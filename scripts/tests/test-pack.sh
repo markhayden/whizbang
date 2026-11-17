@@ -81,6 +81,10 @@ cat >"$tmp/bin/uv" <<'SH'
 printf '%s\n' "$@" >"$PACK_TEST_RECORD/uv-args"
 env | sort >"$PACK_TEST_RECORD/uv-env"
 [ -z "$PACK_TEST_UV_FAILS" ] || { echo "uv: planted failure" >&2; exit 2; }
+# A uv that does not end: past any limit the script passes, and ending by itself after
+# 120 seconds, so that nothing is left if it is not killed. `exec`, so that the process
+# the script kills is this one.
+[ -z "$PACK_TEST_UV_HANGS" ] || exec sleep 120
 echo "$PACK_TEST_RECORD/python"
 SH
 chmod +x "$tmp/bin/uv"
@@ -93,12 +97,13 @@ echo "the stand-in python ran"
 SH
 chmod +x "$tmp/record/python"
 
-# The two variables the stand-in reads are not handed on by the script, which clears the
+# The variables the stand-in reads are not handed on by the script, which clears the
 # environment; so in these cases they reach it only through a stand-in placed on the path
 # that sets them itself.
 cat >"$tmp/bin/uv-wrapper" <<SH
 #!/bin/sh
-PACK_TEST_RECORD="$tmp/record" PACK_TEST_UV_FAILS="\$(cat "$tmp/record/fails" 2>/dev/null || true)" exec "$tmp/bin/uv-real" "\$@"
+PACK_TEST_RECORD="$tmp/record" PACK_TEST_UV_FAILS="\$(cat "$tmp/record/fails" 2>/dev/null || true)" \\
+  PACK_TEST_UV_HANGS="\$(cat "$tmp/record/hangs" 2>/dev/null || true)" exec "$tmp/bin/uv-real" "\$@"
 SH
 mv "$tmp/bin/uv" "$tmp/bin/uv-real"
 mv "$tmp/bin/uv-wrapper" "$tmp/bin/uv"
@@ -137,7 +142,7 @@ done
 grep -x -F "UV_PYTHON_INSTALL_DIR=$tmp/pythons" "$tmp/record/uv-env" >/dev/null ||
   fail "uv is told where the caller's Pythons are installed, when the caller says"
 # Nothing of the caller's but the allow-list: PATH, HOME, TMPDIR, UV_PYTHON_INSTALL_DIR.
-names=$(sed 's/=.*//' "$tmp/record/uv-env" | grep -v -x -E 'PACK_TEST_RECORD|PACK_TEST_UV_FAILS|PWD|SHLVL|_|OLDPWD' | tr '\n' ' ')
+names=$(sed 's/=.*//' "$tmp/record/uv-env" | grep -v -x -E 'PACK_TEST_RECORD|PACK_TEST_UV_FAILS|PACK_TEST_UV_HANGS|PWD|SHLVL|_|OLDPWD' | tr '\n' ' ')
 for name in $names; do
   case "$name" in
     PATH | HOME | TMPDIR | UV_PYTHON_INSTALL_DIR | UV_NO_CONFIG | UV_OFFLINE | UV_PYTHON_DOWNLOADS | UV_MANAGED_PYTHON | \
@@ -159,24 +164,75 @@ echo 1 >"$tmp/record/fails"
 expect_fail "uv fails" "test-pack: uv found no Python $pinned" \
   env PATH="$tmp/bin:$PATH" scripts/thread-guard.sh scripts/test-pack.sh
 
-# CI installs uv by an action pinned to a commit, and the pinned Python from GitHub's
-# releases only (without the mirror, uv tries its maker's own host first), keyed in the
-# cache by the pin. The same mirror is the one the refusal above names.
+# uv that does not end within its limit is killed and waited for, and the run fails. The
+# limit is lowered to 1 second here; the stand-in would end by itself after 120.
+rm -f "$tmp/record/fails"
+echo 1 >"$tmp/record/hangs"
+start=$(date +%s)
+expect_fail "uv does not end" "test-pack: uv did not end within 1 seconds; it was killed and waited for" \
+  env PATH="$tmp/bin:$PATH" WHIZBANG_PACK_UV_LIMIT=1 scripts/thread-guard.sh scripts/test-pack.sh
+took=$(($(date +%s) - start))
+[ "$took" -lt 20 ] || fail "uv was let run $took seconds past a limit of 1"
+rm -f "$tmp/record/hangs"
+grep -F "the stand-in python ran" "$tmp/out" >/dev/null && fail "the Python ran after uv was killed"
+for bad in 0 61 abc 1.5; do
+  expect_fail "the uv limit '$bad'" "WHIZBANG_PACK_UV_LIMIT must be a whole number of seconds from 1 to 60" \
+    env PATH="$tmp/bin:$PATH" WHIZBANG_PACK_UV_LIMIT="$bad" scripts/thread-guard.sh scripts/test-pack.sh
+done
+
+# CI installs uv by an action pinned to a commit, and the pinned Python into the folder it
+# caches, keyed by the pin.
 workflow=.github/workflows/ci.yml
 mirror=https://github.com/astral-sh/python-build-standalone/releases/download
 grep -E '^      - uses: taiki-e/install-action@[0-9a-f]{40}$' "$workflow" >/dev/null ||
   fail "CI installs uv by an action pinned to a commit"
 grep -E '^          tool: .*(^|,| )uv@[0-9.]+($|,)' "$workflow" >/dev/null || fail "CI installs uv"
-[ "$(grep -c -x -F "          UV_PYTHON_INSTALL_MIRROR: $mirror" "$workflow")" = 1 ] ||
-  fail "CI installs the Python from GitHub's releases only: UV_PYTHON_INSTALL_MIRROR: $mirror"
-grep -x -F '          uv python install --no-config --no-bin "$(cat pack/.python-version)"' "$workflow" >/dev/null ||
-  fail "CI installs the Python the pack pins, with no configuration"
+grep -x -F "          uv python install --no-config --no-bin --mirror $mirror \"\$(cat pack/.python-version)\"" "$workflow" >/dev/null ||
+  fail "CI installs the Python the pack pins, with no configuration, from GitHub's releases only"
 grep -x -F "          key: python-\${{ hashFiles('pack/.python-version') }}" "$workflow" >/dev/null ||
   fail "CI's cache is keyed by the pinned Python"
 grep -x -F "          cache-directories: \${{ runner.temp }}/uv-python" "$workflow" >/dev/null &&
   grep -x -F "          UV_PYTHON_INSTALL_DIR: \${{ runner.temp }}/uv-python" "$workflow" >/dev/null ||
   fail "CI installs the Python into the folder it caches"
-grep -F "UV_PYTHON_INSTALL_MIRROR=$mirror" "$tmp/out" >/dev/null ||
-  { cat "$tmp/out" >&2; fail "the refusal names the install from GitHub's releases only"; }
+
+# Every install of a Python names GitHub's releases as the only place to download from.
+# Without the mirror, uv tries its maker's own host first (releases.astral.sh), which the
+# owner has not approved (docs/plans/m1c-local-pack.md, "Origins"). So a line of a tracked
+# file that installs a Python with uv (the workflow, a script, the justfile, a document
+# that gives the command) must, on the same line, pass `--mirror` or set
+# UV_PYTHON_INSTALL_MIRROR to exactly that address. The script tests are left out: they
+# plant such lines on purpose. Not found: a command split over two lines, or written
+# another way than `uv python install` with spaces between.
+# unmirrored <folder>: prints each tracked line that breaks the rule, as <file>:<line>.
+unmirrored() {
+  local found
+  found=$(git -C "$1" -c grep.threads=1 grep -n -I -E -e 'uv[[:space:]]+python[[:space:]]+install' -- \
+    ':!scripts/tests' 2>/dev/null || true)
+  found=$(printf '%s\n' "$found" | grep -v -F -e "--mirror $mirror " -e "UV_PYTHON_INSTALL_MIRROR=$mirror " |
+    grep -v '^$' || true)
+  [ -z "$found" ] || { printf '%s\n' "$found" | cut -d: -f1,2; return 1; }
+}
+expect_pass "every Python installed in this repo comes from GitHub's releases" unmirrored .
+grep -F "$mirror" scripts/test-pack.sh >/dev/null || fail "test-pack names the mirror in its refusal"
+n=0
+for planted in 'uv python install 3.12.15' 'run: uv  python install --no-bin "$v"' \
+  'UV_PYTHON_INSTALL_MIRROR=https://releases.astral.sh/x uv python install 3.12' \
+  "uv python install --mirror ${mirror}x 3.12" 'uv python install 3.12  # see --mirror'; do
+  for name in .github/workflows/ci.yml justfile scripts/a.sh docs/notes.md; do
+    n=$((n + 1))
+    git init -q "$tmp/m$n"
+    mkdir -p "$tmp/m$n/$(dirname "$name")"
+    printf 'first line\n%s\n' "$planted" >"$tmp/m$n/$name"
+    git -C "$tmp/m$n" add "$name"
+    expect_fail "'$planted' in $name" "$name:2" unmirrored "$tmp/m$n"
+  done
+done
+for allowed in "uv python install --mirror $mirror 3.12" "UV_PYTHON_INSTALL_MIRROR=$mirror uv python install 3.12"; do
+  n=$((n + 1))
+  git init -q "$tmp/m$n"
+  printf '%s\n' "$allowed" >"$tmp/m$n/justfile"
+  git -C "$tmp/m$n" add justfile
+  expect_pass "'$allowed'" unmirrored "$tmp/m$n"
+done
 
 finished

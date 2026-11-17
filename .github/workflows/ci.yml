@@ -43,17 +43,16 @@ jobs:
           fallback: none
           tool: just@1.59.0,cargo-nextest@0.9.148,cargo-deny@0.20.2,uv@0.12.23
       # The Python the pack pins (pack/.python-version), for `just test-pack`. From GitHub's
-      # releases only: without the mirror below, uv tries its maker's own host first. When
-      # the cache above already holds it, nothing is downloaded.
-      # The folder it is installed in is the cached one, for this step and every later one.
+      # releases only: without the mirror, uv tries its maker's own host first. When the
+      # cache above already holds it, nothing is downloaded. The folder it is installed in
+      # is the cached one, for this step and every later one.
       - name: The pack's pinned Python
         env:
           UV_NO_CONFIG: "1"
           UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/uv-python
-          UV_PYTHON_INSTALL_MIRROR: https://github.com/astral-sh/python-build-standalone/releases/download
         run: |
           echo "UV_PYTHON_INSTALL_DIR=$UV_PYTHON_INSTALL_DIR" >>"$GITHUB_ENV"
-          uv python install --no-config --no-bin "$(cat pack/.python-version)"
+          uv python install --no-config --no-bin --mirror https://github.com/astral-sh/python-build-standalone/releases/download "$(cat pack/.python-version)"
       - name: Fast tier, advisories, release smoke and secrets scan
         if: matrix.os != 'macos-15'
         run: just ci

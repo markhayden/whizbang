@@ -13,10 +13,13 @@
 # for this use; see the plan's "Origins").
 #
 # `uv` and the Python are each given a cleared environment: PATH, HOME, TMPDIR and
-# UV_PYTHON_INSTALL_DIR of the caller's, and the variables named here, nothing else. The Python runs the runner,
-# pack/tests/run.py, isolated (`-I`: no user site, no variable of Python's own, not the
-# folder it is started in) and writing no bytecode (`-B`). The runner ends itself at
-# 60 seconds (its top says how).
+# UV_PYTHON_INSTALL_DIR of the caller's, and the variables named here, nothing else. The
+# Python runs the runner, pack/tests/run.py, isolated (`-I`: no user site, no variable of
+# Python's own, not the folder it is started in) and writing no bytecode (`-B`).
+#
+# Time: `uv` has 60 seconds (WHIZBANG_PACK_UV_LIMIT lowers it, for this script's test);
+# past that it is killed and waited for, and this fails. The runner ends itself at 60
+# seconds (its top says how). The guard bounds threads, not time, so neither is left to it.
 # Parse the whole file first: see the top of scripts/scan.sh.
 "$BASH" -n "${BASH_SOURCE[0]}" || { echo "test-pack: ${BASH_SOURCE[0]} has a syntax error; refusing to run" >&2; exit 2; }
 # The whole script is one function, read before any of it runs, so a change to this file
@@ -63,23 +66,47 @@ pinned=$(tr -d ' \n' <"$root/pack/.python-version")
 printf '%s\n' "$pinned" | grep -E '^3\.[0-9]+\.[0-9]+$' >/dev/null ||
   { echo "test-pack: pack/.python-version must hold one version, as 3.12.15" >&2; exit 2; }
 
-# Where `uv python install` is told to download from. Without it, `uv` tries a mirror of
-# its maker's first and GitHub after; with it, GitHub's releases only. The owner approved
-# GitHub's releases, and no other origin, for a Python.
-mirror=https://github.com/astral-sh/python-build-standalone/releases/download
-
 # The caller's variables that are handed on, when set.
 kept=(PATH="$PATH" HOME="$HOME")
 [ -z "${TMPDIR:-}" ] || kept+=(TMPDIR="$TMPDIR")
 # Where uv installs its Pythons, when it is not the default: CI sets it to its cached folder.
 [ -z "${UV_PYTHON_INSTALL_DIR:-}" ] || kept+=(UV_PYTHON_INSTALL_DIR="$UV_PYTHON_INSTALL_DIR")
 
-python=$(cd "$root/pack" && env -i "${kept[@]}" \
+uv_limit=${WHIZBANG_PACK_UV_LIMIT:-60}
+case "$uv_limit" in
+  [1-9] | [1-5][0-9] | 60) ;;
+  *) echo "test-pack: WHIZBANG_PACK_UV_LIMIT must be a whole number of seconds from 1 to 60" >&2; exit 2 ;;
+esac
+
+# uv runs in the background, its answer into a file, and is looked at ten times a second
+# until it ends or its time is up. It is this script's only child at that moment.
+answer=$(mktemp "${TMPDIR:-/tmp}/test-pack.XXXXXX")
+(cd "$root/pack" && exec env -i "${kept[@]}" \
   UV_NO_CONFIG=1 UV_OFFLINE=1 UV_PYTHON_DOWNLOADS=never UV_MANAGED_PYTHON=1 \
   UV_CONCURRENT_DOWNLOADS=4 UV_CONCURRENT_INSTALLS=4 UV_CONCURRENT_BUILDS=1 \
-  uv --no-config --offline --no-python-downloads --managed-python python find "$pinned") || python=""
+  uv --no-config --offline --no-python-downloads --managed-python python find "$pinned") >"$answer" &
+uv_pid=$!
+ticks=0
+while kill -0 "$uv_pid" 2>/dev/null && [ "$ticks" -lt $((uv_limit * 10)) ]; do
+  sleep 0.1
+  ticks=$((ticks + 1))
+done
+if kill -0 "$uv_pid" 2>/dev/null; then
+  kill -KILL "$uv_pid" 2>/dev/null || true
+  wait "$uv_pid" 2>/dev/null || true
+  rm -f "$answer"
+  echo "test-pack: uv did not end within $uv_limit seconds; it was killed and waited for" >&2
+  exit 1
+fi
+python=""
+if wait "$uv_pid"; then
+  python=$(cat "$answer")
+fi
+rm -f "$answer"
 if [ -z "$python" ] || [ ! -x "$python" ]; then
-  echo "test-pack: uv found no Python $pinned that it manages, and downloads nothing here; install it once with: UV_PYTHON_INSTALL_MIRROR=$mirror uv python install --no-config --no-bin $pinned (that downloads it from GitHub's releases, and from nowhere else)" >&2
+  # The command names GitHub's releases as the only place to download from: without the
+  # mirror, uv tries its maker's own host first, which the owner has not approved.
+  echo "test-pack: uv found no Python $pinned that it manages, and downloads nothing here; install it once with: uv python install --no-config --no-bin --mirror https://github.com/astral-sh/python-build-standalone/releases/download $pinned (that downloads it from GitHub's releases, and from nowhere else)" >&2
   exit 1
 fi
 

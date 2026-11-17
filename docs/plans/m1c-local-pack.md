@@ -299,7 +299,7 @@ are run one way). A resident worker and a GPU runtime add these.
 | Time, a worker | The limits of D7, each finite with no caller's deadline | The supervisor; a test of each |
 | Memory, one result | 1 GiB of payload (D2), refused before it is allocated; a result's header bounded from its request; the adapter cuts candidates to the most instances asked before it makes a full-size plane | P1, R2a |
 | Memory, beside a result | 256 events and 64 KiB of diagnostics for one request (D2) | P1, P4 |
-| Time, fast tier | A call's deadline comes from the injected clock; one test 30 s, the suite 180 s, as now. The pack's Python tests: 10 s in all | `scripts/timing.sh` |
+| Time, fast tier | A call's deadline comes from the injected clock; one test 30 s, the suite 180 s, as now. The pack's Python tests: 10 s in all | `scripts/timing.sh`; for the pack's Python tests, their runner, `pack/tests/run.py`. **Reworded with the task** (by C1b): this cell read "`scripts/timing.sh`" alone. That script times the Rust tests; the pack's Python tests are run by `just test-pack`, and their runner is what holds them to 10 s, failing a run over it and saying how long it took |
 | Time, model tier | Load 120 s, one request 60 s, the recipe 10 minutes | The supervisor's deadlines; the recipe |
 | Disk | One download of about 3.5 GB into a models directory outside the repo; one environment for the runtime, its size measured by R1 | Tasks N5 and Y1 only |
 | Network | No test of the fast tier leaves the machine. The client's tests use a listener on loopback, made through the test kit, that serves a fixed number of connections. The client has a limit to connect (10 s), a limit between two reads (30 s), and a least rate for a download, a setting whose default is 256 KiB a second: under it over any whole minute ends the download as timed out. A test passes its own limits, under a second. Root certificates are compiled in: the platform's verifier may ask a revocation service nobody approved | Task N1 |
@@ -318,8 +318,8 @@ the task named. What the owner has approved since is under the table.
 | Origin | What for | First used by | Where |
 |---|---|---|---|
 | The Python package index (`pypi.org`, and `files.pythonhosted.org` for the files) | Resolving and installing the runtime extra: the lock file, then `whizbang setup` | Y1 | The owner's Mac; never CI |
-| `github.com`, and the host its release downloads are served from, which C1b names before it asks | `uv` installing the Python the pack pins, where none is there | C1b | The owner's Mac and both CI runners |
-| Where the CI action fetches `uv` itself from: not stated on the page read; C1b names it | `uv` on the runners. On the Mac the installed `uv` is the pinned version, so nothing is contacted | C1b | Both CI runners only |
+| `github.com` (`/astral-sh/python-build-standalone/releases/download/…`), and `release-assets.githubusercontent.com`, where GitHub serves a release's files from (named by C1b) | `uv` installing the Python the pack pins, where none is there | C1b | Both CI runners; the owner's Mac only if the pinned Python is ever missing there |
+| `github.com` (`/astral-sh/uv/releases/download/0.12.23/…`), and `release-assets.githubusercontent.com`: where the CI action, `taiki-e/install-action` at a pinned commit, fetches `uv` from (named by C1b) | `uv` on the runners. On the Mac the installed `uv` is the pinned version, so nothing is contacted | C1b | Both CI runners only |
 | `huggingface.co`, and the host it moves a file download to | The SAM 3 files, with the owner's token to the first origin only. Also, outside whizbang: N5's builder reads the file listing of the pinned revision from the Hub's public API, for the large file's hash; that reading is part of this approval | N5 | The owner's Mac; never CI |
 | `crates.io` | The download client's crates | N1 | Already used for every dependency; named for completeness |
 
@@ -339,7 +339,24 @@ answer on. Given by the owner on 2026-11-15 (the owner's local date):
 | Downloading the runtime's Python packages from `pypi.org` and `files.pythonhosted.org` | The lock file, then `whizbang setup` with the extra | The owner's Mac; never CI | Y1 |
 | Downloading the SAM 3 files from Hugging Face, with the owner's token sent to Hugging Face | `whizbang models get sam3`, `whizbang models pin`, and N5's reading of the pinned revision's file listing | The owner's Mac; never CI | N5 |
 
-The owner also said, the same day:
+Given by the owner on 2026-11-16 (the owner's local date), in the owner's word "yes", to
+the hosts as C1b named them:
+
+| Approved | For | Where | Needed before |
+|---|---|---|---|
+| `github.com`, for release downloads under `/astral-sh/python-build-standalone/releases/download/…` (the Python) and `/astral-sh/uv/releases/download/0.12.23/…` (`uv`, on CI), and `release-assets.githubusercontent.com`, where those downloads are redirected | `uv` installing the Python the pack pins; the CI action installing `uv` | Both CI runners (`macos-15`, `ubuntu-22.04`); the owner's Mac only if the pinned Python is ever missing there | C1b |
+
+Nothing else. Without a mirror named, `uv` 0.12.23 tries its maker's own host,
+`releases.astral.sh`, before GitHub (its source, `crates/uv-python/src/downloads.rs`), and
+that host is not approved. So every command that installs a Python names GitHub's releases
+as its mirror, by `--mirror` or by the variable `UV_PYTHON_INSTALL_MIRROR`, set to
+`https://github.com/astral-sh/python-build-standalone/releases/download`; given so, `uv`
+uses that address alone. `just check` refuses a tracked line that installs a Python
+without it (`scripts/tests/test-pack.sh`). No package index is contacted for C1b: the pack
+has no dependency and `tool.uv.package = false`, and `just test-pack` only finds the
+installed Python, offline.
+
+The owner also said, on 2026-11-15:
 
 - Access to `facebook/sam3` is already granted on the owner's account. This is the
   owner's statement; N5 finds out for real, and its fifth credential test says what a
@@ -348,13 +365,10 @@ The owner also said, the same day:
   (D12).
 - Whizbang is expected to host the model later, for customers (D11). Not in 1C.
 
-Three hosts are still unnamed, and each is named to the owner before its first contact.
-The approvals above do not cover a host by a name nobody has read:
+One host is still unnamed, and is named to the owner before its first contact. The
+approvals above do not cover a host by a name nobody has read (C1b's two were named and
+approved on 2026-11-16, above):
 
-- The host GitHub serves a release's files from: C1b names it to the owner before the
-  first download of a Python.
-- Where the CI action fetches `uv` itself from: C1b names it to the owner before the
-  step is added to CI.
 - The host the Hub moves a file download to, its storage: N5 names it to the owner
   before the entry lists it as an origin (open question 2). A second package index
   for Linux with CUDA, if a lock needs one, is Y1's to name the same way (open
@@ -484,8 +498,9 @@ These contact nothing new. Everything from P2 on runs the pack's Python and wait
 C1b's origins: P2, P3a, P3b, P4, P5b, P6a, P6b, P7a and P7b. Y1 waits for the package
 index as well; N5 for the Hub, the access and the sign-in; R1, R2a and R2b for all of
 them. The origins themselves were approved on 2026-11-15 ("What the owner approved,
-and what is still asked"); C1b and N5 each still wait for the naming of their unnamed
-hosts, and Y1 for nothing more unless its lock needs a second index.
+and what is still asked"); C1b's hosts were named and approved on 2026-11-16; N5 still
+waits for the naming of its unnamed host, and Y1 for nothing more unless its lock needs a
+second index.
 
 ## Commit strategy
 
@@ -876,15 +891,37 @@ error; `whizbang describe` and the generated reference are unchanged. **Size:** 
 **Depends on:** C0. **Needs the owner:** the origins for a pinned Python, and for `uv`
 on the runners, each named in the request.
 
-- [ ] `pack/`: a `pyproject.toml` with no dependency and `tool.uv.package = false`, so
+- [x] `pack/`: a `pyproject.toml` with no dependency and `tool.uv.package = false`, so
       that nothing is built and no build backend is fetched from an index; the pinned
       Python version; an empty package `whizbang_pack` and one `unittest` test.
-- [ ] `uv` joins `scripts/tool-versions.txt` at the version the Mac has; `just setup`
+      Python 3.12.15, in `pack/.python-version` (`requires-python = "==3.12.*"`): inside
+      the ranges PyTorch, `transformers` and Meta's `sam3` package document, and already
+      installed by `uv` on the Mac. The test:
+      `test_package.PackageTest.test_the_package_imports_from_the_pack_and_runs_on_the_pinned_python`,
+      run by `just test-pack`.
+- [x] `uv` joins `scripts/tool-versions.txt` at the version the Mac has; `just setup`
       checks it. `just test-pack` runs the pack's tests with the pinned Python, offline,
       under the two rows of "Rules" on `uv` and on the pack's tests, and joins `just
       check`; `AGENTS.md` and `SPEC.md` section 11 list it.
+      `uv` 0.12.23; `scripts/tests/test-setup.sh` ("uv at its pin", "uv at another
+      version", "no uv"). In `scripts/tests/test-pack.sh`: "under the guard" (offline, no
+      configuration, the three bounds, the allow-list), "uv does not end" (killed and
+      waited for at its limit, 60 s, lowered to 1 for the test), "a test that blocks"
+      (the runner's 60 s), "a thread left behind" (daemon threads), "outside the guard"
+      and "a guard named by hand". `scripts/tests/test-ci-jobs.sh` holds `test-pack` to
+      `check` and to the macOS half of `ci`.
+      The row on `uv` is held as far as `just test-pack` starts it: P3a's allow-list does
+      not exist yet, so the script hands on PATH, HOME, TMPDIR and
+      `UV_PYTHON_INSTALL_DIR` and nothing else; P3a and Y1 hold `whizbang setup` to the
+      rest of the row.
 - [ ] CI: one step installs `uv` at its pinned version, by an action pinned to a commit,
       with its cache. Its time on each runner is in the hand-back.
+      Built in the pull request of C1b: `taiki-e/install-action` at commit `ab49d3c`
+      (v2.90.5), already the workflow's, with `fallback: none`; then a step installs the
+      pinned Python from GitHub's releases only, into a folder that `Swatinem/rust-cache`
+      keeps, keyed by the pin (`scripts/tests/test-pack.sh` holds each). Ticked when CI on
+      that pull request has shown the step under 30 seconds on both runners, as "Done
+      when" asks.
 
 **Done when** `just check` passes on both runners with the new step under 30 seconds,
 and these pass in `scripts/tests/test-pack.sh`: the runner of the pack's tests ends
