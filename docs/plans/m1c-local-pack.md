@@ -430,6 +430,8 @@ Each is settled by the task named, from documentation or by the owner; none bloc
    client needs no change, and the plan none. The host was approved by the owner on
    2026-11-16, ahead of its name ("Origins").
 3. Does candidate A run SAM 3 on the Apple GPU with the fallback off? (R1.)
+   **Settled by R1 (2026-11-17): yes.** One phrase on one picture, twice, on `mps` with
+   `PYTORCH_ENABLE_MPS_FALLBACK` unset; nothing fell back (ADR 0022).
 4. Which Python does the runtime's wheel support? The pack pins the newest that it
    does. (Y1; the pack's core runs on any since 3.12.)
    And can `uv sync --locked --offline` check a lock that holds the runtime's extra
@@ -457,7 +459,8 @@ Each is settled by the task named, from documentation or by the owner; none bloc
    no index but `https://pypi.org/simple` and no file host but
    `files.pythonhosted.org` (`setup::the_lock_file_names_no_index_but_the_approved_one`).
 6. The licences of the runtime's packages, read from their metadata, not from memory.
-   (R1, in the ADR.)
+   (R1, in the ADR.) **Settled by R1 (2026-11-17):** ADR 0022, "The runtime's packages",
+   from the installed metadata of each.
 7. SAM 3.1 (`facebook/sam3.1`, 2026-03-27) is a newer set of weights, for tracking
    several objects in video. This plan installs `facebook/sam3`, which the spec names
    and the library documents. (Owner, if 3.1 is wanted; a catalogue entry later.)
@@ -2171,7 +2174,7 @@ Tag `m1c-fakes` on the merge. **Carry-over:** `backends status`. **Size:** small
 **Depends on:** N5, Y1. **Runs on:** the owner's Mac. **Reads:** D8 and the pages of
 "What was looked up".
 
-- [ ] Candidate A, tried by one script in `pack/`, run once by hand through
+- [x] Candidate A, tried by one script in `pack/`, run once by hand through
       `scripts/heavy.sh` and `scripts/thread-guard.sh` with its limit at 200: load from
       the installation's folder, one phrase on one picture, twice. If A fails the task
       stops (D8). The script runs outside the supervisor, so it brings the
@@ -2186,13 +2189,13 @@ Tag `m1c-fakes` on the merge. **Carry-over:** `backends status`. **Size:** small
       thread guard and which kills over 24 GiB; `scripts/tests/` holds the watch to
       that with a stand-in that grows. It places the model on the
       device itself, by name, and uses no `device_map="auto"`.
-- [ ] ADR 0022, the first runtime: each candidate against the bar, with the page that
+- [x] ADR 0022, the first runtime: each candidate against the bar, with the page that
       shows point, box and CUDA support; what was measured (the device, load time, the
       first and second request, peak memory, threads, the environment's size); every
       thread pool the runtime has and what holds each; the
       licences of the runtime's packages from their metadata; what the choice rules out
       (nothing: a second runtime is another adapter); the watermark chosen.
-- [ ] `SPEC.md` section 17's rows on the runtime, the pack over MCP, the two clients and
+- [x] `SPEC.md` section 17's rows on the runtime, the pack over MCP, the two clients and
       offline bundles say what was decided. Wording only.
 
 **Done when** ADR 0022 names one runtime with its numbers and its sources, the script's
@@ -2206,6 +2209,31 @@ kills only the worker, and lets go of readers that such a process keeps waiting.
 **Added with P3a's pull request,** from its review: a process the worker starts that
 outlives it holds the worker's streams open (`docs/carry-over.md`).
 **Size:** medium.
+**Built with the task:**
+
+- **Candidate A meets the bar** (ADR 0022): SAM 3 answered the phrase on `mps`, every
+  parameter and the output there, with `PYTORCH_ENABLE_MPS_FALLBACK` unset; nothing fell
+  back and nothing was fetched. The script is `pack/trial_runtime.py`; it starts itself
+  again in the worker's environment (`os.execve`, the same process) and refuses any other,
+  which `test_trial_runtime.Environment` holds to the supervisor's list of names. The
+  watch is `scripts/memory-watch.sh` (`scripts/tests/test-memory-watch.sh`); it also
+  reports the peaks it saw and every process of the tree, and whether one outlived the
+  command.
+- **Two variables the plan did not name, added to the worker's environment**
+  (`whizbang_backends::pack::worker::environment`; the names in
+  `worker::the_workers_environment_holds_the_allow_list_and_no_key`):
+  `PYTORCH_MPS_LOW_WATERMARK_RATIO`, equal to the high one, since the runtime refuses a
+  high watermark of 0.5 while its low one is at its default of 1.4; and
+  `HF_HUB_DISABLE_PROGRESS_BARS=1`, since the progress bar drawn while weights load makes a
+  lock of `multiprocessing`, which starts the standard library's resource tracker, a
+  process. With it set the run started none. The tracker ends with its worker, killed or at
+  the end of its input, and the worker's streams then end:
+  `test_trial_runtime.Processes.test_the_resource_tracker_ends_with_its_worker_killed_or_at_the_end_of_its_input`.
+  The row of `docs/carry-over.md` on a process that outlives the worker leaves the list:
+  its "Done when", the runtime starts no process that outlives the worker, is shown.
+- **The watermark stays 0.5.** One load and two requests used 5.3 GiB of the GPU's memory
+  of about 26 GiB it allows. No cap on resident memory that macOS is documented to hold to
+  was found in what could be read offline; the watch stays the cap in the model tier.
 
 ### R2a. The adapter `sam3`
 

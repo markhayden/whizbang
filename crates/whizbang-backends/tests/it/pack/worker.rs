@@ -359,7 +359,9 @@ fn the_workers_environment_holds_the_allow_list_and_no_key() {
         "VECLIB_MAXIMUM_THREADS",
         "TOKENIZERS_PARALLELISM",
         "PYTORCH_MPS_HIGH_WATERMARK_RATIO",
+        "PYTORCH_MPS_LOW_WATERMARK_RATIO",
         "PYTHONDONTWRITEBYTECODE",
+        "HF_HUB_DISABLE_PROGRESS_BARS",
     ];
     let expected: BTreeSet<&str> = passed.iter().copied().chain(set).collect();
     // macOS gives every process a variable of its own for the encoding of text, which
@@ -395,6 +397,10 @@ fn the_workers_environment_holds_the_allow_list_and_no_key() {
     assert_eq!(environment["PATH"], "/usr/bin:/bin");
     assert_eq!(environment["OMP_NUM_THREADS"], "8");
     assert_eq!(environment["TOKENIZERS_PARALLELISM"], "false");
+    // The watermarks R1 ended with (ADR 0022): the low one is the high one, under 1.0.
+    assert_eq!(environment["PYTORCH_MPS_HIGH_WATERMARK_RATIO"], "0.5");
+    assert_eq!(environment["PYTORCH_MPS_LOW_WATERMARK_RATIO"], "0.5");
+    assert_eq!(environment["HF_HUB_DISABLE_PROGRESS_BARS"], "1");
 }
 
 #[test]
