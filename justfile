@@ -8,8 +8,9 @@ setup:
     scripts/setup.sh
 
 # The fast tier: format check, lint, the repo checks, the script tests, the generated
-# reference against a fresh copy, then the fast tests with their timing table.
-check: fmt-check clippy graph deny test-scripts docs-check timing
+# reference against a fresh copy, the fast tests with their timing table, then the pack's
+# Python tests.
+check: fmt-check clippy graph deny test-scripts docs-check timing test-pack
 
 fmt-check:
     cargo fmt --all -- --check
@@ -34,6 +35,11 @@ test-only +args:
 # run through scripts/thread-guard.sh too.
 timing:
     scripts/timing.sh
+
+# The pack's Python tests, with the Python the pack pins (pack/.python-version), offline,
+# through the guard; the runner ends itself at 60 seconds (scripts/test-pack.sh).
+test-pack:
+    scripts/thread-guard.sh scripts/test-pack.sh
 
 # The crate edges of SPEC.md section 3 (scripts/crate-graph.txt), and the features of
 # serde_json, the same for the binary and for the tests (ADR 0023).
@@ -118,6 +124,6 @@ ci: check deny-advisories smoke compile-fail scan-secrets
 # The first half is `ci` without the script tests. The second is the script tests, after
 # `deny` as in `check`: one of them reads the workspace's crates from cargo's home, where
 # `deny` puts them. scripts/tests/test-ci-jobs.sh holds the two to `check` and `ci`.
-ci-without-scripts: fmt-check clippy graph deny docs-check timing deny-advisories smoke compile-fail scan-secrets
+ci-without-scripts: fmt-check clippy graph deny docs-check timing test-pack deny-advisories smoke compile-fail scan-secrets
 
 ci-scripts: deny test-scripts

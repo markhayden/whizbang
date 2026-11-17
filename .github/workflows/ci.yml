@@ -28,10 +28,31 @@ jobs:
           fetch-depth: 0
       - name: Rust toolchain
         run: rustup show
+      # The cache holds the pack's pinned Python too (the folder uv installs it in, set by
+      # the step that installs it), keyed by the pin and by the pinned tools (uv among
+      # them), so that it is downloaded once for each pin and runner and not on every run.
       - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@v2
         with:
-          tool: just@1.59.0,cargo-nextest@0.9.148,cargo-deny@0.20.2
+          key: python-${{ hashFiles('pack/.python-version', 'scripts/tool-versions.txt') }}
+          cache-directories: ${{ runner.temp }}/uv-python
+      # Pinned to a commit (v2.90.5). Each tool is downloaded from its maker's GitHub
+      # releases and checked against the hash the action holds; with no fallback, a tool the
+      # action does not list fails the step instead of being built from crates.io.
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519
+        with:
+          fallback: none
+          tool: just@1.59.0,cargo-nextest@0.9.148,cargo-deny@0.20.2,uv@0.12.23
+      # The Python the pack pins (pack/.python-version), for `just test-pack`. From GitHub's
+      # releases only: without the mirror, uv tries its maker's own host first. When the
+      # cache above already holds it, nothing is downloaded. The folder it is installed in
+      # is the cached one, for this step and every later one.
+      - name: The pack's pinned Python
+        env:
+          UV_NO_CONFIG: "1"
+          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/uv-python
+        run: |
+          echo "UV_PYTHON_INSTALL_DIR=$UV_PYTHON_INSTALL_DIR" >>"$GITHUB_ENV"
+          uv python install --no-config --no-bin --mirror https://github.com/astral-sh/python-build-standalone/releases/download "$(cat pack/.python-version)"
       - name: Fast tier, advisories, release smoke and secrets scan
         if: matrix.os != 'macos-15'
         run: just ci
@@ -82,10 +103,20 @@ jobs:
           fetch-depth: 0
       - name: Rust toolchain
         run: rustup show
+      # The cache holds the pack's pinned Python too (the folder uv installs it in, set by
+      # the step that installs it), keyed by the pin and by the pinned tools (uv among
+      # them), so that it is downloaded once for each pin and runner and not on every run.
       - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@v2
         with:
-          tool: just@1.59.0,cargo-nextest@0.9.148,cargo-deny@0.20.2
+          key: python-${{ hashFiles('pack/.python-version', 'scripts/tool-versions.txt') }}
+          cache-directories: ${{ runner.temp }}/uv-python
+      # Pinned to a commit (v2.90.5). Each tool is downloaded from its maker's GitHub
+      # releases and checked against the hash the action holds; with no fallback, a tool the
+      # action does not list fails the step instead of being built from crates.io.
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519
+        with:
+          fallback: none
+          tool: just@1.59.0,cargo-nextest@0.9.148,cargo-deny@0.20.2,uv@0.12.23
       - name: The script tests, after the crates they read are in cargo's home
         run: just ci-scripts
 
