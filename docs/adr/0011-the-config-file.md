@@ -76,6 +76,18 @@ of a download ("What the file holds"). Added to "The digest": the table is one m
 field, hashed only when it gives a key, so no digest of a file without one moved;
 and a fourth fixed digest. Under "Which settings a run records": neither key is
 recorded, and why.
+Amended: 2026-11-16, a fourteenth note, with task N3b of checkpoint 1C. Changed in "The
+digest": the `models` table is in no digest, where the thirteenth note had it as a
+fourth field hashed when it gave a key. Where the models directory is, and how slow a
+download may be, are not part of what a run means, and with the table in the digest a
+config that only moved the directory made every preparation made before it stale.
+The three digests fixed before the thirteenth note did not move, and are held again
+by the test that replaces the fourth's; the fourth, of a `models` table alone, is now
+the empty config's. No digest of a config with a `models` table had been kept by
+anyone but a test: the binary built with the table in the digest was on `main` for
+one day, with no model it could install. Changed in "What the file holds":
+`download_least_kib_per_second` is given to the download client by `whizbang models
+get`.
 
 ## Context
 
@@ -303,9 +315,10 @@ download_least_kib_per_second = 256
 - **`download_least_kib_per_second` is what a download must keep up over any whole
   minute** or be ended as timed out (plan 1C, "Rules": the download client's
   limits). Whoever makes the download client gives it this, or 256 when the file
-  gives none (`DOWNLOAD_LEAST_KIB_PER_SECOND`); the client is task N1's and the
-  command that makes it task N3b's, so at this head the reader keeps the number
-  (`Config::download_least_kib_per_second`) and nothing uses it yet. A whole
+  gives none (`DOWNLOAD_LEAST_KIB_PER_SECOND`): `whizbang models get` makes the
+  client with it (task N3b;
+  `models::get_makes_the_download_client_with_the_configs_least_rate_or_the_default`,
+  and the client's own test of a slow download, task N1's). A whole
   number of kibibytes, since a setting is never a number with a fraction; one at
   least, since a least rate of nothing is no limit, and a download that never ends
   is what the limit is for.
@@ -553,25 +566,32 @@ be absent is `u` 0, or `u` 1 and then the field. The fields, in order:
    2. `u`, how many upstreams, and each as `b`, sorted;
    3. `u`, how many classes, and each as `b` its name, sorted;
    4. `u` 1 if it may be probed, else 0.
-4. **Only when the `models` table gives a key** (task N3a): `u` 1; then the
-   directory, `b`, its text as written, which may be absent; then the least rate of
-   a download, `u` kibibytes a second, which may be absent. A file whose `models`
-   table gives neither key has no fourth field at all.
+
+**The `models` table is in no digest** (task N3b): neither its directory nor its least
+rate of a download is hashed, whatever it gives
+(`digest::the_models_table_is_in_no_digest`). Where the models directory is, and how
+slow a download may be, are not part of what a run means: a run's model is the identity
+of its installation (ADR 0017), wherever its folder is. With them in it, as task N3a
+first had them (a fourth field, hashed when the table gave a key), a config that only
+moved the directory changed its digest, and so made stale every call prepared under it
+before, and a request sent with such a preparation was refused where it should have
+been run, or answered with the run it had made
+(`wired::two_configs_that_differ_only_in_where_the_models_directory_is_repeat_the_same_run`).
 
 The short form enters as what it is: a backend named `default`, with the default
 `default`. The empty config hashes 45 bytes: the 17 of `whizbang:config/1`, a zero byte,
 and three fields of `u` 0, nine bytes each. Three digests are fixed
 (`digest::the_digests_of_three_fixed_configs_are_the_records`; they were worked out from
 this section alone with a few lines of a scripting language's standard library, not
-from the code), and a fourth with the `models` table's keys, worked out the same way
-(`digest::the_models_table_is_in_the_digest_only_when_it_gives_a_key`):
+from the code). Task N3a fixed a fourth, of a `models` table alone
+(`sha256:ee9df2ae…`); since task N3b that table hashes as the empty config does, and
+the test that held the fourth holds that instead:
 
 | Config | Digest |
 |---|---|
 | The empty one | `sha256:9d60a543ea39be1ca1bc2c4e1a90094a59ded6bdcfdf1c21436f4026f207c4a6` |
 | The example of `SPEC.md` section 4 | `sha256:e0f7ca76571f20c077084f4dcb18a57c0adf857b37d59928546508937fa31c7f` |
 | The config `FULL` of the digest's tests, with something in every place 1B had | `sha256:c151bf69e75bfec361a2018365535e49731847d0dbf6d13f4bb71b06356d6399` |
-| A `models` table alone: `dir = "/srv/models"` and `download_least_kib_per_second = 512` | `sha256:ee9df2aebf87f7a9e248dae8aeedd73d37169b59269afef6faec153fa6ec9ab0` |
 
 What follows from hashing what was read:
 
@@ -584,8 +604,8 @@ What follows from hashing what was read:
 - **A table with nothing in it is as no table,** and saying what is so unless said
   otherwise (`probe = false`, `upstreams = []`) is as not saying it
   (`digest::a_table_with_nothing_in_it_is_as_no_table`).
-- **A change to any setting changes it:** every key of every table is in the fields
-  above, with its place marked by a count or a length, so no two configs run together
+- **A change to any setting changes it:** every key of every table but `models` is in
+  the fields above, with its place marked by a count or a length, so no two configs run together
   to the same bytes (`digest::a_change_to_any_setting_changes_the_digest`,
   `digest::where_one_text_ends_and_the_next_begins_is_in_the_digest`).
 - **No secret is in it.** A variable is in the digest by its name. Its value is in no
@@ -639,16 +659,12 @@ What follows from hashing what was read:
 
 A key added to the file later that is absent from older files must hash as absent, or it
 is a new kind, `config/2`, and every digest changes with it. **The `models` table's
-keys were added so** (task N3a): the fields before them are each closed by a count or a
-length, so what follows the last recipient is read as the fourth field or is not there,
-and a file that gives neither key hashes to the bytes it hashed to before. The three
-digests above did not move. Both keys are hashed, so that "a change to any setting
-changes it" stays true of every key the file has. What that costs: the digest of a
-config that names a directory is of that path among the rest, so one who holds a
-record and the rest of the config can test a guess at the path against it. A path is
-not a credential, and the path itself is in no record ("Which settings a run
-records"). And the directory a flag names is in no digest, as the store a flag names is
-in none: the digest is of the file.
+keys are hashed not at all** (task N3b, where task N3a hashed them as a fourth field
+when the table gave one): so "a change to any setting changes it" is true of every key
+of the file but those two, which are not a run's settings. It follows that a guess at
+the path of a models directory cannot be tested against a digest, and that the
+directory a flag names and the one the config names are alike in no digest, as the
+store a flag names is in none.
 
 ### Which settings a run records
 

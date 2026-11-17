@@ -1,12 +1,13 @@
-//! `whizbang models`, `backends` and `setup`, as stubs (plan 1C, task C1a): each command
-//! is there, says that it is not built, and exits as a complaint does, whatever it was
-//! asked. What each will do arrives with its own task; none reads, writes, starts or
-//! reaches anything until then.
+//! `whizbang backends` and `setup`, as stubs (plan 1C, task C1a): each command is there,
+//! says that it is not built, and exits as a complaint does, whatever it was asked.
+//! What each will do arrives with its own task; none reads, writes, starts or reaches
+//! anything until then. `models` was the third, until task N3b built it
+//! (`tests/it/models.rs`).
 
 use std::process::Output;
 
-/// The three stubs, by the name each has on the command line.
-const STUBS: [&str; 3] = ["models", "backends", "setup"];
+/// The two stubs, by the name each has on the command line.
+const STUBS: [&str; 2] = ["backends", "setup"];
 
 fn whizbang(args: &[&str]) -> Output {
     whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
@@ -42,10 +43,7 @@ fn a_stub_asked_for_anything_says_the_same_and_does_not_appear_to_work() {
     // The verbs of `SPEC.md` section 11, a model's name, an option nobody defined: a
     // stub does not take one for a mistake of the caller's, and does not act on one.
     // It says what it says when it is asked for nothing.
-    let cases: [&[&str]; 8] = [
-        &["models", "list"],
-        &["models", "get", "sam3"],
-        &["models", "remove", "sam3"],
+    let cases: [&[&str]; 5] = [
         &["backends", "status"],
         &["backends", "status", "--probe"],
         &["backends", "--probe"],

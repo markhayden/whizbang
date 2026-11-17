@@ -5,6 +5,7 @@ mod describe;
 mod escape;
 mod executor;
 mod import;
+mod models;
 mod rascal;
 mod runs;
 mod spend;

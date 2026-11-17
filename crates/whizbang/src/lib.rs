@@ -2,4 +2,5 @@
 //! argument parsing; this is the wiring it calls.
 
 pub mod door;
+pub mod model_commands;
 pub mod wiring;

@@ -141,6 +141,16 @@ directory that is not there; the test that no product code names `ModelsDir::at`
 reads every product crate and is not passed by another name for the type; four
 limits; and two sentences that said nothing in the library sleeps, which the lock
 asked for until a time had made untrue.
+Amended: 2026-11-16, with task N3b of checkpoint 1C. Added, in code and under "Where
+the directory is": the commands `whizbang models list`, `get` and `remove`
+(`crates/whizbang/src/model_commands.rs`), which of them works out where the
+directory is and when, and that a relative `--models-dir` is refused before anything
+is read or made, where it made a folder in the working folder and was then refused.
+Changed, in code and under "The inventory": the inventory answers that the model does
+not run on this platform when its entry does not name the platform the build is for
+(ADR 0015's sixth reason), where it called such a model ready; `ModelsDir::has_link`
+is the look whoever lists models makes, and `unrunnable` what is said of a model with
+no directory to look in. Under "Attaching and cancelling": the command's pause.
 
 ## Context
 
@@ -435,12 +445,26 @@ opens it. This is what the binary gives.
   counts the askings.
 - **Which commands open a models directory, and which ask for the platform's.** At
   this head, under the catalogue the build ships: none opens one and none asks.
-  One command is handed what says the platform's place, `whizbang rascal grow`,
-  the only one that builds an executor; `describe`, `store`, `runs`, `spend` and
-  the three stubs are handed nothing and have no way to it. Once the catalogue
-  holds a model, `rascal grow` opens a directory when it is given `--config` or
-  `--models-dir`, and asks for the platform's only when it is given a config that
-  has no `[models] dir` and no `--models-dir`.
+  Two commands are handed what says the platform's place: `whizbang rascal grow`,
+  the only one that builds an executor, and `whizbang models` (task N3b);
+  `describe`, `store`, `runs`, `spend` and the two stubs are handed nothing and
+  have no way to it. Once the catalogue holds a model, `rascal grow` opens a
+  directory when it is given `--config` or `--models-dir`, and asks for the
+  platform's only when it is given a config that has no `[models] dir` and no
+  `--models-dir`. The `models` commands work out where it is only when the
+  catalogue gives them a reason, and each asks for the platform's only when
+  neither the flag nor the config named one
+  (`models::under_the_catalogue_it_ships_no_models_command_resolves_or_makes_a_models_directory`):
+  `list` when the catalogue holds a model, and it opens the directory only when
+  something is at its place, so it makes nothing; `get` of a model the catalogue
+  holds, that runs on this platform and whose adapter the build has, and it makes
+  the directory where it is not; `remove` of a model the catalogue holds, and it
+  opens the directory only when something is at its place. **A relative
+  `--models-dir` is refused by every command that takes it,** before anything is
+  read or made, whether or not the command would have looked at the directory
+  (`models::a_relative_models_dir_is_refused_before_anything_is_made`); until task
+  N3b it was opened relative to the working folder, which made a folder there and
+  then refused it.
 - **No test touches the data folder of whoever runs it.** The function that works
   out the platform's place reads nothing: it is handed what the environment says,
   and its test hands it made-up values. One function of the binary reads the
@@ -1259,7 +1283,11 @@ attaches to whatever holds the lock, and ends as that ended
   "Three kinds of lock"); a caller whose `watch`
   returns at once tries as fast as the file system answers, which is what the
   tests do, giving way to other threads. The pause a command makes there is the
-  command's (1C, `docs/carry-over.md`).
+  command's: `whizbang models get` pauses a quarter of a second of its clock at each
+  call, and says what is shown only when it changes (task N3b;
+  `models::a_second_get_attaches_to_the_first_waits_by_the_clock_and_ends_with_the_same_installation`).
+  Its waiting has no limit of its own: the install it waits for ends by its own
+  limits, or its process ends and the share is given.
 - **It ends by what the status record says,** read once it has its share, when
   nobody can be installing or removing. `installed`, with the pointer naming the
   installation of the entry it asked for: that installation, read by `current`.
@@ -1891,6 +1919,7 @@ offers one local backend.
 | The answer | When |
 |---|---|
 | Not in the catalogue | The catalogue holds no model of exactly that name (`inventory::a_configured_model_that_the_catalogue_does_not_hold_is_prepared_as_not_ready_saying_so`) |
+| Does not run on this platform | The catalogue holds the model, and its entry does not name the platform the build is for (`Platform::this`; a build for a platform no catalogue names runs none of its models). Said first, before the adapter and before anything is looked for on the disk, installed or not (task N3b; until then such a model, installed, was ready) (`inventory::a_model_whose_entry_does_not_name_this_platform_is_not_ready_for_that_reason_installed_or_not`). `Installations::on` gives another platform, for a test; `unrunnable` is the same question, for whoever lists models with no directory to look in |
 | No adapter | The catalogue holds the model, and the build has no adapter of the name its entry gives. Said before anything of the model is looked for on the disk, so it is the answer whether the model is installed, not installed or damaged: nothing this build installs would make it ready (task N3a; until then an installed one was out of date and one that was not was not installed) (`inventory::a_model_whose_adapter_this_build_lacks_is_not_ready_for_that_reason_installed_or_not`) |
 | Not installed | The model has no pointer: never installed, or removed |
 | Ready, under the installation's identity | The pointer names an installation whose record is the record an install would make now: from the catalogue's entry, under the revision this build's adapter states (`inventory::a_model_in_the_catalogue_is_ready_when_installed_and_not_installed_otherwise`) |
@@ -1935,8 +1964,8 @@ offers one local backend.
   mark is not read:* a model whose removal waits for holds is ready, and it is the
   lease that is refused then (task M6b); one whose pointer a removal has cleared
   is not installed. *An adapter this build does not have* has a reason of its
-  own since task N3a (the table above); the command that lists models says it
-  with task N3b. *What a
+  own since task N3a (the table above), and `whizbang models list` says it
+  (`models::a_model_whose_adapter_this_build_lacks_is_listed_with_that_reason`). *What a
   config offers is put over an inventory* since task W1 (ADR 0015, "What a config
   offers, over an inventory"), and the binary's wiring makes this one
   (`wiring::Over::installed`, "Where the directory is"); the tests here give a

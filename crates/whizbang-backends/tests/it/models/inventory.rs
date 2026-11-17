@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use whizbang_backends::models::{
-    Catalogue, Entry, InstallationRecord, Installations, ModelsDir, Revision,
+    Catalogue, Entry, InstallationRecord, Installations, ModelsDir, Platform, Revision, unrunnable,
 };
 use whizbang_core::capability::{
     Declaration, Installation, Installed, InstalledRoster, Inventory, Roster, Unready,
@@ -359,6 +359,59 @@ fn a_model_whose_adapter_this_build_lacks_is_not_ready_for_that_reason_installed
     assert_eq!(
         lacking().look("sam3"),
         Installed::NotReady(Unready::NotInCatalogue)
+    );
+}
+
+#[test]
+fn a_model_whose_entry_does_not_name_this_platform_is_not_ready_for_that_reason_installed_or_not() {
+    let scratch = Scratch::new("inventory-platform");
+    let root = scratch.path();
+    // The entry names both platforms a catalogue can name. A build for neither
+    // runs none of its models, and says so where it would have said not installed.
+    let why = Installed::NotReady(Unready::NotForThisPlatform);
+    let said = format!("{NOT_READY}it does not run on this platform");
+    assert_eq!(inventory(root).on(None).look("tiny"), why);
+    assert_eq!(
+        World::over(inventory(root).on(None), "tiny").why_not(),
+        said
+    );
+    assert!(std::fs::read_dir(root).unwrap().next().is_none());
+    // Installed, the same: what is there is not read.
+    let record = installed(root, &second());
+    assert_eq!(inventory(root).look("tiny"), ready(&record));
+    for platform in Platform::ALL {
+        assert_eq!(
+            inventory(root).on(Some(platform)).look("tiny"),
+            ready(&record)
+        );
+    }
+    assert_eq!(inventory(root).on(None).look("tiny"), why);
+    // The inventory's platform is this build's unless it is told another.
+    assert_eq!(
+        inventory(root).on(Platform::this()).look("tiny"),
+        inventory(root).look("tiny")
+    );
+    // An entry for one platform only is ready on it and on no other; and the
+    // platform is said before the adapter.
+    let mut parts = parts("tiny");
+    parts.platforms = vec![Platform::MacosArm64];
+    let mac = Entry::new(parts, &none()).unwrap();
+    assert_eq!(unrunnable(&mac, Some(Platform::MacosArm64), true), None);
+    assert_eq!(
+        unrunnable(&mac, Some(Platform::LinuxX86_64), true),
+        Some(Unready::NotForThisPlatform)
+    );
+    assert_eq!(
+        unrunnable(&mac, Some(Platform::LinuxX86_64), false),
+        Some(Unready::NotForThisPlatform)
+    );
+    assert_eq!(
+        unrunnable(&mac, Some(Platform::MacosArm64), false),
+        Some(Unready::NoAdapter)
+    );
+    assert_eq!(
+        unrunnable(&mac, None, true),
+        Some(Unready::NotForThisPlatform)
     );
 }
 
