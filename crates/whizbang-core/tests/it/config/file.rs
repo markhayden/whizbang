@@ -5,11 +5,11 @@
 
 use whizbang_core::config::{
     BACKENDS_LIMIT, CONFIG_BYTES_LIMIT, Config, ConfigRefused, DOWNLOAD_LEAST_KIB_LIMIT,
-    DOWNLOAD_LEAST_KIB_PER_SECOND, KEY_SHOWN_LIMIT, MODELS_DIR_LIMIT, RECIPIENTS_LIMIT,
-    SETTINGS_LIMIT, Setting,
+    DOWNLOAD_LEAST_KIB_PER_SECOND, KEY_SHOWN_LIMIT, MODEL_TOKENS_LIMIT, MODELS_DIR_LIMIT,
+    RECIPIENTS_LIMIT, SETTINGS_LIMIT, SIGN_IN_ORIGIN, Setting, TokenFrom,
 };
 use whizbang_core::contract::{Capability, Secrets};
-use whizbang_core::egress::{Account, DataClass, UPSTREAM_LIMIT};
+use whizbang_core::egress::{Account, DataClass, Origin, UPSTREAM_LIMIT};
 use whizbang_testkit::scratch::Scratch;
 
 use super::{made_up_key, the_specs_example};
@@ -301,13 +301,14 @@ fn the_models_table_names_the_directory_and_the_least_rate_of_a_download() {
             "{rate}"
         );
     }
-    // And the table has those two keys and no other.
+    // And the table has those two keys, and the tokens of downloads (task N4), and no
+    // other.
     let refused = refusal("[models]\ndir = \"/m\"\ncatalogue = \"c.json\"\n");
     assert_eq!(key_of(&refused), "models.catalogue");
     assert!(
-        refused
-            .to_string()
-            .contains("is not known; the keys here are dir and download_least_kib_per_second"),
+        refused.to_string().contains(
+            "is not known; the keys here are dir, download_least_kib_per_second and tokens"
+        ),
         "{refused}"
     );
     // What is printed of a config holds no directory, and neither key is among the
@@ -322,6 +323,106 @@ fn the_models_table_names_the_directory_and_the_least_rate_of_a_download() {
         Config::parse(text.as_bytes(), &secrets).unwrap_err(),
         ConfigRefused::HoldsSecret
     );
+}
+
+#[test]
+fn a_downloads_token_is_named_for_an_origin_as_the_sign_in_or_a_variable_and_the_sign_in_for_the_hub_alone()
+ {
+    // Plan 1C, D12; ADR 0011, "A download's token". The config names where a token
+    // is, never the token: the Hub's sign-in, or a variable of the env file.
+    let config = read(
+        "[[models.tokens]]\norigin = \"https://huggingface.co\"\nsign_in = \"huggingface\"\n\
+         [[models.tokens]]\norigin = \"https://weights.example.org\"\nkey_env = \"WEIGHTS_TOKEN\"\n",
+    );
+    let hub = Origin::of(SIGN_IN_ORIGIN, &Secrets::none()).unwrap();
+    let other = Origin::of("https://weights.example.org", &Secrets::none()).unwrap();
+    assert_eq!(config.model_token(&hub), Some(&TokenFrom::SignIn));
+    assert_eq!(
+        config.model_token(&other),
+        Some(&TokenFrom::Variable("WEIGHTS_TOKEN".to_owned()))
+    );
+    let elsewhere = Origin::of("https://elsewhere.example.org", &Secrets::none()).unwrap();
+    assert_eq!(config.model_token(&elsewhere), None);
+    // The variable is one the config names, as a backend's key is; the sign-in is not.
+    assert_eq!(
+        config.variables().into_iter().collect::<Vec<_>>(),
+        ["WEIGHTS_TOKEN"]
+    );
+    // Neither is in the digest, nor in what is printed of a config.
+    assert_eq!(config.digest(), Config::empty().digest());
+    assert!(!format!("{config:?}").contains("WEIGHTS"), "{config:?}");
+    // The sign-in is taken for the Hub's origin alone, so its token is never sent to
+    // another; and its one value is the Hub's.
+    let marker = "zqxjk";
+    for (text, key, words) in [
+        (
+            format!("origin = \"https://{marker}.example.org\"\nsign_in = \"huggingface\""),
+            "models.tokens.0.sign_in",
+            "is taken for the origin https://huggingface.co alone",
+        ),
+        (
+            "origin = \"http://huggingface.co\"\nsign_in = \"huggingface\"".to_owned(),
+            "models.tokens.0.sign_in",
+            "is taken for the origin https://huggingface.co alone",
+        ),
+        (
+            "origin = \"https://huggingface.co:8443\"\nsign_in = \"huggingface\"".to_owned(),
+            "models.tokens.0.sign_in",
+            "is taken for the origin https://huggingface.co alone",
+        ),
+        (
+            format!("origin = \"https://huggingface.co\"\nsign_in = \"{marker}\""),
+            "models.tokens.0.sign_in",
+            "must be \"huggingface\"",
+        ),
+        (
+            "origin = \"https://huggingface.co\"".to_owned(),
+            "models.tokens.0",
+            "must name exactly one of sign_in and key_env",
+        ),
+        (
+            "origin = \"https://huggingface.co\"\nsign_in = \"huggingface\"\nkey_env = \"T\""
+                .to_owned(),
+            "models.tokens.0",
+            "must name exactly one of sign_in and key_env",
+        ),
+        (
+            "sign_in = \"huggingface\"".to_owned(),
+            "models.tokens.0.origin",
+            "is missing",
+        ),
+        (
+            format!("origin = \"https://huggingface.co/{marker}\"\nkey_env = \"T\""),
+            "models.tokens.0.origin",
+            "must be an origin",
+        ),
+        (
+            format!("origin = \"https://huggingface.co\"\nkey_env = \"{marker}\""),
+            "models.tokens.0.key_env",
+            "must name a variable",
+        ),
+        (
+            "origin = \"https://huggingface.co\"\nkey_env = \"T\"\ntoken = \"T\"".to_owned(),
+            "models.tokens.0.token",
+            "is not known",
+        ),
+    ] {
+        let refused = refusal(&format!("[[models.tokens]]\n{text}\n"));
+        assert_eq!(key_of(&refused), key, "{text}");
+        assert!(refused.to_string().contains(words), "{text}: {refused}");
+        assert!(!said(&refused).contains(marker), "{refused}");
+    }
+    // Each origin once, and a bounded list.
+    let twice = "[[models.tokens]]\norigin = \"https://huggingface.co\"\nkey_env = \"A\"\n\
+                 [[models.tokens]]\norigin = \"https://HuggingFace.co:443\"\nkey_env = \"B\"\n";
+    assert_eq!(key_of(&refusal(twice)), "models.tokens.1.origin");
+    let many: String = (0..=MODEL_TOKENS_LIMIT)
+        .map(|n| {
+            format!("[[models.tokens]]\norigin = \"https://o{n}.example.org\"\nkey_env = \"T\"\n")
+        })
+        .collect();
+    assert_eq!(key_of(&refusal(&many)), "models.tokens");
+    assert_eq!(key_of(&refusal("[models]\ntokens = 1\n")), "models.tokens");
 }
 
 #[test]
@@ -1357,7 +1458,7 @@ fn a_config_prints_its_shape_and_none_of_its_values() {
     assert_eq!(
         shown,
         "Config { backends: 1, call_cap: true, recipients: 1, models_dir: false, \
-         download_least: false }"
+         download_least: false, model_tokens: 0 }"
     );
     let (_, backend) = config.backends(Capability::Fill).next().unwrap();
     let (_, recipient) = config.recipients().next().unwrap();
@@ -1376,7 +1477,7 @@ fn a_config_prints_its_shape_and_none_of_its_values() {
     assert_eq!(
         format!("{:?}", Config::empty()),
         "Config { backends: 0, call_cap: false, recipients: 0, models_dir: false, \
-         download_least: false }"
+         download_least: false, model_tokens: 0 }"
     );
 }
 

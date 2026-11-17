@@ -5,6 +5,7 @@
 //! of it can reach a models directory but by a test's catalogue. Nothing here
 //! leaves the machine. Every key is made up at run time.
 
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -987,4 +988,190 @@ fn a_secret_the_config_names_is_in_nothing_the_commands_print() {
         assert!(!text.contains("0123456789"), "{text}");
     }
     assert_eq!(printed.len(), 8);
+}
+
+/// A platform that counts each time it is asked where its models directory is, and
+/// answers a folder that is not there.
+fn counting_platform(shelf: &Shelf) -> (wiring::Platform, Arc<AtomicU64>) {
+    let asked = Arc::new(AtomicU64::new(0));
+    let (count, place) = (asked.clone(), shelf.path("platform-models"));
+    let platform: wiring::Platform = Arc::new(move || {
+        count.fetch_add(1, Ordering::SeqCst);
+        Some(place.clone())
+    });
+    (platform, asked)
+}
+
+#[test]
+fn list_of_an_empty_catalogue_and_get_or_remove_of_a_model_it_does_not_hold_never_ask_where_the_platforms_directory_is()
+ {
+    // Review of N3b: where the platform's models directory is, is asked only when a
+    // directory is to be looked in. A `list` that finds the catalogue empty, and a
+    // `get` or a `remove` of a name the catalogue does not hold, never ask.
+    let shelf = Shelf::new("models-unasked");
+    let clock = Hand::new();
+    let fake = Arc::new(FakeDownloader::new());
+    let empty = Catalogue::new(Vec::new(), &none()).unwrap();
+    for catalogue in [empty, Catalogue::new(vec![alpha()], &none()).unwrap()] {
+        let (platform, asked) = counting_platform(&shelf);
+        let models = Models::of(catalogue.clone(), adapters()).platform(platform);
+        let tools = Tools::of(models, clock.clone(), downloads(&fake, &Arc::default()));
+        if catalogue.entries().is_empty() {
+            assert_eq!(
+                list(&tools),
+                "models: 0: the catalogue holds no model yet\n"
+            );
+        }
+        assert!(get(&tools, "absent").0.is_err());
+        let removed = model_commands::remove(Under::default(), "absent", PAUSE, &tools);
+        assert!(removed.is_err());
+        assert_eq!(asked.load(Ordering::SeqCst), 0);
+        // And `list` of a catalogue that holds a model asks, once: the control.
+        if !catalogue.entries().is_empty() {
+            assert!(list(&tools).contains("not made yet"));
+            assert_eq!(asked.load(Ordering::SeqCst), 1);
+        }
+    }
+    assert!(fake.requests().is_empty());
+    assert!(!shelf.path("platform-models").exists());
+}
+
+/// Each shipped entry whose download needs a token: none until the catalogue's first
+/// entry (task N5).
+fn shipped_needing_a_token() -> Vec<String> {
+    let catalogue = wiring::catalogue().unwrap();
+    let names: Vec<String> = catalogue
+        .entries()
+        .iter()
+        .filter(|entry| entry.needs_token().is_some())
+        .map(|entry| entry.name().as_str().to_owned())
+        .collect();
+    // Until N5 the catalogue holds no model at all, so the runs below are none and
+    // the halves of these tests that read the binary's source are what hold them.
+    if catalogue.entries().is_empty() {
+        assert!(names.is_empty());
+    }
+    names
+}
+
+/// `get` of a shipped model by the real binary, with the function's temporary home,
+/// a config that names the sign-in and a models directory of the test's, and these
+/// variables of the test's own, after `plant` was handed the home to put files in;
+/// what it says on its standard error.
+fn get_with_the_sign_in(
+    shelf: &Shelf,
+    model: &str,
+    variables: &[(&str, &str)],
+    plant: impl FnOnce(&Path),
+) -> String {
+    let config = shelf.path("signed-in.toml");
+    std::fs::write(
+        &config,
+        "[[models.tokens]]\norigin = \"https://huggingface.co\"\nsign_in = \"huggingface\"\n",
+    )
+    .unwrap();
+    let mut command = binary();
+    plant(command.home());
+    command.args(["models", "get", model, "--config"]);
+    command
+        .arg(&config)
+        .arg("--models-dir")
+        .arg(shelf.models_dir());
+    for (name, value) in variables {
+        command.env(name, value);
+    }
+    let out = command.output().expect("the binary runs");
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    String::from_utf8(out.stderr).unwrap()
+}
+
+/// The code of the binary's sources, without the lines that are comments alone and
+/// without white space.
+fn binary_code(file: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join(file);
+    std::fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .flat_map(str::chars)
+        .filter(|c| !c.is_whitespace())
+        .collect()
+}
+
+#[test]
+fn the_real_binary_started_with_a_temporary_home_reads_the_sign_in_there_and_no_other() {
+    // Where the binary reads the sign-in: `main`'s one function hands the four
+    // variables the Hub's documentation names, in its order, to the function that
+    // works out the place (`sign_in::token_file`, held in its own test with made-up
+    // folders), and reads nothing else for it. The text is in a data file: written
+    // here, `just check` would refuse it as a read of the environment in a test.
+    let wanted: String = include_str!("sign-in-reads.txt")
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    assert!(wanted.starts_with("fnhub_sign_in_"), "{wanted}");
+    assert_eq!(binary_code("main.rs").matches(&wanted).count(), 1);
+    // The real binary, started with a temporary home: for each shipped model that
+    // needs the sign-in's token, the token is looked for there and nowhere else.
+    // With nothing there, it is not there; with a file there that others can read,
+    // that file is the one refused. Neither asks anything of any address.
+    let shelf = Shelf::new("models-sign-in-home");
+    for model in shipped_needing_a_token() {
+        let said = get_with_the_sign_in(&shelf, &model, &[], |_| {});
+        assert!(
+            said.contains("the Hub's sign-in has no token on this machine"),
+            "{said}"
+        );
+        // A token file in the temporary home that others can read: refused as that,
+        // so it is the file that was looked at. Its mode is the file system's own
+        // default for a new file, which lets others read it.
+        let said = get_with_the_sign_in(&shelf, &model, &[], |home| {
+            let place = home.join(".cache").join("huggingface");
+            std::fs::create_dir_all(&place).unwrap();
+            let folder = std::fs::Permissions::from_mode(0o700);
+            std::fs::set_permissions(&place, folder).unwrap();
+            std::fs::write(place.join("token"), made_up_key("home")).unwrap();
+            let open = std::fs::Permissions::from_mode(0o644);
+            std::fs::set_permissions(place.join("token"), open).unwrap();
+        });
+        assert!(
+            said.contains("can be read or written by others than its owner"),
+            "{said}"
+        );
+        assert!(!said.contains("0123456789"), "{said}");
+    }
+}
+
+#[test]
+fn the_real_binary_started_with_hf_token_set_reads_the_sign_in_and_never_the_variable() {
+    // No source of the binary names either variable that holds a token itself; the
+    // Hub's tools take them in place of the file, and whizbang does not (plan 1C, D12).
+    let sources = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = 0;
+    for entry in std::fs::read_dir(&sources).unwrap() {
+        let name = entry.unwrap().file_name().into_string().unwrap();
+        let code = binary_code(&name);
+        assert!(!code.contains("\"HF_TOKEN\""), "{name}");
+        assert!(!code.contains("HUGGING_FACE_HUB_TOKEN"), "{name}");
+        files += 1;
+    }
+    assert!(files > 10);
+    // The real binary, with both variables set to a made-up token and no sign-in in
+    // its temporary home: for each shipped model that needs the sign-in's token, the
+    // sign-in is not there, and the variables are not taken for it.
+    let shelf = Shelf::new("models-sign-in-variable");
+    let token = made_up_key("variable");
+    for model in shipped_needing_a_token() {
+        let said = get_with_the_sign_in(
+            &shelf,
+            &model,
+            &[("HF_TOKEN", &token), ("HUGGING_FACE_HUB_TOKEN", &token)],
+            |_| {},
+        );
+        assert!(
+            said.contains("the Hub's sign-in has no token on this machine"),
+            "{said}"
+        );
+        assert!(!said.contains(&token), "{said}");
+    }
 }

@@ -129,6 +129,13 @@ pub fn models_dir<'a>(
 /// about to be opened.
 pub type Platform = Arc<dyn Fn() -> Option<PathBuf> + Send + Sync>;
 
+/// What says where the Hub's command-line sign-in keeps its token
+/// (`sign_in::token_file`), when it is asked: asked at most once, and only when a
+/// download from the sign-in's origin is about to be asked and the config names the
+/// sign-in for it (plan 1C, D12). The binary's `main` gives the one function that
+/// names the real place; a test gives a temporary folder.
+pub type SignIn = Arc<dyn Fn() -> Option<PathBuf> + Send + Sync>;
+
 /// What a command says of a relative `--models-dir`, before anything is read or made:
 /// a relative path is another folder from each place a command is run in, as the
 /// config's `[models] dir` is refused for (ADR 0011, "What the file holds").

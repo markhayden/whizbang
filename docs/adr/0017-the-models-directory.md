@@ -151,6 +151,14 @@ not run on this platform when its entry does not name the platform the build is 
 (ADR 0015's sixth reason), where it called such a model ready; `ModelsDir::has_link`
 is the look whoever lists models makes, and `unrunnable` what is said of a model with
 no directory to look in. Under "Attaching and cancelling": the command's pause.
+Amended: 2026-11-16, with task N4 of checkpoint 1C (D12). Added, in code and under "The
+catalogue": an entry may say that a download from one of its origins needs a token,
+`needs_token`, an optional field of `catalogue/2`. Under "Downloading into staging":
+the installer is handed a credential with its downloader (`install_carrying`,
+`install_or_attach_carrying`), and attaches it to a request for its origin and to no
+other. Under "The inventory", the reason a model does not run on this platform:
+`Installations::on` is what the binary's wiring calls with the platform its models
+are to run on, where this record said it was for a test.
 
 ## Context
 
@@ -649,6 +657,7 @@ one model:
 | `features` | The features the adapter gives with this model: at most 16 (`FEATURES_LIMIT`), each a feature's name as a backend declares one (ADR 0006), each stated once |
 | `origins` | The origins a download of the files may reach: at most 8 (`ORIGINS_LIMIT`), each named once |
 | `files` | 1 to 64 files (`FILES_LIMIT`), each with its `name`, its `size` in bytes, its `sha256`, and `from`, the address it is first asked for at |
+| `needs_token` | May be left out. One of the entry's `origins`, written as an origin, whose downloads need a token (task N4, D12; `catalogue::an_entry_may_say_that_a_download_from_one_of_its_origins_needs_a_token`). The token itself is never in a catalogue: where it is, is the config's (ADR 0011, "A download's token"), and which requests carry it is ADR 0012's, "A download's token". It is no part of an installation's identity: it changes no byte that is installed |
 
 (`catalogue::a_catalogue_is_read_as_its_models_and_their_files`,
 `catalogue::an_entry_holds_a_bounded_count_of_features_each_a_name_declared_once`,
@@ -929,6 +938,13 @@ folder, `models/<model>/staging/incoming/files/<file>`, and answers with what wa
 staged and the model's lock still held (`staging::two_files_are_staged_and_verified`).
 An install stages through the same code under a lock it took itself, and publishes
 ("Publishing"); nothing publishes what `stage` hands back.
+
+An install of an entry that needs a token is handed a credential with its downloader
+(`Carrying`, `install_carrying`, `install_or_attach_carrying`; task N4). Each request
+whose address is at the credential's origin carries it; each request for another
+origin carries none, an address a file moved to included
+(`credential::a_download_moved_to_another_origin_is_asked_there_with_no_credential`).
+`stage`, `install` and `install_or_attach` carry none.
 
 - **Under the model's lock,** taken without waiting before anything of the model is
   touched. Held by another, the answer is busy, and nothing is asked of the downloader
@@ -1919,7 +1935,7 @@ offers one local backend.
 | The answer | When |
 |---|---|
 | Not in the catalogue | The catalogue holds no model of exactly that name (`inventory::a_configured_model_that_the_catalogue_does_not_hold_is_prepared_as_not_ready_saying_so`) |
-| Does not run on this platform | The catalogue holds the model, and its entry does not name the platform the build is for (`Platform::this`; a build for a platform no catalogue names runs none of its models). Said first, before the adapter and before anything is looked for on the disk, installed or not (task N3b; until then such a model, installed, was ready) (`inventory::a_model_whose_entry_does_not_name_this_platform_is_not_ready_for_that_reason_installed_or_not`). `Installations::on` gives another platform, for a test; `unrunnable` is the same question, for whoever lists models with no directory to look in |
+| Does not run on this platform | The catalogue holds the model, and its entry does not name the platform the build is for (`Platform::this`; a build for a platform no catalogue names runs none of its models). Said first, before the adapter and before anything is looked for on the disk, installed or not (task N3b; until then such a model, installed, was ready) (`inventory::a_model_whose_entry_does_not_name_this_platform_is_not_ready_for_that_reason_installed_or_not`). `Installations::on` sets the platform the models are to run on: the binary's wiring calls it with the one its models are given, `Platform::this` unless a test gives another (reworded with task N4, from the review of N3b: it read "gives another platform, for a test", and product code calls it); `unrunnable` is the same question, for whoever lists models with no directory to look in |
 | No adapter | The catalogue holds the model, and the build has no adapter of the name its entry gives. Said before anything of the model is looked for on the disk, so it is the answer whether the model is installed, not installed or damaged: nothing this build installs would make it ready (task N3a; until then an installed one was out of date and one that was not was not installed) (`inventory::a_model_whose_adapter_this_build_lacks_is_not_ready_for_that_reason_installed_or_not`) |
 | Not installed | The model has no pointer: never installed, or removed |
 | Ready, under the installation's identity | The pointer names an installation whose record is the record an install would make now: from the catalogue's entry, under the revision this build's adapter states (`inventory::a_model_in_the_catalogue_is_ready_when_installed_and_not_installed_otherwise`) |

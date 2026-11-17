@@ -124,6 +124,18 @@ fn complain(complaint: &str) -> ExitCode {
     ExitCode::from(1)
 }
 
+/// The same, for a complaint whose own line breaks are lines to print: the models
+/// commands', whose complaints hold no path and nothing a caller typed, and which may
+/// end with lines of a config to add. Each line goes through the escape by itself, so
+/// a character that is not printable is still escaped; the first says who speaks.
+fn complain_in_lines(complaint: &str) -> ExitCode {
+    for (at, line) in complaint.lines().enumerate() {
+        let speaker = if at == 0 { "whizbang: " } else { "" };
+        eprintln!("{speaker}{}", door::printable(line));
+    }
+    ExitCode::from(1)
+}
+
 /// What the parser of the command line answers by itself: help and the version, which
 /// are printed as it prints them, and a usage error, which quotes what the caller
 /// typed. A usage error is printed line by line through the door's escape, so that no
@@ -156,6 +168,24 @@ fn platforms_models_dir() -> Option<std::path::PathBuf> {
         cfg!(target_os = "macos"),
         std::env::var_os("HOME").as_deref(),
         std::env::var_os("XDG_DATA_HOME").as_deref(),
+    )
+}
+
+/// Where the Hub's command-line sign-in keeps its token, from the environment of this
+/// process: the variables `HF_TOKEN_PATH`, `HF_HOME`, `XDG_CACHE_HOME` and `HOME`, as
+/// the Hub's documentation has them (`whizbang::sign_in::token_file`; plan 1C, D12).
+/// **This is the one function that names the real place,** and `main` the one place
+/// that names it (`just check` refuses its name anywhere else:
+/// `scripts/check-sign-in.sh`). `main` does not call it: it hands it on, and it is
+/// called only by `get` of a model whose download needs the sign-in's token. The
+/// variables that hold a token itself, which the Hub's own tools read in place of the
+/// file, are not read.
+fn hub_sign_in_token_file() -> Option<std::path::PathBuf> {
+    whizbang::sign_in::token_file(
+        std::env::var_os("HF_TOKEN_PATH").as_deref(),
+        std::env::var_os("HF_HOME").as_deref(),
+        std::env::var_os("XDG_CACHE_HOME").as_deref(),
+        std::env::var_os("HOME").as_deref(),
     )
 }
 
@@ -192,9 +222,13 @@ fn main() -> ExitCode {
             Err(complaint) => complain(&complaint),
         },
         Command::Models { command } => {
-            match models::run(&command, std::sync::Arc::new(platforms_models_dir)) {
+            match models::run(
+                &command,
+                std::sync::Arc::new(platforms_models_dir),
+                std::sync::Arc::new(hub_sign_in_token_file),
+            ) {
                 Ok(text) => emit(text.as_bytes()),
-                Err(complaint) => complain(&complaint),
+                Err(complaint) => complain_in_lines(&complaint),
             }
         }
         Command::Backends(_) => match backends::run() {

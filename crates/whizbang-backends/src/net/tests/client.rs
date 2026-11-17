@@ -676,6 +676,46 @@ fn a_download_through_the_checked_downloader_that_is_moved_off_its_entrys_origin
 }
 
 #[test]
+fn a_credentialed_download_moved_to_another_allowed_origin_is_asked_there_with_no_credential() {
+    // Review of N4: the gate and the real client together. A request that carries a
+    // credential for its origin is answered with a move to another origin the entry
+    // names; the gate follows it, and what the second listener reads carries no
+    // `Authorization`.
+    let pki = Pki::loopback();
+    let (second, second_log) = serving(&pki, 1, vec![ok(b"abc")]);
+    let moved = format!(
+        "HTTP/1.1 302 Found\r\nLocation: https://127.0.0.1:{}/stored\r\n\r\n",
+        second.port()
+    );
+    let (first, first_log) = serving(&pki, 1, vec![moved.into_bytes()]);
+    let origins = [origin(first.port()), origin(second.port())];
+    let gate = CheckedDownloader::new(Arc::new(the_tests_client(&pki)), &origins).unwrap();
+    let credential = Credential::new(
+        origin(first.port()),
+        "Authorization",
+        "Bearer made-up-token",
+        &Secrets::none(),
+    )
+    .unwrap();
+    let request = DownloadRequest::new(address(first.port(), "/f"), 3)
+        .unwrap()
+        .with_credential(credential)
+        .unwrap();
+    let got = download(&gate, &request, &Cancellation::new());
+    assert_eq!(got.ended, Ok(Downloaded::Bytes(3)));
+    let (first_port, second_port) = (first.port(), second.port());
+    assert_eq!(first.finish(), 1);
+    assert_eq!(second.finish(), 1);
+    assert_eq!(
+        seen(&first_log)[0].request,
+        request_text(first_port, "/f", Some("Bearer made-up-token"))
+    );
+    let asked = seen(&second_log)[0].request.clone();
+    assert_eq!(asked, request_text(second_port, "/stored", None));
+    assert!(!String::from_utf8_lossy(&asked).contains("Authorization"));
+}
+
+#[test]
 fn the_client_makes_no_thread_and_one_socket_for_each_request() {
     // Two downloads through the gate, one of them moved once within its origin:
     // three requests, three connections, each asked to close.

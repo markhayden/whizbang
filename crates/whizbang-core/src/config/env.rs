@@ -14,9 +14,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read as _;
 use std::path::Path;
 
-use super::{CAPABILITIES, Config, ConfigRefused, VARIABLE_LIMIT};
+use super::{CAPABILITIES, Config, ConfigRefused, TokenFrom, VARIABLE_LIMIT};
 use crate::contract::{Capability, SECRET_MIN_BYTES, Secrets};
-use crate::egress::{Address, Credential, NotAllowed};
+use crate::egress::{Address, Credential, NotAllowed, Origin};
 
 /// The longest env file, in bytes. A longer one is refused from its length, before it
 /// is read.
@@ -339,6 +339,26 @@ impl EnvFile {
                     .insert((capability.name(), name.to_owned()), handed);
             }
         }
+        // A download's token the config names a variable for: handed to a download
+        // from its origin and to nothing else (ADR 0011, "A download's token").
+        for token in config.model_tokens() {
+            let TokenFrom::Variable(variable) = token.from() else {
+                continue;
+            };
+            let Some(value) = self.values.get(variable) else {
+                credentials.missing.insert(variable.clone());
+                continue;
+            };
+            if value.len() < SECRET_MIN_BYTES {
+                return Err(EnvRefused::TooShort {
+                    variable: variable.clone(),
+                });
+            }
+            values.insert(value.clone());
+            credentials
+                .tokens
+                .insert(token.origin().to_string(), KeyValue(value.clone()));
+        }
         // Each is at least as long as a secret must be. A set that cannot be made is
         // a refusal, never an empty set: a key would be handed out and not taken out
         // of what is written.
@@ -353,6 +373,8 @@ impl EnvFile {
 pub struct Credentials {
     /// By the capability's name and the backend's.
     handed: BTreeMap<(&'static str, String), Handed>,
+    /// A download's token, by its origin's text, where the config names a variable.
+    tokens: BTreeMap<String, KeyValue>,
     missing: BTreeSet<String>,
     secrets: Secrets,
 }
@@ -372,6 +394,13 @@ impl Credentials {
             .unwrap_or_default()
     }
 
+    /// The token of a download from this origin, when the config names a variable of
+    /// the env file for it and the file sets it. A token of the sign-in is not here:
+    /// it is read by the binary, and only when a download needs it.
+    pub fn model_token(&self, origin: &Origin) -> Option<&KeyValue> {
+        self.tokens.get(&origin.to_string())
+    }
+
     /// The secrets the executor takes out of what it writes: every credential the
     /// config names that has a value.
     pub fn secrets(&self) -> &Secrets {
@@ -389,6 +418,7 @@ impl std::fmt::Debug for Credentials {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Credentials")
             .field("backends", &self.handed.len())
+            .field("tokens", &self.tokens.len())
             .field("missing", &self.missing.len())
             .field("secrets", &self.secrets)
             .finish()

@@ -88,6 +88,12 @@ anyone but a test: the binary built with the table in the digest was on `main` f
 one day, with no model it could install. Changed in "What the file holds":
 `download_least_kib_per_second` is given to the download client by `whizbang models
 get`.
+Amended: 2026-11-16, a fifteenth note, with task N4 of checkpoint 1C (D12). Added: "A
+download's token": the `models` table's third key, `tokens`, which names for an origin
+where its token is, the Hub's sign-in or a variable of the env file; where the binary
+reads the sign-in, which of the Hub's variables it follows and why; what it takes from
+the file, and what it refuses; and that a variable a token is named in is one the
+config names, read from the env file as a backend's key is.
 
 ## Context
 
@@ -363,6 +369,128 @@ Three rules keep a key out of the file and out of what is said about the file:
   whole in the same way
   (`file::a_name_or_a_key_that_holds_a_secret_is_refused_whole_and_not_shown`, for all
   three looks).
+
+### A download's token
+
+Task N4 of checkpoint 1C, for plan 1C's D12, which the owner chose on 2026-11-15 "for
+now": a model's files may be behind a sign-in, and whizbang reads the token of the
+sign-in the Hub's command-line tool keeps on the machine, or a key of the env file. The
+config says which, for each origin, in the `models` table:
+
+```toml
+[[models.tokens]]
+origin = "https://huggingface.co"
+sign_in = "huggingface"
+
+[[models.tokens]]
+origin = "https://weights.example.org"
+key_env = "WEIGHTS_TOKEN"
+```
+
+- **An entry is an `origin` and exactly one of `sign_in` and `key_env`.** The origin is
+  an origin with nothing after it, as an approval's is. At most eight entries
+  (`MODEL_TOKENS_LIMIT`), each origin once, compared as origins
+  (`https://HuggingFace.co:443` is `https://huggingface.co`). Nothing of what is written
+  is shown by a refusal
+  (`file::a_downloads_token_is_named_for_an_origin_as_the_sign_in_or_a_variable_and_the_sign_in_for_the_hub_alone`).
+- **`sign_in` has one value, `huggingface`, and is taken for `https://huggingface.co`
+  alone** (`SIGN_IN_ORIGIN`). That origin is the one the Hub's token is ever sent to:
+  a config that names the sign-in for any other, `http://huggingface.co` and another
+  port included, is refused, so no config can send the owner's token elsewhere.
+- **`key_env` names a variable of the env file,** read as every key is ("The env
+  file"): it is among the variables the config names (`Config::variables`), so a config
+  that names one is refused without an env file, its value is one of the executor's
+  secrets, a value under eight bytes is refused by the variable's name, and one the file
+  does not set is listed as missing. `Credentials::model_token` hands it for its origin
+  and no other.
+- **Like the rest of the `models` table, it is in no digest:** where a token is says
+  nothing of what a run means.
+
+**Where the sign-in is.** The binary's `main` has the one function that names the real
+place (`hub_sign_in_token_file`), and hands it on uncalled; `just check` refuses its
+name anywhere else (`scripts/check-sign-in.sh`). It reads four variables of the
+process's environment and hands them to `whizbang::sign_in::token_file`, which reads
+nothing itself, and which every test gives made-up folders. The order is the Hub's
+documentation of its environment variables
+(`https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables`,
+read for C0b's pull request and again for this one; no token file was looked at):
+
+1. `HF_TOKEN_PATH`, the token file itself, when it is set;
+2. else `token` in `HF_HOME`;
+3. else `huggingface/token` in `XDG_CACHE_HOME`, which the Hub uses "only when
+   `HF_HOME` is not set";
+4. else `.cache/huggingface/token` in `HOME`.
+
+**Why all three that move it, and not only the default.** D12 has whizbang read the
+sign-in the Hub's tool keeps, and that tool writes the token where these say: a person
+who set `HF_HOME` signed in there, and a reader that looked only under the home folder
+would say the sign-in is not there when it is, or read an old token left in the
+default place. A variable that is set and empty is as one not set. A variable that is
+set to a path that is not absolute names no place at all, and the sign-in is then not
+there: it is never taken as the next one down, since a sign-in read from another place
+than the one the person named is not theirs, and `~` is not read as a home folder
+(`sign_in::tests::the_place_is_hf_token_path_then_hf_home_then_xdg_cache_home_then_the_home_folder`).
+
+**`HF_TOKEN` and `HUGGING_FACE_HUB_TOKEN` are not read.** The Hub's own tools take
+either in place of the file. The owner chose the sign-in, and whizbang's other way in
+is the env file's key; a token in the binary's environment would also reach every
+program the binary starts. No source of the binary names either
+(`models::the_real_binary_started_with_hf_token_set_reads_the_sign_in_and_never_the_variable`).
+
+**What is read** (`sign_in::read`). One file, opened once; what is asked of it is asked
+of the file that was opened, not of the name again.
+
+- A link is followed, as the Hub's tool follows one; what it leads to must be a
+  regular file. **Nothing else is opened** (from the security review of N4): the
+  name is looked at first, a link followed, and a FIFO, a socket, a device or a folder
+  is refused before any open, since opening a FIFO waits for a writer that may never
+  come. The open itself does not wait (`O_NONBLOCK`, written in the reader for macOS
+  and Linux, as the workspace has no crate that names it), so a name swapped for a
+  FIFO between the look and the open is opened at once and refused by the look at
+  the opened file
+  (`credential::a_pipe_at_the_sign_ins_place_is_refused_before_it_is_opened_and_nothing_waits`).
+- **The opened file is this user's** (from the same review): its owner is the user
+  the process runs as, learned the one way the workspace learns it
+  (`store::fs::this_user`, now public), or it is refused. A link planted at the name,
+  or a file another user or the system made, may hold another's token, which whizbang
+  would send under this user's name, the reason below for the mode
+  (`sign_in::tests::a_token_file_that_is_not_this_users_or_that_others_may_read_or_write_is_refused`).
+- **Its folder is not one others can write** (`store::fs`'s `who_may_write`): whoever
+  can write the folder can put another file at the name. The folder is the one the
+  name is in; the Hub's tool makes it 700. A link at the name is followed for the file
+  and not for this look; the owner check holds the file the link leads to.
+- **No default.** Without a `[[models.tokens]]` entry for the origin nothing is read:
+  a default would read the Hub's token of anyone who ran `get`, without their saying
+  so (the coordinator's decision for N5). The refusal ends with the three lines to add,
+  each printed as a line of its own.
+- **A file that others than its owner can read or write is refused, not read and
+  warned of.** The Hub's tool writes the file for its owner alone, mode 600, and its
+  folder 700 (its source, `utils/_auth.py`, `_write_secret`, read for this record), so
+  a sign-in made by the tool passes. One that others can read is a token that may have
+  been read already, and one that others can write may be another's token, which
+  whizbang would then send under the owner's name. A warning on the standard error is
+  seen once and the token sent anyway; a refusal says what to do, `chmod 600` or sign
+  in again, and costs one command.
+- At most 512 bytes (`TOKEN_MAX_BYTES`), and no more than that and one byte is read.
+- The token and at most one line break after it, `\n` or `\r\n`, which is taken off:
+  the Hub's tool writes none, and a file written by hand with `echo` has one. Anything
+  else that is not printable ASCII, a space included, is refused; so is an empty file
+  and a token shorter than a secret (eight bytes), which redaction could not protect.
+  The Hub's own reader takes off every line break and the white space at both ends;
+  whizbang refuses what that would hide rather than send a token it had to guess at.
+- The bytes read are overwritten with zeros before the reading ends.
+- A refusal says what is wrong in fixed words and how to sign in or which key to set
+  instead, and quotes nothing of the file and nothing of its path
+  (`credential::a_sign_in_that_is_not_there_or_cannot_be_read_ends_the_install_before_anything_is_asked_and_its_refusal_holds_no_path`).
+
+**When.** Only `whizbang models get` reads it, only of a model whose entry says a
+download from that origin needs a token, and only under a config that names the
+sign-in for that origin: after the model was found, runs on this platform and has its
+adapter, and before the models directory is opened or anything is asked
+(`credential::the_sign_ins_store_is_not_opened_by_a_command_that_downloads_nothing_from_its_origin`).
+One limit: a `get` of a model installed already reads it too, since whether anything
+is to be downloaded is known only under the model's lock. What is done with the token
+is ADR 0012's, "A download's token".
 
 ### How the file is read
 

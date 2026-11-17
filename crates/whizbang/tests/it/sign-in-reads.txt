@@ -1,0 +1,8 @@
+fn hub_sign_in_token_file() -> Option<std::path::PathBuf> {
+    whizbang::sign_in::token_file(
+        std::env::var_os("HF_TOKEN_PATH").as_deref(),
+        std::env::var_os("HF_HOME").as_deref(),
+        std::env::var_os("XDG_CACHE_HOME").as_deref(),
+        std::env::var_os("HOME").as_deref(),
+    )
+}

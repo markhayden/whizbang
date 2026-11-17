@@ -41,7 +41,10 @@ pub use catalogue::{
 };
 pub use directory::{ModelsDir, OpenRefused};
 pub use hold::{Hold, HoldRefused, Holds};
-pub use install::{Current, Damage, InstallRefused, current, install, install_or_attach};
+pub use install::{
+    Carrying, Current, Damage, InstallRefused, current, install, install_carrying,
+    install_or_attach, install_or_attach_carrying,
+};
 pub use installation::{
     INSTALLATION_FORMAT, INSTALLATION_MAX_BYTES, InstallationId, InstallationRecord, InstalledFile,
 };
