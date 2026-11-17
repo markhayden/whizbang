@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::time::{Duration, Instant};
 
-use whizbang::pack_setup::{self, Install, Limits, Pack};
+use whizbang::pack_setup::{self, Asked, Host, Install, Limits, Machine, Pack};
 use whizbang_testkit::scratch::Scratch;
 use whizbang_testkit::worker::{processes, python, uv};
 
@@ -155,9 +155,163 @@ fn install_into(root: &Path) -> Install {
         uv: uv().to_path_buf(),
         python: Some(python().to_path_buf()),
         extra: None,
+        host: Host::this(),
         pack: Pack::carried(),
         limits: Limits::shipped(),
         parent: Vec::new(),
+    }
+}
+
+/// A stand-in for `uv` that notes each start, as `noting_uv` does, and fails, so that
+/// nothing could be downloaded even if a refusal before it were missing.
+fn failing_uv(scratch: &Scratch) -> (PathBuf, PathBuf) {
+    let notes = scratch.path().join("notes");
+    std::fs::create_dir(&notes).unwrap();
+    let stand_in = scratch.path().join("uv");
+    script(
+        &stand_in,
+        &format!(
+            "#!/bin/bash\nnote='{}'/call.$$\nprintf '%s\\n' \"$@\" >\"$note.args\"\n/usr/bin/env >\"$note.vars\"\nexit 1\n",
+            notes.display()
+        ),
+    );
+    (stand_in, notes)
+}
+
+#[test]
+fn an_extra_on_a_platform_the_lock_does_not_cover_is_refused_before_anything_runs() {
+    // The lock covers macOS on Apple silicon alone (ADR 0021, "Amended"). Anywhere else
+    // an extra is refused in a sentence that says so, before any `uv` is started, so
+    // nothing is downloaded, and before the models directory is made.
+    let scratch = Scratch::new("setup-extra-host");
+    let models = models_in(&scratch);
+    let (stand_in, notes) = failing_uv(&scratch);
+    for (os, arch) in [
+        ("linux", "x86_64"),
+        ("linux", "aarch64"),
+        ("macos", "x86_64"),
+        ("windows", "x86_64"),
+    ] {
+        let mut install = install_into(&models);
+        install.uv = stand_in.clone();
+        install.extra = Some("torch".to_owned());
+        install.host = Host { os, arch };
+        let refused = pack_setup::install(&install).expect_err("an extra off the lock");
+        assert!(
+            refused.contains("is locked for macOS on Apple silicon only in this build"),
+            "{refused}"
+        );
+        assert!(refused.contains(&format!("{os} on {arch}")), "{refused}");
+        assert!(
+            refused.contains("nothing was downloaded and nothing was changed"),
+            "{refused}"
+        );
+        assert!(calls(&notes).is_empty(), "uv was started on {os} {arch}");
+        assert!(!models.exists(), "the models directory was made");
+    }
+    // The one platform an extra is not refused on. The core, which downloads nothing,
+    // is refused on none: the other tests here install it with no extra, on both runners.
+    assert_eq!(
+        pack_setup::EXTRA_HOST,
+        Host {
+            os: "macos",
+            arch: "aarch64"
+        }
+    );
+}
+
+#[test]
+fn the_command_refuses_an_extra_off_the_mac_before_it_makes_the_models_directory() {
+    // Through `run`, as the binary runs it: the models directory named by the flag is
+    // missing, and so is the data folder the platform would give; neither is made, no
+    // `uv` is started, and the sentence is the one `install` gives.
+    let scratch = Scratch::new("setup-extra-run");
+    let named = scratch.path().join("named").join("models");
+    let data = scratch.path().join("data");
+    let (stand_in, notes) = failing_uv(&scratch);
+    let linux = Host {
+        os: "linux",
+        arch: "x86_64",
+    };
+    for (models_dir, extra, sentence) in [
+        (
+            Some(named.as_path()),
+            "torch",
+            "is locked for macOS on Apple silicon only in this build, and this is linux on x86_64; nothing was downloaded and nothing was changed",
+        ),
+        (
+            None,
+            "torch",
+            "is locked for macOS on Apple silicon only in this build, and this is linux on x86_64; nothing was downloaded and nothing was changed",
+        ),
+        (
+            Some(named.as_path()),
+            "Not-A-Name",
+            "an extra's name is lower-case letters, digits and '-', 64 at most, starting with a letter; nothing was changed",
+        ),
+    ] {
+        let platform_dir = data.join("whizbang").join("models");
+        let platform: whizbang::wiring::Platform =
+            std::sync::Arc::new(move || Some(platform_dir.clone()));
+        let refused = pack_setup::run(
+            Asked {
+                config: None,
+                env_file: None,
+                models_dir,
+                extra: Some(extra),
+                uv: Some(&stand_in),
+                python: Some(python()),
+            },
+            Machine {
+                platform,
+                path: None,
+                parent: Vec::new(),
+                host: linux,
+            },
+        )
+        .expect_err("refused");
+        assert!(refused.contains(sentence), "{refused}");
+        assert!(!scratch.path().join("named").exists(), "{refused}");
+        assert!(!data.exists(), "{refused}");
+        assert!(calls(&notes).is_empty(), "uv was started");
+    }
+}
+
+/// The marker every package of an extra carries in the pack's file: the one platform
+/// `setup` installs an extra on.
+const MAC: &str = "sys_platform == 'darwin' and platform_machine == 'arm64'";
+
+#[test]
+fn the_extra_is_for_the_mac_alone_and_the_lock_names_no_nvidia_or_cuda_package() {
+    // Each package of each extra is for the Mac alone, so on Linux, which the lock still
+    // covers for the core (`uv sync` refuses a platform the lock is not made for), the
+    // extra resolves to nothing.
+    let pyproject = std::fs::read_to_string(pack_folder().join("pyproject.toml")).unwrap();
+    let all = extras();
+    assert!(!all.is_empty());
+    for (extra, listed) in &all {
+        assert!(!listed.is_empty(), "{extra}");
+        for item in listed {
+            assert!(
+                pyproject.contains(&format!("\"{item}; {MAC}\"")),
+                "{item} of {extra} is not for the Mac alone"
+            );
+        }
+    }
+    // The lock holds none of the packages Linux's CUDA build of `torch` pulls in, and
+    // no file for Linux.
+    let blocks = lock_blocks();
+    assert!(blocks.len() > 3);
+    for block in blocks {
+        let name = field(&block, "name").unwrap();
+        for start in ["nvidia-", "cuda-"] {
+            assert!(!name.starts_with(start), "{name}");
+        }
+        assert_ne!(name, "triton");
+        for line in &block {
+            assert!(!line.contains("linux_x86_64"), "{name}: {line}");
+            assert!(!line.contains("manylinux"), "{name}: {line}");
+        }
     }
 }
 
@@ -281,7 +435,8 @@ fn quoted<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     Some(&rest[..rest.find('"')?])
 }
 
-/// The pack's extras, from its own file: each name, and what it lists.
+/// The pack's extras, from its own file: each name, and what it lists, each without the
+/// marker that says which platform it is for.
 fn extras() -> Vec<(String, Vec<String>)> {
     let pyproject = std::fs::read_to_string(pack_folder().join("pyproject.toml")).unwrap();
     let mut inside = false;
@@ -298,7 +453,11 @@ fn extras() -> Vec<(String, Vec<String>)> {
         let listed = list
             .trim_matches(|c| c == '[' || c == ']')
             .split(',')
-            .map(|item| item.trim().trim_matches('"').to_owned())
+            .map(|item| {
+                let item = item.trim().trim_matches('"');
+                let item = item.split_once(';').map_or(item, |(wanted, _)| wanted);
+                item.trim().to_owned()
+            })
             .filter(|item| !item.is_empty())
             .collect();
         found.push((name.to_owned(), listed));

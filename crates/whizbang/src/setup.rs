@@ -5,7 +5,7 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use whizbang::pack_setup::{self, Asked, Machine};
+use whizbang::pack_setup::{self, Asked, Host, Machine};
 use whizbang::wiring::Platform;
 
 use crate::rascal::Under;
@@ -63,6 +63,7 @@ pub fn run(
             platform,
             path,
             parent,
+            host: Host::this(),
         },
     )
 }

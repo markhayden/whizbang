@@ -14,7 +14,9 @@
 //! extra changes nothing.
 //!
 //! **How**, in this order, each step past the first only when the one before ended
-//! well:
+//! well. Before the first, an extra is refused on any platform but macOS on Apple
+//! silicon ([`EXTRA_HOST`]), the one the lock holds an extra for: no `uv` is started
+//! and nothing is made.
 //!
 //! 1. The pack is written into a folder of `setup`'s own in the system's temporary
 //!    folder, for its owner alone, removed on every path out.
@@ -118,6 +120,36 @@ impl Limits {
         }
     }
 }
+
+/// A platform, as Rust names it (`std::env::consts`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Host {
+    /// The system: `macos`, `linux`.
+    pub os: &'static str,
+    /// The processor: `aarch64`, `x86_64`.
+    pub arch: &'static str,
+}
+
+impl Host {
+    /// The platform this binary was built for and runs on.
+    pub fn this() -> Host {
+        Host {
+            os: std::env::consts::OS,
+            arch: std::env::consts::ARCH,
+        }
+    }
+}
+
+/// The one platform the lock holds an extra's packages for, so the one an extra is
+/// installed on: macOS on Apple silicon, the marker
+/// `sys_platform == 'darwin' and platform_machine == 'arm64'` on every package of the
+/// pack's extras. Linux on x86-64 was dropped from the runtime by the owner on
+/// 2026-11-17 (ADR 0021, "Amended"); the lock still covers it for the pack's core, which
+/// downloads nothing.
+pub const EXTRA_HOST: Host = Host {
+    os: "macos",
+    arch: "aarch64",
+};
 
 /// The files of the pack this build carries, by their place in the pack's folder.
 const CARRIED: [(&str, &[u8]); 9] = [
@@ -244,6 +276,8 @@ pub struct Install {
     pub python: Option<PathBuf>,
     /// The extra to install with the pack's core, or none.
     pub extra: Option<String>,
+    /// The platform it installs on: an extra is refused on any but [`EXTRA_HOST`].
+    pub host: Host,
     /// The pack.
     pub pack: Pack,
     /// How long each `uv` has.
@@ -266,11 +300,7 @@ pub struct Installed {
 /// Why not, otherwise, in fixed words, with the end of what `uv` said where it said
 /// something.
 pub fn install(install: &Install) -> Result<Installed, String> {
-    if let Some(extra) = &install.extra
-        && !is_extra_name(extra)
-    {
-        return Err("an extra's name is lower-case letters, digits and '-', 64 at most, starting with a letter; nothing was changed".to_owned());
-    }
+    extra_allowed(install.extra.as_deref(), install.host)?;
     if !install.uv.is_absolute() || !install.uv.is_file() {
         return Err(
             "uv must be named by an absolute path to a file; nothing was changed".to_owned(),
@@ -360,6 +390,25 @@ pub fn install(install: &Install) -> Result<Installed, String> {
             Err("the pack was installed, but the worker it made did not say hello".to_owned())
         }
     }
+}
+
+/// Whether the extra asked for, if any, may be installed on this platform: its name is
+/// plain, and the platform is [`EXTRA_HOST`]. Asked before anything is made, the models
+/// directory among it.
+fn extra_allowed(extra: Option<&str>, host: Host) -> Result<(), String> {
+    let Some(extra) = extra else {
+        return Ok(());
+    };
+    if !is_extra_name(extra) {
+        return Err("an extra's name is lower-case letters, digits and '-', 64 at most, starting with a letter; nothing was changed".to_owned());
+    }
+    if host != EXTRA_HOST {
+        return Err(format!(
+            "the extra {extra} is locked for macOS on Apple silicon only in this build, and this is {} on {}; nothing was downloaded and nothing was changed (with no extra, setup installs the pack's core, which needs no package)",
+            host.os, host.arch
+        ));
+    }
+    Ok(())
 }
 
 /// Whether a text is an extra's name as the pack writes them.
@@ -704,15 +753,19 @@ pub struct Asked<'a> {
 
 /// What the machine says, as `main` reads it: where the platform's models directory
 /// is (asked only when nothing else names one), the `PATH` that `uv` is looked for on
-/// when `--uv` names none, and the environment `uv`'s is chosen from.
+/// when `--uv` names none, the environment `uv`'s is chosen from, and the platform it
+/// runs on ([`Host::this`] in the binary), which says whether an extra may be installed.
 pub struct Machine {
     pub platform: Platform,
     pub path: Option<OsString>,
     pub parent: Vec<(OsString, OsString)>,
+    pub host: Host,
 }
 
 /// Runs `whizbang setup`: what to print when it ended well, or the complaint.
 pub fn run(asked: Asked<'_>, machine: Machine) -> Result<String, String> {
+    // Before the models directory, or the data folder above it, is made.
+    extra_allowed(asked.extra, machine.host)?;
     let models = Models::shipped()?
         .flag(asked.models_dir)
         .platform(machine.platform);
@@ -741,6 +794,7 @@ pub fn run(asked: Asked<'_>, machine: Machine) -> Result<String, String> {
         uv,
         python: asked.python.map(Path::to_path_buf),
         extra: asked.extra.map(str::to_owned),
+        host: machine.host,
         pack: Pack::carried(),
         limits: Limits::shipped(),
         parent: machine.parent,

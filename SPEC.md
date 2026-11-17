@@ -436,6 +436,13 @@ suite.
 | `aarch64-apple-darwin` | macOS 15 | The Apple silicon GPU |
 | `x86_64-unknown-linux-gnu` | Ubuntu 22.04 | NVIDIA with CUDA, or CPU |
 
+From checkpoint 1C the pack's runtime extra (`whizbang setup --extra`) is locked for
+`aarch64-apple-darwin` alone, by the owner's decision of 2026-11-17 (ADR 0021,
+"Amended: the Mac alone"): on Linux the index's `torch` is a CUDA build whose NVIDIA
+packages are under a proprietary licence or state none. On Linux the pack's core installs
+and the extra is refused. Local models on Linux come back with the carry-over row "Linux
+runtime extra".
+
 ## 6. Spend and controls
 
 ### Spend
