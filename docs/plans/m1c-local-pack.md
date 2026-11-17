@@ -381,7 +381,10 @@ approved on 2026-11-16, above):
   before the entry lists it as an origin (open question 2). **Named by N5:**
   `us.aws.cdn.hf.co`, under the owner's approval of 2026-11-16 above. A second package index
   for Linux with CUDA, if a lock needs one, is Y1's to name the same way (open
-  question 5).
+  question 5). **Y1:** none is needed (open question 5). What Y1 contacted, from the
+  owner's Mac only: `pypi.org` and `files.pythonhosted.org` to make the lock and to read
+  the licences of its packages in the index's metadata, and `files.pythonhosted.org` for
+  the install of the extra by `whizbang setup`; nothing else.
 
 **Spend: nothing.** Every model call is local, the downloads are free, and no task makes
 a paid call. A task that would spend stops and goes to the owner.
@@ -433,8 +436,26 @@ Each is settled by the task named, from documentation or by the owner; none bloc
    when only the core is installed? Not verified. Y1 finds out before it merges; if it
    cannot, the fast tier's `setup` tests install from the lock as it is, and the match
    of the lock with the pack's own file is held by a test that reads both.
+   **Settled by Y1 (2026-11-17).** The pinned Python, 3.12.15, runs the locked versions:
+   every package of `pack/uv.lock` has a wheel for CPython 3.12, or for any Python, on
+   both locked platforms, and on the Mac the environment `whizbang setup --extra torch`
+   made imports `torch` 2.15.0, `transformers` 5.23.0 and the classes `Sam3Model`,
+   `Sam3Processor` and `Sam3TrackerModel`. The pack keeps C1b's pin and does not move to
+   a newer Python: which newer ones the wheels support was not looked at, and Meta's own
+   package asks for 3.12 ("What was looked up"). And yes: `uv`'s `sync --locked
+   --offline` installs the core from the lock that holds the extra, with an empty cache
+   and nothing of the extra installed, and refuses a lock that does not match. It makes
+   the environment's folder before it refuses, though, so `setup` first runs `uv`'s
+   `lock --check`, offline, which also works with the extra locked and makes nothing
+   (ADR 0021, "What `setup` does").
 5. Does a lock that covers Linux with CUDA need a second package index? If it does, it
    is named to the owner before Y1 commits the lock; 1C installs on the Mac only.
+   **Settled by Y1 (2026-11-17): no.** The lock covers Linux on x86-64 from the Python
+   package index alone: the `torch` wheel there for that platform is a CUDA build, and
+   the CUDA libraries it depends on (fifteen `nvidia-*` packages, `cuda-bindings`,
+   `cuda-pathfinder`, `cuda-toolkit`, and `triton`) are on the same index. The lock names
+   no index but `https://pypi.org/simple` and no file host but
+   `files.pythonhosted.org` (`setup::the_lock_file_names_no_index_but_the_approved_one`).
 6. The licences of the runtime's packages, read from their metadata, not from memory.
    (R1, in the ADR.)
 7. SAM 3.1 (`facebook/sam3.1`, 2026-03-27) is a newer set of weights, for tracking
@@ -1612,8 +1633,9 @@ add start the binary through the function from the first.
 **Shown by:** `binary::the_command_has_a_cleared_environment_and_a_temporary_home`
 (the test kit: a process with a planted variable calls the function, and the program
 it starts lists its whole environment); `scripts/tests/test-binary-start.sh` (the
-workspace passes, with twenty-two places counted: the twenty above, the one N3a
-added in `wired.rs` and the one N3b added in `models.rs`; each other way is refused on planted files); and the tests of `crates/whizbang/tests/it/` that start the binary, each
+workspace passes, with twenty-three places counted: the twenty above, the one N3a
+added in `wired.rs`, the one N3b added in `models.rs` and the one Y1 added in
+`setup.rs`; each other way is refused on planted files); and the tests of `crates/whizbang/tests/it/` that start the binary, each
 through the function, which the check counts.
 **Size:** small.
 
@@ -1848,10 +1870,10 @@ directory in the builder's scratch folder; fields only):
 `crates/rascal-mcp/src/provision.rs` and `scripts/build-bundle.sh` (what a bundle was,
 as reference for what is dropped).
 
-- [ ] ADR 0021, installing the pack: D9 and D10; where the environment is; what `setup`
+- [x] ADR 0021, installing the pack: D9 and D10; where the environment is; what `setup`
       contacts; why bundles are dropped.
-- [ ] The pack's extra for candidate A, and `pack/uv.lock`, made on the Mac.
-- [ ] `whizbang setup [--extra <name>]`: `uv sync --locked` of the pack into the
+- [x] The pack's extra for candidate A, and `pack/uv.lock`, made on the Mac.
+- [x] `whizbang setup [--extra <name>]`: `uv sync --locked` of the pack into the
       environment, by `uv` at its pinned version, under the row of "Rules" on `uv`, and a check that the worker it made
       says hello. `setup` starts that worker itself, with `--max-lifetime-s 120`: the
       kind and its setting `max_lifetime_s` come later, with P6a. The kind `pack` finds
@@ -1876,6 +1898,61 @@ and, on the Mac, recorded in the pull request as fields (how it ended, the
 environment's size, the time, the peak of threads), never as raw output: `whizbang
 setup --extra` for the runtime ends well. **Carry-over:** offline bundles, dropped in a
 line. **Size:** medium.
+
+**Built with the task:**
+
+- **The extra** is `torch`: `torch==2.15.0`, `torchvision==0.29.2` (the library's image
+  processor for SAM 3 imports it) and `transformers==5.23.0`. The lock covers macOS on
+  Apple silicon and Linux on x86-64 (`tool.uv.environments`), 60 packages, every one with a
+  wheel for both, so `setup` builds nothing (`--no-build`). Made on the Mac on 2026-11-17
+  through `scripts/heavy.sh` with the guard's limit at 200; the command is in ADR 0021.
+- **Where the environment is:** the folder `pack` of the models directory, beside the
+  models' own folder: `pack/project` (the copy of the pack that was installed) and
+  `pack/env` (the environment). The kind finds them by `whizbang::pack_setup::at`; the
+  first test shows the Python and the source there. The pack's files are compiled into
+  the binary (`Pack::carried`, held to the repository's folder by
+  `setup::the_pack_this_build_carries_is_the_repositorys`), so nothing of the pack is read
+  from a path at run time, as the notes of P3a for Y1 ask.
+- **The order:** the version of `uv`; `uv`'s `lock --check`, offline (open question 4:
+  `sync --locked` makes the environment's folder before it refuses a lock that does not
+  match); the sync; the copy of the pack, a file written only where it differs; the hello.
+  `--uv` and `--python` name the `uv` and the Python by absolute paths, which the tests
+  use, since the binary they start has no `PATH`.
+- **`uv`'s environment,** under the row on `uv`: cleared; the locale of P3a's allow-list,
+  but for a key's name; then `setup`'s own: `PATH=/usr/bin:/bin`, `TMPDIR` a folder of its
+  own, the three bounds, `UV_NO_CONFIG`, `UV_NO_CACHE`, `UV_NO_BUILD`,
+  `UV_PYTHON_DOWNLOADS=never`, `UV_PROJECT_ENVIRONMENT`, `UV_OFFLINE` unless an extra is
+  installed, and, with no `--python`, `UV_MANAGED_PYTHON` and `UV_PYTHON_INSTALL_DIR`:
+  the folder `uv` keeps its Pythons in, worked out from the caller's
+  `UV_PYTHON_INSTALL_DIR`, `XDG_DATA_HOME` or home folder, none of which is handed on. No
+  cache of `uv`'s is used or kept (`--no-cache`): a second `setup` would otherwise change
+  the cache, and the test of a second `setup` reads the whole models directory.
+- **The limit's test** gives `whizbang::pack_setup::install` a limit of one second; the
+  binary's are 60 seconds and 30 minutes. Each `uv`'s output goes to a file of `setup`'s
+  folder, so no thread is made for it; its exit is looked for every 20 ms, a bounded
+  count of times.
+- **The hello's lifetime** is shown on `pack_setup::hello_launch`, which `install` starts
+  the worker from, and in what `setup` prints; that the worker is gone is shown by the
+  processes once the binary has ended.
+- **The rules on `uv`** (`scripts/tests/test-pack.sh`): rule 3 now covers `uv lock`,
+  and a rule 4 holds Rust, which gives `uv` its arguments as a list: in each Rust file,
+  `"--no-python-downloads"` is written at least as often as `"--no-config"`.
+- **The stub's tests** (`tests/it/stubs.rs`) now hold `backends` alone, and
+  `wired::only_main_reads_where_the_platforms_data_folder_is` counts `setup`'s two reads of
+  the environment in `main`: `PATH`, and the variables `uv`'s environment is chosen from.
+- One test more than "Done when" names:
+  `setup::the_pack_this_build_carries_is_the_repositorys`; and four unit tests in
+  `pack_setup` (the version `uv` says, a file's place in the pack, an extra's name, the
+  names of `uv`'s environment).
+- **On the Mac, `whizbang setup --extra torch`** into a models directory in the builder's
+  scratch folder, through `scripts/heavy.sh` with the guard's limit at 200: ended well
+  (exit 0; the worker said hello, 3 threads, no device); the folder `pack` 758 MiB; 107
+  seconds; the peak of threads seen, 13 in `uv` and 3 in `whizbang`. Only
+  `files.pythonhosted.org` was contacted for it (`uv`'s own log of the same install). The
+  lock's making contacted `pypi.org` and `files.pythonhosted.org`: a first resolution
+  from the index with the three packages unpinned, peak 14 threads, chose the versions,
+  and the lock with them pinned was then written from what that resolution had cached,
+  peak 1 thread.
 
 ### P6a. The kind `pack`: a local segmenter through the executor
 

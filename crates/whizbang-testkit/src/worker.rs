@@ -65,6 +65,28 @@ pub fn python() -> &'static Path {
     }
 }
 
+/// The `uv` on the test's `PATH`, by its absolute path, found once in a process: what a
+/// test of `whizbang setup` hands the binary (`--uv`), whose own environment holds no
+/// `PATH`. Only absolute folders of `PATH` are looked in.
+///
+/// # Panics
+/// When there is none: a test of `setup` cannot go on without it.
+#[allow(clippy::panic)]
+pub fn uv() -> &'static Path {
+    static FOUND: OnceLock<Option<PathBuf>> = OnceLock::new();
+    let found = FOUND.get_or_init(|| {
+        let path = std::env::var_os("PATH")?;
+        std::env::split_paths(&path)
+            .filter(|folder| folder.is_absolute())
+            .map(|folder| folder.join("uv"))
+            .find(|candidate| candidate.is_file())
+    });
+    match found {
+        Some(path) => path,
+        None => panic!("no uv on the PATH of the tests; the tests of setup need it"),
+    }
+}
+
 /// The pack's source, which the supervisor puts on the Python path.
 pub fn source() -> PathBuf {
     pack_folder().join("src")

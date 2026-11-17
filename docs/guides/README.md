@@ -10,6 +10,7 @@ then. Milestones are those of `SPEC.md` section 16.
 |---|---|---|
 | [The config file](config.md) | Writing the one TOML file that chooses backends, caps a call's spend and approves recipients, and the env file that holds the keys | Checkpoint 1B |
 | [Models](models.md) | `whizbang models list`, `get` and `remove`: what the catalogue holds, installing a model, removing one, and where the models directory is | Checkpoint 1C |
+| [Setup](setup.md) | `whizbang setup`: installing the Python pack and its runtime from the lock file, where it goes, and every place it contacts | Checkpoint 1C |
 
 ## Doors
 

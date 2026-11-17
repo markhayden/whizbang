@@ -817,7 +817,8 @@ whizbang serve [--http <addr>]
 whizbang play
 whizbang describe [--json [--pretty]]  # static: identical on every machine; --json is
                                        # one line, and --pretty indents it
-whizbang setup                         # install the Python pack
+whizbang setup [--extra <name>]        # install the Python pack from its lock file, and
+                                       # with an extra its runtime (ADR 0021)
 ```
 
 Developer commands:
@@ -1098,7 +1099,7 @@ The conclusions of the 2026-11-11 study are provisional until that write-up exis
 | Squint's alignment code | Decided at port: keep, or replace with a library |
 | Rascal's hand-written image operations | Each decided at port |
 | Squint's checklist submission format and its 4-turn, 8-call budget | Ported as is, then redesigned through the ladder |
-| Offline bundles for installing the pack | Decided at 1C against a plain `uv` install |
+| Offline bundles for installing the pack | Dropped at 1C for a plain `uv` install from a committed lock file (ADR 0021) |
 | Canonical serialisation and durability rules for masks | The invariants of section 3 are kept; formats decided at 1A |
 | Individual crates published to crates.io | Dropped |
 | WebKit in browser tests | Dropped |

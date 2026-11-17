@@ -206,19 +206,27 @@ grep -x -F "          cache-directories: \${{ runner.temp }}/uv-python" "$workfl
 # 2. No line runs uv's update of itself or names its maker's install script or download
 #    host: each tries that host. Over every tracked file but those under `docs/`, which
 #    may name the host to say that it is switched off.
-# 3. Every line that runs `uv run`, `uv sync` or `uv python find` turns the download of a
-#    Python off on that line (`--no-python-downloads` or `UV_PYTHON_DOWNLOADS=never`),
-#    so that no other command fetches one. Over every tracked file but those under
-#    `docs/`, where the plan names commands that later tasks write with their own flags.
+# 3. Every line that runs `uv run`, `uv sync`, `uv lock` or `uv python find` turns the
+#    download of a Python off on that line (`--no-python-downloads` or
+#    `UV_PYTHON_DOWNLOADS=never`), so that no other command fetches one. Over every
+#    tracked file but those under `docs/`, where the plan names commands that later tasks
+#    write with their own flags. (`uv lock` added by task Y1, which makes the lock file and
+#    whose `whizbang setup` checks it.)
+# 4. Rust starts `uv` with its arguments as a list, not as one line: in every tracked Rust
+#    file, `"--no-python-downloads"` is written at least as often as `"--no-config"`, so a
+#    `uv` started there with no user's configuration has the download of a Python turned
+#    off beside it (`whizbang setup`, task Y1; the test kit's fixture, task P3a). The tests
+#    of `setup` show what its `uv` is given (`setup::uv_is_given_the_allow_list_and_no_users_config`).
 #
 # Not found: a command split over two lines or written another way (an alias, a variable
-# for `uv`, quotes between its words); a line under `docs/` for rules 2 and 3.
+# for `uv`, quotes between its words); a line under `docs/` for rules 2 and 3; a `uv` that
+# Rust starts without `--no-config`.
 # uv_rules <folder>: prints each tracked line that breaks a rule, as <file>:<line>.
 uv_rules() {
   local install='uv[[:space:]]+python[[:space:]]+install'
   local maker='uv[[:space:]]+self[[:space:]]+update|astral\.sh/uv/install|releases\.astral\.sh'
-  local fetches='(^|[^A-Za-z0-9_./-])uv([[:space:]]+-[^[:space:]]*)*[[:space:]]+(run|sync|python[[:space:]]+find)([[:space:]"]|$)'
-  local found
+  local fetches='(^|[^A-Za-z0-9_./-])uv([[:space:]]+-[^[:space:]]*)*[[:space:]]+(run|sync|lock|python[[:space:]]+find)([[:space:]"]|$)'
+  local found file configs downloads
   found=$(
     {
       git -C "$1" -c grep.threads=1 grep -n -I -E -e "$install" -- ':!scripts/tests' 2>/dev/null |
@@ -233,6 +241,11 @@ uv_rules() {
           { i = index($0, ":"); j = i + index(substr($0, i + 1), ":"); code = substr($0, j + 1)
             bare = code; sub(/[[:space:]]#.*$/, "", bare); if (bare ~ cmd) code = bare
             if (code !~ /--no-python-downloads|UV_PYTHON_DOWNLOADS=never/) print substr($0, 1, j - 1) }' || true
+      for file in $(git -C "$1" -c grep.threads=1 grep -l -F -e '"--no-config"' -- '*.rs' ':!scripts/tests' 2>/dev/null || true); do
+        configs=$(grep -c -F -e '"--no-config"' "$1/$file" || true)
+        downloads=$(grep -c -F -e '"--no-python-downloads"' "$1/$file" || true)
+        [ "${downloads:-0}" -ge "${configs:-0}" ] || echo "$file"
+      done
     } | grep -v '^$' || true
   )
   [ -z "$found" ] || { printf '%s\n' "$found"; return 1; }
@@ -260,7 +273,8 @@ done
 for planted in 'uv self update 0.12.23' 'curl -LsSf https://astral.sh/uv/install.sh | sh' \
   'see https://releases.astral.sh/github/uv' \
   'uv run python x.py' 'uv sync --locked' 'uv --no-config python find 3.12' \
-  'cd pack && uv --offline sync' 'uv sync --locked  # --no-python-downloads'; do
+  'cd pack && uv --offline sync' 'uv sync --locked  # --no-python-downloads' \
+  'uv lock' 'uv --no-config lock --check'; do
   for name in .github/workflows/ci.yml justfile scripts/a.sh AGENTS.md; do
     n=$((n + 1))
     plant "$tmp/m$n" "$name" "$planted"
@@ -275,10 +289,24 @@ for allowed in "uv python install --mirror $mirror 3.12" "UV_PYTHON_INSTALL_MIRR
   "uv python install --mirror $mirror \"\$v\"  # from GitHub" \
   'UV_PYTHON_DOWNLOADS=never uv sync --locked' 'uv --no-python-downloads run x' \
   'uv --no-config --offline --no-python-downloads --managed-python python find "$pinned") >"$answer" &' \
-  '# uv runs in the background' 'the uv runner, sync it'; do
+  '# uv runs in the background' 'the uv runner, sync it' 'uv --no-config --no-python-downloads lock'; do
   n=$((n + 1))
   plant "$tmp/m$n" justfile "$allowed"
   expect_pass "'$allowed'" uv_rules "$tmp/m$n"
+done
+# Rule 4: a Rust file that gives uv no user's configuration turns off the download of a
+# Python as often; one that does not is named, and one that names neither is left alone.
+for planted in 'command.args(["--no-config", "sync"]);' \
+  'Command::new(uv).arg("--no-config").arg("lock")'; do
+  n=$((n + 1))
+  plant "$tmp/m$n" crates/a/src/lib.rs "$planted"
+  expect_fail "'$planted' in Rust" "crates/a/src/lib.rs" uv_rules "$tmp/m$n"
+done
+for allowed in 'command.args(["--no-config", "--no-cache", "--no-python-downloads"]);' \
+  'Error::io("sync", root)'; do
+  n=$((n + 1))
+  plant "$tmp/m$n" crates/a/src/lib.rs "$allowed"
+  expect_pass "'$allowed' in Rust" uv_rules "$tmp/m$n"
 done
 
 finished

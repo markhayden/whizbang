@@ -2059,10 +2059,14 @@ fn only_main_reads_where_the_platforms_data_folder_is() {
     // folder and the data folder, in the one function; and the four variables that
     // say where the Hub's sign-in keeps its token, in the other (task N4,
     // `models::the_real_binary_started_with_a_temporary_home_reads_the_sign_in_there_and_no_other`).
-    assert_eq!(reads, ["main.rs"; 12], "the environment is read elsewhere");
-    // The function's definition, and the two places it is handed on: to the one
-    // command that builds an executor, and to the models commands (task N3b).
-    assert_eq!(calls, ["main.rs"; 3], "the reading is named elsewhere");
+    // And `setup`'s two (task Y1): `PATH` by `env::var_os`, counted twice, and the
+    // whole environment by `env::vars_os`, counted as `env::var` and as `env::vars`,
+    // from which `uv`'s own is chosen.
+    assert_eq!(reads, ["main.rs"; 16], "the environment is read elsewhere");
+    // The function's definition, and the three places it is handed on: to the one
+    // command that builds an executor, to the models commands (task N3b) and to
+    // `setup` (task Y1).
+    assert_eq!(calls, ["main.rs"; 4], "the reading is named elsewhere");
     let main = std::fs::read_to_string(sources.join("main.rs")).unwrap();
     let main: String = main.chars().filter(|c| !c.is_whitespace()).collect();
     let main = main.replace(",)", ")");
@@ -2072,6 +2076,7 @@ fn only_main_reads_where_the_platforms_data_folder_is() {
     for handed in [
         format!("rascal::run(&command,{platform})"),
         format!("models::run(&command,{platform},"),
+        format!("setup::run(&args,{platform},"),
     ] {
         assert_eq!(main.matches(&handed).count(), 1, "{handed}");
     }
