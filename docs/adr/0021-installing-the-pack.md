@@ -167,7 +167,10 @@ chooses (open question 6). On the Mac, the environment with the extra is about 7
 By the owner's decision of 2026-11-17 ("drop it"), each package of the extra `torch` in
 `pack/pyproject.toml` carries the marker
 `sys_platform == 'darwin' and platform_machine == 'arm64'`, and the lock was made again from
-it (on the owner's Mac, by the command above, offline). `tool.uv.environments` still names
+it on the owner's Mac by the command above. The first making, before the marker, could not
+resolve from `uv`'s cache and contacted `pypi.org` and `files.pythonhosted.org`, the origins
+the owner approved, and no other host; the final making, with the marker, ran with
+`--offline` and contacted nothing. `tool.uv.environments` still names
 both platforms: `uv sync` refuses a platform the lock is not made for, the core's install
 among them, so Linux on x86-64 stays, for the core alone; there the extra resolves to
 nothing. Where this record says the lock pins the runtime for two platforms, read the Mac
@@ -187,10 +190,13 @@ should name no proprietary package that nobody has tested.
 What a Linux user gets: `whizbang setup` with no extra installs the core, offline, as
 before; CI's Linux runner shows it. `whizbang setup --extra <name>` on any platform but
 macOS on Apple silicon is refused in a sentence that says the extra is locked for that
-platform only in this build, before any `uv` is started, so nothing is downloaded and
-nothing is made (`whizbang::pack_setup::EXTRA_HOST`;
+platform only in this build, before the models directory (or the data folder above it) is
+made and before any `uv` is started, so nothing is downloaded and nothing is made
+(`whizbang::pack_setup::EXTRA_HOST`;
 `setup::an_extra_on_a_platform_the_lock_does_not_cover_is_refused_before_anything_runs`,
-which gives `install` a made-up platform).
+which gives `install` a made-up platform, and
+`setup::the_command_refuses_an_extra_off_the_mac_before_it_makes_the_models_directory`,
+which gives the command's `run` one).
 
 The runtime on Linux comes back when a Linux story needs it: its "done when" starts with
 the owner deciding on NVIDIA's licences, or on a CPU-only build from a host the owner

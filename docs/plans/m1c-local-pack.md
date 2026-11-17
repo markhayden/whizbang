@@ -2155,9 +2155,10 @@ for the core alone: `uv sync` refuses a platform the lock is not made for, the c
 install among them, which the Linux runner showed when it was dropped from there. The
 boxes' words do not change: the second box names the lock "made on the Mac", which it
 still is. `whizbang setup --extra` on any other platform is refused before anything is
-downloaded; the core installs on Linux, offline (ADR 0021, "Amended: the Mac alone"). Two
-tests more:
-`setup::an_extra_on_a_platform_the_lock_does_not_cover_is_refused_before_anything_runs`
+downloaded or made; the core installs on Linux, offline (ADR 0021, "Amended: the Mac
+alone"). Three tests more:
+`setup::an_extra_on_a_platform_the_lock_does_not_cover_is_refused_before_anything_runs`,
+`setup::the_command_refuses_an_extra_off_the_mac_before_it_makes_the_models_directory`
 and `setup::the_extra_is_for_the_mac_alone_and_the_lock_names_no_nvidia_or_cuda_package`.
 The runtime on Linux is the carry-over row "Linux runtime extra", owned by 1D.
 

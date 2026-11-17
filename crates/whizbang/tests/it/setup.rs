@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::time::{Duration, Instant};
 
-use whizbang::pack_setup::{self, Host, Install, Limits, Pack};
+use whizbang::pack_setup::{self, Asked, Host, Install, Limits, Machine, Pack};
 use whizbang_testkit::scratch::Scratch;
 use whizbang_testkit::worker::{processes, python, uv};
 
@@ -162,15 +162,9 @@ fn install_into(root: &Path) -> Install {
     }
 }
 
-#[test]
-fn an_extra_on_a_platform_the_lock_does_not_cover_is_refused_before_anything_runs() {
-    // The lock covers macOS on Apple silicon alone (ADR 0021, "Amended"). Anywhere else
-    // an extra is refused in a sentence that says so, before any `uv` is started, so
-    // nothing is downloaded, and before the models directory is made.
-    let scratch = Scratch::new("setup-extra-host");
-    let models = models_in(&scratch);
-    // A stand-in for `uv` that notes each start and fails, so that nothing could be
-    // downloaded even if the refusal were missing.
+/// A stand-in for `uv` that notes each start, as `noting_uv` does, and fails, so that
+/// nothing could be downloaded even if a refusal before it were missing.
+fn failing_uv(scratch: &Scratch) -> (PathBuf, PathBuf) {
     let notes = scratch.path().join("notes");
     std::fs::create_dir(&notes).unwrap();
     let stand_in = scratch.path().join("uv");
@@ -181,6 +175,17 @@ fn an_extra_on_a_platform_the_lock_does_not_cover_is_refused_before_anything_run
             notes.display()
         ),
     );
+    (stand_in, notes)
+}
+
+#[test]
+fn an_extra_on_a_platform_the_lock_does_not_cover_is_refused_before_anything_runs() {
+    // The lock covers macOS on Apple silicon alone (ADR 0021, "Amended"). Anywhere else
+    // an extra is refused in a sentence that says so, before any `uv` is started, so
+    // nothing is downloaded, and before the models directory is made.
+    let scratch = Scratch::new("setup-extra-host");
+    let models = models_in(&scratch);
+    let (stand_in, notes) = failing_uv(&scratch);
     for (os, arch) in [
         ("linux", "x86_64"),
         ("linux", "aarch64"),
@@ -213,6 +218,63 @@ fn an_extra_on_a_platform_the_lock_does_not_cover_is_refused_before_anything_run
             arch: "aarch64"
         }
     );
+}
+
+#[test]
+fn the_command_refuses_an_extra_off_the_mac_before_it_makes_the_models_directory() {
+    // Through `run`, as the binary runs it: the models directory named by the flag is
+    // missing, and so is the data folder the platform would give; neither is made, no
+    // `uv` is started, and the sentence is the one `install` gives.
+    let scratch = Scratch::new("setup-extra-run");
+    let named = scratch.path().join("named").join("models");
+    let data = scratch.path().join("data");
+    let (stand_in, notes) = failing_uv(&scratch);
+    let linux = Host {
+        os: "linux",
+        arch: "x86_64",
+    };
+    for (models_dir, extra, sentence) in [
+        (
+            Some(named.as_path()),
+            "torch",
+            "is locked for macOS on Apple silicon only in this build, and this is linux on x86_64; nothing was downloaded and nothing was changed",
+        ),
+        (
+            None,
+            "torch",
+            "is locked for macOS on Apple silicon only in this build, and this is linux on x86_64; nothing was downloaded and nothing was changed",
+        ),
+        (
+            Some(named.as_path()),
+            "Not-A-Name",
+            "an extra's name is lower-case letters, digits and '-', 64 at most, starting with a letter; nothing was changed",
+        ),
+    ] {
+        let platform_dir = data.join("whizbang").join("models");
+        let platform: whizbang::wiring::Platform =
+            std::sync::Arc::new(move || Some(platform_dir.clone()));
+        let refused = pack_setup::run(
+            Asked {
+                config: None,
+                env_file: None,
+                models_dir,
+                extra: Some(extra),
+                uv: Some(&stand_in),
+                python: Some(python()),
+            },
+            Machine {
+                platform,
+                path: None,
+                parent: Vec::new(),
+                host: linux,
+            },
+        )
+        .expect_err("refused");
+        assert!(refused.contains(sentence), "{refused}");
+        assert!(!scratch.path().join("named").exists(), "{refused}");
+        assert!(!data.exists(), "{refused}");
+        assert!(calls(&notes).is_empty(), "uv was started");
+    }
 }
 
 /// The marker every package of an extra carries in the pack's file: the one platform
