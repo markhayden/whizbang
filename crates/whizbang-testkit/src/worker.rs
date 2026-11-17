@@ -75,10 +75,10 @@ fn find_python() -> Result<PathBuf, String> {
     let pinned = std::fs::read_to_string(folder.join(".python-version"))
         .map_err(|error| format!("pack/.python-version cannot be read: {error}"))?;
     let pinned = pinned.trim().to_owned();
+    // The command is on one line, the mirror with it, as `scripts/tests/test-pack.sh`
+    // holds every line that installs a Python to.
     let install = format!(
-        "install it once with: uv python install --no-config --no-bin --mirror \
-         https://github.com/astral-sh/python-build-standalone/releases/download {pinned} \
-         (that downloads it from GitHub's releases, and from nowhere else)"
+        "install it once with: uv python install --no-config --no-bin --mirror https://github.com/astral-sh/python-build-standalone/releases/download {pinned} (that downloads it from GitHub's releases, and from nowhere else)"
     );
     let mut command = Command::new("uv");
     command.env_clear();
