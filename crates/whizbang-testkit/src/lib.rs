@@ -11,6 +11,7 @@ pub mod fs_shim;
 pub mod inventory;
 pub mod kinds;
 pub mod ledger;
+pub mod loopback;
 pub mod part;
 pub mod recover;
 pub mod schema;

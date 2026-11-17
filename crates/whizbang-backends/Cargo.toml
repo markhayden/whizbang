@@ -18,6 +18,9 @@ serde.workspace = true
 serde_json.workspace = true
 # The hash of a model's file, taken as its pieces arrive: a file is never held whole.
 sha2.workspace = true
+# The download client's TLS, and the roots it trusts, compiled in (ADR 0024).
+rustls.workspace = true
+webpki-roots.workspace = true
 
 [dev-dependencies]
 whizbang-testkit.workspace = true

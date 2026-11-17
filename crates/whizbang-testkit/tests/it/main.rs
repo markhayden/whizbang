@@ -5,6 +5,7 @@ mod binary;
 mod capabilities;
 mod echo;
 mod fs_shim;
+mod loopback;
 mod priced;
 mod renamed;
 mod schema;

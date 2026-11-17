@@ -32,6 +32,13 @@ sha2 = "0.11"
 # off, since whizbang never writes a config. It refuses a key given twice, and it stops at
 # a depth of nesting unless `unbounded` is asked for, which it is not.
 toml = { version = "1.2", default-features = false, features = ["parse", "serde"] }
+# The download client's TLS (ADR 0024), approved by the owner on 2026-11-16, for
+# `whizbang-backends` alone. Each pinned exactly. Default features off: no aws-lc, no
+# logging, no compression of certificates; `ring` for the cryptography, `std`, and `tls12`
+# beside TLS 1.3. No platform verifier and no native certificates: the roots are compiled
+# in, from `webpki-roots` (Mozilla's list, CDLA-Permissive-2.0, which `deny.toml` allows).
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "=1.0.12"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
