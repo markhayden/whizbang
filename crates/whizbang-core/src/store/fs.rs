@@ -323,6 +323,50 @@ pub trait Fs: Send + Sync {
         let _ = path;
         streams_nothing()
     }
+    /// What the system says of a regular file under its own name, without reading it:
+    /// its size, the time it was last written and its inode ([`Stamp`]). A link, a
+    /// directory and anything else that is no regular file are refused with
+    /// [`io::ErrorKind::InvalidData`], as [`Fs::open_file`] refuses them, and nothing
+    /// is followed. Added with the cached check of a model's files (plan 2A, task R1),
+    /// and answered as the calls above are by a file system that does not give it.
+    fn stamp(&self, path: &Path) -> io::Result<Stamp> {
+        let _ = path;
+        streams_nothing()
+    }
+}
+
+/// What [`Fs::stamp`] answers of a file: its size in bytes, the time it was last
+/// written, in whole seconds since 1970 and the nanoseconds past them, and its inode.
+/// A file whose stamp is the same at two moments was, as far as the system says, not
+/// written in between; a writer that keeps all three is not seen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stamp {
+    pub size: u64,
+    pub modified_s: i64,
+    pub modified_ns: u32,
+    pub inode: u64,
+}
+
+/// [`Fs::stamp`] for the real file system.
+#[cfg(unix)]
+fn stamp(path: &Path) -> io::Result<Stamp> {
+    use std::os::unix::fs::MetadataExt;
+    let found = std::fs::symlink_metadata(path)?;
+    if !found.is_file() {
+        return Err(not_a_file());
+    }
+    Ok(Stamp {
+        size: found.size(),
+        modified_s: found.mtime(),
+        modified_ns: u32::try_from(found.mtime_nsec()).map_err(|_| not_a_file())?,
+        inode: found.ino(),
+    })
+}
+
+/// Where a file has no inode to read, nothing is said of it.
+#[cfg(not(unix))]
+fn stamp(_path: &Path) -> io::Result<Stamp> {
+    streams_nothing()
 }
 
 /// Who may write a folder, by its owner and its mode: what [`Fs::who_may_write`]
@@ -799,6 +843,10 @@ impl Fs for RealFs {
 
     fn who_may_write(&self, path: &Path) -> io::Result<Writers> {
         who_may_write(path)
+    }
+
+    fn stamp(&self, path: &Path) -> io::Result<Stamp> {
+        stamp(path)
     }
 }
 

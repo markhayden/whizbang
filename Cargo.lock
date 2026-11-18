@@ -655,6 +655,7 @@ dependencies = [
 name = "whizbang-rascal"
 version = "0.0.1"
 dependencies = [
+ "image",
  "serde_json",
  "whizbang-core",
  "whizbang-testkit",

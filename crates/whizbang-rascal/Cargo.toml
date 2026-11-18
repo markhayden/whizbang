@@ -17,6 +17,9 @@ whizbang-core.workspace = true
 
 [dev-dependencies]
 whizbang-testkit.workspace = true
+# The tests of `segment` paint their pictures and write them as PNG files, at the version
+# the core decodes with.
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
 serde_json.workspace = true
 
 [lints]

@@ -12,14 +12,15 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use whizbang::model_commands::{self, Downloads, PAUSE, Tools, Under};
+use whizbang::pack as kind;
 use whizbang::wiring::{self, Models};
 use whizbang_backends::models::{
     Catalogue, CatalogueFile, Entry, EntryParts, FileName, Installations, Licence, ModelName,
     ModelsDir, Platform, Revision, Title,
 };
-use whizbang_core::capability::{Installation, Installed, Inventory, Unready};
+use whizbang_core::capability::{FaultKind, Installation, Installed, Inventory, Unready};
 use whizbang_core::config::DOWNLOAD_LEAST_KIB_PER_SECOND;
-use whizbang_core::contract::{Clock, Secrets};
+use whizbang_core::contract::{Call, Clock, Executor, Secrets};
 use whizbang_core::egress::{Address, CheckedDownloader, Origin};
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::RealFs;
@@ -27,6 +28,8 @@ use whizbang_testkit::barrier::Barriers;
 use whizbang_testkit::downloads::FakeDownloader;
 use whizbang_testkit::scratch::Scratch;
 use whizbang_testkit::threads;
+
+use crate::pack::{self, Local};
 
 /// The origin every file of the test's catalogue is at.
 const ORIGIN: &str = "https://weights.example.org";
@@ -1375,5 +1378,159 @@ fn the_real_binary_started_with_hf_token_set_reads_the_sign_in_and_never_the_var
             "{said}"
         );
         assert!(!said.contains(&token), "{said}");
+    }
+}
+
+// --- the cached check of an installation's files (plan 2A, task R1) ----------------------------
+
+/// The check record of this installation of `fake-ok` in a test's models directory.
+fn check_record(local: &Local, identity: &str) -> PathBuf {
+    let hex = identity.strip_prefix("sha256:").unwrap();
+    let model = local.models_dir().join("models").join(pack::OK);
+    model.join("checks").join(hex)
+}
+
+/// What is in the model's `checks/`, by name.
+fn checks_held(local: &Local) -> Vec<String> {
+    let checks = local
+        .models_dir()
+        .join("models")
+        .join(pack::OK)
+        .join("checks");
+    let mut names: Vec<String> = std::fs::read_dir(checks)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+/// One call of `finds` through a fresh executor over this folder, and what it came to.
+fn one_call(local: &Local) -> Vec<pack::Came> {
+    let over = local.over(&pack::one(pack::OK, ""));
+    let executor = local.runner(&over);
+    let finished = executor.submit(&Call::new("finds")).unwrap();
+    let came = local.came();
+    assert_eq!(finished.outcome().name() == "completed", came[0].is_ok());
+    came
+}
+
+/// The installation of `fake-ok` checked once in full by a first process, with its
+/// check record written; then a second process, as a fresh one worker is: its own
+/// record of what it verified is empty. The identity, and the installed file.
+fn checked_by_a_first_process(local: &mut Local) -> (String, PathBuf) {
+    let over = local.over(&pack::one(pack::OK, ""));
+    let identity = local.identity(&over, pack::OK);
+    drop(over);
+    let file = local.installed_file(pack::OK, &identity, "weights.bin");
+    assert!(!check_record(local, &identity).exists());
+    assert_eq!(one_call(local), [Ok(pack::determined())]);
+    // The record of the full check: beside the installation, owner-only, and nothing
+    // left of the writing.
+    let hex = identity.strip_prefix("sha256:").unwrap().to_owned();
+    assert_eq!(checks_held(local), [hex]);
+    let mode = std::fs::metadata(check_record(local, &identity))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o600);
+    // The installation's own folder holds its record and its files and nothing else.
+    let folder = file.parent().unwrap().parent().unwrap();
+    let mut names: Vec<String> = std::fs::read_dir(folder)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["RECORD", "files"]);
+    local.worker = pack::guarded();
+    (identity, file)
+}
+
+/// Takes every reading of the file away, keeping its size, its time and its inode: a
+/// full hash of it can no longer run, and fails.
+fn unreadable(file: &Path) {
+    let before = std::fs::metadata(file).unwrap();
+    std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o000)).unwrap();
+    assert!(std::fs::read(file).is_err(), "the file can still be read");
+    let after = std::fs::metadata(file).unwrap();
+    assert_eq!(
+        (before.len(), before.modified().unwrap()),
+        (after.len(), after.modified().unwrap())
+    );
+}
+
+fn readable(file: &Path) {
+    std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o400)).unwrap();
+}
+
+#[test]
+fn an_unchanged_installation_checked_before_is_loaded_without_a_full_hash() {
+    let mut local = Local::new("models-cached");
+    let (_, file) = checked_by_a_first_process(&mut local);
+    // The second process cannot read the file, and loads the model all the same: it
+    // trusted the record, and no file was read whole.
+    unreadable(&file);
+    assert_eq!(one_call(&local), [Ok(pack::determined())]);
+    let loads: Vec<&str> = local.named().iter().map(|sent| sent.0).collect();
+    assert_eq!(loads, ["load", "segment"]);
+    readable(&file);
+}
+
+#[test]
+fn a_file_changed_since_the_check_is_hashed_again_and_refused() {
+    let mut local = Local::new("models-changed");
+    let (identity, file) = checked_by_a_first_process(&mut local);
+    let record = std::fs::read(check_record(&local, &identity)).unwrap();
+    // One byte changed, the length kept: the file's time of last write moves.
+    let mut bytes = std::fs::read(&file).unwrap();
+    bytes[0] = b'W';
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::write(&file, &bytes).unwrap();
+    // The record no longer holds, so every file is read again, and the damage is found:
+    // refused, never sent, and no worker started.
+    assert_eq!(
+        one_call(&local),
+        [Err((FaultKind::Unavailable, kind::DAMAGED.to_owned()))]
+    );
+    assert!(local.named().is_empty());
+    // A check that did not pass writes no record.
+    assert_eq!(
+        std::fs::read(check_record(&local, &identity)).unwrap(),
+        record
+    );
+}
+
+#[test]
+fn a_check_record_that_is_damaged_is_ignored_and_the_full_hash_runs() {
+    let mut local = Local::new("models-damaged-record");
+    let (identity, file) = checked_by_a_first_process(&mut local);
+    let at = check_record(&local, &identity);
+    let good = std::fs::read(&at).unwrap();
+    let text = String::from_utf8(good.clone()).unwrap();
+    assert!(text.starts_with("check/1\n"), "{text}");
+    // Three damaged records: cut short, of another hash (the stamps kept), and not a
+    // record at all. Each time, a file that cannot be read shows that a full hash was
+    // tried: the request is refused as unread. Read again, the full hash passes, the
+    // model loads, and the record is written again, whole.
+    let line = text.lines().nth(2).unwrap();
+    let hash = line.split(' ').nth(4).unwrap();
+    let other = format!("sha256:{}", "0".repeat(64));
+    let damaged = [
+        good[..good.len() - 3].to_vec(),
+        text.replace(hash, &other).into_bytes(),
+        b"not a check record\n".to_vec(),
+    ];
+    for (round, bytes) in damaged.iter().enumerate() {
+        std::fs::write(&at, bytes).unwrap();
+        unreadable(&file);
+        assert_eq!(
+            one_call(&local),
+            [Err((FaultKind::Unavailable, kind::UNVERIFIED.to_owned()))],
+            "{round}"
+        );
+        readable(&file);
+        assert_eq!(one_call(&local), [Ok(pack::determined())], "{round}");
+        assert_eq!(std::fs::read(&at).unwrap(), good, "{round}");
+        local.worker = pack::guarded();
     }
 }

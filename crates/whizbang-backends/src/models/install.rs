@@ -23,6 +23,7 @@ use whizbang_core::egress::{Credential, Downloader};
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::{Fs, PIECE_MAX_BYTES};
 
+use super::checked;
 use super::directory::{Read, refuse_links};
 use super::installation::INSTALLATION_MAX_BYTES;
 use super::remove::stops;
@@ -733,7 +734,7 @@ pub(super) fn read_pointer(
 /// under `files` as a regular file of its size and its hash; none when all are.
 /// `stop` is asked before each piece is read: when it says so, the reading ends
 /// with an error of the kind `Interrupted` ([`verify`]; never, for an install).
-fn first_not_whole(
+pub(super) fn first_not_whole(
     fs: &dyn Fs,
     files: &Path,
     listed: &[InstalledFile],
@@ -824,6 +825,20 @@ fn is_whole(
     record: &InstallationRecord,
     stop: &dyn Fn() -> bool,
 ) -> io::Result<bool> {
+    if !laid_out(dir, folder, record)? {
+        return Ok(false);
+    }
+    Ok(first_not_whole(dir.fs(), &folder.join("files"), record.files(), stop)?.is_none())
+}
+
+/// Whether the folder at `folder` is laid out as the installation of this record:
+/// [`is_whole`] without a file read whole. Its record in the one form, the names the
+/// record lists under `files/` and nothing else, and neither folder a link.
+pub(super) fn laid_out(
+    dir: &ModelsDir,
+    folder: &Path,
+    record: &InstallationRecord,
+) -> io::Result<bool> {
     let fs = dir.fs();
     refuse_links(fs, &[folder, &folder.join("files")])?;
     let written = record.to_bytes();
@@ -840,10 +855,7 @@ fn is_whole(
         .iter()
         .map(|file| file.name().as_str().to_owned())
         .collect();
-    if names_in(fs, &folder.join("files"))? != Some(listed) {
-        return Ok(false);
-    }
-    Ok(first_not_whole(fs, &folder.join("files"), record.files(), stop)?.is_none())
+    Ok(names_in(fs, &folder.join("files"))? == Some(listed))
 }
 
 /// Whether the installation of this model under this identity is whole on the disk,
@@ -885,6 +897,59 @@ pub fn verify(
         }
         _ => Ok(false),
     }
+}
+
+/// [`verify`], trusting the record of an earlier full check while the files are
+/// unchanged since it (plan 2A, task R1; ADR 0017, "The cached check"). The record,
+/// the layout and the links are read and held as [`verify`] holds them, every time.
+/// Then each file's [`Stamp`](whizbang_core::store::fs::Stamp) is taken: when the
+/// check record beside the installation (`checks/<64 hex digits>` in the model's
+/// folder) is of this identity and holds, for every file in the record's order, its
+/// name, its size, its hash and the very stamp it has now, the files are not read and
+/// the answer is whole. Otherwise, a record missing, damaged, of another identity or
+/// naming any other stamp, size or hash, every file is read whole as [`verify`] reads
+/// it, and when they are whole a new check record is written: the stamps taken before
+/// the reading, so that a file written while it was read is read again next time.
+/// The record is written only after a full check passed, under a name of its own
+/// first and renamed into place, readable by its owner only; a failure to write it
+/// is no failure of the check. A `checks/` that is a link is not read and not
+/// written through: the full check runs.
+pub fn verify_checked(
+    dir: &ModelsDir,
+    model: &ModelName,
+    identity: InstallationId,
+    secrets: &Secrets,
+    stop: &dyn Fn() -> bool,
+) -> io::Result<bool> {
+    dir.unlinked(model)?;
+    let folder = dir.model(model).join("installations").join(identity.hex());
+    refuse_links(dir.fs(), &[&folder, &folder.join("files")])?;
+    let bytes = match dir.read(&folder.join("RECORD"), INSTALLATION_MAX_BYTES)? {
+        Read::Bytes(bytes) => bytes,
+        Read::Missing | Read::NotAFile => return Ok(false),
+    };
+    let record = match InstallationRecord::parse(&bytes, secrets) {
+        Ok(record) if record.identity() == identity && record.model() == model => record,
+        _ => return Ok(false),
+    };
+    if !laid_out(dir, &folder, &record)? {
+        return Ok(false);
+    }
+    let files = folder.join("files");
+    let stamps = checked::stamps(dir.fs(), &files, record.files());
+    let checks = dir.model(model).join("checks");
+    if let Some(stamps) = &stamps
+        && checked::holds(dir, &checks, &record, stamps)
+    {
+        return Ok(true);
+    }
+    if first_not_whole(dir.fs(), &files, record.files(), stop)?.is_some() {
+        return Ok(false);
+    }
+    if let Some(stamps) = &stamps {
+        checked::write(dir, &checks, &record, stamps);
+    }
+    Ok(true)
 }
 
 /// What the model's pointer names, read by one who holds no lock.

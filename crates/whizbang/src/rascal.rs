@@ -1,13 +1,13 @@
-//! `whizbang rascal grow`: wiring from arguments to the door (`whizbang::door`), which
-//! runs the action through the executor.
+//! `whizbang rascal grow` and `whizbang rascal segment`: wiring from arguments to the
+//! door (`whizbang::door`), which runs the action through the executor.
 
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
-use whizbang::door::{self, GrowAsked};
+use whizbang::door::{self, GrowAsked, SegmentAsked};
 use whizbang::pack::OneWorker;
 use whizbang::wiring::{self, Make, Models, Over, Platform};
-use whizbang_core::contract::Recovery;
+use whizbang_core::contract::{Engine, Recovery};
 
 use crate::store::Where;
 
@@ -111,6 +111,36 @@ pub enum Command {
         #[arg(long, value_name = "ID")]
         request_id: Option<String>,
     },
+    /// Find each instance of a phrase in an image with the configured segmenter: one
+    /// mask for each, its core the instance, committed to the store. Each mask's
+    /// identity is printed with the instance's score and box (left, top, right,
+    /// bottom, in pixels of the image), which the run's diagnostic `segment.txt` keeps.
+    #[command(after_help = EXIT_CODES)]
+    Segment {
+        /// The image to look in, by its identity in the store: sha256: and 64 hex
+        /// digits, as `whizbang store import` prints it.
+        #[arg(long)]
+        image: String,
+        /// What to find, in words.
+        #[arg(long)]
+        phrase: String,
+        /// The most instances to find, from 1 to 64.
+        #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(u32).range(1..=64))]
+        max_instances: u32,
+        /// The segmenter, by its name in the config's `[backends.segment]` tables. With
+        /// none, the config's default for segment answers.
+        #[arg(long, value_name = "NAME")]
+        backend: Option<String>,
+        #[command(flatten)]
+        at: Where,
+        #[command(flatten)]
+        under: Under,
+        /// An id for this request, of your choosing: 1 to 128 letters, digits, `_`, `-`,
+        /// `.` and `:`. The same request sent again under it is answered with the run
+        /// it made the first time, and nothing runs again.
+        #[arg(long, value_name = "ID")]
+        request_id: Option<String>,
+    },
 }
 
 /// Runs a rascal command: what to print on success, or the complaint. `platform`
@@ -128,6 +158,25 @@ pub fn run_with(command: &Command, recovery: Recovery) -> Result<String, String>
     run_at(command, recovery, None)
 }
 
+/// The executor a command that runs an action builds: over the config and the models
+/// directory `under` names, said first when either cannot be used, and then over the
+/// writer of the store at `at`. A command that runs an action makes no store where
+/// there is none. The executor is built over the writer, which the one entry point
+/// hands out once the store is recovered.
+fn executor(
+    at: &Where,
+    under: &Under,
+    recovery: Recovery,
+    platform: Option<Platform>,
+) -> Result<Engine, String> {
+    let over = under.over(platform)?;
+    let opening = wiring::opening(at.root(), Make::Nothing, recovery)
+        .map_err(|error| wiring::not_opened(&error))?;
+    let store = opening.writer().map_err(|why| why.to_string())?;
+    let registry = wiring::registry()?;
+    wiring::runner(registry, store, &over)
+}
+
 fn run_at(
     command: &Command,
     recovery: Recovery,
@@ -142,17 +191,7 @@ fn run_at(
             under,
             request_id,
         } => {
-            // A config that cannot be used, and a models directory that is not
-            // used, are said before the store is opened.
-            let over = under.over(platform)?;
-            // A command that runs an action makes no store where there is none. The
-            // executor is built over the writer, which the one entry point hands out
-            // once the store is recovered.
-            let opening = wiring::opening(at.root(), Make::Nothing, recovery)
-                .map_err(|error| wiring::not_opened(&error))?;
-            let store = opening.writer().map_err(|why| why.to_string())?;
-            let registry = wiring::registry()?;
-            let executor = wiring::runner(registry, store, &over)?;
+            let executor = executor(at, under, recovery, platform)?;
             let asked = GrowAsked {
                 mask,
                 px: *px,
@@ -160,6 +199,28 @@ fn run_at(
                 request_id: request_id.as_deref(),
             };
             door::grow(&executor, &asked)
+        }
+        Command::Segment {
+            image,
+            phrase,
+            max_instances,
+            backend,
+            at,
+            under,
+            request_id,
+        } => {
+            let executor = executor(at, under, recovery, platform)?;
+            let asked = SegmentAsked {
+                image,
+                phrase,
+                max_instances: *max_instances,
+                backend: backend.as_deref(),
+                request_id: request_id.as_deref(),
+            };
+            let root = at.root().to_path_buf();
+            door::segment(&executor, &asked, &|run, name| {
+                door::diagnostic(&root, run, name)
+            })
         }
     }
 }
