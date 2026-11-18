@@ -176,6 +176,11 @@ queue with the count its own hold read. Under "For the tasks that follow": P6b b
 From the review of task P6a: "Where the directory is" asks the kind `pack`'s own rule
 for a local table (no url, no provider, no credential, and for that kind under
 `segment`), where it asked only for no url.
+Amended: 2026-11-17, with task R1 of plan 2A. Added, in code, under "The directory"
+and "Limits" ("The cached check"): a full check of an installation's files that passes
+leaves its record in the model's folder, `checks/<64 hex digits>`, and the first load
+of a later process that finds each file's size, time of last write and inode as that
+record says trusts it and reads no file whole (`models::verify_checked`).
 
 ## Context
 
@@ -284,6 +289,8 @@ what the binary gives). In it:
             <file>                 a file being downloaded, or downloaded
       holds/
         <64 hex digits>            the file a hold on that installation locks
+      checks/
+        <64 hex digits>            the record of that installation's last full check (task R1 of 2A)
       installations/
         <64 hex digits>/           one installation, by its identity
           RECORD                   its record, installation/1
@@ -2352,6 +2359,28 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   cache, and longer from the disk when it has not: the first request of a process
   pays it. The installer's own check at publication is the same hash of the same
   files.
+- **The cached check** (plan 2A, task R1). The kind `pack` verifies through
+  `models::verify_checked`: the record, the layout and the links are read as `verify`
+  reads them, every time, and then each file's size, time of last write (to the
+  nanosecond) and inode are taken without reading it (`Fs::stamp`). When the record of
+  the installation's last full check, `checks/<64 hex digits>` in the model's folder,
+  holds exactly those stamps with the record's sizes and hashes, no file is read
+  whole; otherwise every file is, and when all are whole the record is written again,
+  with the stamps taken before the reading, under a name of its own, owner-only, and
+  renamed into place. A record is held by its bytes alone: one that is damaged, cut,
+  or of another identity, hash or stamp is not trusted, and the full hash runs
+  (`models::an_unchanged_installation_checked_before_is_loaded_without_a_full_hash`,
+  `models::a_file_changed_since_the_check_is_hashed_again_and_refused`,
+  `models::a_check_record_that_is_damaged_is_ignored_and_the_full_hash_runs`, in the
+  binary's tests). **It trusts metadata:** a file changed with its size, its time of
+  last write and its inode all kept is loaded unchecked; that takes a writer who sets
+  the time back, in the owner's own directory, where the record lives too. A record is
+  not removed with its installation; a reinstall of the same identity writes new
+  files, whose stamps it does not hold. The full check with no record trusted, as a
+  command (`whizbang models verify`), is not built (`docs/carry-over.md`). On the
+  owner's Mac the first request of a process came to its `load` in 0.06 s, where the
+  full hash took about 26 s, and the model was loaded about 5 s after it
+  (`docs/results/m1c-local-pack.md`).
 - **No installation is read through a link** (from the review of task P6b, by the
   owner's ruling of 2026-11-15: refuse, never follow). Below the layout's five
   folders, an installation's own folder and its `files/` are looked at too, in the

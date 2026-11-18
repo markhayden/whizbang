@@ -1,6 +1,8 @@
-//! The model tier's committed evidence (plan 1C, task R2b; decision D15), held in the fast
-//! tier: the record `scripts/model-evidence.sh` wrote is of the tree's adapter, lock and
-//! fixture, and the fixture picture, which is public, holds no metadata.
+//! The model tier's committed evidence (plan 1C, task R2b; decision D15; taken again by
+//! plan 2A, task R1), held in the fast tier: the record `scripts/model-evidence.sh` wrote
+//! is of the tree's adapter, lock and fixture, on a clean head, with each first load
+//! after a full check's record; and the fixture picture, which is public, holds no
+//! metadata.
 
 use std::path::{Path, PathBuf};
 
@@ -82,12 +84,19 @@ fn the_committed_record_names_the_adapters_revision_and_the_lock_the_tree_has() 
     assert_eq!(field(&top, "device"), "mps");
     assert_eq!(field(&top, "fallback"), "off");
     assert_eq!(field(&top, "hosts_contacted"), "none");
+    // Taken on a clean head (plan 2A, task R1): the commit it names is the tree that ran.
+    assert_eq!(field(&top, "tree"), "clean");
     assert_eq!(rounds.len(), 3);
     for round in &rounds {
         assert_eq!(field(round, "phrase_device"), "mps");
         assert_ne!(field(round, "phrase_instances"), "0");
         assert_eq!(field(round, "loads"), "1");
         assert_eq!(field(round, "still_running_after"), "0");
+        // Each first load trusted the record of an earlier full check, and the model
+        // was loaded within 10 seconds of the first request (plan 2A, task R1).
+        assert_eq!(field(round, "check_record_before"), "yes");
+        let first: f64 = field(round, "first_load_seconds").parse().unwrap();
+        assert!(first < 10.0, "{first}");
     }
     // The page beside it says the same lock and the same adapter.
     let page =
