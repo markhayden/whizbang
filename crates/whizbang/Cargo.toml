@@ -24,8 +24,18 @@ whizbang-squint.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 
+[features]
+# What only a test may build: `OneWorker::starting`, a one worker started from what a
+# test hands it, and `Launch::testing`. Only the tests' builds turn it on, by this
+# crate's development dependency on itself; `just smoke` and a release build
+# (`cargo build --release -p whizbang`) build the binary without it, so no source of
+# the binary that names either compiles there (plan 1C, the review of task P6a).
+fakes = ["whizbang-backends/fakes"]
+
 [dev-dependencies]
 whizbang-testkit.workspace = true
+# This crate itself, with the feature `fakes`, for its own tests.
+whizbang = { path = ".", features = ["fakes"] }
 
 [lints]
 workspace = true

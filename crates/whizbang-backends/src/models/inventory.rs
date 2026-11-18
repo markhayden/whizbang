@@ -268,4 +268,11 @@ impl Open for Leased {
         self.0.let_go();
         Ok(())
     }
+
+    /// The count of removals the hold read under the directory's lock: what the
+    /// backend is handed for the request (ADR 0015, "A wrapper around each request";
+    /// plan 1C, task P6b), so that it enters the worker's queue with it.
+    fn removals(&self) -> Option<u64> {
+        Some(self.0.removals())
+    }
 }

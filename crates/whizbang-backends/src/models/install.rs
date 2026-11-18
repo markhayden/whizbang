@@ -823,6 +823,40 @@ fn is_whole(dir: &ModelsDir, folder: &Path, record: &InstallationRecord) -> io::
     Ok(first_not_whole(fs, &folder.join("files"), record.files())?.is_none())
 }
 
+/// Whether the installation of this model under this identity is whole on the disk,
+/// read now: its record, in the one form and of that identity, and every file the
+/// record lists, of its size and its hash, and nothing else in its folder (decision
+/// D14 of plan 1C; task P6b). What loads a model asks this before its `load`, so
+/// that a file damaged after it was published is not loaded.
+///
+/// It is the installation the identity names, not the one the pointer names: a
+/// superseded installation that a hold keeps on the disk is read as it is. It takes
+/// no lock, so the caller holds the installation (a lease's hold) while it reads:
+/// nothing then deletes it. Every file is read whole, so it costs what hashing the
+/// installation's files costs (ADR 0017, "Limits"). A record that is missing, that
+/// cannot be read as a record, or that is of another identity is not whole; a
+/// failure of the file system is the error, and so is a folder of the model's layout
+/// that is a link, which nothing is read through.
+pub fn verify(
+    dir: &ModelsDir,
+    model: &ModelName,
+    identity: InstallationId,
+    secrets: &Secrets,
+) -> io::Result<bool> {
+    dir.unlinked(model)?;
+    let folder = dir.model(model).join("installations").join(identity.hex());
+    let bytes = match dir.read(&folder.join("RECORD"), INSTALLATION_MAX_BYTES)? {
+        Read::Bytes(bytes) => bytes,
+        Read::Missing | Read::NotAFile => return Ok(false),
+    };
+    match InstallationRecord::parse(&bytes, secrets) {
+        Ok(record) if record.identity() == identity && record.model() == model => {
+            is_whole(dir, &folder, &record)
+        }
+        _ => Ok(false),
+    }
+}
+
 /// What the model's pointer names, read by one who holds no lock.
 ///
 /// The pointer is read, and then the record it names. When the record is not

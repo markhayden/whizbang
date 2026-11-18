@@ -167,6 +167,15 @@ tables and not from the kinds, so the order in which the wiring is given the two
 longer matters; and the one worker of the process is told the directory that was
 opened, the one its worker is started over and its supervisor reads counts of
 removals in.
+Amended: 2026-11-17, with task P6b of checkpoint 1C. Added, in code and under "The
+inventory" (its limits), "The lease" and "Limits": an installation's files are
+verified before it is loaded (`models::verify`, decision D14 of the plan), once for
+each installation in a process, by the kind `pack`, with its cost measured; a local
+backend loads by the identity it was handed under, and a request enters the worker's
+queue with the count its own hold read. Under "For the tasks that follow": P6b built.
+From the review of task P6a: "Where the directory is" asks the kind `pack`'s own rule
+for a local table (no url, no provider, no credential, and for that kind under
+`segment`), where it asked only for no url.
 
 ## Context
 
@@ -479,7 +488,12 @@ opens it. This is what the binary gives.
   have is not ready, and opening the directory for it asks nothing of a model. The
   directory opened is the one the one worker of the process is told
   (`wiring::Over::pack`): its worker is started over it, and its supervisor reads
-  the counts of removals in it (task P5b's note).
+  the counts of removals in it (task P5b's note). **Changed after the review of task
+  P6a:** "local" is the kind `pack`'s own rule (`whizbang::pack::is_local`): no url,
+  no provider and no credential, and, for a table of the kind `pack`, under
+  `segment`. A table that names a provider and no url, or a `pack` table under
+  `fill`, which the kind refuses, opens no directory any more (the same test, two
+  cases more).
 - **The platform's is not even worked out unless it is the one.** The wiring is
   given what says where it is (`Models::platform`), and asks it only when a
   directory is about to be opened and neither the flag nor the config named one:
@@ -1851,13 +1865,18 @@ is ADR 0020, "The worker", "Removal". The remover keeps its lock until its mark 
 off, however it ends, so that the mark is live to its last moment
 (`remove::the_remover_keeps_its_lock_until_its_mark_is_off`, which stops a removal
 just before it takes its mark off, at its end, and finds a share of the remover's
-lock refused there; from the review of task P5a). *P6b:* what carries a hold's
-count to the queue is not built here. `Hold::removals` is where it starts; the
-lease (`inventory.rs`, `Leased`) has the hold and hands nothing on yet. ADR 0015
-must be amended by that task, in "A wrapper around each request" and in "An
-inventory" where it describes the lease's place: what a wrapper's `before` gives
-back (`Open`) or what a backend is given for one request gains the count the
-lease's hold read, so that a request enters the queue with it.
+lock refused there; from the review of task P5a). *P6b* (built): what carries a
+hold's count to the queue. `Hold::removals` is where it starts; the lease
+(`inventory.rs`, `Leased`) hands it on through what it holds open for the request
+(`Open::removals`), and the backend is given it for that one request
+(`Bounds::removals`), as ADR 0015 is amended to say ("A wrapper around each
+request", "What a backend is given for one request"; "An inventory"). The kind
+`pack` queues the request with it, so a request enters the queue with the count
+its own hold was given
+(`pack::a_request_enters_the_queue_with_the_count_its_own_hold_was_given`), and a
+removal from a second process cancels a queued request through the binary's
+wiring and not one leased after it
+(`pack::through_the_wiring_a_removal_from_a_second_process_cancels_a_queued_request_and_not_one_leased_after_it`).
 
 **On the disk** (task M5c).
 
@@ -2069,10 +2088,22 @@ offers one local backend.
   publication held them to, and a file damaged since is found when the identity
   is installed again
   (`inventory::known_an_installation_whose_file_was_damaged_after_it_was_published_is_ready_until_it_is_installed_again`).
-  A hold does not read them either ("Holds"), so nothing stands between a file
-  damaged after its publication and the first adapter that loads it: that
-  adapter's task verifies, at the load or at the first lease in a process (1C,
-  `docs/carry-over.md`).
+  A hold does not read them either ("Holds"). **What stands between a damaged file
+  and its load since task P6b of checkpoint 1C** (decision D14): the kind `pack`
+  verifies an installation's files before anything loads it, once for each
+  installation in a process (`models::verify`: the record, of that identity, and
+  each file the record lists, read whole and held to its size and its hash, and
+  nothing else in the folder). A damaged one is not loaded: the request is refused,
+  `unavailable` and never sent, in words that say the model is damaged and to
+  install it again, and the run's record holds them; it is read again at the next
+  request, so a repair is seen
+  (`pack::a_file_damaged_after_it_was_published_is_not_loaded_and_the_model_is_reported_as_damaged`,
+  in the binary's tests; `models::publishing::an_installation_is_verified_by_its_identity_whatever_the_pointer_names_and_a_changed_file_is_not_whole`).
+  The inventory still calls such a model ready until then: it reads no file. One
+  found whole is not read again in that process, so a file damaged after it is
+  loaded as it is when the worker loads the model again; and a damaged installation
+  stays "ready" to `whizbang models list`, which reads no file either. The cost is
+  under "Limits".
   *In the inventory's own tests no request reaches a model:* "runs under the new
   installation" is there what the run's action is handed as its model's version.
   A run is handed its backend under that installation, and each request is
@@ -2137,8 +2168,18 @@ the place after the lease and a fake segmenter behind it.
   reinstalled model ready, under its new installation, a run admitted with the
   old one is refused all the same, and the new installation is not held
   (`leases::a_lease_is_for_the_installation_that_was_admitted_though_the_reinstalled_model_is_ready`).
-  A backend must load by that identity too, and not by the pointer: that is the
-  first real local backend's (1C, `docs/carry-over.md`).
+  A backend must load by that identity too, and not by the pointer. **Built by task
+  P6b of checkpoint 1C:** a request's backend is given the identity its run was
+  handed it under and the count of removals the lease's hold read (ADR 0015, "A
+  wrapper around each request", "What a backend is given for one request"); the
+  kind `pack` names that installation in its `load` and its call, and queues the
+  request with that count. With the model installed again while the first of two
+  requests of one run is held, the first is answered from the old installation,
+  verified and loaded by its identity, and the second is refused at its lease
+  (`pack::after_a_reinstall_between_two_requests_of_a_run_the_first_is_answered_from_the_old_installations_files_and_the_second_is_refused_at_the_lease`);
+  and a request whose count was raised by a removal between its hold and its queue
+  enters the queue with its hold's count and is ended there, never sent
+  (`pack::a_request_enters_the_queue_with_the_count_its_own_hold_was_given`).
 - **A retry inside an admitted run is leased again, for the same identity.** A run
   whose installation was replaced after its first request is refused at its second
   the same way, and the first's hold kept the superseded installation whole while
@@ -2161,10 +2202,11 @@ the place after the lease and a fake segmenter behind it.
   was admitted over no inventory: the lease has nothing to hold it to, and
   refuses it
   (`leases::a_backend_that_names_a_recipient_takes_no_lease_and_a_local_one_with_no_installation_is_refused`).
-- **Limits.** *A hold does not read the installation's files* ("Holds"; the
-  inventory's limit on unverified files, `docs/carry-over.md`). *A call with two
+- **Limits.** *A hold does not read the installation's files* ("Holds"); the kind
+  `pack` verifies them before it loads one, under the lease's hold ("The
+  inventory", limits; task P6b of 1C). *A call with two
   needs of one capability* is leased for the first's installation only (ADR 0015,
-  "An inventory", limits). *The lease is in the binary's executor* since its wiring
+  "An inventory", limits; `docs/carry-over.md`). *The lease is in the binary's executor* since its wiring
   (the plan's task W1; ADR 0015, "The binary wired"), wherever the wiring is given
   a models directory; no command names one yet (1C, `docs/carry-over.md`).
 - **The checkpoint's exit line for models** ("a model installs, attaches, cancels
@@ -2286,7 +2328,21 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   the next install (task M5d).
 - **A reader that holds no lock does not read the files.** `current` answers from the
   pointer and the record; that the files are whole is held when they are published
-  and when the same identity is published again.
+  and when the same identity is published again, and, since task P6b of plan 1C,
+  before an installation is first loaded in a process (`verify`, read under the
+  lease's hold; "The inventory", limits).
+- **What verifying an installation costs** (decision D14 of plan 1C, measured by
+  task P6b): every file read whole and hashed, once for each installation in a
+  process, before its first load, on the request's own thread and within no
+  deadline of the run's. On the owner's Mac (Apple silicon), in the release profile,
+  one file of 256 MiB that had just been written was verified in 117 to 118 ms, about
+  2.2 GB a second, three times running
+  (`models::publishing::measure_what_verifying_an_installation_costs`, ignored in
+  the fast tier; run it with `--run-ignored only --no-capture`). At that rate the
+  3.44 GB of `sam3` take about a second and a half when the system has them in its
+  cache, and longer from the disk when it has not: the first request of a process
+  pays it. The installer's own check at publication is the same hash of the same
+  files.
 - **A name that is one plain name on macOS and Linux may be none elsewhere.** A name
   that ends in a dot, and the names Windows keeps for devices (`con`, `nul`, `aux` and
   the like), are accepted: the platforms are macOS and Linux (`SPEC.md` section 1).

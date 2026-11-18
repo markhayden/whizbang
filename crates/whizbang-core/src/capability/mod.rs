@@ -33,7 +33,7 @@ mod segment;
 pub mod written;
 
 pub use around::{Around, Ended, Nothing, Open, Place, Places, Stop, Wrapped};
-pub(crate) use around::{Leaving, Wrappers};
+pub(crate) use around::{Given, Leaving, Wrappers};
 pub use charge::{Charge, Stage};
 pub use declare::{
     Declaration, DeclarationError, MODEL_NAME_LIMIT, Resolved, Roster, RosterError, Unresolved,
@@ -249,6 +249,13 @@ pub struct Bounds {
     /// What stands between the handle and its backend for this run, when an executor
     /// made the handle (ADR 0015, "A wrapper around each request").
     around: Option<Arc<Wrappers>>,
+    /// The installation of a local model that the run was handed its backend under:
+    /// the identity in the version's place of the declaration the handle holds
+    /// (ADR 0015, "An inventory"). Set for one request ([`Bounds::of_one_request`]).
+    installation: Option<Installation>,
+    /// The model's count of removals that the lease's hold read for this one request
+    /// (ADR 0015, "A wrapper around each request"). Set for one request.
+    removals: Option<u64>,
 }
 
 impl std::fmt::Debug for Bounds {
@@ -630,17 +637,46 @@ impl Bounds {
             sender: None,
             moved: Arc::default(),
             around: None,
+            installation: None,
+            removals: None,
         }
     }
 
     /// The bounds one request is handed: these, with a count of answers that pointed
-    /// elsewhere that starts at nothing and is this request's alone. A handle makes
-    /// one for each request it sends to its backend.
-    pub(crate) fn of_one_request(&self) -> Bounds {
+    /// elsewhere that starts at nothing and is this request's alone; the installation
+    /// the declaration the handle holds names, for a local backend; and what the
+    /// places handed on for it. A handle makes one for each request it sends to its
+    /// backend.
+    pub(crate) fn of_one_request(&self, declaration: &Declaration, given: Given) -> Bounds {
+        let installation = match declaration.is_local() {
+            true => Installation::from_version(declaration.model().version()),
+            false => None,
+        };
         Bounds {
             moved: Arc::default(),
+            installation,
+            removals: given.removals,
             ..self.clone()
         }
+    }
+
+    /// The installation of a local model that this request's run was handed its
+    /// backend under: the identity its admission recorded, which the lease held for
+    /// the request (ADR 0015, "An inventory"; ADR 0017, "The lease"). A local backend
+    /// loads this installation and no other, whatever the model's pointer names now.
+    /// None for a backend that names a recipient, and for one handed under a version
+    /// that is no installation's identity.
+    pub fn installation(&self) -> Option<Installation> {
+        self.installation
+    }
+
+    /// The model's count of removals that the lease's hold read for this request,
+    /// under the models directory's lock (ADR 0017, "Holds"; ADR 0015, "A wrapper
+    /// around each request"): what a request to a local model enters the worker's
+    /// queue with (plan 1C, decision D5). None where no lease held the request: an
+    /// executor given no lease, or a backend that names a recipient.
+    pub fn removals(&self) -> Option<u64> {
+        self.removals
     }
 
     /// How many answers have pointed the request of these bounds elsewhere.
@@ -695,8 +731,9 @@ impl Bounds {
     }
 
     /// Sends one request: counts it, takes it through the wrappers to `ask`, which
-    /// calls the backend and holds its answer to the request, and keeps how it ended.
-    /// `classes` are the classes of data the request is known to hold, and
+    /// calls the backend with the bounds of this one request
+    /// ([`Bounds::of_one_request`]) and holds its answer to the request, and keeps how
+    /// it ended. `classes` are the classes of data the request is known to hold, and
     /// `charge_of` says what an answer cost. A panic in `ask` unwinds through here,
     /// and the request is accounted for as unwound.
     ///
@@ -710,7 +747,7 @@ impl Bounds {
         declaration: &Declaration,
         classes: Classes,
         charge_of: impl Fn(&T) -> Option<Charge>,
-        ask: impl FnOnce() -> Result<T, Fault>,
+        ask: impl FnOnce(&Bounds) -> Result<T, Fault>,
     ) -> Result<T, Fault> {
         let mut sent = self.sending(capability, declaration)?;
         let place = sent.as_ref().map(Sent::place);
@@ -723,7 +760,9 @@ impl Bounds {
 
     /// Takes a request that the tally has counted through the wrappers to `ask`, and
     /// back: for a handle that counts and accounts for its request itself. `request`
-    /// is the place the tally counted it at ([`Sent::place`]).
+    /// is the place the tally counted it at ([`Sent::place`]). `ask` is handed the
+    /// bounds of this one request: what the places handed on for it, and the
+    /// installation `declaration` names.
     pub(crate) fn through<T>(
         &self,
         request: Option<usize>,
@@ -731,10 +770,11 @@ impl Bounds {
         declaration: &Declaration,
         classes: Classes,
         charge_of: impl Fn(&T) -> Option<Charge>,
-        ask: impl FnOnce() -> Result<T, Fault>,
+        ask: impl FnOnce(&Bounds) -> Result<T, Fault>,
     ) -> Result<T, Fault> {
+        let ask = |given: Given| ask(&self.of_one_request(declaration, given));
         let Some(around) = &self.around else {
-            return ask();
+            return ask(Given::default());
         };
         let fail = |why: String| {
             if let Some(tally) = &self.tally {

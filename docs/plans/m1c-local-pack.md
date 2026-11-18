@@ -2341,9 +2341,9 @@ does not hold stands (`asked::a_call_that_resolved_a_model_its_snapshot_does_not
 **Depends on:** P6a. **Reads:** ADR 0015, "An inventory", the lease, "A wrapper around
 each request"; ADR 0017, "Holds", "The lease".
 
-- [ ] D14: the files are verified before `load`. A `load` names the installation in the
+- [x] D14: the files are verified before `load`. A `load` names the installation in the
       declaration the call was handed under, never the one the pointer names.
-- [ ] The count of D5 reaches the queue: the lease hands on the count its hold returned
+- [x] The count of D5 reaches the queue: the lease hands on the count its hold returned
       in what a backend is given for one request, by an amendment to ADR 0015.
 
 **Done when** these pass (`crates/whizbang/tests/it/pack.rs`):
@@ -2355,6 +2355,70 @@ each request"; ADR 0017, "Holds", "The lease".
 
 **Carry-over:** a local backend loading by the identity it was handed under; unverified
 files of an installation. **Size:** small.
+**Built with the task:**
+
+- **Which test shows which clause.** Box one: "the files are verified before `load`",
+  the second test (one byte of the installed file changed, its length kept: the call
+  is refused `unavailable`, never sent, saying the model is damaged, in the run's
+  record too; no `load` is written and no worker started; installed again, the same
+  identity is repaired and the next call loads it; and, as D14 has it, verified once
+  for each installation in a process, so a byte changed after that is not looked at
+  again); "a `load` names the installation in the declaration the call was handed
+  under, never the one the pointer names", the first test (a run of two requests,
+  the first stopped after its lease by a fake in the meter's place while the model is
+  installed again under another revision whose file holds other bytes: the first is
+  verified, loaded and answered under the old identity, which the journal of the
+  worker and the run's record name, and the second is refused at its lease). Box two:
+  the third test (the same stop after the lease; a removal the supervisor is not told
+  of raises the count to 1 while the request holds its installation; the request
+  enters the queue with 0, the count its own hold read, and is ended there, never
+  sent), and the fourth (a real second process, the test's own program run once more,
+  removes the model with a wait of a second: the request queued behind a call of
+  `fake-wait` is ended, never sent; one leased after the removal ended busy enters
+  with 1 and is answered). The amendment: ADR 0015, "A wrapper around each request",
+  "What a backend is given for one request", and "An inventory"; ADR 0017, "The
+  inventory", "The lease", "For the tasks that follow" and "Limits".
+- **What a backend is given** (`whizbang_core::capability::Bounds`): for one request,
+  `Bounds::installation`, the identity in the version's place of the declaration the
+  handle holds (none for a backend that names a recipient), and `Bounds::removals`,
+  the count the lease's place handed on through `Open::removals` (the lease's
+  `Leased` answers `Hold::removals`; every other wrapper none). The kind refuses a
+  request handed neither, `rejected`, never sent (`whizbang::pack::NOT_LEASED`). It
+  no longer reads the pointer or the count in the directory. The worker's journal
+  names each request's installation (`queue::Sent::installation`).
+- **The verification** (`whizbang_backends::models::verify`): the installation's
+  record, of the identity asked and of the model, then `is_whole`, the publication's
+  own check (the files the record lists, each read whole and held to its size and
+  its hash, and nothing else in the folder); a folder of the layout that is a link
+  is an error. The kind asks it before the supervisor is made, keeps each identity
+  found whole in the one worker (`OneWorker`), and asks again after damage. Its cost,
+  measured on the owner's Mac in the release profile: 256 MiB in about 117 ms, 2.2 GB
+  a second from the system's cache; written in ADR 0017, "Limits"
+  (`models::publishing::measure_what_verifying_an_installation_costs`, ignored in the
+  fast tier).
+- **`OneWorker::wait_for` waits for the supervisor too:** it answered false at once
+  while no request had made one, so a test that waited for a call to be written
+  could race the request it had just started.
+- **From the review of task P6a,** folded in here. (1) Which configs open a models
+  directory: the wiring asks the kind's own rule, `whizbang::pack::is_local` (no url,
+  no provider, no credential, and for a table of the kind `pack`, under `segment`);
+  `wired::with_the_catalogue_it_ships_the_binary_opens_and_makes_no_models_directory`
+  has two cases more, a table with a provider and no url and a `pack` table under
+  `fill`. (2) `OneWorker::starting` and `Launch::testing` (a launch of another entry
+  point with more on its command line) are compiled only with the feature `fakes`,
+  which only the tests' builds turn on (each crate's development dependency on
+  itself), and a launch's entry point and the rest of its command line are private;
+  so a source of the binary that names either does not build under `just smoke`
+  (`cargo build --release -p whizbang`). The text test stays as a tripwire. (3)
+  `pack::a_request_through_the_kind_is_bounded_by_its_runs_deadline_and_cancel_and_by_the_kinds_limit`
+  shows each bound against a later one of another kind (a limit of 1 s under a
+  deadline of 5 s, a deadline of 1 s under a limit of 5 s, and a cancel under that
+  limit), each within 4 s, so a bound not handed on fails an assertion in seconds.
+  (4) Two carry-over rows that lived only in the row P6a closed: an executor built
+  with a digest alone, and a call with two needs of one capability.
+- Two tests more than "Done when" names:
+  `models::publishing::an_installation_is_verified_by_its_identity_whatever_the_pointer_names_and_a_changed_file_is_not_whole`,
+  and the measurement, ignored.
 
 ### P7a. `run/4`: the device and the cache
 
@@ -2559,7 +2623,7 @@ Every row of `docs/carry-over.md` whose owner names 1C: thirty.
 | The roster and the backends given apart | P6a |
 | The models directory's lock by 20,000 tries | N2 (a time in place of a count) |
 | A folder of the layout that is a link | N2 (accepted in a line), N3b (`list` says so) |
-| Nothing reads an installation's files before they are loaded | P6b (D14) |
+| Nothing reads an installation's files before they are loaded | P6b (D14). **Built, and the row taken off the list** |
 | A model whose adapter this build lacks | N3a (the reason), N3b (the command) |
 | Parallel installs of models sharing a file | **1D, with the second catalogue entry.** 1C ships one entry, so nothing can share |
 | What a catalogue entry and a models directory held in rascal | N3a (title, platforms, where the directory is), N4 (the credential). The graph's external data: dropped in a line by R1 when the runtime is A, which loads no graph |
@@ -2568,7 +2632,7 @@ Every row of `docs/carry-over.md` whose owner names 1C: thirty.
 | One who attaches is paced by its caller | N3b |
 | `whizbang backends status` | P7b (a remote probe by the test kit's prober; a real one with milestone 2's sender) |
 | The real network client and the shipped catalogue | N1 (downloads), N3a, N3b, N5. **The sender, with `SendCheck::new().keeping_out(root)` over it in the binary, and a real prober: milestone 2, with the first provider's kind.** Nothing in 1C sends, and the row itself says a provider's sending follows there |
-| A local backend loads the installation it was handed under | P6b |
+| A local backend loads the installation it was handed under | P6b. **Built, and the row taken off the list** |
 | A backend made from a config sends with no credential | **Milestone 2, with the first provider's kind.** The kind `pack` sends nothing to a recipient |
 | A recipient is equal only with its upstreams | **Milestone 2,** for the same reason |
 | The encoder for sending stores its rows | **Milestone 2, before the first picture sent to a provider.** 1C sends no picture off the machine |

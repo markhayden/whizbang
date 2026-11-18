@@ -515,18 +515,24 @@ impl SegmentHandle {
             false => Classes::none(),
         };
         let charge_of = SegmentResponse::charge;
-        self.bounds
-            .send(capability, self.declaration(), classes, charge_of, || {
-                self.answered(request)
-            })
+        self.bounds.send(
+            capability,
+            self.declaration(),
+            classes,
+            charge_of,
+            |bounds| self.answered(request, bounds),
+        )
     }
 
-    /// Asks the backend, and holds its answer to the request.
-    fn answered(&self, request: &SegmentRequest) -> Result<SegmentResponse, Fault> {
+    /// Asks the backend, under the bounds of this one request, and holds its answer
+    /// to the request.
+    fn answered(
+        &self,
+        request: &SegmentRequest,
+        bounds: &Bounds,
+    ) -> Result<SegmentResponse, Fault> {
         {
-            let response = self
-                .backend
-                .segment(request, &self.bounds.of_one_request())?;
+            let response = self.backend.segment(request, bounds)?;
             // An answer came: when it is not taken, what it said it cost stands.
             let charge = response.charge;
             self.held(request, response)

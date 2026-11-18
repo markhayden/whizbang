@@ -2127,8 +2127,8 @@ fn with_the_catalogue_it_ships_the_binary_opens_and_makes_no_models_directory() 
     // folder (task N3c). Until task P6a this build had no kind of backend, so no
     // config could offer a backend that asks for a model. **Changed by task P6a,**
     // which gives the build the kind `pack`: a command that builds an executor opens
-    // a models directory only for a config that has a local backend, one that names
-    // no url
+    // a models directory only for a config that has a local backend, one the kind
+    // `pack` takes as local: no url, no provider, no credential, under `segment`
     // (`wired::the_binary_opens_a_models_directory_only_for_a_config_that_has_a_local_backend`).
     // Under a config with none, empty or of remote backends alone, it opens none and
     // asks nothing of where the platform's is, whatever names one. Of the `models`
@@ -2159,6 +2159,15 @@ fn with_the_catalogue_it_ships_the_binary_opens_and_makes_no_models_directory() 
     let remote = "[backends.fill]\nkind = \"service\"\nurl = \"https://fill.example\"\n\n\
                   [backends.judge]\nkind = \"pack\"\nmodel = \"sam3\"\nurl = \"https://judge.example\"\n";
     std::fs::write(world.config_path(), format!("{remote}\n{dir}")).unwrap();
+    run(&[]);
+    run(&["--models-dir", flagged.to_str().unwrap()]);
+    // Tables that name no url and that the kind `pack` refuses all the same: one that
+    // names a provider, and a `pack` table under `fill`. The wiring asks the kind's own
+    // rule, so neither opens a directory (from the review of task P6a: until then any
+    // table with no url did).
+    let refused = "[backends.segment]\nkind = \"acme\"\nprovider = \"acme\"\nmodel = \"sam3\"\n\n\
+                   [backends.fill]\nkind = \"pack\"\nmodel = \"sam3\"\n";
+    std::fs::write(world.config_path(), format!("{refused}\n{dir}")).unwrap();
     run(&[]);
     run(&["--models-dir", flagged.to_str().unwrap()]);
     assert!(!flagged.exists() && !configured.exists());

@@ -368,8 +368,8 @@ impl FillHandle {
             self.declaration(),
             classes,
             Painted::charge,
-            || {
-                let painted = self.backend.fill(request, &self.bounds.of_one_request())?;
+            |bounds| {
+                let painted = self.backend.fill(request, bounds)?;
                 let (expected, found) = (
                     (request.image.width(), request.image.height()),
                     (painted.width, painted.height),

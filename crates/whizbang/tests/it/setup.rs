@@ -710,12 +710,12 @@ fn the_worker_setup_starts_for_its_hello_is_given_a_lifetime_of_120_seconds_and_
     let launch = pack_setup::hello_launch(&place, &models);
     assert_eq!(launch.lifetime_s, 120);
     assert_eq!(
-        launch.module,
+        launch.module(),
         whizbang_backends::pack::worker::WORKER_MODULE
     );
     assert_eq!(launch.python, place.python);
     assert_eq!(launch.source, place.source);
-    assert!(launch.more.is_empty(), "no fault of the fakes");
+    assert!(launch.more().is_empty(), "no fault of the fakes");
     let out = setup(&models, None, &[]);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert!(text(&out.stdout).contains("lifetime 120 s"));

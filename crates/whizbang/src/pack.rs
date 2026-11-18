@@ -18,7 +18,9 @@
 //! Where either is missing a request is refused, `unavailable`, never sent, saying to
 //! run `whizbang setup`. The worker is told the models directory the wiring opened, the
 //! same one the supervisor reads the counts of removals in. A test hands the wiring a
-//! worker of its own ([`OneWorker::starting`]); the binary never does.
+//! worker of its own (`OneWorker::starting`); the binary never does, and cannot: that
+//! seam, and `Launch::testing` beneath it, are compiled only with the feature `fakes`,
+//! which only the tests' builds turn on.
 //!
 //! **A backend's table.** The capability `segment` alone; a model, which is a model's
 //! name; no url, no provider and no credential, since nothing is sent anywhere; and
@@ -41,20 +43,30 @@
 //! A roster over the inventory answers it under its installation's identity.
 //!
 //! **One request** goes to the queue with its run's cancellation and deadline, the
-//! kind's limit for a call and the lifetime of a worker it starts. The installation
-//! it names, and the count of removals it is queued with, are read in the models
-//! directory when it is sent, while the lease holds the installation the run was
-//! admitted with. (Task P6b names the installation of the run's own declaration and
-//! the count its hold read, in their place.)
+//! kind's limit for a call and the lifetime of a worker it starts (task P6a). It names
+//! the installation the run was handed its backend under, the identity its admission
+//! recorded, which its lease holds ([`Bounds::installation`]), and never the one the
+//! model's pointer names now; and it is queued with the count of removals that lease's
+//! hold read ([`Bounds::removals`]), never one read later (task P6b; decision D5). A
+//! request handed neither is refused, never sent ([`NOT_LEASED`]).
+//!
+//! **An installation's files are verified before it is loaded** (decision D14): the
+//! first request for an installation in a process reads each of its files whole and
+//! holds it to the size and the hash it was installed with. A damaged one is not
+//! loaded: the request is refused, `unavailable` and never sent, saying the model is
+//! damaged ([`DAMAGED`]), and it is read again at the next request, so that an install
+//! that repairs it is seen. One found whole is not read again in the process: a file
+//! damaged after that is loaded as it is, when the worker loads the model again.
 
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::Duration;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant};
 
 use whizbang_backends::models::{
-    Catalogue, Current, ModelName, ModelsDir, RemoveRefused, Removed, current, removals,
-    remove_and_tell,
+    Catalogue, InstallationId, ModelName, ModelsDir, RemoveRefused, Removed, remove_and_tell,
+    verify,
 };
 use whizbang_backends::pack::proto::{self, Answer, Ask, Scalar};
 use whizbang_backends::pack::queue::{Request, Sent, Status, Supervisor};
@@ -63,7 +75,7 @@ use whizbang_backends::pack::{Called, Ended, Launch, Limits, Worker};
 use whizbang_core::capability::{
     Bounds, Declaration, Fault, FaultKind, Instance, SegmentRequest, SegmentResponse, Segmenter,
 };
-use whizbang_core::config::{Kind, KindRefused, Setting, Table};
+use whizbang_core::config::{Backend, Kind, KindRefused, Setting, Table};
 use whizbang_core::contract::{Capability, Clock, Made, ModelIdentity, Secrets, SystemClock};
 
 use crate::pack_setup;
@@ -115,6 +127,17 @@ pub const BAD_FRACTION: &str =
 pub const BAD_OUTLINE: &str = "outline is a text";
 /// What it says of a model's setting whose text the protocol cannot carry.
 pub const BAD_TEXT: &str = "a text of a setting of the kind pack is 1 to 1024 printable ASCII characters with no space at either end, and no / or \\";
+/// What a request is told when a file of the installation it names is not the size or
+/// the hash it was installed with (decision D14): nothing was loaded.
+pub const DAMAGED: &str = "the model's installation is damaged: a file of it is not as it was installed; nothing was loaded and the request was not sent; install the model again with whizbang models get";
+/// What a request is told when the installation's files could not be read to verify.
+pub const UNVERIFIED: &str = "the files of the model's installation could not be read to verify them; nothing was loaded and the request was not sent";
+/// What a request is told that was not handed under an installation its lease held.
+pub const NOT_LEASED: &str =
+    "the request was not handed an installation of the model held by a lease; it was not sent";
+/// What a request is told when the one worker was told no models directory.
+const NO_DIRECTORY: &str =
+    "no models directory was opened for the pack's worker; the request was not sent";
 /// What it says of a model and features no declaration takes.
 const NOT_DECLARED: &str =
     "a backend of the kind pack cannot declare that model with those features";
@@ -145,6 +168,9 @@ struct Place {
 struct Held {
     place: Option<Place>,
     supervisor: Option<Arc<Supervisor>>,
+    /// The installations whose files were found whole in this process (decision D14):
+    /// each is verified once.
+    verified: BTreeSet<InstallationId>,
 }
 
 /// The one worker of a process (decision D4): what makes it, where it is, and its
@@ -153,6 +179,8 @@ struct Held {
 pub struct OneWorker {
     start: Start,
     held: Mutex<Held>,
+    /// Told when the supervisor is made.
+    made: Condvar,
 }
 
 impl std::fmt::Debug for OneWorker {
@@ -184,15 +212,20 @@ impl OneWorker {
         Arc::new(OneWorker {
             start,
             held: Mutex::default(),
+            made: Condvar::new(),
         })
     }
 
     /// A one worker that `start` makes: a test's, which starts the pack's fakes
-    /// through the test kit's guard. The binary never names this.
+    /// through the test kit's guard. It is built only with the feature `fakes`,
+    /// which only the tests' builds turn on (this crate's development dependency on
+    /// itself), so the binary `just smoke` and a release build make cannot name it.
+    #[cfg(feature = "fakes")]
     pub fn starting(start: Start) -> Arc<OneWorker> {
         Arc::new(OneWorker {
             start,
             held: Mutex::default(),
+            made: Condvar::new(),
         })
     }
 
@@ -239,22 +272,55 @@ impl OneWorker {
         Some(entry.features().map(str::to_owned).collect())
     }
 
-    /// The supervisor and the models directory, the supervisor made now if no
-    /// request made it before.
-    fn supervisor(&self, secrets: &Secrets) -> Result<(Arc<Supervisor>, ModelsDir), Fault> {
+    /// The supervisor, made now if no request made it before.
+    fn supervisor(&self, secrets: &Secrets) -> Result<Arc<Supervisor>, Fault> {
         let mut held = self.held();
         let Some(place) = held.place.clone() else {
-            let words =
-                "no models directory was opened for the pack's worker; the request was not sent";
-            return Err(Fault::new(FaultKind::Unavailable, words).not_sent());
+            return Err(Fault::new(FaultKind::Unavailable, NO_DIRECTORY).not_sent());
         };
         if let Some(supervisor) = &held.supervisor {
-            return Ok((supervisor.clone(), place.dir));
+            return Ok(supervisor.clone());
         }
         let worker = (self.start)(&place.root, secrets)?;
-        let supervisor = Arc::new(Supervisor::new(worker, place.dir.clone()));
+        let supervisor = Arc::new(Supervisor::new(worker, place.dir));
         held.supervisor = Some(supervisor.clone());
-        Ok((supervisor, place.dir))
+        self.made.notify_all();
+        Ok(supervisor)
+    }
+
+    /// Verifies the files of this installation of this model, the first time it is
+    /// asked in this process, before anything loads it (decision D14): each is read
+    /// whole and held to the size and the hash it was installed with
+    /// ([`whizbang_backends::models::verify`]). One found whole is not read again in
+    /// this process; one found damaged is read again the next time, so that an
+    /// install that repairs it is seen. The installation is the one the request's
+    /// lease holds, so nothing deletes it while it is read.
+    fn verified(
+        &self,
+        model: &ModelName,
+        installation: InstallationId,
+        secrets: &Secrets,
+    ) -> Result<(), Fault> {
+        let dir = {
+            let held = self.held();
+            if held.verified.contains(&installation) {
+                return Ok(());
+            }
+            let Some(place) = held.place.as_ref() else {
+                return Err(Fault::new(FaultKind::Unavailable, NO_DIRECTORY).not_sent());
+            };
+            place.dir.clone()
+        };
+        // Read without the lock: hashing a model's files takes time, and another
+        // request may verify the same installation meanwhile, to the same end.
+        match verify(&dir, model, installation, secrets) {
+            Ok(true) => {
+                self.held().verified.insert(installation);
+                Ok(())
+            }
+            Ok(false) => Err(Fault::new(FaultKind::Unavailable, DAMAGED).not_sent()),
+            Err(_) => Err(Fault::new(FaultKind::Unavailable, UNVERIFIED).not_sent()),
+        }
     }
 
     /// The supervisor, if a request made it.
@@ -275,12 +341,28 @@ impl OneWorker {
             .unwrap_or_default()
     }
 
-    /// Waits until the supervisor's status is as `until` says, or `within` has
-    /// passed on its clock ([`Supervisor::wait_for`]). False at once while no request
-    /// has made it.
+    /// Waits until a request has made the supervisor and its status is as `until`
+    /// says, or `within` has passed: on the machine's clock until the supervisor is
+    /// made, then on its own ([`Supervisor::wait_for`]). False when it passed first.
     pub fn wait_for(&self, within: Duration, until: &dyn Fn(&Status) -> bool) -> bool {
-        self.made()
-            .is_some_and(|supervisor| supervisor.wait_for(within, until))
+        let begun = Instant::now();
+        let mut held = self.held();
+        let supervisor = loop {
+            if let Some(supervisor) = &held.supervisor {
+                break supervisor.clone();
+            }
+            let left = within.saturating_sub(begun.elapsed());
+            if left.is_zero() {
+                return false;
+            }
+            held = self
+                .made
+                .wait_timeout(held, left)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        };
+        drop(held);
+        supervisor.wait_for(within.saturating_sub(begun.elapsed()), until)
     }
 
     /// Ends the supervisor, without waiting for the call in the worker
@@ -407,6 +489,27 @@ fn fraction(text: &str) -> bool {
             .is_ok_and(|number| (0.0..=1.0).contains(&number))
 }
 
+/// Whether a backend's table names a way off the machine: a url, a provider or a
+/// credential. The kind refuses such a table ([`NOT_LOCAL`]).
+fn names_a_way_out(backend: &Backend) -> bool {
+    backend.address().is_some()
+        || backend.provider().is_some()
+        || backend.credentials().next().is_some()
+}
+
+/// Whether a backend's table, under this capability, is a local backend's: it names
+/// no url, no provider and no credential, and, of the kind `pack`, it is under
+/// `segment`, the one capability the kind answers. The one rule the kind and the
+/// wiring share: a config opens a models directory only when one of its tables is
+/// such a one (`wiring::Over::installed`), and every table of the kind `pack` that is
+/// not such a one the kind refuses ([`NOT_LOCAL`], [`NOT_SEGMENT`]) before it would
+/// ask anything of a model. A table of another kind (a test's own kind of a local
+/// backend) is held to the first half alone.
+pub fn is_local(capability: Capability, backend: &Backend) -> bool {
+    let answered = backend.kind() != KIND || capability == Capability::Segment;
+    answered && !names_a_way_out(backend)
+}
+
 /// The kind `pack`, over the one worker of a process.
 pub struct PackKind {
     worker: Arc<OneWorker>,
@@ -428,10 +531,7 @@ impl Kind for PackKind {
             return Err(KindRefused::Table(NOT_SEGMENT));
         }
         let backend = table.backend();
-        let remote = backend.address().is_some()
-            || backend.provider().is_some()
-            || backend.credentials().next().is_some();
-        if remote {
+        if names_a_way_out(backend) {
             return Err(KindRefused::Table(NOT_LOCAL));
         }
         let model = backend.model().ok_or(KindRefused::Table(NO_MODEL))?;
@@ -472,20 +572,21 @@ impl Segmenter for Local {
         &self.declaration
     }
 
+    /// One request, answered from the installation the run was handed its backend
+    /// under, which its lease holds, and queued with the count of removals that
+    /// lease's hold read (task P6b): never the installation the model's pointer names
+    /// now, and never a count read later. Its files are verified before anything
+    /// loads it.
     fn segment(&self, request: &SegmentRequest, bounds: &Bounds) -> Result<SegmentResponse, Fault> {
-        let not_sent = |kind, words: &str| Fault::new(kind, words).not_sent();
-        let (supervisor, dir) = self.worker.supervisor(&self.secrets)?;
-        let installation = match current(&dir, &self.model, &self.secrets) {
-            Ok(Current::Installed(record)) => record.identity(),
-            _ => {
-                let words = "the model's installation cannot be read in the models directory; the request was not sent";
-                return Err(not_sent(FaultKind::Unavailable, words));
-            }
+        let not_leased = || Fault::new(FaultKind::Rejected, NOT_LEASED).not_sent();
+        let (Some(handed), Some(removals)) = (bounds.installation(), bounds.removals()) else {
+            return Err(not_leased());
         };
-        let removals = removals(&dir, &self.model, &self.secrets).map_err(|_| {
-            let words = "the model's count of removals cannot be read; the request was not sent";
-            not_sent(FaultKind::Rejected, words)
-        })?;
+        let installation = InstallationId::from_text(&handed.to_string(), &self.secrets)
+            .map_err(|_| not_leased())?;
+        self.worker
+            .verified(&self.model, installation, &self.secrets)?;
+        let supervisor = self.worker.supervisor(&self.secrets)?;
         let ask = Ask::segment(request, self.model.clone(), installation);
         let queued = Request {
             model: self.model.clone(),

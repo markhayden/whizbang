@@ -159,6 +159,8 @@ pub struct Sent {
     pub kind: &'static str,
     /// The model it names.
     pub model: ModelName,
+    /// The installation of the model it names (plan 1C, task P6b).
+    pub installation: InstallationId,
     /// The process id of the worker it was written to.
     pub worker: u32,
 }
@@ -558,10 +560,21 @@ impl Supervisor {
         ask: Ask,
         limits: &Limits,
     ) -> Result<Called, Box<Failed>> {
-        let (kind, model) = match &ask {
-            Ask::Unload { model, .. } => ("unload", model.clone()),
-            Ask::Load { model, .. } => ("load", model.clone()),
-            Ask::Segment { model, .. } => ("segment", model.clone()),
+        let (kind, model, installation) = match &ask {
+            Ask::Unload {
+                model,
+                installation,
+            } => ("unload", model.clone(), *installation),
+            Ask::Load {
+                model,
+                installation,
+                ..
+            } => ("load", model.clone(), *installation),
+            Ask::Segment {
+                model,
+                installation,
+                ..
+            } => ("segment", model.clone(), *installation),
         };
         {
             let mut shared = self.lock();
@@ -585,6 +598,7 @@ impl Supervisor {
                     number,
                     kind,
                     model: model.clone(),
+                    installation,
                     worker,
                 });
                 shared.worker = Some(worker);
