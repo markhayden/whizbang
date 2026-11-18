@@ -3,8 +3,8 @@
 //! test kit's fake, since the binary ships no fake model
 //! (`pack::the_shipped_binary_offers_no_fake_model_and_starts_no_entry_point_that_takes_a_fault`);
 //! and the real binary, through the test kit's launcher, for what it says of the run
-//! and when no segmenter is configured. The picture is brought into the store as the
-//! core's canonical file of an image, by `whizbang store import`.
+//! and when no segmenter is configured. The picture is brought into the store by
+//! `whizbang store import --picture`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,12 +12,10 @@ use std::sync::Arc;
 use whizbang::door::{self, SegmentAsked};
 use whizbang::pack::OneWorker;
 use whizbang::wiring::{self, Over};
-use whizbang_core::artifact::{Image, ImageRole, Origin, Step};
 use whizbang_core::capability::{Declaration, Price, feature};
 use whizbang_core::config::{Kind, KindRefused, Table};
 use whizbang_core::contract::{Made, ModelIdentity};
 use whizbang_core::egress::Recipient;
-use whizbang_core::identity::{DecodeLimits, Projection, Topology};
 use whizbang_core::store::Store;
 use whizbang_core::store::fs::RealFs;
 use whizbang_testkit::capabilities::FakeSegmenter;
@@ -65,30 +63,26 @@ impl Kind for Finding {
     }
 }
 
-/// A store with the fixture picture in it, brought in by `whizbang store import`: the
-/// store's path and the image's identity as the import printed it.
+/// A store with the fixture picture in it, brought in by `whizbang store import
+/// --picture`: the store's path and the image's identity as the import printed it.
 fn with_picture(dir: &Scratch) -> (PathBuf, String) {
-    let origin = Origin::new(Step::new("fixture", "1")).unwrap();
-    let image = Image::new(
-        FIXTURE.to_vec(),
-        Projection::Flat,
-        Topology::Bounded,
-        ImageRole::Picture,
-        origin,
-        &DecodeLimits::default(),
-    )
-    .unwrap();
-    let file = dir.path().join("circle.image");
-    std::fs::write(&file, image.to_bytes()).unwrap();
+    let file = dir.path().join("circle.png");
+    std::fs::write(&file, FIXTURE).unwrap();
     let root = dir.path().join("store");
     let imported = whizbang(
-        &["store", "import", file.to_str().unwrap(), "--create"],
+        &[
+            "store",
+            "import",
+            "--picture",
+            file.to_str().unwrap(),
+            "--create",
+        ],
         &root,
     );
     assert_eq!(imported.code, Some(0), "{}", imported.err);
     let line = imported.out.lines().last().unwrap();
     let id = line.strip_prefix("imported image ").expect("an image");
-    assert_eq!(id, image.id().0.to_string());
+    assert!(id.starts_with("sha256:"), "{id}");
     // The owner's allowance, which the admission of a call to a remote backend
     // reserves the bound of its price from: the fake states a thousandth of a dollar,
     // and is paid nothing.
