@@ -18,7 +18,7 @@ use crate::contract::{Cancellation, Capability, text};
 use crate::egress::{Classes, DataClass};
 
 use super::fault::{Raw, clean};
-use super::{Bounds, Charge, Declaration, Fault, FaultKind, Picture, Unfit, feature};
+use super::{Bounds, Charge, Declaration, Fault, FaultKind, Picture, Served, Unfit, feature};
 
 /// The most messages a conversation holds.
 pub const MESSAGE_LIMIT: usize = 1024;
@@ -666,6 +666,14 @@ pub struct Turn {
     raw_id: Option<Raw>,
     /// What the request cost, when the backend's answer said.
     charge: Option<Charge>,
+    /// Where it was answered, as far as the backend said.
+    served: Served,
+}
+
+impl super::Answer for Turn {
+    fn served(&self) -> &Served {
+        &self.served
+    }
 }
 
 impl PartialEq for Turn {
@@ -676,6 +684,7 @@ impl PartialEq for Turn {
                 turn.usage,
                 turn.request_id.clone(),
                 turn.charge,
+                turn.served.clone(),
             )
         };
         self.parts == other.parts && all(self) == all(other)
@@ -690,6 +699,7 @@ impl std::fmt::Debug for Turn {
             .field("usage", &self.usage)
             .field("request_id", &self.request_id)
             .field("charge", &self.charge)
+            .field("served", &self.served)
             .finish()
     }
 }
@@ -778,7 +788,21 @@ impl Turn {
             raw_stop,
             raw_id,
             charge: None,
+            served: Served::unknown(),
         })
+    }
+
+    /// The same answer, saying where it was answered: the device and whether a cache
+    /// answered (ADR 0006, "What a response says of where it was answered"). An
+    /// answer that says neither is recorded as saying neither.
+    pub fn served_as(mut self, served: Served) -> Turn {
+        self.served = served;
+        self
+    }
+
+    /// Where it was answered, as far as it said.
+    pub fn served(&self) -> &Served {
+        &self.served
     }
 
     /// The same turn, with what the request cost: the charge the provider's answer

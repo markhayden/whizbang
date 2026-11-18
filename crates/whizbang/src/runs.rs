@@ -74,6 +74,12 @@ fn shown(text: &str) -> String {
     format!("{}{more}", cut.escape_debug())
 }
 
+/// A text the record's reader already bounds, whole and escaped: a model's names, at
+/// most 128 ASCII characters each, and a device's, at most 32.
+fn whole(text: &str) -> String {
+    text.escape_debug().to_string()
+}
+
 /// A time in milliseconds since the Unix epoch, as a date and a time of day in UTC.
 pub fn utc(ms: u64) -> String {
     let (days, in_day) = (ms / 86_400_000, ms % 86_400_000);
@@ -509,7 +515,14 @@ fn text_of(record: &RunRecord) -> String {
             output.artifact
         ));
     }
-    // Each capability request, in the order they were sent, with how long it took.
+    // Each capability request, in the order they were sent, with how long it took and
+    // where it was answered (ADR 0025): the device, and whether a cache answered, each
+    // `not known` where the answer did not say, as no answer of a `run/3` record did.
+    // That is not `unknown`, which says a group of the record was lost.
+    //
+    // A model's names are printed whole, escaped: the reader holds each to 128 ASCII
+    // characters, and a local model's version is its installation's identity, 71
+    // characters, which a cut would leave unable to tell two installations apart.
     line(format!(
         "models: {}",
         counted(Lost::Models, record.models().len())
@@ -521,12 +534,21 @@ fn text_of(record: &RunRecord) -> String {
             .durations
             .get(at)
             .map_or(0, |duration| duration.ms);
+        let device = model
+            .device
+            .as_deref()
+            .map_or_else(|| "not known".to_owned(), whole);
+        let cache = match model.cached {
+            Some(true) => "cached",
+            Some(false) => "not cached",
+            None => "cache not known",
+        };
         line(format!(
-            "  {}\t{} {} {}\t{}\t{took} ms",
+            "  {}\t{} {} {}\t{}\t{took} ms\tdevice {device}\t{cache}",
             model.capability.name(),
-            shown(&model.backend),
-            shown(&model.model),
-            shown(&model.version),
+            whole(&model.backend),
+            whole(&model.model),
+            whole(&model.version),
             ended.as_str().unwrap_or_default()
         ));
     }

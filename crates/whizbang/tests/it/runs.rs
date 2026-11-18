@@ -617,7 +617,7 @@ fn a_refusal_is_printed_as_the_core_says_it_once_escaped_and_whole() {
     assert!(
         shown
             .err
-            .contains("a record of another version: run/1, and this build reads run/3"),
+            .contains("a record of another version: run/1, and this build reads run/4"),
         "{}",
         shown.err
     );
@@ -625,7 +625,7 @@ fn a_refusal_is_printed_as_the_core_says_it_once_escaped_and_whole() {
     let listed = whizbang(&["list"], &root);
     assert_eq!(listed.code, Some(0), "{}", listed.err);
     let expected = "older\trecord not read: a record of another version: run/1, and this build \
-                    reads run/3";
+                    reads run/4, run/3 and run/2";
     assert!(
         listed.text().lines().any(|line| line == expected),
         "{}",
@@ -1164,6 +1164,50 @@ fn runs_show_says_how_much_of_what_a_run_cost_is_of_requests_that_no_answer_sett
     has_line(
         &text,
         "  request 1\tunresolved\theld $0.0005\tsettled $0.0005\tunresolved $0.0005",
+    );
+}
+
+#[test]
+fn show_prints_an_installations_identity_whole_and_two_installations_are_told_apart() {
+    // Two requests of one run to one local model, answered from two installations
+    // whose identities differ in their last seven digits alone: what a cut at 64
+    // characters left the same. Each is printed whole, with the device that answered
+    // and the cache the kind does not have (`run/4`, ADR 0025).
+    let first = format!("sha256:{}{}", "a".repeat(57), "1234567");
+    let second = format!("sha256:{}{}", "a".repeat(57), "7654321");
+    assert_eq!(first.len(), 71);
+    assert_eq!(first[..64], second[..64]);
+    let model = |identity: &str, device: &str| {
+        format!(
+            r#"{{"capability":"segment","backend":"pack","model":"sam3","version":"{identity}","device":"{device}","cached":false,"ended":"answered"}}"#
+        )
+    };
+    let record = ordinary_record()
+        .replacen(r#""record":"run/3""#, r#""record":"run/4""#, 1)
+        .replace(
+            r#""durations":[{"of":"request","index":0,"start_ms":1001,"ms":1}]"#,
+            r#""durations":[{"of":"request","index":0,"start_ms":1001,"ms":1},{"of":"request","index":1,"start_ms":1002,"ms":1}]"#,
+        )
+        .replace(
+            r#"{"capability":"fill","backend":"fake","model":"m","version":"1","device":null,"cached":null,"ended":"answered"}"#,
+            &format!("{},{}", model(&first, "mps"), model(&second, "cpu")),
+        );
+    let text = shown_of(record.as_bytes());
+    has_line(&text, "models: 2");
+    has_line(
+        &text,
+        &format!("  segment\tpack sam3 {first}\tanswered\t1 ms\tdevice mps\tnot cached"),
+    );
+    has_line(
+        &text,
+        &format!("  segment\tpack sam3 {second}\tanswered\t1 ms\tdevice cpu\tnot cached"),
+    );
+    // A `run/3` record is shown as it was read: where its request was answered is
+    // not known, and nothing of it is said to be lost.
+    let text = shown_of(ordinary_record().as_bytes());
+    has_line(
+        &text,
+        "  fill\tfake m 1\tanswered\t1 ms\tdevice not known\tcache not known",
     );
 }
 

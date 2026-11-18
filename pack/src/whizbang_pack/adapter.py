@@ -100,3 +100,11 @@ class Adapter:
         """The bytes of a frame the worker is about to write for this adapter's call. Only a
         fake that answers with a malformed frame changes them."""
         return chunks
+
+
+def runtime_device():
+    """The device the worker's work runs on while no model is resident: what its hello
+    states, and each result while nothing is loaded (plan 1C, task P7a). The pack's core
+    imports no runtime (D10), so its work runs on the CPU, as `Adapter.device` says until a
+    model's adapter names the device its runtime gave it."""
+    return Adapter.device

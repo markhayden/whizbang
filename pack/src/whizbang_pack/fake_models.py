@@ -1,9 +1,11 @@
-"""The six fake models (docs/plans/m1c-local-pack.md, D3), answered by model name. They
-take no third-party package and open no file. The shipped catalogue names none of them.
+"""The fake models (docs/plans/m1c-local-pack.md, D3, and `fake-mps` of task P7a),
+answered by model name. They take no third-party package and open no file. The shipped
+catalogue names none of them.
 
 | Model | What it does |
 |---|---|
 | `fake-ok` | Answers a segment request with the masks the request determines (`FakeOk`) |
+| `fake-mps` | Answers as `fake-ok` does, and names the device `mps` in each result |
 | `fake-wait` | Says it is waiting, and waits until its call is cancelled |
 | `fake-deaf` | Says it is waiting, and waits, ignoring a cancel, until the worker ends |
 | `fake-exit` | Ends the worker's process inside the call, with `EXIT_CODE` |
@@ -89,6 +91,14 @@ class FakeOk(Adapter):
         return "unloaded"
 
 
+class FakeMps(FakeOk):
+    """`fake-ok`, on another device than the worker's own: as a model its runtime placed on
+    the Apple GPU would be, so that a test can tell the device a result names from the one
+    a hello names."""
+
+    device = "mps"
+
+
 class FakeWait(FakeOk):
     features = frozenset(("phrase",))
 
@@ -136,6 +146,7 @@ class FakeBad(FakeOk):
 
 MODELS = {
     "fake-ok": FakeOk,
+    "fake-mps": FakeMps,
     "fake-wait": FakeWait,
     "fake-deaf": FakeDeaf,
     "fake-exit": FakeExit,

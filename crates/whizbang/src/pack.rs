@@ -50,6 +50,10 @@
 //! hold read ([`Bounds::removals`]), never one read later (task P6b; decision D5). A
 //! request handed neither is refused, never sent ([`NOT_LEASED`]).
 //!
+//! **Its answer says where it was answered** (task P7a; ADR 0025): on the device the
+//! worker's result names, and never from a cache, since the kind has none. The run's
+//! record keeps both.
+//!
 //! **An installation's files are verified before it is loaded** (decision D14): the
 //! first request for an installation in a process reads each of its files whole and
 //! holds it to the size and the hash it was installed with. A damaged one is not
@@ -71,9 +75,10 @@ use whizbang_backends::models::{
 use whizbang_backends::pack::proto::{self, Answer, Ask, Scalar};
 use whizbang_backends::pack::queue::{Request, Sent, Status, Supervisor};
 use whizbang_backends::pack::worker::CALL_LIMIT;
-use whizbang_backends::pack::{Called, Ended, Launch, Limits, Worker};
+use whizbang_backends::pack::{Called, Ended, Launch, Limits, Said, Worker};
 use whizbang_core::capability::{
-    Bounds, Declaration, Fault, FaultKind, Instance, SegmentRequest, SegmentResponse, Segmenter,
+    Bounds, Declaration, Device, Fault, FaultKind, Instance, SegmentRequest, SegmentResponse,
+    Segmenter, Served,
 };
 use whizbang_core::config::{Backend, Kind, KindRefused, Setting, Table};
 use whizbang_core::contract::{Capability, Clock, Made, ModelIdentity, Secrets, SystemClock};
@@ -347,6 +352,38 @@ impl OneWorker {
             }
             Err(_) => Err(Fault::new(FaultKind::Unavailable, UNVERIFIED).not_sent()),
         }
+    }
+
+    /// Starts a worker as a request would, hears its hello, and stops it, waiting for
+    /// it to end (decision D7): what `whizbang backends status --probe` asks (task
+    /// P7b). It is not the supervisor's: no request is sent to it, and it is gone
+    /// before this returns. Refused, with nothing started: while the worker was told
+    /// no models directory, and once a request has made the supervisor, since one
+    /// process has one worker (decision D4). Otherwise, what the worker said, or the
+    /// fault that says why it did not say hello.
+    pub fn hello(&self, secrets: &Secrets) -> Result<Said, Fault> {
+        let root = {
+            let held = self.held();
+            if held.supervisor.is_some() {
+                let words = "the pack's worker of this process is running already; one process has one worker";
+                return Err(Fault::new(FaultKind::Unavailable, words).not_sent());
+            }
+            let Some(place) = held.place.as_ref() else {
+                let words =
+                    "no models directory was opened for the pack's worker; it was not started";
+                return Err(Fault::new(FaultKind::Unavailable, words).not_sent());
+            };
+            place.root.clone()
+        };
+        let mut worker = (self.start)(&root, secrets)?;
+        let ready = worker.ready();
+        let said = worker.said().cloned();
+        worker.stop();
+        ready?;
+        said.ok_or_else(|| {
+            let words = "the pack's worker was started and said no hello";
+            Fault::new(FaultKind::Unavailable, words).not_sent()
+        })
     }
 
     /// The supervisor, if a request made it.
@@ -635,8 +672,10 @@ impl Segmenter for Local {
 }
 
 /// The core's response to a request, from what the worker answered: each instance
-/// under the query it answers, in the order the wire held them. An answer the core
-/// cannot take is malformed, as an answer.
+/// under the query it answers, in the order the wire held them, answered on the
+/// device the worker's result names, and never from a cache: the kind has none, and
+/// says so (plan 1C, task P7a; ADR 0025). An answer the core cannot take is
+/// malformed, as an answer.
 fn answered(request: &SegmentRequest, called: Called) -> Result<SegmentResponse, Fault> {
     let malformed = || {
         let words = "the pack's worker answered with an instance the request cannot hold";
@@ -660,7 +699,11 @@ fn answered(request: &SegmentRequest, called: Called) -> Result<SegmentResponse,
         .map_err(|_| malformed())?;
         answers.get_mut(place).ok_or_else(malformed)?.push(instance);
     }
-    Ok(SegmentResponse::new(answers))
+    // The codec held the result's device to the protocol's rule, which is a device's:
+    // one that is not is refused here all the same, as an answer the core cannot take.
+    let device = Device::named(&called.device).map_err(|_| malformed())?;
+    let served = Served::unknown().on(device).cached(false);
+    Ok(SegmentResponse::new(answers).served_as(served))
 }
 
 #[cfg(test)]

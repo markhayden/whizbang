@@ -183,7 +183,9 @@ class Hello(unittest.TestCase):
         self.assertEqual(answer["id"], "h1")
         self.assertEqual(answer["version"], "pack/1")
         self.assertEqual(answer["role"], "worker")
-        self.assertIsNone(answer["device"], "no runtime was asked yet")
+        # The device its work runs on before a model names its own: the pack's core
+        # imports no runtime, so the CPU (plan 1C, task P7a).
+        self.assertEqual(answer["device"], "cpu")
         self.assertGreaterEqual(answer["threads"], 3)
 
     def test_a_first_frame_that_is_no_hello_and_a_frame_that_is_refused_each_end_the_conversation(self):

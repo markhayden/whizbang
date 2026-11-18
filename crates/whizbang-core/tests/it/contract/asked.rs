@@ -1965,8 +1965,9 @@ fn what_is_no_model_no_duration_and_no_judge_entry_is_refused_by_the_types_and_b
     let wrong: [(&str, Json); 19] = [
         ("/models/0/capability", json!("paint")),
         ("/models/0/ended", json!("lost")),
-        ("/models/0/device", json!("gpu")),
-        ("/models/0/cached", json!(false)),
+        // A device and a cache are what `run/4` holds, of their own kinds (ADR 0025).
+        ("/models/0/device", json!(7)),
+        ("/models/0/cached", json!("no")),
         ("/models/0/model", json!(7)),
         ("/time/durations/0/of", json!("turn")),
         ("/time/durations/0/ms", json!(-1)),

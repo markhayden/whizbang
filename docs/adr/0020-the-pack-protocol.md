@@ -5,6 +5,10 @@ binding its picture is under, an instance names the binding its plane belongs to
 the handle refuses an answer whose planes name another
 Date: 2026-11-15
 Spec: section 4, "The Python pack"; section 10, "Two HTTP surfaces"; section 13
+Amended: 2026-11-17, with task P7a (ADR 0025). Added: the worker of the pack's core
+states `cpu` as its device in its hello, the device its work runs on while no model is
+resident, since the core imports no runtime; a hello's device may still be null for a
+worker that cannot say. Nothing of the frames changed.
 Amended: 2026-11-17, from the review of task P2 (the pack's own codec). No byte and no
 reason of `pack/1` changed: whizbang's reader is as it was, and these words state what it
 does where the record was silent or said otherwise. Changed: "A text of the protocol"

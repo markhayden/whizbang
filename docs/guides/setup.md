@@ -79,10 +79,13 @@ On success, the folder it installed in, the extra, and what the worker said of i
 ```
 the pack is installed in <models dir>/pack
 extra: torch
-the worker it made said hello (lifetime 120 s): device none, 3 threads
+the worker it made said hello (lifetime 120 s): device cpu, 3 threads
 ```
 
-The device is `none` until the worker has a model loaded.
+The device is the one the worker's work runs on before a model is loaded: `cpu`, since
+the pack's core uses no runtime. A loaded model's own device, which its runtime gives it,
+is in each result the worker sends, and in the record of each run it answers
+(`whizbang runs show`).
 
 Exit codes: 0 done; 1 not done, and the complaint says why (with the last lines `uv` wrote,
 where it wrote some); 2 the command line was not understood; 3 what was to be printed could
