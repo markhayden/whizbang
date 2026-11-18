@@ -1,13 +1,9 @@
 # Checkpoint 1D note
 
-Checkpoint 1D, "segment coverage", is complete once its last pull requests, U1 and V1,
-are merged. Its plans are `m2a-first-slices.md` (closed) and `m2b-checkpoint-1d.md`. This
-note was written by task V1 from its branch, on `main` at 574bd7d (the merge of T1, #183)
-with T1, F1 and Q1 in it; U1 was in review.
-
-**U1 (a user's weights and a user's adapter): not yet merged when this note was written.
-What it delivers is added to this note, under "What shipped" and the clauses, by the pull
-request that lands second, once U1 is merged.**
+Checkpoint 1D, "segment coverage", is complete once its last pull request, V1, is
+merged. Its plans are `m2a-first-slices.md` (closed) and `m2b-checkpoint-1d.md`. This note
+was written by task V1 from its branch, with `main` at cd11448 (the merge of U1, #185)
+merged in: Q1, F1, T1 and U1 are all in it.
 
 ## What whizbang can do at this checkpoint
 
@@ -28,7 +24,7 @@ fixtures of both and a measured tolerance say when two answers agree.
 | #182 | Q1 | Point, box and pick on SAM 3, from the command line |
 | #181 | F1 | Fixes found in use: the env file, the judge's spend and printed reason, CI on Linux in two jobs |
 | #183 | T1 | Tiny and the `add-adapter` skill |
-| U1 | U1 | **Listed here once U1 lands** |
+| #185 | U1 | A user's weights and a user's adapter, through `whizbang models adapter add`: the adapter's SHA-256 bound to its installation; a user's catalogue refused if it names a shipped model; every origin it names checked against `[egress.recipients]` |
 | This one | V1 | The device setting, the parity fixtures, the tolerance (ADR 0027), the timings, a backend's diagnostics to its run, this note |
 
 ## The clauses of the spec's row, each with its evidence
@@ -90,6 +86,22 @@ CI run; the parity fixtures add three fast tests of about 0.6 s together.
   runtime.
 - **Diagnostics are text.** What a backend says beside its answer is kept as it said it,
   cut at 4,096 characters; nothing reads it as fields.
+
+## Open follow-ups
+
+From U1's review, for milestone 2:
+
+- a named test that a user's catalogue using a shipped model's name is refused whole;
+- the worker refusing a load with no record when the installation's folder holds
+  `files/`;
+- ADR 0017 or the guide saying plainly that a user's adapter runs with the worker's full
+  privileges: its descriptors, its environment, its file system.
+
+And open beside them:
+
+- ship the Apache-2.0 licence text itself before weights are hosted for customers;
+- a test that the worker's map of shipped models (`SHIPPED` in
+  `pack/src/whizbang_pack/worker.py`) and the shipped catalogue cannot drift apart.
 
 ## What moved to the carry-over list
 
