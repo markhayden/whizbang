@@ -39,6 +39,12 @@ pub enum Command {
         /// none, the config's default judge answers.
         #[arg(long, value_name = "NAME")]
         judge: Option<String>,
+        /// What the edit was to do and what it had to keep, in words, such as "change
+        /// only the sky; the parrot's tail keeps its colour". The judge holds the edit
+        /// to it: what it names as kept and is not is a failure. With none, nothing is
+        /// named as kept, and a change is noted but does not fail the check.
+        #[arg(long, value_name = "TEXT")]
+        brief: Option<String>,
         #[command(flatten)]
         at: Where,
         #[command(flatten)]
@@ -67,6 +73,7 @@ fn run_at(
             source,
             candidate,
             judge,
+            brief,
             at,
             under,
             request_id,
@@ -78,6 +85,7 @@ fn run_at(
                 source,
                 candidate,
                 judge: judge.as_deref(),
+                brief: brief.as_deref(),
                 request_id: request_id.as_deref(),
             };
             let root = at.root().to_path_buf();

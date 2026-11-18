@@ -310,6 +310,8 @@ pub struct CheckAsked<'a> {
     /// The judge, by its name in the config's `[backends.judge]` tables, when one is
     /// named.
     pub judge: Option<&'a str>,
+    /// What the edit was to do and keep, as data for the judge, when one is given.
+    pub brief: Option<&'a str>,
     /// The caller's id for the request, when it gave one.
     pub request_id: Option<&'a str>,
 }
@@ -347,6 +349,9 @@ pub fn check(
         .argument("max_output_tokens", Value::Integer(CHECK_OUTPUT_TOKENS));
     if let Some(judge) = asked.judge {
         call = call.argument("judge", Value::text(judge));
+    }
+    if let Some(brief) = asked.brief {
+        call = call.argument("brief", Value::text(brief));
     }
     let (run, mut text, _) = completed(executor, call, asked.request_id)?;
     match read(&run) {
