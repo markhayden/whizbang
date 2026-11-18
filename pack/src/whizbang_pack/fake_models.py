@@ -98,6 +98,12 @@ class FakeMps(FakeOk):
 
     device = "mps"
 
+    def segment(self, request, call):
+        # What it says beside its answer (plan 1D, task V1): two lines, as a model's
+        # adapter may say.
+        found = determined(request)
+        return found, "%d instances on mps\nas determined" % len(found)
+
 
 class FakeWait(FakeOk):
     features = frozenset(("phrase",))

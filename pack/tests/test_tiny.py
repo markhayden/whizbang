@@ -82,8 +82,9 @@ class StandIn:
         self.planes = 0
         self.unloaded = False
 
-    def load(self, files):
+    def load(self, files, device="auto"):
         self.files = files
+        self.asked_device = device
 
     def detect(self, width, height, samples, phrases):
         self.detected.append(list(phrases))
@@ -263,10 +264,15 @@ class Prompts(unittest.TestCase):
         self.assertEqual(runtime.asked[1][1], [(3, 5), (8, 5)])
         self.assertEqual((found[0].samples, said), (halves, "1 instances on mps; 1 retried, 0 retries kept"))
         # Settings that break their rules are refused at the load.
-        for wrong in ({"threshold": "1.5"}, {"pad": "-0.1"}, {"min_cover": "most"}, {"outline": "largest"}, {"pad": 0.1}):
+        for wrong in ({"threshold": "1.5"}, {"pad": "-0.1"}, {"min_cover": "most"}, {"outline": "largest"}, {"pad": 0.1}, {"device": "mps"}):
             with self.assertRaises(adapter.Fault) as refused:
                 loaded(StandIn(), wrong)
             self.assertEqual(refused.exception.fault, "rejected")
+        # The setting `device` reaches the runtime (plan 1D, task V1): `auto` when not given.
+        for settings, asked in (({}, "auto"), ({"device": "cpu"}, "cpu"), ({"device": "auto"}, "auto")):
+            runtime = StandIn()
+            loaded(runtime, settings)
+            self.assertEqual(runtime.asked_device, asked)
 
 
 def fake_modules(calls):

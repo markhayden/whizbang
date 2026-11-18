@@ -1,0 +1,109 @@
+{
+  "adapter": "owlv2-sam2",
+  "adapter_revision": "1",
+  "answers": [
+    [
+      {
+        "box": [
+          60.0,
+          81.0,
+          201.0,
+          261.0
+        ],
+        "iou": 0.9872686862945557,
+        "plane": "shapes-phrase-1.png",
+        "score": 0.6815761923789978
+      }
+    ],
+    [
+      {
+        "box": [
+          60.0,
+          81.0,
+          201.0,
+          261.0
+        ],
+        "iou": 0.9803624749183655,
+        "plane": "shapes-point-1.png",
+        "score": 0.9803624749183655
+      },
+      {
+        "box": [
+          61.0,
+          81.0,
+          421.0,
+          261.0
+        ],
+        "iou": 0.6955834627151489,
+        "plane": "shapes-point-2.png",
+        "score": 0.6955834627151489
+      },
+      {
+        "box": [
+          61.0,
+          82.0,
+          428.0,
+          260.0
+        ],
+        "iou": 0.3252367377281189,
+        "plane": "shapes-point-3.png",
+        "score": 0.3252367377281189
+      }
+    ],
+    [
+      {
+        "box": [
+          280.0,
+          90.0,
+          421.0,
+          231.0
+        ],
+        "iou": 0.9816504120826721,
+        "plane": "shapes-box-1.png",
+        "score": 0.9816504120826721
+      },
+      {
+        "box": [
+          280.0,
+          90.0,
+          421.0,
+          231.0
+        ],
+        "iou": 0.956668496131897,
+        "plane": "shapes-box-2.png",
+        "score": 0.956668496131897
+      },
+      {
+        "box": [
+          280.0,
+          90.0,
+          422.0,
+          231.0
+        ],
+        "iou": 0.9476000070571899,
+        "plane": "shapes-box-3.png",
+        "score": 0.9476000070571899
+      }
+    ]
+  ],
+  "box": [
+    270.0,
+    80.0,
+    430.0,
+    240.0
+  ],
+  "device": "mps",
+  "height": 320,
+  "max_instances": 3,
+  "model": "tiny",
+  "model_revision": "2026-11.1",
+  "phrase": "triangle",
+  "picture": "shapes",
+  "picture_digest": "sha256:8c355a79ce966b81b71894161b34977ae4ab2c509bd3f873c12be2121f613cfa",
+  "picture_file": "fixtures/parity/segment/pictures/shapes.png",
+  "point": [
+    130.0,
+    200.0
+  ],
+  "width": 480
+}

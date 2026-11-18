@@ -11,6 +11,8 @@ tm=scripts/test-models.sh
 ev=scripts/model-evidence.sh
 
 expect_fail "no models directory named" "no models directory is named" env -u WHIZBANG_MODELS_DIR "$tm"
+expect_fail "a part the tier has not" "names a part of the tier" env -u WHIZBANG_MODELS_DIR "$tm" everything
+expect_fail "two parts" "names a part of the tier" env -u WHIZBANG_MODELS_DIR "$tm" parity coverage
 expect_fail "an empty name" "no models directory is named" env WHIZBANG_MODELS_DIR= "$tm"
 expect_fail "a relative path" "must be an absolute path" env WHIZBANG_MODELS_DIR=models "$tm"
 mkdir -p "$tmp/models-only/models"

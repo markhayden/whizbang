@@ -24,7 +24,26 @@ import os
 import re
 
 FEATURES = ("phrase", "point", "box")
+# Where a model's adapter places it, by the setting `device` (plan 1D, task V1): `auto`, the
+# GPU where its runtime has one and the CPU otherwise, which is the default; or `cpu`.
+DEVICES = ("auto", "cpu")
 _FILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+-]{0,127}\Z")
+
+
+def device_of(settings):
+    """The setting `device`, `auto` when none is given; `rejected` for one it is not."""
+    given = settings.get("device", "auto")
+    if given not in DEVICES:
+        raise Fault("rejected", "device is auto or cpu")
+    return given
+
+
+def device_name(torch, device):
+    """The name of the device to ask PyTorch for, by the setting `device`: the Apple GPU
+    (`mps`) under `auto` where the runtime has it, and the CPU otherwise."""
+    if device == "auto" and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
 
 
 class Cancelled(Exception):

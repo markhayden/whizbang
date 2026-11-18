@@ -933,6 +933,7 @@ by the pack's worker, through the one supervisor of the process. Its table:
 |---|---|---|---|
 | `threshold`, `pad`, `min_cover` | A model's setting: rascal's adapters took these (`docs/carry-over.md`) | A text of a number from 0 to 1, digits with one point at most, as `"0.2"`: a setting is never a number with a fraction | Not sent; the adapter's own |
 | `outline` | A model's setting, rascal's rule for an outline | A text | Not sent; the adapter's own |
+| `device` | A model's setting (plan 1D, task V1): where the adapter places the model | `"auto"`, the GPU where the runtime has one and the CPU otherwise, or `"cpu"`; anything else is refused (`pack::a_device_the_kind_does_not_know_is_refused_when_the_config_is_read`) | Not sent; the adapter's own, `auto` |
 | `call_limit_s` | The kind's limit for a call (D7) | A whole number of seconds from 1 to 120, the supervisor's own limit for a call | 120 |
 | `max_lifetime_s` | The lifetime, `--max-lifetime-s`, of a worker a request of the backend starts | A whole number of seconds from 1 to 31,536,000, a year, the most the worker takes | 86,400, a day |
 

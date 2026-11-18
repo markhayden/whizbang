@@ -50,7 +50,13 @@ test-group = 'pack-workers'
 
 # The model tier (docs/plans/m1c-local-pack.md, task R2b): the tests that load a real model,
 # run by `just test-models` (scripts/test-models.sh), never in the fast tier or CI. A load
-# has 120 seconds and a request 60 (the supervisor's limits); a test is ended at 5 minutes,
-# and the two, one at a time, at 10.
+# has 120 seconds and a request 60 (the supervisor's limits); a test is ended at 5 minutes.
 [profile.model-tier]
 slow-timeout = { period = "300s", terminate-after = 1 }
+
+# The parity test (plan 1D, task V1) asks three pictures three times on the GPU and three on
+# the CPU, of SAM 3 and of Tiny: 36 requests and four loads, SAM 3's CPU ones 5 to 10
+# seconds each. It is ended at 10 minutes.
+[[profile.model-tier.overrides]]
+filter = 'test(/^parity::/)'
+slow-timeout = { period = "600s", terminate-after = 1 }

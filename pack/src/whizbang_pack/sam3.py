@@ -38,14 +38,15 @@ What it does with a point or a box (task Q1; ADR 0022, "Consequences"):
 **The runtime.** `Torch` is the one place that touches PyTorch and the library, imported
 only when a model is loaded, so the pack's core and its tests import neither (D10). It asks
 the runtime for 8 threads in each of its two pools before any parallel work, takes the
-Apple GPU (`mps`) when the runtime has it and the CPU otherwise, places the model and its
+Apple GPU (`mps`) when the runtime has it and the CPU otherwise, or the CPU whatever the
+runtime has when the setting `device` says `cpu` (plan 1D, task V1), places the model and its
 processor on that device by name (`.to(torch.device(...))`, never `device_map`), loads only
 from the installation's own folder (`local_files_only=True`; the worker's environment also
 sets `HF_HUB_OFFLINE=1`), and reports the device the model's parameters are on. The tests
 hand the adapter a stand-in for it.
 
-**Settings** (the kind `pack`'s, sent in `load`): `threshold`, a text of a number from 0 to
-1, 0.5 when none is given (the library's model card asks with 0.5, and so did task R1's
+**Settings** (the kind `pack`'s, sent in `load`): `device`, `auto` or `cpu` (above);
+`threshold`, a text of a number from 0 to 1, 0.5 when none is given (the library's model card asks with 0.5, and so did task R1's
 trial). `pad`, `min_cover` and `outline` are the settings of rascal's adapters that traced a
 detector's box with a second model; SAM 3 draws each mask itself, so this adapter takes them
 and uses none, and its load says so.
@@ -59,7 +60,7 @@ install links from the installation of revision `1` and does not download again 
 
 import os
 
-from whizbang_pack.adapter import Adapter, Cancelled, Fault, Found
+from whizbang_pack.adapter import Adapter, Cancelled, Fault, Found, device_name, device_of
 
 REVISION = "2"
 # The threads of each of the runtime's two pools (plan 1C, "Rules"; ADR 0022).
@@ -153,9 +154,10 @@ class Sam3(Adapter):
 
     def load(self, installation, settings, call):
         threshold = threshold_of(settings)
+        device = device_of(settings)
         runtime = self._runtime() if self._runtime is not None else Torch.imported()
         folder = os.path.dirname(installation.file("config.json"))
-        runtime.load(folder)
+        runtime.load(folder, device)
         self.model = runtime
         self.folder = folder
         self.tracker = False
@@ -198,7 +200,13 @@ class Sam3(Adapter):
             else:
                 found.extend(self._place(model, places, place, kind, given, width, height, most, call))
         found.sort(key=_fixed)
-        return found, "%d instances on %s" % (len(found), self.device)
+        said = "%d instances on %s" % (len(found), self.device)
+        # What the GPU holds for the process, its two models among it (plan 1D, task V1),
+        # which macOS does not count as resident.
+        held = model.memory()
+        if held is not None:
+            said += "; %d MiB on the GPU" % (held // (1024 * 1024))
+        return found, said
 
     def _phrase(self, model, features, place, phrase, width, height, most, call):
         answer, candidates = model.candidates(features, phrase)
@@ -272,11 +280,10 @@ class Torch:
         if torch.get_num_interop_threads() != POOL_THREADS:
             torch.set_num_interop_threads(POOL_THREADS)
 
-    def load(self, folder):
+    def load(self, folder, asked="auto"):
         torch = self.torch
         self._pools()
-        name = "mps" if torch.backends.mps.is_available() else "cpu"
-        device = torch.device(name)
+        device = torch.device(device_name(torch, asked))
         model = self.transformers.Sam3Model.from_pretrained(folder, local_files_only=True)
         model = model.to(device)
         model.eval()
@@ -359,6 +366,13 @@ class Torch:
             full = torch.nn.functional.interpolate(low, size=size, mode="bilinear", align_corners=False)[0, 0]
             on = (full > MASK_THRESHOLD).to(torch.uint8) * 255
         return bytes(on.cpu().numpy().tobytes())
+
+    def memory(self):
+        """The bytes the GPU's driver holds for the process, while the model is on the GPU;
+        `None` on the CPU."""
+        if self.device != "mps":
+            return None
+        return int(self.torch.mps.driver_allocated_memory())
 
     def unload(self):
         self.model = None

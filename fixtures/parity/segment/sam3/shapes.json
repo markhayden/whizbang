@@ -1,0 +1,109 @@
+{
+  "adapter": "sam3",
+  "adapter_revision": "2",
+  "answers": [
+    [
+      {
+        "box": [
+          60.71293115615845,
+          80.96036911010742,
+          200.60205459594727,
+          260.8333396911621
+        ],
+        "iou": null,
+        "plane": "shapes-phrase-1.png",
+        "score": 0.7728428840637207
+      }
+    ],
+    [
+      {
+        "box": [
+          60.0,
+          81.0,
+          200.0,
+          261.0
+        ],
+        "iou": 0.9826258420944214,
+        "plane": "shapes-point-1.png",
+        "score": 0.9826258420944214
+      },
+      {
+        "box": [
+          61.0,
+          83.0,
+          421.0,
+          261.0
+        ],
+        "iou": 0.47859808802604675,
+        "plane": "shapes-point-2.png",
+        "score": 0.47859808802604675
+      },
+      {
+        "box": [
+          67.0,
+          138.0,
+          201.0,
+          261.0
+        ],
+        "iou": 0.40047594904899597,
+        "plane": "shapes-point-3.png",
+        "score": 0.40047594904899597
+      }
+    ],
+    [
+      {
+        "box": [
+          280.0,
+          90.0,
+          421.0,
+          231.0
+        ],
+        "iou": 0.9811346530914307,
+        "plane": "shapes-box-1.png",
+        "score": 0.9811346530914307
+      },
+      {
+        "box": [
+          280.0,
+          90.0,
+          421.0,
+          231.0
+        ],
+        "iou": 0.9205030798912048,
+        "plane": "shapes-box-2.png",
+        "score": 0.9205030798912048
+      },
+      {
+        "box": [
+          279.0,
+          90.0,
+          422.0,
+          232.0
+        ],
+        "iou": 0.9151504039764404,
+        "plane": "shapes-box-3.png",
+        "score": 0.9151504039764404
+      }
+    ]
+  ],
+  "box": [
+    270.0,
+    80.0,
+    430.0,
+    240.0
+  ],
+  "device": "mps",
+  "height": 320,
+  "max_instances": 3,
+  "model": "sam3",
+  "model_revision": "2026-11.2",
+  "phrase": "triangle",
+  "picture": "shapes",
+  "picture_digest": "sha256:8c355a79ce966b81b71894161b34977ae4ab2c509bd3f873c12be2121f613cfa",
+  "picture_file": "fixtures/parity/segment/pictures/shapes.png",
+  "point": [
+    130.0,
+    200.0
+  ],
+  "width": 480
+}

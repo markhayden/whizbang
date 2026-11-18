@@ -76,8 +76,9 @@ class StandIn:
         self.planes = []
         self.unloaded = False
 
-    def load(self, folder):
+    def load(self, folder, device="auto"):
         self.folder = folder
+        self.asked_device = device
 
     def load_tracker(self, folder):
         self.tracker_folders.append(folder)
@@ -105,6 +106,9 @@ class StandIn:
         if answer == ("place",):
             return box_plane(self.place_answers[index][1])
         return box_plane(self.answers[answer][index][1])
+
+    def memory(self):
+        return None
 
     def unload(self):
         self.unloaded = True
@@ -343,7 +347,9 @@ def fake_torch(mps):
         get_num_interop_threads=lambda: pools["inter"],
         set_num_interop_threads=setter("inter"),
         backends=types.SimpleNamespace(mps=types.SimpleNamespace(is_available=is_available)),
-        mps=types.SimpleNamespace(empty_cache=lambda: calls.append(("empty_cache",))),
+        mps=types.SimpleNamespace(
+            empty_cache=lambda: calls.append(("empty_cache",)), driver_allocated_memory=lambda: 3 * 1024 * 1024 * 1024
+        ),
     )
 
 
@@ -441,6 +447,31 @@ class Device(unittest.TestCase):
         self.assertIn(("to", "cpu"), torch.calls)
         self.assertNotIn(("device", "mps"), torch.calls)
 
+    def test_a_device_of_cpu_runs_on_the_cpu_and_says_so(self):
+        # Plan 1D, task V1: the setting `device` of `cpu` places the model on the CPU where
+        # the GPU is there, and the GPU is never asked about; `auto` is the default.
+        torch = fake_torch(mps=True)
+        made, said = loaded(sam3.Torch(torch, fake_transformers(torch)), {"device": "cpu"})
+        self.assertEqual((made.device, said), ("cpu", "loaded on cpu; threshold 0.5"))
+        self.assertIn(("device", "cpu"), torch.calls)
+        self.assertIn(("to", "cpu"), torch.calls)
+        self.assertNotIn(("mps_available",), torch.calls)
+        self.assertNotIn(("device", "mps"), torch.calls)
+        # The tracker goes where the model went.
+        made.model.load_tracker(made.folder)
+        self.assertEqual([call for call in torch.calls if call[0] == "to"], [("to", "cpu"), ("to", "cpu")])
+        # `auto` is the GPU where there is one, as with no setting.
+        torch = fake_torch(mps=True)
+        made, said = loaded(sam3.Torch(torch, fake_transformers(torch)), {"device": "auto"})
+        self.assertEqual((made.device, said), ("mps", "loaded on mps; threshold 0.5"))
+        # Any other is refused before the runtime is asked anything.
+        for given in ("mps", "gpu", "CPU", ""):
+            torch = fake_torch(mps=True)
+            with self.assertRaises(adapter.Fault) as refused:
+                loaded(sam3.Torch(torch, fake_transformers(torch)), {"device": given})
+            self.assertEqual((refused.exception.fault, refused.exception.sentence), ("rejected", "device is auto or cpu"))
+            self.assertEqual(torch.calls, [])
+
     def test_the_worker_says_the_adapters_device_in_its_results_and_its_own_in_its_hello(self):
         # Before a model is loaded the worker's work runs on the CPU (task P7a): its hello
         # says `cpu`. Once `sam3` is loaded, every result names the device its runtime gave.
@@ -454,6 +485,20 @@ class Device(unittest.TestCase):
         unload = {"type": "request", "id": 4, "kind": "unload", "model": "sam3", "installation": INSTALLATION}
         self.assertEqual(work._perform(worker.Call(work, unload))["device"], "cpu")
         self.assertIn(("empty_cache",), torch.calls)
+
+    def test_on_the_gpu_a_segment_says_what_the_gpu_holds(self):
+        # Plan 1D, task V1: what the driver holds for the process, in MiB, on the GPU only.
+        torch = fake_torch(mps=True)
+        runtime = sam3.Torch(torch, fake_transformers(torch))
+        made, _ = loaded(runtime)
+        self.assertEqual(runtime.memory(), 3 * 1024 * 1024 * 1024)
+        runtime.device = "cpu"
+        self.assertIsNone(runtime.memory())
+        stand_in = StandIn({"a": [(0.9, [0, 0, 4, 4])]})
+        stand_in.memory = lambda: 5 * 1024 * 1024 + 7
+        made, _ = loaded(stand_in)
+        _, said = made.segment(request(phrases("a")), Asked())
+        self.assertEqual(said, "1 instances on mps; 5 MiB on the GPU")
 
     def test_without_the_runtime_installed_a_load_is_unavailable_and_says_to_install_it(self):
         made = sam3.Sam3()
