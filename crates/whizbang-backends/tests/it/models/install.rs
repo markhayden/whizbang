@@ -7,12 +7,14 @@
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use whizbang_backends::models::{
     Carrying, CatalogueFile, Current, Entry, InstallRefused, InstallationRecord, ModelsDir,
     all_held, current, install_carrying, verify,
 };
-use whizbang_core::contract::Cancellation;
+use whizbang_core::contract::{Cancellation, Clock};
 use whizbang_core::store::fs::RealFs;
 use whizbang_testkit::barrier::Barriers;
 use whizbang_testkit::downloads::FakeDownloader;
@@ -36,6 +38,59 @@ pub(super) fn entry_of(name: &str, catalogue: &str) -> Entry {
         })
         .collect();
     Entry::new(parts, &none()).unwrap()
+}
+
+/// A clock that notes when it is asked to let the pace of a shared file's lock pass:
+/// the moment an install is seen waiting for another's lock.
+struct Waits(Arc<AtomicBool>);
+
+impl Clock for Waits {
+    fn now_ms(&self) -> u64 {
+        0
+    }
+
+    fn pause(&self, span: Duration) {
+        if span == Duration::from_millis(10) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+        std::thread::yield_now();
+    }
+}
+
+/// Installs, sharing, on the real disk, in a directory opened with a clock that says
+/// when the install waits for the lock of a shared file.
+fn sharing_seen(
+    root: &Path,
+    entry: &Entry,
+    fake: &FakeDownloader,
+    waiting: &Arc<AtomicBool>,
+) -> Result<InstallationRecord, InstallRefused> {
+    let dir = ModelsDir::open(Arc::new(RealFs), root, Arc::new(Waits(waiting.clone()))).unwrap();
+    let carrying = Carrying {
+        downloader: fake,
+        credential: None,
+        shares: true,
+    };
+    install_carrying(
+        &dir,
+        entry,
+        &adapter(),
+        &carrying,
+        &Cancellation::new(),
+        &none(),
+    )
+}
+
+/// Waits, up to ten seconds, until the flag is set.
+fn seen(flag: &AtomicBool) {
+    let until = Instant::now() + Duration::from_secs(10);
+    while !flag.load(Ordering::SeqCst) {
+        assert!(
+            Instant::now() < until,
+            "the second install was not seen waiting"
+        );
+        std::thread::yield_now();
+    }
 }
 
 /// Installs, sharing, on the real disk.
@@ -168,10 +223,16 @@ fn two_installs_sharing_a_file_at_once_download_it_once() {
     // The second, of another model with the same files, starts now: it waits for the
     // first's locks, and downloads nothing.
     let second = Arc::new(serving_both());
+    let waiting = Arc::new(AtomicBool::new(false));
     let waiter = {
-        let (fake, root) = (second.clone(), root.clone());
-        threads::spawn(move || sharing(&root, &entry_of("other", "2026-11.1"), &fake))
+        let (fake, root, waiting) = (second.clone(), root.clone(), waiting.clone());
+        threads::spawn(move || {
+            sharing_seen(&root, &entry_of("other", "2026-11.1"), &fake, &waiting)
+        })
     };
+    // Let go only once the second is seen waiting for the first's locks.
+    seen(&waiting);
+    assert!(second.requests().is_empty());
     barriers.release("mid");
     let tiny = installer.join().unwrap().unwrap();
     let other = waiter.join().unwrap().unwrap();
@@ -222,10 +283,14 @@ fn two_installs_sharing_a_file_at_once_download_it_once() {
     };
     barriers.arrived("mid", 1);
     let second = Arc::new(serving_both());
+    let waiting = Arc::new(AtomicBool::new(false));
     let waiter = {
-        let (fake, root) = (second.clone(), root.clone());
-        threads::spawn(move || sharing(&root, &entry_of("other", "2026-11.1"), &fake))
+        let (fake, root, waiting) = (second.clone(), root.clone(), waiting.clone());
+        threads::spawn(move || {
+            sharing_seen(&root, &entry_of("other", "2026-11.1"), &fake, &waiting)
+        })
     };
+    seen(&waiting);
     cancellation.cancel();
     barriers.release("mid");
     assert_eq!(installer.join().unwrap(), Err(InstallRefused::Cancelled));
