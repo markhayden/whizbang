@@ -73,11 +73,12 @@ value() {
 # The run kept from nothing: see the top.
 scripts/test-models.sh
 for round in 1 2 3; do
-  rm -f "$work/phrase-$round.txt" "$work/second-$round.txt" "$work/places-$round.txt" "$work/watch-$round.txt"
+  rm -f "$work/phrase-$round.txt" "$work/second-$round.txt" "$work/places-$round.txt" "$work/tiny-$round.txt" "$work/watch-$round.txt"
   WHIZBANG_MEMORY_REPORT=$work/watch-$round.txt scripts/test-models.sh
   cp "$shared/out/phrase.txt" "$work/phrase-$round.txt"
   cp "$shared/out/second.txt" "$work/second-$round.txt"
   cp "$shared/out/places.txt" "$work/places-$round.txt"
+  cp "$shared/out/tiny.txt" "$work/tiny-$round.txt"
 done
 
 commit=$(git rev-parse HEAD)
@@ -91,6 +92,10 @@ source=$(sha pack/src/whizbang_pack/sam3.py)
 fixture=$(sha docs/results/m1c-local-pack/circle.png)
 revision=$(sed -n 's/.*named("sam3", "\([^"]*\)", true).*/\1/p' crates/whizbang/src/wiring.rs)
 [ -n "$revision" ] || { echo "model-evidence: the binary's table names no shipped sam3" >&2; exit 1; }
+tiny_source=$(sha pack/src/whizbang_pack/owlv2_sam2.py)
+tiny_revision=$(sed -n 's/.*named("owlv2-sam2", "\([^"]*\)", true).*/\1/p' crates/whizbang/src/wiring.rs)
+[ -n "$tiny_revision" ] || { echo "model-evidence: the binary's table names no shipped owlv2-sam2" >&2; exit 1; }
+tiny_installation=$(value "$work/tiny-1.txt" installation)
 p1=$work/phrase-1.txt
 installation=$(value "$p1" installation)
 device=$(value "$p1" device)
@@ -110,6 +115,10 @@ toml=docs/results/m1c-local-pack.toml
   echo "adapter = \"sam3\""
   echo "adapter_revision = \"$revision\""
   echo "adapter_source = \"$source\""
+  echo "tiny_adapter = \"owlv2-sam2\""
+  echo "tiny_adapter_revision = \"$tiny_revision\""
+  echo "tiny_adapter_source = \"$tiny_source\""
+  echo "tiny_installation = \"$tiny_installation\""
   echo "fixture = \"$fixture\""
   echo "phrase = \"circle\""
   echo "installation = \"$installation\""
@@ -153,6 +162,22 @@ toml=docs/results/m1c-local-pack.toml
     echo "box_box = \"$(value "$l" box_1_box)\""
     echo "box_mask = \"$(value "$l" box_1_mask)\""
     echo "second_mask = \"$(value "$s" second_1_mask)\""
+    t=$work/tiny-$round.txt
+    echo "tiny_phrase_run = \"$(value "$t" phrase_run)\""
+    echo "tiny_places_run = \"$(value "$t" places_run)\""
+    echo "tiny_device = \"$(value "$t" device)\""
+    echo "tiny_phrase_instances = $(value "$t" phrase_instances)"
+    echo "tiny_phrase_seconds = \"$(value "$t" phrase_seconds)\""
+    echo "tiny_phrase_score = \"$(value "$t" phrase_1_score)\""
+    echo "tiny_phrase_box = \"$(value "$t" phrase_1_box)\""
+    echo "tiny_phrase_mask = \"$(value "$t" phrase_1_mask)\""
+    echo "tiny_places_seconds = \"$(value "$t" places_seconds)\""
+    echo "tiny_point_instances = $(value "$t" point_instances)"
+    echo "tiny_point_score = \"$(value "$t" point_1_score)\""
+    echo "tiny_point_box = \"$(value "$t" point_1_box)\""
+    echo "tiny_box_instances = $(value "$t" box_instances)"
+    echo "tiny_box_score = \"$(value "$t" box_1_score)\""
+    echo "tiny_box_box = \"$(value "$t" box_1_box)\""
     echo "peak_resident_kib = $(value "$w" peak_resident_kib)"
     echo "most_threads_in_one_process = $(value "$w" most_threads)"
     echo "most_processes = $(value "$w" most_processes)"
@@ -192,6 +217,8 @@ md=docs/results/m1c-local-pack.md
   echo "| Lock file | \`$lock\` |"
   echo "| Adapter | \`sam3\`, revision \`$revision\`, source \`$source\` |"
   echo "| Installation | \`$installation\` |"
+  echo "| Tiny's adapter (plan 1D, task T1) | \`owlv2-sam2\`, revision \`$tiny_revision\`, source \`$tiny_source\` |"
+  echo "| Tiny's installation | \`$tiny_installation\` |"
   echo "| Device | \`$device\`, in every run's record |"
   echo "| CPU fallback | Off: the worker's environment does not set \`PYTORCH_ENABLE_MPS_FALLBACK\` |"
   echo "| Hosts contacted | None: the worker runs with \`HF_HUB_OFFLINE=1\` and loads with \`local_files_only=True\` from the installation's folder |"
@@ -219,6 +246,19 @@ md=docs/results/m1c-local-pack.md
   row "Box 300 80 540 320: candidates" box_instances places
   row "Its best predicted IoU" box_1_score places
   row "Its box" box_1_box places
+  row "Run of Tiny's phrase (plan 1D, task T1)" phrase_run tiny
+  row "Tiny's device" device tiny
+  row "Tiny's phrase: instances" phrase_instances tiny
+  row "Its phrase's request, s" phrase_seconds tiny
+  row "Best instance's score" phrase_1_score tiny
+  row "Its box" phrase_1_box tiny
+  row "Tiny's point and box in one request, s" places_seconds tiny
+  row "Point at 420 200: candidates" point_instances tiny
+  row "Its best predicted IoU" point_1_score tiny
+  row "Its box" point_1_box tiny
+  row "Box 300 80 540 320: candidates" box_instances tiny
+  row "Its best predicted IoU" box_1_score tiny
+  row "Its box" box_1_box tiny
   printf '| %s | %s | %s | %s |\n' "Peak resident memory of the tree, KiB" \
     "$(value "$work/watch-1.txt" peak_resident_kib)" "$(value "$work/watch-2.txt" peak_resident_kib)" "$(value "$work/watch-3.txt" peak_resident_kib)"
   printf '| %s | %s | %s | %s |\n' "Most threads in one process" \
@@ -241,6 +281,12 @@ md=docs/results/m1c-local-pack.md
   echo "whole tree (cargo, the test, the worker); the weights are in the GPU's memory, which"
   echo "macOS does not count as resident. The thread count is the most in one process, the"
   echo "worker's runtime pools at 8 each."
+  echo
+  echo "**Tiny** (plan 1D, task T1): the model \`tiny\`, the adapter \`owlv2-sam2\`, asked the same"
+  echo "phrase, and then the point and the loose box in one request, through the same wiring, by a"
+  echo "test of its own with its own worker and one load for the two requests. OWLv2 finds the"
+  echo "boxes for the phrase and SAM 2.1 Hiera-Tiny draws each mask; the point and the box are"
+  echo "SAM 2.1's alone, and each answers its candidates, best predicted IoU first."
 } >"$md"
 echo "model-evidence: wrote $toml and $md"
 }

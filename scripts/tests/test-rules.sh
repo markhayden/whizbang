@@ -194,7 +194,7 @@ granted() {
         .claude/settings.json) continue ;;
         .claude/agents/builder.md) keys="name description tools " tools=$builder_tools ;;
         .claude/agents/reviewer.md) keys="name description tools " tools=$reviewer_tools ;;
-        .claude/skills/kickoff/SKILL.md | .claude/skills/port-module/SKILL.md | .claude/skills/review-merge/SKILL.md)
+        .claude/skills/add-adapter/SKILL.md | .claude/skills/kickoff/SKILL.md | .claude/skills/port-module/SKILL.md | .claude/skills/review-merge/SKILL.md)
           keys="name description "
           ;;
         *) echo "in a .claude folder, and not a file this test knows: $f"; continue ;;

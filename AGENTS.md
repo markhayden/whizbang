@@ -133,6 +133,7 @@ as plain text. Each names its inputs, its commands and its hand-back format.
 |---|---|---|
 | `kickoff` | Builder | Starting any task from the plan: make the worktree, build with tests first, push, open the pull request, wait for CI, hand back the head commit; and again after a review asks for a change |
 | `port-module` | Builder | A task that brings code from an old repo: on top of `kickoff`, what to port, rewrite or drop, the tests to bring, and how the source is named |
+| `add-adapter` | Builder | A task that adds a local model: on top of `kickoff`, its adapter in the pack, its catalogue entry, its conformance run, its model test, its licence files and the origins to ask the owner for |
 | `review-merge` | Orchestrator | After the reviewer's verdict: check that it allows the merge and that the head has not moved, test the merged result, run both scans over `base..head`, merge with a merge commit, confirm it, clean up |
 
 The orchestrator does not review its own build: a branch it wrote is reviewed by a reviewer

@@ -861,6 +861,37 @@ catalogue is. It holds one model, `sam3`:
   record"), and so a second download of 3.44 GB. Linux is added with the runtime on
   Linux (1D) under a new revision.
 
+**A second model, `tiny`** (plan 1D, task T1, 2026-11-18): OWLv2 finds boxes for a phrase
+and SAM 2.1 Hiera-Tiny draws each mask, through the adapter `owlv2-sam2` at revision `1`
+(`pack/src/whizbang_pack/owlv2_sam2.py`), on the same runtime and lock as `sam3`, with
+the features `phrase`, `point` and `box`, on `macos-arm64` alone.
+
+- **Its files** are those of two public repositories of the Hub, each at a commit:
+  `google/owlv2-base-patch16` at `2a1560802f8cf3c408fec9b809d705f56a2f7146` and
+  `facebook/sam2.1-hiera-tiny` at `de431c4043854a71d8101e17995dfe596bf101a5`: each
+  `model.safetensors` and the small files its runtime reads, never `pytorch_model.bin` or
+  `sam2.1_hiera_tiny.pt`, which are pickles. 13 files, 777.4 MB.
+- **A prefix for each model.** Both repositories hold a `config.json` and a
+  `model.safetensors`, and a catalogue's file names are unique and hold no folder (above,
+  "Names"), so each file is named under its model's prefix (`owlv2.config.json`,
+  `sam2.model.safetensors`), and its `from` is still the repository's own path. The
+  adapter builds each model from its config file and its weights file by name, with the
+  network off, never from a folder the library would look up.
+- **The licence** is Apache-2.0 for both. Neither repository holds a licence file; each
+  model card states it (`license: apache-2.0`), and the two cards are installed as
+  `owlv2.README.md` and `sam2.README.md`.
+- **No token**: the repositories are public, so the entry has no `needs_token`. The
+  origins are those of `sam3`, the Hub and `us.aws.cdn.hf.co`, where the Hub moved both
+  large files' downloads when they were pinned; the owner approved that host for the
+  Hub's storage on 2026-11-16 ("no need to approve").
+- **How the sizes and hashes were fixed.** Every size is the one the Hub's public
+  listing of the commit states, read once without a token. Each small file's SHA-256 is
+  what `whizbang models pin` worked out from the bytes it fetched once; each
+  `model.safetensors`'s is the listing's `lfs.oid`, which these public repositories do
+  not mask, so the weights were downloaded once, by the first `get`, which held them to
+  it. `owlv2.merges.txt` is byte for byte `sam3`'s `merges.txt`: an install links it from
+  an installation that holds it (above, "A file shared between installations").
+
 ### How a record is read
 
 Code (`json.rs`). Stored bytes are not trusted, a catalogue's and an installation

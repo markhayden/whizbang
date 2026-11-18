@@ -283,7 +283,7 @@ logic.
    its weights file by name, with the hub's network off, never from a folder the
    library would look up.
 
-- [ ] Done when:
+- [x] Done when:
   `test_tiny.Phrases.test_owlv2_boxes_over_the_threshold_are_padded_cut_and_drawn_in_the_fixed_order`,
   `test_tiny.Prompts.test_a_box_and_a_point_are_drawn_by_sam2_alone`,
   `test_tiny.Prompts.test_the_outline_rule_and_least_cover_are_the_models_settings`,
@@ -296,6 +296,17 @@ logic.
   empty, shown in the hand-back (no existing tool's logic edited),
   `evidence::the_committed_record_names_the_adapters_revision_and_the_lock_the_tree_has`
   on the retaken record, and the skill in `AGENTS.md`'s list.
+  **Reworded with the task:** "the conformance suite green for `tiny`'s declared features
+  against the fake models" is
+  `test_tiny.Conformance.test_the_worker_answers_tinys_declared_features_within_the_contract`:
+  a load and segments of each declared feature, alone and together, through the worker,
+  over stand-ins for OWLv2 and SAM 2.1, each result held by `kit.conforming`
+  (`pack/tests/kit.py`), the contract of `pack/1` any adapter's answer keeps; the Rust
+  suite's cases run the pack's fake models, which answer by model name and are not
+  Tiny's. "`models::tiny_answers_a_phrase_a_point_and_a_box_on_the_mac`" is
+  `model_tier::tiny_answers_a_phrase_a_point_and_a_box_on_the_mac`, where the model
+  tier's tests are (`just test-models` runs `model_tier::` alone). The skill in
+  `AGENTS.md`'s list is held by `scripts/tests/test-skills.sh`.
 
 ### What the owner provides (T)
 
@@ -312,6 +323,15 @@ need to approve"); for Tiny it is asked again below, since the approval named SA
 either repository has no files `transformers` reads, the builder stops: another host for
 Tiny's weights is a new origin and the owner's to approve. No upstream, no probe; CI
 contacts nothing.
+
+**Recorded by task T1 (2026-11-18).** The owner's approval of 2026-11-16 ("no need to
+approve") covers `https://huggingface.co` and its storage host for Tiny's files, both
+repositories being public: no token. On the day they were pinned both repositories' large
+files were moved to `https://us.aws.cdn.hf.co`, that host, and to no other; the commits
+pinned are `2a1560802f8cf3c408fec9b809d705f56a2f7146` (`google/owlv2-base-patch16`) and
+`de431c4043854a71d8101e17995dfe596bf101a5` (`facebook/sam2.1-hiera-tiny`), both
+Apache-2.0 by their model cards. The weights were downloaded once, by `whizbang models
+get tiny` into a models directory of the builder's own.
 
 ## U1. A user's weights and a user's adapter (medium)
 
@@ -409,6 +429,8 @@ them, each with a test against a fake model."
 
 1. I need Hugging Face's storage host approved for Tiny's files (public repositories,
    Apache-2.0, no sign-in), as you approved it for SAM 3 on 2026-11-16: yes/no.
+   **Answered:** yes, by the approval of 2026-11-16 ("no need to approve"), as recorded
+   under "Origins (T)".
 2. I need to know if Linux comes into 1D on the CPU, with `download.pytorch.org` as a new
    origin for a CPU-only `torch` (no NVIDIA package): yes/no. No leaves Linux out of 1D,
    on its carry-over row.

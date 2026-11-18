@@ -5,16 +5,19 @@ own, the models directory. `whizbang models` lists the models this build knows, 
 one, and removes one. Why it is built this way is in
 `docs/adr/0017-the-models-directory.md`.
 
-**Today the catalogue holds one model, SAM 3** (`sam3`). The catalogue is the list of
-models a build can install, and it is built into the binary
+**Today the catalogue holds two models, SAM 3** (`sam3`) **and Tiny** (`tiny`: OWLv2
+finds boxes for a phrase and SAM 2.1 Hiera-Tiny draws each mask). The catalogue is the
+list of models a build can install, and it is built into the binary
 (`crates/whizbang/src/catalogue.json`; task N5 of checkpoint 1C,
-`docs/plans/m1c-local-pack.md`). On a Mac with nothing installed yet:
+`docs/plans/m1c-local-pack.md`, and task T1 of checkpoint 1D,
+`docs/plans/m2b-checkpoint-1d.md`). On a Mac with nothing installed yet:
 
 ```text
 $ whizbang models list
-models: 1
+models: 2
 directory: the one in this machine's data folder for whizbang, not made yet
 sam3	SAM 3	SAM License	3.4 GB	macos-arm64	not installed
+tiny	Tiny (OWLv2 and SAM 2.1 Hiera-Tiny)	Apache-2.0	777.4 MB	macos-arm64	not installed
 ```
 
 **SAM 3 installs, and is ready once installed.** `get` installs its files, and `list` then
@@ -27,6 +30,13 @@ call that asks for it is refused before any model is loaded.
 SAM 3's files are behind Hugging Face's sign-in: see "A model whose files need a
 token" below. Its entry names `macos-arm64` alone; on Linux it is listed as not
 running on this platform, and `get` refuses it.
+
+**Tiny installs the same way, with no sign-in**: its two repositories are public
+(Apache-2.0), so `whizbang models get tiny` asks for no token. It answers phrases,
+points and boxes with the adapter `owlv2-sam2`, on the same runtime as SAM 3; it too
+runs on the Mac alone. A file it shares with SAM 3 by its size and hash (the
+tokenizer's `merges.txt`) is linked from SAM 3's installation when that is there, not
+downloaded again.
 
 The fast tests show every command with a catalogue of their own and a stand-in for the
 download (`crates/whizbang/tests/it/models.rs`); nothing in them leaves the machine.

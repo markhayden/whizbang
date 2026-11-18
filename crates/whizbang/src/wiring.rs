@@ -91,6 +91,26 @@ pub fn kinds(worker: &Arc<OneWorker>) -> Kinds {
 /// SHA-256 too, but masks it for this gated repository to a reader without a token.
 /// The origins are the Hub and `us.aws.cdn.hf.co`, where the Hub moves the large
 /// file's download, as `pin` found and the owner approved.
+///
+/// A second model, `tiny` (plan 1D, task T1): OWLv2 finds boxes for a phrase and SAM 2.1
+/// Hiera-Tiny draws each mask, run by the adapter `owlv2-sam2`. Its files are those of
+/// two public repositories of the Hub, each at a commit: `google/owlv2-base-patch16` at
+/// `2a1560802f8cf3c408fec9b809d705f56a2f7146` and `facebook/sam2.1-hiera-tiny` at
+/// `de431c4043854a71d8101e17995dfe596bf101a5`; each `model.safetensors` and the small
+/// files its runtime reads, never a `.bin` or a `.pt`, which are pickles. Both
+/// repositories have a `config.json` and a `model.safetensors`, and a catalogue's file
+/// names are unique and hold no folder, so each file is installed under its model's
+/// prefix (`owlv2.config.json`, `sam2.model.safetensors`), its `from` still the
+/// repository's own path. Neither repository holds a licence file: each model card
+/// (`README.md`), installed as `owlv2.README.md` and `sam2.README.md`, states the
+/// licence, Apache-2.0. Both are public, so no download needs a token. **How the sizes
+/// and hashes were fixed** (2026-11-18): each size is the one the Hub's public listing
+/// of the commit states, read once with no token; each small file's SHA-256 is what
+/// `whizbang models pin` worked out from the bytes it fetched once; each
+/// `model.safetensors`'s is the one the listing states for it (not masked, the
+/// repositories being public), which an install checks against the bytes it
+/// downloads. The large files' downloads are moved to `us.aws.cdn.hf.co`, the host the
+/// owner approved for the Hub's storage.
 pub fn catalogue() -> Result<Catalogue, String> {
     Catalogue::parse(SHIPPED_CATALOGUE.as_bytes(), &Secrets::none())
         .map_err(|refused| format!("the catalogue this build ships cannot be read: {refused}"))
@@ -122,6 +142,10 @@ pub struct Adapter {
 /// same files, which `get` links from the one of revision `1` and does not download.
 /// A model whose adapter is not shipped is not ready, and says so (ADR 0017, "The
 /// inventory").
+///
+/// `owlv2-sam2` at revision `1`, shipped (plan 1D, task T1): the adapter of `tiny`
+/// (`pack/src/whizbang_pack/owlv2_sam2.py`, its module named with `_` where the
+/// adapter's name has `-`).
 pub fn adapters() -> Vec<Adapter> {
     let none = Secrets::none();
     let named = |name: &str, revision: &str, shipped: bool| {
@@ -131,7 +155,10 @@ pub fn adapters() -> Vec<Adapter> {
             shipped,
         })
     };
-    [named("sam3", "2", true)].into_iter().flatten().collect()
+    [named("sam3", "2", true), named("owlv2-sam2", "1", true)]
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 /// The models directory in the platform's data folder for whizbang (ADR 0017, "Where
