@@ -890,6 +890,14 @@ fn no_test_starts_the_pack_but_through_the_test_kits_guard() {
     assert_eq!(binarys.matches("Launch::testing(").count(), 1);
     assert_eq!(binarys.matches("Worker::new(").count(), 1);
     assert_eq!(binarys.matches("kit::fakes(None).guard(").count(), 1);
+    // And the model tier (task R2b), whose worker is the binary's own, started from the
+    // installation `whizbang setup` made, inside the test kit's guard for it, once.
+    let tier = std::fs::read_to_string(crates.join("whizbang/tests/it/model_tier.rs")).unwrap();
+    assert_eq!(
+        tier.matches("kit::installed(OneWorker::installed,").count(),
+        1
+    );
+    assert_eq!(tier.matches("OneWorker::installed,").count(), 1);
 }
 
 // --- one call (task P3b) ------------------------------------------------------------------------

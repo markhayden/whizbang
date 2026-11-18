@@ -398,15 +398,14 @@ fn list_names_each_model_of_the_catalogue_with_its_title_licence_size_platforms_
 }
 
 /// What the shipped catalogue's `sam3` is said to be on this platform when nothing is
-/// installed: not installed, and not ready for want of an adapter, or, on a platform
-/// its entry does not name, for that.
+/// installed: on the Mac, not installed and nothing more, since its adapter ships
+/// (task R2a); on a platform its entry does not name, not ready for that.
 fn sam3_not_installed() -> String {
-    let why = if Platform::this() == Some(Platform::MacosArm64) {
-        Unready::NoAdapter
+    if Platform::this() == Some(Platform::MacosArm64) {
+        "not installed".to_owned()
     } else {
-        Unready::NotForThisPlatform
-    };
-    format!("not installed; not ready: {why}")
+        format!("not installed; not ready: {}", Unready::NotForThisPlatform)
+    }
 }
 
 /// What `get sam3` of the real binary is refused with, under a config that names no
@@ -426,7 +425,8 @@ fn sam3_get_refused() -> &'static str {
 fn under_the_catalogue_it_ships_no_models_command_makes_a_models_directory_or_asks_anything_of_any_address()
  {
     // The real binary, with the catalogue it ships, whose one model is `sam3` (task
-    // N5): `list` names it, not installed and not ready; `get` is refused before
+    // N5): `list` names it, not installed (and ready to be, since task R2a ships its
+    // adapter, on the Mac; elsewhere not ready for its platform); `get` is refused before
     // anything is asked of any address, since no config here names the Hub's token
     // (and, on a platform its entry does not name, for that first); `remove` finds
     // it not installed. None of the three makes a models directory, whatever names
@@ -871,7 +871,8 @@ mod inventory {
         let (again, _) = get(&shipped, "alpha");
         assert_eq!(identity_in(&again.unwrap(), "alpha"), identity);
         assert_eq!(fake.requests().len(), asked);
-        // The binary's own table names `sam3` at its revision, not yet shipped.
+        // The binary's own table names `sam3` at the revision N5 fixed, now shipped
+        // (task R2a): the installation N5 made is the one the inventory calls ready.
         let table = wiring::adapters();
         assert_eq!(table.len(), 1);
         assert_eq!(
@@ -880,7 +881,7 @@ mod inventory {
                 table[0].revision.as_str(),
                 table[0].shipped
             ),
-            ("sam3", "1", false)
+            ("sam3", "1", true)
         );
     }
 }

@@ -469,6 +469,9 @@ Each is settled by the task named, from documentation or by the owner; none bloc
 8. A fixture picture for the model tier that may be committed to a public repo. R2b uses
    an example picture already in `docs/reference/tools/` if one holds a thing with a
    name; otherwise it asks the owner for one.
+   **Settled by R2b (2026-11-17):** none of those pictures holds a thing with a name, and
+   the orchestrator allowed a synthetic one: `docs/results/m1c-local-pack/circle.png`,
+   drawn by a program (a red disc beside a blue square on grey), the phrase `circle`.
 9. Where the Hub's command-line tool keeps the token of a sign-in, which variables move
    that place, and which variables keep the Hub's libraries in the worker from reading
    it. Not verified here: nothing was read for it when D12 changed. Each is taken from
@@ -2598,12 +2601,12 @@ outlives it holds the worker's streams open (`docs/carry-over.md`).
 
 **Depends on:** R1, P6a (the settings it reads arrive in `load`).
 
-- [ ] The adapter `sam3` in the pack, on the chosen runtime: image features computed
+- [x] The adapter `sam3` in the pack, on the chosen runtime: image features computed
       once for a batch; a phrase for each query; the settings of P6a; the answer in the
       fixed order. It declares `phrase` only, under the revision N5 fixed, and the binary's
       table now names it as shipped, so the inventory calls an installed `sam3` ready. It asks its runtime for the GPU, falls
       back to the CPU, and reports the device it got.
-- [ ] Its tests run in CI against a stand-in for the runtime that the tests give it: no
+- [x] Its tests run in CI against a stand-in for the runtime that the tests give it: no
       runtime is imported.
 
 **Done when** these pass under `just test-pack`:
@@ -2621,18 +2624,68 @@ and, in the fast tier, N5's
 now covers `sam3`.
 
 **Size:** small.
+**Built with the task** (one pull request with R2b, as the owner asked for larger
+iterations):
+
+- **Which test shows which clause.** Box one: features once for a batch, a phrase for
+  each query, the first test of `test_sam3.Phrase`; the setting `threshold` (and `pad`,
+  `min_cover` and `outline`, taken and not used: SAM 3 draws each mask itself, and
+  rascal's own SAM 3 adapter used none of them) and the fixed order, the second; `phrase`
+  only, the third; the cut before a full-size plane, the fourth; the GPU asked for, the
+  CPU taken when it is not there, and the device reported the one the runtime gave (where
+  the model's parameters are), `test_sam3.Device`'s first two; the revision N5 fixed and
+  the table's mark, `test_sam3.Revision`, and N5's
+  `catalogue::every_adapter_the_binarys_table_names_as_shipped_is_an_adapter_the_pack_has`,
+  which now finds `sam3.py` in the pack and `"sam3"` in the worker; the inventory calling
+  an installed `sam3` ready, the model tier (R2b) and
+  `inventory::a_model_whose_adapter_the_binarys_table_names_as_not_yet_shipped_is_not_ready_for_want_of_an_adapter_installed_or_not`,
+  whose last assertion now reads the table's `sam3` as shipped. Box two: every test of
+  `test_sam3` runs in `just test-pack`, on both runners, with no runtime installed; the
+  pack's core still imports nothing outside the standard library on import
+  (`test_worker.Imports`, which now lets `sam3.py` alone import `torch`, `transformers` and
+  `PIL`, and only inside a function).
+- **The runtime's seam** (`sam3.Torch`): the one place that touches PyTorch and the
+  library, given its two modules. The pools at 8 each before any parallel work (the
+  inter-op pool asked only while it is another size, since it can be sized once in a
+  process); `mps` when `torch.backends.mps.is_available()`, else `cpu`; `Sam3Model` and
+  `Sam3Processor` from the installation's `files` folder with `local_files_only=True`,
+  the model placed by `.to(torch.device(name))`, no `device_map`. The picture's features
+  by `get_vision_features`, once; each phrase against them through the model's
+  `vision_embeds`; a candidate's score is its probability times the presence
+  probability, as the library's post-processing has it; a plane is made, by the same
+  bilinear resizing the library uses, only for a candidate kept. Without the extra
+  installed a load is `unavailable` and says to run `whizbang setup --extra torch`
+  (a test more).
+- **The hello stays `cpu`; the results say the adapter's device** (the review of P7a left
+  it to R2a). The hello is said before any model is loaded, and the pack's core imports
+  no runtime (D10); asking the runtime for it would import PyTorch into every worker,
+  fake or not, and take seconds before the first hello. So the hello says the device the
+  core's own work runs on, `cpu`, and every result of a call made while `sam3` is
+  resident names the device its runtime gave, `mps` on the Mac; the run's record takes
+  the device from each result (P7a). Shown by
+  `test_sam3.Device.test_the_worker_says_the_adapters_device_in_its_results_and_its_own_in_its_hello`
+  (a test more) and by the model tier's records. `whizbang backends status --probe`
+  prints the hello, so it says `cpu`, as its guide says: the device before a model is
+  loaded.
+- `pack_setup`'s carried pack holds `sam3.py` (ten files), so `whizbang setup` installs
+  it; ADR 0017 has a line that `sam3` shipped; `docs/guides/models.md` shows `sam3` as
+  `not installed`, with no "not ready", on the Mac.
+- Mutants of the adapter, each run with `just test-pack`: the cut to `max_instances`
+  removed, a plane with nothing on kept, the pools not asked, and the threshold made
+  strict. Each fails a test, the last only after a case at the threshold was added to
+  the second test.
 
 ### R2b. SAM 3 answers a phrase on the Mac's GPU
 
 **Depends on:** R2a, P7b. **Runs on:** the owner's Mac.
 
-- [ ] `just test-models` and `scripts/model-evidence.sh` (D15), and the fixture picture
+- [x] `just test-models` and `scripts/model-evidence.sh` (D15), and the fixture picture
       with a loose box drawn by hand around the thing its phrase names, committed
       with no metadata (no EXIF, no profile, no text chunk; a test holds it). The recipe is
       heavy, runs under `scripts/thread-guard.sh` with its limit at 200 and under R1's
       watch on resident memory (24 GiB), as the evidence script does, refuses without
       a models directory named in the local environment, and is listed in `AGENTS.md`.
-- [ ] The catalogue's entry and the adapter's revision are unchanged from N5, so
+- [x] The catalogue's entry and the adapter's revision are unchanged from N5, so
       nothing is downloaded again. `docs/reference/` is unchanged: no action is added
       in 1C.
 
@@ -2648,6 +2701,53 @@ request and the second, three runs each, and reports them without asserting an o
 that is the measurement the carry-over row on the speed of local models asks of 1C.
 In the fast tier, `evidence::the_committed_record_names_the_adapters_revision_and_the_lock_the_tree_has`
 fails when the record is stale. **Size:** medium.
+**Built with the task** (one pull request with R2a):
+
+- **Which test shows which clause.** Box one: the recipe `just test-models`
+  (`scripts/test-models.sh`): heavy, under the thread guard at 200 and the watch at 24
+  GiB, refusing before it builds anything unless `WHIZBANG_MODELS_DIR` names an absolute
+  models directory that holds a model and the pack (`scripts/tests/test-test-models.sh`),
+  listed in `AGENTS.md`; `scripts/model-evidence.sh`, which refuses outside the guard at
+  200, runs the tier three times and writes `docs/results/m1c-local-pack.md` and its
+  numbers, `.toml`; the fixture, synthetic (open question 8), its loose box (300, 80,
+  540, 320) written in the test, held to no metadata by
+  `evidence::the_fixture_picture_holds_no_metadata`. Box two: `catalogue.json` is not
+  changed by this branch and the revision stays `1` (`test_sam3.Revision`); the
+  installation N5 made, `sha256:37ab46c2…`, is the one the tier loaded and the record
+  names; `docs/reference/` is not changed (`just docs-check`). "Done when": the two
+  `model_tier::` tests passed on the owner's Mac, three times, in the evidence run; the
+  record and the fast test are committed. The reviewer's own run is the reviewer's.
+- **Through what.** The two tests build what `whizbang rascal grow --config …
+  --models-dir …` builds (`Under::over`): the config, the kinds over the binary's one
+  worker (`OneWorker::installed`, which starts the worker from the installation
+  `whizbang setup` made), and the shipped catalogue and table in the models directory;
+  then the binary's executor. The request is made by a test action that needs the
+  segment capability for phrases, because no command of the binary sends one and 1C adds
+  no action. The run's record is read back by the real binary, through the test kit's
+  launcher (`whizbang runs show --json`), and names `mps`. The worker is held by the test
+  kit's guard (`whizbang_testkit::worker::installed`, new), which kills it and waits for
+  it, and `worker::no_test_starts_the_pack_but_through_the_test_kits_guard` holds the
+  file to that.
+- **How the tests learn where the model is.** A test beside the real binary's start
+  reads nothing of its environment (`scripts/check-binary-start.sh`), so the recipe
+  writes the directory into one file of cargo's folder for tests' scratch
+  (`<target>/tmp/model-tier/models-dir`), which the tests find by
+  `env!("CARGO_TARGET_TMPDIR")`; they write what they measured beside it. Both tests are
+  `#[ignore]`d, so the fast tier and CI skip them; the recipe runs them alone, in the
+  nextest profile `model-tier` (a test ended at 5 minutes, the two at most at 10).
+- **The models directory of the run** was made in the builder's scratch folder, since
+  N5's directory holds the model and Y1's the pack, and the worker finds both in one:
+  N5's `models/` and Y1's `pack/env` and `pack/project`, each copied by the file system's
+  clone (copy on write), nothing of either changed; then this branch's pack files written
+  over `pack/project`, as `whizbang setup` writes them, since `setup --extra torch` may ask
+  the package index and nothing was to be contacted. Nothing was downloaded.
+- **What it measured** (the record): `mps` in every run's record, fallback off; one
+  instance each time, score 0.946, box (329.7, 110.0, 510.1, 290.0) around the disc at
+  (330, 110, 510, 290), the same mask each time; the load 6.1 to 7.7 s, the first request
+  after it 0.9 to 1.0 s, the second 0.66 to 0.69 s, one load for two requests; before the
+  load is written, about 27 s, most of it the check of 3.4 GB of files (D14); the tree's
+  peak resident memory 559 to 585 MiB, at most 17 threads in one process, nothing left
+  running.
 
 ### Z1. Exit check
 

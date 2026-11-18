@@ -450,7 +450,7 @@ opens it. This is what the binary gives.
 - **What the binary gives it** is the catalogue it ships (`wiring::catalogue`),
   which holds no model until its first entry is written (plan 1C, task N5), under
   the adapters it has (`wiring::adapters`), which are none until the first
-  (task R2a). A test gives its own catalogue and adapters to the same wiring, and
+  (task R2a; since R2a, `sam3`). A test gives its own catalogue and adapters to the same wiring, and
   a call for an installed model is then prepared under its installation's
   identity and holds a lease while its request is out
   (`wired::under_the_binarys_wiring_a_call_for_an_installed_model_is_prepared_under_its_identity_and_holds_a_lease`);
@@ -837,6 +837,11 @@ catalogue is. It holds one model, `sam3`:
   A table that names an adapter as shipped which the pack does not have, or as not
   shipped which it has, fails
   `catalogue::every_adapter_the_binarys_table_names_as_shipped_is_an_adapter_the_pack_has`.
+  **Shipped by task R2a (2026-11-17):** the pack has the adapter
+  (`pack/src/whizbang_pack/sam3.py`) under revision `1`, and the table names it as
+  shipped, so the inventory calls an installed `sam3` ready. The installation N5 made,
+  `sha256:37ab46c2…`, is the one loaded: nothing was downloaded again
+  (`test_sam3.Revision.test_the_adapters_revision_is_the_one_the_binarys_table_names`).
 - **Any change to the entry is a new revision** (below, "An installation and its
   record"), and so a second download of 3.44 GB. Linux is added with the runtime on
   Linux (1D) under a new revision.

@@ -31,7 +31,7 @@ import queue
 import sys
 import threading
 
-from whizbang_pack import fake_models, proto
+from whizbang_pack import fake_models, proto, sam3
 from whizbang_pack.adapter import Cancelled, Fault, Installation, Stopped, runtime_device
 
 END_CODE = 0
@@ -40,8 +40,9 @@ LIFETIME_CODE = 3
 LIFETIME_MOST = 31_536_000
 
 # The adapters the worker answers for, by model name. The fakes answer for names the
-# shipped catalogue never holds; a real model's adapter joins them with its runtime.
-ADAPTERS = dict(fake_models.MODELS)
+# shipped catalogue never holds; a real model's adapter joins them, and imports its runtime
+# only when its model is loaded (task R2a: `sam3`, the shipped catalogue's one model).
+ADAPTERS = dict(fake_models.MODELS, **{"sam3": sam3.Sam3})
 
 # Reasons a refused frame ends the conversation as `too_large` (ADR 0020, "What a refusal
 # says"); every other reason is `malformed`.

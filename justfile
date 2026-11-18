@@ -47,6 +47,12 @@ timing:
 test-pack:
     scripts/thread-guard.sh scripts/test-pack.sh
 
+# The model tier: the tests that load a real model (SAM 3, on the Mac's GPU), never in CI.
+# Heavy, under the thread guard at 200 and the watch on resident memory at 24 GiB; it refuses
+# unless WHIZBANG_MODELS_DIR names the models directory (scripts/test-models.sh).
+test-models:
+    WHIZBANG_THREAD_LIMIT=200 scripts/heavy.sh test-models scripts/test-models.sh
+
 # The crate edges of SPEC.md section 3 (scripts/crate-graph.txt), and the features of
 # serde_json, the same for the binary and for the tests (ADR 0023).
 graph:

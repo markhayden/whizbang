@@ -53,6 +53,7 @@ manifest. This file holds what you cannot work out from the code.
 | `scripts/heavy.sh <label> <command...>` | Around any heavy command: one runs at a time on a machine, the next waits. The command runs under `scripts/thread-guard.sh` |
 | `just test-only <which tests>` | One crate's tests or one test, as in `just test-only -p whizbang-core watch::`: the only way to run some of the tests. It runs them under `scripts/thread-guard.sh`, and takes `-p <crate>` or `--package <crate>`, `--lib`, `--test <name>`, `-E <filter>`, `--no-capture`, `--no-fail-fast` and filter words; anything else is refused before anything runs (`scripts/test-only.sh`). Heavy |
 | `scripts/thread-guard.sh <command...>` | Around anything else that runs tests: it kills the command when one process holds more than 300 threads, or when it can no longer count them |
+| `just test-models` | The model tier, on a machine with the model installed, never in CI: SAM 3 answering a phrase on the Mac's GPU through the binary's wiring (`crates/whizbang/tests/it/model_tier.rs`). It refuses unless `WHIZBANG_MODELS_DIR` names the models directory that holds `sam3` and the pack `whizbang setup --extra torch` installed; it runs under the heavy lock, the thread guard at 200 and `scripts/memory-watch.sh` (`scripts/test-models.sh`). `WHIZBANG_THREAD_LIMIT=200 scripts/heavy.sh model-evidence scripts/model-evidence.sh` runs it three times and writes `docs/results/m1c-local-pack.md` and its numbers; the fast tests fail on a record that is not of the tree's adapter, lock and fixture. Heavy |
 | `scripts/memory-watch.sh <command...>` | Around anything that loads a real model, beside the thread guard: it kills the command when it and everything it started hold more than 24 GiB resident, and reports the peaks it saw and any process the command left running |
 
 An action's name and purpose are printed in the reference as they are, so `just docs` refuses
@@ -72,7 +73,7 @@ stopped half-way, so a test passes only when that line ran. A script that sets a
 copies the first lines and the trap of `scripts/scan.sh`; `scripts/tests/test-syntax.sh` holds
 it to that.
 
-These are heavy: `just check`, `just ci`, `just ci-without-scripts`, `just test`, `just test-only`, `just timing`,
+These are heavy: `just check`, `just ci`, `just ci-without-scripts`, `just test`, `just test-only`, `just test-models`, `just timing`,
 `just clippy`, `just docs`, `just docs-check`, `just smoke`, `just compile-fail`,
 `just test-scripts-slow`, and
 any `cargo` command that builds or tests. When another agent may be building on the machine,
