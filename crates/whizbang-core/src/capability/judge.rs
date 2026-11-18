@@ -1001,12 +1001,11 @@ impl JudgeHandle {
             sent.judged(None, request, &refused, None);
             return refused;
         }
-        let bounds = self.bounds.of_one_request();
         // A conversation is prompts, whatever else it holds: that much the request
         // is known to hold. Its pictures and results have no class here (ADR 0015).
         let classes = Classes::of(&[DataClass::Prompts]);
-        let ask = || {
-            self.backend.send(request, &bounds).and_then(|turn| {
+        let ask = |bounds: &Bounds| {
+            self.backend.send(request, bounds).and_then(|turn| {
                 if turn.opaque().any(|opaque| opaque.adapter != backend) {
                     // An answer came, and it is not taken: what it said it cost stands.
                     let unfit = Unfit::NotAllowed {

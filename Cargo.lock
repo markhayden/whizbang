@@ -604,6 +604,7 @@ version = "0.0.1"
 dependencies = [
  "clap",
  "serde_json",
+ "whizbang",
  "whizbang-backends",
  "whizbang-core",
  "whizbang-rascal",
@@ -620,6 +621,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "webpki-roots",
+ "whizbang-backends",
  "whizbang-core",
  "whizbang-testkit",
 ]

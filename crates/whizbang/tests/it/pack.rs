@@ -1,11 +1,12 @@
-//! The kind `pack` through the binary's wiring (plan 1C, task P6a): a local segmenter
-//! over the one worker of a process, with the pack's fake models in a test's catalogue,
-//! installed in a models directory of the test's own, and test actions that ask for the
-//! segment capability.
+//! The kind `pack` through the binary's wiring (plan 1C, tasks P6a and P6b): a local
+//! segmenter over the one worker of a process, with the pack's fake models in a test's
+//! catalogue, installed in a models directory of the test's own, and test actions that
+//! ask for the segment capability.
 //!
 //! **Every worker here is started through the test kit's guard** (plan 1C, "Rules"):
 //! the one worker of the wiring is handed a start that runs the pack's fakes, by the
-//! seam `OneWorker::starting`, which the binary never names
+//! seam `OneWorker::starting`, which is built only with the feature `fakes` that this
+//! crate's tests turn on, and which the binary never names
 //! (`pack::the_shipped_binary_offers_no_fake_model_and_starts_no_entry_point_that_takes_a_fault`).
 //! The guard kills it and waits for it on every path out of a test. Every config that
 //! may start one sets `max_lifetime_s`, so that a worker nobody waits for ends by
@@ -18,25 +19,28 @@ use std::time::{Duration, Instant};
 use whizbang::pack::{self as kind, OneWorker};
 use whizbang::wiring::{self, Models, Over};
 use whizbang_backends::models::{
-    Catalogue, CatalogueFile, Entry, EntryParts, FileName, Licence, ModelName, ModelsDir, Platform,
-    Revision, Title, install,
+    Catalogue, CatalogueFile, Current, Entry, EntryParts, FileName, Licence, ModelName, ModelsDir,
+    Platform, RemoveRefused, Revision, Title, current, install, removals, remove,
 };
 use whizbang_backends::pack::queue::{Sent, Status};
 use whizbang_backends::pack::worker::WORKER_MODULE;
 use whizbang_backends::pack::{Launch, Worker};
-use whizbang_core::capability::{FaultKind, Picture, Query, SegmentRequest};
+use whizbang_core::capability::{FaultKind, Picture, Place, Query, SegmentRequest};
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Answer, Argument, Call, CallError, Cancellation, Capability, Context,
-    Engine, Executor, Failure, Kind, PreparedCall, Produced, Readiness, Refusal, Registry, Request,
-    Requirement, Secrets, SystemClock, Value, ValueType,
+    Action, ActionDescriptor, Answer, Argument, Call, CallError, Cancellation, Capability, Clock,
+    Context, Engine, Executor, Failure, Kind, PreparedCall, Produced, Readiness, Refusal, Registry,
+    Request, Requirement, Secrets, SystemClock, Value, ValueType,
 };
 use whizbang_core::egress::{Address, Origin};
 use whizbang_core::identity::{CanonicalPixels, Digest};
 use whizbang_core::store::Store;
 use whizbang_core::store::fs::RealFs;
+use whizbang_testkit::around::FakeWrapper;
+use whizbang_testkit::barrier::Barriers;
 use whizbang_testkit::downloads::FakeDownloader;
 use whizbang_testkit::echo::Echo;
 use whizbang_testkit::scratch::Scratch;
+use whizbang_testkit::threads;
 use whizbang_testkit::worker::{self as kit, Guard};
 
 use crate::wired::{has_line, shown, whizbang};
@@ -56,9 +60,19 @@ type Came = Result<Vec<(Vec<u8>, [f64; 4], f64)>, (FaultKind, String)>;
 /// The catalogue's entry for a fake model: one file, and the features the pack's fake
 /// says it gives.
 fn entry(model: &str, features: &[&str]) -> (Entry, FakeDownloader) {
+    entry_at(model, features, "2026-11.1", &format!("weights of {model}"))
+}
+
+/// The same, at this revision of the catalogue, whose one file holds this.
+fn entry_at(
+    model: &str,
+    features: &[&str],
+    revision: &str,
+    content: &str,
+) -> (Entry, FakeDownloader) {
     let none = Secrets::none();
     let name = |text: &str| ModelName::new(text, &none).unwrap();
-    let content = format!("weights of {model}").into_bytes();
+    let content = content.as_bytes().to_vec();
     let from = Address::of("https://weights.example.org/files/weights.bin", &none).unwrap();
     let file = CatalogueFile::new(
         FileName::new("weights.bin", &none).unwrap(),
@@ -70,7 +84,7 @@ fn entry(model: &str, features: &[&str]) -> (Entry, FakeDownloader) {
     let parts = EntryParts {
         name: name(model),
         title: Title::new("A fake model of the pack", &none).unwrap(),
-        revision: Revision::new("2026-11.1", &none).unwrap(),
+        revision: Revision::new(revision, &none).unwrap(),
         adapter: name(model),
         licence: Licence::new("Apache-2.0", &none).unwrap(),
         platforms: Platform::ALL.to_vec(),
@@ -108,14 +122,14 @@ fn guarded() -> Guard<Arc<OneWorker>> {
             let (module, more) = (fixture.module.clone(), fixture.more.clone());
             let lifetime_s = fixture.lifetime_s;
             OneWorker::starting(Arc::new(move |root: &Path, secrets: &Secrets| {
-                let launch = Launch {
-                    python: python.clone(),
-                    source: source.clone(),
-                    module: module.clone(),
-                    models_dir: root.to_path_buf(),
+                let launch = Launch::testing(
+                    python.clone(),
+                    source.clone(),
+                    module.clone(),
+                    root.to_path_buf(),
                     lifetime_s,
-                    more: more.clone(),
-                };
+                    more.clone(),
+                );
                 let clock = Arc::new(SystemClock);
                 Ok(Worker::new(launch, clock, secrets.clone()).with_spawn(kit::spawn))
             }))
@@ -145,7 +159,13 @@ fn determined() -> Vec<(Vec<u8>, [f64; 4], f64)> {
 /// `backend` when the call gives one, and asks it once about [`picture`]. What it came
 /// to is kept in `came`; a fault fails the run, as an error of the kind `segment`.
 fn finds(name: &str, came: &Arc<Mutex<Vec<Came>>>) -> Arc<dyn Action> {
-    struct Finds(ActionDescriptor, Arc<Mutex<Vec<Came>>>);
+    finds_times(name, 1, came)
+}
+
+/// The same, asking `times` times in one run, one request after the other, each kept
+/// in `came`; a fault of any fails the run once all were asked.
+fn finds_times(name: &str, times: usize, came: &Arc<Mutex<Vec<Came>>>) -> Arc<dyn Action> {
+    struct Finds(ActionDescriptor, usize, Arc<Mutex<Vec<Came>>>);
     impl Action for Finds {
         fn descriptor(&self) -> &ActionDescriptor {
             &self.0
@@ -157,17 +177,23 @@ fn finds(name: &str, came: &Arc<Mutex<Vec<Came>>>) -> Arc<dyn Action> {
                 .expect("a segmenter is handed");
             let query = Query::phrase("the red part").unwrap();
             let request = SegmentRequest::new(picture(), vec![query], 4).unwrap();
-            let came: Came = match segment.segment(&request) {
-                Ok(response) => Ok(response.answers()[0]
-                    .iter()
-                    .map(|found| (found.plane().to_vec(), found.bounds(), found.score()))
-                    .collect()),
-                Err(fault) => Err((fault.kind(), fault.sentence().to_owned())),
-            };
-            self.1.lock().unwrap().push(came.clone());
-            match came {
-                Ok(_) => Ok(Produced::nothing()),
-                Err((_, sentence)) => Err(Failure::error("segment", &sentence)),
+            let mut failed = None;
+            for _ in 0..self.1 {
+                let came: Came = match segment.segment(&request) {
+                    Ok(response) => Ok(response.answers()[0]
+                        .iter()
+                        .map(|found| (found.plane().to_vec(), found.bounds(), found.score()))
+                        .collect()),
+                    Err(fault) => Err((fault.kind(), fault.sentence().to_owned())),
+                };
+                self.2.lock().unwrap().push(came.clone());
+                if let Err((_, sentence)) = came {
+                    failed.get_or_insert(sentence);
+                }
+            }
+            match failed {
+                None => Ok(Produced::nothing()),
+                Some(sentence) => Err(Failure::error("segment", &sentence)),
             }
         }
     }
@@ -181,7 +207,7 @@ fn finds(name: &str, came: &Arc<Mutex<Vec<Came>>>) -> Arc<dyn Action> {
             ValueType::Text,
         ))
         .needs(need);
-    Arc::new(Finds(draft.build().unwrap(), came.clone()))
+    Arc::new(Finds(draft.build().unwrap(), times, came.clone()))
 }
 
 /// A scratch folder with a store, a config file, and a models directory in which the
@@ -252,11 +278,14 @@ impl Local {
             .expect("the models directory is opened")
     }
 
-    /// The actions of this build, with `finds`, `finds-again` and `echo` beside them.
+    /// The actions of this build, with `finds`, `finds-again`, `finds-twice` and `echo`
+    /// beside them.
     fn registry(&self) -> Registry {
         let mut registry = wiring::registry().unwrap();
         registry.register(finds("finds", &self.came)).unwrap();
         registry.register(finds("finds-again", &self.came)).unwrap();
+        let twice = finds_times("finds-twice", 2, &self.came);
+        registry.register(twice).unwrap();
         registry.register(Arc::new(Echo::new())).unwrap();
         registry
     }
@@ -284,6 +313,52 @@ impl Local {
         sent.into_iter()
             .map(|sent| (sent.kind, sent.model.as_str().to_owned(), sent.worker))
             .collect()
+    }
+
+    /// The requests written to a worker, as `(kind, model, installation)`.
+    fn named(&self) -> Vec<(&'static str, String, String)> {
+        let sent: Vec<Sent> = self.worker.journal();
+        sent.into_iter()
+            .map(|sent| {
+                let model = sent.model.as_str().to_owned();
+                (sent.kind, model, sent.installation.to_string())
+            })
+            .collect()
+    }
+
+    /// The models directory, opened as the tests' own install opens it.
+    fn dir(&self) -> ModelsDir {
+        ModelsDir::at(Arc::new(RealFs), &self.models_dir())
+    }
+
+    /// The identity the model's pointer names now, read in the directory.
+    fn current(&self, model: &str) -> String {
+        let none = Secrets::none();
+        let name = ModelName::new(model, &none).unwrap();
+        match current(&self.dir(), &name, &none).unwrap() {
+            Current::Installed(record) => record.identity().to_string(),
+            other => panic!("{model} is not installed: {other:?}"),
+        }
+    }
+
+    /// The path of one file of this installation of this model, by its identity.
+    fn installed_file(&self, model: &str, identity: &str, file: &str) -> PathBuf {
+        let hex = identity.strip_prefix("sha256:").unwrap();
+        let installation = self.models_dir().join("models").join(model);
+        installation
+            .join("installations")
+            .join(hex)
+            .join("files")
+            .join(file)
+    }
+
+    /// Installs this entry of the tests' catalogue in this folder's directory, as
+    /// `whizbang models get` would: a new installation, or the same one repaired.
+    fn install(&self, (entry, downloads): &(Entry, FakeDownloader)) {
+        let none = Secrets::none();
+        let cancel = Cancellation::new();
+        let dir = self.dir();
+        install(&dir, entry, &adapter_revision(), downloads, &cancel, &none).unwrap();
     }
 }
 
@@ -686,8 +761,8 @@ fn the_shipped_binary_offers_no_fake_model_and_starts_no_entry_point_that_takes_
     // the models directory, with no fault and nothing more on its command line.
     let root = Path::new("/made-up/models");
     let launch = kind::installed_launch(root, 61);
-    assert_eq!(launch.module, WORKER_MODULE);
-    assert!(launch.more.is_empty(), "{launch:?}");
+    assert_eq!(launch.module(), WORKER_MODULE);
+    assert!(launch.more().is_empty(), "{launch:?}");
     assert_eq!(
         launch.python,
         root.join("pack").join("env").join("bin").join("python")
@@ -698,9 +773,16 @@ fn the_shipped_binary_offers_no_fake_model_and_starts_no_entry_point_that_takes_
     // launch of its own, or hands the wiring a worker it did not start from that
     // installation: the one worker the binary makes is `OneWorker::installed`'s, and
     // the seam a test starts the fakes through is named only where it is defined.
-    // The needles are put together, so that this file holds none of them.
+    // The needles are put together, so that this file holds none of them. This is a
+    // tripwire, not the guard: the guard is the build. `OneWorker::starting` and
+    // `Launch::testing` are compiled only with the feature `fakes`, which only the
+    // tests' builds turn on, and a launch's entry point and what follows its command
+    // line are private; so a source of the binary that names either, however it is
+    // spelled, does not compile where the binary is built to ship (`just smoke`,
+    // `cargo build --release -p whizbang`; from the review of task P6a).
     let entry_point = ["whizbang_pack", "fakes"].join(".");
     let literal = ["Launch", " {"].concat();
+    let test_launch = ["Launch::", "testing("].concat();
     let mut installed = Vec::new();
     for (name, text) in the_binarys_sources() {
         for word in [entry_point.as_str(), "--fake-fault", OK] {
@@ -714,6 +796,8 @@ fn the_shipped_binary_offers_no_fake_model_and_starts_no_entry_point_that_takes_
         assert_eq!(starting, 0, "{name} hands the wiring a worker of its own");
         let defined = text.matches("pub fn starting(").count();
         assert!(defined == 0 || name == "pack.rs", "{name}");
+        let testing = text.matches(test_launch.as_str()).count();
+        assert_eq!(testing, 0, "{name} makes a test's launch");
         let launches = text.matches("Launch::worker(").count();
         let expected = match name.as_str() {
             "pack.rs" | "pack_setup.rs" => 1,
@@ -758,33 +842,45 @@ fn without_setup_a_call_is_refused_and_says_to_run_whizbang_setup() {
 
 #[test]
 fn a_request_through_the_kind_is_bounded_by_its_runs_deadline_and_cancel_and_by_the_kinds_limit() {
+    // Each of the three is shown against a later bound of the other kind, so that a
+    // bound that is not handed on fails an assertion within seconds: the call is then
+    // ended by the other bound, later than the four seconds allowed, or as timed out
+    // where it should be cancelled.
     let local = Local::new("pack-bounded");
     let wait = |settings: &str| one(WAIT, settings);
+    let quick = Duration::from_secs(4);
     // The kind's limit for a call, a setting: a call past it ends as timed out, and its
-    // worker is killed.
+    // worker is killed; the run's own deadline, five seconds away, is not what ended it.
     let executor = local.runner(&local.over(&wait("call_limit_s = 1\n")));
     let begun = Instant::now();
-    let finished = executor.submit(&Call::new("finds")).unwrap();
-    assert_eq!(finished.outcome().name(), "error");
-    assert!(begun.elapsed() >= Duration::from_secs(1));
+    let request = Request::new(Call::new("finds")).until(begun + Duration::from_secs(5));
+    let ran = executor.request(&request).unwrap();
+    assert!(matches!(ran, Answer::Ran(_)), "{ran:?}");
+    let took = begun.elapsed();
+    assert!(took >= Duration::from_secs(1) && took < quick, "{took:?}");
     let came = local.came();
     assert!(
         matches!(&came[..], [Err((FaultKind::TimedOut, _))]),
         "{came:?}"
     );
     drop(executor);
-    // The run's deadline, handed to the queue: the call ends at it, as timed out.
-    let executor = local.runner(&local.over(&wait("")));
-    let request = Request::new(Call::new("finds")).until(Instant::now() + Duration::from_secs(1));
+    // The run's deadline, handed to the queue: the call ends at it, as timed out, and
+    // the kind's limit, five seconds, is not what ended it.
+    let executor = local.runner(&local.over(&wait("call_limit_s = 5\n")));
+    let begun = Instant::now();
+    let request = Request::new(Call::new("finds")).until(begun + Duration::from_secs(1));
     let ran = executor.request(&request).unwrap();
     assert!(matches!(ran, Answer::Ran(_)), "{ran:?}");
+    let took = begun.elapsed();
+    assert!(took < quick, "{took:?}");
     let came = local.came();
     assert!(
         matches!(&came[..], [Err((FaultKind::TimedOut, _))]),
         "{came:?}"
     );
-    // The run's cancel, handed to the queue: the worker is sent `cancel` once the call
-    // is written, the call ends as cancelled, and the worker lives on.
+    // The run's cancel, handed to the queue, under the same limit of five seconds: the
+    // worker is sent `cancel` once the call is written, the call ends as cancelled, not
+    // timed out, and the worker lives on.
     let signal = Cancellation::new();
     let (canceller, worker) = (signal.clone(), local.worker.clone());
     let cancels = whizbang_testkit::threads::spawn(move || {
@@ -846,4 +942,389 @@ fn a_removal_in_this_process_through_the_wiring_tells_the_supervisor_and_unloads
     // And the model is gone: the next call for it is not ready.
     let why = not_ready(executor.submit(&Call::new("finds")));
     assert!(why.ends_with("it is not installed"), "{why}");
+}
+
+// --- the installation a call is answered from (task P6b) ----------------------------------------
+
+/// A config of two backends of the kind: `ok`, the default, of `fake-ok`, and `wait`, of
+/// `fake-wait`, whose call ends at twenty seconds if nothing ends it before.
+fn two_models() -> String {
+    "[backends.segment]\ndefault = \"ok\"\n\n\
+     [backends.segment.ok]\nkind = \"pack\"\nmodel = \"fake-ok\"\n\n\
+     [backends.segment.ok.settings]\nmax_lifetime_s = 120\n\n\
+     [backends.segment.wait]\nkind = \"pack\"\nmodel = \"fake-wait\"\n\n\
+     [backends.segment.wait.settings]\nmax_lifetime_s = 120\ncall_limit_s = 20\n"
+        .to_owned()
+}
+
+/// A call of `finds` that chooses this backend.
+fn choosing(backend: &str) -> Call {
+    Call::new("finds").argument("backend", Value::text(backend))
+}
+
+/// Whether the call in the worker is a `segment` of this model, written whole.
+fn segmenting(model: &'static str) -> impl Fn(&Status) -> bool {
+    move |status: &Status| {
+        status.calling.as_ref().is_some_and(|calling| {
+            calling.kind == "segment" && calling.model.as_str() == model && calling.written
+        })
+    }
+}
+
+/// The requests in the queue the first time any is, as `(model, count of removals)`:
+/// caught inside the supervisor's own wait, so that one ended at its next read is seen.
+fn first_waiting(worker: &OneWorker) -> Vec<(String, u64)> {
+    let seen: Mutex<Vec<(String, u64)>> = Mutex::default();
+    let caught = worker.wait_for(Duration::from_secs(20), &|status: &Status| {
+        let waiting: Vec<(String, u64)> = status
+            .waiting
+            .iter()
+            .map(|waiting| (waiting.model.as_str().to_owned(), waiting.removals))
+            .collect();
+        let any = !waiting.is_empty();
+        if any {
+            *seen.lock().unwrap() = waiting;
+        }
+        any
+    });
+    assert!(caught, "no request was seen waiting");
+    seen.into_inner().unwrap()
+}
+
+/// What a request ended by a removal elsewhere while it waited is told (the
+/// supervisor's sentence).
+const REMOVED_ELSEWHERE: &str = "a removal of the model began after the request's hold was given";
+
+#[test]
+fn after_a_reinstall_between_two_requests_of_a_run_the_first_is_answered_from_the_old_installations_files_and_the_second_is_refused_at_the_lease()
+ {
+    let local = Local::new("pack-reinstalled");
+    let over = local.over(&one(OK, ""));
+    let old = local.identity(&over, OK);
+    // A fake in the meter's place, after the lease's: each request stops there with its
+    // installation held, until the test lets it go.
+    let barriers = Barriers::new();
+    let meter = FakeWrapper::new("meter");
+    meter.stop_before(&barriers, "meter");
+    let executor = local
+        .runner(&over)
+        .with_wrapper(Place::Meter, Arc::new(meter.clone()));
+    // A run that asks twice. While its first request is held and stopped, the model is
+    // installed again under another revision whose file holds other bytes: its pointer
+    // now names a new installation, and the old one stays on the disk for the hold.
+    let newer = entry_at(
+        OK,
+        &["box", "phrase", "point"],
+        "2026-11.2",
+        "newer weights",
+    );
+    let finished = threads::scope(|scope| {
+        let reinstalls = scope.spawn(|| {
+            barriers.arrived("meter", 1);
+            local.install(&newer);
+            barriers.open("meter");
+        });
+        let finished = executor.submit(&Call::new("finds-twice")).unwrap();
+        reinstalls.join().unwrap();
+        finished
+    });
+    let new = local.current(OK);
+    assert_ne!(new, old);
+    // The first was answered, from the installation the run was admitted with: its
+    // files verified and loaded, the `load` and the `segment` naming it, never the
+    // one the pointer names. The second was refused at its lease, and never reached
+    // the meter's place or the worker.
+    let came = local.came();
+    let words = "the model's installation was replaced or removed after the run was admitted";
+    assert_eq!(
+        came,
+        [
+            Ok(determined()),
+            Err((FaultKind::Rejected, words.to_owned()))
+        ]
+    );
+    assert_eq!(finished.outcome().name(), "error");
+    assert_eq!(barriers.arrivals("meter"), 1);
+    assert_eq!(
+        local.named(),
+        [
+            ("load", OK.to_owned(), old.clone()),
+            ("segment", OK.to_owned(), old.clone())
+        ]
+    );
+    // The run's record names the old installation for the request that was answered.
+    drop(executor);
+    let json = whizbang(
+        &["runs", "show", finished.run().as_str(), "--json"],
+        &local.root,
+    );
+    let record: serde_json::Value = serde_json::from_str(&json.out).unwrap();
+    assert_eq!(record["models"][0]["version"], old.as_str());
+}
+
+#[test]
+fn a_file_damaged_after_it_was_published_is_not_loaded_and_the_model_is_reported_as_damaged() {
+    let local = Local::new("pack-damaged");
+    let over = local.over(&one(OK, ""));
+    let identity = local.identity(&over, OK);
+    // One byte of the installed file changed, its length kept: the inventory reads no
+    // file, so the model is ready and the call is admitted.
+    let file = local.installed_file(OK, &identity, "weights.bin");
+    let damage = |byte: u8| {
+        let mut bytes = std::fs::read(&file).unwrap();
+        bytes[0] = byte;
+        use std::os::unix::fs::PermissionsExt;
+        let writable = std::fs::Permissions::from_mode(0o600);
+        std::fs::set_permissions(&file, writable).unwrap();
+        std::fs::write(&file, bytes).unwrap();
+    };
+    damage(b'W');
+    let executor = local.runner(&over);
+    let prepared = executor.prepare(&Call::new("finds")).unwrap();
+    assert_eq!(prepared.readiness(), &Readiness::Ready);
+    // Its files are verified before `load`: the call is refused as damaged, never sent,
+    // nothing is loaded and no worker is started.
+    let finished = executor.submit(&Call::new("finds")).unwrap();
+    assert_eq!(finished.outcome().name(), "error");
+    assert_eq!(
+        local.came(),
+        [Err((FaultKind::Unavailable, kind::DAMAGED.to_owned()))]
+    );
+    assert!(local.journal().is_empty(), "{:?}", local.journal());
+    assert!(kit::pack_children().is_empty());
+    // And the run's record reports it so (`runs show` escapes the quote).
+    let text = shown(&local.root, finished.run().as_str());
+    let reported = "error: segment: the model\\'s installation is damaged: a file of it is not as it was installed;";
+    assert!(text.contains(reported), "{text}");
+    // Installed again, the same installation is repaired, and the next call is
+    // answered from it: a damaged installation is looked at again, not remembered.
+    local.install(&entries()[0]);
+    assert_eq!(local.current(OK), identity);
+    let finished = executor.submit(&Call::new("finds")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    assert_eq!(local.came(), [Ok(determined())]);
+    let loaded = ("load", OK.to_owned(), identity.clone());
+    let asked = ("segment", OK.to_owned(), identity.clone());
+    assert_eq!(local.named(), [loaded, asked.clone()]);
+    // Verified once for each installation in a process (decision D14): a file damaged
+    // after that is not looked at again while the process runs.
+    damage(b'X');
+    let finished = executor.submit(&Call::new("finds")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    assert_eq!(local.named().last(), Some(&asked));
+}
+
+#[test]
+fn a_request_enters_the_queue_with_the_count_its_own_hold_was_given() {
+    let local = Local::new("pack-count");
+    let over = local.over(&two_models());
+    let barriers = Barriers::new();
+    let meter = FakeWrapper::new("meter");
+    meter.stop_before(&barriers, "meter");
+    let executor = local
+        .runner(&over)
+        .with_wrapper(Place::Meter, Arc::new(meter.clone()));
+    let none = Secrets::none();
+    let ok = ModelName::new(OK, &none).unwrap();
+    let signal = Cancellation::new();
+    threads::scope(|scope| {
+        // A call of `fake-wait` holds the worker until it is cancelled.
+        let waits = scope.spawn(|| {
+            let request = Request::new(choosing("wait")).cancelled_by(signal.clone());
+            executor.request(&request).unwrap()
+        });
+        barriers.arrived("meter", 1);
+        barriers.release("meter");
+        assert!(
+            local
+                .worker
+                .wait_for(Duration::from_secs(20), &segmenting(WAIT))
+        );
+        // A call of `fake-ok`: its lease's hold reads the count, 0, and the request
+        // stops after the lease, holding the installation.
+        let finds = scope.spawn(|| executor.submit(&choosing("ok")).unwrap());
+        barriers.arrived("meter", 2);
+        // A removal the supervisor is not told of, as one in another process: it sets
+        // its mark, raising the count to 1, finds the installation held, and ends
+        // busy at once with the mark taken off.
+        let dir = local.dir();
+        let pause = &mut || {};
+        let refused = remove(&dir, &ok, &SystemClock, Duration::ZERO, &none, pause);
+        assert_eq!(refused.unwrap_err(), RemoveRefused::Held);
+        assert_eq!(removals(&dir, &ok, &none).unwrap(), 1);
+        // The request goes on: it enters the queue with the count its own hold was
+        // given, 0, not the 1 the directory holds when the request is sent.
+        barriers.release("meter");
+        assert_eq!(first_waiting(&local.worker), [(OK.to_owned(), 0)]);
+        // So the supervisor sees that a removal began after its hold was given, and
+        // ends it while it waits, never sent.
+        let finished = finds.join().unwrap();
+        assert_eq!(finished.outcome().name(), "error");
+        let came = local.came();
+        assert!(
+            matches!(&came[..], [Err((FaultKind::Rejected, why))] if why.starts_with(REMOVED_ELSEWHERE)),
+            "{came:?}"
+        );
+        signal.cancel();
+        waits.join().unwrap();
+    });
+    let came = local.came();
+    assert!(
+        matches!(&came[..], [Err((FaultKind::Cancelled, _))]),
+        "{came:?}"
+    );
+    let kinds: Vec<(&str, String)> = local
+        .journal()
+        .into_iter()
+        .map(|(kind, model, _)| (kind, model))
+        .collect();
+    let wait = |kind: &'static str| (kind, WAIT.to_owned());
+    assert_eq!(kinds, [wait("load"), wait("segment")]);
+}
+
+/// A removal of a model in a second process: the test's own program run once more,
+/// for one test that is otherwise skipped, told the models directory on its input.
+/// It runs one test on one thread, which makes no thread and no process, and it does
+/// not outlive the test that started it: dropped, it is killed if it is still there,
+/// and waited for.
+struct Elsewhere {
+    child: std::process::Child,
+}
+
+impl Drop for Elsewhere {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl Elsewhere {
+    /// Removes `fake-ok` from this models directory in a second process, with a wait
+    /// of a second for its holds, and answers what the removal ended in, as that
+    /// process says it.
+    fn removes(models: &Path) -> String {
+        use std::io::{BufRead, Write};
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "pack::child_removes_fake_ok_from_the_models_directory_it_is_told_of",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit())
+            .spawn()
+            .expect("the test binary runs");
+        let mut elsewhere = Elsewhere { child };
+        let input = elsewhere.child.stdin.as_mut().unwrap();
+        writeln!(input, "{}", models.to_str().unwrap()).unwrap();
+        input.flush().unwrap();
+        let output = elsewhere.child.stdout.take().unwrap();
+        // Read to its end, so that nothing it writes after the line meets a closed pipe.
+        let lines: Vec<String> = std::io::BufReader::new(output)
+            .lines()
+            .map_while(Result::ok)
+            .collect();
+        let said = lines
+            .iter()
+            .find_map(|line| line.strip_prefix("removed ").map(str::to_owned));
+        let said = said.expect("the second process ended before it said how it removed");
+        assert!(elsewhere.child.wait().unwrap().success());
+        said
+    }
+}
+
+/// Run only in a process of its own, by the test below: removes `fake-ok` from the
+/// models directory named on its input, with a wait of a second for its holds, and
+/// says how it ended.
+#[test]
+#[ignore = "run in a process of its own by through_the_wiring_a_removal_from_a_second_process_cancels_a_queued_request_and_not_one_leased_after_it"]
+fn child_removes_fake_ok_from_the_models_directory_it_is_told_of() {
+    use std::io::BufRead;
+    let mut line = String::new();
+    std::io::stdin().lock().read_line(&mut line).unwrap();
+    // Only the folder the test that started it names: an empty line, or a path that
+    // is not absolute, is refused before anything is opened, so a run by hand or a
+    // parent that said nothing removes nothing from wherever it happens to stand.
+    let told = Path::new(line.trim_end());
+    assert!(told.is_absolute(), "no absolute models directory was told");
+    let dir = ModelsDir::at(Arc::new(RealFs), told);
+    let none = Secrets::none();
+    let ok = ModelName::new(OK, &none).unwrap();
+    let clock = SystemClock;
+    let pause = &mut || clock.pause(Duration::from_millis(20));
+    let ended = remove(&dir, &ok, &clock, Duration::from_secs(1), &none, pause);
+    println!("\nremoved {:?}", ended.map(|_| ()));
+}
+
+#[test]
+fn through_the_wiring_a_removal_from_a_second_process_cancels_a_queued_request_and_not_one_leased_after_it()
+ {
+    let local = Local::new("pack-elsewhere");
+    let over = local.over(&two_models());
+    let executor = local.runner(&over);
+    let identity = local.identity(&over, OK);
+    let signal = Cancellation::new();
+    threads::scope(|scope| {
+        // A call of `fake-wait` holds the worker until it is cancelled.
+        let waits = scope.spawn(|| {
+            let request = Request::new(choosing("wait")).cancelled_by(signal.clone());
+            executor.request(&request).unwrap()
+        });
+        assert!(
+            local
+                .worker
+                .wait_for(Duration::from_secs(20), &segmenting(WAIT))
+        );
+        // A call of `fake-ok` is leased, and waits in the queue with the count its
+        // hold read, 0.
+        let queued = scope.spawn(|| executor.submit(&choosing("ok")).unwrap());
+        assert_eq!(first_waiting(&local.worker), [(OK.to_owned(), 0)]);
+        // The test holds the installation too, so that the removal ends busy and the
+        // model stays installed.
+        let digest = identity.parse().unwrap();
+        let installation = whizbang_core::capability::Installation::of(digest);
+        let installations = over.installations().unwrap();
+        let held = installations.hold(OK, installation).unwrap();
+        // A second process removes the model: it marks it, raising its count, and
+        // waits a second for the holds. The supervisor of this one reads the count
+        // and ends the queued request, never sent; the removal then ends busy, with
+        // its mark taken off, at the test's own hold.
+        assert_eq!(Elsewhere::removes(&local.models_dir()), "Err(Held)");
+        let finished = queued.join().unwrap();
+        assert_eq!(finished.outcome().name(), "error");
+        let came = local.came();
+        assert!(
+            matches!(&came[..], [Err((FaultKind::Rejected, why))] if why.starts_with(REMOVED_ELSEWHERE)),
+            "{came:?}"
+        );
+        held.let_go();
+        // A call leased after the removal reads the count it raised, 1, enters the
+        // queue with it, and is not ended by it: it is answered once the worker is
+        // free.
+        let leased = scope.spawn(|| executor.submit(&choosing("ok")).unwrap());
+        assert_eq!(first_waiting(&local.worker), [(OK.to_owned(), 1)]);
+        signal.cancel();
+        waits.join().unwrap();
+        let finished = leased.join().unwrap();
+        assert_eq!(finished.outcome().name(), "completed");
+    });
+    let came = local.came();
+    assert_eq!(came.len(), 2, "{came:?}");
+    assert!(came.contains(&Ok(determined())), "{came:?}");
+    assert!(
+        came.iter()
+            .any(|came| matches!(came, Err((FaultKind::Cancelled, _)))),
+        "{came:?}"
+    );
+    // The queued request was never written to the worker: one `segment` of `fake-ok`,
+    // the one leased after the removal.
+    let named = local.named();
+    let asked: Vec<&(&str, String, String)> = named
+        .iter()
+        .filter(|(kind, model, _)| *kind == "segment" && model == OK)
+        .collect();
+    assert_eq!(asked, [&("segment", OK.to_owned(), identity.clone())]);
 }

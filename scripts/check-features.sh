@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Fails when the tests and the shipped binary would build serde_json with different features.
+# Fails when the tests and the shipped binary would build serde_json with different features,
+# and, over the workspace, when the shipped binary would be built with the tests' feature
+# `fakes` on `whizbang` or `whizbang-backends`.
 # Cargo turns on, for every crate of one build, each feature any crate of that build asks
 # for: so a feature one crate turns on reaches every crate of `just check`, clippy and CI's
 # tests, which build the whole workspace, and none of the binary `just smoke` builds
@@ -40,7 +42,9 @@ tmp=$(mktemp -d)
 done_ok=0
 trap 'rc=$?; rm -rf "$tmp"; [ "$done_ok" = 1 ] || [ "$rc" -ne 0 ] || { echo "features: stopped before its end; failing" >&2; rc=70; }; exit "$rc"' EXIT
 
+computed=0
 if [ -z "$shipped" ]; then
+  computed=1
   shipped="$tmp/shipped"
   workspace="$tmp/workspace"
   # The binary as `just smoke` builds it: its own dependencies, no development ones.
@@ -74,6 +78,19 @@ if [ "$features_shipped" != "$features_workspace" ]; then
   exit 1
 fi
 echo "features: ok (serde_json $version_shipped with ${features_shipped:-no features}, in the binary and in the tests)"
+
+# The feature `fakes` (`OneWorker::starting`, `Launch::testing`) is the tests' alone: the
+# binary as `just smoke` builds it has it on neither of its two crates (plan 1C, the
+# review of task P6b). Checked over the workspace only, not over saved answers.
+if [ "$computed" = 1 ]; then
+  cargo tree --locked -p whizbang -e normal,build -f '{p} {f}' --prefix none >"$tmp/crates"
+  if grep -E '^whizbang(-backends)? v[^ ]+ .*[ ,]fakes(,|$| )' "$tmp/crates" >/dev/null; then
+    echo "features: the binary (-p whizbang) is built with the feature fakes, which only the tests may turn on:" >&2
+    grep -E '^whizbang(-backends)? ' "$tmp/crates" | sort -u | sed 's/^/  /' >&2
+    exit 1
+  fi
+  echo "features: ok (the binary is built without the feature fakes)"
+fi
 done_ok=1
 exit 0
 }

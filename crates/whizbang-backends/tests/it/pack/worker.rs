@@ -46,14 +46,14 @@ const TOKEN: &str = "made-up-token-5b8e1d0c4a2f6e93";
 
 /// The launch of the fixture's worker.
 fn launch(fixture: &Fixture) -> Launch {
-    Launch {
-        python: fixture.python.clone(),
-        source: fixture.source.clone(),
-        module: fixture.module.clone(),
-        models_dir: fixture.models_dir.clone(),
-        lifetime_s: fixture.lifetime_s,
-        more: fixture.more.clone(),
-    }
+    Launch::testing(
+        fixture.python.clone(),
+        fixture.source.clone(),
+        fixture.module.clone(),
+        fixture.models_dir.clone(),
+        fixture.lifetime_s,
+        fixture.more.clone(),
+    )
 }
 
 /// The supervisor of the pack's fakes with this fault, on this clock, held by the test
@@ -619,10 +619,8 @@ fn the_guard_kills_and_waits_for_its_worker_when_its_test_panics() {
 fn a_python_that_is_not_there_or_not_absolute_is_refused_and_says_to_run_setup() {
     for python in ["python3", "/nowhere/bin/python3"] {
         let mut worker = made(None, |fixture| {
-            let launch = Launch {
-                python: PathBuf::from(python),
-                ..launch(fixture)
-            };
+            let mut launch = launch(fixture);
+            launch.python = PathBuf::from(python);
             Worker::new(launch, system(), Secrets::none())
         });
         let fault = worker.ready().unwrap_err();
@@ -640,10 +638,8 @@ fn a_python_that_is_not_there_or_not_absolute_is_refused_and_says_to_run_setup()
 fn a_worker_that_ends_before_its_hello_is_named_by_its_exit_code() {
     // A command line the worker refuses: exit code 2, before anything starts.
     let mut worker = made(None, |fixture| {
-        let launch = Launch {
-            models_dir: PathBuf::from("relative/models"),
-            ..launch(fixture)
-        };
+        let mut launch = launch(fixture);
+        launch.models_dir = PathBuf::from("relative/models");
         Worker::new(launch, system(), Secrets::none())
     });
     let fault = worker.ready().unwrap_err();
@@ -664,10 +660,8 @@ fn a_worker_that_ends_before_its_hello_is_named_by_its_exit_code() {
 
     // Its lifetime, a second here, ends a worker that says no hello: exit code 3.
     let mut worker = made(Some("no-hello"), |fixture| {
-        let launch = Launch {
-            lifetime_s: 1,
-            ..launch(fixture)
-        };
+        let mut launch = launch(fixture);
+        launch.lifetime_s = 1;
         Worker::new(launch, system(), Secrets::none())
     });
     let fault = worker.ready().unwrap_err();
@@ -863,8 +857,10 @@ fn no_test_starts_the_pack_but_through_the_test_kits_guard() {
         {
             naming.insert(place.clone());
         }
-        if !place.contains("/src/") && (text.contains("Worker::new(") || text.contains("Launch {"))
-        {
+        // A launch outside a crate's sources is a test's, made by `Launch::testing`:
+        // its entry point and what follows its command line are private otherwise.
+        let launches = text.contains("Launch::testing(") || text.contains("Launch {");
+        if !place.contains("/src/") && (text.contains("Worker::new(") || launches) {
             making.insert(place);
         }
     }
@@ -889,7 +885,7 @@ fn no_test_starts_the_pack_but_through_the_test_kits_guard() {
     let this = std::fs::read_to_string(crates.join(making[0])).unwrap();
     assert!(this.contains("kit::fakes(fault).guard("));
     let binarys = std::fs::read_to_string(crates.join(making[1])).unwrap();
-    assert_eq!(binarys.matches("Launch {").count(), 1);
+    assert_eq!(binarys.matches("Launch::testing(").count(), 1);
     assert_eq!(binarys.matches("Worker::new(").count(), 1);
     assert_eq!(binarys.matches("kit::fakes(None).guard(").count(), 1);
 }

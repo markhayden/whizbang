@@ -45,7 +45,7 @@ pub use directory::{ModelsDir, OpenRefused};
 pub use hold::{Hold, HoldRefused, Holds};
 pub use install::{
     Carrying, Current, Damage, InstallRefused, current, install, install_carrying,
-    install_or_attach, install_or_attach_carrying,
+    install_or_attach, install_or_attach_carrying, verify,
 };
 pub use installation::{
     INSTALLATION_FORMAT, INSTALLATION_MAX_BYTES, InstallationId, InstallationRecord, InstalledFile,

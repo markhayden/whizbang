@@ -98,6 +98,9 @@ Amended: 2026-11-17, a sixteenth note, with task P6a of checkpoint 1C. Added: "T
 `pack`": the first kind the binary registers, its table and its settings, the model's
 and its own, each with its rule and the words of its refusal. Changed in "Kinds": the
 sentence that said the shipped binary registers none.
+Amended: 2026-11-17, a seventeenth note, with task P6b of checkpoint 1C. Added under "The
+kind `pack`": what one request names and is queued with, its files verified before a
+load, and the one rule for a local table that the kind and the wiring share.
 
 ## Context
 
@@ -941,6 +944,17 @@ file, since what a kind's settings are is the kind's.
 Every test that starts a worker through the wiring sets `max_lifetime_s`, so that a
 worker nobody waits for ends by itself
 (`pack::a_worker_started_through_the_wiring_is_given_the_lifetime_its_config_sets`).
+
+**One request** (task P6b): it names the installation its run was handed the backend
+under and is queued with the count of removals its lease's hold read, both from what
+the backend is given for that request (ADR 0015, "A wrapper around each request",
+"What a backend is given for one request"), never the pointer or a count read later;
+one handed neither is refused, never sent. Before the first load of an installation in
+a process its files are verified, and a damaged one is not loaded (ADR 0017, "The
+inventory", limits). **Which tables are local** is one rule, `whizbang::pack::is_local`,
+that the kind and the binary's wiring (which opens a models directory only for a config
+with a local table, ADR 0017, "Where the directory is") share: no url, no provider, no
+credential, and, of this kind, under `segment` (from the review of task P6a).
 
 ### What a config offers
 
