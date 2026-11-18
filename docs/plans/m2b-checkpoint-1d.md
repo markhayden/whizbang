@@ -206,7 +206,7 @@ the machine.
    synthetic picture made for the test (no photograph), and the record of
    `scripts/model-evidence.sh` gains their lines; taken on a clean head.
 
-- [ ] Done when:
+- [x] Done when:
   `test_sam3.Prompts.test_a_point_is_asked_in_the_pictures_frame_and_answers_its_candidates_best_first`,
   `test_sam3.Prompts.test_a_box_is_asked_as_its_corners_and_answers_its_candidates_best_first`,
   `test_sam3.Prompts.test_the_tracker_is_loaded_once_on_the_first_point_or_box`,
@@ -233,6 +233,18 @@ the machine.
   `evidence::the_committed_record_names_the_adapters_revision_and_the_lock_the_tree_has`
   on the retaken record, `just docs` regenerated, and the carry-over rows on
   shared files and on resizing before the cut closed.
+  **Reworded with the task:** "the conformance suite's runs of `point` and `box`
+  against the fake models" is
+  `pack::conformance::the_real_pack_with_a_fake_model_answers_a_segment_request_whose_masks_are_those_the_request_determines`,
+  which asks a phrase, a point and a box; "`install::a_file_already_held…`" and
+  "`install::two_installs_sharing…`" are `models::install::…` of
+  `whizbang-backends`; "`install::an_install_whose_files_are_all_held_asks_for_no_token`"
+  is `models::an_install_whose_files_are_all_held_asks_for_no_token` of `whizbang`,
+  where `get` reads the token; "`remove::…`" is `models::remove::…`; and
+  "`models::sam3_answers_a_point_and_a_box_on_the_mac`" is
+  `model_tier::sam3_answers_a_point_and_a_box_on_the_mac`, since `just test-models`
+  runs `model_tier::` alone. Each was named by the plan's module where the test now
+  lives under another.
 
 ### What the owner provides (Q)
 
