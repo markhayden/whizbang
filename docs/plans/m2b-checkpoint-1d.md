@@ -119,7 +119,7 @@ runner passes about 270 s of its 300 s, or Linux or a local run about 150 s of i
    and the carry-over row's test is changed to what was decided. On a no, Linux stays on
    its carry-over row and 1D closes without it; nothing else here depends on it.
 
-- [ ] Done when:
+- [x] Done when:
   `config::a_config_naming_a_credential_loads_without_an_env_file_and_hands_no_backend_a_key`,
   `config::a_key_of_capitals_and_digits_pasted_into_key_env_is_never_said_back_without_the_env_file`
   (the refusal, the record, the diagnostics and the error output searched for it),
@@ -150,6 +150,23 @@ runner passes about 270 s of its 300 s, or Linux or a local run about 150 s of i
   ending well on the Linux runner with the worker's hello, recorded as fields in the
   carry-over row, and the evidence record retaken
   (`evidence::the_committed_record_names_the_adapters_revision_and_the_lock_the_tree_has`).
+
+**Reworded with the task** (F1, 2026-11-18). Two clauses above are met otherwise than
+they are worded. (a) "`cli::rascal_segment_on_a_pack_backend_runs_without_the_env_file_under_a_config_naming_a_judge_key`":
+the test runs the real binary, whose kind `pack` needs SAM 3 installed, which no CI runner
+has; so it shows the command going past the env file to its backend, refused there as
+not ready, naming no env file and no key, and `backends status` under the same config
+refused for the env file. A run that completes without the env file is
+`record::a_run_without_the_env_file_holds_no_byte_of_a_key_pasted_into_the_config`
+(a remote segmenter of the test's own). (b) "the carry-over row's line with
+`check (ubuntu-22.04)` under 10 minutes on `main` after the merge": a time on `main`
+after the merge cannot be in the pull request that merges. F1 records the time measured
+on `main` before it (9 min 11 s at 562e3cc) and the split, held by
+`scripts/tests/test-ci-jobs.sh`; the row stays open until the first run on `main` after
+F1, whose time goes into it, under 10 minutes or under the owner's 15 of 2026-11-18.
+Owner's answers, 2026-11-18: item 2 under "What the owner must answer", no (Linux is
+deferred: in production the models would run off the Mac on an external GPU host, such
+as Modal; the carry-over row says so); item 3, yes, should the split not do.
 
 ## Q1. Point, box and pick on SAM 3 (large)
 

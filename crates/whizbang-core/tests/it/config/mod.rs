@@ -32,6 +32,16 @@ fn the_specs_example() -> &'static str {
 }
 
 #[test]
+fn a_config_naming_a_credential_loads_without_an_env_file_and_hands_no_backend_a_key() {
+    files::with_no_env_file_a_config_that_names_a_variable_is_read_and_hands_no_backend_a_key();
+}
+
+#[test]
+fn a_key_of_capitals_and_digits_pasted_into_key_env_is_never_said_back_without_the_env_file() {
+    source::a_pasted_key_is_never_said_back_by_a_source_with_no_env_file();
+}
+
+#[test]
 fn the_toml_reader_reads_the_specs_example_as_tables_of_strings() {
     let config: toml::Table = the_specs_example().parse().expect("the example is TOML");
     assert_eq!(config.keys().collect::<Vec<_>>(), ["backends"]);

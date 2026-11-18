@@ -494,7 +494,8 @@ fn an_entry_whose_origin_needs_a_token_the_config_does_not_name_is_refused_befor
         "{refused}"
     );
     assert!(!refused.contains("sign_in"), "{refused}");
-    // A variable the env file does not set is named, with what to do.
+    // A variable the env file does not set is not named, since a key pasted in its place
+    // cannot be told from a name; what to do is said.
     let unset = bench.config(
         "[[models.tokens]]\norigin = \"https://huggingface.co\"\nkey_env = \"HUB_TOKEN\"\n",
         Some("OTHER=made-up-value-not-a-token\n"),
@@ -502,9 +503,9 @@ fn an_entry_whose_origin_needs_a_token_the_config_does_not_name_is_refused_befor
     let (got, _) = get(under(&unset), "gated", &tools);
     assert_eq!(
         got.unwrap_err(),
-        "the config names the variable `HUB_TOKEN` for the token of https://huggingface.co, \
-         and the env file does not set it, so the model was not installed and nothing was \
-         downloaded: set it in the env file"
+        "the env file does not set the variable the config's `[[models.tokens]]` `key_env` \
+         names for the token of https://huggingface.co, so the model was not installed and \
+         nothing was downloaded: set it in the env file"
     );
     // Nothing was asked, no models directory was made, and the sign-in, which the
     // config does not name, was not looked for.

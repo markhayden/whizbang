@@ -84,32 +84,52 @@ fn both_files_are_read_again_each_time_and_a_file_put_right_is_read() {
     assert_eq!(key_of(&read().unwrap()), Some(first));
 }
 
-#[test]
-fn with_no_env_file_a_config_that_names_a_variable_is_refused_and_one_that_names_none_is_read() {
+/// What `config::a_config_naming_a_credential_loads_without_an_env_file_and_hands_no_backend_a_key`
+/// runs (ADR 0011, "When the env file is asked for").
+pub(super) fn with_no_env_file_a_config_that_names_a_variable_is_read_and_hands_no_backend_a_key() {
     let scratch = Scratch::new("config-no-env");
     let config = scratch.path().join("whizbang.toml");
-    for names in [
-        NAMES_A_KEY,
-        "[backends.judge.a]\nkind = \"fake\"\n[backends.judge.b]\nkind = \"fake\"\n\
-         token_env = \"JUDGE_TOKEN\"\n",
+    for (names, variable) in [
+        (NAMES_A_KEY, "FAL_KEY"),
+        (
+            "[backends.judge.a]\nkind = \"fake\"\n[backends.judge.b]\nkind = \"fake\"\n\
+             token_env = \"JUDGE_TOKEN\"\n",
+            "JUDGE_TOKEN",
+        ),
     ] {
         std::fs::write(&config, names).unwrap();
-        let refused = Loaded::of_files(&config, None).unwrap_err();
-        assert_eq!(refused, LoadRefused::NoEnvFile);
-        assert_eq!(
-            refused.to_string(),
-            "the config names a variable a credential is in, and no env file was given: \
-             without one nothing is known to keep out of what is written, so the config is \
-             not used; name the env file"
-        );
-        let said = format!("{refused:?} {refused}");
-        assert!(!said.contains("FAL_KEY") && !said.contains("JUDGE_TOKEN"));
-        assert!(!said.contains(&scratch.path().display().to_string()));
-        // The reader of ADR 0011's three steps still reads it, with every variable
-        // missing: the refusal is this reader's.
+        let loaded = Loaded::of_files(&config, None).unwrap();
+        // Read as `Loaded::read` reads it, with every variable missing: no backend is
+        // handed a key, and no credential is a secret.
         let read = Loaded::read(&config, None).unwrap();
-        assert_eq!(read.credentials().missing().count(), 1);
+        assert_eq!(loaded.config(), read.config());
+        assert_eq!(loaded.credentials(), read.credentials());
+        assert_eq!(
+            loaded.credentials().missing().collect::<Vec<_>>(),
+            [variable]
+        );
+        assert_eq!(loaded.secrets(), &Secrets::none());
+        // The name the config gives the variable is kept out of what is written when
+        // it is long enough to be a secret (`FAL_KEY` is not), and `Loaded::read`
+        // keeps none.
+        let kept = if variable.len() >= 8 {
+            Secrets::new([variable.to_owned()]).unwrap()
+        } else {
+            Secrets::none()
+        };
+        assert_eq!(loaded.kept_out(), kept);
+        assert_eq!(read.kept_out(), Secrets::none());
     }
+    // A name shorter than a secret is no key, and is not kept out.
+    std::fs::write(
+        &config,
+        "[backends.fill]\nkind = \"fake\"\nkey_env = \"KEY\"\n",
+    )
+    .unwrap();
+    assert_eq!(
+        Loaded::of_files(&config, None).unwrap().kept_out(),
+        Secrets::none()
+    );
     // A config that names no variable is read with no env file.
     let plain = "[backends.fill]\nkind = \"fake\"\nmodel = \"lama\"\n[spend]\ncall_cap_usd = 1\n";
     std::fs::write(&config, plain).unwrap();

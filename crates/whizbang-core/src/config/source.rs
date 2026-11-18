@@ -147,8 +147,17 @@ impl ConfigSource for Files {
         let Some(known) = self.keep(loaded.secrets()) else {
             return Err(SourceRefused::because(KEYS_OVER));
         };
-        let offers = Offers::knowing(loaded.config(), loaded.credentials(), &self.kinds, &known)
-            .map_err(|_| SourceRefused::because(NO_ROSTER))?;
+        // What is kept out of what is written: every key known so far and, under no
+        // env file, the names the config gives its variables (`Loaded::kept_out`).
+        // The names are not kept between readings: the config holds them by right.
+        let kept_out = loaded.kept_out();
+        let offers = Offers::knowing(
+            loaded.config(),
+            loaded.credentials(),
+            &self.kinds,
+            &known.joined(&kept_out),
+        )
+        .map_err(|_| SourceRefused::because(NO_ROSTER))?;
         let offers = match &self.inventory {
             Some(inventory) => offers.over(inventory.clone()),
             None => offers,
@@ -176,7 +185,7 @@ impl ConfigSource for Files {
         }
         let snapshot = snapshot
             .offering(Arc::new(offers))
-            .with_secrets(loaded.secrets().clone())
+            .with_secrets(kept_out)
             .recording(Arc::new(loaded.config().clone()));
         Ok(match loaded.config().call_cap_micros() {
             Some(micros) => snapshot.capped_at(Estimate::of_micros(micros)),
@@ -262,11 +271,6 @@ impl From<&LoadRefused> for SourceRefused {
                      nothing is made of the file; nothing of it is shown"
                 }
             },
-            LoadRefused::NoEnvFile => {
-                "the config names a variable a credential is in, and no env file was given: \
-                 without one nothing is known to keep out of what is written, so the config \
-                 is not used; name the env file"
-            }
         })
     }
 }

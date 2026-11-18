@@ -4,6 +4,10 @@ Status: accepted. Names ADR 0010 (what a backend says of cost) and ADR 0016 (the
 and the meter), and changes neither.
 Date: 2026-11-17
 Spec: section 6, "Money"; plan 2A, task S2, item 1
+Amended: 2026-11-18, with task F1 of plan 1D (`docs/plans/m2b-checkpoint-1d.md`, item 2),
+from the review of the first verdict. Changed under "What a request cost": a status of
+success the adapter does not list costs its bound, where it cost nothing. Added: "A long
+prompt", "A turn cut off at the output ceiling" and "What a turn records".
 
 ## Context
 
@@ -50,12 +54,42 @@ millionth: input, output, cache reads and cache writes each at its price
 (`spend::a_judge_turn_reserves_its_fixed_bound_and_settles_at_its_usage`). An answer of
 200 that reports no usage, or cannot be read, costs its bound, as the meter charges
 any answer that says no charge (`spend::a_judge_turn_with_no_usage_is_charged_its_bound`).
-**An answer of an error status costs nothing:** the provider charges no request it
-refused or failed, and the fault says so (`answered`, at a charge of nothing). A retry is
+**A status of success the adapter does not list** (2xx other than 200) costs its bound,
+as an unreadable answer of 200 does: the provider may have charged it, so it is never
+settled at nothing (`answered`, with no charge;
+`anthropic::an_unlisted_success_status_is_charged_its_bound`). **An answer of an error
+status costs nothing:** the provider charges no request it refused or failed, and the
+fault says so (`answered`, at a charge of nothing). A retry is
 a request of its own, reserved its own bound and settled at its own usage
 (`spend::a_retry_with_a_larger_limit_is_admitted_as_its_own_attempt`). A call whose
 reservation is over the cap is refused at its admission, before anything is sent
 (`spend::a_judge_call_whose_bound_is_over_the_call_cap_is_refused_before_dispatch`).
+
+**A long prompt.** The row's prices hold for a prompt of at most 100,000 tokens of
+input; over that line squint's catalogue gives the long prompt's prices of the same
+reading, 2026-10-26: 0.50 a million input, 2.50 output and 0.05 read from the cache. It
+gives none for a cache write, which is taken as 0.625, five times the short price, the
+factor each long price it does give has, so that the charge is never below the price.
+The input ceiling is held under the line, so a turn passes it only when the provider
+reports more input than the adapter counted; such a turn's reported input (what was
+read from the cache, written to it, and neither, together) over 100,000 is charged
+every count at the long prompt's prices, and one on the line at the row's
+(`spend::judge::a_turn_whose_reported_input_passes_the_long_prompt_line_is_charged_the_long_prompt_prices`).
+Such a charge can pass the bound reserved; the meter takes the excess as for any charge
+over its bound (ADR 0016).
+
+**A turn cut off at the output ceiling** is not asked for again with the same limit.
+Each turn of the kind says the ceiling it was sent under (`Turn::output_ceiling`), and
+`check`, which asks again with four times its limit, ends when that retry would be sent
+with no more than the cut-off turn was: a failure of the kind `judge_output_ceiling`
+that names the setting to raise, `max_output_tokens` in the judge's table, after one
+request (`check::a_turn_cut_off_at_the_output_ceiling_is_not_retried_with_the_same_limit`).
+
+**What a turn records.** The input the adapter counted for a request before it was sent
+is kept on its turn (`Turn::counted_input`) and written into the run's exchange of that
+turn as `counted_input_tokens`, beside the usage the provider reported, so the two can be
+compared turn by turn (`record::each_judge_turn_records_its_counted_input_beside_its_usage`).
+An exchange written before has no such field, and is read as having none.
 
 **More than 20 pictures** in one request are each fitted to 2,000 pixels a side at most,
 as squint's catalogue states for the model (`many_image_threshold`,

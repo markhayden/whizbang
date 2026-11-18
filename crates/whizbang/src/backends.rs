@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use clap::Subcommand;
 use whizbang::backend_status::{self, Asked, NoProber};
-use whizbang::wiring::Platform;
+use whizbang::wiring::{Platform, Uses};
 
 use crate::rascal::Under;
 
@@ -40,7 +40,7 @@ pub enum Command {
 pub fn run(command: &Command, platform: Platform) -> Result<String, String> {
     match command {
         Command::Status { probe, under } => {
-            let over = under.over(Some(platform))?;
+            let over = under.over(Some(platform), Uses::Every)?;
             let asked = Asked { probe: *probe };
             backend_status::status(&over, asked, Arc::new(NoProber))
         }

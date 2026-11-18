@@ -103,6 +103,19 @@ fn select_refuses_masks_on_two_images_nothing_left_and_a_box_that_is_not_four_nu
 }
 
 #[test]
+fn a_pixel_whose_centre_is_on_an_exclude_boxs_edge_is_cleared() {
+    // A box whose left and top edges are on the centre of pixel (1, 1), and whose right
+    // and bottom edges are on the centres of the next column and row. A centre on the
+    // left or top edge is inside the box, so (1, 1) is cleared; one on the right or
+    // bottom edge is not, so (2, 1) and (1, 2) stay.
+    let (w, h) = (4, 4);
+    let a = mask_of(w, h, plane(w, h, |_, _| true), &[0; 16]);
+    let mask = select(&[a], &[[1.5, 1.5, 2.5, 2.5]], UseCase::Remove).unwrap();
+    let expected = plane(w, h, |x, y| (x, y) != (1, 1));
+    assert_eq!(places(mask.core(), w), places(&expected, w));
+}
+
+#[test]
 fn holding_keeps_the_masks_whose_core_holds_the_pixel_in_the_order_given() {
     let (w, h) = (20, 12);
     let a = mask_of(

@@ -52,8 +52,12 @@ for top in check ci; do
 done
 [ "$(recipe docs)" = "scripts/docs.sh" ] ||
   fail "justfile: docs must run exactly: scripts/docs.sh"
-grep -q -E '^ +run: just ci$' .github/workflows/ci.yml ||
-  fail ".github/workflows/ci.yml must have a step that runs: just ci"
+# CI runs `just ci` in two halves on each runner (scripts/tests/test-ci-jobs.sh); the
+# check of the reference is in the half that every runner's `check` job runs.
+grep -q -E '^ +run: just ci-without-scripts$' .github/workflows/ci.yml ||
+  fail ".github/workflows/ci.yml must have a step that runs: just ci-without-scripts"
+reached ci-without-scripts | grep -x 'docs-check' >/dev/null ||
+  fail "justfile: ci-without-scripts must reach docs-check"
 
 # A stand-in for cargo, first on the path. It accepts only the command the real description
 # comes from, prints the file named by FAKE_DESCRIBE_OUT and exits with FAKE_DESCRIBE_EXIT.

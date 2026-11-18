@@ -522,16 +522,15 @@ fn a_config_grow_cannot_use_is_said_with_its_key_and_no_path_before_the_store_is
         err.contains("the config cannot be used: ") && err.contains("call_cap"),
         "{err}"
     );
-    // A config that names a variable is not used without an env file, and with one
-    // that does not parse the line is numbered and not shown.
+    // A config that names a variable, with an env file that does not parse: the line
+    // is numbered and not shown. (Without an env file `grow`, which uses no backend,
+    // runs under it: `cli::commands_that_use_no_backend_run_without_the_env_file_under_a_config_naming_a_key`.)
     let key = made_up_key();
     std::fs::write(
         &config,
         "[backends.fill]\nkind = \"fake\"\nkey_env = \"FAKE_KEY\"\n",
     )
     .unwrap();
-    let err = run(&named);
-    assert!(err.contains("name the env file"), "{err}");
     std::fs::write(&env, format!("FAKE_KEY={key}\nnot an assignment\n")).unwrap();
     let both = [named[0], named[1], "--env-file", env.to_str().unwrap()];
     let err = run(&both);

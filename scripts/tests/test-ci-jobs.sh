@@ -2,10 +2,11 @@
 # The jobs of CI (.github/workflows/ci.yml) and the recipes they run.
 #
 # On the macOS runner the script tests alone take three to five and a half minutes, which
-# put the one job over its budget of ten (docs/plans/m1c-local-pack.md, tasks C0 and C0b).
-# So that runner runs `just ci` as two jobs side by side: `check (macos-15)` runs
-# `just ci-without-scripts` and `scripts (macos-15)` runs `just ci-scripts`. The Linux
-# runner runs `just ci` in one job. What is held here:
+# put the one job over its budget of ten (docs/plans/m1c-local-pack.md, tasks C0 and C0b),
+# and the Linux runner's one job was over it too (docs/plans/m2b-checkpoint-1d.md, task
+# F1, item 5). So each runner runs `just ci` as two jobs side by side: `check (<runner>)`
+# runs `just ci-without-scripts` and `scripts (<runner>)` runs `just ci-scripts`. What is
+# held here:
 #
 # - the two halves together are `just ci`, recipe for recipe, so a recipe added to `check`
 #   or to `ci` and not to the half that runs it on macOS fails `just check`;
@@ -97,20 +98,19 @@ check_workflow() { # <workflow>
   scripts=$(job "$file" scripts)
   ci=$(job "$file" ci)
 
-  # check: both runners; `just ci` on every runner but macOS, and its first half there.
+  # check: both runners, each the first half of `just ci`, in a step with no condition.
   grep -x -F '        os: [macos-15, ubuntu-22.04]' <<<"$check" >/dev/null ||
     { echo "CI: check must run on macos-15 and ubuntu-22.04"; return 1; }
-  [ "$(grep -c -E '^ +run: just ci' <<<"$check")" = 2 ] ||
-    { echo "CI: check must have two steps that run a half or the whole of just ci: one for macOS, one for the other runner"; return 1; }
-  [ "$(before "$check" '^ +run: just ci$')" = "        if: matrix.os != 'macos-15'" ] ||
-    { echo "CI: check must run just ci on every runner but macos-15"; return 1; }
-  [ "$(before "$check" '^ +run: just ci-without-scripts$')" = "        if: matrix.os == 'macos-15'" ] ||
-    { echo "CI: check must run just ci-without-scripts on macos-15"; return 1; }
+  [ "$(grep -c -E '^ +run: just ci' <<<"$check")" = 1 ] && grep -E '^ +run: just ci-without-scripts$' <<<"$check" >/dev/null ||
+    { echo "CI: check must have one step that runs just ci-without-scripts"; return 1; }
+  case "$(before "$check" '^ +run: just ci-without-scripts$')" in *' if: '*)
+    echo "CI: check must run just ci-without-scripts on every runner, with no condition"; return 1 ;; esac
 
-  # scripts: the other half, on that runner, set up as check is, with no step that can be
-  # skipped. A job that is skipped does not count as passed below either.
-  grep -x -F '    runs-on: macos-15' <<<"$scripts" >/dev/null ||
-    { echo "CI: scripts must run on macos-15"; return 1; }
+  # scripts: the other half, on the same runners, set up as check is, with no step that
+  # can be skipped. A job that is skipped does not count as passed below either.
+  grep -x -F '        os: [macos-15, ubuntu-22.04]' <<<"$scripts" >/dev/null &&
+    grep -x -F '    runs-on: ${{ matrix.os }}' <<<"$scripts" >/dev/null ||
+    { echo "CI: scripts must run on macos-15 and ubuntu-22.04"; return 1; }
   [ "$(grep -c -E '^ +run: just ' <<<"$scripts")" = 1 ] && grep -E '^ +run: just ci-scripts$' <<<"$scripts" >/dev/null ||
     { echo "CI: scripts must run exactly: just ci-scripts"; return 1; }
   if grep -E '^ +if:' <<<"$scripts" >/dev/null; then
@@ -143,8 +143,9 @@ expect_pass "the workflow" check_workflow "$workflow"
 check_rules() { # <AGENTS.md>
   local row text
   row=$(grep -F '| `just ci-without-scripts`, `just ci-scripts` |' "$1" || true)
-  for text in '`check (macos-15)` runs the first' '`scripts (macos-15)` runs the second' \
-    '`check (ubuntu-22.04)` runs `just ci` whole' 'the aggregate `ci`, which needs all three'; do
+  for text in '`check (macos-15)` and `check (ubuntu-22.04)` run the first' \
+    '`scripts (macos-15)` and `scripts (ubuntu-22.04)` run the second' \
+    'the aggregate `ci`, which needs all four'; do
     case "$row" in *"$text"*) ;; *) echo "AGENTS.md: the row of the two halves must say: $text"; return 1 ;; esac
   done
 }
@@ -188,8 +189,9 @@ changed check_justfile justfile 's/^    scripts\/tests\/run.sh$/    true/' "test
 changed check_justfile justfile 's/^ci-scripts: deny test-scripts$/&\
     true/' "run nothing of their own"
 
-changed check_rules AGENTS.md 's/`scripts (macos-15)` runs the second/the other job runs the second/' "must say: \`scripts (macos-15)\`"
-changed check_rules AGENTS.md 's/, which needs all three/, which needs both/' "must say: the aggregate"
+changed check_rules AGENTS.md 's/`scripts (macos-15)` and `scripts (ubuntu-22.04)` run the second/the other jobs run the second/' "must say: \`scripts (macos-15)\`"
+changed check_rules AGENTS.md 's/ and `check (ubuntu-22.04)` run the first/ runs the first/' "must say: \`check (macos-15)\`"
+changed check_rules AGENTS.md 's/, which needs all four/, which needs both/' "must say: the aggregate"
 
 # --- The workflow.
 # The aggregate without the new job: a red script test on macOS would not fail it.
@@ -205,13 +207,17 @@ changed check_workflow "$workflow" 's/^        run: |$/        run: >/' "one tes
 changed check_workflow "$workflow" 's/^\( *\)run: just ci-scripts$/\1run: just deny/' "scripts must run exactly: just ci-scripts"
 changed check_workflow "$workflow" 's/^\( *\)run: just ci-scripts$/&\
 \1run: just deny/' "scripts must run exactly: just ci-scripts"
-changed check_workflow "$workflow" "s/^        if: matrix.os != 'macos-15'\$/        if: matrix.os == 'ubuntu-22.04'/" \
-  "must run just ci on every runner but macos-15"
-changed check_workflow "$workflow" "/^        if: matrix.os != 'macos-15'\$/d" "must run just ci on every runner but macos-15"
-changed check_workflow "$workflow" 's/^\( *\)run: just ci-without-scripts$/\1run: just check/' "two steps that run"
+changed check_workflow "$workflow" 's/^\( *\)run: just ci-without-scripts$/\1if: matrix.os == '"'macos-15'"'\
+\1run: just ci-without-scripts/' "with no condition"
+changed check_workflow "$workflow" 's/^\( *\)run: just ci-without-scripts$/\1run: just check/' "one step that runs just ci-without-scripts"
+changed check_workflow "$workflow" 's/^\( *\)run: just ci-without-scripts$/&\
+\1run: just ci/' "one step that runs just ci-without-scripts"
 changed check_workflow "$workflow" 's/^        os: \[macos-15, ubuntu-22.04\]$/        os: [ubuntu-22.04]/' "check must run on macos-15 and ubuntu-22.04"
+# Only the second matrix, which is the new job's.
+awk '/^        os: \[macos-15, ubuntu-22.04\]$/ { n++; if (n == 2) $0 = "        os: [macos-15]" } { print }' "$workflow" >"$tmp/matrix"
+expect_fail "the second matrix on macOS alone" "scripts must run on macos-15 and ubuntu-22.04" check_workflow "$tmp/matrix"
 # The new job somewhere else, skipped, or allowed to fail.
-changed check_workflow "$workflow" 's/^    runs-on: macos-15$/    runs-on: ubuntu-22.04/' "scripts must run on macos-15"
+changed check_workflow "$workflow" 's/^    runs-on: ${{ matrix.os }}$/    runs-on: macos-15/' "scripts must run on macos-15 and ubuntu-22.04"
 changed check_workflow "$workflow" 's/^  scripts:$/&\
     if: github.event_name == '"'push'"'/' "may have a condition"
 changed check_workflow "$workflow" 's/^  scripts:$/&\
