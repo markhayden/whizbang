@@ -57,8 +57,8 @@ And the carry-over row on what an adapter gave, built by V1:
 ## Timing
 
 The timings of the models are in `docs/results/m1d-segment-coverage.md`: on the GPU, a
-load of 2.2 to 3.5 s, a first request with the worker's start and the load in it of 2.5
-to 4.5 s, and a second request of 0.6 s on SAM 3 and 0.08 to 0.21 s on Tiny; SAM 3's two
+load of 2.0 to 3.3 s, a first request with the worker's start and the load in it of 2.3
+to 4.7 s, and a second request of 0.6 to 0.7 s on SAM 3 and under 0.25 s on Tiny; SAM 3's two
 models hold 6,363 MiB of the GPU, its phrase model alone 4,269. On the CPU (by hand, not
 recorded) a request of SAM 3 took 5 to 10 s and its load about 9 s. The parity test runs
 in about 95 s. The fast tests' times of this pull request are in its hand-back and its
