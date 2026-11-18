@@ -67,7 +67,8 @@ fn the_shipping_executor_describes_check_and_cannot_run_it_for_want_of_a_judge()
     assert_eq!(
         names,
         [
-            "check", "feather", "grow", "plug", "render", "segment", "select", "view"
+            "check", "align", "feather", "grow", "plug", "render", "resize", "segment", "select",
+            "view"
         ]
     );
     let root = dir.path().join("store");

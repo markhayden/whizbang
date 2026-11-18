@@ -9,6 +9,10 @@ The same as data: [description.json](description.json).
 
 Has a judge look at images through evidence tools and conclude: pass, fail or unsure.
 
+## `align`
+
+Registers one flat image onto another of the same scene and viewpoint, and returns it warped into the other's frame.
+
 ## `feather`
 
 Sets the blend of a mask to a feather of its core's edge, outward, with one sigma.
@@ -24,6 +28,10 @@ Fills the holes of a mask's core up to a share of the area of the shape around e
 ## `render`
 
 Makes a mask into a picture: the image cut out by it (alpha), or its weight in grey (plain).
+
+## `resize`
+
+Scales an image down to a long edge, so the whole picture can be seen at once.
 
 ## `segment`
 

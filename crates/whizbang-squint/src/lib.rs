@@ -1,10 +1,14 @@
 //! Squint in whizbang (`SPEC.md` section 3): its Rust tools, and later its rules and its
 //! checklist.
 //!
-//! So far it holds one evidence tool, [`view`], for flat images, as a function and as
-//! an action; and [`check`], the smallest judge loop that proves the execution
-//! contract: a judge looks at images through the tools its run froze, and concludes.
+//! It holds three evidence tools for flat images, each as a function and as an action:
+//! [`view`], [`resize`] and [`align`]; and [`check`], the judge loop: a judge looks at
+//! images through the tools its run froze, after [`details`] has handed it what the tools
+//! measured, and concludes.
 
+pub mod align;
 pub mod check;
+pub mod details;
+pub mod resize;
 pub mod source_fidelity;
 pub mod view;

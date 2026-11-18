@@ -32,10 +32,9 @@ use whizbang_backends::anthropic::ServiceKind;
 /// recipe first, then the primitives. Tools add theirs here as they are ported. What
 /// comes back otherwise is why an action could not be registered, in a sentence.
 ///
-/// `check` and `view` are squint's (ADR 0009). They are described, and no command runs
-/// them yet: `whizbang squint check` is plan 2A's task S2. `check` needs a judge, which a
-/// config gives as a backend of the kind `service` ([`kinds`]); `view` needs none, and
-/// is what `check` calls.
+/// `check`, `align`, `resize` and `view` are squint's (ADR 0009); `whizbang squint check`
+/// runs `check`. `check` needs a judge, which a config gives as a backend of the kind
+/// `service` ([`kinds`]); the three tools need none, and are what `check` calls.
 pub fn registry() -> Result<Registry, String> {
     let said = |error: &dyn std::fmt::Display| error.to_string();
     let mut registry = Registry::new();
@@ -44,12 +43,16 @@ pub fn registry() -> Result<Registry, String> {
     let grow = whizbang_rascal::grow::Grow::new();
     let segment = whizbang_rascal::segment::Segment::new();
     let view = whizbang_squint::view::View::new().map_err(|e| said(&e))?;
-    let actions: [Arc<dyn Action>; 8] = [
+    let align = whizbang_squint::align::Align::new().map_err(|e| said(&e))?;
+    let resize = whizbang_squint::resize::Resize::new().map_err(|e| said(&e))?;
+    let actions: [Arc<dyn Action>; 10] = [
         Arc::new(check),
+        Arc::new(align),
         Arc::new(whizbang_rascal::feather::Feather::new()),
         Arc::new(grow),
         Arc::new(whizbang_rascal::plug::Plug::new()),
         Arc::new(whizbang_rascal::render::Render::new()),
+        Arc::new(resize),
         Arc::new(segment),
         Arc::new(whizbang_rascal::select::Select::new()),
         Arc::new(view),

@@ -41,8 +41,9 @@ use whizbang_core::contract::{
 };
 use whizbang_core::identity::{DecodeLimits, Digest};
 
+use crate::details::{self, Details, Names, Projection};
 use crate::source_fidelity;
-use crate::view;
+use crate::{align, resize, view};
 
 /// The use cases `check` takes, by name: the general one, and `source-fidelity`.
 pub const USE_CASES: [&str; 2] = ["general", source_fidelity::NAME];
@@ -50,7 +51,7 @@ pub const USE_CASES: [&str; 2] = ["general", source_fidelity::NAME];
 /// The action's name.
 pub const NAME: &str = "check";
 /// The action's version.
-pub const VERSION: &str = "1.1.0";
+pub const VERSION: &str = "1.2.0";
 /// The most requests one run sends its judge, the retry of a cut-off turn included.
 pub const TURNS_LIMIT: usize = 16;
 /// The most tool calls one run dispatches. It is far under what the executor lets one
@@ -74,14 +75,14 @@ const SYSTEM: &str = "You check images. Look closer with the tools you are given
 /// this when the run starts; what is offered or withdrawn afterwards is seen by the
 /// next run and by no run that has started.
 ///
-/// The tools there are, are the ones this build links: `view`. Offering is saying that
-/// one of them may be named by a run.
+/// The tools there are, are the ones this build links: `view`, `align` and `resize`.
+/// Offering is saying that one of them may be named by a run.
 pub struct Toolbox {
     offered: Mutex<BTreeSet<&'static str>>,
 }
 
 /// The tools this build links, by name.
-const LINKED: [&str; 1] = [view::NAME];
+const LINKED: [&str; 3] = [view::NAME, align::NAME, resize::NAME];
 
 impl Toolbox {
     /// A toolbox that offers every tool this build links.
@@ -155,6 +156,24 @@ impl Check {
             "brief",
             "Under source-fidelity, what the edit was to do and keep, as data.",
             ValueType::Text,
+        ))
+        .argument(Argument::with_default(
+            "details",
+            "none, or first: before the first turn, the tools named by detail are run on each pair of images the use case relates, and what they measured opens the conversation.",
+            ValueType::choice(&Details::NAMES),
+            Value::text("none"),
+        ))
+        .argument(Argument::with_default(
+            "detail",
+            "The tools whose details are measured first, by name, separated by commas: align.",
+            ValueType::Text,
+            Value::text(align::NAME),
+        ))
+        .argument(Argument::with_default(
+            "projection",
+            "How a call of align by the judge is answered: full, or visual only, its pictures and a fixed sentence (squint's projection of arm C).",
+            ValueType::choice(&Projection::NAMES),
+            Value::text("full"),
         ))
         .argument(Argument::with_default(
             "max_output_tokens",
@@ -295,6 +314,10 @@ struct Run<'a> {
     answered: BTreeSet<String>,
     dispatched: usize,
     crops: usize,
+    /// The names the judge may give an image beside its identity.
+    names: Names,
+    /// How a call of `align` is answered.
+    projection: Projection,
 }
 
 impl Run<'_> {
@@ -319,8 +342,24 @@ impl Run<'_> {
             return answer(&format!("refused: {refusal}"), true, Vec::new());
         }
         let listed = self.tools.iter().any(|tool| tool.name() == call.name());
+        let id = format!("call:{}", self.dispatched - 1);
+        let mut said_as: Option<details::AlignAsked> = None;
+        let mut resized: Option<String> = None;
         let asked = match (listed, call.name()) {
             (true, view::NAME) => view_call(call.arguments()),
+            (true, align::NAME) => {
+                details::align_call(call.arguments(), &self.names).map(|asked| {
+                    let call = asked.call.clone();
+                    said_as = Some(asked);
+                    call
+                })
+            }
+            (true, resize::NAME) => {
+                details::resize_call(call.arguments(), &self.names).map(|(call, frame)| {
+                    resized = Some(frame);
+                    call
+                })
+            }
             // The second line, which the check above leaves nothing for: a name that
             // is no tool of the run would go to the executor as it was named, with
             // nothing in it, and the executor refuses a call the run did not freeze
@@ -346,21 +385,42 @@ impl Run<'_> {
                 &"a tool that is not on the run's list ran",
             ));
         }
+        if let Some(asked) = &said_as
+            && let Outcome::Completed { outputs } = finished.outcome()
+        {
+            let committed: Vec<ArtifactId> = outputs.iter().map(|output| output.id()).collect();
+            let report =
+                details::report_of(self.context, asked.image_id, asked.against_id, &committed)?;
+            let mut pictures = Vec::new();
+            for output in outputs {
+                let picture = self.evidence(output.id())?;
+                self.names
+                    .frame(&align::aligned_frame(&asked.image), output.id());
+                pictures.push(picture.picture);
+            }
+            let said = details::align_answer(&id, &report, asked, self.projection);
+            return answer(&said, false, pictures);
+        }
+        if let Some(frame) = &resized
+            && let Outcome::Completed { outputs } = finished.outcome()
+        {
+            let mut pictures = Vec::new();
+            let mut said = String::new();
+            for output in outputs {
+                let picture = self.evidence(output.id())?;
+                self.names.frame(&format!("crop:{id}:0"), output.id());
+                let (width, height) = (picture.picture.width(), picture.picture.height());
+                said = details::resize_answer(&id, frame, width, height);
+                pictures.push(picture.picture);
+            }
+            return answer(&said, false, pictures);
+        }
         match finished.outcome() {
             Outcome::Completed { outputs } => {
                 let mut said = Vec::new();
                 let mut pictures = Vec::new();
                 for output in outputs {
-                    let (image, crop) = shown(self.context, output.id())?;
-                    // The evidence is the run's own: kept with it as a diagnostic,
-                    // whatever the run comes to, and never one of its outputs. It is
-                    // an image's file, so it is kept exactly or not at all: a file
-                    // with a secret taken out of it would be no image (ADR 0009).
-                    self.crops += 1;
-                    let name = format!("evidence-{:03}", self.crops);
-                    let file = Artifact::Image(image).to_bytes();
-                    let kept = self.context.diagnostics().write_exact(&name, &file);
-                    kept.map_err(|why| failed("evidence", &why))?;
+                    let crop = self.evidence(output.id())?;
                     said.push(label(&crop));
                     pictures.push(crop.picture);
                 }
@@ -372,6 +432,83 @@ impl Run<'_> {
             }
             Outcome::Cancelled => Err(failed("cancelled", &"a tool call was cancelled")),
         }
+    }
+
+    /// An image a tool call of this run returned, kept as the run's evidence.
+    fn evidence(&mut self, id: ArtifactId) -> Result<Shown, Failure> {
+        let (image, shown) = shown(self.context, id)?;
+        // The evidence is the run's own: kept with it as a diagnostic, whatever the run
+        // comes to, and never one of its outputs. It is an image's file, so it is kept
+        // exactly or not at all: a file with a secret taken out of it would be no image
+        // (ADR 0009).
+        self.crops += 1;
+        let name = format!("evidence-{:03}", self.crops);
+        let file = Artifact::Image(image).to_bytes();
+        let kept = self.context.diagnostics().write_exact(&name, &file);
+        kept.map_err(|why| failed("evidence", &why))?;
+        Ok(shown)
+    }
+
+    /// The details measured first (ADR 0028): for each pair, `image` registered onto
+    /// `against`, each named as the judge is told of it, the tools of `detail` are called
+    /// through the executor, and what they found is said, with the pictures they returned.
+    /// A call that could not measure is said too, with why.
+    fn measure_first(
+        &mut self,
+        pairs: &[(&str, ArtifactId, &str, ArtifactId)],
+        detail: &[&str],
+    ) -> Result<Vec<Part>, Failure> {
+        let mut parts = Vec::new();
+        for (image, image_id, against, against_id) in pairs {
+            for tool in detail {
+                if *tool != align::NAME {
+                    continue;
+                }
+                let call = Call::new(align::NAME)
+                    .input("image", *image_id)
+                    .input("against", *against_id);
+                self.context.events().progress("a detail was measured");
+                let finished = match self.context.executor().submit(&call) {
+                    Ok(finished) => finished,
+                    Err(CallError::Refused(refusal)) => {
+                        return Err(failed("details", &refusal));
+                    }
+                    Err(other) => return Err(failed("details", &other)),
+                };
+                let outputs = match finished.outcome() {
+                    Outcome::Completed { outputs } => outputs,
+                    Outcome::Invalid { why } | Outcome::Error { message: why, .. } => {
+                        let mark = details::mark(tool);
+                        parts.push(Part::Text(format!(
+                            "{tool} ({mark}), {image} onto {against}: not measured: {why}"
+                        )));
+                        continue;
+                    }
+                    Outcome::Cancelled => {
+                        return Err(failed("cancelled", &"a detail's call was cancelled"));
+                    }
+                };
+                let committed: Vec<ArtifactId> = outputs.iter().map(|output| output.id()).collect();
+                let report = details::report_of(self.context, *image_id, *against_id, &committed)?;
+                if parts.is_empty() {
+                    parts.push(Part::Text(details::DETAILS_INTRO.to_owned()));
+                }
+                parts.push(Part::Text(details::align_detail(&report, image, against)));
+                for output in outputs {
+                    let frame = align::aligned_frame(image);
+                    let shown = self.evidence(output.id())?;
+                    self.names.frame(&frame, output.id());
+                    let (width, height) = (shown.picture.width(), shown.picture.height());
+                    parts.push(Part::Text(format!(
+                        "Image `{frame}` ({image} warped into {against}'s grid, \
+                         {width}x{height}, Flat); for the tool view it is named {}.",
+                        shown.id
+                    )));
+                    parts.push(Part::Image(shown.picture));
+                }
+            }
+        }
+        Ok(parts)
     }
 
     /// Answers every call of a turn, in the order the judge made them.
@@ -411,8 +548,14 @@ impl Action for Check {
         let Some(Value::Text(named)) = argument("tools") else {
             return Err(Failure::invalid("the call names no tools"));
         };
-        let named: BTreeSet<&str> = named.split(',').map(str::trim).collect();
-        let named: Vec<&str> = named.into_iter().filter(|name| !name.is_empty()).collect();
+        // In the order the call names them, each once: the order the judge is told of them.
+        let mut listed: Vec<&str> = Vec::new();
+        for name in named.split(',').map(str::trim) {
+            if !name.is_empty() && !listed.contains(&name) {
+                listed.push(name);
+            }
+        }
+        let named = listed;
         let offered = self.toolbox.offered();
         if let Some(name) = named.iter().find(|name| !offered.contains(name)) {
             let shown: String = name.chars().take(64).collect();
@@ -422,11 +565,51 @@ impl Action for Check {
         }
         let mut tools = Vec::new();
         for name in &named {
-            if *name == view::NAME {
-                tools.push(view_tool()?);
+            match *name {
+                view::NAME => tools.push(view_tool()?),
+                align::NAME => {
+                    tools.push(details::align_tool().map_err(|why| failed("tools", &why))?)
+                }
+                resize::NAME => {
+                    tools.push(details::resize_tool().map_err(|why| failed("tools", &why))?);
+                }
+                _ => {}
             }
         }
-        if !context.freeze_calls(named.iter().copied()) {
+        let chosen = |name: &str, names: &[&str]| match argument(name) {
+            Some(Value::Text(text)) if names.contains(&text.as_str()) => Ok(text.clone()),
+            _ => Err(Failure::invalid(&format!(
+                "{name} is one of {}",
+                names.join(", ")
+            ))),
+        };
+        let details = Details::named(&chosen("details", &Details::NAMES)?).unwrap_or(Details::None);
+        let projection = Projection::named(&chosen("projection", &Projection::NAMES)?)
+            .unwrap_or(Projection::Full);
+        let mut detail: Vec<&str> = Vec::new();
+        if details == Details::First {
+            let Some(Value::Text(asked)) = argument("detail") else {
+                return Err(Failure::invalid("the call names no detail"));
+            };
+            for name in asked
+                .split(',')
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+            {
+                if !details::DETAILED.contains(&name) || !offered.contains(&name) {
+                    let shown: String = name.chars().take(64).collect();
+                    return Err(Failure::invalid(&format!(
+                        "{shown:?} is no tool whose details are measured first: {}",
+                        details::DETAILED.join(", ")
+                    )));
+                }
+                if !detail.contains(&name) {
+                    detail.push(name);
+                }
+            }
+        }
+        let frozen = named.iter().chain(detail.iter()).copied();
+        if !context.freeze_calls(frozen) {
             return Err(failed(
                 "tools",
                 &"the run's tools were frozen before it started",
@@ -446,6 +629,16 @@ impl Action for Check {
             }
         };
         let fidelity = use_case == source_fidelity::NAME;
+        let mut run = Run {
+            context,
+            judge,
+            tools,
+            answered: BTreeSet::new(),
+            dispatched: 0,
+            crops: 0,
+            names: Names::default(),
+            projection,
+        };
         // The images open the conversation, each with the name a tool call gives.
         let mut opening = Vec::new();
         let system = if fidelity {
@@ -456,6 +649,7 @@ impl Action for Check {
                 ));
             };
             for (role, input) in [("candidate", candidate), ("source", source)] {
+                run.names.role(role, input.id());
                 let (_, image) = shown(context, input.id())?;
                 let (width, height) = (image.picture.width(), image.picture.height());
                 let title = format!("{}{}", role[..1].to_ascii_uppercase(), &role[1..]);
@@ -466,14 +660,17 @@ impl Action for Check {
                 )));
                 opening.push(Part::Image(image.picture));
             }
+            // The pair the use case relates: the candidate registered onto the source.
+            let pairs = [("candidate", candidate.id(), "source", source.id())];
+            opening.extend(run.measure_first(&pairs, &detail)?);
             opening.push(Part::Text(source_fidelity::checklist()));
             opening.push(Part::Text(source_fidelity::INSTRUCTION.to_owned()));
             let brief = match argument("brief") {
                 Some(Value::Text(brief)) if !brief.trim().is_empty() => brief.as_str(),
                 _ => source_fidelity::NO_BRIEF,
             };
-            run_tools_submit(&mut tools)?;
-            source_fidelity::system(brief)
+            run_tools_submit(&mut run.tools)?;
+            source_fidelity::system(brief, &details::tools_section(&named))
         } else {
             for input in call.inputs() {
                 let (_, image) = shown(context, input.id())?;
@@ -484,14 +681,6 @@ impl Action for Check {
         };
         let unfit = |why: whizbang_core::capability::Unfit| failed("judge_request", &why);
         let mut messages = vec![Message::new(Role::User, opening).map_err(unfit)?];
-        let mut run = Run {
-            context,
-            judge,
-            tools,
-            answered: BTreeSet::new(),
-            dispatched: 0,
-            crops: 0,
-        };
         let mut allowed = tokens;
         let mut retried = false;
         // A submission that is not a verdict, or a turn that ends without one, is

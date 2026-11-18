@@ -292,6 +292,13 @@ whizbang squint check source-fidelity --source <id> --candidate <id> \
 and the edit changed fails the check; with no brief, nothing is named as kept, so a
 change is noted in the reason but does not fail it.
 
+Before the judge looks, `align` registers the candidate onto the source, and the aligned
+picture, what `align` found and every measurement open the conversation, each labelled
+with the tool and its mark (`--details first`, the default; ADR 0028). The judge may still
+call `view`, `align` and `resize`. `--details none --projection visual_only` gives squint's
+baseline arm C instead: nothing measured first, and a call of `align` answered with its
+picture and a fixed sentence.
+
 **What one request may cost** is fixed by three settings of the backend, each held
 before a byte is sent: `max_input_tokens` (40,000 when none is given),
 `max_output_tokens` (2,048) and `max_pictures` (24), in a table

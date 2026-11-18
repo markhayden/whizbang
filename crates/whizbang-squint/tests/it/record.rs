@@ -112,12 +112,12 @@ impl Examples {
     }
 }
 
-fn tools() -> PathBuf {
+pub fn tools() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/reference/tools")
 }
 
 /// The text between a pair of marks in the record.
-fn between<'a>(record: &'a str, name: &str) -> &'a str {
+pub fn between<'a>(record: &'a str, name: &str) -> &'a str {
     let (begin, end) = marks(name);
     let from = record.find(&begin).expect("the opening mark") + begin.len();
     let to = record.find(&end).expect("the closing mark");
@@ -132,7 +132,7 @@ fn marks(name: &str) -> (String, String) {
 }
 
 /// The record with the text between a pair of marks replaced.
-fn replaced(record: &str, name: &str, with: &str) -> String {
+pub fn replaced(record: &str, name: &str, with: &str) -> String {
     let old = between(record, name);
     let at = old.as_ptr() as usize - record.as_ptr() as usize;
     format!("{}{with}{}", &record[..at], &record[at + old.len()..])
@@ -378,7 +378,7 @@ fn the_records_times_are_kept_until_one_moves_by_more_than_a_third() {
 // --- What only the script runs: times, and the other methods -----------------------------
 
 /// The middle of `runs` timings of `work`.
-fn time<T>(runs: usize, mut work: impl FnMut() -> T) -> Duration {
+pub fn time<T>(runs: usize, mut work: impl FnMut() -> T) -> Duration {
     let mut times: Vec<Duration> = (0..runs)
         .map(|_| {
             let start = Instant::now();

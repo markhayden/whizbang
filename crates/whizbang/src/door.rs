@@ -372,6 +372,33 @@ pub struct CheckAsked<'a> {
     pub brief: Option<&'a str>,
     /// The caller's id for the request, when it gave one.
     pub request_id: Option<&'a str>,
+    /// What is measured before the judge's first turn: `first` (the command's default)
+    /// or `none` (ADR 0028).
+    pub details: Details,
+    /// The tools whose details are measured first, by name, when the caller names them.
+    pub detail: Option<&'a str>,
+    /// How a call of `align` by the judge is answered: `full` or `visual_only`.
+    pub projection: &'a str,
+}
+
+/// What `squint check` measures before the judge's first turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Details {
+    /// The details of each pair the use case relates, in the opening message; the judge
+    /// may call `view`, `align` and `resize`.
+    First,
+    /// Nothing: the judge is told of `view` and `align` and calls them, as squint's arm C.
+    None,
+}
+
+impl Details {
+    /// The tools the judge is offered, and the name `check` takes.
+    fn tools_and_name(self) -> (&'static str, &'static str) {
+        match self {
+            Details::First => ("view,align,resize", "first"),
+            Details::None => ("view,align", "none"),
+        }
+    }
 }
 
 /// The output tokens `squint check` asks of each turn: the ceiling the judge of a
@@ -418,6 +445,14 @@ pub fn check(
         .input("images", candidate)
         .argument("use_case", Value::text(asked.use_case))
         .argument("max_output_tokens", Value::Integer(CHECK_OUTPUT_TOKENS));
+    let (tools, details) = asked.details.tools_and_name();
+    call = call
+        .argument("tools", Value::text(tools))
+        .argument("details", Value::text(details))
+        .argument("projection", Value::text(asked.projection));
+    if let Some(detail) = asked.detail {
+        call = call.argument("detail", Value::text(detail));
+    }
     if let Some(judge) = asked.judge {
         call = call.argument("judge", Value::text(judge));
     }

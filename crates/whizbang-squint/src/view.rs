@@ -21,7 +21,7 @@ use whizbang_core::identity::{
 mod locate;
 mod scale;
 
-pub use locate::{Located, box_to_root};
+pub use locate::{Located, Traced, box_through_homography, box_to_root, points_into_homography};
 use scale::Region;
 
 /// The action's name, as an artifact's origin records it.
@@ -236,7 +236,7 @@ fn snap(low: f64, high: f64, size: u32) -> (u32, u32) {
 }
 
 /// The pixels as a PNG: 8 bits a channel, red, green, blue and alpha, with no other chunk.
-fn png(pixels: &CanonicalPixels) -> Result<Vec<u8>, ViewError> {
+pub(crate) fn png(pixels: &CanonicalPixels) -> Result<Vec<u8>, ViewError> {
     let mut file = Vec::new();
     PngEncoder::new_with_quality(&mut file, CompressionType::Default, FilterType::Adaptive)
         .write_image(

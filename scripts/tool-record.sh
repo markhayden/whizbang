@@ -5,6 +5,8 @@
 #
 #   scripts/tool-record.sh view      docs/reference/tools/view.md and view/
 #   scripts/tool-record.sh grow      docs/reference/tools/grow.md and grow/
+#   scripts/tool-record.sh align     docs/reference/tools/align.md and align/
+#   scripts/tool-record.sh resize    docs/reference/tools/resize.md and resize/
 #
 # It builds in release mode and times real work, so it is heavy: run it through
 # scripts/heavy.sh when another agent may be building. The fast tests then hold the record
@@ -29,8 +31,12 @@ case "${1:-}" in
     scripts/thread-guard.sh cargo test --release -p whizbang-rascal --test it -- \
       --ignored --exact record::write_the_record
     ;;
+  align | resize)
+    scripts/thread-guard.sh cargo test --release -p whizbang-squint --test it -- \
+      --ignored --exact "$1_record::write_the_record"
+    ;;
   *)
-    echo "tool-record: usage: scripts/tool-record.sh view|grow" >&2
+    echo "tool-record: usage: scripts/tool-record.sh view|grow|align|resize" >&2
     exit 2
     ;;
 esac

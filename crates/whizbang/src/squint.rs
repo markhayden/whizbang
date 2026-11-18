@@ -49,6 +49,22 @@ pub enum Command {
         at: Where,
         #[command(flatten)]
         under: Under,
+        /// What is measured before the judge looks. `first`: align registers the
+        /// candidate onto the source, and the aligned picture, what it found and every
+        /// measurement open the conversation, each labelled with the tool and its mark;
+        /// the judge may still call view, align and resize. `none`: nothing is measured
+        /// first, and the judge is told of view and align and calls them, as squint's
+        /// baseline arm C was (with `--projection visual_only`).
+        #[arg(long, value_name = "WHEN", default_value = "first", value_parser = ["first", "none"])]
+        details: String,
+        /// The tools whose details are measured first, by name, separated by commas:
+        /// align, so far.
+        #[arg(long, value_name = "TOOLS")]
+        detail: Option<String>,
+        /// How a call of align by the judge is answered: `full`, everything it found,
+        /// or `visual_only`, its pictures and a fixed sentence, as squint's baseline arm C.
+        #[arg(long, value_name = "WHICH", default_value = "full", value_parser = ["full", "visual_only"])]
+        projection: String,
         /// An id for this request, of your choosing: 1 to 128 letters, digits, `_`, `-`,
         /// `.` and `:`. The same request sent again under it is answered with the run
         /// it made the first time, and nothing runs again.
@@ -74,6 +90,9 @@ fn run_at(
             candidate,
             judge,
             brief,
+            details,
+            detail,
+            projection,
             at,
             under,
             request_id,
@@ -87,6 +106,13 @@ fn run_at(
                 judge: judge.as_deref(),
                 brief: brief.as_deref(),
                 request_id: request_id.as_deref(),
+                details: if details == "none" {
+                    door::Details::None
+                } else {
+                    door::Details::First
+                },
+                detail: detail.as_deref(),
+                projection,
             };
             let root = at.root().to_path_buf();
             door::check(&executor, &asked, &|run| door::verdict(&root, run))

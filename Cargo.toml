@@ -47,3 +47,9 @@ unsafe_code = "forbid"
 all = { level = "warn", priority = -1 }
 unwrap_used = "warn"
 expect_used = "warn"
+
+# Squint's alignment estimator takes tens of millions of samples a call: built unoptimised it
+# takes seconds a pair, which the fast tests cannot spend (plan m2c, task A2, "Keeping tests
+# lean"). Its crate is built optimised in every profile; the checks of debug builds stay on.
+[profile.dev.package.whizbang-squint]
+opt-level = 3

@@ -637,7 +637,7 @@ fn changing_the_tool_list_after_admission_has_no_effect_on_the_run() {
     };
     barriers.arrived("judge", 1);
     world.toolbox.withdraw("view");
-    assert!(world.toolbox.offered().is_empty());
+    assert_eq!(world.toolbox.offered(), ["align", "resize"]);
     assert!(
         !world.toolbox.offer("grow"),
         "no tool of that name is linked"
@@ -1165,13 +1165,16 @@ fn the_records_of_check_completed_failed_and_cancelled_hold_what_the_spec_lists(
                    "whizbang": env!("CARGO_PKG_VERSION")}),
             "{how}"
         );
-        // What was asked: the action, and its exact arguments, the three that have a
+        // What was asked: the action, and its exact arguments, the six that have a
         // value by default among them; no settings yet; the config's digest.
         assert_eq!(
             record["asked"],
-            json!({"action": "check", "version": "1.1.0", "settings": [],
+            json!({"action": "check", "version": "1.2.0", "settings": [],
                    "arguments": [{"name": "tools", "value": {"text": "view"}},
                                  {"name": "use_case", "value": {"text": "general"}},
+                                 {"name": "details", "value": {"text": "none"}},
+                                 {"name": "detail", "value": {"text": "align"}},
+                                 {"name": "projection", "value": {"text": "full"}},
                                  {"name": "max_output_tokens", "value": {"integer": 1024}}],
                    "config": Digest::of_bytes(b"").to_string()}),
             "{how}"
@@ -1540,4 +1543,339 @@ fn a_submission_that_is_not_a_verdict_is_reported_as_invalid() {
         json!([nowhere, item("chk:ob:SF2@candidate", "held", "confident")]),
         "a violation has a location",
     );
+}
+
+// --- the details first, and squint's arm C (plan m2c, task A2) ---------------------------------
+
+/// A plane of squint's vectors, as an image (`tests/it/planes/`).
+fn plane(name: &str) -> Image {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/align");
+    let file = std::fs::read(dir.join(format!("{name}.png"))).unwrap();
+    image_in(
+        file,
+        whizbang_core::identity::Projection::Flat,
+        whizbang_core::identity::Topology::Bounded,
+    )
+}
+
+/// A world that also holds a pair that registers, the source and its restyled, turned
+/// candidate, and a scene unrelated to them.
+fn paired() -> (World, Image, Image, Image) {
+    let world = World::new();
+    let (source, candidate, unrelated) = (plane("scene"), plane("registered"), plane("unrelated"));
+    world.hold(&[&source, &candidate, &unrelated]);
+    (world, source, candidate, unrelated)
+}
+
+/// `check` of a pair under source-fidelity, with these arguments beside.
+fn of_pair(source: &Image, candidate: &Image, arguments: &[(&str, &str)]) -> Call {
+    let mut call = Call::new("check")
+        .input("images", source.id())
+        .input("images", candidate.id())
+        .argument("use_case", Value::text("source-fidelity"));
+    for (name, value) in arguments {
+        call = call.argument(name, Value::text(value));
+    }
+    call
+}
+
+/// A judge that submits a verdict at once, or after the calls given.
+fn submitting(before: &[Json]) -> String {
+    let items = json!([
+        item("chk:ob:SF1@candidate", "held", "confident"),
+        item("chk:ob:SF2@candidate", "held", "confident"),
+    ]);
+    let mut script: Vec<(Json, &str)> = before
+        .iter()
+        .map(|call| (json!([call]), "tool_use"))
+        .collect();
+    script.push((json!([submission(items)]), "tool_use"));
+    turns(&script)
+}
+
+fn texts(parts: &[Part]) -> Vec<String> {
+    parts
+        .iter()
+        .filter_map(|part| match part {
+            Part::Text(text) => Some(text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn details_first_puts_the_aligned_pair_in_the_opening_message_before_the_first_turn() {
+    let (world, source, candidate, _) = paired();
+    let judge = judge(&submitting(&[]), &[]);
+    let executor = world.engine(judge.clone(), Secrets::none());
+    let call = of_pair(&source, &candidate, &[("details", "first")]);
+    let finished = executor.submit(&call).unwrap();
+    drop(executor);
+    assert!(
+        matches!(finished.outcome(), Outcome::Completed { .. }),
+        "{:?}",
+        finished.outcome()
+    );
+    let left = left(&world.root(), world.fs.clone(), finished.run());
+    // `align` ran through the executor, as a step of the run, before the judge was asked.
+    let record = left.record();
+    assert_eq!(steps(record), [("align", Some(Status::Completed))]);
+    assert_eq!(judge.requests(), 1);
+    // What the opening holds, in order: the two images, then the details, then the
+    // checklist. The details are the tool, its mark, squint's sentence and every
+    // measurement, then the aligned frame, named, and its picture.
+    let want = whizbang_squint::align::align(
+        &candidate,
+        &source,
+        &whizbang_squint::align::Options::default(),
+        &limits(),
+    )
+    .unwrap();
+    let frame = want.frame.clone().unwrap().image;
+    let opening = judge.received()[0].messages()[0].parts().to_vec();
+    let said = texts(&opening);
+    assert!(said[0].starts_with("Image `candidate`"), "{said:?}");
+    assert!(said[1].starts_with("Image `source`"), "{said:?}");
+    assert_eq!(said[2], whizbang_squint::details::DETAILS_INTRO);
+    assert!(
+        said[3].starts_with(
+            "align (unverified), candidate onto source: registered candidate registered onto \
+             source: shift "
+        ),
+        "{}",
+        said[3]
+    );
+    assert!(said[3].contains("The aligned frame aligned:candidate:t1 shares source's grid"));
+    for name in [
+        "translation_px",
+        "rotation_deg",
+        "scale",
+        "perspective",
+        "ncc",
+        "inlier_fraction",
+        "overlap",
+        "texture",
+    ] {
+        assert!(said[3].contains(&format!("{name} ")), "{name}: {}", said[3]);
+    }
+    assert!(said[3].contains("\nMeasurements: translation_px "));
+    assert!(said[4].starts_with(
+        "Image `aligned:candidate:t1` (candidate warped into source's grid, 128x96, Flat)"
+    ));
+    assert!(said[4].ends_with(&format!("named {}.", frame.id())));
+    assert!(said[5].starts_with("Checklist."));
+    let pictures: Vec<_> = opening
+        .iter()
+        .filter_map(|part| match part {
+            Part::Image(picture) => Some(picture.digest()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        pictures,
+        [
+            candidate.identity().pixels,
+            source.identity().pixels,
+            frame.identity().pixels
+        ]
+    );
+    // The aligned frame is the run's evidence, and the judge may name it.
+    assert_eq!(left.evidence(1).id(), frame.id());
+    // A pair that does not register is said too, with no picture: not registered is itself
+    // evidence that the geometry changed.
+    let (world, source, _, unrelated) = paired();
+    let judge = self::judge(&submitting(&[]), &[]);
+    let executor = world.engine(judge.clone(), Secrets::none());
+    let finished = executor
+        .submit(&of_pair(&source, &unrelated, &[("details", "first")]))
+        .unwrap();
+    assert!(matches!(finished.outcome(), Outcome::Completed { .. }));
+    let said = texts(judge.received()[0].messages()[0].parts());
+    assert!(
+        said[3].starts_with(
+            "align (unverified), candidate onto source: not_registered candidate does not \
+             register onto source: agreement "
+        ),
+        "{}",
+        said[3]
+    );
+    assert!(said[4].starts_with("Checklist."));
+}
+
+#[test]
+fn details_none_opens_as_the_baseline_recorded_arm_c() {
+    let (world, source, candidate, _) = paired();
+    let judge = judge(&submitting(&[]), &[]);
+    let executor = world.engine(judge.clone(), Secrets::none());
+    let arm_c = [
+        ("tools", "view,align"),
+        ("details", "none"),
+        ("projection", "visual_only"),
+    ];
+    let finished = executor
+        .submit(&of_pair(&source, &candidate, &arm_c))
+        .unwrap();
+    drop(executor);
+    assert!(matches!(finished.outcome(), Outcome::Completed { .. }));
+    let left = left(&world.root(), world.fs.clone(), finished.run());
+    assert!(steps(left.record()).is_empty());
+    let asked = &judge.received()[0];
+    // The tools in squint's prompt order, `align` as squint's judge was told of it.
+    let tools: Vec<&str> = asked.tools().iter().map(|tool| tool.name()).collect();
+    assert_eq!(tools, ["view", "align", "submit_verdict"]);
+    let align = &asked.tools()[1];
+    assert!(
+        align
+            .description()
+            .starts_with("Registers one image onto another")
+    );
+    assert_eq!(align.schema()["required"], json!(["image", "against"]));
+    assert_eq!(align.schema()["additionalProperties"], json!(false));
+    // Squint's Tools section, between the obligations and how to answer.
+    let tools_section = "\n\nTools. Use them to look closer before deciding; every call is \
+        logged. Refer to images and frames by their ids.\n- view (Cheap, about 1s): Shows a \
+        region closer: ";
+    assert!(asked.system().contains(tools_section), "{}", asked.system());
+    assert!(asked.system().contains(
+        "\n- align (Moderate, about 3s): Registers one image onto another of the same scene \
+         and viewpoint"
+    ));
+    assert!(asked.system().contains(
+        "a reshaped pool or wall inside the frame registers as well as an unchanged one.\n\n\
+         Answer with the submit_verdict tool"
+    ));
+    // The opening: the two images, the checklist and the instruction, and nothing measured.
+    let said = texts(asked.messages()[0].parts());
+    assert_eq!(said.len(), 4, "{said:?}");
+    assert!(said[0].starts_with("Image `candidate`"));
+    assert!(said[1].starts_with("Image `source`"));
+    assert!(said[2].starts_with("Checklist."));
+    assert_eq!(said[3], whizbang_squint::source_fidelity::INSTRUCTION);
+    // With no evidence tool, there is no Tools section, as squint's prompt had none.
+    let judge = self::judge(&submitting(&[]), &[]);
+    let executor = world.engine(judge.clone(), Secrets::none());
+    let none = [("tools", ""), ("details", "none")];
+    executor
+        .submit(&of_pair(&source, &candidate, &none))
+        .unwrap();
+    let system = judge.received()[0].system().to_owned();
+    assert!(!system.contains("\nTools."), "{system}");
+    assert!(
+        system.contains("`allowed_by`.\n\n\nAnswer with"),
+        "{system}"
+    );
+}
+
+/// A call of `align` of the candidate onto the source, by squint's names.
+fn aligning(id: &str) -> Json {
+    json!({"tool_call": {"id": id, "name": "align",
+        "arguments": {"image": "candidate", "against": "raw:source"}}})
+}
+
+#[test]
+fn under_visual_only_a_call_of_align_is_answered_with_its_pictures_and_squints_summary_alone() {
+    let (world, source, candidate, unrelated) = paired();
+    let answered = |candidate: &Image, projection: &str| {
+        let judge = judge(&submitting(&[aligning("a1")]), &[]);
+        let executor = world.engine(judge.clone(), Secrets::none());
+        let asked = [
+            ("tools", "view,align"),
+            ("details", "none"),
+            ("projection", projection),
+        ];
+        let finished = executor
+            .submit(&of_pair(&source, candidate, &asked))
+            .unwrap();
+        drop(executor);
+        assert!(matches!(finished.outcome(), Outcome::Completed { .. }));
+        results(&judge, 1).remove(0)
+    };
+    let want = whizbang_squint::align::align(
+        &candidate,
+        &source,
+        &whizbang_squint::align::Options::default(),
+        &limits(),
+    )
+    .unwrap();
+    let frame = want.frame.clone().unwrap().image;
+    let params = want.transform.clone().unwrap().params.to_vec();
+    // Squint's presentation: the call, ok, the fixed sentence, nothing measured, no region,
+    // and the frame with its place on the source; keys in order, on one line.
+    let result = answered(&candidate, "visual_only");
+    assert!(!result.is_error());
+    let expected = json!({
+        "call_id": "call:0", "status": "ok",
+        "summary": "Result computed; its measurements are withheld.",
+        "measurements": [], "regions": [],
+        "images": [{"frame": "aligned:candidate:t1", "parent": "raw:source",
+                    "mapping": {"homography": params}}],
+    })
+    .to_string();
+    assert_eq!(result.text(), expected);
+    assert!(
+        result
+            .text()
+            .starts_with("{\"call_id\":\"call:0\",\"images\":[{\"frame\":")
+    );
+    let shown: Vec<_> = result.images().iter().map(|p| p.digest()).collect();
+    assert_eq!(shown, [frame.identity().pixels]);
+    // A pair that does not register: not applicable, the other fixed sentence, no picture.
+    let result = answered(&unrelated, "visual_only");
+    assert_eq!(
+        result.text(),
+        json!({"call_id": "call:0", "status": "not_applicable",
+               "summary": "Result not available.", "measurements": [], "regions": [],
+               "images": []})
+        .to_string()
+    );
+    assert!(result.images().is_empty());
+    // Under full, the same call is answered with everything: squint's sentence and the
+    // measurements whole, and the region of a pair that does not register.
+    let full: Json = serde_json::from_str(answered(&candidate, "full").text()).unwrap();
+    assert_eq!(full["status"], "ok");
+    assert_eq!(
+        full["summary"],
+        whizbang_squint::align::summary(&want, "candidate", "source")
+    );
+    assert_eq!(full["measurements"].as_array().unwrap().len(), 8);
+    assert_eq!(full["measurements"][4]["name"], "ncc");
+    assert_eq!(full["measurements"][4]["value"], json!(want.quality.ncc));
+    let full: Json = serde_json::from_str(answered(&unrelated, "full").text()).unwrap();
+    assert_eq!(full["status"], "not_applicable");
+    assert_eq!(full["regions"][0]["label"], "not registered onto source");
+}
+
+#[test]
+fn a_use_case_with_one_image_adds_no_details() {
+    let world = World::new();
+    let script = turns(&[(json!([{"text": "pass\nClean."}]), "end_turn")]);
+    let judge = judge(&script, &[]);
+    let executor = world.engine(judge.clone(), Secrets::none());
+    let call = world
+        .check()
+        .argument("details", Value::text("first"))
+        .argument("tools", Value::text("view,align,resize"));
+    let finished = executor.submit(&call).unwrap();
+    drop(executor);
+    assert!(matches!(finished.outcome(), Outcome::Completed { .. }));
+    let left = left(&world.root(), world.fs.clone(), finished.run());
+    assert!(steps(left.record()).is_empty());
+    // The opening is the image, named, and its picture: nothing was measured.
+    let opening = judge.received()[0].messages()[0].parts().to_vec();
+    assert_eq!(opening.len(), 2);
+    assert!(matches!(&opening[0], Part::Text(text) if text.starts_with("image ")));
+    // A detail that is no tool measured first is refused before anything runs.
+    let judge = self::judge(&script, &[]);
+    let executor = world.engine(judge.clone(), Secrets::none());
+    let wrong = world
+        .check()
+        .argument("details", Value::text("first"))
+        .argument("detail", Value::text("view"));
+    let finished = executor.submit(&wrong).unwrap();
+    assert!(
+        matches!(finished.outcome(), Outcome::Invalid { .. }),
+        "{:?}",
+        finished.outcome()
+    );
+    assert_eq!(judge.requests(), 0);
 }
