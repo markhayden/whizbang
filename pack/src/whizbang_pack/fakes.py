@@ -183,6 +183,10 @@ class Asks(Worker):
         # A request of the worker's own, as a request at pack/1 is asked of a worker: its
         # header and the eight bytes of its payload's length are written, and none of the
         # payload's samples. Then the call waits, deaf to a cancel, until the worker ends.
+        #
+        # The header and the length go in one write, which a pipe takes whole: whizbang's
+        # reader lets the pipe go once it has the header, and a length written after that
+        # would fail and end the worker with 2 instead of 0, depending on timing.
         asked = {
             "type": "request",
             "id": ASKED_ID,
@@ -193,7 +197,7 @@ class Asks(Worker):
             "queries": [{"phrase": "anything"}],
             "max_instances": 1,
         }
-        self._write(proto.chunks(asked)[:-1])
+        self._write([b"".join(proto.chunks(asked)[:-1])])
         call.wait_for_stop()
 
     def _take(self, message):
