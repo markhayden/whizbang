@@ -2751,15 +2751,15 @@ fails when the record is stale. **Size:** medium.
 
 ### Z1. Exit check
 
-- [ ] Each clause of the row for 1C in `SPEC.md` section 16 is matched to a named test
+- [x] Each clause of the row for 1C in `SPEC.md` section 16 is matched to a named test
       in `docs/plans/m1c-note.md`, which `scripts/tests/test-notes.sh` reads. The clause on the Mac's GPU is matched to the model-tier test and the
       evidence record.
-- [ ] Every carry-over row that named 1C is gone or has the owner the table below gives.
-- [ ] The note: what shipped; what C0 changed; the decisions the owner made; the timing
+- [x] Every carry-over row that named 1C is gone or has the owner the table below gives.
+- [x] The note: what shipped; what C0 changed; the decisions the owner made; the timing
       table by suite on both runners and the Mac, the pack's tests among them; what was
       spent (nothing); what was downloaded and from where; what a reader should not
       assume; what 1D starts from.
-- [ ] Tag `m1c`.
+- [x] Tag `m1c`. (Tagged at the merge of this pull request.)
 
 **Size:** small.
 
