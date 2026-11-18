@@ -64,7 +64,12 @@ fn the_shipping_executor_describes_check_and_cannot_run_it_for_want_of_a_judge()
     let dir = Scratch::new("executor");
     let registry = whizbang::wiring::registry().expect("the registry builds");
     let names: Vec<&str> = registry.descriptors().map(|d| d.name()).collect();
-    assert_eq!(names, ["check", "grow", "segment", "view"]);
+    assert_eq!(
+        names,
+        [
+            "check", "feather", "grow", "plug", "render", "segment", "select", "view"
+        ]
+    );
     let root = dir.path().join("store");
     let image = {
         let store = Store::open(&root, Arc::new(RealFs)).expect("a store");

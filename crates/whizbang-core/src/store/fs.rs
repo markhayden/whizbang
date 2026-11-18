@@ -324,7 +324,8 @@ pub trait Fs: Send + Sync {
         streams_nothing()
     }
     /// What the system says of a regular file under its own name, without reading it:
-    /// its size, the time it was last written and its inode ([`Stamp`]). A link, a
+    /// its size, the times it was last written and last changed, and its inode
+    /// ([`Stamp`]). A link, a
     /// directory and anything else that is no regular file are refused with
     /// [`io::ErrorKind::InvalidData`], as [`Fs::open_file`] refuses them, and nothing
     /// is followed. Added with the cached check of a model's files (plan 2A, task R1),
@@ -336,14 +337,18 @@ pub trait Fs: Send + Sync {
 }
 
 /// What [`Fs::stamp`] answers of a file: its size in bytes, the time it was last
-/// written, in whole seconds since 1970 and the nanoseconds past them, and its inode.
-/// A file whose stamp is the same at two moments was, as far as the system says, not
-/// written in between; a writer that keeps all three is not seen.
+/// written and the time its inode last changed, each in whole seconds since 1970 and
+/// the nanoseconds past them, and its inode. A file whose stamp is the same at two
+/// moments was, as far as the system says, not written in between. A writer who sets
+/// the time of last write back still moves the time of change, which no call sets; a
+/// writer that keeps every one of them, below the system's calls, is not seen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Stamp {
     pub size: u64,
     pub modified_s: i64,
     pub modified_ns: u32,
+    pub changed_s: i64,
+    pub changed_ns: u32,
     pub inode: u64,
 }
 
@@ -359,6 +364,8 @@ fn stamp(path: &Path) -> io::Result<Stamp> {
         size: found.size(),
         modified_s: found.mtime(),
         modified_ns: u32::try_from(found.mtime_nsec()).map_err(|_| not_a_file())?,
+        changed_s: found.ctime(),
+        changed_ns: u32::try_from(found.ctime_nsec()).map_err(|_| not_a_file())?,
         inode: found.ino(),
     })
 }

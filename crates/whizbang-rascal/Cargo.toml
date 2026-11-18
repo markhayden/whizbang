@@ -14,12 +14,14 @@ path = "tests/it/main.rs"
 
 [dependencies]
 whizbang-core.workspace = true
+# Encoding a rendering as a PNG, as `whizbang-squint` encodes a crop: `image` at the version
+# the core decodes with. Its file is part of the rendering's identity; `png`, `flate2` and
+# `miniz_oxide` under it are pinned by `whizbang-squint`, in the one lock file. The tests
+# of `segment` also paint their pictures with it.
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
 
 [dev-dependencies]
 whizbang-testkit.workspace = true
-# The tests of `segment` paint their pictures and write them as PNG files, at the version
-# the core decodes with.
-image = { version = "=0.25.10", default-features = false, features = ["png"] }
 serde_json.workspace = true
 
 [lints]

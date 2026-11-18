@@ -1,6 +1,7 @@
-//! `whizbang store list|delete|prune|import`: wiring from arguments to the core's store.
+//! `whizbang store list|delete|prune|import|export`: wiring from arguments to the core's
+//! store (`export` is the module `export`).
 //!
-//! One rule for all four: the store must be there. None of them makes a store at a path
+//! One rule for all five: the store must be there. None of them makes a store at a path
 //! with nothing at it or completes one in an empty directory, except `import --create`,
 //! which says so when it has (the module `import` says what it makes). The three that
 //! write take the writer lock and are refused while another process holds it. Each of
@@ -90,6 +91,25 @@ pub enum Command {
         #[arg(long)]
         create: bool,
     },
+    /// Write an image in the store as a PNG file of its pixels alone, upright and in
+    /// sRGB, whatever form the store holds it in: no text, time, colour profile or EXIF.
+    /// Reads only: it works while another process writes. It writes no file over
+    /// another unless `--overwrite` is given, none through a link, and none inside the
+    /// store.
+    Export {
+        /// The image, by its identity in the store, as `store import` or `rascal render`
+        /// prints it.
+        #[arg(long)]
+        image: String,
+        /// The PNG file to write, in a folder that is there.
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
+        /// Replace a file that is there already.
+        #[arg(long)]
+        overwrite: bool,
+        #[command(flatten)]
+        at: Where,
+    },
 }
 
 /// Runs a store command: what to print on success, or the complaint.
@@ -101,6 +121,12 @@ pub fn run(command: &Command) -> Result<String, String> {
 pub fn run_with(command: &Command, recovery: Recovery) -> Result<String, String> {
     match command {
         Command::List { at } => list(&at.store),
+        Command::Export {
+            image,
+            out,
+            overwrite,
+            at,
+        } => crate::export::export(&at.store, image, out, *overwrite),
         Command::Delete { at, runs } => delete(&at.store, runs, recovery),
         Command::Import {
             file,

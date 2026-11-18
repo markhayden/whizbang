@@ -1,6 +1,7 @@
 //! The `whizbang` binary: argument parsing and wiring only.
 
 mod backends;
+mod export;
 mod import;
 mod models;
 mod rascal;
