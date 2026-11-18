@@ -18,8 +18,15 @@
 # It refuses unless the variable scripts/thread-guard.sh sets for what it runs is there
 # (scripts/heavy.sh runs its command under the guard) with the limit at 200, and, through
 # scripts/test-models.sh, unless WHIZBANG_MODELS_DIR names the models directory. The
-# variable is a tripwire against a run by hand, not a proof that the guard is there. A tree with changes not committed is measured all the same, and the record
-# says so (`tree = "changed"`), so that a reviewer can see it.
+# variable is a tripwire against a run by hand, not a proof that the guard is there. It
+# refuses a tree with changes not committed, before anything runs and again before it
+# writes, so that the commit the record names is the tree that ran (plan 2A, task R1);
+# the record says `tree = "clean"`, which the fast test holds it to.
+#
+# Before the three rounds it runs the model tier once more and keeps nothing of it: that
+# run's full check of the installation's files leaves its record in the models directory
+# (plan 2A, task R1), so each round's first load is timed without the full hash, and each
+# round says whether it found that record (`check_record_before`).
 # This script sets no `EXIT` trap, so its own syntax error is a failure; parse it first all
 # the same: see the top of scripts/scan.sh.
 "$BASH" -n "${BASH_SOURCE[0]}" || { echo "model-evidence: ${BASH_SOURCE[0]} has a syntax error; refusing to run" >&2; exit 2; }
@@ -49,6 +56,11 @@ shared=$target/tmp/model-tier
 work=$target/tmp/model-evidence
 mkdir -p "$work"
 
+[ -z "$(git status --short)" ] || {
+  echo "model-evidence: the tree has changes not committed; commit them, then run it again" >&2
+  exit 2
+}
+
 sha() { shasum -a 256 "$1" | awk '{ print "sha256:" $1 }'; }
 # value <file> <name>: the value of `name=value` in a file of the tests' or the watch's.
 value() {
@@ -58,6 +70,8 @@ value() {
   printf '%s\n' "$found"
 }
 
+# The run kept from nothing: see the top.
+scripts/test-models.sh
 for round in 1 2 3; do
   rm -f "$work/phrase-$round.txt" "$work/second-$round.txt" "$work/watch-$round.txt"
   WHIZBANG_MEMORY_REPORT=$work/watch-$round.txt scripts/test-models.sh
@@ -67,7 +81,10 @@ done
 
 commit=$(git rev-parse HEAD)
 tree=clean
-[ -z "$(git status --short)" ] || tree=changed
+[ -z "$(git status --short)" ] || {
+  echo "model-evidence: the tree changed while the model tier ran; nothing was written" >&2
+  exit 1
+}
 lock=$(sha pack/uv.lock)
 source=$(sha pack/src/whizbang_pack/sam3.py)
 fixture=$(sha docs/results/m1c-local-pack/circle.png)
@@ -117,6 +134,8 @@ toml=docs/results/m1c-local-pack.toml
     echo "loads = $(value "$s" loads)"
     echo "until_load_written_seconds = \"$(value "$s" until_load_written_seconds)\""
     echo "load_seconds = \"$(value "$s" load_seconds)\""
+    echo "first_load_seconds = \"$(value "$s" first_load_seconds)\""
+    echo "check_record_before = \"$(value "$s" check_record_before)\""
     echo "first_request_seconds = \"$(value "$s" first_request_seconds)\""
     echo "second_request_seconds = \"$(value "$s" second_request_seconds)\""
     echo "first_mask = \"$(value "$s" first_1_mask)\""
@@ -174,6 +193,8 @@ md=docs/results/m1c-local-pack.md
   row "Pixels on" request_1_pixels_on phrase
   row "Start of the first request to the load written, s" until_load_written_seconds second
   row "Load, s" load_seconds second
+  row "Start of the first request to the model loaded, s" first_load_seconds second
+  row "A full check's record found before the first load" check_record_before second
   row "First request after the load, s" first_request_seconds second
   row "Second request, s" second_request_seconds second
   row "Loads for two requests" loads second
@@ -189,8 +210,12 @@ md=docs/results/m1c-local-pack.md
   echo "times are of one machine on one day and are reported, not compared: the load is the"
   echo "worker's \`load\` call (weights from the disk onto the GPU), and the first request's time"
   echo "beside it includes the processor's first run. The time before the load is written holds"
-  echo "the check of the installation's files, 3.4 GB hashed before a load (decision D14), the"
-  echo "worker's start and its import of the runtime. The memory is resident memory of the"
+  echo "the check of the installation's files, the worker's start and its import of the runtime."
+  echo "The check is the cached one of plan 2A, task R1: a run of the model tier before the"
+  echo "three, whose numbers are not kept, hashed the installation's 3.4 GB in full and left"
+  echo "the record of that check, so each round's first load compares each file's size, time"
+  echo "of last write and inode against it and reads no file whole. The memory is resident"
+  echo "memory of the"
   echo "whole tree (cargo, the test, the worker); the weights are in the GPU's memory, which"
   echo "macOS does not count as resident. The thread count is the most in one process, the"
   echo "worker's runtime pools at 8 each."

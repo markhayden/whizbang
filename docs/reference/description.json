@@ -126,6 +126,84 @@
       "concurrent": true
     },
     {
+      "name": "segment",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Finds each instance of a phrase in an image, as one mask for each.",
+      "arguments": [
+        {
+          "name": "phrase",
+          "purpose": "What to find, in words.",
+          "type": {
+            "type": "text"
+          },
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "max_instances",
+          "purpose": "The most instances to find, from 1 to 64.",
+          "type": {
+            "type": "integer",
+            "min": 1,
+            "max": 64
+          },
+          "required": false,
+          "default": 8
+        },
+        {
+          "name": "backend",
+          "purpose": "The segmenter, by its name in the config; the default when not given.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The picture to look in.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "One mask for each instance found, its core the instance.",
+          "count": {
+            "min": 0,
+            "max": 64
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "image"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [
+        {
+          "capability": "segment",
+          "features": [
+            "phrase"
+          ],
+          "when": "always",
+          "chosen_by": "backend",
+          "requests": 1
+        }
+      ],
+      "concurrent": true
+    },
+    {
       "name": "view",
       "version": "1.0.0",
       "kind": "primitive",

@@ -61,6 +61,13 @@
 //! damaged ([`DAMAGED`]), and it is read again at the next request, so that an install
 //! that repairs it is seen. One found whole is not read again in the process: a file
 //! damaged after that is loaded as it is, when the worker loads the model again.
+//!
+//! **A later process trusts the last full check while the files are unchanged** (plan
+//! 2A, task R1): a full check that passes leaves a record beside the installation of
+//! each file's size, time of last write, inode and hash, and the first request of a
+//! later process that finds every file with the same three loads it without reading
+//! the files again; any change, or a record missing or damaged, reads them all
+//! ([`whizbang_backends::models::verify_checked`]).
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -70,7 +77,7 @@ use std::time::{Duration, Instant};
 
 use whizbang_backends::models::{
     Catalogue, InstallationId, ModelName, ModelsDir, RemoveRefused, Removed, remove_and_tell,
-    verify,
+    verify_checked,
 };
 use whizbang_backends::pack::proto::{self, Answer, Ask, Scalar};
 use whizbang_backends::pack::queue::{Request, Sent, Status, Supervisor};
@@ -303,9 +310,11 @@ impl OneWorker {
 
     /// Verifies the files of this installation of this model, the first time it is
     /// asked in this process, before anything loads it (decision D14): each is read
-    /// whole and held to the size and the hash it was installed with
-    /// ([`whizbang_backends::models::verify`]). One found whole is not read again in
-    /// this process; one found damaged is read again the next time, so that an
+    /// whole and held to the size and the hash it was installed with, unless the
+    /// record of a full check that passed in this or an earlier process says each is
+    /// unchanged since ([`whizbang_backends::models::verify_checked`]). One found
+    /// whole is not read again in this process; one found damaged is read again the
+    /// next time, so that an
     /// install that repairs it is seen. The installation is the one the request's
     /// lease holds, so nothing deletes it while it is read. The reading ends, never
     /// sent, at the run's cancel (`cancelled`) or its deadline (`timed_out`), looked
@@ -337,7 +346,7 @@ impl OneWorker {
         let stop = || bounds.is_cancelled() || past();
         // Read without the lock: hashing a model's files takes time, and another
         // request may verify the same installation meanwhile, to the same end.
-        match verify(&dir, model, installation, secrets, &stop) {
+        match verify_checked(&dir, model, installation, secrets, &stop) {
             Ok(true) => {
                 self.held().verified.insert(key);
                 Ok(())

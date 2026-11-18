@@ -265,7 +265,7 @@ the path from instances to a clean cut-out:
    `scripts/model-evidence.sh` refuses a tree with changes, and is run on R1's head once
    it is committed; the record shows the first load's time without the full hash.
 
-- [ ] Done when:
+- [x] Done when:
   `segment::a_phrase_answered_with_three_instances_writes_three_masks`,
   `segment::no_instance_is_an_outcome_and_writes_no_mask`,
   `segment::a_backend_lacking_phrase_is_refused_at_prepare`,

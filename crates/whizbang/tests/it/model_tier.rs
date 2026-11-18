@@ -309,6 +309,17 @@ fn sam3_answers_a_phrase_on_the_gpu_with_an_instance_inside_the_fixtures_box_and
 fn a_second_request_for_the_same_model_loads_nothing() {
     let tier = Tier::new("model-tier-second");
     let over = tier.over();
+    // Whether a full check of the installation's files passed before, in an earlier
+    // process, and left its record (plan 2A, task R1): then the first load below
+    // reads no file whole.
+    let ready = over.installations().unwrap().ready(SAM3);
+    let identity = ready.expect("sam3 is installed and ready").identity();
+    let record = models_dir()
+        .join("models")
+        .join(SAM3)
+        .join("checks")
+        .join(identity.digest().hex());
+    let checked_before = if record.is_file() { "yes" } else { "no" };
     let executor = Arc::new(tier.runner(&over));
     // The first run, on a thread of the test kit's, while this one sees when the load
     // is written and when the model is resident, by the supervisor's status.
@@ -371,6 +382,8 @@ fn a_second_request_for_the_same_model_loads_nothing() {
     lines.push(("loads".to_owned(), "1".to_owned()));
     lines.push(("until_load_written_seconds".to_owned(), seconds(load_begun)));
     lines.push(("load_seconds".to_owned(), seconds(loaded - load_begun)));
+    lines.push(("first_load_seconds".to_owned(), seconds(loaded)));
+    lines.push(("check_record_before".to_owned(), checked_before.to_owned()));
     lines.push((
         "first_request_seconds".to_owned(),
         seconds(first_took - loaded),

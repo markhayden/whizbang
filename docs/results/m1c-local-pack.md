@@ -19,7 +19,7 @@ action asks for the segment capability.
 | Field | Value |
 |---|---|
 | Measured | 2026-11-18 |
-| Commit measured | `11c251d6827373e518b02c344e854df514c61403` (changed) |
+| Commit measured | `520ff624025c9b9c8af7198b0219dfd664ca21de` (clean) |
 | Lock file | `sha256:b844779adf5bf884fef63e33cc315db267ed61c3f67368922f5e8aef2d5f9215` |
 | Adapter | `sam3`, revision `1`, source `sha256:43ec5dbd3773d7d0b032b3a0368c09b04107decd2ee170e59447f825bcbe87bc` |
 | Installation | `sha256:37ab46c2f87b600f4654dd972ce85a27b1024b4fc92901b11464bd6fa9664d32` |
@@ -29,18 +29,20 @@ action asks for the segment capability.
 
 | Each run | 1 | 2 | 3 |
 |---|---|---|---|
-| Run of the phrase test | 1794970762498-1 | 1794970831985-1 | 1794970903610-1 |
+| Run of the phrase test | 1794977548974-1 | 1794977563590-1 | 1794977578189-1 |
 | Instances | 1 | 1 | 1 |
 | Best instance's score | 0.946 | 0.946 | 0.946 |
 | Its box (left top right bottom) | 329.7 110.0 510.1 290.0 | 329.7 110.0 510.1 290.0 | 329.7 110.0 510.1 290.0 |
 | Its mask | sha256:c49dcca1141934019bc00fec7875e866488bcf3c9413b723afa46b2b21f17028 | sha256:c49dcca1141934019bc00fec7875e866488bcf3c9413b723afa46b2b21f17028 | sha256:c49dcca1141934019bc00fec7875e866488bcf3c9413b723afa46b2b21f17028 |
 | Pixels on | 25410 | 25410 | 25410 |
-| Start of the first request to the load written, s | 26.28 | 26.56 | 27.08 |
-| Load, s | 6.55 | 6.13 | 7.67 |
-| First request after the load, s | 0.90 | 0.94 | 1.03 |
-| Second request, s | 0.66 | 0.67 | 0.69 |
+| Start of the first request to the load written, s | 0.06 | 0.06 | 0.06 |
+| Load, s | 5.42 | 4.89 | 5.21 |
+| Start of the first request to the model loaded, s | 5.48 | 4.95 | 5.27 |
+| A full check's record found before the first load | yes | yes | yes |
+| First request after the load, s | 0.94 | 1.00 | 0.90 |
+| Second request, s | 0.68 | 0.68 | 0.69 |
 | Loads for two requests | 1 | 1 | 1 |
-| Peak resident memory of the tree, KiB | 572416 | 592400 | 599104 |
+| Peak resident memory of the tree, KiB | 594528 | 636144 | 579952 |
 | Most threads in one process | 17 | 17 | 17 |
 | Processes left running after | 0 | 0 | 0 |
 
@@ -49,8 +51,12 @@ hand around it, which the test holds an instance's box to, is 300, 80, 540, 320.
 times are of one machine on one day and are reported, not compared: the load is the
 worker's `load` call (weights from the disk onto the GPU), and the first request's time
 beside it includes the processor's first run. The time before the load is written holds
-the check of the installation's files, 3.4 GB hashed before a load (decision D14), the
-worker's start and its import of the runtime. The memory is resident memory of the
+the check of the installation's files, the worker's start and its import of the runtime.
+The check is the cached one of plan 2A, task R1: a run of the model tier before the
+three, whose numbers are not kept, hashed the installation's 3.4 GB in full and left
+the record of that check, so each round's first load compares each file's size, time
+of last write and inode against it and reads no file whole. The memory is resident
+memory of the
 whole tree (cargo, the test, the worker); the weights are in the GPU's memory, which
 macOS does not count as resident. The thread count is the most in one process, the
 worker's runtime pools at 8 each.
