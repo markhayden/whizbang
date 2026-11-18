@@ -322,6 +322,12 @@ with its spend bound, so that every use case can be asked of a judge of any of t
   `evidence::the_use_cases_record_names_a_commit_of_this_tree_and_holds_no_secret` on the
   record with both judges' lines, and the carry-over rows above closed or narrowed.
 
+**Status (P1's pull request, 2026-11-18).** Left unticked: every clause is shown by its
+named test but the last, `evidence::the_use_cases_record_names_a_commit_of_this_tree_and_holds_no_secret`
+on the record with both judges' lines, which waits on the owner's yes to the two
+recipients and their keys (nothing has been sent to either) and on A1's record (carry-over
+row on P1's live evidence). Item 6 moved to F1 as the named overflow.
+
 **Keeping tests lean (P1).** The recorded exchanges are read once per test; pictures of
 `many-images` cut to a tenth on each side in the test, as S1 did; one loopback listener
 per test.

@@ -8,6 +8,9 @@ Amended: 2026-11-18, with task F1 of plan 1D (`docs/plans/m2b-checkpoint-1d.md`,
 from the review of the first verdict. Changed under "What a request cost": a status of
 success the adapter does not list costs its bound, where it cost nothing. Added: "A long
 prompt", "A turn cut off at the output ceiling" and "What a turn records".
+Amended: 2026-11-18, with task P1 of plan m2c (`docs/plans/m2c-milestone-2.md`, item 4).
+Added: "Google and OpenAI". The ceilings, the bound and the settlement are the kind's,
+the same for each provider (`whizbang_backends::service::spend`).
 
 ## Context
 
@@ -94,6 +97,36 @@ An exchange written before has no such field, and is read as having none.
 **More than 20 pictures** in one request are each fitted to 2,000 pixels a side at most,
 as squint's catalogue states for the model (`many_image_threshold`,
 `many_image_max_dimension_px`).
+
+**Google and OpenAI.** Each provider's rows and count of input are its own
+(`google::spend`, `openai::spend`); the three ceilings, the bound of a request and its
+settlement are the same as above. The rows are squint's catalogue's, read on 2026-10-26:
+`gemini-3.8-flash` at 0.75 dollars a million input tokens, 3.75 output and 0.075 read
+from the cache, and `gemini-4-argon` at 2.00, 10.00 and 0.10, each an introductory
+price the catalogue says ends (2026-12-31 and 2026-11-30), when the row is read again;
+`gpt-6.1-terra` at 1.00, 5.00 and 0.05, and `gpt-6.1-sol` at 2.00, 10.00 and 0.10. The
+catalogue states for none of them a price of a cache write or of a long prompt: a cache
+write is taken at the input price and a long prompt at the row's own, the input ceiling
+being held under the line. At the default ceilings:
+
+    gemini-3.8-flash: 40,000 × 0.75 + 2,048 × 3.75 = 37,680 millionths; 16 turns 0.60288 dollars
+    gpt-6.1-terra:    40,000 × 1.00 + 2,048 × 5.00 = 50,240 millionths; 16 turns 0.80384 dollars
+
+each within the example's cap of 2.00
+(`spend::the_example_configs_whole_call_reservation_fits_its_cap_for_each_judge`). The
+count of input is one token for each byte of words, as above, and for each picture:
+Google, 1,120 tokens whatever its size (the most the catalogue gives a picture at the
+default media resolution; its tile formula is not an upper bound, since every recorded
+picture of 64 by 48 pixels was reported at 1,064); OpenAI, one token for each patch of
+32 by 32 pixels times 1.2, rounded up, without the catalogue's most of 2,500 patches,
+which the recorded pictures of 2,000 by 1,500 passed
+(`google::` and `openai::the_input_count_is_at_least_the_usage_of_every_recorded_exchange`).
+The usage is settled as reported: Google's prompt less what was read from the cache as
+input, its thoughts with its output; OpenAI's input less what was read from the cache as
+input, a write to the cache included at the input price
+(`spend::judge::a_google_and_an_openai_turn_reserve_their_bound_and_settle_at_their_usage`).
+A Responses answer of 200 whose status is `failed` may have been charged, and costs its
+bound.
 
 ## Consequences
 

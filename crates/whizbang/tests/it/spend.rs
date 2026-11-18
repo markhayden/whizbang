@@ -138,7 +138,10 @@ mod judge {
     use serde_json::Value as Json;
     use whizbang_core::contract::{Call, CallError, Executor, Value};
 
-    use crate::anthropic::{Judged, import_picture, judges_call, record_of, serving, turn_with};
+    use crate::anthropic::{
+        GOOGLE, Judged, OPENAI, Provider, import_picture, judges_call, record_of, said_by, serving,
+        turn_with,
+    };
 
     /// The bound of one request at the default ceilings: 40,000 input tokens at the
     /// dearest input price of the row, 0.125 dollars a million, and 2,048 output tokens
@@ -161,10 +164,14 @@ mod judge {
     }
 
     fn one_turn(label: &str, answer: Vec<u8>) -> (Json, Judged) {
-        let judged = Judged::new(label);
+        one_turn_of(crate::anthropic::ANTHROPIC, label, answer)
+    }
+
+    fn one_turn_of(provider: Provider, label: &str, answer: Vec<u8>) -> (Json, Judged) {
+        let judged = Judged::of(label, provider);
         let (listener, _) = serving(&judged.pki, vec![answer]);
         let origin = format!("https://127.0.0.1:{}", listener.port());
-        let over = judged.over(&format!("{origin}/v1/messages"), Some(&origin));
+        let over = judged.over(&judged.address(listener.port()), Some(&origin));
         let executor = judged.runner(&over);
         let ran = executor.submit(&judges_call()).unwrap();
         assert_eq!(ran.outcome().name(), "completed");
@@ -182,6 +189,24 @@ mod judge {
         );
         assert_eq!(record["spend"]["reserved_micros"], BOUND);
         assert_eq!(paid(&record), [(BOUND, 3_500, "answered".to_owned())]);
+    }
+
+    #[test]
+    fn a_google_and_an_openai_turn_reserve_their_bound_and_settle_at_their_usage() {
+        // Each reserves the bound of its default ceilings at its model's row: 40,000
+        // input tokens and 2,048 output, at 0.75 and 3.75 for gemini-3.8-flash (30,000
+        // and 7,680) and at 1.00 and 5.00 for gpt-6.1-terra (40,000 and 10,240). Each
+        // settles at its usage: 30,000 input of which 10,000 read from the cache, and
+        // 1,000 output (thoughts with it, for Google).
+        let usage = (30_000, 10_000, 1_000);
+        // 20,000 at 0.75, 10,000 at 0.075 and 1,000 at 3.75.
+        let (record, _) = one_turn_of(GOOGLE, "spend-google", said_by(GOOGLE, "Seen.", usage));
+        assert_eq!(record["spend"]["reserved_micros"], 37_680);
+        assert_eq!(paid(&record), [(37_680, 19_500, "answered".to_owned())]);
+        // 20,000 at 1.00, 10,000 at 0.05 and 1,000 at 5.00.
+        let (record, _) = one_turn_of(OPENAI, "spend-openai", said_by(OPENAI, "Seen.", usage));
+        assert_eq!(record["spend"]["reserved_micros"], 50_240);
+        assert_eq!(paid(&record), [(50_240, 25_500, "answered".to_owned())]);
     }
 
     #[test]
@@ -308,9 +333,10 @@ mod judge {
     }
 
     #[test]
-    fn the_example_configs_whole_call_reservation_fits_its_cap() {
-        // The example of the guide, as the owner writes it: the bound of one request of
-        // its judge, times the sixteen turns `check` reserves, is within its cap.
+    fn the_example_configs_whole_call_reservation_fits_its_cap_for_each_judge() {
+        // The examples of the guide, as the owner writes them, one for each provider:
+        // the bound of one request of its judge, times the sixteen turns `check`
+        // reserves, is within its cap.
         let guide = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../docs/guides/config.md"
@@ -319,48 +345,54 @@ mod judge {
         let section = guide
             .split("## Checking an edit with a judge")
             .nth(1)
+            .and_then(|rest| rest.split("\n## ").next())
             .unwrap();
-        let toml = section
+        let examples: Vec<&str> = section
             .split("```toml\n")
-            .nth(1)
-            .and_then(|rest| rest.split("```").next())
+            .skip(1)
+            .map(|rest| rest.split("```").next().unwrap())
+            .collect();
+        let expected = [
+            ("claude-haiku-5-5", "ANTHROPIC_API_KEY", BOUND),
+            ("gemini-3.8-flash", "GEMINI_API_KEY", 37_680),
+            ("gpt-6.1-terra", "OPENAI_API_KEY", 50_240),
+        ];
+        assert_eq!(examples.len(), expected.len());
+        for (toml, (model, variable, bound)) in examples.into_iter().zip(expected) {
+            assert!(
+                toml.contains(&format!("model = \"{model}\""))
+                    && toml.contains("call_cap_usd = 2.00"),
+                "{toml}"
+            );
+            let judged = Judged::new(&format!("spend-example-{model}"));
+            std::fs::write(judged.world.config_path(), toml).unwrap();
+            let key = ["made", "up", "example", "key", "0123456789"].join("-");
+            std::fs::write(judged.world.env_path(), format!("{variable}={key}\n")).unwrap();
+            let loaded = whizbang_core::config::Loaded::of_files(
+                &judged.world.config_path(),
+                Some(&judged.world.env_path()),
+            )
             .unwrap();
-        assert!(
-            toml.contains("model = \"claude-haiku-5-5\"") && toml.contains("call_cap_usd = 2.00")
-        );
-        let judged = Judged::new("spend-example");
-        std::fs::write(judged.world.config_path(), toml).unwrap();
-        let key = ["made", "up", "example", "key", "0123456789"].join("-");
-        std::fs::write(
-            judged.world.env_path(),
-            format!("ANTHROPIC_API_KEY={key}\n"),
-        )
-        .unwrap();
-        let loaded = whizbang_core::config::Loaded::of_files(
-            &judged.world.config_path(),
-            Some(&judged.world.env_path()),
-        )
-        .unwrap();
-        let worker = whizbang::pack::OneWorker::installed();
-        let offers = whizbang_core::config::Offers::of(
-            loaded.config(),
-            loaded.credentials(),
-            &whizbang::wiring::kinds(&worker),
-        )
-        .unwrap();
-        let resolved = offers
-            .resolve(whizbang_core::contract::Capability::Judge, None, &[])
+            let worker = whizbang::pack::OneWorker::installed();
+            let offers = whizbang_core::config::Offers::of(
+                loaded.config(),
+                loaded.credentials(),
+                &whizbang::wiring::kinds(&worker),
+            )
             .unwrap();
-        let bound = resolved
-            .declaration()
-            .quote()
-            .unwrap()
-            .bound_micros()
-            .unwrap();
-        assert_eq!(bound, BOUND);
-        let turns = whizbang_squint::check::TURNS_LIMIT as u64;
-        let cap = loaded.config().call_cap_micros().unwrap();
-        assert_eq!(cap, 2_000_000);
-        assert!(bound * turns <= cap, "{} over {cap}", bound * turns);
+            let resolved = offers
+                .resolve(whizbang_core::contract::Capability::Judge, None, &[])
+                .unwrap();
+            let quoted = resolved.declaration().quote().unwrap().bound_micros();
+            assert_eq!(quoted, Some(bound), "{model}");
+            let turns = whizbang_squint::check::TURNS_LIMIT as u64;
+            let cap = loaded.config().call_cap_micros().unwrap();
+            assert_eq!(cap, 2_000_000);
+            assert!(
+                bound * turns <= cap,
+                "{model}: {} over {cap}",
+                bound * turns
+            );
+        }
     }
 }

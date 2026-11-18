@@ -2,7 +2,9 @@
 //! item 2), through the binary's wiring and a judge on loopback: where its data went,
 //! and no byte of the key anywhere under the store.
 
-use crate::anthropic::{CHECK_CLASSES, Judged, checked, record_of, submission};
+use crate::anthropic::{
+    CHECK_CLASSES, GOOGLE, Judged, OPENAI, checked, record_of, submission, submission_by,
+};
 
 /// The run's id, from what the door printed.
 fn run_of(printed: &str) -> String {
@@ -45,6 +47,28 @@ fn the_runs_record_diagnostics_and_faults_hold_no_byte_of_the_key() {
     assert!(complaint.contains("refused the request"), "{complaint}");
     assert!(!complaint.contains(&judged.key), "{complaint}");
     assert!(!judged.store_holds_the_key());
+}
+
+#[test]
+fn a_run_on_each_new_judge_holds_no_byte_of_its_key() {
+    // As above, for a judge of Google and one of OpenAI: a reason that says the key back;
+    // nothing printed, recorded or kept under the store holds it, and the provider was
+    // sent it in its header alone. A fault of either holds nothing of what the provider
+    // answered (`google::` and `openai::a_fault_holds_nothing_of_the_body_the_headers_or_the_address`).
+    for provider in [GOOGLE, OPENAI] {
+        let judged = Judged::of(&format!("record-key-{}", provider.name), provider);
+        let said = format!("The key is {}.", judged.key);
+        let (printed, log) = checked(&judged, vec![submission_by(provider, "held", &said)]);
+        let printed = printed.unwrap();
+        assert!(!printed.contains(&judged.key), "{printed}");
+        assert!(printed.contains("verdict: pass"), "{printed}");
+        let (head, body) = log.lock().unwrap()[0].clone();
+        assert_eq!(head.matches(&judged.key).count(), 1, "{head}");
+        assert!(!String::from_utf8(body).unwrap().contains(&judged.key));
+        let record = record_of(&judged.world.root, &run_of(&printed));
+        assert!(!record.to_string().contains(&judged.key));
+        assert!(!judged.store_holds_the_key(), "{}", provider.name);
+    }
 }
 
 #[test]
