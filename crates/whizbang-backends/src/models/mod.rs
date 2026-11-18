@@ -35,6 +35,7 @@ mod name;
 mod pin;
 mod refused;
 mod remove;
+mod shared;
 mod stage;
 mod status;
 
@@ -62,5 +63,6 @@ pub use remove::{
     DRAINING_FORMAT, DRAINING_MAX_BYTES, Mark, REMOVALS_FORMAT, REMOVALS_MAX_BYTES, RemoveRefused,
     Removed, draining, removals, remove, remove_and_tell,
 };
+pub use shared::all_held;
 pub use stage::{FileRefused, MOVES_LIMIT, StageRefused, Staged, stage};
 pub use status::{STATUS_FORMAT, STATUS_MAX_BYTES, State, Status, status};

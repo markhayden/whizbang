@@ -22,6 +22,10 @@ const LOCK_WAIT: Duration = Duration::from_secs(5);
 /// What the clock is asked to let pass between two tries for the directory's lock.
 const LOCK_PACE: Duration = Duration::from_millis(1);
 
+/// What the clock is asked to let pass between two tries for the lock of a shared
+/// file, which is held for as long as a download and is waited for without a deadline.
+const SHARED_PACE: Duration = Duration::from_millis(10);
+
 /// The most times the directory's lock is tried, whatever the clock says: a clock
 /// that stands still, as a test's does, never comes to the time, and the tries must
 /// end all the same. Under a clock that keeps time the time comes first: five
@@ -219,6 +223,23 @@ impl ModelsDir {
     /// `models/<model>/`: one model's folder.
     pub(super) fn model(&self, model: &ModelName) -> PathBuf {
         self.models().join(model.as_str())
+    }
+
+    /// `shared/`: a lock file for each file an install is staging, named by the
+    /// file's hash as 64 hex digits, and nothing else (ADR 0017, "A file shared
+    /// between installations").
+    pub(super) fn shared(&self) -> PathBuf {
+        self.root.join("shared")
+    }
+
+    /// Lets a moment pass between two tries for a lock that is waited for until it is
+    /// given or the wait is stopped: ten milliseconds of the directory's clock, or, for
+    /// a directory given no clock ([`ModelsDir::at`]), a turn to other threads.
+    pub(super) fn pace(&self) {
+        match &self.clock {
+            Some(clock) => clock.pause(SHARED_PACE),
+            None => std::thread::yield_now(),
+        }
     }
 
     /// `models/<model>/staging/`: where an install of the model keeps its work.

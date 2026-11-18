@@ -135,6 +135,66 @@ fn finds(came: &Arc<Mutex<Vec<Answered>>>) -> Arc<dyn Action> {
     Arc::new(Finds(draft.build().unwrap(), came.clone()))
 }
 
+/// The point asked of the disc: its centre (plan 1D, task Q1).
+pub(crate) const POINT: [f64; 2] = [420.0, 200.0];
+
+/// What one request of a point and a box about the fixture answered: for each query, its
+/// instances as [`Answered`] holds them, and the time of the whole request.
+#[derive(Debug, Clone, Default)]
+struct Places {
+    point: Vec<(f64, [f64; 4], String, usize)>,
+    boxed: Vec<(f64, [f64; 4], String, usize)>,
+    took: Duration,
+}
+
+/// An action that asks the segmenter once, in one batch, for [`POINT`] and for
+/// [`LOOSE_BOX`] about the fixture, and keeps what it answered.
+fn places(came: &Arc<Mutex<Vec<Places>>>) -> Arc<dyn Action> {
+    struct Asks(ActionDescriptor, Arc<Mutex<Vec<Places>>>);
+    impl Action for Asks {
+        fn descriptor(&self) -> &ActionDescriptor {
+            &self.0
+        }
+        fn run(&self, _: &PreparedCall, context: &Context) -> Result<Produced, Failure> {
+            let segment = context.capabilities().segment().expect("a segmenter");
+            let [left, top, right, bottom] = LOOSE_BOX;
+            let queries = vec![
+                Query::point(POINT[0], POINT[1]).unwrap(),
+                Query::boxed(left, top, right, bottom).unwrap(),
+            ];
+            let request = SegmentRequest::new(picture(), queries, MOST).unwrap();
+            let begun = Instant::now();
+            let response = segment
+                .segment(&request)
+                .map_err(|fault| Failure::error("segment", fault.sentence()))?;
+            let took = begun.elapsed();
+            let of = |at: usize| {
+                response.answers()[at]
+                    .iter()
+                    .map(|found| {
+                        let plane = found.plane();
+                        let on = plane.iter().filter(|sample| **sample != 0).count();
+                        let digest = Digest::of_bytes(plane).to_string();
+                        (found.score(), found.bounds(), digest, on)
+                    })
+                    .collect()
+            };
+            self.1.lock().unwrap().push(Places {
+                point: of(0),
+                boxed: of(1),
+                took,
+            });
+            Ok(Produced::nothing())
+        }
+    }
+    let need = Requirement::new(Capability::Segment)
+        .feature("point")
+        .feature("box");
+    let draft =
+        ActionDescriptor::draft("places", "1.0.0", Kind::Primitive, "A test action.").needs(need);
+    Arc::new(Asks(draft.build().unwrap(), came.clone()))
+}
+
 /// A store, a config of one backend of the kind `pack` for `sam3`, and the binary's one
 /// worker, in the test kit's guard.
 struct Tier {
@@ -144,6 +204,7 @@ struct Tier {
     root: PathBuf,
     config: PathBuf,
     came: Arc<Mutex<Vec<Answered>>>,
+    placed: Arc<Mutex<Vec<Places>>>,
 }
 
 impl Tier {
@@ -166,6 +227,7 @@ impl Tier {
             root,
             config,
             came: Arc::default(),
+            placed: Arc::default(),
         }
     }
 
@@ -183,6 +245,7 @@ impl Tier {
     fn runner(&self, over: &Over) -> Engine {
         let mut registry = wiring::registry().unwrap();
         registry.register(finds(&self.came)).unwrap();
+        registry.register(places(&self.placed)).unwrap();
         let store = Arc::new(Store::open(&self.root, Arc::new(RealFs)).unwrap());
         wiring::runner(registry, store, over).expect("the executor builds")
     }
@@ -393,4 +456,62 @@ fn a_second_request_for_the_same_model_loads_nothing() {
     lines.extend(fields_of("first", &came[0]));
     lines.extend(fields_of("second", &came[1]));
     write_out("second", &lines);
+}
+
+#[test]
+#[ignore = "the model tier: just test-models, on a machine with the model installed"]
+fn sam3_answers_a_point_and_a_box_on_the_mac() {
+    // Plan 1D, task Q1: a point at the disc's centre and the loose box around it, asked
+    // of SAM 3's tracker in one request, through the binary's wiring, on the GPU.
+    let tier = Tier::new("model-tier-places");
+    let over = tier.over();
+    let ready = over.installations().unwrap().ready(SAM3);
+    let identity = ready
+        .expect("sam3 is installed and ready")
+        .identity()
+        .digest()
+        .to_string();
+    let executor = tier.runner(&over);
+    let finished = executor.submit(&Call::new("places")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    let run = finished.run().as_str().to_owned();
+    let placed = std::mem::take(&mut *tier.placed.lock().unwrap());
+    assert_eq!(placed.len(), 1);
+    let answered = &placed[0];
+    // Each answers its candidates, at most three, best predicted IoU first; the best of
+    // each is inside the loose box and holds the point.
+    for (name, found) in [("point", &answered.point), ("box", &answered.boxed)] {
+        assert!(!found.is_empty() && found.len() <= 3, "{name}: {found:?}");
+        assert!(
+            found.windows(2).all(|pair| pair[0].0 >= pair[1].0),
+            "{name}: {found:?}"
+        );
+        let (_, bounds, _, on) = &found[0];
+        assert!(inside(*bounds) && *on > 0, "{name}: {found:?}");
+        assert!(
+            bounds[0] <= POINT[0]
+                && POINT[0] < bounds[2]
+                && bounds[1] <= POINT[1]
+                && POINT[1] < bounds[3],
+            "{name}: {found:?}"
+        );
+    }
+    assert_eq!(tier.sent(), ["load", "segment"]);
+    drop(executor);
+    let (device, installation) = device_and_installation(&tier.record(&run));
+    assert_eq!(device, "mps");
+    assert_eq!(installation, identity);
+    let mut lines = vec![
+        ("run".to_owned(), run),
+        ("device".to_owned(), device),
+        ("request_seconds".to_owned(), seconds(answered.took)),
+    ];
+    for (prefix, found) in [("point", &answered.point), ("box", &answered.boxed)] {
+        let one = Answered {
+            instances: found.clone(),
+            took: answered.took,
+        };
+        lines.extend(fields_of(prefix, &one));
+    }
+    write_out("places", &lines);
 }

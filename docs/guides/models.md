@@ -85,6 +85,14 @@ The files are downloaded from the addresses the catalogue names, and from no ori
 but those its entry names, even when a server points elsewhere; each is checked
 against the size and the hash the catalogue states before anything is kept. A model that is installed already, whole, is not downloaded again.
 
+**A file another installation holds is not downloaded.** When a file of the model, by
+its size and its hash, is held already by any installation in the models directory, of
+this model at another revision or of another model, `get` gives that file a second name
+in the new installation, reads it back whole, and downloads nothing for it. The file is
+on the disk once, and removing one of the installations leaves it to the other. Two
+`get`s of models that share a file, run at once, download it once: the second waits
+for the first and then links what it installed.
+
 When another `get` of the same model is running, from this machine, in another
 terminal or by another program, this one downloads nothing: it waits for that one,
 says how far it is each time that changes, and ends as it ends.
@@ -158,8 +166,9 @@ key_env = "HF_DOWNLOAD_TOKEN"
   so.
 
 `get` reads the token only when it is to install a model whose entry says a download
-from that origin needs one, and before anything is asked or the models directory is
-opened; `list`, `remove`, and `get` of any other model never look at the sign-in. The
+from that origin needs one and a file is to be downloaded, and before anything is asked
+or the models directory is made: a model whose every file another installation holds is
+installed with no token at all; `list`, `remove`, and `get` of any other model never look at the sign-in. The
 token is sent with every request to its origin, and with no request to another, also
 when a server moves a file to another origin. It is in nothing `get` prints, in no
 status record and in no refusal, and it is not kept after the install ends.
@@ -178,6 +187,41 @@ A sign-in that is not there or cannot be read is said the same way, with what is
 and never the file's path or what it holds. When the origin refuses the token, `get`
 says to ask for access to the model on its page with the account the token is of (on
 Hugging Face, by accepting the model's terms there).
+
+### A new revision of SAM 3: points and boxes
+
+The SAM 3 of this build answers a point and a box as well as a phrase: a new adapter
+of the pack, under a new revision of the catalogue's entry, with the same files. Two
+commands bring a machine that installed the one before up to it, and neither downloads
+the weights again or asks for a token:
+
+```text
+$ whizbang setup
+$ whizbang models get sam3
+installed sam3: sha256:…
+```
+
+`setup` writes the pack's new copy and keeps the runtime `setup --extra torch`
+installed; `get` finds every file held by the installation before, links them, and
+fetches nothing.
+
+A cut-out with a point is then three commands: `segment` asks for the thing at a place
+and prints its candidates, best first; `select` keeps one of them by its place in that
+list; `render` makes the cut-out. The run's id and each mask's identity are what
+`segment` prints:
+
+```text
+$ whizbang rascal segment --image sha256:… --point "420 200" --store shop --config whizbang.toml
+run … completed
+mask sha256:… score 0.992 box 330 110 510 290
+mask sha256:… score 0.316 box 80 111 510 440
+mask sha256:… score 0.241 box 351 132 504 289
+$ whizbang rascal select --run … --pick 1 --store shop
+$ whizbang rascal render --mask sha256:… --profile alpha --image sha256:… --store shop
+```
+
+`--box "L T R B"` asks for the thing in a box in the same way, and `select --at "X Y"`
+keeps the masks whose core holds a pixel, in place of `--pick`.
 
 ### `remove`
 

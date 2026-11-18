@@ -27,7 +27,10 @@ fn the_shipped_catalogue_parses_names_sam3_and_no_fake_model() {
     assert_eq!(entry.adapter().as_str(), "sam3");
     assert_eq!(entry.licence().as_str(), "SAM License");
     assert_eq!(entry.platforms(), [Platform::MacosArm64]);
-    assert_eq!(entry.features().collect::<Vec<_>>(), ["phrase"]);
+    assert_eq!(
+        entry.features().collect::<Vec<_>>(),
+        ["box", "phrase", "point"]
+    );
     assert_eq!(
         entry.needs_token().map(ToString::to_string).as_deref(),
         Some("https://huggingface.co")

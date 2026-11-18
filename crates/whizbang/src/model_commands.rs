@@ -37,8 +37,8 @@ use std::time::Duration;
 
 use whizbang_backends::models::{
     Carrying, Current, Entry, FileRefused, InstallRefused, ModelsDir, PinRefused, Pinned,
-    RemoveRefused, Revision, State, Status, current, draining, install_or_attach_carrying,
-    pin_file, remove as remove_model, unrunnable,
+    RemoveRefused, Revision, State, Status, all_held, current, draining,
+    install_or_attach_carrying, pin_file, remove as remove_model, unrunnable,
 };
 use whizbang_core::capability::{FaultKind, Unready};
 use whizbang_core::config::{
@@ -397,17 +397,22 @@ fn shown(status: Option<Status>) -> String {
 /// whose entry does not name this platform, and one whose adapter this build does not
 /// have, since no install by this build would make it ready.
 ///
+/// **A file another installation holds** is linked and not downloaded (plan 1D, task
+/// Q1; ADR 0017, "A file shared between installations").
+///
 /// **A credential** (plan 1C, D12): an entry that says a download from its origin
 /// needs a token is installed with one, which every request for that origin carries
 /// and no request for another does. Where the token is, the config says for that
 /// origin (`[[models.tokens]]`): a variable of the env file, or the Hub's
 /// command-line sign-in, which is read here, after the checks above and before the
-/// models directory is opened or anything is asked, from the place the binary was
-/// given ([`Tools::sign_in`]), and by no other command. It is told to redaction
+/// models directory is made or anything is asked, from the place the binary was
+/// given ([`Tools::sign_in`]), and by no other command. **It is not read when
+/// every file of the entry is held** by an installation in the directory: nothing is
+/// to be downloaded (plan 1D, task Q1). It is told to redaction
 /// before the request is made, so nothing this prints, the status record and every
-/// refusal hold it, and it is dropped when the install ends. One limit: a `get` of a
-/// model installed already reads it too, since whether anything is to be downloaded
-/// is known only under the model's lock. An origin that refuses the token (401 or
+/// refusal hold it, and it is dropped when the install ends. One limit: whether every
+/// file is held is looked at before the model's lock is taken, so a file removed in
+/// between is asked for without the token, and its origin refuses it. An origin that refuses the token (401 or
 /// 403) ends the install with a sentence that says to ask for access.
 pub fn get(
     under: Under<'_>,
@@ -431,25 +436,40 @@ pub fn get(
                     .to_owned(),
             );
         };
-        // The token, read now and not before: the model is to be installed, and
-        // nothing has been asked or made yet. From here on every text has it taken
-        // out, beside the config's secrets.
-        let credential = credential_of(entry, read, tools)?;
+        let (said, root) = tools.models.chosen(read.dir.as_deref())?;
+        // Every file held by an installation in the directory already: the install
+        // links them and downloads nothing, so no token is read (plan 1D, task Q1;
+        // ADR 0017, "A file shared between installations"). A directory that is not
+        // there holds nothing, and is not made for the look; a look that fails is no
+        // answer, and the token is read as before.
+        let held = root.is_dir()
+            && wiring::open_models_dir(said, &root, tools.clock.clone())
+                .is_ok_and(|dir| all_held(&dir, entry, &read.secrets).unwrap_or(false));
+        // The token, read now and not before: the model is to be installed, a file
+        // is to be downloaded, and nothing has been asked yet. From here on every
+        // text has it taken out, beside the config's secrets.
+        let credential = if held {
+            None
+        } else {
+            credential_of(entry, read, tools)?
+        };
         let secrets = match &credential {
             Some((_, joined)) => joined.clone(),
             None => read.secrets.clone(),
         };
         let carried = credential.as_ref().map(|(credential, _)| credential);
         let installed = (|| -> Result<String, String> {
-            let (said, root) = tools.models.chosen(read.dir.as_deref())?;
             let dir = wiring::open_models_dir(said, &root, tools.clock.clone())?;
             let downloader = (tools.downloads)(read.least, entry.origins(), &secrets)
                 .map_err(|refused| format!("the download client could not be made: {refused}"))?;
             let mut last = None;
             let clock = tools.clock.clone();
+            // A file another installation holds is linked, not downloaded (plan 1D,
+            // task Q1).
             let carrying = Carrying {
                 downloader: &downloader,
                 credential: carried,
+                shares: true,
             };
             let installed = install_or_attach_carrying(
                 &dir,
@@ -651,6 +671,7 @@ pub fn pin(under: Under<'_>, draft: &Path, tools: &Tools) -> Result<String, Stri
         let carrying = Carrying {
             downloader: &downloader,
             credential: carried,
+            shares: false,
         };
         let mut text = format!(
             "pinned {}: nothing was installed or written\n",

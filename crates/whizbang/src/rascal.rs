@@ -112,11 +112,14 @@ pub enum Command {
         #[arg(long, value_name = "ID")]
         request_id: Option<String>,
     },
-    /// Find each instance of a phrase in an image with the configured segmenter: one
-    /// mask for each, its core the instance, committed to the store. Each mask's
-    /// identity is printed with the instance's score and box (left, top, right,
-    /// bottom, in pixels of the image), which the run's diagnostic `segment.txt` keeps.
+    /// Find each instance of a phrase, or the thing at a point or in a box, in an image
+    /// with the configured segmenter: one mask for each, its core the instance,
+    /// committed to the store, best first. Each mask's identity is printed with the
+    /// instance's score and box (left, top, right, bottom, in pixels of the image), which
+    /// the run's diagnostic `segment.txt` keeps. Exactly one of --phrase, --point and
+    /// --box is given.
     #[command(after_help = EXIT_CODES)]
+    #[command(group(clap::ArgGroup::new("query").required(true).args(["phrase", "point", "box_"])))]
     Segment {
         /// The image to look in, by its identity in the store: sha256: and 64 hex
         /// digits, as `whizbang store import` prints it.
@@ -124,7 +127,14 @@ pub enum Command {
         image: String,
         /// What to find, in words.
         #[arg(long)]
-        phrase: String,
+        phrase: Option<String>,
+        /// The thing at this place: X and Y in pixels of the image, such as "120 80".
+        #[arg(long, value_name = "X Y")]
+        point: Option<String>,
+        /// The thing in this box: left, top, right and bottom in pixels of the image, as
+        /// `rascal segment` prints a box, such as "10 20 30 40".
+        #[arg(long = "box", id = "box_", value_name = "L T R B")]
+        box_: Option<String>,
         /// The most instances to find, from 1 to 64.
         #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(u32).range(1..=64))]
         max_instances: u32,
@@ -143,14 +153,38 @@ pub enum Command {
         request_id: Option<String>,
     },
     /// Make one mask of the instance masks to keep: the union of their cores, minus any
-    /// exclude boxes, with no blend and nothing protected. The new mask is committed to
+    /// exclude boxes, with no blend and nothing protected. The masks are named with
+    /// --mask, or are those of a segment run (--run), all of them or those picked by
+    /// --pick; --at keeps those whose core holds a pixel. The new mask is committed to
     /// the store, and its identity is printed.
     #[command(after_help = EXIT_CODES)]
     Select {
         /// A mask to keep, by its identity in the store, as `rascal segment` prints it:
         /// once for each, 1 to 64 of them, all on one image.
-        #[arg(long = "mask", required = true, value_name = "ID")]
+        #[arg(
+            long = "mask",
+            value_name = "ID",
+            required_unless_present = "run",
+            conflicts_with = "run"
+        )]
         masks: Vec<String>,
+        /// A segment run, by its id as `rascal segment` prints it: its masks, in the
+        /// order it printed them.
+        #[arg(long, value_name = "RUN")]
+        run: Option<String>,
+        /// The Nth mask of the run, counted from 1: once for each to keep.
+        #[arg(
+            long,
+            value_name = "N",
+            requires = "run",
+            conflicts_with = "masks",
+            value_parser = clap::value_parser!(u32).range(1..=64)
+        )]
+        pick: Vec<u32>,
+        /// Keep only the masks whose core holds the pixel at this place: X and Y in
+        /// pixels of the image, such as "120 80".
+        #[arg(long, value_name = "X Y")]
+        at: Option<String>,
         /// A box to clear from the core: left, top, right and bottom in pixels of the
         /// image, as `rascal segment` prints a box, such as "10 20 30 40". A pixel is
         /// cleared when its centre is inside. Once for each box.
@@ -284,6 +318,8 @@ fn run_at(
         Command::Segment {
             image,
             phrase,
+            point,
+            box_,
             max_instances,
             backend,
             at,
@@ -291,9 +327,19 @@ fn run_at(
             request_id,
         } => {
             let executor = executor(at, under, recovery, platform)?;
+            // Exactly one is given: the command line holds it to that.
+            let (kind, query) = match (phrase, point, box_) {
+                (Some(phrase), _, _) => ("phrase", phrase.as_str()),
+                (None, Some(point), _) => ("point", point.as_str()),
+                (None, None, Some(boxed)) => ("box", boxed.as_str()),
+                (None, None, None) => {
+                    return Err("give one of --phrase, --point and --box".to_owned());
+                }
+            };
             let asked = SegmentAsked {
                 image,
-                phrase,
+                kind,
+                query,
                 max_instances: *max_instances,
                 backend: backend.as_deref(),
                 request_id: request_id.as_deref(),
@@ -305,6 +351,9 @@ fn run_at(
         }
         Command::Select {
             masks,
+            run,
+            pick,
+            at,
             exclude,
             common,
         } => {
@@ -312,7 +361,26 @@ fn run_at(
             if !exclude.is_empty() {
                 arguments.push(("exclude", Value::Text(exclude.join(";"))));
             }
-            let inputs = masks.iter().map(|m| ("mask", "--mask", m.as_str()));
+            if let Some(at) = at {
+                arguments.push(("at", Value::text(at)));
+            }
+            // The masks of a run, all or those picked, read before anything is run.
+            let from_run = match run {
+                Some(run) => {
+                    let all = door::run_masks(common.at.root(), run)?;
+                    if pick.is_empty() {
+                        all
+                    } else {
+                        door::picked(&all, pick)?
+                    }
+                }
+                None => Vec::new(),
+            };
+            let (flag, masks) = match run {
+                Some(_) => ("--run", &from_run),
+                None => ("--mask", masks),
+            };
+            let inputs = masks.iter().map(|m| ("mask", flag, m.as_str()));
             operation(
                 common,
                 "select",

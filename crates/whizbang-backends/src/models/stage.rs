@@ -21,6 +21,7 @@ use whizbang_core::store::fs::{LockFile, NewFile, PIECE_MAX_BYTES};
 use super::directory::{LINKED, is_linked};
 use super::name::holds_secret;
 use super::remove::stops;
+use super::shared::link_held;
 use super::{CatalogueFile, Entry, InstalledFile, ModelName, ModelsDir};
 
 /// The most times one file may be answered with another address before it is refused.
@@ -187,6 +188,7 @@ pub fn stage(
         entry,
         downloader,
         None,
+        false,
         cancellation,
         secrets,
         &mut |_| Ok(()),
@@ -257,13 +259,15 @@ impl Stop<'_> {
 /// Stages every file of the entry, for one who holds the model's lock. `staged` is
 /// told after each file how many are staged, and its refusal refuses the staging.
 /// `credential` is attached to each request whose address is at its origin, and to no
-/// other ([`attached`]).
+/// other ([`attached`]). With `shares`, a file another installation holds is linked
+/// and not downloaded ([`super::shared`]).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn stage_locked(
     dir: &ModelsDir,
     entry: &Entry,
     downloader: &dyn Downloader,
     credential: Option<&Credential>,
+    shares: bool,
     cancellation: &Cancellation,
     secrets: &Secrets,
     staged: &mut dyn FnMut(usize) -> io::Result<()>,
@@ -294,7 +298,8 @@ pub(super) fn stage_locked(
             if let Some(stopped) = stop.asked() {
                 return Err(stopped);
             }
-            stage_file(dir, entry, file, &files, downloader, credential, &stop)?;
+            let carried = (downloader, credential, shares);
+            stage_file(dir, entry, file, &files, carried, &stop)?;
             // Made from what the catalogue states, which the file was just held to.
             let installed = InstalledFile::new(file.name().clone(), file.size(), file.sha256());
             done.push(installed.map_err(|_| StageRefused::Disk(io::ErrorKind::InvalidData))?);
@@ -369,14 +374,14 @@ pub(super) fn attached(
     }
 }
 
-/// Downloads one file into `files`, and holds it to its size and its hash.
+/// Downloads one file into `files`, and holds it to its size and its hash; or, when
+/// the install shares, links it from an installation that holds it.
 fn stage_file(
     dir: &ModelsDir,
     entry: &Entry,
     file: &CatalogueFile,
     files: &Path,
-    downloader: &dyn Downloader,
-    credential: Option<&Credential>,
+    (downloader, credential, shares): (&dyn Downloader, Option<&Credential>, bool),
     stop: &Stop,
 ) -> Result<(), StageRefused> {
     let cancellation = stop.cancellation;
@@ -385,11 +390,25 @@ fn stage_file(
         why,
     };
     let size = file.size();
+    let target = files.join(file.name().as_str());
+    // A file another installation holds, of this size and hash, is linked and read
+    // back whole, and nothing is downloaded for it (ADR 0017, "A file shared between
+    // installations").
+    let installed = InstalledFile::new(file.name().clone(), size, file.sha256())
+        .map_err(|_| StageRefused::Disk(io::ErrorKind::InvalidData))?;
+    if shares
+        && link_held(dir, &installed, &target, stop.secrets, &|| {
+            stop.asked().is_some()
+        })?
+    {
+        return Ok(());
+    }
+    if let Some(stopped) = stop.asked() {
+        return Err(stopped);
+    }
     // The file may hold its size and no more: the file system holds it to that.
     let mut received = Received {
-        file: dir
-            .fs()
-            .begin_new(&files.join(file.name().as_str()), size)?,
+        file: dir.fs().begin_new(&target, size)?,
         size,
         kept: 0,
         hash: Sha256::new(),

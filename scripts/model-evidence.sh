@@ -73,10 +73,11 @@ value() {
 # The run kept from nothing: see the top.
 scripts/test-models.sh
 for round in 1 2 3; do
-  rm -f "$work/phrase-$round.txt" "$work/second-$round.txt" "$work/watch-$round.txt"
+  rm -f "$work/phrase-$round.txt" "$work/second-$round.txt" "$work/places-$round.txt" "$work/watch-$round.txt"
   WHIZBANG_MEMORY_REPORT=$work/watch-$round.txt scripts/test-models.sh
   cp "$shared/out/phrase.txt" "$work/phrase-$round.txt"
   cp "$shared/out/second.txt" "$work/second-$round.txt"
+  cp "$shared/out/places.txt" "$work/places-$round.txt"
 done
 
 commit=$(git rev-parse HEAD)
@@ -139,6 +140,18 @@ toml=docs/results/m1c-local-pack.toml
     echo "first_request_seconds = \"$(value "$s" first_request_seconds)\""
     echo "second_request_seconds = \"$(value "$s" second_request_seconds)\""
     echo "first_mask = \"$(value "$s" first_1_mask)\""
+    l=$work/places-$round.txt
+    echo "places_run = \"$(value "$l" run)\""
+    echo "places_device = \"$(value "$l" device)\""
+    echo "places_seconds = \"$(value "$l" request_seconds)\""
+    echo "point_instances = $(value "$l" point_instances)"
+    echo "point_score = \"$(value "$l" point_1_score)\""
+    echo "point_box = \"$(value "$l" point_1_box)\""
+    echo "point_mask = \"$(value "$l" point_1_mask)\""
+    echo "box_instances = $(value "$l" box_instances)"
+    echo "box_score = \"$(value "$l" box_1_score)\""
+    echo "box_box = \"$(value "$l" box_1_box)\""
+    echo "box_mask = \"$(value "$l" box_1_mask)\""
     echo "second_mask = \"$(value "$s" second_1_mask)\""
     echo "peak_resident_kib = $(value "$w" peak_resident_kib)"
     echo "most_threads_in_one_process = $(value "$w" most_threads)"
@@ -198,6 +211,14 @@ md=docs/results/m1c-local-pack.md
   row "First request after the load, s" first_request_seconds second
   row "Second request, s" second_request_seconds second
   row "Loads for two requests" loads second
+  row "Run of the point and the box (plan 1D, task Q1)" run places
+  row "Point and box in one request, s" request_seconds places
+  row "Point at 420 200: candidates" point_instances places
+  row "Its best predicted IoU" point_1_score places
+  row "Its box" point_1_box places
+  row "Box 300 80 540 320: candidates" box_instances places
+  row "Its best predicted IoU" box_1_score places
+  row "Its box" box_1_box places
   printf '| %s | %s | %s | %s |\n' "Peak resident memory of the tree, KiB" \
     "$(value "$work/watch-1.txt" peak_resident_kib)" "$(value "$work/watch-2.txt" peak_resident_kib)" "$(value "$work/watch-3.txt" peak_resident_kib)"
   printf '| %s | %s | %s | %s |\n' "Most threads in one process" \
@@ -206,7 +227,8 @@ md=docs/results/m1c-local-pack.md
     "$(value "$work/watch-1.txt" still_running)" "$(value "$work/watch-2.txt" still_running)" "$(value "$work/watch-3.txt" still_running)"
   echo
   echo "The fixture's disc spans 330 to 510 across and 110 to 290 down; the loose box drawn by"
-  echo "hand around it, which the test holds an instance's box to, is 300, 80, 540, 320. The"
+  echo "hand around it, which the test holds an instance's box to, is 300, 80, 540, 320, and is"
+  echo "the box asked of the tracker; the point asked is the disc's centre, 420, 200. The"
   echo "times are of one machine on one day and are reported, not compared: the load is the"
   echo "worker's \`load\` call (weights from the disk onto the GPU), and the first request's time"
   echo "beside it includes the processor's first run. The time before the load is written holds"

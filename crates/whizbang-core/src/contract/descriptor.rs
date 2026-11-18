@@ -569,14 +569,16 @@ impl OutputPort {
 }
 
 /// A capability an action needs, the features it needs of it, when, which argument
-/// of a call, if any, chooses the backend that answers (ADR 0006, "Resolution"), and
-/// how many requests one call may send that backend (ADR 0010).
+/// of a call, if any, chooses the backend that answers (ADR 0006, "Resolution"), which
+/// argument, if any, names one more feature by its value (ADR 0003, "A feature a call
+/// chooses"), and how many requests one call may send that backend (ADR 0010).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Requirement {
     capability: Capability,
     features: Vec<String>,
     when: When,
     chosen_by: Option<String>,
+    feature_from: Option<String>,
     requests: u64,
 }
 
@@ -589,6 +591,7 @@ impl Requirement {
             features: Vec::new(),
             when: When::Always,
             chosen_by: None,
+            feature_from: None,
             requests: 1,
         }
     }
@@ -644,6 +647,38 @@ impl Requirement {
     /// The argument that chooses the backend, when there is one.
     pub fn chooser(&self) -> Option<&str> {
         self.chosen_by.as_deref()
+    }
+
+    /// With one more feature, the one a call names by its value of this argument: a
+    /// choice every call has a value for, each of whose choices is a feature. So one
+    /// need asks of the backend what the call asks, a point of a call that asks a point
+    /// and a phrase of one that asks a phrase, where two needs of one capability are
+    /// stated only for calls that can never be the same.
+    pub fn feature_from(mut self, argument: &str) -> Requirement {
+        self.feature_from = Some(argument.to_owned());
+        self
+    }
+
+    /// The argument whose value names a feature, when there is one.
+    pub fn feature_argument(&self) -> Option<&str> {
+        self.feature_from.as_deref()
+    }
+
+    /// The features a call with these arguments needs of the capability: those stated,
+    /// then the one the call's value of [`Requirement::feature_argument`] names, when
+    /// that is not stated already.
+    pub fn features_for(&self, arguments: &[(String, Value)]) -> Vec<String> {
+        let mut features = self.features.clone();
+        let chosen = self.feature_from.as_deref().and_then(|from| {
+            arguments.iter().find_map(|(name, value)| match value {
+                Value::Text(text) if name == from => Some(text),
+                _ => None,
+            })
+        });
+        if let Some(chosen) = chosen.filter(|chosen| !features.contains(chosen)) {
+            features.push(chosen.clone());
+        }
+        features
     }
 }
 
@@ -969,6 +1004,23 @@ impl ActionDescriptor {
                         return chooses("is not a text that a call may leave out");
                     }
                     Some(_) => {}
+                }
+            }
+            if let Some(name) = &requirement.feature_from {
+                let names = |why: &str| {
+                    Err(format!(
+                        "the need for {capability} takes a feature from {name}, which {why}"
+                    ))
+                };
+                let Some(argument) = self.argument(name) else {
+                    return names("is no argument");
+                };
+                // A choice's every name is held to the rule of a feature's name already.
+                if !matches!(argument.value_type, ValueType::Choice { .. }) {
+                    return names("is not a choice");
+                }
+                if argument.may_be_absent() {
+                    return names("a call may leave without a value");
                 }
             }
             if requirement.requests == 0 {

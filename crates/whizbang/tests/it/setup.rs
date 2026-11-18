@@ -405,6 +405,74 @@ fn a_second_setup_changes_nothing() {
     assert_eq!(snapshot(&models), before);
 }
 
+#[test]
+fn setup_again_writes_the_packs_new_adapter_and_keeps_the_runtime() {
+    // The upgrade of task Q1 of checkpoint 1D: a models directory whose pack holds the
+    // adapter of revision 1 and a runtime installed by an extra; `setup` again, with no
+    // extra, writes this build's adapter and leaves the runtime as it was.
+    let scratch = Scratch::new("setup-upgrade");
+    let models = models_in(&scratch);
+    let first = setup(&models, None, &[]);
+    assert_eq!(first.status.code(), Some(0), "{}", text(&first.stderr));
+    let place = pack_setup::at(&models);
+    let adapter = place.source.join("whizbang_pack").join("sam3.py");
+    let carried = std::fs::read_to_string(&adapter).unwrap();
+    assert!(carried.contains("REVISION = \"2\""));
+    std::fs::write(
+        &adapter,
+        carried.replace("REVISION = \"2\"", "REVISION = \"1\""),
+    )
+    .unwrap();
+    // A runtime an extra installed: a package the core's lock does not list, as the
+    // environment's installer records one.
+    let packages = std::fs::read_dir(place.environment.join("lib"))
+        .unwrap()
+        .map(|found| found.unwrap().path().join("site-packages"))
+        .find(|path| path.is_dir())
+        .expect("the environment's packages");
+    let module = packages.join("runtime_of_an_extra");
+    std::fs::create_dir(&module).unwrap();
+    std::fs::write(module.join("__init__.py"), "").unwrap();
+    let info = packages.join("runtime_of_an_extra-1.0.dist-info");
+    std::fs::create_dir(&info).unwrap();
+    std::fs::write(
+        info.join("METADATA"),
+        "Metadata-Version: 2.1\nName: runtime-of-an-extra\nVersion: 1.0\n",
+    )
+    .unwrap();
+    std::fs::write(info.join("INSTALLER"), "uv\n").unwrap();
+    std::fs::write(
+        info.join("RECORD"),
+        "runtime_of_an_extra/__init__.py,,\nruntime_of_an_extra-1.0.dist-info/METADATA,,\n\
+         runtime_of_an_extra-1.0.dist-info/INSTALLER,,\nruntime_of_an_extra-1.0.dist-info/RECORD,,\n",
+    )
+    .unwrap();
+    let environment = |snap: BTreeMap<PathBuf, String>| -> BTreeMap<PathBuf, String> {
+        snap.into_iter()
+            .filter(|(path, _)| path.starts_with(&place.environment))
+            .collect()
+    };
+    let before = environment(snapshot(&models));
+    let (stand_in, notes) = noting_uv(&scratch);
+    let again = setup(&models, Some(&stand_in), &[]);
+    assert_eq!(again.status.code(), Some(0), "{}", text(&again.stderr));
+    // The pack's copy is this build's: the adapter that takes points and boxes.
+    assert_eq!(std::fs::read_to_string(&adapter).unwrap(), carried);
+    // The runtime is kept: nothing of the environment changed, and the sync was told
+    // to keep what it does not list.
+    assert!(module.join("__init__.py").is_file());
+    assert_eq!(environment(snapshot(&models)), before);
+    let sync = calls(&notes)
+        .into_iter()
+        .find(|call| call.args.iter().any(|arg| arg == "sync"))
+        .expect("a sync");
+    assert!(
+        sync.args.iter().any(|arg| arg == "--inexact"),
+        "{:?}",
+        sync.args
+    );
+}
+
 /// The lock file, as blocks of `[[package]]`: each block's lines.
 fn lock_blocks() -> Vec<Vec<String>> {
     let lock = std::fs::read_to_string(pack_folder().join("uv.lock")).unwrap();

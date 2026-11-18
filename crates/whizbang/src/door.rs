@@ -164,7 +164,10 @@ pub fn operation(executor: &dyn Executor, asked: &OperationAsked<'_>) -> Result<
 pub struct SegmentAsked<'a> {
     /// The image, by its identity: `sha256:` and 64 hex digits.
     pub image: &'a str,
-    pub phrase: &'a str,
+    /// What the query is: `phrase`, `point` or `box`.
+    pub kind: &'a str,
+    /// The phrase in words, the point as `X Y`, or the box as `L T R B`.
+    pub query: &'a str,
     pub max_instances: u32,
     /// The segmenter, by its name in the config, when the caller chose one.
     pub backend: Option<&'a str>,
@@ -194,7 +197,8 @@ pub fn segment(
         );
     };
     let mut call = Call::new(segment::NAME)
-        .argument("phrase", Value::text(asked.phrase))
+        .argument("kind", Value::text(asked.kind))
+        .argument("query", Value::text(asked.query))
         .argument(
             "max_instances",
             Value::Integer(i64::from(asked.max_instances)),
@@ -222,6 +226,60 @@ pub fn segment(
         text.push_str(&format!("{} {id} {beside}\n", printable(output.port())));
     }
     Ok(text)
+}
+
+/// The masks a `segment` run committed, in the order it printed them, from the store at
+/// `root` by a reader of its own: what `whizbang rascal select --run` keeps from. A run
+/// that is not in the store, is not a run of `segment`, or did not complete is refused;
+/// nothing typed is said back.
+pub fn run_masks(root: &Path, run: &str) -> Result<Vec<String>, String> {
+    let reader = Reader::open(root, Arc::new(RealFs)).map_err(|e| e.to_string())?;
+    let generation = reader.snapshot().map_err(|e| e.to_string())?;
+    let stored =
+        whizbang_core::contract::record::stored(&generation, run, |entry| reader.read(entry));
+    let record = match stored {
+        None => return Err("--run names no run in the store".to_owned()),
+        Some(Err(error)) => {
+            return Err(format!(
+                "--run names a run whose record cannot be read: {}",
+                printable(&error.to_string())
+            ));
+        }
+        Some(Ok(record)) => record,
+    };
+    if record.asked().action.as_deref() != Some(segment::NAME) {
+        return Err(
+            "--run names a run of another action: select keeps masks of a segment run".to_owned(),
+        );
+    }
+    let masks: Vec<String> = record
+        .outputs()
+        .iter()
+        .filter(|output| output.port == "mask")
+        .map(|output| output.artifact.to_string())
+        .collect();
+    if masks.is_empty() {
+        return Err("--run names a segment run that committed no mask".to_owned());
+    }
+    Ok(masks)
+}
+
+/// The masks `--pick` keeps of a run's: the Nth for each N, counted from 1, in the order
+/// the picks were given. A pick past the run's masks is refused, naming how many it has.
+pub fn picked(masks: &[String], picks: &[u32]) -> Result<Vec<String>, String> {
+    picks
+        .iter()
+        .map(|pick| {
+            let at = usize::try_from(*pick).ok().and_then(|n| n.checked_sub(1));
+            at.and_then(|at| masks.get(at)).cloned().ok_or_else(|| {
+                format!(
+                    "--pick {pick} is past the run's masks: it has {} (from 1 to {})",
+                    masks.len(),
+                    masks.len()
+                )
+            })
+        })
+        .collect()
 }
 
 /// The bytes a run kept under this diagnostic name, read from the store at `root` by

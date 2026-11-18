@@ -1,5 +1,5 @@
 {
-  "description_version": 5,
+  "description_version": 6,
   "name": "whizbang",
   "version": "0.0.1",
   "actions": [
@@ -79,6 +79,7 @@
           ],
           "when": "always",
           "chosen_by": "judge",
+          "feature_from": null,
           "requests": 16
         }
       ],
@@ -301,13 +302,27 @@
     },
     {
       "name": "segment",
-      "version": "1.0.0",
+      "version": "2.0.0",
       "kind": "primitive",
-      "purpose": "Finds each instance of a phrase in an image, as one mask for each.",
+      "purpose": "Finds each instance a phrase, a point or a box asks for in an image, as one mask for each.",
       "arguments": [
         {
-          "name": "phrase",
-          "purpose": "What to find, in words.",
+          "name": "kind",
+          "purpose": "What the query is: phrase, point or box.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "phrase",
+              "point",
+              "box"
+            ]
+          },
+          "required": false,
+          "default": "phrase"
+        },
+        {
+          "name": "query",
+          "purpose": "A phrase in words; a point as X Y; a box as left top right bottom; in pixels.",
           "type": {
             "type": "text"
           },
@@ -367,11 +382,10 @@
       "needs": [
         {
           "capability": "segment",
-          "features": [
-            "phrase"
-          ],
+          "features": [],
           "when": "always",
           "chosen_by": "backend",
+          "feature_from": "kind",
           "requests": 1
         }
       ],
@@ -386,6 +400,15 @@
         {
           "name": "exclude",
           "purpose": "Boxes cleared from the core, in pixels: left top right bottom, boxes apart by ;.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "at",
+          "purpose": "Keeps only the masks whose core holds the pixel at X Y, in pixels of the image.",
           "type": {
             "type": "text"
           },

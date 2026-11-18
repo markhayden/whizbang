@@ -396,6 +396,7 @@ fn a_download_moved_to_another_origin_is_asked_there_with_no_credential() {
     let carrying = Carrying {
         downloader: &*bare,
         credential: Some(&credential),
+        shares: false,
     };
     let secrets = Secrets::new([token.clone()]).unwrap();
     let revision = Revision::new("7", &none()).unwrap();
