@@ -7,6 +7,8 @@
 *.jpeg
 *.webp
 !docs/**/*.png
+# The parity fixtures: their pictures and planes (plan 1D, task V1).
+!fixtures/**/*.png
 .claude/settings.local.json
 .claude/worktrees/
 # The nextest results of the script-test fixtures.
