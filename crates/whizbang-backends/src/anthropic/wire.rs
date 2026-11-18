@@ -8,7 +8,7 @@
 //! written, since a [`JudgeRequest`] carries none of them.
 //!
 //! **What is checked is what is sent** (plan 2A, task S1, item 5). Each picture is a
-//! piece of its own, prepared ([`Piece::prepared`]) and checked as an image; the
+//! piece of its own, prepared (`Piece::prepared`) and checked as an image; the
 //! sender writes the base64 of exactly that piece's bytes between the words around it
 //! (`net::http::post`). No picture is copied, decoded or encoded after it is made a
 //! piece. The words are pieces too, split only where a picture stands or the class of
@@ -20,7 +20,9 @@ use whizbang_core::capability::{
     Fault, FaultKind, JudgeRequest, Message, Opaque, Part, Picture, Role, StopReason, ToolCall,
     ToolResult, Turn, Usage,
 };
-use whizbang_core::egress::{DataClass, Piece};
+use whizbang_core::egress::DataClass;
+
+use crate::service::body::{Body, NOT_SAID, OPAQUE, Written, list, long_edge_of};
 
 /// The name a turn's opaque parts are marked with: the backend's, as its model
 /// identity names it.
@@ -38,189 +40,12 @@ pub(crate) struct Settings {
     pub(crate) max_output_tokens: u32,
 }
 
-/// The pictures above which each is fitted to [`MANY_LONG_EDGE`] at most: a request of
-/// more than 20 pictures takes none larger than 2,000 pixels a side (squint's
-/// catalogue of the model: `many_image_threshold`, `many_image_max_dimension_px`).
-pub(crate) const MANY_PICTURES: usize = 20;
-/// The long edge of every picture of a request of more than [`MANY_PICTURES`].
-pub(crate) const MANY_LONG_EDGE: u32 = 2_000;
-
-/// A request as written: its pieces, the prepared size of each of its pictures in
-/// order, and how many messages it holds.
-pub(crate) struct Written {
-    pub(crate) pieces: Vec<Piece>,
-    pub(crate) pictures: Vec<(u32, u32)>,
-    pub(crate) messages: u64,
-}
-
-impl Written {
-    /// The bytes of its words: every piece that is not a picture.
-    pub(crate) fn word_bytes(&self) -> u64 {
-        let words = self.pieces.iter().filter(|piece| !piece.is_picture());
-        words.map(|piece| piece.bytes().len() as u64).sum()
-    }
-}
-
-/// How many pictures a request holds: in its messages and in its tools' results.
-pub(crate) fn pictures_in(request: &JudgeRequest) -> usize {
-    let parts = request.messages().iter().flat_map(Message::parts);
-    parts
-        .map(|part| match part {
-            Part::Image(_) => 1,
-            Part::ToolResult(result) => result.images().len(),
-            _ => 0,
-        })
-        .sum()
-}
-
-/// The prepared size of a picture as the encoder wrote it: a JPEG's frame, or a PNG's
-/// header.
-fn size_of(bytes: &[u8]) -> (u32, u32) {
-    if let Some(header) = bytes.get(16..24).filter(|_| bytes.starts_with(b"\x89PNG")) {
-        let side = |at: usize| {
-            u32::from_be_bytes([header[at], header[at + 1], header[at + 2], header[at + 3]])
-        };
-        return (side(0), side(4));
-    }
-    let mut at = 2;
-    while let Some([0xff, marker, high, low]) =
-        bytes.get(at..at + 4).map(|b| [b[0], b[1], b[2], b[3]])
-    {
-        if marker == 0xc0 {
-            let side = |from: usize| {
-                bytes
-                    .get(from..from + 2)
-                    .map_or(0, |two| u32::from(u16::from_be_bytes([two[0], two[1]])))
-            };
-            return (side(at + 7), side(at + 5));
-        }
-        at += 2 + usize::from(u16::from_be_bytes([high, low]));
-    }
-    (0, 0)
-}
-
-/// A body being written: the words since the last piece, their class, and the pieces
-/// so far.
-struct Body {
-    words: String,
-    class: DataClass,
-    pieces: Vec<Piece>,
-}
-
-impl Body {
-    fn new() -> Body {
-        Body {
-            words: String::new(),
-            class: DataClass::Prompts,
-            pieces: Vec::new(),
-        }
-    }
-
-    /// The words so far become a piece of their class.
-    fn flush(&mut self) {
-        if !self.words.is_empty() {
-            let words = std::mem::take(&mut self.words).into_bytes();
-            self.pieces.push(Piece::of(self.class, words));
-        }
-    }
-
-    /// Words of this class.
-    fn words(&mut self, class: DataClass, text: &str) {
-        if class != self.class {
-            self.flush();
-            self.class = class;
-        }
-        self.words.push_str(text);
-    }
-
-    /// Words that hold no data, the punctuation and the keys of the body: they go
-    /// with the words before them, whatever their class.
-    fn glue(&mut self, text: &str) {
-        self.words.push_str(text);
-    }
-
-    /// A JSON value, written as words of this class.
-    fn json(&mut self, class: DataClass, value: &Value) {
-        let written = serde_json::to_string(value).unwrap_or_default();
-        self.words(class, &written);
-    }
-
-    /// An image block whose data is the picture, prepared, as a piece of its own.
-    fn picture(
-        &mut self,
-        class: DataClass,
-        picture: &Picture,
-        long_edge: u32,
-    ) -> Result<(), Fault> {
-        let piece = Piece::prepared(class, picture, long_edge)
-            .map_err(|_| Fault::new(FaultKind::Rejected, PICTURE).not_sent())?;
-        let media = if piece.bytes().starts_with(b"\xff\xd8") {
-            "image/jpeg"
-        } else {
-            "image/png"
-        };
-        self.words(
-            class,
-            &format!(
-                "{{\"type\":\"image\",\"source\":{{\"type\":\"base64\",\"media_type\":\"{media}\",\"data\":\""
-            ),
-        );
-        self.flush();
-        self.pieces.push(piece);
-        // What closes the block holds no data: it goes with the words after it.
-        self.class = DataClass::Prompts;
-        self.glue("\"}}");
-        Ok(())
-    }
-
-    fn into_pieces(mut self) -> Vec<Piece> {
-        self.flush();
-        self.pieces
-    }
-}
-
-/// What a fault says of a picture that could not be prepared.
-pub(crate) const PICTURE: &str = "a picture of the request could not be prepared to be sent";
-/// What it says of a part a role does not say.
-pub(crate) const NOT_SAID: &str = "the conversation holds a part its role does not say";
-/// What it says of an opaque part that is not one block of this adapter.
-pub(crate) const OPAQUE: &str = "an opaque part of the conversation is not a block the \
-                                 adapter wrote";
-
-/// Writes items between `[` and `]`, with commas.
-fn list<T>(
-    body: &mut Body,
-    items: &[T],
-    mut each: impl FnMut(&mut Body, &T) -> Result<bool, Fault>,
-) -> Result<(), Fault> {
-    body.glue("[");
-    let mut first = true;
-    for item in items {
-        let at = (body.words.len(), body.pieces.len());
-        if !first {
-            body.glue(",");
-        }
-        if each(body, item)? {
-            first = false;
-        } else if (body.words.len(), body.pieces.len()) != at {
-            // Nothing was written for it but a comma: take the comma back.
-            body.words.pop();
-        }
-    }
-    body.glue("]");
-    Ok(())
-}
-
 /// The body of the request, in pieces: `model`, `max_tokens`, `system` (when the
 /// request has one), `messages`, `tools` (when it defines any), `thinking`, and
 /// `output_config` with its `effort` (when one is set).
 pub(crate) fn request(request: &JudgeRequest, settings: &Settings) -> Result<Written, Fault> {
     let mut body = Body::new();
-    let long_edge = if pictures_in(request) > MANY_PICTURES {
-        settings.long_edge.min(MANY_LONG_EDGE)
-    } else {
-        settings.long_edge
-    };
+    let long_edge = long_edge_of(request, settings.long_edge);
     let most = request
         .controls()
         .max_output_tokens()
@@ -267,17 +92,25 @@ pub(crate) fn request(request: &JudgeRequest, settings: &Settings) -> Result<Wri
         body.json(prompts, &json!({ "effort": effort }));
     }
     body.words(prompts, "}");
-    let pieces = body.into_pieces();
-    let pictures = pieces
-        .iter()
-        .filter(|piece| piece.is_picture())
-        .map(|piece| size_of(piece.bytes()))
-        .collect();
-    Ok(Written {
-        pieces,
-        pictures,
-        messages: request.messages().len() as u64,
-    })
+    Ok(Written::of(
+        body.into_pieces(),
+        request.messages().len() as u64,
+    ))
+}
+
+/// An image block whose data is the picture, prepared, as a piece of its own.
+fn picture(
+    body: &mut Body,
+    class: DataClass,
+    picture: &Picture,
+    long_edge: u32,
+) -> Result<(), Fault> {
+    let before = |media: &str| {
+        format!(
+            "{{\"type\":\"image\",\"source\":{{\"type\":\"base64\",\"media_type\":\"{media}\",\"data\":\""
+        )
+    };
+    body.picture(class, picture, long_edge, before, "\"}}")
 }
 
 /// One message: its role, and its content as blocks.
@@ -302,7 +135,7 @@ fn message(body: &mut Body, message: &Message, long_edge: u32) -> Result<(), Fau
         match (message.role(), part) {
             (_, Part::Text(text)) => body.json(prompts, &json!({ "type": "text", "text": text })),
             (Role::User, Part::Image(picture)) => {
-                body.picture(DataClass::SourceImages, picture, long_edge)?;
+                self::picture(body, DataClass::SourceImages, picture, long_edge)?;
             }
             (Role::User, Part::ToolResult(result)) => tool_result(body, result, long_edge)?,
             (Role::Assistant, Part::ToolCall(call)) => {
@@ -366,7 +199,7 @@ fn tool_result(body: &mut Body, result: &ToolResult, long_edge: u32) -> Result<(
         list(body, &parts, |body, part| {
             match part {
                 None => body.json(evidence, &json!({ "type": "text", "text": result.text() })),
-                Some(picture) => body.picture(evidence, picture, long_edge)?,
+                Some(shown) => picture(body, evidence, shown, long_edge)?,
             }
             Ok(true)
         })?;

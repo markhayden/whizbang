@@ -610,6 +610,7 @@ fn a_request_names_fields_of_its_own_that_are_constants_and_none_the_sender_writ
         "X-Api-Key",
         "Proxy-Authorization",
         "api-key",
+        "X-Goog-Api-Key",
         "Cookie",
     ] {
         let fields: &'static [(&'static str, &'static str)] = Box::leak(Box::new([(own, "x")]));
