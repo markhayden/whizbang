@@ -25,7 +25,7 @@ fn indented_description() -> &'static str {
 /// `check`, the recipe.
 fn compact_start() -> String {
     format!(
-        "{{\"description_version\":6,\"name\":\"whizbang\",\"version\":\"{}\",\"actions\":[{{\"name\":\"check\",\"version\":\"1.1.0\",\"kind\":\"recipe\",\"purpose\":\"",
+        "{{\"description_version\":6,\"name\":\"whizbang\",\"version\":\"{}\",\"actions\":[{{\"name\":\"check\",\"version\":\"1.2.0\",\"kind\":\"recipe\",\"purpose\":\"",
         env!("CARGO_PKG_VERSION")
     )
 }

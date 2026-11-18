@@ -25,19 +25,21 @@
 //! ended, and cannot cancel it; a process that is killed while its action runs leaves
 //! the run so (`docs/carry-over.md`).
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
 use whizbang_core::artifact::ArtifactId;
 use whizbang_core::contract::record::DIAGNOSTICS_PREFIX;
 use whizbang_core::contract::{
-    Answer, Call, CallError, Committed, Executor, Outcome, Request, RunId, RunState, Value,
+    Answer, Call, CallError, Committed, Executor, Outcome, Recovery, Request, RunId, RunState,
+    Value,
 };
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{Kind, Reader};
 use whizbang_rascal::{grow, segment};
+use whizbang_squint::job::Job;
 
 /// What a panic prints, after `whizbang: `: this line and nothing else.
 pub const PANIC_LINE: &str = "an internal error (a panic) happened; what it said is not printed, because it may hold a secret";
@@ -360,18 +362,114 @@ fn completed(
 /// What `whizbang squint check` was asked, as it was typed.
 #[derive(Debug, Clone, Copy)]
 pub struct CheckAsked<'a> {
-    /// The use case: `source-fidelity`.
+    /// The use case, one of the table's.
     pub use_case: &'a str,
-    /// The source and the edit of it, each by its identity.
-    pub source: &'a str,
+    /// The edit, or the picture, that is judged, by its identity.
     pub candidate: &'a str,
+    /// What it was edited from, by its identity, when one is given.
+    pub source: Option<&'a str>,
+    /// What it is held to, by their identities, in the order given.
+    pub references: &'a [&'a str],
     /// The judge, by its name in the config's `[backends.judge]` tables, when one is
     /// named.
     pub judge: Option<&'a str>,
-    /// What the edit was to do and keep, as data for the judge, when one is given.
+    /// The job's requirements in words, as data for the judge, when they are given.
     pub brief: Option<&'a str>,
     /// The caller's id for the request, when it gave one.
     pub request_id: Option<&'a str>,
+}
+
+/// The most references `squint check` is given (plan 2C, task A1, item 2): with a
+/// candidate and a source, the most images `check` takes.
+pub const REFERENCES_LIMIT: usize = 8;
+
+/// The most bytes of a job file `squint check --job` reads.
+pub const JOB_FILE_LIMIT: u64 = 1024 * 1024;
+
+fn identity(flag: &str, text: &str) -> Result<ArtifactId, String> {
+    text.parse::<Digest>().map(ArtifactId).map_err(|_| {
+        format!(
+            "--{flag} is no artifact identity: an identity is sha256: and 64 lower-case hex \
+             digits, as `whizbang store import` prints it"
+        )
+    })
+}
+
+/// The job the command line states (`Job::shorthand`), and its images' identities in the
+/// job's order; or why the command is refused before anything runs: more references
+/// than [`REFERENCES_LIMIT`], `brief-compliance` with no brief, or a text that is no
+/// identity.
+pub fn shorthand(asked: &CheckAsked<'_>) -> Result<(Job, Vec<ArtifactId>), String> {
+    let given = asked.references.len();
+    if given > REFERENCES_LIMIT {
+        return Err(format!(
+            "--reference is given at most {REFERENCES_LIMIT} times, and it was given {given}"
+        ));
+    }
+    let briefed = asked.brief.is_some_and(|brief| !brief.trim().is_empty());
+    if asked.use_case == "brief-compliance" && !briefed {
+        return Err(
+            "brief-compliance holds the picture to a brief: give it with --brief".to_owned(),
+        );
+    }
+    let mut images = vec![identity("candidate", asked.candidate)?];
+    if let Some(source) = asked.source {
+        images.push(identity("source", source)?);
+    }
+    for reference in asked.references {
+        images.push(identity("reference", reference)?);
+    }
+    let job = Job::shorthand(asked.use_case, asked.source.is_some(), given, asked.brief);
+    Ok((job, images))
+}
+
+/// A squint job file, read whole (`Job::from_toml`) and of the use case typed, with each
+/// of its pictures brought into the store at `root` from the file its `source.path`
+/// names, relative to the job file's folder, and refused when the job pins its SHA-256
+/// and the file's is another: the job and its images' identities, in its order. A
+/// picture given inline is not taken. Nothing is sent before every picture is in.
+pub fn job_file(
+    file: &Path,
+    use_case: &str,
+    root: &Path,
+    recovery: &Recovery,
+) -> Result<(Job, Vec<ArtifactId>), String> {
+    let shown = printable(&file.display().to_string());
+    let mut text = String::new();
+    let opened = std::fs::File::open(file).map_err(|e| format!("{shown}: {e}"))?;
+    let read = opened.take(JOB_FILE_LIMIT + 1).read_to_string(&mut text);
+    read.map_err(|e| format!("{shown}: {e}"))?;
+    if text.len() as u64 > JOB_FILE_LIMIT {
+        return Err(format!(
+            "{shown}: a job file is at most {JOB_FILE_LIMIT} bytes"
+        ));
+    }
+    let job = Job::from_toml(&text).map_err(|why| format!("{shown}: {}", printable(&why)))?;
+    if job.use_case != use_case {
+        return Err(format!(
+            "{shown} is a job of another use case than {use_case}"
+        ));
+    }
+    let folder = file.parent().unwrap_or(Path::new("."));
+    let mut images = Vec::new();
+    for image in &job.images {
+        let source = image.source.as_ref();
+        let Some(path) = source.and_then(|source| source.path.as_deref()) else {
+            return Err(format!(
+                "{shown}: image {} names no file: a picture given inline is not taken",
+                printable(&image.id)
+            ));
+        };
+        let sha256 = source.and_then(|source| source.sha256.as_deref());
+        let picture = folder.join(path);
+        images.push(crate::import::job_picture(
+            &picture,
+            sha256,
+            root,
+            recovery.clone(),
+        )?);
+    }
+    Ok((job, images))
 }
 
 /// The output tokens `squint check` asks of each turn: the ceiling the judge of a
@@ -403,28 +501,31 @@ pub fn check(
     asked: &CheckAsked<'_>,
     read: &ReadVerdict<'_>,
 ) -> Result<String, String> {
-    let identity = |flag: &str, text: &str| {
-        text.parse::<Digest>().map(ArtifactId).map_err(|_| {
-            format!(
-                "--{flag} is no artifact identity: an identity is sha256: and 64 lower-case \
-                 hex digits, as `whizbang store import` prints it"
-            )
-        })
-    };
-    let source = identity("source", asked.source)?;
-    let candidate = identity("candidate", asked.candidate)?;
+    let (job, images) = shorthand(asked)?;
+    check_job(executor, &job, &images, asked.judge, asked.request_id, read)
+}
+
+/// Runs `check` through the executor under a job and its images, in its order, and
+/// waits for it, as [`check`] does.
+pub fn check_job(
+    executor: &dyn Executor,
+    job: &Job,
+    images: &[ArtifactId],
+    judge: Option<&str>,
+    request_id: Option<&str>,
+    read: &ReadVerdict<'_>,
+) -> Result<String, String> {
     let mut call = Call::new(whizbang_squint::check::NAME)
-        .input("images", source)
-        .input("images", candidate)
-        .argument("use_case", Value::text(asked.use_case))
+        .argument("use_case", Value::text(&job.use_case))
+        .argument("job", Value::text(&job.to_json()))
         .argument("max_output_tokens", Value::Integer(CHECK_OUTPUT_TOKENS));
-    if let Some(judge) = asked.judge {
+    for image in images {
+        call = call.input("images", *image);
+    }
+    if let Some(judge) = judge {
         call = call.argument("judge", Value::text(judge));
     }
-    if let Some(brief) = asked.brief {
-        call = call.argument("brief", Value::text(brief));
-    }
-    let (run, mut text, _) = completed(executor, call, asked.request_id)?;
+    let (run, mut text, _) = completed(executor, call, request_id)?;
     match read(&run) {
         Some(stated) => {
             text.push_str(&format!("verdict: {}\n", printable(&stated.word)));
@@ -454,7 +555,7 @@ pub fn verdict(root: &Path, run: &RunId) -> Option<Stated> {
     let word = serde_json::to_value(decision).ok()?;
     // The items, each a JSON string on a line of its own; a line that is not one is
     // left out, and a diagnostic that is not there gives none.
-    let items = diagnostic(root, run, whizbang_squint::source_fidelity::REASONS)
+    let items = diagnostic(root, run, whizbang_squint::use_case::REASONS)
         .map(|bytes| {
             String::from_utf8_lossy(&bytes)
                 .lines()

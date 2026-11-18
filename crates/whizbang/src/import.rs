@@ -72,12 +72,14 @@
 use std::io::Read;
 use std::path::Path;
 
+use crate::wiring::{self, Make};
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use image::{ExtendedColorType, ImageEncoder};
-use whizbang::wiring::{self, Make};
-use whizbang_core::artifact::{self, Artifact, Image, ImageRole, Origin, Step};
+use whizbang_core::artifact::{self, Artifact, ArtifactId, Image, ImageRole, Origin, Step};
 use whizbang_core::contract::Recovery;
-use whizbang_core::identity::{CanonicalPixels, DecodeLimits, Projection, Topology, identify};
+use whizbang_core::identity::{
+    CanonicalPixels, DecodeLimits, Digest, Projection, Topology, identify,
+};
 use whizbang_core::store::Error;
 
 /// The step a picture's origin names.
@@ -222,6 +224,37 @@ pub fn import_picture(
     commit(&Artifact::Image(image), root, create, recovery)
 }
 
+/// Brings in the picture of a job's image (plan 2C, task A1, item 4), as `--picture`
+/// does, and gives its identity: from `file`, which, when the job pins its SHA-256 (as
+/// `sha256`, with or without `sha256:` before it), is refused before the store is
+/// touched if its digest is another. The store must be there.
+pub fn job_picture(
+    file: &Path,
+    sha256: Option<&str>,
+    root: &Path,
+    recovery: Recovery,
+) -> Result<ArtifactId, String> {
+    let limits = DecodeLimits::default();
+    let bytes = read(file)?;
+    if let Some(pinned) = sha256 {
+        let pinned = pinned.strip_prefix("sha256:").unwrap_or(pinned);
+        if !Digest::of_bytes(&bytes).hex().eq_ignore_ascii_case(pinned) {
+            return Err(format!(
+                "{}: the file's SHA-256 is not the one the job pins",
+                file.display()
+            ));
+        }
+    }
+    let identified =
+        identify(&bytes, &limits).map_err(|error| format!("{}: {error}", file.display()))?;
+    drop(bytes);
+    let image = picture(&identified.pixels, identified.identity.file.0, &limits)
+        .map_err(|error| format!("{}: {error}", file.display()))?;
+    let id = image.id();
+    commit(&Artifact::Image(image), root, false, recovery)?;
+    Ok(id)
+}
+
 /// The image of these pixels: a PNG of them alone, with an origin that names the file
 /// they came from by its digest.
 fn picture(
@@ -267,7 +300,7 @@ fn commit(
         // The open says whether it made the store: it knows, having held the lock.
         if opening.created() {
             // On the standard output, which nothing else escapes.
-            let shown = whizbang::door::printable(&root.display().to_string());
+            let shown = crate::door::printable(&root.display().to_string());
             printed.push_str(&format!("created a store at {shown}\n"));
         }
         opening

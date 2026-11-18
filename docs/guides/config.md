@@ -259,8 +259,12 @@ Where the sign-in keeps its token, and what `get` does with it, are in the guide
 
 ## Checking an edit with a judge
 
-`whizbang squint check source-fidelity` asks a judge whether an edit of an image kept
-what mattered in its source. The judge is a backend of the kind `service`, whose
+`whizbang squint check <use-case>` asks a judge about a picture under one of five use
+cases: `source-fidelity`, whether an edit kept what mattered in its source;
+`reference-consistency`, whether a subject of the references appears faithfully;
+`reality-checks`, mistakes no real photograph would make; `brief-compliance`, whether it
+holds what the brief asked for and nothing it forbade; and `product-fidelity`, whether a
+product shot keeps the exact product. The judge is a backend of the kind `service`, whose
 provider is Anthropic, Google or OpenAI; the config names its model and the variable its
 key is in, caps what one call may reserve, and approves the provider for the four
 classes of data a check sends (plan 2A, "What the owner provides (S)"). For Anthropic:
@@ -333,6 +337,25 @@ whizbang squint check source-fidelity --source <id> --candidate <id> \
 `--brief` says what the edit was to do and what it had to keep. What it names as kept
 and the edit changed fails the check; with no brief, nothing is named as kept, so a
 change is noted in the reason but does not fail it.
+
+The other use cases take the pictures their rules need, each by its identity in the
+store: `--candidate` always; `--source` for `source-fidelity` alone; `--reference`, up to
+eight times, for `reference-consistency` and `product-fidelity`, each labelled by its
+place (`reference 1`, `reference 2`, …); and `--brief` for `brief-compliance`, which is
+refused without one. A role a use case does not take is refused before anything is sent:
+
+```text
+whizbang squint check product-fidelity --candidate <id> --reference <id> --reference <id> \
+  --store <dir> --config whizbang.toml --env-file whizbang.env
+whizbang squint check brief-compliance --candidate <id> \
+  --brief "a red square on grey; no text" --store <dir> --config whizbang.toml \
+  --env-file whizbang.env
+```
+
+`--job <file>` takes a squint job file in place of those flags: its brief, its
+requirements with their ids, and its images with their roles and labels. Each picture is
+brought into the store from the file the job names, relative to the job file's folder,
+and refused when its SHA-256 is not the one the job pins (ADR 0028).
 
 **What one request may cost** is fixed by three settings of the backend, each held
 before a byte is sent: `max_input_tokens` (40,000 when none is given),

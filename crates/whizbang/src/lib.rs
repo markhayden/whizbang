@@ -3,6 +3,7 @@
 
 pub mod backend_status;
 pub mod door;
+pub mod import;
 pub mod model_commands;
 pub mod pack;
 pub mod pack_setup;

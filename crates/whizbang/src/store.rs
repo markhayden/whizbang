@@ -135,9 +135,9 @@ pub fn run_with(command: &Command, recovery: Recovery) -> Result<String, String>
             create,
         } => match (file, picture) {
             (_, Some(picture)) => {
-                crate::import::import_picture(picture, &at.store, *create, recovery)
+                whizbang::import::import_picture(picture, &at.store, *create, recovery)
             }
-            (Some(file), None) => crate::import::import(file, &at.store, *create, recovery),
+            (Some(file), None) => whizbang::import::import(file, &at.store, *create, recovery),
             (None, None) => Err("import takes an artifact file or --picture".to_owned()),
         },
         Command::Prune { at } => {
