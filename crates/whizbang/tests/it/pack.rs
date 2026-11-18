@@ -284,7 +284,7 @@ impl Local {
 
     /// The actions of this build, with `finds`, `finds-again`, `finds-twice` and `echo`
     /// beside them.
-    fn registry(&self) -> Registry {
+    pub(crate) fn registry(&self) -> Registry {
         let mut registry = wiring::registry().unwrap();
         registry.register(finds("finds", &self.came)).unwrap();
         registry.register(finds("finds-again", &self.came)).unwrap();
@@ -746,6 +746,119 @@ fn a_setting_the_kind_does_not_know_is_refused_when_the_config_is_read() {
     let executor = local.runner(&local.over(&one(OK, all)));
     let finished = executor.submit(&Call::new("finds")).unwrap();
     assert_eq!(finished.outcome().name(), "completed");
+}
+
+#[test]
+fn a_device_the_kind_does_not_know_is_refused_when_the_config_is_read() {
+    // Plan 1D, task V1: `device` is a model's setting, `auto` or `cpu`, sent in its load.
+    let local = Local::new("pack-device");
+    for given in ["\"mps\"", "\"gpu\"", "\"CPU\"", "1", "true"] {
+        let text = one(OK, &format!("device = {given}\n"));
+        let executor = local.runner(&local.over(&text));
+        let prepared = executor.prepare(&Call::new("finds")).unwrap();
+        let Readiness::NotReady(missing) = prepared.readiness() else {
+            panic!("ready: {text}");
+        };
+        assert!(missing[0].why().ends_with(kind::BAD_DEVICE), "{text}");
+    }
+    assert!(local.worker.status().is_none());
+    assert!(kind::MODEL_SETTINGS.contains(&"device"));
+    for taken in ["auto", "cpu"] {
+        let text = one(OK, &format!("device = \"{taken}\"\n"));
+        let executor = local.runner(&local.over(&text));
+        let finished = executor.submit(&Call::new("finds")).unwrap();
+        assert_eq!(finished.outcome().name(), "completed", "{taken}");
+    }
+}
+
+/// What one request of a test action was answered beside its instances: the backend's
+/// diagnostics, and each instance's predicted IoU, query by query.
+type Beside = (String, Vec<Vec<Option<f64>>>);
+
+/// An action that asks the segmenter chosen by `backend` once, about [`picture`], for a
+/// phrase and, where the backend declares them, a point and a box; and keeps what the
+/// response held beside its instances.
+fn beside(kept: &Arc<Mutex<Vec<Beside>>>) -> Arc<dyn Action> {
+    struct Asks(ActionDescriptor, Arc<Mutex<Vec<Beside>>>);
+    impl Action for Asks {
+        fn descriptor(&self) -> &ActionDescriptor {
+            &self.0
+        }
+        fn run(&self, _: &PreparedCall, context: &Context) -> Result<Produced, Failure> {
+            let segment = context.capabilities().segment().expect("a segmenter");
+            let mut queries = vec![Query::phrase("the red part").unwrap()];
+            if segment.declaration().has("box") {
+                queries.push(Query::point(1.5, 0.5).unwrap());
+                queries.push(Query::boxed(0.0, 0.0, 2.0, 2.0).unwrap());
+            }
+            let request = SegmentRequest::new(picture(), queries, 4).unwrap();
+            let response = segment
+                .segment(&request)
+                .map_err(|fault| Failure::error("segment", fault.sentence()))?;
+            let iou = (0..response.answers().len())
+                .map(|query| {
+                    (0..response.answers()[query].len())
+                        .map(|at| response.predicted_iou(query, at))
+                        .collect()
+                })
+                .collect();
+            let said = response.diagnostics().to_owned();
+            self.1.lock().unwrap().push((said, iou));
+            Ok(Produced::nothing())
+        }
+    }
+    let need = Requirement::new(Capability::Segment)
+        .feature("phrase")
+        .chosen_by("backend");
+    let draft = ActionDescriptor::draft("beside", "1.0.0", Kind::Primitive, "A test action.")
+        .argument(Argument::optional(
+            "backend",
+            "The segmenter.",
+            ValueType::Text,
+        ))
+        .needs(need);
+    Arc::new(Asks(draft.build().unwrap(), kept.clone()))
+}
+
+#[test]
+fn the_diagnostics_a_worker_answered_reach_the_segmenters_caller() {
+    // Plan 1D, task V1: the result's diagnostics and each instance's predicted IoU, as
+    // the wire held them, reach the action that asked, beside the core's instances.
+    let local = Local::new("pack-beside");
+    let config = "[backends.segment]\ndefault = \"ok\"\n\n\
+                  [backends.segment.ok]\nkind = \"pack\"\nmodel = \"fake-ok\"\n\n\
+                  [backends.segment.ok.settings]\nmax_lifetime_s = 120\n\n\
+                  [backends.segment.mps]\nkind = \"pack\"\nmodel = \"fake-mps\"\n\n\
+                  [backends.segment.mps.settings]\nmax_lifetime_s = 120\n";
+    let kept: Arc<Mutex<Vec<Beside>>> = Arc::default();
+    let mut registry = local.registry();
+    registry.register(beside(&kept)).unwrap();
+    let store = Arc::new(Store::open(&local.root, Arc::new(RealFs)).unwrap());
+    let executor = wiring::runner(registry, store, &local.over(config)).unwrap();
+    for backend in ["ok", "mps"] {
+        let call = Call::new("beside").argument("backend", Value::text(backend));
+        let finished = executor.submit(&call).unwrap();
+        assert_eq!(finished.outcome().name(), "completed", "{backend}");
+    }
+    let kept = std::mem::take(&mut *kept.lock().unwrap());
+    // `fake-ok` says nothing beside its answer; it gives a point's instance a predicted
+    // IoU of 0.5 and a box's 0.75, and a phrase's none.
+    assert_eq!(
+        kept[0],
+        (
+            String::new(),
+            vec![vec![None], vec![Some(0.5)], vec![Some(0.75)]]
+        )
+    );
+    // `fake-mps` says two lines, which reach the caller as the protocol cleaned them:
+    // one line, its break a space (ADR 0020).
+    assert_eq!(
+        kept[1],
+        (
+            "1 instances on mps as determined".to_owned(),
+            vec![vec![None]]
+        )
+    );
 }
 
 #[test]

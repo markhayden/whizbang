@@ -184,7 +184,10 @@ sender has not open. Three kinds at `pack/1`, each asked of a worker:
   with a sign, or a text of 1 to 1,024 printable ASCII characters with no space at
   either end and neither `/` nor `\` in it. What rascal's adapters took for each call (a
   threshold, a padding, an outline rule, a least cover) are settings here: they arrive
-  once, in `load`, and are no field of a `segment`.
+  once, in `load`, and are no field of a `segment`. So does `device` (plan 1D, task V1):
+  `auto`, where the adapter's runtime places the model on the GPU when it has one, or
+  `cpu`, which places it on the CPU whatever the machine has; the result's `device` says
+  where it was placed. A value no adapter takes is refused at the `load`, `rejected`.
 - `image` is a payload's entry (below) for the picture: the canonical pixels of ADR
   0001, under the binding the request names (ADR 0006, as amended).
 - `queries` is 1 to 64 of `{"phrase":text}` (1 to 512 bytes), `{"point":[x,y]}` and

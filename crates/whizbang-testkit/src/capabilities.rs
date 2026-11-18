@@ -404,6 +404,9 @@ pub struct FakeSegmenter {
     declaration: Declaration,
     told: Vec<(String, [u32; 4])>,
     places: Vec<[u32; 4]>,
+    /// What it says beside each answer, and the predicted IoU it gives every instance
+    /// ([`FakeSegmenter::saying`]).
+    saying: Option<(String, f64)>,
     requests: AtomicU64,
     stop: Option<Stop>,
     fails: Option<Fault>,
@@ -419,6 +422,7 @@ impl FakeSegmenter {
             ),
             told: Vec::new(),
             places: Vec::new(),
+            saying: None,
             requests: AtomicU64::new(0),
             stop: None,
             fails: None,
@@ -431,6 +435,13 @@ impl FakeSegmenter {
     /// by 0.1: the candidates a model gives for a place, best first.
     pub fn finding_at_a_place(mut self, bounds: [u32; 4]) -> FakeSegmenter {
         self.places.push(bounds);
+        self
+    }
+
+    /// The same segmenter, which says this text beside each answer and gives every
+    /// instance this predicted IoU (plan 1D, task V1): what a backend's diagnostics are.
+    pub fn saying(mut self, text: &str, iou: f64) -> FakeSegmenter {
+        self.saying = Some((text.to_owned(), iou));
         self
     }
 
@@ -590,7 +601,21 @@ impl Segmenter for FakeSegmenter {
             };
             answers.push(found);
         }
-        let response = SegmentResponse::new(answers);
+        let predicted = |iou: f64| -> Vec<Vec<Option<f64>>> {
+            answers
+                .iter()
+                .map(|answer| vec![Some(iou); answer.len()])
+                .collect()
+        };
+        let response = match &self.saying {
+            Some((text, iou)) => {
+                let predicted = predicted(*iou);
+                SegmentResponse::new(answers)
+                    .said(text)
+                    .predicted(predicted)
+            }
+            None => SegmentResponse::new(answers),
+        };
         Ok(match self.terms.charge {
             Some(charge) => response.charged(charge),
             None => response,

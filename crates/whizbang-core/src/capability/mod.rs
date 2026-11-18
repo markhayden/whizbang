@@ -52,7 +52,7 @@ pub use judge::{
 };
 pub use price::{Price, Quote, QuoteKind, TimeLimit};
 pub use segment::{
-    Asked, INSTANCE_LIMIT, Instance, PHRASE_LIMIT, QUERY_LIMIT, Query, SegmentHandle,
+    Asked, INSTANCE_LIMIT, Instance, PHRASE_LIMIT, QUERY_LIMIT, Query, SAID_LIMIT, SegmentHandle,
     SegmentRequest, SegmentResponse, Segmenter,
 };
 pub(crate) use served::Answer;

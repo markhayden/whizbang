@@ -44,13 +44,14 @@ environment also sets `HF_HUB_OFFLINE=1`): never from a folder the library would
 
 **Settings** (the kind `pack`'s, sent in `load`), each a text: `threshold` (0.2), `pad`
 (0.05) and `min_cover` (0.2), numbers from 0 to 1; `outline`, `whole` or `best` (`whole`).
-The defaults are rascal's Tiny's.
+The defaults are rascal's Tiny's. And `device`, `auto` (the GPU where the runtime has one)
+or `cpu` (plan 1D, task V1).
 
 **The revision** is `1`, the one the binary's table of adapters names
 (`whizbang::wiring::adapters`).
 """
 
-from whizbang_pack.adapter import Adapter, Cancelled, Fault, Found
+from whizbang_pack.adapter import Adapter, Cancelled, Fault, Found, device_name, device_of
 
 REVISION = "1"
 # The threads of each of the runtime's two pools (plan 1C, "Rules"; ADR 0022).
@@ -337,8 +338,9 @@ class Owlv2Sam2(Adapter):
 
     def load(self, installation, settings, call):
         held = settings_of(settings)
+        device = device_of(settings)
         runtime = self._runtime() if self._runtime is not None else Torch.imported()
-        runtime.load(files_of(installation))
+        runtime.load(files_of(installation), device)
         self.model = runtime
         self.settings = held
         self.device = runtime.device
@@ -497,13 +499,12 @@ class Torch:
         made.eval()
         return made
 
-    def load(self, files):
+    def load(self, files, asked="auto"):
         import json
 
         torch = self.torch
         self._pools()
-        name = "mps" if torch.backends.mps.is_available() else "cpu"
-        self._device = torch.device(name)
+        self._device = torch.device(device_name(torch, asked))
         owlv2, sam2 = files["owlv2"], files["sam2"]
         transformers = self.transformers
 

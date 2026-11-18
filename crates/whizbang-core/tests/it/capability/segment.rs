@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 
 use whizbang_core::capability::{
     Asked, Bounds, Charge, Declaration, Fault, FaultKind, INSTANCE_LIMIT, Instance, PHRASE_LIMIT,
-    QUERY_LIMIT, Query, SegmentHandle, SegmentRequest, SegmentResponse, Segmenter, Stage, Unfit,
-    feature,
+    QUERY_LIMIT, Query, SAID_LIMIT, SegmentHandle, SegmentRequest, SegmentResponse, Segmenter,
+    Stage, Unfit, feature,
 };
 use whizbang_core::contract::{Cancellation, ModelIdentity};
 use whizbang_core::identity::{Binding, BindingId, Digest, Direction, Mapping, PixelDigest, Space};
@@ -362,6 +362,50 @@ fn an_answer_that_does_not_fit_its_request_is_malformed() {
             ask(Stub::new(&ALL, vec![vec![other]]), 8),
             format!("the plane of an instance is {width} by {height}, not {WIDTH} by {HEIGHT}")
         );
+    }
+}
+
+#[test]
+fn what_a_backend_says_beside_its_answer_reaches_the_caller_and_is_held_to_its_shape() {
+    // Plan 1D, task V1: the backend's diagnostics and each instance's predicted IoU.
+    let request = SegmentRequest::new(picture(), dog(), 8).unwrap();
+    let with = |response: SegmentResponse| {
+        let stub = Arc::new(Stub {
+            declaration: Declaration::new(ModelIdentity::new("stub", "segmenter", "1"), &ALL)
+                .unwrap(),
+            answer: Ok(response),
+            sent: AtomicU64::new(0),
+            seen: Mutex::new(None),
+        });
+        SegmentHandle::new(stub, Cancellation::new()).segment(&request)
+    };
+    let two = vec![vec![instance(), instance()]];
+    let answered = with(
+        SegmentResponse::new(two.clone())
+            .said("loaded on mps")
+            .predicted(vec![vec![Some(0.9), None]]),
+    )
+    .unwrap();
+    assert_eq!(answered.diagnostics(), "loaded on mps");
+    assert_eq!(answered.predicted_iou(0, 0), Some(0.9));
+    assert_eq!(answered.predicted_iou(0, 1), None);
+    assert_eq!(answered.predicted_iou(1, 0), None);
+    // Said nothing, and gave none: as an answer of any backend that says nothing.
+    let plain = with(SegmentResponse::new(two.clone())).unwrap();
+    assert_eq!((plain.diagnostics(), plain.predicted_iou(0, 0)), ("", None));
+    // What it says is cut at its limit.
+    let long = "d".repeat(SAID_LIMIT + 10);
+    let cut = with(SegmentResponse::new(two.clone()).said(&long)).unwrap();
+    assert_eq!(cut.diagnostics().len(), SAID_LIMIT);
+    // Not one for each instance, or a number not from 0 to 1: malformed.
+    for predicted in [
+        vec![vec![Some(0.9)]],
+        vec![vec![Some(0.9), None], vec![]],
+        vec![vec![Some(1.5), None]],
+        vec![vec![Some(f64::NAN), None]],
+    ] {
+        let fault = with(SegmentResponse::new(two.clone()).predicted(predicted)).unwrap_err();
+        assert_eq!(fault.kind(), FaultKind::Malformed);
     }
 }
 

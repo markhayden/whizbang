@@ -382,11 +382,25 @@ impl std::fmt::Debug for Instance {
     }
 }
 
+/// The most characters of what a backend says beside its answer that a response keeps
+/// ([`SegmentResponse::said`]): the rest is cut.
+pub const SAID_LIMIT: usize = 4096;
+
 /// What a segmenter answers: for each request of the batch, in the batch's order, the
-/// instances it found, in the order the backend gives them.
+/// instances it found, in the order the backend gives them. Beside them, the same way for
+/// every kind of backend (plan 1D, task V1): what the backend said of the answer, a text,
+/// and each instance's predicted IoU where its model gives one. The core's [`Instance`]
+/// holds neither (decided by task P3b of checkpoint 1C), so an action that reads only the
+/// instances is answered the same whichever backend answered; an action that keeps them,
+/// as `segment` does in its run's diagnostic, reads them here.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SegmentResponse {
     answers: Vec<Vec<Instance>>,
+    /// What the backend said of the answer, at most [`SAID_LIMIT`] characters.
+    said: String,
+    /// Each instance's predicted IoU, in the shape of `answers`; empty when the backend
+    /// gave none.
+    predicted: Vec<Vec<Option<f64>>>,
     /// What the request cost, when the backend's answer said.
     charge: Option<Charge>,
     /// Where it was answered, as far as the backend said.
@@ -405,9 +419,38 @@ impl SegmentResponse {
     pub fn new(answers: Vec<Vec<Instance>>) -> SegmentResponse {
         SegmentResponse {
             answers,
+            said: String::new(),
+            predicted: Vec::new(),
             charge: None,
             served: Served::unknown(),
         }
+    }
+
+    /// The same answer, with what the backend said of it: its diagnostics, a text, of
+    /// which the first [`SAID_LIMIT`] characters are kept.
+    pub fn said(mut self, text: &str) -> SegmentResponse {
+        self.said = text.chars().take(SAID_LIMIT).collect();
+        self
+    }
+
+    /// What the backend said of the answer; empty when it said nothing.
+    pub fn diagnostics(&self) -> &str {
+        &self.said
+    }
+
+    /// The same answer, with each instance's predicted IoU, in the shape of the answer:
+    /// one list for each request, one entry for each instance, `None` where the model
+    /// gave none. The handle refuses an answer whose list is of another shape, or holds
+    /// a number that is not from 0 to 1.
+    pub fn predicted(mut self, iou: Vec<Vec<Option<f64>>>) -> SegmentResponse {
+        self.predicted = iou;
+        self
+    }
+
+    /// The predicted IoU of the instance at `at` of the request at `request`, when the
+    /// backend gave one.
+    pub fn predicted_iou(&self, request: usize, at: usize) -> Option<f64> {
+        self.predicted.get(request)?.get(at).copied().flatten()
     }
 
     /// The same answer, saying where it was answered: the device and whether a cache
@@ -573,6 +616,35 @@ impl SegmentHandle {
             return Err(Unfit::NotAllowed {
                 what,
                 why: "does not answer each request once",
+            }
+            .into());
+        }
+        let shaped = response.predicted.is_empty()
+            || (response.predicted.len() == response.answers.len()
+                && response
+                    .predicted
+                    .iter()
+                    .zip(&response.answers)
+                    .all(|(iou, answer)| iou.len() == answer.len()));
+        if !shaped {
+            return Err(Unfit::NotAllowed {
+                what,
+                why: "gives predicted IoUs that are not one for each instance",
+            }
+            .into());
+        }
+        if let Some(iou) = response
+            .predicted
+            .iter()
+            .flatten()
+            .flatten()
+            .find(|iou| !(0.0..=1.0).contains(*iou))
+        {
+            return Err(Unfit::OutOfRange {
+                what: "the predicted IoU of an instance",
+                at: None,
+                found: iou.to_string(),
+                allowed: "from 0 to 1",
             }
             .into());
         }

@@ -31,6 +31,19 @@
 //! each number the shortest decimal that reads back as the same double. Finding no
 //! instance is an outcome, not a failure: the run completes, with no mask and
 //! `instances 0`.
+//!
+//! **What the backend said beside its answer** (plan 1D, task V1) is in the same
+//! diagnostic, the same way whichever kind of backend answered: an instance's predicted
+//! IoU, where its model gave one, ends its mask's line as `iou 0.97`; and each line of the
+//! backend's own diagnostics follows the masks, after `backend `:
+//!
+//! ```text
+//! instances 1
+//! mask sha256:<64 hex digits> score 0.95 box 10 20 30 40 iou 0.95
+//! backend 1 instances on mps
+//! ```
+//!
+//! `whizbang runs show <run> --diagnostic diagnostics/segment.txt` prints it.
 
 use whizbang_core::artifact::{
     self, Artifact, ArtifactType, ImageRole, Mask, Origin, Source, Step, UseCase,
@@ -92,10 +105,11 @@ pub const MAX_INSTANCES_DEFAULT: i64 = 8;
 
 /// One instance as the diagnostic says it: the mask made of it, its score and its box
 /// (left, top, right, bottom, in pixels of the image).
-fn line_of(mask: &Mask, score: f64, bounds: [f64; 4]) -> String {
+fn line_of(mask: &Mask, score: f64, bounds: [f64; 4], iou: Option<f64>) -> String {
     let edges: Vec<String> = bounds.iter().map(|edge| text_of(*edge)).collect();
+    let iou = iou.map_or_else(String::new, |iou| format!(" iou {}", text_of(iou)));
     format!(
-        "mask {} score {} box {}\n",
+        "mask {} score {} box {}{iou}\n",
         mask.id().0,
         text_of(score),
         edges.join(" ")
@@ -256,8 +270,12 @@ impl Action for Segment {
                 )
             });
             let mask = made.map_err(|error| Failure::error("mask", &error.without_paths()))?;
-            said.push_str(&line_of(&mask, instance.score(), instance.bounds()));
+            let iou = response.predicted_iou(0, at);
+            said.push_str(&line_of(&mask, instance.score(), instance.bounds(), iou));
             produced = produced.with("mask", mask);
+        }
+        for line in response.diagnostics().lines() {
+            said.push_str(&format!("backend {line}\n"));
         }
         context
             .diagnostics()

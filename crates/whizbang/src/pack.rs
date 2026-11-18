@@ -31,6 +31,7 @@
 //! |---|---|---|
 //! | `threshold`, `pad`, `min_cover` | A model's setting, sent in its `load` | A text of a number from 0 to 1, as `"0.2"` |
 //! | `outline` | A model's setting, sent in its `load` | A text |
+//! | `device` | A model's setting, sent in its `load` (plan 1D, task V1): where the adapter places the model | `"auto"`, the GPU where the runtime has one and the CPU otherwise, or `"cpu"`; `auto` when not given |
 //! | `call_limit_s` | The kind's limit for a call | A whole number of seconds from 1 to 120; 120 when not given |
 //! | `max_lifetime_s` | The lifetime of a worker a request starts | A whole number of seconds from 1 to 31,536,000; 86,400 when not given |
 //!
@@ -52,7 +53,9 @@
 //!
 //! **Its answer says where it was answered** (task P7a; ADR 0025): on the device the
 //! worker's result names, and never from a cache, since the kind has none. The run's
-//! record keeps both.
+//! record keeps both. Beside it go the result's diagnostics and each instance's
+//! predicted IoU as the wire held it (plan 1D, task V1: `SegmentResponse::said` and
+//! `SegmentResponse::predicted`).
 //!
 //! **An installation's files are verified before it is loaded** (decision D14): the
 //! first request for an installation in a process reads each of its files whole and
@@ -107,7 +110,7 @@ pub const LIFETIME_DEFAULT_S: u32 = 86_400;
 pub const LIFETIME_MOST_S: u32 = 31_536_000;
 
 /// The settings of a model the kind knows, each sent in the model's `load`.
-pub const MODEL_SETTINGS: [&str; 4] = ["min_cover", "outline", "pad", "threshold"];
+pub const MODEL_SETTINGS: [&str; 5] = ["device", "min_cover", "outline", "pad", "threshold"];
 
 /// How long a removal waits between two looks at a lock or a hold.
 const PAUSE: Duration = Duration::from_millis(250);
@@ -127,7 +130,7 @@ pub const NOT_IN_CATALOGUE: &str =
 pub const NOT_LOCAL: &str =
     "a backend of the kind pack is local: it takes no url, no provider and no credential";
 /// What it says of a setting it does not know.
-pub const UNKNOWN_SETTING: &str = "a backend of the kind pack takes the settings call_limit_s, max_lifetime_s, min_cover, outline, pad and threshold, and was given another";
+pub const UNKNOWN_SETTING: &str = "a backend of the kind pack takes the settings call_limit_s, device, max_lifetime_s, min_cover, outline, pad and threshold, and was given another";
 /// What it says of `max_lifetime_s` outside its rule.
 pub const BAD_LIFETIME: &str = "max_lifetime_s is a whole number of seconds from 1 to 31536000";
 /// What it says of `call_limit_s` outside its rule.
@@ -135,6 +138,8 @@ pub const BAD_CALL_LIMIT: &str = "call_limit_s is a whole number of seconds from
 /// What it says of `threshold`, `pad` or `min_cover` outside its rule.
 pub const BAD_FRACTION: &str =
     "threshold, pad and min_cover are each a text of a number from 0 to 1, such as 0.2 in quotes";
+/// What it says of `device` that is not one of the two it takes.
+pub const BAD_DEVICE: &str = "device is auto or cpu, in quotes";
 /// What it says of `outline` that is not a text.
 pub const BAD_OUTLINE: &str = "outline is a text";
 /// What it says of a model's setting whose text the protocol cannot carry.
@@ -535,6 +540,12 @@ impl Taken {
                         .insert(key.to_owned(), Scalar::Text(text.clone()));
                 }
                 ("outline", _) => return Err(refused(BAD_OUTLINE)),
+                ("device", Setting::Text(text)) if text == "auto" || text == "cpu" => {
+                    taken
+                        .model
+                        .insert(key.to_owned(), Scalar::Text(text.clone()));
+                }
+                ("device", _) => return Err(refused(BAD_DEVICE)),
                 _ => return Err(refused(UNKNOWN_SETTING)),
             }
         }
@@ -694,6 +705,7 @@ fn answered(request: &SegmentRequest, called: Called) -> Result<SegmentResponse,
         return Err(malformed());
     };
     let mut answers: Vec<Vec<Instance>> = vec![Vec::new(); request.queries().len()];
+    let mut predicted: Vec<Vec<Option<f64>>> = vec![Vec::new(); request.queries().len()];
     for one in found {
         let place = usize::try_from(one.query).map_err(|_| malformed())?;
         let plane = one.plane;
@@ -707,12 +719,18 @@ fn answered(request: &SegmentRequest, called: Called) -> Result<SegmentResponse,
         )
         .map_err(|_| malformed())?;
         answers.get_mut(place).ok_or_else(malformed)?.push(instance);
+        predicted[place].push(one.iou);
     }
     // The codec held the result's device to the protocol's rule, which is a device's:
     // one that is not is refused here all the same, as an answer the core cannot take.
     let device = Device::named(&called.device).map_err(|_| malformed())?;
     let served = Served::unknown().on(device).cached(false);
-    Ok(SegmentResponse::new(answers).served_as(served))
+    // What the worker said of the answer and each instance's predicted IoU go beside it
+    // (plan 1D, task V1), for the action to keep in its run's diagnostics.
+    Ok(SegmentResponse::new(answers)
+        .served_as(served)
+        .said(&called.diagnostics)
+        .predicted(predicted))
 }
 
 #[cfg(test)]
