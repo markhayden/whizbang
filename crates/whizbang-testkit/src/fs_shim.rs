@@ -1009,6 +1009,14 @@ impl Fs for ShimFs {
         self.real.is_link(path)
     }
 
+    fn hard_link(&self, from: &Path, to: &Path) -> io::Result<()> {
+        // Passed on, and not an event: what it makes is read back under its new name,
+        // and a crash before the sync of its folder leaves a name that is not durable,
+        // as a file begun piece by piece is.
+        let _state = self.alive()?;
+        self.real.hard_link(from, to)
+    }
+
     fn who_may_write(&self, path: &Path) -> io::Result<Writers> {
         // A look at one name, as `is_link` is: not an event.
         let _state = self.alive()?;

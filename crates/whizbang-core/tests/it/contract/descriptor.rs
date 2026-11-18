@@ -941,9 +941,172 @@ fn a_descriptor_as_data_holds_every_field_in_a_fixed_order() {
             r#""inputs":[{"name":"image","artifact":"image","purpose":"The image.","count":{"min":1,"max":1},"belongs_to":null}],"#,
             r#""outputs":[{"name":"mask","artifact":"mask","purpose":"The mask.","count":{"min":1,"max":1},"when":"always","#,
             r#""belongs_to":{"input":"image"},"derived_from":null,"rebound_onto":null}],"#,
-            r#""needs":[{"capability":"fill","features":[],"when":{"given":"filler"},"chosen_by":"filler","requests":1},"#,
-            r#"{"capability":"segment","features":["phrase"],"when":"always","chosen_by":null,"requests":4}],"#,
+            r#""needs":[{"capability":"fill","features":[],"when":{"given":"filler"},"chosen_by":"filler","feature_from":null,"requests":1},"#,
+            r#"{"capability":"segment","features":["phrase"],"when":"always","chosen_by":null,"feature_from":null,"requests":4}],"#,
             r#""concurrent":true}"#
         )
     );
+}
+
+/// An action that asks one thing of a segmenter, a phrase, a point or a box, as its
+/// argument `kind` names it (ADR 0003, "A feature a call chooses").
+fn asks() -> Draft {
+    draft()
+        .argument(Argument::with_default(
+            "kind",
+            "What is asked.",
+            ValueType::choice(&["phrase", "point", "box"]),
+            Value::text("phrase"),
+        ))
+        .argument(Argument::required("query", "The query.", ValueType::Text))
+        .needs(Requirement::new(Capability::Segment).feature_from("kind"))
+}
+
+struct Asks(ActionDescriptor);
+
+impl whizbang_core::contract::Action for Asks {
+    fn descriptor(&self) -> &ActionDescriptor {
+        &self.0
+    }
+}
+
+/// An executor over an empty store that only reads it, whose one segmenter declares
+/// these features.
+fn over(
+    scratch: &whizbang_testkit::scratch::Scratch,
+    features: &[&str],
+) -> whizbang_core::contract::Engine {
+    use std::sync::Arc;
+    use whizbang_core::capability::{Declaration, Roster};
+    use whizbang_core::contract::{Engine, ModelIdentity, Registry};
+    use whizbang_core::identity::Digest;
+    use whizbang_core::store::{Reader, Store};
+
+    let root = scratch.path().join("store");
+    let fs = Arc::new(whizbang_testkit::fs_shim::ShimFs::new());
+    Store::open(&root, fs.clone()).unwrap();
+    let mut registry = Registry::new();
+    registry
+        .register(Arc::new(Asks(asks().build().unwrap())))
+        .unwrap();
+    let declared = Declaration::new(ModelIdentity::new("fake", "sam3", "1"), features).unwrap();
+    let roster = Roster::new()
+        .offer(Capability::Segment, "sam", declared)
+        .unwrap()
+        .default_for(Capability::Segment, "sam")
+        .unwrap();
+    Engine::new(
+        registry,
+        Arc::new(roster),
+        Arc::new(Reader::open(&root, fs).unwrap()),
+        Digest::of_bytes(b"config"),
+    )
+}
+
+#[test]
+fn a_requirement_chosen_by_an_argument_is_checked_at_prepare_and_at_admission() {
+    use whizbang_core::contract::{Call, CallError, Executor, Readiness, Refusal, Request, Stale};
+
+    // The rules: the argument is a choice, and every call has a value for it.
+    let need = || Requirement::new(Capability::Segment).feature_from("kind");
+    let fake = asks().build().unwrap();
+    assert_eq!(fake.needs()[0].feature_argument(), Some("kind"));
+    assert_eq!(fake.needs()[0].features(), [] as [String; 0]);
+    refused(
+        draft().needs(need()),
+        &[
+            "fake",
+            "the need for segment takes a feature from kind, which is no argument",
+        ],
+    );
+    let with = |argument: Argument| draft().argument(argument).needs(need());
+    refused(
+        with(Argument::with_default(
+            "kind",
+            "K.",
+            ValueType::Text,
+            Value::text("box"),
+        )),
+        &["takes a feature from kind, which is not a choice"],
+    );
+    refused(
+        with(Argument::optional(
+            "kind",
+            "K.",
+            ValueType::choice(&["box"]),
+        )),
+        &["takes a feature from kind, which a call may leave without a value"],
+    );
+    with(Argument::required(
+        "kind",
+        "K.",
+        ValueType::choice(&["box"]),
+    ))
+    .build()
+    .unwrap();
+    // A feature stated and chosen is asked once; the stated come first.
+    let both = Requirement::new(Capability::Segment)
+        .feature("box")
+        .feature_from("kind");
+    let given = |kind: &str| vec![("kind".to_owned(), Value::text(kind))];
+    assert_eq!(both.features_for(&given("box")), ["box"]);
+    assert_eq!(both.features_for(&given("point")), ["box", "point"]);
+    assert_eq!(both.features_for(&[]), ["box"]);
+    // As data, the argument is named; a need without one says null, as every field is
+    // always there.
+    let data = serde_json::to_string(&fake.needs()[0]).unwrap();
+    assert!(data.contains(r#""feature_from":"kind""#), "{data}");
+    let plain = serde_json::to_string(&Requirement::new(Capability::Fill)).unwrap();
+    assert!(plain.contains(r#""feature_from":null"#), "{plain}");
+
+    // At prepare: the feature is the call's value, the default's when it gives none.
+    let scratch = whizbang_testkit::scratch::Scratch::new("feature-from");
+    let call = |kind: Option<&str>| {
+        let call = Call::new("fake").argument("query", Value::text("10 20"));
+        match kind {
+            Some(kind) => call.argument("kind", Value::text(kind)),
+            None => call,
+        }
+    };
+    let all = over(&scratch, &["phrase", "point", "box"]);
+    let point = all.prepare(&call(Some("point"))).unwrap();
+    assert_eq!(point.readiness(), &Readiness::Ready);
+    assert_eq!(point.needs()[0].features(), ["point"]);
+    let phrase = all.prepare(&call(None)).unwrap();
+    assert_eq!(phrase.needs()[0].features(), ["phrase"]);
+    assert_ne!(point.fingerprint(), phrase.fingerprint());
+
+    // Against a backend that declares a phrase alone, a point is not ready.
+    let scratch = whizbang_testkit::scratch::Scratch::new("feature-from-phrase");
+    let phrases = over(&scratch, &["phrase"]);
+    let Readiness::NotReady(missing) = phrases
+        .prepare(&call(Some("point")))
+        .unwrap()
+        .readiness()
+        .clone()
+    else {
+        panic!("a point is ready against a backend that takes phrases alone");
+    };
+    assert_eq!(missing[0].features(), ["point"]);
+
+    // At admission the call is prepared again: a point prepared where it was ready is
+    // refused where it is not, before anything is admitted.
+    let request = Request::new(call(Some("point"))).expecting(&point);
+    match phrases.request(&request) {
+        Err(CallError::Refused(Refusal::Stale { why, .. })) => {
+            assert_eq!(
+                why,
+                Stale::Model {
+                    capability: Capability::Segment
+                }
+            );
+        }
+        other => panic!("admitted a point against a backend that takes phrases alone: {other:?}"),
+    }
+    match phrases.request(&Request::new(call(Some("point")))) {
+        Err(CallError::Refused(Refusal::NotReady { missing, .. })) => {
+            assert_eq!(missing[0].features(), ["point"]);
+        }
+        other => panic!("admitted a point against a backend that takes phrases alone: {other:?}"),
+    }
 }

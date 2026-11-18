@@ -17,6 +17,7 @@ mod pack;
 mod rascal;
 mod record;
 mod runs;
+mod select;
 mod setup;
 mod spend;
 mod store;

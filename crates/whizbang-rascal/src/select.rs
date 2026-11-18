@@ -16,6 +16,11 @@
 //! 3. **No pixel left is a refusal of the call** (the run ends as invalid), where rascal
 //!    said its op did not apply.
 //!
+//! **A pixel to keep by** (plan 1D, task Q1): given `at`, `X Y` in pixels of the image, only
+//! the masks whose core holds the pixel there are kept, so one instance of the several a
+//! request answered is picked by pointing at it ([`holding`]). None that holds it refuses
+//! the call, naming how many masks were given.
+//!
 //! The new mask is on the masks' one binding, with nothing protected and no blend: feather
 //! it afterwards. Its source is every instance and location the masks name, once each, in
 //! the order given; its origin is one step, this action, its arguments and every mask.
@@ -82,6 +87,54 @@ fn centres_within(low: f64, high: f64, size: u32) -> impl Iterator<Item = usize>
             centre >= low && centre < high
         })
         .map(|at| at as usize)
+}
+
+/// Reads the argument `at`: two finite numbers, X and Y, apart by spaces or commas.
+pub fn point(text: &str) -> Result<[f64; 2], String> {
+    let read: Option<Vec<f64>> = text
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|word| !word.is_empty())
+        .map(|word| word.parse::<f64>().ok().filter(|n| n.is_finite()))
+        .collect();
+    match read.as_deref() {
+        Some(&[x, y]) => Ok([x, y]),
+        _ => Err("at is two finite numbers: X and Y, in pixels of the image".to_owned()),
+    }
+}
+
+/// The masks whose core holds the pixel at `[x, y]`, in the order given: the pixel
+/// whose left edge is at or under `x` and whose right edge is past it, and the same of
+/// `y`. A place outside the image, or one that no mask holds, is refused, naming how many
+/// masks there were.
+pub fn holding(masks: Vec<Mask>, [x, y]: [f64; 2]) -> Result<Vec<Mask>, SelectError> {
+    let count = masks.len();
+    let Some(first) = masks.first() else {
+        return Err(SelectError::Invalid(
+            "select takes at least one mask".to_owned(),
+        ));
+    };
+    let space = first.binding().source_space();
+    let (width, height) = (f64::from(space.width()), f64::from(space.height()));
+    if !(x >= 0.0 && y >= 0.0 && x < width && y < height) {
+        return Err(SelectError::Invalid(format!(
+            "the pixel at {} {} is outside the image of the {count} masks, {width} by {height}",
+            crate::grow::text_of(x),
+            crate::grow::text_of(y)
+        )));
+    }
+    let at = y.floor() as usize * space.width() as usize + x.floor() as usize;
+    let kept: Vec<Mask> = masks
+        .into_iter()
+        .filter(|mask| mask.core().get(at).is_some_and(|sample| *sample != 0))
+        .collect();
+    if kept.is_empty() {
+        return Err(SelectError::Invalid(format!(
+            "none of the {count} masks holds the pixel at {} {}",
+            crate::grow::text_of(x),
+            crate::grow::text_of(y)
+        )));
+    }
+    Ok(kept)
 }
 
 /// Why a selection was not made.
@@ -185,6 +238,11 @@ impl Select {
             "Boxes cleared from the core, in pixels: left top right bottom, boxes apart by ;.",
             ValueType::Text,
         ))
+        .argument(Argument::optional(
+            "at",
+            "Keeps only the masks whose core holds the pixel at X Y, in pixels of the image.",
+            ValueType::Text,
+        ))
         .argument(Argument::with_default(
             "use_case",
             "What the mask is for, recorded on it.",
@@ -235,10 +293,15 @@ impl Action for Select {
                 return Err(operation::stopped_failure(context, NAME));
             }
         }
-        let mask = select(&masks, &exclude, use_case).map_err(|error| match error {
+        let failed = |error| match error {
             SelectError::Invalid(why) => Failure::invalid(&why),
             SelectError::Mask(error) => Failure::error("mask", &error.without_paths()),
-        })?;
+        };
+        if let Some(at) = operation::text(call, "at") {
+            let at = point(at).map_err(|why| Failure::invalid(&why))?;
+            masks = holding(masks, at).map_err(failed)?;
+        }
+        let mask = select(&masks, &exclude, use_case).map_err(failed)?;
         context.events().progress(&format!(
             "select: a core of {} pixels from {} masks",
             operation::set(mask.core()),

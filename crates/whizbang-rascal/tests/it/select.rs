@@ -4,7 +4,7 @@
 
 use whizbang_core::artifact::{Mask, Source, UseCase};
 use whizbang_core::identity::{Binding, Digest, PixelDigest, Space};
-use whizbang_rascal::select::{SelectError, boxes, select};
+use whizbang_rascal::select::{SelectError, boxes, holding, point, select};
 
 use super::grow::{made_by, mask_of, plane};
 
@@ -100,4 +100,51 @@ fn select_refuses_masks_on_two_images_nothing_left_and_a_box_that_is_not_four_nu
     }
     assert_eq!(boxes("").unwrap(), Vec::<[f64; 4]>::new());
     assert_eq!(boxes("0,0,1,1; 2 2 3 3").unwrap().len(), 2);
+}
+
+#[test]
+fn holding_keeps_the_masks_whose_core_holds_the_pixel_in_the_order_given() {
+    let (w, h) = (20, 12);
+    let a = mask_of(
+        w,
+        h,
+        plane(w, h, |x, y| (2..8).contains(&x) && (2..6).contains(&y)),
+        &[0; 240],
+    );
+    let b = mask_of(
+        w,
+        h,
+        plane(w, h, |x, y| (6..12).contains(&x) && (4..9).contains(&y)),
+        &[0; 240],
+    );
+    let c = mask_of(
+        w,
+        h,
+        plane(w, h, |x, y| (15..18).contains(&x) && (0..3).contains(&y)),
+        &[0; 240],
+    );
+    let given = || vec![a.clone(), b.clone(), c.clone()];
+    let ids = |kept: Vec<Mask>| kept.iter().map(Mask::id).collect::<Vec<_>>();
+    // The pixel at 6.5 5.0 is in both a and b; at 2 2, a alone; at 16.9 2.99, c alone.
+    assert_eq!(ids(holding(given(), [6.5, 5.0]).unwrap()), [a.id(), b.id()]);
+    assert_eq!(ids(holding(given(), [2.0, 2.0]).unwrap()), [a.id()]);
+    assert_eq!(ids(holding(given(), [16.9, 2.99]).unwrap()), [c.id()]);
+    // The order is the order given.
+    assert_eq!(
+        ids(holding(vec![b.clone(), a.clone()], [6.5, 5.0]).unwrap()),
+        [b.id(), a.id()]
+    );
+    // None that holds it, or a place outside the image, is refused naming the count.
+    for at in [[0.0, 0.0], [20.0, 1.0], [1.0, 12.0], [-0.5, 1.0]] {
+        let Err(SelectError::Invalid(why)) = holding(given(), at) else {
+            panic!("kept something at {at:?}");
+        };
+        assert!(
+            why.contains("of the 3 masks") || why.contains("none of the 3 masks"),
+            "{why}"
+        );
+    }
+    // The argument is two numbers, apart by spaces or commas.
+    assert_eq!(point("4, 5.5").unwrap(), [4.0, 5.5]);
+    assert!(point("4").is_err() && point("4 5 6").is_err() && point("x 1").is_err());
 }

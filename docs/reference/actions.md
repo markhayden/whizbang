@@ -2,7 +2,7 @@
 
 # Actions
 
-What `whizbang` 0.0.1 can do, from its static description (version 5).
+What `whizbang` 0.0.1 can do, from its static description (version 6).
 The same as data: [description.json](description.json).
 
 ## `check`
@@ -27,7 +27,7 @@ Makes a mask into a picture: the image cut out by it (alpha), or its weight in g
 
 ## `segment`
 
-Finds each instance of a phrase in an image, as one mask for each.
+Finds each instance a phrase, a point or a box asks for in an image, as one mask for each.
 
 ## `select`
 

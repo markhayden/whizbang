@@ -1349,7 +1349,12 @@ pub(super) fn prepare(
     let mut missing = Vec::new();
     let mut estimate = Estimate::default();
     for requirement in descriptor.needs_for(&given) {
-        let (capability, features) = (requirement.capability(), requirement.features());
+        // The features stated, and the one the call's value names where the need takes
+        // one from an argument: asked of the backend here, and again at admission, where
+        // the call is prepared again.
+        let capability = requirement.capability();
+        let features = requirement.features_for(&arguments);
+        let features = features.as_slice();
         // The call's choice of backend: the text it gave for the argument the need
         // names. An argument that chooses has no default, so a value is the call's own.
         let choice = requirement.chooser().and_then(|chooser| {

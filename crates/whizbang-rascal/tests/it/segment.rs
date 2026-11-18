@@ -69,8 +69,28 @@ fn engine(world: &World, segmenter: &Arc<FakeSegmenter>) -> Engine {
 
 fn call(image: ArtifactId, phrase: &str) -> Call {
     Call::new(NAME)
-        .argument("phrase", Value::text(phrase))
+        .argument("query", Value::text(phrase))
         .input("image", image)
+}
+
+/// A call that asks a query of this kind.
+fn asking(image: ArtifactId, kind: &str, query: &str) -> Call {
+    call(image, query).argument("kind", Value::text(kind))
+}
+
+/// The masks a finished run committed, in the order of its outputs.
+fn masks_of(world: &World, outputs: &[whizbang_core::contract::Committed]) -> Vec<Mask> {
+    let limits = DecodeLimits::default();
+    outputs
+        .iter()
+        .map(|output| {
+            let store = world.store();
+            artifact::get(store.as_ref(), ArtifactType::Mask, output.id(), &limits)
+                .unwrap()
+                .into_mask()
+                .unwrap()
+        })
+        .collect()
 }
 
 /// The plane of a box of whole pixels: left, top, right, bottom.
@@ -128,7 +148,8 @@ fn a_phrase_answered_with_three_instances_writes_three_masks() {
         assert_eq!(
             mask.origin().steps(),
             [Step::new(NAME, VERSION)
-                .argument("phrase", "a cat")
+                .argument("kind", "phrase")
+                .argument("query", "a cat")
                 .argument("max_instances", "8")
                 .argument("instance", &(at + 1).to_string())
                 .input("image", id.0)]
@@ -215,4 +236,139 @@ fn a_backend_lacking_phrase_is_refused_at_prepare() {
     );
     assert_eq!(segmenter.requests(), 0);
     assert_eq!(held(&world.root(), world.fs.clone()).runs.len(), runs);
+}
+
+#[test]
+fn a_point_answered_with_three_candidates_writes_three_masks_best_first() {
+    let world = World::new();
+    let (image, id) = with_picture(&world);
+    let boxes = [[2, 2, 6, 6], [1, 1, 8, 8], [0, 0, 12, 10]];
+    let segmenter = Arc::new(
+        FakeSegmenter::new()
+            .finding_at_a_place(boxes[0])
+            .finding_at_a_place(boxes[1])
+            .finding_at_a_place(boxes[2]),
+    );
+    let finished = engine(&world, &segmenter)
+        .submit(&asking(id, "point", "4 4"))
+        .unwrap();
+    let Outcome::Completed { outputs } = finished.outcome() else {
+        panic!("{:?}", finished.outcome());
+    };
+    assert_eq!(segmenter.requests(), 1);
+    let masks = masks_of(&world, outputs);
+    assert_eq!(masks.len(), 3);
+    for (mask, bounds) in masks.iter().zip(boxes) {
+        assert_eq!(mask.core(), plane_of(bounds));
+        assert_eq!(mask.binding(), &image.binding());
+    }
+    // Best first: the diagnostic's scores fall, in the outputs' order.
+    let stored = held(&world.root(), world.fs.clone());
+    let run = stored
+        .runs
+        .iter()
+        .find(|run| run.id == finished.run().as_str())
+        .unwrap();
+    let said = String::from_utf8(run.diagnostic(DIAGNOSTIC).unwrap().to_vec()).unwrap();
+    let expected = format!(
+        "instances 3\n\
+         mask {} score 0.9 box 2 2 6 6\n\
+         mask {} score 0.8 box 1 1 8 8\n\
+         mask {} score 0.7 box 0 0 12 10\n",
+        masks[0].id().0,
+        masks[1].id().0,
+        masks[2].id().0
+    );
+    assert_eq!(said, expected);
+    // A box is answered the same way; the limit cuts the candidates.
+    let finished = engine(&world, &segmenter)
+        .submit(&asking(id, "box", "1, 1, 9, 9").argument("max_instances", Value::Integer(2)))
+        .unwrap();
+    assert_eq!(finished.outcome().outputs().len(), 2);
+    // A point outside the picture, or a text that is no point, is refused as invalid
+    // before the segmenter is asked.
+    for (kind, query) in [
+        ("point", "24 3"),
+        ("point", "4"),
+        ("box", "1 1 30 9"),
+        ("box", "3 3 1 1"),
+    ] {
+        let finished = engine(&world, &segmenter)
+            .submit(&asking(id, kind, query))
+            .unwrap();
+        assert!(
+            matches!(finished.outcome(), Outcome::Invalid { .. }),
+            "{kind} {query}: {:?}",
+            finished.outcome()
+        );
+    }
+    assert_eq!(segmenter.requests(), 2);
+}
+
+#[test]
+fn a_backend_lacking_point_or_box_is_refused_at_prepare() {
+    let world = World::new();
+    let (_, id) = with_picture(&world);
+    let segmenter = Arc::new(
+        FakeSegmenter::new()
+            .declaring(&[feature::PHRASE])
+            .finding("a cat", [1, 1, 5, 4])
+            .finding_at_a_place([1, 1, 5, 4]),
+    );
+    let executor = engine(&world, &segmenter);
+    // A phrase is ready: the backend declares it.
+    assert_eq!(
+        executor.prepare(&call(id, "a cat")).unwrap().readiness(),
+        &Readiness::Ready
+    );
+    let runs = held(&world.root(), world.fs.clone()).runs.len();
+    for (kind, query) in [(feature::POINT, "2 2"), (feature::BOX, "1 1 5 4")] {
+        let prepared = executor.prepare(&asking(id, kind, query)).unwrap();
+        let Readiness::NotReady(missing) = prepared.readiness() else {
+            panic!("ready to ask a {kind}: {:?}", prepared.readiness());
+        };
+        assert_eq!(missing[0].features(), [kind]);
+        let refused = executor.submit(&asking(id, kind, query));
+        assert!(
+            matches!(refused, Err(CallError::Refused(Refusal::NotReady { .. }))),
+            "{refused:?}"
+        );
+    }
+    // Nothing ran, and the segmenter was never asked.
+    assert_eq!(segmenter.requests(), 0);
+    assert_eq!(held(&world.root(), world.fs.clone()).runs.len(), runs);
+}
+
+#[test]
+fn a_masks_origin_names_the_query_asked() {
+    let world = World::new();
+    let (_, id) = with_picture(&world);
+    // Each kind finds another core here: a mask's identity is of what it is, so the same
+    // core asked twice would be the one mask, with the origin of the first.
+    for (kind, query, bounds) in [
+        ("phrase", "a cat", [1, 1, 5, 4]),
+        ("point", "2 2", [2, 2, 6, 6]),
+        ("box", "1 1 5 4", [3, 3, 7, 7]),
+    ] {
+        let segmenter = Arc::new(
+            FakeSegmenter::new()
+                .finding("a cat", bounds)
+                .finding_at_a_place(bounds),
+        );
+        let finished = engine(&world, &segmenter)
+            .submit(&asking(id, kind, query))
+            .unwrap();
+        let masks = masks_of(&world, finished.outcome().outputs());
+        assert_eq!(masks.len(), 1, "{kind}");
+        assert_eq!(
+            masks[0].origin().steps(),
+            [Step::new(NAME, VERSION)
+                .argument("kind", kind)
+                .argument("query", query)
+                .argument("max_instances", "8")
+                .argument("instance", "1")
+                .input("image", id.0)]
+        );
+    }
+    assert_eq!(VERSION, "2.0.0");
 }

@@ -60,19 +60,36 @@ def box_plane(box):
 
 class StandIn:
     """The runtime, standing in: `answers` gives each phrase its candidates, each a score
-    and a box in the picture's pixels; a candidate's plane is on inside its box."""
+    and a box in the picture's pixels; `places` gives a point or a box its candidates,
+    each a predicted IoU and a box; a candidate's plane is on inside its box."""
 
-    def __init__(self, answers, device="mps"):
+    def __init__(self, answers, device="mps", places=()):
         self.answers = answers
+        self.place_answers = list(places)
         self.device = device
         self.folder = None
+        self.tracker_folders = []
         self.features_made = 0
+        self.places_made = 0
         self.asked = []
+        self.asked_places = []
         self.planes = []
         self.unloaded = False
 
     def load(self, folder):
         self.folder = folder
+
+    def load_tracker(self, folder):
+        self.tracker_folders.append(folder)
+
+    def places(self, width, height, samples):
+        self.places_made += 1
+        return ("places", width, height, len(samples))
+
+    def place_candidates(self, places, kind, given):
+        assert places == ("places", WIDTH, HEIGHT, 4 * WIDTH * HEIGHT)
+        self.asked_places.append((kind, given))
+        return ("place",), [(index, iou) for index, (iou, _) in enumerate(self.place_answers)]
 
     def features(self, width, height, samples):
         self.features_made += 1
@@ -85,6 +102,8 @@ class StandIn:
 
     def plane(self, features, answer, index):
         self.planes.append((answer, index))
+        if answer == ("place",):
+            return box_plane(self.place_answers[index][1])
         return box_plane(self.answers[answer][index][1])
 
     def unload(self):
@@ -153,25 +172,6 @@ class Phrase(unittest.TestCase):
         _, said = loaded(StandIn(answers), {"min_cover": "0.2", "outline": "whole", "pad": "0.05"})
         self.assertEqual(said, "loaded on mps; threshold 0.5; min_cover, outline, pad taken and not used by sam3")
 
-    def test_a_point_or_a_box_is_refused_as_unsupported(self):
-        runtime = StandIn({"cat": [(0.9, [0, 0, 2, 2])]})
-        made, _ = loaded(runtime)
-        self.assertEqual(made.features, frozenset(("phrase",)))
-        for query in ({"point": [1.0, 1.0]}, {"box": [0.0, 0.0, 2.0, 2.0]}):
-            with self.assertRaises(adapter.Fault) as refused:
-                made.segment(request(phrases("cat") + [query]), Asked())
-            self.assertEqual(refused.exception.fault, "unsupported")
-        # Refused before anything is computed.
-        self.assertEqual(runtime.features_made, 0)
-        # And by the worker, from what the adapter declares, before the adapter is asked.
-        work = worker.Worker("/models", None, None, None, None, exit=lambda code: None, adapters={"sam3": lambda: made})
-        work.resident = worker.Resident("sam3", INSTALLATION, None, made)
-        call = worker.Call(work, request([{"point": [1.0, 1.0]}]))
-        with self.assertRaises(adapter.Fault) as refused:
-            work._segment(call)
-        self.assertEqual((refused.exception.fault, refused.exception.sentence), ("unsupported", "the model takes no point"))
-        self.assertEqual(runtime.features_made, 0)
-
     def test_candidates_are_cut_to_the_most_instances_asked_before_a_full_size_plane_is_made(self):
         # Ten candidates over the threshold for one phrase, three for the other; two asked
         # for each. A plane is made for the best two of each, and for no other.
@@ -187,6 +187,132 @@ class Phrase(unittest.TestCase):
         made, _ = loaded(empty)
         found, _ = made.segment(request(phrases("thin"), most=1), Asked())
         self.assertEqual((found, empty.planes), ([], [("thin", 0)]))
+
+
+# Three candidates for a place, as the tracker gives them: its predicted IoU and its box.
+THREE = [(0.31, [0, 0, 8, 6]), (0.99, [2, 1, 5, 4]), (0.24, [3, 2, 4, 3])]
+
+
+class Prompts(unittest.TestCase):
+    def test_a_point_is_asked_in_the_pictures_frame_and_answers_its_candidates_best_first(self):
+        runtime = StandIn({}, places=THREE)
+        made, _ = loaded(runtime)
+        self.assertEqual(made.features, frozenset(("phrase", "point", "box")))
+        found, said = made.segment(request([{"point": [3.5, 2.25]}]), Asked())
+        # Asked as the request gave it, in the picture's pixels: the runtime places it.
+        self.assertEqual(runtime.asked_places, [("point", [3.5, 2.25])])
+        # Best predicted IoU first; the score and the IoU are both that prediction, and
+        # each box is the bounds of what its plane has on.
+        self.assertEqual(
+            [(item.query, item.score, item.iou, item.box) for item in found],
+            [
+                (0, 0.99, 0.99, [2.0, 1.0, 5.0, 4.0]),
+                (0, 0.31, 0.31, [0.0, 0.0, 8.0, 6.0]),
+                (0, 0.24, 0.24, [3.0, 2.0, 4.0, 3.0]),
+            ],
+        )
+        self.assertEqual(found[0].samples, box_plane([2, 1, 5, 4]))
+        self.assertEqual(said, "3 instances on mps")
+        # No threshold is of an IoU: the setting is the phrase's.
+        made, _ = loaded(StandIn({}, places=THREE), {"threshold": "0.95"})
+        self.assertEqual(len(made.segment(request([{"point": [1.0, 1.0]}]), Asked())[0]), 3)
+        # Cut to the most asked before any plane is made: two asked, two planes.
+        runtime = StandIn({}, places=THREE)
+        made, _ = loaded(runtime)
+        found, _ = made.segment(request([{"point": [1.0, 1.0]}], most=2), Asked())
+        self.assertEqual([item.score for item in found], [0.99, 0.31])
+        self.assertEqual(runtime.planes, [(("place",), 1), (("place",), 0)])
+        # A candidate whose plane has nothing on gives no instance.
+        runtime = StandIn({}, places=[(0.9, [3, 3, 3, 3]), (0.5, [0, 0, 1, 1])])
+        made, _ = loaded(runtime)
+        found, _ = made.segment(request([{"point": [1.0, 1.0]}]), Asked())
+        self.assertEqual([item.score for item in found], [0.5])
+
+    def test_a_box_is_asked_as_its_corners_and_answers_its_candidates_best_first(self):
+        runtime = StandIn({"cat": [(0.9, [0, 0, 2, 2])]}, places=THREE)
+        made, _ = loaded(runtime)
+        queries = [{"box": [1.0, 0.5, 6.0, 5.0]}, {"phrase": "cat"}, {"point": [2.0, 2.0]}]
+        found, _ = made.segment(request(queries), Asked())
+        self.assertEqual(runtime.asked_places, [("box", [1.0, 0.5, 6.0, 5.0]), ("point", [2.0, 2.0])])
+        self.assertEqual(runtime.asked, ["cat"])
+        # In the fixed order of the answer: best score first, then the query's place.
+        self.assertEqual(
+            [(item.query, item.score) for item in found],
+            [(0, 0.99), (2, 0.99), (1, 0.9), (0, 0.31), (2, 0.31), (0, 0.24), (2, 0.24)],
+        )
+        self.assertEqual(found, sorted(found, key=sam3._fixed))
+        # The picture's features, once for each model the batch asks: one of each.
+        self.assertEqual((runtime.features_made, runtime.places_made), (1, 1))
+
+    def test_the_tracker_is_loaded_once_on_the_first_point_or_box(self):
+        runtime = StandIn({"cat": [(0.9, [0, 0, 2, 2])]}, places=THREE)
+        made, _ = loaded(runtime)
+        # Phrases alone load no tracker, and compute no feature of its.
+        made.segment(request(phrases("cat")), Asked())
+        self.assertEqual((runtime.tracker_folders, runtime.places_made), ([], 0))
+        # The first point loads it, from the installation's own folder; the next box and
+        # the next point do not load it again.
+        made.segment(request([{"point": [1.0, 1.0]}]), Asked())
+        made.segment(request([{"box": [0.0, 0.0, 4.0, 4.0]}, {"point": [2.0, 2.0]}]), Asked())
+        self.assertEqual(runtime.tracker_folders, [FILES])
+        # Points and boxes of one batch share the picture's features: two batches, two.
+        self.assertEqual(runtime.places_made, 2)
+        # After an unload and a load, the tracker is loaded again on the next point.
+        made.unload(Asked())
+        self.assertTrue(runtime.unloaded)
+        made.load(adapter.Installation("/models", "sam3", INSTALLATION), {}, Asked())
+        made.segment(request([{"point": [1.0, 1.0]}]), Asked())
+        self.assertEqual(runtime.tracker_folders, [FILES, FILES])
+        # On the runtime itself: the same library's tracker, from the same folder, offline,
+        # on the device the model is on.
+        torch = fake_torch(mps=True)
+        runtime = sam3.Torch(torch, fake_transformers(torch))
+        runtime.load(FILES)
+        torch.calls.clear()
+        runtime.load_tracker(FILES)
+        self.assertEqual(
+            torch.calls,
+            [
+                ("tracker", FILES, {"local_files_only": True}),
+                ("to", "mps"),
+                ("eval",),
+                ("tracker_processor", FILES, {"local_files_only": True}),
+            ],
+        )
+        runtime.unload()
+        self.assertIsNone(runtime.tracker)
+
+    def test_a_point_outside_the_picture_is_refused_as_unfit(self):
+        runtime = StandIn({"cat": [(0.9, [0, 0, 2, 2])]}, places=THREE)
+        made, _ = loaded(runtime)
+        for query in (
+            {"point": [8.0, 1.0]},
+            {"point": [1.0, 6.0]},
+            {"box": [0.0, 0.0, 9.0, 6.0]},
+            {"box": [2.0, 2.0, 2.0, 4.0]},
+        ):
+            with self.assertRaises(adapter.Fault) as refused:
+                made.segment(request(phrases("cat") + [query]), Asked())
+            self.assertEqual(refused.exception.fault, "rejected")
+        # Refused before anything is computed or loaded.
+        self.assertEqual((runtime.features_made, runtime.places_made, runtime.tracker_folders), (0, 0, []))
+        # The picture's last pixel, and a box of the whole picture, are inside it.
+        made.segment(request([{"point": [7.5, 5.5]}, {"box": [0.0, 0.0, 8.0, 6.0]}]), Asked())
+
+    def test_the_worker_refuses_a_kind_an_adapter_does_not_declare(self):
+        class PhraseOnly(sam3.Sam3):
+            features = frozenset(("phrase",))
+
+        runtime = StandIn({}, places=THREE)
+        made = PhraseOnly(runtime=lambda: runtime)
+        made.load(adapter.Installation("/models", "sam3", INSTALLATION), {}, Asked())
+        work = worker.Worker("/models", None, None, None, None, exit=lambda code: None, adapters={"sam3": lambda: made})
+        work.resident = worker.Resident("sam3", INSTALLATION, None, made)
+        call = worker.Call(work, request([{"point": [1.0, 1.0]}]))
+        with self.assertRaises(adapter.Fault) as refused:
+            work._segment(call)
+        self.assertEqual((refused.exception.fault, refused.exception.sentence), ("unsupported", "the model takes no point"))
+        self.assertEqual((runtime.places_made, runtime.tracker_folders), (0, []))
 
 
 def fake_torch(mps):
@@ -251,7 +377,21 @@ def fake_transformers(torch, lands=None):
             torch.calls.append(("processor", folder, options))
             return cls()
 
-    return types.SimpleNamespace(Sam3Model=Model, Sam3Processor=Processor)
+    class Tracker(Model):
+        @classmethod
+        def from_pretrained(cls, folder, **options):
+            torch.calls.append(("tracker", folder, options))
+            return cls()
+
+    class TrackerProcessor:
+        @classmethod
+        def from_pretrained(cls, folder, **options):
+            torch.calls.append(("tracker_processor", folder, options))
+            return cls()
+
+    return types.SimpleNamespace(
+        Sam3Model=Model, Sam3Processor=Processor, Sam3TrackerModel=Tracker, Sam3TrackerProcessor=TrackerProcessor
+    )
 
 
 def loaded_on(torch, transformers):
@@ -332,7 +472,7 @@ class Revision(unittest.TestCase):
         body = body[: body.index("\n}\n")]
         table = re.findall(r'named\("([a-z0-9_-]+)", "([^"]+)", (true|false)\)', body)
         self.assertEqual(table, [("sam3", sam3.Sam3.revision, "true")])
-        self.assertEqual(sam3.Sam3.revision, "1")
+        self.assertEqual(sam3.Sam3.revision, "2")
         # And the worker answers for it under that name.
         self.assertIs(worker.ADAPTERS["sam3"], sam3.Sam3)
 

@@ -92,6 +92,10 @@ fn the_committed_record_names_the_adapters_revision_and_the_lock_the_tree_has() 
         assert_ne!(field(round, "phrase_instances"), "0");
         assert_eq!(field(round, "loads"), "1");
         assert_eq!(field(round, "still_running_after"), "0");
+        // A point and a box, on the GPU, each with an instance (plan 1D, task Q1).
+        assert_eq!(field(round, "places_device"), "mps");
+        assert_ne!(field(round, "point_instances"), "0");
+        assert_ne!(field(round, "box_instances"), "0");
         // Each first load trusted the record of an earlier full check, and the model
         // was loaded within 10 seconds of the first request (plan 2A, task R1).
         assert_eq!(field(round, "check_record_before"), "yes");

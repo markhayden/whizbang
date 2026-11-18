@@ -334,6 +334,18 @@ pub trait Fs: Send + Sync {
         let _ = path;
         streams_nothing()
     }
+    /// Gives the regular file at `from` a second name, `to`: one file under two names,
+    /// which lives until both are removed. Fails when `to` is taken, by anything, and
+    /// across two file systems ([`io::ErrorKind::CrossesDevices`]). What `from` is is
+    /// not asked here: whoever links reads the file under its new name and holds it to
+    /// what it must be. The name is not durable until its directory is synced. Added
+    /// with the files shared between installations of models (plan 1D, task Q1; ADR
+    /// 0017, "A file shared between installations"), and answered as the calls above
+    /// are by a file system that does not give it.
+    fn hard_link(&self, from: &Path, to: &Path) -> io::Result<()> {
+        let _ = (from, to);
+        streams_nothing()
+    }
 }
 
 /// What [`Fs::stamp`] answers of a file: its size in bytes, the time it was last
@@ -831,6 +843,10 @@ impl Fs for RealFs {
 
     fn try_share(&self, path: &Path) -> io::Result<Option<Box<dyn Held>>> {
         Ok(try_share(path)?.map(|file| Box::new(file) as Box<dyn Held>))
+    }
+
+    fn hard_link(&self, from: &Path, to: &Path) -> io::Result<()> {
+        std::fs::hard_link(from, to)
     }
 
     fn is_link(&self, path: &Path) -> io::Result<bool> {
