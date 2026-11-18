@@ -439,17 +439,10 @@ pub struct Ran {
 
 /// The real binary, with these arguments and then `--store` and the store.
 pub fn whizbang(args: &[&str], root: &Path) -> Ran {
-    let out = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
-        .args(args)
-        .arg("--store")
-        .arg(root)
-        .output()
-        .expect("the binary runs");
-    Ran {
-        code: out.status.code(),
-        out: String::from_utf8(out.stdout).expect("output is UTF-8"),
-        err: String::from_utf8(out.stderr).expect("output is UTF-8"),
-    }
+    let root = root.to_str().expect("the store's path is UTF-8");
+    let mut all = args.to_vec();
+    all.extend(["--store", root]);
+    whizbang_storeless(&all)
 }
 
 /// The real binary, with these arguments and no store: for a command that takes none.
