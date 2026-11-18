@@ -2333,8 +2333,12 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   lease's hold; "The inventory", limits).
 - **What verifying an installation costs** (decision D14 of plan 1C, measured by
   task P6b): every file read whole and hashed, once for each installation in a
-  process, before its first load, on the request's own thread and within no
-  deadline of the run's. On the owner's Mac (Apple silicon), in the release profile,
+  process, before its first load, on the request's own thread. The run's cancel and
+  deadline are looked at before each piece is read, and end it, `cancelled` or
+  `timed_out` and never sent, so a cancelled run does not wait out a cold hash of
+  gigabytes (from the review of task P6b;
+  `models::publishing::an_installation_is_verified_by_its_identity_whatever_the_pointer_names_and_a_changed_file_is_not_whole`,
+  its end). On the owner's Mac (Apple silicon), in the release profile,
   one file of 256 MiB that had just been written was verified in 117 to 118 ms, about
   2.2 GB a second, three times running
   (`models::publishing::measure_what_verifying_an_installation_costs`, ignored in
@@ -2343,6 +2347,18 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   cache, and longer from the disk when it has not: the first request of a process
   pays it. The installer's own check at publication is the same hash of the same
   files.
+- **No installation is read through a link** (from the review of task P6b, by the
+  owner's ruling of 2026-11-15: refuse, never follow). Below the layout's five
+  folders, an installation's own folder and its `files/` are looked at too, in the
+  one check of an installation's files (`is_whole`) and before `verify` reads the
+  record: either that is a link is refused in the words of every refusal for a
+  link, so a verification before a load and an install that would adopt its
+  identity on the disk both refuse it, and nothing outside the directory is read;
+  a file that is a link is no regular file under its own name, so not whole
+  (`links::an_installation_whose_folder_or_files_folder_is_a_link_is_not_verified_or_adopted_and_nothing_is_read_through_it`).
+  As for the five, it is a look and not a guard: a folder swapped for a link after
+  the look is gone through by the reads that follow, a moment the owner of the
+  directory alone could use (D13).
 - **A name that is one plain name on macOS and Linux may be none elsewhere.** A name
   that ends in a dot, and the names Windows keeps for devices (`con`, `nul`, `aux` and
   the like), are accepted: the platforms are macOS and Linux (`SPEC.md` section 1).

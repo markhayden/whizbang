@@ -132,6 +132,12 @@ pub const BAD_TEXT: &str = "a text of a setting of the kind pack is 1 to 1024 pr
 pub const DAMAGED: &str = "the model's installation is damaged: a file of it is not as it was installed; nothing was loaded and the request was not sent; install the model again with whizbang models get";
 /// What a request is told when the installation's files could not be read to verify.
 pub const UNVERIFIED: &str = "the files of the model's installation could not be read to verify them; nothing was loaded and the request was not sent";
+/// What a request is told whose run was cancelled while its installation's files
+/// were being verified.
+pub const VERIFY_CANCELLED: &str = "the run was cancelled while the model's files were being verified; nothing was loaded and the request was not sent";
+/// What a request is told whose run's deadline passed while its installation's files
+/// were being verified.
+pub const VERIFY_TIMED_OUT: &str = "the run's deadline passed while the model's files were being verified; nothing was loaded and the request was not sent";
 /// What a request is told that was not handed under an installation its lease held.
 pub const NOT_LEASED: &str =
     "the request was not handed an installation of the model held by a lease; it was not sent";
@@ -169,8 +175,10 @@ struct Held {
     place: Option<Place>,
     supervisor: Option<Arc<Supervisor>>,
     /// The installations whose files were found whole in this process (decision D14):
-    /// each is verified once.
-    verified: BTreeSet<InstallationId>,
+    /// each is verified once. Kept by the model and the identity both, though the
+    /// identity alone would do (the model's name is part of what it is the digest
+    /// of, and `verify` holds the record to both): a key that says so needs no proof.
+    verified: BTreeSet<(ModelName, InstallationId)>,
 }
 
 /// The one worker of a process (decision D4): what makes it, where it is, and its
@@ -294,16 +302,21 @@ impl OneWorker {
     /// ([`whizbang_backends::models::verify`]). One found whole is not read again in
     /// this process; one found damaged is read again the next time, so that an
     /// install that repairs it is seen. The installation is the one the request's
-    /// lease holds, so nothing deletes it while it is read.
+    /// lease holds, so nothing deletes it while it is read. The reading ends, never
+    /// sent, at the run's cancel (`cancelled`) or its deadline (`timed_out`), looked
+    /// at before each piece of a file, so a cancelled run does not wait for gigabytes
+    /// to be hashed.
     fn verified(
         &self,
         model: &ModelName,
         installation: InstallationId,
         secrets: &Secrets,
+        bounds: &Bounds,
     ) -> Result<(), Fault> {
+        let key = (model.clone(), installation);
         let dir = {
             let held = self.held();
-            if held.verified.contains(&installation) {
+            if held.verified.contains(&key) {
                 return Ok(());
             }
             let Some(place) = held.place.as_ref() else {
@@ -311,14 +324,27 @@ impl OneWorker {
             };
             place.dir.clone()
         };
+        let past = || {
+            bounds
+                .deadline()
+                .is_some_and(|deadline| Instant::now() >= deadline)
+        };
+        let stop = || bounds.is_cancelled() || past();
         // Read without the lock: hashing a model's files takes time, and another
         // request may verify the same installation meanwhile, to the same end.
-        match verify(&dir, model, installation, secrets) {
+        match verify(&dir, model, installation, secrets, &stop) {
             Ok(true) => {
-                self.held().verified.insert(installation);
+                self.held().verified.insert(key);
                 Ok(())
             }
             Ok(false) => Err(Fault::new(FaultKind::Unavailable, DAMAGED).not_sent()),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
+                let fault = match bounds.is_cancelled() {
+                    true => Fault::new(FaultKind::Cancelled, VERIFY_CANCELLED),
+                    false => Fault::new(FaultKind::TimedOut, VERIFY_TIMED_OUT),
+                };
+                Err(fault.not_sent())
+            }
             Err(_) => Err(Fault::new(FaultKind::Unavailable, UNVERIFIED).not_sent()),
         }
     }
@@ -585,7 +611,7 @@ impl Segmenter for Local {
         let installation = InstallationId::from_text(&handed.to_string(), &self.secrets)
             .map_err(|_| not_leased())?;
         self.worker
-            .verified(&self.model, installation, &self.secrets)?;
+            .verified(&self.model, installation, &self.secrets, bounds)?;
         let supervisor = self.worker.supervisor(&self.secrets)?;
         let ask = Ask::segment(request, self.model.clone(), installation);
         let queued = Request {

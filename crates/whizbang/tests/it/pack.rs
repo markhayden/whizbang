@@ -1245,7 +1245,12 @@ fn child_removes_fake_ok_from_the_models_directory_it_is_told_of() {
     use std::io::BufRead;
     let mut line = String::new();
     std::io::stdin().lock().read_line(&mut line).unwrap();
-    let dir = ModelsDir::at(Arc::new(RealFs), Path::new(line.trim_end()));
+    // Only the folder the test that started it names: an empty line, or a path that
+    // is not absolute, is refused before anything is opened, so a run by hand or a
+    // parent that said nothing removes nothing from wherever it happens to stand.
+    let told = Path::new(line.trim_end());
+    assert!(told.is_absolute(), "no absolute models directory was told");
+    let dir = ModelsDir::at(Arc::new(RealFs), told);
     let none = Secrets::none();
     let ok = ModelName::new(OK, &none).unwrap();
     let clock = SystemClock;

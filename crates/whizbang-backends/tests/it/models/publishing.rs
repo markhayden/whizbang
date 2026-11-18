@@ -1677,30 +1677,43 @@ fn an_installation_is_verified_by_its_identity_whatever_the_pointer_names_and_a_
     let dir = ModelsDir::at(Arc::new(RealFs), root);
     let old = installed(root, &first());
     let id = old.identity();
-    assert!(verify(&dir, &model("tiny"), id, &none()).unwrap());
+    assert!(verify(&dir, &model("tiny"), id, &none(), &|| false).unwrap());
     // A byte of a file changed, its length kept: not whole. Put back: whole again.
     let file = folder_of(root, &old).join("files").join("graph.onnx");
     flip(&file, 7);
-    assert!(!verify(&dir, &model("tiny"), id, &none()).unwrap());
+    assert!(!verify(&dir, &model("tiny"), id, &none(), &|| false).unwrap());
     flip(&file, 7);
-    assert!(verify(&dir, &model("tiny"), id, &none()).unwrap());
+    assert!(verify(&dir, &model("tiny"), id, &none(), &|| false).unwrap());
     // A file more in the installation's folder: not whole.
     let more = folder_of(root, &old).join("files").join("more.bin");
     std::fs::write(&more, b"more").unwrap();
-    assert!(!verify(&dir, &model("tiny"), id, &none()).unwrap());
+    assert!(!verify(&dir, &model("tiny"), id, &none(), &|| false).unwrap());
     std::fs::remove_file(&more).unwrap();
     // A superseded installation a hold keeps on the disk is read by its identity, as
     // it is, though the pointer names another; one never installed has no record.
     let held = held(root, &old);
     let new = installed(root, &second());
     assert_eq!(reading(root), Current::Installed(new.clone()));
-    assert!(verify(&dir, &model("tiny"), id, &none()).unwrap());
-    assert!(verify(&dir, &model("tiny"), new.identity(), &none()).unwrap());
+    assert!(verify(&dir, &model("tiny"), id, &none(), &|| false).unwrap());
+    assert!(verify(&dir, &model("tiny"), new.identity(), &none(), &|| false).unwrap());
     drop(held);
     let never = record_of(&entry_at("2026-11.9")).identity();
-    assert!(!verify(&dir, &model("tiny"), never, &none()).unwrap());
+    assert!(!verify(&dir, &model("tiny"), never, &none(), &|| false).unwrap());
     // The identity of one model's installation names nothing under another model.
-    assert!(!verify(&dir, &model("other"), new.identity(), &none()).unwrap());
+    assert!(!verify(&dir, &model("other"), new.identity(), &none(), &|| false).unwrap());
+    // Asked to stop (a run cancelled, or past its deadline): it reads no piece more
+    // and says nothing of the files, but that it was interrupted; asked again, it
+    // answers whole. Each piece is asked: told to stop after the first, it stops.
+    let stop = verify(&dir, &model("tiny"), new.identity(), &none(), &|| true);
+    assert_eq!(stop.unwrap_err().kind(), std::io::ErrorKind::Interrupted);
+    let asked = std::cell::Cell::new(0);
+    let second_piece = || {
+        asked.set(asked.get() + 1);
+        asked.get() > 1
+    };
+    let stop = verify(&dir, &model("tiny"), new.identity(), &none(), &second_piece);
+    assert_eq!(stop.unwrap_err().kind(), std::io::ErrorKind::Interrupted);
+    assert!(verify(&dir, &model("tiny"), new.identity(), &none(), &|| false).unwrap());
 }
 
 #[test]
@@ -1720,7 +1733,7 @@ fn measure_what_verifying_an_installation_costs() {
     let dir = ModelsDir::at(Arc::new(RealFs), root);
     for round in 0..3 {
         let begun = Instant::now();
-        assert!(verify(&dir, &model("tiny"), record.identity(), &none()).unwrap());
+        assert!(verify(&dir, &model("tiny"), record.identity(), &none(), &|| false).unwrap());
         let took = begun.elapsed();
         let rate = 256.0 / took.as_secs_f64();
         println!("round {round}: 256 MiB verified in {took:?}, {rate:.0} MiB a second");

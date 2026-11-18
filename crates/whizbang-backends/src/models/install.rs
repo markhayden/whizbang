@@ -23,7 +23,7 @@ use whizbang_core::egress::{Credential, Downloader};
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::{Fs, PIECE_MAX_BYTES};
 
-use super::directory::Read;
+use super::directory::{Read, refuse_links};
 use super::installation::INSTALLATION_MAX_BYTES;
 use super::remove::stops;
 use super::stage::{FileRefused, StageRefused, lock_model, stage_locked};
@@ -281,7 +281,7 @@ pub fn install_carrying(
         // held, or renamed in by an install that was refused before it could point
         // to it. It is what would be staged: nothing is downloaded.
         let there = model.installations().join(&hex);
-        let adopted = dir.fs().exists(&there)? && is_whole(dir, &there, &record)?;
+        let adopted = dir.fs().exists(&there)? && is_whole(dir, &there, &record, &|| false)?;
         if adopted {
             dir.unstage(entry.name());
             done = files;
@@ -526,7 +526,9 @@ impl<'a> Model<'a> {
         if !adopted {
             // From the disk, not from the stream: what was staged is what is there
             // now.
-            if let Some(name) = first_not_whole(fs, &incoming.join("files"), record.files())? {
+            if let Some(name) =
+                first_not_whole(fs, &incoming.join("files"), record.files(), &|| false)?
+            {
                 return Err(InstallRefused::NotWhole { name });
             }
             if cancellation.is_cancelled() {
@@ -729,13 +731,16 @@ pub(super) fn read_pointer(
 
 /// The first of these files, by its name as it is shown, that is not on the disk
 /// under `files` as a regular file of its size and its hash; none when all are.
+/// `stop` is asked before each piece is read: when it says so, the reading ends
+/// with an error of the kind `Interrupted` ([`verify`]; never, for an install).
 fn first_not_whole(
     fs: &dyn Fs,
     files: &Path,
     listed: &[InstalledFile],
+    stop: &dyn Fn() -> bool,
 ) -> io::Result<Option<String>> {
     for file in listed {
-        if !file_is_whole(fs, &files.join(file.name().as_str()), file)? {
+        if !file_is_whole(fs, &files.join(file.name().as_str()), file, stop)? {
             return Ok(Some(file.name().shown()));
         }
     }
@@ -746,7 +751,12 @@ fn first_not_whole(
 /// and the hash stated: read piece by piece, counted, and stopped one byte past its
 /// size. A file is held to both, never to its length alone: a crash can leave a
 /// file of the right length whose bytes were never written.
-fn file_is_whole(fs: &dyn Fs, path: &Path, file: &InstalledFile) -> io::Result<bool> {
+fn file_is_whole(
+    fs: &dyn Fs,
+    path: &Path,
+    file: &InstalledFile,
+    stop: &dyn Fn() -> bool,
+) -> io::Result<bool> {
     let mut open = match fs.open_file(path) {
         Ok(open) => open,
         Err(error) => {
@@ -765,6 +775,9 @@ fn file_is_whole(fs: &dyn Fs, path: &Path, file: &InstalledFile) -> io::Result<b
     let mut hash = Sha256::new();
     let mut read = 0u64;
     loop {
+        if stop() {
+            return Err(io::Error::from(io::ErrorKind::Interrupted));
+        }
         // No more is asked for than one byte past the size.
         let left =
             usize::try_from(size + 1 - read).map_or(buffer.len(), |left| left.min(buffer.len()));
@@ -800,9 +813,19 @@ fn names_in(fs: &dyn Fs, folder: &Path) -> io::Result<Option<Vec<String>>> {
 
 /// Whether the folder at `folder` is the installation of this record, whole: its
 /// record in the one form, the files the record lists, each of its size and its
-/// hash, and nothing else.
-fn is_whole(dir: &ModelsDir, folder: &Path, record: &InstallationRecord) -> io::Result<bool> {
+/// hash, and nothing else. The folder, or its `files/`, that is a link is refused
+/// as a folder of the layout is ([`refuse_links`]), and nothing is read through it:
+/// so an install that finds its identity on the disk, and a verification before a
+/// load, each refuse it (from the review of task P6b of checkpoint 1C). `stop` is
+/// asked before each piece of a file is read.
+fn is_whole(
+    dir: &ModelsDir,
+    folder: &Path,
+    record: &InstallationRecord,
+    stop: &dyn Fn() -> bool,
+) -> io::Result<bool> {
     let fs = dir.fs();
+    refuse_links(fs, &[folder, &folder.join("files")])?;
     let written = record.to_bytes();
     match dir.read(&folder.join("RECORD"), INSTALLATION_MAX_BYTES)? {
         Read::Bytes(bytes) if bytes == written => {}
@@ -820,7 +843,7 @@ fn is_whole(dir: &ModelsDir, folder: &Path, record: &InstallationRecord) -> io::
     if names_in(fs, &folder.join("files"))? != Some(listed) {
         return Ok(false);
     }
-    Ok(first_not_whole(fs, &folder.join("files"), record.files())?.is_none())
+    Ok(first_not_whole(fs, &folder.join("files"), record.files(), stop)?.is_none())
 }
 
 /// Whether the installation of this model under this identity is whole on the disk,
@@ -835,23 +858,30 @@ fn is_whole(dir: &ModelsDir, folder: &Path, record: &InstallationRecord) -> io::
 /// nothing then deletes it. Every file is read whole, so it costs what hashing the
 /// installation's files costs (ADR 0017, "Limits"). A record that is missing, that
 /// cannot be read as a record, or that is of another identity is not whole; a
-/// failure of the file system is the error, and so is a folder of the model's layout
-/// that is a link, which nothing is read through.
+/// failure of the file system is the error. So is a link where a folder should be,
+/// which nothing is read through: a folder of the model's layout, the installation's
+/// own folder, and its `files/`; and a file that is a link is no regular file under
+/// its own name, so not whole. `stop` is asked before each piece of a file is read
+/// (a run's cancellation and deadline): when it says so, the error is of the kind
+/// `Interrupted`, and nothing is said of the files.
 pub fn verify(
     dir: &ModelsDir,
     model: &ModelName,
     identity: InstallationId,
     secrets: &Secrets,
+    stop: &dyn Fn() -> bool,
 ) -> io::Result<bool> {
     dir.unlinked(model)?;
     let folder = dir.model(model).join("installations").join(identity.hex());
+    // Before the record is read: the record of a folder that is a link is not read.
+    refuse_links(dir.fs(), &[&folder, &folder.join("files")])?;
     let bytes = match dir.read(&folder.join("RECORD"), INSTALLATION_MAX_BYTES)? {
         Read::Bytes(bytes) => bytes,
         Read::Missing | Read::NotAFile => return Ok(false),
     };
     match InstallationRecord::parse(&bytes, secrets) {
         Ok(record) if record.identity() == identity && record.model() == model => {
-            is_whole(dir, &folder, &record)
+            is_whole(dir, &folder, &record, stop)
         }
         _ => Ok(false),
     }

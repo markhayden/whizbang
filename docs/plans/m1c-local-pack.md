@@ -2389,9 +2389,18 @@ files of an installation. **Size:** small.
 - **The verification** (`whizbang_backends::models::verify`): the installation's
   record, of the identity asked and of the model, then `is_whole`, the publication's
   own check (the files the record lists, each read whole and held to its size and
-  its hash, and nothing else in the folder); a folder of the layout that is a link
-  is an error. The kind asks it before the supervisor is made, keeps each identity
-  found whole in the one worker (`OneWorker`), and asks again after damage. Its cost,
+  its hash, and nothing else in the folder). A link where a folder should be is an
+  error and nothing is read through it: a folder of the layout, and, from the review
+  of this task, the installation's own folder and its `files/`, looked at in
+  `is_whole` itself, so an install that would adopt its identity on the disk refuses
+  it too
+  (`models::links::an_installation_whose_folder_or_files_folder_is_a_link_is_not_verified_or_adopted_and_nothing_is_read_through_it`;
+  the owner's ruling: refuse, never follow). It looks at the run's cancel and
+  deadline before each piece it reads, and ends `cancelled` or `timed_out`, never
+  sent. The kind asks it before the supervisor is made, keeps each model and
+  identity found whole in the one worker (`OneWorker`), and asks again after damage.
+  `scripts/check-features.sh` fails `just check` when the binary's own build would
+  have the feature `fakes` (`scripts/tests/test-features.sh` plants it). Its cost,
   measured on the owner's Mac in the release profile: 256 MiB in about 117 ms, 2.2 GB
   a second from the system's cache; written in ADR 0017, "Limits"
   (`models::publishing::measure_what_verifying_an_installation_costs`, ignored in the
