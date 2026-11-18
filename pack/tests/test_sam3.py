@@ -471,7 +471,8 @@ class Revision(unittest.TestCase):
         body = source[source.index("pub fn adapters()") :]
         body = body[: body.index("\n}\n")]
         table = re.findall(r'named\("([a-z0-9_-]+)", "([^"]+)", (true|false)\)', body)
-        self.assertEqual(table, [("sam3", sam3.Sam3.revision, "true")])
+        # The table's row of `sam3`; `owlv2-sam2` beside it is held by `test_tiny`.
+        self.assertEqual([row for row in table if row[0] == "sam3"], [("sam3", sam3.Sam3.revision, "true")])
         self.assertEqual(sam3.Sam3.revision, "2")
         # And the worker answers for it under that name.
         self.assertIs(worker.ADAPTERS["sam3"], sam3.Sam3)

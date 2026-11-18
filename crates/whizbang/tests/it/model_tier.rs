@@ -3,7 +3,8 @@
 //! supervisor of the one worker, the worker the installation `whizbang setup` made, and
 //! the adapter `sam3`. Never in CI and never in the fast tier: each test is ignored
 //! there, and `just test-models` runs them on a machine that has the model
-//! (`scripts/test-models.sh`).
+//! (`scripts/test-models.sh`). Plan 1D, task T1, adds Tiny (`tiny`, the adapter
+//! `owlv2-sam2`), asked a phrase, a point and a box the same way.
 //!
 //! **Where the model is.** A test beside the real binary's start reads nothing of its
 //! environment (`scripts/check-binary-start.sh`), so `scripts/test-models.sh` writes the
@@ -59,6 +60,8 @@ pub(crate) const LOOSE_BOX: [f64; 4] = [300.0, 80.0, 540.0, 320.0];
 const MOST: u32 = 4;
 /// The model.
 const SAM3: &str = "sam3";
+/// The second model (plan 1D, task T1).
+const TINY: &str = "tiny";
 
 /// One answer: for each instance, its score, its box, the digest of its plane and how
 /// many pixels are on; and how long the request took.
@@ -195,8 +198,8 @@ fn places(came: &Arc<Mutex<Vec<Places>>>) -> Arc<dyn Action> {
     Arc::new(Asks(draft.build().unwrap(), came.clone()))
 }
 
-/// A store, a config of one backend of the kind `pack` for `sam3`, and the binary's one
-/// worker, in the test kit's guard.
+/// A store, a config of one backend of the kind `pack` for a model, `sam3` unless
+/// another is named, and the binary's one worker, in the test kit's guard.
 struct Tier {
     /// First, so that it is dropped first.
     worker: Guard<Arc<OneWorker>>,
@@ -209,14 +212,20 @@ struct Tier {
 
 impl Tier {
     fn new(label: &str) -> Tier {
+        Tier::of(label, SAM3)
+    }
+
+    fn of(label: &str, model: &str) -> Tier {
         let dir = Scratch::new(label);
         let root = dir.path().join("store");
         drop(Store::open(&root, Arc::new(RealFs)).unwrap());
         let config = dir.path().join("whizbang.toml");
         std::fs::write(
             &config,
-            "[backends.segment]\nkind = \"pack\"\nmodel = \"sam3\"\n\n\
-             [backends.segment.settings]\nmax_lifetime_s = 600\ncall_limit_s = 120\n",
+            format!(
+                "[backends.segment]\nkind = \"pack\"\nmodel = \"{model}\"\n\n\
+                 [backends.segment.settings]\nmax_lifetime_s = 600\ncall_limit_s = 120\n"
+            ),
         )
         .unwrap();
         Tier {
@@ -308,6 +317,11 @@ fn seconds(took: Duration) -> String {
 
 /// The device and the installation the record of a run names for its one request.
 fn device_and_installation(record: &serde_json::Value) -> (String, String) {
+    device_and_installation_of(record, SAM3)
+}
+
+/// The same, of a run that asked this model.
+fn device_and_installation_of(record: &serde_json::Value, of: &str) -> (String, String) {
     assert_eq!(record["record"], "run/4");
     let models = record["models"].as_array().unwrap();
     assert_eq!(models.len(), 1, "{models:?}");
@@ -317,7 +331,7 @@ fn device_and_installation(record: &serde_json::Value) -> (String, String) {
         (
             &serde_json::json!("segment"),
             &serde_json::json!("pack"),
-            &serde_json::json!(SAM3)
+            &serde_json::json!(of)
         )
     );
     assert_eq!(model["ended"], "answered");
@@ -514,4 +528,79 @@ fn sam3_answers_a_point_and_a_box_on_the_mac() {
         lines.extend(fields_of(prefix, &one));
     }
     write_out("places", &lines);
+}
+
+#[test]
+#[ignore = "the model tier: just test-models, on a machine with the model installed"]
+fn tiny_answers_a_phrase_a_point_and_a_box_on_the_mac() {
+    // Plan 1D, task T1: the phrase, then the point and the loose box in one request,
+    // asked of Tiny (OWLv2 and SAM 2.1 Hiera-Tiny, the adapter `owlv2-sam2`) through the
+    // binary's wiring, on the GPU, with one load for the two requests.
+    let tier = Tier::of("model-tier-tiny", TINY);
+    let over = tier.over();
+    let ready = over.installations().unwrap().ready(TINY);
+    let identity = ready
+        .expect("tiny is installed and ready")
+        .identity()
+        .digest()
+        .to_string();
+    let executor = tier.runner(&over);
+    let phrase = tier.run(&executor);
+    let finished = executor.submit(&Call::new("places")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    let places = finished.run().as_str().to_owned();
+    let came = tier.came();
+    assert_eq!(came.len(), 1);
+    // The phrase finds the disc: an instance inside the loose box.
+    assert!(
+        came[0]
+            .instances
+            .iter()
+            .any(|(_, bounds, _, on)| inside(*bounds) && *on > 0),
+        "no instance inside the loose box: {came:?}"
+    );
+    let placed = std::mem::take(&mut *tier.placed.lock().unwrap());
+    assert_eq!(placed.len(), 1);
+    let answered = &placed[0];
+    // The point and the box each answer SAM 2.1's candidates, at most three, best
+    // predicted IoU first; the best of each is inside the loose box and holds the point.
+    for (name, found) in [("point", &answered.point), ("box", &answered.boxed)] {
+        assert!(!found.is_empty() && found.len() <= 3, "{name}: {found:?}");
+        assert!(
+            found.windows(2).all(|pair| pair[0].0 >= pair[1].0),
+            "{name}: {found:?}"
+        );
+        let (_, bounds, _, on) = &found[0];
+        assert!(inside(*bounds) && *on > 0, "{name}: {found:?}");
+        assert!(
+            bounds[0] <= POINT[0]
+                && POINT[0] < bounds[2]
+                && bounds[1] <= POINT[1]
+                && POINT[1] < bounds[3],
+            "{name}: {found:?}"
+        );
+    }
+    assert_eq!(tier.sent(), ["load", "segment", "segment"]);
+    drop(executor);
+    let mut lines = vec![
+        ("phrase_run".to_owned(), phrase.clone()),
+        ("places_run".to_owned(), places.clone()),
+    ];
+    for run in [&phrase, &places] {
+        let (device, installation) = device_and_installation_of(&tier.record(run), TINY);
+        assert_eq!(device, "mps");
+        assert_eq!(installation, identity);
+    }
+    lines.push(("device".to_owned(), "mps".to_owned()));
+    lines.push(("installation".to_owned(), identity));
+    lines.extend(fields_of("phrase", &came[0]));
+    lines.push(("places_seconds".to_owned(), seconds(answered.took)));
+    for (prefix, found) in [("point", &answered.point), ("box", &answered.boxed)] {
+        let one = Answered {
+            instances: found.clone(),
+            took: answered.took,
+        };
+        lines.extend(fields_of(prefix, &one));
+    }
+    write_out("tiny", &lines);
 }

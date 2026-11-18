@@ -801,7 +801,7 @@ fn the_shipped_binary_offers_no_fake_model_and_starts_no_entry_point_that_takes_
         .iter()
         .map(|entry| entry.name().as_str())
         .collect();
-    assert_eq!(names, ["sam3"]);
+    assert_eq!(names, ["sam3", "tiny"]);
     let fakes = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../pack/src/whizbang_pack/fake_models.py"

@@ -79,6 +79,18 @@ fn the_committed_record_names_the_adapters_revision_and_the_lock_the_tree_has() 
     assert!(sam3.shipped);
     assert_eq!(field(&top, "adapter"), "sam3");
     assert_eq!(field(&top, "adapter_revision"), sam3.revision.as_str());
+    // And of Tiny's adapter (plan 1D, task T1), by its source and its revision.
+    assert_eq!(field(&top, "tiny_adapter"), "owlv2-sam2");
+    assert_eq!(
+        field(&top, "tiny_adapter_source"),
+        digest_of("pack/src/whizbang_pack/owlv2_sam2.py")
+    );
+    let tiny = table
+        .iter()
+        .find(|adapter| adapter.name.as_str() == "owlv2-sam2")
+        .unwrap();
+    assert!(tiny.shipped);
+    assert_eq!(field(&top, "tiny_adapter_revision"), tiny.revision.as_str());
     // What it shows: the GPU, with the fallback off, nothing contacted, in three runs
     // each with an instance and one load for two requests.
     assert_eq!(field(&top, "device"), "mps");
@@ -96,6 +108,15 @@ fn the_committed_record_names_the_adapters_revision_and_the_lock_the_tree_has() 
         assert_eq!(field(round, "places_device"), "mps");
         assert_ne!(field(round, "point_instances"), "0");
         assert_ne!(field(round, "box_instances"), "0");
+        // Tiny's phrase, point and box, on the GPU, each with an instance (task T1).
+        assert_eq!(field(round, "tiny_device"), "mps");
+        for answered in [
+            "tiny_phrase_instances",
+            "tiny_point_instances",
+            "tiny_box_instances",
+        ] {
+            assert_ne!(field(round, answered), "0", "{answered}");
+        }
         // Each first load trusted the record of an earlier full check, and the model
         // was loaded within 10 seconds of the first request (plan 2A, task R1).
         assert_eq!(field(round, "check_record_before"), "yes");
@@ -109,6 +130,8 @@ fn the_committed_record_names_the_adapters_revision_and_the_lock_the_tree_has() 
         field(&top, "lock"),
         field(&top, "adapter_source"),
         field(&top, "installation"),
+        field(&top, "tiny_adapter_source"),
+        field(&top, "tiny_installation"),
     ] {
         assert!(page.contains(value), "the page does not name {value}");
     }

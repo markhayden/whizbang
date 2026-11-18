@@ -495,10 +495,12 @@ fn under_the_catalogue_it_ships_no_models_command_makes_a_models_directory_or_as
             String::from_utf8(out.stderr).unwrap(),
         );
         if code == 0 {
+            // And `tiny` (plan 1D, task T1), which needs no token.
             let listed = format!(
-                "models: 1\n\
+                "models: 2\n\
                  directory: {said}, not made yet\n\
-                 sam3\tSAM 3\tSAM License\t3.4 GB\tmacos-arm64\t{}\n",
+                 sam3\tSAM 3\tSAM License\t3.4 GB\tmacos-arm64\t{0}\n\
+                 tiny\tTiny (OWLv2 and SAM 2.1 Hiera-Tiny)\tApache-2.0\t777.4 MB\tmacos-arm64\t{0}\n",
                 sam3_not_installed()
             );
             assert_eq!(stdout, listed);
@@ -643,6 +645,103 @@ fn the_catalogues_sam3_declares_phrase_point_and_box() {
     )
     .unwrap();
     assert!(adapter.contains(r#"features = frozenset(("phrase", "point", "box"))"#));
+}
+
+#[test]
+fn the_catalogues_tiny_is_pinned_licensed_and_needs_no_token() {
+    // Task T1 of checkpoint 1D: OWLv2 and SAM 2.1 Hiera-Tiny, run by `owlv2-sam2`, on
+    // the Mac alone (as the lock is), from two public repositories, each at a commit.
+    let catalogue = wiring::catalogue().unwrap();
+    let tiny = catalogue.entry("tiny").unwrap();
+    assert_eq!(tiny.adapter().as_str(), "owlv2-sam2");
+    assert_eq!(tiny.licence().as_str(), "Apache-2.0");
+    assert_eq!(tiny.platforms(), [Platform::MacosArm64]);
+    assert_eq!(
+        tiny.features().collect::<Vec<_>>(),
+        ["box", "phrase", "point"]
+    );
+    // Public: no download needs a token, and the origins are those approved for the Hub.
+    assert_eq!(tiny.needs_token(), None);
+    let origins: Vec<String> = tiny.origins().iter().map(ToString::to_string).collect();
+    assert_eq!(
+        origins,
+        ["https://huggingface.co", "https://us.aws.cdn.hf.co"]
+    );
+    // Each file under its model's prefix, first asked for at its repository's own path
+    // at one commit; the model cards, which state the licence, installed beside them.
+    let repositories = [
+        (
+            "owlv2.",
+            "/google/owlv2-base-patch16/resolve/2a1560802f8cf3c408fec9b809d705f56a2f7146/",
+        ),
+        (
+            "sam2.",
+            "/facebook/sam2.1-hiera-tiny/resolve/de431c4043854a71d8101e17995dfe596bf101a5/",
+        ),
+    ];
+    let mut names = Vec::new();
+    for file in tiny.files() {
+        let name = file.name().as_str();
+        let (prefix, path) = repositories
+            .iter()
+            .find(|(prefix, _)| name.starts_with(prefix))
+            .unwrap_or_else(|| panic!("{name} is under no model's prefix"));
+        let from = file.from();
+        assert_eq!(from.origin().to_string(), "https://huggingface.co");
+        assert_eq!(from.rest(), format!("{path}{}", &name[prefix.len()..]));
+        names.push(name);
+    }
+    assert_eq!(
+        names,
+        [
+            "owlv2.README.md",
+            "owlv2.added_tokens.json",
+            "owlv2.config.json",
+            "owlv2.merges.txt",
+            "owlv2.model.safetensors",
+            "owlv2.preprocessor_config.json",
+            "owlv2.special_tokens_map.json",
+            "owlv2.tokenizer_config.json",
+            "owlv2.vocab.json",
+            "sam2.README.md",
+            "sam2.config.json",
+            "sam2.model.safetensors",
+            "sam2.preprocessor_config.json",
+        ]
+    );
+    // The weights, by the size and hash the Hub's listing of each commit states.
+    let weights = |name: &str| {
+        let file = tiny.files().iter().find(|f| f.name().as_str() == name);
+        file.map(|f| (f.size(), f.sha256().to_string())).unwrap()
+    };
+    assert_eq!(
+        weights("owlv2.model.safetensors"),
+        (
+            619_918_824,
+            "sha256:c4a566429e6b2c015abacb53087bf673260486c369a84e626e9b09fe57ca316d".to_owned()
+        )
+    );
+    assert_eq!(
+        weights("sam2.model.safetensors"),
+        (
+            155_908_064,
+            "sha256:48c14467e5cf9e51870511feb72c89688e82dd74523142c0538b663e193ac2a7".to_owned()
+        )
+    );
+    // The adapter is shipped, at the revision its module states, and the module of
+    // the pack declares the same three features.
+    let table = wiring::adapters();
+    let adapter = table
+        .iter()
+        .find(|adapter| adapter.name.as_str() == "owlv2-sam2")
+        .unwrap();
+    assert!(adapter.shipped);
+    let module = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pack/src/whizbang_pack/owlv2_sam2.py"),
+    )
+    .unwrap();
+    assert!(module.contains(&format!("REVISION = \"{}\"", adapter.revision.as_str())));
+    assert!(module.contains(r#"features = frozenset(("phrase", "point", "box"))"#));
 }
 
 /// An entry of this name that holds `alpha`'s files, byte for byte, at addresses of its
@@ -988,9 +1087,17 @@ mod inventory {
         assert_eq!(identity_in(&again.unwrap(), "alpha"), identity);
         assert_eq!(fake.requests().len(), asked);
         // The binary's own table names `sam3` at the revision of the adapter that takes
-        // points and boxes (task Q1), shipped.
+        // points and boxes (task Q1), shipped; and `owlv2-sam2` beside it (task T1).
         let table = wiring::adapters();
-        assert_eq!(table.len(), 1);
+        assert_eq!(table.len(), 2);
+        assert_eq!(
+            (
+                table[1].name.as_str(),
+                table[1].revision.as_str(),
+                table[1].shipped
+            ),
+            ("owlv2-sam2", "1", true)
+        );
         assert_eq!(
             (
                 table[0].name.as_str(),
