@@ -37,7 +37,7 @@ artifact file (ADR 0002). P0 adds `whizbang store import --picture <file> --stor
 PNG from its pixels alone (so no metadata is kept), committed as an `Image` with the
 role of a picture, and its identity printed.
 
-- [ ] Done when:
+- [x] Done when:
   `import::a_png_and_a_jpeg_are_committed_as_pictures_and_their_identities_printed`,
   `import::a_picture_over_the_decode_limits_is_refused_before_it_is_committed`,
   `import::the_committed_picture_holds_no_metadata_of_the_file`, and the reference
