@@ -171,15 +171,15 @@ check_kickoff() {
     'After any edit to either file, read and scan again.' \
     "or a model's name that it knows (but for the folder \`.claude\` and the file" \
     '`CLAUDE.md` of this repo, named as paths)' \
-    '`check (macos-15)`, `scripts (macos-15)`,' '`check (ubuntu-22.04)`, `scripts (ubuntu-22.04)` and the aggregate `ci`' \
-    '`ci` is listed only once the other four have finished' 'says "no checks reported"' \
-    'a run whose commit is the head lists all five' \
+    '`check (macos-15)`, `scripts (macos-15)`,' '`check (ubuntu-22.04)`, `scripts (ubuntu-22.04)`, `secrets` and the aggregate `ci`' \
+    '`ci` is listed only once the other five have finished' 'says "no checks reported"' \
+    'a run whose commit is the head lists all six' \
     'go back to step 4' 'hand back again with the new commit'; do
     says "$1" Checklist "$text" || return 1
   done
   for text in 'Pull request:' 'Head:' 'Acceptance' 'Decisions' 'Doubts' 'Deferred' 'Refused push:' \
     'CI: check (macos-15) <result>, scripts (macos-15) <result>, check (ubuntu-22.04) <result>,' \
-    '    scripts (ubuntu-22.04) <result>, ci <result>'; do
+    '    scripts (ubuntu-22.04) <result>, secrets <result>, ci <result>'; do
     says "$1" "Hand-back format" "$text" || return 1
   done
 }
@@ -192,7 +192,7 @@ check_review_merge() {
   done
   for text in 'Reviewed head:' 'Base:' 'Merge commit:' 'Verified' 'Read:' 'Follow-ups' \
     '- Verdict: may merge at the reviewed head; no finding that blocks the merge is open' \
-    'check (macos-15) <result>, scripts (macos-15) <result>,' 'check (ubuntu-22.04) <result>, scripts (ubuntu-22.04) <result>, ci <result>' \
+    'check (macos-15) <result>, scripts (macos-15) <result>,' 'check (ubuntu-22.04) <result>, scripts (ubuntu-22.04) <result>, secrets <result>, ci <result>' \
     'corrected by the orchestrator' 'pull request of mine that adds its row to docs/carry-over.md'; do
     says "$1" "Hand-back format" "$text" || return 1
   done
@@ -208,7 +208,7 @@ check_review_merge() {
     '- [ ] 9. Follow-ups are recorded by you; the reviewer only names them.' \
     'a new head that is reviewed again' 'Nothing is left only in a verdict.' \
     'The corrected files get every check of this step again' \
-    '`check (macos-15)`, `scripts (macos-15)`,' '`check (ubuntu-22.04)`, `scripts (ubuntu-22.04)` and the aggregate `ci`' \
+    '`check (macos-15)`, `scripts (macos-15)`,' '`check (ubuntu-22.04)`, `scripts (ubuntu-22.04)`, `secrets` and the aggregate `ci`' \
     'You may correct the title or body yourself' \
     'A correction that changes a claim about the code goes back to the builder.' \
     'never past a failing check' \

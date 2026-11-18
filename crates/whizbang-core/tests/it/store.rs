@@ -7,6 +7,7 @@
 mod locking;
 mod prune;
 mod runs;
+mod volume;
 
 use std::collections::BTreeMap;
 use std::io;

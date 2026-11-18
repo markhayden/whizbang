@@ -13,9 +13,17 @@ name = "it"
 path = "tests/it/main.rs"
 
 [dependencies]
-# No feature of its own: one turned on here would reach every crate of the tests and not
-# the binary (ADR 0023). The comparison keeps a number's text with its own reader.
+# No feature of its own: one turned on here would reach every crate of the workspace
+# (ADR 0023). The comparison keeps a number's text with its own reader.
 serde_json = { workspace = true }
+# Evaluation sets and matrices are TOML files read strictly (plan 2C, task E1).
+serde = { workspace = true }
+toml = { workspace = true }
+# The SHA-256 of a set's seal and of a matrix's identity.
+whizbang-core = { workspace = true }
+
+[dev-dependencies]
+whizbang-testkit = { workspace = true }
 
 [lints]
 workspace = true

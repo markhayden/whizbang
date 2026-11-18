@@ -440,6 +440,18 @@ use cases, sets, judges and arms runs each item as a run of `check`, resumably; 
   `evidence::the_evaluation_record_reports_at_least_100_runs_of_align_by_stats_and_by_export`,
   and the carry-over rows above closed.
 
+**Left unticked by the task (E1).** Built and held by the tests named above: items 1 to 6,
+but for `whizbang store list` naming request ids, which is the named overflow to F1
+(`cli::store_list_says_which_names_are_request_ids`; the carry-over row on the records of
+request ids). Item 7, the evidence, waits on the owner's yes to the third item under "What the
+owner must answer": no picture can be fetched without it, so no matrix has run and
+`docs/results/m2c-evaluation.md` and its two `evidence::` tests are not written (the
+carry-over row on E1's evidence). Two tests live one module deeper than named:
+`store::volume::request_ids_at_100000_publish_within_the_measured_bound` (`#[ignore]`d, run by
+hand, its numbers in ADR 0030, with `store::volume::request_ids_at_2000_…` in CI) and
+`spend::ledger::an_admission_after_many_paid_runs_and_a_reset_reads_no_closed_epoch`. The copy
+of squint's `evalsets/` is 374 files and 16,428 lines, not the 8,900 the split estimated.
+
 **Keeping tests lean (E1).** Sets made in the test, of three to six items with pictures
 of 32 by 32; the byte-for-byte test compares digests listed in a committed file, not
 squint's repo; the 100,000-id measurement is `#[ignore]`d and run once, its number

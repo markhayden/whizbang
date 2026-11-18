@@ -351,6 +351,9 @@ struct State {
     crash_names: usize,
     /// The names that had changes not yet durable at the crash, in order of their paths.
     crash_named: Vec<PathBuf>,
+    /// Every file read whole ([`Fs::read_at_most`]), in the order read. A read is not an
+    /// event: it changes nothing durable.
+    reads: Vec<PathBuf>,
 }
 
 /// The file system that can lose power.
@@ -444,6 +447,16 @@ impl ShimFs {
     /// As [`ShimFs::with_tail`], on a shim already in use.
     pub fn set_tail(&self, tail: Tail) {
         self.lock().tail = tail;
+    }
+
+    /// The files read whole so far, in order.
+    pub fn reads(&self) -> Vec<PathBuf> {
+        self.lock().reads.clone()
+    }
+
+    /// Forgets the files read so far.
+    pub fn forget_reads(&self) {
+        self.lock().reads.clear();
     }
 
     /// The events so far, in order.
@@ -909,7 +922,9 @@ impl Fs for ShimFs {
     }
 
     fn read_at_most(&self, path: &Path, limit: u64) -> io::Result<Vec<u8>> {
-        let _state = self.alive()?;
+        let mut state = self.alive()?;
+        state.reads.push(path.to_path_buf());
+        drop(state);
         self.real.read_at_most(path, limit)
     }
 

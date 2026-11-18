@@ -821,6 +821,74 @@ impl Reading {
         }))
     }
 
+    /// The same, for an admission (plan 2C, task E1, item 6): the content of a name is
+    /// read only where it can bear on the newest epoch, or on an epoch a hold of `run`
+    /// names. A reset closes the books (ADR 0016, "The strand cut down"): nothing made
+    /// before it counts against the allowance it sets, so a reservation whose every hold
+    /// names an older epoch, and the turns, resets and guards of older epochs, are taken
+    /// by their names alone, as undamaged, and none of their content is read. What the
+    /// fold says of the newest epoch, and of the epochs `run` holds in, is what
+    /// [`Reading::of`] would say: its balance, whether it needs its owner, and its next
+    /// turn are of names in those epochs and of reservations with a hold in them, which
+    /// are read as there. What it says of an older epoch is not to be relied on.
+    ///
+    /// Which epoch is newest is read from the names: the highest that a reset or a guard
+    /// names, with or without a form.
+    pub fn of_newest(
+        generation: &Generation,
+        read: impl Fn(&Entry) -> store::Result<Vec<u8>>,
+        run: Option<&RunId>,
+    ) -> Reading {
+        let under: Vec<(&String, &Entry)> = generation
+            .entries()
+            .range(SPEND_PREFIX.to_owned()..)
+            .take_while(|(text, _)| text.starts_with(SPEND_PREFIX))
+            .collect();
+        let parsed: Vec<Result<Name, NotAName>> =
+            under.iter().map(|(text, _)| Name::parse(text)).collect();
+        let mut newest = 0;
+        let mut holds: BTreeMap<&RunId, BTreeSet<u64>> = BTreeMap::new();
+        for name in &parsed {
+            match name {
+                Ok(Name::Reset { epoch, .. } | Name::Epoch(epoch)) => {
+                    newest = newest.max(epoch.get())
+                }
+                Ok(Name::Held { epoch, run, .. }) => {
+                    holds.entry(run).or_default().insert(*epoch);
+                }
+                Err(why) => {
+                    if let Belongs::Epoch {
+                        word: EpochWord::Reset | EpochWord::Guard,
+                        epoch,
+                    } = why.belongs()
+                    {
+                        newest = newest.max(*epoch);
+                    }
+                }
+                Ok(_) => {}
+            }
+        }
+        let mut wanted: BTreeSet<u64> = BTreeSet::from([newest]);
+        if let Some(own) = run.and_then(|run| holds.get(run)) {
+            wanted.extend(own.iter().copied());
+        }
+        let bears = |name: &Name| match name {
+            Name::Reset { epoch, .. } | Name::Epoch(epoch) => wanted.contains(&epoch.get()),
+            Name::Turn { epoch, .. } => wanted.contains(epoch),
+            other => other
+                .run()
+                .and_then(|run| holds.get(run))
+                .is_some_and(|epochs| epochs.iter().any(|epoch| wanted.contains(epoch))),
+        };
+        Reading::of_names(under.iter().zip(&parsed).map(|((text, entry), name)| {
+            let damaged = match name {
+                Ok(name) if bears(name) => !sound(name, entry, &read),
+                _ => false,
+            };
+            (text.as_str(), damaged)
+        }))
+    }
+
     /// The same sorting, of names given as their text, each with whether its content
     /// is damaged: what [`Reading::of`] gathers a generation with, and how books that
     /// are in no store are read. A text that does not start with `spend/` is left

@@ -234,25 +234,72 @@ pub fn job_picture(
     root: &Path,
     recovery: Recovery,
 ) -> Result<ArtifactId, String> {
-    let limits = DecodeLimits::default();
     let bytes = read(file)?;
+    picture_of_bytes(&bytes, &file.display().to_string(), sha256, root, recovery)
+}
+
+/// The same, of a picture's bytes already read, at most [`MAX_FILE_BYTES`], which `shown`
+/// names in a complaint: what `whizbang eval sets fetch` brings in, by the SHA-256 the
+/// set's job pins (plan 2C, task E1, item 3). Bytes whose digest is another are refused
+/// before the store is touched.
+pub fn picture_of_bytes(
+    bytes: &[u8],
+    shown: &str,
+    sha256: Option<&str>,
+    root: &Path,
+    recovery: Recovery,
+) -> Result<ArtifactId, String> {
+    let limits = DecodeLimits::default();
+    if bytes.len() as u64 > MAX_FILE_BYTES {
+        return Err(format!("{shown}: the picture is over {}", limit()));
+    }
     if let Some(pinned) = sha256 {
         let pinned = pinned.strip_prefix("sha256:").unwrap_or(pinned);
-        if !Digest::of_bytes(&bytes).hex().eq_ignore_ascii_case(pinned) {
+        if !Digest::of_bytes(bytes).hex().eq_ignore_ascii_case(pinned) {
             return Err(format!(
-                "{}: the file's SHA-256 is not the one the job pins",
-                file.display()
+                "{shown}: the file's SHA-256 is not the one the job pins"
             ));
         }
     }
-    let identified =
-        identify(&bytes, &limits).map_err(|error| format!("{}: {error}", file.display()))?;
-    drop(bytes);
+    let identified = identify(bytes, &limits).map_err(|error| format!("{shown}: {error}"))?;
     let image = picture(&identified.pixels, identified.identity.file.0, &limits)
-        .map_err(|error| format!("{}: {error}", file.display()))?;
+        .map_err(|error| format!("{shown}: {error}"))?;
     let id = image.id();
     commit(&Artifact::Image(image), root, false, recovery)?;
     Ok(id)
+}
+
+/// The images a store holds that were brought in as pictures, each by the SHA-256 of the
+/// file it was brought in from, as its origin names it (`import-picture`'s input
+/// `file`): how a set's pictures, pinned by their files' digests, are found once fetched.
+/// Every image the store holds is read once.
+pub fn pictures_by_file(
+    root: &Path,
+) -> Result<std::collections::BTreeMap<Digest, ArtifactId>, String> {
+    use whizbang_core::store::{Reader, fs::RealFs};
+    let reader = Reader::open(root, std::sync::Arc::new(RealFs)).map_err(|e| e.to_string())?;
+    let generation = reader.snapshot().map_err(|e| e.to_string())?;
+    let limits = DecodeLimits::default();
+    let mut found = std::collections::BTreeMap::new();
+    let prefix = "artifacts/image/";
+    let images = (generation.entries().range(prefix.to_owned()..))
+        .take_while(|(name, _)| name.starts_with(prefix));
+    for (_, entry) in images {
+        let bytes = reader.read(entry).map_err(|e| e.to_string())?;
+        let Ok(artifact) = Artifact::from_bytes_as(artifact::ArtifactType::Image, &bytes, &limits)
+        else {
+            continue;
+        };
+        let steps = artifact.origin().steps();
+        let file = steps
+            .first()
+            .filter(|step| step.action == PICTURE_STEP)
+            .and_then(|step| step.inputs.iter().find(|(port, _)| port == "file"));
+        if let Some((_, file)) = file {
+            found.insert(*file, artifact.id());
+        }
+    }
+    Ok(found)
 }
 
 /// The image of these pixels: a PNG of them alone, with an origin that names the file

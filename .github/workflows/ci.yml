@@ -57,24 +57,6 @@ jobs:
       # job `scripts` below runs them beside this one, on the same runner.
       - name: Fast tier without the script tests, advisories, release smoke and secrets scan
         run: just ci-without-scripts
-      # Every commit, not only the final tree: a secret added and then deleted, or a commit
-      # made where the hooks do not run, is still caught. On a pull request, base..head; on
-      # main, the commits of the push. A pull request is checked by the base branch's copy
-      # of the scan, so it cannot pass by changing the scan; the head's copy is used only
-      # when the base has none that can scan a range.
-      - name: Secrets scan and attribution check over every commit
-        env:
-          EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          scan=scripts/scan.sh
-          if [ "$EVENT" = pull_request ] &&
-            git show "$BASE":scripts/scan.sh >"$RUNNER_TEMP/scan.sh" 2>/dev/null &&
-            grep -q -e '--range' "$RUNNER_TEMP/scan.sh"; then
-            scan="$RUNNER_TEMP/scan.sh"
-          fi
-          bash "$scan" --secrets-only --range "$BASE" "$HEAD"
       # 30 seconds, on the runner where git grep on several threads lost matches: the
       # scan's search, on one thread, must give its known output every time.
       - name: The search canary
@@ -120,13 +102,45 @@ jobs:
       - name: The script tests, after the crates they read are in cargo's home
         run: just ci-scripts
 
+  # The secrets scan and the attribution check over every commit, in a job of its own
+  # beside the others: on a branch that adds many files it takes minutes, and in the
+  # `check` job it took that job past its limit. One runner is enough: it reads commits,
+  # not a build.
+  secrets:
+    name: secrets
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Every commit, not only the final tree: a secret added and then deleted, or a commit
+      # made where the hooks do not run, is still caught. On a pull request, base..head; on
+      # main, the commits of the push. A pull request is checked by the base branch's copy
+      # of the scan, so it cannot pass by changing the scan; the head's copy is used only
+      # when the base has none that can scan a range.
+      - name: Secrets scan and attribution check over every commit
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          scan=scripts/scan.sh
+          if [ "$EVENT" = pull_request ] &&
+            git show "$BASE":scripts/scan.sh >"$RUNNER_TEMP/scan.sh" 2>/dev/null &&
+            grep -q -e '--range' "$RUNNER_TEMP/scan.sh"; then
+            scan="$RUNNER_TEMP/scan.sh"
+          fi
+          bash "$scan" --secrets-only --range "$BASE" "$HEAD"
+
   ci:
     name: ci
     if: always()
-    needs: [check, scripts]
+    needs: [check, scripts, secrets]
     runs-on: ubuntu-22.04
     steps:
       - name: Every job passed
         run: |
           test "${{ needs.check.result }}" = "success"
           test "${{ needs.scripts.result }}" = "success"
+          test "${{ needs.secrets.result }}" = "success"

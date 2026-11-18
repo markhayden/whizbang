@@ -49,7 +49,7 @@ use crate::contract::{
     Closing, Declined, Ledger, MadeName, NotJudged, Reread, Reservation, Settled, Step,
 };
 
-use super::fold::fold;
+use super::fold::fold_newest;
 use super::meter::next_turn;
 use super::name::Amount;
 use super::reading::Names;
@@ -77,7 +77,8 @@ impl Ledger for StoreLedger {
         let Some(reserved) = Amount::new(reservation.micros()) else {
             return Err(NotJudged::saying(NO_AMOUNT).into());
         };
-        let folded = fold(step.generation(), |entry| step.read(entry));
+        // Only what bears on the newest epoch is read (plan 2C, task E1, item 6).
+        let folded = fold_newest(step.generation(), |entry| step.read(entry), None);
         let run = reservation.run();
         // The run was named a moment ago, and the books already name it: other hands
         // made a name of it, or it is the id of a run that was deleted. A hold beside
@@ -126,7 +127,11 @@ impl Ledger for StoreLedger {
         let Some(reserved) = Amount::new(reservation.micros()) else {
             return Ok(false);
         };
-        let folded = fold(reading.generation(), |entry| reading.read(entry));
+        let folded = fold_newest(
+            reading.generation(),
+            |entry| reading.read(entry),
+            Some(reservation.run()),
+        );
         Ok(folded.stands(reservation.run(), reserved))
     }
 

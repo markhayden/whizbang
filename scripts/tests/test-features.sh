@@ -53,17 +53,19 @@ cp "$check" "$copy/scripts/"
 (cd "$copy" && git init -q . && "$PWD/scripts/check-features.sh") >"$tmp/out" 2>&1 \
   || { cat "$tmp/out" >&2; fail "the copy of the workspace: expected success"; }
 grep -F -e 'features: ok' "$tmp/out" >/dev/null || { cat "$tmp/out" >&2; fail "the copy: no ok"; }
-sed 's/^serde_json = { workspace = true }$/serde_json = { workspace = true, features = ["arbitrary_precision"] }/' \
-  crates/whizbang-eval/Cargo.toml >"$copy/crates/whizbang-eval/Cargo.toml"
-grep -F -e 'arbitrary_precision' "$copy/crates/whizbang-eval/Cargo.toml" >/dev/null \
-  || fail "the copy's whizbang-eval has no serde_json line to plant the feature in"
+# The testkit: since task E1 of plan 2C the binary depends on whizbang-eval, which this
+# planted the feature in before.
+sed 's/^serde_json.workspace = true$/serde_json = { workspace = true, features = ["arbitrary_precision"] }/' \
+  crates/whizbang-testkit/Cargo.toml >"$copy/crates/whizbang-testkit/Cargo.toml"
+grep -F -e 'arbitrary_precision' "$copy/crates/whizbang-testkit/Cargo.toml" >/dev/null \
+  || fail "the copy's whizbang-testkit has no serde_json line to plant the feature in"
 expect_fail "a crate the binary does not depend on turns the feature on" \
   "the workspace and its tests: arbitrary_precision" \
   bash -c 'cd "$1" && scripts/check-features.sh' _ "$copy"
 
-# The tests' feature `fakes` in the binary's own build: the copy's whizbang-eval is put
+# The tests' feature `fakes` in the binary's own build: the copy's whizbang-testkit is put
 # back, and the binary's dependency on whizbang-backends turns `fakes` on.
-cp crates/whizbang-eval/Cargo.toml "$copy/crates/whizbang-eval/Cargo.toml"
+cp crates/whizbang-testkit/Cargo.toml "$copy/crates/whizbang-testkit/Cargo.toml"
 (cd "$copy" && "$PWD/scripts/check-features.sh") >"$tmp/clean" 2>&1 \
   || { cat "$tmp/clean" >&2; fail "the copy put back: expected success"; }
 grep -F -e 'features: ok (the binary is built without the feature fakes)' "$tmp/clean" >/dev/null \
