@@ -317,7 +317,7 @@ the path from instances to a clean cut-out:
    places the operations. Section 7 places mask export in milestone 3 too; this PNG
    export is a viewer's, not the mask format's.
 
-- [ ] Done when:
+- [x] Done when:
   `select::the_kept_instances_union_minus_an_exclude_box_is_the_core`,
   `plug::a_hole_up_to_its_share_of_its_owner_is_filled_and_a_larger_one_is_not`,
   `plug::a_hole_touching_the_edge_is_not_filled`,

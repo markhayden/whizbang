@@ -67,6 +67,54 @@
       "concurrent": false
     },
     {
+      "name": "feather",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Sets the blend of a mask to a feather of its core's edge, outward, with one sigma.",
+      "arguments": [
+        {
+          "name": "sigma_px",
+          "purpose": "The feather's sigma, in pixels of the mask's image, from 0.1 to 10000.",
+          "type": {
+            "type": "number",
+            "min": 0.1,
+            "max": 10000.0
+          },
+          "required": true,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask whose core's edge is feathered.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask with the new blend, its core and its protect kept.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
       "name": "grow",
       "version": "1.0.0",
       "kind": "primitive",
@@ -112,6 +160,114 @@
           "name": "mask",
           "artifact": "mask",
           "purpose": "The mask with the grown core, its blend cleared and its protect kept.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "plug",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Fills the holes of a mask's core up to a share of the area of the shape around each.",
+      "arguments": [
+        {
+          "name": "max_share",
+          "purpose": "The largest hole filled, as a share of the area of the shape around it, from 0 to 1.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 1.0
+          },
+          "required": false,
+          "default": 0.1
+        }
+      ],
+      "inputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask whose holes are filled.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask with its small holes filled, its blend cleared and its protect kept.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "render",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Makes a mask into a picture: the image cut out by it (alpha), or its weight in grey (plain).",
+      "arguments": [
+        {
+          "name": "profile",
+          "purpose": "alpha: the image with the mask's weight as alpha; plain: the weight in grey.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "alpha",
+              "plain"
+            ]
+          },
+          "required": true,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask to render.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image the mask is on, which alpha requires.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The rendering, an image whose role is a rendering.",
           "count": {
             "min": 1,
             "max": 1
@@ -201,6 +357,68 @@
           "requests": 1
         }
       ],
+      "concurrent": true
+    },
+    {
+      "name": "select",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "One mask from the instance masks to keep: the union of their cores, minus exclude boxes.",
+      "arguments": [
+        {
+          "name": "exclude",
+          "purpose": "Boxes cleared from the core, in pixels: left top right bottom, boxes apart by ;.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "use_case",
+          "purpose": "What the mask is for, recorded on it.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "seam",
+              "remove",
+              "repair",
+              "protect",
+              "custom"
+            ]
+          },
+          "required": false,
+          "default": "remove"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The instance masks to keep, all on one image.",
+          "count": {
+            "min": 1,
+            "max": 64
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The selection: the union of the cores, no blend and nothing protected.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
       "concurrent": true
     },
     {

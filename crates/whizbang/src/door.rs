@@ -122,6 +122,43 @@ pub fn grow(executor: &dyn Executor, asked: &GrowAsked<'_>) -> Result<String, St
     Ok(text)
 }
 
+/// What `whizbang rascal select`, `plug`, `feather` or `render` was asked: the action,
+/// its arguments, and its inputs by port as they were typed, an identity each.
+#[derive(Debug, Clone)]
+pub struct OperationAsked<'a> {
+    pub action: &'a str,
+    pub arguments: Vec<(&'a str, Value)>,
+    /// Each input's port, the flag it was typed under, and the text typed.
+    pub inputs: Vec<(&'a str, &'a str, &'a str)>,
+    /// The caller's id for the request, when it gave one.
+    pub request_id: Option<&'a str>,
+}
+
+/// Runs one of rascal's operations through the executor, and waits for it, as
+/// [`grow`] does: what comes back is what to print when the run completed, each output
+/// by its port and identity, or the complaint, escaped already.
+pub fn operation(executor: &dyn Executor, asked: &OperationAsked<'_>) -> Result<String, String> {
+    let mut call = Call::new(asked.action);
+    for (name, value) in &asked.arguments {
+        call = call.argument(name, value.clone());
+    }
+    for (port, flag, typed) in &asked.inputs {
+        let Ok(id) = typed.parse::<Digest>() else {
+            return Err(format!(
+                "{flag} is no artifact identity: an identity is sha256: and 64 lower-case hex \
+                 digits, as `whizbang store import` prints it"
+            ));
+        };
+        call = call.input(port, ArtifactId(id));
+    }
+    let (_, mut text, outputs) = completed(executor, call, asked.request_id)?;
+    for output in outputs {
+        let port = printable(output.port());
+        text.push_str(&format!("{port} {}\n", output.id().0));
+    }
+    Ok(text)
+}
+
 /// What `whizbang rascal segment` was asked, as it was typed.
 #[derive(Debug, Clone, Copy)]
 pub struct SegmentAsked<'a> {

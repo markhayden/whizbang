@@ -179,8 +179,8 @@ for a local table (no url, no provider, no credential, and for that kind under
 Amended: 2026-11-17, with task R1 of plan 2A. Added, in code, under "The directory"
 and "Limits" ("The cached check"): a full check of an installation's files that passes
 leaves its record in the model's folder, `checks/<64 hex digits>`, and the first load
-of a later process that finds each file's size, time of last write and inode as that
-record says trusts it and reads no file whole (`models::verify_checked`).
+of a later process that finds each file's size, times of last write and of last change
+and inode as that record says trusts it and reads no file whole (`models::verify_checked`).
 
 ## Context
 
@@ -2361,8 +2361,8 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   files.
 - **The cached check** (plan 2A, task R1). The kind `pack` verifies through
   `models::verify_checked`: the record, the layout and the links are read as `verify`
-  reads them, every time, and then each file's size, time of last write (to the
-  nanosecond) and inode are taken without reading it (`Fs::stamp`). When the record of
+  reads them, every time, and then each file's size, times of last write and of last
+  change (to the nanosecond) and inode are taken without reading it (`Fs::stamp`). When the record of
   the installation's last full check, `checks/<64 hex digits>` in the model's folder,
   holds exactly those stamps with the record's sizes and hashes, no file is read
   whole; otherwise every file is, and when all are whole the record is written again,
@@ -2371,10 +2371,15 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   or of another identity, hash or stamp is not trusted, and the full hash runs
   (`models::an_unchanged_installation_checked_before_is_loaded_without_a_full_hash`,
   `models::a_file_changed_since_the_check_is_hashed_again_and_refused`,
-  `models::a_check_record_that_is_damaged_is_ignored_and_the_full_hash_runs`, in the
-  binary's tests). **It trusts metadata:** a file changed with its size, its time of
-  last write and its inode all kept is loaded unchecked; that takes a writer who sets
-  the time back, in the owner's own directory, where the record lives too. A record is
+  `models::a_check_record_that_is_damaged_is_ignored_and_the_full_hash_runs`,
+  `models::a_rewrite_that_restores_the_time_of_last_write_is_seen_by_the_time_of_change`,
+  `models::a_checks_folder_or_a_check_record_that_is_a_link_is_not_trusted_and_nothing_is_written_through_it`,
+  in the binary's tests). **It trusts metadata:** the stamps are the size, the times of last
+  write and of the inode's last change, each to the nanosecond, and the inode, so a
+  writer who sets the time of last write back is seen by the time of change, which no
+  call sets. A file changed with all of them kept is loaded unchecked; that takes
+  filesystem corruption, or a writer below the system's calls, in the owner's own
+  directory, where the record lives too. A record is
   not removed with its installation; a reinstall of the same identity writes new
   files, whose stamps it does not hold. The full check with no record trusted, as a
   command (`whizbang models verify`), is not built (`docs/carry-over.md`). On the
