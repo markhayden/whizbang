@@ -47,7 +47,7 @@ use crate::wired::{has_line, shown, whizbang};
 
 /// The model every config here asks for unless it says another: the fake that answers
 /// with the masks its request determines.
-const OK: &str = "fake-ok";
+pub(crate) const OK: &str = "fake-ok";
 /// The fake that waits until its call is cancelled.
 const WAIT: &str = "fake-wait";
 /// The fake that answers as `fake-ok` does, on the device `mps` (task P7a).
@@ -57,7 +57,7 @@ const ADAPTER_REVISION: &str = "7";
 
 /// What one call of a test action came to: the instances of its one query, each as its
 /// plane, its box and its score; or the fault's kind and sentence.
-type Came = Result<Vec<(Vec<u8>, [f64; 4], f64)>, (FaultKind, String)>;
+pub(crate) type Came = Result<Vec<(Vec<u8>, [f64; 4], f64)>, (FaultKind, String)>;
 
 /// The catalogue's entry for a fake model: one file, and the features the pack's fake
 /// says it gives.
@@ -118,7 +118,7 @@ fn adapter_revision() -> Revision {
 
 /// The one worker of the wiring, started from the pack's fakes, held by the test kit's
 /// guard: its drop kills the worker and waits for it.
-fn guarded() -> Guard<Arc<OneWorker>> {
+pub(crate) fn guarded() -> Guard<Arc<OneWorker>> {
     kit::fakes(None).guard(
         |fixture| {
             let (python, source) = (fixture.python.clone(), fixture.source.clone());
@@ -153,7 +153,7 @@ fn picture() -> Picture {
 
 /// What `fake-ok` answers a phrase about [`picture`] with: one instance, the three
 /// pixels, their box, and a score of 0.7.
-fn determined() -> Vec<(Vec<u8>, [f64; 4], f64)> {
+pub(crate) fn determined() -> Vec<(Vec<u8>, [f64; 4], f64)> {
     let plane = vec![0, 255, 255, 0, 0, 0, 255, 0];
     vec![(plane, [1.0, 0.0, 3.0, 2.0], 0.7)]
 }
@@ -247,7 +247,7 @@ impl Local {
         local
     }
 
-    fn models_dir(&self) -> PathBuf {
+    pub(crate) fn models_dir(&self) -> PathBuf {
         self.dir.path().join("models")
     }
 
@@ -295,13 +295,13 @@ impl Local {
     }
 
     /// The binary's executor over this folder's store, built over this.
-    fn runner(&self, over: &Over) -> Engine {
+    pub(crate) fn runner(&self, over: &Over) -> Engine {
         let store = Arc::new(Store::open(&self.root, Arc::new(RealFs)).unwrap());
         wiring::runner(self.registry(), store, over).expect("the executor builds")
     }
 
     /// What the test actions came to, oldest first, taken.
-    fn came(&self) -> Vec<Came> {
+    pub(crate) fn came(&self) -> Vec<Came> {
         std::mem::take(&mut *self.came.lock().unwrap())
     }
 
@@ -320,7 +320,7 @@ impl Local {
     }
 
     /// The requests written to a worker, as `(kind, model, installation)`.
-    fn named(&self) -> Vec<(&'static str, String, String)> {
+    pub(crate) fn named(&self) -> Vec<(&'static str, String, String)> {
         let sent: Vec<Sent> = self.worker.journal();
         sent.into_iter()
             .map(|sent| {
@@ -346,7 +346,7 @@ impl Local {
     }
 
     /// The path of one file of this installation of this model, by its identity.
-    fn installed_file(&self, model: &str, identity: &str, file: &str) -> PathBuf {
+    pub(crate) fn installed_file(&self, model: &str, identity: &str, file: &str) -> PathBuf {
         let hex = identity.strip_prefix("sha256:").unwrap();
         let installation = self.models_dir().join("models").join(model);
         installation
@@ -368,7 +368,7 @@ impl Local {
 
 /// A config of one backend of the kind `pack`, the capability's default, for this
 /// model, with these lines of settings beside the lifetime every config here sets.
-fn one(model: &str, settings: &str) -> String {
+pub(crate) fn one(model: &str, settings: &str) -> String {
     format!(
         "[backends.segment]\nkind = \"pack\"\nmodel = \"{model}\"\n\n\
          [backends.segment.settings]\nmax_lifetime_s = 120\n{settings}"

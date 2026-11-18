@@ -26,13 +26,18 @@
 //! the run so (`docs/carry-over.md`).
 
 use std::io::Write;
+use std::path::Path;
+use std::sync::Arc;
 
 use whizbang_core::artifact::ArtifactId;
+use whizbang_core::contract::record::DIAGNOSTICS_PREFIX;
 use whizbang_core::contract::{
-    Answer, Call, CallError, Executor, Outcome, Request, RunState, Value,
+    Answer, Call, CallError, Committed, Executor, Outcome, Request, RunId, RunState, Value,
 };
 use whizbang_core::identity::Digest;
-use whizbang_rascal::grow;
+use whizbang_core::store::fs::RealFs;
+use whizbang_core::store::{Kind, Reader};
+use whizbang_rascal::{grow, segment};
 
 /// What a panic prints, after `whizbang: `: this line and nothing else.
 pub const PANIC_LINE: &str = "an internal error (a panic) happened; what it said is not printed, because it may hold a secret";
@@ -109,11 +114,107 @@ pub fn grow(executor: &dyn Executor, asked: &GrowAsked<'_>) -> Result<String, St
     if let Some(down_px) = asked.down_px {
         call = call.argument("down_px", Value::Number(down_px));
     }
+    let (_, mut text, outputs) = completed(executor, call, asked.request_id)?;
+    for output in outputs {
+        let port = printable(output.port());
+        text.push_str(&format!("{port} {}\n", output.id().0));
+    }
+    Ok(text)
+}
+
+/// What `whizbang rascal segment` was asked, as it was typed.
+#[derive(Debug, Clone, Copy)]
+pub struct SegmentAsked<'a> {
+    /// The image, by its identity: `sha256:` and 64 hex digits.
+    pub image: &'a str,
+    pub phrase: &'a str,
+    pub max_instances: u32,
+    /// The segmenter, by its name in the config, when the caller chose one.
+    pub backend: Option<&'a str>,
+    /// The caller's id for the request, when it gave one.
+    pub request_id: Option<&'a str>,
+}
+
+/// What reads the bytes a run kept under a diagnostic name, the run's id given.
+pub type ReadDiagnostic<'a> = dyn Fn(&RunId, &str) -> Result<Vec<u8>, String> + 'a;
+
+/// Runs `segment` through the executor, and waits for it. What comes back is what to
+/// print when the run completed, or the complaint: both are escaped already. A run
+/// that completed prints its line, then each mask's identity with the score and the
+/// box the run's diagnostic gives it (`whizbang_rascal::segment::DIAGNOSTIC`), which
+/// `read` hands over: the bytes the run kept under that name, the run's id given.
+/// A run that found nothing says so.
+pub fn segment(
+    executor: &dyn Executor,
+    asked: &SegmentAsked<'_>,
+    read: &ReadDiagnostic<'_>,
+) -> Result<String, String> {
+    let Ok(image) = asked.image.parse::<Digest>() else {
+        return Err(
+            "--image is no artifact identity: an identity is sha256: and 64 lower-case hex \
+             digits, as `whizbang store import` prints it"
+                .to_owned(),
+        );
+    };
+    let mut call = Call::new(segment::NAME)
+        .argument("phrase", Value::text(asked.phrase))
+        .argument(
+            "max_instances",
+            Value::Integer(i64::from(asked.max_instances)),
+        )
+        .input("image", ArtifactId(image));
+    if let Some(backend) = asked.backend {
+        call = call.argument("backend", Value::text(backend));
+    }
+    let (run, mut text, outputs) = completed(executor, call, asked.request_id)?;
+    if outputs.is_empty() {
+        text.push_str("no instance was found\n");
+        return Ok(text);
+    }
+    // The diagnostic says each mask with its score and its box, one line each. A run
+    // whose diagnostic cannot be read still printed its masks.
+    let said = read(&run, segment::DIAGNOSTIC).ok();
+    let said = said.and_then(|bytes| String::from_utf8(bytes).ok());
+    let said = said.unwrap_or_default();
+    for output in outputs {
+        let id = output.id().0.to_string();
+        let beside = said
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("mask {id} ")))
+            .map_or_else(|| "score unknown".to_owned(), printable);
+        text.push_str(&format!("{} {id} {beside}\n", printable(output.port())));
+    }
+    Ok(text)
+}
+
+/// The bytes a run kept under this diagnostic name, read from the store at `root` by
+/// a reader of its own; or why they were not, in the store's words.
+pub fn diagnostic(root: &Path, run: &RunId, name: &str) -> Result<Vec<u8>, String> {
+    let reader = Reader::open(root, Arc::new(RealFs)).map_err(|e| e.to_string())?;
+    let generation = reader.snapshot().map_err(|e| e.to_string())?;
+    let held = generation.runs().get(run.as_str());
+    let entry = held.and_then(|held| held.get(&format!("{DIAGNOSTICS_PREFIX}{name}")));
+    match entry {
+        Some(entry) if entry.kind == Kind::Diagnostic => {
+            reader.read(entry).map_err(|e| e.to_string())
+        }
+        _ => Err("the run keeps no diagnostic of that name".to_owned()),
+    }
+}
+
+/// Sends the call, under the caller's request id when it gave one, and waits for its
+/// run. A run that completed is its id, its line to print and its outputs; any other
+/// end is the complaint, escaped already.
+fn completed(
+    executor: &dyn Executor,
+    call: Call,
+    request_id: Option<&str>,
+) -> Result<(RunId, String, Vec<Committed>), String> {
     let mut request = Request::new(call);
-    if let Some(text) = asked.request_id {
+    if let Some(text) = request_id {
         request = request.with_id(executor.request_id(text).map_err(|e| refused(&e))?);
     }
-    let (run, state, before) = match executor.request(&request).map_err(|e| refused(&e))? {
+    let (id, state, before) = match executor.request(&request).map_err(|e| refused(&e))? {
         Answer::Ran(finished) => (
             finished.run().clone(),
             RunState::Ended(finished.outcome().clone()),
@@ -127,16 +228,11 @@ pub fn grow(executor: &dyn Executor, asked: &GrowAsked<'_>) -> Result<String, St
         // `request` waits; only `start` answers so.
         Answer::Started(run) => (run, RunState::NotEnded { here: true }, ""),
     };
-    let run = format!("run {}{before}", printable(run.as_str()));
+    let run = format!("run {}{before}", printable(id.as_str()));
     let nothing = "nothing was committed";
     match state {
         RunState::Ended(Outcome::Completed { outputs }) => {
-            let mut text = format!("{run} completed\n");
-            for output in outputs {
-                let port = printable(output.port());
-                text.push_str(&format!("{port} {}\n", output.id().0));
-            }
-            Ok(text)
+            Ok((id, format!("{run} completed\n"), outputs))
         }
         RunState::Ended(Outcome::Cancelled) => Err(format!("{run} was cancelled; {nothing}")),
         RunState::Ended(Outcome::Error { kind, message }) => Err(format!(

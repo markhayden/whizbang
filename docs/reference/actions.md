@@ -13,6 +13,10 @@ Has a judge look at images through evidence tools and conclude: pass, fail or un
 
 Grows the core of a mask by a disc, and further downward for a shadow.
 
+## `segment`
+
+Finds each instance of a phrase in an image, as one mask for each.
+
 ## `view`
 
 Shows a region of an image closer, and the same region of a second image when one is given.

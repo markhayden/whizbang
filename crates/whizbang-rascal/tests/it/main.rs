@@ -6,3 +6,4 @@ mod grow;
 mod grow_action;
 mod grow_runs;
 mod record;
+mod segment;

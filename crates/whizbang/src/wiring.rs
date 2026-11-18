@@ -41,8 +41,14 @@ pub fn registry() -> Result<Registry, String> {
     let toolbox = whizbang_squint::check::Toolbox::standard();
     let check = whizbang_squint::check::Check::new(toolbox).map_err(|e| said(&e))?;
     let grow = whizbang_rascal::grow::Grow::new();
+    let segment = whizbang_rascal::segment::Segment::new();
     let view = whizbang_squint::view::View::new().map_err(|e| said(&e))?;
-    let actions: [Arc<dyn Action>; 3] = [Arc::new(check), Arc::new(grow), Arc::new(view)];
+    let actions: [Arc<dyn Action>; 4] = [
+        Arc::new(check),
+        Arc::new(grow),
+        Arc::new(segment),
+        Arc::new(view),
+    ];
     for action in actions {
         registry.register(action).map_err(|e| said(&e))?;
     }

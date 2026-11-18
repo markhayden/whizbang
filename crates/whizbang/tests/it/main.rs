@@ -3,6 +3,7 @@
 
 mod backends;
 mod catalogue;
+mod cli;
 mod credential;
 mod describe;
 mod escape;
