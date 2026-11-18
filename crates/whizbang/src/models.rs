@@ -1,4 +1,4 @@
-//! `whizbang models list|get|remove`: wiring from arguments to the binary's own
+//! `whizbang models list|get|remove|adapter add`: wiring from arguments to the binary's own
 //! functions (`whizbang::model_commands`), which say what each does and when it works
 //! out where the models directory is (plan 1C, task N3b; `docs/guides/models.md`).
 
@@ -47,6 +47,11 @@ pub enum Command {
         #[command(flatten)]
         under: Under,
     },
+    /// A user's adapter: copy one Python file you wrote into the models directory, named
+    /// by its hash, as the adapter `user-<name>` that a model of the directory's own
+    /// catalogue (catalogue.json) may name. Nothing is fetched or run here.
+    #[command(subcommand, after_help = EXIT_CODES)]
+    Adapter(AdapterCommand),
     /// For whoever writes a catalogue entry: fetch each file of a draft entry once and
     /// print its size and SHA-256. Each file's size in the draft is the most bytes
     /// wanted of it. Nothing is installed or written.
@@ -54,6 +59,24 @@ pub enum Command {
     Pin {
         /// The draft: a catalogue file (format catalogue/2) of one entry.
         draft: std::path::PathBuf,
+        #[command(flatten)]
+        under: Under,
+    },
+}
+
+/// What `whizbang models adapter` does (plan 1D, task U1).
+#[derive(Subcommand)]
+pub enum AdapterCommand {
+    /// Add a Python file you wrote as the adapter `user-<name>`: it is copied into the
+    /// models directory, read-only, named by its SHA-256, and runs only for a model
+    /// installed under that hash. Prints the adapter's name and hash.
+    #[command(after_help = EXIT_CODES)]
+    Add {
+        /// The adapter: one Python file whose class `ADAPTER` is the adapter.
+        file: std::path::PathBuf,
+        /// The name the adapter is added under, after `user-`.
+        #[arg(long)]
+        name: String,
         #[command(flatten)]
         under: Under,
     },
@@ -82,6 +105,10 @@ pub fn run(command: &Command, platform: Platform, sign_in: SignIn) -> Result<Str
             let tools = Tools::shipped(under.models_dir(), platform, sign_in)?;
             let wait = Duration::from_secs(*wait);
             model_commands::remove(under.asked(), model, wait, &tools)
+        }
+        Command::Adapter(AdapterCommand::Add { file, name, under }) => {
+            let tools = Tools::shipped(under.models_dir(), platform, sign_in)?;
+            model_commands::adapter_add(under.asked(), file, name, &tools)
         }
         Command::Pin { draft, under } => {
             let tools = Tools::shipped(under.models_dir(), platform, sign_in)?;

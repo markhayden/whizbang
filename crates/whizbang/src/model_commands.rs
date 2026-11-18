@@ -16,6 +16,10 @@
 //!   directory, and makes it where it is not.
 //! - `remove` of a model the catalogue holds. It opens the directory only when
 //!   something is there: where nothing is, the model is not installed.
+//! - `get` and `remove` of a name this build's catalogue does not hold (plan 1D, task
+//!   U1): the directory is worked out, and opened where it is there, for the user's
+//!   catalogue (`catalogue.json`) and adapters; nothing is made for the look.
+//! - `adapter add` always: it opens the directory, and makes it where it is not.
 //!
 //! Each asks the flag first, then the config's `[models] dir`, then the platform's,
 //! which is worked out only when the other two are silent ([`Models::chosen`]). A
@@ -36,9 +40,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use whizbang_backends::models::{
-    Carrying, Current, Entry, FileRefused, InstallRefused, ModelsDir, PinRefused, Pinned,
-    RemoveRefused, Revision, State, Status, all_held, current, draining,
-    install_or_attach_carrying, pin_file, remove as remove_model, unrunnable,
+    ADAPTER_MAX_BYTES, Carrying, Current, Entry, FileRefused, InstallRefused, ModelsDir,
+    PinRefused, Pinned, RemoveRefused, Revision, State, Status, add_adapter, all_held, current,
+    draining, install_or_attach_carrying, pin_file, remove as remove_model, unrunnable,
 };
 use whizbang_core::capability::{FaultKind, Unready};
 use whizbang_core::config::{
@@ -143,6 +147,10 @@ struct Read {
     /// Whether an env file was named: without one a variable is never named back
     /// (ADR 0011, "When the env file is asked for").
     env_file: bool,
+    /// The origins the config approves (`[egress.recipients]`): each recipient's, and
+    /// those it may pass data on to. A download of a user's model reaches no other
+    /// (plan 1D, task U1).
+    approved: Vec<Origin>,
 }
 
 /// Reads the config and its env file, as an executor's source reads them; with no
@@ -157,6 +165,7 @@ fn read(under: Under<'_>) -> Result<Read, String> {
             tokens: Vec::new(),
             credentials: Credentials::none(),
             env_file: under.env_file.is_some(),
+            approved: Vec::new(),
         });
     };
     let loaded = Loaded::of_files(config, under.env_file)
@@ -171,6 +180,12 @@ fn read(under: Under<'_>) -> Result<Read, String> {
         tokens: config.model_tokens().to_vec(),
         credentials: loaded.credentials().clone(),
         env_file: under.env_file.is_some(),
+        approved: config
+            .recipients()
+            .flat_map(|(_, approval)| {
+                std::iter::once(approval.origin().clone()).chain(approval.upstreams().to_vec())
+            })
+            .collect(),
     })
 }
 
@@ -191,8 +206,8 @@ fn run(
 
 /// The entry of the model of this name, compared exactly: none when the catalogue
 /// holds no model of it, or when its name holds a secret.
-fn entry<'a>(tools: &'a Tools, name: &str, secrets: &Secrets) -> Result<&'a Entry, String> {
-    match tools.models.catalogue.entry(name) {
+fn entry<'a>(models: &'a Models, name: &str, secrets: &Secrets) -> Result<&'a Entry, String> {
+    match models.catalogue.entry(name) {
         Some(entry) if !holds_secret(entry.name().as_str(), secrets) => Ok(entry),
         _ => Err(
             "the catalogue holds no model of that name; `whizbang models list` names \
@@ -207,9 +222,10 @@ fn holds_secret(text: &str, secrets: &Secrets) -> bool {
     secrets.redact(text) != text
 }
 
-/// The revision this build's pack ships the entry's adapter under, when it ships it.
-fn adapter_of<'a>(tools: &'a Tools, entry: &Entry) -> Option<&'a Revision> {
-    let adapters = &tools.models.adapters;
+/// The revision this build's pack ships the entry's adapter under, when it ships it; or,
+/// for a user's adapter, the hash of its copy the directory's registry names.
+fn adapter_of<'a>(models: &'a Models, entry: &Entry) -> Option<&'a Revision> {
+    let adapters = &models.adapters;
     adapters
         .iter()
         .find(|(name, _)| name == entry.adapter())
@@ -220,9 +236,8 @@ fn adapter_of<'a>(tools: &'a Tools, entry: &Entry) -> Option<&'a Revision> {
 /// what `get` installs under (plan 1C, task N5). A model whose adapter is in the
 /// table but not shipped yet is installed under the revision it will be loaded under,
 /// so nothing is downloaded again when the adapter ships.
-fn revision_of<'a>(tools: &'a Tools, entry: &Entry) -> Option<&'a Revision> {
-    let models = &tools.models;
-    adapter_of(tools, entry).or_else(|| {
+fn revision_of<'a>(models: &'a Models, entry: &Entry) -> Option<&'a Revision> {
+    adapter_of(models, entry).or_else(|| {
         models
             .not_yet_shipped
             .iter()
@@ -235,6 +250,21 @@ fn revision_of<'a>(tools: &'a Tools, entry: &Entry) -> Option<&'a Revision> {
 /// looked at is said by the opening.
 fn there(root: &Path) -> bool {
     !matches!(std::fs::metadata(root), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+}
+
+/// The models a command about this model is over: this build's, when its catalogue
+/// holds the model; otherwise this build's and the user's of the models directory, when
+/// there is one to look in (plan 1D, task U1). Nothing is made for the look.
+fn with_users_for(tools: &Tools, model: &str, read: &Read) -> Result<Models, String> {
+    if tools.models.catalogue.entry(model).is_some() {
+        return Ok(tools.models.clone());
+    }
+    let (said, root) = tools.models.chosen(read.dir.as_deref())?;
+    if !root.is_dir() {
+        return Ok(tools.models.clone());
+    }
+    let dir = wiring::open_models_dir(said, &root, tools.clock.clone())?;
+    tools.models.clone().with_users(&dir, &read.secrets)
 }
 
 /// What is printed of where the directory is: which of the three named it, and
@@ -283,6 +313,12 @@ pub fn list(under: Under<'_>, tools: &Tools) -> Result<String, String> {
         } else {
             None
         };
+        // The user's models and adapters beside this build's (plan 1D, task U1).
+        let models = match &dir {
+            Some(dir) => tools.models.clone().with_users(dir, &read.secrets)?,
+            None => tools.models.clone(),
+        };
+        let entries = models.catalogue.entries();
         let mut text = format!("models: {}\n", entries.len());
         text.push_str(&format!("directory: {}", named(said)));
         text.push_str(if dir.is_some() {
@@ -291,7 +327,6 @@ pub fn list(under: Under<'_>, tools: &Tools) -> Result<String, String> {
             ", not made yet\n"
         });
         let inventory = dir.as_ref().map(|dir| {
-            let models = &tools.models;
             wiring::inventory_of(
                 dir,
                 &models.catalogue,
@@ -307,7 +342,7 @@ pub fn list(under: Under<'_>, tools: &Tools) -> Result<String, String> {
             }
             let state = match (&dir, &inventory) {
                 (Some(dir), Some(inventory)) => state(dir, inventory, entry, &read.secrets),
-                _ => absent(tools, entry),
+                _ => absent(&models, entry),
             };
             text.push_str(&format!(
                 "{}\t{}\t{}\t{}\t{}\t{state}\n",
@@ -324,9 +359,8 @@ pub fn list(under: Under<'_>, tools: &Tools) -> Result<String, String> {
 
 /// The state of a model when there is no directory to look in: not installed, and
 /// why no install by this build would make it ready, when none would.
-fn absent(tools: &Tools, entry: &Entry) -> String {
-    let models = &tools.models;
-    match unrunnable(entry, models.runs_on, adapter_of(tools, entry).is_some()) {
+fn absent(models: &Models, entry: &Entry) -> String {
+    match unrunnable(entry, models.runs_on, adapter_of(models, entry).is_some()) {
         Some(why) => format!("not installed; not ready: {why}"),
         None => "not installed".to_owned(),
     }
@@ -426,7 +460,8 @@ pub fn get(
     say: &mut dyn FnMut(&str),
 ) -> Result<String, String> {
     run(under, tools, |read| {
-        let entry = entry(tools, model, &read.secrets)?;
+        let models = with_users_for(tools, model, read)?;
+        let entry = entry(&models, model, &read.secrets)?;
         if unrunnable(entry, tools.models.runs_on, true) == Some(Unready::NotForThisPlatform) {
             return Err(format!(
                 "the model does not run on this platform (its entry names {}), so it was not \
@@ -434,13 +469,28 @@ pub fn get(
                 platforms(entry, ", ")
             ));
         }
-        let Some(adapter) = revision_of(tools, entry) else {
+        let Some(adapter) = revision_of(&models, entry) else {
             return Err(
                 "this build has no adapter for the model, so it was not installed and \
                         nothing was downloaded"
                     .to_owned(),
             );
         };
+        // A user's model is downloaded only from origins the config approves (plan 1D,
+        // task U1): the shipped catalogue's origins are this build's, a user's are not.
+        if models.is_users(entry)
+            && !entry
+                .origins()
+                .iter()
+                .all(|origin| read.approved.contains(origin))
+        {
+            return Err(
+                "the model's entry in the models directory's catalogue names an origin the \
+                 config does not approve as a recipient (`[egress.recipients]`), so it was \
+                 not installed and nothing was downloaded"
+                    .to_owned(),
+            );
+        }
         let (said, root) = tools.models.chosen(read.dir.as_deref())?;
         // Every file held by an installation in the directory already: the install
         // links them and downloads nothing, so no token is read (plan 1D, task Q1;
@@ -739,6 +789,54 @@ pub fn pin(under: Under<'_>, draft: &Path, tools: &Tools) -> Result<String, Stri
     })
 }
 
+// --- adapter add ---------------------------------------------------------------------------------
+
+/// `whizbang models adapter add <file> --name <name>` (plan 1D, task U1; ADR 0017, "A
+/// user's weights and a user's adapter"): copies one Python file the user wrote into the
+/// models directory, outside the pack `whizbang setup` refreshes, as a read-only copy
+/// named by its hash, and records `user-<name>` and that hash in the directory's
+/// registry. **Nothing is fetched, and nothing of the file runs here:** it runs only
+/// in the worker, for an installation made under this hash, and only when the copy's
+/// bytes still hash to it. A model of the user's catalogue that names the adapter is
+/// installed under it by `get`; adding a changed file under the same name is a new
+/// hash, and `get` installs the model again under it, while an installation made
+/// under the earlier copy keeps it. The file is a regular file of at most
+/// [`ADAPTER_MAX_BYTES`]; the directory is made where it is not.
+pub fn adapter_add(
+    under: Under<'_>,
+    file: &Path,
+    name: &str,
+    tools: &Tools,
+) -> Result<String, String> {
+    run(under, tools, |read| {
+        let unreadable = "the adapter's file cannot be read: name one Python file";
+        if !std::fs::metadata(file).is_ok_and(|meta| meta.is_file()) {
+            return Err(unreadable.to_owned());
+        }
+        let mut code = Vec::new();
+        std::fs::File::open(file)
+            .and_then(|opened| {
+                use std::io::Read as _;
+                opened.take(ADAPTER_MAX_BYTES + 1).read_to_end(&mut code)
+            })
+            .map_err(|_| unreadable.to_owned())?;
+        let (said, root) = tools.models.chosen(read.dir.as_deref())?;
+        let dir = wiring::open_models_dir(said, &root, tools.clock.clone())?;
+        let added = add_adapter(&dir, name, &code, &read.secrets)
+            .map_err(|refused| format!("the adapter was not added: {refused}"))?;
+        Ok(format!(
+            "added {}: sha256:{}{}\n",
+            added.name.as_str(),
+            added.revision.as_str(),
+            if added.copied {
+                ""
+            } else {
+                " (the same file was added before)"
+            }
+        ))
+    })
+}
+
 // --- remove --------------------------------------------------------------------------------------
 
 /// `whizbang models remove <model> --wait <seconds>`: removes the model (ADR 0017,
@@ -754,7 +852,8 @@ pub fn remove(
 ) -> Result<String, String> {
     run(under, tools, |read| {
         let secrets = &read.secrets;
-        let entry = entry(tools, model, secrets)?;
+        let models = with_users_for(tools, model, read)?;
+        let entry = entry(&models, model, secrets)?;
         let (said, root) = tools.models.chosen(read.dir.as_deref())?;
         if !there(&root) {
             return Err(not_removed(RemoveRefused::NotInstalled));

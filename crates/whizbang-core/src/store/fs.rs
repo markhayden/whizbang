@@ -346,6 +346,15 @@ pub trait Fs: Send + Sync {
         let _ = (from, to);
         streams_nothing()
     }
+    /// Makes the file at `path` readable by its owner alone and writable by nobody
+    /// (mode `0400`), following no link: a link at the name is refused with
+    /// [`io::ErrorKind::InvalidData`]. Added for the copy of a user's adapter in the
+    /// models directory (plan 1D, task U1), and answered as the calls above are by a
+    /// file system that does not give it.
+    fn set_read_only(&self, path: &Path) -> io::Result<()> {
+        let _ = path;
+        streams_nothing()
+    }
 }
 
 /// What [`Fs::stamp`] answers of a file: its size in bytes, the time it was last
@@ -847,6 +856,17 @@ impl Fs for RealFs {
 
     fn hard_link(&self, from: &Path, to: &Path) -> io::Result<()> {
         std::fs::hard_link(from, to)
+    }
+
+    fn set_read_only(&self, path: &Path) -> io::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        if std::fs::symlink_metadata(path)?.is_symlink() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "a link is not followed",
+            ));
+        }
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o400))
     }
 
     fn is_link(&self, path: &Path) -> io::Result<bool> {

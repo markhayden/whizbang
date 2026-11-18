@@ -19,7 +19,9 @@ Three threads of its own, and no pool:
 
 One model is resident: a `load` of another unloads the first. The worker is given the
 models directory when it is started, and finds an installation by the model's name and
-the identity a `load` names. It reads no variable of its environment.
+the identity a `load` names. The adapter is the one the installation's record names,
+the record held to that identity, and a user's adapter only by the hash the record gives
+(`installed`; plan 1D, task U1). It reads no variable of its environment.
 
 How it ends, by its exit code: 0 at the end of its input, or when whizbang's error names
 the conversation; 2 when a frame is refused, or its output cannot be written; 3 at its
@@ -31,7 +33,7 @@ import queue
 import sys
 import threading
 
-from whizbang_pack import fake_models, owlv2_sam2, proto, sam3
+from whizbang_pack import fake_models, installed, owlv2_sam2, proto, sam3
 from whizbang_pack.adapter import Cancelled, Fault, Installation, Stopped, runtime_device
 
 END_CODE = 0
@@ -47,6 +49,10 @@ SHIPPED = {"sam3": "sam3", "tiny": "owlv2-sam2"}
 # The adapters the worker answers for, by model name. The fakes answer for names the
 # shipped catalogue never holds; each model of the shipped catalogue joins them.
 ADAPTERS = dict(fake_models.MODELS, **{model: REAL[adapter] for model, adapter in SHIPPED.items()})
+# The adapters the worker answers for, by the adapter's name an installation's record gives
+# (plan 1D, task U1): the real ones and the fakes, each under its own name. An adapter a
+# user added is in no table: it is found by the hash its installation's record names.
+BY_ADAPTER = dict(fake_models.MODELS, **REAL)
 
 # Reasons a refused frame ends the conversation as `too_large` (ADR 0020, "What a refusal
 # says"); every other reason is `malformed`.
@@ -197,6 +203,8 @@ class Worker:
         self.stdout = stdout
         self.stderr = stderr
         self.adapters = ADAPTERS if adapters is None else adapters
+        # A test that gives its own adapters gives them by both names.
+        self.by_adapter = BY_ADAPTER if adapters is None else adapters
         self.code = None
         self.threads = []
         self.resident = None
@@ -407,18 +415,19 @@ class Worker:
     def _load(self, call):
         request = call.request
         model, identity = request["model"], request["installation"]
-        make = self.adapters.get(model)
+        resident = self.resident
+        if resident is not None and (resident.model, resident.identity) == (model, identity):
+            return "already loaded"
+        installation = Installation(self.models_dir, model, identity)
+        # By the installation's record, held to the identity this load names (task U1).
+        make = installed.adapter_of(self.models_dir, installation, self.adapters, self.by_adapter, SHIPPED)
         if make is None:
             raise Fault("rejected", "no adapter answers for this model")
         said = []
-        resident = self.resident
         if resident is not None:
-            if (resident.model, resident.identity) == (model, identity):
-                return "already loaded"
             self.resident = None
             resident.adapter.unload(call)
             said.append("unloaded " + resident.model)
-        installation = Installation(self.models_dir, model, identity)
         adapter = make()
         diagnostics = adapter.load(installation, request["settings"], call)
         self.resident = Resident(model, identity, installation, adapter)

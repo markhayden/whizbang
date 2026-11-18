@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use whizbang_backends::models::{
-    Catalogue, Installations, Lease, ModelName, ModelsDir, OpenRefused, Platform as ModelPlatform,
-    Revision,
+    Catalogue, Entry, Installations, Lease, ModelName, ModelsDir, OpenRefused,
+    Platform as ModelPlatform, Revision, is_users, registered, users_catalogue,
 };
 use whizbang_core::artifact::Contents;
 use whizbang_core::capability::{Inventory, NoInventory};
@@ -249,6 +249,9 @@ pub struct Models {
     pub(crate) runs_on: Option<ModelPlatform>,
     pub(crate) flag: Option<PathBuf>,
     platform: Option<Platform>,
+    /// The models of the user's catalogue in the models directory, once it was read
+    /// ([`Models::with_users`]); none before.
+    users: Vec<ModelName>,
 }
 
 impl Models {
@@ -278,6 +281,7 @@ impl Models {
             runs_on: ModelPlatform::this(),
             flag: None,
             platform: None,
+            users: Vec::new(),
         }
     }
 
@@ -314,12 +318,74 @@ impl Models {
     }
 }
 
+impl Models {
+    /// The same, with what the user added to this models directory (plan 1D, task U1;
+    /// ADR 0017, "A user's weights and a user's adapter"): the adapters of its registry,
+    /// each at the hash of its copy, beside this build's; and the models of its
+    /// catalogue (`catalogue.json`), read by the reader of the shipped one, beside this
+    /// build's. **A model of this build's catalogue is never taken the place of:** a
+    /// user's catalogue that names one is refused whole. A user's adapter is named
+    /// `user-` and a name, which no adapter of this build has; a table of this build's
+    /// that held one would be refused too. What cannot be read is refused, in the
+    /// readers' own words, which hold no path.
+    pub(crate) fn with_users(
+        mut self,
+        dir: &ModelsDir,
+        secrets: &Secrets,
+    ) -> Result<Models, String> {
+        if self
+            .adapters
+            .iter()
+            .chain(&self.not_yet_shipped)
+            .any(|(name, _)| is_users(name))
+        {
+            return Err("this build's table of adapters names an adapter as a user's".to_owned());
+        }
+        let added = registered(dir, secrets).map_err(|refused| {
+            format!("the users' adapters of the models directory cannot be used: {refused}")
+        })?;
+        let users = users_catalogue(dir, secrets).map_err(|refused| {
+            format!("the models directory's catalogue (catalogue.json) cannot be used: {refused}")
+        })?;
+        self.adapters.extend(added);
+        let Some(users) = users else {
+            return Ok(self);
+        };
+        let mut entries = self.catalogue.entries().to_vec();
+        for entry in users.entries() {
+            if self.catalogue.entry(entry.name().as_str()).is_some() {
+                return Err(
+                    "the models directory's catalogue (catalogue.json) names a model of the \
+                     catalogue this build ships, whose place no user's model takes; give the \
+                     user's model another name"
+                        .to_owned(),
+                );
+            }
+            self.users.push(entry.name().clone());
+            entries.push(entry.clone());
+        }
+        self.catalogue = Catalogue::new(entries, secrets).map_err(|refused| {
+            format!(
+                "the models directory's catalogue (catalogue.json) cannot be used beside this \
+                 build's: {refused}"
+            )
+        })?;
+        Ok(self)
+    }
+
+    /// Whether this entry is of the user's catalogue in the models directory.
+    pub(crate) fn is_users(&self, entry: &Entry) -> bool {
+        self.users.contains(entry.name())
+    }
+}
+
 impl std::fmt::Debug for Models {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Models")
             .field("models", &self.catalogue.entries().len())
             .field("adapters", &self.adapters.len())
             .field("not_yet_shipped", &self.not_yet_shipped.len())
+            .field("users", &self.users.len())
             .field("runs_on", &self.runs_on.map(ModelPlatform::name))
             .field("flag", &self.flag.is_some())
             .field("platform", &self.platform.is_some())
@@ -605,6 +671,10 @@ impl Over {
     /// - **A relative `--models-dir` is refused first,** whatever else is asked and
     ///   before anything is read or made ([`RELATIVE_MODELS_DIR`]).
     ///
+    /// - **What the user added to the directory is read with it** ([`Models::with_users`];
+    ///   plan 1D, task U1): the models of its `catalogue.json` and the adapters of its
+    ///   registry, beside this build's, which none of them takes the place of.
+    ///
     /// - **The one worker of the process is told the directory** ([`Over::pack`]),
     ///   and the catalogue: the folder its worker is started over, and the
     ///   directory its supervisor reads the counts of removals in, are this one.
@@ -630,6 +700,8 @@ impl Over {
         // The platform's is asked for last, and only when the other two are silent.
         let (said, root) = models.chosen(config.models_dir())?;
         let dir = open_models_dir(said, &root, Arc::new(SystemClock))?;
+        // What the user added to the directory, beside this build's (plan 1D, task U1).
+        let models = models.with_users(&dir, &self.secrets)?;
         let opened = Opened::knowing(
             root,
             dir,

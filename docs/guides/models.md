@@ -252,6 +252,34 @@ whizbang: the model was not removed: the model is held by a run, which did not l
 Killed while it waits, it leaves the model installed and stops nobody. `remove` of a
 model that is not installed says so, and makes nothing.
 
+## A model of your own
+
+Two things can be added to a models directory beside what this build ships.
+
+**Your own weights for an adapter whizbang has.** Write `catalogue.json` in the models
+directory: a catalogue (`catalogue/2`) of your models, each entry as the shipped ones
+are, naming an adapter whizbang ships (`sam3`, `owlv2-sam2`). Approve each origin it
+downloads from in the config, as a recipient (`[egress.recipients.<name>]` with its
+`origin` and `classes = []`), then `whizbang models get <model>` and configure a backend
+of the kind `pack` for it. A model of the shipped catalogue cannot be named again there.
+
+**Your own adapter.** Write one Python file whose class `ADAPTER` is the adapter (the
+interface of `whizbang_pack/adapter.py`), and check it against the files of your model:
+
+```sh
+python -m whizbang_pack.conformance my_adapter.py <folder of the model's files>
+whizbang models adapter add my_adapter.py --name mine
+```
+
+The first runs the conformance suite: each feature the adapter declares alone, then all
+together, each answer held to the protocol's contract; it ends 0 when every run conforms.
+The second copies the file into the models directory, read-only and named by its SHA-256,
+as the adapter `user-mine`, which an entry of your `catalogue.json` may name. The file is
+your code and runs in the worker: only for a model installed under that hash, and only
+after the copy's bytes are checked against it. Adding a changed file under the same name
+makes a new hash; `get` installs the model again under it, and a run already admitted
+keeps the earlier copy. `whizbang setup` leaves both alone.
+
 ## Where the models directory is
 
 Three may say, in this order: the command's `--models-dir`, which must be an absolute

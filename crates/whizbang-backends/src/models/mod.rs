@@ -34,6 +34,7 @@ mod json;
 mod name;
 mod pin;
 mod refused;
+mod registry;
 mod remove;
 mod shared;
 mod stage;
@@ -59,6 +60,10 @@ pub use name::{
 };
 pub use pin::{PinRefused, Pinned, pin_file};
 pub use refused::{Refused, Rule, What};
+pub use registry::{
+    ADAPTER_MAX_BYTES, AdapterRefused, Added, REGISTRY_FORMAT, REGISTRY_MAX_BYTES,
+    USER_ADAPTERS_LIMIT, USER_PREFIX, add_adapter, is_users, registered, users_catalogue,
+};
 pub use remove::{
     DRAINING_FORMAT, DRAINING_MAX_BYTES, Mark, REMOVALS_FORMAT, REMOVALS_MAX_BYTES, RemoveRefused,
     Removed, draining, removals, remove, remove_and_tell,

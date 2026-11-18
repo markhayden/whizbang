@@ -380,7 +380,7 @@ them, each with a test against a fake model."
    keeps its copy until it is removed, so a call already admitted runs the code it was
    admitted with. ADR 0017 and ADR 0020 say how.
 
-- [ ] Done when:
+- [x] Done when:
   `test_worker.Adapters.test_the_adapter_is_the_one_the_installations_record_names`,
   the `pack/1` conformance vectors unchanged,
   `models::a_users_entry_for_a_known_adapter_installs_and_runs_from_config_alone`,
@@ -391,6 +391,13 @@ them, each with a test against a fake model."
   `models::an_adapter_replaced_while_a_call_is_admitted_leaves_that_call_on_the_earlier_copy`,
   `models::a_users_adapter_passes_the_conformance_suite_against_a_fake_model`, and the
   carry-over row closed.
+  **Reworded with the task** (U1, 2026-11-18):
+  "`models::a_users_adapter_passes_the_conformance_suite_against_a_fake_model`" is
+  `test_worker.Adapters.test_a_users_adapter_passes_the_conformance_suite_against_a_fake_model`:
+  the suite a user is given is the pack's own (`python -m whizbang_pack.conformance`,
+  which `kit.conforming` now calls), and it runs in Python, where the adapter does; the
+  binary's tests may start no second worker of the fakes. The carry-over row is closed,
+  and a row for removing copies no installation names is opened in its place.
 
 ## V1. Parity, the tolerance, timings, the run's diagnostics and the note (large)
 

@@ -24,6 +24,8 @@ pub enum What {
     Mark,
     /// A model's count of removals, `removals/1`.
     Removals,
+    /// The registry of users' adapters, `adapters/1` (plan 1D, task U1).
+    Registry,
 }
 
 impl std::fmt::Display for What {
@@ -34,6 +36,7 @@ impl std::fmt::Display for What {
             What::Status => "the status record",
             What::Mark => "the draining mark",
             What::Removals => "the count of removals",
+            What::Registry => "the registry of users' adapters",
         })
     }
 }
