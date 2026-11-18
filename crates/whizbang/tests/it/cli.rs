@@ -561,6 +561,36 @@ fn squint_check_prints_the_verdict_and_the_run_under_a_recorded_fake() {
 }
 
 #[test]
+fn squint_check_sends_the_brief_it_is_given_and_none_when_it_is_given_none() {
+    use crate::anthropic::{Judged, checked, checked_under, submission};
+    let brief = "Change only the sky. The parrot's tail keeps its colour.";
+    let system = |log: &crate::anthropic::Log| {
+        let sent: serde_json::Value = serde_json::from_slice(&log.lock().unwrap()[0].1).unwrap();
+        sent["system"].to_string()
+    };
+    let judged = Judged::new("cli-squint-brief");
+    let (printed, log) = checked_under(
+        &judged,
+        vec![submission("held", "Nothing protected moved.")],
+        Some(brief),
+    );
+    printed.unwrap();
+    assert!(system(&log).contains(brief), "{}", system(&log));
+    let judged = Judged::new("cli-squint-no-brief");
+    let (printed, log) = checked(
+        &judged,
+        vec![submission("held", "Nothing protected moved.")],
+    );
+    printed.unwrap();
+    let without = system(&log);
+    assert!(!without.contains(brief), "{without}");
+    assert!(
+        without.contains(&whizbang_squint::source_fidelity::NO_BRIEF[..40]),
+        "{without}"
+    );
+}
+
+#[test]
 fn squint_check_without_the_env_file_is_refused_naming_the_variable() {
     let scratch = Scratch::new("cli-squint-env");
     let root = scratch.path().join("store");

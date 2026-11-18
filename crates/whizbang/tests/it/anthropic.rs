@@ -334,6 +334,15 @@ pub fn pair(judged: &Judged) -> (String, String) {
 /// door, under a judge at a server on loopback that gives these answers: what the door
 /// prints or its complaint, and what the server saw.
 pub fn checked(judged: &Judged, answers: Vec<Vec<u8>>) -> (Result<String, String>, Log) {
+    checked_under(judged, answers, None)
+}
+
+/// As `checked`, with a brief given, as `--brief` gives one.
+pub fn checked_under(
+    judged: &Judged,
+    answers: Vec<Vec<u8>>,
+    brief: Option<&str>,
+) -> (Result<String, String>, Log) {
     let (source, candidate) = pair(judged);
     let (listener, log) = serving(&judged.pki, answers);
     let origin = format!("https://127.0.0.1:{}", listener.port());
@@ -349,6 +358,7 @@ pub fn checked(judged: &Judged, answers: Vec<Vec<u8>>) -> (Result<String, String
         source: &source,
         candidate: &candidate,
         judge: None,
+        brief,
         request_id: None,
     };
     let root = judged.world.root.clone();
