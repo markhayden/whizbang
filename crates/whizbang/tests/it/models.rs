@@ -1087,9 +1087,17 @@ mod inventory {
         assert_eq!(identity_in(&again.unwrap(), "alpha"), identity);
         assert_eq!(fake.requests().len(), asked);
         // The binary's own table names `sam3` at the revision of the adapter that takes
-        // points and boxes (task Q1), shipped.
+        // points and boxes (task Q1), shipped; and `owlv2-sam2` beside it (task T1).
         let table = wiring::adapters();
-        assert_eq!(table.len(), 1);
+        assert_eq!(table.len(), 2);
+        assert_eq!(
+            (
+                table[1].name.as_str(),
+                table[1].revision.as_str(),
+                table[1].shipped
+            ),
+            ("owlv2-sam2", "1", true)
+        );
         assert_eq!(
             (
                 table[0].name.as_str(),
