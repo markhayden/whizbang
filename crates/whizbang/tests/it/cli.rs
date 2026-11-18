@@ -1107,3 +1107,58 @@ fn a_key_pasted_into_key_env_with_an_env_file_that_does_not_set_it_is_never_said
     );
     assert!(!ran.err.contains("nobody-here"), "{}", ran.err);
 }
+
+#[test]
+fn a_users_adapter_is_added_its_model_installed_and_a_segment_runs_through_admission_against_a_fake_model()
+ {
+    // Plan 1D, task U1: the binary adds a user's adapter (a made-up fake model's, in a
+    // test's folder) to the models directory; a model of the directory's own catalogue
+    // that names it is installed under its hash; and a run admitted over it is answered
+    // by it, through the worker, which ran the copy only after its hash matched.
+    use crate::models::{
+        USERS_ADAPTER, get_under, users_config, users_entry, write_users_catalogue,
+    };
+    use whizbang_core::contract::Executor as _;
+    let local = crate::pack::Local::new("cli-users-adapter");
+    let file = local.models_dir().with_file_name("mine.py");
+    std::fs::write(&file, USERS_ADAPTER).unwrap();
+    let hex = whizbang_core::identity::Digest::of_bytes(USERS_ADAPTER.as_bytes()).hex();
+    let mut add = crate::models::binary();
+    add.args(["models", "adapter", "add"])
+        .arg(&file)
+        .args(["--name", "mine", "--models-dir"])
+        .arg(local.models_dir());
+    let added = add.output().unwrap();
+    assert_eq!(added.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&added.stdout),
+        format!("added user-mine: sha256:{hex}\n")
+    );
+    let (mine, fake) = users_entry("mine", "user-mine");
+    write_users_catalogue(&local.models_dir(), &[mine]);
+    std::fs::write(local.config_path(), users_config("mine")).unwrap();
+    let got = get_under(
+        local.models(),
+        Some(&local.config_path()),
+        &Arc::new(fake),
+        "mine",
+    )
+    .unwrap();
+    let over = local.over(&users_config("mine"));
+    let identity = local.identity(&over, "mine");
+    assert_eq!(got, format!("installed mine: {identity}\n"));
+    let record = over.installations().unwrap().ready("mine").unwrap();
+    assert_eq!(
+        (
+            record.adapter().as_str(),
+            record.adapter_revision().as_str()
+        ),
+        ("user-mine", hex.as_str())
+    );
+    let executor = local.runner(&over);
+    let finished = executor
+        .submit(&whizbang_core::contract::Call::new("finds"))
+        .unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    assert_eq!(local.came(), [Ok(crate::pack::determined())]);
+}

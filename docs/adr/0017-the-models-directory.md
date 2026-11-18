@@ -280,6 +280,10 @@ what the binary gives). In it:
 ```text
 <models>/
   LOCK                             the directory's lock
+  catalogue.json                   the user's catalogue, catalogue/2 (task U1 of 1D)
+  adapters/                        users' adapters (task U1 of 1D)
+    REGISTRY                       adapters/1: each user's adapter and the hash of its copy
+    <64 hex digits>.py             a copy of a user's adapter, by its hash, read-only
   shared/
     <64 hex digits>                the lock of a file an install stages, by the file's hash (task Q1 of 1D)
   models/
@@ -2343,6 +2347,44 @@ the place after the lease and a fake segmenter behind it.
   removal here that drains the other's hold, busy at its deadline and done once
   the hold is let go
   (`leases::a_model_installs_is_attached_to_is_cancelled_and_is_drained_from_this_process_and_a_second_one`).
+
+### A user's weights and a user's adapter
+
+*Decided and built by task U1 of plan 1D* (`whizbang_backends::models::registry`;
+`whizbang::wiring::Models::with_users`; `pack/src/whizbang_pack/installed.py`).
+
+- **A user's weights.** The directory may hold `catalogue.json`, a catalogue of the
+  user's own models, read by the reader of the shipped catalogue (`catalogue/2`, the same
+  names, origins and hash rules). Its models stand beside this build's; a user's
+  catalogue that names a model of this build's catalogue is refused whole, so no shipped
+  model's name is taken. `get` downloads a user's model only from origins the config
+  approves as recipients (`[egress.recipients]`, a recipient's origin or one of its
+  upstreams); the shipped catalogue's origins are this build's own
+  (`models::a_users_entry_naming_an_origin_the_config_does_not_allow_is_refused`). An
+  entry that names an adapter of this build is installed and run from the config alone
+  (`models::a_users_entry_for_a_known_adapter_installs_and_runs_from_config_alone`).
+- **A user's adapter.** `whizbang models adapter add <file> --name <name>` copies one
+  Python file of at most 1 MiB into `adapters/` as `<sha256 hex>.py`, made read-only for
+  its owner (`Fs::set_read_only`), and writes `REGISTRY` (`adapters/1`, one form,
+  `{"format":"adapters/1","adapters":[{"name":"user-<name>","sha256":"sha256:<hex>"}]}`,
+  at most 64 adapters) naming `user-<name>` and that hash, under the directory's lock, each
+  by a new file renamed into place. No adapter of this build is named `user-`. Nothing is
+  fetched and nothing of the file runs then. The adapter's revision is the hash as 64 hex
+  digits, so an installation's record, and with it its identity, binds the hash of the
+  code it was installed with. `adapters/` is outside the pack, which `whizbang setup`
+  refreshes (`models::a_users_adapter_survives_setup_again`).
+- **The worker loads by the record** (ADR 0020, "The adapter of an installation"): it
+  reads the admitted installation's record, holds it to the identity the `load` names,
+  and for `user-<name>` reads the copy once, compares its SHA-256 with the record's
+  revision, and compiles only those bytes; a copy whose hash differs is refused before
+  anything of it runs. A model of the shipped catalogue never runs a user's adapter.
+- **A replaced adapter.** Adding a changed file under the same name is a new hash: the
+  registry names it, the model's installation is out of date until `get` installs it
+  again (its files linked, nothing downloaded), and the earlier copy is kept, so a call
+  admitted under the earlier installation runs the earlier copy
+  (`models::an_adapter_replaced_while_a_call_is_admitted_leaves_that_call_on_the_earlier_copy`).
+  No copy is ever removed: a removal of the copies no installation names is on the
+  carry-over list.
 
 ### What a refusal says
 

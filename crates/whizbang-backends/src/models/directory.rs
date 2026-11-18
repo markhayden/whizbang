@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use whizbang_core::contract::Clock;
-use whizbang_core::store::fs::{Fs, LockFile, UserUnknown};
+use whizbang_core::store::fs::{Fs, LockFile, PIECE_MAX_BYTES, UserUnknown};
 
 use super::ModelName;
 
@@ -215,6 +215,11 @@ impl ModelsDir {
         &*self.fs
     }
 
+    /// The directory's own folder.
+    pub(super) fn root(&self) -> &Path {
+        &self.root
+    }
+
     /// `models/`: the folder that holds a folder for each model and nothing else.
     pub(super) fn models(&self) -> PathBuf {
         self.root.join("models")
@@ -368,14 +373,23 @@ impl ModelsDir {
                 };
             }
         };
-        let mut bytes = vec![
-            0;
-            usize::try_from(limit)
-                .unwrap_or(usize::MAX)
-                .saturating_add(1)
-        ];
-        let filled = file.read(&mut bytes)?;
-        bytes.truncate(filled);
+        // In pieces of at most what one read of the interface takes: a catalogue or a
+        // user's adapter may be longer than one (plan 1D, task U1).
+        let most = usize::try_from(limit)
+            .unwrap_or(usize::MAX)
+            .saturating_add(1);
+        let mut bytes = Vec::new();
+        while bytes.len() < most {
+            let mut piece = vec![0; (most - bytes.len()).min(PIECE_MAX_BYTES)];
+            let asked = piece.len();
+            let filled = file.read(&mut piece)?;
+            bytes.extend_from_slice(&piece[..filled]);
+            // A piece is filled whole unless the file ended in it: then nothing is
+            // left to read, and no read more is asked.
+            if filled < asked {
+                break;
+            }
+        }
         Ok(Read::Bytes(bytes))
     }
 

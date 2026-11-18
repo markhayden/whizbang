@@ -69,7 +69,9 @@ If one is missing, ask the orchestrator. Do not guess.
       (`pack/src/whizbang_pack/worker.py`); the pack the binary carries holds its module
       (`CARRIED` in `crates/whizbang/src/pack_setup.rs`).
 - [ ] 9. **Conformance.** Its declared features, alone and together, through the worker,
-      held by `kit.conforming` (`pack/tests/kit.py`) against its stand-ins.
+      held by `kit.conforming` (`pack/tests/kit.py`) against its stand-ins. A user who
+      writes an adapter is given the same suite: `python -m whizbang_pack.conformance
+      <adapter.py> <files>` (`docs/guides/models.md`, "A model of your own").
 - [ ] 10. **The model test**, `#[ignore]`d, in `crates/whizbang/tests/it/model_tier.rs`:
       the model asked each feature it declares about the fixture picture, through the
       binary's wiring, on the Mac's GPU. Install it once into a models directory of your

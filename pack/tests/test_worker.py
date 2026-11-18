@@ -8,6 +8,8 @@ variables `scripts/test-pack.sh` hands on.
 """
 
 import ast
+import hashlib
+import io
 import json
 import os
 import subprocess
@@ -19,7 +21,7 @@ import types
 import unittest
 
 import kit
-from whizbang_pack import adapter, fakes, proto, worker
+from whizbang_pack import adapter, conformance, fake_models, fakes, installed, proto, worker
 
 MODELS = "/nowhere/models"
 INSTALLATION = "sha256:" + "77f358414083a02e8d99d0d097f53bb7c63890ce465acbb742020e63961699fd"
@@ -53,13 +55,13 @@ def unload(id, model="fake-ok", installation=INSTALLATION):
     return {"type": "request", "id": id, "kind": "unload", "model": model, "installation": installation}
 
 
-def segment(id, model="fake-ok", queries=None, most=2):
+def segment(id, model="fake-ok", queries=None, most=2, installation=INSTALLATION):
     return {
         "type": "request",
         "id": id,
         "kind": "segment",
         "model": model,
-        "installation": INSTALLATION,
+        "installation": installation,
         "image": proto.Payload(WIDTH, HEIGHT, BINDING, picture()),
         "queries": queries or [{"phrase": "a red thing"}, {"point": [5.5, 2.25]}, {"box": [1.0, 1.0, 3.0, 4.0]}],
         "max_instances": most,
@@ -74,13 +76,13 @@ def hello(id="h1", version=proto.VERSION):
 class Running:
     """A worker in this process, over two pipes, whose exit is recorded."""
 
-    def __init__(self, test, module=worker, options=(), lifetime=None, adapters=None, error_output=None, first=b""):
+    def __init__(self, test, module=worker, options=(), lifetime=None, adapters=None, error_output=None, first=b"", models=MODELS):
         to_worker_read, self.to_worker = os.pipe()
         self.from_worker, from_worker_write = os.pipe()
         self.exits = []
         self.error_output = _Lines() if error_output is None else error_output
         self.made = module.make(
-            ["--models-dir", MODELS] + list(options),
+            ["--models-dir", models] + list(options),
             stdin=open(to_worker_read, "rb", buffering=0),
             stdout=open(from_worker_write, "wb", buffering=0),
             stderr=self.error_output,
@@ -629,6 +631,185 @@ class Fakes(unittest.TestCase):
         self.assertEqual(child.wait(), 0)
 
 
+# --- the adapter of an installation (plan 1D, task U1) --------------------------------------
+
+# A user's adapter of a made-up fake model: it reads its weights, a file of the installation,
+# at its load, and answers what `fake-ok` answers, in the fixed order.
+USER_ADAPTER = b"""
+from whizbang_pack import fake_models
+from whizbang_pack.adapter import Adapter
+
+
+class Weighed(Adapter):
+    features = frozenset(("phrase", "point", "box"))
+    revision = "user"
+
+    def load(self, installation, settings, call):
+        with open(installation.file("weights.bin"), "rb") as file:
+            self.weights = file.read()
+        return "a user's adapter read %d bytes of weights" % len(self.weights)
+
+    def segment(self, request, call):
+        found = fake_models.determined(request)
+        found.sort(key=lambda item: (-item.score, item.query, item.box[1], item.box[0], item.box[2], item.box[3]))
+        return found, ""
+
+
+ADAPTER = Weighed
+"""
+
+WEIGHTS = b"made-up weights of a fake model"
+
+
+def record_in(models, model, adapter_name, revision):
+    """Installs a record of this model under this adapter in this models directory, with one
+    file of made-up weights, as the binary writes one; answers its identity."""
+    record = {
+        "format": "installation/1",
+        "model": model,
+        "catalogue_revision": "2026-11.1",
+        "adapter": adapter_name,
+        "adapter_revision": revision,
+        "files": [{"name": "weights.bin", "size": len(WEIGHTS), "sha256": "sha256:" + hashlib.sha256(WEIGHTS).hexdigest()}],
+    }
+    identity = installed.identity_of(record)
+    folder = os.path.join(models, "models", model, "installations", identity[len("sha256:") :])
+    os.makedirs(os.path.join(folder, "files"))
+    with open(os.path.join(folder, "RECORD"), "wb") as file:
+        file.write(json.dumps(record, separators=(",", ":")).encode("ascii"))
+    with open(os.path.join(folder, "files", "weights.bin"), "wb") as file:
+        file.write(WEIGHTS)
+    return identity
+
+
+def copy_in(models, data, revision=None):
+    """A user's adapter copied into the models directory under its hash, or under this
+    revision; answers the revision it is named by."""
+    revision = revision or hashlib.sha256(data).hexdigest()
+    os.makedirs(os.path.join(models, "adapters"), exist_ok=True)
+    with open(os.path.join(models, "adapters", revision + ".py"), "wb") as file:
+        file.write(data)
+    return revision
+
+
+class Adapters(unittest.TestCase):
+    def models(self):
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        return scratch.name
+
+    def loaded(self, running, model, identity):
+        running.ask(load("r-" + model + identity[-4:], model=model, installation=identity))
+        return running.read()
+
+    def test_the_adapter_is_the_one_the_installations_record_names(self):
+        models = self.models()
+        # A model of a name no table holds, installed under the adapter `fake-ok`: the
+        # record names the adapter, and the model's name picks nothing.
+        mine = record_in(models, "my-weights", "fake-ok", "7")
+        # And `fake-ok` installed under another adapter: the record wins over the name.
+        waits = record_in(models, "fake-ok", "fake-wait", "7")
+        shipped = record_in(models, "sam3", "user-mine", "ab" * 32)
+        unknown = record_in(models, "other-weights", "no-such-adapter", "7")
+        # The record of `my-weights` under a folder of another identity.
+        elsewhere = os.path.join(models, "models", "my-weights", "installations", OTHER_INSTALLATION[len("sha256:") :])
+        os.makedirs(elsewhere)
+        with open(os.path.join(models, "models", "my-weights", "installations", mine[len("sha256:") :], "RECORD"), "rb") as file:
+            moved = file.read()
+        with open(os.path.join(elsewhere, "RECORD"), "wb") as file:
+            file.write(moved)
+
+        running = Running(self, models=models)
+        running.hello()
+        self.assertEqual(self.loaded(running, "my-weights", mine)["type"], "result")
+        self.assertIs(type(running.made.resident.adapter), fake_models.FakeOk)
+        running.ask(segment("s1", model="my-weights", installation=mine))
+        self.assertEqual(len(running.read()["instances"]), 3)
+        self.assertEqual(self.loaded(running, "fake-ok", waits)["type"], "result")
+        self.assertIs(type(running.made.resident.adapter), fake_models.FakeWait)
+
+        refused = self.loaded(running, "my-weights", OTHER_INSTALLATION)
+        self.assertEqual((refused["fault"], refused["sentence"]), ("rejected", "the installation's record is not the one its identity names"))
+        refused = self.loaded(running, "sam3", shipped)
+        self.assertEqual(refused["sentence"], "a model of the shipped catalogue is never run by a user's adapter")
+        refused = self.loaded(running, "other-weights", unknown)
+        self.assertEqual(refused["sentence"], "no adapter answers for this model")
+        # Nothing refused unloaded what was resident.
+        self.assertIs(type(running.made.resident.adapter), fake_models.FakeWait)
+
+    def test_an_adapter_copy_whose_hash_is_not_the_installations_is_refused_before_import(self):
+        models = self.models()
+        marker = os.path.join(models, "imported")
+        tampered = USER_ADAPTER + b"\nopen(%r, 'w').close()\n" % marker.encode("ascii")
+        revision = copy_in(models, USER_ADAPTER)
+        good = record_in(models, "mine", "user-mine", revision)
+        # The copy another installation names holds other bytes than its hash.
+        other = hashlib.sha256(b"an earlier adapter").hexdigest()
+        copy_in(models, tampered, revision=other)
+        changed = record_in(models, "mine", "user-mine", other)
+        missing = record_in(models, "mine", "user-mine", "cd" * 32)
+        no_hash = record_in(models, "mine", "user-mine", "7")
+
+        running = Running(self, models=models)
+        running.hello()
+        for identity, sentence in (
+            (changed, "the copy of the user's adapter is not the one the installation was installed with"),
+            (missing, "the user's adapter the installation was installed with is not in the models directory"),
+            (no_hash, "the installation names a user's adapter by no hash"),
+        ):
+            refused = self.loaded(running, "mine", identity)
+            self.assertEqual((refused["fault"], refused["sentence"]), ("rejected", sentence))
+        self.assertFalse(os.path.exists(marker), "nothing of a refused copy ran")
+        self.assertIsNone(running.made.resident)
+
+        # The copy whose hash is the record's is run, over the installation's files.
+        loaded = self.loaded(running, "mine", good)
+        self.assertEqual(loaded["diagnostics"], "a user's adapter read %d bytes of weights" % len(WEIGHTS))
+        request = segment("s1", model="mine", installation=good)
+        running.ask(request)
+        kit.conforming(self, request, running.read())
+
+        # A folder of users' adapters that is a link is not gone through.
+        linked = self.models()
+        os.symlink(os.path.join(models, "adapters"), os.path.join(linked, "adapters"))
+        through = record_in(linked, "mine", "user-mine", revision)
+        running = Running(self, models=linked)
+        running.hello()
+        refused = self.loaded(running, "mine", through)
+        self.assertEqual(refused["sentence"], "the folder of users' adapters is a link, and nothing is run through it")
+
+    def test_a_users_adapter_passes_the_conformance_suite_against_a_fake_model(self):
+        folder = self.models()
+        files = os.path.join(folder, "files")
+        os.makedirs(files)
+        with open(os.path.join(files, "weights.bin"), "wb") as file:
+            file.write(WEIGHTS)
+        good = os.path.join(folder, "good.py")
+        with open(good, "wb") as file:
+            file.write(USER_ADAPTER)
+        said = io.StringIO()
+        self.assertEqual(conformance.main([good, files], out=said), 0, said.getvalue())
+        self.assertEqual(
+            said.getvalue().splitlines(),
+            [
+                "adapter sha256:" + hashlib.sha256(USER_ADAPTER).hexdigest(),
+                "phrase: conforms",
+                "point: conforms",
+                "box: conforms",
+                "phrase and point and box: conforms",
+                "conforms",
+            ],
+        )
+        # One that breaks the contract is told how, and the suite fails.
+        bad = os.path.join(folder, "bad.py")
+        with open(bad, "wb") as file:
+            file.write(USER_ADAPTER.replace(b'return found, ""', b'return [type(item)(item.query, item.score, item.iou, [0.0, 0.0, 1.0, 1.0], item.samples) for item in found], ""'))
+        said = io.StringIO()
+        self.assertEqual(conformance.main([bad, files], out=said), 1)
+        self.assertIn("phrase: does not conform: a box that is not the bounds of its plane", said.getvalue())
+        self.assertEqual(conformance.main([bad], out=io.StringIO()), 2)
+
+
 # The runtime of the adapter `sam3` (task R2a), which only that adapter imports, and only
 # inside a function, when its model is loaded: never when the package is imported.
 RUNTIME = {
@@ -643,7 +824,18 @@ class Imports(unittest.TestCase):
         names = sorted(name for name in os.listdir(package) if name.endswith(".py"))
         self.assertEqual(
             names,
-            ["__init__.py", "adapter.py", "fake_models.py", "fakes.py", "owlv2_sam2.py", "proto.py", "sam3.py", "worker.py"],
+            [
+                "__init__.py",
+                "adapter.py",
+                "conformance.py",
+                "fake_models.py",
+                "fakes.py",
+                "installed.py",
+                "owlv2_sam2.py",
+                "proto.py",
+                "sam3.py",
+                "worker.py",
+            ],
         )
         for name in names:
             with open(os.path.join(package, name), encoding="utf-8") as file:
