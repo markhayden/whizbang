@@ -184,6 +184,14 @@ runpy.run_module(name, run_name='__main__', alter_sys=True)\n";
 
 /// What the supervisor starts: the interpreter, the pack's source, the entry point,
 /// and what the worker is told on its command line.
+///
+/// **The entry point and what follows the rest are not the caller's to set,** but in
+/// a test's build: [`Launch::worker`] makes the one launch a build that ships can
+/// make, of [`WORKER_MODULE`] with nothing more; [`Launch::testing`], which names
+/// another entry point (the pack's fakes) and a fault, is compiled only with the
+/// feature `fakes`, which only the tests' builds turn on (plan 1C, the review of
+/// task P6a). The fields that say what is run are private, so no launch is made field
+/// by field outside this crate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Launch {
     /// The interpreter: an absolute path to a file. Never looked for on `PATH`.
@@ -191,13 +199,13 @@ pub struct Launch {
     /// The pack's `src` folder, put on the interpreter's path.
     pub source: PathBuf,
     /// The entry point, run as a program: [`WORKER_MODULE`] for the kind `pack`.
-    pub module: String,
+    module: String,
     /// The models directory the worker opens installations in.
     pub models_dir: PathBuf,
     /// The worker's lifetime, `--max-lifetime-s`: always passed, at least 1.
     pub lifetime_s: u32,
     /// More of the command line, after the rest: the faults of the tests' fakes.
-    pub more: Vec<String>,
+    more: Vec<String>,
 }
 
 impl Launch {
@@ -216,6 +224,38 @@ impl Launch {
             lifetime_s,
             more: Vec::new(),
         }
+    }
+
+    /// A test's launch: this entry point, with these words after the rest of the
+    /// command line, as the test kit's fixture of the pack's fakes gives them. Built
+    /// only with the feature `fakes`.
+    #[cfg(feature = "fakes")]
+    pub fn testing(
+        python: PathBuf,
+        source: PathBuf,
+        module: String,
+        models_dir: PathBuf,
+        lifetime_s: u32,
+        more: Vec<String>,
+    ) -> Launch {
+        Launch {
+            python,
+            source,
+            module,
+            models_dir,
+            lifetime_s,
+            more,
+        }
+    }
+
+    /// The entry point it runs as a program.
+    pub fn module(&self) -> &str {
+        &self.module
+    }
+
+    /// What follows the rest of its command line: nothing, but in a test's launch.
+    pub fn more(&self) -> &[String] {
+        &self.more
     }
 }
 

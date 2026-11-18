@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use whizbang_backends::models::{
     CatalogueFile, Current, Damage, Entry, FileRefused, InstallRefused, InstallationRecord,
-    ModelsDir, Revision, State, current, install, stage, status,
+    ModelsDir, Revision, State, current, install, stage, status, verify,
 };
 use whizbang_core::capability::{Fault, FaultKind};
 use whizbang_core::contract::{Cancellation, Secrets};
@@ -1664,5 +1664,78 @@ fn an_install_answers_only_when_the_folders_that_name_the_model_are_durable() {
         fs.crash(Lost::Unsynced);
         assert_eq!(reading(root), Current::Installed(next.clone()), "{refused}");
         is_whole(root, &next);
+    }
+}
+
+// --- an installation's files verified before it is loaded (plan 1C, task P6b) -----------------
+
+#[test]
+fn an_installation_is_verified_by_its_identity_whatever_the_pointer_names_and_a_changed_file_is_not_whole()
+ {
+    let scratch = Scratch::new("publish-verify");
+    let root = scratch.path();
+    let dir = ModelsDir::at(Arc::new(RealFs), root);
+    let old = installed(root, &first());
+    let id = old.identity();
+    assert!(verify(&dir, &model("tiny"), id, &none(), &|| false).unwrap());
+    // A byte of a file changed, its length kept: not whole. Put back: whole again.
+    let file = folder_of(root, &old).join("files").join("graph.onnx");
+    flip(&file, 7);
+    assert!(!verify(&dir, &model("tiny"), id, &none(), &|| false).unwrap());
+    flip(&file, 7);
+    assert!(verify(&dir, &model("tiny"), id, &none(), &|| false).unwrap());
+    // A file more in the installation's folder: not whole.
+    let more = folder_of(root, &old).join("files").join("more.bin");
+    std::fs::write(&more, b"more").unwrap();
+    assert!(!verify(&dir, &model("tiny"), id, &none(), &|| false).unwrap());
+    std::fs::remove_file(&more).unwrap();
+    // A superseded installation a hold keeps on the disk is read by its identity, as
+    // it is, though the pointer names another; one never installed has no record.
+    let held = held(root, &old);
+    let new = installed(root, &second());
+    assert_eq!(reading(root), Current::Installed(new.clone()));
+    assert!(verify(&dir, &model("tiny"), id, &none(), &|| false).unwrap());
+    assert!(verify(&dir, &model("tiny"), new.identity(), &none(), &|| false).unwrap());
+    drop(held);
+    let never = record_of(&entry_at("2026-11.9")).identity();
+    assert!(!verify(&dir, &model("tiny"), never, &none(), &|| false).unwrap());
+    // The identity of one model's installation names nothing under another model.
+    assert!(!verify(&dir, &model("other"), new.identity(), &none(), &|| false).unwrap());
+    // Asked to stop (a run cancelled, or past its deadline): it reads no piece more
+    // and says nothing of the files, but that it was interrupted; asked again, it
+    // answers whole. Each piece is asked: told to stop after the first, it stops.
+    let stop = verify(&dir, &model("tiny"), new.identity(), &none(), &|| true);
+    assert_eq!(stop.unwrap_err().kind(), std::io::ErrorKind::Interrupted);
+    let asked = std::cell::Cell::new(0);
+    let second_piece = || {
+        asked.set(asked.get() + 1);
+        asked.get() > 1
+    };
+    let stop = verify(&dir, &model("tiny"), new.identity(), &none(), &second_piece);
+    assert_eq!(stop.unwrap_err().kind(), std::io::ErrorKind::Interrupted);
+    assert!(verify(&dir, &model("tiny"), new.identity(), &none(), &|| false).unwrap());
+}
+
+#[test]
+#[ignore = "a measurement, not a check: a quarter of a gigabyte written and read"]
+fn measure_what_verifying_an_installation_costs() {
+    // Decision D14 of plan 1C asks for the cost of verifying an installation's files
+    // before it is loaded. One file of 256 MiB, installed and then verified three
+    // times; run with `--run-ignored only --no-capture`, in the profile to measure.
+    use std::time::Instant;
+    let size: usize = 256 << 20;
+    let content: Vec<u8> = (0..size).map(|at| (at % 251) as u8).collect();
+    let entry = entry_of("2026-11.1", &[("graph.onnx", content.clone())]);
+    let fake = FakeDownloader::new().serving(&at("graph.onnx"), content);
+    let scratch = Scratch::new("publish-measure");
+    let root = scratch.path();
+    let record = installing(&Arc::new(ShimFs::new()), root, &entry, &fake).unwrap();
+    let dir = ModelsDir::at(Arc::new(RealFs), root);
+    for round in 0..3 {
+        let begun = Instant::now();
+        assert!(verify(&dir, &model("tiny"), record.identity(), &none(), &|| false).unwrap());
+        let took = begun.elapsed();
+        let rate = 256.0 / took.as_secs_f64();
+        println!("round {round}: 256 MiB verified in {took:?}, {rate:.0} MiB a second");
     }
 }

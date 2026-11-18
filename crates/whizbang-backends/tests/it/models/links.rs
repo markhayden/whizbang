@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use whizbang_backends::models::{
     Current, HoldRefused, Holds, InstallRefused, InstallationRecord, ModelsDir, RemoveRefused,
-    StageRefused, stage,
+    StageRefused, stage, verify,
 };
 use whizbang_core::contract::Cancellation;
 use whizbang_core::store::fs::{Fs, RealFs};
@@ -436,6 +436,44 @@ fn a_hold_is_refused_through_a_folder_of_the_layout_that_is_a_link_and_makes_not
         assert_eq!(held.installation(), record.identity());
     }
 }
+
+// --- an installation's own folder, and its files (from the review of task P6b) ------------------
+
+#[test]
+fn an_installation_whose_folder_or_files_folder_is_a_link_is_not_verified_or_adopted_and_nothing_is_read_through_it()
+ {
+    // Below the layout's five folders: an installation's own folder, and its
+    // `files/`, each moved out of the directory, whole, with a link left at its name.
+    // Whole as the copy is, nothing is read through the link: a verification before
+    // a load is refused as a link is, and so is an install that finds its identity
+    // there and would adopt it. The owner's ruling: refuse, never follow.
+    let scratch = Scratch::new("links-installation");
+    let root = scratch.path().to_path_buf();
+    let outside = Scratch::new("links-installation-outside");
+    let record = installed(&root, &first());
+    let dir = ModelsDir::at(Arc::new(RealFs), &root);
+    let (name, id) = (super::model("tiny"), record.identity());
+    let folder = tiny(&root).join("installations").join(id.hex());
+    let not = &|| false;
+    assert!(verify(&dir, &name, id, &none(), not).unwrap());
+    for inside in [folder.clone(), folder.join("files")] {
+        let to = outside.path().join("moved");
+        std::fs::rename(&inside, &to).unwrap();
+        symlink(&to, &inside).unwrap();
+        let refused = verify(&dir, &name, id, &none(), not).unwrap_err();
+        assert_eq!(refused.to_string(), LINKED_WORDS, "{}", inside.display());
+        let fs = Arc::new(ShimFs::new());
+        let adopted = installing(&fs, &root, &first(), &serving_both());
+        assert_eq!(adopted, Err(InstallRefused::Linked), "{}", inside.display());
+        std::fs::remove_file(&inside).unwrap();
+        std::fs::rename(&to, &inside).unwrap();
+        assert!(verify(&dir, &name, id, &none(), not).unwrap());
+    }
+}
+
+/// What a refusal for a link says (`models::directory`).
+const LINKED_WORDS: &str =
+    "a folder of the models directory is a link, and nothing is done through it";
 
 // --- the directory's own folder ------------------------------------------------------------------
 

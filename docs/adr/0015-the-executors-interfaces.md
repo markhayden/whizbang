@@ -103,6 +103,12 @@ Amended: 2026-11-16, with task N3b of checkpoint 1C. Changed under "An inventory
 `Unready` has a sixth reason, that the model does not run on this platform: its
 catalogue entry does not name the platform the build is for. Until then a model
 installed on a platform its entry does not name was called ready.
+Amended: 2026-11-17, with task P6b of checkpoint 1C. Added under "A wrapper around each
+request": what the places hand on to the backend of one request (`Open::removals`,
+`Bounds::installation`, `Bounds::removals`): the installation the run was handed its
+backend under, and the count of removals the lease's hold read. Changed under "An
+inventory": the lease's place hands that count on, and a local backend loads by the
+identity it was handed under.
 
 ## Context
 
@@ -943,6 +949,15 @@ was told nothing of is not in its catalogue
   place is told the installation the run was admitted with, not the one that is
   current
   (`inventory::the_lease_is_asked_for_the_identity_the_admission_recorded_not_the_one_current_at_the_request`).
+- **What the lease's place hands on, and what a backend loads** (task P6b of
+  checkpoint 1C): the backend of a request is given the installation its run was
+  handed it under and the count of removals the lease's hold read ("A wrapper around
+  each request", "What a backend is given for one request"). The first real local
+  backend, of the kind `pack`, loads by that identity, and the request enters the
+  worker's queue with that count; a reinstall between two requests of one run leaves
+  the first answered from the old installation, which its hold keeps on the disk,
+  and the second refused at its lease
+  (`pack::after_a_reinstall_between_two_requests_of_a_run_the_first_is_answered_from_the_old_installations_files_and_the_second_is_refused_at_the_lease`).
 
 **What a config offers, over an inventory** (task W1; the code is `config/offers.rs`,
 `config/source.rs` and `contract/snapshot.rs`; tests named `source::` are in
@@ -1174,6 +1189,36 @@ capability that declare one model are told apart there, where `Roster::bound`, w
 is asked by a model, answers the largest of theirs. That answer is what an admission
 reserves, and it is kept: reserving the largest cannot reserve too little
 (`around::the_bound_a_request_is_held_to_is_its_own_backends_and_an_admission_reserves_the_largest`).
+
+**What a backend is given for one request** (task P6b of checkpoint 1C, decision D5 of
+`docs/plans/m1c-local-pack.md`). The bounds a handle hands its backend with each
+request (`Bounds`, made for that one request by `Bounds::of_one_request`) hold, beside
+the run's cancellation and deadline:
+
+- **The installation the run was handed its backend under** (`Bounds::installation`):
+  the identity in the version's place of the declaration the handle holds, for a
+  local backend ("An inventory", `Declaration::installed_as`), which is the identity
+  the admission recorded and the lease holds. None for a backend that names a
+  recipient, and for one under a version that is no installation's identity. A
+  local backend loads that installation and no other: never the one the model's
+  pointer names when the request is sent (the kind `pack`, ADR 0011).
+- **The count of removals the lease's hold read** (`Bounds::removals`): what stands
+  in the lease's place hands it on through what it holds open for the request,
+  `Open::removals`, which is none for every other wrapper and which only the lease's
+  place is asked. The lease over the models directory's holds answers the count its
+  hold read under the directory's lock (`Hold::removals`, ADR 0017, "Holds"), so a
+  request to a local model enters the worker's queue with the count its own hold was
+  given, never one read later: a removal that began between the hold and the queue
+  has moved the count from it, and the supervisor ends the request, never sent (ADR
+  0020, "The worker", "Removal"). None where no lease held the request: an executor
+  given no lease, or a backend that names a recipient. The kind `pack` refuses a
+  request handed neither, never sent.
+
+The trait of a backend is not changed for it: `Bounds` was made to grow so ("What a
+later task needs a backend to know of its run is added here"). The tests are the
+kind's, through the binary's wiring
+(`pack::a_request_enters_the_queue_with_the_count_its_own_hold_was_given`,
+`pack::after_a_reinstall_between_two_requests_of_a_run_the_first_is_answered_from_the_old_installations_files_and_the_second_is_refused_at_the_lease`).
 
 **Limits, each stated.**
 

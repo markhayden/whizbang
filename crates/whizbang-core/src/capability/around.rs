@@ -125,6 +125,23 @@ pub trait Open: Send {
     fn holds(&self) -> bool {
         true
     }
+
+    /// The model's count of removals that the hold it took for the request read
+    /// (ADR 0017, "Holds"; ADR 0015, "A wrapper around each request"): what the
+    /// lease's place hands on to the backend, so that a request to a local model
+    /// enters the worker's queue with it (plan 1C, task P6b). None for a wrapper that
+    /// took no hold; only what stands in the lease's place is asked.
+    fn removals(&self) -> Option<u64> {
+        None
+    }
+}
+
+/// What the places handed on to the backend of one request, beside the request
+/// (ADR 0015, "A wrapper around each request"; plan 1C, task P6b): the count of
+/// removals the lease's hold read, when the lease's place took a hold for it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Given {
+    pub(crate) removals: Option<u64>,
 }
 
 /// A wrapper that holds nothing open: for one whose work is all before the request.
@@ -246,19 +263,20 @@ const NOT_ACCOUNTED: &str = "the request ended and could not be accounted for, s
                              is abandoned and nothing more is sent for it";
 
 impl Wrappers {
-    /// Sends one request through the places, to `ask`, which calls the backend, and
-    /// back. `fail` is told when the run is to be abandoned: a wrapper failed or
-    /// panicked once the request was over, or the backend panicked under a wrapper.
+    /// Sends one request through the places, to `ask`, which calls the backend with
+    /// what the places handed on ([`Given`]), and back. `fail` is told when the run is
+    /// to be abandoned: a wrapper failed or panicked once the request was over, or the
+    /// backend panicked under a wrapper.
     pub(crate) fn send<T>(
         &self,
         leaving: Leaving<'_>,
         charge_of: impl Fn(&T) -> Option<Charge>,
-        ask: impl FnOnce() -> Result<T, Fault>,
+        ask: impl FnOnce(Given) -> Result<T, Fault>,
         fail: impl Fn(String),
     ) -> Result<T, Fault> {
         let places = self.places.in_order();
         if places.is_empty() {
-            return ask();
+            return ask(Given::default());
         }
         let Leaving {
             request,
@@ -316,11 +334,18 @@ impl Wrappers {
                 }
             }
         }
+        // What the lease's place hands on to the backend: the count its hold read.
+        let given = Given {
+            removals: open
+                .iter()
+                .find(|(place, _)| *place == Place::Lease)
+                .and_then(|(_, held)| held.removals()),
+        };
         // The backend, under the wrappers. A panic of it unwinds through here, as it
         // does through a handle with no wrapper. Where a wrapper holds something for
         // the request, it was told the request left and is never told how it ended:
         // the request is not accounted for as free, and the run is abandoned.
-        let result = match catch_unwind(AssertUnwindSafe(ask)) {
+        let result = match catch_unwind(AssertUnwindSafe(|| ask(given))) {
             Ok(result) => result,
             Err(panic) => {
                 if let Some((place, _)) = open.iter().find(|(_, held)| held.holds()) {

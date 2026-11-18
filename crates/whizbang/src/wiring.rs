@@ -379,18 +379,20 @@ impl Opened {
     }
 }
 
-/// Whether a config has a local backend: one whose table names no url, which is how
-/// a backend names no recipient (ADR 0012; ADR 0015, "An inventory"). It is read from
-/// the tables alone, whatever kinds the build has and whichever was given first: a
-/// backend of a kind the build does not have is not ready, and opening the directory
-/// for it asks nothing of a model.
+/// Whether a config has a local backend, by the kind `pack`'s own rule
+/// ([`crate::pack::is_local`]: no url, no provider and no credential, and for the
+/// kind `pack`, under `segment`), so that the wiring and the kind never disagree. It
+/// is read from the tables alone, whichever of the kinds and the directory was given
+/// first. A table the kind would refuse (a provider and no url, or a `pack` table
+/// under `fill`) opens no directory, as it would ask nothing of a model. (Until the
+/// review of task P6a any table with no url counted.)
 fn has_local_backend(config: &Config) -> bool {
     [Capability::Segment, Capability::Fill, Capability::Judge]
         .into_iter()
         .any(|capability| {
             config
                 .backends(capability)
-                .any(|(_, backend)| backend.address().is_none())
+                .any(|(_, backend)| crate::pack::is_local(capability, backend))
         })
 }
 
@@ -535,8 +537,9 @@ impl Over {
     ///   to be opened and neither the flag nor the config named one.
     /// - **Where no model could be asked for, no directory is opened or made:** with
     ///   a catalogue that holds no model; and under a config that has no local
-    ///   backend, one whose table names no url (plan 1C, task P6a, which gave the
-    ///   build its first kind, `pack`), or no config at all, whose executor has no
+    ///   backend, by the kind `pack`'s own rule for one ([`crate::pack::is_local`];
+    ///   plan 1C, task P6a, which gave the build its first kind, and the review of
+    ///   it), or no config at all, whose executor has no
     ///   backend. Such an executor is over the inventory that knows no model. Which
     ///   backends are local is read from the config's tables, not from the kinds
     ///   given ([`Over::kinds`]), so the two may be given in either order.

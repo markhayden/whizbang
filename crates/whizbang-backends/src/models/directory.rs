@@ -64,6 +64,18 @@ pub(super) fn is_linked(error: &io::Error) -> bool {
     error.get_ref().is_some_and(|inner| inner.is::<Linked>())
 }
 
+/// The error a look answers when one of these folders is a link: the same refusal as
+/// [`ModelsDir::unlinked`]'s, for folders below the layout's five (an installation's
+/// folder and its `files/`, from the review of task P6b of checkpoint 1C).
+pub(super) fn refuse_links(fs: &dyn Fs, folders: &[&Path]) -> io::Result<()> {
+    for folder in folders {
+        if fs.is_link(folder)? {
+            return Err(io::Error::other(Linked));
+        }
+    }
+    Ok(())
+}
+
 /// One models directory. What `{:?}` prints holds no path.
 #[derive(Clone)]
 pub struct ModelsDir {

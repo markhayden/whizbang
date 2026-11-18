@@ -22,8 +22,17 @@ sha2.workspace = true
 rustls.workspace = true
 webpki-roots.workspace = true
 
+[features]
+# What only a test may build: `Launch::testing`, a launch of the pack's fakes. Only the
+# tests' builds turn it on, by the development dependencies below and in the crate
+# `whizbang`; the binary `just smoke` builds (`-p whizbang`, no development
+# dependency) is built without it (plan 1C, the review of task P6a).
+fakes = []
+
 [dev-dependencies]
 whizbang-testkit.workspace = true
+# This crate itself, with the feature `fakes`, for its own tests.
+whizbang-backends = { path = ".", features = ["fakes"] }
 
 [lints]
 workspace = true
