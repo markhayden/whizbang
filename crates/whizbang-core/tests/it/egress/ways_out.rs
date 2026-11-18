@@ -18,8 +18,9 @@ use whizbang_core::contract::{
 };
 use whizbang_core::egress::{
     ACCOUNT_LIMIT, ADDRESS_MAX_BYTES, Account, Address, Classes, Credential, DataClass,
-    DownloadRequest, Downloaded, Downloader, NotAllowed, Origin, Outgoing, PIECES_LIMIT, Piece,
-    ProbeRequest, Probed, Prober, REPLY_MAX_BYTES, Recipient, Reply, Sender, UPSTREAM_LIMIT,
+    DownloadRequest, Downloaded, Downloader, FIELDS_LIMIT, NotAllowed, Origin, Outgoing,
+    PIECES_LIMIT, Piece, ProbeRequest, Probed, Prober, REPLY_MAX_BYTES, Recipient, Reply, Sender,
+    UPSTREAM_LIMIT,
 };
 
 /// A value no test would write by accident, told to the constructors as a secret.
@@ -561,13 +562,90 @@ fn what_is_sent_is_an_address_bounded_pieces_and_a_credential_of_its_own_origin(
     assert_eq!(
         format!("{carried:?}"),
         "Outgoing { to: Address(https://api.example.com, 8 more bytes), pieces: \
-         [Piece(prompts, 10 bytes)], credential: Some(Credential(x-api-key for \
+         [Piece(prompts, 10 bytes)], fields: [], credential: Some(Credential(x-api-key for \
          https://api.example.com)) }"
     );
     assert_eq!(
         format!("{:?}", Piece::unclassed(vec![0; 3])),
         "Piece(no class, 3 bytes)"
     );
+}
+
+#[test]
+fn a_request_names_fields_of_its_own_that_are_constants_and_none_the_sender_writes() {
+    let to = Address::of("https://api.example.com/v1", &Secrets::none()).unwrap();
+    let outgoing = Outgoing::new(to, Vec::new()).unwrap();
+    let named = outgoing
+        .clone()
+        .with_fields(&[
+            ("content-type", "application/json"),
+            ("x-version", "2023-06-01"),
+        ])
+        .unwrap();
+    assert_eq!(
+        named.fields(),
+        [
+            ("content-type", "application/json"),
+            ("x-version", "2023-06-01")
+        ]
+    );
+    assert!(outgoing.fields().is_empty());
+    let refused = |fields: &'static [(&'static str, &'static str)]| {
+        outgoing
+            .clone()
+            .with_fields(fields)
+            .map(|_| ())
+            .unwrap_err()
+    };
+    // A field the sender writes itself, in any case; a name that is not a token; a
+    // value that could end a line or is empty; one name twice; and one too many.
+    for own in [
+        "Host",
+        "content-length",
+        "Transfer-Encoding",
+        "CONNECTION",
+        "expect",
+    ] {
+        let fields: &'static [(&'static str, &'static str)] = Box::leak(Box::new([(own, "x")]));
+        assert_eq!(refused(fields), NotAllowed::Name, "{own}");
+    }
+    assert_eq!(refused(&[("a b", "x")]), NotAllowed::Name);
+    assert_eq!(refused(&[("a:b", "x")]), NotAllowed::Name);
+    assert_eq!(refused(&[("x-a", "1\r\nx-b: 2")]), NotAllowed::Name);
+    assert_eq!(refused(&[("x-a", "")]), NotAllowed::Name);
+    assert_eq!(refused(&[("x-a", " padded")]), NotAllowed::Name);
+    assert_eq!(refused(&[("x-a", "1"), ("X-A", "2")]), NotAllowed::Twice);
+    let nine: &'static [(&'static str, &'static str)] = &[
+        ("a", "1"),
+        ("b", "1"),
+        ("c", "1"),
+        ("d", "1"),
+        ("e", "1"),
+        ("f", "1"),
+        ("g", "1"),
+        ("h", "1"),
+        ("i", "1"),
+    ];
+    assert_eq!(nine.len(), FIELDS_LIMIT + 1);
+    assert_eq!(refused(nine), NotAllowed::TooMany);
+    assert!(outgoing.with_fields(&nine[..FIELDS_LIMIT]).is_ok());
+}
+
+#[test]
+fn only_a_piece_the_encoder_made_of_a_picture_is_a_picture() {
+    let encoded = Piece::picture(DataClass::SourceImages, &picture()).unwrap();
+    assert!(encoded.is_picture());
+    assert_eq!(
+        format!("{encoded:?}"),
+        format!(
+            "Piece(source_images, {} bytes, a picture)",
+            encoded.bytes().len()
+        )
+    );
+    // The same bytes, put in by hand, are not.
+    let by_hand = Piece::of(DataClass::SourceImages, encoded.bytes().to_vec());
+    assert!(!by_hand.is_picture());
+    assert!(!Piece::unclassed(encoded.bytes().to_vec()).is_picture());
 }
 
 /// A sender that keeps what it was handed and answers with a redirect.

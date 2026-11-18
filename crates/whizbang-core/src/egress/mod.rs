@@ -35,8 +35,8 @@ pub use recipient::{
     UPSTREAM_LIMIT,
 };
 pub use ways::{
-    DownloadRequest, Downloaded, Downloader, Outgoing, PIECES_LIMIT, Piece, ProbeRequest, Probed,
-    Prober, REPLY_MAX_BYTES, Reply, Sender,
+    DownloadRequest, Downloaded, Downloader, FIELDS_LIMIT, Outgoing, PIECES_LIMIT, Piece,
+    ProbeRequest, Probed, Prober, REPLY_MAX_BYTES, Reply, Sender,
 };
 
 /// Why something that names a way out could not be made. Each is a kind and a sentence

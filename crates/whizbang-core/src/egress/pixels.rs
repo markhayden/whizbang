@@ -266,7 +266,7 @@ impl Piece {
     /// [`PIXEL_LIMIT`](crate::capability::PIXEL_LIMIT) is.
     pub fn picture(class: DataClass, picture: &Picture) -> Result<Piece, NotAllowed> {
         write(picture.width(), picture.height(), picture.rgba())
-            .map(|bytes| Piece::of(class, bytes))
+            .map(|bytes| Piece::of_picture(class, bytes))
             .ok_or(NotAllowed::TooLong)
     }
 }

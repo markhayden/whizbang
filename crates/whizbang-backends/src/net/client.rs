@@ -1,9 +1,11 @@
-//! The download client: one `GET` over TLS to one address, answered once ([`super`]).
-//! It implements [`Downloader`] and follows nothing: an answer that points elsewhere is
-//! handed back as [`Downloaded::Moved`], for the checked downloader around it to ask
-//! its questions of. It is not public: [`super::downloader`] makes it inside a
-//! [`CheckedDownloader`](whizbang_core::egress::CheckedDownloader), and nothing else
-//! outside this crate can make one.
+//! The client: one request over TLS to one address, answered once ([`super`]). It
+//! implements [`Downloader`], a `GET`, and [`Sender`], a `POST`, and follows nothing:
+//! an answer that points elsewhere is handed back as [`Downloaded::Moved`] or
+//! [`Reply::moved`], for the gate around it to ask its questions of. It is not public:
+//! [`super::downloader`] makes it inside a
+//! [`CheckedDownloader`](whizbang_core::egress::CheckedDownloader), [`super::ways`]
+//! makes it the sender of ways out with the check behind a send over it, and nothing
+//! else outside this crate can make one.
 
 use std::io;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
@@ -13,9 +15,12 @@ use std::time::Duration;
 use rustls::client::Resumption;
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, RootCertStore};
-use whizbang_core::capability::{Fault, FaultKind};
+use whizbang_core::capability::{Bounds, Fault, FaultKind};
 use whizbang_core::contract::{Cancellation, Clock, Secrets};
-use whizbang_core::egress::{Address, DownloadRequest, Downloaded, Downloader, NotAllowed};
+use whizbang_core::egress::{
+    Address, DownloadRequest, Downloaded, Downloader, NotAllowed, Outgoing, REPLY_MAX_BYTES, Reply,
+    Sender,
+};
 
 use super::http;
 use super::wire::{CANCELLED, Timing, Wire};
@@ -127,7 +132,12 @@ impl Client {
 
     /// Connects to one of the host's addresses, within the limit to connect for them
     /// all. Every fault here says that nothing was sent.
-    fn connect(&self, address: &Address, cancellation: &Cancellation) -> Result<TcpStream, Fault> {
+    fn connect(
+        &self,
+        address: &Address,
+        timing: Timing,
+        cancellation: &Cancellation,
+    ) -> Result<TcpStream, Fault> {
         let origin = address.origin();
         let not_sent = |kind, why| Fault::new(kind, why).not_sent();
         let addresses: Vec<SocketAddr> = (origin.host(), origin.port())
@@ -145,8 +155,7 @@ impl Client {
                 return Err(not_sent(FaultKind::Cancelled, CANCELLED));
             }
             let spent = self.clock.now().saturating_duration_since(start);
-            let Some(left) = self
-                .timing
+            let Some(left) = timing
                 .connect
                 .checked_sub(spent)
                 .filter(|left| !left.is_zero())
@@ -196,14 +205,28 @@ impl Client {
     }
 }
 
-impl Downloader for Client {
-    fn download(
-        &self,
-        request: &DownloadRequest,
-        cancellation: &Cancellation,
-        sink: &mut dyn FnMut(&[u8]) -> bool,
-    ) -> Result<Downloaded, Fault> {
-        let address = request.from();
+/// An answer's head, read, and the bytes of the body that came with it.
+struct Answered<'a> {
+    wire: Wire<'a>,
+    head: http::Head,
+    /// The bytes after the head that came with it: the start of the body.
+    rest: Vec<u8>,
+}
+
+impl Client {
+    /// One request to one address: the checks before anything leaves, the connection,
+    /// the handshake, the request, and the head of the answer. `request` is written
+    /// whole and then overwritten with zeros before it is let go, since it may hold a
+    /// credential's value (`http::request` and `http::post` make it in one
+    /// allocation, so no other copy of it is left behind).
+    fn exchange<'a>(
+        &'a self,
+        address: &Address,
+        request: Vec<u8>,
+        timing: Timing,
+        cancellation: &'a Cancellation,
+    ) -> Result<Answered<'a>, Fault> {
+        let mut request = Zeroed(request);
         let origin = address.origin();
         // Before the socket connects nothing has left, so each fault says so.
         if origin.scheme() != "https" {
@@ -223,20 +246,13 @@ impl Downloader for Client {
         let Ok(tls) = ClientConnection::new(config.clone(), name) else {
             return Err(Fault::new(FaultKind::Unavailable, NO_TLS).not_sent());
         };
-        let socket = self.connect(address, cancellation)?;
+        let socket = self.connect(address, timing, cancellation)?;
 
         // From here a byte may have left: every fault is unresolved.
-        let mut wire = Wire::new(socket, tls, &*self.clock, self.timing, cancellation)?;
+        let mut wire = Wire::new(socket, tls, &*self.clock, timing, cancellation)?;
         wire.handshake()?;
-        // The request holds the credential's value: it is written, and then its bytes
-        // are overwritten with zeros before they are let go (`http::request` makes it
-        // in one allocation, so no other copy of it is left behind).
-        let mut written = http::request(address, request.credential());
-        let sent = wire.send(&written);
-        written.fill(0);
-        std::hint::black_box(&mut written);
-        drop(written);
-        sent?;
+        wire.send(&request.0)?;
+        request.0.fill(0);
 
         let mut buffer = vec![0; PIECE_MAX_BYTES];
         let mut head = Vec::new();
@@ -253,7 +269,37 @@ impl Downloader for Client {
             scanned = head.len();
             head.extend_from_slice(&buffer[..read]);
         };
-        let answer = http::head(&head[..end])?;
+        let rest = head.split_off(end);
+        let head = http::head(&head)?;
+        Ok(Answered { wire, head, rest })
+    }
+}
+
+/// A request's bytes, overwritten with zeros when they are let go, on every path: they
+/// may hold a credential's value.
+struct Zeroed(Vec<u8>);
+
+impl Drop for Zeroed {
+    fn drop(&mut self) {
+        self.0.fill(0);
+        std::hint::black_box(&mut self.0);
+    }
+}
+
+impl Downloader for Client {
+    fn download(
+        &self,
+        request: &DownloadRequest,
+        cancellation: &Cancellation,
+        sink: &mut dyn FnMut(&[u8]) -> bool,
+    ) -> Result<Downloaded, Fault> {
+        let address = request.from();
+        let written = http::request(address, request.credential());
+        let Answered {
+            mut wire,
+            head: answer,
+            rest,
+        } = self.exchange(address, written, self.timing, cancellation)?;
         let answered = |kind, why| Err(Fault::new(kind, why).unresolved());
         match answer.status {
             200 => {}
@@ -269,8 +315,9 @@ impl Downloader for Client {
 
         // The body: its stated length, and never more than the request asked for.
         let wanted = answer.length()?.min(request.most_bytes());
+        let mut buffer = vec![0; PIECE_MAX_BYTES];
         let mut handed: u64 = 0;
-        let mut piece = head.split_off(end);
+        let mut piece = rest;
         loop {
             let room = usize::try_from(wanted - handed).unwrap_or(usize::MAX);
             piece.truncate(room);
@@ -294,5 +341,63 @@ impl Downloader for Client {
             piece.clear();
             piece.extend_from_slice(&buffer[..read]);
         }
+    }
+}
+
+/// What the sender says of an answer whose body is over [`REPLY_MAX_BYTES`].
+pub(crate) const REPLY_TOO_LARGE: &str = "the answer's body is over the most a reply holds";
+/// What it says of a send whose run's deadline has passed before anything left.
+pub(crate) const PAST_DEADLINE: &str = "the run's deadline passed before the request was sent";
+
+impl Sender for Client {
+    /// One `POST` of the request's pieces to its address ([`http::post`]), answered
+    /// once: the answer's status and its body, of the length its one
+    /// `Content-Length` states and at most [`REPLY_MAX_BYTES`], whatever the status;
+    /// or, for `301`, `302`, `303`, `307` and `308`, the address its one `Location`
+    /// names, which is not asked (ADR 0019, "Every hop": nothing is followed by the
+    /// sender). The limit between two reads is the sender's, and no later than the
+    /// run's deadline; the cancellation is the run's.
+    fn send(&self, outgoing: &Outgoing, bounds: &Bounds) -> Result<Reply, Fault> {
+        let mut timing = self.timing;
+        if let Some(deadline) = bounds.deadline() {
+            let left = deadline.saturating_duration_since(self.clock.now());
+            if left.is_zero() {
+                return Err(Fault::new(FaultKind::TimedOut, PAST_DEADLINE).not_sent());
+            }
+            timing.connect = timing.connect.min(left);
+            timing.between_reads = timing.between_reads.min(left);
+        }
+        let address = outgoing.to();
+        let written = http::post(outgoing);
+        let cancellation = bounds.cancellation();
+        let Answered {
+            mut wire,
+            head: answer,
+            rest,
+        } = self.exchange(address, written, timing, cancellation)?;
+        if matches!(answer.status, 301 | 302 | 303 | 307 | 308) {
+            let to = self.moved_to(address, answer.location()?)?;
+            return Ok(Reply::moved(to));
+        }
+        let length = answer.length()?;
+        let Some(length) = usize::try_from(length)
+            .ok()
+            .filter(|length| *length <= REPLY_MAX_BYTES)
+        else {
+            return Err(Fault::new(FaultKind::TooLarge, REPLY_TOO_LARGE).unresolved());
+        };
+        let mut body = rest;
+        body.truncate(length);
+        let mut buffer = vec![0; PIECE_MAX_BYTES];
+        while body.len() < length {
+            let read = wire.read(&mut buffer)?;
+            if read == 0 {
+                return Err(Fault::new(FaultKind::Malformed, super::wire::CUT).unresolved());
+            }
+            let room = length - body.len();
+            body.extend_from_slice(&buffer[..read.min(room)]);
+        }
+        Reply::answered(answer.status, body)
+            .map_err(|_| Fault::new(FaultKind::TooLarge, REPLY_TOO_LARGE).unresolved())
     }
 }

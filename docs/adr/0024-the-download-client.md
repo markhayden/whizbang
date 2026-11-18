@@ -9,6 +9,8 @@ rate, and a ceiling of reads of TLS alone is added ("Limits"); the request's byt
 zeroed once written; the end of a head is looked for in the new bytes only; the test
 kit's listener serves 32 connections at most. Added: what a name resolves to, and the
 tests of a name, a twenty-digit length and a server that sends TLS alone.
+Amended: 2026-11-17, by plan 2A, task S1 (its first pull request). Added: the sender
+("The sender"), the same client making one `POST`; nothing of the download changed.
 Spec: section 10, "Egress"
 
 ## Context
@@ -253,6 +255,47 @@ thread made anywhere in the workspace but in two allowed places (`clippy.toml`).
 installs an entry of two files from a listener, through `CheckedDownloader::new(client,
 entry.origins())`, one file moved once within the origin and followed by the gate, into a
 models directory opened by the opening that asks whose it is.
+
+### The sender
+
+Plan 2A, task S1, its first pull request. The same client implements `Sender`
+(ADR 0012), over the same TLS, connection and limits of polls, with the same
+statement of how far a request got (`not_sent` only before its socket connects).
+
+- **The one way to it** is `whizbang_backends::net::ways(store_root, secrets)`, which
+  answers the executor's `Ways` with the client as their sender and
+  `SendCheck::new().keeping_out(root)` over it: the root as an absolute path, and its
+  canonical spelling too when that differs (ADR 0019, "For later tasks"). The ways
+  approve no recipient; a run sends under its snapshot's policy. `wiring::runner` gives
+  them to the binary's executor, over the root of the store it writes to
+  (`wired::the_binarys_sender_refuses_a_file_from_inside_the_store_root`). No bare
+  sender is public (`public::the_only_public_way_to_the_client_is_a_checked_downloader`,
+  which lists every public item of the module).
+- **One `POST` with a body of known length.** The head is the `GET`'s fixed fields, the
+  request's own fields (`Outgoing::with_fields`: constants of the code that sends, at
+  most 8, none of the fields the client writes itself), the credential's field when the
+  executor attached one, and `Content-Length`. The body is the request's pieces in
+  order, nothing between them: a piece made by `Piece::picture` (`Piece::is_picture`)
+  as the base64 of exactly its bytes, the bytes the check behind a send looked at, and
+  every other piece as it is. Head and body are made in one allocation of their exact
+  size and zeroed once written, as the `GET` is
+  (`http::tests::a_post_is_its_head_its_own_fields_the_credential_its_length_and_its_pieces_in_order`,
+  `sender::a_post_carries_its_body_once_and_follows_no_redirect`).
+- **Every final status is answered** with its status and its body, by its one
+  `Content-Length`, at most `REPLY_MAX_BYTES` (16 MiB); what a status means is the
+  adapter's to say. A `301`, `302`, `303`, `307` or `308` comes back as `Reply::moved`
+  with the address of its `Location`, which is not asked: a second listener sees no
+  connection (`sender::a_post_carries_its_body_once_and_follows_no_redirect`). The same
+  refusals as a download's head hold: no interim status, no transfer coding, chunked
+  included, no compression.
+- **Its limits.** To connect, `CONNECT_LIMIT`; from the request's last byte to the
+  answer's first, and between two bytes of the answer, `ANSWER_WAIT_LIMIT` (600 s),
+  since a model's answer comes whole once it has written its turn; each no later than
+  the run's deadline, and a deadline that has passed before the socket connects is
+  `not_sent`. No least rate: a model may write for minutes before the first byte.
+- **How far a request got** (`sender::a_request_that_never_connected_is_not_sent_and_one_cut_after_writing_is_unresolved`):
+  refused to connect, not `https`, cancelled, or past its deadline, `not_sent`, and the
+  listener sees nothing; connected, written whole and cut with no answer, unresolved.
 
 ## Consequences
 

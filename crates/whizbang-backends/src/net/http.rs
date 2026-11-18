@@ -1,9 +1,9 @@
-//! The HTTP/1.1 the download client speaks: the request it writes, and the head of an
-//! answer, read and refused by the rules of the module's top ([`super`]). Nothing here
-//! touches a socket; [`super::wire`] does.
+//! The HTTP/1.1 the client speaks: the requests it writes, a `GET` and a `POST`, and
+//! the head of an answer, read and refused by the rules of the module's top
+//! ([`super`]). Nothing here touches a socket; [`super::wire`] does.
 
 use whizbang_core::capability::{Fault, FaultKind};
-use whizbang_core::egress::{Address, Credential};
+use whizbang_core::egress::{Address, Credential, Outgoing, Piece};
 
 /// The most bytes of one line of an answer's head, its line ending included.
 pub(crate) const LINE_MAX_BYTES: usize = 8 * 1024;
@@ -24,6 +24,60 @@ pub(crate) const FIELDS_LIMIT: usize = 100;
 /// copied once, into what is returned, and into no buffer that grew and was let go:
 /// whoever writes it overwrites it then (`client.rs`).
 pub(crate) fn request(address: &Address, credential: Option<&Credential>) -> Vec<u8> {
+    written(b"GET ", address, &[], credential, None)
+}
+
+/// The request that sends `outgoing`: a `POST` of the address's path and query, with
+/// the same fixed fields as a `GET`, the request's own fields
+/// ([`Outgoing::fields`](whizbang_core::egress::Outgoing::fields), whose names and
+/// values the type held to a token and to printable ASCII), its credential's field,
+/// and a `Content-Length` of its body; then the body, which is each piece in turn: a
+/// picture ([`Piece::is_picture`]) as the base64 of exactly its bytes, and every other
+/// piece as it is. Nothing else is written between, before or after them.
+///
+/// Made in one allocation of its exact size, as [`request`] is.
+pub(crate) fn post(outgoing: &Outgoing) -> Vec<u8> {
+    written(
+        b"POST ",
+        outgoing.to(),
+        outgoing.fields(),
+        outgoing.credential(),
+        Some(outgoing.pieces()),
+    )
+}
+
+/// How many bytes the base64 of `bytes` bytes is, with its padding.
+pub(crate) fn base64_len(bytes: usize) -> usize {
+    bytes.div_ceil(3) * 4
+}
+
+const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/// Writes the base64 of `bytes` (the standard alphabet, with padding) onto `into`.
+pub(crate) fn base64_onto(bytes: &[u8], into: &mut Vec<u8>) {
+    let letter = |six: u32| BASE64[(six & 63) as usize];
+    for group in bytes.chunks(3) {
+        let at = |i: usize| u32::from(group.get(i).copied().unwrap_or(0));
+        let all = (at(0) << 16) | (at(1) << 8) | at(2);
+        into.push(letter(all >> 18));
+        into.push(letter(all >> 12));
+        into.push(if group.len() > 1 {
+            letter(all >> 6)
+        } else {
+            b'='
+        });
+        into.push(if group.len() > 2 { letter(all) } else { b'=' });
+    }
+}
+
+/// The bytes of a request: the method, the head, and a body when there is one.
+fn written(
+    method: &[u8],
+    address: &Address,
+    fields: &[(&str, &str)],
+    credential: Option<&Credential>,
+    body: Option<&[Piece]>,
+) -> Vec<u8> {
     let rest = match address.rest() {
         "" => "/",
         rest => rest,
@@ -34,8 +88,19 @@ pub(crate) fn request(address: &Address, credential: Option<&Credential>) -> Vec
     } else {
         format!(":{}", origin.port())
     };
+    let piece_len = |piece: &Piece| {
+        if piece.is_picture() {
+            base64_len(piece.bytes().len())
+        } else {
+            piece.bytes().len()
+        }
+    };
+    let length = body.map(|pieces| {
+        let length: usize = pieces.iter().map(piece_len).sum();
+        format!("Content-Length: {length}\r\n")
+    });
     let parts: [&[u8]; 6] = [
-        b"GET ",
+        method,
         rest.as_bytes(),
         b" HTTP/1.1\r\nHost: ",
         origin.host().as_bytes(),
@@ -43,6 +108,9 @@ pub(crate) fn request(address: &Address, credential: Option<&Credential>) -> Vec
         b"\r\nUser-Agent: whizbang\r\nAccept: */*\r\nAccept-Encoding: identity\r\n\
           Connection: close\r\n",
     ];
+    let own = fields
+        .iter()
+        .flat_map(|(name, value)| [name.as_bytes(), b": ", value.as_bytes(), b"\r\n"]);
     let carried: [&[u8]; 4] = match credential {
         Some(credential) => [
             credential.header().as_bytes(),
@@ -52,12 +120,26 @@ pub(crate) fn request(address: &Address, credential: Option<&Credential>) -> Vec
         ],
         None => [b"", b"", b"", b""],
     };
-    let end: [&[u8]; 1] = [b"\r\n"];
-    let all = parts.iter().chain(&carried).chain(&end);
-    let length = all.clone().map(|part| part.len()).sum();
+    let end: [&[u8]; 2] = [length.as_deref().unwrap_or_default().as_bytes(), b"\r\n"];
+    let head = || {
+        parts
+            .into_iter()
+            .chain(own.clone())
+            .chain(carried)
+            .chain(end)
+    };
+    let body_length: usize = body.map_or(0, |pieces| pieces.iter().map(piece_len).sum());
+    let length = head().map(<[u8]>::len).sum::<usize>() + body_length;
     let mut text = Vec::with_capacity(length);
-    for part in all {
+    for part in head() {
         text.extend_from_slice(part);
+    }
+    for piece in body.unwrap_or_default() {
+        if piece.is_picture() {
+            base64_onto(piece.bytes(), &mut text);
+        } else {
+            text.extend_from_slice(piece.bytes());
+        }
     }
     text
 }
@@ -286,6 +368,69 @@ mod tests {
 
     fn address(text: &str) -> Address {
         Address::of(text, &Secrets::none()).unwrap()
+    }
+
+    fn base64(bytes: &[u8]) -> String {
+        let mut out = Vec::new();
+        base64_onto(bytes, &mut out);
+        assert_eq!(out.len(), base64_len(bytes.len()));
+        String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn base64_is_the_standard_alphabet_with_its_padding() {
+        // The vectors of RFC 4648, section 10.
+        let vectors = [
+            ("", ""),
+            ("f", "Zg=="),
+            ("fo", "Zm8="),
+            ("foo", "Zm9v"),
+            ("foob", "Zm9vYg=="),
+            ("fooba", "Zm9vYmE="),
+            ("foobar", "Zm9vYmFy"),
+        ];
+        for (plain, encoded) in vectors {
+            assert_eq!(base64(plain.as_bytes()), encoded, "{plain}");
+        }
+        assert_eq!(base64(&[0xfb, 0xff, 0xbf]), "+/+/");
+    }
+
+    #[test]
+    fn a_post_is_its_head_its_own_fields_the_credential_its_length_and_its_pieces_in_order() {
+        use whizbang_core::capability::Picture;
+        use whizbang_core::egress::DataClass;
+        use whizbang_core::identity::CanonicalPixels;
+        let pixels = CanonicalPixels::from_rgba(1, 1, vec![1, 2, 3, 255]).unwrap();
+        let picture =
+            Piece::picture(DataClass::SourceImages, &Picture::new(pixels).unwrap()).unwrap();
+        let encoded = base64(picture.bytes());
+        let pieces = vec![
+            Piece::of(DataClass::Prompts, b"{\"a\":\"".to_vec()),
+            picture,
+            Piece::of(DataClass::Prompts, b"\"}".to_vec()),
+        ];
+        let to = address("https://127.0.0.1:8443/v1/messages");
+        let origin = Origin::of("https://127.0.0.1:8443", &Secrets::none()).unwrap();
+        let credential =
+            Credential::new(origin, "x-api-key", "made-up-value", &Secrets::none()).unwrap();
+        let outgoing = Outgoing::new(to, pieces)
+            .unwrap()
+            .with_fields(&[("content-type", "application/json"), ("x-version", "1")])
+            .unwrap()
+            .with_credential(credential)
+            .unwrap();
+        let written = post(&outgoing);
+        // Made in one allocation of its size: no larger buffer held the value first.
+        assert_eq!(written.capacity(), written.len());
+        let body = format!("{{\"a\":\"{encoded}\"}}");
+        let expected = format!(
+            "POST /v1/messages HTTP/1.1\r\nHost: 127.0.0.1:8443\r\nUser-Agent: whizbang\r\n\
+             Accept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\
+             content-type: application/json\r\nx-version: 1\r\n\
+             x-api-key: made-up-value\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        assert_eq!(String::from_utf8(written).unwrap(), expected);
     }
 
     #[test]

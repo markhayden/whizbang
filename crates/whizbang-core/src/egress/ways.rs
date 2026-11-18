@@ -18,13 +18,30 @@ pub const PIECES_LIMIT: usize = 64;
 /// The most bytes of a reply's body.
 pub const REPLY_MAX_BYTES: usize = 16 << 20;
 
-/// One part of what is sent: its bytes, and the class of data they are, when whoever
-/// put the part in stated one. What `{:?}` prints is the class and the size, never a
-/// byte.
+/// The most fields of its own a request names ([`Outgoing::with_fields`]).
+pub const FIELDS_LIMIT: usize = 8;
+
+/// The fields a sender writes itself, which a request may not name: compared without
+/// regard to case.
+const SENDERS_FIELDS: [&str; 8] = [
+    "host",
+    "user-agent",
+    "accept",
+    "accept-encoding",
+    "connection",
+    "content-length",
+    "transfer-encoding",
+    "expect",
+];
+
+/// One part of what is sent: its bytes, the class of data they are, when whoever put
+/// the part in stated one, and whether it is a picture as the encoder wrote it
+/// ([`Piece::picture`]). What `{:?}` prints is the class and the size, never a byte.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Piece {
     class: Option<DataClass>,
     bytes: Vec<u8>,
+    picture: bool,
 }
 
 impl Piece {
@@ -33,13 +50,35 @@ impl Piece {
         Piece {
             class: Some(class),
             bytes,
+            picture: false,
+        }
+    }
+
+    /// A piece of this class that is a picture as the encoder wrote it: made by
+    /// [`Piece::picture`] and nothing else.
+    pub(super) fn of_picture(class: DataClass, bytes: Vec<u8>) -> Piece {
+        Piece {
+            class: Some(class),
+            bytes,
+            picture: true,
         }
     }
 
     /// A piece whose class nobody stated. A recipient needs every class approved to be
     /// handed it.
     pub fn unclassed(bytes: Vec<u8>) -> Piece {
-        Piece { class: None, bytes }
+        Piece {
+            class: None,
+            bytes,
+            picture: false,
+        }
+    }
+
+    /// Whether the piece is a picture, made by [`Piece::picture`]: a sender that
+    /// writes a wire format of text writes such a piece as the base64 of its bytes,
+    /// exactly those, and every other piece as it is.
+    pub fn is_picture(&self) -> bool {
+        self.picture
     }
 
     /// The class that was stated, when one was.
@@ -55,17 +94,39 @@ impl Piece {
 impl fmt::Debug for Piece {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let class = self.class.map_or("no class", DataClass::name);
-        write!(f, "Piece({class}, {} bytes)", self.bytes.len())
+        let picture = if self.picture { ", a picture" } else { "" };
+        write!(f, "Piece({class}, {} bytes{picture})", self.bytes.len())
     }
 }
 
-/// What is sent to one address: pieces of data, and a credential when the address's
-/// origin is the one the credential is bound to.
+/// What is sent to one address: pieces of data, the fields of its own the request
+/// names, and a credential when the address's origin is the one the credential is
+/// bound to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outgoing {
     to: Address,
     pieces: Vec<Piece>,
+    fields: &'static [(&'static str, &'static str)],
     credential: Option<Credential>,
+}
+
+/// Whether a field's name is 1 to 64 letters, digits and hyphens.
+fn is_field_name(name: &str) -> bool {
+    (1..=64).contains(&name.len())
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+}
+
+/// Whether a field's value is 1 to 256 printable ASCII characters and spaces, with no
+/// space at either end.
+fn is_field_value(value: &str) -> bool {
+    (1..=256).contains(&value.len())
+        && value
+            .bytes()
+            .all(|byte| byte == b' ' || byte.is_ascii_graphic())
+        && !value.starts_with(' ')
+        && !value.ends_with(' ')
 }
 
 impl Outgoing {
@@ -77,8 +138,47 @@ impl Outgoing {
         Ok(Outgoing {
             to,
             pieces,
+            fields: &[],
             credential: None,
         })
+    }
+
+    /// The same, naming these fields of its own: a wire format's fixed fields, such as
+    /// the type of its body and the version of a provider's interface. They are
+    /// constants of the code that sends, never data: the type takes nothing else.
+    /// Refused: more than [`FIELDS_LIMIT`]; a name that is not 1 to 64 letters, digits
+    /// and hyphens, or that is one the sender writes itself (`Host`, `User-Agent`,
+    /// `Accept`, `Accept-Encoding`, `Connection`, `Content-Length`,
+    /// `Transfer-Encoding`, `Expect`), or one named twice; a value that is not 1 to
+    /// 256 printable ASCII characters and spaces with no space at either end.
+    pub fn with_fields(
+        mut self,
+        fields: &'static [(&'static str, &'static str)],
+    ) -> Result<Outgoing, NotAllowed> {
+        if fields.len() > FIELDS_LIMIT {
+            return Err(NotAllowed::TooMany);
+        }
+        for (at, (name, value)) in fields.iter().enumerate() {
+            let senders = SENDERS_FIELDS
+                .iter()
+                .any(|own| own.eq_ignore_ascii_case(name));
+            if !is_field_name(name) || senders || !is_field_value(value) {
+                return Err(NotAllowed::Name);
+            }
+            if fields[..at]
+                .iter()
+                .any(|(other, _)| other.eq_ignore_ascii_case(name))
+            {
+                return Err(NotAllowed::Twice);
+            }
+        }
+        self.fields = fields;
+        Ok(self)
+    }
+
+    /// The fields of its own the request names, in order.
+    pub fn fields(&self) -> &'static [(&'static str, &'static str)] {
+        self.fields
     }
 
     /// The same, carrying this credential. Refused when the credential is bound to
