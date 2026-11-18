@@ -121,6 +121,7 @@ fn cancelled_by(signal: &Cancellation) -> Limits {
     Limits {
         cancellation: signal.clone(),
         deadline: None,
+        ..Limits::none()
     }
 }
 
@@ -406,6 +407,7 @@ fn a_call_past_its_deadline_ends_as_timed_out_and_its_worker_is_restarted() {
     let limits = Limits {
         cancellation: Cancellation::new(),
         deadline: Some(clock.now() + Duration::from_secs(10)),
+        ..Limits::none()
     };
     let call = asked(&supervisor, request("fake-deaf"), limits);
     seen(&supervisor, |status| calling(status, "segment", 1));
@@ -428,6 +430,7 @@ fn a_call_past_its_deadline_ends_as_timed_out_and_its_worker_is_restarted() {
     let limits = Limits {
         cancellation: Cancellation::new(),
         deadline: Some(clock.now()),
+        ..Limits::none()
     };
     let unsent = failed(supervisor.call(request("fake-ok"), &limits));
     assert_eq!(unsent.fault.kind(), FaultKind::TimedOut);
@@ -784,6 +787,7 @@ fn a_cancelled_call_whose_deadline_comes_before_five_seconds_after_its_cancel_is
     let limits = Limits {
         cancellation: signal.clone(),
         deadline: Some(clock.now() + Duration::from_secs(2)),
+        ..Limits::none()
     };
     let call = asked(&supervisor, request("fake-deaf"), limits);
     seen(&supervisor, |status| calling(status, "segment", 1));

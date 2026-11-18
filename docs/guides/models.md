@@ -213,9 +213,28 @@ is not there, and the folders above it only when it is the one in the data folde
 `list` when the catalogue holds a model; `get` of a model the catalogue holds, that runs
 on this platform and whose adapter this build has; `remove` of a model the catalogue
 holds. With the catalogue this build ships, `list` and `remove` of `sam3` look for it
-and make nothing; `get sam3` makes it. No other command looks at it: this build has no
-kind of backend that runs a local model yet (task P6a), so nothing a config offers can
-ask for a model.
+and make nothing; `get sam3` makes it. A command that runs an action, such as `whizbang
+rascal grow`, opens it, and makes it where it is not, only under a config that has a
+local backend: one whose table names no `url`, as a backend of the kind `pack` is.
+
+A backend of the kind `pack` runs an installed model in the pack's worker, which
+`whizbang setup` installs into the same directory:
+
+```toml
+[backends.segment]
+kind = "pack"
+model = "sam3"
+
+[backends.segment.settings]
+threshold = "0.2"
+max_lifetime_s = 3600
+```
+
+Its settings are the model's, `threshold`, `pad` and `min_cover` (each a text of a
+number from 0 to 1) and `outline` (a text), and its own: `call_limit_s`, the most seconds
+one call may take, from 1 to 120 (120 when not given), and `max_lifetime_s`, the most
+seconds the worker lives, from 1 to 31,536,000 (a day when not given). Any other setting
+is refused, and the backend is not ready, with the reason.
 
 Where the directory is, and the least rate of a download, are not part of what a run
 means: moving the directory changes no config's digest, so a run sent again under its

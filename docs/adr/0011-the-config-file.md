@@ -94,6 +94,10 @@ where its token is, the Hub's sign-in or a variable of the env file; where the b
 reads the sign-in, which of the Hub's variables it follows and why; what it takes from
 the file, and what it refuses; and that a variable a token is named in is one the
 config names, read from the env file as a backend's key is.
+Amended: 2026-11-17, a sixteenth note, with task P6a of checkpoint 1C. Added: "The kind
+`pack`": the first kind the binary registers, its table and its settings, the model's
+and its own, each with its rule and the words of its refusal. Changed in "Kinds": the
+sentence that said the shipped binary registers none.
 
 ## Context
 
@@ -856,6 +860,7 @@ name, and a build has 64 at most. What is given as a name and is none is refused
 shown (`roster::a_kind_is_registered_once_by_a_name_and_a_build_has_no_more_than_its_bound`).
 The core names no kind, and the shipped binary registers none: no network client is
 built at this checkpoint. The test kit has a fake (`whizbang_testkit::kinds::FakeKind`).
+(Changed by task P6a of checkpoint 1C: the binary registers one kind, `pack`, below.)
 
 A kind is shown one backend at a time (`Kind::make`, of a `Table`): the capability,
 the name, the backend's table, and the credentials that table names. It makes the
@@ -898,6 +903,44 @@ inventory, and a backend that names a recipient and declares one is handed to no
 (ADR 0015, "An inventory", its limits). Nothing refuses such a kind when it is
 registered: the rule is the kind's to keep, and a provider's own digest of a model is
 written another way, with a prefix of the kind's.
+
+### The kind `pack`
+
+Added with task P6a of checkpoint 1C (`whizbang::pack`; plan 1C, D4 and D7). The first
+kind the binary registers (`wiring::kinds`): a local segmenter whose model is answered
+by the pack's worker, through the one supervisor of the process. Its table:
+
+- **The capability `segment`, and no other.** A table under `fill` or `judge` is refused.
+- **`model`, required:** a model's name as the models directory has one (ADR 0017). The
+  model's features are what the entry for it in the catalogue the wiring is over states
+  (ADR 0017, "The catalogue"); a model that catalogue does not hold is refused, since
+  there is nothing to declare.
+- **No `url`, no `provider`, no `key_env` and no `token_env`.** A backend of the kind is
+  local: it declares no recipient and no price, so a call to it may cost nothing and is
+  admitted without the ledger (plan 1C, D16), and nothing of it leaves the machine.
+- **Its settings** (`settings`), and no other:
+
+| Setting | Is | Rule | When not given |
+|---|---|---|---|
+| `threshold`, `pad`, `min_cover` | A model's setting: rascal's adapters took these (`docs/carry-over.md`) | A text of a number from 0 to 1, digits with one point at most, as `"0.2"`: a setting is never a number with a fraction | Not sent; the adapter's own |
+| `outline` | A model's setting, rascal's rule for an outline | A text | Not sent; the adapter's own |
+| `call_limit_s` | The kind's limit for a call (D7) | A whole number of seconds from 1 to 120, the supervisor's own limit for a call | 120 |
+| `max_lifetime_s` | The lifetime, `--max-lifetime-s`, of a worker a request of the backend starts | A whole number of seconds from 1 to 31,536,000, a year, the most the worker takes | 86,400, a day |
+
+The model's settings travel in its `load` (ADR 0020) and are no field of a call; a text
+of one is also held to the protocol's rule for a setting's text (printable ASCII, no
+space at an end, no `/` and no `\`), so that no `load` is refused when it is written. The
+kind's own two are not sent: the limit of a call bounds its `segment`, and a worker
+already running keeps the lifetime it was started with. Each refusal is a constant of
+the kind's code, and the reason a call is given ends with it
+(`pack::a_setting_the_kind_does_not_know_is_refused_when_the_config_is_read`). The table
+is shown to the kind at each reading of the config, so a setting is refused where the
+config is read for a call, before any worker is started: the reader itself takes the
+file, since what a kind's settings are is the kind's.
+
+Every test that starts a worker through the wiring sets `max_lifetime_s`, so that a
+worker nobody waits for ends by itself
+(`pack::a_worker_started_through_the_wiring_is_given_the_lifetime_its_config_sets`).
 
 ### What a config offers
 

@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use whizbang::pack::OneWorker;
 use whizbang::wiring::{self, Models, Over, Said};
 use whizbang_backends::models::{
     Catalogue, CatalogueFile, Entry, EntryParts, FileName, Installations, Licence, ModelName,
@@ -155,7 +156,7 @@ impl config::Kind for Shared {
 
 /// The kinds of this build with the fake kind registered beside them.
 pub fn kinds_with(fakes: &Arc<Fakes>) -> Kinds {
-    let mut kinds = wiring::kinds();
+    let mut kinds = wiring::kinds(&OneWorker::installed());
     kinds.register(Arc::new(Shared(fakes.clone()))).unwrap();
     kinds
 }
@@ -516,15 +517,20 @@ fn with_no_config_the_binarys_executor_is_under_the_empty_config_and_a_call_with
 #[test]
 fn a_backend_of_a_kind_this_build_does_not_have_is_not_ready_through_the_binarys_wiring_and_says_why()
  {
-    // The build registers no kind (`wiring::kinds`), so a backend a config names is
-    // offered and is not ready, with the reason; nothing answers in its place.
+    // The build registers one kind, `pack` (`wiring::kinds`, task P6a of plan 1C), so
+    // a backend of any other kind a config names is offered and is not ready, with
+    // the reason; nothing answers in its place.
     let world = World::new("wired-no-kind");
     let config = "[backends.fill]\nkind = \"fake\"\nmodel = \"paint-1\"\n";
     std::fs::write(world.config_path(), config).unwrap();
-    assert!(wiring::kinds().is_empty());
+    let worker = OneWorker::installed();
+    let kinds = wiring::kinds(&worker);
+    assert_eq!(kinds.len(), 1);
+    assert!(kinds.get("pack").is_some() && kinds.get("fake").is_none());
     let over = Over::nothing()
         .config(Some(&world.config_path()))
-        .kinds(wiring::kinds());
+        .kinds(kinds)
+        .pack(worker);
     let executor = world.runner(&over);
     let why = not_ready(executor.submit(&Call::new("paints")));
     assert_eq!(
@@ -1743,9 +1749,12 @@ fn the_models_directory_is_the_flags_then_the_configs_then_the_platforms() {
     let (other, third) = (world.beside("other"), world.beside("third"));
     let ready = |found: Installed| matches!(found, Installed::Ready(_));
     let absent = Installed::NotReady(Unready::NotInstalled);
+    // Each config has a local backend: a config with none opens no directory (task
+    // P6a), whichever of the three names one.
     let written = |dir: Option<&Path>| {
         let dir = dir.map(|dir| format!("[models]\ndir = '{}'\n", dir.to_str().unwrap()));
-        std::fs::write(world.config_path(), dir.unwrap_or_default()).unwrap();
+        let text = format!("{}{}", local(MODEL), dir.unwrap_or_default());
+        std::fs::write(world.config_path(), text).unwrap();
     };
     // What says where the platform's is counts each time it is asked: it is asked
     // only when a directory is to be opened and neither of the others named one.
@@ -1840,10 +1849,20 @@ fn the_models_directory_is_the_flags_then_the_configs_then_the_platforms() {
     assert!(std::fs::read_dir(&open).unwrap().next().is_none());
 
     // Where no model could be asked for, no directory is opened or made: under a
-    // catalogue that holds none; under the kinds this build has, which are none, with
-    // the catalogue it ships (task N5); and for a command that names neither a config
-    // nor a directory. Where the platform's is, is not even asked: that is every
-    // command of the binary but `whizbang models` today, whatever it names.
+    // catalogue that holds none; under a config that has no local backend, with the
+    // kinds this build has and the catalogue it ships (tasks N5 and P6a); and for a
+    // command that names neither a config nor a directory. Where the platform's is, is
+    // not even asked.
+    // The kinds given after the directory: it is opened all the same, since which
+    // backends are local is read from the config and not from the kinds (task P6a).
+    written(None);
+    let later = Over::nothing()
+        .config(Some(&world.config_path()))
+        .installed(world.models().flag(Some(&kept)))
+        .unwrap()
+        .kinds(kinds_with(&world.fakes));
+    assert!(ready(looked(&later)));
+
     let never = world.beside("never");
     let before = asked.load(Ordering::SeqCst);
     let empty = Models::of(
@@ -1854,16 +1873,32 @@ fn the_models_directory_is_the_flags_then_the_configs_then_the_platforms() {
         let models = empty.clone().flag(flag).platform(says(Some(&never)));
         let over = world.named().installed(models).unwrap();
         assert!(over.installations().is_none());
-        let models = Models::shipped()
-            .unwrap()
-            .flag(flag)
-            .platform(says(Some(&never)));
-        let over = world
-            .named()
-            .kinds(wiring::kinds())
-            .installed(models)
-            .unwrap();
-        assert!(over.installations().is_none());
+        // No backend, or remote ones alone, each naming a url: under the kinds this
+        // build has, and under the fake's too, given before or after.
+        let remote = "[backends.fill]\nkind = \"fake\"\nurl = \"https://fill.example\"\n";
+        for config in ["", remote] {
+            std::fs::write(world.config_path(), config).unwrap();
+            let models = || {
+                Models::shipped()
+                    .unwrap()
+                    .flag(flag)
+                    .platform(says(Some(&never)))
+            };
+            let worker = OneWorker::installed();
+            let over = world
+                .named()
+                .kinds(wiring::kinds(&worker))
+                .pack(worker)
+                .installed(models())
+                .unwrap();
+            assert!(over.installations().is_none());
+            let over = Over::nothing()
+                .config(Some(&world.config_path()))
+                .installed(world.models().flag(flag).platform(says(Some(&never))))
+                .unwrap()
+                .kinds(kinds_with(&world.fakes));
+            assert!(over.installations().is_none());
+        }
     }
     let over = Over::nothing()
         .kinds(kinds_with(&world.fakes))
@@ -1916,7 +1951,9 @@ fn under_the_binarys_wiring_a_call_for_an_installed_model_is_prepared_under_its_
 #[test]
 fn a_secret_the_executor_is_told_of_is_refused_as_a_models_name_by_the_binarys_inventory() {
     let world = World::new("wired-inventory-secret");
-    std::fs::write(world.config_path(), "").unwrap();
+    // A config with a local backend, which is what opens a models directory (task
+    // P6a); of another model than the one looked at here.
+    std::fs::write(world.config_path(), local(MODEL)).unwrap();
     // A model whose name is a key, in a catalogue made by a reader that was told of
     // no secret, and installed.
     let key = made_up_key("model");
@@ -2082,17 +2119,21 @@ fn only_main_reads_where_the_platforms_data_folder_is() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn with_the_catalogue_it_ships_the_binary_opens_and_makes_no_models_directory() {
     // Plan 1C, task N5: the shipped catalogue holds one model, `sam3`, and every test
     // that starts the binary gives it a cleared environment with a temporary home
-    // folder (task N3c). This build has no kind of backend, so no config can offer a
-    // backend that asks for a model: a command that builds an executor opens no
-    // models directory, and asks nothing of where the platform's is, whatever names
-    // one. Only `whizbang models` looks at one, and only `models get` makes one
+    // folder (task N3c). Until task P6a this build had no kind of backend, so no
+    // config could offer a backend that asks for a model. **Changed by task P6a,**
+    // which gives the build the kind `pack`: a command that builds an executor opens
+    // a models directory only for a config that has a local backend, one that names
+    // no url
+    // (`wired::the_binary_opens_a_models_directory_only_for_a_config_that_has_a_local_backend`).
+    // Under a config with none, empty or of remote backends alone, it opens none and
+    // asks nothing of where the platform's is, whatever names one. Of the `models`
+    // commands, only `models get` makes one
     // (`models::under_the_catalogue_it_ships_no_models_command_makes_a_models_directory_or_asks_anything_of_any_address`).
-    // **When this build is given its first kind (task P6a), this fails,** and says
-    // that a command run under a config now opens the models directory.
     let names: Vec<String> = wiring::catalogue()
         .unwrap()
         .entries()
@@ -2100,42 +2141,117 @@ fn with_the_catalogue_it_ships_the_binary_opens_and_makes_no_models_directory() 
         .map(|entry| entry.name().as_str().to_owned())
         .collect();
     assert_eq!(names, ["sam3"]);
-    assert!(
-        wiring::kinds().is_empty(),
-        "this build has a kind: a command run under a config may now open the models \
-         directory, and every test that starts the binary must name one of its own"
-    );
+    let kinds = wiring::kinds(&OneWorker::installed());
+    assert!(kinds.get("pack").is_some(), "this build has the kind pack");
     let world = World::new("wired-shipped");
     std::fs::write(world.config_path(), "").unwrap();
     let (flagged, configured) = (world.beside("flagged"), world.beside("configured"));
-    let mask = format!("sha256:{}", "0".repeat(64));
-    let run = |more: &[&str]| {
-        // The function's temporary home, with the platform's data folder inside it:
-        // the command is kept until the run has been waited for, and the home is
-        // looked into after it.
-        let mut command = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"));
-        let home = command.home().to_path_buf();
-        let out = command
-            .args(["rascal", "grow", "--mask", &mask, "--px", "1", "--config"])
-            .arg(world.config_path())
-            .args(more)
-            .arg("--store")
-            .arg(&world.root)
-            .output()
-            .expect("the binary runs");
-        // The command got as far as its store: the mask is not in it.
-        assert_eq!(out.status.code(), Some(1), "{out:?}");
-        let err = String::from_utf8(out.stderr).unwrap();
-        assert!(!err.contains("models directory"), "{err}");
-        // Nothing was made in the home: no models directory in the platform's place.
-        assert!(std::fs::read_dir(&home).unwrap().next().is_none());
-    };
+    // Nothing is made in the home: no models directory in the platform's place.
+    let run = |more: &[&str]| assert_eq!(grown_in_a_home(&world, more), Vec::new());
     // No directory named: the platform's would be in the temporary home.
     run(&[]);
     // The directory named by the flag, and then by the config.
     run(&["--models-dir", flagged.to_str().unwrap()]);
     let dir = format!("[models]\ndir = '{}'\n", configured.to_str().unwrap());
-    std::fs::write(world.config_path(), dir).unwrap();
+    std::fs::write(world.config_path(), &dir).unwrap();
     run(&[]);
+    // A config whose backends are all remote: each names a url.
+    let remote = "[backends.fill]\nkind = \"service\"\nurl = \"https://fill.example\"\n\n\
+                  [backends.judge]\nkind = \"pack\"\nmodel = \"sam3\"\nurl = \"https://judge.example\"\n";
+    std::fs::write(world.config_path(), format!("{remote}\n{dir}")).unwrap();
+    run(&[]);
+    run(&["--models-dir", flagged.to_str().unwrap()]);
     assert!(!flagged.exists() && !configured.exists());
+}
+
+/// `whizbang rascal grow` of a mask the store does not hold, by the real binary, under
+/// the world's config, with these arguments more: every folder it left in the
+/// function's temporary home, which holds the platform's data folder, by its path
+/// inside the home and with its permission bits. The command is kept until the run
+/// has been waited for, and the home is looked into after it, before it is removed
+/// with the command. The command gets as far as its store, and says nothing of a
+/// models directory.
+#[cfg(unix)]
+fn grown_in_a_home(world: &World, more: &[&str]) -> Vec<(PathBuf, u32)> {
+    let mask = format!("sha256:{}", "0".repeat(64));
+    let mut command = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"));
+    let home = command.home().to_path_buf();
+    let out = command
+        .args(["rascal", "grow", "--mask", &mask, "--px", "1", "--config"])
+        .arg(world.config_path())
+        .args(more)
+        .arg("--store")
+        .arg(&world.root)
+        .output()
+        .expect("the binary runs");
+    // The command got as far as its store: the mask is not in it.
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let err = String::from_utf8(out.stderr).unwrap();
+    assert!(!err.contains("models directory"), "{err}");
+    let found = folders_under(&home).into_iter().map(|folder| {
+        let mode = mode_of(&folder);
+        (folder.strip_prefix(&home).unwrap().to_path_buf(), mode)
+    });
+    found.collect()
+}
+
+/// The folders under this one, to a depth of six, each by its path.
+#[cfg(unix)]
+fn folders_under(top: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut level = vec![top.to_path_buf()];
+    for _ in 0..6 {
+        let mut next = Vec::new();
+        for folder in level {
+            for entry in std::fs::read_dir(&folder).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    found.push(path.clone());
+                    next.push(path);
+                }
+            }
+        }
+        level = next;
+    }
+    found
+}
+
+#[cfg(unix)]
+#[test]
+fn the_binary_opens_a_models_directory_only_for_a_config_that_has_a_local_backend() {
+    // Plan 1C, task P6a, and the row of `docs/carry-over.md` on `rascal grow` opening a
+    // models directory: with the kind `pack` in the build, a config that has a local
+    // backend, one that names no url, opens the models directory where the executor
+    // is built, and makes it where it is not, so that a refusal of the folder has a
+    // place to be said. A config with none opens none
+    // (`wired::with_the_catalogue_it_ships_the_binary_opens_and_makes_no_models_directory`).
+    // Whether a backend is local is read from its table, not from its kind, so it does
+    // not hang on which kinds were given first.
+    let world = World::new("wired-local-opens");
+    let local = "[backends.segment]\nkind = \"pack\"\nmodel = \"sam3\"\n\n\
+                 [backends.segment.settings]\nmax_lifetime_s = 60\n";
+    std::fs::write(world.config_path(), local).unwrap();
+    let (flagged, configured) = (world.beside("flagged"), world.beside("configured"));
+    // No worker is started: `grow` needs no backend.
+    let run = |more: &[&str]| -> Vec<(PathBuf, u32)> {
+        let made = grown_in_a_home(&world, more).into_iter();
+        made.filter(|(folder, _)| folder.ends_with("whizbang/models"))
+            .collect()
+    };
+    // No directory named: the platform's, in the temporary home, is made, for its
+    // owner alone.
+    let made = run(&[]);
+    assert_eq!(made.len(), 1, "{made:?}");
+    assert_eq!(made[0].1, 0o700);
+    // Named by the flag, and then by the config: that one is made, and nothing in the
+    // home.
+    assert!(run(&["--models-dir", flagged.to_str().unwrap()]).is_empty());
+    assert!(flagged.is_dir());
+    let dir = format!(
+        "{local}\n[models]\ndir = '{}'\n",
+        configured.to_str().unwrap()
+    );
+    std::fs::write(world.config_path(), dir).unwrap();
+    assert!(run(&[]).is_empty());
+    assert!(configured.is_dir());
 }
