@@ -1105,7 +1105,9 @@ fn a_request_from_the_worker_is_refused_before_its_payload_is_read_and_answered_
         "the pack's worker sent a request of its own, which this version does not take; it was ended"
     );
     // The worker was answered `unsupported`, and then told the conversation was over,
-    // at which it ended by itself.
+    // at which it ended by itself. The fake writes its request's header and length in
+    // one write, so nothing of it is left to write once the reader has let the pipe go
+    // at the header: no write fails, and the code is 0, never 2.
     assert_eq!(failed.ended, Some(Ended::Exited(0)));
     assert!(
         failed
