@@ -20,21 +20,22 @@ use whizbang_core::contract::{
     Registry, Secrets, Snapshot, SystemClock,
 };
 use whizbang_core::description::Description;
-use whizbang_core::egress::DispatchPolicy;
+use whizbang_core::egress::{DispatchPolicy, Ways};
 use whizbang_core::spend::{CallCap, Meter, PreparationAge, StoreLedger};
 use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{self, Store};
 
 use crate::pack::{OneWorker, PackKind};
+use whizbang_backends::anthropic::ServiceKind;
 
 /// Every action this build ships, registered in the order a door lists them: the
 /// recipe first, then the primitives. Tools add theirs here as they are ported. What
 /// comes back otherwise is why an action could not be registered, in a sentence.
 ///
 /// `check` and `view` are squint's (ADR 0009). They are described, and no command runs
-/// them yet: `whizbang squint check` is milestone 2's. `check` needs a judge, and this
-/// build has no kind of backend ([`kinds`]), so on this build it is prepared as not
-/// ready; `view` needs none, and is what `check` calls.
+/// them yet: `whizbang squint check` is plan 2A's task S2. `check` needs a judge, which a
+/// config gives as a backend of the kind `service` ([`kinds`]); `view` needs none, and
+/// is what `check` calls.
 pub fn registry() -> Result<Registry, String> {
     let said = |error: &dyn std::fmt::Display| error.to_string();
     let mut registry = Registry::new();
@@ -59,16 +60,18 @@ pub fn registry() -> Result<Registry, String> {
     Ok(registry)
 }
 
-/// The kinds of backend this build has (ADR 0011, "Kinds"): one, `pack`, a local
-/// segmenter over the one worker of the process (plan 1C, task P6a; [`crate::pack`]),
-/// which is this. Whoever builds the executor makes the one worker once, and gives the
-/// same to the wiring ([`Over::pack`]), which tells it the models directory it opened.
-/// No network client is built at this checkpoint: a backend of any other kind is of a
-/// kind this build does not have, and is not ready. A test registers a fake beside it.
+/// The kinds of backend this build has (ADR 0011, "Kinds"): `pack`, a local segmenter
+/// over the one worker of the process (plan 1C, task P6a; [`crate::pack`]), which is
+/// this; and `service`, a judge whose provider is `anthropic` (plan 2A, task S1;
+/// `whizbang_backends::anthropic`). Whoever builds the executor makes the one worker
+/// once, and gives the same to the wiring ([`Over::pack`]), which tells it the models
+/// directory it opened. A backend of any other kind is of a kind this build does not
+/// have, and is not ready. A test registers a fake beside them.
 pub fn kinds(worker: &Arc<OneWorker>) -> Kinds {
     let mut kinds = Kinds::new();
-    // One kind, under a name of the rule, in kinds that hold none: it is taken.
+    // Two kinds, under names of the rule, in kinds that hold none: each is taken.
     let _ = kinds.register(Arc::new(PackKind::over(worker.clone())));
+    let _ = kinds.register(Arc::new(ServiceKind::new()));
     kinds
 }
 
@@ -446,6 +449,10 @@ pub struct Over {
     /// Why that worker could not be told the models directory, when it was given
     /// after the directory was opened: the executor is not built.
     unplaced: Option<String>,
+    /// The test's root the sender trusts in place of the compiled roots, when a test
+    /// gave one ([`Over::trusting`]): compiled only under the feature `fakes`.
+    #[cfg(feature = "fakes")]
+    trusting: Option<Arc<whizbang_backends::net::testing::Pki>>,
 }
 
 impl Over {
@@ -466,6 +473,16 @@ impl Over {
     /// file (`--env-file`), or from none.
     pub fn env_file(mut self, env: Option<&Path>) -> Over {
         self.env = env.map(Path::to_owned);
+        self
+    }
+
+    /// The same, whose runner's sender trusts the root of this test's `pki` and no
+    /// other, in place of the roots compiled in: for a test whose server is on
+    /// loopback. Compiled only under the feature `fakes`, which the binary that ships
+    /// is built without.
+    #[cfg(feature = "fakes")]
+    pub fn trusting(mut self, pki: Arc<whizbang_backends::net::testing::Pki>) -> Over {
+        self.trusting = Some(pki);
         self
     }
 
@@ -824,7 +841,8 @@ pub fn executor(
 pub fn runner(registry: Registry, store: Arc<Store>, over: &Over) -> Result<Engine, String> {
     let digest = Config::empty().digest();
     let meter = Meter::new(store.clone(), Arc::new(SystemClock));
-    let ways = whizbang_backends::net::ways(store.root(), &over.secrets)
+    let ways = over
+        .ways(store.root())
         .map_err(|refused| format!("the ways out of the store cannot be made: {refused}"))?;
     let engine = Engine::over(registry, Arc::new(NoBackends), store, digest);
     let engine = wired(engine, over)?
@@ -841,6 +859,18 @@ pub fn runner(registry: Registry, store: Arc<Store>, over: &Over) -> Result<Engi
         }
         None => engine,
     })
+}
+
+impl Over {
+    /// The ways out of a runner over the store at this root: the network client's
+    /// (`net::ways`), or, in a test that gave one, the same trusting its root.
+    fn ways(&self, root: &Path) -> Result<Ways, whizbang_core::egress::NotAllowed> {
+        #[cfg(feature = "fakes")]
+        if let Some(pki) = &self.trusting {
+            return whizbang_backends::net::testing::ways_trusting(pki, root, &self.secrets);
+        }
+        whizbang_backends::net::ways(root, &self.secrets)
+    }
 }
 
 /// What recovers a store before this build is handed its writer (ADR 0015, "One way

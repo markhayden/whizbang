@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use crate::contract::{Capability, Made, Secrets, text};
-use crate::egress::NotAllowed;
+use crate::egress::{Credential, NotAllowed};
 
 use super::{Backend, Handed, KeyValue};
 
@@ -144,6 +144,19 @@ pub trait Kind: Send + Sync {
     /// the origin of the address it sends to, under a header that is the kind's own
     /// constant.
     fn make(&self, table: &Table<'_>) -> Result<Made, KindRefused>;
+
+    /// The credential a backend this kind made of this table sends with, when it
+    /// sends with one: made with [`KeyValue::carried_to`], bound to the origin of the
+    /// recipient the backend declares, under a header that is the kind's own constant.
+    /// It is asked only after [`Kind::make`] made the backend, and goes to the
+    /// snapshot of the config beside it, held for that recipient and that origin and
+    /// no other (ADR 0012, "A backend's credential"); the executor attaches it to a
+    /// request to that origin and to none other. A backend is never handed it. None by
+    /// default.
+    fn credential(&self, table: &Table<'_>) -> Result<Option<Credential>, KindRefused> {
+        let _ = table;
+        Ok(None)
+    }
 }
 
 /// Why a kind was not registered.

@@ -93,7 +93,7 @@ USD, `docs/baseline/manifest.toml`).
    kind's `max_pictures` (S2) keeps a conversation under it, and a request that would
    pass it is refused `not_sent`.
 
-- [ ] Done when:
+- [x] Done when:
   `net::sender::a_post_carries_its_body_once_and_follows_no_redirect`,
   `net::sender::a_request_that_never_connected_is_not_sent_and_one_cut_after_writing_is_unresolved`,
   `anthropic::conformance::each_recorded_exchange_of_squint_is_read_back_to_its_turn`
@@ -107,6 +107,26 @@ USD, `docs/baseline/manifest.toml`).
   `wired::the_binarys_sender_refuses_a_file_from_inside_the_store_root`,
   `prepare::a_picture_is_fitted_and_sent_as_jpeg_and_the_check_knows_it`,
   `anthropic::each_picture_in_the_sent_body_decodes_to_the_bytes_of_its_checked_piece`.
+
+**Reworded with the task** (S1's second pull request, 2026-11-17). S1 was split at its
+seam: the sender, its first pull request; the kind, the wire and the picture sent, its
+second. The tests sit where the crate can reach a test root: `net::sender::…` and
+`anthropic::…` are `net::tests::sender::…` and `anthropic::tests::…` inside
+`whizbang-backends`, beside N1's `client::…`; `anthropic::the_key_goes_only_…` is in
+`crates/whizbang/tests/it/anthropic.rs`, through an executor over the files; and
+`prepare::…` is `egress::prepare::…` of the core, where the encoder is. One clause was
+"`anthropic::conformance::a_request_is_written_as_the_recorded_request_was`", and is
+now: that test, over the 26 of squint's 29 recorded requests that name no control a
+`JudgeRequest` does not carry, compared as JSON with the recorded body less each tool's
+`strict` (squint's catalog set it; a `JudgeRequest` has no place for it), and with each
+picture compared by its block, its type and its size, not its bytes. Why: three
+recordings name a forced tool choice (`final-turn-forced/02`) or a removal of tools
+(`final-turn-tool-removal/02`, `03`), which a request of the core does not say; a
+picture is held as pixels and written by whizbang's own encoder, so its bytes are not
+squint's; and the 21 pictures of 2,000 by 1,500 of `many-images` are made a tenth the
+size on each side in the test, since encoding them in a test build takes longer than a
+test may run (`egress::prepare::…` holds the fitting). Every read-back of a turn is of
+all 29.
 
 ### S2. Spend, the record, source fidelity and the command (large)
 

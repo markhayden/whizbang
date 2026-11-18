@@ -39,6 +39,9 @@ pub(crate) struct Timing {
     pub(crate) least_bytes_per_second: u64,
     /// The socket's own limit for one call.
     pub(crate) poll: Duration,
+    /// When the whole request must be over, by the injected clock, however its bytes
+    /// come: a send's run's deadline. None for a download.
+    pub(crate) until: Option<Instant>,
 }
 
 impl Timing {
@@ -54,6 +57,7 @@ pub(crate) const CANCELLED: &str = "the download was cancelled";
 pub(crate) const STALLED: &str = "nothing came from the server within the limit between two \
                                   reads";
 pub(crate) const TOO_SLOW: &str = "the download kept under its least rate over a whole minute";
+pub(crate) const PAST_DEADLINE: &str = "the run's deadline passed before the answer was whole";
 pub(crate) const CUT: &str = "the connection ended before the answer was whole";
 pub(crate) const BROKEN: &str = "the connection failed";
 pub(crate) const UNTRUSTED: &str = "the server's certificate is not one the client trusts for \
@@ -192,6 +196,9 @@ impl<'a> Wire<'a> {
             return Err(unresolved(FaultKind::Cancelled, CANCELLED));
         }
         let now = self.clock.now();
+        if self.timing.until.is_some_and(|until| now >= until) {
+            return Err(unresolved(FaultKind::TimedOut, PAST_DEADLINE));
+        }
         let quiet_for = now.saturating_duration_since(self.last);
         if quiet_for >= self.timing.between_reads || self.quiet > self.timing.polls_ceiling() {
             return Err(unresolved(FaultKind::TimedOut, STALLED));
@@ -279,10 +286,17 @@ impl<'a> Wire<'a> {
         self.flush()
     }
 
-    /// Writes the request whole.
+    /// Writes the request whole. TLS takes a bounded amount of it at once (64 KiB by
+    /// default), so a larger request is handed over in turns, what TLS holds written
+    /// to the socket between them, each wait bounded as every other is.
     pub(crate) fn send(&mut self, bytes: &[u8]) -> Result<(), Fault> {
-        if self.tls.writer().write_all(bytes).is_err() {
-            return Err(unresolved(FaultKind::Unavailable, BROKEN));
+        let mut rest = bytes;
+        while !rest.is_empty() {
+            match self.tls.writer().write(rest) {
+                Ok(0) => self.flush()?,
+                Ok(taken) => rest = &rest[taken..],
+                Err(_) => return Err(unresolved(FaultKind::Unavailable, BROKEN)),
+            }
         }
         self.flush()
     }
@@ -365,6 +379,7 @@ mod tests {
             between_reads: Duration::from_millis(30_000),
             least_bytes_per_second: 1,
             poll: Duration::from_millis(250),
+            until: None,
         };
         assert_eq!(timing.polls_ceiling(), 121);
     }

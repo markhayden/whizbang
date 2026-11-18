@@ -89,6 +89,9 @@ mod wire;
 #[cfg(test)]
 mod tests;
 
+#[cfg(any(test, feature = "fakes"))]
+pub mod testing;
+
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -136,6 +139,7 @@ pub fn downloader(
         between_reads: BETWEEN_READS_LIMIT,
         least_bytes_per_second: least_kib_per_second * 1024,
         poll: POLL,
+        until: None,
     };
     let client = Client::new(timing, Arc::new(SystemClock), secrets.clone());
     CheckedDownloader::new(Arc::new(client), origins)
@@ -154,6 +158,24 @@ pub fn downloader(
 /// Refused: a root that cannot be made absolute, and one of nothing or of nothing but
 /// slashes (`NotAllowed::Empty`).
 pub fn ways(store_root: &Path, secrets: &Secrets) -> Result<Ways, NotAllowed> {
+    let client = Client::new(sender_timing(), Arc::new(SystemClock), secrets.clone());
+    ways_over(Arc::new(client), store_root)
+}
+
+/// A send's limits: [`ANSWER_WAIT_LIMIT`] and no least rate.
+fn sender_timing() -> Timing {
+    Timing {
+        connect: CONNECT_LIMIT,
+        between_reads: ANSWER_WAIT_LIMIT,
+        least_bytes_per_second: 0,
+        poll: POLL,
+        until: None,
+    }
+}
+
+/// The ways out with this client as their sender and the check behind a send over it,
+/// keeping out the store's root as an absolute path and its canonical spelling.
+fn ways_over(client: Arc<Client>, store_root: &Path) -> Result<Ways, NotAllowed> {
     let absolute = std::path::absolute(store_root).map_err(|_| NotAllowed::Empty)?;
     let mut check = SendCheck::new().keeping_out(&absolute)?;
     if let Ok(canonical) = std::fs::canonicalize(&absolute)
@@ -161,12 +183,5 @@ pub fn ways(store_root: &Path, secrets: &Secrets) -> Result<Ways, NotAllowed> {
     {
         check = check.keeping_out(&canonical)?;
     }
-    let timing = Timing {
-        connect: CONNECT_LIMIT,
-        between_reads: ANSWER_WAIT_LIMIT,
-        least_bytes_per_second: 0,
-        poll: POLL,
-    };
-    let client = Client::new(timing, Arc::new(SystemClock), secrets.clone());
-    Ok(Ways::through(Arc::new(client)).checked_by(Arc::new(check)))
+    Ok(Ways::through(client).checked_by(Arc::new(check)))
 }

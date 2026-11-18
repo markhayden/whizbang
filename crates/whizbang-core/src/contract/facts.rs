@@ -149,6 +149,12 @@ impl RunFacts {
         RunFacts::over(secrets, Some(refuse))
     }
 
+    /// Whether the text holds a secret of the run's executor: those it was built with
+    /// and those of the snapshot the run was admitted under.
+    pub(crate) fn holds_secret(&self, text: &str) -> bool {
+        self.shared.secrets.redact(text) != text
+    }
+
     fn noted(&self) -> MutexGuard<'_, Noted> {
         let noted = self.shared.noted.lock();
         noted.unwrap_or_else(PoisonError::into_inner)

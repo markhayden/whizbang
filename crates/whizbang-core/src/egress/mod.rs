@@ -21,15 +21,17 @@ mod classes;
 mod hops;
 mod pixels;
 mod policy;
+mod prepared;
 mod recipient;
 mod ways;
 
 pub use chains::{CheckedDownloader, CheckedProber, DOWNLOAD_ORIGINS_LIMIT};
 pub(crate) use checked::NoWayOut;
-pub use checked::{CREDENTIALS_LIMIT, Denied, Hop, HopCheck, NoHop, Ways};
+pub use checked::{CREDENTIALS_LIMIT, Denied, Hop, HopCheck, MOVED_SECRET, NoHop, Ways};
 pub use classes::{Classes, DataClass};
 pub use hops::{KEPT_OUT_LIMIT, MOVES_LIMIT, SendCheck};
 pub use policy::{APPROVED_LIMIT, DispatchPolicy, NotApproved};
+pub use prepared::{JPEG_QUALITY, fitted, is_plain_jpeg};
 pub use recipient::{
     ACCOUNT_LIMIT, ADDRESS_MAX_BYTES, Account, Address, Credential, Origin, Recipient,
     UPSTREAM_LIMIT,

@@ -110,10 +110,11 @@ impl Client {
     }
 
     /// A client that trusts these roots and no others, and connects by `dial`: for the
-    /// crate's own tests, which hand it a root made in the test. It is compiled into
-    /// the crate's tests and nowhere else, so no other code, the binary's included, can
-    /// call it: a build that is not of these tests has no such function.
-    #[cfg(test)]
+    /// tests, which hand it a root made in the test. It is compiled into the crate's
+    /// tests and, under the feature `fakes`, into the tests of the crates that turn it
+    /// on ([`super::testing`]), and nowhere else: the binary that ships is built
+    /// without `fakes`, so no source of it can call this.
+    #[cfg(any(test, feature = "fakes"))]
     pub(crate) fn trusting(
         roots: RootCertStore,
         timing: Timing,
@@ -352,11 +353,13 @@ pub(crate) const PAST_DEADLINE: &str = "the run's deadline passed before the req
 impl Sender for Client {
     /// One `POST` of the request's pieces to its address ([`http::post`]), answered
     /// once: the answer's status and its body, of the length its one
-    /// `Content-Length` states and at most [`REPLY_MAX_BYTES`], whatever the status;
+    /// `Content-Length` states or in chunks ([`http::Chunks`]), at most
+    /// [`REPLY_MAX_BYTES`], whatever the status;
     /// or, for `301`, `302`, `303`, `307` and `308`, the address its one `Location`
     /// names, which is not asked (ADR 0019, "Every hop": nothing is followed by the
-    /// sender). The limit between two reads is the sender's, and no later than the
-    /// run's deadline; the cancellation is the run's.
+    /// sender). The limit between two reads is the sender's; the whole request, its
+    /// connection and every byte of its answer, is over by the run's deadline; the
+    /// cancellation is the run's.
     fn send(&self, outgoing: &Outgoing, bounds: &Bounds) -> Result<Reply, Fault> {
         let mut timing = self.timing;
         if let Some(deadline) = bounds.deadline() {
@@ -366,6 +369,8 @@ impl Sender for Client {
             }
             timing.connect = timing.connect.min(left);
             timing.between_reads = timing.between_reads.min(left);
+            // And the whole of it, however the answer's bytes come.
+            timing.until = Some(self.clock.now() + left);
         }
         let address = outgoing.to();
         let written = http::post(outgoing);
@@ -379,7 +384,15 @@ impl Sender for Client {
             let to = self.moved_to(address, answer.location()?)?;
             return Ok(Reply::moved(to));
         }
-        let length = answer.length()?;
+        let length = match answer.framing()? {
+            http::Framing::Length(length) => length,
+            http::Framing::Chunked => {
+                let mut more = |buffer: &mut [u8]| wire.read(buffer);
+                let body = http::Chunks::new(rest, &mut more).body(REPLY_MAX_BYTES)?;
+                return Reply::answered(answer.status, body)
+                    .map_err(|_| Fault::new(FaultKind::TooLarge, REPLY_TOO_LARGE).unresolved());
+            }
+        };
         let Some(length) = usize::try_from(length)
             .ok()
             .filter(|length| *length <= REPLY_MAX_BYTES)

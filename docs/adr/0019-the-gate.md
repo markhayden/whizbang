@@ -40,6 +40,12 @@ Amended: 2026-11-15, with task W1 (ADR 0015, "The binary wired"). Changed under
 and the check over a sender goes to the task that gives it a sender.
 Amended: 2026-11-17, with task P7b of plan 1C, a note and no decision changed: under "A
 download and a probe", what now gives a checked prober its policy and its recipient.
+Amended: 2026-11-17, with task S1 of plan 2A, its second pull request, and the security
+review of its first. Added to "Nothing but pixels": the JPEG of a prepared picture, which
+the check knows by its markers; a request's own fields, looked at as words; a folder
+kept out found in any case on macOS. Added to "Every hop": an answer that points to an
+address holding a secret of the run is not handed to the backend. `Hop::fields` is one
+accessor more on ADR 0015's `Hop`.
 Spec: section 10, "Egress"
 Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
 that said something was still to come; no decision changed.
@@ -577,6 +583,39 @@ Limits of it, each pinned or stated:
   no test reaches the refusal through a picture; the sizes are tested without pixels
   (`egress::pixels::tests::a_size_of_no_pixels_and_a_size_past_one_chunk_have_no_file`,
   `egress::pixels::tests::pixels_that_are_not_of_the_size_have_no_file`).
+
+### Task S1 of plan 2A: the picture sent, a request's own fields, and the case of a folder
+
+Its second pull request; `egress::prepare::…` are its tests, in
+`crates/whizbang-core/tests/it/egress/prepare.rs`.
+
+- **A prepared picture** (`Piece::prepared`, `egress/prepared.rs`): fitted to a long
+  edge with Lanczos3, never larger, then the JPEG of its pixels at quality 90, or, when
+  any pixel is not opaque, the PNG above; squint prepared its pictures so. **The check
+  knows the JPEG by its markers:** the start of the image, then only `APP0` that is
+  JFIF with no thumbnail, `DQT`, `DHT`, `DRI` and one `SOF0`, one `SOS`, data whose
+  marker bytes are followed only by a stuffed zero or a restart, and the end of the
+  image as the last two bytes (`is_plain_jpeg`). An `APP1` to `APP15` (EXIF, XMP, a
+  colour profile), a comment, a thumbnail, a second frame or a byte after the end is
+  refused as an image the encoder did not write
+  (`prepare::a_picture_is_fitted_and_sent_as_jpeg_and_the_check_knows_it`). It reads
+  the structure, not the pixels: a JPEG of that structure holds pixels and nothing
+  else, whoever wrote it. The row on the uncompressed encoder is closed by it: the PNG
+  stays for a picture with clear pixels.
+- **A request's own fields** (`Outgoing::with_fields`; ADR 0012, "A backend's
+  credential") are looked at as words are, value by value, after the pieces: a value
+  that holds a folder kept out, or an absolute path, is refused
+  (`prepare::the_check_looks_at_a_requests_own_fields_and_finds_a_folder_kept_out_in_any_case_on_macos`).
+- **A folder kept out is found in any case of its ASCII letters on macOS,** whose file
+  system does not tell case apart by default (same test). Elsewhere it is found as it
+  is written. Other spellings (a link, percent-encoding, escaped slashes) are still not
+  found, as below.
+- **An answer that points to an address holding a secret of the run** (the executor's
+  secrets with those of the snapshot the run was admitted under) is not handed to the
+  backend: the send is a fault, `malformed` and unresolved, in fixed words
+  (`MOVED_SECRET`;
+  `prepare::an_answer_that_points_to_an_address_holding_a_secret_of_the_run_is_not_handed_to_the_backend`).
+  The client's own look at such an address knows only the secrets it was made with.
 
 ### Limits, each pinned or stated
 

@@ -25,6 +25,9 @@ that said something was still to come; no decision changed.
 Amended: 2026-11-16, with task N4 of checkpoint 1C (plan 1C, D12). Added: "A download's
 token": the credential a model's download carries, which origin it goes to, and what is
 told of it before anything is asked.
+Amended: 2026-11-17, with task S1 of plan 2A, its second pull request. Added: "A
+backend's credential": how the key a kind made reaches the request, bound to its
+recipient's origin; and that a request's own fields name no credential.
 
 ## Context
 
@@ -207,6 +210,35 @@ ADR 0011's, "A download's token"; what is done with it is here.
   The installer keeps a fault's kind and not its words, so the sentence cannot say
   which origin answered; with one origin that needs a token, it is that one or a server
   that wanted one the catalogue does not say it needs.
+
+### A backend's credential
+
+Task S1 of plan 2A, its second pull request (carry-over row "A backend made from a config
+sends with no credential").
+
+- **A kind makes the credential and never hands it to its backend.** `Kind::credential`
+  answers the `Credential` a backend made from a table sends with, made with
+  `KeyValue::carried_to` under the kind's own header constant (the judge of a service:
+  `x-api-key`). It is asked only after `Kind::make` made the backend, and is none by
+  default.
+- **It is bound to the recipient's own origin, and no other.** What a config offers
+  (`Offers`) keeps it beside the recipient the backend declares only when its origin is
+  that recipient's own origin; one bound to an upstream, or to any other origin, or of a
+  backend that declares no recipient, makes the backend not ready
+  (`KindRefused::Credential(NotAllowed::Elsewhere)`).
+- **The snapshot holds it, and the executor attaches it.** The source over the files
+  gives each to its snapshot (`Snapshot::with_credential`), held once for a recipient
+  and an origin; two that differ for one are a config that cannot be used. The checked
+  sender attaches it to a request whose address is at that origin, and to no other:
+  a redirect to another origin is asked of the gate again and goes without it, or is
+  refused (`anthropic::the_key_goes_only_to_the_approved_origin_in_its_header`,
+  `wired::a_redirect_to_another_origin_is_refused_and_the_key_is_not_sent_there`).
+- **A request's own fields name no credential.** `Outgoing::with_fields` refuses
+  `Authorization`, `Proxy-Authorization`, `X-Api-Key`, `Api-Key` and `Cookie`, in any
+  case, beside the fields the sender writes itself: a credential goes only as the
+  executor attaches it. The values are meant to be constants; the type holds them to
+  `&'static`, which a leaked text is too, so the check behind a send looks at each
+  value as it looks at a part of words (ADR 0019).
 
 ### The four classes of data
 

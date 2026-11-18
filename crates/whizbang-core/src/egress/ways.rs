@@ -21,9 +21,15 @@ pub const REPLY_MAX_BYTES: usize = 16 << 20;
 /// The most fields of its own a request names ([`Outgoing::with_fields`]).
 pub const FIELDS_LIMIT: usize = 8;
 
-/// The fields a sender writes itself, which a request may not name: compared without
-/// regard to case.
-const SENDERS_FIELDS: [&str; 8] = [
+/// The fields a sender writes itself, and those that carry a credential, which only
+/// the executor attaches: a request may name none of them. Compared without regard to
+/// case.
+const SENDERS_FIELDS: [&str; 13] = [
+    "authorization",
+    "proxy-authorization",
+    "x-api-key",
+    "api-key",
+    "cookie",
     "host",
     "user-agent",
     "accept",
@@ -144,12 +150,19 @@ impl Outgoing {
     }
 
     /// The same, naming these fields of its own: a wire format's fixed fields, such as
-    /// the type of its body and the version of a provider's interface. They are
-    /// constants of the code that sends, never data: the type takes nothing else.
+    /// the type of its body and the version of a provider's interface. They are meant
+    /// to be constants of the code that sends. **What the type holds to is less:** a
+    /// `&'static` text is one that lives as long as the program, which a constant
+    /// does and a text that was leaked does too; so the check behind a send looks at
+    /// each value as it looks at a part of words (ADR 0019, "Nothing but pixels"),
+    /// and the run's record notes no field.
+    ///
     /// Refused: more than [`FIELDS_LIMIT`]; a name that is not 1 to 64 letters, digits
     /// and hyphens, or that is one the sender writes itself (`Host`, `User-Agent`,
     /// `Accept`, `Accept-Encoding`, `Connection`, `Content-Length`,
-    /// `Transfer-Encoding`, `Expect`), or one named twice; a value that is not 1 to
+    /// `Transfer-Encoding`, `Expect`) or one that carries a credential
+    /// (`Authorization`, `Proxy-Authorization`, `X-Api-Key`, `Api-Key`, `Cookie`),
+    /// which only the executor attaches, or one named twice; a value that is not 1 to
     /// 256 printable ASCII characters and spaces with no space at either end.
     pub fn with_fields(
         mut self,
