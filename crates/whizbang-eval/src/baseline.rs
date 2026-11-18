@@ -11,10 +11,18 @@ use crate::json::{Json, parse};
 
 /// The version of this comparison, written into the gate receipt (docs/baseline/README.md).
 /// It changes whenever what counts as a difference changes.
-pub const COMPARISON_VERSION: &str = "3";
+pub const COMPARISON_VERSION: &str = "4";
 
-/// The transcript format this comparison reads.
+/// The transcript format the converter writes.
 pub const TRANSCRIPT_VERSION: u64 = 1;
+
+/// Format 2 (docs/baseline/transcript.md, "Version 2"): version 1, except that a tool
+/// image squint scaled down is compared by its size and mapping and not by its prepared
+/// bytes. Both transcripts of a pair are of one version.
+pub const SCALED_FORMAT: u64 = 2;
+
+/// The longest side `view` cuts without scaling the cut down (squint's `MAX_SIDE`).
+pub const SCALED_ABOVE: f64 = 1024.0;
 
 /// The only places that are not compared: what version 1 of the format declares volatile
 /// (docs/baseline/transcript.md). `*` stands for any one position in a list. A recorded
@@ -62,7 +70,8 @@ impl fmt::Display for Difference {
 pub enum Refusal {
     /// A transcript is not one JSON value.
     NotJson { which: Side },
-    /// A transcript is not of the version this comparison reads.
+    /// A transcript is not of a version this comparison reads, or the replayed one is not
+    /// of the recorded one's.
     Version { which: Side },
     /// A transcript is not an object with at least one turn and a terminal outcome of a
     /// stated kind.
@@ -97,7 +106,8 @@ impl fmt::Display for Refusal {
             Refusal::Version { which } => {
                 write!(
                     f,
-                    "the {which} transcript is not version {TRANSCRIPT_VERSION}"
+                    "the {which} transcript is not version {TRANSCRIPT_VERSION} or \
+                     {SCALED_FORMAT}, or not the recorded one's"
                 )
             }
             Refusal::Shape { which } => {
@@ -138,12 +148,20 @@ pub fn compare(recorded: &str, replayed: &str) -> Result<Vec<Difference>, Refusa
     let replayed = parse(replayed).ok_or(Refusal::NotJson {
         which: Side::Replayed,
     })?;
-    let version = Json::Number(TRANSCRIPT_VERSION.to_string());
+    // Digits only (docs/baseline/transcript.md, "whole number").
+    let version = [TRANSCRIPT_VERSION, SCALED_FORMAT]
+        .into_iter()
+        .map(|v| Json::Number(v.to_string()))
+        .find(|v| recorded.get("transcript_version") == Some(v))
+        .ok_or(Refusal::Version {
+            which: Side::Recorded,
+        })?;
+    if replayed.get("transcript_version") != Some(&version) {
+        return Err(Refusal::Version {
+            which: Side::Replayed,
+        });
+    }
     for (which, t) in [(Side::Recorded, &recorded), (Side::Replayed, &replayed)] {
-        // Digits only (docs/baseline/transcript.md, "whole number").
-        if t.get("transcript_version") != Some(&version) {
-            return Err(Refusal::Version { which });
-        }
         // At least one turn, and an outcome that says what kind it is: an empty list or an
         // empty outcome on both sides would otherwise compare as equal.
         let turns = t
@@ -172,8 +190,18 @@ pub fn compare(recorded: &str, replayed: &str) -> Result<Vec<Difference>, Refusa
     if declared.as_deref() != Some(VOLATILE) {
         return Err(Refusal::Volatile);
     }
+    let scaled: Vec<String> = if version == Json::Number(SCALED_FORMAT.to_string()) {
+        scaled_tool_images(&recorded)
+            .into_iter()
+            .map(|i| format!("/images/{i}/prepared"))
+            .collect()
+    } else {
+        Vec::new()
+    };
     let volatile: Vec<Vec<&str>> = VOLATILE
         .iter()
+        .copied()
+        .chain(scaled.iter().map(String::as_str))
         .map(|path| path.trim_start_matches('/').split('/').collect())
         .collect();
     let mut differences = Vec::new();
@@ -186,6 +214,56 @@ pub fn compare(recorded: &str, replayed: &str) -> Result<Vec<Difference>, Refusa
         &mut differences,
     );
     Ok(differences)
+}
+
+/// The places in `images` of the recorded transcript's tool images that squint scaled
+/// down: a crop (its mapping a box, as fractions of its parent) whose cut is longer than
+/// [`SCALED_ABOVE`] pixels on a side of the parent it was cut from. The cut is counted, not
+/// the crop's own size: squint's `view` fitted a longer cut to 1,024, so a crop of 1,024 is
+/// either. `scripts/baseline/audit.py --count-scaled-cuts` counts the same way.
+pub(crate) fn scaled_tool_images(transcript: &Json) -> Vec<usize> {
+    let Some(images) = transcript.get("images").and_then(Json::as_list) else {
+        return Vec::new();
+    };
+    let number = |j: Option<&Json>| match j {
+        Some(Json::Number(text)) => text.parse::<f64>().ok(),
+        _ => None,
+    };
+    let mut out = Vec::new();
+    for (index, image) in images.iter().enumerate() {
+        if image.get("origin").and_then(Json::as_text) == Some("job") {
+            continue;
+        }
+        let Some(b) = image
+            .get("mapping")
+            .and_then(|m| m.get("bbox"))
+            .and_then(Json::as_list)
+            .and_then(|b| {
+                b.iter()
+                    .map(|x| number(Some(x)))
+                    .collect::<Option<Vec<f64>>>()
+            })
+            .filter(|b| b.len() == 4)
+        else {
+            continue;
+        };
+        let parent = image.get("parent").and_then(Json::as_text);
+        let Some(parent) = images
+            .iter()
+            .find(|p| parent.is_some() && p.get("frame").and_then(Json::as_text) == parent)
+        else {
+            continue;
+        };
+        let (Some(w), Some(h)) = (number(parent.get("width")), number(parent.get("height"))) else {
+            continue;
+        };
+        let cut_w = ((b[2] - b[0]) * w).round();
+        let cut_h = ((b[3] - b[1]) * h).round();
+        if cut_w > SCALED_ABOVE || cut_h > SCALED_ABOVE {
+            out.push(index);
+        }
+    }
+    out
 }
 
 fn is_volatile(path: &[String], volatile: &[Vec<&str>]) -> bool {

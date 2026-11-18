@@ -246,6 +246,39 @@ class Base(unittest.TestCase):
         self.assertIn(says, said)
 
 
+class ScaledCuts(Base):
+    def test_the_count_is_of_crops_whose_cut_passed_1024_and_nothing_else(self):
+        ordinary(self.package)
+        self.convert()
+
+        def crops(t):
+            def box(*numbers):
+                return {"bbox": [common.Num(repr(float(n))) for n in numbers]}
+
+            parent = {"frame": "raw:candidate", "origin": "job", "width": 3000, "height": 2000}
+            crop = {"origin": "c1", "parent": "raw:candidate", "width": 1024, "height": 410}
+            t["images"] = [
+                parent,
+                dict(crop, frame="a", mapping=box(0.1, 0.1, 0.6, 0.4)),
+                # A cut of exactly 1024 by 400 was not scaled.
+                dict(crop, frame="b", mapping=box(0.1, 0.1, 0.4413333333333333, 0.3)),
+                # A crop of a crop is cut from its parent's pixels: 1024 * 0.5 is not over.
+                dict(crop, frame="c", parent="a", mapping=box(0, 0, 0.5, 1)),
+                # An aligned frame has no box.
+                dict(crop, frame="d", mapping={"homography": [1, 0, 0, 0, 1, 0, 0, 0, 1]}),
+                dict(parent, frame="raw:source", mapping=box(0, 0, 1, 1)),
+            ]
+
+        self.rewrite(crops)
+        code = self.run_tool(audit.main, ["--count-scaled-cuts", "--transcripts", self.out])
+        self.assertEqual((code, self.printed), (0, "1\n"))
+        # A transcript changed after conversion is not counted.
+        with open(self.path(), "ab") as f:
+            f.write(b" ")
+        code = self.run_tool(audit.main, ["--count-scaled-cuts", "--transcripts", self.out])
+        self.assertEqual(code, 1, self.printed)
+
+
 class Convert(Base):
     def test_an_ordinary_decision_is_complete_with_three_dispositions(self):
         ordinary(self.package)

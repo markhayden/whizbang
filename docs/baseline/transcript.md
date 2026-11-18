@@ -256,6 +256,23 @@ Everything else is compared. A path names one place: a field called `meta` insid
 arguments is compared like any other argument. A transcript whose list is anything else is
 not version 1.
 
+## Version 2
+
+Version 2 is version 1 with one place fewer compared, for the choice in the plan of milestone
+2 (`docs/plans/m2c-milestone-2.md`, task E2, item 6). Squint's `view` scaled a cut longer than
+1024 pixels on a side down with a filter whizbang's `view` does not use, so the prepared bytes
+of such a crop cannot match. In version 2, a tool image whose mapping is a box (`bbox`, as
+fractions of its parent) and whose cut, the box's width and height times its parent's `width`
+and `height` rounded half away from zero, is longer than 1024 on either side has its
+`prepared` left out of the comparison. Its size and its mapping are compared as before. Which
+images those are is worked out from the recorded transcript alone, so a replay cannot widen it.
+A cut of exactly 1024 is not scaled. Both transcripts of a pair are of one version; a pair of
+two versions is refused.
+
+`audit.py --count-scaled-cuts --transcripts <folder>` prints how many such images the
+transcripts hold, and nothing else. Version 2 is used only on the owner's yes, given that
+number; with a count of 0, version 1 stands. The converter writes version 1.
+
 ## Complete and incomplete
 
 A transcript is **complete** when every file it was read from exists, has the hash the old
