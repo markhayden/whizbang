@@ -7,10 +7,13 @@ source "$(dirname "$0")/lib.sh"
 
 check=scripts/check-sign-in.sh
 
-# --- The repo itself. The script tests are part of `just check`, so this is where `just
-# check` refuses.
-grep -q -x -F 'check: fmt-check clippy graph deny test-scripts docs-check timing test-pack' justfile ||
-  fail "justfile: check runs the script tests, and this check with them"
+# --- The repo itself. The script tests are part of `just check-full`, which `just ci` runs,
+# and this one is among those the local `just check` runs on any change to the crates'
+# sources (scripts/script-tests-local.sh), so this is where both refuse.
+grep -q -x -F 'check-full: fmt-check clippy graph deny test-scripts docs-check timing test-pack' justfile ||
+  fail "justfile: check-full runs the script tests, and this check with them"
+grep -q -E '^part=".*scripts/tests/test-sign-in\.sh' scripts/script-tests-local.sh ||
+  fail "scripts/script-tests-local.sh: the local check runs this test on a change to the crates' sources"
 expect_pass "the workspace" "$check"
 grep -q -F 'hub_sign_in_token_file is named in main.rs alone' "$tmp/out" || { cat "$tmp/out" >&2; fail "the workspace's main.rs is seen"; }
 

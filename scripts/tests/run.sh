@@ -3,6 +3,10 @@
 #
 #   scripts/tests/run.sh          this repo's script tests
 #   scripts/tests/run.sh DIR      the test-*.sh of another folder (scripts/tests/test-syntax.sh)
+#   scripts/tests/run.sh --only FILE...
+#                                 these tests and no other: the part the local `just check`
+#                                 chooses (scripts/script-tests-local.sh); a name that is
+#                                 not a file fails
 #
 # Before any test: every shell script under scripts/ (or DIR) must parse (scripts/syntax.sh).
 # A test passes when it exits 0 and the last line it prints is `finished: <its path>`, which
@@ -18,9 +22,17 @@ cd "$(git rev-parse --show-toplevel)" || exit 2
 
 dir=scripts/tests
 syntax_dir=scripts
-if [ $# -gt 0 ]; then
-  dir=$1
-  syntax_dir=$1
+only=0
+if [ "${1:-}" = --only ]; then
+  shift
+  [ $# -gt 0 ] || { echo "FAIL  --only names no test"; exit 1; }
+  only=1
+else
+  if [ $# -gt 0 ]; then
+    dir=$1
+    syntax_dir=$1
+  fi
+  set -- "$dir"/test-*.sh
 fi
 
 if ! scripts/syntax.sh "$syntax_dir"; then
@@ -30,8 +42,13 @@ fi
 
 failed=0
 ran=0
-for t in "$dir"/test-*.sh; do
-  [ -f "$t" ] || continue
+for t in "$@"; do
+  if [ ! -f "$t" ]; then
+    [ "$only" = 1 ] || continue
+    echo "FAIL  $t: no such test"
+    failed=1
+    continue
+  fi
   ran=$((ran + 1))
   status=0
   out=$(bash "$t" 2>&1) || status=$?
