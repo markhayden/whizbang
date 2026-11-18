@@ -11,6 +11,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod client;
+mod sender;
 
 use std::io::{Read, Write};
 use std::net::TcpStream;

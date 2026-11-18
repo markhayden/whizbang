@@ -822,6 +822,12 @@ impl Store {
         Store::open_at(root, fs, Make::Nothing)
     }
 
+    /// The root this store was opened at, as it was written to the opening: what the
+    /// check behind a send keeps out of every request (ADR 0019, "For later tasks").
+    pub fn root(&self) -> &Path {
+        &self.files.layout.root
+    }
+
     /// Whether the open that gave this value made the store: no store was here when it
     /// took the writer lock, and it wrote the first pointer. That is so where there was
     /// nothing, in an empty directory, and where another writer's creation was left

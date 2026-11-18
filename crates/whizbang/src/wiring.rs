@@ -805,6 +805,12 @@ pub fn executor(
 /// says the need is for (`Requirement::requests`; ADR 0010): one, unless the action
 /// says more, as `check` does for the turns of its judge.
 ///
+/// And the ways out (plan 2A, task S1): the network client as the sender behind every
+/// checked send, with the check behind a send over it, keeping out the root of this
+/// store (`net::ways`; ADR 0019, "For later tasks"). The ways approve no recipient:
+/// a run sends under the policy of its config's snapshot, and under no config,
+/// under the policy that approves nothing.
+///
 /// And the lease (`models::Lease`; ADR 0017, "The lease"), in the lease's place,
 /// over the models directory this was given ([`Over::installed`]): before a request
 /// to a local model leaves it takes a hold on the installation the run was admitted
@@ -814,8 +820,11 @@ pub fn executor(
 pub fn runner(registry: Registry, store: Arc<Store>, over: &Over) -> Result<Engine, String> {
     let digest = Config::empty().digest();
     let meter = Meter::new(store.clone(), Arc::new(SystemClock));
+    let ways = whizbang_backends::net::ways(store.root(), &over.secrets)
+        .map_err(|refused| format!("the ways out of the store cannot be made: {refused}"))?;
     let engine = Engine::over(registry, Arc::new(NoBackends), store, digest);
     let engine = wired(engine, over)?
+        .with_ways(ways)
         .with_ledger(Arc::new(StoreLedger))
         .with_wrapper(Place::Meter, Arc::new(meter));
     // The lease stands in its place wherever there is a models directory to take

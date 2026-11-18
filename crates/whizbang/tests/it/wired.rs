@@ -24,7 +24,7 @@ use whizbang_core::contract::{
     Context, Engine, Executor, Failure, Kind, Made, ModelIdentity, PreparedCall, Produced,
     Readiness, Refusal, RefusalKind, Registry, Request, Requirement, Secrets, Value, ValueType,
 };
-use whizbang_core::egress::{Address, Origin, Recipient};
+use whizbang_core::egress::{Address, DataClass, Origin, Piece, Recipient};
 use whizbang_core::identity::{CanonicalPixels, Digest};
 use whizbang_core::spend::{
     AGE_PART, CAP_PART, OVER_THE_CAP, PREPARATION_HOLDS_MS, Record, TOO_OLD, TurnBy,
@@ -62,6 +62,7 @@ pub struct Fakes {
     made: Mutex<Vec<Arc<FakeFiller>>>,
     dies: Mutex<Option<Arc<ShimFs>>>,
     out: Mutex<Option<Looks>>,
+    posts: Mutex<Option<Vec<Piece>>>,
 }
 
 /// What a test does while a request is with a backend.
@@ -85,6 +86,12 @@ impl Fakes {
     /// answers: what a test looks at while a request is out.
     pub fn while_a_request_is_out(&self, look: impl Fn() + Send + Sync + 'static) {
         *self.out.lock().unwrap() = Some(Arc::new(look));
+    }
+
+    /// From now on, a backend it makes with an address sends these pieces there, with
+    /// each request, through the sender its run hands it, before it answers.
+    pub fn posting(&self, pieces: Vec<Piece>) {
+        *self.posts.lock().unwrap() = Some(pieces);
     }
 }
 
@@ -144,7 +151,11 @@ impl config::Kind for Shared {
                 }
             }
         }
-        let filler = FakeFiller::new(Paint::Inverse).declared_as(declaration);
+        let mut filler = FakeFiller::new(Paint::Inverse).declared_as(declaration);
+        let posts = self.0.posts.lock().unwrap().clone();
+        if let (Some(pieces), Some(address)) = (posts, table.backend().address()) {
+            filler = filler.posting(address.clone(), pieces);
+        }
         let filler = Arc::new(match charge {
             Some(micros) => filler.charging(micros),
             None => filler,
@@ -840,6 +851,55 @@ fn a_recipient_the_config_does_not_approve_is_refused_at_the_gate_and_one_its_eg
     drop(executor);
     let text = shown(&world.root, let_through.run().as_str());
     assert!(!text.contains("request_not_approved"), "{text}");
+}
+
+// --- the sender --------------------------------------------------------------------------------
+
+#[test]
+fn the_binarys_sender_refuses_a_file_from_inside_the_store_root() {
+    // The binary's executor sends through the network client, with the check behind a
+    // send over it keeping out the root of its store (plan 2A, task S1). A backend
+    // approved for prompts sends, to a listener on loopback, words that name a file
+    // inside the store: as its root is written, and as its canonical spelling. Each is
+    // refused by the check, for the folder kept out, and the listener sees nothing.
+    let world = World::new("wired-sender");
+    let listener = whizbang_testkit::loopback::Listener::serve(1, |_, _| {});
+    let origin = format!("https://127.0.0.1:{}", listener.port());
+    let config = format!(
+        "[backends.fill]\nkind = \"fake\"\nurl = \"{origin}/v1\"\n\n\
+         [backends.fill.settings]\nat_most_micros = 250000\n\n\
+         [egress.recipients.loopback]\norigin = \"{origin}\"\nclasses = [\"prompts\"]\n"
+    );
+    reset(&world.root, "20");
+    let canonical = std::fs::canonicalize(&world.root).unwrap();
+    for root in [&world.root, &canonical] {
+        let named = format!("see {}/runs/a-file", root.display());
+        world
+            .fakes
+            .posting(vec![Piece::of(DataClass::Prompts, named.into_bytes())]);
+        let executor = world.runner(&world.config(&config));
+        let refused = executor.submit(&Call::new("paints")).unwrap();
+        assert_eq!(refused.outcome().name(), "error");
+        drop(executor);
+        let text = shown(&world.root, refused.run().as_str());
+        assert!(text.contains("\trequest_not_approved\t"), "{text}");
+        assert!(
+            text.contains("the request holds the path of a folder that is kept out"),
+            "{text}"
+        );
+    }
+    assert_eq!(listener.accepted(), 0);
+    // Words that name no folder are handed to the real sender, which connects to the
+    // listener: it is the client, and not a sender that sends nothing. The listener
+    // speaks no TLS, so nothing more happens.
+    world
+        .fakes
+        .posting(vec![Piece::of(DataClass::Prompts, b"words".to_vec())]);
+    let executor = world.runner(&world.config(&config));
+    let sent = executor.submit(&Call::new("paints")).unwrap();
+    assert_eq!(sent.outcome().name(), "error");
+    drop(executor);
+    assert_eq!(listener.finish(), 1);
 }
 
 // --- the ledger, the bound of a call and the meter ---------------------------------------------

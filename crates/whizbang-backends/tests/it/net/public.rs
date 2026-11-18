@@ -1,9 +1,12 @@
-//! `public::…`: the one way to the download client from outside the crate is a checked
-//! downloader (ADR 0024).
+//! `public::…`: the two ways to the client from outside the crate are a checked
+//! downloader (ADR 0024) and ways out whose sender has the check behind a send over it
+//! (plan 2A, task S1).
 
 use std::net::{Ipv4Addr, TcpListener};
 
-use whizbang_backends::net::{BETWEEN_READS_LIMIT, CONNECT_LIMIT, downloader};
+use whizbang_backends::net::{
+    ANSWER_WAIT_LIMIT, BETWEEN_READS_LIMIT, CONNECT_LIMIT, downloader, ways,
+};
 use whizbang_core::capability::{FaultKind, Stage};
 use whizbang_core::config::DOWNLOAD_LEAST_KIB_LIMIT;
 use whizbang_core::contract::{Cancellation, Secrets};
@@ -33,6 +36,19 @@ fn the_only_public_way_to_the_client_is_a_checked_downloader() {
     assert_eq!(CONNECT_LIMIT.as_secs(), 10);
     assert_eq!(BETWEEN_READS_LIMIT.as_secs(), 30);
 
+    // And ways out whose sender is the client, under the policy that approves
+    // nothing until a snapshot gives its own; a root of nothing is refused.
+    let out = ways(std::path::Path::new("/a/store"), &none()).unwrap();
+    assert!(
+        format!("{out:?}").starts_with("Ways { sender: true, "),
+        "{out:?}"
+    );
+    assert_eq!(ANSWER_WAIT_LIMIT.as_secs(), 600);
+    assert_eq!(
+        ways(std::path::Path::new(""), &none()).unwrap_err(),
+        NotAllowed::Empty
+    );
+
     // And nothing else of the module is public: every item its files declare `pub`
     // is one of these. The client, its constructors, its wire and its HTTP are the
     // crate's own.
@@ -53,7 +69,9 @@ fn the_only_public_way_to_the_client_is_a_checked_downloader() {
         [
             "mod.rs: pub const CONNECT_LIMIT",
             "mod.rs: pub const BETWEEN_READS_LIMIT",
+            "mod.rs: pub const ANSWER_WAIT_LIMIT",
             "mod.rs: pub fn downloader",
+            "mod.rs: pub fn ways",
         ]
     );
     let lib = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs")).unwrap();
