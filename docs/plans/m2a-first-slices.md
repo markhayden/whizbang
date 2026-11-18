@@ -164,7 +164,7 @@ all 29.
    tokens and the spend the ledger settled, the run's identity, and the egress record's
    recipient. No image, no item name, no reply text.
 
-- [ ] Done when:
+- [x] Done when:
   `spend::a_judge_turn_reserves_its_fixed_bound_and_settles_at_its_usage`,
   `spend::a_judge_turn_with_no_usage_is_charged_its_bound`,
   `spend::a_judge_call_whose_bound_is_over_the_call_cap_is_refused_before_dispatch`,
@@ -181,6 +181,18 @@ all 29.
   `cli::squint_check_without_the_env_file_is_refused_naming_the_variable`,
   and the evidence file, checked by
   `evidence::the_first_verdict_record_names_a_commit_of_this_tree_and_holds_no_secret`.
+
+**Reworded with the task** (S2, 2026-11-18). The tests sit where their crate reaches what
+they need: `spend::…` are `spend::judge::…` of the binary's tests; `anthropic::…` are
+`anthropic::tests::…` and `anthropic::tests::conformance::…` inside `whizbang-backends`,
+beside S1's; `squint::check::…` are `check::…` of `whizbang-squint`'s tests; and
+`cli::squint_check_prints_…` drives the binary's door in process (`door::check`), as
+R1's `cli::` tests do, since the binary that ships cannot trust a test's root. Item 5
+said "the owner runs it on the Mac on one pair of real images (a source and an edit of
+it, the owner's own)", and is now: the builder ran it once on the owner's Mac, with the
+owner's env file, on a synthetic source and an edit of it made for the call, as the
+orchestrator directed on 2026-11-18 (no personal photograph). Why: the orchestrator's
+brief for S2 gave the call to the builder, with pictures it makes itself.
 
 ### What the owner provides (S)
 
