@@ -669,6 +669,22 @@ A call is told as written once the worker speaks of it in an event, which can co
 before the writer says it wrote it (task P5b: until then a status could show an event of
 a call whose worker it did not name yet, and P4's test of a slow load read it so).
 
+### The adapter of an installation
+
+Added by task U1 of plan 1D; no byte of `pack/1` changed and its vectors are as they
+were. A `load` keeps its fields. The worker, which knows the models directory it was
+started with, reads the record of the installation the `load` names
+(`models/<model>/installations/<hex>/RECORD`, through a name that is no link, at most
+32 KiB), works out its identity again (ADR 0017, "The identity of an installation") and
+refuses (`rejected`) a record whose identity is not the one named; then it takes the
+adapter the record names, not the one of the model's name. For `user-<name>` the
+adapter is the copy `adapters/<revision>.py`, read once, its SHA-256 compared with the
+record's revision before anything of it runs, and the bytes that were hashed compiled; a
+copy that is missing, a link, too long or of another hash is `rejected`, and a model of
+the shipped catalogue is never run by one. An installation with no record (the pack's
+own tests, which install nothing) is answered by the adapter of the model's name, as
+before (`test_worker.Adapters.…`).
+
 ## Consequences
 
 - What is read from a worker is bounded before it is built: a header by its four bytes,

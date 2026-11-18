@@ -20,10 +20,11 @@ use whizbang_backends::models::{
 };
 use whizbang_core::capability::{FaultKind, Installation, Installed, Inventory, Unready};
 use whizbang_core::config::DOWNLOAD_LEAST_KIB_PER_SECOND;
-use whizbang_core::contract::{Call, Clock, Executor, Secrets};
+use whizbang_core::contract::{Call, Clock, Executor, Place, Secrets};
 use whizbang_core::egress::{Address, CheckedDownloader, Origin};
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::RealFs;
+use whizbang_testkit::around::FakeWrapper;
 use whizbang_testkit::barrier::Barriers;
 use whizbang_testkit::downloads::FakeDownloader;
 use whizbang_testkit::scratch::Scratch;
@@ -310,7 +311,7 @@ fn everything_under(folder: &Path) -> Vec<String> {
 
 /// The real binary, with a cleared environment and a temporary home, kept until the
 /// program has been waited for.
-fn binary() -> whizbang_testkit::binary::Binary {
+pub(crate) fn binary() -> whizbang_testkit::binary::Binary {
     whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
 }
 
@@ -1423,11 +1424,13 @@ fn counting_platform(shelf: &Shelf) -> (wiring::Platform, Arc<AtomicU64>) {
 }
 
 #[test]
-fn list_of_an_empty_catalogue_and_get_or_remove_of_a_model_it_does_not_hold_never_ask_where_the_platforms_directory_is()
+fn list_of_an_empty_catalogue_never_asks_where_the_platforms_directory_is_and_get_or_remove_of_a_name_it_does_not_hold_asks_once_and_makes_nothing()
  {
     // Review of N3b: where the platform's models directory is, is asked only when a
-    // directory is to be looked in. A `list` that finds the catalogue empty, and a
-    // `get` or a `remove` of a name the catalogue does not hold, never ask.
+    // directory is to be looked in. A `list` that finds the catalogue empty never asks.
+    // Since task U1 of plan 1D a `get` or a `remove` of a name this build's catalogue
+    // does not hold looks in the directory for the user's catalogue: each asks once,
+    // and makes nothing where nothing is.
     let shelf = Shelf::new("models-unasked");
     let clock = Hand::new();
     let fake = Arc::new(FakeDownloader::new());
@@ -1445,11 +1448,11 @@ fn list_of_an_empty_catalogue_and_get_or_remove_of_a_model_it_does_not_hold_neve
         assert!(get(&tools, "absent").0.is_err());
         let removed = model_commands::remove(Under::default(), "absent", PAUSE, &tools);
         assert!(removed.is_err());
-        assert_eq!(asked.load(Ordering::SeqCst), 0);
+        assert_eq!(asked.load(Ordering::SeqCst), 2);
         // And `list` of a catalogue that holds a model asks, once: the control.
         if !catalogue.entries().is_empty() {
             assert!(list(&tools).contains("not made yet"));
-            assert_eq!(asked.load(Ordering::SeqCst), 1);
+            assert_eq!(asked.load(Ordering::SeqCst), 3);
         }
     }
     assert!(fake.requests().is_empty());
@@ -1868,4 +1871,324 @@ fn a_checks_folder_or_a_check_record_that_is_a_link_is_not_trusted_and_nothing_i
     assert!(std::fs::symlink_metadata(&at).unwrap().is_file());
     assert_eq!(std::fs::read(&at).unwrap(), restamped(&good, &files));
     assert_eq!(std::fs::read(&target).unwrap(), led);
+}
+
+// --- a user's weights and a user's adapter (plan 1D, task U1) ----------------------------------
+
+/// A user's adapter of a made-up fake model, as a user writes one: it reads its
+/// weights, one file of its installation, at its load, and answers what `fake-ok`
+/// answers, its scores times `SCALE`, in the fixed order. Nothing of it is a real model.
+pub(crate) const USERS_ADAPTER: &str = "\
+from whizbang_pack import fake_models
+from whizbang_pack.adapter import Adapter
+
+SCALE = 1.0
+
+
+class Weighed(Adapter):
+    features = frozenset((\"phrase\", \"point\", \"box\"))
+
+    def load(self, installation, settings, call):
+        with open(installation.file(\"weights.bin\"), \"rb\") as file:
+            self.weights = file.read()
+        return \"read %d bytes of weights\" % len(self.weights)
+
+    def segment(self, request, call):
+        found = fake_models.determined(request)
+        for item in found:
+            item.score = item.score * SCALE
+        found.sort(key=lambda item: (-item.score, item.query, item.box[1], item.box[0], item.box[2], item.box[3]))
+        return found, \"\"
+
+
+ADAPTER = Weighed
+";
+
+/// The same adapter changed: each score halved.
+pub(crate) fn users_adapter_changed() -> String {
+    USERS_ADAPTER.replace("SCALE = 1.0", "SCALE = 0.5")
+}
+
+/// A model of a user's catalogue: one file of made-up weights at [`ORIGIN`], under
+/// this adapter, for both platforms, with the three features; and a fake of its
+/// download.
+pub(crate) fn users_entry(name: &str, adapter: &str) -> (Entry, FakeDownloader) {
+    let content = format!("made-up weights of {name}").into_bytes();
+    let from = at(&format!("{name}/weights.bin"));
+    let file = CatalogueFile::new(
+        FileName::new("weights.bin", &none()).unwrap(),
+        content.len() as u64,
+        Digest::of_bytes(&content),
+        from.clone(),
+        &none(),
+    )
+    .unwrap();
+    let parts = EntryParts {
+        name: ModelName::new(name, &none()).unwrap(),
+        title: Title::new("A user's model, for tests", &none()).unwrap(),
+        revision: Revision::new("1", &none()).unwrap(),
+        adapter: ModelName::new(adapter, &none()).unwrap(),
+        licence: Licence::new("MIT", &none()).unwrap(),
+        platforms: Platform::ALL.to_vec(),
+        features: ["box", "phrase", "point"].map(str::to_owned).to_vec(),
+        origins: vec![Origin::of(ORIGIN, &none()).unwrap()],
+        files: vec![file],
+    };
+    let entry = Entry::new(parts, &none()).unwrap();
+    (entry, FakeDownloader::new().serving(&from, content))
+}
+
+/// Writes the user's catalogue of these entries in this models directory, as a user
+/// writes `catalogue.json`.
+pub(crate) fn write_users_catalogue(models: &Path, entries: &[Entry]) {
+    let catalogue = Catalogue::new(entries.to_vec(), &none()).unwrap();
+    std::fs::write(models.join("catalogue.json"), catalogue.to_bytes()).unwrap();
+}
+
+/// A config of one local backend for this model, that approves [`ORIGIN`] as a
+/// recipient, as a user's model's download needs.
+pub(crate) fn users_config(model: &str) -> String {
+    format!(
+        "{}\n[egress.recipients.weights]\norigin = \"{ORIGIN}\"\nclasses = []\n",
+        pack::one(model, "")
+    )
+}
+
+/// `get` under this config, with a fresh clock, over these models and this fake.
+pub(crate) fn get_under(
+    models: Models,
+    config: Option<&Path>,
+    fake: &Arc<FakeDownloader>,
+    model: &str,
+) -> Result<String, String> {
+    let tools = Tools::of(models, Hand::new(), downloads(fake, &Arc::default()));
+    let under = Under {
+        config,
+        env_file: None,
+    };
+    model_commands::get(under, model, &tools, &mut |_| {})
+}
+
+/// `adapter add` of this text under this name, over these models.
+pub(crate) fn add_under(models: Models, file: &Path, text: &str, name: &str) -> String {
+    std::fs::write(file, text).unwrap();
+    let tools = Tools::of(
+        models,
+        Hand::new(),
+        downloads(&Arc::default(), &Arc::default()),
+    );
+    model_commands::adapter_add(Under::default(), file, name, &tools).unwrap()
+}
+
+#[test]
+fn a_users_entry_for_a_known_adapter_installs_and_runs_from_config_alone() {
+    // A user's weights, with no code of the user's: an entry of the directory's own
+    // catalogue naming an adapter of the build (`fake-ok`, the tests' build), and a
+    // config. The model's name is no adapter's: the worker finds the adapter by the
+    // installation's record.
+    let local = Local::new("models-users-entry");
+    let (mine, fake) = users_entry("my-weights", pack::OK);
+    write_users_catalogue(&local.models_dir(), &[mine]);
+    std::fs::write(local.config_path(), users_config("my-weights")).unwrap();
+    let fake = Arc::new(fake);
+    let got = get_under(
+        local.models(),
+        Some(&local.config_path()),
+        &fake,
+        "my-weights",
+    )
+    .unwrap();
+    let identity = identity_in(&got, "my-weights");
+    let tools = Tools::of(
+        local.models(),
+        Hand::new(),
+        downloads(&Arc::default(), &Arc::default()),
+    );
+    assert_eq!(state_of(&list(&tools), "my-weights"), "installed");
+    let over = local.over(&users_config("my-weights"));
+    let record = over.installations().unwrap().ready("my-weights").unwrap();
+    assert_eq!(record.identity().digest().to_string(), identity);
+    assert_eq!(record.adapter().as_str(), pack::OK);
+    let executor = local.runner(&over);
+    let finished = executor.submit(&Call::new("finds")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    assert_eq!(local.came(), [Ok(pack::determined())]);
+    let named = local.named();
+    assert_eq!(
+        named,
+        [
+            ("load", "my-weights".to_owned(), identity.clone()),
+            ("segment", "my-weights".to_owned(), identity)
+        ]
+    );
+}
+
+#[test]
+fn a_users_entry_naming_an_origin_the_config_does_not_allow_is_refused() {
+    let shelf = Shelf::new("models-users-origin");
+    std::fs::create_dir(shelf.models_dir()).unwrap();
+    let (mine, fake) = users_entry("mine", ADAPTER);
+    write_users_catalogue(&shelf.models_dir(), &[mine]);
+    let models = || shelf.models(&[alpha()]);
+    let refused = "the model's entry in the models directory's catalogue names an origin the \
+                   config does not approve as a recipient (`[egress.recipients]`), so it was \
+                   not installed and nothing was downloaded";
+    // No config, and a config that approves another origin: refused before anything
+    // is asked.
+    let elsewhere = shelf.path("elsewhere.toml");
+    std::fs::write(
+        &elsewhere,
+        "[egress.recipients.other]\norigin = \"https://other.example.org\"\nclasses = []\n",
+    )
+    .unwrap();
+    let asked = Arc::new(FakeDownloader::new());
+    for config in [None, Some(elsewhere.as_path())] {
+        let got = get_under(models(), config, &asked, "mine");
+        assert_eq!(got.unwrap_err(), refused);
+    }
+    assert!(asked.requests().is_empty());
+    // A config that approves the entry's origin: installed.
+    let approving = shelf.path("approving.toml");
+    std::fs::write(
+        &approving,
+        format!("[egress.recipients.weights]\norigin = \"{ORIGIN}\"\nclasses = []\n"),
+    )
+    .unwrap();
+    let got = get_under(models(), Some(&approving), &Arc::new(fake), "mine").unwrap();
+    assert!(got.starts_with("installed mine: sha256:"), "{got}");
+    // A model of the build's catalogue is never taken the place of: a user's catalogue
+    // that names one is refused whole.
+    let (shadow, _) = users_entry("alpha", ADAPTER);
+    write_users_catalogue(&shelf.models_dir(), &[shadow]);
+    let tools = Tools::of(
+        models(),
+        Hand::new(),
+        downloads(&Arc::default(), &Arc::default()),
+    );
+    let listed = model_commands::list(Under::default(), &tools).unwrap_err();
+    assert!(
+        listed.contains("whose place no user's model takes"),
+        "{listed}"
+    );
+}
+
+#[test]
+fn a_users_adapter_survives_setup_again() {
+    let shelf = Shelf::new("models-users-setup");
+    let file = shelf.path("mine.py");
+    std::fs::write(&file, USERS_ADAPTER).unwrap();
+    let hex = Digest::of_bytes(USERS_ADAPTER.as_bytes()).hex();
+    let mut add = binary();
+    add.args(["models", "adapter", "add"])
+        .arg(&file)
+        .args(["--name", "mine", "--models-dir"])
+        .arg(shelf.models_dir());
+    let added = add.output().unwrap();
+    let said = String::from_utf8_lossy(&added.stdout).into_owned();
+    assert_eq!(added.status.code(), Some(0), "{said}");
+    assert_eq!(said, format!("added user-mine: sha256:{hex}\n"));
+    let adapters = shelf.models_dir().join("adapters");
+    let copy = adapters.join(format!("{hex}.py"));
+    let seen = || {
+        let mode = std::fs::metadata(&copy).unwrap().permissions().mode() & 0o777;
+        (
+            std::fs::read(&copy).unwrap(),
+            mode,
+            std::fs::read(adapters.join("REGISTRY")).unwrap(),
+        )
+    };
+    let before = seen();
+    assert_eq!(before.0, USERS_ADAPTER.as_bytes());
+    assert_eq!(before.1, 0o400, "the copy is its owner's, read-only");
+    let mut setup = binary();
+    setup
+        .arg("setup")
+        .arg("--uv")
+        .arg(whizbang_testkit::worker::uv())
+        .arg("--python")
+        .arg(whizbang_testkit::worker::python())
+        .arg("--models-dir")
+        .arg(shelf.models_dir());
+    let set_up = setup.output().unwrap();
+    assert_eq!(
+        set_up.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&set_up.stderr)
+    );
+    assert_eq!(seen(), before);
+    let dir = ModelsDir::at(Arc::new(RealFs), &shelf.models_dir());
+    let registered = whizbang_backends::models::registered(&dir, &none()).unwrap();
+    assert_eq!(
+        registered,
+        [(
+            ModelName::new("user-mine", &none()).unwrap(),
+            Revision::new(&hex, &none()).unwrap()
+        )]
+    );
+}
+
+#[test]
+fn an_adapter_replaced_while_a_call_is_admitted_leaves_that_call_on_the_earlier_copy() {
+    let local = Local::new("models-users-replaced");
+    let file = local.models_dir().with_file_name("mine.py");
+    add_under(local.models(), &file, USERS_ADAPTER, "mine");
+    let (mine, fake) = users_entry("mine", "user-mine");
+    write_users_catalogue(&local.models_dir(), &[mine]);
+    std::fs::write(local.config_path(), users_config("mine")).unwrap();
+    let config = local.config_path();
+    let fake = Arc::new(fake);
+    get_under(local.models(), Some(&config), &fake, "mine").unwrap();
+    let over = local.over(&users_config("mine"));
+    let old = local.identity(&over, "mine");
+    // A fake in the meter's place, after the lease's: the request stops there with its
+    // installation held, until the test lets it go. Meanwhile the adapter is replaced
+    // by a changed file under the same name, and the model installed again under it.
+    let barriers = Barriers::new();
+    let meter = FakeWrapper::new("meter");
+    meter.stop_before(&barriers, "meter");
+    let executor = local
+        .runner(&over)
+        .with_wrapper(Place::Meter, Arc::new(meter.clone()));
+    let changed = users_adapter_changed();
+    let finished = threads::scope(|scope| {
+        let replaces = scope.spawn(|| {
+            barriers.arrived("meter", 1);
+            let said = add_under(local.models(), &file, &changed, "mine");
+            assert!(said.starts_with("added user-mine: "), "{said}");
+            get_under(local.models(), Some(&config), &fake, "mine").unwrap();
+            barriers.open("meter");
+        });
+        let finished = executor.submit(&Call::new("finds")).unwrap();
+        replaces.join().unwrap();
+        finished
+    });
+    // The call admitted under the earlier installation ran the earlier copy.
+    assert_eq!(finished.outcome().name(), "completed");
+    assert_eq!(local.came(), [Ok(pack::determined())]);
+    drop(executor);
+    // A run admitted now is under the new installation, and runs the changed copy.
+    let over = local.over(&users_config("mine"));
+    let new = local.identity(&over, "mine");
+    assert_ne!(new, old);
+    let record = over.installations().unwrap().ready("mine").unwrap();
+    let hex = Digest::of_bytes(changed.as_bytes()).hex();
+    assert_eq!(record.adapter_revision().as_str(), hex);
+    let executor = local.runner(&over);
+    let finished = executor.submit(&Call::new("finds")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    let halved: Vec<_> = pack::determined()
+        .into_iter()
+        .map(|(plane, bounds, score)| (plane, bounds, score * 0.5))
+        .collect();
+    assert_eq!(local.came(), [Ok(halved)]);
+    // Both copies are there, each under its own hash.
+    let adapters = local.models_dir().join("adapters");
+    for text in [USERS_ADAPTER, changed.as_str()] {
+        let hex = Digest::of_bytes(text.as_bytes()).hex();
+        assert_eq!(
+            std::fs::read(adapters.join(format!("{hex}.py"))).unwrap(),
+            text.as_bytes()
+        );
+    }
 }

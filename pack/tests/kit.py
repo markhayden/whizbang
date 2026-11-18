@@ -58,34 +58,15 @@ def described(value):
 
 def conforming(test, request, result):
     """Holds a worker's result for a segment request to the contract of `pack/1` (ADR 0020)
-    and of the core's answer, whatever model gave it: at most the request's
-    `max_instances` for each query; each instance of a query asked, its score and its
-    predicted IoU (or `None`) from 0 to 1, its plane the picture's size with samples 0 and
-    255 and something on, and its box the bounds of what its plane has on; and the
-    instances in the fixed order (ADR 0020, "The fixed order of an answer")."""
-    image = request["image"]
-    width, height = image.width, image.height
-    test.assertEqual((result["type"], result["id"], result["kind"]), ("result", request["id"], "segment"))
-    instances = result["instances"]
-    for place in range(len(request["queries"])):
-        test.assertLessEqual(sum(1 for item in instances if item["query"] == place), request["max_instances"])
-    keys = []
-    for item in instances:
-        test.assertIn(item["query"], range(len(request["queries"])))
-        test.assertTrue(0.0 <= item["score"] <= 1.0, item["score"])
-        test.assertTrue(item["iou"] is None or 0.0 <= item["iou"] <= 1.0, item["iou"])
-        plane = item["plane"]
-        test.assertEqual((plane.width, plane.height, plane.binding), (width, height, image.binding))
-        samples = bytes(plane.samples)
-        test.assertEqual(len(samples), width * height)
-        test.assertEqual(set(samples) - {0, 255}, set())
-        on = [(at % width, at // width) for at, sample in enumerate(samples) if sample == 255]
-        test.assertTrue(on, "an instance with nothing on")
-        xs, ys = [x for x, _ in on], [y for _, y in on]
-        test.assertEqual(item["box"], [float(min(xs)), float(min(ys)), float(max(xs) + 1), float(max(ys) + 1)])
-        box = item["box"]
-        keys.append((-item["score"], item["query"], box[1], box[0], box[2], box[3]))
-    test.assertEqual(keys, sorted(keys))
+    and of the core's answer, whatever model gave it: the pack's own conformance suite
+    (`whizbang_pack.conformance.check`, which a user's adapter is given too; plan 1D,
+    task U1), failing the test at the first thing that breaks it."""
+    from whizbang_pack import conformance
+
+    try:
+        conformance.check(request, result)
+    except conformance.Nonconforming as nonconforming:
+        test.fail(str(nonconforming))
 
 
 def child_environment():

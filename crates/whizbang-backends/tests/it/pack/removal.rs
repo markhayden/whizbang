@@ -61,9 +61,11 @@ fn model(name: &str) -> ModelName {
     ModelName::new(name, &none()).unwrap()
 }
 
-/// The entry of this fake model: one small file.
+/// The entry of this fake model: one small file, under the fake's own adapter, which
+/// the worker finds by the installation's record (plan 1D, task U1).
 fn entry(name: &str) -> Entry {
     let mut parts = parts(name);
+    parts.adapter = model(name);
     parts.files = vec![file("weights.bin", 3, b"abc")];
     Entry::new(parts, &none()).unwrap()
 }
