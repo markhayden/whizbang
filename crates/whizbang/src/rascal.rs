@@ -7,8 +7,8 @@ use std::path::PathBuf;
 use clap::{Args, Subcommand};
 use whizbang::door::{self, GrowAsked, OperationAsked, SegmentAsked};
 use whizbang::pack::OneWorker;
-use whizbang::wiring::{self, Make, Models, Over, Platform};
-use whizbang_core::contract::{Engine, Recovery, Value};
+use whizbang::wiring::{self, Make, Models, Over, Platform, Uses};
+use whizbang_core::contract::{Capability, Engine, Recovery, Value};
 
 use crate::store::Where;
 
@@ -30,7 +30,7 @@ pub struct Under {
     #[arg(long, value_name = "FILE")]
     config: Option<PathBuf>,
     /// The env file that holds the values of the variables the config names for its
-    /// credentials. A config that names a variable is not used without it.
+    /// credentials. A command that will use a backend naming one is not run without it.
     #[arg(long, value_name = "FILE", requires = "config")]
     env_file: Option<PathBuf>,
     /// The models directory: where installed models are kept, an absolute path. With
@@ -63,16 +63,18 @@ impl Under {
     /// in the machine's data folder, which `platform` says when it is asked, and it
     /// is asked only then.
     ///
-    /// A config that cannot be used is said first, in the readers' own words, which
-    /// name the key or the line and no path; then a models directory that is not
-    /// used, in the opening's.
-    pub fn over(&self, platform: Option<Platform>) -> Result<Over, String> {
+    /// A config whose backends the command will use (`uses`) names a credential and
+    /// no env file was given is said first ([`wiring::env_file_asked`]); then a config
+    /// that cannot be used, in the readers' own words, which name the key or the line
+    /// and no path; then a models directory that is not used, in the opening's.
+    pub fn over(&self, platform: Option<Platform>, uses: Uses<'_>) -> Result<Over, String> {
         let worker = OneWorker::installed();
         let over = Over::nothing()
             .config(self.config.as_deref())
             .env_file(self.env_file.as_deref())
             .kinds(wiring::kinds(&worker))
             .pack(worker);
+        wiring::env_file_asked(&over, uses)?;
         wiring::loaded(&over)?;
         let models = Models::shipped()?.flag(self.models_dir.as_deref());
         over.installed(match platform {
@@ -283,8 +285,9 @@ pub(crate) fn executor(
     under: &Under,
     recovery: Recovery,
     platform: Option<Platform>,
+    uses: Uses<'_>,
 ) -> Result<Engine, String> {
-    let over = under.over(platform)?;
+    let over = under.over(platform, uses)?;
     let opening = wiring::opening(at.root(), Make::Nothing, recovery)
         .map_err(|error| wiring::not_opened(&error))?;
     let store = opening.writer().map_err(|why| why.to_string())?;
@@ -306,7 +309,7 @@ fn run_at(
             under,
             request_id,
         } => {
-            let executor = executor(at, under, recovery, platform)?;
+            let executor = executor(at, under, recovery, platform, Uses::Nothing)?;
             let asked = GrowAsked {
                 mask,
                 px: *px,
@@ -326,7 +329,8 @@ fn run_at(
             under,
             request_id,
         } => {
-            let executor = executor(at, under, recovery, platform)?;
+            let uses = Uses::One(Capability::Segment, backend.as_deref());
+            let executor = executor(at, under, recovery, platform, uses)?;
             // Exactly one is given: the command line holds it to that.
             let (kind, query) = match (phrase, point, box_) {
                 (Some(phrase), _, _) => ("phrase", phrase.as_str()),
@@ -433,7 +437,7 @@ fn operation(
     recovery: Recovery,
     platform: Option<Platform>,
 ) -> Result<String, String> {
-    let executor = executor(&common.at, &common.under, recovery, platform)?;
+    let executor = executor(&common.at, &common.under, recovery, platform, Uses::Nothing)?;
     let asked = OperationAsked {
         action,
         arguments,

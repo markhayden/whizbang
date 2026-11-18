@@ -181,6 +181,10 @@ and "Limits" ("The cached check"): a full check of an installation's files that 
 leaves its record in the model's folder, `checks/<64 hex digits>`, and the first load
 of a later process that finds each file's size, times of last write and of last change
 and inode as that record says trusts it and reads no file whole (`models::verify_checked`).
+Amended: 2026-11-18, with task F1 of plan 1D (`docs/plans/m2b-checkpoint-1d.md`, item 4).
+Words only. Added under "A folder of the layout that is a link": why the model's
+`checks/` is not one of the folders `unlinked` looks at, and what removes a check
+record.
 Amended: 2026-11-18, with task Q1 of checkpoint 1D (`docs/plans/m2b-checkpoint-1d.md`).
 Added, in code (`shared.rs`; `Fs::hard_link` in the store's file-system interface) and
 here: "A file shared between installations", `shared/` in "The directory", and the
@@ -2136,6 +2140,25 @@ alone, it can answer that a model is installed which every install, hold and
 removal then refuses. The inventory, which is built on `current`, looks at the
 layout first and answers damaged, so such a model is never called ready ("The
 inventory"). And a lock file that is a link ("Limits").
+
+**The model's `checks/` is not one of the five** (plan 1D, task F1, item 4). It
+holds the records of full checks ("Limits", "The cached check"), which save work and
+decide nothing: a check record that is missing, damaged or not trusted costs a full
+hash of the files, and no more. Were `checks/` among the folders `unlinked` looks
+at, a link there would refuse every install, hold, removal and load of the model,
+where the link test asks for the opposite: with `checks/` a link, the load goes on,
+nothing is read or written through the link, and the full hash runs
+(`models::a_checks_folder_or_a_check_record_that_is_a_link_is_not_trusted_and_nothing_is_written_through_it`).
+So the cached check looks at `checks/` itself, each time, and neither reads nor
+writes through a link there; the five folders are refused, and `checks/` is passed
+by. **Nothing in the build removes a check record.** A removal deletes what is under
+`installations/`, and leaves `checks/` as it is: a record of an installation that
+was removed names an identity that no installation has, so it is never read, unless
+the same identity is installed again; then its stamps (the inode and the times of
+last write and of last change) are not those of the new files, it is not trusted,
+the full hash runs, and a record of the new files replaces it under the same name.
+What is left is one small file for each identity that was ever checked in full,
+which removing the model's folder by hand takes away.
 
 **The owner may later choose to follow links instead,** so that one model can be
 kept on another disk by a link at its folder. That would take a rule for what a

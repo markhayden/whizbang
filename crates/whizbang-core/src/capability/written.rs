@@ -196,6 +196,11 @@ struct TurnWire {
     stop: StopWire,
     #[serde(deserialize_with = "present")]
     usage: Option<UsageWire>,
+    /// The input the adapter counted, beside the usage the provider reported: null
+    /// when the adapter counts none. An exchange written before it was kept has no
+    /// such field, and is read as null.
+    #[serde(default)]
+    counted_input_tokens: Option<u64>,
     #[serde(deserialize_with = "present")]
     request_id: Option<String>,
 }
@@ -332,6 +337,7 @@ fn answer_out(answer: &Result<Turn, Fault>, opaque: Keep) -> AnswerWire {
                 cache_read_tokens: usage.cache_read_tokens(),
                 cache_write_tokens: usage.cache_write_tokens(),
             }),
+            counted_input_tokens: turn.counted_input(),
             request_id: turn.request_id().map(str::to_owned),
         }),
         Err(fault) => AnswerWire::Fault(FaultWire {
@@ -638,8 +644,13 @@ fn answer_in(answer: AnswerWire, at: usize) -> Result<Result<Turn, Fault>, Unrea
                 Usage::new(usage.input_tokens, usage.output_tokens)
                     .cached(usage.cache_read_tokens, usage.cache_write_tokens)
             });
+            let counted = turn.counted_input_tokens;
             let turn = Turn::new(parts, stop, usage, turn.request_id.as_deref());
-            Ok(turn.map_err(|why| Unread::Unfit { at, why })?)
+            let turn = turn.map_err(|why| Unread::Unfit { at, why })?;
+            Ok(match counted {
+                Some(tokens) => turn.counted(tokens),
+                None => turn,
+            })
         }
         AnswerWire::TurnWithheld { .. } => return Err(Unread::Withheld),
         AnswerWire::Fault(fault) => {

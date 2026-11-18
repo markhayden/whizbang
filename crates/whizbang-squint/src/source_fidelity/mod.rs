@@ -126,8 +126,42 @@ enum Row {
 const ITEM_DISPOSITIONS: [&str; 5] = ["violation", "held", "allowed_change", "hidden", "cant_tell"];
 const FINDING_DISPOSITIONS: [&str; 4] = ["violation", "allowed_change", "cant_tell", "observed"];
 
-/// The most characters of a reason a verdict keeps of each item that decided it.
+/// The most characters of a reason a verdict keeps of each item that decided it. The
+/// verdict's reason is a summary; each item is kept whole beside it ([`REASONS`]).
 const REASON_LIMIT: usize = 300;
+
+/// The name of the run's diagnostic that holds the reason's items whole, one to a
+/// line, each a JSON string (plan 1D, task F1, item 7). Each is a turn's text, so the
+/// turn's bound holds each item and all of them together
+/// ([`crate::check::TURN_TEXT_LIMIT`]); the diagnostic's writer takes the run's secrets
+/// out of the whole before anything cuts or escapes it.
+pub const REASONS: &str = "reasons.jsonl";
+
+/// A reason as the summary keeps it: whole when it is at most [`REASON_LIMIT`]
+/// characters; otherwise cut at the last white space before that, so that no word,
+/// and no key, is split, and three dots follow. A reason with no white space there is
+/// not kept at all, and the three dots stand for it.
+fn summary(reason: &str) -> String {
+    if reason.chars().count() <= REASON_LIMIT {
+        return reason.to_owned();
+    }
+    let head: String = reason.chars().take(REASON_LIMIT + 1).collect();
+    let cut = head
+        .char_indices()
+        .filter(|(_, c)| c.is_whitespace())
+        .map(|(at, _)| at)
+        .next_back()
+        .unwrap_or(0);
+    format!("{}...", head[..cut].trim_end())
+}
+
+/// What a submission decided: the verdict, whose reason is the summary, and each item
+/// of that reason whole.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Decided {
+    pub verdict: Verdict,
+    pub items: Vec<String>,
+}
 
 fn row(disposition: &str, confident: bool) -> Row {
     match (disposition, confident) {
@@ -196,6 +230,12 @@ fn said(answer: &Json, named: String, allowed: &[&str]) -> Result<Said, String> 
 /// The verdict a submission states, or why it states none, in words that quote
 /// nothing the judge wrote but the ids it was given.
 pub fn verdict_of(arguments: &Json) -> Result<Verdict, String> {
+    decided_of(arguments).map(|decided| decided.verdict)
+}
+
+/// What a submission decided ([`Decided`]), or why it decided nothing, as
+/// [`verdict_of`] says.
+pub fn decided_of(arguments: &Json) -> Result<Decided, String> {
     let items = arguments
         .get("items")
         .and_then(Json::as_array)
@@ -260,19 +300,28 @@ pub fn verdict_of(arguments: &Json) -> Result<Verdict, String> {
         at == strictest
             && (strictest != Row::Recorded || CHECKLIST.contains(&answer.named.as_str()))
     });
+    let said = |answer: &Said, reason: &str| {
+        let confidence = if answer.confident {
+            "confident"
+        } else {
+            "tentative"
+        };
+        format!(
+            "{}: {} ({confidence}): {reason}",
+            answer.named, answer.disposition
+        )
+    };
+    let deciding: Vec<&Said> = deciding.collect();
     let reasons: Vec<String> = deciding
-        .map(|answer| {
-            let confidence = if answer.confident {
-                "confident"
-            } else {
-                "tentative"
-            };
-            let reason: String = answer.reason.chars().take(REASON_LIMIT).collect();
-            format!(
-                "{}: {} ({confidence}): {reason}",
-                answer.named, answer.disposition
-            )
-        })
+        .iter()
+        .map(|answer| said(answer, &summary(&answer.reason)))
         .collect();
-    Ok(Verdict::new(decision, &reasons.join("; ")))
+    let items = deciding
+        .iter()
+        .map(|answer| said(answer, &answer.reason))
+        .collect();
+    Ok(Decided {
+        verdict: Verdict::new(decision, &reasons.join("; ")),
+        items,
+    })
 }

@@ -666,6 +666,12 @@ pub struct Turn {
     raw_id: Option<Raw>,
     /// What the request cost, when the backend's answer said.
     charge: Option<Charge>,
+    /// The input tokens the adapter counted for the request before it was sent, when
+    /// it counts them (ADR 0026): kept beside the usage the provider reported.
+    counted_input: Option<u64>,
+    /// The most output tokens the backend sends any request with, when it holds one:
+    /// a loop asks for no more than this on a retry, since it would not be sent.
+    output_ceiling: Option<u32>,
     /// Where it was answered, as far as the backend said.
     served: Served,
 }
@@ -788,8 +794,34 @@ impl Turn {
             raw_stop,
             raw_id,
             charge: None,
+            counted_input: None,
+            output_ceiling: None,
             served: Served::unknown(),
         })
+    }
+
+    /// The same turn, with the input tokens the adapter counted for its request
+    /// before it was sent (ADR 0026, "What a turn records").
+    pub fn counted(mut self, input_tokens: u64) -> Turn {
+        self.counted_input = Some(input_tokens);
+        self
+    }
+
+    /// The input tokens the adapter counted for the request, when it said.
+    pub fn counted_input(&self) -> Option<u64> {
+        self.counted_input
+    }
+
+    /// The same turn, saying the most output tokens its backend sends any request
+    /// with: a request that asks for more is sent with this.
+    pub fn under_output_ceiling(mut self, tokens: u32) -> Turn {
+        self.output_ceiling = Some(tokens);
+        self
+    }
+
+    /// The most output tokens the backend sends any request with, when it said.
+    pub fn output_ceiling(&self) -> Option<u32> {
+        self.output_ceiling
     }
 
     /// The same answer, saying where it was answered: the device and whether a cache

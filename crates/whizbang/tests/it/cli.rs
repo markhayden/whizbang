@@ -24,7 +24,7 @@ use whizbang_testkit::capabilities::FakeSegmenter;
 use whizbang_testkit::scratch::Scratch;
 
 use crate::model_tier::FIXTURE;
-use crate::wired::{has_line, whizbang};
+use crate::wired::{has_line, whizbang, whizbang_storeless};
 
 /// The boxes the fake finds for `circle` in the fixture: around the disc, around its
 /// upper half, and around the square.
@@ -34,7 +34,7 @@ const FOUND: [[u32; 4]; 3] = [
     [80, 280, 240, 440],
 ];
 
-const CONFIG: &str = "[backends.segment]\nkind = \"finding\"\nurl = \"https://segment.example.org/v1\"\n\n\
+pub(crate) const CONFIG: &str = "[backends.segment]\nkind = \"finding\"\nurl = \"https://segment.example.org/v1\"\n\n\
      [egress.recipients.segment]\norigin = \"https://segment.example.org\"\nclasses = [\"prompts\"]\n";
 
 /// A kind whose one segmenter is the test kit's fake, declaring the features `phrase`,
@@ -102,8 +102,18 @@ pub(crate) fn segment(
     root: &Path,
     asked: &SegmentAsked<'_>,
 ) -> Result<String, String> {
+    segment_under(dir, root, asked, CONFIG)
+}
+
+/// The same, under this config, with no env file.
+pub(crate) fn segment_under(
+    dir: &Scratch,
+    root: &Path,
+    asked: &SegmentAsked<'_>,
+    text: &str,
+) -> Result<String, String> {
     let config = dir.path().join("whizbang.toml");
-    std::fs::write(&config, CONFIG).unwrap();
+    std::fs::write(&config, text).unwrap();
     let mut kinds = wiring::kinds(&OneWorker::installed());
     kinds.register(Arc::new(Finding)).unwrap();
     let over = Over::nothing().config(Some(&config)).kinds(kinds);
@@ -602,17 +612,18 @@ fn squint_check_prints_the_verdict_and_the_run_under_a_recorded_fake() {
     );
     let printed = printed.unwrap();
     let lines: Vec<&str> = printed.lines().collect();
-    assert_eq!(lines.len(), 3, "{printed}");
+    assert_eq!(lines.len(), 4, "{printed}");
     assert!(
         lines[0].starts_with("run ") && lines[0].ends_with(" completed"),
         "{printed}"
     );
     assert_eq!(lines[1], "verdict: pass");
-    assert!(
-        lines[2].starts_with(
-            "reason: chk:ob:SF1@candidate: held (confident): Nothing protected moved."
-        ),
-        "{printed}"
+    assert_eq!(
+        lines[2..],
+        [
+            "reason: chk:ob:SF1@candidate: held (confident): Nothing protected moved.",
+            "reason: chk:ob:SF2@candidate: held (confident): Nothing protected moved."
+        ]
     );
     // One request reached the judge, with the source-fidelity's tool beside view.
     let sent: serde_json::Value = serde_json::from_slice(&log.lock().unwrap()[0].1).unwrap();
@@ -624,6 +635,21 @@ fn squint_check_prints_the_verdict_and_the_run_under_a_recorded_fake() {
         .collect();
     assert_eq!(tools, ["view", "submit_verdict"]);
     assert_eq!(sent["max_tokens"], 2_048);
+}
+
+/// A key of capitals and digits, as one pasted in place of a variable's name would
+/// be: made at run time, the key of nothing.
+pub(crate) fn pasted_key() -> String {
+    format!("SK0{}", "ABCDEFGHIJ0123456789".repeat(2))
+}
+
+/// A judge whose `key_env` holds a key pasted in place of the variable's name.
+pub(crate) fn pasted_judge() -> String {
+    format!(
+        "\n[backends.judge]\nkind = \"service\"\nprovider = \"anthropic\"\n\
+         model = \"claude-haiku-5-5\"\nkey_env = \"{}\"\n",
+        pasted_key()
+    )
 }
 
 #[test]
@@ -657,18 +683,11 @@ fn squint_check_sends_the_brief_it_is_given_and_none_when_it_is_given_none() {
 }
 
 #[test]
-fn squint_check_without_the_env_file_is_refused_naming_the_variable() {
+fn squint_check_without_the_env_file_is_refused_naming_the_backend_and_not_the_value() {
     let scratch = Scratch::new("cli-squint-env");
     let root = scratch.path().join("store");
-    let made = whizbang(&["spend", "reset", "--allowance", "1"], &root);
-    let _ = made;
     let config = scratch.path().join("whizbang.toml");
-    std::fs::write(
-        &config,
-        "[backends.judge]\nkind = \"service\"\nprovider = \"anthropic\"\n\
-         model = \"claude-haiku-5-5\"\nkey_env = \"ANTHROPIC_API_KEY\"\n",
-    )
-    .unwrap();
+    std::fs::write(&config, pasted_judge()).unwrap();
     let id = format!("sha256:{}", "0".repeat(64));
     let ran = whizbang(
         &[
@@ -685,7 +704,406 @@ fn squint_check_without_the_env_file_is_refused_naming_the_variable() {
         &root,
     );
     assert_eq!(ran.code, Some(1), "{}", ran.err);
-    assert!(ran.err.contains("ANTHROPIC_API_KEY"), "{}", ran.err);
-    assert!(ran.err.contains("--env-file"), "{}", ran.err);
+    assert!(
+        ran.err.contains(
+            "the judge backend `default` names its credential with `key_env`, and no env \
+             file was given: name the env file that sets it with --env-file"
+        ),
+        "{}",
+        ran.err
+    );
+    assert!(!ran.err.contains(&pasted_key()), "{}", ran.err);
     assert!(ran.out.is_empty());
+    // Refused before the store was looked at: there is none, and none was made.
+    assert!(!root.exists());
+}
+
+#[test]
+fn rascal_segment_on_a_pack_backend_runs_without_the_env_file_under_a_config_naming_a_judge_key() {
+    // The real binary, whose kind `pack` is over the installed pack: the CI runner has
+    // no model installed, so the run's segmenter is not ready. What is shown is that
+    // the command goes past the env file to its backend, and says nothing of the key.
+    let dir = Scratch::new("cli-segment-pack");
+    let (root, image) = with_picture(&dir);
+    let models = dir.path().join("models");
+    let config = dir.path().join("whizbang.toml");
+    let text = format!(
+        "[backends.segment]\nkind = \"pack\"\nmodel = \"sam3\"\n{}",
+        pasted_judge()
+    );
+    std::fs::write(&config, text).unwrap();
+    let ran = whizbang(
+        &[
+            "rascal",
+            "segment",
+            "--image",
+            &image,
+            "--phrase",
+            "circle",
+            "--config",
+            config.to_str().unwrap(),
+            "--models-dir",
+            models.to_str().unwrap(),
+        ],
+        &root,
+    );
+    assert_eq!(ran.code, Some(1), "{} {}", ran.out, ran.err);
+    assert!(!ran.err.contains("env file"), "{}", ran.err);
+    assert!(ran.err.contains("not ready"), "{}", ran.err);
+    assert!(!ran.err.contains(&pasted_key()), "{}", ran.err);
+    assert!(!ran.out.contains(&pasted_key()), "{}", ran.out);
+    // A command that uses every backend, the judge among them, is refused for the
+    // env file.
+    let ran = whizbang_storeless(&[
+        "backends",
+        "status",
+        "--config",
+        config.to_str().unwrap(),
+        "--models-dir",
+        models.to_str().unwrap(),
+    ]);
+    assert_eq!(ran.code, Some(1), "{} {}", ran.out, ran.err);
+    assert!(
+        ran.err.contains("`key_env`, and no env file"),
+        "{}",
+        ran.err
+    );
+    assert!(!ran.err.contains(&pasted_key()), "{}", ran.err);
+}
+
+#[test]
+fn commands_that_use_no_backend_run_without_the_env_file_under_a_config_naming_a_key() {
+    let dir = Scratch::new("cli-no-backend");
+    let (root, image) = with_picture(&dir);
+    let asked = SegmentAsked {
+        image: &image,
+        kind: "phrase",
+        query: "circle",
+        max_instances: 8,
+        backend: None,
+        request_id: None,
+    };
+    let found = segment(&dir, &root, &asked).unwrap();
+    let mask = found
+        .lines()
+        .find_map(|line| line.strip_prefix("mask "))
+        .map(|rest| rest.split(' ').next().unwrap().to_owned())
+        .unwrap();
+    let config = dir.path().join("keyed.toml");
+    std::fs::write(&config, format!("{CONFIG}{}", pasted_judge())).unwrap();
+    let config = config.to_str().unwrap();
+    let models = dir.path().join("models");
+    let ran = |args: &[&str]| {
+        let ran = whizbang(args, &root);
+        assert_eq!(ran.code, Some(0), "{args:?}: {}", ran.err);
+        assert!(!ran.out.contains(&pasted_key()), "{}", ran.out);
+        ran.out
+    };
+    // The operations of rascal, each under the config and no env file.
+    ran(&[
+        "rascal", "grow", "--mask", &mask, "--px", "2", "--config", config,
+    ]);
+    ran(&["rascal", "select", "--mask", &mask, "--config", config]);
+    ran(&[
+        "rascal",
+        "plug",
+        "--mask",
+        &mask,
+        "--max-share",
+        "0.1",
+        "--config",
+        config,
+    ]);
+    ran(&[
+        "rascal",
+        "feather",
+        "--mask",
+        &mask,
+        "--sigma-px",
+        "1",
+        "--config",
+        config,
+    ]);
+    ran(&[
+        "rascal",
+        "render",
+        "--mask",
+        &mask,
+        "--profile",
+        "plain",
+        "--config",
+        config,
+    ]);
+    let listed = whizbang_storeless(&[
+        "models",
+        "list",
+        "--config",
+        config,
+        "--models-dir",
+        models.to_str().unwrap(),
+    ]);
+    assert_eq!(listed.code, Some(0), "{}", listed.err);
+    assert!(!listed.out.contains(&pasted_key()), "{}", listed.out);
+    // `store`, `runs` and `spend` take no config at all.
+    ran(&["runs", "list"]);
+    ran(&["spend", "status"]);
+}
+
+// --- the verdict's reason, whole (plan 1D, task F1, item 7) -------------------------------------
+
+/// A reason of `words` words, each `word` and a space between: so long that the
+/// verdict's summary cuts it, and with nothing a door escapes.
+fn long_reason(word: &str, words: usize) -> String {
+    vec![word; words].join(" ")
+}
+
+/// The lines `squint check` printed after its run's: the verdict, then the reason's.
+fn after_the_run(printed: &str) -> Vec<String> {
+    printed.lines().skip(1).map(str::to_owned).collect()
+}
+
+#[test]
+fn squint_check_prints_each_reason_item_whole_on_its_own_line() {
+    use crate::anthropic::{Judged, checked, record_of, submission};
+    // 80 words of five letters and a space: 479 characters, over the summary's 300.
+    let reason = long_reason("tails", 80);
+    let judged = Judged::new("cli-reason-whole");
+    let (printed, _) = checked(&judged, vec![submission("held", &reason)]);
+    let printed = printed.unwrap();
+    assert_eq!(
+        after_the_run(&printed),
+        [
+            "verdict: pass".to_owned(),
+            format!("reason: chk:ob:SF1@candidate: held (confident): {reason}"),
+            format!("reason: chk:ob:SF2@candidate: held (confident): {reason}"),
+        ]
+    );
+    // The record's reason is the summary: each item cut at a space before 300
+    // characters, with three dots, and the two joined.
+    let run = printed.lines().next().unwrap().split(' ').nth(1).unwrap();
+    let record = record_of(&judged.world.root, run);
+    let verdict = record["judge"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["judge"] == "verdict")
+        .unwrap();
+    let cut = long_reason("tails", 50);
+    assert_eq!(
+        verdict["why"],
+        format!(
+            "chk:ob:SF1@candidate: held (confident): {cut}...; \
+             chk:ob:SF2@candidate: held (confident): {cut}..."
+        )
+    );
+}
+
+#[test]
+fn reason_items_over_4096_characters_in_all_are_each_printed_whole_from_the_stored_run() {
+    use crate::anthropic::{Judged, checked, submission};
+    // Two items of 3,000 characters and more: over the 4,096 a record keeps of a
+    // verdict's reason in all, and each under the door's print limit.
+    let reason = long_reason("feathers", 340);
+    assert!(reason.len() > 3_000 && reason.len() < 4_900);
+    let judged = Judged::new("cli-reason-4096");
+    let (printed, _) = checked(&judged, vec![submission("held", &reason)]);
+    let printed = printed.unwrap();
+    let lines = after_the_run(&printed);
+    assert_eq!(lines.len(), 3, "{printed}");
+    for (line, item) in lines[1..]
+        .iter()
+        .zip(whizbang_squint::source_fidelity::CHECKLIST)
+    {
+        assert_eq!(*line, format!("reason: {item}: held (confident): {reason}"));
+    }
+    // Read again from the stored run by a reader of its own: the same items.
+    let run = printed.lines().next().unwrap().split(' ').nth(1).unwrap();
+    let run = whizbang_core::contract::RunId::parse(run).unwrap();
+    let stated = whizbang::door::verdict(&judged.world.root, &run).unwrap();
+    assert_eq!(stated.items.len(), 2);
+    assert!(stated.items.iter().all(|item| item.ends_with(&reason)));
+}
+
+#[test]
+fn a_reason_item_over_the_print_limit_is_cut_there_and_escaped() {
+    use crate::anthropic::{Judged, checked, submission};
+    // A reason of 6,000 characters and more, with a line break and an escape near its
+    // start: printed on one line, each escaped, and cut at the door's 5,000
+    // characters of the item, with three dots.
+    let reason = format!(
+        "Line one.\nAn escape \u{1b}[31m here. {}",
+        long_reason("plumes", 900)
+    );
+    let judged = Judged::new("cli-reason-cut");
+    let (printed, _) = checked(&judged, vec![submission("held", &reason)]);
+    let printed = printed.unwrap();
+    let lines = after_the_run(&printed);
+    assert_eq!(lines.len(), 3, "{printed}");
+    let item = format!("chk:ob:SF1@candidate: held (confident): {reason}");
+    let kept: String = item.chars().take(5_000).collect();
+    let shown = whizbang::door::printable(&kept);
+    assert!(
+        shown.contains("Line one.\\nAn escape \\u{1b}[31m here."),
+        "{shown}"
+    );
+    assert_eq!(lines[1], format!("reason: {shown}..."));
+    assert!(!printed.contains('\u{1b}'));
+}
+
+#[test]
+fn squint_check_brief_prints_the_same_items() {
+    use crate::anthropic::{Judged, checked, checked_under, submission};
+    let reason = long_reason("crest", 90);
+    let judged = Judged::new("cli-reason-brief");
+    let (without, _) = checked(&judged, vec![submission("held", &reason)]);
+    let judged = Judged::new("cli-reason-brief-given");
+    let (with, _) = checked_under(
+        &judged,
+        vec![submission("held", &reason)],
+        Some("Change only the sky."),
+    );
+    let (without, with) = (without.unwrap(), with.unwrap());
+    assert_eq!(after_the_run(&with), after_the_run(&without));
+    assert_eq!(after_the_run(&with).len(), 3, "{with}");
+}
+
+#[test]
+fn a_key_pasted_into_key_env_with_an_env_file_that_does_not_set_it_is_never_said_back() {
+    // The security review of F1: with an env file given that does not set it, a key
+    // pasted where a variable's name belongs is not known to any reader as a secret,
+    // so nothing may say the variable's name. Each command that would use it says the
+    // setting, `key_env`, and never what it holds; nothing of it reaches the store.
+    let dir = Scratch::new("cli-pasted-env");
+    let (root, image) = with_picture(&dir);
+    let key = pasted_key();
+    let env = dir.path().join("keys.env");
+    std::fs::write(&env, "OTHER=made-up-value-not-a-key\n").unwrap();
+    let env = env.to_str().unwrap().to_owned();
+    let models = dir.path().join("models");
+    let models = models.to_str().unwrap().to_owned();
+    let config = dir.path().join("pasted.toml");
+    let text = format!(
+        "[backends.segment]\nkind = \"pack\"\nmodel = \"sam3\"\nkey_env = \"{key}\"\n{}\n\
+         [[models.tokens]]\norigin = \"https://huggingface.co\"\nkey_env = \"{key}\"\n",
+        pasted_judge()
+    );
+    std::fs::write(&config, text).unwrap();
+    let config = config.to_str().unwrap().to_owned();
+    let under = ["--config", config.as_str(), "--env-file", env.as_str()];
+    let said = |ran: &crate::wired::Ran, what: &str| {
+        assert_ne!(ran.code, Some(0), "{what}: {} {}", ran.out, ran.err);
+        assert!(!ran.out.contains(&key), "{what}: {}", ran.out);
+        assert!(!ran.err.contains(&key), "{what}: {}", ran.err);
+        format!("{}{}", ran.out, ran.err)
+    };
+    let checked = whizbang(
+        &[
+            &[
+                "squint",
+                "check",
+                "source-fidelity",
+                "--source",
+                &image,
+                "--candidate",
+                &image,
+            ][..],
+            &under[..],
+        ]
+        .concat(),
+        &root,
+    );
+    let text = said(&checked, "squint check");
+    assert!(text.contains("`key_env` names"), "{text}");
+    let status = whizbang_storeless(
+        &[
+            &["backends", "status", "--models-dir", &models][..],
+            &under[..],
+        ]
+        .concat(),
+    );
+    // `backends status` lists each backend and ends well; what it prints holds no key.
+    assert!(
+        !status.out.contains(&key) && !status.err.contains(&key),
+        "{}{}",
+        status.out,
+        status.err
+    );
+    assert!(status.out.contains("`key_env` names"), "{}", status.out);
+    let segmented = whizbang(
+        &[
+            &[
+                "rascal",
+                "segment",
+                "--image",
+                &image,
+                "--phrase",
+                "circle",
+                "--models-dir",
+                &models,
+            ][..],
+            &under[..],
+        ]
+        .concat(),
+        &root,
+    );
+    let text = said(&segmented, "rascal segment");
+    assert!(text.contains("`key_env` names"), "{text}");
+    let got = whizbang_storeless(
+        &[
+            &["models", "get", "sam3", "--models-dir", &models][..],
+            &under[..],
+        ]
+        .concat(),
+    );
+    let text = said(&got, "models get");
+    // The token is read only on a platform the model runs on: on any other the get is
+    // refused before it, and says so. `credential::` holds the token's refusal on every
+    // platform, with a catalogue of its own.
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        assert!(
+            text.contains("`[[models.tokens]]` `key_env` names"),
+            "{text}"
+        );
+    } else {
+        assert!(text.contains("does not run on this platform"), "{text}");
+    }
+    // Nothing of it in any file of the store.
+    let mut folders = vec![root.clone()];
+    while let Some(folder) = folders.pop() {
+        for entry in std::fs::read_dir(&folder).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                folders.push(path);
+            } else {
+                let bytes = std::fs::read(&path).unwrap();
+                assert!(!bytes.windows(key.len()).any(|at| at == key.as_bytes()));
+            }
+        }
+    }
+    // A judge the config does not give is refused at once, without the env file, and
+    // what was typed is not said back.
+    let ran = whizbang(
+        &[
+            "squint",
+            "check",
+            "source-fidelity",
+            "--source",
+            &image,
+            "--candidate",
+            &image,
+            "--judge",
+            "nobody-here",
+            "--config",
+            &config,
+        ],
+        &root,
+    );
+    assert_eq!(ran.code, Some(1), "{}", ran.err);
+    assert!(
+        ran.err
+            .contains("the config gives no judge backend of the name the command line gives"),
+        "{}",
+        ran.err
+    );
+    assert!(!ran.err.contains("nobody-here"), "{}", ran.err);
 }

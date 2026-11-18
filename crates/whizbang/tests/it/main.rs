@@ -4,6 +4,7 @@
 mod anthropic;
 mod backends;
 mod catalogue;
+mod check;
 mod cli;
 mod credential;
 mod describe;

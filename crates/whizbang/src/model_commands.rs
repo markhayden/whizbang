@@ -140,6 +140,9 @@ struct Read {
     secrets: Secrets,
     tokens: Vec<ModelToken>,
     credentials: Credentials,
+    /// Whether an env file was named: without one a variable is never named back
+    /// (ADR 0011, "When the env file is asked for").
+    env_file: bool,
 }
 
 /// Reads the config and its env file, as an executor's source reads them; with no
@@ -153,6 +156,7 @@ fn read(under: Under<'_>) -> Result<Read, String> {
             secrets: Secrets::none(),
             tokens: Vec::new(),
             credentials: Credentials::none(),
+            env_file: under.env_file.is_some(),
         });
     };
     let loaded = Loaded::of_files(config, under.env_file)
@@ -163,9 +167,10 @@ fn read(under: Under<'_>) -> Result<Read, String> {
         least: config
             .download_least_kib_per_second()
             .unwrap_or(DOWNLOAD_LEAST_KIB_PER_SECOND),
-        secrets: loaded.secrets().clone(),
+        secrets: loaded.kept_out(),
         tokens: config.model_tokens().to_vec(),
         credentials: loaded.credentials().clone(),
+        env_file: under.env_file.is_some(),
     })
 }
 
@@ -549,13 +554,25 @@ fn credential_of(
             });
         }
         Some(token) => match token.from() {
-            TokenFrom::Variable(variable) => match read.credentials.model_token(origin) {
+            TokenFrom::Variable(_) => match read.credentials.model_token(origin) {
                 Some(value) => value.expose().to_owned(),
+                // The download is the one use of the token, so the env file is asked
+                // for here; the variable is not named, since a key pasted in its
+                // place cannot be told from a name.
+                None if !read.env_file => {
+                    return Err(format!(
+                        "the config names a variable in `[[models.tokens]]` for the token of \
+                         {origin}, and no env file was given, {not_downloaded}: name the env \
+                         file that sets it with --env-file"
+                    ));
+                }
+                // The variable is not named: a key pasted in its place cannot be told
+                // from a name.
                 None => {
                     return Err(format!(
-                        "the config names the variable `{variable}` for the token of {origin}, \
-                         and the env file does not set it, {not_downloaded}: set it in the \
-                         env file"
+                        "the env file does not set the variable the config's \
+                         `[[models.tokens]]` `key_env` names for the token of {origin}, \
+                         {not_downloaded}: set it in the env file"
                     ));
                 }
             },

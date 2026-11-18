@@ -15,8 +15,12 @@
 //! (the plan's risk 1): `anthropic::the_input_count_is_at_least_the_usage_of_every_recorded_exchange`.
 //!
 //! **What a request cost** is worked out from the usage its answer reports, at the same
-//! row, rounded up; an answer that reports none costs its bound. An answer of an error
-//! status costs nothing: the provider charges no request it refused or failed.
+//! row, rounded up; an answer that reports none costs its bound, and so does an answer
+//! of a status of success the adapter does not list, as an unreadable answer of 200
+//! does. A turn whose reported input passes [`LONG_PROMPT_TOKENS`] is charged the long
+//! prompt's prices of the same reading ([`LongPrompt`]), so a charge is never below
+//! the price. An answer of an error status costs nothing: the provider charges no
+//! request it refused or failed.
 
 use whizbang_core::capability::{Charge, Usage};
 
@@ -30,13 +34,30 @@ pub struct Prices {
     pub cache_write: f64,
     /// The date the row was read from the provider's page of prices.
     pub read: &'static str,
+    /// The prices of a prompt over [`LONG_PROMPT_TOKENS`], of the same reading.
+    pub long: LongPrompt,
+}
+
+/// The prices of a prompt whose input passes [`LONG_PROMPT_TOKENS`], in US dollars per
+/// million tokens, read on the same date as the row they belong to.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LongPrompt {
+    pub input: f64,
+    pub output: f64,
+    pub cache_read: f64,
+    pub cache_write: f64,
 }
 
 /// The models this build has a row of prices for: `claude-haiku-5-5`, the model of the
 /// study. The row is squint's catalogue's (`crates/squint-providers/catalog.toml`, at
 /// the commit `docs/sources.toml` pins), read from the provider's page of prices on
-/// 2026-10-26; its prices for a prompt over 100,000 tokens are not needed, since the
-/// input ceiling is under that and is held.
+/// 2026-10-26, its long prompt's prices with it: over 100,000 tokens of input, 0.50
+/// for input, 2.50 for output and 0.05 for cached input. The catalogue states no
+/// price of a cache write for a long prompt; it is taken as five times the short
+/// one, 0.625, the factor every price it does state for a long prompt has, so that
+/// it is never below the price. The input ceiling is held under the line, so a long
+/// prompt's charge applies only when the provider reports more input than the
+/// adapter counted (ADR 0026, "A long prompt").
 pub const PRICED: [(&str, Prices); 1] = [(
     "claude-haiku-5-5",
     Prices {
@@ -45,6 +66,12 @@ pub const PRICED: [(&str, Prices); 1] = [(
         cache_read: 0.01,
         cache_write: 0.125,
         read: "2026-10-26",
+        long: LongPrompt {
+            input: 0.50,
+            output: 2.50,
+            cache_read: 0.05,
+            cache_write: 0.625,
+        },
     },
 )];
 
@@ -87,14 +114,37 @@ pub fn bound_micros(ceilings: Ceilings, prices: Prices) -> f64 {
     input * prices.input.max(prices.cache_write) + output * prices.output
 }
 
-/// What an answer's usage cost, in millionths of a US dollar, rounded up.
+/// The input an answer's usage reports: what was read from the cache, written to it,
+/// and neither, together.
+pub fn reported_input(usage: Usage) -> u64 {
+    usage
+        .input_tokens()
+        .saturating_add(usage.cache_read_tokens())
+        .saturating_add(usage.cache_write_tokens())
+}
+
+/// What an answer's usage cost, in millionths of a US dollar, rounded up: at the row,
+/// or at its long prompt's prices when the reported input passes
+/// [`LONG_PROMPT_TOKENS`].
 pub fn charge_of(usage: Usage, prices: Prices) -> Option<Charge> {
+    let long = reported_input(usage) > LONG_PROMPT_TOKENS;
+    let (input, output, cache_read, cache_write) = if long {
+        let long = prices.long;
+        (long.input, long.output, long.cache_read, long.cache_write)
+    } else {
+        (
+            prices.input,
+            prices.output,
+            prices.cache_read,
+            prices.cache_write,
+        )
+    };
     #[allow(clippy::cast_precision_loss)]
     let at = |tokens: u64, price: f64| tokens as f64 * price;
-    let micros = at(usage.input_tokens(), prices.input)
-        + at(usage.output_tokens(), prices.output)
-        + at(usage.cache_read_tokens(), prices.cache_read)
-        + at(usage.cache_write_tokens(), prices.cache_write);
+    let micros = at(usage.input_tokens(), input)
+        + at(usage.output_tokens(), output)
+        + at(usage.cache_read_tokens(), cache_read)
+        + at(usage.cache_write_tokens(), cache_write);
     Charge::of_micros(micros.ceil()).ok()
 }
 

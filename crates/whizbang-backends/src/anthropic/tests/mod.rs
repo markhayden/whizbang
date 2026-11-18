@@ -404,3 +404,45 @@ fn a_request_asking_more_output_than_the_ceiling_is_sent_with_the_ceiling() {
     assert_eq!(sent[0]["max_tokens"], 1_024);
     assert_eq!(sent[1]["max_tokens"], 2_048);
 }
+
+#[test]
+fn an_unlisted_success_status_is_charged_its_bound() {
+    // A status of success other than 200, with a body that is a turn: the adapter does
+    // not read it, and the request, which the provider may have charged, settles at
+    // its bound, as an unreadable answer of 200 does, and never at nothing.
+    let pki = Arc::new(Pki::loopback());
+    let turn = json!({
+        "id": "msg_1", "content": [{ "type": "text", "text": "Seen." }],
+        "stop_reason": "end_turn", "usage": { "input_tokens": 9, "output_tokens": 2 }
+    });
+    let body = turn.to_string();
+    let answers = [
+        "201 Created",
+        "203 Non-Authoritative Information",
+        "299 Odd",
+    ]
+    .map(|status| answer(status, "", body.as_bytes()));
+    let (listener, _) = serving(&pki, answers.to_vec());
+    let port = listener.port();
+    for _ in 0..answers.len() {
+        let fault = ask(&pki, messages(port, "claude-haiku-5-5", None), &words()).unwrap_err();
+        assert_eq!(fault.kind(), FaultKind::Malformed);
+        assert_eq!(fault.sentence(), super::OTHER_SUCCESS);
+        assert_eq!(fault.stage(), whizbang_core::capability::Stage::Answered);
+        assert_eq!(fault.charge(), None);
+    }
+    assert_eq!(listener.finish(), answers.len());
+    // An unreadable answer of 200 settles the same way.
+    let (listener, _) = serving(&pki, vec![answer("200 OK", "", b"not a turn")]);
+    let fault = ask(
+        &pki,
+        messages(listener.port(), "claude-haiku-5-5", None),
+        &words(),
+    )
+    .unwrap_err();
+    assert_eq!(
+        (fault.stage(), fault.charge()),
+        (whizbang_core::capability::Stage::Answered, None)
+    );
+    assert_eq!(listener.finish(), 1);
+}

@@ -20,18 +20,18 @@ use crate::contract::{
 use super::{CAPABILITIES, Config, Credentials, KindRefused, Kinds, Table};
 use crate::egress::{Credential, NotAllowed, Recipient};
 
-/// Why a backend a config offers cannot answer. Each is fixed words, but for the name
-/// of a variable, which the config's reader held to the rule of one and looked at for a
-/// secret. Nothing of a value is in one.
+/// Why a backend a config offers cannot answer. Each is fixed words. Nothing of a value
+/// is in one, and no variable's name: a key pasted where a name belongs cannot be told
+/// from one (ADR 0011, "When the env file is asked for").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NotReady {
     /// The build has no code for the backend's `kind`.
     UnknownKind,
     /// The backend's kind does not take its table.
     Refused(KindRefused),
-    /// The backend names this variable for a credential, and the env file does not
-    /// set it.
-    Missing { variable: String },
+    /// The backend names a variable for a credential under this setting, `key_env` or
+    /// `token_env`, and the env file does not set it. The variable is not named.
+    Missing { setting: &'static str },
     /// The backend's kind made a backend of another capability than the one its
     /// table is under.
     OtherCapability,
@@ -42,9 +42,9 @@ impl std::fmt::Display for NotReady {
         match self {
             NotReady::UnknownKind => f.write_str("its kind is not one this build has"),
             NotReady::Refused(why) => write!(f, "its kind does not take it: {why}"),
-            NotReady::Missing { variable } => write!(
+            NotReady::Missing { setting } => write!(
                 f,
-                "the env file does not set {variable}, the variable its credential is in"
+                "the env file does not set the variable its `{setting}` names"
             ),
             NotReady::OtherCapability => {
                 f.write_str("its kind made a backend of another capability")
@@ -194,12 +194,12 @@ impl Offers {
         for capability in CAPABILITIES {
             for (name, backend) in config.backends(capability) {
                 let handed = credentials.of(capability, name);
-                let missing = backend.credentials().find_map(|(key, variable)| {
+                let missing = backend.credentials().find_map(|(key, _)| {
                     let value = match key {
                         "key_env" => handed.key(),
                         _ => handed.token(),
                     };
-                    value.is_none().then(|| variable.to_owned())
+                    value.is_none().then_some(key)
                 });
                 let table = Table {
                     capability,
@@ -209,7 +209,7 @@ impl Offers {
                     secrets,
                 };
                 let made = match (missing, kinds.get(backend.kind())) {
-                    (Some(variable), _) => Err(NotReady::Missing { variable }),
+                    (Some(setting), _) => Err(NotReady::Missing { setting }),
                     (None, None) => Err(NotReady::UnknownKind),
                     (None, Some(kind)) => kind
                         .make(&table)

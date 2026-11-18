@@ -731,7 +731,7 @@ impl Over {
         let offers = Offers::of(loaded.config(), loaded.credentials(), &self.kinds)
             .map_err(|refused| format!("the config cannot be used: {refused}"))?
             .over(inventory.clone());
-        let secrets = self.secrets.joined(loaded.secrets());
+        let secrets = self.secrets.joined(&loaded.kept_out());
         Ok(Some(Configured {
             loaded,
             offers,
@@ -780,6 +780,80 @@ impl Over {
             .recording(Arc::new(empty));
         Ok(Arc::new(snapshot))
     }
+}
+
+/// The backends a command's run will use, as the command chose them before anything
+/// is built (ADR 0011, "When the env file is asked for").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Uses<'a> {
+    /// None: the operations of rascal, which ask no backend.
+    Nothing,
+    /// The one backend of this capability the command named, or with none named the
+    /// capability's default; where the config gives no default, every backend of it.
+    One(Capability, Option<&'a str>),
+    /// Every backend of the config: `whizbang backends status`.
+    Every,
+}
+
+/// Whether a command that will use these backends may go on without an env file:
+/// asked before any backend is built and before anything but the config is read,
+/// and only when a config is named and no env file is (ADR 0011, "When the env file
+/// is asked for"). When one of the backends names a credential, the refusal names
+/// the capability, the backend and the setting (`key_env` or `token_env`), and never
+/// the setting's value: a key of capitals and digits pasted there cannot be told from
+/// a variable's name. A backend the command names that the config does not give is
+/// refused first. A config that cannot be read is not refused here: [`loaded`] says
+/// why, in the readers' own words.
+pub fn env_file_asked(over: &Over, uses: Uses<'_>) -> Result<(), String> {
+    let (Some(path), None) = (&over.config, &over.env) else {
+        return Ok(());
+    };
+    let Ok(config) = Config::read(path, &over.secrets) else {
+        return Ok(());
+    };
+    // A backend the command names that the config does not give is refused at once,
+    // without what was typed: nothing would answer the call.
+    if let Uses::One(of, Some(named)) = uses
+        && !config.backends(of).any(|(name, _)| name == named)
+    {
+        return Err(format!(
+            "the config gives no {} backend of the name the command line gives; nothing \
+             was read but the config, and nothing ran",
+            of.name()
+        ));
+    }
+    let capabilities = [Capability::Segment, Capability::Fill, Capability::Judge];
+    let chosen: Vec<(Capability, &str, &whizbang_core::config::Backend)> = capabilities
+        .into_iter()
+        .flat_map(|capability| {
+            let config = &config;
+            config
+                .backends(capability)
+                .map(move |(name, backend)| (capability, name, backend))
+        })
+        .filter(|(capability, name, _)| match uses {
+            Uses::Nothing => false,
+            Uses::Every => true,
+            Uses::One(of, named) => {
+                *capability == of
+                    && match named.or(config.default_of(of)) {
+                        Some(chosen) => *name == chosen,
+                        None => true,
+                    }
+            }
+        })
+        .collect();
+    for (capability, name, backend) in chosen {
+        if let Some((key, _)) = backend.credentials().next() {
+            return Err(format!(
+                "the {} backend `{name}` names its credential with `{key}`, and no env file \
+                 was given: name the env file that sets it with --env-file; nothing was read \
+                 but the config, and nothing ran",
+                capability.name()
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Reads the config a command named, as its executor's source will read it, and
