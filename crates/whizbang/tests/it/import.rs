@@ -4,11 +4,12 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 
+use image::ImageEncoder;
 use whizbang_core::artifact::{
-    self, Artifact, ArtifactType, BandProfile, Line, Location, Mask, Origin, Plan, Series, Shape,
-    Source, Step, UseCase, Windows,
+    self, Artifact, ArtifactType, BandProfile, ImageRole, Line, Location, Mask, Origin, Plan,
+    Series, Shape, Source, Step, UseCase, Windows,
 };
-use whizbang_core::identity::{Binding, DecodeLimits, Digest, PixelDigest, Space};
+use whizbang_core::identity::{Binding, DecodeLimits, Digest, PixelDigest, Space, identify};
 use whizbang_core::store::Reader;
 use whizbang_core::store::fs::RealFs;
 use whizbang_testkit::scratch::Scratch;
@@ -590,4 +591,245 @@ fn a_diagnostic_under_the_artifacts_name_is_not_the_artifact_and_import_brings_i
         read_back(&store, ArtifactType::Mask, mask.id()),
         Artifact::from(mask)
     );
+}
+
+// Pictures: `store import --picture`.
+
+/// Imports a picture, making the store if there is none.
+fn import_picture(file: &Path, store: &Path) -> (i32, String, String) {
+    whizbang(&[
+        "store",
+        "import",
+        "--picture",
+        file.to_str().expect("a path of UTF-8"),
+        "--create",
+        "--store",
+        store.to_str().expect("a path of UTF-8"),
+    ])
+}
+
+/// The checksum of a PNG chunk: CRC-32 over its name and data.
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = 0xffff_ffffu32;
+    for byte in bytes {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            crc = if crc & 1 == 1 {
+                (crc >> 1) ^ 0xedb8_8320
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    !crc
+}
+
+/// A PNG chunk, whole: its length, its name, its data and its checksum.
+fn chunk(name: &[u8; 4], data: &[u8]) -> Vec<u8> {
+    let mut covered = name.to_vec();
+    covered.extend_from_slice(data);
+    let mut whole = u32::try_from(data.len())
+        .expect("a short chunk")
+        .to_be_bytes()
+        .to_vec();
+    whole.extend_from_slice(&covered);
+    whole.extend_from_slice(&crc32(&covered).to_be_bytes());
+    whole
+}
+
+/// The names of a PNG's chunks, in order.
+fn chunk_names(png: &[u8]) -> Vec<String> {
+    assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"), "a PNG");
+    let (mut at, mut names) = (8, Vec::new());
+    while at < png.len() {
+        let length = u32::from_be_bytes(png[at..at + 4].try_into().expect("four bytes"));
+        names.push(String::from_utf8_lossy(&png[at + 4..at + 8]).into_owned());
+        at += 12 + length as usize;
+    }
+    names
+}
+
+/// A picture of 6 by 4 pixels, no two alike, as red, green, blue and alpha.
+fn rgba() -> Vec<u8> {
+    (0..24u8)
+        .flat_map(|n| [n * 10, 255 - n * 10, n * 3, 255])
+        .collect()
+}
+
+/// The picture as a PNG.
+fn a_png() -> Vec<u8> {
+    let mut file = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut file)
+        .write_image(&rgba(), 6, 4, image::ExtendedColorType::Rgba8)
+        .expect("a PNG");
+    file
+}
+
+/// The picture as a JPEG, without its alpha.
+fn a_jpeg() -> Vec<u8> {
+    let rgb: Vec<u8> = rgba()
+        .chunks(4)
+        .flat_map(|pixel| pixel[..3].to_vec())
+        .collect();
+    let mut file = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut file, 90)
+        .write_image(&rgb, 6, 4, image::ExtendedColorType::Rgb8)
+        .expect("a JPEG");
+    file
+}
+
+/// What a camera or an editor writes beside the pixels, which must not be kept.
+const SECRET: &[u8] = b"taken at 51.5007N 0.1246W by serial 0042";
+
+#[test]
+fn a_png_and_a_jpeg_are_committed_as_pictures_and_their_identities_printed() {
+    let dir = Scratch::new("import-picture");
+    let store = dir.path().join("store");
+    let mut seen = Vec::new();
+    for (n, (name, bytes)) in [("photo.png", a_png()), ("photo.jpg", a_jpeg())]
+        .into_iter()
+        .enumerate()
+    {
+        let file = dir.path().join(name);
+        std::fs::write(&file, &bytes).expect("the fixture is written");
+        let given = identify(&bytes, &DecodeLimits::default()).expect("the fixture decodes");
+
+        let (code, printed, complaint) = import_picture(&file, &store);
+        assert_eq!((code, complaint.as_str()), (0, ""), "{printed}");
+        let made = if n == 0 {
+            created(&store)
+        } else {
+            String::new()
+        };
+        let id = printed
+            .strip_prefix(&format!("{made}imported image "))
+            .and_then(|rest| rest.strip_suffix('\n'))
+            .unwrap_or_else(|| panic!("an identity is printed: {printed:?}"));
+        let id = artifact::ArtifactId(id.parse().expect("an artifact's identity"));
+
+        let Artifact::Image(image) = read_back(&store, ArtifactType::Image, id) else {
+            panic!("an image");
+        };
+        assert_eq!(image.id(), id);
+        assert_eq!(image.role(), ImageRole::Picture);
+        // The same picture: what the file shows, pixel for pixel, in the file's size.
+        assert_eq!(image.identity().pixels, given.identity.pixels);
+        assert_eq!((image.space().width(), image.space().height()), (6, 4));
+        seen.push(id);
+
+        // A second import of the same picture publishes nothing.
+        let (code, printed, _) = import_picture(&file, &store);
+        assert_eq!(code, 0);
+        assert_eq!(printed, format!("already there: image {id}\n"));
+    }
+    // A PNG and a JPEG show different pixels, so they are two pictures.
+    assert_ne!(seen[0], seen[1]);
+}
+
+#[test]
+fn a_picture_over_the_decode_limits_is_refused_before_it_is_committed() {
+    let dir = Scratch::new("import-picture");
+    let (file, store) = (dir.path().join("huge.png"), dir.path().join("store"));
+    // A PNG that says it is 10,000 by 10,000 pixels: twice the core's limit of 50,000,000.
+    // Its data is a few bytes; what is refused is what its header says.
+    let mut header = Vec::new();
+    header.extend_from_slice(&10_000u32.to_be_bytes());
+    header.extend_from_slice(&10_000u32.to_be_bytes());
+    header.extend_from_slice(&[8, 0, 0, 0, 0]);
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    png.extend(chunk(b"IHDR", &header));
+    png.extend(chunk(
+        b"IDAT",
+        &[0x78, 0x9c, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01],
+    ));
+    png.extend(chunk(b"IEND", &[]));
+    std::fs::write(&file, &png).expect("the fixture is written");
+
+    let (code, printed, complaint) = import_picture(&file, &store);
+    assert_ne!(code, 0);
+    assert_eq!(printed, "");
+    assert!(complaint.contains("limit"), "{complaint}");
+    // Refused before the store was touched: even `--create` made nothing.
+    assert!(!store.exists(), "a store was made for a refused picture");
+
+    // A picture file is not taken for an artifact file, nor an artifact file for a
+    // picture.
+    let photo = dir.path().join("photo.png");
+    std::fs::write(&photo, a_png()).expect("the fixture is written");
+    let (code, _, complaint) = import(&photo, &store);
+    assert_ne!(code, 0);
+    assert!(complaint.contains("photo.png"), "{complaint}");
+    let artifact = dir.path().join("seam.mask");
+    std::fs::write(&artifact, mask().to_bytes()).expect("the fixture is written");
+    let (code, _, complaint) = import_picture(&artifact, &store);
+    assert_ne!(code, 0);
+    assert!(!complaint.is_empty());
+    assert!(!store.exists());
+}
+
+#[test]
+fn the_committed_picture_holds_no_metadata_of_the_file() {
+    let dir = Scratch::new("import-picture");
+    let store = dir.path().join("store");
+
+    // A PNG with a text chunk and a private chunk after its header.
+    let plain = a_png();
+    let mut png = plain[..33].to_vec();
+    png.extend(chunk(b"tEXt", &[b"Comment\0".as_slice(), SECRET].concat()));
+    png.extend(chunk(b"prVt", SECRET));
+    png.extend_from_slice(&plain[33..]);
+    // A JPEG with a comment segment after its start.
+    let plain = a_jpeg();
+    let mut jpeg = plain[..2].to_vec();
+    jpeg.extend_from_slice(&[0xff, 0xfe]);
+    jpeg.extend_from_slice(
+        &u16::try_from(SECRET.len() + 2)
+            .expect("short")
+            .to_be_bytes(),
+    );
+    jpeg.extend_from_slice(SECRET);
+    jpeg.extend_from_slice(&plain[2..]);
+
+    for (name, bytes) in [("noted.png", png), ("noted.jpg", jpeg)] {
+        let file = dir.path().join(name);
+        std::fs::write(&file, &bytes).expect("the fixture is written");
+        let (code, printed, complaint) = import_picture(&file, &store);
+        assert_eq!(code, 0, "{complaint}");
+        let id = printed
+            .lines()
+            .last()
+            .and_then(|line| line.strip_prefix("imported image "))
+            .unwrap_or_else(|| panic!("an identity is printed: {printed:?}"));
+        let id = artifact::ArtifactId(id.parse().expect("an artifact's identity"));
+        let Artifact::Image(image) = read_back(&store, ArtifactType::Image, id) else {
+            panic!("an image");
+        };
+
+        // The picture held is a PNG of the pixels alone: a header, the data, the end.
+        let names = chunk_names(image.file());
+        assert_eq!(names.first().map(String::as_str), Some("IHDR"), "{names:?}");
+        assert_eq!(names.last().map(String::as_str), Some("IEND"), "{names:?}");
+        assert!(
+            names[1..names.len() - 1].iter().all(|name| name == "IDAT"),
+            "{name}: {names:?}"
+        );
+        // Nothing of what the file said beside its pixels is anywhere in the artifact,
+        // nor its name.
+        let whole = image.to_bytes();
+        for kept in [SECRET, name.as_bytes()] {
+            assert!(
+                !whole.windows(kept.len()).any(|at| at == kept),
+                "{name}: the artifact holds {:?}",
+                String::from_utf8_lossy(kept)
+            );
+        }
+        // The file's bytes are not the picture's: the file was not kept.
+        assert_ne!(
+            image.identity().file,
+            identify(&bytes, &DecodeLimits::default())
+                .expect("decodes")
+                .identity
+                .file
+        );
+    }
 }

@@ -1,5 +1,21 @@
 //! `whizbang store import`: a developer's command that brings a canonical artifact file
-//! (ADR 0002) into a store, so that a fixture can be an action's input.
+//! (ADR 0002) into a store, so that a fixture can be an action's input; and, with
+//! `--picture`, a PNG or JPEG picture, committed as an image.
+//!
+//! # A picture
+//!
+//! A picture file is read as an artifact file is, within the same limit, then decoded by
+//! the core's `identify`, within the core's decode limits (ADR 0001): a file over them is
+//! refused before the store is touched. Its canonical pixels (upright, sRGB, 8 bits a
+//! channel, red, green, blue and alpha) are written again as a PNG that holds nothing
+//! else, and that PNG is the file the image holds: no text, EXIF, colour profile or other
+//! chunk or segment of the file given is kept, and neither is its name. Its role is a
+//! picture; its space is flat and bounded, as no file can be trusted to say otherwise.
+//! Its origin is one step, `import-picture`, whose one input is the digest of the file
+//! given, so what was imported can be told apart from what was not; the origin is not
+//! part of the image's identity, so the same pixels from two files are one image. The
+//! PNG is written as `view` writes a crop. Its file digest is that encoder's; its pixel
+//! digest is the picture's, whatever the file was.
 //!
 //! # What is read, and how much
 //!
@@ -56,11 +72,16 @@
 use std::io::Read;
 use std::path::Path;
 
+use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+use image::{ExtendedColorType, ImageEncoder};
 use whizbang::wiring::{self, Make};
-use whizbang_core::artifact::{self, Artifact};
+use whizbang_core::artifact::{self, Artifact, Image, ImageRole, Origin, Step};
 use whizbang_core::contract::Recovery;
-use whizbang_core::identity::DecodeLimits;
+use whizbang_core::identity::{CanonicalPixels, DecodeLimits, Projection, Topology, identify};
 use whizbang_core::store::Error;
+
+/// The step a picture's origin names.
+const PICTURE_STEP: &str = "import-picture";
 
 /// The most bytes the picture an image artifact holds may have: ADR 0001's limit on a
 /// file, which is the default of [`DecodeLimits`].
@@ -179,6 +200,64 @@ pub fn import(
     let artifact = Artifact::from_bytes(&bytes, &DecodeLimits::default())
         .map_err(|error| format!("{}: {error}", file.display()))?;
     drop(bytes);
+    commit(&artifact, root, create, recovery)
+}
+
+/// Reads a PNG or JPEG picture and commits it as an image whose role is a picture,
+/// written again as a PNG of its pixels alone; the module's description says how. A
+/// picture that is refused creates nothing.
+pub fn import_picture(
+    file: &Path,
+    root: &Path,
+    create: bool,
+    recovery: Recovery,
+) -> Result<String, String> {
+    let limits = DecodeLimits::default();
+    let bytes = read(file)?;
+    let identified =
+        identify(&bytes, &limits).map_err(|error| format!("{}: {error}", file.display()))?;
+    drop(bytes);
+    let image = picture(&identified.pixels, identified.identity.file.0, &limits)
+        .map_err(|error| format!("{}: {error}", file.display()))?;
+    commit(&Artifact::Image(image), root, create, recovery)
+}
+
+/// The image of these pixels: a PNG of them alone, with an origin that names the file
+/// they came from by its digest.
+fn picture(
+    pixels: &CanonicalPixels,
+    file: whizbang_core::identity::Digest,
+    limits: &DecodeLimits,
+) -> Result<Image, String> {
+    let mut png = Vec::new();
+    PngEncoder::new_with_quality(&mut png, CompressionType::Default, FilterType::Adaptive)
+        .write_image(
+            pixels.rgba(),
+            pixels.width(),
+            pixels.height(),
+            ExtendedColorType::Rgba8,
+        )
+        .map_err(|error| format!("cannot write the picture as a PNG: {error}"))?;
+    let origin =
+        Origin::new(Step::new(PICTURE_STEP, "1").input("file", file)).map_err(|e| e.to_string())?;
+    Image::new(
+        png,
+        Projection::Flat,
+        Topology::Bounded,
+        ImageRole::Picture,
+        origin,
+        limits,
+    )
+    .map_err(|error| error.to_string())
+}
+
+/// Commits an artifact that has been read and checked: the store part of both imports.
+fn commit(
+    artifact: &Artifact,
+    root: &Path,
+    create: bool,
+    recovery: Recovery,
+) -> Result<String, String> {
     let (kind, id) = (artifact.artifact_type(), artifact.id());
 
     let mut printed = String::new();
@@ -210,7 +289,7 @@ pub fn import(
         return Ok(printed);
     }
     let mut publication = store.begin().map_err(|error| error.to_string())?;
-    artifact::put(&mut publication, &artifact).map_err(|error| error.to_string())?;
+    artifact::put(&mut publication, artifact).map_err(|error| error.to_string())?;
     publication.publish().map_err(|error| error.to_string())?;
     printed.push_str(&format!("imported {kind} {id}\n"));
     Ok(printed)

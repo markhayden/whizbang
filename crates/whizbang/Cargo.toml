@@ -23,6 +23,9 @@ whizbang-rascal.workspace = true
 whizbang-squint.workspace = true
 clap.workspace = true
 serde_json.workspace = true
+# Writing an imported picture again as a PNG of its pixels alone (`store import
+# --picture`), at the version the core decodes with and `whizbang-squint` encodes with.
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
 
 [features]
 # What only a test may build: `OneWorker::starting`, a one worker started from what a
@@ -34,6 +37,8 @@ fakes = ["whizbang-backends/fakes"]
 
 [dev-dependencies]
 whizbang-testkit.workspace = true
+# Pictures to import, as a PNG and a JPEG, for the tests of `store import --picture`.
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }
 # This crate itself, with the feature `fakes`, for its own tests.
 whizbang = { path = ".", features = ["fakes"] }
 

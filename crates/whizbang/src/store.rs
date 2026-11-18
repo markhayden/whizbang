@@ -65,13 +65,21 @@ pub enum Command {
         at: Where,
     },
     /// For developers: bring a canonical artifact file into a store, under its type and
-    /// identity. A picture is not an artifact file. The file is a regular file, or a
-    /// link to one, of at most 65 MiB: the largest picture an image artifact holds, and
-    /// the record around it.
+    /// identity, or, with `--picture`, a PNG or JPEG picture as an image. The file is a
+    /// regular file, or a link to one, of at most 65 MiB: the largest picture an image
+    /// artifact holds, and the record around it.
     Import {
         /// The canonical file of a mask, a location, an image, a band profile, a series
-        /// or a plan: a regular file, or a link to one, of at most 65 MiB.
-        file: PathBuf,
+        /// or a plan: a regular file, or a link to one, of at most 65 MiB. A picture is
+        /// not an artifact file: give it with `--picture`.
+        #[arg(required_unless_present = "picture")]
+        file: Option<PathBuf>,
+        /// A PNG or JPEG picture to commit as an image whose role is a picture. It is
+        /// decoded within the core's limits (64 MiB, 50,000,000 pixels) and written
+        /// again as a PNG of its pixels alone, upright and in sRGB: nothing else the file
+        /// holds (its text, its EXIF, its colour profile, its name) is kept.
+        #[arg(long, value_name = "FILE", conflicts_with = "file")]
+        picture: Option<PathBuf>,
         #[command(flatten)]
         at: Where,
         /// Make the store if there is none: at a path with nothing at it, in an empty
@@ -94,9 +102,18 @@ pub fn run_with(command: &Command, recovery: Recovery) -> Result<String, String>
     match command {
         Command::List { at } => list(&at.store),
         Command::Delete { at, runs } => delete(&at.store, runs, recovery),
-        Command::Import { file, at, create } => {
-            crate::import::import(file, &at.store, *create, recovery)
-        }
+        Command::Import {
+            file,
+            picture,
+            at,
+            create,
+        } => match (file, picture) {
+            (_, Some(picture)) => {
+                crate::import::import_picture(picture, &at.store, *create, recovery)
+            }
+            (Some(file), None) => crate::import::import(file, &at.store, *create, recovery),
+            (None, None) => Err("import takes an artifact file or --picture".to_owned()),
+        },
         Command::Prune { at } => {
             let pruned = remover(&at.store, recovery)?;
             let pruned = pruned.prune().map_err(|e| e.to_string())?;
