@@ -11,7 +11,8 @@
 # It refuses, before it builds or starts anything, unless the local environment names the
 # models directory: WHIZBANG_MODELS_DIR, an absolute path to a folder that holds the model
 # installed by `whizbang models get sam3` and the pack installed by `whizbang setup --extra
-# torch`. Set it where it lasts, as AGENTS.md says of the word list.
+# torch`, and `tiny` by `whizbang models get tiny` (plan 1D, task T1). Set it where it
+# lasts, as AGENTS.md says of the word list.
 #
 # Then it builds the tests, and runs the model tier under scripts/memory-watch.sh (24 GiB of
 # resident memory for the whole tree, then a kill) and, inside it, scripts/thread-guard.sh at
@@ -57,7 +58,7 @@ case "$target" in
 esac
 shared=$target/tmp/model-tier
 mkdir -p "$shared/out"
-rm -f "$shared/out/phrase.txt" "$shared/out/second.txt" "$shared/out/places.txt"
+rm -f "$shared/out/phrase.txt" "$shared/out/second.txt" "$shared/out/places.txt" "$shared/out/tiny.txt"
 printf '%s\n' "$dir" >"$shared/models-dir"
 
 cd "$root"

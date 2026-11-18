@@ -31,7 +31,7 @@ import queue
 import sys
 import threading
 
-from whizbang_pack import fake_models, proto, sam3
+from whizbang_pack import fake_models, owlv2_sam2, proto, sam3
 from whizbang_pack.adapter import Cancelled, Fault, Installation, Stopped, runtime_device
 
 END_CODE = 0
@@ -39,10 +39,14 @@ REFUSED_CODE = 2
 LIFETIME_CODE = 3
 LIFETIME_MOST = 31_536_000
 
+# The adapters of real models, by the adapter's name in the catalogue; each imports its
+# runtime only when its model is loaded (task R2a: `sam3`; plan 1D, task T1: `owlv2-sam2`).
+REAL = {"sam3": sam3.Sam3, "owlv2-sam2": owlv2_sam2.Owlv2Sam2}
+# The shipped catalogue's models, each by the name of its adapter there.
+SHIPPED = {"sam3": "sam3", "tiny": "owlv2-sam2"}
 # The adapters the worker answers for, by model name. The fakes answer for names the
-# shipped catalogue never holds; a real model's adapter joins them, and imports its runtime
-# only when its model is loaded (task R2a: `sam3`, the shipped catalogue's one model).
-ADAPTERS = dict(fake_models.MODELS, **{"sam3": sam3.Sam3})
+# shipped catalogue never holds; each model of the shipped catalogue joins them.
+ADAPTERS = dict(fake_models.MODELS, **{model: REAL[adapter] for model, adapter in SHIPPED.items()})
 
 # Reasons a refused frame ends the conversation as `too_large` (ADR 0020, "What a refusal
 # says"); every other reason is `malformed`.

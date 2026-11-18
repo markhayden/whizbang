@@ -21,7 +21,7 @@ fn the_shipped_catalogue_parses_names_sam3_and_no_fake_model() {
         .iter()
         .map(|entry| entry.name().as_str())
         .collect();
-    assert_eq!(names, ["sam3"]);
+    assert_eq!(names, ["sam3", "tiny"]);
     let entry = sam3();
     assert_eq!(entry.title().as_str(), "SAM 3");
     assert_eq!(entry.adapter().as_str(), "sam3");
@@ -107,8 +107,10 @@ fn every_file_of_the_shipped_entry_is_at_an_origin_the_entry_names_and_at_one_pi
 #[test]
 fn the_shipped_entry_names_no_pickle() {
     // `sam3.pt` is a pickle: it is never downloaded or loaded (D11). Nor is any
-    // other file of a pickle's kind.
-    for file in sam3().files() {
+    // other file of a pickle's kind, of any entry: Tiny's repositories hold a
+    // `pytorch_model.bin` and a `sam2.1_hiera_tiny.pt` beside their safetensors.
+    let catalogue = wiring::catalogue().unwrap();
+    for file in catalogue.entries().iter().flat_map(Entry::files) {
         let name = file.name().as_str().to_ascii_lowercase();
         for pickle in [".pt", ".pth", ".pkl", ".pickle", ".ckpt", ".bin"] {
             assert!(!name.ends_with(pickle), "{name}");
@@ -129,7 +131,8 @@ fn every_adapter_the_binarys_table_names_as_shipped_is_an_adapter_the_pack_has()
     assert!(!table.is_empty());
     for adapter in &table {
         let name = adapter.name.as_str();
-        let module = pack.join(format!("{name}.py")).exists();
+        // A module's name holds `_` where an adapter's holds `-` (`owlv2-sam2`).
+        let module = pack.join(format!("{}.py", name.replace('-', "_"))).exists();
         let named = worker.contains(&format!("\"{name}\""));
         assert_eq!(
             (module && named, module || named),

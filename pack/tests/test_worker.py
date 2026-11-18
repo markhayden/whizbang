@@ -631,7 +631,10 @@ class Fakes(unittest.TestCase):
 
 # The runtime of the adapter `sam3` (task R2a), which only that adapter imports, and only
 # inside a function, when its model is loaded: never when the package is imported.
-RUNTIME = {"sam3.py": ("PIL", "torch", "transformers")}
+RUNTIME = {
+    "sam3.py": ("PIL", "torch", "transformers"),
+    "owlv2_sam2.py": ("PIL", "torch", "transformers", "safetensors"),
+}
 
 
 class Imports(unittest.TestCase):
@@ -639,7 +642,8 @@ class Imports(unittest.TestCase):
         package = os.path.join(kit.SRC, "whizbang_pack")
         names = sorted(name for name in os.listdir(package) if name.endswith(".py"))
         self.assertEqual(
-            names, ["__init__.py", "adapter.py", "fake_models.py", "fakes.py", "proto.py", "sam3.py", "worker.py"]
+            names,
+            ["__init__.py", "adapter.py", "fake_models.py", "fakes.py", "owlv2_sam2.py", "proto.py", "sam3.py", "worker.py"],
         )
         for name in names:
             with open(os.path.join(package, name), encoding="utf-8") as file:

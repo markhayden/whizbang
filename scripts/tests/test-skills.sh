@@ -8,6 +8,7 @@ source "$(dirname "$0")/lib.sh"
 
 # The skills there are, and who uses each.
 cat >"$tmp/skills" <<'LIST'
+add-adapter Builder
 kickoff Builder
 port-module Builder
 review-merge Orchestrator
