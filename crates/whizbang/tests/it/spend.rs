@@ -200,6 +200,25 @@ mod judge {
             turn_with("Seen.", "end_turn", Some((100_000, 1_000))),
         );
         assert_eq!(paid(&record), [(BOUND, 10_500, "answered".to_owned())]);
+        // The input read from the cache counts toward the line: 50,000 not read from it
+        // and 60,000 read, at 0.50 and 0.05, and 1,000 output at 2.50.
+        let mut answer =
+            String::from_utf8(turn_with("Seen.", "end_turn", Some((50_000, 1_000)))).unwrap();
+        let usage = "\"output_tokens\":1000";
+        let cached = "\"output_tokens\":1000,\"cache_read_input_tokens\":60000";
+        let (head, body) = answer.split_once("\r\n\r\n").unwrap();
+        let body = body.replace(usage, cached);
+        assert!(body.contains("cache_read_input_tokens"), "{body}");
+        let head = head.replace(
+            &format!(
+                "Content-Length: {}",
+                body.len() - (cached.len() - usage.len())
+            ),
+            &format!("Content-Length: {}", body.len()),
+        );
+        answer = format!("{head}\r\n\r\n{body}");
+        let (record, _) = one_turn("spend-cached", answer.into_bytes());
+        assert_eq!(paid(&record), [(BOUND, 30_500, "answered".to_owned())]);
     }
 
     #[test]
