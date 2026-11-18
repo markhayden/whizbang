@@ -287,6 +287,15 @@ pub fn judges_call() -> whizbang_core::contract::Call {
 /// of source-fidelity given this disposition, confidently, and a reason that says
 /// `said`; reporting this usage.
 pub fn submission(disposition: &str, said: &str) -> Vec<u8> {
+    submission_of(
+        &["chk:ob:SF1@candidate", "chk:ob:SF2@candidate"],
+        disposition,
+        said,
+    )
+}
+
+/// The same, for the checklist of these items.
+pub fn submission_of(items: &[&str], disposition: &str, said: &str) -> Vec<u8> {
     let item = |id: &str| {
         serde_json::json!({
             "id": id, "disposition": disposition, "confidence": "confident",
@@ -303,7 +312,7 @@ pub fn submission(disposition: &str, said: &str) -> Vec<u8> {
             { "type": "thinking", "thinking": "", "signature": "c2lnbmVk" },
             { "type": "tool_use", "id": "toolu_1", "name": "submit_verdict", "caller": { "type": "direct" },
               "input": { "schema_version": 1, "findings": [],
-                         "items": [item("chk:ob:SF1@candidate"), item("chk:ob:SF2@candidate")],
+                         "items": items.iter().map(|id| item(id)).collect::<Vec<_>>(),
                          "opinion": { "verdict": "pass", "reason": "Recorded only." } } }
         ],
         "stop_reason": "tool_use",
@@ -355,8 +364,9 @@ pub fn checked_under(
     let executor = judged.runner(&over);
     let asked = whizbang::door::CheckAsked {
         use_case: "source-fidelity",
-        source: &source,
+        source: Some(&source),
         candidate: &candidate,
+        references: &[],
         judge: None,
         brief,
         request_id: None,
@@ -368,4 +378,37 @@ pub fn checked_under(
     drop(executor);
     listener.finish();
     (printed, log)
+}
+
+/// `whizbang squint check` of a job and its images, in its order, through the binary's
+/// door, under a judge at a server on loopback that gives these answers: what the door
+/// prints or its complaint, and what the server saw.
+pub fn checked_job(
+    judged: &Judged,
+    job: &whizbang_squint::job::Job,
+    images: &[whizbang_core::artifact::ArtifactId],
+    answers: Vec<Vec<u8>>,
+) -> (Result<String, String>, Log) {
+    let (listener, log) = serving(&judged.pki, answers);
+    let origin = format!("https://127.0.0.1:{}", listener.port());
+    let over = judged.over_with(
+        &format!("{origin}/v1/messages"),
+        Some(&origin),
+        &CHECK_CLASSES,
+        "",
+    );
+    let executor = judged.runner(&over);
+    let root = judged.world.root.clone();
+    let read = |run: &_| whizbang::door::verdict(&root, run);
+    let printed = whizbang::door::check_job(&executor, job, images, None, None, &read);
+    drop(executor);
+    listener.finish();
+    (printed, log)
+}
+
+/// The checklist of a job, by its items' ids.
+pub fn checklist_of(job: &whizbang_squint::job::Job) -> Vec<String> {
+    use whizbang_squint::use_case::{Checklist, resolve};
+    let checklist = Checklist::build(&resolve(job).unwrap(), job);
+    checklist.ids().map(str::to_owned).collect()
 }

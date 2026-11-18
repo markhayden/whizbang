@@ -16,6 +16,9 @@ path = "tests/it/main.rs"
 whizbang-core.workspace = true
 # The arguments of a judge's tool call, and a tool's schema, are JSON values.
 serde_json.workspace = true
+# Squint's rule files and job files are TOML (plan 2C, task A1); a job travels as JSON.
+serde.workspace = true
+toml.workspace = true
 # Encoding a crop as a PNG. The file's bytes are part of the image artifact's identity
 # (ADR 0002), so what writes them is pinned exactly: `image`, at the version the core
 # decodes with, is what the code calls; the bytes come from `png`, and from the compressor

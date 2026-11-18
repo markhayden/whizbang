@@ -25,7 +25,8 @@ serde = { version = "1.0", features = ["derive"] }
 # for every crate, so that no crate that reads JSON can be the one without it.
 serde_json = { version = "1.0", features = ["float_roundtrip"] }
 sha2 = "0.11"
-# The reader of the config file (SPEC.md section 4), for the core and for nothing else. One
+# The reader of the config file (SPEC.md section 4), for the core, and of squint's rule and
+# job files, for `whizbang-squint` (plan 2C, task A1); for nothing else. One
 # crate, the one both old tools read their configs with; it and what it brings (its parser,
 # its date type, its spans and `winnow`) are MIT or Apache-2.0 and come from crates.io, which
 # `just deny` checks. It reads only: the half that writes TOML is a default feature and is

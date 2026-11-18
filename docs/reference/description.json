@@ -5,7 +5,7 @@
   "actions": [
     {
       "name": "check",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "kind": "recipe",
       "purpose": "Has a judge look at images through evidence tools and conclude: pass, fail or unsure.",
       "arguments": [
@@ -29,7 +29,7 @@
         },
         {
           "name": "use_case",
-          "purpose": "general, or source-fidelity: the source first among the images, then the edit of it.",
+          "purpose": "general, or a use case of the table: source-fidelity, reference-consistency, reality-checks, brief-compliance or product-fidelity.",
           "type": {
             "type": "text"
           },
@@ -37,8 +37,8 @@
           "default": "general"
         },
         {
-          "name": "brief",
-          "purpose": "Under source-fidelity, what the edit was to do and keep, as data.",
+          "name": "job",
+          "purpose": "Under a use case of the table, the job in the contract job/1: its brief, its requirements, and its images in the order of the inputs, with their roles.",
           "type": {
             "type": "text"
           },
@@ -64,7 +64,7 @@
           "purpose": "The images the judge is shown, and may look into.",
           "count": {
             "min": 1,
-            "max": 8
+            "max": 10
           },
           "belongs_to": null
         }

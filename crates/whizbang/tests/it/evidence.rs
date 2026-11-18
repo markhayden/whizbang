@@ -195,10 +195,9 @@ fn the_first_verdict_record_names_a_commit_of_this_tree_and_holds_no_secret() {
                 .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
     );
     assert_eq!(field(&fields, "whizbang"), env!("CARGO_PKG_VERSION"));
-    assert_eq!(
-        field(&fields, "action"),
-        format!("check {}", whizbang_squint::check::VERSION)
-    );
+    // The action as it was then: plan 2C, task A1, took `check` to 1.2.0 after it, and
+    // its own record is `docs/results/m2c-use-cases.md`.
+    assert_eq!(field(&fields, "action"), "check 1.1.0");
     assert_eq!(field(&fields, "backend"), anthropic::ADAPTER);
     assert_eq!(field(&fields, "adapter_version"), anthropic::VERSION);
     let prices = anthropic::spend::prices_of(field(&fields, "model")).expect("a priced model");

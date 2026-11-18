@@ -3,10 +3,22 @@
 //! proves the execution contract. Under the use case `general`, the judge is told what
 //! the images are and which tools there are, and concludes by ending its turn with one
 //! word, `pass`, `fail` or `unsure`, on the first line of its text, and its reason
-//! after. Under `source-fidelity` (plan 2A, task S2; [`crate::source_fidelity`]), it is
-//! given squint's rules and checklist, answers with the tool `submit_verdict`, and the
-//! verdict is worked out from its dispositions; a submission that is not a verdict is
-//! answered with why, and asked for once more.
+//! after. Under each of the five use cases of the table ([`crate::use_case`]; plan 2A,
+//! task S2, and plan 2C, task A1), it is given a job (`job/1`, [`crate::job`]) whose
+//! images are the call's, in its order, with their roles and labels; it is told squint's
+//! rules and the job's requirements, and the checklist made of them; it answers with the
+//! tool `submit_verdict`, and the verdict is worked out from its dispositions. A
+//! submission that is not a verdict is answered with why, and asked for once more. What
+//! the run decided is kept beside its record ([`JUDGED`]).
+//!
+//! **Retrying** (squint's `retry.rs`, at the commit `docs/sources.toml` pins). A request
+//! the judge's backend could not answer now (a fault `unavailable`, as a 429 or a 5xx
+//! is, or `timed_out`) is sent again, at most [`RETRIES_LIMIT`] times in a run, after the
+//! wait the backend said, or else after 1, 2, 4, … seconds up to 30, never longer than
+//! 30. Any other fault ends the run. Squint drew each wait at random under that ceiling;
+//! here it is the ceiling, so that a run waits the same on every machine. A 400 whose body
+//! named no cause, which squint retried once, is a fault `rejected` from whizbang's
+//! adapter, and is not retried.
 //!
 //! The shape of the loop is squint's (`crates/squint-core/src/run.rs`, `drive`): the
 //! images open the conversation; a turn that calls tools has each call answered, in
@@ -26,12 +38,13 @@
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use serde_json::{Value as Json, json};
 use whizbang_core::artifact::{self, Artifact, ArtifactId, ArtifactType, Image};
 use whizbang_core::capability::{
-    Controls, Excluded, JudgeHandle, JudgeRequest, Message, Part, Picture, Role, StopReason,
-    ToolCall, ToolDefinition, ToolResult, Turn,
+    Controls, Excluded, FaultKind, JudgeHandle, JudgeRequest, Message, Part, Picture, Role,
+    StopReason, ToolCall, ToolDefinition, ToolResult, Turn,
 };
 use whizbang_core::contract::record::Decision;
 use whizbang_core::contract::{
@@ -41,16 +54,24 @@ use whizbang_core::contract::{
 };
 use whizbang_core::identity::{DecodeLimits, Digest};
 
-use crate::source_fidelity;
+use crate::job::Job;
+use crate::use_case::{self, Checklist, Resolved};
 use crate::view;
 
-/// The use cases `check` takes, by name: the general one, and `source-fidelity`.
-pub const USE_CASES: [&str; 2] = ["general", source_fidelity::NAME];
+/// The use cases `check` takes, by name: the general one, then the five of the table.
+pub const USE_CASES: [&str; 6] = [
+    "general",
+    use_case::NAMES[0],
+    use_case::NAMES[1],
+    use_case::NAMES[2],
+    use_case::NAMES[3],
+    use_case::NAMES[4],
+];
 
 /// The action's name.
 pub const NAME: &str = "check";
 /// The action's version.
-pub const VERSION: &str = "1.1.0";
+pub const VERSION: &str = "1.2.0";
 /// The most requests one run sends its judge, the retry of a cut-off turn included.
 pub const TURNS_LIMIT: usize = 16;
 /// The most tool calls one run dispatches. It is far under what the executor lets one
@@ -63,8 +84,16 @@ pub const CALLS_LIMIT: usize = 32;
 pub const TURN_TEXT_LIMIT: usize = 256 * 1024;
 /// A cut-off turn is asked for again with this many times the output tokens.
 pub const RETRY_FACTOR: u32 = 4;
-/// The most images a run is given.
-pub const IMAGES_LIMIT: u32 = 8;
+/// The most images a run is given: a candidate, a source and eight references.
+pub const IMAGES_LIMIT: u32 = 10;
+/// The most times one run sends a request again after its judge could not answer it.
+pub const RETRIES_LIMIT: u32 = 3;
+/// The longest a run waits before it sends a request again, in milliseconds.
+pub const RETRY_WAIT_LIMIT_MS: u64 = 30_000;
+/// The name of the run's diagnostic that holds what a run under a use case decided: the
+/// job's images with their roles, labels and identities; the checklist; each repair and
+/// each retry; and each answer's disposition, confidence, row and location.
+pub const JUDGED: &str = "judged.json";
 
 const SYSTEM: &str = "You check images. Look closer with the tools you are given when a \
     closer look would change your answer. Then end your turn with one word on the first \
@@ -147,13 +176,13 @@ impl Check {
         ))
         .argument(Argument::with_default(
             "use_case",
-            "general, or source-fidelity: the source first among the images, then the edit of it.",
+            "general, or a use case of the table: source-fidelity, reference-consistency, reality-checks, brief-compliance or product-fidelity.",
             ValueType::Text,
             Value::text("general"),
         ))
         .argument(Argument::optional(
-            "brief",
-            "Under source-fidelity, what the edit was to do and keep, as data.",
+            "job",
+            "Under a use case of the table, the job in the contract job/1: its brief, its requirements, and its images in the order of the inputs, with their roles.",
             ValueType::Text,
         ))
         .argument(Argument::with_default(
@@ -278,9 +307,9 @@ fn verdict_of(turn: &Turn) -> Option<Verdict> {
     Some(Verdict::new(decision, why.trim()))
 }
 
-/// Adds the tool the judge answers with under `source-fidelity`.
+/// Adds the tool the judge answers with under a use case of the table.
 fn run_tools_submit(tools: &mut Vec<ToolDefinition>) -> Result<(), Failure> {
-    let submit = source_fidelity::submit_tool();
+    let submit = use_case::submit_tool();
     tools.push(submit.ok_or_else(|| failed("tools", &"the submission's schema is not read"))?);
     Ok(())
 }
@@ -441,39 +470,32 @@ impl Action for Check {
             Some(Value::Text(name)) if USE_CASES.contains(&name.as_str()) => name.as_str(),
             _ => {
                 return Err(Failure::invalid(
-                    "the use case is general or source-fidelity",
+                    "the use case is general, source-fidelity, reference-consistency, \
+                     reality-checks, brief-compliance or product-fidelity",
                 ));
             }
         };
-        let fidelity = use_case == source_fidelity::NAME;
+        // Under a use case of the table, the job is read and held to the images before
+        // anything is sent: a call it does not fit is invalid, and nothing leaves.
+        let mut judging = match use_case {
+            "general" => None,
+            _ => Some(judging(call, use_case, argument("job"))?),
+        };
         // The images open the conversation, each with the name a tool call gives.
         let mut opening = Vec::new();
-        let system = if fidelity {
-            let inputs = call.inputs();
-            let [source, candidate] = inputs else {
-                return Err(Failure::invalid(
-                    "source-fidelity is given two images: the source, then the edit of it",
-                ));
-            };
-            for (role, input) in [("candidate", candidate), ("source", source)] {
-                let (_, image) = shown(context, input.id())?;
-                let (width, height) = (image.picture.width(), image.picture.height());
-                let title = format!("{}{}", role[..1].to_ascii_uppercase(), &role[1..]);
-                opening.push(Part::Text(format!(
-                    "Image `{role}` (role {title}, frame raw:{role}, {width}x{height}, Flat); \
-                     for the tool view it is named {}.",
-                    image.id
-                )));
-                opening.push(Part::Image(image.picture));
+        let system = if let Some(judging) = &judging {
+            for (image, input) in judging.job.images.iter().zip(call.inputs()) {
+                let (_, shown) = shown(context, input.id())?;
+                let (width, height) = (shown.picture.width(), shown.picture.height());
+                let named = shown.id.to_string();
+                let said = use_case::opening(image, width, height, &named);
+                opening.push(Part::Text(said));
+                opening.push(Part::Image(shown.picture));
             }
-            opening.push(Part::Text(source_fidelity::checklist()));
-            opening.push(Part::Text(source_fidelity::INSTRUCTION.to_owned()));
-            let brief = match argument("brief") {
-                Some(Value::Text(brief)) if !brief.trim().is_empty() => brief.as_str(),
-                _ => source_fidelity::NO_BRIEF,
-            };
+            opening.push(Part::Text(judging.checklist.render(&judging.resolved)));
+            opening.push(Part::Text(use_case::INSTRUCTION.to_owned()));
             run_tools_submit(&mut tools)?;
-            source_fidelity::system(brief)
+            use_case::system(&judging.resolved, &judging.job)
         } else {
             for input in call.inputs() {
                 let (_, image) = shown(context, input.id())?;
@@ -494,6 +516,9 @@ impl Action for Check {
         };
         let mut allowed = tokens;
         let mut retried = false;
+        // Each request sent again after the judge could not answer it: its fault's kind
+        // and the wait.
+        let mut retries: Vec<Json> = Vec::new();
         // A submission that is not a verdict, or a turn that ends without one, is
         // answered with why and asked for once more: one repair, as squint allowed.
         let mut repaired = false;
@@ -501,8 +526,25 @@ impl Action for Check {
             let sent = allowed;
             let controls = Controls::new(allowed).map_err(unfit)?;
             let request = JudgeRequest::new(&system, messages.clone(), run.tools.clone(), controls);
-            let turn = run.judge.send(&request.map_err(unfit)?);
-            let turn = turn.map_err(|fault| failed("judge_fault", &fault))?;
+            let turn = match run.judge.send(&request.map_err(unfit)?) {
+                Ok(turn) => turn,
+                Err(fault) => {
+                    let again =
+                        matches!(fault.kind(), FaultKind::Unavailable | FaultKind::TimedOut);
+                    let count = u32::try_from(retries.len()).unwrap_or(u32::MAX);
+                    if !again || count >= RETRIES_LIMIT {
+                        return Err(failed("judge_fault", &fault));
+                    }
+                    let backoff = 1000u64 << count.min(5);
+                    let wait = fault.wait_ms().unwrap_or(backoff).min(RETRY_WAIT_LIMIT_MS);
+                    retries.push(json!({"kind": fault.kind().name(), "wait_ms": wait}));
+                    context
+                        .events()
+                        .progress("the judge could not answer now: the request is sent again");
+                    wait_for(context, wait)?;
+                    continue;
+                }
+            };
             allowed = tokens;
             match turn.stop() {
                 // Cut off: the turn is left out of the conversation, whatever it
@@ -541,12 +583,19 @@ impl Action for Check {
                     };
                     let submitted: Vec<&ToolCall> = turn
                         .tool_calls()
-                        .filter(|call| call.name() == source_fidelity::SUBMIT)
+                        .filter(|call| call.name() == use_case::SUBMIT)
                         .collect();
-                    if fidelity && !submitted.is_empty() {
+                    if let Some(judging) = &mut judging
+                        && !submitted.is_empty()
+                    {
                         let calls = turn.tool_calls().count();
                         let read = match submitted.as_slice() {
-                            [call] if calls == 1 => source_fidelity::decided_of(call.arguments()),
+                            [submit] if calls == 1 => use_case::decided_of(
+                                submit.arguments(),
+                                &judging.job,
+                                &judging.resolved,
+                                &judging.checklist,
+                            ),
                             _ => Err("submit_verdict is called once, alone".to_owned()),
                         };
                         let why = match read {
@@ -561,8 +610,9 @@ impl Action for Check {
                                 }
                                 let kept = context
                                     .diagnostics()
-                                    .write(source_fidelity::REASONS, lines.as_bytes());
+                                    .write(use_case::REASONS, lines.as_bytes());
                                 kept.map_err(|why| failed("reasons", &why))?;
+                                judging.keep(context, call, &retries, &decided)?;
                                 return Ok(Produced::nothing().with_verdict(decided.verdict));
                             }
                             Err(why) => why,
@@ -582,7 +632,8 @@ impl Action for Check {
                                 result.map_err(|why| failed("tool_result", &why))?,
                             ));
                         }
-                        results.push(Part::Text(source_fidelity::REPAIR.to_owned()));
+                        judging.repairs.push(why);
+                        results.push(Part::Text(use_case::REPAIR.to_owned()));
                         messages.push(said);
                         messages.push(Message::new(Role::User, results).map_err(unfit)?);
                         continue;
@@ -591,16 +642,19 @@ impl Action for Check {
                     messages.push(said);
                     messages.push(results);
                 }
-                StopReason::EndTurn if fidelity && turn.tool_calls().next().is_none() => {
+                StopReason::EndTurn if judging.is_some() && turn.tool_calls().next().is_none() => {
+                    let why = "the judge ended its turn without calling submit_verdict";
                     if repaired {
-                        let why = "the judge ended its turn without calling submit_verdict";
                         return Err(failed("judge_output", &why));
                     }
                     repaired = true;
+                    if let Some(judging) = &mut judging {
+                        judging.repairs.push(why.to_owned());
+                    }
                     if let Some(said) = turn.message() {
                         messages.push(said);
                     }
-                    let repair = Part::Text(source_fidelity::REPAIR.to_owned());
+                    let repair = Part::Text(use_case::REPAIR.to_owned());
                     messages.push(Message::new(Role::User, vec![repair]).map_err(unfit)?);
                 }
                 StopReason::EndTurn if turn.tool_calls().next().is_none() => {
@@ -624,4 +678,110 @@ impl Action for Check {
         let why = format!("the judge did not conclude within {TURNS_LIMIT} requests");
         Err(failed("judge_loop", &why))
     }
+}
+
+/// A run under a use case of the table: its job, what resolution made of it, its
+/// checklist, and the repairs it has asked for.
+struct Judging {
+    job: Job,
+    resolved: Resolved,
+    checklist: Checklist,
+    repairs: Vec<String>,
+}
+
+/// The job of a call under a use case, read and held to the call: in the contract
+/// `job/1`, of the call's use case, with one image for each image the call gives, a
+/// brief under `brief-compliance`, and resolved under the use case's rules, which refuse
+/// a job that lacks a role the use case requires or names one it does not take.
+fn judging(call: &PreparedCall, use_case: &str, job: Option<&Value>) -> Result<Judging, Failure> {
+    let Some(Value::Text(text)) = job else {
+        return Err(Failure::invalid(&format!(
+            "{use_case} is given a job, in the contract job/1"
+        )));
+    };
+    let job = Job::from_json(text).map_err(|why| Failure::invalid(&why))?;
+    if job.use_case != use_case {
+        return Err(Failure::invalid(
+            "the job is of another use case than the call",
+        ));
+    }
+    let (named, given) = (job.images.len(), call.inputs().len());
+    if named != given {
+        return Err(Failure::invalid(&format!(
+            "the job names {named} images, and the call gives {given}"
+        )));
+    }
+    let briefed = job
+        .brief
+        .as_deref()
+        .is_some_and(|brief| !brief.trim().is_empty());
+    if use_case == "brief-compliance" && !briefed {
+        return Err(Failure::invalid("brief-compliance is given a brief"));
+    }
+    let resolved = use_case::resolve(&job).map_err(|why| Failure::invalid(&why))?;
+    let checklist = Checklist::build(&resolved, &job);
+    Ok(Judging {
+        job,
+        resolved,
+        checklist,
+        repairs: Vec::new(),
+    })
+}
+
+impl Judging {
+    /// Keeps what the run decided among its diagnostics ([`JUDGED`]).
+    fn keep(
+        &self,
+        context: &Context,
+        call: &PreparedCall,
+        retries: &[Json],
+        decided: &use_case::Decided,
+    ) -> Result<(), Failure> {
+        let images: Vec<Json> = (self.job.images.iter().zip(call.inputs()))
+            .map(|(image, input)| {
+                json!({"id": image.id, "role": image.role, "label": image.label,
+                       "artifact": input.id().to_string()})
+            })
+            .collect();
+        let kept = json!({
+            "use_case": self.resolved.use_case,
+            "rules_version": self.resolved.version,
+            "images": images,
+            "checklist": self.checklist.ids().collect::<Vec<_>>(),
+            "repairs": self.repairs,
+            "retries": retries,
+            "answers": decided.answers,
+        });
+        let written = context
+            .diagnostics()
+            .write(JUDGED, kept.to_string().as_bytes());
+        written.map_err(|why| failed("judged", &why))
+    }
+}
+
+/// Waits `ms` milliseconds before a request is sent again, looking every 50 at whether
+/// the run was cancelled or its deadline passed, either of which ends the run.
+fn wait_for(context: &Context, ms: u64) -> Result<(), Failure> {
+    let until = Instant::now() + Duration::from_millis(ms);
+    // The wait is at most RETRY_WAIT_LIMIT_MS, so this many looks are enough.
+    for _ in 0..=(RETRY_WAIT_LIMIT_MS / 50) {
+        if context.cancellation().is_cancelled() {
+            return Err(failed(
+                "cancelled",
+                &"the run was cancelled while it waited",
+            ));
+        }
+        if context.deadline_passed() {
+            return Err(failed(
+                "deadline",
+                &"the run's deadline passed while it waited",
+            ));
+        }
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            break;
+        }
+        std::thread::sleep(left.min(Duration::from_millis(50)));
+    }
+    Ok(())
 }

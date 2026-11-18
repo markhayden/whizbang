@@ -525,10 +525,12 @@ fn view_on_a_guessed_artifact_id() {
     assert_eq!(why, same);
 }
 
+/// The second request ends in a fault that is final: one the judge's backend could not
+/// answer now would be sent again.
 const FAILS_ON_TURN_TWO: &str = r#"{"script":"judge-script/1","entries":[
   {"turn":{"parts":[{"tool_call":{"id":"c1","name":"view","arguments":{"image":"$photo","bbox":[0.25,0.25,0.75,0.75]}}}],
     "stop":"tool_use","usage":null,"request_id":null}},
-  {"fault":{"kind":"unavailable","sentence":"overloaded","retry_after_ms":2000}}]}"#;
+  {"fault":{"kind":"rejected","sentence":"refused","retry_after_ms":null}}]}"#;
 
 #[test]
 fn a_failure_on_turn_two() {
@@ -536,7 +538,7 @@ fn a_failure_on_turn_two() {
     let (finished, left, _) = run(&world, FAILS_ON_TURN_TWO, &[("photo", world.photo.id())]);
     let failed = Outcome::Error {
         kind: "judge_fault".to_owned(),
-        message: "unavailable: overloaded".to_owned(),
+        message: "rejected: refused".to_owned(),
     };
     assert_eq!(finished.outcome(), &failed);
     // A failed run: its terminal status, no verdict, no committed output and no
@@ -549,7 +551,7 @@ fn a_failure_on_turn_two() {
     // it ended: both exchanges and the journal, each as the record lists it.
     assert_eq!(left.evidence(1).id(), crop_of(&world.photo, HALF).id());
     assert_eq!(left.exchange(1)["answer"]["turn"]["stop"], "tool_use");
-    assert_eq!(left.exchange(2)["answer"]["fault"]["kind"], "unavailable");
+    assert_eq!(left.exchange(2)["answer"]["fault"]["kind"], "rejected");
     let listed: Vec<_> = record.diagnostics().iter().map(|d| d.name()).collect();
     let names = ["evidence-001", "exchange-0001", "exchange-0002"];
     let mut expected: Vec<_> = names
@@ -917,7 +919,7 @@ fn evidence_that_holds_a_secrets_bytes_is_not_kept_altered_and_the_run_fails() {
 }
 
 /// A script of these turns, each a list of parts and the word it stopped with.
-fn turns(turns: &[(Json, &str)]) -> String {
+pub fn turns(turns: &[(Json, &str)]) -> String {
     let entry = |(parts, stop): &(Json, &str)| json!({"turn": {"parts": parts, "stop": stop, "usage": null, "request_id": null}});
     let entries: Vec<Json> = turns.iter().map(entry).collect();
     json!({"script": "judge-script/1", "entries": entries}).to_string()
@@ -1169,7 +1171,7 @@ fn the_records_of_check_completed_failed_and_cancelled_hold_what_the_spec_lists(
         // value by default among them; no settings yet; the config's digest.
         assert_eq!(
             record["asked"],
-            json!({"action": "check", "version": "1.1.0", "settings": [],
+            json!({"action": "check", "version": "1.2.0", "settings": [],
                    "arguments": [{"name": "tools", "value": {"text": "view"}},
                                  {"name": "use_case", "value": {"text": "general"}},
                                  {"name": "max_output_tokens", "value": {"integer": 1024}}],
@@ -1188,7 +1190,7 @@ fn the_records_of_check_completed_failed_and_cancelled_hold_what_the_spec_lists(
         assert_eq!(record["outputs"], json!([]), "{how}");
         // Outcome: the status, and for the error its type and message.
         let error = match how {
-            "error" => json!({"kind": "judge_fault", "message": "unavailable: overloaded"}),
+            "error" => json!({"kind": "judge_fault", "message": "rejected: refused"}),
             _ => Json::Null,
         };
         assert_eq!(
@@ -1203,7 +1205,7 @@ fn the_records_of_check_completed_failed_and_cancelled_hold_what_the_spec_lists(
         assert_eq!(models.len(), turns, "{how}");
         for (at, model) in models.iter().enumerate() {
             let ended = match (how, at) {
-                ("error", 1) => "unavailable",
+                ("error", 1) => "rejected",
                 ("cancelled", 1) => "cancelled",
                 _ => "answered",
             };
@@ -1301,7 +1303,7 @@ fn the_records_of_check_completed_failed_and_cancelled_hold_what_the_spec_lists(
             // What was received: the turn as the judge gave it, or its fault.
             let answer = &exchange["answer"];
             match (how, at) {
-                ("error", 1) => assert_eq!(answer["fault"]["kind"], "unavailable"),
+                ("error", 1) => assert_eq!(answer["fault"]["kind"], "rejected"),
                 ("cancelled", 1) => assert_eq!(answer["fault"]["kind"], "cancelled"),
                 _ => {
                     assert_eq!(turn["stop"], answer["turn"]["stop"]);
@@ -1351,12 +1353,22 @@ fn the_records_of_check_completed_failed_and_cancelled_hold_what_the_spec_lists(
 
 // --- the use case source-fidelity (plan 2A, task S2) -------------------------------------------
 
-/// `check` under source-fidelity: the photograph as the source, the other as its edit.
+/// `check` under source-fidelity: the other as the candidate, the edit of the
+/// photograph, which is the source.
 fn fidelity(world: &World) -> Call {
-    Call::new("check")
-        .input("images", world.photo.id())
-        .input("images", world.other.id())
-        .argument("use_case", Value::text("source-fidelity"))
+    let job = whizbang_squint::job::Job::shorthand("source-fidelity", true, 0, None);
+    judged_call(&job, &[world.other.id(), world.photo.id()])
+}
+
+/// `check` under the job's use case, of these images, in the job's order.
+pub fn judged_call(job: &whizbang_squint::job::Job, images: &[ArtifactId]) -> Call {
+    let mut call = Call::new("check")
+        .argument("use_case", Value::text(&job.use_case))
+        .argument("job", Value::text(&job.to_json()));
+    for image in images {
+        call = call.input("images", *image);
+    }
+    call
 }
 
 /// A submission of these items, as the judge's one call.
@@ -1539,5 +1551,312 @@ fn a_submission_that_is_not_a_verdict_is_reported_as_invalid() {
     bad(
         json!([nowhere, item("chk:ob:SF2@candidate", "held", "confident")]),
         "a violation has a location",
+    );
+}
+
+// --- the four other use cases, and the job (plan 2C, task A1) ---------------------------------
+
+use whizbang_squint::job::Job;
+use whizbang_squint::use_case::{self, Checklist};
+
+/// The checklist of a job, as the run will make it.
+fn checklist_of(job: &Job) -> Checklist {
+    Checklist::build(&use_case::resolve(job).unwrap(), job)
+}
+
+/// A script whose one turn submits these answers.
+fn submits(answers: Json) -> String {
+    let call = json!({"tool_call": {"id": "s1", "name": "submit_verdict", "arguments": answers}});
+    turns(&[(json!([call]), "tool_use")])
+}
+
+/// Runs a call against this script: what the run ended as, what it left, and the judge.
+fn judged(world: &World, call: &Call, script: &str) -> (Finished, Left, Arc<FakeJudge>) {
+    let judge = judge(script, &[]);
+    let executor = world.engine(judge.clone(), Secrets::none());
+    let finished = executor.submit(call).unwrap();
+    drop(executor);
+    let left = left(&world.root(), world.fs.clone(), finished.run());
+    (finished, left, judge)
+}
+
+/// The images a job of this use case is given: the other as the candidate, then the
+/// photograph as its one source or reference.
+fn verdicts_of(world: &World, name: &str, brief: Option<&str>) {
+    let job = super::use_case::fitting(name, brief);
+    let images: Vec<ArtifactId> = [world.other.id(), world.photo.id()]
+        .into_iter()
+        .take(job.images.len())
+        .collect();
+    let checklist = checklist_of(&job);
+    let last = checklist.ids().last().unwrap().to_owned();
+    for (disposition, confidence, decided) in [
+        ("held", "confident", Decision::Pass),
+        ("violation", "confident", Decision::Fail),
+        ("cant_tell", "confident", Decision::Unsure),
+    ] {
+        let answers = super::use_case::answers(&checklist, &last, disposition, confidence);
+        let (finished, left, judge) = judged(world, &judged_call(&job, &images), &submits(answers));
+        assert!(
+            matches!(finished.outcome(), Outcome::Completed { .. }),
+            "{name}"
+        );
+        let (decision, why) = left.record().verdict().unwrap();
+        assert_eq!(decision, decided, "{name} {disposition}");
+        assert!(why.contains(&last) || decided == Decision::Pass, "{why}");
+        let asked = &judge.received()[0];
+        assert!(asked.system().contains("\nRules:\n1. "), "{name}");
+        let tools: Vec<&str> = asked.tools().iter().map(|tool| tool.name()).collect();
+        assert_eq!(tools, ["view", "submit_verdict"]);
+        let kept: Json =
+            serde_json::from_slice(left.diagnostic(whizbang_squint::check::JUDGED)).unwrap();
+        assert_eq!(kept["use_case"], name);
+        assert_eq!(
+            kept["checklist"].as_array().unwrap().len(),
+            checklist.items.len()
+        );
+    }
+}
+
+#[test]
+fn reference_consistency_reaches_a_verdict_from_a_scripted_judge() {
+    verdicts_of(&World::new(), "reference-consistency", None);
+}
+
+#[test]
+fn reality_checks_reaches_a_verdict_from_a_scripted_judge() {
+    verdicts_of(&World::new(), "reality-checks", None);
+}
+
+#[test]
+fn brief_compliance_reaches_a_verdict_from_a_scripted_judge() {
+    verdicts_of(
+        &World::new(),
+        "brief-compliance",
+        Some("A red square on grey. No text."),
+    );
+}
+
+#[test]
+fn product_fidelity_reaches_a_verdict_from_a_scripted_judge() {
+    verdicts_of(&World::new(), "product-fidelity", None);
+}
+
+#[test]
+fn a_call_missing_a_required_role_is_refused_at_prepare_and_sends_nothing() {
+    let world = World::new();
+    let (photo, other) = (world.photo.id(), world.other.id());
+    let job = |name: &str, source: bool, references: usize, brief: Option<&str>| {
+        Job::shorthand(name, source, references, brief)
+    };
+    let cases = [
+        // A role it requires is missing.
+        (
+            job("reference-consistency", false, 0, None),
+            vec![other],
+            "requires an image with role \"reference\"",
+        ),
+        (
+            job("source-fidelity", false, 0, None),
+            vec![other],
+            "requires an image with role \"source\"",
+        ),
+        // A role it does not take is named.
+        (
+            job("reality-checks", true, 0, None),
+            vec![other, photo],
+            "takes no image with role \"source\"",
+        ),
+        (
+            job("product-fidelity", true, 1, None),
+            vec![other, photo, photo],
+            "takes no image with role \"source\"",
+        ),
+        // brief-compliance without a brief.
+        (
+            job("brief-compliance", false, 0, None),
+            vec![other],
+            "brief-compliance is given a brief",
+        ),
+        // A job that names more images than the call gives.
+        (
+            job("reference-consistency", false, 2, None),
+            vec![other, photo],
+            "the job names 3 images",
+        ),
+    ];
+    for (job, images, said) in cases {
+        let (finished, _, judge) = judged(&world, &judged_call(&job, &images), &turns(&[]));
+        match finished.outcome() {
+            Outcome::Invalid { why } => assert!(why.contains(said), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(judge.requests(), 0, "{said}");
+    }
+    // A call under a use case with no job at all.
+    let bare = Call::new("check")
+        .input("images", other)
+        .argument("use_case", Value::text("reality-checks"));
+    let (finished, _, judge) = judged(&world, &bare, &turns(&[]));
+    assert!(matches!(finished.outcome(), Outcome::Invalid { .. }));
+    assert_eq!(judge.requests(), 0);
+}
+
+#[test]
+fn references_are_sent_in_the_order_given_with_their_labels() {
+    let world = World::new();
+    let job = Job::shorthand("product-fidelity", false, 2, None);
+    let images = [world.other.id(), world.photo.id(), world.other.id()];
+    let checklist = checklist_of(&job);
+    let answers = super::use_case::answers(&checklist, "", "held", "confident");
+    let (finished, left, judge) = judged(&world, &judged_call(&job, &images), &submits(answers));
+    assert!(matches!(finished.outcome(), Outcome::Completed { .. }));
+    let opening = judge.received()[0].messages()[0].parts().to_vec();
+    let texts: Vec<&str> = opening
+        .iter()
+        .filter_map(|part| match part {
+            Part::Text(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    let expected = [
+        ("candidate", "Candidate", "", images[0]),
+        ("reference-1", "Reference", ", reference 1", images[1]),
+        ("reference-2", "Reference", ", reference 2", images[2]),
+    ];
+    for (at, (id, role, label, image)) in expected.into_iter().enumerate() {
+        assert_eq!(
+            texts[at],
+            format!(
+                "Image `{id}` (role {role}{label}, frame raw:{id}, 96x64, Flat); for the tool \
+                 view it is named {image}."
+            )
+        );
+        // Each picture follows its line.
+        assert!(matches!(opening[2 * at + 1], Part::Image(_)));
+    }
+    assert!(
+        texts[3].contains("- chk:ref:reference-1: ")
+            && texts[3].contains("- chk:ref:reference-2: ")
+    );
+    let kept: Json =
+        serde_json::from_slice(left.diagnostic(whizbang_squint::check::JUDGED)).unwrap();
+    let labels: Vec<&Json> = kept["images"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| &i["label"])
+        .collect();
+    assert_eq!(
+        labels,
+        [&Json::Null, &json!("reference 1"), &json!("reference 2")]
+    );
+}
+
+#[test]
+fn a_violation_located_outside_the_candidate_is_clamped_and_kept() {
+    let world = World::new();
+    let job = Job::shorthand("source-fidelity", true, 0, None);
+    let checklist = checklist_of(&job);
+    let mut answers =
+        super::use_case::answers(&checklist, "chk:ob:SF1@candidate", "violation", "confident");
+    // Wholly past the right and the bottom of the frame, and a finding partly past it.
+    answers["items"][0]["location"]["bbox"] = json!([1.2, 1.1, 1.5, 1.4]);
+    answers["findings"] = json!([{"obligation_ids": ["SF4"], "disposition": "observed",
+        "confidence": "confident", "reason": "A smudge.", "allowed_by": null, "evidence": [],
+        "location": {"kind": "bbox", "frame": "raw:candidate", "bbox": [-0.2, 0.5, 0.3, 0.9],
+                     "polygon": null, "yaw": null, "pitch": null, "fov": null}}]);
+    let call = judged_call(&job, &[world.other.id(), world.photo.id()]);
+    let (finished, left, judge) = judged(&world, &call, &submits(answers));
+    assert!(
+        matches!(finished.outcome(), Outcome::Completed { .. }),
+        "{:?}",
+        finished.outcome()
+    );
+    assert_eq!(judge.requests(), 1, "accepted at once, not repaired");
+    assert_eq!(left.record().verdict().unwrap().0, Decision::Fail);
+    let kept: Json =
+        serde_json::from_slice(left.diagnostic(whizbang_squint::check::JUDGED)).unwrap();
+    let item = &kept["answers"][0];
+    assert_eq!(item["location"]["bbox"], json!([1.0, 1.0, 1.0, 1.0]));
+    assert_eq!(item["clamped"], true);
+    assert_eq!(item["row"], "fail");
+    let finding = &kept["answers"][2];
+    assert_eq!(finding["location"]["bbox"], json!([0.0, 0.5, 0.3, 0.9]));
+    assert_eq!(finding["clamped"], true);
+    assert_eq!(kept["answers"][1]["clamped"], false);
+}
+
+#[test]
+fn a_retryable_fault_is_retried_after_its_wait_and_a_final_one_ends_the_loop() {
+    let world = World::new();
+    let job = Job::shorthand("source-fidelity", true, 0, None);
+    let call = judged_call(&job, &[world.other.id(), world.photo.id()]);
+    let answers = super::use_case::answers(&checklist_of(&job), "", "held", "confident");
+    let fault = |kind: &str, wait: Option<u64>| json!({"fault": {"kind": kind, "sentence": "not now", "retry_after_ms": wait}});
+    let with_faults = |faults: Vec<Json>| {
+        let mut script: Json = serde_json::from_str(&submits(answers.clone())).unwrap();
+        let entries = script["entries"].as_array_mut().unwrap();
+        for (at, fault) in faults.into_iter().enumerate() {
+            entries.insert(at, fault);
+        }
+        script.to_string()
+    };
+    // Two the backend could not answer now, then the turn: sent three times, after the
+    // waits the backend said.
+    let script = with_faults(vec![
+        fault("unavailable", Some(5)),
+        fault("timed_out", Some(7)),
+    ]);
+    let (finished, left, judge) = judged(&world, &call, &script);
+    assert!(
+        matches!(finished.outcome(), Outcome::Completed { .. }),
+        "{:?}",
+        finished.outcome()
+    );
+    assert_eq!(judge.requests(), 3);
+    let kept: Json =
+        serde_json::from_slice(left.diagnostic(whizbang_squint::check::JUDGED)).unwrap();
+    assert_eq!(
+        kept["retries"],
+        json!([{"kind": "unavailable", "wait_ms": 5}, {"kind": "timed_out", "wait_ms": 7}])
+    );
+    // A fault that is final ends the loop at once.
+    let (finished, _, judge) = judged(&world, &call, &with_faults(vec![fault("rejected", None)]));
+    assert!(matches!(finished.outcome(), Outcome::Error { kind, .. } if kind == "judge_fault"));
+    assert_eq!(judge.requests(), 1);
+    // And so does one more than the run may retry.
+    let four = (0..4).map(|_| fault("unavailable", Some(1))).collect();
+    let (finished, _, judge) = judged(&world, &call, &with_faults(four));
+    assert!(matches!(finished.outcome(), Outcome::Error { kind, .. } if kind == "judge_fault"));
+    assert_eq!(
+        judge.requests(),
+        u64::from(whizbang_squint::check::RETRIES_LIMIT) + 1
+    );
+}
+
+#[test]
+fn a_repair_of_an_invalid_submission_is_recorded_in_the_run() {
+    let world = World::new();
+    let job = Job::shorthand("source-fidelity", true, 0, None);
+    let call = judged_call(&job, &[world.other.id(), world.photo.id()]);
+    let whole = super::use_case::answers(&checklist_of(&job), "", "held", "confident");
+    let mut short = whole.clone();
+    short["items"].as_array_mut().unwrap().pop();
+    let submit = |answers: Json| json!([{"tool_call": {"id": "s1", "name": "submit_verdict", "arguments": answers}}]);
+    let script = turns(&[(submit(short), "tool_use"), (submit(whole), "tool_use")]);
+    let (finished, left, judge) = judged(&world, &call, &script);
+    assert!(
+        matches!(finished.outcome(), Outcome::Completed { .. }),
+        "{:?}",
+        finished.outcome()
+    );
+    assert_eq!(judge.requests(), 2);
+    assert_eq!(left.record().verdict().unwrap().0, Decision::Pass);
+    let kept: Json =
+        serde_json::from_slice(left.diagnostic(whizbang_squint::check::JUDGED)).unwrap();
+    assert_eq!(
+        kept["repairs"],
+        json!(["chk:ob:SF2@candidate has no disposition"])
     );
 }

@@ -1,6 +1,8 @@
-//! `whizbang squint check <use-case>` (`SPEC.md` section 11; plan 2A, task S2): wiring
-//! from arguments to the door (`whizbang::door::check`), which runs `check` through the
-//! executor under the use case and says its verdict.
+//! `whizbang squint check <use-case>` (`SPEC.md` section 11; plan 2A, task S2; plan 2C,
+//! task A1): wiring from arguments to the door (`whizbang::door::check_job`), which runs
+//! `check` through the executor under the use case and a job, and says its verdict.
+
+use std::path::PathBuf;
 
 use clap::Subcommand;
 use whizbang::door::{self, CheckAsked};
@@ -19,32 +21,47 @@ const EXIT_CODES: &str = "Exit codes:
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Have the configured judge check an edit of an image against its source, under
-    /// a use case: `source-fidelity`, whether the edit kept what mattered in the
-    /// source. The judge disposes of each item of the use case's checklist; the
-    /// verdict is worked out from those, and printed with its reason and the run.
+    /// Have the configured judge check a picture under a use case: `source-fidelity`,
+    /// whether an edit kept what mattered in its source; `reference-consistency`,
+    /// whether a subject of the references appears faithfully; `reality-checks`,
+    /// mistakes no real photograph would make; `brief-compliance`, whether it holds
+    /// what the brief asked for and nothing it forbade; `product-fidelity`, whether a
+    /// product shot keeps the exact product. The judge disposes of each item of the use
+    /// case's checklist; the verdict is worked out from those, and printed with its
+    /// reason and the run.
     #[command(after_help = EXIT_CODES)]
     Check {
-        /// The use case: source-fidelity.
-        #[arg(value_parser = [whizbang_squint::source_fidelity::NAME])]
+        /// The use case.
+        #[arg(value_parser = whizbang_squint::use_case::NAMES)]
         use_case: String,
-        /// The source image, by its identity in the store: sha256: and 64 hex digits,
-        /// as `whizbang store import` prints it.
-        #[arg(long)]
-        source: String,
-        /// The edit of it, by its identity in the store.
-        #[arg(long)]
-        candidate: String,
+        /// The picture that is judged, by its identity in the store: sha256: and 64 hex
+        /// digits, as `whizbang store import` prints it.
+        #[arg(long, required_unless_present = "job", conflicts_with = "job")]
+        candidate: Option<String>,
+        /// What the candidate was edited from, by its identity in the store: for
+        /// source-fidelity.
+        #[arg(long, conflicts_with = "job")]
+        source: Option<String>,
+        /// What the candidate is held to, by its identity in the store: for
+        /// reference-consistency and product-fidelity. Up to 8, each labelled by its
+        /// place: reference 1, reference 2, and so on.
+        #[arg(long = "reference", value_name = "ID", conflicts_with = "job")]
+        references: Vec<String>,
         /// The judge, by its name in the config's `[backends.judge]` tables. With
         /// none, the config's default judge answers.
         #[arg(long, value_name = "NAME")]
         judge: Option<String>,
-        /// What the edit was to do and what it had to keep, in words, such as "change
-        /// only the sky; the parrot's tail keeps its colour". The judge holds the edit
-        /// to it: what it names as kept and is not is a failure. With none, nothing is
-        /// named as kept, and a change is noted but does not fail the check.
-        #[arg(long, value_name = "TEXT")]
+        /// The job's requirements in words, such as "change only the sky; the parrot's
+        /// tail keeps its colour". The judge holds the picture to it. brief-compliance
+        /// needs one; with none, nothing is named as kept or as asked for.
+        #[arg(long, value_name = "TEXT", conflicts_with = "job")]
         brief: Option<String>,
+        /// A squint job file, read whole: its brief, its requirements with their ids,
+        /// scopes and evidence, and its images with their roles and labels, each
+        /// brought into the store from the file it names, relative to the job file's
+        /// folder, and checked against the SHA-256 the job pins.
+        #[arg(long, value_name = "FILE")]
+        job: Option<PathBuf>,
         #[command(flatten)]
         at: Where,
         #[command(flatten)]
@@ -70,26 +87,45 @@ fn run_at(
     match command {
         Command::Check {
             use_case,
-            source,
             candidate,
+            source,
+            references,
             judge,
             brief,
+            job,
             at,
             under,
             request_id,
         } => {
+            let root = at.root().to_path_buf();
+            // What the command line states is checked, and a job file read and its
+            // pictures brought in, before anything runs.
+            let (job, images) = match job {
+                Some(file) => door::job_file(file, use_case, &root, &recovery)?,
+                None => {
+                    let references: Vec<&str> = references.iter().map(String::as_str).collect();
+                    door::shorthand(&CheckAsked {
+                        use_case,
+                        candidate: candidate.as_deref().unwrap_or_default(),
+                        source: source.as_deref(),
+                        references: &references,
+                        judge: judge.as_deref(),
+                        brief: brief.as_deref(),
+                        request_id: request_id.as_deref(),
+                    })?
+                }
+            };
             let uses = Uses::One(Capability::Judge, judge.as_deref());
             let executor = executor(at, under, recovery, platform, uses)?;
-            let asked = CheckAsked {
-                use_case,
-                source,
-                candidate,
-                judge: judge.as_deref(),
-                brief: brief.as_deref(),
-                request_id: request_id.as_deref(),
-            };
-            let root = at.root().to_path_buf();
-            door::check(&executor, &asked, &|run| door::verdict(&root, run))
+            let read = |run: &_| door::verdict(&root, run);
+            door::check_job(
+                &executor,
+                &job,
+                &images,
+                judge.as_deref(),
+                request_id.as_deref(),
+                &read,
+            )
         }
     }
 }
