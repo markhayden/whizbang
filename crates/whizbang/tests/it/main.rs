@@ -15,6 +15,7 @@ mod model_tier;
 mod models;
 mod pack;
 mod rascal;
+mod record;
 mod runs;
 mod setup;
 mod spend;

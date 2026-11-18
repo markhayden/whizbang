@@ -134,3 +134,75 @@ fn the_fixture_picture_holds_no_metadata() {
     assert!(!found.stored.alpha);
     assert_eq!(found.stored.orientation, 1);
 }
+
+/// The fields of the first verdict's record, `name = "value"` each, in order.
+fn first_verdict() -> (String, Vec<(String, String)>) {
+    let page = std::fs::read_to_string(repository().join("docs/results/m2a-first-verdict.md"))
+        .expect("the record of the first verdict is committed");
+    let block = page
+        .split("```toml\n")
+        .nth(1)
+        .and_then(|rest| rest.split("```").next())
+        .expect("the page holds its fields");
+    let fields = block
+        .lines()
+        .map(|line| {
+            let (name, value) = line.split_once(" = ").expect("a line is name = value");
+            (name.to_owned(), value.trim_matches('"').to_owned())
+        })
+        .collect();
+    (page, fields)
+}
+
+#[test]
+fn the_first_verdict_record_names_a_commit_of_this_tree_and_holds_no_secret() {
+    use whizbang_backends::anthropic;
+    let (page, fields) = first_verdict();
+    // A commit, whole; and what ran is this tree's: the build's version, the action's,
+    // the adapter's, and the date of the row of prices.
+    let commit = field(&fields, "commit");
+    assert!(
+        commit.len() == 40
+            && commit
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    );
+    assert_eq!(field(&fields, "whizbang"), env!("CARGO_PKG_VERSION"));
+    assert_eq!(
+        field(&fields, "action"),
+        format!("check {}", whizbang_squint::check::VERSION)
+    );
+    assert_eq!(field(&fields, "backend"), anthropic::ADAPTER);
+    assert_eq!(field(&fields, "adapter_version"), anthropic::VERSION);
+    let prices = anthropic::spend::prices_of(field(&fields, "model")).expect("a priced model");
+    assert_eq!(field(&fields, "prices_read"), prices.read);
+    // The spend is the arithmetic of ADR 0026: the bound of a request at the default
+    // ceilings, sixteen of them reserved, and the turn settled at its usage.
+    let number = |name: &str| field(&fields, name).parse::<u64>().unwrap();
+    assert_eq!(number("request_bound_micros"), 6_024);
+    assert_eq!(number("reserved_micros"), 6_024 * 16);
+    let usage =
+        whizbang_core::capability::Usage::new(number("input_tokens"), number("output_tokens"))
+            .cached(number("cache_read_tokens"), number("cache_write_tokens"));
+    let charged = anthropic::spend::charge_of(usage, prices).unwrap();
+    assert_eq!(number("settled_micros"), charged.micros());
+    assert!(number("input_tokens") <= 40_000);
+    assert!(["pass", "fail", "unsure"].contains(&field(&fields, "verdict")));
+    assert_eq!(
+        field(&fields, "egress_recipient"),
+        "https://api.anthropic.com"
+    );
+    // No secret, no path and no reply: no key's form, no header, no absolute path,
+    // no checklist item's name and no reason.
+    for held in [
+        "sk-ant",
+        "x-api-key",
+        "/Users/",
+        "/private/",
+        "/home/",
+        "chk:ob:",
+        "reason",
+    ] {
+        assert!(!page.contains(held), "the page holds {held}");
+    }
+}

@@ -1,9 +1,12 @@
 //! `check`: a judge looks at images through evidence tools and concludes (`SPEC.md`
 //! section 3, "What a judge model may call"; ADR 0009). It is the smallest loop that
-//! proves the execution contract. Squint's rules, its checklist and its submission
-//! format are not here: the judge is told what the images are and which tools there
-//! are, and concludes by ending its turn with one word, `pass`, `fail` or `unsure`, on
-//! the first line of its text, and its reason after.
+//! proves the execution contract. Under the use case `general`, the judge is told what
+//! the images are and which tools there are, and concludes by ending its turn with one
+//! word, `pass`, `fail` or `unsure`, on the first line of its text, and its reason
+//! after. Under `source-fidelity` (plan 2A, task S2; [`crate::source_fidelity`]), it is
+//! given squint's rules and checklist, answers with the tool `submit_verdict`, and the
+//! verdict is worked out from its dispositions; a submission that is not a verdict is
+//! answered with why, and asked for once more.
 //!
 //! The shape of the loop is squint's (`crates/squint-core/src/run.rs`, `drive`): the
 //! images open the conversation; a turn that calls tools has each call answered, in
@@ -36,12 +39,16 @@ use whizbang_core::contract::{
 };
 use whizbang_core::identity::{DecodeLimits, Digest};
 
+use crate::source_fidelity;
 use crate::view;
+
+/// The use cases `check` takes, by name: the general one, and `source-fidelity`.
+pub const USE_CASES: [&str; 2] = ["general", source_fidelity::NAME];
 
 /// The action's name.
 pub const NAME: &str = "check";
 /// The action's version.
-pub const VERSION: &str = "1.0.0";
+pub const VERSION: &str = "1.1.0";
 /// The most requests one run sends its judge, the retry of a cut-off turn included.
 pub const TURNS_LIMIT: usize = 16;
 /// The most tool calls one run dispatches. It is far under what the executor lets one
@@ -134,6 +141,17 @@ impl Check {
         .argument(Argument::optional(
             "judge",
             "The judge to ask; without it, the configured default.",
+            ValueType::Text,
+        ))
+        .argument(Argument::with_default(
+            "use_case",
+            "general, or source-fidelity: the source first among the images, then the edit of it.",
+            ValueType::Text,
+            Value::text("general"),
+        ))
+        .argument(Argument::optional(
+            "brief",
+            "Under source-fidelity, what the edit was to do and keep, as data.",
             ValueType::Text,
         ))
         .argument(Argument::with_default(
@@ -256,6 +274,13 @@ fn verdict_of(turn: &Turn) -> Option<Verdict> {
         _ => return None,
     };
     Some(Verdict::new(decision, why.trim()))
+}
+
+/// Adds the tool the judge answers with under `source-fidelity`.
+fn run_tools_submit(tools: &mut Vec<ToolDefinition>) -> Result<(), Failure> {
+    let submit = source_fidelity::submit_tool();
+    tools.push(submit.ok_or_else(|| failed("tools", &"the submission's schema is not read"))?);
+    Ok(())
 }
 
 /// One run of the loop: what it froze, and what it has dispatched and kept so far.
@@ -410,13 +435,51 @@ impl Action for Check {
         };
         let tokens = u32::try_from(*tokens).unwrap_or(1);
 
+        let use_case = match argument("use_case") {
+            Some(Value::Text(name)) if USE_CASES.contains(&name.as_str()) => name.as_str(),
+            _ => {
+                return Err(Failure::invalid(
+                    "the use case is general or source-fidelity",
+                ));
+            }
+        };
+        let fidelity = use_case == source_fidelity::NAME;
         // The images open the conversation, each with the name a tool call gives.
         let mut opening = Vec::new();
-        for input in call.inputs() {
-            let (_, image) = shown(context, input.id())?;
-            opening.push(Part::Text(label(&image)));
-            opening.push(Part::Image(image.picture));
-        }
+        let system = if fidelity {
+            let inputs = call.inputs();
+            let [source, candidate] = inputs else {
+                return Err(Failure::invalid(
+                    "source-fidelity is given two images: the source, then the edit of it",
+                ));
+            };
+            for (role, input) in [("candidate", candidate), ("source", source)] {
+                let (_, image) = shown(context, input.id())?;
+                let (width, height) = (image.picture.width(), image.picture.height());
+                let title = format!("{}{}", role[..1].to_ascii_uppercase(), &role[1..]);
+                opening.push(Part::Text(format!(
+                    "Image `{role}` (role {title}, frame raw:{role}, {width}x{height}, Flat); \
+                     for the tool view it is named {}.",
+                    image.id
+                )));
+                opening.push(Part::Image(image.picture));
+            }
+            opening.push(Part::Text(source_fidelity::checklist()));
+            opening.push(Part::Text(source_fidelity::INSTRUCTION.to_owned()));
+            let brief = match argument("brief") {
+                Some(Value::Text(brief)) if !brief.trim().is_empty() => brief.as_str(),
+                _ => source_fidelity::NO_BRIEF,
+            };
+            run_tools_submit(&mut tools)?;
+            source_fidelity::system(brief)
+        } else {
+            for input in call.inputs() {
+                let (_, image) = shown(context, input.id())?;
+                opening.push(Part::Text(label(&image)));
+                opening.push(Part::Image(image.picture));
+            }
+            SYSTEM.to_owned()
+        };
         let unfit = |why: whizbang_core::capability::Unfit| failed("judge_request", &why);
         let mut messages = vec![Message::new(Role::User, opening).map_err(unfit)?];
         let mut run = Run {
@@ -429,9 +492,12 @@ impl Action for Check {
         };
         let mut allowed = tokens;
         let mut retried = false;
+        // A submission that is not a verdict, or a turn that ends without one, is
+        // answered with why and asked for once more: one repair, as squint allowed.
+        let mut repaired = false;
         for _ in 0..TURNS_LIMIT {
             let controls = Controls::new(allowed).map_err(unfit)?;
-            let request = JudgeRequest::new(SYSTEM, messages.clone(), run.tools.clone(), controls);
+            let request = JudgeRequest::new(&system, messages.clone(), run.tools.clone(), controls);
             let turn = run.judge.send(&request.map_err(unfit)?);
             let turn = turn.map_err(|fault| failed("judge_fault", &fault))?;
             allowed = tokens;
@@ -456,9 +522,55 @@ impl Action for Check {
                     let Some(said) = said else {
                         return Err(failed("judge_output", &"a turn that calls tools is empty"));
                     };
+                    let submitted: Vec<&ToolCall> = turn
+                        .tool_calls()
+                        .filter(|call| call.name() == source_fidelity::SUBMIT)
+                        .collect();
+                    if fidelity && !submitted.is_empty() {
+                        let calls = turn.tool_calls().count();
+                        let read = match submitted.as_slice() {
+                            [call] if calls == 1 => source_fidelity::verdict_of(call.arguments()),
+                            _ => Err("submit_verdict is called once, alone".to_owned()),
+                        };
+                        let why = match read {
+                            Ok(verdict) => return Ok(Produced::nothing().with_verdict(verdict)),
+                            Err(why) => why,
+                        };
+                        if repaired {
+                            return Err(failed(
+                                "invalid_submission",
+                                &format!("the judge's submission is not a verdict: {why}"),
+                            ));
+                        }
+                        repaired = true;
+                        let mut results = Vec::new();
+                        for call in turn.tool_calls() {
+                            let said = format!("Submission rejected: {why}");
+                            let result = ToolResult::new(call.id(), &said, true, Vec::new());
+                            results.push(Part::ToolResult(
+                                result.map_err(|why| failed("tool_result", &why))?,
+                            ));
+                        }
+                        results.push(Part::Text(source_fidelity::REPAIR.to_owned()));
+                        messages.push(said);
+                        messages.push(Message::new(Role::User, results).map_err(unfit)?);
+                        continue;
+                    }
                     let results = run.answer(&turn)?;
                     messages.push(said);
                     messages.push(results);
+                }
+                StopReason::EndTurn if fidelity && turn.tool_calls().next().is_none() => {
+                    if repaired {
+                        let why = "the judge ended its turn without calling submit_verdict";
+                        return Err(failed("judge_output", &why));
+                    }
+                    repaired = true;
+                    if let Some(said) = turn.message() {
+                        messages.push(said);
+                    }
+                    let repair = Part::Text(source_fidelity::REPAIR.to_owned());
+                    messages.push(Message::new(Role::User, vec![repair]).map_err(unfit)?);
                 }
                 StopReason::EndTurn if turn.tool_calls().next().is_none() => {
                     let Some(verdict) = verdict_of(&turn) else {

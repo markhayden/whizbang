@@ -378,3 +378,53 @@ fn a_request_is_written_as_the_recorded_request_was() {
     }
     assert_eq!(listener.finish(), written.len());
 }
+
+#[test]
+fn the_input_count_is_at_least_the_usage_of_every_recorded_exchange() {
+    // The count as the adapter makes it, of each recorded request: its words as they
+    // were written, less each picture's data, and each picture by its recorded size,
+    // fitted as the adapter fits it; against the input the provider reported for it,
+    // read from its cache and written to it included.
+    use super::super::{LONG_EDGE, spend};
+    use whizbang_core::egress::fitted;
+    for (name, exchange) in exchanges() {
+        let mut body = exchange["request"]["body"].clone();
+        let pictures: Vec<(u32, u32)> = images_of(&body)
+            .iter()
+            .map(|(data, _)| {
+                let (w, h) = data
+                    .strip_prefix("<picture ")
+                    .and_then(|rest| rest.strip_suffix('>'))
+                    .and_then(|size| size.split_once('x'))
+                    .unwrap();
+                fitted(w.parse().unwrap(), h.parse().unwrap(), LONG_EDGE)
+            })
+            .collect();
+        fn emptied(value: &mut Value) {
+            match value {
+                Value::Object(map) => {
+                    if map.get("type") == Some(&json!("base64")) {
+                        map.insert("data".to_owned(), Value::String(String::new()));
+                    }
+                    map.values_mut().for_each(emptied);
+                }
+                Value::Array(values) => values.iter_mut().for_each(emptied),
+                _ => {}
+            }
+        }
+        emptied(&mut body);
+        let words = serde_json::to_vec(&body).unwrap().len() as u64;
+        let messages = body["messages"].as_array().unwrap().len() as u64;
+        let counted = spend::input_count(words, messages, &pictures);
+        let usage = &exchange["response"]["body"]["usage"];
+        let used = [
+            "input_tokens",
+            "cache_read_input_tokens",
+            "cache_creation_input_tokens",
+        ]
+        .iter()
+        .map(|field| usage[field].as_u64().unwrap_or(0))
+        .sum::<u64>();
+        assert!(counted >= used, "{name}: counted {counted}, used {used}");
+    }
+}

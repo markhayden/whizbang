@@ -1165,12 +1165,13 @@ fn the_records_of_check_completed_failed_and_cancelled_hold_what_the_spec_lists(
                    "whizbang": env!("CARGO_PKG_VERSION")}),
             "{how}"
         );
-        // What was asked: the action, and its exact arguments, the two that have a
+        // What was asked: the action, and its exact arguments, the three that have a
         // value by default among them; no settings yet; the config's digest.
         assert_eq!(
             record["asked"],
-            json!({"action": "check", "version": "1.0.0", "settings": [],
+            json!({"action": "check", "version": "1.1.0", "settings": [],
                    "arguments": [{"name": "tools", "value": {"text": "view"}},
+                                 {"name": "use_case", "value": {"text": "general"}},
                                  {"name": "max_output_tokens", "value": {"integer": 1024}}],
                    "config": Digest::of_bytes(b"").to_string()}),
             "{how}"
@@ -1346,4 +1347,197 @@ fn the_records_of_check_completed_failed_and_cancelled_hold_what_the_spec_lists(
         assert_eq!(record["record"], "run/4");
         assert_eq!(record.as_object().unwrap().len(), 13, "{how}");
     }
+}
+
+// --- the use case source-fidelity (plan 2A, task S2) -------------------------------------------
+
+/// `check` under source-fidelity: the photograph as the source, the other as its edit.
+fn fidelity(world: &World) -> Call {
+    Call::new("check")
+        .input("images", world.photo.id())
+        .input("images", world.other.id())
+        .argument("use_case", Value::text("source-fidelity"))
+}
+
+/// A submission of these items, as the judge's one call.
+fn submission(items: Json) -> Json {
+    json!({"tool_call": {"id": "s1", "name": "submit_verdict", "arguments": {
+        "schema_version": 1, "items": items, "findings": [],
+        "opinion": {"verdict": "pass", "reason": "Recorded only."}}}})
+}
+
+fn item(id: &str, disposition: &str, confidence: &str) -> Json {
+    let location = (disposition == "violation").then(|| {
+        json!({
+        "kind": "bbox", "frame": "raw:candidate", "bbox": [0.1, 0.1, 0.4, 0.4],
+        "polygon": null, "yaw": null, "pitch": null, "fov": null})
+    });
+    json!({"id": id, "disposition": disposition, "confidence": confidence,
+           "reason": format!("{id} was looked at."), "allowed_by": null,
+           "evidence": [], "location": location})
+}
+
+/// The verdict the run's record holds, read by a reader that opens the store anew.
+fn verdict_of(world: &World, finished: &Finished) -> Option<(Decision, String)> {
+    let left = left(&world.root(), world.fs.clone(), finished.run());
+    let record = left.record?;
+    record
+        .verdict()
+        .map(|(decision, why)| (decision, why.to_owned()))
+}
+
+fn finished_with(world: &World, script: &str) -> (Finished, Arc<FakeJudge>) {
+    let judge = judge(script, &[]);
+    let executor = world.engine(judge.clone(), Secrets::none());
+    let finished = executor.submit(&fidelity(world)).unwrap();
+    (finished, judge)
+}
+
+#[test]
+fn source_fidelity_reaches_a_verdict_from_a_scripted_judge() {
+    let world = World::new();
+    let cases = [
+        (("held", "confident"), ("held", "confident"), Decision::Pass),
+        (
+            ("held", "confident"),
+            ("violation", "confident"),
+            Decision::Fail,
+        ),
+        (
+            ("held", "confident"),
+            ("violation", "tentative"),
+            Decision::Unsure,
+        ),
+        (
+            ("cant_tell", "confident"),
+            ("held", "confident"),
+            Decision::Unsure,
+        ),
+        (
+            ("held", "tentative"),
+            ("held", "confident"),
+            Decision::Unsure,
+        ),
+    ];
+    for ((first, how_first), (second, how_second), decided) in cases {
+        let items = json!([
+            item("chk:ob:SF1@candidate", first, how_first),
+            item("chk:ob:SF2@candidate", second, how_second),
+        ]);
+        let script = turns(&[(json!([submission(items)]), "tool_use")]);
+        let (finished, judge) = finished_with(&world, &script);
+        let Outcome::Completed { outputs } = finished.outcome() else {
+            panic!("{:?}", finished.outcome());
+        };
+        assert!(outputs.is_empty());
+        let (decision, why) =
+            verdict_of(&world, &finished).unwrap_or_else(|| panic!("{first} {second}: no verdict"));
+        assert_eq!(decision, decided, "{first} {second}");
+        // The reasons are the deciding items', each by its id.
+        assert!(why.contains("chk:ob:"), "{why}");
+        // What the judge was told: squint's rules and checklist, the candidate first,
+        // and the tool it answers with beside view.
+        let asked = &judge.received()[0];
+        assert!(
+            asked
+                .system()
+                .contains("SF1 (must hold; judges candidate; consults source)")
+        );
+        let opening: Vec<String> = asked.messages()[0]
+            .parts()
+            .iter()
+            .filter_map(|part| match part {
+                Part::Text(text) => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(opening[0].starts_with("Image `candidate` (role Candidate"));
+        assert!(opening[1].starts_with("Image `source` (role Source"));
+        assert!(opening[2].contains("- chk:ob:SF2@candidate: "));
+        let tools: Vec<&str> = asked.tools().iter().map(|tool| tool.name()).collect();
+        assert_eq!(tools, ["view", "submit_verdict"]);
+    }
+    // One image is not a pair: the call is invalid.
+    let judge = judge(&turns(&[]), &[]);
+    let executor = world.engine(judge, Secrets::none());
+    let one = Call::new("check")
+        .input("images", world.photo.id())
+        .argument("use_case", Value::text("source-fidelity"));
+    let finished = executor.submit(&one).unwrap();
+    assert!(
+        matches!(finished.outcome(), Outcome::Invalid { .. }),
+        "{:?}",
+        finished.outcome()
+    );
+}
+
+#[test]
+fn a_submission_that_is_not_a_verdict_is_reported_as_invalid() {
+    let world = World::new();
+    // An item left out, then an item of no checklist: each is answered with why, the
+    // first asked for again once, and the second ends the run.
+    let missing = submission(json!([item("chk:ob:SF1@candidate", "held", "confident")]));
+    let unknown = submission(json!([
+        item("chk:ob:SF1@candidate", "held", "confident"),
+        item("chk:ob:SF2@candidate", "held", "confident"),
+        item("chk:ob:SF9@candidate", "held", "confident"),
+    ]));
+    let script = turns(&[
+        (json!([missing]), "tool_use"),
+        (json!([unknown]), "tool_use"),
+    ]);
+    let (finished, judge) = finished_with(&world, &script);
+    match finished.outcome() {
+        Outcome::Error { kind, message } => {
+            assert_eq!(kind, "invalid_submission");
+            assert!(
+                message.contains("an item is not on the checklist"),
+                "{message}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(verdict_of(&world, &finished).is_none());
+    // The repair: the rejection, as the call's error, and the words that ask again.
+    let received = judge.received();
+    assert_eq!(received.len(), 2);
+    let repair = received[1].messages().last().unwrap().parts().to_vec();
+    match &repair[0] {
+        Part::ToolResult(result) => {
+            assert!(result.is_error());
+            assert_eq!(
+                result.text(),
+                "Submission rejected: chk:ob:SF2@candidate has no disposition"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(
+        matches!(&repair[1], Part::Text(text) if text.starts_with("Repair: call submit_verdict once"))
+    );
+    // A disposition no item takes, and a violation with no location, are not verdicts.
+    let bad = |items: Json, said: &str| {
+        let script = turns(&[
+            (json!([submission(items.clone())]), "tool_use"),
+            (json!([submission(items)]), "tool_use"),
+        ]);
+        let (finished, _) = finished_with(&world, &script);
+        let Outcome::Error { message, .. } = finished.outcome() else {
+            panic!("{:?}", finished.outcome());
+        };
+        assert!(message.contains(said), "{message}");
+    };
+    bad(
+        json!([
+            item("chk:ob:SF1@candidate", "observed", "confident"),
+            item("chk:ob:SF2@candidate", "held", "confident")
+        ]),
+        "chk:ob:SF1@candidate: the disposition is not one of",
+    );
+    let mut nowhere = item("chk:ob:SF1@candidate", "violation", "confident");
+    nowhere["location"] = Json::Null;
+    bad(
+        json!([nowhere, item("chk:ob:SF2@candidate", "held", "confident")]),
+        "a violation has a location",
+    );
 }

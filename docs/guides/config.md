@@ -253,6 +253,45 @@ https://huggingface.co alone: the Hub's token is never sent to another
 Where the sign-in keeps its token, and what `get` does with it, are in the guide
 `models.md`.
 
+## Checking an edit with a judge
+
+`whizbang squint check source-fidelity` asks a judge whether an edit of an image kept
+what mattered in its source. The judge is a backend of the kind `service`, whose one
+provider is Anthropic; the config names its model and the variable its key is in, caps
+what one call may reserve, and approves the provider for the four classes of data a
+check sends (plan 2A, "What the owner provides (S)"):
+
+```toml
+[backends.judge]
+kind = "service"
+provider = "anthropic"
+model = "claude-haiku-5-5"
+key_env = "ANTHROPIC_API_KEY"
+
+[spend]
+call_cap_usd = 2.00
+
+[egress.recipients.anthropic]
+origin = "https://api.anthropic.com"
+classes = ["source_images", "derived_images", "prompts", "evidence"]
+```
+
+The key is in the env file, as `ANTHROPIC_API_KEY=…`, and the command is given both:
+
+```text
+whizbang squint check source-fidelity --source <id> --candidate <id> \
+  --store <dir> --config whizbang.toml --env-file whizbang.env
+```
+
+**What one request may cost** is fixed by three settings of the backend, each held
+before a byte is sent: `max_input_tokens` (40,000 when none is given),
+`max_output_tokens` (2,048) and `max_pictures` (24), in a table
+`[backends.judge.settings]`. A request is bound at its ceilings: 40,000 input tokens at
+0.125 dollars a million and 2,048 output tokens at 0.50, which is 0.006024 dollars; a
+check reserves that for each of its 16 turns, 0.096384 dollars, within the cap of 2.00.
+Each turn is then settled at what its answer says it used. A conversation that needs
+more raises the settings, and the cap with them (ADR 0026).
+
 ## What is refused
 
 The file is read strictly, so that a slip is told and not guessed at. A refusal names

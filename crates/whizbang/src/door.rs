@@ -298,3 +298,77 @@ fn completed(
         )),
     }
 }
+
+/// What `whizbang squint check` was asked, as it was typed.
+#[derive(Debug, Clone, Copy)]
+pub struct CheckAsked<'a> {
+    /// The use case: `source-fidelity`.
+    pub use_case: &'a str,
+    /// The source and the edit of it, each by its identity.
+    pub source: &'a str,
+    pub candidate: &'a str,
+    /// The judge, by its name in the config's `[backends.judge]` tables, when one is
+    /// named.
+    pub judge: Option<&'a str>,
+    /// The caller's id for the request, when it gave one.
+    pub request_id: Option<&'a str>,
+}
+
+/// The output tokens `squint check` asks of each turn: the ceiling the judge of a
+/// service holds by default (plan 2A, task S2), so that a turn is not cut off under
+/// it.
+pub const CHECK_OUTPUT_TOKENS: i64 = 2048;
+
+/// What reads a run's verdict back: its decision's word and its reason.
+pub type ReadVerdict<'a> = dyn Fn(&RunId) -> Option<(String, String)> + 'a;
+
+/// Runs `check` through the executor under a use case, and waits for it. A run that
+/// completed prints its line, then its verdict and its reason, which `read` reads back
+/// from its record; any other end is the complaint, escaped already.
+pub fn check(
+    executor: &dyn Executor,
+    asked: &CheckAsked<'_>,
+    read: &ReadVerdict<'_>,
+) -> Result<String, String> {
+    let identity = |flag: &str, text: &str| {
+        text.parse::<Digest>().map(ArtifactId).map_err(|_| {
+            format!(
+                "--{flag} is no artifact identity: an identity is sha256: and 64 lower-case \
+                 hex digits, as `whizbang store import` prints it"
+            )
+        })
+    };
+    let source = identity("source", asked.source)?;
+    let candidate = identity("candidate", asked.candidate)?;
+    let mut call = Call::new(whizbang_squint::check::NAME)
+        .input("images", source)
+        .input("images", candidate)
+        .argument("use_case", Value::text(asked.use_case))
+        .argument("max_output_tokens", Value::Integer(CHECK_OUTPUT_TOKENS));
+    if let Some(judge) = asked.judge {
+        call = call.argument("judge", Value::text(judge));
+    }
+    let (run, mut text, _) = completed(executor, call, asked.request_id)?;
+    match read(&run) {
+        Some((word, why)) => {
+            text.push_str(&format!("verdict: {}\n", printable(&word)));
+            text.push_str(&format!("reason: {}\n", printable(&why)));
+        }
+        None => text.push_str("verdict: none was recorded\n"),
+    }
+    Ok(text)
+}
+
+/// The verdict of the run `run` in the store at `root`, as its record holds it, read
+/// by a reader of its own: its decision's word and its reason.
+pub fn verdict(root: &Path, run: &RunId) -> Option<(String, String)> {
+    let reader = Reader::open(root, Arc::new(RealFs)).ok()?;
+    let generation = reader.snapshot().ok()?;
+    let record = whizbang_core::contract::record::stored(&generation, run.as_str(), |entry| {
+        reader.read(entry)
+    })?
+    .ok()?;
+    let (decision, why) = record.verdict()?;
+    let word = serde_json::to_value(decision).ok()?;
+    Some((word.as_str()?.to_owned(), why.to_owned()))
+}

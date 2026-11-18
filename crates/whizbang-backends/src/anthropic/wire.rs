@@ -34,6 +34,69 @@ pub(crate) struct Settings {
     pub(crate) effort: Option<String>,
     /// The long edge every picture is fitted to.
     pub(crate) long_edge: u32,
+    /// The most output tokens a request asks for: one asking more is sent with this.
+    pub(crate) max_output_tokens: u32,
+}
+
+/// The pictures above which each is fitted to [`MANY_LONG_EDGE`] at most: a request of
+/// more than 20 pictures takes none larger than 2,000 pixels a side (squint's
+/// catalogue of the model: `many_image_threshold`, `many_image_max_dimension_px`).
+pub(crate) const MANY_PICTURES: usize = 20;
+/// The long edge of every picture of a request of more than [`MANY_PICTURES`].
+pub(crate) const MANY_LONG_EDGE: u32 = 2_000;
+
+/// A request as written: its pieces, the prepared size of each of its pictures in
+/// order, and how many messages it holds.
+pub(crate) struct Written {
+    pub(crate) pieces: Vec<Piece>,
+    pub(crate) pictures: Vec<(u32, u32)>,
+    pub(crate) messages: u64,
+}
+
+impl Written {
+    /// The bytes of its words: every piece that is not a picture.
+    pub(crate) fn word_bytes(&self) -> u64 {
+        let words = self.pieces.iter().filter(|piece| !piece.is_picture());
+        words.map(|piece| piece.bytes().len() as u64).sum()
+    }
+}
+
+/// How many pictures a request holds: in its messages and in its tools' results.
+pub(crate) fn pictures_in(request: &JudgeRequest) -> usize {
+    let parts = request.messages().iter().flat_map(Message::parts);
+    parts
+        .map(|part| match part {
+            Part::Image(_) => 1,
+            Part::ToolResult(result) => result.images().len(),
+            _ => 0,
+        })
+        .sum()
+}
+
+/// The prepared size of a picture as the encoder wrote it: a JPEG's frame, or a PNG's
+/// header.
+fn size_of(bytes: &[u8]) -> (u32, u32) {
+    if let Some(header) = bytes.get(16..24).filter(|_| bytes.starts_with(b"\x89PNG")) {
+        let side = |at: usize| {
+            u32::from_be_bytes([header[at], header[at + 1], header[at + 2], header[at + 3]])
+        };
+        return (side(0), side(4));
+    }
+    let mut at = 2;
+    while let Some([0xff, marker, high, low]) =
+        bytes.get(at..at + 4).map(|b| [b[0], b[1], b[2], b[3]])
+    {
+        if marker == 0xc0 {
+            let side = |from: usize| {
+                bytes
+                    .get(from..from + 2)
+                    .map_or(0, |two| u32::from(u16::from_be_bytes([two[0], two[1]])))
+            };
+            return (side(at + 7), side(at + 5));
+        }
+        at += 2 + usize::from(u16::from_be_bytes([high, low]));
+    }
+    (0, 0)
 }
 
 /// A body being written: the words since the last piece, their class, and the pieces
@@ -151,13 +214,22 @@ fn list<T>(
 /// The body of the request, in pieces: `model`, `max_tokens`, `system` (when the
 /// request has one), `messages`, `tools` (when it defines any), `thinking`, and
 /// `output_config` with its `effort` (when one is set).
-pub(crate) fn request(request: &JudgeRequest, settings: &Settings) -> Result<Vec<Piece>, Fault> {
+pub(crate) fn request(request: &JudgeRequest, settings: &Settings) -> Result<Written, Fault> {
     let mut body = Body::new();
+    let long_edge = if pictures_in(request) > MANY_PICTURES {
+        settings.long_edge.min(MANY_LONG_EDGE)
+    } else {
+        settings.long_edge
+    };
+    let most = request
+        .controls()
+        .max_output_tokens()
+        .min(settings.max_output_tokens);
     let prompts = DataClass::Prompts;
     body.words(prompts, "{\"model\":");
     body.json(prompts, &json!(settings.model));
     body.words(prompts, ",\"max_tokens\":");
-    body.json(prompts, &json!(request.controls().max_output_tokens()));
+    body.json(prompts, &json!(most));
     if !request.system().is_empty() {
         body.words(prompts, ",\"system\":");
         body.json(
@@ -167,7 +239,7 @@ pub(crate) fn request(request: &JudgeRequest, settings: &Settings) -> Result<Vec
     }
     body.words(prompts, ",\"messages\":");
     list(&mut body, request.messages(), |body, message| {
-        self::message(body, message, settings.long_edge)?;
+        self::message(body, message, long_edge)?;
         Ok(true)
     })?;
     if !request.tools().is_empty() {
@@ -195,7 +267,17 @@ pub(crate) fn request(request: &JudgeRequest, settings: &Settings) -> Result<Vec
         body.json(prompts, &json!({ "effort": effort }));
     }
     body.words(prompts, "}");
-    Ok(body.into_pieces())
+    let pieces = body.into_pieces();
+    let pictures = pieces
+        .iter()
+        .filter(|piece| piece.is_picture())
+        .map(|piece| size_of(piece.bytes()))
+        .collect();
+    Ok(Written {
+        pieces,
+        pictures,
+        messages: request.messages().len() as u64,
+    })
 }
 
 /// One message: its role, and its content as blocks.

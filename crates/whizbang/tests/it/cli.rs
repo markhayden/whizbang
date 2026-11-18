@@ -523,3 +523,73 @@ fn store_export_writes_a_png_for_an_image_held_as_jpeg() {
         held.pixels(&DecodeLimits::default()).unwrap()
     );
 }
+
+// --- `whizbang squint check` (plan 2A, task S2, item 4) ----------------------------------------
+
+#[test]
+fn squint_check_prints_the_verdict_and_the_run_under_a_recorded_fake() {
+    use crate::anthropic::{Judged, checked, submission};
+    let judged = Judged::new("cli-squint");
+    let (printed, log) = checked(
+        &judged,
+        vec![submission("held", "Nothing protected moved.")],
+    );
+    let printed = printed.unwrap();
+    let lines: Vec<&str> = printed.lines().collect();
+    assert_eq!(lines.len(), 3, "{printed}");
+    assert!(
+        lines[0].starts_with("run ") && lines[0].ends_with(" completed"),
+        "{printed}"
+    );
+    assert_eq!(lines[1], "verdict: pass");
+    assert!(
+        lines[2].starts_with(
+            "reason: chk:ob:SF1@candidate: held (confident): Nothing protected moved."
+        ),
+        "{printed}"
+    );
+    // One request reached the judge, with the source-fidelity's tool beside view.
+    let sent: serde_json::Value = serde_json::from_slice(&log.lock().unwrap()[0].1).unwrap();
+    let tools: Vec<&str> = sent["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(tools, ["view", "submit_verdict"]);
+    assert_eq!(sent["max_tokens"], 2_048);
+}
+
+#[test]
+fn squint_check_without_the_env_file_is_refused_naming_the_variable() {
+    let scratch = Scratch::new("cli-squint-env");
+    let root = scratch.path().join("store");
+    let made = whizbang(&["spend", "reset", "--allowance", "1"], &root);
+    let _ = made;
+    let config = scratch.path().join("whizbang.toml");
+    std::fs::write(
+        &config,
+        "[backends.judge]\nkind = \"service\"\nprovider = \"anthropic\"\n\
+         model = \"claude-haiku-5-5\"\nkey_env = \"ANTHROPIC_API_KEY\"\n",
+    )
+    .unwrap();
+    let id = format!("sha256:{}", "0".repeat(64));
+    let ran = whizbang(
+        &[
+            "squint",
+            "check",
+            "source-fidelity",
+            "--source",
+            &id,
+            "--candidate",
+            &id,
+            "--config",
+            config.to_str().unwrap(),
+        ],
+        &root,
+    );
+    assert_eq!(ran.code, Some(1), "{}", ran.err);
+    assert!(ran.err.contains("ANTHROPIC_API_KEY"), "{}", ran.err);
+    assert!(ran.err.contains("--env-file"), "{}", ran.err);
+    assert!(ran.out.is_empty());
+}
