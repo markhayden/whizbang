@@ -26,7 +26,7 @@ use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{self, Store};
 
 use crate::pack::{OneWorker, PackKind};
-use whizbang_backends::anthropic::ServiceKind;
+use whizbang_backends::service::ServiceKind;
 
 /// Every action this build ships, registered in the order a door lists them: the
 /// recipe first, then the primitives. Tools add theirs here as they are ported. What
@@ -65,8 +65,8 @@ pub fn registry() -> Result<Registry, String> {
 
 /// The kinds of backend this build has (ADR 0011, "Kinds"): `pack`, a local segmenter
 /// over the one worker of the process (plan 1C, task P6a; [`crate::pack`]), which is
-/// this; and `service`, a judge whose provider is `anthropic` (plan 2A, task S1;
-/// `whizbang_backends::anthropic`). Whoever builds the executor makes the one worker
+/// this; and `service`, a judge whose provider is `anthropic` (plan 2A, task S1),
+/// `google` or `openai` (plan m2c, task P1; `whizbang_backends::service`). Whoever builds the executor makes the one worker
 /// once, and gives the same to the wiring ([`Over::pack`]), which tells it the models
 /// directory it opened. A backend of any other kind is of a kind this build does not
 /// have, and is not ready. A test registers a fake beside them.

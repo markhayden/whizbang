@@ -7,7 +7,6 @@
 //! place of their bytes; nothing else was changed. A picture cannot be compared byte
 //! for byte: whizbang holds pixels, and writes its own JPEG of them.
 
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
@@ -19,33 +18,11 @@ use whizbang_core::capability::{
 use super::super::{ADAPTER, FIELDS};
 use super::{images_of, messages, picture, serving, unbase64, words};
 use crate::net::testing::Pki;
+use crate::service::testing::scale_of;
 
 /// Every recorded exchange, by its set and its number, in order.
 fn exchanges() -> Vec<(String, Value)> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/anthropic-messages");
-    let mut sets: Vec<PathBuf> = std::fs::read_dir(&root)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .collect();
-    sets.sort();
-    let mut all = Vec::new();
-    for set in sets {
-        let mut files: Vec<PathBuf> = std::fs::read_dir(&set)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .collect();
-        files.sort();
-        for file in files {
-            let name = format!(
-                "{}/{}",
-                set.file_name().unwrap().to_string_lossy(),
-                file.file_name().unwrap().to_string_lossy()
-            );
-            let read: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
-            all.push((name, read));
-        }
-    }
-    all
+    crate::service::testing::exchanges("anthropic-messages")
 }
 
 /// A recorded body as bytes.
@@ -151,16 +128,6 @@ fn each_recorded_exchange_of_squint_is_read_back_to_its_turn() {
         assert!(words.iter().all(|text| !text.contains("legal")), "{name}");
     }
     assert_eq!(listener.finish(), exchanges.len());
-}
-
-/// How much smaller a recorded picture is made for the test: a tenth on each side for
-/// one over 1,000 pixels wide, none otherwise. Encoding the 21 pictures of 2,000 by
-/// 1,500 that `many-images` carried takes the encoder, built unoptimised as the tests
-/// are, longer than a test may run; the request's every other byte, and how many
-/// pictures it carries, in which blocks and of which type, are compared as they were
-/// recorded. Fitting a picture to its long edge is `prepare::…`'s.
-fn scale_of(width: u32) -> u32 {
-    if width > 1000 { 10 } else { 1 }
 }
 
 /// The request a recorded body was written from, as whizbang holds one, with the

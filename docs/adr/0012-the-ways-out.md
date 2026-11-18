@@ -220,7 +220,12 @@ sends with no credential").
   answers the `Credential` a backend made from a table sends with, made with
   `KeyValue::carried_to` under the kind's own header constant (the judge of a service:
   `x-api-key`). It is asked only after `Kind::make` made the backend, and is none by
-  default.
+  default. Task P1 of plan m2c added the kind's two other providers: Google's key goes
+  in `x-goog-api-key`, and OpenAI's in `Authorization`, as `Bearer` and the key, made
+  with `Credential::new` at the origin of the address the kind sends to; neither is
+  ever written into an address, and Google's query form of a key is not used
+  (`google::the_key_goes_only_to_the_approved_origin_in_its_header`,
+  `openai::the_key_goes_only_to_the_approved_origin_as_a_bearer`).
 - **It is bound to the recipient's own origin, and no other.** What a config offers
   (`Offers`) keeps it beside the recipient the backend declares only when its origin is
   that recipient's own origin; one bound to an upstream, or to any other origin, or of a
@@ -234,8 +239,8 @@ sends with no credential").
   refused (`anthropic::the_key_goes_only_to_the_approved_origin_in_its_header`,
   `wired::a_redirect_to_another_origin_is_refused_and_the_key_is_not_sent_there`).
 - **A request's own fields name no credential.** `Outgoing::with_fields` refuses
-  `Authorization`, `Proxy-Authorization`, `X-Api-Key`, `Api-Key` and `Cookie`, in any
-  case, beside the fields the sender writes itself: a credential goes only as the
+  `Authorization`, `Proxy-Authorization`, `X-Api-Key`, `Api-Key`, `X-Goog-Api-Key`
+  (added by task P1 of plan m2c) and `Cookie`, in any case, beside the fields the sender writes itself: a credential goes only as the
   executor attaches it. The values are meant to be constants; the type holds them to
   `&'static`, which a leaked text is too, so the check behind a send looks at each
   value as it looks at a part of words (ADR 0019).

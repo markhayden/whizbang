@@ -24,11 +24,12 @@ pub const FIELDS_LIMIT: usize = 8;
 /// The fields a sender writes itself, and those that carry a credential, which only
 /// the executor attaches: a request may name none of them. Compared without regard to
 /// case.
-const SENDERS_FIELDS: [&str; 13] = [
+const SENDERS_FIELDS: [&str; 14] = [
     "authorization",
     "proxy-authorization",
     "x-api-key",
     "api-key",
+    "x-goog-api-key",
     "cookie",
     "host",
     "user-agent",
@@ -161,8 +162,8 @@ impl Outgoing {
     /// and hyphens, or that is one the sender writes itself (`Host`, `User-Agent`,
     /// `Accept`, `Accept-Encoding`, `Connection`, `Content-Length`,
     /// `Transfer-Encoding`, `Expect`) or one that carries a credential
-    /// (`Authorization`, `Proxy-Authorization`, `X-Api-Key`, `Api-Key`, `Cookie`),
-    /// which only the executor attaches, or one named twice; a value that is not 1 to
+    /// (`Authorization`, `Proxy-Authorization`, `X-Api-Key`, `Api-Key`,
+    /// `X-Goog-Api-Key`, `Cookie`), which only the executor attaches, or one named twice; a value that is not 1 to
     /// 256 printable ASCII characters and spaces with no space at either end.
     pub fn with_fields(
         mut self,
