@@ -27,7 +27,8 @@ evalsets/receipts/                squint's gate receipts
 matrices/                         the matrices whizbang runs (below)
 ```
 
-No picture is in this repository. Each is fetched by its pin into a store, as a picture
+A set's folder holds no link: every file of a set, and every picture under `--from`, is
+read through none, and one found is refused. No picture is in this repository. Each is fetched by its pin into a store, as a picture
 (`whizbang eval sets fetch`).
 
 Every file is read strictly: an unknown key anywhere (an `expected` on an item, a label in a
@@ -52,7 +53,8 @@ items are judged under.
   the pictures matched their pins.
 - `whizbang eval sets fetch --set <id> --store <dir> --config <file>` brings each picture of
   the set that the store does not hold into it, as a picture, from
-  `https://raw.githubusercontent.com/<owner>/<repo>/<images_rev>/<set id>/<path>`. The config
+  `https://raw.githubusercontent.com/markhayden/wafflery-evalsets/<images_rev>/<set id>/<path>`;
+  a set that names another repository is not fetched. The config
   must approve that origin as a recipient (`[egress.recipients]`), or nothing is fetched; the
   request carries nothing but its address. What arrives is imported only when its SHA-256 is
   the job's pin. With `--from <dir>`, the pictures are read from a folder laid out as that

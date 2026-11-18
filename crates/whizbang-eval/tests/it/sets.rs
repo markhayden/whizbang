@@ -226,3 +226,34 @@ fn no_set_without_published_labels_has_a_labels_file() {
         "{refused}"
     );
 }
+
+#[test]
+fn a_set_file_or_folder_that_is_a_link_is_refused_and_nothing_it_leads_to_is_said() {
+    use std::os::unix::fs::symlink;
+    let (scratch, dir) = a_set("sets-links");
+    let outside = scratch.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("words.toml"), "an outside line\n").unwrap();
+    // A file of the set that is a link.
+    let families = dir.join("families.toml");
+    let kept = std::fs::read(&families).unwrap();
+    std::fs::remove_file(&families).unwrap();
+    symlink(outside.join("words.toml"), &families).unwrap();
+    let refused = Set::load(&dir).unwrap_err();
+    assert!(refused.contains("is a link"), "{refused}");
+    assert!(!refused.contains("an outside line"), "{refused}");
+    std::fs::remove_file(&families).unwrap();
+    std::fs::write(&families, kept).unwrap();
+    Set::load(&dir).unwrap();
+    // A folder of the set that is a link to a copy of itself elsewhere.
+    let items = dir.join("items");
+    std::fs::rename(&items, outside.join("items")).unwrap();
+    symlink(outside.join("items"), &items).unwrap();
+    let refused = Set::load(&dir).unwrap_err();
+    assert!(refused.contains("is a link"), "{refused}");
+    // And corrections beside the labels that are a link.
+    std::fs::remove_file(&items).unwrap();
+    std::fs::rename(outside.join("items"), &items).unwrap();
+    symlink(outside.join("words.toml"), dir.join(sets::CORRECTIONS_FILE)).unwrap();
+    assert!(Set::load(&dir).unwrap_err().contains("is a link"));
+}

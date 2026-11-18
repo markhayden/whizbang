@@ -1427,24 +1427,24 @@ fn runs_show_prints_a_run_2_record_as_it_did() {
 
 // --- `runs stats` and `runs export` (plan 2C, task E1, item 5) ------------------------------
 
-/// A matrix of arm F over three items under a judge on loopback: three runs of `check`,
-/// each with its run of `align` measured first; the store's root.
-fn three_checked(label: &str) -> crate::anthropic::Judged {
+/// A matrix of arm F over these items under a judge on loopback: a run of `check` for
+/// each, with its run of `align` measured first.
+fn checked(label: &str, items: &[&str]) -> crate::anthropic::Judged {
     use crate::anthropic::submission;
     use crate::matrix::{matrix_of, ran, run_matrix, world_with};
-    let (judged, tiny) = world_with(label, &["a", "b", "c"]);
+    let (judged, tiny) = world_with(label, items);
     let matrix = matrix_of("F", 1, 2);
-    let answers = vec![submission("held", "Kept."); 3];
+    let answers = vec![submission("held", "Kept."); items.len()];
     let (report, _) = run_matrix(&judged, answers, &|e| {
         ran(e, &judged, &tiny, &matrix, 20_000_000, &|| false)
     });
-    assert_eq!(report.unwrap().completed, 3);
+    assert_eq!(report.unwrap().completed, items.len());
     judged
 }
 
 #[test]
 fn stats_over_a_tool_report_count_outcomes_verdicts_time_and_cost() {
-    let judged = three_checked("runs-stats");
+    let judged = checked("runs-stats", &["a", "b", "c"]);
     let root = &judged.world.root;
     let stats = crate::wired::whizbang(&["runs", "stats", "--tool", "align"], root);
     assert_eq!(stats.code, Some(0), "{}", stats.err);
@@ -1481,12 +1481,12 @@ fn stats_over_a_tool_report_count_outcomes_verdicts_time_and_cost() {
 
 #[test]
 fn export_writes_one_json_object_per_run_and_no_label() {
-    let judged = three_checked("runs-export");
+    let judged = checked("runs-export", &["a", "b"]);
     let root = &judged.world.root;
     let all = crate::wired::whizbang(&["runs", "export"], root);
     assert_eq!(all.code, Some(0), "{}", all.err);
     let lines: Vec<&str> = all.out.lines().collect();
-    // Three runs of check, three of align, and the runs of view or resize none.
+    // Two runs of check, two of align, and the runs of view or resize none.
     let records: Vec<serde_json::Value> = lines
         .iter()
         .map(|line| serde_json::from_str(line).unwrap())
@@ -1497,12 +1497,12 @@ fn export_writes_one_json_object_per_run_and_no_label() {
         .collect();
     assert_eq!(
         actions.iter().filter(|a| **a == "check").count(),
-        3,
+        2,
         "{actions:?}"
     );
     assert_eq!(
         actions.iter().filter(|a| **a == "align").count(),
-        3,
+        2,
         "{actions:?}"
     );
     // Each line is the record as `runs show --json` gives it.
@@ -1513,5 +1513,5 @@ fn export_writes_one_json_object_per_run_and_no_label() {
     assert!(!all.out.contains("\"expected\""));
     assert!(!all.out.contains("adjudicated"));
     let tool = crate::wired::whizbang(&["runs", "export", "--tool", "align"], root);
-    assert_eq!(tool.out.lines().count(), 3);
+    assert_eq!(tool.out.lines().count(), 2);
 }

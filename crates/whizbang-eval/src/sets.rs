@@ -356,28 +356,9 @@ fn hex(bytes: &[u8]) -> String {
     Digest::of_bytes(bytes).hex()
 }
 
-/// A file of a set, as text, at most [`FILE_LIMIT`] bytes.
-fn read_text(path: &Path) -> Result<String, String> {
-    use std::io::Read;
-    let shown = path.display();
-    let file = std::fs::File::open(path).map_err(|e| format!("cannot read {shown}: {e}"))?;
-    let mut text = String::new();
-    file.take(FILE_LIMIT + 1)
-        .read_to_string(&mut text)
-        .map_err(|e| format!("cannot read {shown}: {e}"))?;
-    if text.len() as u64 > FILE_LIMIT {
-        return Err(format!("{shown} is over {FILE_LIMIT} bytes"));
-    }
-    Ok(text)
-}
-
-fn read_toml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
-    let text = read_text(path)?;
-    toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
-}
-
-/// A path a set names, relative to its folder, refused when it could lead out of it.
-fn inside(dir: &Path, relative: &str) -> Result<PathBuf, String> {
+/// A path a set names, relative to its folder: plain names only, so it cannot lead out of
+/// it by `..`, by a root or by a prefix.
+fn plain(relative: &str) -> Result<&Path, String> {
     let path = Path::new(relative);
     let plain = path
         .components()
@@ -387,7 +368,93 @@ fn inside(dir: &Path, relative: &str) -> Result<PathBuf, String> {
             "the path {relative:?} is not a plain path inside the set's folder"
         ));
     }
-    Ok(dir.join(path))
+    Ok(path)
+}
+
+/// Each folder and the file a path names under `base`, from `base` down, is not a link:
+/// what it is, by a look that follows none. A path that is not there is said as missing.
+fn no_link_under(base: &Path, relative: &Path) -> Result<std::fs::Metadata, String> {
+    let mut at = base.to_path_buf();
+    let mut last = None;
+    for part in relative.components() {
+        at.push(part);
+        let found = std::fs::symlink_metadata(&at)
+            .map_err(|e| format!("cannot read {}: {e}", at.display()))?;
+        if found.file_type().is_symlink() {
+            return Err(format!(
+                "{} is a link, and nothing in a set's folder is read through a link",
+                at.display()
+            ));
+        }
+        last = Some(found);
+    }
+    last.ok_or_else(|| "an empty path names no file".to_owned())
+}
+
+/// The bytes of the file at `relative` under `base`, at most `limit`, read through no link
+/// (plan 2C, task E1; the security review of its pull request). Every part of the path
+/// below `base` is looked at without following a link, and refused if it is one; the file
+/// must be a regular file. It is then opened, and the file opened must be the one looked
+/// at (the same device and inode), and the path's parts are looked at again: so a link
+/// put in its place between the look and the open is refused, not followed. Nothing read
+/// is said in a refusal.
+pub fn read_under(base: &Path, relative: &str, limit: u64) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    use std::os::unix::fs::MetadataExt;
+    let path = plain(relative)?;
+    let full = base.join(path);
+    let shown = full.display();
+    let looked = no_link_under(base, path)?;
+    if !looked.file_type().is_file() {
+        return Err(format!("{shown} is not a regular file"));
+    }
+    if looked.len() > limit {
+        return Err(format!("{shown} is over {limit} bytes"));
+    }
+    let file = std::fs::File::open(&full).map_err(|e| format!("cannot read {shown}: {e}"))?;
+    let opened = file
+        .metadata()
+        .map_err(|e| format!("cannot read {shown}: {e}"))?;
+    let same = opened.dev() == looked.dev() && opened.ino() == looked.ino();
+    if !same || !opened.file_type().is_file() {
+        return Err(format!(
+            "{shown} changed while it was opened, and is not read"
+        ));
+    }
+    no_link_under(base, path)?;
+    let mut bytes = Vec::new();
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("cannot read {shown}: {e}"))?;
+    if bytes.len() as u64 > limit {
+        return Err(format!("{shown} is over {limit} bytes"));
+    }
+    Ok(bytes)
+}
+
+/// A file of a set, as text, at most [`FILE_LIMIT`] bytes, read through no link.
+fn read_text(dir: &Path, relative: &str) -> Result<String, String> {
+    let bytes = read_under(dir, relative, FILE_LIMIT)?;
+    String::from_utf8(bytes).map_err(|_| format!("{relative} is not UTF-8"))
+}
+
+fn read_toml<T: serde::de::DeserializeOwned>(dir: &Path, relative: &str) -> Result<T, String> {
+    let text = read_text(dir, relative)?;
+    toml::from_str(&text).map_err(|e| format!("{}: {e}", dir.join(relative).display()))
+}
+
+/// Whether a set's folder holds a file at `relative`, by a look that follows no link: a
+/// link there is refused.
+fn holds(dir: &Path, relative: &str) -> Result<bool, String> {
+    match std::fs::symlink_metadata(dir.join(relative)) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        _ => no_link_under(dir, plain(relative)?).map(|_| true),
+    }
+}
+
+/// A path a set names, relative to its folder, refused when it could lead out of it.
+fn inside(dir: &Path, relative: &str) -> Result<PathBuf, String> {
+    Ok(dir.join(plain(relative)?))
 }
 
 impl Set {
@@ -395,26 +462,35 @@ impl Set {
     /// is refused, which is how a manifest or a job is kept free of an answer), and the
     /// corrections beside the labels applied.
     pub fn load(dir: &Path) -> Result<Set, String> {
-        let manifest: Manifest = read_toml(&dir.join(MANIFEST_FILE))?;
+        let link = std::fs::symlink_metadata(dir)
+            .map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+        if link.file_type().is_symlink() {
+            return Err(format!(
+                "{} is a link, and a set's folder is not read through one",
+                dir.display()
+            ));
+        }
+        let manifest: Manifest = read_toml(dir, MANIFEST_FILE)?;
         let id = manifest.set.id.clone();
-        let families: Families = read_toml(&inside(dir, &manifest.set.families)?)?;
+        let families: Families = read_toml(dir, &manifest.set.families)?;
         let sealed_labels = match &manifest.set.labels {
-            Some(relative) => Some(read_toml::<Labels>(&inside(dir, relative)?)?),
+            Some(relative) => Some(read_toml::<Labels>(dir, relative)?),
             None => None,
         };
         let mut jobs = Vec::new();
         let mut parsed = Vec::new();
         for item in &manifest.item {
-            let text = read_text(&inside(dir, &item.job)?)
+            let text = read_text(dir, &item.job)
                 .map_err(|e| said(&id, format!("item {}: {e}", item.id)))?;
             let file: JobFile =
                 toml::from_str(&text).map_err(|e| said(&id, format!("item {}: {e}", item.id)))?;
             jobs.push((item.id.clone(), text));
             parsed.push(file.job);
         }
-        let corrections = dir.join(CORRECTIONS_FILE);
-        let labels = match (&sealed_labels, corrections.is_file()) {
-            (Some(labels), true) => Some(corrected(&id, labels, &read_toml(&corrections)?)?),
+        let labels = match (&sealed_labels, holds(dir, CORRECTIONS_FILE)?) {
+            (Some(labels), true) => {
+                Some(corrected(&id, labels, &read_toml(dir, CORRECTIONS_FILE)?)?)
+            }
             (None, true) => {
                 return Err(said(
                     &id,
@@ -605,7 +681,7 @@ impl Set {
         lines.dedup();
         let pin = &self.manifest.set.rules;
         let labels = match (&self.manifest.set.labels, &self.manifest.set.labels_sha256) {
-            (Some(relative), _) => hex(read_text(&inside(&self.dir, relative)?)?.as_bytes()),
+            (Some(relative), _) => hex(read_text(&self.dir, relative)?.as_bytes()),
             (None, Some(hash)) => hash.to_ascii_lowercase(),
             (None, None) => return Err(said(id, "no labels file and no labels_sha256")),
         };
@@ -623,7 +699,7 @@ impl Set {
     /// is of its components. A seal that does not match is refused, naming what changed.
     fn verify_seal(&self, rules: &str) -> Result<(), String> {
         let id = self.id();
-        let sealed: Seal = read_toml(&self.dir.join(SEAL_FILE))?;
+        let sealed: Seal = read_toml(&self.dir, SEAL_FILE)?;
         let now = self.components(rules)?;
         let changed = sealed.seal.components.changed(&now);
         if !changed.is_empty() {
@@ -740,7 +816,7 @@ pub fn discover(root: &Path) -> Result<Vec<PathBuf>, String> {
             std::fs::read_dir(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
         let mut dirs: Vec<PathBuf> = read
             .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-            .filter(|path| path.is_dir())
+            .filter(|path| std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_dir()))
             .collect();
         dirs.sort();
         Ok(dirs)
@@ -748,7 +824,7 @@ pub fn discover(root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut found = Vec::new();
     for use_case in folders(root)? {
         for set in folders(&use_case)? {
-            if set.join(MANIFEST_FILE).is_file() {
+            if std::fs::symlink_metadata(set.join(MANIFEST_FILE)).is_ok() {
                 found.push(set);
             }
         }
@@ -812,6 +888,7 @@ pub fn find(root: &Path, id: &str) -> Result<Set, String> {
     if parts.len() != 2 || !parts.iter().all(plain) {
         return Err("a set's id is <use-case>/<set>, two plain names".to_owned());
     }
+    no_link_under(root, Path::new(id))?;
     let set = Set::load(&root.join(id))?;
     if set.id() != id {
         return Err(said(id, "the set at that path has another id"));

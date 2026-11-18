@@ -54,7 +54,7 @@ pub fn tiny(dir: &Path, items: &[&str]) -> Tiny {
     let from = dir.join("pictures");
     let mut manifest = format!(
         "[set]\nid = \"{SET}\"\nuse_case = \"source-fidelity\"\nsplit = \"dev\"\n\
-         licence = \"CC-BY-4.0\"\nimages_repo = \"github.com/example/sets\"\n\
+         licence = \"CC-BY-4.0\"\nimages_repo = \"github.com/markhayden/wafflery-evalsets\"\n\
          images_rev = \"{REVISION}\"\nlabels = \"labels.toml\"\nfamilies = \"families.toml\"\n\
          rules = {{ base = \"source-fidelity\", version = 1 }}\n"
     );
@@ -107,7 +107,7 @@ pub fn fetched(tiny: &Tiny, root: &Path) {
 }
 
 fn address(path: &str) -> Address {
-    let text = format!("{RAW_ORIGIN}/example/sets/{REVISION}/{SET}/{path}");
+    let text = format!("{RAW_ORIGIN}/markhayden/wafflery-evalsets/{REVISION}/{SET}/{path}");
     Address::of(&text, &Secrets::none()).unwrap()
 }
 
@@ -301,4 +301,39 @@ fn from_a_folder_imports_the_same_pictures_by_hash() {
         "{}",
         ran.err
     );
+}
+
+#[test]
+fn from_a_folder_refuses_a_picture_that_is_a_link_and_a_set_of_another_repository() {
+    use std::os::unix::fs::symlink;
+    let world = world("fetch-links");
+    let tiny = tiny(&world.beside("set"), &["one"]);
+    // The candidate in the folder is a link to the same bytes elsewhere: refused, and
+    // nothing of the set is imported.
+    let (path, bytes) = &tiny.pictures[0];
+    let elsewhere = world.beside("elsewhere.png");
+    std::fs::write(&elsewhere, bytes).unwrap();
+    let placed = tiny.from.join(SET).join(path);
+    std::fs::remove_file(&placed).unwrap();
+    symlink(&elsewhere, &placed).unwrap();
+    let set = sets::find(&tiny.root, SET).unwrap();
+    let refused =
+        evaluation::from_folder(&set, &tiny.from, &world.root, &whizbang::wiring::recovery())
+            .unwrap_err();
+    assert!(refused.contains("is a link"), "{refused}");
+    assert!(pictures_by_file(&world.root).unwrap().is_empty());
+    // A set that names another repository is not fetched: nothing is asked.
+    let manifest = tiny.root.join(SET).join("set.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    std::fs::write(
+        &manifest,
+        text.replace("markhayden/wafflery-evalsets", "someone/else"),
+    )
+    .unwrap();
+    let (said, fake, _) = fetch_with(&world, &tiny, &raw(), |_, b| b.to_vec());
+    assert!(
+        said.unwrap_err()
+            .contains("images_repo is not github.com/markhayden/wafflery-evalsets")
+    );
+    assert!(fake.requests().is_empty());
 }

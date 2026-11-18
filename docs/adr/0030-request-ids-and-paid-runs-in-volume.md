@@ -50,7 +50,7 @@ dispatches and settlements, its end). The generation file's limit of 64 MiB
    owner, the next turn, whether an admission stands) is what the whole fold says; what it
    says of an older epoch is not used. `whizbang spend` still folds everything.
    `spend::ledger::an_admission_after_many_paid_runs_and_a_reset_reads_no_closed_epoch` holds
-   it: after forty paid runs and a reset, an admission reads no file of epoch 1.
+   it: after twelve paid runs and a reset, an admission reads no file of epoch 1.
 
 ## Consequences
 

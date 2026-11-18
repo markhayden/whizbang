@@ -85,9 +85,12 @@ pub fn judging() -> Judging<'static> {
     }
 }
 
+/// The repository the sets' pictures are in: a set that names any other is not fetched.
+pub const SETS_REPOSITORY: &str = "github.com/markhayden/wafflery-evalsets";
+
 /// The address of one picture of a set: `<base>/<owner>/<repo>/<revision>/<set id>/<path>`.
-/// The set must name a repository as `github.com/<owner>/<repo>` and a revision of 40 hex
-/// digits; the path is the job's, which the set's check holds to plain names.
+/// The set must name [`SETS_REPOSITORY`] and a revision of 40 hex digits; the path is the
+/// job's, which the set's check holds to plain names.
 pub fn picture_address(base: &str, set: &Set, path: &str) -> Result<String, String> {
     let meta = &set.manifest.set;
     let plain = |part: &str| {
@@ -98,13 +101,12 @@ pub fn picture_address(base: &str, set: &Set, path: &str) -> Result<String, Stri
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
     };
-    let repo: Vec<&str> = meta.images_repo.split('/').collect();
-    let named = repo.len() == 3 && repo[0] == "github.com" && plain(repo[1]) && plain(repo[2]);
-    if !named {
-        return Err(format!(
-            "{}: images_repo is not github.com/<owner>/<repo>",
-            meta.id
-        ));
+    // The one repository the sets' pictures are fetched from, whatever else a set names.
+    let Some(repo) = meta.images_repo.strip_prefix("github.com/") else {
+        return Err(format!("{}: images_repo is not {SETS_REPOSITORY}", meta.id));
+    };
+    if meta.images_repo != SETS_REPOSITORY {
+        return Err(format!("{}: images_repo is not {SETS_REPOSITORY}", meta.id));
     }
     let rev = meta.images_rev.as_deref().unwrap_or_default();
     if rev.len() != 40 || !rev.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -117,10 +119,8 @@ pub fn picture_address(base: &str, set: &Set, path: &str) -> Result<String, Stri
         return Err(format!("{}: a picture's path is not plain names", meta.id));
     }
     Ok(format!(
-        "{}/{}/{}/{rev}/{}/{path}",
+        "{}/{repo}/{rev}/{}/{path}",
         base.trim_end_matches('/'),
-        repo[1],
-        repo[2],
         meta.id
     ))
 }
@@ -235,7 +235,7 @@ fn download(downloader: &CheckedDownloader, from: Address) -> Result<Vec<u8>, St
 
 /// `whizbang eval sets fetch --from <dir>`: the same pictures, from a folder the owner
 /// placed by hand, laid out as the repository is (`<dir>/<set id>/<path>`), by the same
-/// pins. Nothing is fetched.
+/// pins, each read through no link. Nothing is fetched.
 pub fn from_folder(
     set: &Set,
     dir: &Path,
@@ -244,8 +244,17 @@ pub fn from_folder(
 ) -> Result<String, String> {
     let (wanted, present) = wanted(set, root)?;
     for picture in &wanted {
-        let file = dir.join(set.id()).join(&picture.path);
-        import::job_picture(&file, Some(&picture.sha256), root, recovery.clone())?;
+        // Read through no link, from the folder down (`sets::read_under`).
+        let relative = format!("{}/{}", set.id(), picture.path);
+        let bytes = sets::read_under(dir, &relative, PICTURE_LIMIT)?;
+        let shown = dir.join(&relative).display().to_string();
+        import::picture_of_bytes(
+            &bytes,
+            &shown,
+            Some(&picture.sha256),
+            root,
+            recovery.clone(),
+        )?;
     }
     Ok(format!(
         "{}: imported {} pictures from the folder, {present} already there\n",

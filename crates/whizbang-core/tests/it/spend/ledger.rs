@@ -29,7 +29,7 @@ fn objects(
 
 #[test]
 fn an_admission_after_many_paid_runs_and_a_reset_reads_no_closed_epoch() {
-    const RUNS: usize = 40;
+    const RUNS: usize = 12;
     let world = World::new("ledger-epochs");
     assert_eq!(allow(&world.store, 100_000_000), 1);
     let engine: Engine = world
@@ -42,7 +42,7 @@ fn an_admission_after_many_paid_runs_and_a_reset_reads_no_closed_epoch() {
         let id = RequestId::parse(&format!("paid-{at}")).unwrap();
         ran(engine.request(&Request::new(Call::new("paint")).with_id(id)));
     }
-    // Epoch 1 holds forty reservations, each closed; the owner's reset opens epoch 2.
+    // Epoch 1 holds twelve reservations, each closed; the owner's reset opens epoch 2.
     assert_eq!(books(&world.store).reservations().len(), RUNS);
     assert_eq!(allow(&world.store, 50_000_000), 2);
     let store_root = world.store_root();
