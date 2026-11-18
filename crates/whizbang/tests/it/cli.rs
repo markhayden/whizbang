@@ -12,10 +12,12 @@ use std::sync::Arc;
 use whizbang::door::{self, SegmentAsked};
 use whizbang::pack::OneWorker;
 use whizbang::wiring::{self, Over};
+use whizbang_core::artifact::{Image, ImageRole, Origin, Step};
 use whizbang_core::capability::{Declaration, Price, feature};
 use whizbang_core::config::{Kind, KindRefused, Table};
 use whizbang_core::contract::{Made, ModelIdentity};
 use whizbang_core::egress::Recipient;
+use whizbang_core::identity::{CanonicalPixels, DecodeLimits, Projection, Topology, identify};
 use whizbang_core::store::Store;
 use whizbang_core::store::fs::RealFs;
 use whizbang_testkit::capabilities::FakeSegmenter;
@@ -237,4 +239,287 @@ fn rascal_segment_with_no_segmenter_configured_exits_1_and_commits_nothing() {
         &root,
     );
     assert_eq!(ran.code, Some(2));
+}
+
+// --- the operations, and the PNG out (plan 2A, task R2) ----------------------------------------
+
+/// The chunk types of a PNG file, in order.
+fn chunks(png: &[u8]) -> Vec<String> {
+    assert_eq!(png[..8], *b"\x89PNG\r\n\x1a\n");
+    let mut at = 8;
+    let mut found = Vec::new();
+    while at + 8 <= png.len() {
+        let length = u32::from_be_bytes(png[at..at + 4].try_into().unwrap()) as usize;
+        found.push(String::from_utf8(png[at + 4..at + 8].to_vec()).unwrap());
+        at += 12 + length;
+    }
+    assert_eq!(at, png.len());
+    found
+}
+
+/// The pixels of a PNG or JPEG file, as the core reads them.
+fn pixels_of(file: &[u8]) -> CanonicalPixels {
+    identify(file, &DecodeLimits::default()).unwrap().pixels
+}
+
+/// The one output a command printed, by its port.
+fn printed(out: &str, port: &str) -> String {
+    let line = out
+        .lines()
+        .find_map(|line| line.strip_prefix(&format!("{port} ")));
+    line.unwrap_or_else(|| panic!("no {port} in:\n{out}"))
+        .to_owned()
+}
+
+#[test]
+fn rascal_select_plug_feather_render_and_export_make_a_cut_out_of_the_instances() {
+    let dir = Scratch::new("cli-cutout");
+    let (root, image) = with_picture(&dir);
+    let asked = SegmentAsked {
+        image: &image,
+        phrase: "circle",
+        max_instances: 8,
+        backend: None,
+        request_id: None,
+    };
+    let found = segment(&dir, &root, &asked).unwrap();
+    let masks: Vec<&str> = found
+        .lines()
+        .filter_map(|line| line.strip_prefix("mask "))
+        .map(|rest| rest.split(' ').next().unwrap())
+        .collect();
+    assert_eq!(masks.len(), 3, "{found}");
+    // Keep the disc and its upper half, not the square; clear a box at the disc's top.
+    let ran = |args: &[&str]| {
+        let ran = whizbang(args, &root);
+        assert_eq!(ran.code, Some(0), "{args:?}: {}", ran.err);
+        ran.out
+    };
+    let selected = ran(&[
+        "rascal",
+        "select",
+        "--mask",
+        masks[0],
+        "--mask",
+        masks[1],
+        "--exclude",
+        "330 110 510 120",
+    ]);
+    let selected = printed(&selected, "mask");
+    let plugged = printed(&ran(&["rascal", "plug", "--mask", &selected]), "mask");
+    let feathered = printed(
+        &ran(&["rascal", "feather", "--mask", &plugged, "--sigma-px", "2"]),
+        "mask",
+    );
+    let out = ran(&[
+        "rascal",
+        "render",
+        "--mask",
+        &feathered,
+        "--profile",
+        "alpha",
+        "--image",
+        &image,
+    ]);
+    let cut = printed(&out, "image");
+    let file = dir.path().join("cut.png");
+    let exported = ran(&[
+        "store",
+        "export",
+        "--image",
+        &cut,
+        "--out",
+        file.to_str().unwrap(),
+    ]);
+    assert!(
+        exported.starts_with(&format!("exported image {cut} ")),
+        "{exported}"
+    );
+    let png = std::fs::read(&file).unwrap();
+    assert_eq!(chunks(&png), ["IHDR", "IDAT", "IEND"]);
+    let shown = pixels_of(&png);
+    let picture = pixels_of(FIXTURE);
+    assert_eq!(
+        (shown.width(), shown.height()),
+        (picture.width(), picture.height())
+    );
+    // The colours are the picture's; the alpha is clear outside the instances, where the
+    // feather does not reach, and opaque at the disc's middle, under the box it is not.
+    let at = |x: usize, y: usize| (y * picture.width() as usize + x) * 4;
+    for (a, b) in shown.rgba().chunks(4).zip(picture.rgba().chunks(4)) {
+        assert_eq!(a[..3], b[..3]);
+    }
+    assert_eq!(shown.rgba()[at(5, 5) + 3], 0);
+    assert_eq!(shown.rgba()[at(160, 360) + 3], 0, "the square was not kept");
+    assert_eq!(shown.rgba()[at(420, 200) + 3], 255);
+    assert_eq!(shown.rgba()[at(420, 111) + 3], 0, "the box is cleared");
+    // A plain rendering is the weight in grey.
+    let plain = printed(
+        &ran(&[
+            "rascal",
+            "render",
+            "--mask",
+            &feathered,
+            "--profile",
+            "plain",
+        ]),
+        "image",
+    );
+    let grey = dir.path().join("grey.png");
+    ran(&[
+        "store",
+        "export",
+        "--image",
+        &plain,
+        "--out",
+        grey.to_str().unwrap(),
+    ]);
+    let grey = pixels_of(&std::fs::read(&grey).unwrap());
+    assert_eq!(
+        grey.rgba()[at(420, 200)..at(420, 200) + 4],
+        [255, 255, 255, 255]
+    );
+    assert_eq!(grey.rgba()[at(5, 5)..at(5, 5) + 4], [0, 0, 0, 255]);
+}
+
+#[test]
+fn store_export_writes_the_png_and_refuses_to_overwrite_or_write_inside_the_store() {
+    let dir = Scratch::new("cli-export");
+    let (root, image) = with_picture(&dir);
+    let file = dir.path().join("out.png");
+    let export = |out: &Path, more: &[&str]| {
+        let mut args = vec!["store", "export", "--image", &image, "--out"];
+        args.push(out.to_str().unwrap());
+        args.extend_from_slice(more);
+        whizbang(&args, &root)
+    };
+    let first = export(&file, &[]);
+    assert_eq!(first.code, Some(0), "{}", first.err);
+    let png = std::fs::read(&file).unwrap();
+    assert_eq!(chunks(&png), ["IHDR", "IDAT", "IEND"]);
+    assert_eq!(pixels_of(&png), pixels_of(FIXTURE));
+
+    // A file that is there is not replaced, unless asked.
+    std::fs::write(&file, b"the owner's file").unwrap();
+    let again = export(&file, &[]);
+    assert_eq!(again.code, Some(1));
+    assert!(again.err.contains("is there already"), "{}", again.err);
+    assert!(again.err.contains("--overwrite"), "{}", again.err);
+    assert_eq!(std::fs::read(&file).unwrap(), b"the owner's file");
+    let replaced = export(&file, &["--overwrite"]);
+    assert_eq!(replaced.code, Some(0), "{}", replaced.err);
+    assert_eq!(std::fs::read(&file).unwrap(), png);
+    let left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+    assert!(left.iter().all(|e| {
+        !e.as_ref()
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .ends_with(".export")
+    }));
+
+    // A link is refused, with or without --overwrite, and what it leads to is untouched.
+    let target = dir.path().join("target.txt");
+    std::fs::write(&target, b"kept").unwrap();
+    let link = dir.path().join("link.png");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    for more in [&[][..], &["--overwrite"][..]] {
+        let refused = export(&link, more);
+        assert_eq!(refused.code, Some(1));
+        assert!(refused.err.contains("is a link"), "{}", refused.err);
+    }
+    let dangling = dir.path().join("dangling.png");
+    std::os::unix::fs::symlink(dir.path().join("nowhere.png"), &dangling).unwrap();
+    assert_eq!(export(&dangling, &[]).code, Some(1));
+    assert!(!dir.path().join("nowhere.png").exists());
+    assert_eq!(std::fs::read(&target).unwrap(), b"kept");
+
+    // Inside the store, by its path or through a link to it, is refused, and nothing is
+    // written there.
+    let through = dir.path().join("store-link");
+    std::os::unix::fs::symlink(&root, &through).unwrap();
+    for out in [
+        root.join("out.png"),
+        root.join("objects").join("out.png"),
+        through.join("out.png"),
+    ] {
+        let refused = export(&out, &["--overwrite"]);
+        assert_eq!(refused.code, Some(1), "{}", out.display());
+        assert!(refused.err.contains("inside the store"), "{}", refused.err);
+        assert!(!out.exists());
+    }
+    // A folder that is missing is not made; an identity the store does not hold is
+    // refused and writes nothing.
+    let missing = dir.path().join("no-such-folder").join("out.png");
+    assert_eq!(export(&missing, &[]).code, Some(1));
+    let other = format!("sha256:{}", "0".repeat(64));
+    let file = dir.path().join("none.png");
+    let refused = whizbang(
+        &[
+            "store",
+            "export",
+            "--image",
+            &other,
+            "--out",
+            file.to_str().unwrap(),
+        ],
+        &root,
+    );
+    assert_eq!(refused.code, Some(1));
+    assert!(!file.exists());
+}
+
+#[test]
+fn store_export_writes_a_png_for_an_image_held_as_jpeg() {
+    let dir = Scratch::new("cli-export-jpeg");
+    let (w, h) = (24, 16);
+    let rgb: Vec<u8> = (0..w * h)
+        .flat_map(|at| [(at % w * 10) as u8, (at / w * 15) as u8, 90])
+        .collect();
+    let mut jpeg = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 90)
+        .encode(&rgb, w as u32, h as u32, image::ExtendedColorType::Rgb8)
+        .unwrap();
+    // An image artifact that holds the JPEG itself, as an action may write one, brought
+    // in as its canonical file.
+    let held = Image::new(
+        jpeg,
+        Projection::Flat,
+        Topology::Bounded,
+        ImageRole::Picture,
+        Origin::new(Step::new("fixture", "1")).unwrap(),
+        &DecodeLimits::default(),
+    )
+    .unwrap();
+    let record = dir.path().join("held.image");
+    std::fs::write(&record, held.to_bytes()).unwrap();
+    let root = dir.path().join("store");
+    let imported = whizbang(
+        &["store", "import", record.to_str().unwrap(), "--create"],
+        &root,
+    );
+    assert_eq!(imported.code, Some(0), "{}", imported.err);
+    let id = held.id().to_string();
+    assert!(imported.out.contains(&id), "{}", imported.out);
+
+    let file = dir.path().join("out.png");
+    let ran = whizbang(
+        &[
+            "store",
+            "export",
+            "--image",
+            &id,
+            "--out",
+            file.to_str().unwrap(),
+        ],
+        &root,
+    );
+    assert_eq!(ran.code, Some(0), "{}", ran.err);
+    let png = std::fs::read(&file).unwrap();
+    assert_eq!(chunks(&png), ["IHDR", "IDAT", "IEND"]);
+    // The PNG holds the JPEG's pixels as the core decodes them, exactly.
+    assert_eq!(
+        pixels_of(&png),
+        held.pixels(&DecodeLimits::default()).unwrap()
+    );
 }

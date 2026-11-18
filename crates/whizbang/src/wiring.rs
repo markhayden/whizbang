@@ -43,10 +43,14 @@ pub fn registry() -> Result<Registry, String> {
     let grow = whizbang_rascal::grow::Grow::new();
     let segment = whizbang_rascal::segment::Segment::new();
     let view = whizbang_squint::view::View::new().map_err(|e| said(&e))?;
-    let actions: [Arc<dyn Action>; 4] = [
+    let actions: [Arc<dyn Action>; 8] = [
         Arc::new(check),
+        Arc::new(whizbang_rascal::feather::Feather::new()),
         Arc::new(grow),
+        Arc::new(whizbang_rascal::plug::Plug::new()),
+        Arc::new(whizbang_rascal::render::Render::new()),
         Arc::new(segment),
+        Arc::new(whizbang_rascal::select::Select::new()),
         Arc::new(view),
     ];
     for action in actions {

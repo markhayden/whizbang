@@ -1463,13 +1463,37 @@ fn readable(file: &Path) {
     std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o400)).unwrap();
 }
 
+/// A check record as a check made now would write it: each file's time of change, in
+/// `files`, as it is now. Taking a file's reading away changes that time, so a record
+/// made before it no longer holds; this is the record made after it.
+fn restamped(record: &[u8], files: &Path) -> Vec<u8> {
+    use std::os::unix::fs::MetadataExt;
+    let text = String::from_utf8(record.to_vec()).unwrap();
+    let mut out = String::new();
+    for (at, line) in text.lines().enumerate() {
+        let mut words: Vec<String> = line.split(' ').map(str::to_owned).collect();
+        if at >= 2 {
+            let found = std::fs::symlink_metadata(files.join(words.last().unwrap())).unwrap();
+            words[3] = found.ctime().to_string();
+            words[4] = found.ctime_nsec().to_string();
+        }
+        out.push_str(&words.join(" "));
+        out.push('\n');
+    }
+    out.into_bytes()
+}
+
 #[test]
 fn an_unchanged_installation_checked_before_is_loaded_without_a_full_hash() {
     let mut local = Local::new("models-cached");
-    let (_, file) = checked_by_a_first_process(&mut local);
+    let (identity, file) = checked_by_a_first_process(&mut local);
     // The second process cannot read the file, and loads the model all the same: it
-    // trusted the record, and no file was read whole.
+    // trusted the record, made after the file's reading was taken away, and no file was
+    // read whole.
     unreadable(&file);
+    let at = check_record(&local, &identity);
+    let record = restamped(&std::fs::read(&at).unwrap(), file.parent().unwrap());
+    std::fs::write(&at, record).unwrap();
     assert_eq!(one_call(&local), [Ok(pack::determined())]);
     let loads: Vec<&str> = local.named().iter().map(|sent| sent.0).collect();
     assert_eq!(loads, ["load", "segment"]);
@@ -1507,13 +1531,13 @@ fn a_check_record_that_is_damaged_is_ignored_and_the_full_hash_runs() {
     let at = check_record(&local, &identity);
     let good = std::fs::read(&at).unwrap();
     let text = String::from_utf8(good.clone()).unwrap();
-    assert!(text.starts_with("check/1\n"), "{text}");
+    assert!(text.starts_with("check/2\n"), "{text}");
     // Three damaged records: cut short, of another hash (the stamps kept), and not a
     // record at all. Each time, a file that cannot be read shows that a full hash was
     // tried: the request is refused as unread. Read again, the full hash passes, the
     // model loads, and the record is written again, whole.
     let line = text.lines().nth(2).unwrap();
-    let hash = line.split(' ').nth(4).unwrap();
+    let hash = line.split(' ').nth(6).unwrap();
     let other = format!("sha256:{}", "0".repeat(64));
     let damaged = [
         good[..good.len() - 3].to_vec(),
@@ -1530,7 +1554,98 @@ fn a_check_record_that_is_damaged_is_ignored_and_the_full_hash_runs() {
         );
         readable(&file);
         assert_eq!(one_call(&local), [Ok(pack::determined())], "{round}");
-        assert_eq!(std::fs::read(&at).unwrap(), good, "{round}");
+        let now = restamped(&good, file.parent().unwrap());
+        assert_eq!(std::fs::read(&at).unwrap(), now, "{round}");
         local.worker = pack::guarded();
     }
+}
+
+#[test]
+fn a_rewrite_that_restores_the_time_of_last_write_is_seen_by_the_time_of_change() {
+    let mut local = Local::new("models-restored-time");
+    let (identity, file) = checked_by_a_first_process(&mut local);
+    let record = std::fs::read(check_record(&local, &identity)).unwrap();
+    // One byte changed, the length kept, and the time of last write set back to what
+    // the record holds: only the time of change says the file was written.
+    let written = std::fs::metadata(&file).unwrap().modified().unwrap();
+    let mut bytes = std::fs::read(&file).unwrap();
+    bytes[0] = b'W';
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::write(&file, &bytes).unwrap();
+    let opened = std::fs::OpenOptions::new().write(true).open(&file).unwrap();
+    opened.set_modified(written).unwrap();
+    drop(opened);
+    assert_eq!(
+        std::fs::metadata(&file).unwrap().modified().unwrap(),
+        written
+    );
+    assert_eq!(
+        one_call(&local),
+        [Err((FaultKind::Unavailable, kind::DAMAGED.to_owned()))]
+    );
+    assert_eq!(
+        std::fs::read(check_record(&local, &identity)).unwrap(),
+        record
+    );
+}
+
+#[test]
+fn a_checks_folder_or_a_check_record_that_is_a_link_is_not_trusted_and_nothing_is_written_through_it()
+ {
+    let mut local = Local::new("models-checks-link");
+    let (identity, file) = checked_by_a_first_process(&mut local);
+    let at = check_record(&local, &identity);
+    let checks = at.parent().unwrap().to_path_buf();
+    let files = file.parent().unwrap().to_path_buf();
+    let elsewhere = local.models_dir().parent().unwrap().join("elsewhere");
+    std::fs::create_dir(&elsewhere).unwrap();
+    let name = at.file_name().unwrap().to_owned();
+
+    // `checks/` a link to a folder that holds a record that would hold, were it read:
+    // it is not, so the full hash runs, and fails on a file that cannot be read.
+    unreadable(&file);
+    let good = restamped(&std::fs::read(&at).unwrap(), &files);
+    std::fs::write(elsewhere.join(&name), &good).unwrap();
+    std::fs::remove_file(&at).unwrap();
+    std::fs::remove_dir(&checks).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &checks).unwrap();
+    assert_eq!(
+        one_call(&local),
+        [Err((FaultKind::Unavailable, kind::UNVERIFIED.to_owned()))]
+    );
+    // Readable again, the full hash passes and the model loads; nothing is written
+    // through the link.
+    readable(&file);
+    local.worker = pack::guarded();
+    assert_eq!(one_call(&local), [Ok(pack::determined())]);
+    assert!(
+        std::fs::symlink_metadata(&checks)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    let held: Vec<_> = std::fs::read_dir(&elsewhere).unwrap().collect();
+    assert_eq!(held.len(), 1);
+    assert_eq!(std::fs::read(elsewhere.join(&name)).unwrap(), good);
+
+    // The record itself a link to a file that would hold: not trusted either. The
+    // record written after the full hash replaces the link, and what it led to is kept.
+    std::fs::remove_file(&checks).unwrap();
+    std::fs::create_dir(&checks).unwrap();
+    unreadable(&file);
+    let target = elsewhere.join("record");
+    let led = restamped(&good, &files);
+    std::fs::write(&target, &led).unwrap();
+    std::os::unix::fs::symlink(&target, &at).unwrap();
+    local.worker = pack::guarded();
+    assert_eq!(
+        one_call(&local),
+        [Err((FaultKind::Unavailable, kind::UNVERIFIED.to_owned()))]
+    );
+    readable(&file);
+    local.worker = pack::guarded();
+    assert_eq!(one_call(&local), [Ok(pack::determined())]);
+    assert!(std::fs::symlink_metadata(&at).unwrap().is_file());
+    assert_eq!(std::fs::read(&at).unwrap(), restamped(&good, &files));
+    assert_eq!(std::fs::read(&target).unwrap(), led);
 }

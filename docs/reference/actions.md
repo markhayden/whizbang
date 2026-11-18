@@ -9,13 +9,29 @@ The same as data: [description.json](description.json).
 
 Has a judge look at images through evidence tools and conclude: pass, fail or unsure.
 
+## `feather`
+
+Sets the blend of a mask to a feather of its core's edge, outward, with one sigma.
+
 ## `grow`
 
 Grows the core of a mask by a disc, and further downward for a shadow.
 
+## `plug`
+
+Fills the holes of a mask's core up to a share of the area of the shape around each.
+
+## `render`
+
+Makes a mask into a picture: the image cut out by it (alpha), or its weight in grey (plain).
+
 ## `segment`
 
 Finds each instance of a phrase in an image, as one mask for each.
+
+## `select`
+
+One mask from the instance masks to keep: the union of their cores, minus exclude boxes.
 
 ## `view`
 

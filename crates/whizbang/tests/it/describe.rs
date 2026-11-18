@@ -110,21 +110,30 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
         .map(|action| action["name"].as_str().expect("a name"))
         .collect();
     // A recipe first, then the primitives, in the order the registry lists them.
-    assert_eq!(names, ["check", "grow", "segment", "view"]);
+    assert_eq!(
+        names,
+        [
+            "check", "feather", "grow", "plug", "render", "segment", "select", "view"
+        ]
+    );
     let kinds: Vec<&str> = doc["actions"]
         .as_array()
         .expect("a list")
         .iter()
         .map(|action| action["kind"].as_str().expect("a kind"))
         .collect();
-    assert_eq!(kinds, ["recipe", "primitive", "primitive", "primitive"]);
+    assert_eq!(kinds[0], "recipe");
+    assert!(
+        kinds[1..].iter().all(|kind| *kind == "primitive"),
+        "{kinds:?}"
+    );
     // `check` says what it needs: a judge. Whether one is there is no part of a
     // description, which is the same on every machine.
     assert_eq!(doc["actions"][0]["needs"][0]["capability"], "judge");
     // And for how many requests: the turns of its loop.
     assert_eq!(doc["actions"][0]["needs"][0]["requests"], 16);
     // `segment` needs a segmenter that takes a phrase, chosen by its argument `backend`.
-    let need = &doc["actions"][2]["needs"][0];
+    let need = &doc["actions"][5]["needs"][0];
     assert_eq!(need["capability"], "segment");
     assert_eq!(need["features"], serde_json::json!(["phrase"]));
 }
@@ -154,7 +163,13 @@ fn describe_without_json_names_the_build() {
         .iter()
         .map(|line| line.split_whitespace().next().expect("a name"))
         .collect();
-    assert_eq!(names, ["check", "grow", "segment", "view"], "{text}");
+    assert_eq!(
+        names,
+        [
+            "check", "feather", "grow", "plug", "render", "segment", "select", "view"
+        ],
+        "{text}"
+    );
 }
 
 #[test]

@@ -8,10 +8,13 @@
 //! exactly these lines, each ended by one line feed:
 //!
 //! ```text
-//! check/1
+//! check/2
 //! sha256:<the installation's identity>
-//! <size> <seconds> <nanoseconds> <inode> sha256:<hash> <name>      one for each file, in the record's order
+//! <size> <written s> <written ns> <changed s> <changed ns> <inode> sha256:<hash> <name>
 //! ```
+//!
+//! with one line of the last form for each file, in the record's order: the times are
+//! of the file's last write and of its inode's last change ([`Stamp`]).
 //!
 //! A record is held by its bytes alone: the bytes a record of this installation and
 //! these stamps would have, and nothing else, so no record that is damaged, cut, of
@@ -27,7 +30,7 @@ use super::directory::Read;
 use super::{InstallationRecord, InstalledFile, ModelsDir};
 
 /// The first line of a check record.
-pub const CHECK_FORMAT: &str = "check/1";
+pub const CHECK_FORMAT: &str = "check/2";
 
 /// Told apart, the names a process writes a record under before it is renamed.
 static WRITING: AtomicU64 = AtomicU64::new(0);
@@ -47,10 +50,12 @@ fn bytes_of(record: &InstallationRecord, stamps: &[Stamp]) -> Vec<u8> {
     let mut text = format!("{CHECK_FORMAT}\n{}\n", record.identity());
     for (file, stamp) in record.files().iter().zip(stamps) {
         text.push_str(&format!(
-            "{} {} {} {} {} {}\n",
+            "{} {} {} {} {} {} {} {}\n",
             stamp.size,
             stamp.modified_s,
             stamp.modified_ns,
+            stamp.changed_s,
+            stamp.changed_ns,
             stamp.inode,
             file.sha256(),
             file.name().as_str()

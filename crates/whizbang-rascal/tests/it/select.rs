@@ -1,0 +1,103 @@
+//! `select` (plan 2A, task R2): the union of the kept instances' cores, minus the exclude
+//! boxes, as one new mask; and refused when the masks are on two images or nothing is
+//! left.
+
+use whizbang_core::artifact::{Mask, Source, UseCase};
+use whizbang_core::identity::{Binding, Digest, PixelDigest, Space};
+use whizbang_rascal::select::{SelectError, boxes, select};
+
+use super::grow::{made_by, mask_of, plane};
+
+fn places(core: &[u8], width: usize) -> Vec<(usize, usize)> {
+    let set = core.iter().enumerate().filter(|(_, s)| **s != 0);
+    set.map(|(at, _)| (at % width, at / width)).collect()
+}
+
+#[test]
+fn the_kept_instances_union_minus_an_exclude_box_is_the_core() {
+    let (w, h) = (20, 12);
+    // Two instances that overlap, and a third that is not kept, so not given.
+    let a = mask_of(
+        w,
+        h,
+        plane(w, h, |x, y| (2..8).contains(&x) && (2..6).contains(&y)),
+        &[0; 240],
+    );
+    let b = mask_of(
+        w,
+        h,
+        plane(w, h, |x, y| (6..12).contains(&x) && (4..9).contains(&y)),
+        &[0; 240],
+    );
+    // A box from 7 to 9.5 across and 3.5 to 5 down: the pixels whose centres are at or
+    // past the left and top edges and before the right and bottom ones, columns 7 to 8
+    // (8.5 < 9.5, 9.5 is not) and row 4 (3.5 is row 3's centre, so row 3 too; 4.5 < 5).
+    let exclude = boxes("7 3.5 9.5 5").unwrap();
+    assert_eq!(exclude, [[7.0, 3.5, 9.5, 5.0]]);
+    let mask = select(&[a.clone(), b.clone()], &exclude, UseCase::Remove).unwrap();
+    let expected = plane(w, h, |x, y| {
+        let in_a = (2..8).contains(&x) && (2..6).contains(&y);
+        let in_b = (6..12).contains(&x) && (4..9).contains(&y);
+        let cut = (7..9).contains(&x) && (3..5).contains(&y);
+        (in_a || in_b) && !cut
+    });
+    assert_eq!(places(mask.core(), w), places(&expected, w));
+    // A new mask on the same binding, with no blend and nothing protected.
+    assert_eq!(mask.binding(), a.binding());
+    assert!(mask.blend().iter().all(|s| *s == 0));
+    assert!(mask.protect().iter().all(|s| *s == 0));
+    assert_eq!(mask.use_case(), UseCase::Remove);
+    // Its origin is one step: the action, its arguments, and every mask in order.
+    let step = &mask.origin().steps()[0];
+    assert_eq!(mask.origin().steps().len(), 1);
+    assert_eq!(
+        *step,
+        whizbang_core::artifact::Step::new("select", "1.0.0")
+            .argument("exclude", "7 3.5 9.5 5")
+            .argument("use_case", "remove")
+            .input("mask", a.id().0)
+            .input("mask", b.id().0)
+    );
+    // Without a box, the union whole; the order of the masks changes no pixel.
+    let whole = select(&[b, a], &[], UseCase::Custom).unwrap();
+    let union = plane(w, h, |x, y| {
+        ((2..8).contains(&x) && (2..6).contains(&y))
+            || ((6..12).contains(&x) && (4..9).contains(&y))
+    });
+    assert_eq!(whole.core(), union.as_slice());
+}
+
+#[test]
+fn select_refuses_masks_on_two_images_nothing_left_and_a_box_that_is_not_four_numbers() {
+    let (w, h) = (8, 8);
+    let a = mask_of(w, h, plane(w, h, |x, _| x < 2), &[0; 64]);
+    let other = Mask::from_core(
+        Binding::root(
+            PixelDigest(Digest::of_bytes(b"another")),
+            Space::flat(8, 8).unwrap(),
+        ),
+        UseCase::Remove,
+        plane(w, h, |x, _| x < 2),
+        Source::default(),
+        made_by("fixture"),
+    )
+    .unwrap();
+    let Err(SelectError::Invalid(why)) = select(&[a.clone(), other], &[], UseCase::Remove) else {
+        panic!("two images were taken");
+    };
+    assert!(why.contains("two images"), "{why}");
+    let Err(SelectError::Invalid(why)) = select(&[a], &[[0.0, 0.0, 8.0, 8.0]], UseCase::Remove)
+    else {
+        panic!("an empty core was made");
+    };
+    assert!(why.contains("no pixel is left"), "{why}");
+    assert!(matches!(
+        select(&[], &[], UseCase::Remove),
+        Err(SelectError::Invalid(_))
+    ));
+    for text in ["1 2 3", "1 2 3 x", "1 2 3 inf", "1 2 3 4 5"] {
+        assert!(boxes(text).is_err(), "{text}");
+    }
+    assert_eq!(boxes("").unwrap(), Vec::<[f64; 4]>::new());
+    assert_eq!(boxes("0,0,1,1; 2 2 3 3").unwrap().len(), 2);
+}
