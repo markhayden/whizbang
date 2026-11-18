@@ -172,6 +172,25 @@ impl Head {
         Ok(first)
     }
 
+    /// How a send's answer frames its body: by its one `Content-Length`, as
+    /// [`Head::length`] reads it, or in chunks, when its one `Transfer-Encoding` is
+    /// `chunked` alone and it states no length. Any other transfer coding, a length
+    /// beside chunks, and a content coding but `identity` are refused.
+    pub(crate) fn framing(&self) -> Result<Framing, Fault> {
+        let Some(coding) = self.once("transfer-encoding", CODED)? else {
+            return self.length().map(Framing::Length);
+        };
+        if !coding.eq_ignore_ascii_case("chunked") || self.all("content-length").next().is_some() {
+            return Err(malformed(CODED));
+        }
+        if let Some(coding) = self.once("content-encoding", COMPRESSED)?
+            && !coding.eq_ignore_ascii_case("identity")
+        {
+            return Err(malformed(COMPRESSED));
+        }
+        Ok(Framing::Chunked)
+    }
+
     /// The length of the body of a `200`: one `Content-Length` of digits alone, no
     /// transfer coding, and no content coding but `identity`.
     pub(crate) fn length(&self) -> Result<u64, Fault> {
@@ -200,6 +219,140 @@ impl Head {
             Some(location) if !location.is_empty() => Ok(location),
             _ => Err(malformed(NO_LOCATION)),
         }
+    }
+}
+
+/// How a send's answer frames its body ([`Head::framing`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Framing {
+    Length(u64),
+    Chunked,
+}
+
+/// The most bytes of a chunk's size line, its extensions and its ending included.
+pub(crate) const CHUNK_LINE_MAX_BYTES: usize = 256;
+
+/// The most lines of trailer after the last chunk; each is at most [`LINE_MAX_BYTES`].
+pub(crate) const TRAILERS_LIMIT: usize = 16;
+
+pub(crate) const CHUNK_LINE: &str = "a chunk's size line of the answer is not hex digits, with \
+                                     extensions, within 256 bytes";
+pub(crate) const CHUNK_END: &str = "a chunk of the answer does not end with a line ending";
+pub(crate) const CHUNKED_TOO_LARGE: &str = "the answer's chunks hold more than the most a \
+                                            reply holds";
+pub(crate) const TRAILERS: &str = "the answer's trailer is over 16 lines or a line of it over \
+                                   8 KiB";
+
+/// The bytes of a chunked body as they come: those that came with the head, and then
+/// what `more` reads, which answers how many bytes it put in the buffer it is handed
+/// and none only when the connection ended.
+pub(crate) struct Chunks<'a> {
+    held: Vec<u8>,
+    at: usize,
+    more: &'a mut dyn FnMut(&mut [u8]) -> Result<usize, Fault>,
+}
+
+impl<'a> Chunks<'a> {
+    pub(crate) fn new(
+        start: Vec<u8>,
+        more: &'a mut dyn FnMut(&mut [u8]) -> Result<usize, Fault>,
+    ) -> Chunks<'a> {
+        Chunks {
+            held: start,
+            at: 0,
+            more,
+        }
+    }
+
+    /// Reads on, once; a connection that ends here ends the body before it is whole.
+    fn fill(&mut self) -> Result<(), Fault> {
+        if self.at > 0 {
+            self.held.drain(..self.at);
+            self.at = 0;
+        }
+        let mut buffer = [0u8; 16 * 1024];
+        let read = (self.more)(&mut buffer)?;
+        if read == 0 {
+            return Err(Fault::new(FaultKind::Malformed, super::wire::CUT).unresolved());
+        }
+        self.held.extend_from_slice(&buffer[..read]);
+        Ok(())
+    }
+
+    /// One line, without its ending, of at most `most` bytes with the ending. A bare
+    /// carriage return or line feed in it is refused.
+    fn line(&mut self, most: usize, why: &'static str) -> Result<Vec<u8>, Fault> {
+        loop {
+            let left = &self.held[self.at..];
+            if let Some(end) = left.windows(2).position(|pair| pair == b"\r\n") {
+                if end + 2 > most {
+                    return Err(malformed(why));
+                }
+                let line = left[..end].to_vec();
+                if line.iter().any(|&b| b == b'\r' || b == b'\n') {
+                    return Err(malformed(BARE_ENDING));
+                }
+                self.at += end + 2;
+                return Ok(line);
+            }
+            if left.len() >= most {
+                return Err(malformed(why));
+            }
+            self.fill()?;
+        }
+    }
+
+    /// Exactly `count` bytes, onto `into`.
+    fn take(&mut self, mut count: usize, into: &mut Vec<u8>) -> Result<(), Fault> {
+        while count > 0 {
+            if self.at == self.held.len() {
+                self.fill()?;
+            }
+            let here = (self.held.len() - self.at).min(count);
+            into.extend_from_slice(&self.held[self.at..self.at + here]);
+            self.at += here;
+            count -= here;
+        }
+        Ok(())
+    }
+
+    /// The whole body: each chunk's size line (hex digits, then any extensions after a
+    /// `;`, which are not read), its bytes and its line ending, until the chunk of
+    /// size nothing; then the trailer's lines, at most [`TRAILERS_LIMIT`], which are
+    /// not read either, and the empty line. At most `most` bytes in all.
+    pub(crate) fn body(mut self, most: usize) -> Result<Vec<u8>, Fault> {
+        let mut body = Vec::new();
+        loop {
+            let line = self.line(CHUNK_LINE_MAX_BYTES, CHUNK_LINE)?;
+            let digits = line.split(|&b| b == b';').next().unwrap_or_default();
+            let hex =
+                !digits.is_empty() && digits.len() <= 8 && digits.iter().all(u8::is_ascii_hexdigit);
+            if !hex {
+                return Err(malformed(CHUNK_LINE));
+            }
+            let size = digits.iter().fold(0usize, |size, &digit| {
+                let value = char::from(digit).to_digit(16).unwrap_or(0) as usize;
+                size * 16 + value
+            });
+            if size == 0 {
+                break;
+            }
+            if body.len().saturating_add(size) > most {
+                return Err(Fault::new(FaultKind::TooLarge, CHUNKED_TOO_LARGE).unresolved());
+            }
+            self.take(size, &mut body)?;
+            let mut ending = Vec::new();
+            self.take(2, &mut ending)?;
+            if ending != b"\r\n" {
+                return Err(malformed(CHUNK_END));
+            }
+        }
+        for _ in 0..=TRAILERS_LIMIT {
+            if self.line(LINE_MAX_BYTES, TRAILERS)?.is_empty() {
+                return Ok(body);
+            }
+        }
+        Err(malformed(TRAILERS))
     }
 }
 

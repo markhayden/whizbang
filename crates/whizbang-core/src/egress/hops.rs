@@ -21,6 +21,7 @@ use std::fmt;
 use std::path::Path;
 
 use super::pixels::{SIGNATURE, is_encoded};
+use super::prepared::is_plain_jpeg;
 use super::{Denied, Hop, HopCheck, NotAllowed};
 
 /// The most folders a check keeps out.
@@ -46,6 +47,7 @@ const KEPT_OUT: &str = "the request holds the path of a folder that is kept out 
 /// What it answers of a part that is an image file the encoder did not write.
 const NOT_PIXELS: &str = "a part of the request is an image file that whizbang's encoder \
                           did not write, and an image leaves only as its pixels";
+// A JPEG of the structure the prepared encoder writes is pixels too (`prepared.rs`).
 
 /// How an absolute path starts, where it names a folder every machine of its kind
 /// has: a person's folders, the temporary folders, and an address that names a file.
@@ -150,13 +152,22 @@ impl SendCheck {
         Ok(self)
     }
 
+    /// Whether the bytes hold a folder kept out. On macOS, whose file system does not
+    /// tell case apart by default, a folder is found in any case of its ASCII letters.
     fn keeps_out(&self, bytes: &[u8]) -> bool {
-        self.kept_out.iter().any(|folder| holds(bytes, folder))
+        if cfg!(target_os = "macos") {
+            let lower = bytes.to_ascii_lowercase();
+            self.kept_out
+                .iter()
+                .any(|folder| holds(&lower, &folder.to_ascii_lowercase()))
+        } else {
+            self.kept_out.iter().any(|folder| holds(bytes, folder))
+        }
     }
 
     /// One part of what would leave.
     fn part(&self, bytes: &[u8]) -> Result<(), Denied> {
-        if is_encoded(bytes) {
+        if is_encoded(bytes) || is_plain_jpeg(bytes) {
             return Ok(());
         }
         if starts_as_an_image(bytes) {
@@ -188,6 +199,11 @@ impl HopCheck for SendCheck {
         }
         hop.pieces()
             .iter()
-            .try_for_each(|piece| self.part(piece.bytes()))
+            .try_for_each(|piece| self.part(piece.bytes()))?;
+        // A request's own fields are constants of the code that sends; they are
+        // looked at all the same, as words.
+        hop.fields()
+            .iter()
+            .try_for_each(|(_, value)| self.part(value.as_bytes()))
     }
 }

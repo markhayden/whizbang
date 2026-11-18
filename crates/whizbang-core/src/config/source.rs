@@ -19,7 +19,7 @@ use crate::capability::Inventory;
 use crate::contract::{
     ConfigSource, Estimate, SECRETS_KEPT_LIMIT, Secrets, Snapshot, SourceRefused,
 };
-use crate::egress::DispatchPolicy;
+use crate::egress::{Credential, DispatchPolicy, Recipient};
 
 use super::{ConfigRefused, EnvRefused, Kinds, LoadRefused, Loaded, Offers};
 
@@ -158,9 +158,24 @@ impl ConfigSource for Files {
         let approvals = loaded.config().recipients().map(|(_, approval)| approval);
         let policy = DispatchPolicy::from_approvals(approvals)
             .map_err(|_| SourceRefused::because(NO_POLICY))?;
-        let snapshot = Snapshot::of(loaded.config().digest())
+        // Each credential a kind made, held for the recipient its backend declares and
+        // that recipient's own origin. One held twice alike is held once; two that
+        // differ for one recipient and origin are a config that cannot be used.
+        let mut snapshot = Snapshot::of(loaded.config().digest()).sending_under(policy);
+        let mut held: Vec<&(Recipient, Credential)> = Vec::new();
+        let credentials = offers.credentials().to_vec();
+        for pair in &credentials {
+            if held.contains(&pair) {
+                continue;
+            }
+            let (recipient, credential) = pair;
+            snapshot = snapshot
+                .with_credential(recipient, credential.clone())
+                .map_err(|_| SourceRefused::because(TWO_KEYS))?;
+            held.push(pair);
+        }
+        let snapshot = snapshot
             .offering(Arc::new(offers))
-            .sending_under(policy)
             .with_secrets(loaded.secrets().clone())
             .recording(Arc::new(loaded.config().clone()));
         Ok(match loaded.config().call_cap_micros() {
@@ -169,6 +184,10 @@ impl ConfigSource for Files {
         })
     }
 }
+
+/// What a call is told when two backends of one recipient carry two credentials.
+const TWO_KEYS: &str = "two backends of one recipient name two different credentials for \
+                        its origin; the config cannot be used";
 
 /// What a call is told of a refusal of either file: fixed words for each kind of
 /// refusal, which name the file as "the config" or "the env file". Nothing a refusal

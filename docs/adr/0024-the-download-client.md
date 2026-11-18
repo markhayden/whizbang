@@ -11,6 +11,11 @@ kit's listener serves 32 connections at most. Added: what a name resolves to, an
 tests of a name, a twenty-digit length and a server that sends TLS alone.
 Amended: 2026-11-17, by plan 2A, task S1 (its first pull request). Added: the sender
 ("The sender"), the same client making one `POST`; nothing of the download changed.
+Amended: 2026-11-17, by plan 2A, task S1 (its second pull request) and the security
+review of the first. Added to "The sender": chunked answers, bounded; the run's deadline
+held over the whole request; a request larger than TLS takes at once. Changed in "How a
+test reaches a server on loopback": the test root and the client that trusts it are
+compiled under the feature `fakes` too, for the tests of the crates that turn it on.
 Spec: section 10, "Egress"
 
 ## Context
@@ -156,6 +161,16 @@ The module's top (`net/mod.rs`) states it whole. In short:
 
 ### How a test reaches a server on loopback
 
+**Changed by task S1 of plan 2A, its second pull request:** the root, the server's
+certificate (`net::testing::Pki`), `Client::trusting` and the executor's ways out over
+a client that trusts the test's root (`net::testing::ways_trusting`) are compiled into
+this crate's tests and, under the feature `fakes`, into the tests of the crates that
+turn it on, which the binary's tests need to reach a judge on loopback through its
+wiring (`wiring::Over::trusting`, under `fakes` too). As `Launch::testing` is: the
+binary that ships, `just smoke`'s and a release build, is built without `fakes`
+(`scripts/check-features.sh` fails a build of `-p whizbang` that turns it on), so no
+source of it can name any of this. What follows is as N1 wrote it.
+
 The client trusts the compiled roots and no other, so a test's server needs a root the
 client is handed. `Client::trusting(roots, …)` takes one, and is `#[cfg(test)]`: it is
 compiled into this crate's own tests and into nothing else, so no other code can call it,
@@ -296,6 +311,24 @@ statement of how far a request got (`not_sent` only before its socket connects).
 - **How far a request got** (`sender::a_request_that_never_connected_is_not_sent_and_one_cut_after_writing_is_unresolved`):
   refused to connect, not `https`, cancelled, or past its deadline, `not_sent`, and the
   listener sees nothing; connected, written whole and cut with no answer, unresolved.
+- **The run's deadline is held over the whole request** (second pull request, after the
+  security review of the first): its connection and every byte of its answer, however
+  slowly they come, not only each wait between two reads
+  (`sender::the_whole_answer_is_over_by_the_runs_deadline_however_slowly_its_bytes_come`).
+- **A chunked answer is read, bounded** (second pull request): a `Transfer-Encoding` of
+  `chunked` alone, with no `Content-Length`. Each chunk's size line is hex digits, eight
+  at most, then any extensions after a `;`, which are not read, in 256 bytes at most;
+  each chunk ends with a line ending; the body is held to `REPLY_MAX_BYTES` as a whole;
+  the trailer is 16 lines at most, each within the head's 8 KiB, and not read. Refused,
+  each in fixed words: a size line that is not that, a chunk that does not end with a
+  line ending, a body over the bound, a trailer over its bound, any other transfer
+  coding, chunks beside a length, and a connection that ends before the last chunk
+  (`sender::a_chunked_answer_is_read_whole_and_one_the_reader_does_not_take_is_refused_by_name`,
+  with exact bytes). A download still refuses every transfer coding.
+- **A request larger than TLS takes at once** (64 KiB) is handed over in turns, what TLS
+  holds written to the socket between them, each wait bounded as every other is
+  (`anthropic::each_picture_in_the_sent_body_decodes_to_the_bytes_of_its_checked_piece`,
+  whose request holds pictures of hundreds of kilobytes).
 
 ## Consequences
 

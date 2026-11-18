@@ -390,3 +390,127 @@ fn a_request_that_never_connected_is_not_sent_and_one_cut_after_writing_is_unres
     assert!(seen[0].head.starts_with(b"POST /v1/messages "));
     assert_eq!(seen[0].after, body);
 }
+
+#[test]
+fn a_chunked_answer_is_read_whole_and_one_the_reader_does_not_take_is_refused_by_name() {
+    use super::super::http::{CHUNK_END, CHUNK_LINE, CHUNKED_TOO_LARGE, TRAILERS};
+    let pki = Pki::loopback();
+    let chunked = |chunks: &str| {
+        format!("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n{chunks}").into_bytes()
+    };
+    let mut trailers = String::from("0\r\n");
+    for at in 0..17 {
+        trailers.push_str(&format!("x-t{at}: 1\r\n"));
+    }
+    trailers.push_str("\r\n");
+    // Each answer, and the body it is read to or the sentence it is refused with.
+    type Case<'a> = (Vec<u8>, Result<&'a [u8], &'a str>);
+    let answers: Vec<Case> =
+        vec![
+        // Two chunks, an extension, a trailer: the body is the chunks' bytes.
+        (
+            chunked("5;name=v\r\n{\"a\":\r\n3\r\n12}\r\n0\r\nx-t: 1\r\n\r\n"),
+            Ok(b"{\"a\":12}"),
+        ),
+        (chunked("A\r\n0123456789\r\n0\r\n\r\n"), Ok(b"0123456789")),
+        (chunked("z\r\nab\r\n0\r\n\r\n"), Err(CHUNK_LINE)),
+        (chunked(";x\r\nab\r\n0\r\n\r\n"), Err(CHUNK_LINE)),
+        (chunked("123456789\r\n"), Err(CHUNK_LINE)),
+        (chunked(&format!("1;{}\r\na\r\n0\r\n\r\n", "x".repeat(300))), Err(CHUNK_LINE)),
+        (chunked("2\r\nabX\r\n0\r\n\r\n"), Err(CHUNK_END)),
+        (chunked("1000001\r\n"), Err(CHUNKED_TOO_LARGE)),
+        (chunked(&trailers), Err(TRAILERS)),
+        (chunked("3\r\nab"), Err(CUT)),
+        (
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n0\r\n\r\n".to_vec(),
+            Err(super::super::http::CODED),
+        ),
+        (
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 3\r\n\r\n0\r\n\r\n"
+                .to_vec(),
+            Err(super::super::http::CODED),
+        ),
+    ];
+    // Each answer is written, and the server's side then ends at once: the answer
+    // cut short is cut by the server, not by a wait.
+    let config = pki.both();
+    let written: Vec<Vec<u8>> = answers.iter().map(|(bytes, _)| bytes.clone()).collect();
+    let listener = Listener::serve(answers.len(), move |number, stream| {
+        let mut tls = StreamOwned::new(ServerConnection::new(config.clone()).unwrap(), stream);
+        let head = read_head(&mut tls);
+        let length: usize = field(&head, "content-length").map_or(0, |n| n.parse().unwrap());
+        let mut body = vec![0; length];
+        if tls.read_exact(&mut body).is_ok() && tls.write_all(&written[number]).is_ok() {
+            tls.conn.send_close_notify();
+            let _ = tls.flush();
+        }
+    });
+    let port = listener.port();
+    for (bytes, expected) in &answers {
+        let sent = outgoing(address(port, "/v1/messages"));
+        let got = send(
+            the_tests_client(&pki),
+            sent,
+            Cancellation::new(),
+            false,
+            None,
+        );
+        let shown = String::from_utf8_lossy(bytes);
+        match expected {
+            Ok(body) => {
+                let got = got.unwrap_or_else(|fault| panic!("{shown}: {fault:?}"));
+                assert_eq!((got.status(), got.body()), (Some(200), *body), "{shown}");
+            }
+            Err(why) => {
+                let fault = fault(got);
+                assert_eq!(fault.sentence(), *why, "{shown}");
+                assert_eq!(fault.stage(), Stage::Unresolved);
+            }
+        }
+    }
+    assert_eq!(listener.finish(), answers.len());
+}
+
+#[test]
+fn the_whole_answer_is_over_by_the_runs_deadline_however_slowly_its_bytes_come() {
+    // A server that sends the head at once, then a byte of its body every 20 ms: no
+    // wait between two reads comes near its limit, and the whole is cut at the run's
+    // deadline, 300 ms after the request.
+    let pki = Pki::loopback();
+    let config = pki.both();
+    let listener = Listener::serve(1, move |_, stream| {
+        let mut tls = StreamOwned::new(ServerConnection::new(config.clone()).unwrap(), stream);
+        let _ = read_head(&mut tls);
+        let mut write = |bytes: &[u8]| tls.write_all(bytes).and_then(|()| tls.flush()).is_ok();
+        if !write(b"HTTP/1.1 200 OK\r\nContent-Length: 500\r\n\r\n") {
+            return;
+        }
+        for _ in 0..500 {
+            std::thread::sleep(Duration::from_millis(20));
+            if !write(b"x") {
+                return;
+            }
+        }
+    });
+    let started = Instant::now();
+    let deadline = started + Duration::from_millis(300);
+    let sent = outgoing(address(listener.port(), "/v1/messages"));
+    let got = fault(send(
+        the_tests_client(&pki),
+        sent,
+        Cancellation::new(),
+        false,
+        Some(deadline),
+    ));
+    let took = started.elapsed();
+    assert_eq!(
+        (got.kind(), got.stage(), got.sentence()),
+        (
+            FaultKind::TimedOut,
+            Stage::Unresolved,
+            super::super::wire::PAST_DEADLINE
+        )
+    );
+    assert!(took < Duration::from_secs(3), "{took:?}");
+    assert_eq!(listener.finish(), 1);
+}

@@ -10,6 +10,7 @@
 //! else in the workspace, and, of crates outside it, on `rustls` and `webpki-roots` for
 //! the download client's TLS.
 
+pub mod anthropic;
 pub mod models;
 pub mod net;
 pub mod pack;

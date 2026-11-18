@@ -528,16 +528,17 @@ fn with_no_config_the_binarys_executor_is_under_the_empty_config_and_a_call_with
 #[test]
 fn a_backend_of_a_kind_this_build_does_not_have_is_not_ready_through_the_binarys_wiring_and_says_why()
  {
-    // The build registers one kind, `pack` (`wiring::kinds`, task P6a of plan 1C), so
-    // a backend of any other kind a config names is offered and is not ready, with
-    // the reason; nothing answers in its place.
+    // The build registers two kinds, `pack` (`wiring::kinds`, task P6a of plan 1C)
+    // and `service` (plan 2A, task S1), so a backend of any other kind a config names
+    // is offered and is not ready, with the reason; nothing answers in its place.
     let world = World::new("wired-no-kind");
     let config = "[backends.fill]\nkind = \"fake\"\nmodel = \"paint-1\"\n";
     std::fs::write(world.config_path(), config).unwrap();
     let worker = OneWorker::installed();
     let kinds = wiring::kinds(&worker);
-    assert_eq!(kinds.len(), 1);
-    assert!(kinds.get("pack").is_some() && kinds.get("fake").is_none());
+    assert_eq!(kinds.len(), 2);
+    assert!(kinds.get("pack").is_some() && kinds.get("service").is_some());
+    assert!(kinds.get("fake").is_none());
     let over = Over::nothing()
         .config(Some(&world.config_path()))
         .kinds(kinds)
@@ -900,6 +901,57 @@ fn the_binarys_sender_refuses_a_file_from_inside_the_store_root() {
     assert_eq!(sent.outcome().name(), "error");
     drop(executor);
     assert_eq!(listener.finish(), 1);
+}
+
+#[test]
+fn a_judge_call_to_a_recipient_the_config_does_not_name_is_refused_before_a_byte_leaves() {
+    // A judge of the kind `service` whose config approves no recipient, and then one
+    // that approves another origin: the gate refuses each request before anything is
+    // handed to the sender, and the server sees no connection.
+    use crate::anthropic::Judged;
+    let judged = Judged::new("wired-unnamed");
+    let listener = whizbang_testkit::loopback::Listener::serve(1, |_, _| {});
+    let address = format!("https://127.0.0.1:{}/v1/messages", listener.port());
+    for approved in [None, Some("https://api.example.com")] {
+        let executor = judged.runner(&judged.over(&address, approved));
+        let refused = executor.submit(&Call::new("judges")).unwrap();
+        assert_eq!(refused.outcome().name(), "error");
+        drop(executor);
+        let text = shown(&judged.world.root, refused.run().as_str());
+        assert!(text.contains("\trequest_not_approved\t"), "{text}");
+    }
+    assert_eq!(listener.finish(), 0);
+    assert!(!judged.store_holds_the_key());
+}
+
+#[test]
+fn a_redirect_to_another_origin_is_refused_and_the_key_is_not_sent_there() {
+    // The approved origin answers the judge's request by pointing it to another
+    // origin, on another port of loopback: the backend asks the gate of that address,
+    // which is not the recipient's, and is refused; the other server sees no
+    // connection, so neither the key nor the request reached it.
+    use crate::anthropic::{Judged, serving};
+    let judged = Judged::new("wired-redirect");
+    let elsewhere = whizbang_testkit::loopback::Listener::serve(1, |_, _| {});
+    let there = format!("https://127.0.0.1:{}/v1/messages", elsewhere.port());
+    let moved = format!("HTTP/1.1 307 Temporary Redirect\r\nLocation: {there}\r\n\r\n");
+    let (listener, log) = serving(&judged.pki, vec![moved.into_bytes()]);
+    let origin = format!("https://127.0.0.1:{}", listener.port());
+    let executor = judged.runner(&judged.over(&format!("{origin}/v1/messages"), Some(&origin)));
+    let refused = executor.submit(&Call::new("judges")).unwrap();
+    assert_eq!(refused.outcome().name(), "error");
+    drop(executor);
+    assert_eq!(listener.finish(), 1);
+    assert_eq!(elsewhere.finish(), 0);
+    // The approved origin was sent the key; the other was sent nothing.
+    assert!(log.lock().unwrap()[0].0.contains(&judged.key));
+    let text = shown(&judged.world.root, refused.run().as_str());
+    assert!(text.contains("\trequest_not_approved\t"), "{text}");
+    assert!(
+        text.contains("the origin is neither the recipient"),
+        "{text}"
+    );
+    assert!(!judged.store_holds_the_key());
 }
 
 // --- the ledger, the bound of a call and the meter ---------------------------------------------

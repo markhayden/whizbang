@@ -36,6 +36,7 @@ pub struct Hop<'a> {
     recipient: &'a Recipient,
     to: &'a Address,
     pieces: &'a [Piece],
+    fields: &'a [(&'a str, &'a str)],
     needs: Classes,
     policy: &'a DispatchPolicy,
     moves: u32,
@@ -64,6 +65,12 @@ impl<'a> Hop<'a> {
     /// is printed of a hop shows nothing of them.
     pub fn pieces(&self) -> &'a [Piece] {
         self.pieces
+    }
+
+    /// The fields of its own the request names ([`Outgoing::with_fields`]), for a
+    /// check that looks at what would leave.
+    pub fn fields(&self) -> &'a [(&'a str, &'a str)] {
+        self.fields
     }
 
     /// The classes of data the request holds: the class each piece states, and all
@@ -395,6 +402,10 @@ const NOT_LISTED: &str = "what is handed over is listed in the run's record, and
                           not be: the run is over, the list is full, or the origin holds a \
                           secret; so nothing was sent";
 
+/// What a send answers of an answer that points to an address holding a secret.
+pub const MOVED_SECRET: &str = "the answer points elsewhere, to an address that holds a \
+                                secret, and is not shown";
+
 /// What a sender answers once its run is over.
 const RUN_OVER: &str = "the run this sender was made for is over, and nothing is sent for it";
 
@@ -456,6 +467,7 @@ impl Sender for Checked {
             recipient,
             to,
             pieces: outgoing.pieces(),
+            fields: outgoing.fields(),
             needs,
             policy: &self.policy,
             moves: self.moves.load(Ordering::SeqCst),
@@ -501,6 +513,21 @@ impl Sender for Checked {
             return Err(self.refuse(origin, needs, NOT_LISTED));
         };
         let reply = sender.send(outgoing.as_ref(), bounds);
+        // An answer that points to an address that holds a secret of the run is not
+        // handed to the backend: the secrets are the run's, its snapshot's among them,
+        // which the sender behind the check may not have been told.
+        let secret = reply
+            .as_ref()
+            .ok()
+            .and_then(Reply::moved_to)
+            .is_some_and(|to| {
+                self.facts
+                    .holds_secret(&format!("{}{}", to.origin(), to.rest()))
+            });
+        if secret {
+            bounds.moved_once_more();
+            return Err(Fault::new(FaultKind::Malformed, MOVED_SECRET).unresolved());
+        }
         match &reply {
             // An answer that points elsewhere is one more move, in a row and in all.
             Ok(reply) if reply.moved_to().is_some() => {

@@ -617,6 +617,7 @@ dependencies = [
 name = "whizbang-backends"
 version = "0.0.1"
 dependencies = [
+ "image",
  "rustls",
  "serde",
  "serde_json",

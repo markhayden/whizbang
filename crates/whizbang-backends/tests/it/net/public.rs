@@ -50,7 +50,9 @@ fn the_only_public_way_to_the_client_is_a_checked_downloader() {
     );
 
     // And nothing else of the module is public: every item its files declare `pub`
-    // is one of these. The client, its constructors, its wire and its HTTP are the
+    // is one of these; `testing` is compiled only into tests and under `fakes`
+    // (`#[cfg(any(test, feature = "fakes"))]`), which the binary that ships is built
+    // without. The client, its constructors, its wire and its HTTP are the
     // crate's own.
     let net = concat!(env!("CARGO_MANIFEST_DIR"), "/src/net");
     let mut public = Vec::new();
@@ -67,6 +69,7 @@ fn the_only_public_way_to_the_client_is_a_checked_downloader() {
     assert_eq!(
         public,
         [
+            "mod.rs: pub mod testing;",
             "mod.rs: pub const CONNECT_LIMIT",
             "mod.rs: pub const BETWEEN_READS_LIMIT",
             "mod.rs: pub const ANSWER_WAIT_LIMIT",

@@ -18,6 +18,7 @@ use crate::contract::{
 };
 
 use super::{CAPABILITIES, Config, Credentials, KindRefused, Kinds, Table};
+use crate::egress::{Credential, NotAllowed, Recipient};
 
 /// Why a backend a config offers cannot answer. Each is fixed words, but for the name
 /// of a variable, which the config's reader held to the rule of one and looked at for a
@@ -115,6 +116,10 @@ pub struct Offers {
     ready: usize,
     /// The backends that are ready, made, by the capability's name and the backend's.
     made: BTreeMap<(&'static str, String), Made>,
+    /// The credential each ready backend's kind made for it, with the recipient it
+    /// declares, in the order the backends were made: what the snapshot holds for the
+    /// executor to attach.
+    credentials: Vec<(Recipient, Credential)>,
     /// The roster over an inventory, when these offers were put over one
     /// ([`Offers::over`]): what prepare is then answered by. Two offers over two
     /// inventories that offer the same are equal: what is installed is not what a
@@ -183,6 +188,7 @@ impl Offers {
             defaults: BTreeMap::new(),
             ready: 0,
             made: BTreeMap::new(),
+            credentials: Vec::new(),
             installed: None,
         };
         for capability in CAPABILITIES {
@@ -195,23 +201,45 @@ impl Offers {
                     };
                     value.is_none().then(|| variable.to_owned())
                 });
+                let table = Table {
+                    capability,
+                    name,
+                    backend,
+                    handed: &handed,
+                    secrets,
+                };
                 let made = match (missing, kinds.get(backend.kind())) {
                     (Some(variable), _) => Err(NotReady::Missing { variable }),
                     (None, None) => Err(NotReady::UnknownKind),
                     (None, Some(kind)) => kind
-                        .make(&Table {
-                            capability,
-                            name,
-                            backend,
-                            handed: &handed,
-                            secrets,
-                        })
+                        .make(&table)
                         .map_err(|refused| NotReady::Refused(refused.kept(secrets)))
                         .and_then(|made| match made.capability() == capability {
                             true => Ok(made),
                             false => Err(NotReady::OtherCapability),
+                        })
+                        .and_then(|made| {
+                            let carried = kind
+                                .credential(&table)
+                                .map_err(|refused| NotReady::Refused(refused.kept(secrets)))?;
+                            Ok((made, carried))
                         }),
                 };
+                let made = made.and_then(|(made, carried)| {
+                    let Some(credential) = carried else {
+                        return Ok(made);
+                    };
+                    // Bound to the origin of the recipient the backend declares, and to
+                    // no upstream of it: one origin, the recipient's own.
+                    let elsewhere = KindRefused::Credential(NotAllowed::Elsewhere);
+                    match made.declaration().recipient() {
+                        Some(recipient) if recipient.origin() == credential.origin() => {
+                            offers.credentials.push((recipient.clone(), credential));
+                            Ok(made)
+                        }
+                        _ => Err(NotReady::Refused(elsewhere)),
+                    }
+                });
                 match made {
                     Ok(made) => {
                         // The roster's entry is what the backend that was made
@@ -240,6 +268,12 @@ impl Offers {
             }
         }
         Ok(offers)
+    }
+
+    /// The credential each ready backend's kind made for it ([`Kind::credential`](super::Kind::credential)),
+    /// with the recipient that backend declares, bound to that recipient's own origin.
+    pub fn credentials(&self) -> &[(Recipient, Credential)] {
+        &self.credentials
     }
 
     /// The same offers, with the models of their local backends looked up in this

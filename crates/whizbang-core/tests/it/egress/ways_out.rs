@@ -597,14 +597,20 @@ fn a_request_names_fields_of_its_own_that_are_constants_and_none_the_sender_writ
             .map(|_| ())
             .unwrap_err()
     };
-    // A field the sender writes itself, in any case; a name that is not a token; a
-    // value that could end a line or is empty; one name twice; and one too many.
+    // A field the sender writes itself, or one that carries a credential, which only
+    // the executor attaches, in any case; a name that is not a token; a value that
+    // could end a line or is empty; one name twice; and one too many.
     for own in [
         "Host",
         "content-length",
         "Transfer-Encoding",
         "CONNECTION",
         "expect",
+        "authorization",
+        "X-Api-Key",
+        "Proxy-Authorization",
+        "api-key",
+        "Cookie",
     ] {
         let fields: &'static [(&'static str, &'static str)] = Box::leak(Box::new([(own, "x")]));
         assert_eq!(refused(fields), NotAllowed::Name, "{own}");
