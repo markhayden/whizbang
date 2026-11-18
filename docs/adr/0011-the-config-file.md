@@ -984,15 +984,18 @@ file's default; the short form is one backend named `default`, which is the defa
   - **its kind does not take its table**, in the kind's fixed words
     (`roster::a_backend_whose_kind_does_not_take_its_table_is_not_ready_with_the_kinds_own_words`);
   - **it names a variable the env file does not set.** This record had left that to the
-    backend; it is decided here, for every kind. The reason names the variable, the
-    key's first when neither is set, and its kind is not asked
-    (`roster::a_variable_the_env_file_does_not_set_makes_its_backend_not_ready_naming_the_variable`);
+    backend; it is decided here, for every kind. The reason names the setting,
+    `key_env` first when neither is set, and never the variable, whose text could be a
+    key pasted in its place (amended with task F1 of plan 1D, after its security
+    review); its kind is not asked
+    (`roster::a_variable_the_env_file_does_not_set_makes_its_backend_not_ready_naming_its_setting`);
   - **its kind made a backend of another capability** than the one its table is under
     (`roster::a_kind_that_makes_a_backend_of_another_capability_makes_its_backend_not_ready`).
-- **A reason is fixed words, the capability's name and, for a variable, its name.** It
-  holds no backend's name, no kind's name, no setting and no value: a variable's name
-  kept the rule of one and was looked at for a secret when the config was read. A key
-  that is read as a variable's name ("What the reader does not do") is said as one.
+- **A reason is fixed words, the capability's name and, for a variable, the setting
+  that names it** (`key_env` or `token_env`). It holds no backend's name, no kind's
+  name, no variable's name and no value: a key read as a variable's name ("What the
+  reader does not do") cannot be told from one, and is never said (amended with task
+  F1 of plan 1D, after its security review; until then the variable was named).
   `Offers` prints how many backends are ready and how many are not.
 - **What is offered holds each ready backend, made,** under its capability and its
   name, and is what a snapshot holds as its backends (`Offered`, ADR 0015)

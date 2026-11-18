@@ -774,8 +774,9 @@ pub enum Uses<'a> {
 /// is asked for"). When one of the backends names a credential, the refusal names
 /// the capability, the backend and the setting (`key_env` or `token_env`), and never
 /// the setting's value: a key of capitals and digits pasted there cannot be told from
-/// a variable's name. A config that cannot be read is not refused here: [`loaded`]
-/// says why, in the readers' own words.
+/// a variable's name. A backend the command names that the config does not give is
+/// refused first. A config that cannot be read is not refused here: [`loaded`] says
+/// why, in the readers' own words.
 pub fn env_file_asked(over: &Over, uses: Uses<'_>) -> Result<(), String> {
     let (Some(path), None) = (&over.config, &over.env) else {
         return Ok(());
@@ -783,6 +784,17 @@ pub fn env_file_asked(over: &Over, uses: Uses<'_>) -> Result<(), String> {
     let Ok(config) = Config::read(path, &over.secrets) else {
         return Ok(());
     };
+    // A backend the command names that the config does not give is refused at once,
+    // without what was typed: nothing would answer the call.
+    if let Uses::One(of, Some(named)) = uses
+        && !config.backends(of).any(|(name, _)| name == named)
+    {
+        return Err(format!(
+            "the config gives no {} backend of the name the command line gives; nothing \
+             was read but the config, and nothing ran",
+            of.name()
+        ));
+    }
     let capabilities = [Capability::Segment, Capability::Fill, Capability::Judge];
     let chosen: Vec<(Capability, &str, &whizbang_core::config::Backend)> = capabilities
         .into_iter()

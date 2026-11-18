@@ -126,7 +126,8 @@ file as plain UTF-8 with no byte-order mark, which some editors add and which is
 A link to a file is followed, and what it leads to is read. Nothing is expanded, and the
 environment of your shell is not read: a key is in this file or it is not set. Only the variables your config names are used, each by
 the backend that names it. A backend that names a variable this file does not set is
-not ready, and a call that would use it is told which variable. A command that will
+not ready, and a call that would use it is told which setting, `key_env` or
+`token_env`, names it. A command that will
 use a backend that names a variable asks for the env file before it reads anything but
 the config, naming the backend and `key_env` or `token_env`, never the variable; a
 command that uses no such backend (the operations of `rascal`, `models list`, a

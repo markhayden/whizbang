@@ -434,7 +434,7 @@ kind = "fake"
 }
 
 #[test]
-fn a_variable_the_env_file_does_not_set_makes_its_backend_not_ready_naming_the_variable() {
+fn a_variable_the_env_file_does_not_set_makes_its_backend_not_ready_naming_its_setting() {
     let key = made_up_key("");
     let text = r#"
 [backends.fill]
@@ -476,8 +476,13 @@ token_env = "B_TOKEN"
     );
     let (kinds, fakes) = kinds(&["fake"]);
     let offers = Offers::of(&config, &credentials, &kinds).unwrap();
+    // The setting that names the variable, and never the variable.
     let missing = |variable: &str| NotReady::Missing {
-        variable: variable.to_owned(),
+        setting: if variable.ends_with("_TOKEN") {
+            "token_env"
+        } else {
+            "key_env"
+        },
     };
     assert_eq!(
         offers.every_not_ready().collect::<Vec<_>>(),
@@ -491,13 +496,13 @@ token_env = "B_TOKEN"
             ("judge", "default", &missing("B_TOKEN")),
         ]
     );
-    // The reason names the variable, and nothing of a value: the default is not ready,
+    // The reason names the setting, and nothing of a value or of the variable: the default is not ready,
     // though its key is set, and is not answered by the backend that has all it names.
     let unanswered = offers.resolve(Capability::Fill, None, &[]).unwrap_err();
     assert_eq!(
         unanswered.to_string(),
-        "the default fill backend is not ready: the env file does not set B_TOKEN, the \
-         variable its credential is in"
+        "the default fill backend is not ready: the env file does not set the variable its \
+         `token_env` names"
     );
     assert!(!said(&unanswered).contains(&key));
     assert!(!format!("{offers:?}").contains(&key));

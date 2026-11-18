@@ -554,7 +554,7 @@ fn credential_of(
             });
         }
         Some(token) => match token.from() {
-            TokenFrom::Variable(variable) => match read.credentials.model_token(origin) {
+            TokenFrom::Variable(_) => match read.credentials.model_token(origin) {
                 Some(value) => value.expose().to_owned(),
                 // The download is the one use of the token, so the env file is asked
                 // for here; the variable is not named, since a key pasted in its
@@ -566,11 +566,13 @@ fn credential_of(
                          file that sets it with --env-file"
                     ));
                 }
+                // The variable is not named: a key pasted in its place cannot be told
+                // from a name.
                 None => {
                     return Err(format!(
-                        "the config names the variable `{variable}` for the token of {origin}, \
-                         and the env file does not set it, {not_downloaded}: set it in the \
-                         env file"
+                        "the env file does not set the variable the config's \
+                         `[[models.tokens]]` `key_env` names for the token of {origin}, \
+                         {not_downloaded}: set it in the env file"
                     ));
                 }
             },

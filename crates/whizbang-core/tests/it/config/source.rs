@@ -780,8 +780,8 @@ fn a_variable_taken_out_of_the_env_file_after_a_call_was_prepared_refuses_the_ca
     };
     assert_eq!(
         missing[0].why(),
-        "the default fill backend is not ready: the env file does not set FILL_KEY, the \
-         variable its credential is in"
+        "the default fill backend is not ready: the env file does not set the variable its \
+         `key_env` names"
     );
     assert_eq!((world.runs(), world.requests("default")), (0, 0));
 }
