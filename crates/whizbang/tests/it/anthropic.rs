@@ -473,6 +473,24 @@ pub fn checked_under(
     answers: Vec<Vec<u8>>,
     brief: Option<&str>,
 ) -> (Result<String, String>, Log) {
+    checked_as(
+        judged,
+        answers,
+        brief,
+        whizbang::door::Details::None,
+        "full",
+    )
+}
+
+/// As `checked_under`, with what is measured first and the projection of `align`, as
+/// `--details` and `--projection` give them.
+pub fn checked_as(
+    judged: &Judged,
+    answers: Vec<Vec<u8>>,
+    brief: Option<&str>,
+    details: whizbang::door::Details,
+    projection: &str,
+) -> (Result<String, String>, Log) {
     let (source, candidate) = pair(judged);
     let (listener, log) = serving(&judged.pki, answers);
     let origin = format!("https://127.0.0.1:{}", listener.port());
@@ -491,6 +509,9 @@ pub fn checked_under(
         judge: None,
         brief,
         request_id: None,
+        details,
+        detail: None,
+        projection,
     };
     let root = judged.world.root.clone();
     let printed = whizbang::door::check(&executor, &asked, &|run| {
@@ -521,7 +542,12 @@ pub fn checked_job(
     let executor = judged.runner(&over);
     let root = judged.world.root.clone();
     let read = |run: &_| whizbang::door::verdict(&root, run);
-    let printed = whizbang::door::check_job(&executor, job, images, None, None, &read);
+    let measuring = whizbang::door::Measuring {
+        details: whizbang::door::Details::None,
+        detail: None,
+        projection: "full",
+    };
+    let printed = whizbang::door::check_job(&executor, job, images, None, None, &measuring, &read);
     drop(executor);
     listener.finish();
     (printed, log)

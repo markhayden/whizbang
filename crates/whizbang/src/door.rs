@@ -377,6 +377,33 @@ pub struct CheckAsked<'a> {
     pub brief: Option<&'a str>,
     /// The caller's id for the request, when it gave one.
     pub request_id: Option<&'a str>,
+    /// What is measured before the judge's first turn: `first` (the command's default)
+    /// or `none` (ADR 0029).
+    pub details: Details,
+    /// The tools whose details are measured first, by name, when the caller names them.
+    pub detail: Option<&'a str>,
+    /// How a call of `align` by the judge is answered: `full` or `visual_only`.
+    pub projection: &'a str,
+}
+
+/// What `squint check` measures before the judge's first turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Details {
+    /// The details of each pair the use case relates, in the opening message; the judge
+    /// may call `view`, `align` and `resize`.
+    First,
+    /// Nothing: the judge is told of `view` and `align` and calls them, as squint's arm C.
+    None,
+}
+
+impl Details {
+    /// The tools the judge is offered, and the name `check` takes.
+    fn tools_and_name(self) -> (&'static str, &'static str) {
+        match self {
+            Details::First => ("view,align,resize", "first"),
+            Details::None => ("view,align", "none"),
+        }
+    }
 }
 
 /// The most references `squint check` is given (plan 2C, task A1, item 2): with a
@@ -502,7 +529,29 @@ pub fn check(
     read: &ReadVerdict<'_>,
 ) -> Result<String, String> {
     let (job, images) = shorthand(asked)?;
-    check_job(executor, &job, &images, asked.judge, asked.request_id, read)
+    let measuring = Measuring {
+        details: asked.details,
+        detail: asked.detail,
+        projection: asked.projection,
+    };
+    check_job(
+        executor,
+        &job,
+        &images,
+        asked.judge,
+        asked.request_id,
+        &measuring,
+        read,
+    )
+}
+
+/// What `check` measures before the judge's first turn, and how a call of `align` by the
+/// judge is answered (ADR 0029).
+#[derive(Debug, Clone, Copy)]
+pub struct Measuring<'a> {
+    pub details: Details,
+    pub detail: Option<&'a str>,
+    pub projection: &'a str,
 }
 
 /// Runs `check` through the executor under a job and its images, in its order, and
@@ -513,12 +562,21 @@ pub fn check_job(
     images: &[ArtifactId],
     judge: Option<&str>,
     request_id: Option<&str>,
+    measuring: &Measuring<'_>,
     read: &ReadVerdict<'_>,
 ) -> Result<String, String> {
     let mut call = Call::new(whizbang_squint::check::NAME)
         .argument("use_case", Value::text(&job.use_case))
         .argument("job", Value::text(&job.to_json()))
         .argument("max_output_tokens", Value::Integer(CHECK_OUTPUT_TOKENS));
+    let (tools, details) = measuring.details.tools_and_name();
+    call = call
+        .argument("tools", Value::text(tools))
+        .argument("details", Value::text(details))
+        .argument("projection", Value::text(measuring.projection));
+    if let Some(detail) = measuring.detail {
+        call = call.argument("detail", Value::text(detail));
+    }
     for image in images {
         call = call.input("images", *image);
     }

@@ -23,7 +23,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-pub use render::{Checklist, Item, NO_BRIEF, clean, opening, system};
+pub use render::{Checklist, Item, NO_BRIEF, clean, opening, system, system_with};
 pub use submission::{Decided, REASONS, decided_of, submit_tool};
 
 use crate::job::{Job, Role};

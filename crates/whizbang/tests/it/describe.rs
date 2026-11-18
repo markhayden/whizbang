@@ -25,7 +25,7 @@ fn indented_description() -> &'static str {
 /// `check`, the recipe.
 fn compact_start() -> String {
     format!(
-        "{{\"description_version\":6,\"name\":\"whizbang\",\"version\":\"{}\",\"actions\":[{{\"name\":\"check\",\"version\":\"1.2.0\",\"kind\":\"recipe\",\"purpose\":\"",
+        "{{\"description_version\":6,\"name\":\"whizbang\",\"version\":\"{}\",\"actions\":[{{\"name\":\"check\",\"version\":\"1.3.0\",\"kind\":\"recipe\",\"purpose\":\"",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -113,7 +113,8 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
     assert_eq!(
         names,
         [
-            "check", "feather", "grow", "plug", "render", "segment", "select", "view"
+            "check", "align", "feather", "grow", "plug", "render", "resize", "segment", "select",
+            "view"
         ]
     );
     let kinds: Vec<&str> = doc["actions"]
@@ -134,7 +135,7 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
     assert_eq!(doc["actions"][0]["needs"][0]["requests"], 16);
     // `segment` needs a segmenter that takes what the call's `kind` names, a phrase, a
     // point or a box, chosen by its argument `backend`.
-    let need = &doc["actions"][5]["needs"][0];
+    let need = &doc["actions"][7]["needs"][0];
     assert_eq!(need["capability"], "segment");
     assert_eq!(need["features"], serde_json::json!([]));
     assert_eq!(need["feature_from"], "kind");
@@ -169,7 +170,8 @@ fn describe_without_json_names_the_build() {
     assert_eq!(
         names,
         [
-            "check", "feather", "grow", "plug", "render", "segment", "select", "view"
+            "check", "align", "feather", "grow", "plug", "render", "resize", "segment", "select",
+            "view"
         ],
         "{text}"
     );

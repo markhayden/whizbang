@@ -357,6 +357,13 @@ requirements with their ids, and its images with their roles and labels. Each pi
 brought into the store from the file the job names, relative to the job file's folder,
 and refused when its SHA-256 is not the one the job pins (ADR 0028).
 
+Before the judge looks, `align` registers the candidate onto the source, and the aligned
+picture, what `align` found and every measurement open the conversation, each labelled
+with the tool and its mark (`--details first`, the default; ADR 0029). The judge may still
+call `view`, `align` and `resize`. `--details none --projection visual_only` gives squint's
+baseline arm C instead: nothing measured first, and a call of `align` answered with its
+picture and a fixed sentence.
+
 **What one request may cost** is fixed by three settings of the backend, each held
 before a byte is sent: `max_input_tokens` (40,000 when none is given),
 `max_output_tokens` (2,048) and `max_pictures` (24), in a table

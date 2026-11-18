@@ -268,6 +268,9 @@ fn the_brief_and_each_bindings_role_and_label_are_in_the_run() {
         judge: None,
         brief: Some(brief),
         request_id: None,
+        details: whizbang::door::Details::None,
+        detail: None,
+        projection: "full",
     };
     let (job, images) = whizbang::door::shorthand(&asked).unwrap();
     let ids = checklist_of(&job);

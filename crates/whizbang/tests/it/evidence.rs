@@ -271,10 +271,8 @@ fn the_use_cases_record_names_a_commit_of_this_tree_and_holds_no_secret() {
                     .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
         );
         assert_eq!(field(fields, "whizbang"), env!("CARGO_PKG_VERSION"));
-        assert_eq!(
-            field(fields, "action"),
-            format!("check {}", whizbang_squint::check::VERSION)
-        );
+        // The action as it ran: plan 2C, task A2, took `check` to 1.3.0 after it.
+        assert_eq!(field(fields, "action"), "check 1.2.0");
         assert_eq!(field(fields, "backend"), anthropic::ADAPTER);
         assert_eq!(field(fields, "adapter_version"), anthropic::VERSION);
         let prices = anthropic::spend::prices_of(field(fields, "model")).expect("a priced model");

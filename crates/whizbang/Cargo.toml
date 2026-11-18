@@ -37,6 +37,9 @@ fakes = ["whizbang-backends/fakes"]
 
 [dev-dependencies]
 whizbang-testkit.workspace = true
+# The baseline's comparison of transcripts, for the test of a whole exchange of squint's
+# arm C (plan m2c, task A2, item 4).
+whizbang-eval = { path = "../whizbang-eval" }
 # Pictures to import, as a PNG and a JPEG, for the tests of `store import --picture`.
 image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }
 # This crate itself, with the feature `fakes`, for its own tests.

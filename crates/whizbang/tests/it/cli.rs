@@ -625,7 +625,7 @@ fn squint_check_prints_the_verdict_and_the_run_under_a_recorded_fake() {
             "reason: chk:ob:SF2@candidate: held (confident): Nothing protected moved."
         ]
     );
-    // One request reached the judge, with the source-fidelity's tool beside view.
+    // One request reached the judge, with the source-fidelity's tool beside view and align.
     let sent: serde_json::Value = serde_json::from_slice(&log.lock().unwrap()[0].1).unwrap();
     let tools: Vec<&str> = sent["tools"]
         .as_array()
@@ -633,8 +633,65 @@ fn squint_check_prints_the_verdict_and_the_run_under_a_recorded_fake() {
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
-    assert_eq!(tools, ["view", "submit_verdict"]);
+    assert_eq!(tools, ["view", "align", "submit_verdict"]);
     assert_eq!(sent["max_tokens"], 2_048);
+}
+
+#[test]
+fn squint_check_details_first_prints_the_verdict_under_a_recorded_fake() {
+    use crate::anthropic::{Judged, checked_as, submission};
+    let judged = Judged::new("cli-squint-details");
+    let (printed, log) = checked_as(
+        &judged,
+        vec![submission("held", "Nothing protected moved.")],
+        None,
+        whizbang::door::Details::First,
+        "full",
+    );
+    let printed = printed.unwrap();
+    let lines: Vec<&str> = printed.lines().collect();
+    assert!(lines[0].starts_with("run ") && lines[0].ends_with(" completed"));
+    assert_eq!(lines[1], "verdict: pass");
+    // One request reached the judge. It may call view, align and resize; and before it
+    // looked, align registered the candidate onto the source: what it found and every
+    // measurement are in the opening, labelled with the tool and its mark, and the
+    // aligned picture beside them.
+    let log = log.lock().unwrap();
+    assert_eq!(log.len(), 1);
+    let sent: serde_json::Value = serde_json::from_slice(&log[0].1).unwrap();
+    let tools: Vec<&str> = sent["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(tools, ["view", "align", "resize", "submit_verdict"]);
+    let opening = sent["messages"][0]["content"].as_array().unwrap();
+    let texts: Vec<&str> = opening
+        .iter()
+        .filter_map(|part| part["text"].as_str())
+        .collect();
+    assert_eq!(texts[2], whizbang_squint::details::DETAILS_INTRO);
+    assert!(
+        texts[3].starts_with("align (unverified), candidate onto source: registered "),
+        "{}",
+        texts[3]
+    );
+    assert!(
+        texts[3].contains("Measurements: translation_px "),
+        "{}",
+        texts[3]
+    );
+    assert!(
+        texts[4].starts_with("Image `aligned:candidate:t1`"),
+        "{}",
+        texts[4]
+    );
+    let pictures = opening
+        .iter()
+        .filter(|part| part["type"] == "image")
+        .count();
+    assert_eq!(pictures, 3);
 }
 
 /// A key of capitals and digits, as one pasted in place of a variable's name would
@@ -1191,6 +1248,9 @@ fn squint_check_takes_each_use_case_with_its_roles_under_a_recorded_fake() {
             judge: None,
             brief: Some(brief),
             request_id: None,
+            details: whizbang::door::Details::None,
+            detail: None,
+            projection: "full",
         };
         let (job, images) = door::shorthand(&asked).unwrap();
         let ids = checklist_of(&job);

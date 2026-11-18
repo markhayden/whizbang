@@ -239,7 +239,7 @@ may still call `view`, `resize` and `align` itself.
    `--details none --projection visual_only` gives the baseline's arm exactly. With
    `details = first` the measurements are handed whole (`projection = full`): they are
    the details the owner asked for.
-- [ ] Done when:
+- [x] Done when:
   `resize::a_picture_is_fitted_to_the_size_asked_keeping_its_aspect`,
   `align::a_known_homography_is_recovered_within_the_records_error_on_the_synthetic_pairs`,
   `align::the_ported_vectors_of_squint_give_squints_homography_and_residual`,
@@ -254,6 +254,13 @@ may still call `view`, `resize` and `align` itself.
   `scripts/tests/test-tool-records.sh` holding the records of `resize` and `align`,
   `just docs` regenerated, and the carry-over row on locations through a homography
   narrowed with a line.
+
+**Reworded with the task.** Item 2 said "the aligned frame bound onto the source by a
+homography mapping", and the test's name says the same; it is bound onto the image it was
+warped from (the candidate, as squint's frame had its root there), which is what lets a
+location on it map back, and "source" there is that binding's source image. The action
+states its measurements in a diagnostic, not a port, and `check` reads them by working them
+out again (`docs/carry-over.md`, the row on a result that is not an artifact).
 
 **Keeping tests lean (A2).** Alignment on pictures of at most 128 pixels, 24 pairs made
 in one test; squint's vectors ported as small committed planes; no judge but a scripted

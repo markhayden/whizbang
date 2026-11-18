@@ -1,11 +1,17 @@
 //! Integration tests of whizbang-squint.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+mod align;
+mod align_record;
+mod binding;
 mod check;
 mod job;
 mod locate;
 mod record;
+mod resize;
+mod resize_record;
 mod scale;
+mod scenes;
 mod support;
 mod use_case;
 mod vectors;

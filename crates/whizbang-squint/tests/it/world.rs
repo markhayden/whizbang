@@ -1,5 +1,5 @@
 //! What the tests of `check` run in: a store on the test kit's disk, an executor that
-//! holds `check`, `view`, a stand-in for rascal's `grow`, and a scripted judge read
+//! holds `check`, `view`, `align`, `resize`, a stand-in for rascal's `grow`, and a scripted judge read
 //! from data, and readers of what a run left in the store.
 
 use std::collections::BTreeMap;
@@ -19,7 +19,9 @@ use whizbang_core::contract::{
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::Fs;
 use whizbang_core::store::{Kind as Stored, Reader, Store};
+use whizbang_squint::align::Align;
 use whizbang_squint::check::{Check, Toolbox};
+use whizbang_squint::resize::Resize;
 use whizbang_squint::view::View;
 use whizbang_testkit::capabilities::{FakeJudge, roster};
 use whizbang_testkit::fs_shim::ShimFs;
@@ -121,6 +123,16 @@ impl World {
         world
     }
 
+    /// Puts these images in the world's store.
+    pub fn hold(&self, images: &[&Image]) {
+        let store = self.store();
+        let mut publication = store.begin().unwrap();
+        for image in images {
+            artifact::put(&mut publication, &Artifact::Image((*image).clone())).unwrap();
+        }
+        publication.publish().unwrap();
+    }
+
     pub fn root(&self) -> PathBuf {
         self.dir.path().join("store")
     }
@@ -166,6 +178,12 @@ impl World {
         registry.register(wrap(Arc::new(check))).unwrap();
         let view = View::new().unwrap();
         registry.register(wrap(Arc::new(view))).unwrap();
+        registry
+            .register(wrap(Arc::new(Align::new().unwrap())))
+            .unwrap();
+        registry
+            .register(wrap(Arc::new(Resize::new().unwrap())))
+            .unwrap();
         registry.register(Arc::new(grow)).unwrap();
         let offered = roster(None, None, Some(judge.as_ref()));
         Engine::over(

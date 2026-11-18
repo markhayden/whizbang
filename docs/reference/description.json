@@ -5,7 +5,7 @@
   "actions": [
     {
       "name": "check",
-      "version": "1.2.0",
+      "version": "1.3.0",
       "kind": "recipe",
       "purpose": "Has a judge look at images through evidence tools and conclude: pass, fail or unsure.",
       "arguments": [
@@ -46,6 +46,41 @@
           "default": null
         },
         {
+          "name": "details",
+          "purpose": "none, or first: before the first turn, the tools named by detail are run on each pair of images the use case relates, and what they measured opens the conversation.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "none",
+              "first"
+            ]
+          },
+          "required": false,
+          "default": "none"
+        },
+        {
+          "name": "detail",
+          "purpose": "The tools whose details are measured first, by name, separated by commas: align.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": "align"
+        },
+        {
+          "name": "projection",
+          "purpose": "How a call of align by the judge is answered: full, or visual only, its pictures and a fixed sentence (squint's projection of arm C).",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "full",
+              "visual_only"
+            ]
+          },
+          "required": false,
+          "default": "full"
+        },
+        {
           "name": "max_output_tokens",
           "purpose": "The most output tokens of one turn of the judge.",
           "type": {
@@ -84,6 +119,52 @@
         }
       ],
       "concurrent": false
+    },
+    {
+      "name": "align",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Registers one flat image onto another of the same scene and viewpoint, and returns it warped into the other's frame.",
+      "arguments": [],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image to register, usually the candidate.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "against",
+          "artifact": "image",
+          "purpose": "The image to register onto, usually the source: the aligned frame shares its grid.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "aligned",
+          "artifact": "image",
+          "purpose": "The image warped into the other's grid, when the pair registers.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
     },
     {
       "name": "feather",
@@ -287,6 +368,54 @@
           "name": "image",
           "artifact": "image",
           "purpose": "The rendering, an image whose role is a rendering.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "resize",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Scales an image down to a long edge, so the whole picture can be seen at once.",
+      "arguments": [
+        {
+          "name": "long_edge",
+          "purpose": "The longer side of the result in pixels, under the image's own.",
+          "type": {
+            "type": "integer",
+            "min": 64,
+            "max": 1024
+          },
+          "required": true,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image to scale down.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "resized",
+          "artifact": "image",
+          "purpose": "The whole image at the size asked.",
           "count": {
             "min": 1,
             "max": 1

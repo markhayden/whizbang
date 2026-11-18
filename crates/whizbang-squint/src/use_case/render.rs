@@ -165,9 +165,15 @@ pub fn obligations(resolved: &Resolved, job: &Job) -> String {
 /// The system prompt: squint's template with the section of obligations and no section
 /// of tools, since each tool is described where it is defined.
 pub fn system(resolved: &Resolved, job: &Job) -> String {
+    system_with(resolved, job, "")
+}
+
+/// The system prompt with squint's section of tools (`crate::details::tools_section`) in
+/// its place, as squint's prompt had it whenever evidence tools were offered.
+pub fn system_with(resolved: &Resolved, job: &Job, tools: &str) -> String {
     TEMPLATE
         .replace("{{obligations}}", &obligations(resolved, job))
-        .replace("{{tools}}", "")
+        .replace("{{tools}}", tools)
 }
 
 /// The line that shows an image: its id, its role and label, its frame, its size and
