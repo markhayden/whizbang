@@ -361,7 +361,14 @@ pub fn install(install: &Install) -> Result<Installed, String> {
             sync.push(format!("--extra={extra}"));
             (true, install.limits.extra)
         }
-        None => (false, install.limits.quick),
+        // With no extra, what an extra installed before is kept: `setup` again, to
+        // bring the pack's copy up to this build's, leaves the runtime as it is (plan
+        // 1D, task Q1). An exact sync would remove every package the core's lock does
+        // not list.
+        None => {
+            sync.push("--inexact".to_owned());
+            (false, install.limits.quick)
+        }
     };
     let sync: Vec<&str> = sync.iter().map(String::as_str).collect();
     let synced = uv.run(&sync, online, limit)?;

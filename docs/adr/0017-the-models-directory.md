@@ -185,6 +185,11 @@ Amended: 2026-11-18, with task F1 of plan 1D (`docs/plans/m2b-checkpoint-1d.md`,
 Words only. Added under "A folder of the layout that is a link": why the model's
 `checks/` is not one of the folders `unlinked` looks at, and what removes a check
 record.
+Amended: 2026-11-18, with task Q1 of checkpoint 1D (`docs/plans/m2b-checkpoint-1d.md`).
+Added, in code (`shared.rs`; `Fs::hard_link` in the store's file-system interface) and
+here: "A file shared between installations", `shared/` in "The directory", and the
+locks of shared files in "Three kinds of lock". Closes the carry-over row on two
+installs sharing a file.
 
 ## Context
 
@@ -275,6 +280,8 @@ what the binary gives). In it:
 ```text
 <models>/
   LOCK                             the directory's lock
+  shared/
+    <64 hex digits>                the lock of a file an install stages, by the file's hash (task Q1 of 1D)
   models/
     <model>/                       one model, by its name in the catalogue
       LOCK                         the model's lock
@@ -637,7 +644,8 @@ of `docs/carry-over.md` on those locks names the models directory too.
 | The remover's lock, alone | The directory's lock; and what a holder of the model's lock may, once it has that too | Taken first of all, holding nothing. Waits for no other lock: the model's lock and the hold files are tried, as before |
 | Anything, or nothing | Nothing more | A share of the remover's lock is a try that does not wait, by one who holds nothing, the directory's lock, or the model's lock and the directory's; it is let go before anything else is done, so nothing is ever waited for under it |
 | The directory's lock | Nothing | Takes no model's lock. Takes a hold file only to share it, as below, which does not wait. Waits for no hold |
-| A model's lock, alone | The directory's lock | Waits for no hold file: it takes one alone by a try that does not wait, or not at all |
+| A model's lock, alone | The directory's lock; the locks of shared files, each alone, in the order of their hashes, before it stages ("A file shared between installations") | Waits for no hold file: it takes one alone by a try that does not wait, or not at all. Waits for the lock of no shared file once it holds the directory's lock, and for none out of the order of the hashes |
+| The lock of a shared file, alone | The directory's lock; the lock of a shared file whose hash comes after | Waits for no model's lock: it is taken by a holder of one, and let go when that install ends |
 | A model's lock, shared (attached) | Nothing | Takes no other lock: it reads the status record and the pointer, and lets its share go |
 | A hold file, alone, by an install that deletes | Nothing | Takes no lock and waits for none: it deletes the folder, syncs, and lets the hold file go before it takes the directory's lock or sets a pointer |
 | A hold file, alone, by a removal | The directory's lock, to clear the pointer | Sets no pointer. Its mark is set, so nobody is given a hold on that model under the directory's lock meanwhile |
@@ -1298,6 +1306,58 @@ not name is not an installation in use, and is cleaned as below.
   **The repair tries the hold file once.** Waiting for holds until a deadline needs
   the clock and the pacing of removal (task M5b), which may give the repair the same
   wait.
+
+### A file shared between installations
+
+Code (task Q1 of checkpoint 1D: `shared.rs`, `Carrying::shares`; tests named
+`install::…` and `remove::removing_one_of_two_installations_sharing_a_file_keeps_the_file`).
+A new revision of an entry, or another entry, may name a file an installation in the
+directory holds already: SAM 3's revision `2026-11.2` names the same 3.4 GB as
+`2026-11.1`. An install that **shares** (`Carrying::shares`; the binary's `get` does,
+[`install`] and [`install_or_attach`] do not) downloads none of it:
+
+- **Before each file is downloaded,** every installation of every model in the
+  directory is looked at, by the record in its folder, for a file of the same size and
+  hash, whatever its name. A model whose layout has a link, a folder that is a link, a
+  name that is not an identity and a record that cannot be read are passed over. The
+  first one found is given a second name in the staging folder (`Fs::hard_link`), under
+  the name the catalogue gives the file, and read back whole under it: its size and its
+  hash, piece by piece, as a downloaded file is. One that is not whole is removed and
+  the next is tried; a link the system refuses (the file is gone, the two are on two
+  disks, the system links nothing) is passed over; with none left, the file is
+  downloaded. The publication reads every staged file back again, linked or not.
+- **One file under two names lives until both are removed.** Deleting an installation's
+  folder, by a removal or by an install's cleaning of what the pointer does not name,
+  removes its names and leaves the file to every other installation that has one
+  (`remove::removing_one_of_two_installations_sharing_a_file_keeps_the_file`). Nothing
+  writes an installed file in place, so a change made under one name cannot reach the
+  other: a file is only ever made new and renamed.
+- **The lock of a shared file** is `shared/<64 hex digits>`, by the file's hash: a lock
+  file, made by the first to want it and never removed or replaced, as every lock file
+  here. An install that shares takes the lock of every file of its entry, alone, in the
+  order of the hashes, after the model's lock and before it stages, and holds them to
+  the end of the install, after its publication or its refusal. One that finds a lock
+  held tries again, paced by ten milliseconds of the directory's clock, until it is
+  given it, or its cancellation or a live removal's mark ends the wait, as each ends a
+  download; there is no deadline, as a download has none. So of two installs that stage
+  one file at once, the second looks for a held copy only once the first has ended: it
+  links what the first published, or downloads when the first was refused
+  (`install::two_installs_sharing_a_file_at_once_download_it_once`). Taken in one
+  order, no two installs each wait for a lock the other holds; none is taken under the
+  directory's lock, and the directory's lock is let go before any is waited for.
+- **What `get` asks for.** Every file of the entry held already, by the records, `get`
+  reads no token: nothing is to be downloaded
+  (`models::an_install_whose_files_are_all_held_asks_for_no_token`). That look is made
+  before the model's lock, so a file removed in between is asked of its origin without
+  the token, which refuses it; asked again, the token is read. A directory that is not
+  there is not made for the look.
+- **Limits.** The look reads every record of the directory for each file of an entry:
+  a few small files for each installation, as many as a directory holds. A held copy is
+  read whole to be checked, so a shared file of 3.4 GB is read twice before it is
+  published, where a download writes it once and reads it once. A link across two
+  disks is refused by the system, and the file is downloaded. An install that does not
+  share takes no lock of a shared file, and so may download a file another install that
+  shares is downloading.
 
 ### The status record
 

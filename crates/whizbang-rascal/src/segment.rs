@@ -1,19 +1,26 @@
-//! `segment`: an image and one phrase in, one mask for each instance the configured
+//! `segment`: an image and one query in, one mask for each instance the configured
 //! segmenter finds, out (`SPEC.md` section 7, "`segment`, as an action over the segment
-//! capability"; plan 2A, task R1).
+//! capability"; plan 2A, task R1; plan 1D, task Q1).
+//!
+//! **The query** is one of three kinds, named by the argument `kind`: a `phrase`, what to
+//! find in words; a `point`, `X Y`, the thing at that place; or a `box`, `L T R B`, the
+//! thing in that box, each number in pixels of the image as `segment` prints a box, apart
+//! by spaces or commas. The text is the argument `query`. A point is in a pixel of the
+//! image and a box inside it, with area (`SegmentRequest::new`).
 //!
 //! The image is sent through the handle the executor hands the run, so the run's
 //! cancellation, deadline, admission and record are the executor's; the action never
 //! names a backend itself. The backend is the default for the capability, or the one the
-//! call names in `backend`; one that does not declare the feature `phrase` is refused
-//! when the call is prepared, and nothing runs.
+//! call names in `backend`; one that does not declare the feature the call's `kind`
+//! names is refused when the call is prepared, and again when it is admitted, and
+//! nothing runs (ADR 0003, "A feature a call chooses").
 //!
 //! **Each mask** is one instance's plane as its core, on the image's own binding, with
 //! nothing protected and no blend, and one step in its origin: this action, its version,
-//! the phrase, `max_instances`, which instance it is, counted from 1 in the order the
-//! segmenter gave them, and the image. A run's output holds an artifact's identity only,
-//! and a mask holds no score and no box, so both are in the run's diagnostic
-//! [`DIAGNOSTIC`], one line for each mask in the order of the outputs:
+//! the kind and the query asked, `max_instances`, which instance it is, counted from 1 in
+//! the order the segmenter gave them, best first, and the image. A run's output holds an
+//! artifact's identity only, and a mask holds no score and no box, so both are in the
+//! run's diagnostic [`DIAGNOSTIC`], one line for each mask in the order of the outputs:
 //!
 //! ```text
 //! instances 2
@@ -40,8 +47,42 @@ use crate::grow::text_of;
 /// The action's name.
 pub const NAME: &str = "segment";
 
-/// The action's version, which a mask it made records in its origin.
-pub const VERSION: &str = "1.0.0";
+/// The action's version, which a mask it made records in its origin. 2.0.0 took the query
+/// as its kind and its text, where 1.0.0 took a phrase alone.
+pub const VERSION: &str = "2.0.0";
+
+/// The kinds of query, by the name the argument `kind` takes, which is the feature a
+/// backend must declare to be asked one.
+pub const KINDS: [&str; 3] = [feature::PHRASE, feature::POINT, feature::BOX];
+
+/// The query a call asks, from its kind and its text: a phrase as it is; a point as two
+/// numbers and a box as four, apart by spaces or commas. Why not, as a sentence.
+pub fn query_of(kind: &str, text: &str) -> Result<Query, String> {
+    let numbers = || -> Option<Vec<f64>> {
+        text.split(|c: char| c == ',' || c.is_whitespace())
+            .filter(|word| !word.is_empty())
+            .map(|word| word.parse::<f64>().ok().filter(|n| n.is_finite()))
+            .collect()
+    };
+    let unfit = |unfit: whizbang_core::capability::Unfit| unfit.to_string();
+    match kind {
+        feature::PHRASE => Query::phrase(text).map_err(unfit),
+        feature::POINT => match numbers().as_deref() {
+            Some(&[x, y]) => Query::point(x, y).map_err(unfit),
+            _ => Err("a point is two numbers, X and Y, in pixels of the image".to_owned()),
+        },
+        feature::BOX => match numbers().as_deref() {
+            Some(&[left, top, right, bottom]) => {
+                Query::boxed(left, top, right, bottom).map_err(unfit)
+            }
+            _ => Err(
+                "a box is four numbers, left, top, right and bottom, in pixels of the image"
+                    .to_owned(),
+            ),
+        },
+        other => Err(format!("{other} is no kind of query: phrase, point or box")),
+    }
+}
 
 /// The diagnostic every run that was answered writes: each mask with its score and box.
 pub const DIAGNOSTIC: &str = "segment.txt";
@@ -72,11 +113,17 @@ impl Segment {
             NAME,
             VERSION,
             Kind::Primitive,
-            "Finds each instance of a phrase in an image, as one mask for each.",
+            "Finds each instance a phrase, a point or a box asks for in an image, as one mask for each.",
         )
+        .argument(Argument::with_default(
+            "kind",
+            "What the query is: phrase, point or box.",
+            ValueType::choice(&KINDS),
+            Value::text(feature::PHRASE),
+        ))
         .argument(Argument::required(
-            "phrase",
-            "What to find, in words.",
+            "query",
+            "A phrase in words; a point as X Y; a box as left top right bottom; in pixels.",
             ValueType::Text,
         ))
         .argument(Argument::with_default(
@@ -106,7 +153,7 @@ impl Segment {
         )
         .needs(
             Requirement::new(Capability::Segment)
-                .feature(feature::PHRASE)
+                .feature_from("kind")
                 .chosen_by("backend"),
         )
         .concurrent(true);
@@ -136,9 +183,14 @@ impl Action for Segment {
     }
 
     fn run(&self, call: &PreparedCall, context: &Context) -> Result<Produced, Failure> {
-        // A call that was prepared has the phrase: the descriptor requires it.
-        let Some(Value::Text(phrase)) = argument(call, "phrase") else {
-            return Err(Failure::error("argument", "the call gives no phrase"));
+        // A call that was prepared has the query and its kind: the descriptor requires
+        // the one and gives the other a default.
+        let Some(Value::Text(text)) = argument(call, "query") else {
+            return Err(Failure::error("argument", "the call gives no query"));
+        };
+        let kind = match argument(call, "kind") {
+            Some(Value::Text(kind)) => kind.as_str(),
+            _ => feature::PHRASE,
         };
         let most = match argument(call, "max_instances") {
             Some(Value::Integer(most)) => *most,
@@ -172,7 +224,7 @@ impl Action for Segment {
         let pixels = image
             .pixels(&limits)
             .map_err(|error| Failure::error("input", &error.without_paths()))?;
-        let query = Query::phrase(phrase).map_err(|unfit| Failure::invalid(&unfit.to_string()))?;
+        let query = query_of(kind, text).map_err(|why| Failure::invalid(&why))?;
         let binding = image.binding();
         let request = Picture::new(pixels)
             .and_then(|picture| SegmentRequest::new(picture, vec![query], most))
@@ -189,7 +241,8 @@ impl Action for Segment {
         let mut said = format!("instances {}\n", found.len());
         for (at, instance) in found.iter().enumerate() {
             let step = Step::new(NAME, VERSION)
-                .argument("phrase", phrase)
+                .argument("kind", kind)
+                .argument("query", text)
                 .argument("max_instances", &most.to_string())
                 .argument("instance", &(at + 1).to_string())
                 .input("image", image.id().0);

@@ -20,6 +20,9 @@ description's version stays 4.
 Amended: 2026-11-15, with ADR 0010, after the review of task W1 of checkpoint 1B. Added:
 a need states how many requests one call may send its backend (`requests`). The
 description's version went from 4 to 5.
+Amended: 2026-11-18, with task Q1 of checkpoint 1D (`docs/plans/m2b-checkpoint-1d.md`).
+Added: "A feature a call chooses", a need that takes one more feature from the value of
+an argument (`feature_from`). The description's version went from 5 to 6.
 Spec: section 3, "The execution contract" and "Primitives, recipes and loops"; section 6,
 "Readiness"; section 14, "Documentation that cannot drift"
 
@@ -148,6 +151,23 @@ more, as a loop does for its turns. What a call may cost for the need is the bou
 request times this number (ADR 0010). A need for no request is refused
 (`descriptor::a_need_states_how_many_requests_one_call_may_send_its_backend_and_is_for_one_unless_it_says`).
 
+**A feature a call chooses** (`feature_from`; `Requirement::feature_from`). A need may
+name an argument whose value is one more feature it needs: the argument is declared, is a
+`choice`, and every call has a value for it (it is required or has a default); each of its
+choices is a name by the rule of a feature's. A call that gives `point` needs the feature
+`point`, one that gives `phrase` needs `phrase`, of one need for one capability: the rule
+that no call needs a capability twice cannot say that with two needs, since the two would
+be under conditions on one argument's value and not on whether it is given. The features a
+call needs of the capability are those stated, then the one its value names, once
+(`Requirement::features_for`). They are worked out when the call is prepared (ADR 0004)
+and so again at its admission, where the call is prepared again: a backend that declares
+`phrase` alone is ready for a phrase and not for a point, and a point prepared against one
+that declared it is refused, stale, when the backend no longer does
+(`descriptor::a_requirement_chosen_by_an_argument_is_checked_at_prepare_and_at_admission`,
+`prepare::a_phrase_only_backend_answers_a_phrase_and_is_refused_a_point`). Which
+capabilities a call needs still depends on the names of the arguments it gives alone; only
+which features it needs of one depends on a value.
+
 **A condition** (`when`) is `always`, `given` an argument, or `not_given` an argument. The
 argument must be one a call may leave without a value. So which capabilities a call needs
 and which outputs it returns are decided from the names of the arguments it gives and from
@@ -168,9 +188,9 @@ nothing. The binary builds its registry in one function (`crates/whizbang/src/wi
 that its tests call too; a test then registers its fakes, which live in
 `whizbang-testkit`, a development dependency only (`scripts/crate-graph.txt`).
 
-### The static description, version 5
+### The static description, version 6
 
-`whizbang describe --json` is one object: `description_version` (now 5), `name`, `version`,
+`whizbang describe --json` is one object: `description_version` (now 6), `name`, `version`,
 `actions` and `artifact_types`. A `Description` is made from a registry and in no other
 way: its fields are private, so one cannot be written by hand with a name listed twice.
 
@@ -179,7 +199,8 @@ way: its fields are private, so one cannot be written by hand with a name listed
   the order its actions were registered (section 3: recipes are what is advertised, and
   primitives follow). The order does not depend on the order a build registers its tools in.
   Version 2 listed actions in registration order. Version 4 gave each need of an action
-  the field `chosen_by`, and version 5 the field `requests`.
+  the field `chosen_by`, version 5 the field `requests`, and version 6 the field
+  `feature_from` ("A feature a call chooses").
 - `artifact_types` holds the six types in ADR 0002's order, each with its `name`, a
   `purpose` that keeps the purpose rule, and `travels_as`, which is `canonical_file` for
   all six: a copy of the file is the artifact, and `whizbang store import` reads it.

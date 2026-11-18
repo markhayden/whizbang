@@ -37,8 +37,8 @@ const FOUND: [[u32; 4]; 3] = [
 pub(crate) const CONFIG: &str = "[backends.segment]\nkind = \"finding\"\nurl = \"https://segment.example.org/v1\"\n\n\
      [egress.recipients.segment]\norigin = \"https://segment.example.org\"\nclasses = [\"prompts\"]\n";
 
-/// A kind whose one segmenter is the test kit's fake, declaring the feature `phrase`
-/// and finding [`FOUND`] for `circle`. It is a remote backend's kind, at an address of
+/// A kind whose one segmenter is the test kit's fake, declaring the features `phrase`,
+/// `point` and `box`, and finding [`FOUND`] for `circle` and for every point and box. It is a remote backend's kind, at an address of
 /// the reserved `.example` domain, which nothing contacts: a local one is a model of
 /// the catalogue.
 struct Finding;
@@ -50,7 +50,8 @@ impl Kind for Finding {
 
     fn make(&self, table: &Table<'_>) -> Result<Made, KindRefused> {
         let model = ModelIdentity::new("finding", "m", "1");
-        let declaration = Declaration::new(model, &[feature::PHRASE]).unwrap();
+        let features = [feature::PHRASE, feature::POINT, feature::BOX];
+        let declaration = Declaration::new(model, &features).unwrap();
         // It sends nothing, and says where it would and what it may cost, as a remote
         // backend's declaration does.
         let address = table.backend().address().expect("a url");
@@ -59,7 +60,7 @@ impl Kind for Finding {
             .priced(Price::at_most(1000.0).unwrap());
         let mut fake = FakeSegmenter::new().declared_as(declaration);
         for bounds in FOUND {
-            fake = fake.finding("circle", bounds);
+            fake = fake.finding("circle", bounds).finding_at_a_place(bounds);
         }
         Ok(Made::Segment(Arc::new(fake)))
     }
@@ -96,7 +97,11 @@ pub(crate) fn with_picture(dir: &Scratch) -> (PathBuf, String) {
 /// The command's run, as `whizbang rascal segment` makes it, over a config whose one
 /// segment backend is of the kind [`Finding`], at a recipient the config approves for
 /// prompts.
-fn segment(dir: &Scratch, root: &Path, asked: &SegmentAsked<'_>) -> Result<String, String> {
+pub(crate) fn segment(
+    dir: &Scratch,
+    root: &Path,
+    asked: &SegmentAsked<'_>,
+) -> Result<String, String> {
     segment_under(dir, root, asked, CONFIG)
 }
 
@@ -125,7 +130,8 @@ fn rascal_segment_prints_each_masks_identity_and_score_under_a_fake_segmenter() 
     let (root, image) = with_picture(&dir);
     let asked = SegmentAsked {
         image: &image,
-        phrase: "circle",
+        kind: "phrase",
+        query: "circle",
         max_instances: 8,
         backend: None,
         request_id: Some("first-cut"),
@@ -192,7 +198,7 @@ fn rascal_segment_prints_each_masks_identity_and_score_under_a_fake_segmenter() 
     );
     // A phrase it finds nothing for completes, and says so.
     let nothing = SegmentAsked {
-        phrase: "a dog",
+        query: "a dog",
         request_id: None,
         ..asked
     };
@@ -201,6 +207,65 @@ fn rascal_segment_prints_each_masks_identity_and_score_under_a_fake_segmenter() 
         out.ends_with(" completed\nno instance was found\n"),
         "{out}"
     );
+}
+
+#[test]
+fn rascal_segment_with_a_box_prints_each_masks_identity_and_score_under_a_fake_segmenter() {
+    let dir = Scratch::new("cli-segment-box");
+    let (root, image) = with_picture(&dir);
+    for (kind, query) in [("box", "300 80 540 320"), ("point", "420 200")] {
+        let asked = SegmentAsked {
+            image: &image,
+            kind,
+            query,
+            max_instances: 8,
+            backend: None,
+            request_id: None,
+        };
+        let out = segment(&dir, &root, &asked).unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 4, "{out}");
+        assert!(lines[0].ends_with(" completed"), "{out}");
+        // Each mask with its score and its box, best first.
+        for (line, (bounds, score)) in lines[1..]
+            .iter()
+            .zip(FOUND.iter().zip(["0.9", "0.8", "0.7"]))
+        {
+            let edges: Vec<String> = bounds.iter().map(u32::to_string).collect();
+            let rest = line.strip_prefix("mask sha256:").expect("a mask");
+            assert_eq!(
+                rest.split_once(' ').unwrap().1,
+                format!("score {score} box {}", edges.join(" ")),
+                "{kind}"
+            );
+        }
+    }
+}
+
+#[test]
+fn rascal_segment_takes_exactly_one_of_phrase_point_and_box() {
+    let dir = Scratch::new("cli-segment-one");
+    let (root, image) = with_picture(&dir);
+    let base = ["rascal", "segment", "--image", image.as_str()];
+    for extra in [
+        &[][..],
+        &["--phrase", "circle", "--point", "1 1"][..],
+        &["--point", "1 1", "--box", "1 1 4 4"][..],
+        &["--phrase", "circle", "--box", "1 1 4 4"][..],
+    ] {
+        let args: Vec<&str> = base.iter().chain(extra).copied().collect();
+        let ran = whizbang(&args, &root);
+        assert_eq!(ran.code, Some(2), "{args:?}: {} {}", ran.out, ran.err);
+    }
+    // One of them is taken: with no segmenter configured, the call is refused for it.
+    for extra in [["--point", "1 1"], ["--box", "1 1 4 4"]] {
+        let args: Vec<&str> = base.iter().chain(&extra).copied().collect();
+        let ran = whizbang(&args, &root);
+        assert_eq!(ran.code, Some(1), "{args:?}: {}", ran.err);
+        assert!(ran.err.contains("segment"), "{}", ran.err);
+    }
+    let runs = whizbang(&["runs", "list"], &root);
+    assert!(runs.out.starts_with("runs: 0\n"), "{}", runs.out);
 }
 
 #[test]
@@ -287,7 +352,8 @@ fn rascal_select_plug_feather_render_and_export_make_a_cut_out_of_the_instances(
     let (root, image) = with_picture(&dir);
     let asked = SegmentAsked {
         image: &image,
-        phrase: "circle",
+        kind: "phrase",
+        query: "circle",
         max_instances: 8,
         backend: None,
         request_id: None,
@@ -711,7 +777,8 @@ fn commands_that_use_no_backend_run_without_the_env_file_under_a_config_naming_a
     let (root, image) = with_picture(&dir);
     let asked = SegmentAsked {
         image: &image,
-        phrase: "circle",
+        kind: "phrase",
+        query: "circle",
         max_instances: 8,
         backend: None,
         request_id: None,

@@ -175,7 +175,10 @@ in the pack's tests on both CI runners.
   calling `torch.set_num_threads` and `torch.set_num_interop_threads` before its first
   parallel work.
 - Point and box requests (1D) use `Sam3TrackerModel` of the same library and the same
-  files: no second runtime and no new download.
+  files: no second runtime and no new download. Built by task Q1 of checkpoint 1D: the
+  adapter's revision `2` loads the tracker on its first point or box and keeps it
+  resident beside `Sam3Model` until the unload (`pack/src/whizbang_pack/sam3.py`;
+  `test_sam3.Prompts`).
 - The supervisor's environment gains two variables (`whizbang_backends::pack::worker`,
   `worker::the_workers_environment_holds_the_allow_list_and_no_key`).
 - What the choice rules out: nothing. A second runtime is another adapter. Candidate A loads

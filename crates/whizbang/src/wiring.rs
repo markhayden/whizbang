@@ -114,11 +114,12 @@ pub struct Adapter {
     pub shipped: bool,
 }
 
-/// The table of adapters of this build (plan 1C, tasks N5 and R2a): `sam3` at
-/// revision `1`, shipped. N5 fixed the revision before the pack had the adapter, so
-/// that `get` installed the model under the identity it is loaded under; R2a shipped
-/// the adapter (`pack/src/whizbang_pack/sam3.py`) under that revision and turned
-/// `shipped` on, so the same installation is ready and nothing is downloaded again.
+/// The table of adapters of this build (plan 1C, tasks N5 and R2a; plan 1D, task Q1):
+/// `sam3` at revision `2`, shipped. N5 fixed revision `1` before the pack had the
+/// adapter, so that `get` installed the model under the identity it is loaded under;
+/// R2a shipped the adapter (`pack/src/whizbang_pack/sam3.py`) under that revision. Q1
+/// moved it to `2`, the adapter that takes points and boxes: a new installation of the
+/// same files, which `get` links from the one of revision `1` and does not download.
 /// A model whose adapter is not shipped is not ready, and says so (ADR 0017, "The
 /// inventory").
 pub fn adapters() -> Vec<Adapter> {
@@ -130,7 +131,7 @@ pub fn adapters() -> Vec<Adapter> {
             shipped,
         })
     };
-    [named("sam3", "1", true)].into_iter().flatten().collect()
+    [named("sam3", "2", true)].into_iter().flatten().collect()
 }
 
 /// The models directory in the platform's data folder for whizbang (ADR 0017, "Where

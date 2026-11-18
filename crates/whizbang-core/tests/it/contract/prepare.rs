@@ -45,7 +45,28 @@ fn registry() -> Registry {
             "The image.",
         ))
         .input(InputPort::required("place", ArtifactType::Location, "The place.").on("image"));
-    for draft in [fixtures::seam(), fixtures::remove_prompt(), look, every()] {
+    // An action that asks a segmenter a phrase, a point or a box, as its call says.
+    let ask = ActionDescriptor::draft("ask", "1.0.0", Kind::Primitive, "Asks one thing.")
+        .input(InputPort::required(
+            "image",
+            ArtifactType::Image,
+            "The image.",
+        ))
+        .argument(Argument::with_default(
+            "kind",
+            "What is asked.",
+            ValueType::choice(&["phrase", "point", "box"]),
+            Value::text("phrase"),
+        ))
+        .argument(Argument::required("query", "The query.", ValueType::Text))
+        .needs(Requirement::new(Capability::Segment).feature_from("kind"));
+    for draft in [
+        fixtures::seam(),
+        fixtures::remove_prompt(),
+        look,
+        every(),
+        ask,
+    ] {
         registry
             .register(Arc::new(Fake(draft.build().unwrap())))
             .unwrap();
@@ -446,6 +467,43 @@ fn a_capability_without_a_feature_the_action_needs_is_not_ready() {
     };
     assert_eq!(missing[0].features(), ["phrase".to_owned()]);
     assert_eq!(missing[0].why(), "tiny lacks phrase");
+}
+
+#[test]
+fn a_phrase_only_backend_answers_a_phrase_and_is_refused_a_point() {
+    let world = world();
+    let ask = |kind: &str, query: &str| {
+        Call::new("ask")
+            .argument("kind", Value::text(kind))
+            .argument("query", Value::text(query))
+            .input("image", world.photo)
+    };
+    let phrases = world.engine(Offered::default().with(Capability::Segment, &["phrase"], "sam"));
+    let phrase = phrases.prepare(&ask("phrase", "a dog")).unwrap();
+    assert_eq!(phrase.readiness(), &Readiness::Ready);
+    assert_eq!(phrase.needs()[0].features(), ["phrase".to_owned()]);
+    for kind in ["point", "box"] {
+        let prepared = phrases.prepare(&ask(kind, "1 1 2 2")).unwrap();
+        let Readiness::NotReady(missing) = prepared.readiness() else {
+            panic!("a {kind} is ready against a backend that takes phrases alone");
+        };
+        assert_eq!(missing[0].features(), [kind.to_owned()]);
+        assert_eq!(missing[0].why(), format!("sam lacks {kind}"));
+        // And it is refused when it is sent, before anything runs.
+        let Err(CallError::Refused(Refusal::NotReady { missing, .. })) =
+            phrases.submit(&ask(kind, "1 1 2 2"))
+        else {
+            panic!("a {kind} was submitted to a backend that takes phrases alone");
+        };
+        assert_eq!(missing[0].features(), [kind.to_owned()]);
+    }
+    // A backend that declares a point answers one.
+    let points =
+        world.engine(Offered::default().with(Capability::Segment, &["phrase", "point"], "sam"));
+    assert_eq!(
+        points.prepare(&ask("point", "1 1")).unwrap().readiness(),
+        &Readiness::Ready
+    );
 }
 
 #[test]

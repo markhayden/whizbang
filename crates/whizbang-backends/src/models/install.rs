@@ -27,6 +27,7 @@ use super::checked;
 use super::directory::{Read, refuse_links};
 use super::installation::INSTALLATION_MAX_BYTES;
 use super::remove::stops;
+use super::shared::lock_files;
 use super::stage::{FileRefused, StageRefused, lock_model, stage_locked};
 use super::status::{self, State, Status};
 use super::{
@@ -203,6 +204,7 @@ pub fn install(
     let carrying = Carrying {
         downloader,
         credential: None,
+        shares: false,
     };
     install_carrying(
         dir,
@@ -219,16 +221,25 @@ pub fn install(
 /// entry that says a download from its origin needs a token is installed with one;
 /// the caller reads it, and tells the installer's `secrets` of it before anything is
 /// asked, so that nothing the install writes or answers holds it.
+///
+/// `shares` says whether the install links a file that another installation in the
+/// directory holds, in place of downloading it, and takes the lock of each of its
+/// files so that two installs of one file download it once (ADR 0017, "A file shared
+/// between installations"; plan 1D, task Q1). The binary's `get` shares. [`install`]
+/// and [`install_or_attach`] do not: each downloads every file it does not find
+/// under its own identity.
 #[derive(Clone, Copy)]
 pub struct Carrying<'a> {
     pub downloader: &'a dyn Downloader,
     pub credential: Option<&'a Credential>,
+    pub shares: bool,
 }
 
 impl std::fmt::Debug for Carrying<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Carrying")
             .field("credential", &self.credential.is_some())
+            .field("shares", &self.shares)
             .finish()
     }
 }
@@ -247,6 +258,7 @@ pub fn install_carrying(
     let Carrying {
         downloader,
         credential,
+        shares,
     } = *carrying;
     let record = match InstallationRecord::of(entry, adapter_revision.clone(), secrets) {
         Ok(record) => record,
@@ -268,6 +280,10 @@ pub fn install_carrying(
         model.say(&status)
     };
     let mut done = 0;
+    // The locks of the entry's files, held from before the staging to the end of the
+    // install, so that another install of one of them waits for this one's end and
+    // then links what it published (ADR 0017, "A file shared between installations").
+    let mut shared = Vec::new();
     let ended = (|| {
         // Before anything else: whoever looks while the lock is held is shown an
         // install that is running.
@@ -288,11 +304,22 @@ pub fn install_carrying(
             done = files;
             say(State::Installing, done)?;
         } else {
+            if shares {
+                shared = lock_files(dir, entry, &|| {
+                    if cancellation.is_cancelled() {
+                        return Some(StageRefused::Cancelled);
+                    }
+                    stops(dir, entry.name(), secrets)
+                        .unwrap_or(false)
+                        .then_some(StageRefused::Draining)
+                })?;
+            }
             stage_locked(
                 dir,
                 entry,
                 downloader,
                 credential,
+                shares,
                 cancellation,
                 secrets,
                 &mut |staged| {
@@ -318,6 +345,7 @@ pub fn install_carrying(
     }
     let _ = say(state, done);
     let _ = model.clean(&hex);
+    drop(shared);
     ended.map(|()| record)
 }
 
@@ -360,6 +388,7 @@ pub fn install_or_attach(
     let carrying = Carrying {
         downloader,
         credential: None,
+        shares: false,
     };
     install_or_attach_carrying(
         dir,
@@ -752,7 +781,7 @@ pub(super) fn first_not_whole(
 /// and the hash stated: read piece by piece, counted, and stopped one byte past its
 /// size. A file is held to both, never to its length alone: a crash can leave a
 /// file of the right length whose bytes were never written.
-fn file_is_whole(
+pub(super) fn file_is_whole(
     fs: &dyn Fs,
     path: &Path,
     file: &InstalledFile,

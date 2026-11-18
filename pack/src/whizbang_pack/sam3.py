@@ -1,7 +1,8 @@
-"""The adapter `sam3` (docs/plans/m1c-local-pack.md, task R2a; docs/adr/0022-the-first-runtime.md):
-SAM 3 through PyTorch and the `transformers` library, answering phrases.
+"""The adapter `sam3` (docs/plans/m1c-local-pack.md, task R2a; docs/adr/0022-the-first-runtime.md;
+docs/plans/m2b-checkpoint-1d.md, task Q1): SAM 3 through PyTorch and the `transformers`
+library, answering phrases, points and boxes.
 
-What it does with a segment request:
+What it does with a phrase:
 
 - the picture's features are computed once, whatever the count of phrases (`features`);
 - each phrase is then asked against those features (`candidates`): every candidate the
@@ -16,8 +17,23 @@ What it does with a segment request:
 - the answer is in the fixed order (ADR 0020, "The fixed order of an answer"), which the
   worker's writer holds it to again.
 
-It takes phrases alone: a point or a box is refused as `unsupported`, by the worker (the
-adapter declares `phrase` only) and by the adapter itself.
+What it does with a point or a box (task Q1; ADR 0022, "Consequences"):
+
+- it is asked of `Sam3TrackerModel`, of the same library and the same files: no second
+  runtime and no download. The tracker is loaded on the first point or box the adapter is
+  asked, and kept resident beside `Sam3Model` until the unload, under the worker's
+  watermark (`load_tracker`);
+- the picture's features for the tracker are computed once for a batch, whatever the count
+  of points and boxes (`places`);
+- a point is asked as `X Y` and a box as its corners, in the picture's pixels; the runtime
+  puts them in the model's frame. A point outside the picture, or a box not inside it, is
+  refused as `rejected` before anything is computed (the core refuses both before a request
+  is sent: `SegmentRequest::new`);
+- the tracker's candidates, at most three, are ranked by their predicted IoU, best first,
+  and cut to `max_instances` before a full-size plane is made for any; each instance's
+  score is that predicted IoU, and so is its `iou`. No threshold is applied to them: the
+  setting `threshold` is of the phrase's score. A plane with nothing on gives no instance,
+  and an instance's box is the bounds of what its plane has on.
 
 **The runtime.** `Torch` is the one place that touches PyTorch and the library, imported
 only when a model is loaded, so the pack's core and its tests import neither (D10). It asks
@@ -34,16 +50,18 @@ trial). `pad`, `min_cover` and `outline` are the settings of rascal's adapters t
 detector's box with a second model; SAM 3 draws each mask itself, so this adapter takes them
 and uses none, and its load says so.
 
-**The revision** is `1`, the one the binary's table of adapters fixed for it in task N5
-(`whizbang::wiring::adapters`): it is part of an installation's identity (ADR 0017), so the
-model N5 installed is loaded as it is, and nothing is downloaded again.
+**The revision** is `2`, the one the binary's table of adapters names
+(`whizbang::wiring::adapters`): `1` took phrases alone. It is part of an installation's
+identity (ADR 0017), so the new revision is a new installation of the same files, which an
+install links from the installation of revision `1` and does not download again (ADR 0017,
+"A file shared between installations").
 """
 
 import os
 
 from whizbang_pack.adapter import Adapter, Cancelled, Fault, Found
 
-REVISION = "1"
+REVISION = "2"
 # The threads of each of the runtime's two pools (plan 1C, "Rules"; ADR 0022).
 POOL_THREADS = 8
 THRESHOLD = 0.5
@@ -75,6 +93,35 @@ def _ranked(candidate):
     return (-score, query, box[1], box[0], box[2], box[3])
 
 
+def _bounds(samples, width, height):
+    """The box of what a plane has on: left, top, right, bottom, in pixels; `None` when
+    nothing is. Each row is searched from each end by the bytes' own search, so a large
+    picture costs a few calls a row."""
+    samples = bytes(samples)
+    left, right, top, bottom = width, 0, None, None
+    for y in range(height):
+        start = y * width
+        first = samples.find(255, start, start + width)
+        if first < 0:
+            continue
+        last = samples.rfind(255, start, start + width)
+        left, right = min(left, first - start), max(right, last - start + 1)
+        top = y if top is None else top
+        bottom = y + 1
+    if top is None:
+        return None
+    return [float(left), float(top), float(right), float(bottom)]
+
+
+def _inside(kind, given, width, height):
+    """Whether a point is in a pixel of the picture, or a box inside it with area."""
+    if kind == "point":
+        x, y = given
+        return 0 <= x < width and 0 <= y < height
+    left, top, right, bottom = given
+    return 0 <= left < right <= width and 0 <= top < bottom <= height
+
+
 def _fixed(found):
     """The whole fixed order of an answer, the predicted IoU (`None` for this model) and
     the plane's bytes last."""
@@ -93,20 +140,25 @@ def _clipped(box, width, height):
 
 
 class Sam3(Adapter):
-    features = frozenset(("phrase",))
+    features = frozenset(("phrase", "point", "box"))
     revision = REVISION
 
     def __init__(self, runtime=None):
         self._runtime = runtime
         self.model = None
+        self.folder = None
+        self.tracker = False
         self.threshold = THRESHOLD
         self.device = Adapter.device
 
     def load(self, installation, settings, call):
         threshold = threshold_of(settings)
         runtime = self._runtime() if self._runtime is not None else Torch.imported()
-        runtime.load(os.path.dirname(installation.file("config.json")))
+        folder = os.path.dirname(installation.file("config.json"))
+        runtime.load(folder)
         self.model = runtime
+        self.folder = folder
+        self.tracker = False
         self.threshold = threshold
         self.device = runtime.device
         unused = [name for name in UNUSED if name in settings]
@@ -120,36 +172,68 @@ class Sam3(Adapter):
         if model is None:
             raise Fault("unavailable", "the model is not loaded")
         queries = request["queries"]
-        for query in queries:
-            (kind,) = query
-            if kind != "phrase":
-                raise Fault("unsupported", "sam3 takes phrases only, not a " + kind)
         image = request["image"]
         width, height = image.width, image.height
+        for query in queries:
+            ((kind, given),) = query.items()
+            if kind not in self.features:
+                raise Fault("unsupported", "sam3 takes no " + kind)
+            if kind != "phrase" and not _inside(kind, given, width, height):
+                raise Fault("rejected", "the %s is not inside the picture" % kind)
         most = request["max_instances"]
-        features = model.features(width, height, image.samples)
+        asks_phrase = any("phrase" in query for query in queries)
+        asks_place = any("phrase" not in query for query in queries)
+        if asks_place and not self.tracker:
+            model.load_tracker(self.folder)
+            self.tracker = True
+        features = model.features(width, height, image.samples) if asks_phrase else None
+        places = model.places(width, height, image.samples) if asks_place else None
         found = []
         for place, query in enumerate(queries):
             if call.cancelled():
                 raise Cancelled()
-            answer, candidates = model.candidates(features, query["phrase"])
-            kept = [
-                (place, float(score), _clipped(box, width, height), index)
-                for index, score, box in candidates
-                if float(score) >= self.threshold
-            ]
-            kept.sort(key=_ranked)
-            for _, score, box, index in kept[:most]:
-                if call.cancelled():
-                    raise Cancelled()
-                samples = model.plane(features, answer, index)
-                if 255 in samples:
-                    found.append(Found(place, score, None, box, samples))
+            ((kind, given),) = query.items()
+            if kind == "phrase":
+                found.extend(self._phrase(model, features, place, given, width, height, most, call))
+            else:
+                found.extend(self._place(model, places, place, kind, given, width, height, most, call))
         found.sort(key=_fixed)
         return found, "%d instances on %s" % (len(found), self.device)
 
+    def _phrase(self, model, features, place, phrase, width, height, most, call):
+        answer, candidates = model.candidates(features, phrase)
+        kept = [
+            (place, float(score), _clipped(box, width, height), index)
+            for index, score, box in candidates
+            if float(score) >= self.threshold
+        ]
+        kept.sort(key=_ranked)
+        found = []
+        for _, score, box, index in kept[:most]:
+            if call.cancelled():
+                raise Cancelled()
+            samples = model.plane(features, answer, index)
+            if 255 in samples:
+                found.append(Found(place, score, None, box, samples))
+        return found
+
+    def _place(self, model, places, place, kind, given, width, height, most, call):
+        answer, candidates = model.place_candidates(places, kind, [float(number) for number in given])
+        # Best predicted IoU first; among equals, the model's own order.
+        kept = sorted(((float(iou), index) for index, iou in candidates), key=lambda each: (-each[0], each[1]))
+        found = []
+        for iou, index in kept[:most]:
+            if call.cancelled():
+                raise Cancelled()
+            samples = model.plane(places, answer, index)
+            box = _bounds(samples, width, height)
+            if box is not None:
+                found.append(Found(place, iou, iou, box, samples))
+        return found
+
     def unload(self, call):
         model, self.model = self.model, None
+        self.tracker = False
         if model is not None:
             model.unload()
         return "unloaded"
@@ -165,6 +249,8 @@ class Torch:
         self.device = None
         self.model = None
         self.processor = None
+        self.tracker = None
+        self.tracker_processor = None
 
     @classmethod
     def imported(cls):
@@ -209,6 +295,44 @@ class Torch:
             embeds = self.model.get_vision_features(pixel_values=inputs["pixel_values"])
         return embeds, (height, width)
 
+    def load_tracker(self, folder):
+        """`Sam3TrackerModel` from the same folder, on the same device, offline, as `load`
+        places `Sam3Model`."""
+        self._pools()
+        tracker = self.transformers.Sam3TrackerModel.from_pretrained(folder, local_files_only=True)
+        tracker = tracker.to(self._device)
+        tracker.eval()
+        processor = self.transformers.Sam3TrackerProcessor.from_pretrained(folder, local_files_only=True)
+        self.tracker, self.tracker_processor = tracker, processor
+
+    def places(self, width, height, samples):
+        from PIL import Image
+
+        picture = Image.frombytes("RGBA", (width, height), bytes(samples)).convert("RGB")
+        inputs = self.tracker_processor(images=picture, return_tensors="pt").to(self._device)
+        with self.torch.inference_mode():
+            embeds = self.tracker.get_image_embeddings(inputs["pixel_values"])
+        return embeds, (height, width)
+
+    def place_candidates(self, places, kind, given):
+        """The tracker's candidates for a point or a box in the picture's pixels: its
+        masks, and each candidate's index and predicted IoU. The processor puts the point
+        or the box in the model's frame, from the picture's size."""
+        embeds, (height, width) = places
+        if kind == "point":
+            asked = {"input_points": [[[given]]], "input_labels": [[[1]]]}
+        else:
+            asked = {"input_boxes": [[given]]}
+        prompt = self.tracker_processor(original_sizes=[[height, width]], return_tensors="pt", **asked)
+        prompt = prompt.to(self._device)
+        names = ("input_points", "input_labels", "input_boxes")
+        with self.torch.inference_mode():
+            outputs = self.tracker(
+                image_embeddings=embeds, multimask_output=True, **{name: prompt[name] for name in names if name in prompt}
+            )
+        scores = outputs.iou_scores[0, 0].float().cpu().tolist()
+        return outputs.pred_masks[0], list(enumerate(scores))
+
     def candidates(self, features, phrase):
         embeds, (height, width) = features
         text = self.processor(text=phrase, return_tensors="pt").to(self._device)
@@ -239,5 +363,7 @@ class Torch:
     def unload(self):
         self.model = None
         self.processor = None
+        self.tracker = None
+        self.tracker_processor = None
         if self.device == "mps":
             self.torch.mps.empty_cache()

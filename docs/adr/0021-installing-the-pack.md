@@ -14,6 +14,8 @@ installs on Linux. Linux comes back when a Linux story needs it (`docs/carry-ove
 Amended: 2026-11-17, by task P6a (the kind `pack`). Added, under "What the binary carries,
 and where it installs": how the kind finds the worker there, and what a request is told
 where `setup` installed nothing.
+Amended: 2026-11-18, by task Q1 of checkpoint 1D. Changed, in code and in step 4: a
+`setup` with no extra keeps what an extra installed (`--inexact`), where it removed it.
 Spec: section 4, "The Python pack"; section 17, "Offline bundles for installing the pack"
 
 ## Context
@@ -101,8 +103,11 @@ In this order, each step past the first only when the one before ended well:
    This step is there because `sync --locked` makes the environment's folder before it
    finds that the lock does not match.
 4. `uv`'s `sync --locked --no-build`, with `--extra=<name>` when one was named, into
-   `pack/env`. With no extra it is offline. With one it downloads that extra's wheels from
-   the addresses the lock names; it builds nothing.
+   `pack/env`. With no extra it is offline, and `--inexact`: what an extra installed
+   before is kept, so `setup` again brings the pack's copy to this build's and leaves the
+   runtime as it is (task Q1 of checkpoint 1D;
+   `setup::setup_again_writes_the_packs_new_adapter_and_keeps_the_runtime`). With one it
+   downloads that extra's wheels from the addresses the lock names; it builds nothing.
 5. `pack/project` is brought to the pack that was installed: a file is written only where
    it differs, as a new file renamed over the old, and a module the pack no longer has is
    removed. A second `setup` of the same pack and extra changes nothing

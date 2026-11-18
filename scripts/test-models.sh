@@ -57,7 +57,7 @@ case "$target" in
 esac
 shared=$target/tmp/model-tier
 mkdir -p "$shared/out"
-rm -f "$shared/out/phrase.txt" "$shared/out/second.txt"
+rm -f "$shared/out/phrase.txt" "$shared/out/second.txt" "$shared/out/places.txt"
 printf '%s\n' "$dir" >"$shared/models-dir"
 
 cd "$root"

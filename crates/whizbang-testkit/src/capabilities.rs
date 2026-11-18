@@ -398,10 +398,12 @@ impl FakeFiller {
 /// told, with scores from 0.9 down by 0.1; a phrase it was told nothing of is answered
 /// with no instance. A point is answered with the pixel under it, and a box with the
 /// whole pixels it touches, each with a score of 1. No answer holds more instances than
-/// the request asks for.
+/// the request asks for. Told boxes for a place ([`FakeSegmenter::finding_at_a_place`]),
+/// it answers every point and every box with those instead, as a phrase is answered.
 pub struct FakeSegmenter {
     declaration: Declaration,
     told: Vec<(String, [u32; 4])>,
+    places: Vec<[u32; 4]>,
     requests: AtomicU64,
     stop: Option<Stop>,
     fails: Option<Fault>,
@@ -416,11 +418,20 @@ impl FakeSegmenter {
                 &[feature::PHRASE, feature::POINT, feature::BOX],
             ),
             told: Vec::new(),
+            places: Vec::new(),
             requests: AtomicU64::new(0),
             stop: None,
             fails: None,
             terms: Terms::default(),
         }
+    }
+
+    /// The same segmenter, which also finds, for every point and every box it is asked,
+    /// the whole pixels of this box, in the order it was told, with scores from 0.9 down
+    /// by 0.1: the candidates a model gives for a place, best first.
+    pub fn finding_at_a_place(mut self, bounds: [u32; 4]) -> FakeSegmenter {
+        self.places.push(bounds);
+        self
     }
 
     /// The same segmenter, declaring this in place of what it declared.
@@ -540,17 +551,23 @@ impl Segmenter for FakeSegmenter {
         let (width, height) = (request.image().width(), request.image().height());
         let most = request.max_instances() as usize;
         let mut answers = Vec::new();
+        let scored = |at: usize| (0.9 - 0.1 * at as f64).max(0.0);
         for query in request.queries() {
             let found = match query.asked() {
+                Asked::Point { .. } | Asked::Box { .. } if !self.places.is_empty() => self
+                    .places
+                    .iter()
+                    .take(most)
+                    .enumerate()
+                    .map(|(at, bounds)| boxed(request, *bounds, scored(at)))
+                    .collect::<Result<Vec<_>, _>>()?,
                 Asked::Phrase(phrase) => self
                     .told
                     .iter()
                     .filter(|(told, _)| told == phrase)
                     .take(most)
                     .enumerate()
-                    .map(|(at, (_, bounds))| {
-                        boxed(request, *bounds, (0.9 - 0.1 * at as f64).max(0.0))
-                    })
+                    .map(|(at, (_, bounds))| boxed(request, *bounds, scored(at)))
                     .collect::<Result<Vec<_>, _>>()?,
                 Asked::Point { x, y } => {
                     let (x, y) = ((x as u32).min(width - 1), (y as u32).min(height - 1));

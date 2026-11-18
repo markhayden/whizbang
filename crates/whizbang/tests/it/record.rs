@@ -96,7 +96,8 @@ fn a_run_without_the_env_file_holds_no_byte_of_a_key_pasted_into_the_config() {
     let text = format!("{CONFIG}{}", pasted_judge());
     let asked = SegmentAsked {
         image: &image,
-        phrase: "circle",
+        kind: "phrase",
+        query: "circle",
         max_instances: 8,
         backend: None,
         request_id: None,

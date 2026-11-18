@@ -60,6 +60,10 @@ Spec: section 3, "The execution contract", "Identities" and "Storage"; section 6
 "Readiness"
 Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
 that said something was still to come; no decision changed.
+Amended: 2026-11-18, with task Q1 of checkpoint 1D. Added, in step 6 and in "Conditions
+on a value are not added": the features a need asks of its backend may include one that
+the value of an argument names (ADR 0003, "A feature a call chooses"), worked out here and
+so again at admission. Which capabilities a call needs still follows from names alone.
 
 ## Context
 
@@ -358,7 +362,13 @@ The types an executing action is handed and hands back:
 
 ### Conditions on a value are not added
 
-Prepare needs none. Every action of checkpoint 1A (`echo`, `grow`, `view`, `check`) needs
+Prepare needs none. One thing short of a condition is taken, with task Q1 of checkpoint
+1D: the features a need asks of its backend may include the one an argument's value
+names (`feature_from`; ADR 0003, "A feature a call chooses"). Step 6 asks the backend for
+the features stated and that one (`Requirement::features_for`); the need, its features
+and so the fingerprint hold it, and a backend that does not declare it leaves the call
+not ready. Admission prepares the call again, so it is checked there too. Which
+capabilities are needed is still decided from the names of the arguments given. Every action of checkpoint 1A (`echo`, `grow`, `view`, `check`) needs
 the same capabilities whatever its arguments' values. Rascal's `remove_prompt` is the
 known case that does not, and it goes with rascal's recipes to milestone 3
 (`docs/carry-over.md`).

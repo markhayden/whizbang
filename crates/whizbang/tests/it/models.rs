@@ -617,6 +617,119 @@ fn get_installs_a_model_and_list_then_says_it_is_installed() {
 }
 
 #[test]
+fn the_catalogues_sam3_declares_phrase_point_and_box() {
+    // Task Q1 of checkpoint 1D: SAM 3 answers a point and a box from the same files, so
+    // its entry declares the three features at a new revision of the catalogue, and the
+    // files, their sizes and their hashes are those of the revision before.
+    let catalogue = wiring::catalogue().unwrap();
+    let sam3 = catalogue.entry("sam3").unwrap();
+    assert_eq!(
+        sam3.features().collect::<Vec<_>>(),
+        ["box", "phrase", "point"]
+    );
+    assert_eq!(sam3.revision().as_str(), "2026-11.2");
+    let weights = sam3
+        .files()
+        .iter()
+        .find(|file| file.name().as_str() == "model.safetensors")
+        .unwrap();
+    assert_eq!(
+        weights.sha256().to_string(),
+        "sha256:6d06f0a5f84e435071fe6603e61d0b4cc7b40e0d39d487cfd4d67d8cc11cc14a"
+    );
+    // The adapter the pack ships declares the same three.
+    let adapter = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pack/src/whizbang_pack/sam3.py"),
+    )
+    .unwrap();
+    assert!(adapter.contains(r#"features = frozenset(("phrase", "point", "box"))"#));
+}
+
+/// An entry of this name that holds `alpha`'s files, byte for byte, at addresses of its
+/// own, and these more, and needs a token for a download from [`ORIGIN`].
+fn holding_alphas_files(name: &str, more: &[(&str, &[u8])]) -> Entry {
+    let alpha = alpha();
+    let mut files: Vec<CatalogueFile> = alpha
+        .files()
+        .iter()
+        .map(|file| {
+            let from = at(&format!("{name}/{}", file.name().as_str()));
+            CatalogueFile::new(
+                file.name().clone(),
+                file.size(),
+                file.sha256(),
+                from,
+                &none(),
+            )
+            .unwrap()
+        })
+        .collect();
+    for (file, content) in more {
+        let from = at(&format!("{name}/{file}"));
+        let named = FileName::new(file, &none()).unwrap();
+        let size = content.len() as u64;
+        let made = CatalogueFile::new(named, size, Digest::of_bytes(content), from, &none());
+        files.push(made.unwrap());
+    }
+    let parts = EntryParts {
+        name: ModelName::new(name, &none()).unwrap(),
+        title: Title::new("Holds alpha's files", &none()).unwrap(),
+        revision: Revision::new("2026-11.2", &none()).unwrap(),
+        adapter: ModelName::new(ADAPTER, &none()).unwrap(),
+        licence: Licence::new("Apache-2.0", &none()).unwrap(),
+        platforms: Platform::ALL.to_vec(),
+        features: Vec::new(),
+        origins: vec![Origin::of(ORIGIN, &none()).unwrap()],
+        files,
+    };
+    Entry::new(parts, &none())
+        .unwrap()
+        .needing_a_token_at(Origin::of(ORIGIN, &none()).unwrap())
+        .unwrap()
+}
+
+#[test]
+fn an_install_whose_files_are_all_held_asks_for_no_token() {
+    let shelf = Shelf::new("models-held-no-token");
+    let clock = Hand::new();
+    let fake = Arc::new(serving(&[alpha()]));
+    let gamma = holding_alphas_files("gamma", &[]);
+    // `delta` holds one file more, which nothing holds.
+    let delta = holding_alphas_files("delta", &[("extra.bin", b"new")]);
+    let entries = [alpha(), gamma.clone(), delta];
+    let tools = shelf.tools(shelf.models(&entries), &clock, &fake);
+    // Before anything holds its files, `gamma` needs its token, which the config does
+    // not name: refused, and nothing is downloaded.
+    let (refused, _) = get(&tools, "gamma");
+    assert!(refused.unwrap_err().contains("needs a token"));
+    assert!(fake.requests().is_empty());
+    get(&tools, "alpha").0.unwrap();
+    assert_eq!(fake.requests().len(), 2);
+    // Now every file of `gamma` is held by `alpha`'s installation: no token is asked
+    // for, nothing is downloaded, and `gamma` is installed of the same files.
+    let (got, _) = get(&tools, "gamma");
+    let got = got.unwrap();
+    assert!(got.starts_with("installed gamma: sha256:"), "{got}");
+    assert_eq!(fake.requests().len(), 2);
+    let installed = Installations::of(
+        ModelsDir::at(Arc::new(RealFs), &shelf.models_dir()),
+        Catalogue::new(entries.to_vec(), &none()).unwrap(),
+        adapters(),
+        none(),
+    );
+    let record = installed.ready("gamma").unwrap();
+    assert_eq!(
+        record.identity().digest().to_string(),
+        identity_in(&got, "gamma")
+    );
+    // A file that nothing holds is to be downloaded: the token is asked for, and the
+    // install is refused for want of it before anything is asked.
+    let (refused, _) = get(&tools, "delta");
+    assert!(refused.unwrap_err().contains("needs a token"));
+    assert_eq!(fake.requests().len(), 2);
+}
+
+#[test]
 fn get_makes_the_download_client_with_the_configs_least_rate_or_the_default() {
     // The maker of the download client is given the config's least rate of a
     // download, or the default when the config gives none or there is no config,
@@ -874,8 +987,8 @@ mod inventory {
         let (again, _) = get(&shipped, "alpha");
         assert_eq!(identity_in(&again.unwrap(), "alpha"), identity);
         assert_eq!(fake.requests().len(), asked);
-        // The binary's own table names `sam3` at the revision N5 fixed, now shipped
-        // (task R2a): the installation N5 made is the one the inventory calls ready.
+        // The binary's own table names `sam3` at the revision of the adapter that takes
+        // points and boxes (task Q1), shipped.
         let table = wiring::adapters();
         assert_eq!(table.len(), 1);
         assert_eq!(
@@ -884,7 +997,7 @@ mod inventory {
                 table[0].revision.as_str(),
                 table[0].shipped
             ),
-            ("sam3", "1", true)
+            ("sam3", "2", true)
         );
     }
 }

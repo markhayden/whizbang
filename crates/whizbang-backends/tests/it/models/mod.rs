@@ -11,6 +11,8 @@ mod directory;
 mod downloads;
 mod holds;
 mod identity;
+#[cfg(unix)]
+mod install;
 mod installation;
 mod inventory;
 mod leases;

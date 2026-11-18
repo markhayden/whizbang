@@ -4,11 +4,11 @@
     {
       "name": "sam3",
       "title": "SAM 3",
-      "revision": "2026-11.1",
+      "revision": "2026-11.2",
       "adapter": "sam3",
       "licence": "SAM License",
       "platforms": ["macos-arm64"],
-      "features": ["phrase"],
+      "features": ["phrase", "point", "box"],
       "origins": ["https://huggingface.co", "https://us.aws.cdn.hf.co"],
       "needs_token": "https://huggingface.co",
       "files": [

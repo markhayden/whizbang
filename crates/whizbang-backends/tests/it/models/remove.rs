@@ -2431,3 +2431,36 @@ fn the_remover_keeps_its_lock_until_its_mark_is_off() {
             .is_some()
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn removing_one_of_two_installations_sharing_a_file_keeps_the_file() {
+    use super::install::{entry_of, file_of, sharing};
+    let scratch = Scratch::new("remove-shared");
+    let root = scratch.path();
+    let tiny = sharing(root, &entry_of("tiny", "2026-11.1"), &serving_both()).unwrap();
+    let nothing = FakeDownloader::new();
+    let other = sharing(root, &entry_of("other", "2026-11.1"), &nothing).unwrap();
+    assert!(nothing.requests().is_empty());
+    // `tiny` is removed, with every file of its installation's folder: the files it
+    // shared are still the other's, whole.
+    assert!(removed(root).is_ok());
+    assert!(!file_of(root, &tiny, "graph.onnx").exists());
+    assert_eq!(
+        std::fs::read(file_of(root, &other, "graph.onnx")).unwrap(),
+        graph()
+    );
+    assert_eq!(
+        std::fs::read(file_of(root, &other, "LICENSE.txt")).unwrap(),
+        TERMS
+    );
+    let dir = ModelsDir::at(Arc::new(RealFs), root);
+    let verified = whizbang_backends::models::verify(
+        &dir,
+        &model("other"),
+        other.identity(),
+        &none(),
+        &|| false,
+    );
+    assert!(verified.unwrap());
+}
