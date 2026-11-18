@@ -16,6 +16,9 @@
 #   that one recipe in the place of `test-scripts`, so the two cannot drift apart;
 # - the new job is set up exactly as the other is (the same actions, the same pinned tools),
 #   runs its half on every pull request and push, and no step of it may be skipped;
+# - the secrets scan and attribution check over every commit is the job `secrets`, on the
+#   Linux runner, with the check job's limit and no condition, and in no other job (plan
+#   2C, task E1: in `check` it took that job past its limit);
 # - the aggregate `ci`, the one check a merge waits for, needs every other job and passes
 #   only when each of them did.
 #
@@ -87,15 +90,16 @@ before() { grep -B1 -E "$2" <<<"$1" | head -n 1 || true; }
 set_up() { awk '/^      - uses: actions\/checkout@/ { on = 1 } on { print } on && /^          tool: / { exit }' <<<"$1"; }
 
 check_workflow() { # <workflow>
-  local file=$1 check scripts ci name
-  [ "$(jobs "$file" | tr '\n' ' ')" = "check scripts ci " ] ||
-    { echo "CI: the jobs must be check, scripts and ci (found: $(jobs "$file" | tr '\n' ' '))"; return 1; }
+  local file=$1 check scripts secrets ci name
+  [ "$(jobs "$file" | tr '\n' ' ')" = "check scripts secrets ci " ] ||
+    { echo "CI: the jobs must be check, scripts, secrets and ci (found: $(jobs "$file" | tr '\n' ' '))"; return 1; }
   # A step or a job that may fail without failing the run would pass anything.
   if grep -E 'continue-on-error' "$file" >/dev/null; then
     echo "CI: nothing may continue on error"; return 1
   fi
   check=$(job "$file" check)
   scripts=$(job "$file" scripts)
+  secrets=$(job "$file" secrets)
   ci=$(job "$file" ci)
 
   # check: both runners, each the first half of `just ci`, in a step with no condition.
@@ -119,12 +123,26 @@ check_workflow() { # <workflow>
   [ -n "$(set_up "$check")" ] && [ "$(set_up "$scripts")" = "$(set_up "$check")" ] ||
     { echo "CI: scripts must be set up exactly as check is: the checkout, the toolchain, the cache and the pinned tools"; return 1; }
 
+  # secrets: the scan of every commit, alone, on Linux, within the check job's limit, with
+  # no condition; and in no other job.
+  grep -x -F '    runs-on: ubuntu-22.04' <<<"$secrets" >/dev/null &&
+    grep -x -F '    timeout-minutes: 15' <<<"$secrets" >/dev/null ||
+    { echo "CI: secrets must run on ubuntu-22.04 within 15 minutes"; return 1; }
+  [ "$(grep -c -F 'bash "$scan" --secrets-only --range "$BASE" "$HEAD"' "$file")" = 1 ] &&
+    grep -F 'bash "$scan" --secrets-only --range "$BASE" "$HEAD"' <<<"$secrets" >/dev/null ||
+    { echo "CI: secrets, and no other job, must scan every commit"; return 1; }
+  grep -F 'fetch-depth: 0' <<<"$secrets" >/dev/null ||
+    { echo "CI: secrets must check out every commit (fetch-depth: 0)"; return 1; }
+  if grep -E '^ +if:' <<<"$secrets" >/dev/null; then
+    echo "CI: no step of secrets, and not the job, may have a condition"; return 1
+  fi
+
   # ci: runs whatever happened, needs every other job, and passes only when each passed.
   grep -x -F '    if: always()' <<<"$ci" >/dev/null ||
     { echo "CI: the aggregate ci must run always, so that a failed job fails it and does not skip it"; return 1; }
-  grep -x -F '    needs: [check, scripts]' <<<"$ci" >/dev/null ||
-    { echo "CI: the aggregate ci must need: [check, scripts]"; return 1; }
-  for name in check scripts; do
+  grep -x -F '    needs: [check, scripts, secrets]' <<<"$ci" >/dev/null ||
+    { echo "CI: the aggregate ci must need: [check, scripts, secrets]"; return 1; }
+  for name in check scripts secrets; do
     grep -x -F "          test \"\${{ needs.$name.result }}\" = \"success\"" <<<"$ci" >/dev/null ||
       { echo "CI: the aggregate ci must fail unless $name succeeded"; return 1; }
   done
@@ -145,7 +163,8 @@ check_rules() { # <AGENTS.md>
   row=$(grep -F '| `just ci-without-scripts`, `just ci-scripts` |' "$1" || true)
   for text in '`check (macos-15)` and `check (ubuntu-22.04)` run the first' \
     '`scripts (macos-15)` and `scripts (ubuntu-22.04)` run the second' \
-    'the aggregate `ci`, which needs all four'; do
+    'The job `secrets` runs the secrets scan and the attribution check over every commit' \
+    'the aggregate `ci`, which needs all five'; do
     case "$row" in *"$text"*) ;; *) echo "AGENTS.md: the row of the two halves must say: $text"; return 1 ;; esac
   done
 }
@@ -191,11 +210,25 @@ changed check_justfile justfile 's/^ci-scripts: deny test-scripts$/&\
 
 changed check_rules AGENTS.md 's/`scripts (macos-15)` and `scripts (ubuntu-22.04)` run the second/the other jobs run the second/' "must say: \`scripts (macos-15)\`"
 changed check_rules AGENTS.md 's/ and `check (ubuntu-22.04)` run the first/ runs the first/' "must say: \`check (macos-15)\`"
-changed check_rules AGENTS.md 's/, which needs all four/, which needs both/' "must say: the aggregate"
+changed check_rules AGENTS.md 's/, which needs all five/, which needs four/' "must say: the aggregate"
+changed check_rules AGENTS.md 's/The job `secrets` runs/A job runs/' "must say: The job"
 
 # --- The workflow.
 # The aggregate without the new job: a red script test on macOS would not fail it.
-changed check_workflow "$workflow" 's/^    needs: \[check, scripts\]$/    needs: [check]/' "must need: [check, scripts]"
+changed check_workflow "$workflow" 's/^    needs: \[check, scripts, secrets\]$/    needs: [check, scripts]/' "must need: [check, scripts, secrets]"
+changed check_workflow "$workflow" '/needs\.secrets\.result/d' "must fail unless secrets succeeded"
+# The scan of every commit in another job as well, skipped, allowed to fail, given more
+# time, or on macOS.
+changed check_workflow "$workflow" 's/^\( *\)bash "$scan" --secrets-only.*$/&\
+\1bash "$scan" --secrets-only --range "$BASE" "$HEAD"/' "secrets, and no other job, must scan every commit"
+changed check_workflow "$workflow" 's/^  secrets:$/&\
+    if: github.event_name == '"'push'"'/' "no step of secrets"
+changed check_workflow "$workflow" 's/^  secrets:$/&\
+    continue-on-error: true/' "nothing may continue on error"
+awk '/^  secrets:$/ { on = 1 } on && /^    timeout-minutes: 15$/ { $0 = "    timeout-minutes: 30"; on = 0 } { print }' "$workflow" >"$tmp/longer"
+expect_fail "secrets with a longer limit" "within 15 minutes" check_workflow "$tmp/longer"
+awk '/^  secrets:$/ { on = 1 } on && /^    runs-on: ubuntu-22.04$/ { $0 = "    runs-on: macos-15"; on = 0 } { print }' "$workflow" >"$tmp/elsewhere"
+expect_fail "secrets on macOS" "secrets must run on ubuntu-22.04" check_workflow "$tmp/elsewhere"
 changed check_workflow "$workflow" '/needs\.scripts\.result/d' "must fail unless scripts succeeded"
 changed check_workflow "$workflow" '/needs\.check\.result/d' "must fail unless check succeeded"
 changed check_workflow "$workflow" 's/^\( *test .*needs\.scripts\.result.*\)$/\1 || true/' "must fail unless scripts succeeded"
@@ -222,7 +255,7 @@ changed check_workflow "$workflow" 's/^  scripts:$/&\
     if: github.event_name == '"'push'"'/' "may have a condition"
 changed check_workflow "$workflow" 's/^  scripts:$/&\
     continue-on-error: true/' "nothing may continue on error"
-changed check_workflow "$workflow" 's/^  scripts:$/  tests:/' "the jobs must be check, scripts and ci"
+changed check_workflow "$workflow" 's/^  scripts:$/  tests:/' "the jobs must be check, scripts, secrets and ci"
 # Set up another way than check is: other tools, or no toolchain. Only the second of the two
 # set-ups is changed, which is the new job's.
 second() { # <sed script for the second match of the line> <line, as a pattern>

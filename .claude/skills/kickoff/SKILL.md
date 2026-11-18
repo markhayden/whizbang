@@ -110,13 +110,13 @@ If one is missing, ask the orchestrator. Do not guess.
       "co-authored-by" or "generated with" and is not refused: go through those. Then
       open the pull request against `main`.
 - [ ] 11. Wait for CI on the head: the jobs `check (macos-15)`, `scripts (macos-15)`,
-      `check (ubuntu-22.04)`, `scripts (ubuntu-22.04)` and the aggregate `ci`. Each runner
+      `check (ubuntu-22.04)`, `scripts (ubuntu-22.04)`, `secrets` and the aggregate `ci`. Each runner
       has two jobs side by side: `scripts` runs the script tests, and `check` everything
-      else. `ci` is listed only once the other four have finished: each
+      else; `secrets` scans every commit. `ci` is listed only once the other five have finished: each
       job takes several minutes. Straight after
       the pull request is opened, `gh pr checks` exits 1 and
       says "no checks reported"; after a second push it shows the run before for a moment.
-      So ask until a run whose commit is the head lists all five (the loop below), then
+      So ask until a run whose commit is the head lists all six (the loop below), then
       watch. The loop outlasts one shell call of the usual length:
       give the call a longer time limit, or enter the loop again. It gives up after 20
       minutes: hand back then, saying that CI did not start. A pull request that conflicts
@@ -227,7 +227,7 @@ Branch: <slug>
 Base: <full commit of origin/main the branch started from>
 Head: <full commit; the pull request shows the same>
 CI: check (macos-15) <result>, scripts (macos-15) <result>, check (ubuntu-22.04) <result>,
-    scripts (ubuntu-22.04) <result>, ci <result>
+    scripts (ubuntu-22.04) <result>, secrets <result>, ci <result>
     <any rerun: the job and the reason; otherwise "no rerun">
 Local: just check <result>, just scan <result>, on the head
 Refused push: <which scan refused, the commit, path and line if named, and what was done;
