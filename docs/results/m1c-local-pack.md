@@ -19,11 +19,11 @@ action asks for the segment capability.
 | Field | Value |
 |---|---|
 | Measured | 2026-11-18 |
-| Commit measured | `4771beb42a3f23f3521bc9d4dc1f93aaa35d73e1` (clean) |
+| Commit measured | `3b9c3922cf458035788a2cc88c7a84f8cb330cc6` (clean) |
 | Lock file | `sha256:b844779adf5bf884fef63e33cc315db267ed61c3f67368922f5e8aef2d5f9215` |
-| Adapter | `sam3`, revision `2`, source `sha256:81293bbaa9bb12ffd3ace1e02b4bd6c0f8e1091397f602ba1a5f15c897b1f258` |
+| Adapter | `sam3`, revision `2`, source `sha256:89cb76a160810418d7e33da9ccb47d47d5ff486fa88a46e29741dafefd32a410` |
 | Installation | `sha256:4c1428553b40dcc493f53221fb1134c487432e43f3a39b5a8a5ab5c60f3ed652` |
-| Tiny's adapter (plan 1D, task T1) | `owlv2-sam2`, revision `1`, source `sha256:32f4d61c904eaccc9592c308d12885ea1d5ec59c66ce7f3ed0db68d35d236bde` |
+| Tiny's adapter (plan 1D, task T1) | `owlv2-sam2`, revision `1`, source `sha256:fb4f273ae69f9ea086aa757b1709990d2325eb5d556bcb2c5218d9828e505053` |
 | Tiny's installation | `sha256:3958be3d2b51aff1852898663f89d61e3eae64ee6ebf237fea0622a3eb449774` |
 | Device | `mps`, in every run's record |
 | CPU fallback | Off: the worker's environment does not set `PYTORCH_ENABLE_MPS_FALLBACK` |
@@ -31,41 +31,41 @@ action asks for the segment capability.
 
 | Each run | 1 | 2 | 3 |
 |---|---|---|---|
-| Run of the phrase test | 1795023192578-1 | 1795023213703-1 | 1795023231366-1 |
+| Run of the phrase test | 1795025725127-1 | 1795025744080-1 | 1795025762214-1 |
 | Instances | 1 | 1 | 1 |
 | Best instance's score | 0.946 | 0.946 | 0.946 |
 | Its box (left top right bottom) | 329.7 110.0 510.1 290.0 | 329.7 110.0 510.1 290.0 | 329.7 110.0 510.1 290.0 |
 | Its mask | sha256:c49dcca1141934019bc00fec7875e866488bcf3c9413b723afa46b2b21f17028 | sha256:c49dcca1141934019bc00fec7875e866488bcf3c9413b723afa46b2b21f17028 | sha256:c49dcca1141934019bc00fec7875e866488bcf3c9413b723afa46b2b21f17028 |
 | Pixels on | 25410 | 25410 | 25410 |
 | Start of the first request to the load written, s | 0.06 | 0.06 | 0.06 |
-| Load, s | 3.51 | 3.45 | 3.10 |
-| Start of the first request to the model loaded, s | 3.57 | 3.51 | 3.16 |
+| Load, s | 3.21 | 3.30 | 3.55 |
+| Start of the first request to the model loaded, s | 3.28 | 3.36 | 3.61 |
 | A full check's record found before the first load | yes | yes | yes |
-| First request after the load, s | 0.88 | 0.89 | 0.88 |
-| Second request, s | 0.68 | 0.70 | 0.68 |
+| First request after the load, s | 0.85 | 0.89 | 0.89 |
+| Second request, s | 0.67 | 0.66 | 0.69 |
 | Loads for two requests | 1 | 1 | 1 |
-| Run of the point and the box (plan 1D, task Q1) | 1795023196513-1 | 1795023217458-1 | 1795023235087-1 |
-| Point and box in one request, s | 6.48 | 4.13 | 4.48 |
+| Run of the point and the box (plan 1D, task Q1) | 1795025729456-1 | 1795025747832-1 | 1795025766282-1 |
+| Point and box in one request, s | 4.85 | 4.27 | 4.36 |
 | Point at 420 200: candidates | 3 | 3 | 3 |
 | Its best predicted IoU | 0.992 | 0.992 | 0.992 |
 | Its box | 330.0 110.0 510.0 290.0 | 330.0 110.0 510.0 290.0 | 330.0 110.0 510.0 290.0 |
 | Box 300 80 540 320: candidates | 3 | 3 | 3 |
 | Its best predicted IoU | 0.774 | 0.774 | 0.774 |
 | Its box | 330.0 107.0 510.0 293.0 | 330.0 107.0 510.0 293.0 | 330.0 107.0 510.0 293.0 |
-| Run of Tiny's phrase (plan 1D, task T1) | 1795023203242-1 | 1795023221796-1 | 1795023239784-1 |
+| Run of Tiny's phrase (plan 1D, task T1) | 1795025734532-1 | 1795025752322-1 | 1795025770855-1 |
 | Tiny's device | mps | mps | mps |
 | Tiny's phrase: instances | 1 | 1 | 1 |
-| Its phrase's request, s | 3.24 | 2.70 | 2.71 |
+| Its phrase's request, s | 2.80 | 2.88 | 2.71 |
 | Best instance's score | 0.741 | 0.741 | 0.741 |
 | Its box | 330.0 110.0 510.0 290.0 | 330.0 110.0 510.0 290.0 | 330.0 110.0 510.0 290.0 |
-| Tiny's point and box in one request, s | 0.11 | 0.12 | 0.10 |
+| Tiny's point and box in one request, s | 0.12 | 0.11 | 0.13 |
 | Point at 420 200: candidates | 3 | 3 | 3 |
 | Its best predicted IoU | 0.989 | 0.989 | 0.989 |
 | Its box | 330.0 110.0 510.0 290.0 | 330.0 110.0 510.0 290.0 | 330.0 110.0 510.0 290.0 |
 | Box 300 80 540 320: candidates | 3 | 3 | 3 |
 | Its best predicted IoU | 0.990 | 0.990 | 0.990 |
 | Its box | 330.0 110.0 510.0 290.0 | 330.0 110.0 510.0 290.0 | 330.0 110.0 510.0 290.0 |
-| Peak resident memory of the tree, KiB | 659344 | 656944 | 662544 |
+| Peak resident memory of the tree, KiB | 655840 | 663808 | 656288 |
 | Most threads in one process | 17 | 17 | 17 |
 | Processes left running after | 0 | 0 | 0 |
 
