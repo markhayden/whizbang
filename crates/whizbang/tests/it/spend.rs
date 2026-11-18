@@ -131,3 +131,199 @@ fn a_reset_and_a_status_through_the_binary_and_a_complaint_that_is_escaped() {
     );
     assert!(!said.contains('\u{1b}'), "{said}");
 }
+
+// --- the judge of a service (plan 2A, task S2, item 1) ----------------------------------------
+
+mod judge {
+    use serde_json::Value as Json;
+    use whizbang_core::contract::{Call, CallError, Executor, Value};
+
+    use crate::anthropic::{Judged, import_picture, judges_call, record_of, serving, turn_with};
+
+    /// The bound of one request at the default ceilings: 40,000 input tokens at the
+    /// dearest input price of the row, 0.125 dollars a million, and 2,048 output tokens
+    /// at 0.50 (ADR 0026).
+    const BOUND: u64 = 6_024;
+
+    fn paid(record: &Json) -> Vec<(u64, u64, String)> {
+        record["spend"]["requests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|paid| {
+                (
+                    paid["reserved_micros"].as_u64().unwrap(),
+                    paid["settled_micros"].as_u64().unwrap(),
+                    paid["stage"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect()
+    }
+
+    fn one_turn(label: &str, answer: Vec<u8>) -> (Json, Judged) {
+        let judged = Judged::new(label);
+        let (listener, _) = serving(&judged.pki, vec![answer]);
+        let origin = format!("https://127.0.0.1:{}", listener.port());
+        let over = judged.over(&format!("{origin}/v1/messages"), Some(&origin));
+        let executor = judged.runner(&over);
+        let ran = executor.submit(&judges_call()).unwrap();
+        assert_eq!(ran.outcome().name(), "completed");
+        drop(executor);
+        assert_eq!(listener.finish(), 1);
+        (record_of(&judged.world.root, ran.run().as_str()), judged)
+    }
+
+    #[test]
+    fn a_judge_turn_reserves_its_fixed_bound_and_settles_at_its_usage() {
+        // 30,000 input tokens at 0.10 and 1,000 output at 0.50: 3,500 millionths.
+        let (record, _) = one_turn(
+            "spend-usage",
+            turn_with("Seen.", "end_turn", Some((30_000, 1_000))),
+        );
+        assert_eq!(record["spend"]["reserved_micros"], BOUND);
+        assert_eq!(paid(&record), [(BOUND, 3_500, "answered".to_owned())]);
+    }
+
+    #[test]
+    fn a_judge_turn_with_no_usage_is_charged_its_bound() {
+        let (record, _) = one_turn("spend-no-usage", turn_with("Seen.", "end_turn", None));
+        assert_eq!(paid(&record), [(BOUND, BOUND, "answered".to_owned())]);
+    }
+
+    #[test]
+    fn a_judge_call_whose_bound_is_over_the_call_cap_is_refused_before_dispatch() {
+        let judged = Judged::new("spend-cap");
+        let listener = whizbang_testkit::loopback::Listener::serve(1, |_, _| {});
+        let origin = format!("https://127.0.0.1:{}", listener.port());
+        // A cap of half a cent, under the bound of one request.
+        let over = judged.over_with(
+            &format!("{origin}/v1/messages"),
+            Some(&origin),
+            &["prompts"],
+            "[spend]\ncall_cap_usd = 0.005\n",
+        );
+        let executor = judged.runner(&over);
+        let refused = executor.submit(&judges_call());
+        assert!(matches!(refused, Err(CallError::Refused(_))), "{refused:?}");
+        drop(executor);
+        assert_eq!(listener.finish(), 0);
+    }
+
+    #[test]
+    fn a_retry_with_a_larger_limit_is_admitted_as_its_own_attempt() {
+        // `check` asks with 1,024 output tokens, is cut off, and asks again with four
+        // times that, which the ceiling holds to 2,048: two requests, each reserved
+        // its own bound and settled at its own usage.
+        let judged = Judged::new("spend-retry");
+        let answers = vec![
+            turn_with("Looking", "max_tokens", Some((10_000, 1_024))),
+            turn_with("pass\nThe two agree.", "end_turn", Some((10_000, 200))),
+        ];
+        let (listener, log) = serving(&judged.pki, answers);
+        let origin = format!("https://127.0.0.1:{}", listener.port());
+        let over = judged.over_with(
+            &format!("{origin}/v1/messages"),
+            Some(&origin),
+            &["prompts", "source_images"],
+            "",
+        );
+        let scratch = judged.world.beside("pictures");
+        std::fs::create_dir_all(&scratch).unwrap();
+        let picture = import_picture(&judged.world.root, &scratch, "one", 10);
+        let executor = judged.runner(&over);
+        let call = Call::new("check")
+            .input(
+                "images",
+                picture
+                    .parse::<whizbang_core::identity::Digest>()
+                    .map(whizbang_core::artifact::ArtifactId)
+                    .unwrap(),
+            )
+            .argument("tools", Value::text(""));
+        let ran = executor.submit(&call).unwrap();
+        assert_eq!(ran.outcome().name(), "completed", "{:?}", ran.outcome());
+        drop(executor);
+        assert_eq!(listener.finish(), 2);
+        let sent: Vec<Json> = log
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, body)| serde_json::from_slice(body).unwrap())
+            .collect();
+        assert_eq!(
+            (
+                sent[0]["max_tokens"].as_u64(),
+                sent[1]["max_tokens"].as_u64()
+            ),
+            (Some(1_024), Some(2_048))
+        );
+        let record = record_of(&judged.world.root, ran.run().as_str());
+        // The call reserved the bound of each of check's sixteen turns.
+        assert_eq!(record["spend"]["reserved_micros"], BOUND * 16);
+        // 1,000 + 512 and 1,000 + 100.
+        assert_eq!(
+            paid(&record),
+            [
+                (BOUND, 1_512, "answered".to_owned()),
+                (BOUND, 1_100, "answered".to_owned())
+            ]
+        );
+    }
+
+    #[test]
+    fn the_example_configs_whole_call_reservation_fits_its_cap() {
+        // The example of the guide, as the owner writes it: the bound of one request of
+        // its judge, times the sixteen turns `check` reserves, is within its cap.
+        let guide = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/guides/config.md"
+        ))
+        .unwrap();
+        let section = guide
+            .split("## Checking an edit with a judge")
+            .nth(1)
+            .unwrap();
+        let toml = section
+            .split("```toml\n")
+            .nth(1)
+            .and_then(|rest| rest.split("```").next())
+            .unwrap();
+        assert!(
+            toml.contains("model = \"claude-haiku-5-5\"") && toml.contains("call_cap_usd = 2.00")
+        );
+        let judged = Judged::new("spend-example");
+        std::fs::write(judged.world.config_path(), toml).unwrap();
+        let key = ["made", "up", "example", "key", "0123456789"].join("-");
+        std::fs::write(
+            judged.world.env_path(),
+            format!("ANTHROPIC_API_KEY={key}\n"),
+        )
+        .unwrap();
+        let loaded = whizbang_core::config::Loaded::of_files(
+            &judged.world.config_path(),
+            Some(&judged.world.env_path()),
+        )
+        .unwrap();
+        let worker = whizbang::pack::OneWorker::installed();
+        let offers = whizbang_core::config::Offers::of(
+            loaded.config(),
+            loaded.credentials(),
+            &whizbang::wiring::kinds(&worker),
+        )
+        .unwrap();
+        let resolved = offers
+            .resolve(whizbang_core::contract::Capability::Judge, None, &[])
+            .unwrap();
+        let bound = resolved
+            .declaration()
+            .quote()
+            .unwrap()
+            .bound_micros()
+            .unwrap();
+        assert_eq!(bound, BOUND);
+        let turns = whizbang_squint::check::TURNS_LIMIT as u64;
+        let cap = loaded.config().call_cap_micros().unwrap();
+        assert_eq!(cap, 2_000_000);
+        assert!(bound * turns <= cap, "{} over {cap}", bound * turns);
+    }
+}

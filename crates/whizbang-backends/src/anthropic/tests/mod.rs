@@ -62,7 +62,14 @@ fn messages(port: u16, model: &str, effort: Option<&str>) -> Messages {
             model: model.to_owned(),
             effort: effort.map(str::to_owned),
             long_edge: LONG_EDGE,
+            max_output_tokens: 128_000,
         },
+        ceilings: super::spend::Ceilings {
+            input_tokens: u64::MAX,
+            output_tokens: 128_000,
+            pictures: 64,
+        },
+        prices: super::spend::prices_of("claude-haiku-5-5").unwrap(),
     }
 }
 
@@ -292,7 +299,7 @@ fn each_picture_in_the_sent_body_decodes_to_the_bytes_of_its_checked_piece() {
     let backend = messages(listener.port(), "claude-haiku-5-5", None);
     // The pieces the gate is handed for this request: written again, they are the
     // same, since the writer and the encoder make the same bytes of the same request.
-    let pieces = wire::request(&request, &backend.settings).unwrap();
+    let pieces = wire::request(&request, &backend.settings).unwrap().pieces;
     let pictures: Vec<Vec<u8>> = pieces
         .iter()
         .filter(|piece| piece.is_picture())
@@ -318,4 +325,82 @@ fn each_picture_in_the_sent_body_decodes_to_the_bytes_of_its_checked_piece() {
         media,
         ["image/jpeg", "image/jpeg", "image/jpeg", "image/png"]
     );
+}
+
+/// A backend at this port with these ceilings.
+fn ceiled(port: u16, input_tokens: u64, output_tokens: u32, pictures: usize) -> Messages {
+    let mut backend = messages(port, "claude-haiku-5-5", None);
+    backend.ceilings = super::spend::Ceilings {
+        input_tokens,
+        output_tokens,
+        pictures,
+    };
+    backend.settings.max_output_tokens = output_tokens;
+    backend
+}
+
+#[test]
+fn a_request_counted_over_its_input_or_picture_ceiling_is_refused_not_sent() {
+    let pki = Arc::new(Pki::loopback());
+    // A server that must see no connection: each request is refused before one.
+    let (listener, _) = serving(&pki, vec![answer("200 OK", "", b"{}")]);
+    let port = listener.port();
+    // Words over the input ceiling, by the count of one token a byte.
+    let long = Message::new(Role::User, vec![Part::Text("x".repeat(5_000))]).unwrap();
+    let request = JudgeRequest::new("Judge.", vec![long], Vec::new(), Controls::new(64).unwrap());
+    let fault = ask(&pki, ceiled(port, 4_000, 64, 24), &request.unwrap()).unwrap_err();
+    assert_eq!(
+        (fault.kind(), fault.stage(), fault.sentence()),
+        (FaultKind::TooLarge, Stage::NotSent, super::OVER_INPUT)
+    );
+    // Three pictures over a ceiling of two.
+    let pictures = vec![
+        Part::Image(picture(8, 8, false)),
+        Part::Image(picture(8, 8, false)),
+        Part::Image(picture(8, 8, false)),
+    ];
+    let message = Message::new(Role::User, pictures).unwrap();
+    let request = JudgeRequest::new("", vec![message], Vec::new(), Controls::new(64).unwrap());
+    let fault = ask(&pki, ceiled(port, 40_000, 64, 2), &request.unwrap()).unwrap_err();
+    assert_eq!(
+        (fault.kind(), fault.stage(), fault.sentence()),
+        (FaultKind::TooLarge, Stage::NotSent, super::OVER_PICTURES)
+    );
+    // A picture counts by the formula on its prepared size: one of 2,576 by 1,932 is
+    // 4,784 tokens and its overhead, over a ceiling of 4,000.
+    let big = Message::new(Role::User, vec![Part::Image(picture(2576, 1932, false))]).unwrap();
+    let request = JudgeRequest::new("", vec![big], Vec::new(), Controls::new(64).unwrap());
+    let fault = ask(&pki, ceiled(port, 4_000, 64, 24), &request.unwrap()).unwrap_err();
+    assert_eq!(fault.sentence(), super::OVER_INPUT);
+    // Nothing reached the server.
+    assert_eq!(listener.finish(), 0);
+}
+
+#[test]
+fn a_request_asking_more_output_than_the_ceiling_is_sent_with_the_ceiling() {
+    let pki = Arc::new(Pki::loopback());
+    let turn = json!({
+        "id": "msg_1", "content": [{ "type": "text", "text": "Seen." }],
+        "stop_reason": "end_turn", "usage": { "input_tokens": 9, "output_tokens": 2 }
+    });
+    let ok = answer("200 OK", "", turn.to_string().as_bytes());
+    let (listener, log) = serving(&pki, vec![ok.clone(), ok]);
+    let port = listener.port();
+    let asking = |most: u32| {
+        let message = Message::new(Role::User, vec![Part::Text("Look.".to_owned())]).unwrap();
+        JudgeRequest::new("", vec![message], Vec::new(), Controls::new(most).unwrap()).unwrap()
+    };
+    // A first request, and a retry that asks four times as much: each is sent with
+    // the ceiling at most.
+    ask(&pki, ceiled(port, 40_000, 2_048, 24), &asking(1_024)).unwrap();
+    ask(&pki, ceiled(port, 40_000, 2_048, 24), &asking(8_192)).unwrap();
+    assert_eq!(listener.finish(), 2);
+    let sent: Vec<Value> = log
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|seen| serde_json::from_slice(&seen.body).unwrap())
+        .collect();
+    assert_eq!(sent[0]["max_tokens"], 1_024);
+    assert_eq!(sent[1]["max_tokens"], 2_048);
 }

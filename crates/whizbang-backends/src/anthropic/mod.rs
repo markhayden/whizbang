@@ -4,8 +4,9 @@
 //! `https://api.anthropic.com/v1/messages`, through the sender its run hands it.
 //!
 //! **A table of the kind** is `kind = "service"`, `provider = "anthropic"`, a `model`
-//! and a `key_env`, under `[backends.judge]`; its settings are `effort` (a text) and
-//! `at_most_micros` (the bound of one request, in millionths of a dollar). It names no
+//! and a `key_env`, under `[backends.judge]`; its settings are `effort` (a text) and the
+//! three ceilings of a request, `max_input_tokens`, `max_output_tokens` and
+//! `max_pictures`, which fix what one request may cost ([`spend`]). It names no
 //! `url`: the address is the kind's own, and a table that names one is refused. A
 //! test's build makes the kind at another address ([`ServiceKind::at`], under the
 //! feature `fakes`).
@@ -19,6 +20,7 @@
 //! when no byte left the process (the sender says so, or the request was refused before
 //! it was handed over).
 
+pub mod spend;
 mod wire;
 
 #[cfg(test)]
@@ -27,7 +29,7 @@ mod tests;
 use std::sync::Arc;
 
 use whizbang_core::capability::{
-    Bounds, Declaration, Fault, FaultKind, Judge, JudgeRequest, Price, Turn,
+    Bounds, Charge, Declaration, Fault, FaultKind, Judge, JudgeRequest, Price, Turn,
 };
 use whizbang_core::config::{Kind, KindRefused, Setting, Table};
 use whizbang_core::contract::{Capability, Made, ModelIdentity, Secrets};
@@ -75,9 +77,17 @@ const NO_MODEL: &str = "a service backend names its model";
 const BAD_MODEL: &str = "a service backend's model is 1 to 64 letters, digits, dots and hyphens";
 const NO_KEY: &str = "a service backend names its key with key_env, and no token_env";
 const BAD_SETTING: &str = "a service backend takes the settings effort, one of low, medium, \
-                           high, xhigh and max, and at_most_micros, a whole number of 1 or more";
+                           high, xhigh and max, and max_input_tokens (1 to 100000), \
+                           max_output_tokens (1 to 128000) and max_pictures (1 to 64), each a \
+                           whole number";
+const NOT_PRICED: &str = "a service backend's model is one this build has a row of prices for: \
+                          claude-haiku-5-5";
 const NOT_DECLARED: &str = "a service backend cannot declare that model";
 
+/// What a fault says of a request counted over the input ceiling.
+pub const OVER_INPUT: &str = "the request is counted over the most input tokens its backend sends";
+/// What it says of a request of more pictures than the ceiling.
+pub const OVER_PICTURES: &str = "the request holds more pictures than its backend sends";
 /// What a fault says of a request whose pieces are more than a request may hold.
 pub const TOO_MANY_PIECES: &str = "the request holds more pictures than one request may carry";
 /// What it says of an answer of 400, 404, 413 or 422.
@@ -133,7 +143,8 @@ impl ServiceKind {
 struct Read {
     model: String,
     effort: Option<String>,
-    at_most_micros: Option<i64>,
+    ceilings: spend::Ceilings,
+    prices: spend::Prices,
 }
 
 fn read(table: &Table<'_>) -> Result<Read, KindRefused> {
@@ -158,18 +169,29 @@ fn read(table: &Table<'_>) -> Result<Read, KindRefused> {
     if !plain || table.secrets().redact(model) != model {
         return Err(KindRefused::Table(BAD_MODEL));
     }
+    let prices = spend::prices_of(model).ok_or(KindRefused::Table(NOT_PRICED))?;
     let mut read = Read {
         model: model.to_owned(),
         effort: None,
-        at_most_micros: None,
+        ceilings: spend::DEFAULT_CEILINGS,
+        prices,
     };
+    let within = |value: i64, most: i64| (1..=most).contains(&value);
     for (key, setting) in backend.settings() {
         match (key, setting) {
             ("effort", Setting::Text(effort)) if EFFORTS.contains(&effort.as_str()) => {
                 read.effort = Some(effort.clone());
             }
-            ("at_most_micros", Setting::Integer(micros)) if *micros >= 1 => {
-                read.at_most_micros = Some(*micros);
+            ("max_input_tokens", Setting::Integer(tokens))
+                if within(*tokens, spend::LONG_PROMPT_TOKENS as i64) =>
+            {
+                read.ceilings.input_tokens = tokens.unsigned_abs();
+            }
+            ("max_output_tokens", Setting::Integer(tokens)) if within(*tokens, 128_000) => {
+                read.ceilings.output_tokens = u32::try_from(*tokens).unwrap_or(1);
+            }
+            ("max_pictures", Setting::Integer(pictures)) if within(*pictures, 64) => {
+                read.ceilings.pictures = usize::try_from(*pictures).unwrap_or(1);
             }
             _ => return Err(KindRefused::Table(BAD_SETTING)),
         }
@@ -186,15 +208,12 @@ impl Kind for ServiceKind {
         let read = read(table)?;
         let address = self.address(table.secrets())?;
         let identity = ModelIdentity::new(ADAPTER, &read.model, VERSION);
-        let mut declaration = Declaration::new(identity, &["image", "tool"])
+        let bound = spend::bound_micros(read.ceilings, read.prices);
+        let price = Price::at_most(bound).map_err(|_| KindRefused::Table(BAD_SETTING))?;
+        let declaration = Declaration::new(identity, &["image", "tool"])
             .map_err(|_| KindRefused::Table(NOT_DECLARED))?
-            .sending_to(Recipient::new(address.origin().clone()));
-        if let Some(micros) = read.at_most_micros {
-            #[allow(clippy::cast_precision_loss)]
-            let price =
-                Price::at_most(micros as f64).map_err(|_| KindRefused::Table(BAD_SETTING))?;
-            declaration = declaration.priced(price);
-        }
+            .sending_to(Recipient::new(address.origin().clone()))
+            .priced(price);
         Ok(Made::Judge(Arc::new(Messages {
             declaration,
             address,
@@ -202,7 +221,10 @@ impl Kind for ServiceKind {
                 model: read.model,
                 effort: read.effort,
                 long_edge: LONG_EDGE,
+                max_output_tokens: read.ceilings.output_tokens,
             },
+            ceilings: read.ceilings,
+            prices: read.prices,
         })))
     }
 
@@ -221,6 +243,8 @@ struct Messages {
     declaration: Declaration,
     address: Address,
     settings: wire::Settings,
+    ceilings: spend::Ceilings,
+    prices: spend::Prices,
 }
 
 impl Messages {
@@ -233,7 +257,18 @@ impl Messages {
         sender: &dyn Sender,
         bounds: &Bounds,
     ) -> Result<Turn, Fault> {
-        let pieces = wire::request(request, &self.settings)?;
+        // The ceilings, before anything is handed over: the pictures, then the input
+        // as counted. The output is held by the writer, which asks for no more.
+        let over = |why| Err(Fault::new(FaultKind::TooLarge, why).not_sent());
+        if wire::pictures_in(request) > self.ceilings.pictures {
+            return over(OVER_PICTURES);
+        }
+        let written = wire::request(request, &self.settings)?;
+        let counted = spend::input_count(written.word_bytes(), written.messages, &written.pictures);
+        if counted > self.ceilings.input_tokens {
+            return over(OVER_INPUT);
+        }
+        let pieces = written.pieces;
         let mut to = self.address.clone();
         for _ in 0..=MOVES_LIMIT {
             let outgoing = Outgoing::new(to.clone(), pieces.clone())
@@ -249,9 +284,22 @@ impl Messages {
                 to = next.clone();
                 continue;
             }
-            let answered = |kind, why| Err(Fault::new(kind, why).answered(None));
+            // An error status is charged nothing: the provider charges no request it
+            // refused or failed.
+            let nothing = Charge::whole(0).ok();
+            let answered = |kind, why| Err(Fault::new(kind, why).answered(nothing));
             return match reply.status() {
-                Some(200) => wire::turn(reply.body()),
+                // What a turn cost is its usage at the row; one that reports none
+                // cost its bound, which the meter charges when no charge is said.
+                Some(200) => wire::turn(reply.body()).map(|turn| {
+                    match turn
+                        .usage()
+                        .and_then(|usage| spend::charge_of(usage, self.prices))
+                    {
+                        Some(charge) => turn.charged(charge),
+                        None => turn,
+                    }
+                }),
                 Some(400 | 404 | 413 | 422) => answered(FaultKind::Rejected, REFUSED),
                 Some(401 | 403) => answered(FaultKind::Credential, CREDENTIAL),
                 Some(429) => answered(FaultKind::Unavailable, RATE_LIMITED),

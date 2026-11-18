@@ -6,4 +6,5 @@
 //! contract: a judge looks at images through the tools its run froze, and concludes.
 
 pub mod check;
+pub mod source_fidelity;
 pub mod view;

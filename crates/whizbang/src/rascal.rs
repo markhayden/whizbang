@@ -244,7 +244,7 @@ pub fn run_with(command: &Command, recovery: Recovery) -> Result<String, String>
 /// writer of the store at `at`. A command that runs an action makes no store where
 /// there is none. The executor is built over the writer, which the one entry point
 /// hands out once the store is recovered.
-fn executor(
+pub(crate) fn executor(
     at: &Where,
     under: &Under,
     recovery: Recovery,

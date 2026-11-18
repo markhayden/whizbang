@@ -405,8 +405,7 @@ fn a_chunked_answer_is_read_whole_and_one_the_reader_does_not_take_is_refused_by
     trailers.push_str("\r\n");
     // Each answer, and the body it is read to or the sentence it is refused with.
     type Case<'a> = (Vec<u8>, Result<&'a [u8], &'a str>);
-    let answers: Vec<Case> =
-        vec![
+    let answers: Vec<Case> = vec![
         // Two chunks, an extension, a trailer: the body is the chunks' bytes.
         (
             chunked("5;name=v\r\n{\"a\":\r\n3\r\n12}\r\n0\r\nx-t: 1\r\n\r\n"),
@@ -416,9 +415,20 @@ fn a_chunked_answer_is_read_whole_and_one_the_reader_does_not_take_is_refused_by
         (chunked("z\r\nab\r\n0\r\n\r\n"), Err(CHUNK_LINE)),
         (chunked(";x\r\nab\r\n0\r\n\r\n"), Err(CHUNK_LINE)),
         (chunked("123456789\r\n"), Err(CHUNK_LINE)),
-        (chunked(&format!("1;{}\r\na\r\n0\r\n\r\n", "x".repeat(300))), Err(CHUNK_LINE)),
+        (
+            chunked(&format!("1;{}\r\na\r\n0\r\n\r\n", "x".repeat(300))),
+            Err(CHUNK_LINE),
+        ),
         (chunked("2\r\nabX\r\n0\r\n\r\n"), Err(CHUNK_END)),
         (chunked("1000001\r\n"), Err(CHUNKED_TOO_LARGE)),
+        // The largest size eight digits say: refused by the bound, nothing read.
+        (chunked("ffffffff\r\n"), Err(CHUNKED_TOO_LARGE)),
+        // A chunk of nothing, then a second answer smuggled after it: the body ends at
+        // the chunk of nothing, and what follows is never read as an answer.
+        (
+            chunked("2\r\nok\r\n0\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nother"),
+            Ok(b"ok"),
+        ),
         (chunked(&trailers), Err(TRAILERS)),
         (chunked("3\r\nab"), Err(CUT)),
         (

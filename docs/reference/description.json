@@ -5,7 +5,7 @@
   "actions": [
     {
       "name": "check",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "kind": "recipe",
       "purpose": "Has a judge look at images through evidence tools and conclude: pass, fail or unsure.",
       "arguments": [
@@ -21,6 +21,24 @@
         {
           "name": "judge",
           "purpose": "The judge to ask; without it, the configured default.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "use_case",
+          "purpose": "general, or source-fidelity: the source first among the images, then the edit of it.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": "general"
+        },
+        {
+          "name": "brief",
+          "purpose": "Under source-fidelity, what the edit was to do and keep, as data.",
           "type": {
             "type": "text"
           },

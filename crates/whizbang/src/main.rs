@@ -12,6 +12,7 @@ mod setup;
 mod spend;
 #[cfg(test)]
 mod spending;
+mod squint;
 mod store;
 
 use std::process::ExitCode;
@@ -56,6 +57,12 @@ enum Command {
     Rascal {
         #[command(subcommand)]
         command: rascal::Command,
+    },
+    /// Squint: having a judge check images under a use case, as an action against a
+    /// store.
+    Squint {
+        #[command(subcommand)]
+        command: squint::Command,
     },
     /// Spend: a store's allowance, what is counted against it, and the owner's
     /// reset, which sets the allowance and clears the books.
@@ -215,6 +222,12 @@ fn main() -> ExitCode {
         },
         Command::Rascal { command } => {
             match rascal::run(&command, std::sync::Arc::new(platforms_models_dir)) {
+                Ok(text) => emit(text.as_bytes()),
+                Err(complaint) => complain(&complaint),
+            }
+        }
+        Command::Squint { command } => {
+            match squint::run(&command, std::sync::Arc::new(platforms_models_dir)) {
                 Ok(text) => emit(text.as_bytes()),
                 Err(complaint) => complain(&complaint),
             }
