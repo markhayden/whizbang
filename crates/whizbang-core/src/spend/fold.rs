@@ -469,6 +469,17 @@ pub fn fold(generation: &Generation, read: impl Fn(&Entry) -> store::Result<Vec<
     Folded::of(Reading::of(generation, read))
 }
 
+/// Folds the books as an admission reads them ([`Reading::of_newest`]): the content of
+/// no name of an epoch a reset closed is read, unless a hold of `run` names that epoch.
+/// What it says of the newest epoch, and of `run`'s, is what [`fold`] says.
+pub fn fold_newest(
+    generation: &Generation,
+    read: impl Fn(&Entry) -> store::Result<Vec<u8>>,
+    run: Option<&RunId>,
+) -> Folded {
+    Folded::of(Reading::of_newest(generation, read, run))
+}
+
 /// One reservation's state and what it counts for: the first row that fits of ADR
 /// 0016, "What a reservation counts for".
 fn standing(names: Names, newest: u64, turns: &BTreeMap<u64, BTreeSet<u64>>) -> Standing {

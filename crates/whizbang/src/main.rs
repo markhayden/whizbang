@@ -1,6 +1,7 @@
 //! The `whizbang` binary: argument parsing and wiring only.
 
 mod backends;
+mod eval;
 mod export;
 mod models;
 mod rascal;
@@ -12,6 +13,7 @@ mod spend;
 #[cfg(test)]
 mod spending;
 mod squint;
+mod stats;
 mod store;
 
 use std::process::ExitCode;
@@ -62,6 +64,12 @@ enum Command {
     Squint {
         #[command(subcommand)]
         command: squint::Command,
+    },
+    /// Evaluation: the evaluation sets, their pictures, and matrices of runs of
+    /// `squint check` over them.
+    Eval {
+        #[command(subcommand)]
+        command: eval::Command,
     },
     /// Spend: a store's allowance, what is counted against it, and the owner's
     /// reset, which sets the allowance and clears the books.
@@ -231,6 +239,10 @@ fn main() -> ExitCode {
                 Err(complaint) => complain(&complaint),
             }
         }
+        Command::Eval { command } => match eval::run(&command) {
+            Ok(text) => emit(text.as_bytes()),
+            Err(complaint) => complain(&complaint),
+        },
         Command::Spend { command } => match spend::run(&command) {
             Ok(text) => emit(text.as_bytes()),
             Err(complaint) => complain(&complaint),

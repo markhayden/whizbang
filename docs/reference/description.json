@@ -81,6 +81,15 @@
           "default": "full"
         },
         {
+          "name": "cell",
+          "purpose": "The cell of an evaluation matrix this run is, kept in its record: the matrix, set, item, judge, arm, repetition and attempt. check does not read it.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
           "name": "max_output_tokens",
           "purpose": "The most output tokens of one turn of the judge.",
           "type": {

@@ -1,0 +1,13 @@
+# Ported from squint's evalsets/matrix/study-terra.toml (squint, cc4b9ac3e2a9a3fbfd32a6588e5d700988e36b63).
+# Squint's arm D_<tool> is C+<tool> here: the control and the one tool under test. The judge is
+# the config's backend of that name, which must be of the model named. outline and regions are
+# tools whizbang does not have yet (task X1), so the runner refuses this matrix until it does.
+[matrix]
+name = "study-terra-2026-11"
+sets = ["source-fidelity/blind-v3"]
+arms = ["C", "C+outline", "C+regions"]
+repetitions = 1
+
+[[matrix.judges]]
+backend = "terra"
+model = "gpt-6.1-terra"

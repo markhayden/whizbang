@@ -204,6 +204,11 @@ impl Check {
             ValueType::choice(&Projection::NAMES),
             Value::text("full"),
         ))
+        .argument(Argument::optional(
+            "cell",
+            "The cell of an evaluation matrix this run is, kept in its record: the matrix, set, item, judge, arm, repetition and attempt. check does not read it.",
+            ValueType::Text,
+        ))
         .argument(Argument::with_default(
             "max_output_tokens",
             "The most output tokens of one turn of the judge.",

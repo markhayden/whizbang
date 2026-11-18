@@ -604,6 +604,7 @@ version = "0.0.1"
 dependencies = [
  "clap",
  "image",
+ "serde",
  "serde_json",
  "whizbang",
  "whizbang-backends",
@@ -650,7 +651,11 @@ dependencies = [
 name = "whizbang-eval"
 version = "0.0.1"
 dependencies = [
+ "serde",
  "serde_json",
+ "toml",
+ "whizbang-core",
+ "whizbang-testkit",
 ]
 
 [[package]]

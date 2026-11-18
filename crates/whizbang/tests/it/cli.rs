@@ -1398,3 +1398,73 @@ fn squint_check_with_nine_references_is_refused_naming_the_limit() {
     let ran = whizbang(eight, &root);
     assert!(!ran.err.contains("at most 8"), "{}", ran.err);
 }
+
+#[test]
+fn eval_matrix_runs_a_three_item_set_under_a_scripted_judge_and_runs_stats_reports_it() {
+    use crate::anthropic::submission;
+    use crate::matrix::{matrix_of, ran, run_matrix, world_with};
+    use crate::wired::whizbang;
+    // The matrix runs through the runner the command builds, over the binary's
+    // executor and a judge on loopback: three items under arm C.
+    let (judged, tiny) = world_with("cli-eval-matrix", &["a", "b", "c"]);
+    let matrix = matrix_of("C", 1, 2);
+    let answers = vec![submission("held", "Kept."); 3];
+    let (report, _) = run_matrix(&judged, answers, &|e| {
+        ran(e, &judged, &tiny, &matrix, 20_000_000, &|| false)
+    });
+    assert_eq!(
+        report.unwrap().text(),
+        "cells: 3\nstarted now: 3\ncompleted: 3\nfailed: 0\ninterrupted: 0\nnot run: 0\n\
+         verdicts: pass 3\nagreeing with their labels: 3 of 3\n"
+    );
+    // And the binary reports on it, by the matrix's name.
+    let stats = whizbang(&["runs", "stats", "--matrix", "tiny"], &judged.world.root);
+    assert_eq!(stats.code, Some(0), "{}", stats.err);
+    assert!(
+        stats.out.starts_with("runs: 3\ncompleted: 3 (100.0%)\n"),
+        "{}",
+        stats.out
+    );
+    assert!(
+        stats.out.contains("verdicts: 3 (pass 3, fail 0, unsure 0)"),
+        "{}",
+        stats.out
+    );
+    // The command itself refuses a matrix whose judge the config does not give as the
+    // model it names, before anything runs.
+    let file = judged.world.beside("matrix.toml");
+    std::fs::write(
+        &file,
+        format!(
+            "[matrix]\nname = \"m\"\nsets = [\"{}\"]\narms = [\"C\"]\nrepetitions = 1\n\
+             [[matrix.judges]]\nbackend = \"default\"\nmodel = \"gpt-6.1-terra\"\n",
+            crate::fetch::SET
+        ),
+    )
+    .unwrap();
+    let config = judged.world.beside("eval-config.toml");
+    std::fs::write(
+        &config,
+        "[backends.judge]\nkind = \"service\"\nprovider = \"anthropic\"\nmodel = \"claude-haiku-5-5\"\n",
+    )
+    .unwrap();
+    let refused = whizbang(
+        &[
+            "eval",
+            "matrix",
+            "--matrix",
+            file.to_str().unwrap(),
+            "--root",
+            tiny.root.to_str().unwrap(),
+            "--config",
+            config.to_str().unwrap(),
+        ],
+        &judged.world.root,
+    );
+    assert_eq!(refused.code, Some(1));
+    assert!(
+        refused.err.contains("is to be of the model gpt-6.1-terra"),
+        "{}",
+        refused.err
+    );
+}

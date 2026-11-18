@@ -51,6 +51,23 @@ pub enum Command {
         #[arg(long, value_name = "NAME")]
         diagnostic: Option<String>,
     },
+    /// Aggregate the runs a filter admits: how many; how they ended; for runs that
+    /// judged, their verdicts and the unsure rate; retries and repairs; time as the
+    /// median and the 95th percentile; and cost.
+    Stats {
+        #[command(flatten)]
+        filter: crate::stats::Filter,
+        #[command(flatten)]
+        at: Where,
+    },
+    /// Write the record of each run a filter admits, as it is stored: one JSON object a
+    /// line, for analysis outside whizbang. A record holds no label of an evaluation set.
+    Export {
+        #[command(flatten)]
+        filter: crate::stats::Filter,
+        #[command(flatten)]
+        at: Where,
+    },
 }
 
 /// Runs a runs command: the bytes to print on success, or the complaint.
@@ -63,6 +80,10 @@ pub fn run(command: &Command) -> Result<Vec<u8>, String> {
             json,
             diagnostic,
         } => show(at.root(), run, *json, diagnostic.as_deref()),
+        Command::Stats { filter, at } => {
+            crate::stats::stats(at.root(), filter).map(String::into_bytes)
+        }
+        Command::Export { filter, at } => crate::stats::export(at.root(), filter),
     }
 }
 

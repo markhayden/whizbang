@@ -1,0 +1,23 @@
+# The evidence of task E1 (plan 2C, item 7): arm F over the five dev sets and the five adversarial
+# sets, 110 items, under claude-haiku-5-5, twice: 220 decisions. Run by hand on the owner's Mac.
+[matrix]
+name = "e1-evidence"
+sets = [
+  "source-fidelity/scenes-v1",
+  "reference-consistency/pets-v1",
+  "reality-checks/people-v1",
+  "brief-compliance/stills-v1",
+  "product-fidelity/packshots-v1",
+  "source-fidelity/adversarial-v1",
+  "reference-consistency/adversarial-v1",
+  "reality-checks/adversarial-v1",
+  "brief-compliance/adversarial-v1",
+  "product-fidelity/adversarial-v1",
+]
+arms = ["F"]
+repetitions = 2
+concurrency = 2
+
+[[matrix.judges]]
+backend = "haiku"
+model = "claude-haiku-5-5"

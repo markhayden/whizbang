@@ -1,0 +1,16 @@
+# Ported from squint's evalsets/matrix/study-haiku.toml (squint, cc4b9ac3e2a9a3fbfd32a6588e5d700988e36b63).
+# Squint's arm D_<tool> is C+<tool> here: the control and the one tool under test. The judge is
+# the config's backend of that name, which must be of the model named. outline and regions are
+# tools whizbang does not have yet (task X1), so the runner refuses this matrix until it does.
+# Stage 1 of squint's tool study (the pilot): claude-haiku-5-5 on blind-v3 under the control and
+# with each tool under test; two repetitions, the second measuring how often the model disagrees
+# with itself.
+[matrix]
+name = "study-haiku-2026-11"
+sets = ["source-fidelity/blind-v3"]
+arms = ["C", "C+outline", "C+regions"]
+repetitions = 2
+
+[[matrix.judges]]
+backend = "haiku"
+model = "claude-haiku-5-5"

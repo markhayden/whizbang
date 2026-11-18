@@ -1424,3 +1424,94 @@ fn runs_show_prints_a_run_2_record_as_it_did() {
     );
     assert_eq!(text, expected);
 }
+
+// --- `runs stats` and `runs export` (plan 2C, task E1, item 5) ------------------------------
+
+/// A matrix of arm F over three items under a judge on loopback: three runs of `check`,
+/// each with its run of `align` measured first; the store's root.
+fn three_checked(label: &str) -> crate::anthropic::Judged {
+    use crate::anthropic::submission;
+    use crate::matrix::{matrix_of, ran, run_matrix, world_with};
+    let (judged, tiny) = world_with(label, &["a", "b", "c"]);
+    let matrix = matrix_of("F", 1, 2);
+    let answers = vec![submission("held", "Kept."); 3];
+    let (report, _) = run_matrix(&judged, answers, &|e| {
+        ran(e, &judged, &tiny, &matrix, 20_000_000, &|| false)
+    });
+    assert_eq!(report.unwrap().completed, 3);
+    judged
+}
+
+#[test]
+fn stats_over_a_tool_report_count_outcomes_verdicts_time_and_cost() {
+    let judged = three_checked("runs-stats");
+    let root = &judged.world.root;
+    let stats = crate::wired::whizbang(&["runs", "stats", "--tool", "align"], root);
+    assert_eq!(stats.code, Some(0), "{}", stats.err);
+    let lines: Vec<&str> = stats.out.lines().collect();
+    assert_eq!(lines[0], "runs: 3");
+    assert_eq!(lines[1], "completed: 3 (100.0%)");
+    assert_eq!(lines[5], "interrupted: 0 (0.0%)");
+    assert_eq!(
+        lines[6],
+        "verdicts: 0 (pass 0, fail 0, unsure 0); unsure rate -"
+    );
+    assert!(lines[9].starts_with("time: median ") && lines[9].contains(" ms, 95th percentile "));
+    assert_eq!(lines[10], "cost: $0.00 settled, $0.00 unresolved");
+    // The runs of check, by their use case: each judged once and passed, at a cost.
+    let stats = crate::wired::whizbang(&["runs", "stats", "--use-case", "source-fidelity"], root);
+    let lines: Vec<&str> = stats.out.lines().collect();
+    assert_eq!(lines[0], "runs: 3");
+    assert_eq!(
+        lines[6],
+        "verdicts: 3 (pass 3, fail 0, unsure 0); unsure rate 0.0%"
+    );
+    assert_eq!(lines[7..9], ["retries: 0", "repairs: 0"]);
+    assert!(
+        lines[10].starts_with("cost: $") && !lines[10].starts_with("cost: $0.00 "),
+        "{}",
+        lines[10]
+    );
+    // A filter no run passes.
+    let none = crate::wired::whizbang(&["runs", "stats", "--model", "gpt-6.1-terra"], root);
+    assert!(none.out.starts_with("runs: 0\n"), "{}", none.out);
+    let refused = crate::wired::whizbang(&["runs", "stats", "--since", "18-11-2026"], root);
+    assert_eq!(refused.code, Some(1));
+}
+
+#[test]
+fn export_writes_one_json_object_per_run_and_no_label() {
+    let judged = three_checked("runs-export");
+    let root = &judged.world.root;
+    let all = crate::wired::whizbang(&["runs", "export"], root);
+    assert_eq!(all.code, Some(0), "{}", all.err);
+    let lines: Vec<&str> = all.out.lines().collect();
+    // Three runs of check, three of align, and the runs of view or resize none.
+    let records: Vec<serde_json::Value> = lines
+        .iter()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let actions: Vec<&str> = records
+        .iter()
+        .map(|r| r["asked"]["action"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        actions.iter().filter(|a| **a == "check").count(),
+        3,
+        "{actions:?}"
+    );
+    assert_eq!(
+        actions.iter().filter(|a| **a == "align").count(),
+        3,
+        "{actions:?}"
+    );
+    // Each line is the record as `runs show --json` gives it.
+    let first = records[0]["identity"]["run"].as_str().unwrap();
+    let shown = crate::wired::whizbang(&["runs", "show", first, "--json"], root);
+    assert_eq!(format!("{}\n", lines[0]), shown.out);
+    // No record holds a label: the set's words for its items are in none of them.
+    assert!(!all.out.contains("\"expected\""));
+    assert!(!all.out.contains("adjudicated"));
+    let tool = crate::wired::whizbang(&["runs", "export", "--tool", "align"], root);
+    assert_eq!(tool.out.lines().count(), 3);
+}

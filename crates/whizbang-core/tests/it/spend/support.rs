@@ -188,6 +188,11 @@ impl World {
         self.dir.path().join("store")
     }
 
+    /// The store's folder.
+    pub fn store_root(&self) -> PathBuf {
+        self.root()
+    }
+
     /// How many actions ran.
     pub fn ran(&self) -> u64 {
         self.runs.load(Ordering::SeqCst)
