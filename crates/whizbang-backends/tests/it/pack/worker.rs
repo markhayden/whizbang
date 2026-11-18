@@ -192,7 +192,9 @@ fn a_worker_is_started_at_the_first_request_and_not_before() {
     let pid = worker.pid().unwrap();
     assert_eq!(kit::pack_children(), vec![pid]);
     let said = worker.said().unwrap().clone();
-    assert_eq!(said.device, None, "no runtime was asked yet");
+    // The worker states its device in its hello (plan 1C, task P7a): the pack's core
+    // imports no runtime, so its work runs on the CPU until a model names its own.
+    assert_eq!(said.device.as_deref(), Some("cpu"));
     assert!(said.threads >= 1, "{said:?}");
 
     // The next finds it running, and starts nothing more.

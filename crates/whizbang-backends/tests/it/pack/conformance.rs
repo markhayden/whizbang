@@ -150,6 +150,12 @@ struct Case {
 
 const TABLE: &[Case] = &[
     Case {
+        shows: "a result names the device of the model that answered it, not the hello's",
+        by: &[By::Model("fake-mps")],
+        task: "P7a",
+        test: "conformance::a_result_names_the_device_of_the_model_that_answered_it_and_the_hello_the_workers_own",
+    },
+    Case {
         shows: "a segment request is answered with the masks the request determines",
         by: &[By::Model("fake-ok")],
         task: "P3b",
@@ -297,7 +303,8 @@ fn texts() -> (String, String) {
 fn every_case_of_the_table_names_the_fake_model_or_the_fake_fault_that_produces_it() {
     let models = python_names("fake_models.py", "MODELS");
     let faults = python_names("fakes.py", "FAULTS");
-    assert_eq!(models.len(), 6, "{models:?}");
+    // D3's six, and `fake-mps` of task P7a.
+    assert_eq!(models.len(), 7, "{models:?}");
     let (tests, plan) = texts();
     let mut named_models = BTreeSet::new();
     let mut named_faults = BTreeSet::new();
@@ -333,7 +340,7 @@ fn every_case_of_the_table_names_the_fake_model_or_the_fake_fault_that_produces_
         // Every task of the table is built: each case's test is here, and those of P4 are
         // in the queue's tests.
         assert!(
-            ["P3a", "P3b", "P4"].contains(&case.task),
+            ["P3a", "P3b", "P4", "P7a"].contains(&case.task),
             "a case of the task {}",
             case.task
         );
@@ -354,6 +361,19 @@ fn every_case_of_the_table_names_the_fake_model_or_the_fake_fault_that_produces_
 }
 
 // --- the cases this task shows ----------------------------------------------------------------
+
+#[test]
+fn a_result_names_the_device_of_the_model_that_answered_it_and_the_hello_the_workers_own() {
+    // Task P7a: the hello names the device the worker's work runs on while no model is
+    // resident, `cpu`; a result names the device of the model that answered it, which
+    // `fake-mps` says is `mps`, as a model its runtime placed on the Apple GPU would.
+    let mut worker = supervised(None, system());
+    worker.ready().unwrap();
+    assert_eq!(worker.said().unwrap().device.as_deref(), Some("cpu"));
+    let transport: &mut dyn Transport = &mut *worker;
+    let (_, answered) = loaded_then(transport, "fake-mps", three_queries(), 2);
+    assert_eq!(answered.unwrap().device, "mps");
+}
 
 #[test]
 fn the_real_pack_with_a_fake_model_answers_a_segment_request_whose_masks_are_those_the_request_determines()

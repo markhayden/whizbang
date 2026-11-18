@@ -10,7 +10,7 @@ use crate::contract::Cancellation;
 use crate::egress::{Classes, DataClass};
 use crate::identity::{Binding, BindingId, Space};
 
-use super::{Bounds, Charge, Declaration, Fault, Picture, Unfit, feature, pixel_count};
+use super::{Bounds, Charge, Declaration, Fault, Picture, Served, Unfit, feature, pixel_count};
 
 /// The most requests one batch holds.
 pub const QUERY_LIMIT: usize = 64;
@@ -389,6 +389,14 @@ pub struct SegmentResponse {
     answers: Vec<Vec<Instance>>,
     /// What the request cost, when the backend's answer said.
     charge: Option<Charge>,
+    /// Where it was answered, as far as the backend said.
+    served: Served,
+}
+
+impl super::Answer for SegmentResponse {
+    fn served(&self) -> &Served {
+        &self.served
+    }
 }
 
 impl SegmentResponse {
@@ -398,7 +406,21 @@ impl SegmentResponse {
         SegmentResponse {
             answers,
             charge: None,
+            served: Served::unknown(),
         }
+    }
+
+    /// The same answer, saying where it was answered: the device and whether a cache
+    /// answered (ADR 0006, "What a response says of where it was answered"). An
+    /// answer that says neither is recorded as saying neither.
+    pub fn served_as(mut self, served: Served) -> SegmentResponse {
+        self.served = served;
+        self
+    }
+
+    /// Where it was answered, as far as it said.
+    pub fn served(&self) -> &Served {
+        &self.served
     }
 
     /// The same answer, with what the request cost: the charge the backend's answer

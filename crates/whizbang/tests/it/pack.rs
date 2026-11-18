@@ -50,6 +50,8 @@ use crate::wired::{has_line, shown, whizbang};
 const OK: &str = "fake-ok";
 /// The fake that waits until its call is cancelled.
 const WAIT: &str = "fake-wait";
+/// The fake that answers as `fake-ok` does, on the device `mps` (task P7a).
+const MPS: &str = "fake-mps";
 /// The revision the adapter of the tests' entries states of itself.
 const ADAPTER_REVISION: &str = "7";
 
@@ -101,11 +103,12 @@ fn entry_at(
     )
 }
 
-/// The two fake models of the tests' catalogue.
+/// The fake models of the tests' catalogue.
 fn entries() -> Vec<(Entry, FakeDownloader)> {
     vec![
         entry(OK, &["box", "phrase", "point"]),
         entry(WAIT, &["phrase"]),
+        entry(MPS, &["phrase"]),
     ]
 }
 
@@ -211,18 +214,19 @@ fn finds_times(name: &str, times: usize, came: &Arc<Mutex<Vec<Came>>>) -> Arc<dy
 }
 
 /// A scratch folder with a store, a config file, and a models directory in which the
-/// tests' two fake models are installed; and the one worker of the wiring, in its guard.
-struct Local {
+/// tests' fake models are installed; and the one worker of the wiring, in its guard.
+/// `backends.rs` builds on it too.
+pub(crate) struct Local {
     /// First, so that it is dropped first: the worker is killed and waited for before
     /// the folders go.
-    worker: Guard<Arc<OneWorker>>,
+    pub(crate) worker: Guard<Arc<OneWorker>>,
     dir: Scratch,
-    root: PathBuf,
+    pub(crate) root: PathBuf,
     came: Arc<Mutex<Vec<Came>>>,
 }
 
 impl Local {
-    fn new(label: &str) -> Local {
+    pub(crate) fn new(label: &str) -> Local {
         let dir = Scratch::new(label);
         let root = dir.path().join("store");
         drop(Store::open(&root, Arc::new(RealFs)).unwrap());
@@ -247,13 +251,13 @@ impl Local {
         self.dir.path().join("models")
     }
 
-    fn config_path(&self) -> PathBuf {
+    pub(crate) fn config_path(&self) -> PathBuf {
         self.dir.path().join("whizbang.toml")
     }
 
     /// The tests' catalogue under the adapters of its models, with the flag naming this
     /// folder's models directory.
-    fn models(&self) -> Models {
+    pub(crate) fn models(&self) -> Models {
         let none = Secrets::none();
         let (entries, adapters): (Vec<Entry>, Vec<(ModelName, Revision)>) = entries()
             .into_iter()
@@ -268,7 +272,7 @@ impl Local {
     /// Writes the config, and answers what the binary's wiring builds over it: the
     /// kinds of this build over the one worker, and the tests' models in the
     /// directory the wiring opened.
-    fn over(&self, text: &str) -> Over {
+    pub(crate) fn over(&self, text: &str) -> Over {
         std::fs::write(self.config_path(), text).unwrap();
         Over::nothing()
             .config(Some(&self.config_path()))
@@ -302,7 +306,7 @@ impl Local {
     }
 
     /// The identity of this model's installation, as the inventory gives it.
-    fn identity(&self, over: &Over, model: &str) -> String {
+    pub(crate) fn identity(&self, over: &Over, model: &str) -> String {
         let record = over.installations().unwrap().ready(model).unwrap();
         record.identity().digest().to_string()
     }
@@ -437,6 +441,57 @@ fn a_call_to_a_local_model_is_answered_by_the_worker_and_its_record_names_the_ba
     let text = shown(&local.root, finished.run().as_str());
     has_line(&text, "  backends.segment.default.kind = \"pack\"");
     has_line(&text, "  backends.segment.default.model = \"fake-ok\"");
+}
+
+#[test]
+fn the_record_of_a_local_call_names_the_device_the_worker_reported() {
+    // Two runs, one for each of two fakes: `fake-ok`, whose results name the worker's
+    // own device, `cpu`, and `fake-mps`, whose results name `mps`, as a model its
+    // runtime placed on the Apple GPU would. Each record names the device its worker's
+    // result named, and no cache: the kind has none, and says so (task P7a).
+    let local = Local::new("pack-device");
+    let over = local.over(
+        "[backends.segment]\ndefault = \"ok\"\n\n\
+         [backends.segment.ok]\nkind = \"pack\"\nmodel = \"fake-ok\"\n\n\
+         [backends.segment.ok.settings]\nmax_lifetime_s = 120\n\n\
+         [backends.segment.mps]\nkind = \"pack\"\nmodel = \"fake-mps\"\n\n\
+         [backends.segment.mps.settings]\nmax_lifetime_s = 120\n",
+    );
+    let executor = local.runner(&over);
+    let mut runs = Vec::new();
+    for backend in ["ok", "mps"] {
+        let finished = executor.submit(&choosing(backend)).unwrap();
+        assert_eq!(finished.outcome().name(), "completed", "{backend}");
+        runs.push(finished.run().as_str().to_owned());
+    }
+    drop(executor);
+    for (run, device, model) in [(&runs[0], "cpu", OK), (&runs[1], "mps", MPS)] {
+        let json = whizbang(&["runs", "show", run, "--json"], &local.root);
+        assert_eq!(json.code, Some(0), "{}", json.err);
+        let record: serde_json::Value = serde_json::from_str(&json.out).unwrap();
+        assert_eq!(record["record"], "run/4");
+        let models = record["models"].as_array().unwrap();
+        assert_eq!(models.len(), 1, "{models:?}");
+        assert_eq!(models[0]["model"], model);
+        assert_eq!(models[0]["ended"], "answered");
+        assert_eq!(models[0]["device"], device, "{model}");
+        assert_eq!(models[0]["cached"], false, "{model}");
+        // And `runs show` prints it on the request's line, beside the identity whole.
+        let identity = local.identity(&over, model);
+        let text = shown(&local.root, run);
+        let line = text
+            .lines()
+            .find(|line| line.starts_with("  segment\t"))
+            .unwrap_or_else(|| panic!("no request in:\n{text}"));
+        assert!(
+            line.starts_with(&format!("  segment\tpack {model} {identity}\tanswered\t")),
+            "{line}"
+        );
+        assert!(
+            line.ends_with(&format!(" ms\tdevice {device}\tnot cached")),
+            "{line}"
+        );
+    }
 }
 
 #[test]

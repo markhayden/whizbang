@@ -32,7 +32,7 @@ import sys
 import threading
 
 from whizbang_pack import fake_models, proto
-from whizbang_pack.adapter import Cancelled, Fault, Installation, Stopped
+from whizbang_pack.adapter import Cancelled, Fault, Installation, Stopped, runtime_device
 
 END_CODE = 0
 REFUSED_CODE = 2
@@ -316,7 +316,7 @@ class Worker:
                     "id": self.conversation,
                     "version": proto.VERSION,
                     "role": "worker",
-                    "device": None,
+                    "device": runtime_device(),
                     "threads": self._threads(),
                 }
             )
@@ -381,7 +381,7 @@ class Worker:
             "type": "result",
             "id": call.id,
             "kind": kind,
-            "device": self.resident.adapter.device if self.resident is not None else "cpu",
+            "device": self.resident.adapter.device if self.resident is not None else runtime_device(),
             "threads": self._threads(),
             "diagnostics": proto.clean(diagnostics or "", room),
         }

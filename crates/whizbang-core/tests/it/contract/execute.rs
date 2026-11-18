@@ -302,7 +302,7 @@ fn a_failed_echo_writes_the_same_record_with_its_error_and_keeps_its_diagnostics
     // The record, by hand: the same shape, the error in its place, no output and no
     // completed status.
     let by_hand = concat!(
-        r#"{"record":"run/3","#,
+        r#"{"record":"run/4","#,
         r#""identity":{"run":"1000-1","request":null,"parent":null,"whizbang":"0.0.1"},"#,
         r#""asked":{"action":"echo","version":"1.0.0","#,
         r#""arguments":[{"name":"text","value":{"text":"hello"}},"#,

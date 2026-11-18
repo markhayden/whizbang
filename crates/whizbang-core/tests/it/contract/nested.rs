@@ -1874,7 +1874,7 @@ fn what_is_refused_inside_a_run_is_recorded_with_the_secrets_taken_out_and_withi
 /// one itself and had one call refused: by hand.
 fn nested() -> String {
     concat!(
-        r#"{"record":"run/3","#,
+        r#"{"record":"run/4","#,
         r#""identity":{"run":"1000-2","request":null,"parent":"1000-1","whizbang":"0.0.1"},"#,
         r#""asked":{"action":"inner","version":"1.0.0","arguments":[],"settings":[],"#,
         r#""config":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"#,

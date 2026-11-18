@@ -11,7 +11,7 @@ use crate::artifact::Mask;
 use crate::contract::Cancellation;
 use crate::egress::{Classes, DataClass};
 
-use super::{Bounds, Charge, Declaration, Fault, Picture, Unfit, feature, pixel_count};
+use super::{Bounds, Charge, Declaration, Fault, Picture, Served, Unfit, feature, pixel_count};
 
 /// The most bytes a prompt holds.
 pub const PROMPT_LIMIT: usize = 4096;
@@ -210,6 +210,14 @@ pub struct Painted {
     rgb: Vec<u8>,
     /// What the request cost, when the backend's answer said.
     charge: Option<Charge>,
+    /// Where it was answered, as far as the backend said.
+    served: Served,
+}
+
+impl super::Answer for Painted {
+    fn served(&self) -> &Served {
+        &self.served
+    }
 }
 
 impl Painted {
@@ -232,7 +240,21 @@ impl Painted {
             height,
             rgb,
             charge: None,
+            served: Served::unknown(),
         })
+    }
+
+    /// The same answer, saying where it was answered: the device and whether a cache
+    /// answered (ADR 0006, "What a response says of where it was answered"). An
+    /// answer that says neither is recorded as saying neither.
+    pub fn served_as(mut self, served: Served) -> Painted {
+        self.served = served;
+        self
+    }
+
+    /// Where it was answered, as far as it said.
+    pub fn served(&self) -> &Served {
+        &self.served
     }
 
     /// The same fill, with what the request cost: the charge the backend's answer

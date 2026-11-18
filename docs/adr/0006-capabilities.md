@@ -10,7 +10,9 @@ a handle's tally and its backend stand three places, the gate, the lease and the
 meter, and a request is accounted for only once the last of them has returned.
 Changed by ADR 0020 ("The amendment to ADR 0006"): a segment request carries the
 identity of the binding its picture is under, an instance names the binding its plane
-belongs to, and the handle refuses an answer whose planes name another
+belongs to, and the handle refuses an answer whose planes name another.
+Changed by ADR 0025 ("What a response says"): each response may say the device that
+answered it and whether a cache did, and the handle keeps both for the run's record
 Date: 2026-11-12
 Amended: 2026-11-12, after the review of the first part, before it merged. Changed: what
 a fault's cleaning guarantees and what it does not find, with a rule for adapters; a

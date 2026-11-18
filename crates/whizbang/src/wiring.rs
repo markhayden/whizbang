@@ -14,7 +14,7 @@ use whizbang_backends::models::{
 };
 use whizbang_core::artifact::Contents;
 use whizbang_core::capability::{Inventory, NoInventory};
-use whizbang_core::config::{Config, Credentials, Files, Kinds, Offers};
+use whizbang_core::config::{Config, Credentials, Files, Kinds, Loaded, Offers};
 use whizbang_core::contract::{
     Action, Capability, ConfigSource, Engine, Interrupted, NoBackends, Opening, Place, Recovery,
     Registry, Secrets, Snapshot, SystemClock,
@@ -655,6 +655,51 @@ impl Over {
         }
     }
 
+    /// What `whizbang backends status` reads (plan 1C, task P7b): the config and its
+    /// env file, read once as a call's source reads them, what they offer with the
+    /// kinds of the build over what is installed, and the one worker of the process
+    /// when one was given. Nothing is made but what the kinds make of their tables,
+    /// and nothing is started or sent. With no config named it is none: the empty
+    /// config offers no backend. Otherwise, why the config cannot be used, in the
+    /// readers' own words ([`loaded`]).
+    pub(crate) fn configured(&self) -> Result<Option<Configured>, String> {
+        let Some(files) = self.files() else {
+            return Ok(None);
+        };
+        let loaded = files
+            .load()
+            .map_err(|refused| format!("the config cannot be used: {refused}"))?;
+        let inventory = self.inventory();
+        let offers = Offers::of(loaded.config(), loaded.credentials(), &self.kinds)
+            .map_err(|refused| format!("the config cannot be used: {refused}"))?
+            .over(inventory.clone());
+        let secrets = self.secrets.joined(loaded.secrets());
+        Ok(Some(Configured {
+            loaded,
+            offers,
+            inventory,
+            worker: self.pack.clone(),
+            secrets,
+        }))
+    }
+}
+
+/// What a config offers, as `whizbang backends status` reads it ([`Over::configured`]).
+pub(crate) struct Configured {
+    /// The config and its credentials, as they were read.
+    pub(crate) loaded: Loaded,
+    /// What it offers with the kinds of the build, over what is installed.
+    pub(crate) offers: Offers,
+    /// What is installed: the models directory that was opened, or the inventory that
+    /// knows no model.
+    pub(crate) inventory: Arc<dyn Inventory>,
+    /// The one worker of the process, when one was given ([`Over::pack`]).
+    pub(crate) worker: Option<Arc<OneWorker>>,
+    /// Every secret the command knows: those it was told of and the env file's.
+    pub(crate) secrets: Secrets,
+}
+
+impl Over {
     /// Where an executor built over this reads its config (ADR 0015, "One snapshot
     /// of the config"). With a config named it is the source over the config file
     /// and its env file, which reads both again each time it is asked. With none it

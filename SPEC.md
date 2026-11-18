@@ -813,7 +813,12 @@ whizbang models pin <draft> [--config <file> [--env-file <file>]]
                                        # for whoever writes a catalogue entry: fetch each
                                        # file of a draft entry once and print its size and
                                        # SHA-256; installs and writes nothing
-whizbang backends status [--probe]
+whizbang backends status [--probe] [--config <file> [--env-file <file>]]
+                    [--models-dir <dir>]
+                                       # each backend the config offers and whether it is
+                                       # ready; --probe hears the pack's worker say hello,
+                                       # and asks a remote backend only when the config
+                                       # approves probing it (docs/guides/backends.md)
 whizbang store list|delete|prune
 whizbang store import <file> --store <dir> [--create]
                                        # for developers: bring a canonical artifact file

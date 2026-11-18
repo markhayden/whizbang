@@ -4,14 +4,17 @@
 //! is held to the types and to the schema alike.
 
 use serde_json::{Value as Json, json};
-use whizbang_core::contract::{RUN_RECORD_SCHEMA, RecordError, RunRecord};
+use whizbang_core::contract::{RUN_3_SCHEMA, RecordError, RunRecord};
 use whizbang_testkit::schema::validate;
 
 /// The schema of `run/2`, as the tag `m1a` froze it.
 const RUN_2_SCHEMA: &str = include_str!("../../../schemas/run-2.json");
 
+/// The schema of `run/3`, which this build still reads and no longer writes (ADR
+/// 0025). What these tests hold of `run/3` holds of `run/4` too, whose shape is the
+/// same but for a request's device and cache (`record.rs`).
 fn schema() -> Json {
-    serde_json::from_str(RUN_RECORD_SCHEMA).unwrap()
+    serde_json::from_str(RUN_3_SCHEMA).unwrap()
 }
 
 fn as_json(text: &str) -> Json {
@@ -210,7 +213,7 @@ fn a_run_2_record_holds_nothing_that_run_3_added() {
 
 #[test]
 fn a_record_of_a_version_this_build_does_not_read_is_another_version() {
-    for version in ["run/1", "run/4", "run/30"] {
+    for version in ["run/1", "run/5", "run/30"] {
         let bytes = ordinary().replace("run/3", version);
         let refused = RunRecord::from_bytes(bytes.as_bytes()).unwrap_err();
         assert_eq!(

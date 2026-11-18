@@ -2434,11 +2434,11 @@ files of an installation. **Size:** small.
 **Depends on:** P6b. **Reads:** ADR 0005 and ADR 0013 on a record's versions;
 `contract/record.rs` (`Model`).
 
-- [ ] A capability's response says which device answered and whether a cache did (an
+- [x] A capability's response says which device answered and whether a cache did (an
       amendment to ADR 0006). The worker states its device in `hello` and in each
       result; the local kind has no cache and says so. `run/4`: its schema, its fixed
       vectors, and what a reader does with a `run/3` record.
-- [ ] `whizbang runs show` prints an installation's identity whole.
+- [x] `whizbang runs show` prints an installation's identity whole.
 
 **Done when** these pass (`crates/whizbang-core/tests/it/`, `crates/whizbang/tests/it/`):
 
@@ -2448,13 +2448,52 @@ files of an installation. **Size:** small.
 - `runs::show_prints_an_installations_identity_whole_and_two_installations_are_told_apart`
 
 **Carry-over:** `device` and `cached`; the `runs show` cut. **Size:** small.
+**Built with the task** (one pull request with P7b, as the owner asked for larger
+iterations):
+
+- **Which test shows which clause.** Box one: a response says where it was answered
+  (`capability::Served`, `Device`; `served_as` on `SegmentResponse`, `Painted` and
+  `Turn`), which the handle keeps and the record holds, the first test (the fixed
+  vector `served`, three requests: on `mps` with no cache, from a cache on no named
+  device, and timed out with neither; what both refuse, and what the types alone
+  refuse: a device not of the rule, and either on a request that was not answered);
+  the worker's device in each result and the kind's "no cache", the third (two runs,
+  `fake-ok` on `cpu` and `fake-mps` on `mps`, each record naming its own, `cached`
+  false); the worker's device in its hello,
+  `worker::a_worker_is_started_at_the_first_request_and_not_before` and
+  `test_worker.Hello.test_a_hello_is_answered_with_the_workers_own_of_the_same_id`,
+  now `cpu`, and P7b's second test; what a reader does with `run/3`, the second
+  (read, written back in its own version, held to its own schema, both null, one
+  that names either refused). The amendment: ADR 0025, which ADR 0006 and ADR 0013
+  name in their status lines; ADR 0020 has a dated line on the hello. Box two: the
+  fourth (two identities that agree in their first 64 characters, each printed whole,
+  with the device and the cache; a `run/3` record printed `device not known`, `cache
+  not known`).
+- **The hello's device is `cpu`,** `adapter.runtime_device()`: the pack's core imports
+  no runtime (D10), so its work runs on the CPU until a model's adapter names the
+  device its runtime gave it. It was `null`, which the protocol still allows. R2a's
+  adapter says its own device in each result, as `Adapter.device`; whether the hello
+  should ask the runtime is R2a's to decide (a note for it).
+- **A seventh fake, `fake-mps`:** `fake-ok` on the device `mps`, so a test can tell the
+  device a result names from the hello's and from any default. D3's six are unchanged.
+  The conformance table has a case for it, as for every fake:
+  `conformance::a_result_names_the_device_of_the_model_that_answered_it_and_the_hello_the_workers_own`
+  (a test more than "Done when" names).
+- **`runs show`** prints a model's names whole, escaped (the reader holds each to 128
+  ASCII characters), and after the time `device <name>` or `device not known`, and
+  `cached`, `not cached` or `cache not known`: "not known" and not "unknown", which
+  says a group was lost. A refusal of another version names the three versions read.
+- **A device that holds a secret of the run is not kept,** and is recorded as not
+  named: a device is a short name, and is not cut or redacted.
+- Each test that wrote a `run/3` record by hand as the executor writes one now writes
+  `run/4`; `record3.rs` holds `run/3` to its own schema (`RUN_3_SCHEMA`).
 
 ### P7b. `whizbang backends status`
 
 **Depends on:** P7a. **Reads:** `SPEC.md` section 6, "Readiness"; ADR 0019, "A
 download and a probe".
 
-- [ ] Each configured backend with its kind, its model and whether its model is ready,
+- [x] Each configured backend with its kind, its model and whether its model is ready,
       with no network and no worker. `--probe` starts the worker of a local backend and
       prints its hello (the protocol version, the device). A remote backend is
       probed only through `CheckedProber`, shown with the test kit's prober: no real
@@ -2467,6 +2506,27 @@ download and a probe".
 - `backends::status_with_probe_asks_a_prober_of_a_remote_backend_only_when_the_config_approves_probing_it`
 
 Tag `m1c-fakes` on the merge. **Carry-over:** `backends status`. **Size:** small.
+**Built with the task** (one pull request with P7a):
+
+- **Which test shows which clause.** The list, with no network and no worker, the
+  first test (through the wiring, with a ready local backend, one whose model the
+  catalogue does not hold and a remote one of a kind the build lacks; no supervisor,
+  no child that runs the pack, the prober not asked; and through the binary, with its
+  own catalogue, and with no config). `--probe` of a local backend, the second (its
+  hello: `pack/1`, the device, the threads; the worker started once for the command,
+  stopped and waited for before it returns, `OneWorker::hello`, and no supervisor
+  made). A remote backend probed only through `CheckedProber` with the test kit's
+  prober, the third (asked once, at its address, with no credential, for the
+  recipient approved for probing; not asked for the one approved for prompts alone;
+  and the binary's `NoProber`, which contacts nothing and says so). The guide,
+  `docs/guides/backends.md`; `SPEC.md` section 11's line; ADR 0019 a dated note.
+- **The binary's prober is `NoProber`,** behind the same check: a build with no network
+  client says so of a probe the config approves, and nothing is contacted. With no
+  remote kind in the build, a remote backend there is never ready, so never probed.
+- **The stub goes:** `stub.rs` and its tests (`stubs.rs`). The places that start the
+  real binary stay twenty-three: the stub's tests' one is now `backends.rs`'s one.
+- **A note for R2b:** `backends status --probe` with the real worker prints the hello
+  of the installed pack, whose device is the core's (`cpu`) until R2a says otherwise.
 
 ### R1. The runtime, chosen
 

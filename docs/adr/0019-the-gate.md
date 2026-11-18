@@ -38,6 +38,8 @@ that said it was not is restated.
 Amended: 2026-11-15, with task W1 (ADR 0015, "The binary wired"). Changed under
 "Limits" and "For later tasks": the binary's executor is given its config's policy,
 and the check over a sender goes to the task that gives it a sender.
+Amended: 2026-11-17, with task P7b of plan 1C, a note and no decision changed: under "A
+download and a probe", what now gives a checked prober its policy and its recipient.
 Spec: section 10, "Egress"
 Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
 that said something was still to come; no decision changed.
@@ -374,6 +376,15 @@ Limits of it, each stated:
   The command that probes is 1C's (`docs/carry-over.md`), and takes all three from
   the snapshot of the config a call is made under.
 - **A probe and a download are in no run's record.**
+
+**Built with task P7b of plan 1C** (a note): `whizbang backends status --probe`
+(`whizbang::backend_status`) makes one `CheckedProber` for each remote backend that is
+ready, under the policy the config's approvals make (`DispatchPolicy::from_approvals`),
+for the recipient the backend declares, and probes its address holding no credential.
+The binary hands it no real prober, since none is built until milestone 2: what stands
+behind the check there is `NoProber`, which contacts nothing and says so. The tests hand
+the test kit's `FakeProber`
+(`backends::status_with_probe_asks_a_prober_of_a_remote_backend_only_when_the_config_approves_probing_it`).
 
 **Amended by task N5 of plan 1C: a checked download may be told what it refused.**
 `CheckedDownloader::noting_refused` hands a note the origin, and the origin alone, of

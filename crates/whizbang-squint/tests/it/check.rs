@@ -1343,7 +1343,7 @@ fn the_records_of_check_completed_failed_and_cancelled_hold_what_the_spec_lists(
             assert_eq!(diagnostic["digest"], format!("sha256:{}", digest.hex()));
         }
         assert!(left.has("evidence-001") && left.names.contains_key("journal"));
-        assert_eq!(record["record"], "run/3");
+        assert_eq!(record["record"], "run/4");
         assert_eq!(record.as_object().unwrap().len(), 13, "{how}");
     }
 }

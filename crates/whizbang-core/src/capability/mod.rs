@@ -30,6 +30,7 @@ mod inventory;
 mod judge;
 mod price;
 mod segment;
+mod served;
 pub mod written;
 
 pub use around::{Around, Ended, Nothing, Open, Place, Places, Stop, Wrapped};
@@ -54,6 +55,8 @@ pub use segment::{
     Asked, INSTANCE_LIMIT, Instance, PHRASE_LIMIT, QUERY_LIMIT, Query, SegmentHandle,
     SegmentRequest, SegmentResponse, Segmenter,
 };
+pub(crate) use served::Answer;
+pub use served::{DEVICE_LIMIT, Device, Served, is_device};
 
 /// The most pixels an image, a plane or a fill may have: ADR 0001's default limit on a
 /// decoded image, held here for everything a capability is sent or sends back.
@@ -322,6 +325,9 @@ pub(crate) struct Logged {
     pub(crate) ended: HowEnded,
     /// For a request to a judge: what the record keeps of the exchange.
     pub(crate) judged: Option<judge::Judged>,
+    /// What the answer said of where it was answered: nothing for a request that
+    /// ended without one the handle took.
+    pub(crate) served: Served,
 }
 
 /// The requests the handles of one run were sent, and how many of them are accounted
@@ -436,6 +442,7 @@ impl Tally {
             end_ms: now,
             ended: HowEnded::Unwound,
             judged: None,
+            served: Served::unknown(),
         });
         Ok(Sent {
             tally: self.clone(),
@@ -522,13 +529,16 @@ impl Sent {
         self.place
     }
 
-    /// The request ended this way: with an answer the handle took, or in a fault.
-    pub(crate) fn ended<T>(&mut self, result: &Result<T, Fault>) {
-        let ended = match result {
-            Ok(_) => HowEnded::Answered,
-            Err(fault) => HowEnded::Fault(fault.kind()),
+    /// The request ended this way: with an answer the handle took, which says where
+    /// it was answered, or in a fault.
+    pub(crate) fn ended<T: Answer>(&mut self, result: &Result<T, Fault>) {
+        let (ended, served) = match result {
+            Ok(answer) => (HowEnded::Answered, answer.served().clone()),
+            Err(fault) => (HowEnded::Fault(fault.kind()), Served::unknown()),
         };
-        self.tally.counts().asked[self.place].ended = ended;
+        let asked = &mut self.tally.counts().asked[self.place];
+        asked.ended = ended;
+        asked.served = served;
     }
 
     /// What was sent, written, when the run keeps its exchanges: made before the
@@ -741,7 +751,7 @@ impl Bounds {
     /// before this call; here the tally counts the request, then the gate, the lease
     /// and the meter see it, then the backend; and the tally accounts for it only
     /// once the last wrapper has returned.
-    pub(crate) fn send<T>(
+    pub(crate) fn send<T: Answer>(
         &self,
         capability: Capability,
         declaration: &Declaration,

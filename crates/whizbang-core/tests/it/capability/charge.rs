@@ -254,14 +254,22 @@ fn debug_of_a_fault_and_of_a_response_shows_the_stage_and_the_charge() {
     );
     assert_eq!(
         format!("{:?}", SegmentResponse::new(Vec::new()).charged(charge(5))),
-        "SegmentResponse { answers: [], charge: Some(Charge { micros: 5 }) }"
+        "SegmentResponse { answers: [], charge: Some(Charge { micros: 5 }), \
+         served: Served { device: None, cached: None } }"
     );
     let shown = format!("{:?}", turn().charged(charge(5)));
+    let unsaid = "served: Served { device: None, cached: None } }";
     assert!(
-        shown.ends_with("request_id: None, charge: Some(Charge { micros: 5 }) }"),
+        shown.ends_with(&format!(
+            "request_id: None, charge: Some(Charge {{ micros: 5 }}), {unsaid}"
+        )),
         "{shown}"
     );
-    assert!(format!("{:?}", turn()).ends_with("request_id: None, charge: None }"));
+    let shown = format!("{:?}", turn());
+    assert!(
+        shown.ends_with(&format!("request_id: None, charge: None, {unsaid}")),
+        "{shown}"
+    );
 }
 
 #[test]

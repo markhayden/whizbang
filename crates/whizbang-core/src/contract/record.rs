@@ -1,11 +1,14 @@
 //! The run record (`SPEC.md` section 3, "What every run records"; ADR 0005): the one
 //! account of a run, written whatever its outcome, with a fixed, versioned shape.
 //!
-//! A record holds every group the spec lists. This build writes `run/3` (ADR 0013),
-//! which gives `asked.settings`, `spend.requests` and `egress` their elements, adds
-//! the refusals of a capability request, and adds `outcome.lost`: what the record of
-//! a run that a dead process left does not know. It reads `run/3`, and `run/2` as the
-//! tag `m1a` froze it (ADR 0005), in which those lists hold nothing.
+//! A record holds every group the spec lists. This build writes `run/4` (ADR 0025),
+//! which gives each capability request's `device` and `cached` their values: what the
+//! answer said of where it was answered. `run/3` (ADR 0013) gave `asked.settings`,
+//! `spend.requests` and `egress` their elements, added the refusals of a capability
+//! request, and added `outcome.lost`: what the record of a run that a dead process
+//! left does not know. It reads `run/4`; `run/3`, whose device and cache are always
+//! null, as not known; and `run/2` as the tag `m1a` froze it (ADR 0005), in which
+//! those lists hold nothing.
 //!
 //! A record is written one way: as JSON on one line, its fields in the order of the
 //! types below, followed by a newline. It is read strictly: a field that is not known, a
@@ -15,7 +18,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::artifact::ArtifactType;
-use crate::capability::{Excluded, FaultKind, HowEnded, Logged, MODEL_NAME_LIMIT, Stage};
+use crate::capability::{
+    Excluded, FaultKind, HowEnded, Logged, MODEL_NAME_LIMIT, Stage, is_device,
+};
 use crate::egress::{Account, Classes, DataClass, Origin, Recipient};
 use crate::identity::Digest;
 use crate::store::{self, Entry, Generation, Kind};
@@ -27,10 +32,18 @@ use super::{
 };
 
 /// The record's kind, with the version this build writes.
-pub const RUN_RECORD: &str = "run/3";
+pub const RUN_RECORD: &str = "run/4";
 
-/// The JSON Schema of a `run/3` record, as a document.
-pub const RUN_RECORD_SCHEMA: &str = include_str!("../../schemas/run-3.json");
+/// The JSON Schema of a `run/4` record, as a document.
+pub const RUN_RECORD_SCHEMA: &str = include_str!("../../schemas/run-4.json");
+
+/// The kind and version of the record checkpoint 1B and the first tasks of 1C wrote.
+/// It is still read, and never written again: a `run/3` record that is read is written
+/// back as it was, in its own version (ADR 0025).
+pub const RUN_3: &str = "run/3";
+
+/// The JSON Schema of a `run/3` record, as it was before `run/4`.
+pub const RUN_3_SCHEMA: &str = include_str!("../../schemas/run-3.json");
 
 /// The kind and version of the record checkpoint 1A wrote. It is still read, as the
 /// tag `m1a` froze it, and never written again.
@@ -448,8 +461,14 @@ impl RequestEnded {
 
 /// One capability request the run sent (ADR 0009): which capability, and the backend,
 /// the model and the version that answered, as the backend declares them. The requests
-/// are in the order they were sent. `device` and `cached` are null: no response says
-/// which device answered or whether a cache did (ADR 0006), so neither is known.
+/// are in the order they were sent.
+///
+/// `device` and `cached` are what the answer said of where it was answered (`run/4`,
+/// ADR 0025): the device's name, of the rule of one ([`crate::capability::Device`]),
+/// and whether a cache answered. Each is null when the answer did not say, and both
+/// are null for a request that ended without an answer the handle took. In a `run/3`
+/// record both are always null: no response of that version said either, so neither
+/// is known.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Model {
@@ -458,10 +477,42 @@ pub struct Model {
     pub model: String,
     pub version: String,
     #[serde(deserialize_with = "present")]
-    pub device: Option<Nothing>,
+    pub device: Option<String>,
     #[serde(deserialize_with = "present")]
-    pub cached: Option<Nothing>,
+    pub cached: Option<bool>,
     pub ended: RequestEnded,
+}
+
+/// A capability request as `run/2` holds one, as the tag `m1a` froze it: its device
+/// and its cache are always null.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FrozenModel {
+    capability: Capability,
+    backend: String,
+    model: String,
+    version: String,
+    #[serde(deserialize_with = "present")]
+    device: Option<Nothing>,
+    #[serde(deserialize_with = "present")]
+    cached: Option<Nothing>,
+    ended: RequestEnded,
+}
+
+impl FrozenModel {
+    fn model(self) -> Model {
+        // Neither can hold a value.
+        let _: (Option<Nothing>, Option<Nothing>) = (self.device, self.cached);
+        Model {
+            capability: self.capability,
+            backend: self.backend,
+            model: self.model,
+            version: self.version,
+            device: None,
+            cached: None,
+            ended: self.ended,
+        }
+    }
 }
 
 /// What a duration is of, as a word.
@@ -1324,7 +1375,7 @@ struct Frozen {
     outputs: Vec<Output>,
     outcome: FrozenEnded,
     time: FrozenTime,
-    models: Vec<Model>,
+    models: Vec<FrozenModel>,
     spend: FrozenSpend,
     egress: Vec<Nothing>,
     #[serde(deserialize_with = "steps_wire")]
@@ -1402,7 +1453,7 @@ impl Frozen {
                 end_ms: self.time.end_ms,
                 durations: self.time.durations,
             },
-            models: self.models,
+            models: self.models.into_iter().map(FrozenModel::model).collect(),
             spend: Spend {
                 reserved_micros: self.spend.reserved_micros,
                 requests: Vec::new(),
@@ -1465,7 +1516,8 @@ impl std::fmt::Display for RecordError {
         match self {
             RecordError::OtherVersion { found } => write!(
                 f,
-                "a record of another version: {}, and this build reads {RUN_RECORD}",
+                "a record of another version: {}, and this build reads {RUN_RECORD}, \
+                 {RUN_3} and {RUN_2}",
                 found.escape_debug()
             ),
             // The reason can quote what was read: it is shown escaped and cut.
@@ -1729,13 +1781,20 @@ impl RunRecord {
         // Redacted while whole, and only then cut to what the reader takes: a name
         // that redaction lengthened is still within the bound.
         let named = |name: &str| super::engine::cut_to(secrets, name, MODEL_NAME_LIMIT, "");
+        // A device is a short name of a fixed rule, and is kept as it is; one that
+        // holds a secret of the run is not kept, so the device is not known: a name
+        // with a secret taken out of it is no device.
+        let device = |asked: &Logged| {
+            let device = asked.served.device()?.as_str();
+            (secrets.redact(device) == device).then(|| device.to_owned())
+        };
         let models = asked.iter().map(|asked| Model {
             capability: asked.capability,
             backend: named(asked.model.backend()),
             model: named(asked.model.model()),
             version: named(asked.model.version()),
-            device: None,
-            cached: None,
+            device: device(asked),
+            cached: asked.served.from_cache(),
             ended: RequestEnded::of(asked.ended),
         });
         let lasted = |of, index: usize, start: u64, end: u64| Duration {
@@ -1962,7 +2021,7 @@ impl RunRecord {
             record: String,
         }
         let frozen = match serde_json::from_slice::<Version>(bytes) {
-            Ok(Version { record }) if record != RUN_RECORD && record != RUN_2 => {
+            Ok(Version { record }) if ![RUN_RECORD, RUN_3, RUN_2].contains(&record.as_str()) => {
                 // What it says its version is can be anything: its first 64 characters
                 // are kept.
                 return Err(RecordError::OtherVersion {
@@ -2096,6 +2155,24 @@ impl RunRecord {
         let mut names = names.flat_map(|model| [&model.backend, &model.model, &model.version]);
         if names.any(|name| name.len() > MODEL_NAME_LIMIT || !name.is_ascii()) {
             return refuse("a model's name is longer than one is kept, or is not ASCII");
+        }
+        // Where each request was answered (ADR 0025): a device of the rule of one, and
+        // both null for a request that was not answered, and in a `run/3` record,
+        // which says neither.
+        for model in &self.models {
+            let said = model.device.is_some() || model.cached.is_some();
+            if said && (model.ended != RequestEnded::Answered || self.record != RUN_RECORD) {
+                return refuse(
+                    "a capability request names a device or a cache, and was not answered \
+                     or is in a record of a version that has neither",
+                );
+            }
+            if model.device.as_deref().is_some_and(|d| !is_device(d)) {
+                return refuse(
+                    "a capability request's device is not a lower-case letter, then \
+                     lower-case letters, digits, ., _, - and :, 32 characters at most",
+                );
+            }
         }
         let durations = &self.time.durations;
         let of_requests = durations.iter().filter(|d| d.of == Timed::Request);
@@ -2323,8 +2400,8 @@ impl RunRecord {
         Ok(())
     }
 
-    /// The record's kind and version: `run/3`, or `run/2` for a record that the tag
-    /// `m1a` wrote.
+    /// The record's kind and version: `run/4`; `run/3` for a record written before
+    /// it; or `run/2` for a record that the tag `m1a` wrote.
     pub fn version(&self) -> &str {
         &self.record
     }

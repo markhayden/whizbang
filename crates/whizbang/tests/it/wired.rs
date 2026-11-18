@@ -441,8 +441,8 @@ pub fn whizbang(args: &[&str], root: &Path) -> Ran {
     }
 }
 
-/// The version of the one model a run's record names, whole: `runs show` cuts a text
-/// at 64 characters, and an installation's identity is longer.
+/// The version of the one model a run's record names, whole, as `runs show --json`
+/// gives it.
 pub fn version_of(root: &Path, run: &str) -> String {
     let json = whizbang(&["runs", "show", run, "--json"], root);
     assert_eq!(json.code, Some(0), "{}", json.err);
@@ -2100,10 +2100,11 @@ fn only_main_reads_where_the_platforms_data_folder_is() {
     // whole environment by `env::vars_os`, counted as `env::var` and as `env::vars`,
     // from which `uv`'s own is chosen.
     assert_eq!(reads, ["main.rs"; 16], "the environment is read elsewhere");
-    // The function's definition, and the three places it is handed on: to the one
-    // command that builds an executor, to the models commands (task N3b) and to
-    // `setup` (task Y1).
-    assert_eq!(calls, ["main.rs"; 4], "the reading is named elsewhere");
+    // The function's definition, and the four places it is handed on: to the one
+    // command that builds an executor, to the models commands (task N3b), to
+    // `setup` (task Y1) and to `backends status` (task P7b), which opens the models
+    // directory a local backend's model is looked up in.
+    assert_eq!(calls, ["main.rs"; 5], "the reading is named elsewhere");
     let main = std::fs::read_to_string(sources.join("main.rs")).unwrap();
     let main: String = main.chars().filter(|c| !c.is_whitespace()).collect();
     let main = main.replace(",)", ")");
@@ -2114,6 +2115,7 @@ fn only_main_reads_where_the_platforms_data_folder_is() {
         format!("rascal::run(&command,{platform})"),
         format!("models::run(&command,{platform},"),
         format!("setup::run(&args,{platform},"),
+        format!("backends::run(&command,{platform})"),
     ] {
         assert_eq!(main.matches(&handed).count(), 1, "{handed}");
     }

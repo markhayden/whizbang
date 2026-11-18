@@ -12,7 +12,6 @@ mod spend;
 #[cfg(test)]
 mod spending;
 mod store;
-mod stub;
 
 use std::process::ExitCode;
 
@@ -69,9 +68,11 @@ enum Command {
         #[command(subcommand)]
         command: models::Command,
     },
-    /// Backends: whether each configured one is ready. Not built yet: it says so and
-    /// exits 1, whatever it is asked.
-    Backends(stub::Asked),
+    /// Backends: whether each one the config offers is ready, and probing them.
+    Backends {
+        #[command(subcommand)]
+        command: backends::Command,
+    },
     /// Setup: installing the Python pack from the lock file this build carries, and
     /// checking that its worker says hello.
     Setup(setup::Args),
@@ -231,10 +232,12 @@ fn main() -> ExitCode {
                 Err(complaint) => complain_in_lines(&complaint),
             }
         }
-        Command::Backends(_) => match backends::run() {
-            Ok(text) => emit(text.as_bytes()),
-            Err(complaint) => complain(&complaint),
-        },
+        Command::Backends { command } => {
+            match backends::run(&command, std::sync::Arc::new(platforms_models_dir)) {
+                Ok(text) => emit(text.as_bytes()),
+                Err(complaint) => complain_in_lines(&complaint),
+            }
+        }
         // Setup reads two things more of this process's environment: `PATH`, where
         // `uv` is looked for when `--uv` names none, and the variables `uv`'s own
         // environment is chosen from (the locale, and where `uv` keeps its Pythons).

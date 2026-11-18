@@ -28,7 +28,7 @@ use crate::artifact::support::{image_of, photo};
 /// A record as the executor writes one for a completed `echo`, by hand.
 pub fn completed() -> String {
     concat!(
-        r#"{"record":"run/3","#,
+        r#"{"record":"run/4","#,
         r#""identity":{"run":"1000-1","request":null,"parent":null,"whizbang":"0.0.1"},"#,
         r#""asked":{"action":"echo","version":"1.0.0","#,
         r#""arguments":[{"name":"text","value":{"text":"hello"}}],"settings":[],"#,
@@ -70,7 +70,7 @@ fn a_record_is_read_and_written_back_as_the_same_bytes() {
     let bytes = completed();
     let record = RunRecord::from_bytes(bytes.as_bytes()).unwrap();
     assert_eq!(record.to_bytes(), bytes.as_bytes());
-    assert_eq!(RUN_RECORD, "run/3");
+    assert_eq!(RUN_RECORD, "run/4");
     assert_eq!(record.spend().reserved_micros, None);
     // The same run with half a dollar reserved for it when it was admitted.
     let reserved = completed().replace(r#""reserved_micros":null"#, r#""reserved_micros":500000"#);
@@ -186,7 +186,7 @@ fn a_record_of_another_version_is_another_version_not_damage() {
     ));
     let said = RunRecord::from_bytes(other).unwrap_err().to_string();
     assert!(
-        said.contains("run/9") && said.contains("this build reads run/3"),
+        said.contains("run/9") && said.contains("this build reads run/4"),
         "{said}"
     );
 }
@@ -386,7 +386,7 @@ fn what_is_not_a_record_is_refused_by_the_types_and_by_the_schema() {
         d["time"].as_object_mut().unwrap().remove("start_ms");
     });
     // Another version is refused by both too, the types as another version.
-    let other = changed(|d| d["record"] = json!("run/4"));
+    let other = changed(|d| d["record"] = json!("run/5"));
     assert!(validate(&schema(), &serde_json::from_slice(&other).unwrap()).is_err());
 }
 
@@ -1585,10 +1585,17 @@ mod facts {
             end_ms: 5000,
         };
         let interrupted = RunRecord::interrupted(left(Some(admitted))).unwrap();
-        assert_eq!(interrupted.to_bytes(), record3::interrupted().as_bytes());
+        // The vectors of `run/3`, as `run/4` writes them: a run a dead process left
+        // sent nothing this build knows of, so the two versions differ in the name of
+        // the version alone.
+        let as_run_4 = |vector: String| vector.replacen("\"run/3\"", "\"run/4\"", 1);
+        assert_eq!(
+            interrupted.to_bytes(),
+            as_run_4(record3::interrupted()).as_bytes()
+        );
         assert_eq!(interrupted.outcome().lost, Lost::but_the_admission());
         let unread = RunRecord::interrupted(left(None)).unwrap();
-        assert_eq!(unread.to_bytes(), record3::unread().as_bytes());
+        assert_eq!(unread.to_bytes(), as_run_4(record3::unread()).as_bytes());
         assert_eq!(unread.outcome().lost, Lost::ALL);
         assert_eq!(Lost::ALL.len(), 13);
         // A clock that went back does not make such a run end before it started.
@@ -1614,7 +1621,7 @@ mod facts {
                 RunRecord::from_bytes(&record.to_bytes()).as_ref(),
                 Ok(&record)
             );
-            assert_eq!(record.version(), "run/3");
+            assert_eq!(record.version(), "run/4");
         }
     }
 
@@ -1702,9 +1709,10 @@ mod facts {
             })
             .collect();
         let most = u64::MAX - 1;
+        // Each request with the longest device `run/4` holds, and its cache said.
         let model = concat!(
             r#"{"capability":"fill","backend":"fake","model":"m","version":"1","#,
-            r#""device":null,"cached":null,"ended":"answered"}"#
+            r#""device":"cuda:0123456789abcdefghijklmnopq","cached":false,"ended":"answered"}"#
         );
         let models: Vec<String> = (0..PAID_LIMIT).map(|_| model.to_owned()).collect();
         let durations: Vec<String> = (0..PAID_LIMIT)
@@ -1729,7 +1737,7 @@ mod facts {
             .collect();
         // Each list goes where the vector has its own, between what stands before and
         // after it in a record.
-        let mut written = record3::ordinary();
+        let mut written = record3::ordinary().replacen("\"run/3\"", "\"run/4\"", 1);
         let before = written.len();
         let mut put = |start: &str, end: &str, items: &[String]| {
             let from = written.find(start).unwrap() + start.len();
@@ -1760,5 +1768,141 @@ mod facts {
             (rest + added) as u64 + 400_000 < RECORD_MAX_BYTES,
             "{added}"
         );
+    }
+}
+
+// --- run/4: the device and the cache (ADR 0025) -----------------------------------------------
+
+/// The fixed vector of `run/4`: three requests of one run, one answered on `mps` with
+/// no cache, one answered from a cache on a device it did not name, and one that timed
+/// out, which names neither.
+pub fn served() -> String {
+    const IDENTITY: &str =
+        "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+    [
+        r#"{"record":"run/4","#,
+        r#""identity":{"run":"1000-1","request":null,"parent":null,"whizbang":"0.0.1"},"#,
+        r#""asked":{"action":"finds","version":"1.0.0","arguments":[],"settings":[],"#,
+        r#""config":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"#,
+        r#""inputs":[],"outputs":[],"#,
+        r#""outcome":{"status":"completed","error":null,"invalid":null,"refusals":[],"refusals_omitted":0,"lost":[]},"#,
+        r#""time":{"start_ms":1000,"end_ms":1009,"durations":["#,
+        r#"{"of":"request","index":0,"start_ms":1001,"ms":3},"#,
+        r#"{"of":"request","index":1,"start_ms":1004,"ms":1},"#,
+        r#"{"of":"request","index":2,"start_ms":1005,"ms":4}]},"#,
+        r#""models":[{"capability":"segment","backend":"pack","model":"sam3","version":""#,
+        IDENTITY,
+        r#"","device":"mps","cached":false,"ended":"answered"},"#,
+        r#"{"capability":"fill","backend":"fake","model":"m","version":"1","#,
+        r#""device":null,"cached":true,"ended":"answered"},"#,
+        r#"{"capability":"segment","backend":"pack","model":"sam3","version":""#,
+        IDENTITY,
+        r#"","device":null,"cached":null,"ended":"timed_out"}],"#,
+        r#""spend":{"reserved_micros":null,"requests":[]},"egress":[],"steps":[],"#,
+        r#""judge":[],"diagnostics":[]}"#,
+        "\n",
+    ]
+    .concat()
+}
+
+#[test]
+fn a_run_4_record_holds_the_device_and_whether_a_cache_answered_for_each_request() {
+    let bytes = served();
+    let record = RunRecord::from_bytes(bytes.as_bytes()).unwrap();
+    assert_eq!(record.to_bytes(), bytes.as_bytes());
+    validate(&schema(), &as_json(&bytes)).unwrap();
+    assert_eq!(record.version(), RUN_RECORD);
+    let said: Vec<(Option<&str>, Option<bool>)> = record
+        .models()
+        .iter()
+        .map(|model| (model.device.as_deref(), model.cached))
+        .collect();
+    assert_eq!(
+        said,
+        [(Some("mps"), Some(false)), (None, Some(true)), (None, None)]
+    );
+    // What is not of their kinds, both refuse; the longest device is taken, and one
+    // longer is not.
+    let each = |change: &dyn Fn(&mut Json)| {
+        let mut document = as_json(&bytes);
+        change(&mut document);
+        let mut written = serde_json::to_vec(&document).unwrap();
+        written.push(b'\n');
+        (written, document)
+    };
+    let longest = "cuda:".to_owned() + &"0".repeat(27);
+    let written = bytes.replacen("\"mps\"", &format!("\"{longest}\""), 1);
+    let read = RunRecord::from_bytes(written.as_bytes()).unwrap();
+    assert_eq!(read.models()[0].device.as_deref(), Some(longest.as_str()));
+    validate(&schema(), &as_json(&written)).unwrap();
+    let both: [(&str, Json); 4] = [
+        ("device", json!(format!("{longest}0"))),
+        ("device", json!(7)),
+        ("device", json!("")),
+        ("cached", json!("no")),
+    ];
+    for (field, value) in both {
+        let (written, document) = each(&|d| d["models"][0][field] = value.clone());
+        assert!(
+            RunRecord::from_bytes(&written).is_err(),
+            "the types take {value}"
+        );
+        assert!(
+            validate(&schema(), &document).is_err(),
+            "the schema takes {value}"
+        );
+    }
+    // What the schema cannot say, the types refuse: a device that is not a name of
+    // the rule, and a device or a cache on a request that was not answered.
+    let types_alone: [(&str, usize, Json); 5] = [
+        ("device", 0, json!("GPU")),
+        ("device", 0, json!("mps /dev")),
+        ("device", 0, json!("0mps")),
+        ("device", 2, json!("mps")),
+        ("cached", 2, json!(false)),
+    ];
+    for (field, at, value) in types_alone {
+        let (written, document) = each(&|d| d["models"][at][field] = value.clone());
+        assert!(
+            matches!(
+                RunRecord::from_bytes(&written),
+                Err(RecordError::Inconsistent(_))
+            ),
+            "the types take {value} at {at}"
+        );
+        validate(&schema(), &document).unwrap();
+    }
+}
+
+#[test]
+fn a_run_3_record_is_still_read_and_says_its_device_is_not_known() {
+    let schema_3: Json = serde_json::from_str(whizbang_core::contract::RUN_3_SCHEMA).unwrap();
+    // The fixed vector of `run/3`, with an answered request: read, written back as it
+    // was in its own version, and held to its own schema and not to this one.
+    let bytes = super::record3::ordinary();
+    let record = RunRecord::from_bytes(bytes.as_bytes()).unwrap();
+    assert_eq!(record.version(), "run/3");
+    assert_eq!(record.to_bytes(), bytes.as_bytes());
+    validate(&schema_3, &as_json(&bytes)).unwrap();
+    assert!(validate(&schema(), &as_json(&bytes)).is_err());
+    // Its request was answered, and where is not known: neither the device nor
+    // whether a cache answered.
+    let model = &record.models()[0];
+    assert_eq!(model.ended, record::RequestEnded::Answered);
+    assert_eq!((model.device.as_deref(), model.cached), (None, None));
+    // A `run/3` record that names either is not one: the version had neither.
+    for (field, value) in [("device", json!("mps")), ("cached", json!(false))] {
+        let mut document = as_json(&bytes);
+        document["models"][0][field] = value.clone();
+        let mut written = serde_json::to_vec(&document).unwrap();
+        written.push(b'\n');
+        assert!(
+            matches!(
+                RunRecord::from_bytes(&written),
+                Err(RecordError::Inconsistent(_))
+            ),
+            "{field}"
+        );
+        assert!(validate(&schema_3, &document).is_err(), "{field}");
     }
 }
