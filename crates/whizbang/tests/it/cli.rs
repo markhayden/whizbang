@@ -1056,10 +1056,17 @@ fn a_key_pasted_into_key_env_with_an_env_file_that_does_not_set_it_is_never_said
         .concat(),
     );
     let text = said(&got, "models get");
-    assert!(
-        text.contains("`[[models.tokens]]` `key_env` names"),
-        "{text}"
-    );
+    // The token is read only on a platform the model runs on: on any other the get is
+    // refused before it, and says so. `credential::` holds the token's refusal on every
+    // platform, with a catalogue of its own.
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        assert!(
+            text.contains("`[[models.tokens]]` `key_env` names"),
+            "{text}"
+        );
+    } else {
+        assert!(text.contains("does not run on this platform"), "{text}");
+    }
     // Nothing of it in any file of the store.
     let mut folders = vec![root.clone()];
     while let Some(folder) = folders.pop() {
