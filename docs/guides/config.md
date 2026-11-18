@@ -280,8 +280,13 @@ The key is in the env file, as `ANTHROPIC_API_KEY=…`, and the command is given
 
 ```text
 whizbang squint check source-fidelity --source <id> --candidate <id> \
-  --store <dir> --config whizbang.toml --env-file whizbang.env
+  --store <dir> --config whizbang.toml --env-file whizbang.env \
+  --brief "change only the sky; the bird's tail keeps its colour"
 ```
+
+`--brief` says what the edit was to do and what it had to keep. What it names as kept
+and the edit changed fails the check; with no brief, nothing is named as kept, so a
+change is noted in the reason but does not fail it.
 
 **What one request may cost** is fixed by three settings of the backend, each held
 before a byte is sent: `max_input_tokens` (40,000 when none is given),
