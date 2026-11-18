@@ -7,11 +7,15 @@ source "$(dirname "$0")/lib.sh"
 check=scripts/check-binary-start.sh
 call='whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))'
 
-# --- The repo itself. The script tests are part of `just check`, so this is where
-# `just check` refuses: the check passes on the workspace, and it has seen the places
-# that start the binary (a check that found none would be looking in the wrong place).
-grep -q -x -F 'check: fmt-check clippy graph deny test-scripts docs-check timing test-pack' justfile ||
-  fail "justfile: check runs the script tests, and this check with them"
+# --- The repo itself. The script tests are part of `just check-full`, which `just ci` runs,
+# and this one is among those the local `just check` runs on any change to the crates'
+# sources (scripts/script-tests-local.sh), so this is where both refuse: the check passes
+# on the workspace, and it has seen the places that start the binary (a check that found
+# none would be looking in the wrong place).
+grep -q -x -F 'check-full: fmt-check clippy graph deny test-scripts docs-check timing test-pack' justfile ||
+  fail "justfile: check-full runs the script tests, and this check with them"
+grep -q -E '^part=".*scripts/tests/test-binary-start\.sh' scripts/script-tests-local.sh ||
+  fail "scripts/script-tests-local.sh: the local check runs this test on a change to the crates' sources"
 expect_pass "the workspace" "$check"
 started=$(sed -n 's/^binary start: ok (.* the real binary is started in \([0-9][0-9]*\) places, .*$/\1/p' "$tmp/out")
 # Exactly the number the plan states (N3c, "Shown by"): a test that starts the binary is

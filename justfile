@@ -7,10 +7,15 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 setup:
     scripts/setup.sh
 
-# The fast tier: format check, lint, the repo checks, the script tests, the generated
-# reference against a fresh copy, the fast tests with their timing table, then the pack's
-# Python tests.
-check: fmt-check clippy graph deny test-scripts docs-check timing test-pack
+# The fast tier on this machine: format check, lint, the repo checks, the script tests a
+# change of this branch can reach (test-scripts-local), the generated reference against a
+# fresh copy, the fast tests with their timing table, then the pack's Python tests.
+check: fmt-check clippy graph deny test-scripts-local docs-check timing test-pack
+
+# The fast tier with every script test, whatever changed: what `ci` runs, so CI runs them
+# all on every push. scripts/tests/test-ci-jobs.sh holds `check` to it, the script tests
+# aside.
+check-full: fmt-check clippy graph deny test-scripts docs-check timing test-pack
 
 fmt-check:
     cargo fmt --all -- --check
@@ -55,9 +60,18 @@ deny:
 deny-advisories:
     cargo deny check advisories
 
-# The tests of the scripts themselves (scripts/tests/).
+# The tests of the scripts themselves (scripts/tests/), every one of them.
 test-scripts:
     scripts/tests/run.sh
+
+# The script tests `check` runs on this machine: all of them when this branch (its commits
+# since the merge-base with origin/main, and the working tree) changes a path one of them
+# reads, such as scripts/, the justfile, .github/, AGENTS.md, pack/ or docs/; only the ones
+# that read the crates' sources or every tracked file when the change is elsewhere; none
+# when nothing changed. It prints one line saying which and why. WHIZBANG_SCRIPT_TESTS=1
+# runs them all. CI does not use it (scripts/script-tests-local.sh).
+test-scripts-local:
+    scripts/script-tests-local.sh
 
 # Regenerate the reference (docs/reference/) from `whizbang describe --json --pretty`.
 docs:
@@ -117,14 +131,14 @@ scan-range base head:
 scan-range-secrets base head:
     scripts/scan.sh --secrets-only --range "$1" "$2"
 
-# What a pull request runs.
-ci: check deny-advisories smoke compile-fail scan-secrets
+# What a pull request runs: `check` with every script test (check-full), and more.
+ci: check-full deny-advisories smoke compile-fail scan-secrets
 
 # `ci` in two halves, for CI's macOS runner, where the script tests alone take three to five
 # minutes: it runs each half in a job of its own, side by side (.github/workflows/ci.yml).
 # The first half is `ci` without the script tests. The second is the script tests, after
 # `deny` as in `check`: one of them reads the workspace's crates from cargo's home, where
-# `deny` puts them. scripts/tests/test-ci-jobs.sh holds the two to `check` and `ci`.
+# `deny` puts them. scripts/tests/test-ci-jobs.sh holds the two to `check-full` and `ci`.
 ci-without-scripts: fmt-check clippy graph deny docs-check timing test-pack deny-advisories smoke compile-fail scan-secrets
 
 ci-scripts: deny test-scripts

@@ -9,6 +9,10 @@
 #
 # - the two halves together are `just ci`, recipe for recipe, so a recipe added to `check`
 #   or to `ci` and not to the half that runs it on macOS fails `just check`;
+# - `ci` runs every script test whatever changed: it depends on `check-full`, which runs
+#   `test-scripts` (all of them), and never on `check`, whose `test-scripts-local` runs only
+#   those a change can reach (scripts/script-tests-local.sh). `check` is `check-full` with
+#   that one recipe in the place of `test-scripts`, so the two cannot drift apart;
 # - the new job is set up exactly as the other is (the same actions, the same pinned tools),
 #   runs its half on every pull request and push, and no step of it may be skipped;
 # - the aggregate `ci`, the one check a merge waits for, needs every other job and passes
@@ -29,17 +33,30 @@ body() {
 }
 
 check_justfile() { # <justfile>
-  local file=$1 word want=""
-  case " $(deps "$file" check) " in *" test-scripts "*) ;; *)
-    echo "justfile: check must run the script tests (test-scripts)"; return 1 ;; esac
-  case " $(deps "$file" ci) " in *" check "*) ;; *)
-    echo "justfile: ci must depend on check"; return 1 ;; esac
+  local file=$1 word want="" local_check=""
+  case " $(deps "$file" check-full) " in *" test-scripts "*) ;; *)
+    echo "justfile: check-full must run every script test (test-scripts)"; return 1 ;; esac
+  case " $(deps "$file" ci) " in *" check-full "*) ;; *)
+    echo "justfile: ci must depend on check-full"; return 1 ;; esac
+  case " $(deps "$file" ci) " in *" check "*)
+    echo "justfile: ci must not depend on check, which runs only some of the script tests"; return 1 ;; esac
   [ "$(body "$file" test-scripts)" = "scripts/tests/run.sh" ] ||
     { echo "justfile: test-scripts must run exactly: scripts/tests/run.sh"; return 1; }
-  # `ci`, with `check` written out and the script tests left out.
+  [ "$(body "$file" test-scripts-local)" = "scripts/script-tests-local.sh" ] ||
+    { echo "justfile: test-scripts-local must run exactly: scripts/script-tests-local.sh"; return 1; }
+  [ -z "$(body "$file" check)$(body "$file" check-full)" ] ||
+    { echo "justfile: check and check-full run nothing of their own"; return 1; }
+  # `check`: `check-full` with the local choice in the place of the script tests.
+  for word in $(deps "$file" check-full); do
+    [ "$word" = test-scripts ] && word=test-scripts-local
+    local_check="$local_check $word"
+  done
+  [ " $(deps "$file" check)" = "$local_check" ] ||
+    { echo "justfile: check must depend on exactly what check-full does, in its order, with test-scripts-local for test-scripts:$local_check"; return 1; }
+  # `ci`, with `check-full` written out and the script tests left out.
   for word in $(deps "$file" ci); do
-    if [ "$word" = check ]; then
-      for word in $(deps "$file" check); do
+    if [ "$word" = check-full ]; then
+      for word in $(deps "$file" check-full); do
         [ "$word" = test-scripts ] || want="$want $word"
       done
     else
@@ -141,11 +158,27 @@ changed() {
 }
 
 # --- The justfile: a recipe in one place and not in the other.
-changed check_justfile justfile 's/^check: fmt-check clippy graph deny test-scripts /check: fmt-check clippy graph deny /' \
-  "check must run the script tests"
-changed check_justfile justfile 's/^ci: check /ci: fmt-check /' "ci must depend on check"
-changed check_justfile justfile 's/^check: fmt-check /check: fmt-check new-check /' "ci-without-scripts must depend on exactly"
-changed check_justfile justfile 's/^ci: check deny-advisories /ci: check deny-advisories new-step /' "ci-without-scripts must depend on exactly"
+changed check_justfile justfile 's/^check-full: fmt-check clippy graph deny test-scripts /check-full: fmt-check clippy graph deny /' \
+  "check-full must run every script test"
+changed check_justfile justfile 's/^ci: check-full /ci: fmt-check /' "ci must depend on check-full"
+changed check_justfile justfile 's/^ci: check-full /ci: check-full check /' "ci must not depend on check"
+changed check_justfile justfile 's/^ci: check-full /ci: check-full test-scripts-local /' "ci-without-scripts must depend on exactly"
+# `check` and `check-full` apart: a recipe in one and not the other, or the local choice
+# in check-full, or every script test in check.
+changed check_justfile justfile 's/^check: fmt-check /check: fmt-check new-check /' "check must depend on exactly what check-full does"
+changed check_justfile justfile 's/^check-full: fmt-check /check-full: fmt-check new-check /' "check must depend on exactly what check-full does"
+changed check_justfile justfile 's/^check: fmt-check clippy graph deny test-scripts-local /check: fmt-check clippy graph deny test-scripts /' \
+  "check must depend on exactly what check-full does"
+changed check_justfile justfile 's/^check-full: fmt-check clippy graph deny test-scripts /check-full: fmt-check clippy graph deny test-scripts-local /' \
+  "check-full must run every script test"
+changed check_justfile justfile 's/^    scripts\/script-tests-local.sh$/    scripts\/tests\/run.sh --only scripts\/tests\/test-pack.sh/' \
+  "test-scripts-local must run exactly"
+changed check_justfile justfile 's/^check-full: .*$/&\
+    true/' "run nothing of their own"
+# A recipe added to both: ci-without-scripts must have it too.
+changed check_justfile justfile 's/^check: fmt-check /check: fmt-check new-check /;s/^check-full: fmt-check /check-full: fmt-check new-check /' \
+  "ci-without-scripts must depend on exactly"
+changed check_justfile justfile 's/^ci: check-full deny-advisories /ci: check-full deny-advisories new-step /' "ci-without-scripts must depend on exactly"
 changed check_justfile justfile 's/^\(ci-without-scripts: .*\) timing /\1 /' "ci-without-scripts must depend on exactly"
 changed check_justfile justfile 's/^\(ci-without-scripts: .*\) docs-check /\1 /' "ci-without-scripts must depend on exactly"
 changed check_justfile justfile 's/^\(ci-without-scripts: .*\) scan-secrets$/\1/' "ci-without-scripts must depend on exactly"

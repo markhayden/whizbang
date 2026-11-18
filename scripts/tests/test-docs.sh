@@ -18,8 +18,10 @@ recipe() {
 }
 grep -q -E '^check:( [a-z-]+)* docs-check( [a-z-]+)*$' justfile ||
   fail "justfile: check must depend on docs-check"
-grep -q -E '^ci:( [a-z-]+)* check( [a-z-]+)*$' justfile ||
-  fail "justfile: ci must depend on check"
+grep -q -E '^check-full:( [a-z-]+)* docs-check( [a-z-]+)*$' justfile ||
+  fail "justfile: check-full must depend on docs-check"
+grep -q -E '^ci:( [a-z-]+)* check-full( [a-z-]+)*$' justfile ||
+  fail "justfile: ci must depend on check-full"
 [ "$(recipe docs-check)" = "scripts/docs.sh --check" ] ||
   fail "justfile: docs-check must run exactly: scripts/docs.sh --check"
 # A check that regenerated first would always pass: docs-check depends on nothing, and no
