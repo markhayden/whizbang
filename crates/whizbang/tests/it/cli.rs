@@ -24,7 +24,7 @@ use whizbang_testkit::capabilities::FakeSegmenter;
 use whizbang_testkit::scratch::Scratch;
 
 use crate::model_tier::FIXTURE;
-use crate::wired::{has_line, whizbang};
+use crate::wired::{has_line, whizbang, whizbang_storeless};
 
 /// The boxes the fake finds for `circle` in the fixture: around the disc, around its
 /// upper half, and around the square.
@@ -34,7 +34,7 @@ const FOUND: [[u32; 4]; 3] = [
     [80, 280, 240, 440],
 ];
 
-const CONFIG: &str = "[backends.segment]\nkind = \"finding\"\nurl = \"https://segment.example.org/v1\"\n\n\
+pub(crate) const CONFIG: &str = "[backends.segment]\nkind = \"finding\"\nurl = \"https://segment.example.org/v1\"\n\n\
      [egress.recipients.segment]\norigin = \"https://segment.example.org\"\nclasses = [\"prompts\"]\n";
 
 /// A kind whose one segmenter is the test kit's fake, declaring the feature `phrase`
@@ -67,7 +67,7 @@ impl Kind for Finding {
 
 /// A store with the fixture picture in it, brought in by `whizbang store import
 /// --picture`: the store's path and the image's identity as the import printed it.
-fn with_picture(dir: &Scratch) -> (PathBuf, String) {
+pub(crate) fn with_picture(dir: &Scratch) -> (PathBuf, String) {
     let file = dir.path().join("circle.png");
     std::fs::write(&file, FIXTURE).unwrap();
     let root = dir.path().join("store");
@@ -97,8 +97,18 @@ fn with_picture(dir: &Scratch) -> (PathBuf, String) {
 /// segment backend is of the kind [`Finding`], at a recipient the config approves for
 /// prompts.
 fn segment(dir: &Scratch, root: &Path, asked: &SegmentAsked<'_>) -> Result<String, String> {
+    segment_under(dir, root, asked, CONFIG)
+}
+
+/// The same, under this config, with no env file.
+pub(crate) fn segment_under(
+    dir: &Scratch,
+    root: &Path,
+    asked: &SegmentAsked<'_>,
+    text: &str,
+) -> Result<String, String> {
     let config = dir.path().join("whizbang.toml");
-    std::fs::write(&config, CONFIG).unwrap();
+    std::fs::write(&config, text).unwrap();
     let mut kinds = wiring::kinds(&OneWorker::installed());
     kinds.register(Arc::new(Finding)).unwrap();
     let over = Over::nothing().config(Some(&config)).kinds(kinds);
@@ -560,19 +570,27 @@ fn squint_check_prints_the_verdict_and_the_run_under_a_recorded_fake() {
     assert_eq!(sent["max_tokens"], 2_048);
 }
 
+/// A key of capitals and digits, as one pasted in place of a variable's name would
+/// be: made at run time, the key of nothing.
+pub(crate) fn pasted_key() -> String {
+    format!("SK0{}", "ABCDEFGHIJ0123456789".repeat(2))
+}
+
+/// A judge whose `key_env` holds a key pasted in place of the variable's name.
+pub(crate) fn pasted_judge() -> String {
+    format!(
+        "\n[backends.judge]\nkind = \"service\"\nprovider = \"anthropic\"\n\
+         model = \"claude-haiku-5-5\"\nkey_env = \"{}\"\n",
+        pasted_key()
+    )
+}
+
 #[test]
-fn squint_check_without_the_env_file_is_refused_naming_the_variable() {
+fn squint_check_without_the_env_file_is_refused_naming_the_backend_and_not_the_value() {
     let scratch = Scratch::new("cli-squint-env");
     let root = scratch.path().join("store");
-    let made = whizbang(&["spend", "reset", "--allowance", "1"], &root);
-    let _ = made;
     let config = scratch.path().join("whizbang.toml");
-    std::fs::write(
-        &config,
-        "[backends.judge]\nkind = \"service\"\nprovider = \"anthropic\"\n\
-         model = \"claude-haiku-5-5\"\nkey_env = \"ANTHROPIC_API_KEY\"\n",
-    )
-    .unwrap();
+    std::fs::write(&config, pasted_judge()).unwrap();
     let id = format!("sha256:{}", "0".repeat(64));
     let ran = whizbang(
         &[
@@ -589,7 +607,146 @@ fn squint_check_without_the_env_file_is_refused_naming_the_variable() {
         &root,
     );
     assert_eq!(ran.code, Some(1), "{}", ran.err);
-    assert!(ran.err.contains("ANTHROPIC_API_KEY"), "{}", ran.err);
-    assert!(ran.err.contains("--env-file"), "{}", ran.err);
+    assert!(
+        ran.err.contains(
+            "the judge backend `default` names its credential with `key_env`, and no env \
+             file was given: name the env file that sets it with --env-file"
+        ),
+        "{}",
+        ran.err
+    );
+    assert!(!ran.err.contains(&pasted_key()), "{}", ran.err);
     assert!(ran.out.is_empty());
+    // Refused before the store was looked at: there is none, and none was made.
+    assert!(!root.exists());
+}
+
+#[test]
+fn rascal_segment_on_a_pack_backend_runs_without_the_env_file_under_a_config_naming_a_judge_key() {
+    // The real binary, whose kind `pack` is over the installed pack: the CI runner has
+    // no model installed, so the run's segmenter is not ready. What is shown is that
+    // the command goes past the env file to its backend, and says nothing of the key.
+    let dir = Scratch::new("cli-segment-pack");
+    let (root, image) = with_picture(&dir);
+    let models = dir.path().join("models");
+    let config = dir.path().join("whizbang.toml");
+    let text = format!(
+        "[backends.segment]\nkind = \"pack\"\nmodel = \"sam3\"\n{}",
+        pasted_judge()
+    );
+    std::fs::write(&config, text).unwrap();
+    let ran = whizbang(
+        &[
+            "rascal",
+            "segment",
+            "--image",
+            &image,
+            "--phrase",
+            "circle",
+            "--config",
+            config.to_str().unwrap(),
+            "--models-dir",
+            models.to_str().unwrap(),
+        ],
+        &root,
+    );
+    assert_eq!(ran.code, Some(1), "{} {}", ran.out, ran.err);
+    assert!(!ran.err.contains("env file"), "{}", ran.err);
+    assert!(ran.err.contains("not ready"), "{}", ran.err);
+    assert!(!ran.err.contains(&pasted_key()), "{}", ran.err);
+    assert!(!ran.out.contains(&pasted_key()), "{}", ran.out);
+    // A command that uses every backend, the judge among them, is refused for the
+    // env file.
+    let ran = whizbang_storeless(&[
+        "backends",
+        "status",
+        "--config",
+        config.to_str().unwrap(),
+        "--models-dir",
+        models.to_str().unwrap(),
+    ]);
+    assert_eq!(ran.code, Some(1), "{} {}", ran.out, ran.err);
+    assert!(
+        ran.err.contains("`key_env`, and no env file"),
+        "{}",
+        ran.err
+    );
+    assert!(!ran.err.contains(&pasted_key()), "{}", ran.err);
+}
+
+#[test]
+fn commands_that_use_no_backend_run_without_the_env_file_under_a_config_naming_a_key() {
+    let dir = Scratch::new("cli-no-backend");
+    let (root, image) = with_picture(&dir);
+    let asked = SegmentAsked {
+        image: &image,
+        phrase: "circle",
+        max_instances: 8,
+        backend: None,
+        request_id: None,
+    };
+    let found = segment(&dir, &root, &asked).unwrap();
+    let mask = found
+        .lines()
+        .find_map(|line| line.strip_prefix("mask "))
+        .map(|rest| rest.split(' ').next().unwrap().to_owned())
+        .unwrap();
+    let config = dir.path().join("keyed.toml");
+    std::fs::write(&config, format!("{CONFIG}{}", pasted_judge())).unwrap();
+    let config = config.to_str().unwrap();
+    let models = dir.path().join("models");
+    let ran = |args: &[&str]| {
+        let ran = whizbang(args, &root);
+        assert_eq!(ran.code, Some(0), "{args:?}: {}", ran.err);
+        assert!(!ran.out.contains(&pasted_key()), "{}", ran.out);
+        ran.out
+    };
+    // The operations of rascal, each under the config and no env file.
+    ran(&[
+        "rascal", "grow", "--mask", &mask, "--px", "2", "--config", config,
+    ]);
+    ran(&["rascal", "select", "--mask", &mask, "--config", config]);
+    ran(&[
+        "rascal",
+        "plug",
+        "--mask",
+        &mask,
+        "--max-share",
+        "0.1",
+        "--config",
+        config,
+    ]);
+    ran(&[
+        "rascal",
+        "feather",
+        "--mask",
+        &mask,
+        "--sigma-px",
+        "1",
+        "--config",
+        config,
+    ]);
+    ran(&[
+        "rascal",
+        "render",
+        "--mask",
+        &mask,
+        "--profile",
+        "plain",
+        "--config",
+        config,
+    ]);
+    let listed = whizbang_storeless(&[
+        "models",
+        "list",
+        "--config",
+        config,
+        "--models-dir",
+        models.to_str().unwrap(),
+    ]);
+    assert_eq!(listed.code, Some(0), "{}", listed.err);
+    assert!(!listed.out.contains(&pasted_key()), "{}", listed.out);
+    // `store`, `runs` and `spend` take no config at all.
+    ran(&["runs", "list"]);
+    ran(&["spend", "status"]);
 }

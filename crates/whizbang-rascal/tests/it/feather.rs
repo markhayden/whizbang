@@ -94,3 +94,19 @@ fn the_squared_distances_are_exact_and_none_without_a_core() {
     assert!(empty.iter().all(Option::is_none));
     assert!(squared_distances(&core, w, h, &|| true).is_none());
 }
+
+#[test]
+fn protect_is_kept_where_the_blend_would_lower_it() {
+    // A point of core with a protected pixel on its right, where the feather would put
+    // 247. Protect wins there: the pixel stays protected and its blend is 0, while the
+    // pixel on the core's left, which is not protected, gets the 247.
+    let (w, h, c) = (5, 5, 2);
+    let mut protect = vec![0u8; w * h];
+    protect[c * w + c + 1] = 255;
+    let mask = mask_of(w, h, plane(w, h, |x, y| (x, y) == (c, c)), &protect);
+    let out = feather(mask, 2.0, &never).unwrap().unwrap();
+    assert_eq!(out.protect()[c * w + c + 1], 255);
+    assert_eq!(out.blend()[c * w + c + 1], 0);
+    assert_eq!(out.blend()[c * w + c - 1], 247);
+    assert_eq!(out.protect(), protect.as_slice());
+}

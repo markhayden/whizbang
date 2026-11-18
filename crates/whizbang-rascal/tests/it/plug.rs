@@ -98,3 +98,22 @@ fn a_hole_touching_the_edge_is_not_filled() {
     // And plugging stops when told to.
     assert!(plugged(&u, w, h, 1.0, &|| true).is_none());
 }
+
+#[test]
+fn a_hole_of_exactly_its_share_is_filled() {
+    // A frame one pixel wide, 6 across and 8 down, around a hole 4 by 6: the frame is
+    // 24 pixels and the hole 24, a share of exactly 1. That fills it; the double just
+    // under 1 does not.
+    let (w, h) = (8, 10);
+    let frame = plane(w, h, |x, y| {
+        let outer = (1..7).contains(&x) && (1..9).contains(&y);
+        let hole = (2..6).contains(&x) && (2..8).contains(&y);
+        outer && !hole
+    });
+    let full = plane(w, h, |x, y| (1..7).contains(&x) && (1..9).contains(&y));
+    let out = plugged(&frame, w, h, 1.0, &never).unwrap();
+    assert_eq!((out.found, out.filled), (1, 1));
+    assert_eq!(out.core, full);
+    let under = f64::from_bits(1.0_f64.to_bits() - 1);
+    assert_eq!(plugged(&frame, w, h, under, &never).unwrap().filled, 0);
+}

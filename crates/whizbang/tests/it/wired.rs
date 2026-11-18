@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use whizbang::pack::OneWorker;
-use whizbang::wiring::{self, Models, Over, Said};
+use whizbang::wiring::{self, Models, Over, Said, Uses};
 use whizbang_backends::models::{
     Catalogue, CatalogueFile, Entry, EntryParts, FileName, Installations, Licence, ModelName,
     ModelsDir, Platform, Revision, Title, install,
@@ -452,6 +452,19 @@ pub fn whizbang(args: &[&str], root: &Path) -> Ran {
     }
 }
 
+/// The real binary, with these arguments and no store: for a command that takes none.
+pub fn whizbang_storeless(args: &[&str]) -> Ran {
+    let out = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
+        .args(args)
+        .output()
+        .expect("the binary runs");
+    Ran {
+        code: out.status.code(),
+        out: String::from_utf8(out.stdout).expect("output is UTF-8"),
+        err: String::from_utf8(out.stderr).expect("output is UTF-8"),
+    }
+}
+
 /// The version of the one model a run's record names, whole, as `runs show --json`
 /// gives it.
 pub fn version_of(root: &Path, run: &str) -> String {
@@ -795,14 +808,30 @@ fn the_value_of_a_variable_the_config_names_is_taken_out_of_what_a_run_under_the
         let found = bytes.windows(key.len()).any(|at| at == key.as_bytes());
         assert!(!found, "a file of the store holds the key");
     }
-    // Without the env file the config, which names a variable, is not used.
+    // Without the env file the config is used, and its backend that names a
+    // variable is handed no key; the command asks for the env file before it builds
+    // an executor that would use that backend (ADR 0011, "When the env file is asked
+    // for"), and the name, which could be a key pasted in its place, is kept out.
     drop(executor);
-    let executor = world.runner(&world.config(text));
-    let refused = executor.submit(&Call::new("echo").argument("text", Value::text("hello")));
-    let Err(CallError::Config { why }) = refused else {
-        panic!("the config was used: {refused:?}");
-    };
-    assert!(why.contains("no env file was given"), "{why}");
+    let over = world.config(text);
+    let refused = wiring::env_file_asked(&over, Uses::One(Capability::Fill, None)).unwrap_err();
+    assert_eq!(
+        refused,
+        "the fill backend `default` names its credential with `key_env`, and no env file was \
+         given: name the env file that sets it with --env-file; nothing was read but the \
+         config, and nothing ran"
+    );
+    assert_eq!(wiring::env_file_asked(&over, Uses::Nothing), Ok(()));
+    let executor = world.runner(&over);
+    let said = "the variable is FAKE_KEY";
+    let finished = executor
+        .submit(&Call::new("echo").argument("text", Value::text(said)))
+        .unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    for bytes in world.bytes() {
+        let found = bytes.windows(8).any(|at| at == b"FAKE_KEY");
+        assert!(!found, "a file of the store holds the variable's name");
+    }
 }
 
 // --- the policy --------------------------------------------------------------------------------

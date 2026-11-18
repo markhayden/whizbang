@@ -541,23 +541,38 @@ fn an_env_file_that_cannot_be_read_as_one_fails_the_next_call_and_put_right_it_i
     assert_eq!(world.runs(), 2);
 }
 
-#[test]
-fn a_source_that_names_no_env_file_refuses_a_config_that_names_a_variable() {
-    let config =
-        format!("[backends.fill]\nkind = \"fake\"\nkey_env = \"FILL_KEY\"\nurl = \"{API}/v1\"\n");
-    let world = World::new(&config, None);
-    let executor = world.executor(vec![asks()]);
-    let failed = executor.submit(&Call::new("asks")).unwrap_err();
-    assert_eq!(
-        failed,
-        config_failure(
-            "the config names a variable a credential is in, and no env file was given: \
-             without one nothing is known to keep out of what is written, so the config is \
-             not used; name the env file"
-        )
+/// A key of capitals and digits pasted where a variable's name belongs, under a
+/// source that names no env file (ADR 0011, "When the env file is asked for"): the
+/// config is used, its other backend runs a call whose argument says the key, and
+/// the backend that names the key is not ready. Neither the refusal, the record nor
+/// any file of the store holds the key. What `config::a_key_of_capitals_and_digits_pasted_into_key_env_is_never_said_back_without_the_env_file`
+/// runs.
+pub(super) fn a_pasted_key_is_never_said_back_by_a_source_with_no_env_file() {
+    let pasted = format!("SK0{}", "ABCDEFGHIJ0123456789".repeat(2));
+    let config = format!(
+        "[backends.fill]\ndefault = \"plain\"\n\n[backends.fill.plain]\nkind = \"fake\"\n\n\
+         [backends.fill.paid]\nkind = \"fake\"\nkey_env = \"{pasted}\"\n"
     );
-    assert!(!said(&failed).contains("FILL_KEY"));
-    assert_eq!(world.runs(), 0);
+    let world = World::new(&config, None);
+    let loaded = world.files.load().unwrap();
+    assert_eq!(loaded.secrets(), &Secrets::none());
+    assert_eq!(loaded.kept_out(), Secrets::new([pasted.clone()]).unwrap());
+    let executor = world.executor(vec![asks()]);
+    let said_back = format!("the key is {pasted}");
+    let finished = executor
+        .submit(&Call::new("asks").argument("note", Value::text(&said_back)))
+        .unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    let record = serde_json::to_string(&world.record(&finished)).unwrap();
+    assert!(!record.contains(&pasted));
+    let refused = executor.submit(&Call::new("asks").argument("backend", Value::text("paid")));
+    let refused = format!("{refused:?}");
+    assert!(
+        refused.contains("not ready") || refused.contains("NotReady"),
+        "{refused}"
+    );
+    assert!(!refused.contains(&pasted), "{refused}");
+    assert!(!world.store_holds(&pasted));
 }
 
 #[test]
@@ -597,7 +612,6 @@ fn every_refusal_of_either_file_is_said_in_fixed_words_that_quote_nothing_of_it(
         LoadRefused::Env(EnvRefused::TooShort { variable: key() }),
         LoadRefused::Env(EnvRefused::NameIsAValue),
         LoadRefused::Env(EnvRefused::Unprotected),
-        LoadRefused::NoEnvFile,
     ];
     let mut sentences = Vec::new();
     for refused in &cases {
@@ -606,7 +620,7 @@ fn every_refusal_of_either_file_is_said_in_fixed_words_that_quote_nothing_of_it(
         // It names the file it is about, as "the config" or "the env file".
         let names = match refused {
             LoadRefused::Config(_) => "the config",
-            LoadRefused::Env(_) | LoadRefused::NoEnvFile => "the env file",
+            LoadRefused::Env(_) => "the env file",
         };
         assert!(why.contains(names), "{why}");
         assert!(why.len() <= 256 && !why.contains('/') && !why.contains('`'));

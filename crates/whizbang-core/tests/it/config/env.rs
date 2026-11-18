@@ -735,7 +735,7 @@ fn one_call_reads_the_env_file_first_and_then_the_config_with_its_secrets() {
     assert_eq!(
         format!("{loaded:?}"),
         format!(
-            "Loaded {{ config: {:?}, credentials: {:?} }}",
+            "Loaded {{ config: {:?}, credentials: {:?}, withheld: Secrets(0) }}",
             loaded.config(),
             loaded.credentials()
         )

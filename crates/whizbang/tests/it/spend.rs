@@ -185,6 +185,24 @@ mod judge {
     }
 
     #[test]
+    fn a_turn_whose_reported_input_passes_the_long_prompt_line_is_charged_the_long_prompt_prices() {
+        // 100,001 input tokens, one over the line, at the long prompt's 0.50, and
+        // 1,000 output at its 2.50: 50,000.5 and 2,500, rounded up. At the row's own
+        // prices the same usage is 10,000.1 and 500: under the price of a long prompt.
+        let (record, _) = one_turn(
+            "spend-long",
+            turn_with("Seen.", "end_turn", Some((100_001, 1_000))),
+        );
+        assert_eq!(paid(&record), [(BOUND, 52_501, "answered".to_owned())]);
+        // On the line itself, the row's prices: 10,000 and 500.
+        let (record, _) = one_turn(
+            "spend-line",
+            turn_with("Seen.", "end_turn", Some((100_000, 1_000))),
+        );
+        assert_eq!(paid(&record), [(BOUND, 10_500, "answered".to_owned())]);
+    }
+
+    #[test]
     fn a_judge_turn_with_no_usage_is_charged_its_bound() {
         let (record, _) = one_turn("spend-no-usage", turn_with("Seen.", "end_turn", None));
         assert_eq!(paid(&record), [(BOUND, BOUND, "answered".to_owned())]);

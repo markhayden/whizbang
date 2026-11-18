@@ -209,7 +209,13 @@ impl Offers {
                     secrets,
                 };
                 let made = match (missing, kinds.get(backend.kind())) {
-                    (Some(variable), _) => Err(NotReady::Missing { variable }),
+                    // A name that holds a secret is said with it taken out: under no
+                    // env file every name the config gives a variable is one, since a
+                    // key pasted there cannot be told from a name (ADR 0011, "When the
+                    // env file is asked for").
+                    (Some(variable), _) => Err(NotReady::Missing {
+                        variable: secrets.redact(&variable),
+                    }),
                     (None, None) => Err(NotReady::UnknownKind),
                     (None, Some(kind)) => kind
                         .make(&table)

@@ -101,6 +101,9 @@ pub const RATE_LIMITED: &str = "the provider is limiting the rate of requests: 4
 pub const BUSY: &str = "the provider could not answer now: 500, 502, 503, 504 or 529";
 /// What it says of any other status.
 pub const STATUS: &str = "the provider answered with a status the adapter does not act on";
+/// What it says of a status of success other than 200.
+pub const OTHER_SUCCESS: &str =
+    "the provider answered with a status of success the adapter does not read: 2xx other than 200";
 /// What it says of a request pointed elsewhere more often than the gate follows.
 pub const MOVED_TOO_OFTEN: &str = "the request was pointed elsewhere more often than is followed";
 
@@ -292,6 +295,9 @@ impl Messages {
                 // What a turn cost is its usage at the row; one that reports none
                 // cost its bound, which the meter charges when no charge is said.
                 Some(200) => wire::turn(reply.body()).map(|turn| {
+                    let turn = turn
+                        .counted(counted)
+                        .under_output_ceiling(self.ceilings.output_tokens);
                     match turn
                         .usage()
                         .and_then(|usage| spend::charge_of(usage, self.prices))
@@ -304,6 +310,11 @@ impl Messages {
                 Some(401 | 403) => answered(FaultKind::Credential, CREDENTIAL),
                 Some(429) => answered(FaultKind::Unavailable, RATE_LIMITED),
                 Some(500 | 502 | 503 | 504 | 529) => answered(FaultKind::Unavailable, BUSY),
+                // A success the adapter does not read may have been charged: it costs
+                // its bound, as an unreadable answer of 200 does, and never nothing.
+                Some(201..=299) => {
+                    Err(Fault::new(FaultKind::Malformed, OTHER_SUCCESS).answered(None))
+                }
                 _ => answered(FaultKind::Malformed, STATUS),
             };
         }

@@ -11,7 +11,9 @@
 //! The shape of the loop is squint's (`crates/squint-core/src/run.rs`, `drive`): the
 //! images open the conversation; a turn that calls tools has each call answered, in
 //! order, and is said back whole; a turn that was cut off at its output limit is left
-//! out of the conversation and asked for once more, with a larger limit.
+//! out of the conversation and asked for once more, with a larger limit, unless its
+//! backend's output ceiling would send the retry with no more, when the run fails
+//! naming the setting to raise.
 //!
 //! **A judge is not trusted.** What it may call and what it may read are frozen when
 //! the run starts, and held by the executor where each call is dispatched
@@ -496,6 +498,7 @@ impl Action for Check {
         // answered with why and asked for once more: one repair, as squint allowed.
         let mut repaired = false;
         for _ in 0..TURNS_LIMIT {
+            let sent = allowed;
             let controls = Controls::new(allowed).map_err(unfit)?;
             let request = JudgeRequest::new(&system, messages.clone(), run.tools.clone(), controls);
             let turn = run.judge.send(&request.map_err(unfit)?);
@@ -504,14 +507,28 @@ impl Action for Check {
             match turn.stop() {
                 // Cut off: the turn is left out of the conversation, whatever it
                 // holds, and asked for once more with a larger limit.
+                // A turn whose backend sends no more than its output ceiling, and was
+                // sent with it already, is not asked for again: the retry would be
+                // sent with the same limit. The fault names the setting to raise.
                 StopReason::MaxTokens => {
                     run.judge.exclude_last(Excluded::Truncated);
                     if retried {
                         let why = "the judge was cut off again after its limit was raised";
                         return Err(failed("judge_output", &why));
                     }
+                    let raised = tokens.saturating_mul(RETRY_FACTOR);
+                    if let Some(ceiling) = turn.output_ceiling()
+                        && raised.min(ceiling) <= sent.min(ceiling)
+                    {
+                        let why = format!(
+                            "the judge was cut off at its backend's output ceiling of \
+                             {ceiling} tokens, and a retry would be sent with no more: raise \
+                             max_output_tokens in the judge's table of the config"
+                        );
+                        return Err(failed("judge_output_ceiling", &why));
+                    }
                     retried = true;
-                    allowed = tokens.saturating_mul(RETRY_FACTOR);
+                    allowed = raised;
                 }
                 StopReason::Refusal => {
                     run.judge.exclude_last(Excluded::Refusal);

@@ -4,9 +4,8 @@
 
 use clap::Subcommand;
 use whizbang::door::{self, CheckAsked};
-use whizbang::wiring::Platform;
-use whizbang_core::config::Config;
-use whizbang_core::contract::{Recovery, Secrets};
+use whizbang::wiring::{Platform, Uses};
+use whizbang_core::contract::{Capability, Recovery};
 
 use crate::rascal::{Under, executor};
 use crate::store::Where;
@@ -52,45 +51,6 @@ pub enum Command {
     },
 }
 
-/// Whether a text is a variable's name as a person writes one: an upper-case letter,
-/// then upper-case letters, digits and `_`, 64 characters at most. A complaint names a
-/// variable only so: a key written where its name belongs is never said back.
-fn plainly_a_name(text: &str) -> bool {
-    let mut bytes = text.bytes();
-    bytes.next().is_some_and(|first| first.is_ascii_uppercase())
-        && text.len() <= 64
-        && bytes.all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
-}
-
-/// The complaint of a command whose config names a variable for a credential and that
-/// was given no env file: before anything is read but the config, naming each variable
-/// that is plainly a name.
-fn no_env_file(under: &Under) -> Option<String> {
-    let (Some(config), None) = (under.asked().config, under.asked().env_file) else {
-        return None;
-    };
-    let config = Config::read(config, &Secrets::none()).ok()?;
-    let variables = config.variables();
-    if variables.is_empty() {
-        return None;
-    }
-    let named: Vec<&str> = variables
-        .iter()
-        .copied()
-        .filter(|variable| plainly_a_name(variable))
-        .collect();
-    let which = if named.len() == variables.len() {
-        named.join(", ")
-    } else {
-        "a variable that is not shown".to_owned()
-    };
-    Some(format!(
-        "the config names {which} for a credential, and no env file was given: name the \
-         env file that sets it with --env-file; nothing was read but the config and \
-         nothing ran"
-    ))
-}
-
 /// Runs a squint command: what to print on success, or the complaint.
 pub fn run(command: &Command, platform: Platform) -> Result<String, String> {
     run_at(command, whizbang::wiring::recovery(), Some(platform))
@@ -111,10 +71,8 @@ fn run_at(
             under,
             request_id,
         } => {
-            if let Some(complaint) = no_env_file(under) {
-                return Err(complaint);
-            }
-            let executor = executor(at, under, recovery, platform)?;
+            let uses = Uses::One(Capability::Judge, judge.as_deref());
+            let executor = executor(at, under, recovery, platform, uses)?;
             let asked = CheckAsked {
                 use_case,
                 source,

@@ -493,9 +493,6 @@ pub enum LoadRefused {
     Env(EnvRefused),
     /// The config.
     Config(ConfigRefused),
-    /// The config names a variable a credential is in, and no env file was given
-    /// ([`Loaded::of_files`]).
-    NoEnvFile,
 }
 
 impl std::fmt::Display for LoadRefused {
@@ -503,11 +500,6 @@ impl std::fmt::Display for LoadRefused {
         match self {
             LoadRefused::Env(refused) => refused.fmt(f),
             LoadRefused::Config(refused) => refused.fmt(f),
-            LoadRefused::NoEnvFile => f.write_str(
-                "the config names a variable a credential is in, and no env file was \
-                 given: without one nothing is known to keep out of what is written, so \
-                 the config is not used; name the env file",
-            ),
         }
     }
 }
@@ -521,6 +513,11 @@ impl std::error::Error for LoadRefused {}
 pub struct Loaded {
     config: Config,
     credentials: Credentials,
+    /// With no env file, the names of the variables the config names, each long
+    /// enough to be a secret: a key pasted where a variable's name belongs cannot be
+    /// told from one (ADR 0011, "When the env file is asked for"), so each is kept
+    /// out of what is written. With an env file, none.
+    withheld: Secrets,
 }
 
 impl Loaded {
@@ -548,6 +545,7 @@ impl Loaded {
         Ok(Loaded {
             config,
             credentials,
+            withheld: Secrets::none(),
         })
     }
 
@@ -555,10 +553,13 @@ impl Loaded {
     /// what they say: each time it is called it reads both again, whole, and answers
     /// what they say now, or why they are not read. It keeps nothing between two calls.
     ///
-    /// With no env file, a config that names a variable is refused
-    /// ([`LoadRefused::NoEnvFile`]): a key pasted into such a config would be read and
-    /// said back, since nothing told its reader of one. A config that names no
-    /// variable is read with no env file.
+    /// With no env file, a config that names a variable is read all the same, and
+    /// hands no backend a key: every variable it names is missing, so each backend
+    /// that names one is not ready. Whether a command may go on without the env file
+    /// is the command's to say, from the backends it chose (ADR 0011, "When the env
+    /// file is asked for"). Each name the config gives a variable, long enough to be
+    /// a secret, is then kept out of what is written ([`Loaded::kept_out`]): a key
+    /// pasted where the name belongs is never said back.
     pub fn of_files(config: &Path, env: Option<&Path>) -> Result<Loaded, LoadRefused> {
         Loaded::of_files_knowing(config, env, &Secrets::none())
     }
@@ -573,9 +574,9 @@ impl Loaded {
         env: Option<&Path>,
         earlier: &Secrets,
     ) -> Result<Loaded, LoadRefused> {
-        let loaded = Loaded::read_knowing(config, env, earlier)?;
-        if env.is_none() && !loaded.config.variables().is_empty() {
-            return Err(LoadRefused::NoEnvFile);
+        let mut loaded = Loaded::read_knowing(config, env, earlier)?;
+        if env.is_none() {
+            loaded.withheld = withheld(&loaded.config);
         }
         Ok(loaded)
     }
@@ -593,6 +594,29 @@ impl Loaded {
     pub fn secrets(&self) -> &Secrets {
         self.credentials.secrets()
     }
+
+    /// What is kept out of everything written under this reading: the credentials'
+    /// secrets and, when no env file was read, the names the config gives its
+    /// variables ([`Loaded::of_files`]). These names are never told to the config's
+    /// reader as secrets, since the config holds them by right.
+    pub fn kept_out(&self) -> Secrets {
+        self.credentials.secrets().joined(&self.withheld)
+    }
+}
+
+/// The names a config gives the variables its credentials are in, each of at least
+/// [`SECRET_MIN_BYTES`]: a shorter text is no key, and no set of secrets holds one.
+fn withheld(config: &Config) -> Secrets {
+    let long = config
+        .variables()
+        .into_iter()
+        .map(|name| name.trim_matches(|c: char| c.is_ascii_whitespace()))
+        .filter(|name| name.len() >= SECRET_MIN_BYTES)
+        .map(str::to_owned);
+    // Each is trimmed as the set trims it and is long enough, so the set is always
+    // made. Were it ever refused, no name would be kept out, and a command still
+    // refuses to use a backend that names a variable without the env file.
+    Secrets::new(long).unwrap_or_default()
 }
 
 #[cfg(test)]

@@ -82,3 +82,90 @@ fn the_run_records_the_recipient_and_the_classes_sent() {
     // No header of the request is in the record.
     assert!(!record.to_string().contains("x-api-key"));
 }
+
+#[test]
+fn a_run_without_the_env_file_holds_no_byte_of_a_key_pasted_into_the_config() {
+    // A config whose judge holds a key of capitals and digits where its variable's
+    // name belongs, and no env file: a segment run and an operation's run over it
+    // complete, and no file under the store holds the key.
+    use crate::cli::{CONFIG, pasted_judge, pasted_key, segment_under, with_picture};
+    use whizbang::door::SegmentAsked;
+    use whizbang_testkit::scratch::Scratch;
+    let dir = Scratch::new("record-pasted");
+    let (root, image) = with_picture(&dir);
+    let text = format!("{CONFIG}{}", pasted_judge());
+    let asked = SegmentAsked {
+        image: &image,
+        phrase: "circle",
+        max_instances: 8,
+        backend: None,
+        request_id: None,
+    };
+    let found = segment_under(&dir, &root, &asked, &text).unwrap();
+    assert!(!found.contains(&pasted_key()), "{found}");
+    let mask = found
+        .lines()
+        .find_map(|line| line.strip_prefix("mask "))
+        .map(|rest| rest.split(' ').next().unwrap().to_owned())
+        .unwrap();
+    let config = dir.path().join("whizbang.toml");
+    let grown = crate::wired::whizbang(
+        &[
+            "rascal",
+            "grow",
+            "--mask",
+            &mask,
+            "--px",
+            "2",
+            "--config",
+            config.to_str().unwrap(),
+        ],
+        &root,
+    );
+    assert_eq!(grown.code, Some(0), "{}", grown.err);
+    let key = pasted_key();
+    let mut seen = 0;
+    let mut folders = vec![root.clone()];
+    while let Some(folder) = folders.pop() {
+        for entry in std::fs::read_dir(&folder).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                folders.push(path);
+            } else {
+                let bytes = std::fs::read(&path).unwrap();
+                seen += 1;
+                let found = bytes.windows(key.len()).any(|at| at == key.as_bytes());
+                assert!(!found, "a file of the store holds the key");
+            }
+        }
+    }
+    assert!(seen > 10, "the store holds next to nothing");
+}
+
+#[test]
+fn each_judge_turn_records_its_counted_input_beside_its_usage() {
+    // The exchange the run keeps of each turn holds the input the adapter counted
+    // before the request was sent, beside the usage the provider reported.
+    let judged = Judged::new("record-counted");
+    let (printed, log) = checked(&judged, vec![submission("held", "Nothing moved.")]);
+    let printed = printed.unwrap();
+    let run = run_of(&printed);
+    let record = record_of(&judged.world.root, &run);
+    let turns = record["judge"].as_array().unwrap();
+    let turn = turns.iter().find(|turn| turn["judge"] == "turn").unwrap();
+    let name = turn["exchange"].as_str().unwrap();
+    let id = whizbang_core::contract::RunId::parse(&run).unwrap();
+    let name = name.strip_prefix("diagnostics/").unwrap_or(name);
+    let bytes = whizbang::door::diagnostic(&judged.world.root, &id, name).unwrap();
+    let exchange: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let answered = &exchange["answer"]["turn"];
+    let counted = answered["counted_input_tokens"].as_u64().unwrap();
+    assert!(answered["usage"].is_object(), "{exchange}");
+    // The count is the adapter's: at least the request's own bytes, and no more than
+    // the input ceiling it was held to.
+    let sent = log.lock().unwrap()[0].1.len() as u64;
+    assert!(
+        counted >= sent / 2 && counted <= 40_000,
+        "{counted} for {sent} bytes"
+    );
+}
