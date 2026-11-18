@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Writes the model tier's evidence record (docs/plans/m1c-local-pack.md, task R2b; decision
-# D15): docs/results/m1c-local-pack.md and its numbers file, docs/results/m1c-local-pack.toml.
+# D15): docs/results/m1c-local-pack.md and its numbers file, docs/results/m1c-local-pack.toml;
+# and the timings of checkpoint 1D (plan 1D, task V1), docs/results/m1d-segment-coverage.md,
+# from one run of `scripts/test-models.sh coverage` after the three rounds.
 # On the owner's Mac only, never in CI.
 #
 #   WHIZBANG_THREAD_LIMIT=200 scripts/heavy.sh model-evidence scripts/model-evidence.sh
@@ -71,15 +73,20 @@ value() {
 }
 
 # The run kept from nothing: see the top.
-scripts/test-models.sh
+scripts/test-models.sh model_tier
 for round in 1 2 3; do
   rm -f "$work/phrase-$round.txt" "$work/second-$round.txt" "$work/places-$round.txt" "$work/tiny-$round.txt" "$work/watch-$round.txt"
-  WHIZBANG_MEMORY_REPORT=$work/watch-$round.txt scripts/test-models.sh
+  WHIZBANG_MEMORY_REPORT=$work/watch-$round.txt scripts/test-models.sh model_tier
   cp "$shared/out/phrase.txt" "$work/phrase-$round.txt"
   cp "$shared/out/second.txt" "$work/second-$round.txt"
   cp "$shared/out/places.txt" "$work/places-$round.txt"
   cp "$shared/out/tiny.txt" "$work/tiny-$round.txt"
 done
+
+# The timings of checkpoint 1D (plan 1D, task V1): once, under the watch, after the rounds.
+rm -f "$work/coverage.txt" "$work/watch-coverage.txt"
+WHIZBANG_MEMORY_REPORT=$work/watch-coverage.txt scripts/test-models.sh coverage
+cp "$shared/out/coverage.txt" "$work/coverage.txt"
 
 commit=$(git rev-parse HEAD)
 tree=clean
@@ -288,6 +295,62 @@ md=docs/results/m1c-local-pack.md
   echo "boxes for the phrase and SAM 2.1 Hiera-Tiny draws each mask; the point and the box are"
   echo "SAM 2.1's alone, and each answers its candidates, best predicted IoU first."
 } >"$md"
-echo "model-evidence: wrote $toml and $md"
+
+c=$work/coverage.txt
+cw=$work/watch-coverage.txt
+sam3_model=$(sed -n '/"name": "sam3"/,/"revision"/s/.*"revision": "\([^"]*\)".*/\1/p' crates/whizbang/src/catalogue.json | head -n 1)
+tiny_model=$(sed -n '/"name": "tiny"/,/"revision"/s/.*"revision": "\([^"]*\)".*/\1/p' crates/whizbang/src/catalogue.json | head -n 1)
+[ -n "$sam3_model" ] && [ -n "$tiny_model" ] || { echo "model-evidence: the catalogue names no revision of sam3 or tiny" >&2; exit 1; }
+coverage=docs/results/m1d-segment-coverage.md
+{
+  echo "# Checkpoint 1D: timings of phrase, point and box on SAM 3 and Tiny"
+  echo
+  echo "Written by \`scripts/model-evidence.sh\` (plan 1D, task V1, item 4) from one run of"
+  echo "\`scripts/test-models.sh coverage\` (\`crates/whizbang/tests/it/coverage.rs\`) on the owner's"
+  echo "Mac, under the heavy lock, the thread guard at 200 and the watch on resident memory;"
+  echo "\`evidence::the_coverage_record_names_a_commit_of_this_tree_and_every_timing\` holds the"
+  echo "fields below to the tree. The picture is the model tier's (\`circle.png\`, drawn by a"
+  echo "program), asked the phrase \`circle\`, the point 420 200 or the box 300 80 540 320. No"
+  echo "picture of the owner's."
+  echo
+  echo "For each model and each kind of query, a worker of its own: \`first\` is the first"
+  echo "request from the action's side, the worker's start, the cached check of the installation's"
+  echo "files, the runtime's import and the load included; \`load\` is the worker's \`load\` call"
+  echo "alone, by the supervisor's status; \`second\` is a second request of the same kind, the"
+  echo "model resident. SAM 3's point and box load its tracker on the first of them, inside the"
+  echo "request. The GPU's memory is what the driver holds for the worker"
+  echo "(\`torch.mps.driver_allocated_memory\`), said by the adapter \`sam3\` beside each answer on"
+  echo "the GPU: after a phrase (\`Sam3Model\` resident) and after a point that followed it (both"
+  echo "models resident). The resident memory is the watch's peak over the whole tree (cargo, the"
+  echo "test, the worker), which does not count the GPU's. Times are of one machine on one day,"
+  echo "reported, not compared."
+  echo
+  echo '```toml'
+  echo "record = \"m1d-segment-coverage\""
+  echo "measured = \"$measured\""
+  echo "commit = \"$commit\""
+  echo "tree = \"$tree\""
+  echo "sam3_revision = \"$sam3_model\""
+  echo "sam3_adapter_revision = \"$revision\""
+  echo "sam3_adapter_source = \"$source\""
+  echo "tiny_revision = \"$tiny_model\""
+  echo "tiny_adapter_revision = \"$tiny_revision\""
+  echo "tiny_adapter_source = \"$tiny_source\""
+  echo "device = \"mps\""
+  for model in sam3 tiny; do
+    for kind in phrase point box; do
+      for part in load first second; do
+        echo "${model}_${kind}_${part}_seconds = \"$(value "$c" "${model}_${kind}_${part}_seconds")\""
+      done
+    done
+  done
+  echo "sam3_one_model_gpu_mib = $(value "$c" sam3_one_model_gpu_mib)"
+  echo "sam3_two_models_gpu_mib = $(value "$c" sam3_two_models_gpu_mib)"
+  echo "peak_resident_kib = $(value "$cw" peak_resident_kib)"
+  echo "most_threads_in_one_process = $(value "$cw" most_threads)"
+  echo "still_running_after = $(value "$cw" still_running)"
+  echo '```'
+} >"$coverage"
+echo "model-evidence: wrote $toml, $md and $coverage"
 }
 main "$@"; exit

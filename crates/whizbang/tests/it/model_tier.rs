@@ -73,12 +73,12 @@ struct Answered {
 
 /// The folder `scripts/test-models.sh` and these tests share, in cargo's folder for the
 /// scratch of tests.
-fn shared() -> PathBuf {
+pub(crate) fn shared() -> PathBuf {
     Path::new(env!("CARGO_TARGET_TMPDIR")).join("model-tier")
 }
 
 /// The models directory `scripts/test-models.sh` was given: an absolute path, one line.
-fn models_dir() -> PathBuf {
+pub(crate) fn models_dir() -> PathBuf {
     let named = std::fs::read_to_string(shared().join("models-dir"))
         .expect("run the model tier by just test-models, which names the models directory");
     let dir = PathBuf::from(named.trim_end_matches('\n'));
@@ -87,7 +87,7 @@ fn models_dir() -> PathBuf {
 }
 
 /// Writes what a test measured, `name=value` lines, for the evidence script.
-fn write_out(test: &str, lines: &[(String, String)]) {
+pub(crate) fn write_out(test: &str, lines: &[(String, String)]) {
     let out = shared().join("out");
     std::fs::create_dir_all(&out).unwrap();
     let text: String = lines
@@ -311,7 +311,7 @@ fn fields_of(prefix: &str, answered: &Answered) -> Vec<(String, String)> {
     lines
 }
 
-fn seconds(took: Duration) -> String {
+pub(crate) fn seconds(took: Duration) -> String {
     format!("{:.2}", took.as_secs_f64())
 }
 

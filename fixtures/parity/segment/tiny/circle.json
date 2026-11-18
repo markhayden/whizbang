@@ -1,0 +1,109 @@
+{
+  "adapter": "owlv2-sam2",
+  "adapter_revision": "1",
+  "answers": [
+    [
+      {
+        "box": [
+          330.0,
+          110.0,
+          510.0,
+          290.0
+        ],
+        "iou": 0.9822880029678345,
+        "plane": "circle-phrase-1.png",
+        "score": 0.7406918406486511
+      }
+    ],
+    [
+      {
+        "box": [
+          330.0,
+          110.0,
+          510.0,
+          290.0
+        ],
+        "iou": 0.9889978766441345,
+        "plane": "circle-point-1.png",
+        "score": 0.9889978766441345
+      },
+      {
+        "box": [
+          330.0,
+          110.0,
+          510.0,
+          290.0
+        ],
+        "iou": 0.9348403215408325,
+        "plane": "circle-point-2.png",
+        "score": 0.9348403215408325
+      },
+      {
+        "box": [
+          80.0,
+          110.0,
+          510.0,
+          440.0
+        ],
+        "iou": 0.6012133359909058,
+        "plane": "circle-point-3.png",
+        "score": 0.6012133359909058
+      }
+    ],
+    [
+      {
+        "box": [
+          330.0,
+          110.0,
+          510.0,
+          290.0
+        ],
+        "iou": 0.9901750087738037,
+        "plane": "circle-box-1.png",
+        "score": 0.9901750087738037
+      },
+      {
+        "box": [
+          331.0,
+          111.0,
+          510.0,
+          290.0
+        ],
+        "iou": 0.9753654599189758,
+        "plane": "circle-box-2.png",
+        "score": 0.9753654599189758
+      },
+      {
+        "box": [
+          291.0,
+          105.0,
+          532.0,
+          296.0
+        ],
+        "iou": 0.9737573266029358,
+        "plane": "circle-box-3.png",
+        "score": 0.9737573266029358
+      }
+    ]
+  ],
+  "box": [
+    300.0,
+    80.0,
+    540.0,
+    320.0
+  ],
+  "device": "mps",
+  "height": 480,
+  "max_instances": 3,
+  "model": "tiny",
+  "model_revision": "2026-11.1",
+  "phrase": "circle",
+  "picture": "circle",
+  "picture_digest": "sha256:89eb6949f38a93f7a4b157ee81e204d5119da4d9575f5887ff11fa445bfe3a02",
+  "picture_file": "docs/results/m1c-local-pack/circle.png",
+  "point": [
+    420.0,
+    200.0
+  ],
+  "width": 640
+}

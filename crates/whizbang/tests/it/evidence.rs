@@ -233,3 +233,79 @@ fn the_first_verdict_record_names_a_commit_of_this_tree_and_holds_no_secret() {
         assert!(!page.contains(held), "the page holds {held}");
     }
 }
+
+#[test]
+fn the_coverage_record_names_a_commit_of_this_tree_and_every_timing() {
+    // Plan 1D, task V1, item 4: the record `scripts/model-evidence.sh` wrote of the
+    // timings of phrase, point and box on SAM 3 and Tiny, and the GPU's memory.
+    let page = std::fs::read_to_string(repository().join("docs/results/m1d-segment-coverage.md"))
+        .expect("the coverage record is committed");
+    let block = page
+        .split("```toml\n")
+        .nth(1)
+        .and_then(|rest| rest.split("```").next())
+        .expect("the page holds its fields");
+    let fields: Vec<(String, String)> = block
+        .lines()
+        .map(|line| {
+            let (name, value) = line.split_once(" = ").expect("a line is name = value");
+            (name.to_owned(), value.trim_matches('"').to_owned())
+        })
+        .collect();
+    assert_eq!(field(&fields, "record"), "m1d-segment-coverage");
+    let commit = field(&fields, "commit");
+    assert!(
+        commit.len() == 40
+            && commit
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()),
+        "{commit}"
+    );
+    assert_eq!(field(&fields, "tree"), "clean");
+    assert_eq!(field(&fields, "device"), "mps");
+    // Of this tree's models and adapters: the catalogue's revisions, the binary's
+    // table, and the adapters' sources by their digests.
+    let catalogue = wiring::catalogue().unwrap();
+    let table = wiring::adapters();
+    for (model, adapter, source) in [
+        ("sam3", "sam3", "pack/src/whizbang_pack/sam3.py"),
+        ("tiny", "owlv2-sam2", "pack/src/whizbang_pack/owlv2_sam2.py"),
+    ] {
+        let entry = catalogue.entry(model).unwrap();
+        assert_eq!(
+            field(&fields, &format!("{model}_revision")),
+            entry.revision().as_str()
+        );
+        let revision = &table
+            .iter()
+            .find(|each| each.name.as_str() == adapter)
+            .unwrap()
+            .revision;
+        assert_eq!(
+            field(&fields, &format!("{model}_adapter_revision")),
+            revision.as_str()
+        );
+        assert_eq!(
+            field(&fields, &format!("{model}_adapter_source")),
+            digest_of(source)
+        );
+        // Every timing: the load, the first request and a second, of each kind.
+        for kind in ["phrase", "point", "box"] {
+            for part in ["load", "first", "second"] {
+                let name = format!("{model}_{kind}_{part}_seconds");
+                let seconds: f64 = field(&fields, &name).parse().unwrap();
+                assert!(seconds > 0.0 && seconds < 300.0, "{name}: {seconds}");
+            }
+        }
+    }
+    // The memory: the GPU's with one model of SAM 3 and with its two, and the tree's
+    // resident peak; and nothing left running.
+    let number = |name: &str| field(&fields, name).parse::<u64>().unwrap();
+    assert!(number("sam3_one_model_gpu_mib") > 0);
+    assert!(number("sam3_two_models_gpu_mib") >= number("sam3_one_model_gpu_mib"));
+    assert!(number("peak_resident_kib") > 0);
+    assert_eq!(number("still_running_after"), 0);
+    for held in ["/Users/", "/private/", "/home/"] {
+        assert!(!page.contains(held), "the page holds {held}");
+    }
+}

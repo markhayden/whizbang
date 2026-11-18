@@ -14,11 +14,16 @@
 # torch`, and `tiny` by `whizbang models get tiny` (plan 1D, task T1). Set it where it
 # lasts, as AGENTS.md says of the word list.
 #
+# One argument may name a part of the tier: `model_tier` (the tests of SAM 3's and Tiny's
+# requests, which scripts/model-evidence.sh runs), `parity` (the parity fixtures on the GPU and
+# the CPU, plan 1D, task V1) or `coverage` (the timings of plan 1D, task V1); with none, all
+# three run. Any other argument is refused before anything runs.
+#
 # Then it builds the tests, and runs the model tier under scripts/memory-watch.sh (24 GiB of
 # resident memory for the whole tree, then a kill) and, inside it, scripts/thread-guard.sh at
 # the limit it is given (200 from the recipe), one test at a time, in the nextest
-# profile `model-tier` (.config/nextest.toml: a test is ended at 5 minutes, so the two take
-# 10 at most). The tests read nothing of their environment (scripts/check-binary-start.sh),
+# profile `model-tier` (.config/nextest.toml: a test is ended at 5 minutes, and the parity test at
+# 10). The tests read nothing of their environment (scripts/check-binary-start.sh),
 # so the models directory reaches them in one file of cargo's folder for tests' scratch,
 # `<target>/tmp/model-tier/models-dir`, written here; each writes what it measured beside
 # it, in `model-tier/out/`, which scripts/model-evidence.sh reads. WHIZBANG_MEMORY_REPORT,
@@ -37,6 +42,13 @@ refuse() {
   echo "test-models: $1" >&2
   exit 2
 }
+
+case "${1-}" in
+  "") filter='test(/^(model_tier|parity|coverage)::/)' ;;
+  model_tier | parity | coverage) filter="test(/^$1::/)" ;;
+  *) refuse "the one argument names a part of the tier: model_tier, parity or coverage" ;;
+esac
+[ "$#" -le 1 ] || refuse "the one argument names a part of the tier: model_tier, parity or coverage"
 
 dir=${WHIZBANG_MODELS_DIR:-}
 [ -n "$dir" ] ||
@@ -58,12 +70,13 @@ case "$target" in
 esac
 shared=$target/tmp/model-tier
 mkdir -p "$shared/out"
-rm -f "$shared/out/phrase.txt" "$shared/out/second.txt" "$shared/out/places.txt" "$shared/out/tiny.txt"
+rm -f "$shared/out/phrase.txt" "$shared/out/second.txt" "$shared/out/places.txt" "$shared/out/tiny.txt" \
+  "$shared/out/parity.txt" "$shared/out/coverage.txt"
 printf '%s\n' "$dir" >"$shared/models-dir"
 
 cd "$root"
 scripts/thread-guard.sh cargo nextest run --profile model-tier -p whizbang --test it --no-run
 scripts/memory-watch.sh scripts/thread-guard.sh cargo nextest run --profile model-tier -p whizbang --test it \
-  --run-ignored only --test-threads 1 --no-fail-fast --no-capture -E 'test(/^model_tier::/)'
+  --run-ignored only --test-threads 1 --no-fail-fast --no-capture -E "$filter"
 }
 main "$@"; exit
