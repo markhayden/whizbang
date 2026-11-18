@@ -947,6 +947,30 @@ fn a_judge_call_to_a_recipient_the_config_does_not_name_is_refused_before_a_byte
 }
 
 #[test]
+fn a_google_or_openai_call_to_a_recipient_the_config_does_not_name_is_refused_before_a_byte_leaves()
+{
+    // As for Anthropic's judge, above, for each of the two others: a config that approves
+    // no recipient, and then one that approves another origin; the gate refuses each
+    // request before anything is handed to the sender, and the server sees no connection.
+    use crate::anthropic::{GOOGLE, Judged, OPENAI};
+    for provider in [GOOGLE, OPENAI] {
+        let judged = Judged::of(&format!("wired-unnamed-{}", provider.name), provider);
+        let listener = whizbang_testkit::loopback::Listener::serve(1, |_, _| {});
+        let address = judged.address(listener.port());
+        for approved in [None, Some("https://api.example.com")] {
+            let executor = judged.runner(&judged.over(&address, approved));
+            let refused = executor.submit(&Call::new("judges")).unwrap();
+            assert_eq!(refused.outcome().name(), "error");
+            drop(executor);
+            let text = shown(&judged.world.root, refused.run().as_str());
+            assert!(text.contains("\trequest_not_approved\t"), "{text}");
+        }
+        assert_eq!(listener.finish(), 0, "{}", provider.name);
+        assert!(!judged.store_holds_the_key());
+    }
+}
+
+#[test]
 fn a_redirect_to_another_origin_is_refused_and_the_key_is_not_sent_there() {
     // The approved origin answers the judge's request by pointing it to another
     // origin, on another port of loopback: the backend asks the gate of that address,

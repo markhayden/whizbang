@@ -260,10 +260,10 @@ Where the sign-in keeps its token, and what `get` does with it, are in the guide
 ## Checking an edit with a judge
 
 `whizbang squint check source-fidelity` asks a judge whether an edit of an image kept
-what mattered in its source. The judge is a backend of the kind `service`, whose one
-provider is Anthropic; the config names its model and the variable its key is in, caps
-what one call may reserve, and approves the provider for the four classes of data a
-check sends (plan 2A, "What the owner provides (S)"):
+what mattered in its source. The judge is a backend of the kind `service`, whose
+provider is Anthropic, Google or OpenAI; the config names its model and the variable its
+key is in, caps what one call may reserve, and approves the provider for the four
+classes of data a check sends (plan 2A, "What the owner provides (S)"). For Anthropic:
 
 ```toml
 [backends.judge]
@@ -280,7 +280,49 @@ origin = "https://api.anthropic.com"
 classes = ["source_images", "derived_images", "prompts", "evidence"]
 ```
 
-The key is in the env file, as `ANTHROPIC_API_KEY=…`, and the command is given both:
+For Google, whose key goes in the header `x-goog-api-key` and never in the address:
+
+```toml
+[backends.judge]
+kind = "service"
+provider = "google"
+model = "gemini-3.8-flash"
+key_env = "GEMINI_API_KEY"
+
+[spend]
+call_cap_usd = 2.00
+
+[egress.recipients.google]
+origin = "https://generativelanguage.googleapis.com"
+classes = ["source_images", "derived_images", "prompts", "evidence"]
+```
+
+For OpenAI, whose key goes in the header `Authorization`, as `Bearer` and the key:
+
+```toml
+[backends.judge]
+kind = "service"
+provider = "openai"
+model = "gpt-6.1-terra"
+key_env = "OPENAI_API_KEY"
+
+[spend]
+call_cap_usd = 2.00
+
+[egress.recipients.openai]
+origin = "https://api.openai.com"
+classes = ["source_images", "derived_images", "prompts", "evidence"]
+```
+
+The models this build has prices for are `claude-haiku-5-5`; `gemini-3.8-flash` and
+`gemini-4-argon`; and `gpt-6.1-terra` and `gpt-6.1-sol`. The setting `effort` takes
+`low`, `medium`, `high`, `xhigh` or `max` for Anthropic; `low`, `medium` or `high`
+(Gemini's thinking level) for Google; and `none`, `low`, `medium`, `high`, `xhigh` or
+`max` for OpenAI. An OpenAI request is sent with `store` false, so the provider keeps
+none of it between turns.
+
+The key is in the env file, as `ANTHROPIC_API_KEY=…` (or `GEMINI_API_KEY=…`,
+`OPENAI_API_KEY=…`), and the command is given both:
 
 ```text
 whizbang squint check source-fidelity --source <id> --candidate <id> \
@@ -295,9 +337,13 @@ change is noted in the reason but does not fail it.
 **What one request may cost** is fixed by three settings of the backend, each held
 before a byte is sent: `max_input_tokens` (40,000 when none is given),
 `max_output_tokens` (2,048) and `max_pictures` (24), in a table
-`[backends.judge.settings]`. A request is bound at its ceilings: 40,000 input tokens at
-0.125 dollars a million and 2,048 output tokens at 0.50, which is 0.006024 dollars; a
-check reserves that for each of its 16 turns, 0.096384 dollars, within the cap of 2.00.
+`[backends.judge.settings]` (`max_output_tokens` is at most 65,536 for Google). A
+request is bound at its ceilings: for `claude-haiku-5-5`, 40,000 input tokens at 0.125
+dollars a million and 2,048 output tokens at 0.50, which is 0.006024 dollars; a check
+reserves that for each of its 16 turns, 0.096384 dollars, within the cap of 2.00. For
+`gemini-3.8-flash` the bound is 40,000 at 0.75 and 2,048 at 3.75, 0.03768 dollars, 0.60288
+for a check; for `gpt-6.1-terra`, 40,000 at 1.00 and 2,048 at 5.00, 0.05024 dollars,
+0.80384 for a check.
 Each turn is then settled at what its answer says it used. A conversation that needs
 more raises the settings, and the cap with them (ADR 0026).
 

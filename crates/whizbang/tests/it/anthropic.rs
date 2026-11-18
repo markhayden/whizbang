@@ -65,21 +65,6 @@ fn judges() -> Arc<dyn Action> {
     Arc::new(Judges(draft.build().unwrap()))
 }
 
-/// A turn as the provider answers one.
-pub fn a_turn() -> Vec<u8> {
-    let body = serde_json::json!({
-        "id": "msg_1", "type": "message", "role": "assistant", "model": "claude-haiku-5-5",
-        "content": [{ "type": "text", "text": "Seen." }],
-        "stop_reason": "end_turn", "usage": { "input_tokens": 9, "output_tokens": 2 }
-    })
-    .to_string();
-    format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
-        body.len()
-    )
-    .into_bytes()
-}
-
 /// What a server on loopback saw of each request: its head and its body.
 pub type Log = Arc<Mutex<Vec<(String, Vec<u8>)>>>;
 
@@ -118,16 +103,49 @@ pub fn serving(pki: &Arc<Pki>, answers: Vec<Vec<u8>>) -> (Listener, Log) {
     (listener, log)
 }
 
+/// A provider of the kind `service`, as a test's config names it: its name, the model
+/// a test names, and the path of its address, which the test's server is at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Provider {
+    pub name: &'static str,
+    pub model: &'static str,
+    pub path: &'static str,
+}
+
+pub const ANTHROPIC: Provider = Provider {
+    name: "anthropic",
+    model: "claude-haiku-5-5",
+    path: "/v1/messages",
+};
+
+pub const GOOGLE: Provider = Provider {
+    name: "google",
+    model: "gemini-3.8-flash",
+    path: "/v1beta/models/gemini-3.8-flash:generateContent",
+};
+
+pub const OPENAI: Provider = Provider {
+    name: "openai",
+    model: "gpt-6.1-terra",
+    path: "/v1/responses",
+};
+
 /// A world whose config names one judge of the kind `service`, at `address`, with the
 /// key in its env file, and approves `approved` for prompts when it names one.
 pub struct Judged {
     pub world: World,
     pub key: String,
     pub pki: Arc<Pki>,
+    pub provider: Provider,
 }
 
 impl Judged {
     pub fn new(label: &str) -> Judged {
+        Judged::of(label, ANTHROPIC)
+    }
+
+    /// The same, of this provider.
+    pub fn of(label: &str, provider: Provider) -> Judged {
         let world = World::new(label);
         let reset = whizbang(&["spend", "reset", "--allowance", "20"], &world.root);
         assert_eq!(reset.code, Some(0), "{}", reset.err);
@@ -135,7 +153,13 @@ impl Judged {
             world,
             key: made_up_key(),
             pki: Arc::new(Pki::loopback()),
+            provider,
         }
+    }
+
+    /// The address of the provider at a port of loopback.
+    pub fn address(&self, port: u16) -> String {
+        format!("https://127.0.0.1:{port}{}", self.provider.path)
     }
 
     /// What the runner is built over: the config and the env file, written; the kind
@@ -153,9 +177,10 @@ impl Judged {
         classes: &[&str],
         more: &str,
     ) -> Over {
+        let Provider { name, model, .. } = self.provider;
         let mut config = format!(
-            "[backends.judge]\nkind = \"service\"\nprovider = \"anthropic\"\n\
-             model = \"claude-haiku-5-5\"\nkey_env = \"{KEY_VARIABLE}\"\n\n{more}"
+            "[backends.judge]\nkind = \"service\"\nprovider = \"{name}\"\n\
+             model = \"{model}\"\nkey_env = \"{KEY_VARIABLE}\"\n\n{more}"
         );
         if let Some(origin) = approved {
             let classes: Vec<String> = classes.iter().map(|class| format!("\"{class}\"")).collect();
@@ -204,29 +229,42 @@ impl Judged {
     }
 }
 
-#[test]
-fn the_key_goes_only_to_the_approved_origin_in_its_header() {
+/// A call of `judges` under a judge of this provider at a server on loopback whose
+/// origin the config approves: what the server saw of the one request, its head and its
+/// body, once the store is checked to hold no byte of the key.
+pub fn asked_once(provider: Provider, label: &str) -> (Judged, String, String) {
     use whizbang_core::contract::{Call, Executor};
-    let judged = Judged::new("anthropic-key");
-    let (listener, log) = serving(&judged.pki, vec![a_turn()]);
+    let judged = Judged::of(label, provider);
+    let (listener, log) = serving(&judged.pki, vec![said_by(provider, "Seen.", (9, 0, 2))]);
     let origin = format!("https://127.0.0.1:{}", listener.port());
-    let over = judged.over(&format!("{origin}/v1/messages"), Some(&origin));
+    let over = judged.over(&judged.address(listener.port()), Some(&origin));
     let executor = judged.runner(&over);
     let ran = executor.submit(&Call::new("judges")).unwrap();
     assert_eq!(ran.outcome().name(), "completed");
     drop(executor);
     assert_eq!(listener.finish(), 1);
     let (head, body) = log.lock().unwrap()[0].clone();
-    // In its one header, once, and nowhere else of the request.
-    let line = format!("{KEY_HEADER}: {}\r\n", judged.key);
-    assert_eq!(head.matches(&judged.key).count(), 1, "{head}");
-    assert!(head.contains(&line), "{head}");
     let body = String::from_utf8(body).unwrap();
+    // The key is in the head once, and in no address and no body; the store holds no
+    // byte of it.
+    assert_eq!(head.matches(&judged.key).count(), 1, "{head}");
+    assert!(
+        !head.lines().next().unwrap().contains(&judged.key),
+        "{head}"
+    );
     assert!(!body.contains(&judged.key));
+    assert!(!judged.store_holds_the_key());
+    (judged, head, body)
+}
+
+#[test]
+fn the_key_goes_only_to_the_approved_origin_in_its_header() {
+    let (judged, head, _) = asked_once(ANTHROPIC, "anthropic-key");
+    // In its one header.
+    let line = format!("{KEY_HEADER}: {}\r\n", judged.key);
+    assert!(head.contains(&line), "{head}");
     assert!(head.starts_with("POST /v1/messages HTTP/1.1\r\n"), "{head}");
     assert!(head.contains("anthropic-version: 2023-06-01\r\n"), "{head}");
-    // The store holds no byte of it.
-    assert!(!judged.store_holds_the_key());
 }
 
 /// An answer of 200 with a turn that says `text`, stops for `stop`, and reports this
@@ -283,10 +321,9 @@ pub fn judges_call() -> whizbang_core::contract::Call {
     whizbang_core::contract::Call::new("judges")
 }
 
-/// An answer of 200 whose turn calls `submit_verdict` once, with each checklist item
-/// of source-fidelity given this disposition, confidently, and a reason that says
-/// `said`; reporting this usage.
-pub fn submission(disposition: &str, said: &str) -> Vec<u8> {
+/// The input of a call of `submit_verdict` that gives each checklist item of
+/// source-fidelity this disposition, confidently, and a reason that says `said`.
+pub fn verdict_input(disposition: &str, said: &str) -> serde_json::Value {
     let item = |id: &str| {
         serde_json::json!({
             "id": id, "disposition": disposition, "confidence": "confident",
@@ -297,24 +334,91 @@ pub fn submission(disposition: &str, said: &str) -> Vec<u8> {
             } else { serde_json::Value::Null }
         })
     };
-    let body = serde_json::json!({
-        "id": "msg_2", "type": "message", "role": "assistant", "model": "claude-haiku-5-5",
-        "content": [
-            { "type": "thinking", "thinking": "", "signature": "c2lnbmVk" },
-            { "type": "tool_use", "id": "toolu_1", "name": "submit_verdict", "caller": { "type": "direct" },
-              "input": { "schema_version": 1, "findings": [],
-                         "items": [item("chk:ob:SF1@candidate"), item("chk:ob:SF2@candidate")],
-                         "opinion": { "verdict": "pass", "reason": "Recorded only." } } }
-        ],
-        "stop_reason": "tool_use",
-        "usage": { "input_tokens": 3_000, "output_tokens": 400 }
-    })
-    .to_string();
+    serde_json::json!({ "schema_version": 1, "findings": [],
+                        "items": [item("chk:ob:SF1@candidate"), item("chk:ob:SF2@candidate")],
+                        "opinion": { "verdict": "pass", "reason": "Recorded only." } })
+}
+
+/// An answer of 200 with this body.
+fn ok(body: &serde_json::Value) -> Vec<u8> {
+    let body = body.to_string();
     format!(
         "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
         body.len()
     )
     .into_bytes()
+}
+
+/// An answer of 200 whose turn calls `submit_verdict` once, with each checklist item
+/// of source-fidelity given this disposition, confidently, and a reason that says
+/// `said`; reporting this usage.
+pub fn submission(disposition: &str, said: &str) -> Vec<u8> {
+    submission_by(ANTHROPIC, disposition, said)
+}
+
+/// The same, as this provider answers.
+pub fn submission_by(provider: Provider, disposition: &str, said: &str) -> Vec<u8> {
+    let input = verdict_input(disposition, said);
+    let body = match provider.name {
+        "google" => serde_json::json!({
+            "candidates": [{ "content": { "role": "model", "parts": [
+                { "functionCall": { "id": "call_1", "name": "submit_verdict", "args": input },
+                  "thoughtSignature": "c2lnbmVk" }
+            ] }, "finishReason": "STOP" }],
+            "usageMetadata": { "promptTokenCount": 3_000, "candidatesTokenCount": 400 },
+            "responseId": "resp_2"
+        }),
+        "openai" => serde_json::json!({
+            "id": "resp_2", "status": "completed",
+            "output": [
+                { "type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "c2lnbmVk" },
+                { "type": "function_call", "id": "fc_1", "call_id": "call_1",
+                  "name": "submit_verdict", "arguments": input.to_string(), "status": "completed" }
+            ],
+            "usage": { "input_tokens": 3_000, "output_tokens": 400 }
+        }),
+        _ => serde_json::json!({
+            "id": "msg_2", "type": "message", "role": "assistant", "model": "claude-haiku-5-5",
+            "content": [
+                { "type": "thinking", "thinking": "", "signature": "c2lnbmVk" },
+                { "type": "tool_use", "id": "toolu_1", "name": "submit_verdict", "caller": { "type": "direct" },
+                  "input": input }
+            ],
+            "stop_reason": "tool_use",
+            "usage": { "input_tokens": 3_000, "output_tokens": 400 }
+        }),
+    };
+    ok(&body)
+}
+
+/// An answer of 200 of this provider whose turn says `text` and ends, reporting this
+/// usage: the whole input, how much of it was read from a cache, and the output.
+pub fn said_by(provider: Provider, text: &str, usage: (u64, u64, u64)) -> Vec<u8> {
+    let (input, cached, output) = usage;
+    let body = match provider.name {
+        "google" => serde_json::json!({
+            "candidates": [{ "content": { "role": "model", "parts": [{ "text": text }] },
+                             "finishReason": "STOP" }],
+            "usageMetadata": { "promptTokenCount": input, "cachedContentTokenCount": cached,
+                               "candidatesTokenCount": output * 4 / 5,
+                               "thoughtsTokenCount": output - output * 4 / 5 },
+            "responseId": "resp_1"
+        }),
+        "openai" => serde_json::json!({
+            "id": "resp_1", "status": "completed",
+            "output": [{ "type": "message", "id": "msg_1", "role": "assistant", "status": "completed",
+                         "content": [{ "type": "output_text", "text": text, "annotations": [] }] }],
+            "usage": { "input_tokens": input, "output_tokens": output,
+                       "input_tokens_details": { "cached_tokens": cached } }
+        }),
+        _ => serde_json::json!({
+            "id": "msg_1", "type": "message", "role": "assistant", "model": "claude-haiku-5-5",
+            "content": [{ "type": "text", "text": text }], "stop_reason": "end_turn",
+            "usage": { "input_tokens": input - cached, "output_tokens": output,
+                       "cache_read_input_tokens": cached }
+        }),
+    };
+    ok(&body)
 }
 
 /// The classes a check of source-fidelity sends: its words, the two pictures, and
@@ -347,7 +451,7 @@ pub fn checked_under(
     let (listener, log) = serving(&judged.pki, answers);
     let origin = format!("https://127.0.0.1:{}", listener.port());
     let over = judged.over_with(
-        &format!("{origin}/v1/messages"),
+        &judged.address(listener.port()),
         Some(&origin),
         &CHECK_CLASSES,
         "",
