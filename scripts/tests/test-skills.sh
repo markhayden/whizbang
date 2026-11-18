@@ -132,9 +132,9 @@ check_kickoff() {
     'cat "$text/title.txt" "$text/body.md"          # read first' \
     'gh pr edit <number> --title "$(cat "$text/title.txt")" --body-file "$text/body.md"' \
     'until run=$(gh run list --commit "$head" --json databaseId' \
-    '.jobs | length'"'"')" -ge 4 ]; do' '[ "$tries" -le 60 ] ||' \
+    '.jobs | length'"'"')" -ge 5 ]; do' '[ "$tries" -le 60 ] ||' \
     'git merge --no-ff --no-edit origin/main' 'git status --short' 'git merge --abort' \
-    'gh pr checks <number> --watch                  # check (macos-15), scripts (macos-15), check (ubuntu-22.04), ci'; do
+    'gh pr checks <number> --watch                  # check and scripts on macos-15 and ubuntu-22.04, ci'; do
     says "$1" Commands "$text" || return 1
   done
   pr_scan_alone "$1" || return 1
@@ -170,15 +170,15 @@ check_kickoff() {
     'After any edit to either file, read and scan again.' \
     "or a model's name that it knows (but for the folder \`.claude\` and the file" \
     '`CLAUDE.md` of this repo, named as paths)' \
-    '`check (macos-15)`, `scripts (macos-15)` and' '`check (ubuntu-22.04)`, and the aggregate `ci`' \
-    '`ci` is listed only once the other three have finished' 'says "no checks reported"' \
-    'a run whose commit is the head lists all four' \
+    '`check (macos-15)`, `scripts (macos-15)`,' '`check (ubuntu-22.04)`, `scripts (ubuntu-22.04)` and the aggregate `ci`' \
+    '`ci` is listed only once the other four have finished' 'says "no checks reported"' \
+    'a run whose commit is the head lists all five' \
     'go back to step 4' 'hand back again with the new commit'; do
     says "$1" Checklist "$text" || return 1
   done
   for text in 'Pull request:' 'Head:' 'Acceptance' 'Decisions' 'Doubts' 'Deferred' 'Refused push:' \
     'CI: check (macos-15) <result>, scripts (macos-15) <result>, check (ubuntu-22.04) <result>,' \
-    '    ci <result>'; do
+    '    scripts (ubuntu-22.04) <result>, ci <result>'; do
     says "$1" "Hand-back format" "$text" || return 1
   done
 }
@@ -191,7 +191,7 @@ check_review_merge() {
   done
   for text in 'Reviewed head:' 'Base:' 'Merge commit:' 'Verified' 'Read:' 'Follow-ups' \
     '- Verdict: may merge at the reviewed head; no finding that blocks the merge is open' \
-    'check (macos-15) <result>, scripts (macos-15) <result>,' 'check (ubuntu-22.04) <result>, ci <result>' \
+    'check (macos-15) <result>, scripts (macos-15) <result>,' 'check (ubuntu-22.04) <result>, scripts (ubuntu-22.04) <result>, ci <result>' \
     'corrected by the orchestrator' 'pull request of mine that adds its row to docs/carry-over.md'; do
     says "$1" "Hand-back format" "$text" || return 1
   done
@@ -207,7 +207,7 @@ check_review_merge() {
     '- [ ] 9. Follow-ups are recorded by you; the reviewer only names them.' \
     'a new head that is reviewed again' 'Nothing is left only in a verdict.' \
     'The corrected files get every check of this step again' \
-    '`check (macos-15)`, `scripts (macos-15)` and' '`check (ubuntu-22.04)`, and the aggregate `ci`' \
+    '`check (macos-15)`, `scripts (macos-15)`,' '`check (ubuntu-22.04)`, `scripts (ubuntu-22.04)` and the aggregate `ci`' \
     'You may correct the title or body yourself' \
     'A correction that changes a claim about the code goes back to the builder.' \
     'never past a failing check' \
@@ -456,7 +456,7 @@ changed check_kickoff "$f" 's/and is not refused: go through those\. Then$/and i
 changed check_kickoff "$f" 's/^gh pr edit <number> /gh pr comment <number> /' "must say: gh pr edit <number>"
 changed check_kickoff "$f" 's/Never retry around the hook, and never use `--no-verify`\.//' "must say: Never retry around the hook"
 changed check_kickoff "$f" '/^until run=/d' "must say: until run="
-changed check_kickoff "$f" 's/ -ge 4 \]; do$/ -ge 3 ]; do/' "must say: .jobs | length"
+changed check_kickoff "$f" 's/ -ge 5 \]; do$/ -ge 4 ]; do/' "must say: .jobs | length"
 changed check_kickoff "$f" '/"$tries" -le 60/d' 'must say: [ "$tries" -le 60 ]'
 changed check_kickoff "$f" 's/has passed on exactly the tree being pushed/has passed/' "must say: has passed on exactly the tree being pushed"
 changed check_kickoff "$f" 's/owner at once and is rotated/owner/' "must say: owner at once and is rotated"

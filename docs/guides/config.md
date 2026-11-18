@@ -126,8 +126,11 @@ file as plain UTF-8 with no byte-order mark, which some editors add and which is
 A link to a file is followed, and what it leads to is read. Nothing is expanded, and the
 environment of your shell is not read: a key is in this file or it is not set. Only the variables your config names are used, each by
 the backend that names it. A backend that names a variable this file does not set is
-not ready, and a call that would use it is told which variable; and a config that names
-any variable is not used without an env file. A key shorter than 8 bytes is refused, by the name of its
+not ready, and a call that would use it is told which variable. A command that will
+use a backend that names a variable asks for the env file before it reads anything but
+the config, naming the backend and `key_env` or `token_env`, never the variable; a
+command that uses no such backend (the operations of `rascal`, `models list`, a
+`rascal segment` on a local segmenter) runs without it. A key shorter than 8 bytes is refused, by the name of its
 variable. Keep nothing but keys here: any value of 8 bytes or more is treated as a
 secret, and a config that holds the same text is refused.
 
@@ -232,8 +235,8 @@ key_env = "WEIGHTS_TOKEN"
 Each entry is an `origin` and exactly one of two keys. `sign_in = "huggingface"` is the
 sign-in Hugging Face's command-line tool keeps on this machine (`hf auth login`), which
 `whizbang models get` reads only when a download from that origin needs it. `key_env`
-names a variable of the env file, as a backend's key does, and the config then needs
-its env file. Eight origins at most, each once. Like the other keys of `[models]`, these
+names a variable of the env file, as a backend's key does, and a `get` that reads it
+then needs the env file. Eight origins at most, each once. Like the other keys of `[models]`, these
 are in no digest.
 
 The sign-in's token is sent to Hugging Face and to no other origin, so it is taken for

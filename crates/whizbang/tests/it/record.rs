@@ -169,3 +169,56 @@ fn each_judge_turn_records_its_counted_input_beside_its_usage() {
         "{counted} for {sent} bytes"
     );
 }
+
+#[test]
+fn a_reason_item_is_redacted_before_it_is_cut_or_escaped() {
+    // A reason whose key stands across both cuts: the summary's, at 300 characters of
+    // the reason, and the door's, at 5,000 of the item. The key is taken out first,
+    // whole, so neither cut leaves a piece of it: not the record, the diagnostic of
+    // the items, any file under the store, nor what is printed.
+    let judged = Judged::new("record-reason-cut");
+    let key = judged.key.clone();
+    let filler = |chars: usize| vec!["ab"; chars / 3].join(" ");
+    // The item's own words come first: 40 characters before the reason.
+    let first = filler(294 - 2);
+    let second = filler(5_000 - 40 - first.len() - key.len() - 2 - 4);
+    let reason = format!("{first} {key} {second} {key} tail");
+    let at = |of: &str, from: usize| of[..from].chars().count();
+    let first_at = at(&reason, reason.find(&key).unwrap());
+    assert!(first_at < 300 && first_at + key.len() > 300, "{first_at}");
+    let item = format!("chk:ob:SF1@candidate: held (confident): {reason}");
+    let second_at = at(&item, item.rfind(&key).unwrap());
+    assert!(
+        second_at < 5_000 && second_at + key.len() > 5_000,
+        "{second_at}"
+    );
+    let (printed, _) = checked(&judged, vec![submission("held", &reason)]);
+    let printed = printed.unwrap();
+    // No piece of the key of eight characters or more, anywhere.
+    let pieces: Vec<&str> = (0..=key.len() - 8)
+        .map(|from| &key[from..from + 8])
+        .collect();
+    for piece in &pieces {
+        assert!(!printed.contains(piece), "{piece} in {printed}");
+    }
+    let run = run_of(&printed);
+    let record = record_of(&judged.world.root, &run).to_string();
+    let id = whizbang_core::contract::RunId::parse(&run).unwrap();
+    let items = whizbang::door::diagnostic(
+        &judged.world.root,
+        &id,
+        whizbang_squint::source_fidelity::REASONS,
+    )
+    .unwrap();
+    let items = String::from_utf8(items).unwrap();
+    for piece in &pieces {
+        assert!(!record.contains(piece), "{piece} in the record");
+        assert!(!items.contains(piece), "{piece} in the items");
+    }
+    assert_eq!(
+        items.matches("[redacted]").count(),
+        4,
+        "the items hold the marker"
+    );
+    assert!(!judged.store_holds_the_key());
+}

@@ -321,12 +321,25 @@ pub struct CheckAsked<'a> {
 /// it.
 pub const CHECK_OUTPUT_TOKENS: i64 = 2048;
 
-/// What reads a run's verdict back: its decision's word and its reason.
-pub type ReadVerdict<'a> = dyn Fn(&RunId) -> Option<(String, String)> + 'a;
+/// A run's verdict as it was stored: its decision's word, its reason, and the items
+/// of the reason whole, from the run's diagnostic of them, when it keeps one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stated {
+    pub word: String,
+    pub why: String,
+    pub items: Vec<String>,
+}
+
+/// What reads a run's verdict back ([`Stated`]).
+pub type ReadVerdict<'a> = dyn Fn(&RunId) -> Option<Stated> + 'a;
 
 /// Runs `check` through the executor under a use case, and waits for it. A run that
-/// completed prints its line, then its verdict and its reason, which `read` reads back
-/// from its record; any other end is the complaint, escaped already.
+/// completed prints its line, then its verdict, which `read` reads back from the
+/// stored run, and each item of its reason whole, on a line of its own, from the run's
+/// diagnostic of them (plan 1D, task F1, item 7): escaped, and cut only where any text
+/// a door prints is ([`printable`]). A run that keeps no such diagnostic has its
+/// reason printed as its record holds it. Any other end is the complaint, escaped
+/// already.
 pub fn check(
     executor: &dyn Executor,
     asked: &CheckAsked<'_>,
@@ -355,9 +368,14 @@ pub fn check(
     }
     let (run, mut text, _) = completed(executor, call, asked.request_id)?;
     match read(&run) {
-        Some((word, why)) => {
-            text.push_str(&format!("verdict: {}\n", printable(&word)));
-            text.push_str(&format!("reason: {}\n", printable(&why)));
+        Some(stated) => {
+            text.push_str(&format!("verdict: {}\n", printable(&stated.word)));
+            if stated.items.is_empty() {
+                text.push_str(&format!("reason: {}\n", printable(&stated.why)));
+            }
+            for item in &stated.items {
+                text.push_str(&format!("reason: {}\n", printable(item)));
+            }
         }
         None => text.push_str("verdict: none was recorded\n"),
     }
@@ -365,8 +383,9 @@ pub fn check(
 }
 
 /// The verdict of the run `run` in the store at `root`, as its record holds it, read
-/// by a reader of its own: its decision's word and its reason.
-pub fn verdict(root: &Path, run: &RunId) -> Option<(String, String)> {
+/// by a reader of its own: its decision's word and its reason, and the items of its
+/// reason from the run's diagnostic of them.
+pub fn verdict(root: &Path, run: &RunId) -> Option<Stated> {
     let reader = Reader::open(root, Arc::new(RealFs)).ok()?;
     let generation = reader.snapshot().ok()?;
     let record = whizbang_core::contract::record::stored(&generation, run.as_str(), |entry| {
@@ -375,5 +394,19 @@ pub fn verdict(root: &Path, run: &RunId) -> Option<(String, String)> {
     .ok()?;
     let (decision, why) = record.verdict()?;
     let word = serde_json::to_value(decision).ok()?;
-    Some((word.as_str()?.to_owned(), why.to_owned()))
+    // The items, each a JSON string on a line of its own; a line that is not one is
+    // left out, and a diagnostic that is not there gives none.
+    let items = diagnostic(root, run, whizbang_squint::source_fidelity::REASONS)
+        .map(|bytes| {
+            String::from_utf8_lossy(&bytes)
+                .lines()
+                .filter_map(|line| serde_json::from_str::<String>(line).ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(Stated {
+        word: word.as_str()?.to_owned(),
+        why: why.to_owned(),
+        items,
+    })
 }

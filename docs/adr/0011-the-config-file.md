@@ -101,6 +101,11 @@ sentence that said the shipped binary registers none.
 Amended: 2026-11-17, a seventeenth note, with task P6b of checkpoint 1C. Added under "The
 kind `pack`": what one request names and is queued with, its files verified before a
 load, and the one rule for a local table that the kind and the wiring share.
+Amended: 2026-11-18, an eighteenth note, with task F1 of plan 1D
+(`docs/plans/m2b-checkpoint-1d.md`, item 1). Added: "When the env file is asked for".
+Changed in "Both files, each time" and "A download's token": a config that names a
+variable is read without an env file, and hands no backend a key; the command asks for
+the env file, from the backends it chose. `LoadRefused::NoEnvFile` is gone.
 
 ## Context
 
@@ -405,8 +410,9 @@ key_env = "WEIGHTS_TOKEN"
   a config that names the sign-in for any other, `http://huggingface.co` and another
   port included, is refused, so no config can send the owner's token elsewhere.
 - **`key_env` names a variable of the env file,** read as every key is ("The env
-  file"): it is among the variables the config names (`Config::variables`), so a config
-  that names one is refused without an env file, its value is one of the executor's
+  file"): it is among the variables the config names (`Config::variables`), so without
+  an env file a `get` that would read it is refused, naming no variable ("When the env
+  file is asked for"), its value is one of the executor's
   secrets, a value under eight bytes is refused by the variable's name, and one the file
   does not set is listed as missing. `Credentials::model_token` hands it for its origin
   and no other.
@@ -1024,16 +1030,43 @@ it is put right is answered; a key rotated in the env file is the one the next a
 hands out, with the secrets of that reading
 (`files::both_files_are_read_again_each_time_and_a_file_put_right_is_read`).
 
-**With no env file, a config that names a variable is refused** (`LoadRefused::NoEnvFile`),
-in a fixed sentence that says the env file is needed. Nothing is protected without one:
-a key pasted into such a config would be read, and said back, since nothing told its
-reader of one. A config that names no variable is read with no env file. Such a config
-is read with no secrets: a key pasted into it is not known, and is kept out of what a
-run records only if the executor's secrets hold it. A config that is itself refused is
-refused as `Loaded::read` refuses it, before this. `Loaded::read`
-is as it was, and reads such a config with every variable missing: the refusal is this
-reader's
-(`files::with_no_env_file_a_config_that_names_a_variable_is_refused_and_one_that_names_none_is_read`).
+**With no env file, a config that names a variable is read** (amended with task F1 of
+plan 1D; until then it was refused, `LoadRefused::NoEnvFile`), as `Loaded::read` reads
+it: every variable missing, no backend handed a key, and each backend that names one
+not ready. Whether a command may go on without the env file is the command's to say,
+from the backends it chose ("When the env file is asked for"). What such a reading
+keeps out of what is written (`Loaded::kept_out`) is its credentials' secrets, none,
+and each name the config gives a variable that is long enough to be a secret: a key
+pasted where a name belongs cannot be told from one, so each such name is kept out of
+the record, the diagnostics, the events and every fault, and a backend not ready for
+want of its variable is said with the name taken out. The names are not told to the
+config's reader as secrets, since the config holds them by right
+(`config::a_config_naming_a_credential_loads_without_an_env_file_and_hands_no_backend_a_key`,
+`config::a_key_of_capitals_and_digits_pasted_into_key_env_is_never_said_back_without_the_env_file`).
+A config that is itself refused is refused as `Loaded::read` refuses it.
+
+### When the env file is asked for
+
+Plan 1D, task F1, item 1. A command asks for the env file **when it has chosen the
+backends its run will use, before any is built and before anything but the config is
+read, and only when one of them names a credential** (`whizbang::wiring::env_file_asked`).
+`whizbang squint check` uses its judge: the one `--judge` names, or the default;
+`whizbang rascal segment` its segmenter, the same way; `whizbang backends status` every
+backend; the operations of `rascal`, `models list`, `models remove` and `setup` none;
+`store`, `runs` and `spend` take no config. Where a capability has no default and none
+was named, every backend of it counts. `models get` and `models pin` ask for it only
+when a download's token is to be read from a variable ("A download's token").
+
+**The refusal names the capability, the backend and the setting,** `key_env` or
+`token_env`, and never the setting's value: a key of capital letters and digits cannot
+be told from a variable's name, so a variable is named only once the env file is read
+and its values are known to be kept out. A backend's name is the config's own, lower
+case. Nothing is read but the config, and nothing runs
+(`cli::squint_check_without_the_env_file_is_refused_naming_the_backend_and_not_the_value`,
+`cli::rascal_segment_on_a_pack_backend_runs_without_the_env_file_under_a_config_naming_a_judge_key`,
+`cli::commands_that_use_no_backend_run_without_the_env_file_under_a_config_naming_a_key`,
+`record::a_run_without_the_env_file_holds_no_byte_of_a_key_pasted_into_the_config`).
+With an env file, its values are known first, as before.
 
 **For a reader that kept what it read before,** `Loaded::of_files_knowing` takes the
 secrets of earlier readings too, and tells the config's reader of them beside the
@@ -1237,8 +1270,10 @@ What follows is task C5's, each on one executor across a change of the file.
   value that cannot be made unchecked.
 - A backend whose table names a variable needs it set, whatever its kind: a kind that
   could have done without a token cannot say so.
-- A config that names a credential is not used without its env file by the reader an
-  executor will be given, though the three steps still read it.
+- A command that will use a backend that names a credential is not run without its env
+  file; one that uses none runs, and the reader an executor is given then hands no
+  backend a key and keeps every name of a variable out of what is written (amended
+  with task F1 of plan 1D).
 - The spec's example stands as written; `SPEC.md` is not changed.
 - A config cannot carry a credential by any documented way. A person who wants a key in
   a file puts it in the env file.

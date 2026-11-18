@@ -546,17 +546,18 @@ fn squint_check_prints_the_verdict_and_the_run_under_a_recorded_fake() {
     );
     let printed = printed.unwrap();
     let lines: Vec<&str> = printed.lines().collect();
-    assert_eq!(lines.len(), 3, "{printed}");
+    assert_eq!(lines.len(), 4, "{printed}");
     assert!(
         lines[0].starts_with("run ") && lines[0].ends_with(" completed"),
         "{printed}"
     );
     assert_eq!(lines[1], "verdict: pass");
-    assert!(
-        lines[2].starts_with(
-            "reason: chk:ob:SF1@candidate: held (confident): Nothing protected moved."
-        ),
-        "{printed}"
+    assert_eq!(
+        lines[2..],
+        [
+            "reason: chk:ob:SF1@candidate: held (confident): Nothing protected moved.",
+            "reason: chk:ob:SF2@candidate: held (confident): Nothing protected moved."
+        ]
     );
     // One request reached the judge, with the source-fidelity's tool beside view.
     let sent: serde_json::Value = serde_json::from_slice(&log.lock().unwrap()[0].1).unwrap();
@@ -779,4 +780,122 @@ fn commands_that_use_no_backend_run_without_the_env_file_under_a_config_naming_a
     // `store`, `runs` and `spend` take no config at all.
     ran(&["runs", "list"]);
     ran(&["spend", "status"]);
+}
+
+// --- the verdict's reason, whole (plan 1D, task F1, item 7) -------------------------------------
+
+/// A reason of `words` words, each `word` and a space between: so long that the
+/// verdict's summary cuts it, and with nothing a door escapes.
+fn long_reason(word: &str, words: usize) -> String {
+    vec![word; words].join(" ")
+}
+
+/// The lines `squint check` printed after its run's: the verdict, then the reason's.
+fn after_the_run(printed: &str) -> Vec<String> {
+    printed.lines().skip(1).map(str::to_owned).collect()
+}
+
+#[test]
+fn squint_check_prints_each_reason_item_whole_on_its_own_line() {
+    use crate::anthropic::{Judged, checked, record_of, submission};
+    // 80 words of five letters and a space: 479 characters, over the summary's 300.
+    let reason = long_reason("tails", 80);
+    let judged = Judged::new("cli-reason-whole");
+    let (printed, _) = checked(&judged, vec![submission("held", &reason)]);
+    let printed = printed.unwrap();
+    assert_eq!(
+        after_the_run(&printed),
+        [
+            "verdict: pass".to_owned(),
+            format!("reason: chk:ob:SF1@candidate: held (confident): {reason}"),
+            format!("reason: chk:ob:SF2@candidate: held (confident): {reason}"),
+        ]
+    );
+    // The record's reason is the summary: each item cut at a space before 300
+    // characters, with three dots, and the two joined.
+    let run = printed.lines().next().unwrap().split(' ').nth(1).unwrap();
+    let record = record_of(&judged.world.root, run);
+    let verdict = record["judge"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["judge"] == "verdict")
+        .unwrap();
+    let cut = long_reason("tails", 50);
+    assert_eq!(
+        verdict["why"],
+        format!(
+            "chk:ob:SF1@candidate: held (confident): {cut}...; \
+             chk:ob:SF2@candidate: held (confident): {cut}..."
+        )
+    );
+}
+
+#[test]
+fn reason_items_over_4096_characters_in_all_are_each_printed_whole_from_the_stored_run() {
+    use crate::anthropic::{Judged, checked, submission};
+    // Two items of 3,000 characters and more: over the 4,096 a record keeps of a
+    // verdict's reason in all, and each under the door's print limit.
+    let reason = long_reason("feathers", 340);
+    assert!(reason.len() > 3_000 && reason.len() < 4_900);
+    let judged = Judged::new("cli-reason-4096");
+    let (printed, _) = checked(&judged, vec![submission("held", &reason)]);
+    let printed = printed.unwrap();
+    let lines = after_the_run(&printed);
+    assert_eq!(lines.len(), 3, "{printed}");
+    for (line, item) in lines[1..]
+        .iter()
+        .zip(whizbang_squint::source_fidelity::CHECKLIST)
+    {
+        assert_eq!(*line, format!("reason: {item}: held (confident): {reason}"));
+    }
+    // Read again from the stored run by a reader of its own: the same items.
+    let run = printed.lines().next().unwrap().split(' ').nth(1).unwrap();
+    let run = whizbang_core::contract::RunId::parse(run).unwrap();
+    let stated = whizbang::door::verdict(&judged.world.root, &run).unwrap();
+    assert_eq!(stated.items.len(), 2);
+    assert!(stated.items.iter().all(|item| item.ends_with(&reason)));
+}
+
+#[test]
+fn a_reason_item_over_the_print_limit_is_cut_there_and_escaped() {
+    use crate::anthropic::{Judged, checked, submission};
+    // A reason of 6,000 characters and more, with a line break and an escape near its
+    // start: printed on one line, each escaped, and cut at the door's 5,000
+    // characters of the item, with three dots.
+    let reason = format!(
+        "Line one.\nAn escape \u{1b}[31m here. {}",
+        long_reason("plumes", 900)
+    );
+    let judged = Judged::new("cli-reason-cut");
+    let (printed, _) = checked(&judged, vec![submission("held", &reason)]);
+    let printed = printed.unwrap();
+    let lines = after_the_run(&printed);
+    assert_eq!(lines.len(), 3, "{printed}");
+    let item = format!("chk:ob:SF1@candidate: held (confident): {reason}");
+    let kept: String = item.chars().take(5_000).collect();
+    let shown = whizbang::door::printable(&kept);
+    assert!(
+        shown.contains("Line one.\\nAn escape \\u{1b}[31m here."),
+        "{shown}"
+    );
+    assert_eq!(lines[1], format!("reason: {shown}..."));
+    assert!(!printed.contains('\u{1b}'));
+}
+
+#[test]
+fn squint_check_brief_prints_the_same_items() {
+    use crate::anthropic::{Judged, checked, checked_under, submission};
+    let reason = long_reason("crest", 90);
+    let judged = Judged::new("cli-reason-brief");
+    let (without, _) = checked(&judged, vec![submission("held", &reason)]);
+    let judged = Judged::new("cli-reason-brief-given");
+    let (with, _) = checked_under(
+        &judged,
+        vec![submission("held", &reason)],
+        Some("Change only the sky."),
+    );
+    let (without, with) = (without.unwrap(), with.unwrap());
+    assert_eq!(after_the_run(&with), after_the_run(&without));
+    assert_eq!(after_the_run(&with).len(), 3, "{with}");
 }

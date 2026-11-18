@@ -546,11 +546,25 @@ impl Action for Check {
                     if fidelity && !submitted.is_empty() {
                         let calls = turn.tool_calls().count();
                         let read = match submitted.as_slice() {
-                            [call] if calls == 1 => source_fidelity::verdict_of(call.arguments()),
+                            [call] if calls == 1 => source_fidelity::decided_of(call.arguments()),
                             _ => Err("submit_verdict is called once, alone".to_owned()),
                         };
                         let why = match read {
-                            Ok(verdict) => return Ok(Produced::nothing().with_verdict(verdict)),
+                            Ok(decided) => {
+                                // Each item of the reason whole, one to a line, beside
+                                // the verdict's summary: the writer takes the secrets
+                                // out of the whole first.
+                                let mut lines = String::new();
+                                for item in &decided.items {
+                                    lines.push_str(&Json::from(item.as_str()).to_string());
+                                    lines.push('\n');
+                                }
+                                let kept = context
+                                    .diagnostics()
+                                    .write(source_fidelity::REASONS, lines.as_bytes());
+                                kept.map_err(|why| failed("reasons", &why))?;
+                                return Ok(Produced::nothing().with_verdict(decided.verdict));
+                            }
                             Err(why) => why,
                         };
                         if repaired {

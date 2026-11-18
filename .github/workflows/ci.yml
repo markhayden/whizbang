@@ -53,13 +53,9 @@ jobs:
         run: |
           echo "UV_PYTHON_INSTALL_DIR=$UV_PYTHON_INSTALL_DIR" >>"$GITHUB_ENV"
           uv python install --no-config --no-bin --mirror https://github.com/astral-sh/python-build-standalone/releases/download "$(cat pack/.python-version)"
-      - name: Fast tier, advisories, release smoke and secrets scan
-        if: matrix.os != 'macos-15'
-        run: just ci
-      # The same without the script tests, which take this runner three to five minutes:
-      # the job `scripts` below runs them beside this one.
+      # `just ci` without the script tests, which take a runner three to six minutes: the
+      # job `scripts` below runs them beside this one, on the same runner.
       - name: Fast tier without the script tests, advisories, release smoke and secrets scan
-        if: matrix.os == 'macos-15'
         run: just ci-without-scripts
       # Every commit, not only the final tree: a secret added and then deleted, or a commit
       # made where the hooks do not run, is still caught. On a pull request, base..head; on
@@ -90,12 +86,16 @@ jobs:
         if: matrix.os == 'ubuntu-22.04'
         run: just test-timeout
 
-  # The script tests on the macOS runner, which `check` leaves out there: the other half of
-  # `just ci`. Set up as `check` is, because some of them run cargo, clippy and cargo-deny:
-  # the toolchain, the cache, and the same pinned tools.
+  # The script tests on each runner, which `check` leaves out: the other half of `just ci`.
+  # Set up as `check` is, because some of them run cargo, clippy and cargo-deny: the
+  # toolchain, the cache, and the same pinned tools.
   scripts:
-    name: scripts (macos-15)
-    runs-on: macos-15
+    name: scripts (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4

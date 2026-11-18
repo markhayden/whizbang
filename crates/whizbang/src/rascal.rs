@@ -30,7 +30,7 @@ pub struct Under {
     #[arg(long, value_name = "FILE")]
     config: Option<PathBuf>,
     /// The env file that holds the values of the variables the config names for its
-    /// credentials. A config that names a variable is not used without it.
+    /// credentials. A command that will use a backend naming one is not run without it.
     #[arg(long, value_name = "FILE", requires = "config")]
     env_file: Option<PathBuf>,
     /// The models directory: where installed models are kept, an absolute path. With
