@@ -107,7 +107,8 @@ And open beside them:
 
 Closed or re-owned by V1: the row on what a segmenter adapter took and gave (done for the
 settings, the diagnostics and the predicted IoU; the order re-owned by milestone 2); the
-speed of local models (1D's half done; milestone 8 for the fill model).
+speed of local models (1D's half done; milestone 8 for the fill model). Added: one row,
+owned by milestone 2, for the open follow-ups above.
 
 ## What milestone 2 and 3 start from
 
