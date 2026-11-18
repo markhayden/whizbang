@@ -57,7 +57,8 @@ fn left(dir: &Scratch) -> (PathBuf, PathBuf, String) {
     }
     drop((writer, opening));
     let import = store::Command::Import {
-        file: file.clone(),
+        file: Some(file.clone()),
+        picture: None,
         at: Where::at(&root),
         create: false,
     };
@@ -107,7 +108,8 @@ fn prune(root: &Path) -> store::Command {
 
 fn import(root: &Path, file: &Path) -> store::Command {
     store::Command::Import {
-        file: file.to_path_buf(),
+        file: Some(file.to_path_buf()),
+        picture: None,
         at: Where::at(root),
         create: false,
     }
