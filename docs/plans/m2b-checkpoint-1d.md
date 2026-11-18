@@ -425,7 +425,7 @@ them, each with a test against a fake model."
    row 1D with the tests that show it, what a reader should not assume, what moved to
    the carry-over list, and what milestone 2 and 3 start from.
 
-- [ ] Done when:
+- [x] Done when:
   `pack::a_device_the_kind_does_not_know_is_refused_when_the_config_is_read`,
   `test_sam3.Device.test_a_device_of_cpu_runs_on_the_cpu_and_says_so`,
   `evidence::the_committed_record_names_the_adapters_revision_and_the_lock_the_tree_has`
