@@ -734,7 +734,7 @@ fn squint_check_sends_the_brief_it_is_given_and_none_when_it_is_given_none() {
     let without = system(&log);
     assert!(!without.contains(brief), "{without}");
     assert!(
-        without.contains(&whizbang_squint::source_fidelity::NO_BRIEF[..40]),
+        without.contains(&whizbang_squint::use_case::NO_BRIEF[..40]),
         "{without}"
     );
 }
@@ -969,7 +969,7 @@ fn reason_items_over_4096_characters_in_all_are_each_printed_whole_from_the_stor
     assert_eq!(lines.len(), 3, "{printed}");
     for (line, item) in lines[1..]
         .iter()
-        .zip(whizbang_squint::source_fidelity::CHECKLIST)
+        .zip(["chk:ob:SF1@candidate", "chk:ob:SF2@candidate"])
     {
         assert_eq!(*line, format!("reason: {item}: held (confident): {reason}"));
     }
@@ -1218,4 +1218,183 @@ fn a_users_adapter_is_added_its_model_installed_and_a_segment_runs_through_admis
         .unwrap();
     assert_eq!(finished.outcome().name(), "completed");
     assert_eq!(local.came(), [Ok(crate::pack::determined())]);
+}
+
+// --- the four other use cases, and the job (plan 2C, task A1) ---------------------------------
+
+#[test]
+fn squint_check_takes_each_use_case_with_its_roles_under_a_recorded_fake() {
+    use crate::anthropic::{Judged, checked_job, checklist_of, import_picture, submission_of};
+    let judged = Judged::new("cli-use-cases");
+    let scratch = judged.world.beside("pictures");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let candidate = import_picture(&judged.world.root, &scratch, "candidate", 200);
+    let reference = import_picture(&judged.world.root, &scratch, "reference", 10);
+    let brief = "A grey picture with a red band. No text.";
+    for (use_case, references) in [
+        ("reference-consistency", vec![reference.as_str()]),
+        ("reality-checks", vec![]),
+        ("brief-compliance", vec![]),
+        (
+            "product-fidelity",
+            vec![reference.as_str(), candidate.as_str()],
+        ),
+    ] {
+        let asked = door::CheckAsked {
+            use_case,
+            candidate: &candidate,
+            source: None,
+            references: &references,
+            judge: None,
+            brief: Some(brief),
+            request_id: None,
+            details: whizbang::door::Details::None,
+            detail: None,
+            projection: "full",
+        };
+        let (job, images) = door::shorthand(&asked).unwrap();
+        let ids = checklist_of(&job);
+        let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+        let answer = submission_of(&ids, "held", "Looked at.");
+        let (printed, log) = checked_job(&judged, &job, &images, vec![answer]);
+        let printed = printed.unwrap_or_else(|why| panic!("{use_case}: {why}"));
+        assert!(printed.contains("verdict: pass"), "{use_case}: {printed}");
+        assert_eq!(
+            printed.matches("reason: chk:").count(),
+            ids.len(),
+            "{printed}"
+        );
+        // What the judge was sent: the rules of the use case, and each image's line
+        // with its role, references labelled in the order given.
+        let sent: serde_json::Value = serde_json::from_slice(&log.lock().unwrap()[0].1).unwrap();
+        let rule = &ids[0][7..10];
+        assert!(
+            sent["system"].to_string().contains(&format!("1. {rule} (")),
+            "{use_case}"
+        );
+        let opening = sent["messages"][0].to_string();
+        assert!(opening.contains("Image `candidate` (role Candidate, frame raw:candidate"));
+        for (at, reference) in references.iter().enumerate() {
+            let line = format!(
+                "Image `reference-{n}` (role Reference, reference {n}, frame raw:reference-{n}, \
+                 64x48, Flat); for the tool view it is named {reference}.",
+                n = at + 1
+            );
+            assert!(opening.contains(&line), "{use_case}: {opening}");
+        }
+    }
+}
+
+#[test]
+fn squint_check_job_takes_a_squint_job_file_whole() {
+    use crate::anthropic::{Judged, checked_job, checklist_of, submission_of};
+    let judged = Judged::new("cli-job-file");
+    let folder = judged.world.beside("set");
+    std::fs::create_dir_all(folder.join("items")).unwrap();
+    let picture = folder.join("items/candidate.png");
+    image::RgbImage::from_fn(64, 48, |x, y| {
+        image::Rgb([(x * 4) as u8, (y * 5) as u8, 90])
+    })
+    .save_with_format(&picture, image::ImageFormat::Png)
+    .unwrap();
+    let digest = whizbang_core::identity::Digest::of_bytes(&std::fs::read(&picture).unwrap());
+    // A squint job file of brief-compliance, as its sets write them.
+    let written = |sha256: &str| {
+        format!(
+            "# An item, made for this test.\n[job]\nuse_case = \"brief-compliance\"\n\
+             brief = \"A gradient. No people.\"\n\n\
+             [[job.requirements]]\nid = \"RQ1\"\nkind = \"must_hold\"\nscope = [\"candidate\"]\n\
+             text = \"The candidate shows a gradient.\"\n\n\
+             [[job.requirements]]\nid = \"RQ2\"\nkind = \"must_not\"\nscope = [\"candidate\"]\n\
+             text = \"The candidate shows people; none was asked for.\"\n\n\
+             [[job.images]]\nid = \"candidate\"\nrole = \"candidate\"\nlabel = \"the gradient\"\n\
+             source = {{ path = \"items/candidate.png\", sha256 = \"{sha256}\" }}\n"
+        )
+    };
+    let file = folder.join("job.toml");
+    std::fs::write(&file, written(&digest.hex())).unwrap();
+    let recovery = wiring::recovery();
+    let root = &judged.world.root;
+    let (job, images) = door::job_file(&file, "brief-compliance", root, &recovery).unwrap();
+    assert_eq!(images.len(), 1);
+    let ids = checklist_of(&job);
+    let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+    assert_eq!(
+        ids,
+        [
+            "chk:ob:BC1@candidate",
+            "chk:ob:BC2@candidate",
+            "chk:ob:BC3@candidate",
+            "chk:ob:RQ1@candidate",
+            "chk:ob:RQ2@candidate"
+        ]
+    );
+    let answer = submission_of(&ids, "held", "Looked at.");
+    let (printed, log) = checked_job(&judged, &job, &images, vec![answer]);
+    assert!(printed.unwrap().contains("verdict: pass"));
+    let sent: serde_json::Value = serde_json::from_slice(&log.lock().unwrap()[0].1).unwrap();
+    let system = sent["system"].to_string();
+    assert!(system.contains("Job requirements:"), "{system}");
+    assert!(system.contains("7. RQ2 (must not occur; judges candidate; consults nothing)"));
+    assert!(system.contains("A gradient. No people."));
+    assert!(
+        sent["messages"][0]
+            .to_string()
+            .contains("(role Candidate, the gradient, frame")
+    );
+    // A file whose digest is not the one pinned, and a job of another use case, are
+    // refused before anything is sent.
+    std::fs::write(&file, written(&"0".repeat(64))).unwrap();
+    let refused = door::job_file(&file, "brief-compliance", root, &recovery).unwrap_err();
+    assert!(refused.contains("is not the one the job pins"), "{refused}");
+    let refused = door::job_file(&file, "reality-checks", root, &recovery).unwrap_err();
+    assert!(
+        refused.contains("is a job of another use case than reality-checks"),
+        "{refused}"
+    );
+}
+
+#[test]
+fn squint_check_brief_compliance_without_a_brief_is_refused_before_anything_runs() {
+    let scratch = Scratch::new("cli-no-brief");
+    let root = scratch.path().join("store");
+    let id = format!("sha256:{}", "0".repeat(64));
+    let ran = whizbang(
+        &["squint", "check", "brief-compliance", "--candidate", &id],
+        &root,
+    );
+    assert_eq!(ran.code, Some(1), "{}", ran.err);
+    assert!(
+        ran.err
+            .contains("brief-compliance holds the picture to a brief: give it with --brief"),
+        "{}",
+        ran.err
+    );
+    assert!(ran.out.is_empty());
+    // Refused before the config, the store or a judge was looked at.
+    assert!(!root.exists());
+}
+
+#[test]
+fn squint_check_with_nine_references_is_refused_naming_the_limit() {
+    let scratch = Scratch::new("cli-nine-references");
+    let root = scratch.path().join("store");
+    let id = format!("sha256:{}", "0".repeat(64));
+    let mut args = vec!["squint", "check", "product-fidelity", "--candidate", &id];
+    for _ in 0..9 {
+        args.extend(["--reference", id.as_str()]);
+    }
+    let ran = whizbang(&args, &root);
+    assert_eq!(ran.code, Some(1), "{}", ran.err);
+    assert!(
+        ran.err
+            .contains("--reference is given at most 8 times, and it was given 9"),
+        "{}",
+        ran.err
+    );
+    assert!(!root.exists());
+    // Eight are taken past that check: what stops them is the empty store.
+    let eight = &args[..args.len() - 2];
+    let ran = whizbang(eight, &root);
+    assert!(!ran.err.contains("at most 8"), "{}", ran.err);
 }

@@ -2,7 +2,6 @@
 
 mod backends;
 mod export;
-mod import;
 mod models;
 mod rascal;
 #[cfg(test)]

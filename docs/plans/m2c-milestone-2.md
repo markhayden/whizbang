@@ -165,7 +165,7 @@ whizbang squint check source-fidelity       --source <id> --candidate <id> [--br
    `docs/results/m2c-use-cases.md`: the commit, the use case, the model, the verdict, the
    tokens and the spend settled, the run, the recipient. No reply text.
 
-- [ ] Done when:
+- [x] Done when:
   `use_case::each_of_the_five_use_cases_is_in_the_table_with_its_roles_rules_and_checklist`,
   `use_case::a_confident_must_not_violation_fails_and_a_tentative_one_is_unsure`,
   `use_case::the_ported_rules_are_squints_rules_byte_for_byte_less_the_fields_dropped`,

@@ -1,4 +1,4 @@
-# 0028. The details handed to the judge first
+# 0029. The details handed to the judge first
 
 Status: accepted.
 Date: 2026-11-18
@@ -18,8 +18,8 @@ must stay reachable exactly.
 
 `check` takes `details`: `none`, squint's arm C as it was (the judge calls the tools), or
 `first`, the default of `whizbang squint check`. Under `first`, before the first turn, for
-each pair of images the use case relates (under source-fidelity, the candidate registered
-onto the source), `check` calls `align` through the executor, as a step of the run, and puts
+each pair of images the use case relates (the candidate registered onto the source, and
+onto each reference, in the job's order), `check` calls `align` through the executor, as a step of the run, and puts
 in the opening message, after the images and before the checklist:
 
 - one line that says these are measurements made before the judge looked, each labelled

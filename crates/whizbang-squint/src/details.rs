@@ -1,5 +1,5 @@
 //! What `check` hands the judge beside the images (plan `docs/plans/m2c-milestone-2.md`,
-//! task A2; ADR 0028): the tools `resize` and `align` as squint's judge knew them, what a call
+//! task A2; ADR 0029): the tools `resize` and `align` as squint's judge knew them, what a call
 //! of either is answered with under a projection, and the details measured first.
 //!
 //! **The details first.** The owner's goal: squint gives the judge every detail it can

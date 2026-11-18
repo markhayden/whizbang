@@ -229,12 +229,9 @@ fn a_reason_item_is_redacted_before_it_is_cut_or_escaped() {
     let run = run_of(&printed);
     let record = record_of(&judged.world.root, &run).to_string();
     let id = whizbang_core::contract::RunId::parse(&run).unwrap();
-    let items = whizbang::door::diagnostic(
-        &judged.world.root,
-        &id,
-        whizbang_squint::source_fidelity::REASONS,
-    )
-    .unwrap();
+    let items =
+        whizbang::door::diagnostic(&judged.world.root, &id, whizbang_squint::use_case::REASONS)
+            .unwrap();
     let items = String::from_utf8(items).unwrap();
     for piece in &pieces {
         assert!(!record.contains(piece), "{piece} in the record");
@@ -246,4 +243,99 @@ fn a_reason_item_is_redacted_before_it_is_cut_or_escaped() {
         "the items hold the marker"
     );
     assert!(!judged.store_holds_the_key());
+}
+
+#[test]
+fn the_brief_and_each_bindings_role_and_label_are_in_the_run() {
+    use crate::anthropic::{
+        Judged, checked_job, checklist_of, import_picture, record_of, submission_of,
+    };
+    // Plan 2C, task A1, items 2 and 3: the job the run was given, its brief and each
+    // image's role and label among them, is the record's argument; what each image was
+    // bound to is the run's diagnostic of what it decided.
+    let judged = Judged::new("record-bindings");
+    let scratch = judged.world.beside("pictures");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let candidate = import_picture(&judged.world.root, &scratch, "candidate", 200);
+    let first = import_picture(&judged.world.root, &scratch, "first", 10);
+    let second = import_picture(&judged.world.root, &scratch, "second", 90);
+    let brief = "The bottle keeps its label: SQUINT in blue capitals.";
+    let asked = whizbang::door::CheckAsked {
+        use_case: "product-fidelity",
+        candidate: &candidate,
+        source: None,
+        references: &[&first, &second],
+        judge: None,
+        brief: Some(brief),
+        request_id: None,
+        details: whizbang::door::Details::None,
+        detail: None,
+        projection: "full",
+    };
+    let (job, images) = whizbang::door::shorthand(&asked).unwrap();
+    let ids = checklist_of(&job);
+    let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+    let (printed, _) = checked_job(
+        &judged,
+        &job,
+        &images,
+        vec![submission_of(&ids, "held", "Same.")],
+    );
+    let printed = printed.unwrap();
+    let run = run_of(&printed);
+    let record = record_of(&judged.world.root, &run);
+    let arguments = record["asked"]["arguments"].as_array().unwrap();
+    let argument = |name: &str| {
+        let found = arguments.iter().find(|argument| argument["name"] == name);
+        found.unwrap()["value"]["text"].as_str().unwrap().to_owned()
+    };
+    assert_eq!(argument("use_case"), "product-fidelity");
+    let held: serde_json::Value = serde_json::from_str(&argument("job")).unwrap();
+    assert_eq!(held["contract"], "job/1");
+    assert_eq!(held["brief"], brief);
+    let bound: Vec<(&str, &str, &serde_json::Value)> = held["images"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|image| {
+            (
+                image["id"].as_str().unwrap(),
+                image["role"].as_str().unwrap(),
+                &image["label"],
+            )
+        })
+        .collect();
+    assert_eq!(
+        bound,
+        [
+            ("candidate", "candidate", &serde_json::Value::Null),
+            (
+                "reference-1",
+                "reference",
+                &serde_json::json!("reference 1")
+            ),
+            (
+                "reference-2",
+                "reference",
+                &serde_json::json!("reference 2")
+            ),
+        ]
+    );
+    // The inputs, in the job's order.
+    let inputs: Vec<&str> = record["inputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|input| input["artifact"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        inputs,
+        [candidate.as_str(), first.as_str(), second.as_str()]
+    );
+    let id = whizbang_core::contract::RunId::parse(&run).unwrap();
+    let kept = whizbang::door::diagnostic(&judged.world.root, &id, whizbang_squint::check::JUDGED);
+    let kept: serde_json::Value = serde_json::from_slice(&kept.unwrap()).unwrap();
+    assert_eq!(kept["images"][2]["artifact"], second.as_str());
+    assert_eq!(kept["images"][2]["label"], "reference 2");
+    assert_eq!(kept["checklist"].as_array().unwrap().len(), ids.len());
 }

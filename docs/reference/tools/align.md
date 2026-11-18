@@ -178,4 +178,4 @@ control, rungs 3 and 4 do not apply (`SPEC.md` section 8).
 
 - 2026-11-18, plan m2c task A2: ported from squint (`crates/squint-tools/src/align/`,
   `builtin/align.rs`) at the pinned commit; offered to a judge by `check`, and run first on
-  each pair under `--details first` (ADR 0028).
+  each pair under `--details first` (ADR 0029).

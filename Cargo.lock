@@ -671,7 +671,9 @@ dependencies = [
  "image",
  "miniz_oxide 0.9.1",
  "png",
+ "serde",
  "serde_json",
+ "toml",
  "whizbang-core",
  "whizbang-testkit",
 ]

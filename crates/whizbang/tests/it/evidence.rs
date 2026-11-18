@@ -195,8 +195,8 @@ fn the_first_verdict_record_names_a_commit_of_this_tree_and_holds_no_secret() {
                 .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
     );
     assert_eq!(field(&fields, "whizbang"), env!("CARGO_PKG_VERSION"));
-    // The action as it ran: `check` has gained arguments since (plan m2c, task A2), and
-    // the record keeps the version of the run it records.
+    // The action as it was then: plan 2C, task A1, took `check` to 1.2.0 after it, and
+    // its own record is `docs/results/m2c-use-cases.md`.
     assert_eq!(field(&fields, "action"), "check 1.1.0");
     assert_eq!(field(&fields, "backend"), anthropic::ADAPTER);
     assert_eq!(field(&fields, "adapter_version"), anthropic::VERSION);
@@ -227,6 +227,91 @@ fn the_first_verdict_record_names_a_commit_of_this_tree_and_holds_no_secret() {
         "/private/",
         "/home/",
         "chk:ob:",
+        "reason",
+    ] {
+        assert!(!page.contains(held), "the page holds {held}");
+    }
+}
+
+#[test]
+fn the_use_cases_record_names_a_commit_of_this_tree_and_holds_no_secret() {
+    use whizbang_backends::anthropic;
+    // Plan 2C, task A1, item 6: one live call of each of the four use cases task A1
+    // added, each a block of fields.
+    let page = std::fs::read_to_string(repository().join("docs/results/m2c-use-cases.md"))
+        .expect("the record of the use cases is committed");
+    let blocks: Vec<Vec<(String, String)>> = page
+        .split("```toml\n")
+        .skip(1)
+        .map(|rest| {
+            let block = rest.split("```").next().unwrap();
+            let line = |line: &str| {
+                let (name, value) = line.split_once(" = ").expect("a line is name = value");
+                (name.to_owned(), value.trim_matches('"').to_owned())
+            };
+            block.lines().map(line).collect()
+        })
+        .collect();
+    let named: Vec<&str> = blocks.iter().map(|b| field(b, "use_case")).collect();
+    assert_eq!(
+        named,
+        [
+            "reference-consistency",
+            "reality-checks",
+            "brief-compliance",
+            "product-fidelity"
+        ]
+    );
+    for fields in &blocks {
+        let commit = field(fields, "commit");
+        assert!(
+            commit.len() == 40
+                && commit
+                    .bytes()
+                    .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        );
+        assert_eq!(field(fields, "whizbang"), env!("CARGO_PKG_VERSION"));
+        // The action as it ran: plan 2C, task A2, took `check` to 1.3.0 after it.
+        assert_eq!(field(fields, "action"), "check 1.2.0");
+        assert_eq!(field(fields, "backend"), anthropic::ADAPTER);
+        assert_eq!(field(fields, "adapter_version"), anthropic::VERSION);
+        let prices = anthropic::spend::prices_of(field(fields, "model")).expect("a priced model");
+        assert_eq!(field(fields, "prices_read"), prices.read);
+        // Each turn settled at its usage, at the row of prices, within its bound.
+        let number = |name: &str| field(fields, name).parse::<u64>().unwrap();
+        assert_eq!(number("turns"), 1);
+        let usage =
+            whizbang_core::capability::Usage::new(number("input_tokens"), number("output_tokens"))
+                .cached(number("cache_read_tokens"), number("cache_write_tokens"));
+        let charged = anthropic::spend::charge_of(usage, prices).unwrap();
+        assert_eq!(number("settled_micros"), charged.micros());
+        assert!(number("settled_micros") <= number("request_bound_micros"));
+        assert_eq!(
+            number("reserved_micros"),
+            number("request_bound_micros") * 16
+        );
+        assert!(["pass", "fail", "unsure"].contains(&field(fields, "verdict")));
+        assert_eq!(field(fields, "outcome"), "completed");
+        assert_eq!(
+            field(fields, "egress_recipient"),
+            "https://api.anthropic.com"
+        );
+    }
+    // Under a dollar in all, as the brief of the task allowed.
+    let spent: u64 = blocks
+        .iter()
+        .map(|b| field(b, "settled_micros").parse::<u64>().unwrap())
+        .sum();
+    assert!(spent < 1_000_000);
+    // No secret, no path and no reply: no key's form, no header, no absolute path, no
+    // checklist item's name and no reason.
+    for held in [
+        "sk-ant",
+        "x-api-key",
+        "/Users/",
+        "/private/",
+        "/home/",
+        "chk:",
         "reason",
     ] {
         assert!(!page.contains(held), "the page holds {held}");
