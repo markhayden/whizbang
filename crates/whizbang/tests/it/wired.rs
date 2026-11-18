@@ -1649,14 +1649,16 @@ fn a_call_for_a_model_whose_adapter_this_build_lacks_is_refused_when_prepared_wi
     let none = Secrets::none();
     let other = ModelName::new("another-adapter", &none).unwrap();
     // The model is in the catalogue and installed, by a build that had its adapter.
-    // This build has another adapter, or none at all, which is what the binary has
-    // until its pack ships its first (task R2a).
+    // This build has another adapter: one of a test's, or the binary's own, which
+    // since task R2a is `sam3` alone.
     let shipped: Vec<(ModelName, Revision)> = wiring::adapters()
         .into_iter()
         .filter(|adapter| adapter.shipped)
         .map(|adapter| (adapter.name, adapter.revision))
         .collect();
-    assert!(shipped.is_empty());
+    let names: Vec<&str> = shipped.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["sam3"]);
+    assert_ne!(MODEL, "sam3");
     // And the model's own adapter at its revision, named in the table as not yet
     // shipped (task N5): the call is refused when it is prepared, before any worker
     // could be started.

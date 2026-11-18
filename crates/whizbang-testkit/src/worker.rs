@@ -226,6 +226,19 @@ impl Fixture {
     }
 }
 
+/// The real pack, as `whizbang setup` installed it in a models directory, for the
+/// model tier alone (plan 1C, task R2b): the supervisor `make` makes, whose worker is
+/// started from that installation and not from this kit's fixture, held by a guard
+/// that ends it with `end` (a kill and a wait) and fails the test if a worker of the
+/// pack outlives it, as [`Fixture::guard`]'s does.
+pub fn installed<T>(make: impl FnOnce() -> T, end: fn(&mut T)) -> Guard<T> {
+    Guard {
+        held: Some(make()),
+        end,
+        _models: Scratch::new("pack-installed"),
+    }
+}
+
 /// A supervisor of a worker a test started. Its drop ends the worker, waits for it,
 /// and fails the test if a child of the test's process still runs the pack then.
 pub struct Guard<T> {

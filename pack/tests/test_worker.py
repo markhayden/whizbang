@@ -629,14 +629,29 @@ class Fakes(unittest.TestCase):
         self.assertEqual(child.wait(), 0)
 
 
+# The runtime of the adapter `sam3` (task R2a), which only that adapter imports, and only
+# inside a function, when its model is loaded: never when the package is imported.
+RUNTIME = {"sam3.py": ("PIL", "torch", "transformers")}
+
+
 class Imports(unittest.TestCase):
     def test_the_core_imports_nothing_outside_the_standard_library(self):
         package = os.path.join(kit.SRC, "whizbang_pack")
         names = sorted(name for name in os.listdir(package) if name.endswith(".py"))
-        self.assertEqual(names, ["__init__.py", "adapter.py", "fake_models.py", "fakes.py", "proto.py", "worker.py"])
+        self.assertEqual(
+            names, ["__init__.py", "adapter.py", "fake_models.py", "fakes.py", "proto.py", "sam3.py", "worker.py"]
+        )
         for name in names:
             with open(os.path.join(package, name), encoding="utf-8") as file:
                 tree = ast.parse(file.read(), name)
+            # What runs when the module is imported: everything but a function's body.
+            on_import = set()
+            todo = list(tree.body)
+            while todo:
+                node = todo.pop()
+                on_import.add(id(node))
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                    todo.extend(ast.iter_child_nodes(node))
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
                     found = [alias.name for alias in node.names]
@@ -648,8 +663,9 @@ class Imports(unittest.TestCase):
                 for module in found:
                     top = module.split(".")[0]
                     with self.subTest(file=name, module=module):
+                        runtime = top in RUNTIME.get(name, ()) and id(node) not in on_import
                         self.assertTrue(
-                            top == "whizbang_pack" or top in sys.stdlib_module_names,
+                            top == "whizbang_pack" or top in sys.stdlib_module_names or runtime,
                             "%s imports %s" % (name, module),
                         )
 

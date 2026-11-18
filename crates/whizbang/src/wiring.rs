@@ -101,10 +101,13 @@ pub struct Adapter {
     pub shipped: bool,
 }
 
-/// The table of adapters of this build (plan 1C, task N5): `sam3` at revision `1`,
-/// not shipped yet. The pack has no adapter `sam3` until task R2a, which ships it
-/// under this revision and turns `shipped` on. Until then a model whose adapter is
-/// not shipped is not ready, and says so (ADR 0017, "The inventory").
+/// The table of adapters of this build (plan 1C, tasks N5 and R2a): `sam3` at
+/// revision `1`, shipped. N5 fixed the revision before the pack had the adapter, so
+/// that `get` installed the model under the identity it is loaded under; R2a shipped
+/// the adapter (`pack/src/whizbang_pack/sam3.py`) under that revision and turned
+/// `shipped` on, so the same installation is ready and nothing is downloaded again.
+/// A model whose adapter is not shipped is not ready, and says so (ADR 0017, "The
+/// inventory").
 pub fn adapters() -> Vec<Adapter> {
     let none = Secrets::none();
     let named = |name: &str, revision: &str, shipped: bool| {
@@ -114,7 +117,7 @@ pub fn adapters() -> Vec<Adapter> {
             shipped,
         })
     };
-    [named("sam3", "1", false)].into_iter().flatten().collect()
+    [named("sam3", "1", true)].into_iter().flatten().collect()
 }
 
 /// The models directory in the platform's data folder for whizbang (ADR 0017, "Where

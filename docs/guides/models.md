@@ -14,14 +14,16 @@ models a build can install, and it is built into the binary
 $ whizbang models list
 models: 1
 directory: the one in this machine's data folder for whizbang, not made yet
-sam3	SAM 3	SAM License	3.4 GB	macos-arm64	not installed; not ready: this build has no adapter for it
+sam3	SAM 3	SAM License	3.4 GB	macos-arm64	not installed
 ```
 
-**SAM 3 installs, and is not ready yet.** `get` installs its files, but the pack has no
-adapter for it until task R2a of the same checkpoint, so until then `list` says
-`installed, not ready: this build has no adapter for it`, and a call that asks for it is
-refused before any model is loaded. The adapter's revision is fixed already: when the
-adapter ships, the installation is ready as it is, and nothing is downloaded again.
+**SAM 3 installs, and is ready once installed.** `get` installs its files, and `list` then
+says `installed`: the pack has its adapter (`sam3`, task R2a of the same checkpoint), which
+answers phrases on the Mac's GPU once `whizbang setup --extra torch` has installed its
+runtime (`docs/guides/setup.md`). Task N5 fixed the adapter's revision before the adapter shipped, so a model
+installed then is ready as it is, and nothing is downloaded again. A model whose adapter
+a build lacks is listed as `installed, not ready: this build has no adapter for it`, and a
+call that asks for it is refused before any model is loaded.
 SAM 3's files are behind Hugging Face's sign-in: see "A model whose files need a
 token" below. Its entry names `macos-arm64` alone; on Linux it is listed as not
 running on this platform, and `get` refuses it.

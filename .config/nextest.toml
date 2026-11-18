@@ -47,3 +47,10 @@ test-group = 'crash-sweeps'
 [[profile.default.overrides]]
 filter = 'test(/^pack::(worker|conformance|queue|removal)::/) | test(/^pack::[a-z0-9_]+$/) | test(/^setup::/)'
 test-group = 'pack-workers'
+
+# The model tier (docs/plans/m1c-local-pack.md, task R2b): the tests that load a real model,
+# run by `just test-models` (scripts/test-models.sh), never in the fast tier or CI. A load
+# has 120 seconds and a request 60 (the supervisor's limits); a test is ended at 5 minutes,
+# and the two, one at a time, at 10.
+[profile.model-tier]
+slow-timeout = { period = "300s", terminate-after = 1 }

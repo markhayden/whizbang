@@ -156,7 +156,7 @@ the package in `docs/results/2026-11-tool-study.md`.
 | Rerun the top Google model after the squint fixes above | E |
 | Other runtimes for local models, compared on speed, mask agreement and install size. Checkpoint 1C chose one runtime, PyTorch through the `transformers` library (task R1 of `docs/plans/m1c-local-pack.md`, ADR 0022), and a second one would be another adapter | None; when a measurement calls for it, as `SPEC.md` section 17 says |
 | Holding several models in the worker; concurrent model calls. Checkpoint 1C builds one resident model and one call at a time (decision D4 of its plan) | None; reopen on need, when a measurement calls for it, as `SPEC.md` section 4 defers it |
-| Speed of local models (R12): a fill model on the CPU took 41 seconds a fill; one segmenter ran once per detected box; repeat runs were no faster, so models may have reloaded each run | 1C, task R2b, measures a first and a second request on the GPU with a resident worker; 1D measures the rest; milestone 8 for the fill model |
+| Speed of local models (R12): a fill model on the CPU took 41 seconds a fill; one segmenter ran once per detected box; repeat runs were no faster, so models may have reloaded each run | 1C, task R2b, measures a first and a second request on the GPU with a resident worker. **Measured by R2b** (`docs/results/m1c-local-pack.md`): one load for two requests of SAM 3 in one worker, the second request well under a second; nothing reloads. 1D measures the rest (point and box, Tiny); milestone 8 for the fill model |
 | Faster transfer between whizbang and the worker | When profiling calls for it |
 | Segmentation that labels every pixel | When a tool needs it |
 | A paid segmentation service as a backend | When one is wanted |

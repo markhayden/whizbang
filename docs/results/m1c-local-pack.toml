@@ -1,0 +1,87 @@
+# The numbers of the model tier of checkpoint 1C (task R2b): SAM 3 answering a phrase on
+# the Mac's GPU through the binary's wiring. Written by scripts/model-evidence.sh; see
+# m1c-local-pack.md beside this file. No path.
+
+record = "m1c-local-pack"
+measured = "2026-11-18"
+commit = "11c251d6827373e518b02c344e854df514c61403"
+tree = "changed"
+lock = "sha256:b844779adf5bf884fef63e33cc315db267ed61c3f67368922f5e8aef2d5f9215"
+adapter = "sam3"
+adapter_revision = "1"
+adapter_source = "sha256:43ec5dbd3773d7d0b032b3a0368c09b04107decd2ee170e59447f825bcbe87bc"
+fixture = "sha256:89eb6949f38a93f7a4b157ee81e204d5119da4d9575f5887ff11fa445bfe3a02"
+phrase = "circle"
+installation = "sha256:37ab46c2f87b600f4654dd972ce85a27b1024b4fc92901b11464bd6fa9664d32"
+device = "mps"
+fallback = "off"
+hosts_contacted = "none"
+
+[[round]]
+round = 1
+phrase_run = "1794970762498-1"
+phrase_device = "mps"
+phrase_instances = 1
+phrase_score = "0.946"
+phrase_box = "329.7 110.0 510.1 290.0"
+phrase_mask = "sha256:c49dcca1141934019bc00fec7875e866488bcf3c9413b723afa46b2b21f17028"
+phrase_pixels_on = 25410
+first_run = "1794970727515-1"
+second_run = "1794970761250-2"
+loads = 1
+until_load_written_seconds = "26.28"
+load_seconds = "6.55"
+first_request_seconds = "0.90"
+second_request_seconds = "0.66"
+first_mask = "sha256:c49dcca1141934019bc00fec7875e866488bcf3c9413b723afa46b2b21f17028"
+second_mask = "sha256:c49dcca1141934019bc00fec7875e866488bcf3c9413b723afa46b2b21f17028"
+peak_resident_kib = 572416
+most_threads_in_one_process = 17
+most_processes = 4
+still_running_after = 0
+
+[[round]]
+round = 2
+phrase_run = "1794970831985-1"
+phrase_device = "mps"
+phrase_instances = 1
+phrase_score = "0.946"
+phrase_box = "329.7 110.0 510.1 290.0"
+phrase_mask = "sha256:c49dcca1141934019bc00fec7875e866488bcf3c9413b723afa46b2b21f17028"
+phrase_pixels_on = 25410
+first_run = "1794970796910-1"
+second_run = "1794970830537-2"
+loads = 1
+until_load_written_seconds = "26.56"
+load_seconds = "6.13"
+first_request_seconds = "0.94"
+second_request_seconds = "0.67"
+first_mask = "sha256:c49dcca1141934019bc00fec7875e866488bcf3c9413b723afa46b2b21f17028"
+second_mask = "sha256:c49dcca1141934019bc00fec7875e866488bcf3c9413b723afa46b2b21f17028"
+peak_resident_kib = 592400
+most_threads_in_one_process = 17
+most_processes = 4
+still_running_after = 0
+
+[[round]]
+round = 3
+phrase_run = "1794970903610-1"
+phrase_device = "mps"
+phrase_instances = 1
+phrase_score = "0.946"
+phrase_box = "329.7 110.0 510.1 290.0"
+phrase_mask = "sha256:c49dcca1141934019bc00fec7875e866488bcf3c9413b723afa46b2b21f17028"
+phrase_pixels_on = 25410
+first_run = "1794970866442-1"
+second_run = "1794970902215-2"
+loads = 1
+until_load_written_seconds = "27.08"
+load_seconds = "7.67"
+first_request_seconds = "1.03"
+second_request_seconds = "0.69"
+first_mask = "sha256:c49dcca1141934019bc00fec7875e866488bcf3c9413b723afa46b2b21f17028"
+second_mask = "sha256:c49dcca1141934019bc00fec7875e866488bcf3c9413b723afa46b2b21f17028"
+peak_resident_kib = 599104
+most_threads_in_one_process = 17
+most_processes = 4
+still_running_after = 0
