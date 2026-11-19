@@ -568,7 +568,7 @@ use whizbang_core::capability::{
     Bounds, Declaration, Fault, FaultKind, FillRequest, Filler, Painted, Price,
 };
 use whizbang_core::config::{Kind, KindRefused, Table};
-use whizbang_core::contract::{Made, ModelIdentity, Value};
+use whizbang_core::contract::{Made, ModelIdentity};
 use whizbang_core::egress::Recipient;
 use whizbang_core::identity::DecodeLimits;
 use whizbang_eval::lab::decode::{self, Assignment, Outcome, Pair, Picked, Picks, Shown, Side};
