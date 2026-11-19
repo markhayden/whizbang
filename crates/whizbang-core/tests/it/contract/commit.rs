@@ -684,11 +684,12 @@ fn a_run_crashed_inside_its_commit_reopens_with_neither_output_nor_status_or_wit
                     assert_eq!(after.outputs.len(), 2, "{at}");
                     assert_eq!(*names, 5, "{at}");
                     outcomes.insert("all");
-                    // Reported only where the last call left was the clearing of the
-                    // staging, which nothing depends on.
+                    // Reported only where the calls left were the removal of the older
+                    // generation's file and the clearing of the staging, which nothing
+                    // depends on.
                     if let Ok(finished) = &answer {
                         assert_eq!(finished.outcome().outputs(), committed(), "{at}");
-                        assert_eq!(step, steps - 1, "{at}");
+                        assert!(step >= steps - 2, "{at}");
                         reported += 1;
                     }
                 }
@@ -730,10 +731,10 @@ fn a_commit_that_the_store_refuses_at_any_step_publishes_no_output_and_no_status
                 assert_eq!(after.outputs.len(), if unconfirmed { 2 } else { 0 });
                 seen.insert(unconfirmed);
             }
-            // Clearing the staging away, after the commit is durable, can fail without
-            // failing the run.
+            // Removing the older generation's file and clearing the staging away, the two
+            // steps after the commit is durable, can fail without failing the run.
             Ok(finished) => {
-                assert_eq!(step, steps - 1);
+                assert!(step >= steps - 2, "step {step} of {steps}");
                 assert_eq!(finished.outcome().outputs(), committed());
                 assert!(after.mask && after.place && stored.is_some());
             }

@@ -1070,8 +1070,10 @@ fn a_cancelled_end_that_the_store_refuses_at_any_step_publishes_no_status_or_bot
                 );
                 seen.insert(all);
             }
+            // The two steps after the end is durable, the removal of the older
+            // generation's file and the clearing of staging, can fail without failing it.
             Ok(Answer::Ran(finished)) => {
-                assert_eq!(step, steps - 1);
+                assert!(step >= steps - 2, "step {step} of {steps}");
                 assert_eq!(finished.outcome(), &Outcome::Cancelled);
                 assert!(all);
             }

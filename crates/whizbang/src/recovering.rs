@@ -190,12 +190,10 @@ fn store_prune_on_a_store_a_killed_process_left_recovers_before_it_prunes() {
     let part = marking();
     let said = store::run_with(&prune(&root), with(&part)).unwrap();
     recovered_first(&part, found);
-    // The generation the store was found at is among those the prune removed: the
-    // recovery was published before anything was removed.
-    assert!(
-        said.starts_with(&format!("generations removed: {found}\n")),
-        "{said}"
-    );
+    // The recovery was published before anything was removed: its publication removed
+    // the file of the generation the store was found at (ADR 0036), so the prune finds
+    // no generation left to remove.
+    assert!(said.starts_with("generations removed: 0\n"), "{said}");
     let marked = LEFT.iter().map(|run| ((*run).to_owned(), true)).collect();
     assert_eq!(held(&root), (found + 1, true, marked));
     let generations = root.join("generations");

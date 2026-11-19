@@ -825,10 +825,10 @@ fn a_check_whose_end_is_refused_at_any_step_is_not_reported_as_completed_a_sweep
                 assert_eq!(left.names.len() == 1, !both, "step {step}");
                 seen.insert(both);
             }
-            // Clearing the staging away, after the end is durable, can fail without
-            // failing the run.
+            // Removing the older generation's file (ADR 0036) and clearing the staging
+            // away, after the end is durable, can fail without failing the run.
             Ok(finished) => {
-                assert_eq!(step, steps - 1);
+                assert!(step >= steps - 2, "step {step} of {steps}");
                 assert_eq!(finished.outcome().name(), "completed");
                 assert!(left.record().verdict().is_some());
             }

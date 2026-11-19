@@ -251,7 +251,8 @@ fn a_look_that_meets_a_publication_and_a_prune_reports_no_damage() {
             Store::open(&root, Arc::new(ShimFs::new())).unwrap(),
         )));
         // The second writer has read the pointer, which says 1. Before it reads
-        // generation 1, the holder publishes generation 2 and prunes: 1.json is gone.
+        // generation 1, the holder publishes generation 2, which removes 1.json, and
+        // prunes, which finds no generation file left to remove (ADR 0036).
         let hook = {
             let (root, holder) = (root.clone(), holder.clone());
             move || {
@@ -261,7 +262,11 @@ fn a_look_that_meets_a_publication_and_a_prune_reports_no_damage() {
                 publication.put("a", A2).unwrap();
                 publication.put("c", C).unwrap();
                 publication.publish().unwrap();
-                assert_eq!(store.prune().unwrap().generations_removed, vec![1]);
+                assert!(!root.join("generations/1.json").exists());
+                assert_eq!(
+                    store.prune().unwrap().generations_removed,
+                    Vec::<u64>::new()
+                );
                 assert!(!root.join("generations/1.json").exists());
                 if !holder_stays {
                     holder.take();
