@@ -882,6 +882,10 @@ pictures of `tighten`'s vectors are rascal's drawn at 256 by 192, where rascal's
   `constants::every_set_rascal_shipped_is_here_byte_for_byte` (all eleven, or `poisson-v1`
   named as dropped), `just docs` regenerated, and the carry-over rows above closed or narrowed with a line.
 
+  **Split at the seam, as the plan allows:** the first pull request holds items 1 and 2 and
+  every test above but `evidence::the_encoding_record_names_a_commit_of_this_tree`; item 3,
+  large results' encoding and its record, is the second, and the box waits for it.
+
 ## L1. The shared harness, and the lab's files (large)
 
 ### Goal

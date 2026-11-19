@@ -2,7 +2,7 @@
 //! image under a mask; the actions `segment`, `select`, `grow`, `close`, `plug`,
 //! `subtract`, `feather`, `render`, `paste`, `fill`, `line`, `rect`, `stroke`, `rasterize`,
 //! `shrink`, `invert`, `tighten` and `inspect`; the canvases `cut`, `put`, `window`,
-//! `unwindow` and `apply`; the seam's `fan`, `profile` and `ramp`;
+//! `unwindow` and `apply`; the seam's `fan`, `profile` and `ramp`; `measure`;
 //! rascal's constant sets (`constants`); and the recipes this build ships (`recipes`).
 //!
 //! Each operation's module holds its own descriptor, its own `register` and, where its
@@ -42,3 +42,5 @@ pub mod window;
 pub mod fan;
 pub mod profile;
 pub mod ramp;
+// The last of rascal's operations (plan m3, task O5).
+pub mod measure;

@@ -211,6 +211,10 @@ pub fn identify(bytes: &[u8], limits: &DecodeLimits) -> Result<Identified> {
             decoder.total_bytes()
         )));
     }
+    // A JPEG's scans hold what its frame calls for, or the decoder would fill the rest.
+    if container::is_jpeg(bytes) {
+        super::scans::whole(bytes)?;
+    }
     let mut decoder_limits = image::Limits::default();
     decoder_limits.max_alloc = Some(MAX_DECODER_ALLOCATION);
     decoder

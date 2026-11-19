@@ -54,3 +54,12 @@ pub fn value(set: &str, key: &str) -> Option<toml::Value> {
     let table: toml::Table = toml::from_str(set).ok()?;
     table.get(key).cloned()
 }
+
+/// `measures-v1`: the chroma below which `measure` omits a hue difference, and the
+/// percentile it reports beside the mean, the median and the largest (task O5).
+pub const MEASURES_V1: (&str, &str) =
+    ("measures-v1", include_str!("../constants/measures-v1.toml"));
+
+/// `feather-v1`: how many sigmas out a feather reaches, which `feather::SUPPORT` holds;
+/// copied with the last of the sets (task O5), and read by a test of this crate.
+pub const FEATHER_V1: (&str, &str) = ("feather-v1", include_str!("../constants/feather-v1.toml"));

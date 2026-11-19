@@ -17,6 +17,7 @@ use std::sync::Arc;
 use clap::{Args, Subcommand};
 use whizbang::wiring::{self, Make};
 use whizbang_core::contract::{REQUESTS_PREFIX, Recovery, Remover, SPEND_PREFIX};
+use whizbang_core::identity::Projection;
 use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{Kind, Pruned, Reader};
 
@@ -77,9 +78,16 @@ pub enum Command {
         /// A PNG or JPEG picture to commit as an image whose role is a picture. It is
         /// decoded within the core's limits (64 MiB, 50,000,000 pixels) and written
         /// again as a PNG of its pixels alone, upright and in sRGB: nothing else the file
-        /// holds (its text, its EXIF, its colour profile, its name) is kept.
+        /// holds (its text, its EXIF, its colour profile, its name) is kept. It is read
+        /// from the file its path names, through no link, and refused unless it is a
+        /// regular file.
         #[arg(long, value_name = "FILE", conflicts_with = "file")]
         picture: Option<PathBuf>,
+        /// What the picture is: flat, or an equirectangular panorama, complete, which
+        /// wraps. Without it, a picture whose metadata says it is equirectangular is one,
+        /// and any other is flat.
+        #[arg(long, value_parser = ["flat", "equirectangular"], requires = "picture")]
+        projection: Option<String>,
         #[command(flatten)]
         at: Where,
         /// Make the store if there is none: at a path with nothing at it, in an empty
@@ -130,11 +138,18 @@ pub fn run_with(command: &Command, recovery: Recovery) -> Result<String, String>
         Command::Import {
             file,
             picture,
+            projection,
             at,
             create,
         } => match (file, picture) {
             (_, Some(picture)) => {
-                whizbang::import::import_picture(picture, &at.store, *create, recovery)
+                let projection = projection.as_deref().map(|p| match p {
+                    "equirectangular" => Projection::Equirectangular,
+                    _ => Projection::Flat,
+                });
+                whizbang::import::import_picture_as(
+                    picture, &at.store, *create, recovery, projection,
+                )
             }
             (Some(file), None) => whizbang::import::import(file, &at.store, *create, recovery),
             (None, None) => Err("import takes an artifact file or --picture".to_owned()),

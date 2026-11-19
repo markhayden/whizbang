@@ -160,3 +160,7 @@ Makes the band mask of a band profile: the core at each row's half-width, the bl
 ## `ramp`
 
 Measures the colour step across a band mask's line, row by row, and adds it to the mask as a tone ramp for apply.
+
+## `measure`
+
+Measures a seam or a composite: continuity, tone step, transition, texture match and drift, per row; none is a verdict.

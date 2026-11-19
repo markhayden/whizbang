@@ -182,9 +182,16 @@ nothing, so both containers are walked to their end before anything is decoded.
 - What follows the end chunk or the end marker is not part of the picture and is not read.
   Two files that differ only there have two file digests and one pixel digest.
 
-For a JPEG this sees only the markers. A file that has its end marker and too little data
-before it is decoded as far as it goes and is given an identity; that is on
-`docs/carry-over.md`.
+**A JPEG's scans** (plan m3, task O5). The decoder fills what a scan lacks and says
+nothing, so the markers alone let through a file with its end marker and too little data
+before it. Once a JPEG's size is within the limits, and before it is decoded, each scan is
+walked through its Huffman codes, block by block, with nothing dequantised or transformed
+(`identity/scans.rs`): a code that needs a bit its scan does not hold refuses the file, and
+so does an end marker reached before every coefficient of every component was coded to its
+last bit (a scan header followed at once by the end marker; a progressive file ended
+before its last scans). Sequential and progressive Huffman coding are read, as the decoder
+reads them; any other coding is refused as unsupported, and a file of more than 256 scans
+is over a limit, so the walk is a bounded number of passes over the blocks.
 
 **Limits.** Checked before anything is decoded, each with a default the caller may change:
 64 MiB of file, 50,000,000 pixels as stored, and 1 MiB of profile. One more is fixed: the
@@ -305,10 +312,16 @@ are `libm`'s and not the machine's, whose last bits may differ from one machine 
   through alpha multiplied into the colours and back, and any optimiser that sets the
   colour under transparent pixels to zero, changes the canonical pixels and so the
   identity.
-- An image whose profile is not an RGB matrix profile, and a CMYK JPEG, are refused until a
-  later record gives them a canonical reading. Colour information a PNG carries outside an
-  ICC profile is not read, and such a file is taken as sRGB. Both are on
-  `docs/carry-over.md`.
+- An image whose profile is not an RGB matrix profile, and a CMYK JPEG, are refused, and
+  colour information a PNG carries outside an ICC profile is not read, the file taken as
+  sRGB. Decided again for a caller's own pictures (plan m3, task O5): the refusal and the
+  reading stand. A caller's picture is untrusted, and a reading of a grey, lookup-table or
+  CMYK profile is a colour engine's worth of rules, any of which is another picture if it
+  is wrong; refused, the caller converts the file to sRGB with a tool of their own and the
+  identity is of what they chose. A PNG's gamma and chromaticity chunks are taken for sRGB
+  as browsers and editors do when an sRGB file carries them, which is how such files are
+  made. `pixels::a_picture_with_a_grey_or_lookup_table_profile_is_read_as_its_adr_says`
+  holds both.
 - Pictures deeper than 8 bits lose depth in their identity: two 16-bit pictures that differ
   only below 8 bits share a pixel digest. The tools work on 8-bit pixels.
 - The pixel digest is fixed by this record and by pinned versions, not by whatever a
