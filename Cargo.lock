@@ -1177,9 +1177,11 @@ dependencies = [
 name = "whizbang-core"
 version = "0.0.1"
 dependencies = [
+ "flate2",
  "image",
  "libm",
  "miniz_oxide 0.8.9",
+ "miniz_oxide 0.9.1",
  "png",
  "serde",
  "serde_json",
@@ -1223,11 +1225,8 @@ dependencies = [
 name = "whizbang-squint"
 version = "0.0.1"
 dependencies = [
- "flate2",
  "image",
  "jsonschema",
- "miniz_oxide 0.9.1",
- "png",
  "serde",
  "serde_json",
  "toml",

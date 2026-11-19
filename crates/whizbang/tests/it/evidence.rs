@@ -342,10 +342,16 @@ fn the_use_cases_record_names_a_commit_of_this_tree_and_holds_no_secret() {
         .map(|b| field(b, "settled_micros").parse::<u64>().unwrap())
         .sum();
     assert!(spent < 1_000_000);
+    // Plan 3, task L0 (plan 2C, task P1, item 7): each of the five use cases asked once of
+    // each new judge, a block of its own.
+    the_two_new_judges_lines_are_of_this_tree(&page);
     // No secret, no path and no reply: no key's form, no header, no absolute path, no
     // checklist item's name and no reason.
     for held in [
-        "sk-ant",
+        "sk-",
+        "AIza",
+        "x-goog-api-key",
+        "Bearer",
         "x-api-key",
         "/Users/",
         "/private/",
@@ -355,6 +361,123 @@ fn the_use_cases_record_names_a_commit_of_this_tree_and_holds_no_secret() {
     ] {
         assert!(!page.contains(held), "the page holds {held}");
     }
+}
+
+/// The ten blocks of the Google and OpenAI judges' live calls (plan 3, task L0), in
+/// `docs/results/m2c-use-cases.md`: of a commit this tree descends from, each use case on
+/// each judge once, and each run's spend what its usage and its turns allow.
+fn the_two_new_judges_lines_are_of_this_tree(page: &str) {
+    use whizbang_backends::service::spend::{
+        DEFAULT_CEILINGS, LONG_PROMPT_TOKENS, bound_micros, charge_of,
+    };
+    use whizbang_backends::{google, openai};
+    let blocks: Vec<Fields> = page
+        .split("```toml judges\n")
+        .skip(1)
+        .map(|rest| {
+            let block = rest.split("```").next().unwrap();
+            let line = |line: &str| {
+                let (name, value) = line.split_once(" = ").expect("a line is name = value");
+                (name.to_owned(), value.trim_matches('"').to_owned())
+            };
+            block.lines().map(line).collect()
+        })
+        .collect();
+    let use_cases = [
+        "source-fidelity",
+        "reference-consistency",
+        "reality-checks",
+        "brief-compliance",
+        "product-fidelity",
+    ];
+    let mut asked: Vec<(&str, &str)> = blocks
+        .iter()
+        .map(|b| (field(b, "backend"), field(b, "use_case")))
+        .collect();
+    asked.sort_unstable();
+    let mut wanted: Vec<(&str, &str)> = [google::ADAPTER, openai::ADAPTER]
+        .iter()
+        .flat_map(|backend| use_cases.iter().map(move |case| (*backend, *case)))
+        .collect();
+    wanted.sort_unstable();
+    assert_eq!(asked, wanted, "each use case once on each judge");
+    let commit = field(&blocks[0], "commit");
+    assert!(
+        commit.len() == 40
+            && commit
+                .bytes()
+                .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    );
+    // The commit that ran is in this tree's history.
+    let ancestor = std::process::Command::new("git")
+        .args(["merge-base", "--is-ancestor", commit, "HEAD"])
+        .current_dir(repository())
+        .output()
+        .expect("git runs");
+    assert!(ancestor.status.success(), "{commit} is not an ancestor");
+    let mut spent = 0;
+    for fields in &blocks {
+        let backend = field(fields, "backend");
+        let (version, prices, recipient) = if backend == google::ADAPTER {
+            (
+                google::VERSION,
+                google::spend::prices_of(field(fields, "model")),
+                "https://generativelanguage.googleapis.com",
+            )
+        } else {
+            (
+                openai::VERSION,
+                openai::spend::prices_of(field(fields, "model")),
+                "https://api.openai.com",
+            )
+        };
+        let prices = prices.expect("a priced model");
+        assert_eq!(field(fields, "commit"), commit);
+        assert_eq!(field(fields, "whizbang"), env!("CARGO_PKG_VERSION"));
+        // The action as it ran.
+        assert_eq!(field(fields, "action"), "check 1.4.0");
+        assert_eq!(field(fields, "adapter_version"), version);
+        assert!(
+            field(fields, "model_version").starts_with(&format!("{version}+fit1-jpeg90-")),
+            "{}",
+            field(fields, "model_version")
+        );
+        assert_eq!(field(fields, "prices_read"), prices.read);
+        assert_eq!(field(fields, "outcome"), "completed");
+        assert!(["pass", "fail", "unsure"].contains(&field(fields, "verdict")));
+        assert_eq!(field(fields, "egress_recipient"), recipient);
+        assert_eq!(field(fields, "egress_outcome"), "sent");
+        // The bound of one request at the default ceilings and the model's row; sixteen
+        // of them reserved; the turns taken within the sixteen, each within its bound.
+        let number = |name: &str| field(fields, name).parse::<u64>().unwrap();
+        let bound = number("request_bound_micros");
+        #[allow(clippy::cast_precision_loss)]
+        let stated = bound as f64;
+        assert!((stated - bound_micros(DEFAULT_CEILINGS, prices)).abs() < f64::EPSILON);
+        assert_eq!(number("reserved_micros"), bound * 16);
+        let turns = number("turns");
+        assert!((1..=16).contains(&turns), "{turns}");
+        let settled = number("settled_micros");
+        assert!(settled <= bound * turns);
+        // The record holds the usage summed over the turns, not each turn's. Each turn
+        // was charged its own usage at the row, rounded up to a millionth; no turn's
+        // input passed the long prompt's line, since the sum does not. So the settled
+        // sum is at least the charge of the summed usage, and over it by fewer millionths
+        // than there were turns.
+        let usage =
+            whizbang_core::capability::Usage::new(number("input_tokens"), number("output_tokens"))
+                .cached(number("cache_read_tokens"), number("cache_write_tokens"));
+        assert!(whizbang_backends::service::spend::reported_input(usage) <= LONG_PROMPT_TOKENS);
+        let least = charge_of(usage, prices).unwrap().micros();
+        assert!(
+            least <= settled && settled < least + turns,
+            "{backend} {}: {least} {settled}",
+            field(fields, "use_case")
+        );
+        spent += settled;
+    }
+    // Within the plan's estimate for the task, 0.50 dollars.
+    assert!(spent <= 500_000, "{spent}");
 }
 
 #[test]
@@ -657,4 +780,57 @@ fn the_per_subject_record_names_a_commit_of_this_tree_and_its_rung_2_numbers() {
         field(&fields, "adapter_source"),
         digest_of("pack/src/whizbang_pack/sam3.py")
     );
+}
+
+#[test]
+fn the_fills_record_names_a_commit_of_this_tree_and_holds_no_secret() {
+    // Plan m3, task F1, item 8: the live fill through fal, one block of fields.
+    use whizbang_backends::fal;
+    let page = std::fs::read_to_string(repository().join("docs/results/m3-fills.md"))
+        .expect("the record of the fills is committed");
+    let block = page.split("```toml\n").nth(1).expect("a block of fields");
+    let block = block.split("```").next().unwrap();
+    let fields: Vec<(String, String)> = block
+        .lines()
+        .map(|line| {
+            let (name, value) = line.split_once(" = ").expect("a line is name = value");
+            (name.to_owned(), value.trim_matches('"').to_owned())
+        })
+        .collect();
+    let commit = field(&fields, "commit");
+    assert!(
+        commit.len() == 40
+            && commit
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    );
+    assert_eq!(field(&fields, "whizbang"), env!("CARGO_PKG_VERSION"));
+    assert_eq!(field(&fields, "action"), "fill 1.0.0");
+    assert_eq!(field(&fields, "backend"), fal::ADAPTER);
+    assert_eq!(field(&fields, "adapter_version"), fal::VERSION);
+    assert_eq!(field(&fields, "model"), fal::MODEL);
+    assert_eq!(field(&fields, "model_version"), fal::identity_version());
+    assert_eq!(field(&fields, "price_read"), fal::spend::PRICE.read);
+    let price = fal::spend::bound_micros(fal::spend::PRICE).to_string();
+    for name in ["request_bound_micros", "reserved_micros", "settled_micros"] {
+        assert_eq!(field(&fields, name), price, "{name}");
+    }
+    assert_eq!(field(&fields, "outcome"), "completed");
+    assert_eq!(field(&fields, "outside_support_original"), "true");
+    assert_eq!(field(&fields, "egress_recipient"), "https://fal.run");
+    assert_eq!(
+        field(&fields, "egress_classes"),
+        "source_images derived_images"
+    );
+    // No secret, no path and no reply: no key's form, no header, no absolute path.
+    for held in [
+        "authorization",
+        "Key ",
+        "/Users/",
+        "/home/",
+        "/private/",
+        "data:image",
+    ] {
+        assert!(!page.contains(held), "{held}");
+    }
 }

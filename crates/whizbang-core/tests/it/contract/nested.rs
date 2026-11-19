@@ -36,7 +36,7 @@ use whizbang_testkit::schema::validate;
 use super::commit::{World, both, committed, held, pair};
 use super::record::schema;
 use super::redact::made_up_key;
-use crate::artifact::support::{limits, on, rect_mask};
+use crate::artifact::support::{limits, on, rect_mask, rect_mask_by};
 
 /// How long a wait for another thread may last before it is taken for a test that
 /// cannot pass: a limit, not a pause.
@@ -1574,7 +1574,7 @@ fn a_run_reads_what_a_run_it_called_committed_as_its_own_output_and_as_the_input
     let world = World::new();
     let store = world.store();
     let mask = committed()[0].id();
-    let other = rect_mask(on("another photo"));
+    let other = rect_mask_by(on("another photo"), "other");
     let other_id = other.id();
     // A run that nothing here called, which commits another mask.
     let outside = {

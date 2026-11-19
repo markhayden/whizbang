@@ -33,6 +33,8 @@ Amended: 2026-11-15, after the review of task W1. Changed, in the limit that a r
 answer is of one request: a need states its own number of requests and preparing a
 call multiplies by it, where a wrapper around the backends (`spend::PerCall`)
 multiplied every need of every action by one number.
+Amended: 2026-11-18, with task F1 of plan m3 (`docs/plans/m3-milestone-3.md`, item 3).
+Added: "A price for each call".
 Spec: section 4, "Backends"; section 6, "Spend"
 
 ## Context
@@ -390,6 +392,19 @@ Limits, each pinned:
 - **Nothing is settled, and a run's record says neither.** The record of a run lists
   each request and the kind of fault it ended in (ADR 0009), as before; the stage and
   the charge of a paid request are `run/3`'s (task B4) and the ledger's.
+
+### A price for each call
+
+Added with task F1 of plan m3. A model priced by the call, such as Bria Eraser on fal
+(0.04 dollars a generation on fal's page of the model, read 2026-11-18), states that
+price as a fixed maximum charge (`SPEC.md` section 6): its declaration's price is
+`Price::at_most` the price, so the bound of a request is the price, reserved before a
+byte is sent. Its answer states no usage, so the adapter says no charge and the request
+is settled at its bound; an answer of an error status says a charge of nothing, as a
+judge's does. The price and the date it was read are the adapter's row
+(`whizbang_backends::fal::spend::PRICE`). A stated price for one request is enough: no
+quote is worked out from a request's shape
+(`spend::fill::a_bria_call_reserves_its_price_and_settles_at_it`).
 
 ### What this record leaves to others
 
