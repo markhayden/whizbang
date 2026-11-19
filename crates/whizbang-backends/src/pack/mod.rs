@@ -11,7 +11,9 @@
 pub mod proto;
 pub mod queue;
 pub mod threads;
+pub mod tool;
 pub mod worker;
 
 pub use queue::Supervisor;
+pub use tool::{ToolLaunch, ToolWorker};
 pub use worker::{Called, Ended, Failed, Launch, Limits, Said, Worker};

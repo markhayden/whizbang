@@ -2,9 +2,9 @@ allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 
 # A thread is made in four places only: the executor's spawner, which is bounded (ADR 0008,
-# "How many runs are started at once"); the spawner of the pack's supervisor, which refuses
-# the fourth live thread of a process, one worker's three being the most
-# (`whizbang_backends::pack::threads`); the spawner of the MCP server's reader, which refuses
+# "How many runs are started at once"); the spawner of the pack's supervisors, which refuses
+# the seventh live thread of a process, two workers' three being the most (the model's and
+# the tool worker, ADR 0032; `whizbang_backends::pack::threads`); the spawner of the MCP server's reader, which refuses
 # the third live reader of a process (`whizbang_serve`, ADR 0031); and
 # `whizbang_testkit::threads`, which refuses the 65th live thread of a process before it is
 # made. A test that made threads until the system refused one took a machine down. Each of

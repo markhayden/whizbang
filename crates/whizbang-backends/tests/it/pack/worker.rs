@@ -881,9 +881,14 @@ fn no_test_starts_the_pack_but_through_the_test_kits_guard() {
         making,
         [
             "whizbang-backends/tests/it/pack/worker.rs",
-            "whizbang/tests/it/pack.rs"
+            "whizbang/tests/it/pack.rs",
+            "whizbang/tests/it/tool_file.rs"
         ]
     );
+    // The tool worker's one start in the binary's tests (task X1), held by the kit's guard.
+    let tools = std::fs::read_to_string(crates.join(making[2])).unwrap();
+    assert_eq!(tools.matches("ToolWorker::new(").count(), 1);
+    assert_eq!(tools.matches("kit::installed(").count(), 1);
     let this = std::fs::read_to_string(crates.join(making[0])).unwrap();
     assert!(this.contains("kit::fakes(fault).guard("));
     let binarys = std::fs::read_to_string(crates.join(making[1])).unwrap();

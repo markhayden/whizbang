@@ -146,7 +146,7 @@ pub const LINE_BYTES: usize = 4_096;
 /// kept is found whole, if it is no longer than 4 KiB.
 const LINE_READ_BYTES: usize = 2 * LINE_BYTES;
 /// How long the supervisor lets pass between two looks at what it waits for.
-const PACE: Duration = Duration::from_millis(5);
+pub(super) const PACE: Duration = Duration::from_millis(5);
 /// The line the kept error output ends with when a worker's streams stayed open after
 /// it ended, held by a process it started.
 pub const LINGERING: &str = "whizbang: the worker ended and a process it started still holds its streams open; their readers were let go";
@@ -273,7 +273,7 @@ pub enum Ended {
 }
 
 impl Ended {
-    fn of(status: ExitStatus) -> Ended {
+    pub(super) fn of(status: ExitStatus) -> Ended {
         status.code().map_or(Ended::Signalled, Ended::Exited)
     }
 
@@ -453,7 +453,7 @@ enum Heard {
 type Note = (String, proto::Awaited);
 
 /// The lines of the error output that are kept.
-type Kept = Arc<Mutex<VecDeque<String>>>;
+pub(super) type Kept = Arc<Mutex<VecDeque<String>>>;
 
 /// One frame for the writer of the worker's input: the message, where the count of its
 /// bytes the pipe took is kept, and where the writer says whether it was written whole.
@@ -1483,7 +1483,7 @@ fn refusal(kind: FaultKind, sentence: &str) -> Fault {
 }
 
 /// Kills a child, unless it has ended already, and waits for it.
-fn kill(child: &mut Child) -> Ended {
+pub(super) fn kill(child: &mut Child) -> Ended {
     if let Ok(Some(status)) = child.try_wait() {
         return Ended::of(status);
     }
@@ -1557,7 +1557,7 @@ pub fn is_key(name: &str, keys: &[String]) -> bool {
 
 /// A new empty folder for one worker, for its owner only, in the system's temporary
 /// folder.
-fn make_home() -> io::Result<PathBuf> {
+pub(super) fn make_home() -> io::Result<PathBuf> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let base = std::env::temp_dir();
     let mut last = io::Error::other("no folder was tried");
@@ -1675,7 +1675,7 @@ fn read_output(output: impl Read, tell: &SyncSender<Heard>, notes: &Receiver<Not
 /// each line, without its line break, is redacted, cut to [`LINE_BYTES`] and kept, the
 /// last [`LINES_KEPT`] of them. What is past [`LINE_READ_BYTES`] of a line is read and
 /// dropped. Only a failed read ends it before the end.
-fn read_error_output(errors: ChildStderr, kept: &Kept, secrets: &Secrets) {
+pub(super) fn read_error_output(errors: ChildStderr, kept: &Kept, secrets: &Secrets) {
     let mut errors = BufReader::new(errors);
     let mut line: Vec<u8> = Vec::new();
     let keep = |line: &mut Vec<u8>| {

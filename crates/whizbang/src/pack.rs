@@ -84,8 +84,11 @@ use whizbang_backends::models::{
 };
 use whizbang_backends::pack::proto::{self, Answer, Ask, Scalar};
 use whizbang_backends::pack::queue::{Request, Sent, Status, Supervisor};
+use whizbang_backends::pack::tool::{Asked, Mask, ToolFault, ToolLimits, ToolRun};
 use whizbang_backends::pack::worker::CALL_LIMIT;
-use whizbang_backends::pack::{Called, Ended, Launch, Limits, Said, Worker};
+use whizbang_backends::pack::{
+    Called, Ended, Launch, Limits, Said, ToolLaunch, ToolWorker, Worker,
+};
 use whizbang_core::capability::{
     Bounds, Declaration, Device, Fault, FaultKind, Instance, SegmentRequest, SegmentResponse,
     Segmenter, Served,
@@ -170,12 +173,44 @@ const NOT_DECLARED: &str =
 /// is not made, as a request's fault.
 pub type Start = Arc<dyn Fn(&Path, &Secrets) -> Result<Worker, Fault> + Send + Sync>;
 
+/// What makes the tool worker (plan 2C, task X1; ADR 0032), given the models directory
+/// the wiring opened, if it opened one, and the secrets of the run that asks; or why it
+/// is not made, in fixed words.
+pub type ToolStart =
+    Arc<dyn Fn(Option<&Path>, &Secrets) -> Result<ToolWorker, String> + Send + Sync>;
+
+/// How long a run of a tool file waits for the tool worker while another run holds it,
+/// between two looks at its cancel and its deadline.
+const TOOL_TURN_PAUSE: Duration = Duration::from_millis(20);
+
 /// What the binary starts, for the models directory at `root`: the worker itself,
 /// from the Python and the pack's source of the installation `whizbang setup` made
 /// there (`pack_setup::at`), with this lifetime, and nothing more on its command line.
 pub fn installed_launch(root: &Path, lifetime_s: u32) -> Launch {
     let place = pack_setup::at(root);
     Launch::worker(place.python, place.source, root.to_path_buf(), lifetime_s)
+}
+
+/// What the binary starts as the tool worker: the tool worker of the pack's runtime that
+/// `whizbang setup` installed in the models directory the wiring opened, with the
+/// lifetime of a worker. Where no directory was opened, or the pack is not installed in
+/// it, nothing is started, and the sentence says why.
+fn installed_tools() -> ToolStart {
+    Arc::new(|root: Option<&Path>, secrets: &Secrets| {
+        let Some(root) = root else {
+            return Err("a tool file runs in the pack's runtime, which whizbang setup installs in the models directory; the config names no local backend, so none was opened".to_owned());
+        };
+        let place = pack_setup::at(root);
+        if !place.source.is_dir() {
+            return Err(
+                "the pack's source is not installed in the models directory; run whizbang setup"
+                    .to_owned(),
+            );
+        }
+        let launch = ToolLaunch::worker(place.python, place.source, LIFETIME_DEFAULT_S);
+        let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+        Ok(ToolWorker::new(launch, clock, secrets.clone()))
+    })
 }
 
 /// Where the one worker is: the models directory the wiring opened, by its folder and
@@ -201,6 +236,10 @@ pub struct OneWorker {
     held: Mutex<Held>,
     /// Told when the supervisor is made.
     made: Condvar,
+    /// The tool worker (plan 2C, task X1; ADR 0032): the second process of the pack's
+    /// runtime, at most one, made at the first run of a tool file and stopped with this.
+    tool_start: ToolStart,
+    tool: Mutex<Option<ToolWorker>>,
 }
 
 impl std::fmt::Debug for OneWorker {
@@ -233,6 +272,8 @@ impl OneWorker {
             start,
             held: Mutex::default(),
             made: Condvar::new(),
+            tool_start: installed_tools(),
+            tool: Mutex::default(),
         })
     }
 
@@ -242,11 +283,75 @@ impl OneWorker {
     /// itself), so the binary `just smoke` and a release build make cannot name it.
     #[cfg(feature = "fakes")]
     pub fn starting(start: Start) -> Arc<OneWorker> {
+        OneWorker::starting_with_tools(start, installed_tools())
+    }
+
+    /// The same, whose tool worker `tool_start` makes: a test's, from the test kit's
+    /// Python and the pack's source. Built only with the feature `fakes`.
+    #[cfg(feature = "fakes")]
+    pub fn starting_with_tools(start: Start, tool_start: ToolStart) -> Arc<OneWorker> {
         Arc::new(OneWorker {
             start,
             held: Mutex::default(),
             made: Condvar::new(),
+            tool_start,
+            tool: Mutex::default(),
         })
+    }
+
+    /// Runs a tool file in the tool worker, starting it if none runs (ADR 0032): one run
+    /// at a time; a run that finds another in it waits, looking at its own cancel and
+    /// deadline. `answer` answers each capability the tool asks for.
+    pub fn run_tool(
+        &self,
+        secrets: &Secrets,
+        run: ToolRun,
+        limits: &ToolLimits<'_>,
+        answer: &mut dyn FnMut(&Asked) -> Result<Vec<Mask>, String>,
+    ) -> Result<serde_json::Value, ToolFault> {
+        let clock = SystemClock;
+        let mut held = loop {
+            match self.tool.try_lock() {
+                Ok(held) => break held,
+                Err(std::sync::TryLockError::Poisoned(poisoned)) => break poisoned.into_inner(),
+                Err(std::sync::TryLockError::WouldBlock) => {}
+            }
+            if limits.cancellation.is_cancelled() {
+                return Err(ToolFault::Cancelled);
+            }
+            if limits.deadline.is_some_and(|by| clock.now() >= by) {
+                return Err(ToolFault::TimedOut);
+            }
+            clock.pause(TOOL_TURN_PAUSE);
+        };
+        if held.is_none() {
+            let root = self.held().place.as_ref().map(|place| place.root.clone());
+            *held = Some((self.tool_start)(root.as_deref(), secrets).map_err(ToolFault::NotSent)?);
+        }
+        let Some(worker) = held.as_mut() else {
+            return Err(ToolFault::Unavailable("was not made".to_owned()));
+        };
+        worker.run(run, limits, answer)
+    }
+
+    /// Ends the tool worker and its group, when one runs and no run holds it: what the
+    /// end of a door's input and the test kit's guard do. Says how it ended.
+    pub fn stop_tools(&self) -> Option<Ended> {
+        let mut held = match self.tool.try_lock() {
+            Ok(held) => held,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return None,
+        };
+        held.as_mut().and_then(ToolWorker::stop)
+    }
+
+    /// The process id of the tool worker that runs, if one does and no run holds it.
+    pub fn tool_pid(&self) -> Option<u32> {
+        self.tool
+            .try_lock()
+            .ok()?
+            .as_ref()
+            .and_then(ToolWorker::pid)
     }
 
     fn held(&self) -> MutexGuard<'_, Held> {
@@ -436,6 +541,7 @@ impl OneWorker {
     /// ([`Supervisor::kill`]): what the test kit's guard calls. Says how the worker
     /// ended; nothing when none was running or no request made the supervisor.
     pub fn kill(&self) -> Option<Ended> {
+        self.stop_tools();
         self.made().and_then(|supervisor| supervisor.kill())
     }
 

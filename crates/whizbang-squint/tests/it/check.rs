@@ -2374,3 +2374,168 @@ fn a_comparison_named_by_a_run_is_offered_to_the_judge_and_answered_with_its_mea
         "{said}"
     );
 }
+
+// --- a tool file offered to a judge (plan m2c, task X1, item 4) ----------------------------
+
+/// A tool file as the binary hands `check` one: `probe`, which reads `source` and
+/// `candidate` and takes a `phrase`; each run noted, and its output a fixed reading.
+#[derive(Default)]
+struct Probe {
+    ran: std::sync::Mutex<Vec<Probed>>,
+}
+
+type Probed = (Vec<(String, ArtifactId)>, Json);
+
+const PROBE_DIGEST: &str =
+    "sha256:abababababababababababababababababababababababababababababababab";
+
+impl whizbang_squint::files::FileTools for Probe {
+    fn listed(&self) -> Vec<whizbang_squint::files::FileTool> {
+        vec![whizbang_squint::files::FileTool {
+            name: "probe".to_owned(),
+            purpose: "Probes how much of a named subject the candidate keeps.".to_owned(),
+            bindings: vec!["source".to_owned(), "candidate".to_owned()],
+            arguments: vec![whizbang_squint::files::FileArgument {
+                name: "phrase".to_owned(),
+                number: false,
+                purpose: "The subject, in words.".to_owned(),
+                required: true,
+            }],
+        }]
+    }
+
+    fn revision(&self, _: &str) -> Option<String> {
+        Some(PROBE_DIGEST.to_owned())
+    }
+
+    fn run(
+        &self,
+        _: &str,
+        images: &[(String, ArtifactId)],
+        arguments: &serde_json::Map<String, Json>,
+        _: &whizbang_core::contract::Context,
+    ) -> Result<whizbang_squint::files::FileRan, String> {
+        let mut ran = self.ran.lock().unwrap();
+        ran.push((images.to_vec(), Json::Object(arguments.clone())));
+        Ok(whizbang_squint::files::FileRan {
+            digest: PROBE_DIGEST.to_owned(),
+            output: json!({"readings": [{"subject": "door", "values": {"kept": 0.75}}]}),
+        })
+    }
+}
+
+fn probing(world: &mut World) -> Arc<Probe> {
+    let probe = Arc::new(Probe::default());
+    world.toolbox = whizbang_squint::check::Toolbox::with_files(probe.clone());
+    probe
+}
+
+#[test]
+fn a_named_tool_file_is_offered_to_the_judge_with_its_schema_and_called() {
+    let (mut world, source, candidate, _) = paired();
+    let probe = probing(&mut world);
+    let asked = json!({"tool_call": {"id": "p1", "name": "probe", "arguments":
+        {"source": "source", "candidate": "candidate", "phrase": "door"}}});
+    let judge = judge(&submitting(&[asked]), &[]);
+    let executor = world.engine(judge.clone(), Secrets::none());
+    let call = of_pair(&source, &candidate, &[("tools", "view,probe")]);
+    let finished = executor.submit(&call).unwrap();
+    drop(executor);
+    assert!(
+        matches!(finished.outcome(), Outcome::Completed { .. }),
+        "{:?}",
+        finished.outcome()
+    );
+    // Offered with the schema its declaration gives: an image for each binding, and its
+    // argument, each required.
+    let offered = judge.received()[0].tools().to_vec();
+    let tool = offered
+        .iter()
+        .find(|tool| tool.name() == "probe")
+        .expect("offered");
+    assert_eq!(
+        tool.schema()["required"],
+        json!(["source", "candidate", "phrase"])
+    );
+    assert_eq!(
+        tool.schema()["properties"]["phrase"]["type"],
+        json!("string")
+    );
+    // Called once, with the run's images by the names the judge gave them, and answered
+    // with its output and the digest it ran.
+    let ran = probe.ran.lock().unwrap().clone();
+    assert_eq!(
+        ran,
+        [(
+            vec![
+                ("source".to_owned(), source.id()),
+                ("candidate".to_owned(), candidate.id())
+            ],
+            json!({"phrase": "door"})
+        )]
+    );
+    let said = results(&judge, 1);
+    assert!(!said[0].is_error());
+    assert_eq!(
+        said[0].text(),
+        format!(
+            "call:0: probe (experimental; a tool file, {PROBE_DIGEST}) measured: \
+             {{\"readings\":[{{\"subject\":\"door\",\"values\":{{\"kept\":0.75}}}}]}}"
+        )
+    );
+    let left = left(&world.root(), world.fs.clone(), finished.run());
+    let noted = left
+        .record()
+        .asked()
+        .settings
+        .iter()
+        .any(|setting| setting.name() == "tool_file:probe");
+    assert!(noted);
+}
+
+#[test]
+fn a_tool_file_not_named_is_never_offered() {
+    let (mut world, source, candidate, _) = paired();
+    let probe = probing(&mut world);
+    // On offer, and not named: the judge is not told of it, and a call of it is refused
+    // before anything runs.
+    let asked = json!({"tool_call": {"id": "p1", "name": "probe", "arguments":
+        {"source": "source", "candidate": "candidate", "phrase": "door"}}});
+    let judge = judge(&submitting(&[asked]), &[]);
+    let executor = world.engine(judge.clone(), Secrets::none());
+    let finished = executor.submit(&of_pair(&source, &candidate, &[])).unwrap();
+    drop(executor);
+    assert!(
+        matches!(finished.outcome(), Outcome::Completed { .. }),
+        "{:?}",
+        finished.outcome()
+    );
+    assert!(
+        judge.received()[0]
+            .tools()
+            .iter()
+            .all(|tool| tool.name() != "probe")
+    );
+    let said = results(&judge, 1);
+    assert!(said[0].is_error());
+    assert!(
+        said[0].text().starts_with("refused: "),
+        "{}",
+        said[0].text()
+    );
+    assert!(probe.ran.lock().unwrap().is_empty());
+    // A run that names a tool file nothing offers is refused as invalid.
+    let judge = judge_none();
+    let executor = world.engine(judge, Secrets::none());
+    let named = of_pair(&source, &candidate, &[("tools", "view,absent")]);
+    let finished = executor.submit(&named).unwrap();
+    assert!(
+        matches!(finished.outcome(), Outcome::Invalid { .. }),
+        "{:?}",
+        finished.outcome()
+    );
+}
+
+fn judge_none() -> Arc<FakeJudge> {
+    judge(&submitting(&[]), &[])
+}

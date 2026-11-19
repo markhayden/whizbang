@@ -76,6 +76,9 @@ pub const CALL_CAP_LIMIT_MICROS: u64 = 1_000_000 * 1_000_000;
 /// The most bytes of the models directory's path, as a config names it.
 pub const MODELS_DIR_LIMIT: usize = 1024;
 
+/// The most tool files `[tools] paths` lists.
+pub const TOOL_PATHS_LIMIT: usize = 16;
+
 /// The least rate of a download, in kibibytes a second, when no config gives one.
 pub const DOWNLOAD_LEAST_KIB_PER_SECOND: u64 = 256;
 
@@ -154,6 +157,10 @@ pub struct Config {
     /// the digest: whether a run may answer from the cache says nothing of what a run
     /// means, and the cache's key holds the digest.
     decisions_cached: bool,
+    /// `[tools] paths` (plan 2C, task X1; ADR 0032): the tool files, each an absolute
+    /// path as it is written. Not in the digest: what a run of a tool file ran is the
+    /// file's digest, which the run records.
+    tool_paths: Vec<String>,
 }
 
 /// The backends of one capability.
@@ -234,6 +241,11 @@ impl Config {
     /// `decisions` is not false (plan 2C, task M1; ADR 0031). Off without one.
     pub fn decisions_cached(&self) -> bool {
         self.decisions_cached
+    }
+
+    /// The tool files the file lists, `[tools] paths`, in its order: none without it.
+    pub fn tool_paths(&self) -> impl Iterator<Item = &std::path::Path> {
+        self.tool_paths.iter().map(std::path::Path::new)
     }
 
     /// Where the models directory is, when the file says: `[models] dir`, an absolute

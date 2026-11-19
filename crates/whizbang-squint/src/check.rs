@@ -56,6 +56,7 @@ use whizbang_core::identity::{DecodeLimits, Digest};
 
 use crate::cache;
 use crate::details::{self, Details, Names, Projection};
+use crate::files::{self, FileTool, FileTools};
 use crate::job::{Job, Role as ImageRole};
 use crate::use_case::{self, Checklist, Resolved};
 use crate::{align, compare, resize, view};
@@ -72,6 +73,8 @@ pub const USE_CASES: [&str; 6] = [
 
 /// The action's name.
 pub const NAME: &str = "check";
+/// The action a tool file's capability is asked through (`whizbang_rascal::segment`).
+const SEGMENT: &str = "segment";
 /// The action's version.
 pub const VERSION: &str = "1.3.0";
 /// The most requests one run sends its judge, the retry of a cut-off turn included.
@@ -108,9 +111,12 @@ const SYSTEM: &str = "You check images. Look closer with the tools you are given
 /// The tools there are, are the ones this build links: `view`, `align`, `resize`,
 /// `change_map` and `edge_similarity`. Offering is saying that one of them may be named
 /// by a run. The last two are experimental (`SPEC.md` section 8): on offer, but run only
-/// when a run names them.
+/// when a run names them. Beside them, the tool files the config lists, when the binary
+/// hands them ([`Toolbox::with_files`]; plan 2C, task X1; ADR 0032): each on offer, and
+/// each run only when a run names it.
 pub struct Toolbox {
     offered: Mutex<BTreeSet<&'static str>>,
+    files: Option<Arc<dyn FileTools>>,
 }
 
 /// The tools this build links, by name.
@@ -127,7 +133,22 @@ impl Toolbox {
     pub fn standard() -> Arc<Toolbox> {
         Arc::new(Toolbox {
             offered: Mutex::new(LINKED.into_iter().collect()),
+            files: None,
         })
+    }
+
+    /// The same, with these tool files on offer beside the tools this build links.
+    pub fn with_files(files: Arc<dyn FileTools>) -> Arc<Toolbox> {
+        Arc::new(Toolbox {
+            offered: Mutex::new(LINKED.into_iter().collect()),
+            files: Some(files),
+        })
+    }
+
+    /// The tool file of this name, when one is on offer.
+    fn file(&self, name: &str) -> Option<FileTool> {
+        let files = self.files.as_ref()?;
+        files.listed().into_iter().find(|tool| tool.name == name)
     }
 
     fn names(&self) -> std::sync::MutexGuard<'_, BTreeSet<&'static str>> {
@@ -146,9 +167,13 @@ impl Toolbox {
         self.names().remove(name);
     }
 
-    /// The tools on offer now.
-    pub fn offered(&self) -> Vec<&'static str> {
-        self.names().iter().copied().collect()
+    /// The tools on offer now: the linked ones, then the tool files.
+    pub fn offered(&self) -> Vec<String> {
+        let mut offered: Vec<String> = self.names().iter().map(|n| (*n).to_owned()).collect();
+        if let Some(files) = &self.files {
+            offered.extend(files.listed().into_iter().map(|tool| tool.name));
+        }
+        offered
     }
 }
 
@@ -373,6 +398,9 @@ struct Run<'a> {
     names: Names,
     /// How a call of `align` is answered.
     projection: Projection,
+    /// The tool files the run named, and what runs them.
+    files: Vec<FileTool>,
+    file_tools: Option<Arc<dyn FileTools>>,
 }
 
 impl Run<'_> {
@@ -398,6 +426,9 @@ impl Run<'_> {
         }
         let listed = self.tools.iter().any(|tool| tool.name() == call.name());
         let id = format!("call:{}", self.dispatched - 1);
+        if let Some(tool) = self.files.iter().find(|tool| tool.name == call.name()) {
+            return self.dispatch_file(&id, tool.clone(), call);
+        }
         let mut said_as: Option<details::AlignAsked> = None;
         let mut resized: Option<String> = None;
         let mut compared: Option<details::CompareAsked> = None;
@@ -514,6 +545,39 @@ impl Run<'_> {
                 answer(&format!("the tool failed: {kind}"), true, Vec::new())
             }
             Outcome::Cancelled => Err(failed("cancelled", &"a tool call was cancelled")),
+        }
+    }
+
+    /// Answers a call of a tool file the run named: run under this run's context, so that
+    /// what it asks for is a nested call of this run, and its output, held to its
+    /// declaration, is the answer. The digest it ran is noted among the run's settings.
+    fn dispatch_file(
+        &mut self,
+        id: &str,
+        tool: FileTool,
+        call: &ToolCall,
+    ) -> Result<ToolResult, Failure> {
+        let answer = |text: &str, error: bool| {
+            let result = ToolResult::new(call.id(), text, error, Vec::new());
+            result.map_err(|why| failed("tool_result", &why))
+        };
+        let (images, arguments) = match files::call_of(&tool, call.arguments(), &self.names) {
+            Ok(asked) => asked,
+            Err(why) => return answer(&format!("not called: {why}"), true),
+        };
+        let Some(file_tools) = &self.file_tools else {
+            return answer("not called: no tool file is on offer", true);
+        };
+        self.context.events().progress("a tool file was called");
+        match file_tools.run(&tool.name, &images, &arguments, self.context) {
+            Ok(ran) => {
+                let setting = format!("tool_file:{}", tool.name);
+                self.context
+                    .facts()
+                    .setting(&setting, &Value::text(&ran.digest));
+                answer(&files::answer(id, &tool.name, &ran), false)
+            }
+            Err(why) => answer(&format!("the tool failed: {why}"), true),
         }
     }
 
@@ -705,13 +769,17 @@ impl Action for Check {
         }
         let named = listed;
         let offered = self.toolbox.offered();
-        if let Some(name) = named.iter().find(|name| !offered.contains(name)) {
+        if let Some(name) = named
+            .iter()
+            .find(|name| !offered.iter().any(|o| o == *name))
+        {
             let shown: String = name.chars().take(64).collect();
             return Err(Failure::invalid(&format!(
                 "{shown:?} is no evidence tool on offer"
             )));
         }
         let mut tools = Vec::new();
+        let mut named_files: Vec<FileTool> = Vec::new();
         for name in &named {
             match *name {
                 view::NAME => tools.push(view_tool()?),
@@ -724,7 +792,12 @@ impl Action for Check {
                 compare::CHANGE_MAP | compare::EDGE_SIMILARITY => {
                     tools.push(details::compare_tool(name).map_err(|why| failed("tools", &why))?);
                 }
-                _ => {}
+                other => {
+                    if let Some(tool) = self.toolbox.file(other) {
+                        tools.push(files::definition(&tool).map_err(|why| failed("tools", &why))?);
+                        named_files.push(tool);
+                    }
+                }
             }
         }
         let chosen = |name: &str, names: &[&str]| match argument(name) {
@@ -747,7 +820,7 @@ impl Action for Check {
                 .map(str::trim)
                 .filter(|name| !name.is_empty())
             {
-                if !details::DETAILED.contains(&name) || !offered.contains(&name) {
+                if !details::DETAILED.contains(&name) || !offered.iter().any(|o| o == name) {
                     let shown: String = name.chars().take(64).collect();
                     return Err(Failure::invalid(&format!(
                         "{shown:?} is no tool whose details are measured first: {}",
@@ -766,7 +839,18 @@ impl Action for Check {
                 detail.insert(0, align::NAME);
             }
         }
-        let frozen = named.iter().chain(detail.iter()).copied();
+        // A tool file's capabilities are nested calls of this run: `segment` is frozen
+        // with the tools when the run names one, and is never offered to the judge.
+        let asks: &[&str] = if named_files.is_empty() {
+            &[]
+        } else {
+            &[SEGMENT]
+        };
+        let frozen = named
+            .iter()
+            .chain(detail.iter())
+            .chain(asks.iter())
+            .copied();
         if !context.freeze_calls(frozen) {
             return Err(failed(
                 "tools",
@@ -801,6 +885,14 @@ impl Action for Check {
                     .map(|input| (input.id(), input.binding()))
                     .collect();
                 let tools: Vec<&str> = named.iter().chain(detail.iter()).copied().collect();
+                let revisions: Vec<(String, String)> = named_files
+                    .iter()
+                    .map(|tool| {
+                        let files = self.toolbox.files.as_ref();
+                        let revision = files.and_then(|files| files.revision(&tool.name));
+                        (tool.name.clone(), revision.unwrap_or_default())
+                    })
+                    .collect();
                 let system = use_case::system_with(
                     &judging.resolved,
                     &judging.job,
@@ -814,6 +906,7 @@ impl Action for Check {
                     checklist: &judging.checklist.render(&judging.resolved),
                     rules_version: judging.resolved.version,
                     tools: &tools,
+                    files: &revisions,
                     judge: judge.declaration().model(),
                     config: call.config(),
                 }))
@@ -837,6 +930,8 @@ impl Action for Check {
             crops: 0,
             names: Names::default(),
             projection,
+            files: named_files,
+            file_tools: self.toolbox.files.clone(),
         };
         // The images open the conversation, each with the name a tool call gives.
         let mut opening = Vec::new();

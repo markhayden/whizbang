@@ -152,7 +152,7 @@ pub const EXTRA_HOST: Host = Host {
 };
 
 /// The files of the pack this build carries, by their place in the pack's folder.
-const CARRIED: [(&str, &[u8]); 13] = [
+const CARRIED: [(&str, &[u8]); 15] = [
     (
         "pyproject.toml",
         include_bytes!("../../../pack/pyproject.toml"),
@@ -199,8 +199,17 @@ const CARRIED: [(&str, &[u8]); 13] = [
         include_bytes!("../../../pack/src/whizbang_pack/sam3.py"),
     ),
     (
+        "src/whizbang_pack/tool_worker.py",
+        include_bytes!("../../../pack/src/whizbang_pack/tool_worker.py"),
+    ),
+    (
         "src/whizbang_pack/worker.py",
         include_bytes!("../../../pack/src/whizbang_pack/worker.py"),
+    ),
+    // The tool file of milestone 2 (plan 2C, task X1; ADR 0032), for a config to list.
+    (
+        "tools/per_subject.py",
+        include_bytes!("../../../pack/tools/per_subject.py"),
     ),
 ];
 

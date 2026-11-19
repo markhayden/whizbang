@@ -55,6 +55,9 @@ pub struct Material<'a> {
     pub rules_version: u32,
     /// The tools the run may call or measures first, by name.
     pub tools: &'a [&'a str],
+    /// The tool files among them, each its name and its revision: the digest of its bytes
+    /// (plan 2C, task X1; ADR 0032), so that an edited file misses.
+    pub files: &'a [(String, String)],
     pub judge: &'a ModelIdentity,
     /// The digest of the config the call was prepared under.
     pub config: Digest,
@@ -130,8 +133,13 @@ pub fn key(material: &Material<'_>) -> Key {
     let images: Vec<Json> = (material.images.iter())
         .map(|(id, binding)| json!({"artifact": id.to_string(), "binding": binding.to_string()}))
         .collect();
+    let file = |name: &str| {
+        (material.files.iter())
+            .find(|(file, _)| file == name)
+            .map(|(_, revision)| revision.clone())
+    };
     let tools: Vec<Json> = (material.tools.iter())
-        .map(|name| json!({"name": name, "version": tool_version(name)}))
+        .map(|name| json!({"name": name, "version": tool_version(name).or_else(|| file(name))}))
         .collect();
     let judge = material.judge;
     let written = json!({

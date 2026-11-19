@@ -3,6 +3,7 @@
 //! key against a closed list, every value against its kind and its rule. A refusal names
 //! a key, escaped and cut, and never shows a value or a path.
 
+use std::path::Path;
 use whizbang_core::config::{
     BACKENDS_LIMIT, CONFIG_BYTES_LIMIT, Config, ConfigRefused, DOWNLOAD_LEAST_KIB_LIMIT,
     DOWNLOAD_LEAST_KIB_PER_SECOND, KEY_SHOWN_LIMIT, MODEL_TOKENS_LIMIT, MODELS_DIR_LIMIT,
@@ -205,12 +206,31 @@ fn an_unknown_table_or_key_is_refused_naming_the_key() {
 }
 
 #[test]
-fn tools_is_refused_until_it_has_a_shape_and_a_table_with_nothing_in_it_is_as_no_table() {
-    for text in ["[tools]\n", "[tools]\npaths = [\"a.py\"]\n", "tools = 1\n"] {
-        let refused = refusal(text);
-        assert_eq!(key_of(&refused), "tools");
-        assert!(refused.to_string().contains("milestone 2"), "{refused}");
+fn tools_lists_absolute_paths_and_a_table_with_nothing_in_it_is_as_no_table() {
+    // The tool files (plan 2C, task X1): absolute paths, each once, at most 16.
+    let listed = read("[tools]\npaths = [\"/t/a.py\", \"/t/b.py\"]\n");
+    let paths: Vec<_> = listed.tool_paths().collect();
+    assert_eq!(paths, [Path::new("/t/a.py"), Path::new("/t/b.py")]);
+    let many = (0..17)
+        .map(|n| format!("\"/t/{n}.py\""))
+        .collect::<Vec<_>>();
+    for (text, key) in [
+        ("[tools]\npaths = [\"a.py\"]\n".to_owned(), "tools.paths.0"),
+        (
+            "[tools]\npaths = [\"/a.py\", \"/a.py\"]\n".to_owned(),
+            "tools.paths",
+        ),
+        (
+            format!("[tools]\npaths = [{}]\n", many.join(", ")),
+            "tools.paths",
+        ),
+        ("[tools]\nfolder = \"/t\"\n".to_owned(), "tools.folder"),
+        ("tools = 1\n".to_owned(), "tools"),
+    ] {
+        let refused = refusal(&text);
+        assert_eq!(key_of(&refused), key, "{refused}");
     }
+    assert_eq!(read("[tools]\n"), Config::empty());
     // A table with nothing in it is as no table: the config of such a file is the
     // empty one, with no capability that has no backend.
     for text in [

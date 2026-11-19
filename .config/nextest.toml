@@ -40,12 +40,13 @@ test-group = 'crash-sweeps'
 # its module (task P3a: `pack::worker::`; task P3b: `pack::conformance::`; task P4:
 # `pack::queue::`; task P5b: `pack::removal::`), and so does
 # the file of `whizbang setup`, whose check that the worker says hello starts one (task
-# Y1: `setup::`), and the binary's file of the kind `pack`, whose tests are its module's
-# own with no module below (task P6a: `pack::` and a test's name). The filter names no
+# Y1: `setup::`), the binary's file of the kind `pack`, whose tests are its module's
+# own with no module below (task P6a: `pack::` and a test's name), and every test that
+# starts the tool worker, which names a tool file or the tool worker (plan 2C, task X1). The filter names no
 # package: this file is also read in a workspace of another crate
 # (scripts/tests/test-timeout.sh), where a package that is not there is an error.
 [[profile.default.overrides]]
-filter = 'test(/^pack::(worker|conformance|queue|removal)::/) | test(/^pack::[a-z0-9_]+$/) | test(/^setup::/)'
+filter = 'test(/^pack::(worker|conformance|queue|removal)::/) | test(/^pack::[a-z0-9_]+$/) | test(/^setup::/) | test(/tool_file|tool_worker/)'
 test-group = 'pack-workers'
 
 # The model tier (docs/plans/m1c-local-pack.md, task R2b): the tests that load a real model,

@@ -19,7 +19,7 @@ use super::{
     Approval, BACKENDS_LIMIT, Backend, CALL_CAP_LIMIT_MICROS, CAPABILITIES, CONFIG_BYTES_LIMIT,
     Config, ConfigRefused, DOWNLOAD_LEAST_KIB_LIMIT, MODEL_TOKENS_LIMIT, MODELS_DIR_LIMIT,
     ModelToken, Offered, RECIPIENTS_LIMIT, SETTING_TEXT_LIMIT, SETTINGS_LIMIT, SIGN_IN_ORIGIN,
-    Setting, TEXT_LIMIT, TokenFrom, VARIABLE_LIMIT,
+    Setting, TEXT_LIMIT, TOOL_PATHS_LIMIT, TokenFrom, VARIABLE_LIMIT,
 };
 use crate::contract::record::SETTING_NAME_LIMIT;
 use crate::contract::{Secrets, text};
@@ -401,15 +401,42 @@ fn config(mut table: Table, secrets: &Secrets) -> Read<Config> {
         };
         at.unknown(&cache, "decisions")?;
     }
-    if table.contains_key("tools") {
-        return Err(At::top("tools", secrets)
-            .refuse("is not read yet: the table of tools is given its shape at milestone 2"));
+    if let Some(value) = table.remove("tools") {
+        let at = At::top("tools", secrets);
+        let mut tools = at.table(value)?;
+        if let Some(value) = tools.remove("paths") {
+            config.tool_paths = tool_paths(&at.then("paths"), value)?;
+        }
+        at.unknown(&tools, "paths")?;
     }
     match table.keys().next() {
-        Some(key) => Err(At::top(key, secrets)
-            .refuse("is not known; the tables are backends, spend, egress, models and cache")),
+        Some(key) => Err(At::top(key, secrets).refuse(
+            "is not known; the tables are backends, spend, egress, models, cache and tools",
+        )),
         None => Ok(config),
     }
+}
+
+/// The tool files (plan 2C, task X1; ADR 0032): a list of at most [`TOOL_PATHS_LIMIT`]
+/// absolute paths, each named once. What is written is not shown, and nothing is asked
+/// of the disk here: each file is read, and its declaration held to its rules, where the
+/// actions are made.
+fn tool_paths(at: &At, value: Value) -> Read<Vec<String>> {
+    let Value::Array(items) = value else {
+        return Err(at.wrong("a list of paths", &value));
+    };
+    if items.len() > TOOL_PATHS_LIMIT {
+        return Err(at.refuse(format!("names more than {TOOL_PATHS_LIMIT} tool files")));
+    }
+    let mut paths: Vec<String> = Vec::new();
+    for (n, item) in items.into_iter().enumerate() {
+        let path = models_dir(&at.then(&n.to_string()), item)?;
+        if paths.contains(&path) {
+            return Err(at.refuse("names a tool file twice"));
+        }
+        paths.push(path);
+    }
+    Ok(paths)
 }
 
 /// Where the models directory is: an absolute path, as it is written. Nothing of it

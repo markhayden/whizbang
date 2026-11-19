@@ -800,12 +800,18 @@ fn the_worker_setup_starts_for_its_hello_is_given_a_lifetime_of_120_seconds_and_
 #[test]
 fn the_pack_this_build_carries_is_the_repositorys() {
     // What `setup` installs is what the repository holds: its file, its lock, its
-    // pinned Python and every module of its source; and nothing else.
+    // pinned Python, every module of its source and its tool file (plan 2C, task X1);
+    // and nothing else.
     let carried = Pack::carried();
-    let mut wanted: Vec<String> = ["pyproject.toml", "uv.lock", ".python-version"]
-        .iter()
-        .map(|name| (*name).to_owned())
-        .collect();
+    let mut wanted: Vec<String> = [
+        "pyproject.toml",
+        "uv.lock",
+        ".python-version",
+        "tools/per_subject.py",
+    ]
+    .iter()
+    .map(|name| (*name).to_owned())
+    .collect();
     let package = pack_folder().join("src").join("whizbang_pack");
     for entry in std::fs::read_dir(&package).unwrap() {
         let name = entry.unwrap().file_name().to_string_lossy().into_owned();

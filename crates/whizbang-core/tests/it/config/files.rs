@@ -138,7 +138,7 @@ pub(super) fn with_no_env_file_a_config_that_names_a_variable_is_read_and_hands_
     assert_eq!(loaded.config().call_cap_micros(), Some(1_000_000));
     assert_eq!(loaded.secrets(), &Secrets::none());
     // A config that is refused is its own refusal, with or without an env file.
-    std::fs::write(&config, "[tools]\n").unwrap();
+    std::fs::write(&config, "[nothing]\n").unwrap();
     assert!(matches!(
         Loaded::of_files(&config, None),
         Err(LoadRefused::Config(_))

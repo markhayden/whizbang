@@ -28,6 +28,8 @@ whizbang-eval = { path = "../whizbang-eval" }
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# A tool file's declaration (plan 2C, task X1; ADR 0032), read as squint reads a job.
+toml.workspace = true
 # Writing an imported picture again as a PNG of its pixels alone (`store import
 # --picture`), at the version the core decodes with and `whizbang-squint` encodes with;
 # and squint's digest of a picture's decoded samples, which the baseline gate recomputes

@@ -260,7 +260,7 @@ fn object<'a>(
 }
 
 /// An image a judge's argument names.
-fn image_of(
+pub fn image_of(
     arguments: &serde_json::Map<String, Json>,
     key: &str,
     names: &Names,

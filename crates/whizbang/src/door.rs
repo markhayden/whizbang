@@ -542,6 +542,7 @@ pub fn check(
         details: asked.details,
         detail: asked.detail,
         projection: asked.projection,
+        tools: &[],
     };
     check_job(
         executor,
@@ -561,6 +562,9 @@ pub struct Measuring<'a> {
     pub details: Details,
     pub detail: Option<&'a str>,
     pub projection: &'a str,
+    /// More tools offered to the judge beside those `details` gives: tool files the run
+    /// names (`--tool`; plan 2C, task X1, item 4), each offered only so.
+    pub tools: &'a [String],
 }
 
 /// Runs `check` through the executor under a job and its images, in its order, and
@@ -594,8 +598,13 @@ pub fn check_call(
         .argument("job", Value::text(&job.to_json()))
         .argument("max_output_tokens", Value::Integer(CHECK_OUTPUT_TOKENS));
     let (tools, details) = measuring.details.tools_and_name();
+    let mut tools = tools.to_owned();
+    for tool in measuring.tools {
+        tools.push(',');
+        tools.push_str(tool);
+    }
     call = call
-        .argument("tools", Value::text(tools))
+        .argument("tools", Value::text(&tools))
         .argument("details", Value::text(details))
         .argument("projection", Value::text(measuring.projection));
     if let Some(detail) = measuring.detail {
