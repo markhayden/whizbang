@@ -87,14 +87,18 @@ struct Example {
     rebound: Option<bool>,
 }
 
+/// A case of the examples: its name, what paints, its mask, and the colour of the fill,
+/// or none for the scene's inverse.
+type Case = (
+    &'static str,
+    &'static str,
+    fn(&Image) -> Mask,
+    Option<[u8; 3]>,
+);
+
 fn examples(tool: &str) -> Vec<Example> {
     let base = image_of(&scene(), "import");
-    let cases: [(
-        &'static str,
-        &'static str,
-        fn(&Image) -> Mask,
-        Option<[u8; 3]>,
-    ); 2] = [
+    let cases: [Case; 2] = [
         ("feathered", "a brick red", disc, Some(BRICK)),
         ("protected", "the scene's inverse", striped, None),
     ];

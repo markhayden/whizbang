@@ -30,8 +30,11 @@ fn scratched() -> CanonicalPixels {
     CanonicalPixels::from_rgba(96, 64, rgba).unwrap()
 }
 
-/// Each example of a tool: its name, the scene, and the call's arguments.
-fn examples(tool: &str) -> Vec<(&'static str, CanonicalPixels, Vec<(&'static str, Value)>)> {
+/// An example of a tool: its name, the scene, and the call's arguments.
+type Asked = (&'static str, CanonicalPixels, Vec<(&'static str, Value)>);
+
+/// Each example of a tool.
+fn examples(tool: &str) -> Vec<Asked> {
     let number = Value::Number;
     match tool {
         "line" => vec![

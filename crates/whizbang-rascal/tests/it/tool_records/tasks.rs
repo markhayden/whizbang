@@ -114,13 +114,13 @@ fn page_of(tool: &'static str, rects: &[Rect], passes: &[Pass]) -> Page {
             "\n| Example | `box` | Core | Blend | Protected | Use case |\n|---|---|---|---|---|---|\n",
         );
         for (name, text, mask) in rects {
-            files.push((format!("{name}.png"), picture(&mask)));
+            files.push((format!("{name}.png"), picture(mask)));
             measured.push_str(&format!(
                 "| {name} | \"{text}\" | {} | {} | {} | {} |\n",
                 count(mask.core()),
                 count(mask.blend()),
                 count(mask.protect()),
-                use_case(&mask),
+                use_case(mask),
             ));
         }
     } else {
@@ -129,12 +129,12 @@ fn page_of(tool: &'static str, rects: &[Rect], passes: &[Pass]) -> Page {
              | Protected after | Use case |\n|---|---|---|---|---|---|---|---|\n",
         );
         for (name, by, first, composite, made) in passes {
-            files.push((format!("{name}-first.png"), picture(&first)));
+            files.push((format!("{name}-first.png"), picture(first)));
             files.push((
                 format!("{name}-composite.png"),
-                image_picture(&composite, None),
+                image_picture(composite, None),
             ));
-            files.push((format!("{name}-protect.png"), picture(&made)));
+            files.push((format!("{name}-protect.png"), picture(made)));
             measured.push_str(&format!(
                 "| {name} | {by} | {} | {} | {} | {} | {} | {} |\n",
                 count(first.core()),
@@ -142,7 +142,7 @@ fn page_of(tool: &'static str, rects: &[Rect], passes: &[Pass]) -> Page {
                 count(made.core()),
                 count(made.blend()),
                 count(made.protect()),
-                use_case(&made),
+                use_case(made),
             ));
         }
     }
