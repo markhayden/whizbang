@@ -108,7 +108,10 @@ fn the_judge_step_is_handed_aligns_measurements_and_align_runs_once_a_pair() {
     // And it is what the judge was told.
     let said = texts(judge.received()[0].messages()[0].parts());
     let told = whizbang_squint::details::align_detail(&report, "candidate", "source");
-    assert!(said.contains(&told), "{said:?}");
+    assert!(
+        said.contains(&format!("{told} Cite it as detail:0.")),
+        "{said:?}"
+    );
     // The recipe hands back the judge's verdict with its outcome.
     assert_eq!(
         finished.verdict().map(|v| v.decision()),
@@ -170,6 +173,7 @@ fn the_aligned_frames_and_tiles_of_details_reach_the_judge_step() {
             .iter()
             .find(|text| text.starts_with(&format!("Tile `tile:candidate:{place}`")))
             .unwrap();
-        assert!(line.ends_with(&format!("named {}.", tiles[at])), "{line}");
+        let named = format!("named {}. Cite it as detail:{at}.", tiles[at]);
+        assert!(line.ends_with(&named), "{line}");
     }
 }

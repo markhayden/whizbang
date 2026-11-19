@@ -410,6 +410,23 @@ impl Wire {
         }
     }
 
+    /// What an answer of an error states of itself, for the provider whose wire reads
+    /// one: its own word for the error, one of a fixed list, and how long it says to
+    /// wait. Only Gemini's errors are read (`google::wire::stated`); the others' state
+    /// their wait in a header, which a reply does not carry.
+    fn stated(&self, body: &[u8]) -> (Option<&'static str>, Option<u64>) {
+        match self {
+            Wire::Generate(_) => google::wire::stated(body),
+            Wire::Messages(_) | Wire::Responses(_) => (None, None),
+        }
+    }
+
+    /// Whether the provider's own word for an error says the same request may be sent
+    /// again.
+    fn transient(&self, word: &str) -> bool {
+        matches!(self, Wire::Generate(_)) && google::wire::TRANSIENT.contains(&word)
+    }
+
     /// The fields of a request, each a constant.
     fn fields(&self) -> &'static [(&'static str, &'static str)] {
         match self {
@@ -469,7 +486,25 @@ impl Service {
             // An error status is charged nothing: the provider charges no request it
             // refused or failed.
             let nothing = Charge::whole(0).ok();
-            let answered = |kind, why| Err(Fault::new(kind, why).answered(nothing));
+            let (word, wait) = match reply.status() {
+                Some(200) | None => (None, None),
+                Some(_) => self.wire.stated(reply.body()),
+            };
+            let answered = |kind, why: &str| {
+                let fault = Fault::new(kind, why).answered(nothing);
+                // A wait is stated only of a request that may be sent again.
+                match wait.filter(|_| kind == FaultKind::Unavailable) {
+                    Some(wait) => Err(fault.retry_after_ms(wait)),
+                    None => Err(fault),
+                }
+            };
+            // The status, and the provider's word for it when it gave one of its own,
+            // named after the sentence: a status the adapter does not act on is then
+            // known from the run's record (the gate run of 2026-11-19 kept none).
+            let named = |why: &str, status: u16| match word {
+                Some(word) => format!("{why}; it answered {status} {word}"),
+                None => format!("{why}; it answered {status}"),
+            };
             return match reply.status() {
                 // What a turn cost is its usage at the row; one that reports none
                 // cost its bound, which the meter charges when no charge is said.
@@ -493,13 +528,21 @@ impl Service {
                 Some(400 | 404 | 413 | 422) => answered(FaultKind::Rejected, REFUSED),
                 Some(401 | 403) => answered(FaultKind::Credential, CREDENTIAL),
                 Some(429) => answered(FaultKind::Unavailable, RATE_LIMITED),
-                Some(500 | 502 | 503 | 504 | 529) => answered(FaultKind::Unavailable, BUSY),
+                Some(status @ (500 | 502 | 503 | 504 | 529)) => {
+                    answered(FaultKind::Unavailable, &named(BUSY, status))
+                }
                 // A success the adapter does not read may have been charged: it costs
                 // its bound, as an unreadable answer of 200 does, and never nothing.
                 Some(201..=299) => {
                     Err(Fault::new(FaultKind::Malformed, OTHER_SUCCESS).answered(None))
                 }
-                _ => answered(FaultKind::Malformed, STATUS),
+                // Another status that the provider's own word says is transient is sent
+                // again as a busy one is; any other is named, and not.
+                Some(status) if word.is_some_and(|word| self.wire.transient(word)) => {
+                    answered(FaultKind::Unavailable, &named(BUSY, status))
+                }
+                Some(status) => answered(FaultKind::Malformed, &named(STATUS, status)),
+                None => answered(FaultKind::Malformed, STATUS),
             };
         }
         Err(Fault::new(FaultKind::Rejected, MOVED_TOO_OFTEN).unresolved())

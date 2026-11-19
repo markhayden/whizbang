@@ -97,3 +97,106 @@ fn a_call_the_model_could_not_form_is_a_fault_sent_again_and_charged_its_usage()
     }
     assert_eq!(listener.finish(), reasons.len());
 }
+
+#[test]
+fn an_error_google_states_is_named_and_a_transient_one_is_sent_again_after_its_stated_wait() {
+    // The gate run of the details first on 2026-11-19 ended 86 runs of the Google judge,
+    // from one point of the run to its end, at `malformed: the provider answered with a
+    // status the adapter does not act on`: a status outside those the kind classes, which
+    // the run kept no trace of. Each answer here has the shape of Google's error (the
+    // body `{"error": {"code", "message", "status", "details"}}`, its message redacted):
+    // the status the adapter does not act on is named, with Google's own word for it
+    // when that is one of its codes; a status Google states is transient is the fault
+    // `unavailable`, which `check` sends again, after the wait Google states in a
+    // `RetryInfo`; and the statuses of the kind that are busy name which they were.
+    use std::sync::Arc;
+    use whizbang_core::capability::{FaultKind, Stage};
+
+    use crate::net::testing::Pki;
+    use crate::service::testing::{answer, ask, serving, words};
+    let pki = Arc::new(Pki::loopback());
+    let error = |code: u16, word: &str, wait: Option<&str>| {
+        let mut details = vec![serde_json::json!({
+            "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+            "reason": "REDACTED", "domain": "googleapis.com"})];
+        if let Some(wait) = wait {
+            details.push(serde_json::json!({
+                "@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": wait}));
+        }
+        serde_json::json!({"error": {"code": code, "message": "[redacted]",
+                                     "status": word, "details": details}})
+        .to_string()
+    };
+    let rate = crate::service::RATE_LIMITED;
+    let busy = crate::service::BUSY;
+    let status = crate::service::STATUS;
+    let cases: Vec<(&str, String, FaultKind, String, Option<u64>)> = vec![
+        (
+            "429 Too Many Requests",
+            error(429, "RESOURCE_EXHAUSTED", Some("7s")),
+            FaultKind::Unavailable,
+            rate.to_owned(),
+            Some(7_000),
+        ),
+        (
+            "503 Service Unavailable",
+            error(503, "UNAVAILABLE", Some("1.5s")),
+            FaultKind::Unavailable,
+            format!("{busy}; it answered 503 UNAVAILABLE"),
+            Some(1_500),
+        ),
+        (
+            "500 Internal Server Error",
+            error(500, "INTERNAL", None),
+            FaultKind::Unavailable,
+            format!("{busy}; it answered 500 INTERNAL"),
+            None,
+        ),
+        (
+            "408 Request Timeout",
+            error(408, "DEADLINE_EXCEEDED", None),
+            FaultKind::Unavailable,
+            format!("{busy}; it answered 408 DEADLINE_EXCEEDED"),
+            None,
+        ),
+        (
+            "499 Client Closed Request",
+            error(499, "CANCELLED", None),
+            FaultKind::Malformed,
+            format!("{status}; it answered 499 CANCELLED"),
+            None,
+        ),
+        (
+            "418 Teapot",
+            error(418, "NOT-ONE-OF-GOOGLES", Some("9s")),
+            FaultKind::Malformed,
+            format!("{status}; it answered 418"),
+            None,
+        ),
+    ];
+    let answers = cases
+        .iter()
+        .map(|(line, body, ..)| answer(line, "", body.as_bytes()))
+        .collect();
+    let (listener, _) = serving(&pki, answers);
+    for (line, _, kind, sentence, wait) in &cases {
+        let fault = ask(
+            &pki,
+            generate(listener.port(), "gemini-3.8-flash", None),
+            &words(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            (
+                fault.kind(),
+                fault.stage(),
+                fault.sentence(),
+                fault.wait_ms()
+            ),
+            (*kind, Stage::Answered, sentence.as_str(), *wait),
+            "{line}"
+        );
+        assert!(!fault.sentence().contains("redacted"), "{line}");
+    }
+    assert_eq!(listener.finish(), cases.len());
+}

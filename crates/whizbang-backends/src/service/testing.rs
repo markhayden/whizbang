@@ -224,6 +224,10 @@ pub(crate) fn faults_hold_nothing(make: impl Fn(u16) -> Service, not_a_response:
          https://{host}/v1 with {token}\"}},\"request_id\":\"req_{marker}\"}}"
     );
     let fields = format!("X-Marker: {marker}\r\nRequest-Id: req_{marker}\r\nX-Token: {token}\r\n");
+    // A status the kind names is named after the sentence; nothing of the body is.
+    let busy_500 = format!("{BUSY}; it answered 500");
+    let busy_529 = format!("{BUSY}; it answered 529");
+    let status_418 = format!("{STATUS}; it answered 418");
     let cases: Vec<(&str, FaultKind, &str)> = vec![
         ("400 Bad Request", FaultKind::Rejected, REFUSED),
         ("401 Unauthorized", FaultKind::Credential, CREDENTIAL),
@@ -235,9 +239,13 @@ pub(crate) fn faults_hold_nothing(make: impl Fn(u16) -> Service, not_a_response:
             FaultKind::Unavailable,
             RATE_LIMITED,
         ),
-        ("500 Internal Server Error", FaultKind::Unavailable, BUSY),
-        ("529 Overloaded", FaultKind::Unavailable, BUSY),
-        ("418 Teapot", FaultKind::Malformed, STATUS),
+        (
+            "500 Internal Server Error",
+            FaultKind::Unavailable,
+            &busy_500,
+        ),
+        ("529 Overloaded", FaultKind::Unavailable, &busy_529),
+        ("418 Teapot", FaultKind::Malformed, &status_418),
         ("200 OK", FaultKind::Malformed, not_a_response),
     ];
     let answers = cases

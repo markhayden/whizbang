@@ -442,8 +442,18 @@ struct Run<'a> {
     tools: Vec<ToolDefinition>,
     /// The ids of the tool calls answered so far: an id answers one call.
     answered: BTreeSet<String>,
-    /// The ids of the tool calls that completed: what a submission may cite.
+    /// The provider's own ids of the tool calls that completed, and the ids of the runs
+    /// that measured the details said first: what a submission may cite beside `shown`,
+    /// though no judge is shown them as text.
     completed: Vec<String>,
+    /// The ids the judge was shown of what completed, in the order it was: the id each
+    /// tool's result gives (`call:0`), and the id of the run that measured each detail
+    /// handed to it first. What a submission may cite, and what a refusal lists (the gate
+    /// of the details first on 2026-11-19: 66 of 67 runs refused for their citations
+    /// cited ids they were shown, or calls whose results showed none).
+    shown: Vec<String>,
+    /// How many details measured first were given an id to cite them by.
+    details_cited: usize,
     dispatched: usize,
     crops: usize,
     /// The names the judge may give an image beside its identity.
@@ -587,7 +597,8 @@ impl Run<'_> {
                     said.push(label(&crop));
                     pictures.push(crop.picture);
                 }
-                answer(&said.join("\n"), false, pictures)
+                // The id to cite it by, as every other tool's result gives it.
+                answer(&format!("{id}: {}", said.join("\n")), false, pictures)
             }
             Outcome::Invalid { why } => answer(&format!("rejected: {why}"), true, Vec::new()),
             Outcome::Error { kind, .. } => {
@@ -682,13 +693,14 @@ impl Run<'_> {
                     continue;
                 }
                 let bbox = entry.bbox.unwrap_or([0.0, 0.0, 1.0, 1.0]);
+                let cite = self.cited_as(entry);
                 for id in ids {
                     let shown = self.evidence(id)?;
                     self.names.frame(&format!("tile:{image}:{place}"), shown.id);
                     let size = (shown.picture.width(), shown.picture.height());
                     let id = shown.id.to_string();
                     let said = details::tile_said(image, place, bbox, size, &id);
-                    tiles.push(Part::Text(said));
+                    tiles.push(Part::Text(format!("{said}{cite}")));
                     tiles.push(Part::Image(shown.picture));
                 }
                 continue;
@@ -705,8 +717,10 @@ impl Run<'_> {
             if parts.is_empty() {
                 parts.push(Part::Text(details::DETAILS_INTRO.to_owned()));
             }
+            let cite = self.cited_as(entry);
             if tool == align::NAME {
-                parts.push(Part::Text(details::align_detail(&measured, image, against)));
+                let said = details::align_detail(&measured, image, against);
+                parts.push(Part::Text(format!("{said}{cite}")));
                 for id in ids {
                     let shown = self.evidence(id)?;
                     self.names.frame(&frame, id);
@@ -723,7 +737,7 @@ impl Run<'_> {
             let map = format!("map:{image}:{against}");
             let measurements = details::measures_of(&measured);
             let said = details::compare_detail(tool, &measurements, against, &frame, &map);
-            parts.push(Part::Text(said));
+            parts.push(Part::Text(format!("{said}{cite}")));
             for id in ids {
                 let shown = self.evidence(id)?;
                 self.names.frame(&map, id);
@@ -739,6 +753,24 @@ impl Run<'_> {
         }
         parts.extend(tiles);
         Ok(parts)
+    }
+
+    /// What a detail measured first is cited by, said after it: `detail:0`, `detail:1`, in
+    /// the order the details are said, which a submission may then cite as a call of this
+    /// run; and the id of the run that measured it, the entry's own, which it may cite
+    /// too (the gate of the details first on 2026-11-19: its judges were shown the
+    /// details as evidence and given no id to cite them by). The id said is the run's
+    /// order, not the measuring run's id, so that the same details make the same request
+    /// whichever run measured them. Nothing for an entry no run is known to have made.
+    fn cited_as(&mut self, entry: &Entry) -> String {
+        let Some(run) = &entry.run else {
+            return String::new();
+        };
+        let id = format!("detail:{}", self.details_cited);
+        self.details_cited += 1;
+        self.shown.push(id.clone());
+        self.completed.push(run.clone());
+        format!(" Cite it as {id}.")
     }
 
     /// The crop `view` cuts of this image for this box, as a call of the run, kept as its
@@ -892,8 +924,11 @@ impl Run<'_> {
                 return Err(failed("judge_output", &why));
             }
             let result = self.dispatch(call)?;
+            // A result that is no error is of a call that was counted, under the id its
+            // result gave the judge.
             if !result.is_error() {
                 self.completed.push(call.id().to_owned());
+                self.shown.push(format!("call:{}", self.dispatched - 1));
             }
             results.push(Part::ToolResult(result));
         }
@@ -1157,6 +1192,8 @@ impl Action for Check {
             tools,
             answered: BTreeSet::new(),
             completed: Vec::new(),
+            shown: Vec::new(),
+            details_cited: 0,
             dispatched: 0,
             crops: 0,
             names: Names::default(),
@@ -1310,17 +1347,19 @@ impl Action for Check {
                         let calls = turn.tool_calls().count();
                         let arguments = submitted.first().map(|submit| submit.arguments().clone());
                         let read = match submitted.as_slice() {
-                            [submit] if calls == 1 => {
-                                use_case::cited_calls_held(submit.arguments(), &run.completed)
-                                    .and_then(|()| {
-                                        use_case::decided_of(
-                                            submit.arguments(),
-                                            &judging.job,
-                                            &judging.resolved,
-                                            &judging.checklist,
-                                        )
-                                    })
-                            }
+                            [submit] if calls == 1 => use_case::cited_calls_held(
+                                submit.arguments(),
+                                &run.shown,
+                                &run.completed,
+                            )
+                            .and_then(|()| {
+                                use_case::decided_of(
+                                    submit.arguments(),
+                                    &judging.job,
+                                    &judging.resolved,
+                                    &judging.checklist,
+                                )
+                            }),
                             _ => Err("submit_verdict is called once, alone".to_owned()),
                         };
                         let why = match read {
