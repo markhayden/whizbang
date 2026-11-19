@@ -611,9 +611,11 @@ mod tests {
             let made = std::process::Command::new("mkfifo").arg(&path).status();
             assert!(made.is_ok_and(|status| status.success()), "mkfifo");
         };
+        // A file system that gives the FIFO the inode the file had (Linux's temporary
+        // folder does) passes the same-inode look, and the look at its kind refuses it.
         let complaint = read_picture_with(&path, &to_fifo).unwrap_err();
         assert!(
-            complaint.contains("changed while it was opened"),
+            complaint.contains("changed while it was opened") || complaint.contains("is a FIFO"),
             "{complaint}"
         );
     }
