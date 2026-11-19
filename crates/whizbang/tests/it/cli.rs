@@ -2283,3 +2283,63 @@ fn rascal_paste_composites_a_fill_onto_its_base() {
     );
     assert_eq!(other.code, Some(2), "{}", other.err);
 }
+
+#[test]
+fn rascal_window_unwindow_and_apply_run_from_the_command_line() {
+    // A picture of 64 by 48 and a mask on it, a block from 8, 8 to 24, 20: `rascal
+    // window` prints the crop and the mask on it; `rascal unwindow` writes the crop back,
+    // unchanged, as the picture itself; `rascal apply` of a mask with no prescription
+    // hands back the picture and the mask as they were.
+    let dir = Scratch::new("cli-window");
+    let root = dir.path().join("store");
+    std::fs::create_dir_all(dir.path().join("in")).unwrap();
+    let ran = |args: &[&str]| {
+        let ran = whizbang(args, &root);
+        assert_eq!(ran.code, Some(0), "{args:?}: {}", ran.err);
+        ran.out
+    };
+    drop(Store::open(&root, Arc::new(RealFs)).unwrap());
+    let image = crate::anthropic::import_picture(&root, &dir.path().join("in"), "base", 40);
+    let mask = crate::fal::put_mask(
+        &root,
+        whizbang_core::artifact::ArtifactId(image.parse().unwrap()),
+    )
+    .0
+    .to_string();
+    let out = ran(&[
+        "rascal",
+        "window",
+        "--image",
+        &image,
+        "--mask",
+        &mask,
+        "--max-side",
+        "40",
+    ]);
+    let (crop, on_crop) = (printed(&out, "image"), printed(&out, "mask"));
+    assert_ne!(crop, image);
+    let out = ran(&[
+        "rascal", "unwindow", "--image", &image, "--crop", &crop, "--mask", &on_crop,
+    ]);
+    assert_eq!(printed(&out, "image"), image);
+    let out = ran(&["rascal", "apply", "--image", &image, "--mask", &mask]);
+    assert_eq!(
+        (printed(&out, "image"), printed(&out, "mask")),
+        (image.clone(), mask.clone())
+    );
+    // A max side of 0 is the command line's error.
+    let zero = whizbang(
+        &[
+            "rascal",
+            "window",
+            "--image",
+            &image,
+            "--mask",
+            &mask,
+            "--max-side",
+            "0",
+        ],
+        &root,
+    );
+    assert_eq!(zero.code, Some(2), "{}", zero.err);
+}

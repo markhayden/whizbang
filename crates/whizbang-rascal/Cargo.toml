@@ -16,6 +16,8 @@ path = "tests/it/main.rs"
 whizbang-core.workspace = true
 # Each operation's command flags live beside the operation (plan m3, "Shared files").
 clap.workspace = true
+# Rascal's constant sets are TOML files, copied byte for byte (`constants`).
+toml.workspace = true
 
 [dev-dependencies]
 # The tests of `segment` and `render` paint and read their pictures with it, at the version

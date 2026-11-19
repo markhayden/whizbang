@@ -696,7 +696,7 @@ on both CI runners; and a fill made on a canvas is put back onto the picture it 
    `fill`, `unwindow`, and `cut`, `fill`, `put`; every pixel of the original that the mask
    never reaches, and every protected one, is the original's.
 
-- [ ] Done when:
+- [x] Done when:
   `cut::the_ported_vectors_give_rascals_canvas_and_plan`,
   `put::a_canvas_put_back_through_its_plan_is_the_original_outside_the_support`,
   `window::the_ported_vectors_give_rascals_window`,
