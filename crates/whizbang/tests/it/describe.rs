@@ -464,6 +464,11 @@ fn each_tool_the_upper_rungs_apply_to_shows_its_mark_from_its_record() {
     assert_eq!(
         shown,
         [
+            ("source-fidelity", "unverified"),
+            ("reference-consistency", "unverified"),
+            ("reality-checks", "unverified"),
+            ("brief-compliance", "unverified"),
+            ("product-fidelity", "unverified"),
             ("align", "unverified"),
             ("change_map", "unverified"),
             ("edge_similarity", "unverified"),

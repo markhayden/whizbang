@@ -30,8 +30,29 @@ impl Mark {
     }
 }
 
-/// The records of squint's tools, by the tool's name.
-const RECORDS: [(&str, &str); 5] = [
+/// The records of squint's tools, by the tool's name: the five use cases' recipes (plan m3,
+/// task Q1, item 5) first, in the order the description lists them, then the tools.
+const RECORDS: [(&str, &str); 10] = [
+    (
+        "source-fidelity",
+        include_str!("../../../docs/reference/tools/source-fidelity.md"),
+    ),
+    (
+        "reference-consistency",
+        include_str!("../../../docs/reference/tools/reference-consistency.md"),
+    ),
+    (
+        "reality-checks",
+        include_str!("../../../docs/reference/tools/reality-checks.md"),
+    ),
+    (
+        "brief-compliance",
+        include_str!("../../../docs/reference/tools/brief-compliance.md"),
+    ),
+    (
+        "product-fidelity",
+        include_str!("../../../docs/reference/tools/product-fidelity.md"),
+    ),
     (
         "align",
         include_str!("../../../docs/reference/tools/align.md"),

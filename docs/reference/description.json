@@ -3656,6 +3656,26 @@
   ],
   "marks": [
     {
+      "tool": "source-fidelity",
+      "mark": "unverified"
+    },
+    {
+      "tool": "reference-consistency",
+      "mark": "unverified"
+    },
+    {
+      "tool": "reality-checks",
+      "mark": "unverified"
+    },
+    {
+      "tool": "brief-compliance",
+      "mark": "unverified"
+    },
+    {
+      "tool": "product-fidelity",
+      "mark": "unverified"
+    },
+    {
       "tool": "align",
       "mark": "unverified"
     },
