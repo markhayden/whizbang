@@ -349,7 +349,7 @@ pub fn verdict_input_of(items: &[&str], disposition: &str, said: &str) -> serde_
 }
 
 /// An answer of 200 with this body.
-fn ok(body: &serde_json::Value) -> Vec<u8> {
+pub fn ok(body: &serde_json::Value) -> Vec<u8> {
     let body = body.to_string();
     format!(
         "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
