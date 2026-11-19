@@ -23,6 +23,20 @@ fn the_key_goes_only_to_the_approved_origin_in_its_header() {
     );
 }
 
+#[test]
+fn a_google_judge_whose_table_sets_no_effort_thinks_at_the_low_level() {
+    // The gate run of the details first sent no thinking level, and 117 of its 131 turns
+    // cut off at the output limit held nothing but thinking: Gemini counts its thoughts
+    // against `maxOutputTokens`. A table that sets no `effort` asks for `low`, the level
+    // squint's recorded requests of the study's models asked for.
+    let (_, _, body) = asked_once(GOOGLE, "google-low");
+    let sent: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        sent["generationConfig"]["thinkingConfig"]["thinkingLevel"], "low",
+        "{sent}"
+    );
+}
+
 /// An answer of 200 with this body.
 fn ok(body: &serde_json::Value) -> Vec<u8> {
     let body = body.to_string();

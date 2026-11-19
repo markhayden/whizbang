@@ -362,7 +362,9 @@ The models this build has prices for are `claude-haiku-5-5`; `gemini-3.8-flash` 
 `low`, `medium`, `high`, `xhigh` or `max` for Anthropic; `low`, `medium` or `high`
 (Gemini's thinking level) for Google; and `none`, `low`, `medium`, `high`, `xhigh` or
 `max` for OpenAI. An OpenAI request is sent with `store` false, so the provider keeps
-none of it between turns.
+none of it between turns. A Google judge whose table sets no `effort` asks for `low`:
+Gemini counts its thinking against the output limit, and left to its own level it spent
+whole turns thinking. A higher level wants `max_output_tokens` raised with it.
 
 The key is in the env file, as `ANTHROPIC_API_KEY=…` (or `GEMINI_API_KEY=…`,
 `OPENAI_API_KEY=…`), and the command is given both:

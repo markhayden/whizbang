@@ -42,6 +42,7 @@ pub(crate) static STATED: Stated = Stated {
     version: VERSION,
     long_edge: LONG_EDGE,
     efforts: &["none", "low", "medium", "high", "xhigh", "max"],
+    default_effort: None,
     most_output: 128_000,
     key_header: KEY_HEADER,
     bad_setting: "a service backend of openai takes the settings effort, one of none, low, \

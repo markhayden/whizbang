@@ -34,7 +34,7 @@ pub(crate) mod testing;
 use std::sync::Arc;
 
 use whizbang_core::capability::{
-    Bounds, Charge, Declaration, Fault, FaultKind, Judge, JudgeRequest, Price, Turn,
+    Bounds, Charge, Declaration, Fault, FaultKind, Judge, JudgeRequest, Price, StopReason, Turn,
 };
 use whizbang_core::config::{Kind, KindRefused, Setting, Table};
 use whizbang_core::contract::{Capability, Made, ModelIdentity, Secrets};
@@ -105,6 +105,8 @@ pub(crate) struct Stated {
     pub(crate) long_edge: u32,
     /// The efforts a table may set.
     pub(crate) efforts: &'static [&'static str],
+    /// The effort asked for when a table sets none: none, for the provider's own.
+    pub(crate) default_effort: Option<&'static str>,
     /// The most output tokens a request of the model may ask for.
     pub(crate) most_output: u32,
     /// The header the key is carried in.
@@ -231,7 +233,7 @@ fn read(table: &Table<'_>) -> Result<Read, KindRefused> {
     let mut read = Read {
         provider,
         model: model.to_owned(),
-        effort: None,
+        effort: stated.default_effort.map(str::to_owned),
         ceilings: spend::DEFAULT_CEILINGS,
         prices,
     };
@@ -394,6 +396,20 @@ impl Wire {
         )
     }
 
+    /// Why a turn is an answer its model could not form, when it is one: a Gemini turn
+    /// that stopped for one of [`google::wire::UNFORMED`].
+    fn unformed(&self, turn: &Turn) -> Option<&'static str> {
+        let Wire::Generate(_) = self else {
+            return None;
+        };
+        match turn.stop() {
+            StopReason::Other(reason) if google::wire::UNFORMED.contains(&reason.as_str()) => {
+                Some(google::wire::MALFORMED)
+            }
+            _ => None,
+        }
+    }
+
     /// The fields of a request, each a constant.
     fn fields(&self) -> &'static [(&'static str, &'static str)] {
         match self {
@@ -457,17 +473,22 @@ impl Service {
             return match reply.status() {
                 // What a turn cost is its usage at the row; one that reports none
                 // cost its bound, which the meter charges when no charge is said.
-                Some(200) => self.wire.read(reply.body()).map(|turn| {
+                Some(200) => self.wire.read(reply.body()).and_then(|turn| {
                     let turn = turn
                         .counted(counted)
                         .under_output_ceiling(self.ceilings.output_tokens);
-                    match turn
+                    let charge = turn
                         .usage()
-                        .and_then(|usage| spend::charge_of(usage, self.prices))
-                    {
+                        .and_then(|usage| spend::charge_of(usage, self.prices));
+                    // An answer the model could not form is a fault the caller may send
+                    // again, settled at its usage like any answer.
+                    if let Some(why) = self.wire.unformed(&turn) {
+                        return Err(Fault::new(FaultKind::Unavailable, why).answered(charge));
+                    }
+                    Ok(match charge {
                         Some(charge) => turn.charged(charge),
                         None => turn,
-                    }
+                    })
                 }),
                 Some(400 | 404 | 413 | 422) => answered(FaultKind::Rejected, REFUSED),
                 Some(401 | 403) => answered(FaultKind::Credential, CREDENTIAL),
