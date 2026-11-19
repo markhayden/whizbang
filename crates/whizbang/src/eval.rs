@@ -45,6 +45,28 @@ pub enum Command {
         #[command(flatten)]
         under: Under,
     },
+    /// Run a gate frozen in a file (`SPEC.md` section 8, "Gates"): the matrix it names, each
+    /// run holding the gate's digest, then scored against the labels given and decided.
+    /// Writes the receipt and prints aggregates only. Run again, it resumes.
+    Run {
+        /// The gate file; the matrix it names is beside it.
+        #[arg(long, value_name = "FILE")]
+        gate: PathBuf,
+        /// The folder the labels are read from, laid out as the sets are
+        /// (`<folder>/<set id>/labels.toml`): for a blind set, wherever its labels are kept.
+        #[arg(long, value_name = "DIR")]
+        labels: PathBuf,
+        /// Where the receipt is written: not under the sets' or the labels' folder.
+        #[arg(long, value_name = "FILE")]
+        receipt: PathBuf,
+        /// The folder of the evaluation sets: `<use-case>/<set>/set.toml` under it.
+        #[arg(long, value_name = "DIR", default_value = "evalsets")]
+        root: PathBuf,
+        #[command(flatten)]
+        at: Where,
+        #[command(flatten)]
+        under: Under,
+    },
     /// Score a tool on rung 2: its read of each item of each set named, each a run in the
     /// store (align, then the tool on the source and the aligned frame), scored against the
     /// sets' labels. Prints each item's number, the area under the ROC curve of the tool's
@@ -70,19 +92,38 @@ pub enum Command {
     /// The baseline gate: each recorded decision of a baseline package replayed with a judge
     /// that answers its recorded turns, squint's loop on whizbang's tools and preparation,
     /// and compared with its recorded transcript. Writes the receipt and prints counts only.
+    /// With --live, the descriptive live rerun instead: arm C of claude-haiku-5-5 run fresh
+    /// on source-fidelity/blind-v3, once, under the config's judge, and its agreement with
+    /// the package's recorded run and that run's self-disagreement printed as counts.
     Baseline {
         /// The baseline package's root.
         #[arg(long, value_name = "DIR")]
         package: PathBuf,
         /// The recorded transcripts, as scripts/baseline/convert.py wrote them.
-        #[arg(long, value_name = "DIR")]
-        transcripts: PathBuf,
+        #[arg(long, value_name = "DIR", required_unless_present = "live")]
+        transcripts: Option<PathBuf>,
         /// Where the receipt is written.
         #[arg(long, value_name = "FILE")]
         receipt: PathBuf,
         /// The full whizbang commit replayed, as `git rev-parse HEAD` prints it.
-        #[arg(long, value_name = "SHA")]
-        commit: String,
+        #[arg(long, value_name = "SHA", required_unless_present = "live")]
+        commit: Option<String>,
+        /// The live rerun: calls the config's judge, under the store's allowance.
+        #[arg(long, conflicts_with_all = ["transcripts", "commit", "pictures"], requires = "store")]
+        live: bool,
+        /// The live rerun's store, which holds the set's pictures and its runs.
+        #[arg(long, value_name = "DIR", requires = "live")]
+        store: Option<PathBuf>,
+        /// The live rerun's judge: the config's backend of this name, of claude-haiku-5-5.
+        #[arg(
+            long,
+            value_name = "NAME",
+            default_value = "default",
+            requires = "live"
+        )]
+        judge: String,
+        #[command(flatten)]
+        under: Under,
         /// The folder of the evaluation sets the jobs are read from.
         #[arg(long, value_name = "DIR", default_value = "evalsets")]
         sets: PathBuf,
@@ -174,6 +215,32 @@ pub fn run(command: &Command) -> Result<String, String> {
             at,
             under,
         } => run_matrix(matrix, root, at, under, recovery),
+        Command::Run {
+            gate,
+            labels,
+            receipt,
+            root,
+            at,
+            under,
+        } => {
+            let frozen = whizbang::gating::frozen(gate)?;
+            judges_are_of_their_models(&frozen.matrix, under)?;
+            let executor = executor(at, under, recovery, None, uses_of(&frozen.matrix))?;
+            let running = Running {
+                executor: &executor,
+                root: at.root(),
+                left_micros: left(at.root())?,
+                stop: &|| false,
+            };
+            let gating = whizbang::gating::Gating {
+                file: gate,
+                sets_root: root,
+                labels_root: labels,
+                receipt,
+            };
+            let written = whizbang::gating::run(&gating, &running)?;
+            Ok(whizbang::gating::text(&written))
+        }
         Command::Tool {
             tool,
             sets,
@@ -201,7 +268,18 @@ pub fn run(command: &Command) -> Result<String, String> {
             commit,
             sets,
             pictures,
+            live,
+            store,
+            judge,
+            under,
         } => {
+            if *live {
+                let at = Where::at(store.as_deref().unwrap_or(Path::new("")));
+                return live_rerun(package, receipt, sets, judge, &at, under, recovery);
+            }
+            let (Some(transcripts), Some(commit)) = (transcripts, commit) else {
+                return Err("the replay is given --transcripts and --commit".to_owned());
+            };
             let asked = whizbang::baseline::Asked {
                 package,
                 transcripts,
@@ -259,13 +337,7 @@ fn run_matrix(
     judges_are_of_their_models(&matrix, under)?;
     let (planned, labels) = evaluation::plan(&matrix, root, at.root())?;
     let left_micros = left(at.root())?;
-    let judges = &matrix.matrix.judges;
-    let uses = match judges.as_slice() {
-        [one] if one.backend != "default" => Uses::One(Capability::Judge, Some(&one.backend)),
-        [_] => Uses::One(Capability::Judge, None),
-        _ => Uses::Every,
-    };
-    let executor = executor(at, under, recovery, None, uses)?;
+    let executor = executor(at, under, recovery, None, uses_of(&matrix))?;
     let running = Running {
         executor: &executor,
         root: at.root(),
@@ -274,6 +346,52 @@ fn run_matrix(
     };
     let report = evaluation::run(&matrix, &planned, &labels, &running)?;
     Ok(report.text())
+}
+
+/// `eval baseline --live`: the live rerun under the config's judge, which must be of the
+/// model it reruns.
+fn live_rerun(
+    package: &Path,
+    receipt: &Path,
+    sets: &Path,
+    judge: &str,
+    at: &Where,
+    under: &Under,
+    recovery: Recovery,
+) -> Result<String, String> {
+    use whizbang::baseline_live::{LIVE_MODEL, LIVE_SET, Live};
+    let text = format!(
+        "[matrix]\nname = \"baseline-live\"\nsets = [\"{LIVE_SET}\"]\narms = [\"C\"]\n\
+         repetitions = 1\n[[matrix.judges]]\nbackend = \"{}\"\nmodel = \"{LIVE_MODEL}\"\n",
+        judge.replace(['"', '\\'], "")
+    );
+    let matrix = Matrix::parse(&text)?;
+    judges_are_of_their_models(&matrix, under)?;
+    let executor = executor(at, under, recovery, None, uses_of(&matrix))?;
+    let running = Running {
+        executor: &executor,
+        root: at.root(),
+        left_micros: left(at.root())?,
+        stop: &|| false,
+    };
+    let live = Live {
+        package,
+        receipt,
+        sets,
+        set: LIVE_SET,
+        model: LIVE_MODEL,
+        judge,
+    };
+    whizbang::baseline_live::run(&live, &running).map(|rerun| rerun.text())
+}
+
+/// What a matrix's executor is built to use: its one judge, or every backend.
+fn uses_of(matrix: &Matrix) -> Uses<'_> {
+    match matrix.matrix.judges.as_slice() {
+        [one] if one.backend != "default" => Uses::One(Capability::Judge, Some(&one.backend)),
+        [_] => Uses::One(Capability::Judge, None),
+        _ => Uses::Every,
+    }
 }
 
 /// Each judge the matrix names is a backend of the config of the model it says.

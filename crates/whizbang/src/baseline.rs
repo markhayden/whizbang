@@ -109,7 +109,7 @@ impl Tally {
     }
 }
 
-fn read(path: &Path) -> Result<Vec<u8>, String> {
+pub(crate) fn read(path: &Path) -> Result<Vec<u8>, String> {
     use std::io::Read;
     let file = std::fs::File::open(path).map_err(|_| "a file cannot be read".to_owned())?;
     let mut bytes = Vec::new();
@@ -123,14 +123,14 @@ fn read(path: &Path) -> Result<Vec<u8>, String> {
 }
 
 /// The package: its digest and its listing, path to SHA-256.
-struct Package<'a> {
+pub(crate) struct Package<'a> {
     root: &'a Path,
-    digest: String,
-    listed: BTreeMap<String, String>,
+    pub(crate) digest: String,
+    pub(crate) listed: BTreeMap<String, String>,
 }
 
 impl<'a> Package<'a> {
-    fn open(root: &'a Path) -> Result<Package<'a>, String> {
+    pub(crate) fn open(root: &'a Path) -> Result<Package<'a>, String> {
         let digest = String::from_utf8(read(&root.join("PACKAGE.digest"))?)
             .map_err(|_| "PACKAGE.digest is not text".to_owned())?;
         let digest = digest.trim_end_matches('\n');
@@ -165,7 +165,7 @@ impl<'a> Package<'a> {
         Ok(bytes)
     }
 
-    fn json(&self, path: &str) -> Result<Json, String> {
+    pub(crate) fn json(&self, path: &str) -> Result<Json, String> {
         serde_json::from_slice(&self.file(path)?)
             .map_err(|_| "a file of the package is not JSON".to_owned())
     }

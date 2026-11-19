@@ -344,3 +344,147 @@ fn a_folder_of_transcripts_of_two_versions_is_refused() {
     assert!(refused.contains("not all of one version"), "{refused}");
     assert!(!at.exists());
 }
+
+// --- the live rerun (plan m3, task G1, item 2) ---------------------------------------------------
+
+/// A package of study inputs alone, made in the test: each decision's `result.json`, by run,
+/// cell, item, repetition and verdict, and its listing and digest.
+fn study_package(dir: &Path, decisions: &[(&str, &str, &str, u32, &str)]) {
+    let mut listing = Vec::new();
+    for (at, (run, cell, item, repetition, verdict)) in decisions.iter().enumerate() {
+        let path = format!("study/{run}/decisions/{at:03}/result.json");
+        let body = serde_json::json!({
+            "cell": cell, "item": item, "repetition": repetition, "verdict": verdict,
+            "cost_usd": 0.003
+        })
+        .to_string();
+        std::fs::create_dir_all(dir.join(&path).parent().unwrap()).unwrap();
+        std::fs::write(dir.join(&path), &body).unwrap();
+        let sha = whizbang_core::identity::Digest::of_bytes(body.as_bytes()).hex();
+        listing.push(format!("{sha}  {path}\n"));
+    }
+    listing.sort_by(|a, b| a[66..].cmp(&b[66..]));
+    let listing = listing.concat();
+    std::fs::write(dir.join("PACKAGE.sha256"), &listing).unwrap();
+    let digest = whizbang_core::identity::Digest::of_bytes(listing.as_bytes()).hex();
+    std::fs::write(dir.join("PACKAGE.digest"), format!("{digest}\n")).unwrap();
+}
+
+#[test]
+fn the_live_rerun_prints_its_agreement_and_the_recorded_self_disagreement_and_no_item() {
+    use crate::anthropic::{CHECK_CLASSES, serving, submission};
+    use crate::fetch::SET;
+    use crate::matrix::world_with;
+    use whizbang::baseline_live::{Live, run as live_run};
+    use whizbang::evaluation::Running;
+    let items = ["itm-alpha", "itm-bravo", "itm-charlie"];
+    let (judged, tiny) = world_with("baseline-live", &items);
+    let package = judged.world.beside("package");
+    let haiku = "anthropic:claude-haiku-5-5/C";
+    // The recorded run of two repetitions: bravo failed first and passed second. Another
+    // run of one repetition, another model and another arm are not it.
+    study_package(
+        &package,
+        &[
+            ("study-haiku", haiku, "itm-alpha", 1, "pass"),
+            ("study-haiku", haiku, "itm-bravo", 1, "fail"),
+            ("study-haiku", haiku, "itm-charlie", 1, "pass"),
+            ("study-haiku", haiku, "itm-alpha", 2, "pass"),
+            ("study-haiku", haiku, "itm-bravo", 2, "pass"),
+            ("study-haiku", haiku, "itm-charlie", 2, "pass"),
+            ("study-tools", haiku, "itm-alpha", 1, "fail"),
+            (
+                "study-haiku",
+                "anthropic:claude-haiku-5-5/D_outline",
+                "itm-alpha",
+                1,
+                "fail",
+            ),
+            (
+                "study-sonnet",
+                "anthropic:claude-sonnet-5-5/C",
+                "itm-alpha",
+                1,
+                "fail",
+            ),
+        ],
+    );
+    let receipt = judged.world.beside("live.toml");
+    let (listener, log) = serving(&judged.pki, vec![submission("held", "Kept."); 3]);
+    let origin = format!("https://127.0.0.1:{}", listener.port());
+    let over = judged.over_with(
+        &judged.address(listener.port()),
+        Some(&origin),
+        &CHECK_CLASSES,
+        "",
+    );
+    let executor = judged.runner(&over);
+    let running = Running {
+        executor: &executor,
+        root: &judged.world.root,
+        left_micros: 20_000_000,
+        stop: &|| false,
+    };
+    let live = Live {
+        package: &package,
+        receipt: &receipt,
+        sets: &tiny.root,
+        set: SET,
+        model: "claude-haiku-5-5",
+        judge: "default",
+    };
+    let rerun = live_run(&live, &running).unwrap();
+    // A package whose listing is not the bytes of its files is refused before anything is
+    // sent.
+    let tampered = judged.world.beside("tampered");
+    copy(&package, &tampered);
+    let first = tampered.join("study/study-haiku/decisions/000/result.json");
+    std::fs::write(&first, "{}").unwrap();
+    let refused = live_run(
+        &Live {
+            package: &tampered,
+            ..live
+        },
+        &running,
+    )
+    .unwrap_err();
+    assert!(
+        refused.contains("not the bytes its listing names"),
+        "{refused}"
+    );
+    drop(executor);
+    listener.finish();
+    assert_eq!(log.lock().unwrap().len(), 3);
+    let text = rerun.text();
+    assert_eq!(
+        text,
+        "live decisions: 3 (failed 0)\nagreement with the recorded run: 2 of 3 (66.7%)\n\
+         recorded self-disagreement: 1 of 3 (33.3%)\n"
+    );
+    let written = std::fs::read_to_string(&receipt).unwrap();
+    assert!(written.contains("agreed = 2\n") && written.contains("recorded_differing = 1\n"));
+    let digest = std::fs::read_to_string(package.join("PACKAGE.digest")).unwrap();
+    assert!(written.starts_with(&format!("package_digest = \"sha256:{}\"\n", digest.trim())));
+    // No item, verdict or run of the package is printed or written.
+    for word in items.iter().chain(&["study-", "\"fail\"", "\"pass\""]) {
+        assert!(!text.contains(word) && !written.contains(word), "{word}");
+    }
+    // The command takes --live only with a store, and never with the replay's arguments.
+    let ran = crate::wired::whizbang_storeless(&[
+        "eval",
+        "baseline",
+        "--live",
+        "--package",
+        "p",
+        "--receipt",
+        "r",
+        "--commit",
+        COMMIT,
+    ]);
+    assert_ne!(ran.code, Some(0));
+    assert!(
+        ran.err.contains("--commit") || ran.err.contains("--store"),
+        "{}",
+        ran.err
+    );
+}

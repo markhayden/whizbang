@@ -15,6 +15,7 @@ mod escape;
 mod evidence;
 mod executor;
 mod fetch;
+mod gate;
 mod google;
 mod import;
 mod matrix;

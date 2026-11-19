@@ -1521,6 +1521,77 @@ fn eval_matrix_runs_a_three_item_set_under_a_scripted_judge_and_runs_stats_repor
     );
 }
 
+#[test]
+fn eval_run_gate_runs_a_three_item_gate_under_a_scripted_judge_and_writes_its_receipt() {
+    use crate::anthropic::submission;
+    use crate::gate::{frozen_gate, gate_matrix, gated};
+    use crate::matrix::world_with;
+    use crate::wired::whizbang;
+    // The gate runs through what the command calls, over the binary's executor and a judge
+    // on loopback: three items under arms C and F.
+    let (judged, tiny) = world_with("cli-eval-gate", &["a", "b", "c"]);
+    let gates = judged.world.beside("gates");
+    let gate = frozen_gate(&gates, &gate_matrix());
+    let receipt = judged.world.beside("receipt.json");
+    let answers = vec![submission("held", "Kept."); 6];
+    let (written, sent) = gated(&judged, &tiny, &gate, &tiny.root, &receipt, answers);
+    let written = written.unwrap();
+    assert_eq!(sent, 6);
+    let text = whizbang::gating::text(&written);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[0], format!("gate: {}", &written.gate_sha256[..16]));
+    assert_eq!(lines[2..4], ["cells scored: 6", "outcome: inconclusive"]);
+    assert!(
+        lines[4].starts_with(
+            "judge default (claude-haiku-5-5): inconclusive; items 3, families 1, differing 0"
+        ),
+        "{text}"
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&receipt).unwrap()).unwrap();
+    assert_eq!(json["cells"], 6);
+    // The command refuses, before anything runs: a receipt under the sets' folder, and a
+    // matrix changed after its gate was frozen.
+    let config = judged.world.beside("gate-config.toml");
+    std::fs::write(
+        &config,
+        "[backends.judge]\nkind = \"service\"\nprovider = \"anthropic\"\nmodel = \"claude-haiku-5-5\"\n",
+    )
+    .unwrap();
+    let path = |p: &Path| p.to_str().unwrap().to_owned();
+    let command = |receipt: &Path| {
+        whizbang(
+            &[
+                "eval",
+                "run",
+                "--gate",
+                &path(&gate),
+                "--labels",
+                &path(&tiny.root),
+                "--receipt",
+                &path(receipt),
+                "--root",
+                &path(&tiny.root),
+                "--config",
+                &path(&config),
+            ],
+            &judged.world.root,
+        )
+    };
+    let inside = command(&tiny.root.join("receipt.json"));
+    assert_eq!(inside.code, Some(1));
+    assert!(inside.err.contains("not written under"), "{}", inside.err);
+    std::fs::write(
+        gates.join("matrix.toml"),
+        gate_matrix().replace("tiny-gate", "other"),
+    )
+    .unwrap();
+    let changed = command(&judged.world.beside("other.json"));
+    assert_eq!(changed.code, Some(1));
+    assert!(changed.err.contains("frozen with"), "{}", changed.err);
+    assert!(!judged.world.beside("other.json").exists());
+}
+
 // --- `whizbang serve` (plan 2C, task M1) --------------------------------------------------------
 
 /// A child that is killed and waited for when this is dropped, on every path out of a
