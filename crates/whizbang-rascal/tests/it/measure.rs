@@ -361,6 +361,22 @@ fn measure_as_an_action_hands_back_a_series_for_each_measure_that_measured() {
     assert_eq!(first.rows(), (0..H).collect::<Vec<_>>());
     // Drift alone measures, and hands back no series.
     assert!(ran(&engine, &call("drift")).is_empty());
+    // Its numbers are handed back beside, as the result kind it declares (plan m3, task
+    // Q1; ADR 0035), and read from the finished run: drift's, at most 39.
+    let finished = whizbang_core::contract::Executor::submit(&engine, &call("drift")).unwrap();
+    let numbers = finished.measurements().unwrap()["numbers"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert!(!numbers.is_empty() && numbers.len() <= 39, "{numbers:?}");
+    assert!(
+        numbers
+            .iter()
+            .all(|n| n["name"].as_str().unwrap().starts_with("drift"))
+    );
+    let measure = whizbang_rascal::measure::Measure::new();
+    let declared = whizbang_core::contract::Action::descriptor(&measure);
+    assert!(declared.answers_with(whizbang_core::contract::ResultKind::Measurements));
     // A flat image: continuity measured nothing, and nothing is handed back.
     let flat_id = put(&world, image(&halves([120; 3], [120; 3], 0), false));
     let flat = Call::new("measure")
