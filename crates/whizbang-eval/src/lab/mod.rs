@@ -14,7 +14,9 @@
 pub mod cell;
 pub mod corpus;
 pub mod decode;
+pub mod focus;
 pub mod matrix;
+pub mod pairs;
 pub mod protocol;
 
 use std::path::Path;
@@ -82,6 +84,14 @@ pub fn read_relative(root: &Path, relative: &str, limit: u64) -> Result<Vec<u8>,
     crate::sets::read_under(root, relative, limit).map_err(|why| {
         let base = root.display().to_string();
         let base = base.trim_end_matches('/');
+        // The root `/`: a path named is `/` and a path under it, which is said alone.
+        if base.is_empty() {
+            let parts: Vec<&str> = relative.split('/').collect();
+            return (1..=parts.len()).rev().fold(why, |why, k| {
+                let under = parts[..k].join("/");
+                why.replace(&format!("/{under}"), &under)
+            });
+        }
         why.replace(&format!("{base}/"), "").replace(base, ".")
     })
 }

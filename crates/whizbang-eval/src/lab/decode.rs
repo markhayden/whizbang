@@ -9,7 +9,13 @@
 //!
 //! The assignment is L3's to write (`whizbang lab pairs`); the picks are the owner's, and
 //! what is read of them is said only as counts: a refusal names a pair by its id, which is
-//! a corpus id of the committed manifest, and never quotes what the file holds.
+//! a corpus id of the committed manifest, held to a plain name when the assignment is read
+//! (ADR 0038, "Amended with task L3"), and never quotes what the picks file holds: a pick
+//! naming a pair not in the assignment is named by its place in the list.
+//!
+//! A round drawn as a subset (`whizbang lab pairs --limit`) is decoded by the same rules:
+//! every group of the protocol is reported, one with fewer decided pairs than `min_decided`
+//! is `inconclusive`, never a win, and the decode says the round was a subset.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -28,8 +34,19 @@ pub struct Assignment {
     /// The two arms compared, `[a, b]`: wins are a's.
     pub arms: [String; 2],
     pub seed: u64,
+    /// When the round is a subset, how many pairs were drawn of how many.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subset: Option<Subset>,
     /// In page order.
     pub pair: Vec<Pair>,
+}
+
+/// A round drawn as a subset: `limit` pairs of the round's `of`, by the protocol's groups.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Subset {
+    pub limit: u32,
+    pub of: u32,
 }
 
 /// One pair: an image, the two cells shown, and the side arm `a` took.
@@ -127,6 +144,8 @@ pub struct Group {
 pub struct Decode {
     pub arms: [String; 2],
     pub groups: Vec<Group>,
+    pub subset: Option<Subset>,
+    pub min_decided: u32,
 }
 
 /// A JSON file of the lab read as its form, in fixed words and the place when the reader
@@ -146,6 +165,19 @@ impl Assignment {
         let read: Assignment = read_json("the assignment", bytes)?;
         if read.assignment_version != 1 {
             return Err("the assignment: its version is not 1".to_owned());
+        }
+        let mut ids = BTreeSet::new();
+        for (at, pair) in read.pair.iter().enumerate() {
+            if !super::is_name(&pair.id) || !super::is_name(&pair.group) {
+                return Err(format!(
+                    "the assignment: pair {} of the list has an id or a group that is no \
+                     plain name",
+                    at + 1
+                ));
+            }
+            if !ids.insert(pair.id.as_str()) {
+                return Err(format!("the assignment: pair {} is in it twice", pair.id));
+            }
         }
         Ok(read)
     }
@@ -227,11 +259,21 @@ pub fn decode(
     if let Some(id) = missing.first() {
         return Err(format!("pair {id} has no pick"));
     }
+    for pair in &assignment.pair {
+        if !(protocol.group.iter()).any(|g| g.name == pair.group && g.images.contains(&pair.id)) {
+            return Err(format!(
+                "pair {} is not an image of the group the assignment puts it in; nothing was \
+                 decoded",
+                pair.id
+            ));
+        }
+    }
     let mut groups = Vec::new();
-    // An assignment drawn for one group holds that group's pairs only; the others are not
-    // reported.
-    for group in
-        (protocol.group.iter()).filter(|g| assignment.pair.iter().any(|p| p.group == g.name))
+    // An assignment of a whole round holds every group's pairs; one of a subset may draw
+    // none of a group, which is then reported, inconclusive.
+    let subset = assignment.subset;
+    for group in (protocol.group.iter())
+        .filter(|g| subset.is_some() || assignment.pair.iter().any(|p| p.group == g.name))
     {
         let mut counts = [0_u32; 4];
         let (mut wins, mut losses) = (0, 0);
@@ -271,6 +313,8 @@ pub fn decode(
     Ok(Decode {
         arms: assignment.arms.clone(),
         groups,
+        subset,
+        min_decided: protocol.min_decided,
     })
 }
 
@@ -278,6 +322,14 @@ impl Decode {
     /// The decode as `whizbang lab decode` prints it: counts and an outcome a group.
     pub fn text(&self) -> String {
         let mut out = format!("arms: {} against {}\n", self.arms[0], self.arms[1]);
+        if let Some(Subset { limit, of }) = self.subset {
+            out.push_str(&format!(
+                "a subset of the round: {limit} of its {of} pairs, drawn by group from the \
+                 protocol's seed; a group with fewer than {} decided pairs is inconclusive, \
+                 never a win\n",
+                self.min_decided
+            ));
+        }
         for g in &self.groups {
             out.push_str(&format!(
                 "group {}: pairs {}, decided {}, wins {}, losses {}, same {}, neither {}: {}\n",

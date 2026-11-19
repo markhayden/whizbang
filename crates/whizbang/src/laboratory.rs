@@ -453,11 +453,14 @@ pub fn round(prepared: &Prepared, running: &Running<'_>) -> Result<Report, Strin
 }
 
 /// `whizbang lab decode`: the picks decoded against the frozen assignment under the
-/// protocol, as counts and an outcome a group (`whizbang_eval::lab::decode`).
+/// protocol, as counts and an outcome a group (`whizbang_eval::lab::decode`). The
+/// assignment is first held to what the protocol's seed draws (plan m3, task L3), and the
+/// picks to the assignment file's digest.
 pub fn decode_files(protocol: &Path, assignment: &Path, picks: &Path) -> Result<String, String> {
     let (protocol, digest) = Protocol::parse(&file_given(protocol)?)?;
     let assignment_bytes = file_given(assignment)?;
     let frozen = decode::Assignment::parse(&assignment_bytes)?;
+    whizbang_eval::lab::pairs::check_drawn(&protocol, &frozen)?;
     let picks = decode::Picks::parse(&file_given(picks)?)?;
     let decoded = decode::decode(
         &protocol,
