@@ -11,6 +11,7 @@
 //! from the store, and by the types themselves.
 
 mod band;
+mod carry;
 mod derivation;
 mod location;
 mod mask;
@@ -24,9 +25,12 @@ use crate::identity::{DecodeLimits, Digest, IdentityError};
 use crate::store;
 
 pub use band::{BandProfile, Windows};
+pub use carry::{Carried, Toward, carry};
 pub use derivation::Derivation;
 pub use location::{Line, Location, Shape};
-pub use mask::{Mask, Prescription, Profile, Refinement, Source, UseCase, effective_weight};
+pub use mask::{
+    Mask, Prescription, Profile, Refinement, Source, UseCase, ZoneStatistics, effective_weight,
+};
 pub use picture::{Image, ImageRole};
 pub use plan::Plan;
 pub use series::Series;

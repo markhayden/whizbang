@@ -630,6 +630,32 @@ records, and the tasks `remove`, `repair_area`, `mask_rect` and `protect` run as
 **Keeping tests lean (O1).** Rascal's vectors as small committed planes; pictures of at most
 128 pixels.
 
+**Reworded with the task (O1).** Item 1 said each operation is "exact against rascal's
+vectors": rascal's vectors of `invert` from a cut canvas and from a crop
+(`invert_from_a_cut_mask_lands_protect_on_the_edge_spans_and_the_core_on_the_middle`,
+`invert_from_a_crop_mask_lands_protect_on_its_bbox`,
+`invert_walks_a_crop_of_a_cut_to_the_raw_frame_and_to_the_cut`) carry a mask up a chain of frames, which whizbang does through windows and cuts, task O2's;
+`invert` here inverts on the mask's own image, which it takes beside the mask, and its
+vectors are rascal's that stay on one frame (the canvas mask's planes with `to` naming its
+own frame, and the mask that reaches every pixel). The rest moved to the carry-over row on
+`invert`'s `to`, owned by O2. Rascal's coordinates were fractions of a frame; a location
+here is in pixels (ADR 0002), so every vector is rascal's fraction times the width or the
+height, the step rascal's `rasterize` took. Where rascal said an operation "did not apply"
+(a location with no inside or covering no pixel, a core shrunk to nothing, a mask that
+reached every pixel, a box wholly outside), the call is refused as invalid, as `select` was
+in plan 2A.
+
+**Split at the seam (O1).** At about 3,550 changed lines beside the generated reference, O1
+is two pull requests, split where "Seams" says: the first holds `line`, `rasterize`,
+`shrink`, `invert`, `subtract` of a location, the rules of `mask.rs` and `location.rs`, and
+the tasks `remove`, `repair_area` and `protect`; the second, which lands before anything
+that builds on O1, holds `rect` and `stroke`, the task `mask_rect`, the commands' `--box`,
+and the tests `rect::the_ported_vectors_give_rascals_locations`,
+`stroke::the_ported_vectors_give_rascals_locations`,
+`task::mask_rect_makes_the_rectangle_as_a_mask` and
+`cli::rascal_remove_with_a_box_fills_under_a_scripted_filler`. The box is ticked by the
+second.
+
 ## O2. Canvases, and a fill put back (large)
 
 ### Goal
@@ -656,7 +682,7 @@ on both CI runners; and a fill made on a canvas is put back onto the picture it 
    `fill`, `unwindow`, and `cut`, `fill`, `put`; every pixel of the original that the mask
    never reaches, and every protected one, is the original's.
 
-- [ ] Done when:
+- [x] Done when:
   `cut::the_ported_vectors_give_rascals_canvas_and_plan`,
   `put::a_canvas_put_back_through_its_plan_is_the_original_outside_the_support`,
   `window::the_ported_vectors_give_rascals_window`,
