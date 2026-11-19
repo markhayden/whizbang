@@ -52,7 +52,7 @@ use whizbang_core::contract::{
     DescriptorError, Failure, InputPort, Kind, Outcome, PreparedCall, Produced, Requirement, Value,
     ValueType, Verdict,
 };
-use whizbang_core::identity::{DecodeLimits, Digest};
+use whizbang_core::identity::DecodeLimits;
 
 use crate::cache;
 use crate::details::{self, Details, Names, Projection};
