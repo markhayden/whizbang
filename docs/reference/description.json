@@ -5,7 +5,7 @@
   "actions": [
     {
       "name": "check",
-      "version": "1.4.0",
+      "version": "1.5.0",
       "kind": "recipe",
       "purpose": "Has a judge look at images through evidence tools and conclude: pass, fail or unsure.",
       "arguments": [
@@ -60,7 +60,7 @@
         },
         {
           "name": "detail",
-          "purpose": "The tools whose details are measured first, by name, separated by commas: align, and the two that compare the source with the frame align returns, which run align first.",
+          "purpose": "The details measured first, separated by commas: align, and the two comparisons that run align first, for a pair; or tiles, for one image: its candidate in four tiles by view.",
           "type": {
             "type": "text"
           },
@@ -79,6 +79,19 @@
           },
           "required": false,
           "default": "full"
+        },
+        {
+          "name": "second_look",
+          "purpose": "off, or on: a submission whose verdict is unsure for a tentative item gets one more turn, inside the run's turns and spend, with crops of what it cited, to settle those items.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "off",
+              "on"
+            ]
+          },
+          "required": false,
+          "default": "off"
         },
         {
           "name": "cell",

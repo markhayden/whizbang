@@ -658,3 +658,79 @@ fn the_per_subject_record_names_a_commit_of_this_tree_and_its_rung_2_numbers() {
         digest_of("pack/src/whizbang_pack/sam3.py")
     );
 }
+
+#[test]
+fn the_unsure_record_names_a_commit_of_this_tree_and_holds_only_aggregates() {
+    // Plan m3, task U1, items 1 and 5: the count by rule and the screen, aggregates only.
+    let page = std::fs::read_to_string(repository().join("docs/results/m3-unsure.md"))
+        .expect("the record of the attack on unsure is committed");
+    let blocks: Vec<Fields> = page
+        .split("```toml\n")
+        .skip(1)
+        .map(|rest| {
+            let block = rest.split("```").next().unwrap();
+            let line = |line: &str| {
+                let (name, value) = line.split_once(" = ").expect("a line is name = value");
+                (name.to_owned(), value.trim_matches('"').to_owned())
+            };
+            block.lines().map(line).collect()
+        })
+        .collect();
+    let run = &blocks[0];
+    let commit = field(run, "commit");
+    assert!(
+        commit.len() == 40
+            && commit
+                .bytes()
+                .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    );
+    assert_eq!(field(run, "matrix"), "unsure-screen");
+    assert_eq!(field(run, "model"), "claude-haiku-5-5");
+    let text = std::fs::read_to_string(repository().join("matrices/unsure-screen.toml")).unwrap();
+    let matrix = whizbang_eval::matrix::Matrix::parse(&text).unwrap();
+    assert_eq!(field(run, "matrix_identity"), &matrix.identity()[..16]);
+    let number = |fields: &Fields, name: &str| field(fields, name).parse::<u64>().unwrap();
+    // Each block of a use case and an arm: its counts add up, and its arm is the matrix's.
+    let arms: Vec<String> = matrix.matrix.arms.iter().map(ToString::to_string).collect();
+    let cells: Vec<&Fields> = blocks[1..]
+        .iter()
+        .filter(|b| b.iter().any(|(n, _)| n == "arm"))
+        .collect();
+    assert_eq!(cells.len(), 2 * arms.len());
+    let runs: u64 = cells.iter().map(|b| number(b, "runs")).sum();
+    assert_eq!(runs, number(run, "decisions"));
+    assert_eq!(runs, 44 * 4 * 3);
+    for cell in &cells {
+        assert!(arms.iter().any(|arm| arm == field(cell, "arm")));
+        let ended = ["completed", "failed", "interrupted"].map(|n| number(cell, n));
+        assert_eq!(ended.iter().sum::<u64>(), number(cell, "runs"));
+        let verdicts = ["pass", "fail", "unsure"].map(|n| number(cell, n));
+        assert_eq!(verdicts.iter().sum::<u64>(), number(cell, "completed"));
+        let labelled = ["labelled_pass", "labelled_fail"].map(|n| number(cell, n));
+        assert_eq!(labelled.iter().sum::<u64>(), number(cell, "completed"));
+        assert!(number(cell, "agreeing") <= number(cell, "completed"));
+    }
+    // Spend within the plan's estimate for U1.
+    assert!(number(run, "settled_micros") <= 31_000_000);
+    // No item, no reply, no secret, no path.
+    for dir in whizbang_eval::sets::discover(&repository().join("evalsets")).unwrap() {
+        let set = whizbang_eval::sets::Set::load(&dir).unwrap();
+        for (item, _) in &set.jobs {
+            assert!(
+                !page.contains(&format!("`{item}`")) && !page.contains(&format!("\"{item}\"")),
+                "{item}"
+            );
+        }
+    }
+    for held in [
+        "sk-ant",
+        "x-api-key",
+        "/Users/",
+        "/private/",
+        "/home/",
+        "chk:",
+        "reason",
+    ] {
+        assert!(!page.contains(held), "the page holds {held}");
+    }
+}

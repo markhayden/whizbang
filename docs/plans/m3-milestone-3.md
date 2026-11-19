@@ -503,6 +503,18 @@ frozen in a file.
   `evidence::the_unsure_record_names_a_commit_of_this_tree_and_holds_only_aggregates`,
   `scripts/tests/test-tool-records.sh` holding the record of `tiles`.
 
+**Reworded with the task (U1).** Item 5 said "`evalsets/matrix/unsure-screen.toml`": the
+tree under `evalsets/` is held to squint's 374 files byte for byte
+(`sets::every_file_squint_tracked_under_evalsets_is_here_byte_for_byte`), and whizbang's
+matrices are in `matrices/`, so the screen is `matrices/unsure-screen.toml`; the gate goes
+where G1 puts its gates. Item 5 also said "on reference-consistency ..., `F` and `F` with the
+second look (88 items in all)": a matrix crosses every arm with every set, and the two sets of
+each use case hold 44 items, so the screen is one matrix of the four arms on the four sets,
+in which the arms with tiles name them for reality-checks alone and, on reference-consistency,
+are further repetitions of `F` and of `F` with the second look (528 decisions). Item 4 said
+"crops ... of the regions the judge cited for that item": an item left `held` cites no region
+as a rule, so where none is cited the look shows the candidate's four tiles.
+
 **Keeping tests lean (U1).** Scripted judges; sets of three to six items made in the test;
 pictures of at most 128 pixels.
 
