@@ -10,5 +10,6 @@ pub mod model_commands;
 pub mod pack;
 pub mod pack_setup;
 pub mod parity;
+pub mod serving;
 pub mod sign_in;
 pub mod wiring;

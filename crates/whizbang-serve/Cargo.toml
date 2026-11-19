@@ -1,0 +1,18 @@
+[package]
+name = "whizbang-serve"
+description = "The MCP server over stdio: each action as a tool, run through the executor it is given"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# No feature of its own: one turned on here would reach every crate of the workspace
+# (ADR 0023). The frames of the protocol are JSON, one to a line (ADR 0031).
+serde_json = { workspace = true }
+whizbang-core = { workspace = true }
+
+[lints]
+workspace = true

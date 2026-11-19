@@ -814,6 +814,19 @@ from the decision cache.
   the record with the door's lines, `scripts/crate-graph.txt` holding `whizbang-serve`,
   and the carry-over rows above closed.
 
+**Where M1's pull request leaves the box.** Unticked. Shown by the tests named above: the
+seven of `serve::` other than the tool worker's group, `pack::files_are_verified_again_before_a_load_after_a_restart_of_the_worker`,
+four of the five `cache::`, `cli::serve_answers_a_client_over_stdio_and_exits_when_its_input_ends`,
+and `scripts/crate-graph.txt` holding `whizbang-serve`. Not shown, each a carry-over row:
+`cache::a_tool_files_edit_misses` and `serve::end_of_input_ends_the_tool_workers_group_with_a_child_holding_its_pipes`,
+which need X1's tool files; and of item 3, a cancel from a second process (F1, as named).
+Item 5's evidence was narrowed by the orchestrator to one use case asked over stdio and
+then answered from the cache (`docs/results/m2c-use-cases.md`, held by
+`evidence::the_use_cases_record_names_a_commit_of_this_tree_and_holds_no_secret`). The
+carry-over row on files verified once in a process is closed; those on what running an
+action does not do yet and on the events a door shows keep only what no door can do
+(ADR 0031).
+
 **Keeping tests lean (M1).** The server's tests run in process over in-memory pipes; one
 test starts the binary; cache keys are computed over jobs made in the test.
 

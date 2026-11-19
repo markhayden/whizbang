@@ -1274,12 +1274,49 @@ fn a_file_damaged_after_it_was_published_is_not_loaded_and_the_model_is_reported
     let loaded = ("load", OK.to_owned(), identity.clone());
     let asked = ("segment", OK.to_owned(), identity.clone());
     assert_eq!(local.named(), [loaded, asked.clone()]);
-    // Verified once for each installation in a process (decision D14): a file damaged
-    // after that is not looked at again while the process runs.
+    // Verified before each load (decision D14; plan 2C, task M1): while the model stays
+    // resident nothing loads it again, and a file damaged meanwhile is not looked at.
     damage(b'X');
     let finished = executor.submit(&Call::new("finds")).unwrap();
     assert_eq!(finished.outcome().name(), "completed");
     assert_eq!(local.named().last(), Some(&asked));
+}
+
+#[test]
+fn files_are_verified_again_before_a_load_after_a_restart_of_the_worker() {
+    // A process that lives across runs (plan 2C, task M1): the model's call outlives the
+    // kind's limit, and its worker is killed. The next request starts another worker,
+    // which loads the model again; its files are looked at before that load, and a
+    // file damaged meanwhile is found, so nothing is loaded.
+    let local = Local::new("pack-verified-again");
+    let over = local.over(&one(WAIT, "call_limit_s = 1\n"));
+    let identity = local.identity(&over, WAIT);
+    let executor = local.runner(&over);
+    let first = executor.submit(&Call::new("finds")).unwrap();
+    assert_eq!(first.outcome().name(), "error");
+    let came = local.came();
+    assert!(
+        matches!(&came[..], [Err((FaultKind::TimedOut, _))]),
+        "{came:?}"
+    );
+    let file = local.installed_file(WAIT, &identity, "weights.bin");
+    let mut bytes = std::fs::read(&file).unwrap();
+    bytes[0] = b'W';
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::write(&file, bytes).unwrap();
+    let second = executor.submit(&Call::new("finds")).unwrap();
+    assert_eq!(second.outcome().name(), "error");
+    assert_eq!(
+        local.came(),
+        [Err((FaultKind::Unavailable, kind::DAMAGED.to_owned()))]
+    );
+    // One load, the first worker's: none followed the restart.
+    let loads = local
+        .journal()
+        .into_iter()
+        .filter(|(kind, ..)| *kind == "load");
+    assert_eq!(loads.count(), 1);
 }
 
 #[test]

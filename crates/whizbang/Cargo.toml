@@ -21,6 +21,8 @@ whizbang-backends.workspace = true
 whizbang-core.workspace = true
 whizbang-rascal.workspace = true
 whizbang-squint.workspace = true
+# The MCP server over stdio (plan 2C, task M1; ADR 0031).
+whizbang-serve.workspace = true
 # Evaluation sets and matrices (plan 2C, task E1).
 whizbang-eval = { path = "../whizbang-eval" }
 clap.workspace = true

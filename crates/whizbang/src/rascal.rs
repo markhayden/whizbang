@@ -288,11 +288,35 @@ pub(crate) fn executor(
     uses: Uses<'_>,
 ) -> Result<Engine, String> {
     let over = under.over(platform, uses)?;
+    built(at, &over, recovery, false)
+}
+
+/// As [`executor`], with `check`'s decision cache on where the config's `[cache]`
+/// turns it on (plan 2C, task M1): what `squint check` and `serve` run under. The
+/// executor comes back with what it was built over, whose worker `serve` stops.
+pub(crate) fn executor_caching(
+    at: &Where,
+    under: &Under,
+    recovery: Recovery,
+    platform: Option<Platform>,
+    uses: Uses<'_>,
+) -> Result<(Engine, wiring::Over), String> {
+    let over = under.over(platform, uses)?;
+    let cached = over.decisions_cached()?;
+    Ok((built(at, &over, recovery, cached)?, over))
+}
+
+fn built(
+    at: &Where,
+    over: &wiring::Over,
+    recovery: Recovery,
+    cached: bool,
+) -> Result<Engine, String> {
     let opening = wiring::opening(at.root(), Make::Nothing, recovery)
         .map_err(|error| wiring::not_opened(&error))?;
     let store = opening.writer().map_err(|why| why.to_string())?;
-    let registry = wiring::registry()?;
-    wiring::runner(registry, store, &over)
+    let registry = wiring::registry_with(cached)?;
+    wiring::runner(registry, store, over)
 }
 
 fn run_at(

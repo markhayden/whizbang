@@ -146,6 +146,19 @@ The most one call may reserve, in US dollars: more than 0, at most 1,000,000, an
 finer than a millionth. A call may ask for less and never for more. What a store may
 spend in all is not in this file: it is set by `whizbang spend reset`, by the owner.
 
+## Answering a job asked again
+
+```toml
+[cache]
+```
+
+With the table `[cache]`, `whizbang squint check` and `whizbang serve` answer a check
+asked again unchanged from the run that answered it first, and send nothing: the same use
+case, brief, images (by their pixels) with their roles and order, rules, tools, judge and
+config. Only a judge whose every answer named the model that gave it is cached. The run
+that answers so is recorded, and names the earlier one. `decisions = false` in the table
+turns it off; without the table it is off. Evaluation never reads it (ADR 0031).
+
 ## Who may receive data
 
 This table is what will be enforced once the gate is built: nothing will leave the

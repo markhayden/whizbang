@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/whizbang-core", "crates/whizbang-backends", "crates/whizbang-eval", "crates/whizbang-rascal", "crates/whizbang-squint", "crates/whizbang-testkit", "crates/whizbang"]
+members = ["crates/whizbang-core", "crates/whizbang-backends", "crates/whizbang-eval", "crates/whizbang-rascal", "crates/whizbang-squint", "crates/whizbang-testkit", "crates/whizbang-serve", "crates/whizbang"]
 
 [workspace.package]
 version = "0.0.1"
@@ -15,6 +15,7 @@ whizbang-core = { path = "crates/whizbang-core" }
 whizbang-backends = { path = "crates/whizbang-backends" }
 whizbang-rascal = { path = "crates/whizbang-rascal" }
 whizbang-squint = { path = "crates/whizbang-squint" }
+whizbang-serve = { path = "crates/whizbang-serve" }
 whizbang-testkit = { path = "crates/whizbang-testkit" }
 clap = { version = "4.6", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }

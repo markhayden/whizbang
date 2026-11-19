@@ -26,13 +26,18 @@ grep -q -F "whizbang_testkit::threads" "$tmp/out" || { cat "$tmp/out" >&2; fail 
 # The same crate without its test file is clean: what failed above is the test file.
 expect_pass "the fixture's library alone" lint --lib
 
-# The lint is allowed in three files, and nothing else in the workspace mentions it: the
+# The lint is allowed in four files, and nothing else in the workspace mentions it: the
 # executor's spawner, once; the spawner of the pack's supervisor, once, which holds a
-# process to one worker's three threads; and the test kit's helper, for a thread, a scope
-# and a thread of a scope.
+# process to one worker's three threads; the spawner of the MCP server's reader, once,
+# which holds a process to two (plan 2C, task M1); and the test kit's helper, for a
+# thread, a scope and a thread of a scope.
 allowed=$(grep -r -l -F 'disallowed_methods' crates --include='*.rs' | sort | tr '\n' ' ')
-[ "$allowed" = "crates/whizbang-backends/src/pack/threads.rs crates/whizbang-core/src/contract/engine.rs crates/whizbang-testkit/src/threads.rs " ] ||
-  fail "clippy::disallowed_methods is allowed in the executor's spawner, the pack supervisor's spawner and the test kit's helper only (found in: $allowed)"
+[ "$allowed" = "crates/whizbang-backends/src/pack/threads.rs crates/whizbang-core/src/contract/engine.rs crates/whizbang-serve/src/threads.rs crates/whizbang-testkit/src/threads.rs " ] ||
+  fail "clippy::disallowed_methods is allowed in the executor's spawner, the pack supervisor's spawner, the server reader's spawner and the test kit's helper only (found in: $allowed)"
+[ "$(grep -c -F 'allow(clippy::disallowed_methods)' crates/whizbang-serve/src/threads.rs)" = 1 ] ||
+  fail "the server allows the lint once, on its reader's spawner"
+grep -F 'pub const READERS_LIMIT: usize = 2;' crates/whizbang-serve/src/threads.rs >/dev/null ||
+  fail "the server holds a process to two readers"
 [ "$(grep -c -F 'allow(clippy::disallowed_methods)' crates/whizbang-core/src/contract/engine.rs)" = 1 ] ||
   fail "the executor allows the lint once, on its spawner"
 [ "$(grep -c -F 'allow(clippy::disallowed_methods)' crates/whizbang-backends/src/pack/threads.rs)" = 1 ] ||

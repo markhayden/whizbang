@@ -297,6 +297,45 @@ fn the_use_cases_record_names_a_commit_of_this_tree_and_holds_no_secret() {
             "https://api.anthropic.com"
         );
     }
+    // Plan 2C, task M1, item 5: one call over stdio, then the same call answered from
+    // the decision cache, naming the first run, sending nothing and settling nothing.
+    let door: Vec<Vec<(String, String)>> = page
+        .split("```toml door\n")
+        .skip(1)
+        .map(|rest| {
+            let block = rest.split("```").next().unwrap();
+            let line = |line: &str| {
+                let (name, value) = line.split_once(" = ").expect("a line is name = value");
+                (name.to_owned(), value.trim_matches('"').to_owned())
+            };
+            block.lines().map(line).collect()
+        })
+        .collect();
+    let [asked, again] = &door[..] else {
+        panic!("two calls over stdio are recorded");
+    };
+    for fields in [asked, again] {
+        assert_eq!(field(fields, "action"), "check 1.3.0");
+        assert_eq!(field(fields, "outcome"), "completed");
+        assert_eq!(field(fields, "use_case"), field(asked, "use_case"));
+        assert!(field(fields, "commit").len() == 40);
+    }
+    assert_eq!(field(asked, "decision_cache"), "kept");
+    assert_eq!(
+        field(asked, "egress_recipient"),
+        "https://api.anthropic.com"
+    );
+    assert!(field(asked, "settled_micros").parse::<u64>().unwrap() > 0);
+    assert_eq!(field(again, "decision_cache"), "hit");
+    assert_eq!(field(again, "answered_by_run"), field(asked, "run"));
+    assert_eq!(field(again, "verdict"), field(asked, "verdict"));
+    assert_eq!(field(again, "turns"), "0");
+    assert_eq!(field(again, "settled_micros"), "0");
+    assert_eq!(field(again, "egress_recipient"), "none");
+    assert_eq!(
+        field(again, "reserved_micros"),
+        field(asked, "reserved_micros")
+    );
     // Under a dollar in all, as the brief of the task allowed.
     let spent: u64 = blocks
         .iter()

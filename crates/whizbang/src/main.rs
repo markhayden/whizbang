@@ -8,6 +8,7 @@ mod rascal;
 #[cfg(test)]
 mod recovering;
 mod runs;
+mod serve;
 mod setup;
 mod spend;
 #[cfg(test)]
@@ -91,6 +92,10 @@ enum Command {
     /// Setup: installing the Python pack from the lock file this build carries, and
     /// checking that its worker says hello.
     Setup(setup::Args),
+    /// Serve: the MCP server over stdio, for a local agent. Each action is a tool; a
+    /// call runs through admission, spend and the egress gate as the command line's
+    /// do. It ends when its input does.
+    Serve(serve::Args),
 }
 
 fn describe(json: bool, pretty: bool) -> Result<String, String> {
@@ -266,6 +271,12 @@ fn main() -> ExitCode {
         // Setup reads two things more of this process's environment: `PATH`, where
         // `uv` is looked for when `--uv` names none, and the variables `uv`'s own
         // environment is chosen from (the locale, and where `uv` keeps its Pythons).
+        Command::Serve(args) => {
+            match serve::run(&args, std::sync::Arc::new(platforms_models_dir)) {
+                Ok(text) => emit(text.as_bytes()),
+                Err(complaint) => complain_in_lines(&complaint),
+            }
+        }
         Command::Setup(args) => match setup::run(
             &args,
             std::sync::Arc::new(platforms_models_dir),

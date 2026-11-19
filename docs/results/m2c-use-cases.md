@@ -130,3 +130,57 @@ against the use case's checklist, two passes and two unsure. The ledger settled 
 turns at their usage, 3390 millionths of a dollar in all, against a bound of 6,024 for
 each request and 96,384 reserved for each call's 16 turns. Each run's record lists the
 one recipient, with the classes it was sent: a reference is sent as a source image is.
+
+## Over stdio, and asked again (task M1)
+
+Plan 2C, task M1, item 5, as the orchestrator narrowed it: one call of `check` by hand
+over `whizbang serve`, driven by a small client on its standard input and output, on the
+owner's Mac, through the binary built with `cargo build --release -p whizbang` from the
+commit below with `main` at 78c96e3 merged into the working tree; then the same call
+again, answered from the decision cache. The config was the guide's for Anthropic with
+`[cache]`, the owner's env file, and a store made for it with `whizbang spend reset
+--allowance 2`. The picture was drawn for the call (a red disc over a blue sky and a green
+strip, 256 by 192), not taken, and not committed. `reality-checks`, no brief. The server
+exited 0 at the end of its input and wrote nothing to its error output. No reply text is
+kept.
+
+```toml door
+commit = "af71b4b7f14dc65097bccd21be89a7a08a0cbe2c"
+whizbang = "0.0.1"
+action = "check 1.3.0"
+use_case = "reality-checks"
+backend = "anthropic"
+model = "claude-haiku-5-5"
+model_version = "1+fit1-jpeg90-2576"
+run = "1795049187264-1"
+outcome = "completed"
+verdict = "unsure"
+decision_cache = "kept"
+turns = "1"
+input_tokens = "4581"
+output_tokens = "849"
+reserved_micros = "96384"
+settled_micros = "883"
+egress_recipient = "https://api.anthropic.com"
+egress_classes = "source_images, prompts"
+run_ms = "4358"
+call_ms = "4471"
+```
+
+```toml door
+commit = "af71b4b7f14dc65097bccd21be89a7a08a0cbe2c"
+whizbang = "0.0.1"
+action = "check 1.3.0"
+use_case = "reality-checks"
+run = "1795049191738-2"
+outcome = "completed"
+verdict = "unsure"
+decision_cache = "hit"
+answered_by_run = "1795049187264-1"
+turns = "0"
+reserved_micros = "96384"
+settled_micros = "0"
+egress_recipient = "none"
+run_ms = "46"
+call_ms = "102"
+```
