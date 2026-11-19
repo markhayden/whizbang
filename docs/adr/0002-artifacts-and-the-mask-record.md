@@ -189,10 +189,10 @@ identities to mean two different places.
 
 **Mapped coordinates and `libm`.** A location's coordinates are hashed. ADR 0001 requires
 that a mapped point that enters hashed bytes be computed with `libm`, because the machine's
-own sine, cosine and arc functions may differ in their last bits. Nothing maps a location
-yet. Whatever first carries a location through a rotation, or through any mapping that
-uses those functions, computes its points with `libm`, so that the mapped location has the
-same identity on every machine; that is on `docs/carry-over.md`.
+own sine, cosine and arc functions may differ in their last bits. A location is carried
+through a binding by `artifact::carry` (plan m3, task O2), and a rotation's points are
+computed with `libm`, so that the mapped location has the same identity on every machine
+(`identity::located::a_mapped_location_has_its_fixed_identity_for_a_rotation_and_a_wrap`).
 
 **`mask/1`.** The mask record:
 

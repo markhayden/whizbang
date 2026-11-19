@@ -128,3 +128,21 @@ It holds exactly:
 | `comparison_version` | The version of the comparison code that judged the replay |
 | `whizbang_commit` | The full whizbang commit that was replayed |
 | `result` | `pass` or `fail` |
+
+## The gate's run
+
+The owner's package, replayed on 2026-11-19 by a build of `b964f75` made with the feature
+`baseline-replay` (ADR 0034), with its transcripts converted in version 2 (the owner's yes of
+2026-11-18, after the count of scaled cuts printed 54): 1,144 fixtures, 1,144 transcripts,
+1,144 the same, 0 differing, 0 refused, every one of the seven models 0 differing,
+`result: pass`. The receipt is `receipt.toml` beside this page.
+
+How it got there, one run a line:
+
+- 0 compared: every decision refused, the gate holding a spelling of the resize the package does not use.
+- 967 the same, 177 differing, 54 of them at scaled cuts.
+- 1,006 the same, with version 2: every difference at `submit_verdict`.
+- 1,139 the same, with squint's judgement of a submission ported.
+- 1,144 the same, with the one set match (`transcript.md`, "The replay").
+
+The descriptive live rerun is in `docs/results/m2c-baseline.md`.
