@@ -129,7 +129,7 @@ pub fn export(root: &Path, image: &str, out: &Path, overwrite: bool) -> Result<S
     let (target, replace) = destination(out, root, overwrite)?;
     let reader = Reader::open(root, Arc::new(RealFs)).map_err(|e| e.to_string())?;
     let limits = DecodeLimits::default();
-    let read = artifact::get(&reader, ArtifactType::Image, ArtifactId(id), &limits);
+    let read = artifact::get_anywhere(&reader, ArtifactType::Image, ArtifactId(id), &limits);
     let Artifact::Image(held) = read.map_err(|e| e.to_string())? else {
         return Err("the store holds no image of that identity".to_owned());
     };
@@ -151,7 +151,7 @@ pub fn export_mask(root: &Path, mask: &str, out: &Path, overwrite: bool) -> Resu
     let id = identity(mask, "--mask")?;
     let (target, replace) = destination(out, root, overwrite)?;
     let reader = Reader::open(root, Arc::new(RealFs)).map_err(|e| e.to_string())?;
-    let read = artifact::get(
+    let read = artifact::get_anywhere(
         &reader,
         ArtifactType::Mask,
         ArtifactId(id),
@@ -198,12 +198,12 @@ pub fn export_file(root: &Path, id: &str, to: &Path, overwrite: bool) -> Result<
     ];
     let Some(kind) = kinds
         .into_iter()
-        .find(|kind| artifact::holds(&generation, *kind, id))
+        .find(|kind| artifact::holds_anywhere(&generation, *kind, id))
     else {
         return Err("the store holds no artifact of that identity".to_owned());
     };
-    let held =
-        artifact::get(&reader, kind, id, &DecodeLimits::default()).map_err(|e| e.to_string())?;
+    let held = artifact::get_anywhere(&reader, kind, id, &DecodeLimits::default())
+        .map_err(|e| e.to_string())?;
     written(&target, replace, &held.to_bytes())?;
     Ok(format!(
         "exported {kind} {id} as its canonical file to {}\n",

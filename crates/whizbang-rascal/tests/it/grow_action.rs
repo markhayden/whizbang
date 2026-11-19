@@ -176,7 +176,10 @@ pub fn held(root: &Path, fs: Arc<dyn Fs>) -> Held {
                 Err(record::StoredRecordError::NoRecord) => None,
                 Err(other) => panic!("{other}"),
             };
-            let names = run.entries().iter();
+            // A run's holds on the artifacts it took are references to what it read,
+            // not to anything it wrote (ADR 0008, "What deleting a run removes").
+            let names =
+                (run.entries().iter()).filter(|(name, _)| !name.starts_with(store::HOLDS_PREFIX));
             let outputs = names
                 .clone()
                 .filter(|(_, entry)| entry.kind == store::Kind::Output)

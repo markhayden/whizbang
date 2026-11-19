@@ -77,6 +77,10 @@ worker's input, so that no write to the worker waits outside the supervisor's cl
 Amended: 2026-11-18, with task X1 of plan 2C (ADR 0032). Changed, in the same place:
 that spawner holds a process to two workers' three threads, the model's and the tool
 worker's, six in all.
+Amended: 2026-11-19, with the third pull request of plan m3, task Q1. Changed: "What
+deleting a run removes" is built (its last part says how), and so is the paragraph on the
+reference to an output, under "The commit step"; an output of a run that another run
+called is a name of the first run of its tree, read by that tree alone ("Nested calls").
 
 ## Context
 
@@ -232,12 +236,10 @@ identity with its type, in the record's `outputs`: the artifact is found from it
 name. The store's own references are the two above. `whizbang store list` counts the
 run's among what the run holds
 (`runs::a_run_that_committed_an_output_is_shown_and_listed_with_it`, in the binary's
-tests), and deleting the run removes them. It does not remove the
-artifact's name: that is outside runs, where an imported artifact is, and another run
-may have taken it as an input. So an artifact that only a deleted run committed stays
-in the store, and no command removes it
-(`commit::deleting_a_run_removes_its_references_and_known_leaves_the_artifacts_it_committed`;
-`docs/carry-over.md`).
+tests), and deleting the run removes them. The artifact's name goes with them once no
+remaining run holds it and no import marked it ("What deleting a run removes", as built
+since plan m3, task Q1;
+`commit::deleting_a_run_removes_its_references_and_the_artifacts_only_it_held`).
 
 ### What deleting a run removes
 
@@ -274,6 +276,50 @@ admission and import publish, each with its crash sweep, and it meets the refere
 this as its "done when": a deletion removes the name of an artifact that no remaining
 run holds a reference to and no import marked, with a test through a deletion and a
 prune.
+
+**As built (plan m3, task Q1, its third pull request).** The two kinds of name are there,
+and a deletion is decided from the generation alone, inside the publishing step of the one
+publication that deletes:
+
+- **A run holds what it takes and what it commits.** The publication that admits a run
+  gives it, for each input that is a name outside runs, the name `holds/<that name>`, a
+  reference to the same content (`Publication::hold_in`); the publication that ends a run
+  that nothing called does the same for each output it commits. Where a deletion removed
+  the name between the reading of the input and the admission, the admission gives it
+  back as it was read: whoever took an artifact holds it.
+- **An import marks what it brings in**: `whizbang store import` gives the name
+  `imported/<that name>`, with the same content (`Publication::mark_imported`), and marks
+  an artifact the store held already the same way.
+- **A deletion** removes the deleted runs' names, then each name outside runs that one of
+  them held and that no remaining run holds and no import marked. A name under `requests/`
+  or `spend/` is never held and never removed. A name that a run committed or took before
+  runs held names is held by none, so no deletion removes it: a store written before this
+  keeps what it kept.
+- **The output of a run that another run called** is not a name outside runs: the commit
+  step gives it to the first run of its tree, the one nothing called, as a name of that
+  run (`Publication::keep_in`). The runs under that run read it, as their view of the store
+  adds that run's names (`Generation::scoped_to`); a run of another tree is refused it as
+  missing; it goes when that run is deleted. A person reading the store, as `whizbang
+  export` does, finds it among any run's names (`artifact::get_anywhere`).
+- **Crash safety** is the publication's: the deletion is one publication, so a crash
+  leaves the store before it or after it, whole, and the content it left without a name is
+  removed by the prune that `store delete` runs next, or by the next prune.
+
+Held by tests (`crates/whizbang-core/tests/it/store/holds.rs`):
+`store::holds::a_deletion_removes_what_no_run_and_no_import_holds` (a run's holds, another
+run's, an import's mark, a name older than holds, a made record, and a reader's held
+generation, through two deletions and their prunes);
+`store::holds::a_crash_at_any_event_of_a_deletion_and_its_prune_leaves_it_done_or_undone_and_never_removes_what_is_held`
+(a crash before every event of a deletion and its prune, under every loss the test kit's
+disk can bring: the store opens, the deletion is whole or absent, finishing it leaves the
+same names, and the content is each remaining name's and no other);
+`store::holds::a_run_that_holds_a_name_a_deletion_removed_meanwhile_names_it_again`;
+`store::holds::a_name_kept_in_a_run_is_that_runs_alone_and_goes_with_it`;
+`store::holds::another_root_run_cannot_read_a_childs_image_of_this_one` (through the
+executor); and `commit::deleting_a_run_removes_its_references_and_the_artifacts_only_it_held`.
+The crash sweeps of the admission and of the commit step
+(`commit::a_run_crashed_inside_its_commit_reopens_with_neither_output_nor_status_or_with_all`,
+whose run now holds seven names) reach the holds those publications now give.
 
 **A failure of the store in the commit step** is answered as ADR 0005 says of the end of
 a run: with the store's failure, not with a finished run. The run stays as it was
@@ -1257,6 +1303,14 @@ hold: content that a later `put` under that name replaced, and a prune then remo
 between a look and the read fails that read. No code of whizbang replaces an
 artifact's name with other content while a run executes (`store import` is the one
 writer of its store).
+
+Since plan m3, task Q1 (its third pull request), that name is a name of the first run of
+the tree, the one nothing called, and not a name outside runs: the commit step of a run
+that another run called gives it there ("What deleting a run removes", as built). Every
+run's view of the store adds the names of its tree's first run, so a parent, a sibling's
+later call and the judge's crops of an aligned frame read it, and the second call above is
+admitted with it; a run of another tree is refused it as missing
+(`store::holds::another_root_run_cannot_read_a_childs_image_of_this_one`).
 
 **What is not built.** A parent's record does not list a child whose admission became
 visible and was not confirmed: that child is abandoned, never ran, and names its

@@ -18,7 +18,7 @@ use whizbang_core::contract::{
 };
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::Fs;
-use whizbang_core::store::{Kind as Stored, Reader, Store};
+use whizbang_core::store::{HOLDS_PREFIX, Kind as Stored, Reader, Store};
 use whizbang_squint::align::Align;
 use whizbang_squint::check::{Check, Toolbox};
 use whizbang_squint::compare::Compare;
@@ -299,13 +299,18 @@ impl Left {
 }
 
 /// Reads a run from the store at `root`, through a reader of its own on this disk.
-/// A record that is there is held to the schema.
+/// A record that is there is held to the schema. The run's holds on the artifacts it took
+/// (ADR 0008, "What deleting a run removes") are not among its names here: they are
+/// references to what it read, not to anything it wrote.
 pub fn left(root: &Path, fs: Arc<dyn Fs>, run: &RunId) -> Left {
     let reader = Reader::open(root, fs).unwrap();
     let generation = reader.snapshot().unwrap();
     let entries = generation.run(run.as_str()).unwrap().entries();
     let mut names = BTreeMap::new();
-    for (name, entry) in entries {
+    let written = entries
+        .iter()
+        .filter(|(name, _)| !name.starts_with(HOLDS_PREFIX));
+    for (name, entry) in written {
         names.insert(name.clone(), (entry.kind, reader.read(entry).unwrap()));
     }
     let record = names.get("record").map(|(_, bytes)| {
@@ -331,7 +336,7 @@ pub fn runs(root: &Path, fs: Arc<dyn Fs>) -> usize {
 /// Whether the store at `root` holds an image artifact of this identity.
 pub fn holds(root: &Path, fs: Arc<dyn Fs>, id: ArtifactId) -> bool {
     let reader = Reader::open(root, fs).unwrap();
-    artifact::holds(&reader.snapshot().unwrap(), ArtifactType::Image, id)
+    artifact::holds_anywhere(&reader.snapshot().unwrap(), ArtifactType::Image, id)
 }
 
 /// Every file under the store, with its bytes.

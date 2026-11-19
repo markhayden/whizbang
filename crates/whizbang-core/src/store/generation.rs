@@ -8,6 +8,10 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use super::digest::Digest;
 
+/// What the names a run keeps for the runs under it start with, among its names, and
+/// what [`Generation::scoped_to`] adds outside runs: the names of artifacts.
+pub const SCOPED_PREFIX: &str = "artifacts/";
+
 /// The version of the generation file's shape.
 pub const GENERATION_FORMAT: u32 = 2;
 
@@ -104,6 +108,28 @@ impl Generation {
     /// One run.
     pub fn run(&self, id: &str) -> Option<&Run> {
         self.runs.get(id)
+    }
+
+    /// This generation as the runs under the first run `run` read it: each name the run
+    /// was given by [`super::Publication::keep_in`] that is an output, and no name outside
+    /// runs has, is added outside runs. A name of the run under [`super::HOLDS_PREFIX`],
+    /// or one that is a diagnostic, is not. The runs are as they were.
+    pub fn scoped_to(mut self, run: &str) -> Generation {
+        let Some(own) = self.runs.get(run) else {
+            return self;
+        };
+        let added: Vec<(String, Entry)> = own
+            .entries
+            .iter()
+            .filter(|(name, entry)| {
+                entry.kind == Kind::Output
+                    && name.starts_with(SCOPED_PREFIX)
+                    && !self.entries.contains_key(*name)
+            })
+            .map(|(name, entry)| (name.clone(), entry.clone()))
+            .collect();
+        self.entries.extend(added);
+        self
     }
 
     /// Every reference the generation holds, outside runs and in them.

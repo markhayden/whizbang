@@ -143,8 +143,9 @@ pub(super) fn engine_over(store: Arc<Store>, actions: Vec<Arc<dyn Action>>) -> E
 /// and checked.
 pub(super) struct Held {
     pub(super) runs: Vec<(String, Option<RunRecord>, usize)>,
-    /// The names of all the runs that are references to a committed output, each with
-    /// the content read through it as an output.
+    /// The names of all the runs that are references to an output a run committed
+    /// (under `outputs/`), each with the content read through it as an output. A run's
+    /// holds and the names a first run keeps for its tree are not listed.
     pub(super) outputs: Vec<(String, Vec<u8>)>,
     pub(super) mask: bool,
     pub(super) place: bool,
@@ -172,10 +173,13 @@ pub(super) fn held(root: &std::path::Path, fs: Arc<dyn Fs>) -> Held {
         .runs()
         .values()
         .flat_map(|run| run.entries())
-        .filter(|(_, entry)| entry.kind == store::Kind::Output)
+        .filter(|(name, entry)| {
+            entry.kind == store::Kind::Output && name.starts_with(record::OUTPUTS_PREFIX)
+        })
         .map(|(name, entry)| (name.clone(), reader.read_output(entry).unwrap()))
         .collect();
-    let has = |kind, id| match artifact::get(&reader, kind, id, &limits()) {
+    // Outside runs, or among the names the first run of a tree keeps for it.
+    let has = |kind, id| match artifact::get_anywhere(&reader, kind, id, &limits()) {
         Ok(_) => true,
         Err(artifact::ArtifactError::Missing { .. }) => false,
         Err(other) => panic!("{other}"),
@@ -320,19 +324,36 @@ fn a_port_that_returns_several_numbers_the_references_of_its_run() {
 }
 
 #[test]
-fn deleting_a_run_removes_its_references_and_known_leaves_the_artifacts_it_committed() {
-    // The limit, pinned: an artifact is stored outside runs, under the name a later
-    // call takes it by, and deleting the run that committed it removes the run's own
-    // references and not that name (`docs/carry-over.md`).
+fn deleting_a_run_removes_its_references_and_the_artifacts_only_it_held() {
+    // An artifact is stored outside runs, under the name a later call takes it by, and
+    // the run that committed it holds that name. Deleting the run removes the name too
+    // once no other run holds it (ADR 0008, "What deleting a run removes"). A run that
+    // took the mask as its input holds it as well, and keeps it until it goes.
     let world = World::new();
     let store = world.store();
-    let engine = engine_over(store.clone(), vec![pair(|_, _| Ok(both()))]);
+    let look = {
+        let draft = ActionDescriptor::draft("look", "1.0.0", Kind::Primitive, "Looks.")
+            .input(InputPort::required("mask", ArtifactType::Mask, "The mask."));
+        Arc::new(Scripted(
+            draft.build().unwrap(),
+            Box::new(|_, _| Ok(Produced::nothing())),
+        ))
+    };
+    let engine = engine_over(store.clone(), vec![pair(|_, _| Ok(both())), look]);
     let finished = engine.submit(&Call::new("pair")).unwrap();
+    let looked = engine
+        .submit(&Call::new("look").input("mask", the_mask().id()))
+        .unwrap();
     store.delete(&[finished.run().as_str()]).unwrap();
     store.prune().unwrap();
     let after = held(&world.root(), world.fs.clone());
+    assert_eq!(after.runs.len(), 1);
+    assert!(after.mask && !after.place);
+    store.delete(&[looked.run().as_str()]).unwrap();
+    store.prune().unwrap();
+    let after = held(&world.root(), world.fs.clone());
     assert!(after.runs.is_empty() && after.outputs.is_empty());
-    assert!(after.mask && after.place);
+    assert!(!after.mask && !after.place);
 }
 
 #[test]
@@ -686,7 +707,9 @@ fn a_run_crashed_inside_its_commit_reopens_with_neither_output_nor_status_or_wit
                     assert_eq!(stored.outcome().status, Status::Completed, "{at}");
                     assert_eq!(stored.outputs().len(), 2, "{at}");
                     assert_eq!(after.outputs.len(), 2, "{at}");
-                    assert_eq!(*names, 5, "{at}");
+                    // The admission, the journal, the record, the two outputs and the
+                    // run's hold on each.
+                    assert_eq!(*names, 7, "{at}");
                     outcomes.insert("all");
                     // Reported only where the calls left were the removal of the older
                     // generation's file and the clearing of the staging, which nothing

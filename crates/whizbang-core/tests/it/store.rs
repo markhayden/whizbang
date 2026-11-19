@@ -5,6 +5,7 @@
 //! The one writer, and what is and is not a store, are in `store/locking.rs` (task A3).
 
 mod growth;
+mod holds;
 mod locking;
 mod prune;
 mod runs;

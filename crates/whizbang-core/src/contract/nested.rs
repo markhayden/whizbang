@@ -48,8 +48,12 @@ pub const LEVELS_LIMIT: usize = 4;
 /// its end is published ([`Added::resolve`]): a look then reads no file (plan m3, task
 /// R1, item 2; the carry-over row on a parent reading a child's names). A name whose
 /// resolution failed is resolved at the next look instead, as every name was before.
+///
+/// What a run that another run called commits is a name of the first run of its tree, the
+/// one nothing called, and is read by the runs under that run alone (plan m3, task Q1,
+/// item 3): a name is looked for outside runs, then among that run's names.
 #[derive(Default)]
-pub(super) struct Added(Mutex<Names>);
+pub(super) struct Added(Mutex<Names>, OnceLock<String>);
 
 #[derive(Default)]
 struct Names {
@@ -62,6 +66,26 @@ impl Added {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Says which run is the first of this run's tree: the one nothing called. It is said
+    /// once; a second saying changes nothing.
+    pub(super) fn under_first(&self, run: &str) {
+        let _ = self.1.set(run.to_owned());
+    }
+
+    /// The first run of this run's tree, once it is said.
+    pub(super) fn first(&self) -> Option<&str> {
+        self.1.get().map(String::as_str)
+    }
+
+    /// A generation as the runs of this tree read it: with the names its first run keeps
+    /// for them ([`Generation::scoped_to`]).
+    pub(super) fn scoped(&self, generation: Generation) -> Generation {
+        match self.first() {
+            Some(first) => generation.scoped_to(first),
+            None => generation,
+        }
+    }
+
     /// The names a child committed, resolved in the generation current now: one read
     /// of the store for the child. Where that read fails, they are left to the next
     /// look.
@@ -69,7 +93,7 @@ impl Added {
         if names.is_empty() {
             return;
         }
-        let current = store.snapshot();
+        let current = store.snapshot().map(|current| self.scoped(current));
         let mut held = self.names();
         for name in names {
             match current.as_ref().ok().and_then(|current| current.get(&name)) {
@@ -105,7 +129,7 @@ impl Added {
         if pending.is_empty() {
             return Ok(generation);
         }
-        let current = store.snapshot()?;
+        let current = self.scoped(store.snapshot()?);
         for name in pending {
             if generation.get(&name).is_none()
                 && let Some(entry) = current.get(&name)
@@ -570,6 +594,12 @@ pub(super) struct Family {
 }
 
 impl Family {
+    /// The first run of this run's tree, the one nothing called: `None` for a run that
+    /// nothing called, which is its own.
+    pub(super) fn first(&self) -> Option<&RunId> {
+        self.above.first()
+    }
+
     /// The runs above this run and this run, which is named only once it is admitted.
     pub(super) fn above_with(&self, run: &RunId) -> Arc<Vec<RunId>> {
         let mut above = self.above.to_vec();

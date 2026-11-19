@@ -2103,8 +2103,10 @@ fn rascal_remove_prompt_until_feather_hands_back_the_mask() {
     assert!(lines[2].starts_with("step select select run "), "{out}");
     let selected = lines[3].strip_prefix("mask ").expect("the selection");
     let selected: whizbang_core::identity::Digest = selected.parse().unwrap();
+    // A step's output is a name of the recipe's run, which a person reads, as `export`
+    // does, and no run of another tree takes (plan m3, task Q1, item 3).
     let store = Store::open(&root, Arc::new(RealFs)).unwrap();
-    let read = whizbang_core::artifact::get(
+    let read = whizbang_core::artifact::get_anywhere(
         &store,
         whizbang_core::artifact::ArtifactType::Mask,
         whizbang_core::artifact::ArtifactId(selected),

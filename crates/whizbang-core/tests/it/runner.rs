@@ -65,7 +65,7 @@ impl World {
 
     /// The mask of this identity.
     pub fn mask(&self, id: ArtifactId) -> Mask {
-        let read = artifact::get(
+        let read = artifact::get_anywhere(
             self.store.as_ref(),
             ArtifactType::Mask,
             id,

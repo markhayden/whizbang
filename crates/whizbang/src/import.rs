@@ -112,7 +112,7 @@ use whizbang_core::contract::Recovery;
 use whizbang_core::identity::{
     CanonicalPixels, DecodeLimits, Digest, Projection, Topology, identify,
 };
-use whizbang_core::store::Error;
+use whizbang_core::store::{Error, IMPORTED_PREFIX};
 
 /// The step a picture's origin names.
 const PICTURE_STEP: &str = "import-picture";
@@ -686,14 +686,17 @@ fn commit(
     let named = from_file.map(|(prefix, file)| format!("{prefix}{}", file.hex()));
     let unnamed = named.as_ref().filter(|name| generation.get(name).is_none());
     let held = artifact::holds(&generation, kind, id);
-    if held && unnamed.is_none() {
+    // An import marks what it brought in, so that no deletion of a run removes it; an
+    // artifact a run committed is marked when it is imported too (ADR 0008, "What
+    // deleting a run removes").
+    let marked = format!("{IMPORTED_PREFIX}{}", artifact::name(kind, id));
+    let marked = generation.get(&marked).is_some();
+    if held && marked && unnamed.is_none() {
         printed.push_str(&format!("already there: {kind} {id}\n"));
         return Ok(printed);
     }
     let mut publication = store.begin().map_err(|error| error.to_string())?;
-    if !held {
-        artifact::put(&mut publication, artifact).map_err(|error| error.to_string())?;
-    }
+    artifact::import(&mut publication, artifact, held).map_err(|error| error.to_string())?;
     if let Some(name) = unnamed {
         publication
             .put(name, id.to_string().as_bytes())

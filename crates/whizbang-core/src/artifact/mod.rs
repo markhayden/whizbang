@@ -34,7 +34,7 @@ pub use mask::{
 pub use picture::{Image, ImageRole};
 pub use plan::Plan;
 pub use series::Series;
-pub use stored::{Contents, commit, get, holds, name, put};
+pub use stored::{Contents, commit, get, get_anywhere, holds, holds_anywhere, import, name, put};
 
 use wire::{Reader, Writer};
 

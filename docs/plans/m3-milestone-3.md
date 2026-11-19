@@ -822,7 +822,7 @@ and gives the verdicts it gave before.
   `store::another_root_run_cannot_read_a_childs_image_of_this_one`,
   `store::a_deletion_removes_what_no_run_and_no_import_holds`,
   `view::a_crops_place_on_its_source_maps_back_through_its_binding`,
-  `view::a_run_reading_an_image_twice_decodes_it_once`,
+  the row on `view`'s decoding dropped with a line (reworded below),
   `submission::a_cited_call_that_is_not_a_completed_call_of_the_run_is_refused`,
   `describe::the_five_use_cases_are_listed_as_recipes_first`,
   `serve::check_over_stdio_returns_the_verdict_of_each_use_case_under_a_scripted_judge`
@@ -852,6 +852,21 @@ dropped or handed on the rest of items 4 and 6 with a line each (`view`'s decodi
 manifest's fields, the old configs' keys, squint's milestone 4 follow-ups, `resize`'s
 methods; the stored run as a transcript to B1). Items 3 and 5 are a third pull request
 (the carry-over row on Q1's third pull request), and the box waits for it.
+The third pull request built item 3 (ADR 0008, "What deleting a run removes", as built:
+`store::holds::another_root_run_cannot_read_a_childs_image_of_this_one`,
+`store::holds::a_deletion_removes_what_no_run_and_no_import_holds` and its crash sweep,
+`check::a_tools_image_is_a_reference_only_its_parent_reads`) and item 5 (the five records,
+held by `use_case_records::each_use_case_record_holds_two_worked_examples_that_its_recipe_gives`
+and `scripts/tests/test-tool-records.sh`; rung 2 credited from
+`docs/results/m2c-evaluation.md`, `m3-unsure.md` and `m3-gates.md`). The box still waits for
+item 7, the orchestrator's live record, which the evidence test holds "on the record with the
+recipes' lines" (the carry-over row on Q1's third pull request, narrowed to it).
+
+**Reworded with the task** (Q1's third pull request, 2026-11-19). "Done when" named
+"`view::a_run_reading_an_image_twice_decodes_it_once`": the second pull request dropped a
+run's cache of decoded pixels with a line (the carry-over row on `view` decoding the whole
+image on every call), as item 4 lets it, so no such test is written; that clause is now "or
+the row on `view`'s decoding dropped with a line", which it is.
 
 ## O3. The seam (large)
 

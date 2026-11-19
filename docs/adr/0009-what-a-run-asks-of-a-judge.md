@@ -20,6 +20,9 @@ Spec: section 3, "The execution contract", "What a run publishes", "What a judge
 call" and "What every run records"; section 4, "Backends"
 Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
 that said something was still to come; no decision changed.
+Amended: 2026-11-19, with the third pull request of plan m3, task Q1. Changed, under
+"Evidence": a tool's result is a name of the run that nothing called at the top of its tree,
+which no run of another tree takes (ADR 0008, "What deleting a run removes").
 
 ## Context
 
@@ -521,17 +524,17 @@ first. What is built:
   ends, as every diagnostic is. That is under the 1,024 diagnostics a run may write
   (ADR 0008).
 
-**What is not held, and why it is accepted.** The crop is also an image artifact in the
-store, under its identity, as the output of the `view` run that cut it. A caller of the
-executor that is no judge, a door or a recipe, takes it as an input by that identity, as
-it takes any artifact
-(`check::known_a_crop_that_a_view_run_committed_is_an_artifact_a_caller_of_the_executor_may_take`).
-A store has one owner and no boundary between the runs of its callers; the boundary the
-spec draws is around the judge model, and that one holds. A crop is a function of an
-image and a box, and holds nothing of what the judge said. Making a tool's result
-invisible to every other run would need a third kind of reference, an output of a child
-that only its parent reads, in the store and in the commit step; it is on
-`docs/carry-over.md` for milestone 2, with the tools a judge may call.
+**What a run of another tree is refused (plan m3, task Q1, item 3).** The crop is the
+committed output of the `view` run that cut it, and that run was called, so the commit step
+gives it to the run that nothing called at the top of its tree, the run of `check` or of the
+recipe, as a name of that run, and not outside runs (ADR 0008, "What deleting a run
+removes"). The judge's later calls read it through their run's view of the store, which adds
+that run's names. A caller of the executor that is no judge, a door or another run, that
+names the crop's identity is refused, as the store holds no such artifact for it
+(`check::a_tools_image_is_a_reference_only_its_parent_reads`, which replaces the test that
+pinned the old limit, `check::known_a_crop_that_a_view_run_committed_is_an_artifact_a_caller_of_the_executor_may_take`).
+The crop goes when that run is deleted. A person reading the store, with `whizbang export`,
+still finds it.
 
 ## Consequences
 
