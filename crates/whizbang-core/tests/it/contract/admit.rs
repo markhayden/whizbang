@@ -2231,9 +2231,28 @@ fn admission_reserves_the_estimate_in_the_step_that_makes_the_run_and_the_ids_re
     let request = Request::new(shop.call(shop.photo))
         .expecting(&prepared)
         .with_id(id("order-17"));
+    // The writer removes the file of a generation nobody holds as it publishes the next
+    // (ADR 0036), so readers hold the two looked at below: generation 2 now, and the
+    // admission's, 3, the moment its pointer is in place.
+    let at_reset = Reader::open(&shop.world.root(), shop.world.fs.clone()).unwrap();
+    assert_eq!(at_reset.snapshot().unwrap().number(), 2);
+    let at_admission = Arc::new(Mutex::new(None));
+    shop.world.fs.pause_after_rename_onto("CURRENT", {
+        let (root, fs, slot) = (
+            shop.world.root(),
+            shop.world.fs.clone(),
+            at_admission.clone(),
+        );
+        move || {
+            let reader = Reader::open(&root, fs).unwrap();
+            assert_eq!(reader.snapshot().unwrap().number(), 3);
+            *slot.lock().unwrap() = Some(reader);
+        }
+    });
     let finished = ran(shop.engine.request(&request));
     let run = finished.run().clone();
     assert_eq!(shop.ledger.asked(), 1);
+    assert!(at_admission.lock().unwrap().is_some());
 
     // The admission was one generation: the run, the id's record, the reservation and
     // the ledger's own record came with it together. The end was the next.
@@ -2284,11 +2303,16 @@ fn admission_reserves_the_estimate_in_the_step_that_makes_the_run_and_the_ids_re
     for name in [names[0], names[1], names[3], names[4], names[7]] {
         assert!(second["entries"].get(name).is_none(), "{name}: {second}");
     }
-    let first = std::fs::read(shop.world.root().join("generations").join("1.json")).unwrap();
-    let first: serde_json::Value = serde_json::from_slice(&first).unwrap();
-    for name in &names {
-        assert!(first["entries"].get(*name).is_none(), "{name}");
-    }
+    // The first, the photographs', nobody held: the writer removed its file when it
+    // published the second.
+    assert!(
+        !shop
+            .world
+            .root()
+            .join("generations")
+            .join("1.json")
+            .exists()
+    );
 
     // The reservation: of this run and this request, for the estimate, in a name made
     // from the run's id, and holding the digest of the run's own admission.
