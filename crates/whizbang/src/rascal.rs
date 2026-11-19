@@ -1,7 +1,7 @@
 //! `whizbang rascal segment`, `select`, `grow`, `close`, `plug`, `subtract`, `feather`,
-//! `render`, `paste`, `fill`, `line`, `rasterize`, `shrink` and `invert`, and the
-//! recipes: wiring from arguments to the door (`whizbang::door`), which
-//! runs the action through the executor.
+//! `render`, `paste`, `fill`, `line`, `rasterize`, `shrink`, `invert`, `cut`, `put`,
+//! `window`, `unwindow` and `apply`, and the recipes: wiring from arguments to the
+//! door (`whizbang::door`), which runs the action through the executor.
 
 use std::path::PathBuf;
 
@@ -267,6 +267,16 @@ pub enum Command {
         #[command(flatten)]
         common: Common,
     },
+    #[command(about = whizbang_rascal::cut::ABOUT, after_help = EXIT_CODES)]
+    Cut(Op<whizbang_rascal::cut::Args>),
+    #[command(about = whizbang_rascal::put::ABOUT, after_help = EXIT_CODES)]
+    Put(Op<whizbang_rascal::put::Args>),
+    #[command(about = whizbang_rascal::window::ABOUT, after_help = EXIT_CODES)]
+    Window(Op<whizbang_rascal::window::Args>),
+    #[command(about = whizbang_rascal::unwindow::ABOUT, after_help = EXIT_CODES)]
+    Unwindow(Op<whizbang_rascal::unwindow::Args>),
+    #[command(about = whizbang_rascal::apply::ABOUT, after_help = EXIT_CODES)]
+    Apply(Op<whizbang_rascal::apply::Args>),
     /// Make the mask that removes what a phrase names from a picture: the recipe
     /// `remove_prompt`, whose steps are segment, select, grow, close, plug, subtract and
     /// feather, each a run of its own under the recipe's. The configured segmenter finds
@@ -645,6 +655,11 @@ fn run_at(
             };
             door::recipe(&executor, &asked, common.at.root())
         }
+        Command::Cut(op) => op.run(recovery, platform),
+        Command::Put(op) => op.run(recovery, platform),
+        Command::Window(op) => op.run(recovery, platform),
+        Command::Unwindow(op) => op.run(recovery, platform),
+        Command::Apply(op) => op.run(recovery, platform),
         Command::RemovePrompt {
             image,
             prompt,

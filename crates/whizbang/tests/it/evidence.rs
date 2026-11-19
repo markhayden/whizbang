@@ -932,3 +932,122 @@ fn the_unsure_record_names_a_commit_of_this_tree_and_holds_only_aggregates() {
         assert!(!page.contains(held), "the page holds {held}");
     }
 }
+
+/// The digest the public manifest of the baseline package names.
+fn manifests_digest() -> String {
+    let text = std::fs::read_to_string(repository().join("docs/baseline/manifest.toml")).unwrap();
+    let line = text
+        .lines()
+        .find(|line| line.starts_with("digest = "))
+        .expect("the manifest names a digest");
+    line["digest = ".len()..].trim_matches('"').to_owned()
+}
+
+fn is_ancestor(commit: &str) -> bool {
+    commit.len() == 40
+        && commit
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        && std::process::Command::new("git")
+            .args(["merge-base", "--is-ancestor", commit, "HEAD"])
+            .current_dir(repository())
+            .output()
+            .expect("git runs")
+            .status
+            .success()
+}
+
+#[test]
+fn the_baseline_receipt_names_the_manifests_digest_and_a_commit_of_this_tree() {
+    let text = std::fs::read_to_string(repository().join("docs/baseline/receipt.toml"))
+        .expect("the receipt of the gate's run is committed");
+    let fields: Fields = text
+        .lines()
+        .map(|line| {
+            let (name, value) = line.split_once(" = ").expect("a line is name = value");
+            (name.to_owned(), value.trim_matches('"').to_owned())
+        })
+        .collect();
+    let names: Vec<&str> = fields.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "package_digest",
+            "comparison_version",
+            "whizbang_commit",
+            "result"
+        ]
+    );
+    assert_eq!(field(&fields, "package_digest"), manifests_digest());
+    assert_eq!(
+        field(&fields, "comparison_version"),
+        whizbang_eval::baseline::COMPARISON_VERSION
+    );
+    assert!(is_ancestor(field(&fields, "whizbang_commit")));
+    assert_eq!(field(&fields, "result"), "pass");
+}
+
+#[test]
+fn the_baseline_record_holds_the_live_reruns_two_numbers() {
+    let page = std::fs::read_to_string(repository().join("docs/results/m2c-baseline.md"))
+        .expect("the record of the live rerun is committed");
+    let blocks: Vec<&str> = page.split("```toml\n").skip(1).collect();
+    assert_eq!(blocks.len(), 1);
+    let fields: Fields = blocks[0]
+        .split("```")
+        .next()
+        .unwrap()
+        .lines()
+        .map(|line| {
+            let (name, value) = line.split_once(" = ").expect("a line is name = value");
+            (name.to_owned(), value.trim_matches('"').to_owned())
+        })
+        .collect();
+    let names: Vec<&str> = fields.iter().map(|(name, _)| name.as_str()).collect();
+    // The receipt's fields, the commit and the spend, and nothing of an item.
+    assert_eq!(
+        names,
+        [
+            "commit",
+            "package_digest",
+            "set",
+            "model",
+            "arm",
+            "live_decisions",
+            "live_failed",
+            "compared",
+            "agreed",
+            "recorded_later",
+            "recorded_differing",
+            "settled_usd"
+        ]
+    );
+    assert!(is_ancestor(field(&fields, "commit")));
+    assert_eq!(field(&fields, "package_digest"), manifests_digest());
+    assert_eq!(
+        (
+            field(&fields, "set"),
+            field(&fields, "model"),
+            field(&fields, "arm")
+        ),
+        ("source-fidelity/blind-v3", "claude-haiku-5-5", "C")
+    );
+    let number = |name: &str| field(&fields, name).parse::<u64>().unwrap();
+    let (compared, agreed, later, differing) = (
+        number("compared"),
+        number("agreed"),
+        number("recorded_later"),
+        number("recorded_differing"),
+    );
+    assert!(agreed <= compared && differing <= later && compared <= number("live_decisions"));
+    // The two numbers, as the page states them.
+    let share = |part: u64, whole: u64| format!("{:.1}%", 100.0 * part as f64 / whole as f64);
+    assert!(page.contains(&format!(
+        "{agreed} of {compared} decisions compared ({})",
+        share(agreed, compared)
+    )));
+    assert!(page.contains(&format!(
+        "{differing} of {later} ({})",
+        share(differing, later)
+    )));
+}

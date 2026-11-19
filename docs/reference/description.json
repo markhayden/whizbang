@@ -1456,6 +1456,348 @@
       "concurrent": true
     },
     {
+      "name": "cut",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Cuts a panorama at its seam: its last and first strips side by side on a flat canvas whose middle column is the seam.",
+      "arguments": [
+        {
+          "name": "strip",
+          "purpose": "The strip as a share of the panorama's width, over 0 and at most 0.5; the strip is made even, at least 2 and at most a quarter of the width, twice.",
+          "type": {
+            "type": "number",
+            "min": 1e-9,
+            "max": 0.5
+          },
+          "required": false,
+          "default": 0.07
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "A complete panorama, at least 4 columns wide.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The canvas: the panorama's last strip, then its first.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "plan",
+          "artifact": "plan",
+          "purpose": "The panorama and the strip, for put.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "put",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Puts a cut's canvas back onto its panorama; nothing outside the two strips changes.",
+      "arguments": [],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The panorama the plan was made for.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "canvas",
+          "artifact": "image",
+          "purpose": "The canvas, the cut wherever the mask weighs nothing.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "plan",
+          "artifact": "plan",
+          "purpose": "The plan cut handed back.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask the canvas was worked through: on the cut, or rebound from it onto the canvas.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The panorama with the canvas put back, or the panorama when nothing changed.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "window",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Crops an image and its mask around the mask's support, with context; the mask handed back places the crop onto the image.",
+      "arguments": [
+        {
+          "name": "max_side",
+          "purpose": "The largest side of the window in pixels; a support larger than it is refused. Unset: the image's.",
+          "type": {
+            "type": "integer",
+            "min": 1,
+            "max": 1000000
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "context",
+          "purpose": "The context on each side of the support, as a share of its width and height, from 0 to 4; unset, the constant set's.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 4.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "constants",
+          "purpose": "The constant set the context is taken from when the call does not give it.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "window-v1"
+            ]
+          },
+          "required": false,
+          "default": "window-v1"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image to window.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask on the image whose support the window is built around.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": "image"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The crop of the image.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask's planes cut to the crop, on the crop, placing it onto the image.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "output": "image"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "unwindow",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Writes a crop back into exactly the box of the image window cut it from; nothing outside the box changes.",
+      "arguments": [],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image the window was cut from.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "crop",
+          "artifact": "image",
+          "purpose": "The crop to write back: the window's, wherever its mask weighs nothing.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask window handed back, which places its crop onto the image.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image with the crop written back, or the image when nothing changed.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "apply",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Performs a mask's prescriptions on its image, once each and in order, and rebinds the mask onto the working image.",
+      "arguments": [],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image to work on.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask on the image, carrying the prescriptions.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": "image"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The working image, or the image when nothing changed.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": {
+            "input": "image"
+          },
+          "rebound_onto": null
+        },
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask, rebound onto the working image.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "image"
+          },
+          "derived_from": null,
+          "rebound_onto": "image"
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
       "name": "line",
       "version": "1.0.0",
       "kind": "primitive",

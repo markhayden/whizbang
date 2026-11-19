@@ -405,18 +405,23 @@ fn proper_rotation(m: &Matrix) -> bool {
 
 /// Turns a point of one panorama into a direction, rotates it, and returns its point in
 /// the other panorama.
+///
+/// The sine, the cosine and the arc functions are `libm`'s, not the machine's: a point
+/// mapped here may become a location's coordinates, which are hashed (ADR 0001, ADR 0002),
+/// and the machine's own may differ in their last bits from one platform to another.
 fn rotate(m: &Matrix, from: &Space, to: &Space, point: Point) -> Point {
     debug_assert!(from.topology() == Topology::Wrap && to.topology() == Topology::Wrap);
     let lon = point.x / f64::from(from.width()) * 2.0 * PI - PI;
     let lat = FRAC_PI_2 - point.y / f64::from(from.height()) * PI;
-    let d = [lat.cos() * lon.cos(), lat.cos() * lon.sin(), lat.sin()];
+    let (cos_lat, sin_lat) = (libm::cos(lat), libm::sin(lat));
+    let d = [cos_lat * libm::cos(lon), cos_lat * libm::sin(lon), sin_lat];
     let r = [
         m[0] * d[0] + m[1] * d[1] + m[2] * d[2],
         m[3] * d[0] + m[4] * d[1] + m[5] * d[2],
         m[6] * d[0] + m[7] * d[1] + m[8] * d[2],
     ];
-    let lon = r[1].atan2(r[0]);
-    let lat = r[2].clamp(-1.0, 1.0).asin();
+    let lon = libm::atan2(r[1], r[0]);
+    let lat = libm::asin(r[2].clamp(-1.0, 1.0));
     Point::new(
         (lon + PI) / (2.0 * PI) * f64::from(to.width()),
         (FRAC_PI_2 - lat) / PI * f64::from(to.height()),
