@@ -10,7 +10,8 @@
 # cache) and runs it, which writes a synthetic package; then it writes the package's listing
 # and digest as docs/baseline/README.md says, converts the package with
 # scripts/baseline/convert.py, and copies the set, the decisions' package files the replay
-# reads and the transcripts into fixtures/baseline/synthetic/. Nothing is pushed, nothing in
+# reads and the transcripts into fixtures/baseline/synthetic/ and fixtures/baseline/scaled/.
+# Nothing is pushed, nothing in
 # the old repository changes, and no model is called. It builds, so it is heavy: run it
 # through scripts/heavy.sh.
 # The whole script is one function, read before any of it runs, so a change to this file
@@ -35,9 +36,12 @@ awk '{ print } $0 == "  \"crates/squint-cli\"," { print "  \"crates/baseline-cap
 mv "$scratch/Cargo.toml.joined" "$scratch/squint/Cargo.toml"
 grep -q -F '"crates/baseline-capture"' "$scratch/squint/Cargo.toml" || { echo "capture: the workspace was not joined" >&2; exit 1; }
 (cd "$scratch/squint" && cargo build --offline --quiet -p baseline-capture)
-package="$scratch/package"
-mkdir "$package"
-"$scratch/squint/target/debug/baseline-capture" "$package"
+# Two packages: `synthetic`, the three ordinary decisions, and `scaled`, the one whose crop
+# is scaled down (transcript format 2).
+for which in synthetic scaled; do
+package="$scratch/$which/package"
+mkdir -p "$package"
+"$scratch/squint/target/debug/baseline-capture" "$package" "$which"
 
 # The package's listing and digest (docs/baseline/README.md, "The package digest").
 ROOT="$root" python3 -B -c '
@@ -49,13 +53,13 @@ data, _ = common.listing(package, leave_out=("PACKAGE.sha256", "PACKAGE.digest")
 open(os.path.join(package, "PACKAGE.sha256"), "wb").write(data)
 open(os.path.join(package, "PACKAGE.digest"), "w").write(common.digest_of_listing(data)[len("sha256:"):] + "\n")
 ' "$package"
-python3 -B "$root/scripts/baseline/convert.py" --package "$package" --out "$scratch/transcripts" --fixtures replay
+python3 -B "$root/scripts/baseline/convert.py" --package "$package" --out "$scratch/$which/transcripts" --fixtures replay
 
 # What is committed: the transcripts, and of the package what `whizbang eval baseline` reads:
 # the listing and digest, the preparation, the set, and each decision's header and old
 # result. The rest (the journals, the stored exchanges, the frames, and the run records,
 # which name this scratch folder) stays here; the listing still names it.
-out="$root/fixtures/baseline/synthetic"
+out="$root/fixtures/baseline/$which"
 rm -rf "$out"
 mkdir -p "$out/package"
 (cd "$package" && find PACKAGE.sha256 PACKAGE.digest assembly evalsets -type f \
@@ -63,11 +67,12 @@ mkdir -p "$out/package"
   mkdir -p "$out/package/$(dirname "$file")"
   cp "$package/$file" "$out/package/$file"
 done
-cp -R "$scratch/transcripts" "$out/transcripts"
+cp -R "$scratch/$which/transcripts" "$out/transcripts"
 if grep -r -l -F -e "$scratch" -e "$HOME" "$out" >/dev/null; then
   echo "capture: a committed file names a local folder" >&2
   exit 1
 fi
-echo "capture: written to fixtures/baseline/synthetic"
+echo "capture: written to fixtures/baseline/$which"
+done
 }
 main "$@"; exit

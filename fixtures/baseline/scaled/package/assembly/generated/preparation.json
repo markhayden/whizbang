@@ -1,0 +1,24 @@
+{
+  "settings": {
+    "claude-haiku-5-5": {
+      "config_max_long_edge": null,
+      "decode_max_bytes": 67108864,
+      "decode_max_pixels": 50000000,
+      "formats_accepted": [
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp"
+      ],
+      "jpeg_quality": 90,
+      "long_edge_px": 2576,
+      "metadata": "stripped",
+      "model": "claude-haiku-5-5",
+      "native_long_edge_px": 2576,
+      "plan": "standard",
+      "png_when_alpha": "png",
+      "prep_version": "1",
+      "resize": "Lanczos3, never upscaled"
+    }
+  }
+}

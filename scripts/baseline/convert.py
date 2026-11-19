@@ -3,6 +3,7 @@
 (docs/baseline/transcript.md).
 
     convert.py --package <package root> --out <folder> [--origin historical|recaptured]
+               [--transcript-version 1|2]
 
 Reads the package and writes one transcript per decision under <out>/<origin>/, then a
 listing and its digest over everything it wrote. Nothing is added to a record: what a
@@ -109,7 +110,7 @@ def tool_results(history):
     return out
 
 
-def convert(package, subdir, decision_dir, run_dir, origin, package_digest, preparation):
+def convert(package, subdir, decision_dir, run_dir, origin, package_digest, preparation, version=common.TRANSCRIPT_VERSION):
     fx = Fixture(package, decision_dir, run_dir)
     events = common.load_lines(fx.journal_path)
     fx.plain_file("journal", fx.journal_path)
@@ -322,7 +323,7 @@ def convert(package, subdir, decision_dir, run_dir, origin, package_digest, prep
         fx.problems.append("the subject is not fully known")
 
     transcript = {
-        "transcript_version": common.TRANSCRIPT_VERSION,
+        "transcript_version": version,
         "origin": origin,
         "complete": not fx.problems,
         "incomplete": sorted(set(fx.problems)),
@@ -368,6 +369,13 @@ def main(argv=None):
     p.add_argument("--out", required=True)
     p.add_argument("--origin", choices=("historical", "recaptured"), default="historical")
     p.add_argument("--fixtures", default="replay", help="folder of fixtures inside the package")
+    p.add_argument(
+        "--transcript-version",
+        type=int,
+        choices=common.TRANSCRIPT_VERSIONS,
+        default=common.TRANSCRIPT_VERSION,
+        help="the format's version to write: 2 compares a scaled tool image by its size and mapping",
+    )
     args = p.parse_args(argv)
 
     package = os.path.abspath(args.package)
@@ -393,7 +401,10 @@ def main(argv=None):
         return 2
     complete = 0
     for name, decision_dir, run_dir in found:
-        t = convert(package, args.fixtures, decision_dir, run_dir, args.origin, package_digest, preparation)
+        t = convert(
+            package, args.fixtures, decision_dir, run_dir, args.origin, package_digest, preparation,
+            args.transcript_version,
+        )
         target = os.path.join(out_root, *name.split("/")) + ".json"
         os.makedirs(os.path.dirname(target), mode=0o700, exist_ok=True)
         common.write_private(target, common.canonical(t))

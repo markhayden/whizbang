@@ -12,7 +12,10 @@ import sys
 
 sys.dont_write_bytecode = True
 
-TRANSCRIPT_VERSION = 1
+TRANSCRIPT_VERSION = 1  # what the converter writes unless asked for another
+# The versions of docs/baseline/transcript.md: 2 is 1 with a scaled tool image's prepared bytes
+# left out of the comparison, on the owner's yes of 2026-11-18. Their fields are the same.
+TRANSCRIPT_VERSIONS = (1, 2)
 TOOLS_VERSION = "2"  # the version of convert.py and audit.py, recorded in what they write
 
 DISPOSITIONS = ("executed", "rejected", "excluded", "final")
@@ -415,7 +418,7 @@ class _Check:
 
 
 def schema_errors(t):
-    """Every way a value is not a version 1 transcript. An empty list means it is one."""
+    """Every way a value is not a transcript of a version this page describes. An empty list means it is one."""
     c = _Check()
     top = (
         "transcript_version", "origin", "complete", "incomplete", "subject", "preparation",
@@ -424,8 +427,8 @@ def schema_errors(t):
     )
     if not c.keys(t, "", top):
         return c.errors
-    if t["transcript_version"] != TRANSCRIPT_VERSION or not _is_int(t["transcript_version"]):
-        c.bad("/transcript_version", "not %d" % TRANSCRIPT_VERSION)
+    if not _is_int(t["transcript_version"]) or t["transcript_version"] not in TRANSCRIPT_VERSIONS:
+        c.bad("/transcript_version", "not one of %s" % ", ".join(str(v) for v in TRANSCRIPT_VERSIONS))
     c.one_of(t["origin"], "/origin", ORIGINS)
     c.flag(t["complete"], "/complete")
     c.texts(t["incomplete"], "/incomplete")

@@ -241,3 +241,106 @@ fn a_package_that_spells_the_resize_otherwise_is_refused() {
     );
     assert!(!tally.passed());
 }
+
+/// The gate over one of the fixtures' packages (`synthetic` or `scaled`).
+fn gate_over(which: &str, transcripts: &Path, receipt_at: &Path) -> Result<Tally, String> {
+    let package = fixtures().join("..").join(which).join("package");
+    let sets = package.join("evalsets");
+    run(&Asked {
+        package: &package,
+        transcripts,
+        receipt: receipt_at,
+        sets: &sets,
+        pictures: None,
+        commit: COMMIT,
+    })
+}
+
+/// A copy of a fixture's transcripts, each of them, or the first only, in version 2: what
+/// `convert.py --transcript-version 2` writes, which differs from version 1 in that field
+/// alone (`scripts/baseline/tests/test_baseline.py`, `Versions`).
+fn in_version_2(which: &str, to: &Path, all: bool) {
+    copy(&fixtures().join("..").join(which).join("transcripts"), to);
+    let mut found = Vec::new();
+    let mut folders = vec![to.join("historical")];
+    while let Some(folder) = folders.pop() {
+        for entry in std::fs::read_dir(folder).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                folders.push(path);
+            } else {
+                found.push(path);
+            }
+        }
+    }
+    found.sort();
+    for path in found.iter().take(if all { found.len() } else { 1 }) {
+        let text = std::fs::read_to_string(path).unwrap();
+        let line = "\n  \"transcript_version\": 1,\n";
+        assert_eq!(text.matches(line).count(), 1);
+        std::fs::write(path, text.replace(line, "\n  \"transcript_version\": 2,\n")).unwrap();
+    }
+}
+
+#[test]
+fn a_version_2_conversion_of_the_synthetic_package_replays_the_same() {
+    let scratch = Scratch::new("baseline-v2");
+    let transcripts = scratch.path().join("transcripts");
+    in_version_2("synthetic", &transcripts, true);
+    let tally = gate_over("synthetic", &transcripts, &scratch.path().join("r.toml")).unwrap();
+    assert_eq!(
+        (tally.version, tally.same, tally.differed),
+        (Some(2), 3, 0),
+        "{}",
+        tally.text()
+    );
+    assert!(tally.text().contains("\ntranscript version: 2\n"));
+    assert!(tally.passed());
+}
+
+#[test]
+fn a_scaled_cut_differs_under_version_1_and_is_the_same_under_version_2() {
+    let scratch = Scratch::new("baseline-scaled");
+    let at = scratch.path().join("r.toml");
+    // Version 1 compares the crop's prepared bytes, which squint's triangle filter made and
+    // whizbang's mean does not; nothing else differs.
+    let recorded = fixtures().join("../scaled/transcripts");
+    let one = gate_over("scaled", &recorded, &at).unwrap();
+    assert_eq!(
+        (one.version, one.same, one.differed),
+        (Some(1), 0, 1),
+        "{}",
+        one.text()
+    );
+    let places: Vec<&str> = one.places.keys().map(String::as_str).collect();
+    assert_eq!(
+        places,
+        ["/images/*/prepared/bytes", "/images/*/prepared/sha256"]
+    );
+    // Version 2 leaves them out and compares the crop's size and mapping.
+    let transcripts = scratch.path().join("v2");
+    in_version_2("scaled", &transcripts, true);
+    let two = gate_over("scaled", &transcripts, &at).unwrap();
+    assert_eq!(
+        (two.version, two.same, two.differed),
+        (Some(2), 1, 0),
+        "{}",
+        two.text()
+    );
+    assert!(
+        std::fs::read_to_string(&at)
+            .unwrap()
+            .ends_with("result = \"pass\"\n")
+    );
+}
+
+#[test]
+fn a_folder_of_transcripts_of_two_versions_is_refused() {
+    let scratch = Scratch::new("baseline-mixed");
+    let transcripts = scratch.path().join("transcripts");
+    in_version_2("synthetic", &transcripts, false);
+    let at = scratch.path().join("r.toml");
+    let refused = gate_over("synthetic", &transcripts, &at).unwrap_err();
+    assert!(refused.contains("not all of one version"), "{refused}");
+    assert!(!at.exists());
+}

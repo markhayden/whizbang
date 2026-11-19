@@ -1,0 +1,9 @@
+{
+  "cell": "synthetic/claude-haiku-5-5/C",
+  "dir": "decision-1795067428952-65634",
+  "exit_code": 0,
+  "item": "wide",
+  "repetition": 1,
+  "set": "source-fidelity/scaled-v1",
+  "verdict": "pass"
+}

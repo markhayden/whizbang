@@ -1017,6 +1017,8 @@ no network.
    the baseline package (it prints one number) and, given that number, your yes to
    transcript format 2 for scaled tool images (their size and mapping compared, not
    their bytes): yes/no. A count of 0 needs no answer.
+   **Answered 2026-11-18: yes.** The count printed 54; transcript format 2 is built
+   end to end (`convert.py --transcript-version 2`, the audit, `whizbang eval baseline`).
 5. I need you to run the baseline gate and its descriptive live rerun on your Mac on E2's
    pushed head, before it is merged (two commands, each printing counts only; about 1
    dollar to Anthropic), and to hand the builder the receipt file it writes: yes/no.
