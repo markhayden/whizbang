@@ -63,6 +63,9 @@ pub struct Asked<'a> {
 pub struct Tally {
     /// The package's fixtures: the old results its replay folder holds.
     pub fixtures: usize,
+    /// The version of the format every transcript holds, and every replay is written in:
+    /// 2 compares a scaled tool image by its size and mapping (`docs/baseline/transcript.md`).
+    pub version: Option<u64>,
     pub transcripts: usize,
     pub same: usize,
     pub differed: usize,
@@ -86,8 +89,10 @@ impl Tally {
 
     /// Counts only.
     pub fn text(&self) -> String {
+        let version = self.version.map_or("none".to_owned(), |v| v.to_string());
         let mut out = format!(
-            "fixtures: {}\ntranscripts: {}\nsame: {}\ndiffered: {}\nrefused: {}\n",
+            "fixtures: {}\ntranscripts: {}\ntranscript version: {version}\nsame: {}\n\
+             differed: {}\nrefused: {}\n",
             self.fixtures, self.transcripts, self.same, self.differed, self.refused
         );
         for (reason, count) in &self.reasons {
@@ -407,7 +412,28 @@ pub fn run(asked: &Asked<'_>) -> Result<Tally, String> {
         fixtures: package.fixtures(),
         ..Tally::default()
     };
-    for path in transcripts(asked.transcripts)? {
+    let found = transcripts(asked.transcripts)?;
+    // One version of the format for the whole folder: a pair of two versions is never
+    // compared, so a folder of two is refused before anything is replayed.
+    let mut versions = std::collections::BTreeSet::new();
+    for path in &found {
+        let read_version = read(path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Json>(&bytes).ok())
+            .map(|t| t["transcript_version"].clone());
+        if let Some(version) = read_version {
+            versions.insert(version.to_string());
+        }
+    }
+    if versions.len() > 1 {
+        return Err(
+            "the transcripts are not all of one version of the format, and a pair of two \
+             versions is never compared"
+                .to_owned(),
+        );
+    }
+    tally.version = versions.first().and_then(|v| v.parse().ok());
+    for path in found {
         tally.transcripts += 1;
         let refuse = |tally: &mut Tally, why: String| {
             tally.refused += 1;

@@ -452,7 +452,7 @@ def audit_one(t, package, fixture):
     f = Findings()
     errors = common.schema_errors(t)
     if errors:
-        f.broken("not a version %d transcript: %s" % (common.TRANSCRIPT_VERSION, "; ".join(errors[:5])))
+        f.broken("not a transcript of version 1 or 2: %s" % "; ".join(errors[:5]))
         return f
     # The transcript must agree with itself about being whole.
     marked = any(e["truncated"] or e["sha256"] is None for e in t["files"])
@@ -606,6 +606,15 @@ def main(argv=None):
         if digest != package_digest:
             return refuse("the manifest names another package")
 
+    # One version for the whole folder: a pair of two versions is never compared.
+    versions = set()
+    for name, _d, _r in found:
+        t = common.load_json(os.path.join(root, *(name + ".json").split("/")))
+        versions.add(t.get("transcript_version") if isinstance(t, dict) else None)
+    if len(versions) != 1:
+        return refuse("the transcripts are not all of one version of the format")
+    version = versions.pop()
+
     state = collections.Counter()
     origins = collections.Counter()
     dispositions = collections.Counter()
@@ -673,7 +682,7 @@ def main(argv=None):
             "# The audit of the baseline transcripts: counts only. Written by scripts/baseline/audit.py;",
             "# see transcript.md beside this file. It holds no item names, file names or verdicts.",
             "",
-            "transcript_version = %d" % common.TRANSCRIPT_VERSION,
+            "transcript_version = %d" % version,
             'tools_version = "%s"' % common.TOOLS_VERSION,
             'package_digest = "%s"' % package_digest,
             'transcripts_digest = "%s"' % transcripts_digest,

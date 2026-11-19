@@ -517,7 +517,7 @@ class Example(Base):
             (lambda t: t["images"][0]["source"].pop("pixel_sha256"), "/images/0/source: no pixel_sha256"),
             (lambda t: t["images"][0].update(width=8.0), "/images/0/width: not a whole number"),
             (lambda t: t["preparation"].update(settings=[1]), "/preparation/settings: not an object"),
-            (lambda t: t.update(transcript_version=2), "/transcript_version: not 1"),
+            (lambda t: t.update(transcript_version=3), "/transcript_version: not one of 1, 2"),
             (lambda t: t["volatile"].pop(), "/volatile: not the format's list"),
             (lambda t: t["terminal"].update(kind="done"), "/terminal: not a terminal outcome"),
             (lambda t: t["turns"][0]["request"].update(max_output_tokens="512"), "max_output_tokens: not a whole number"),
@@ -525,6 +525,37 @@ class Example(Base):
             t = common.load_json(EXAMPLE)
             change(t)
             self.assertTrue(any(says in e for e in common.schema_errors(t)), says)
+
+
+class Versions(Base):
+    def test_version_2_is_written_on_request_and_passes_the_audit(self):
+        p = ordinary(self.package)
+        code = self.run_tool(
+            convert.main, ["--package", self.package, "--out", self.out, "--transcript-version", "2"]
+        )
+        self.assertEqual(code, 0, self.printed)
+        t = self.transcript()
+        self.assertEqual(t["transcript_version"], 2)
+        self.assertEqual(common.schema_errors(t), [])
+        self.assertEqual(self.audit(), 0, self.printed)
+
+    def test_a_folder_of_two_versions_is_refused(self):
+        p = ordinary(self.package)
+        item = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(p.decision))))
+        shutil.copytree(item, item + "-2")
+        self.assertEqual(self.run_tool(convert.main, ["--package", self.package, "--out", self.out]), 0)
+        found = []
+        for folder, _d, files in os.walk(os.path.join(self.out, "historical")):
+            found += [os.path.join(folder, n) for n in files]
+        self.assertEqual(len(found), 2)
+        self.assertEqual(self.audit(), 0, self.printed)
+        t = common.load_json(found[0])
+        t["transcript_version"] = 2
+        with open(found[0], "wb") as f:
+            f.write(common.canonical(t))
+        self.relist()
+        self.assertEqual(self.audit(), 1, self.printed)
+        self.assertIn("not all of one version", self.printed)
 
 
 class Attempts(Base):

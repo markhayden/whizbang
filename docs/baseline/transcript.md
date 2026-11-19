@@ -62,7 +62,7 @@ is compared. So `1E2`, `1e2` and `1e+2` are equal. The exponent's digits are kep
 
 | Field | Type | Compared | Holds |
 |---|---|---|---|
-| `transcript_version` | whole number | yes | `1` |
+| `transcript_version` | whole number | yes | `1`, or `2` (below, "Version 2") |
 | `origin` | text | no | `historical` for a decision of the old runs, `recaptured` for one captured again later, `replayed` for what the gate's replay wrote |
 | `complete` | true or false | yes | Whether the record is whole (see "Complete and incomplete") |
 | `incomplete` | list of text | yes | What is missing; empty when `complete` is true |
@@ -278,7 +278,22 @@ two versions is refused.
 
 `audit.py --count-scaled-cuts --transcripts <folder>` prints how many such images the
 transcripts hold, and nothing else. Version 2 is used only on the owner's yes, given that
-number; with a count of 0, version 1 stands. The converter writes version 1.
+number; with a count of 0, version 1 stands.
+
+**The owner said yes on 2026-11-18**, after the count over the 2026-11 package's transcripts
+printed 54. The converter writes version 1 unless asked for 2:
+
+```
+scripts/baseline/convert.py --package <package root> --out <folder> --transcript-version 2
+```
+
+The fields of the two versions are the same; only what is compared differs. The audit takes a
+folder of either version, never of both, and records the version in `audit.toml`.
+`whizbang eval baseline` replays in the version the recorded transcripts hold, prints it as
+`transcript version: <n>`, and refuses a folder of both before anything is replayed. The
+receipt does not change. `fixtures/baseline/scaled/` holds one synthetic decision whose crop
+is cut 1,100 pixels long and scaled down: under version 1 it differs at its prepared bytes,
+under version 2 it is the same.
 
 ## Complete and incomplete
 

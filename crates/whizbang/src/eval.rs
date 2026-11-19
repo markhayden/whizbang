@@ -87,7 +87,8 @@ pub enum Command {
         #[arg(long, value_name = "DIR", default_value = "evalsets")]
         sets: PathBuf,
         /// A folder of the sets' pictures, laid out as their repository is
-        /// (`<folder>/<set id>/<path>`), where a picture is not beside its job.
+        /// (`<folder>/<set id>/<path>`). Needed when the package does not hold the pictures and
+        /// they are not beside the jobs: a decision whose picture is found nowhere is refused.
         #[arg(long, value_name = "DIR")]
         pictures: Option<PathBuf>,
     },

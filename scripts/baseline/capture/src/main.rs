@@ -33,7 +33,9 @@ use squint_providers::prepare::{PREP_VERSION, Preparer};
 use squint_testkit::ScriptedProvider;
 
 const MODEL: &str = "claude-haiku-5-5";
+/// The set of the three ordinary decisions, and of the one whose crop is scaled down.
 const SET: &str = "source-fidelity/synthetic-v1";
+const SCALED_SET: &str = "source-fidelity/scaled-v1";
 
 const CONFIG: &str = r#"
 [provider]
@@ -134,12 +136,19 @@ fn png(img: &RgbImage) -> Vec<u8> {
 }
 
 /// Writes one item of the set: its candidate, its family's source and its job.
-fn item(set: &Path, name: &str, candidate: &RgbImage, source_path: &str, source: &[u8]) -> PathBuf {
+fn item(
+    set: &Path,
+    set_id: &str,
+    name: &str,
+    candidate: &RgbImage,
+    source_path: &str,
+    source: &[u8],
+) -> PathBuf {
     let candidate = png(candidate);
     let candidate_path = format!("items/{name}/candidate.png");
     write(&set.join(&candidate_path), &candidate);
     let job = format!(
-        r#"# Item of {SET}; made by scripts/baseline/capture.
+        r#"# Item of {set_id}; made by scripts/baseline/capture.
 [job]
 use_case = "source-fidelity"
 brief = "Restyle the scene; keep the structure and every named subject."
@@ -208,29 +217,48 @@ fn held(item: &str) -> Value {
            "evidence": []})
 }
 
+/// A strip of 1,100 by 40 pixels: a crop of all of it is longer than 1,024 and is scaled
+/// down, the case transcript format 2 was made for.
+fn strip(salt: u32) -> RgbImage {
+    RgbImage::from_fn(1100, 40, |x, y| {
+        let n = noise(x / 3, y / 3, salt);
+        Rgb([n, n / 2 + 40, 200 - n / 2])
+    })
+}
+
 fn main() {
     let out = PathBuf::from(std::env::args().nth(1).expect("the package folder"));
+    // `scaled`: the one decision whose crop is scaled down; otherwise the three ordinary ones.
+    let scaled = std::env::args().nth(2).as_deref() == Some("scaled");
+    let set_id = if scaled { SCALED_SET } else { SET };
     let catalog = Catalog::shipped().expect("the catalogue");
     let images = catalog.model(MODEL).expect("the model").images.clone();
     let config = Config::parse(CONFIG, &[], &|_| None).expect("the config");
-    let set = out.join("evalsets").join(SET);
+    let set = out.join("evalsets").join(set_id);
 
-    let source = scene((0, 0), Rgb([20, 90, 40]));
-    let source_png = png(&source);
-    let source_path = "families/door/source.png";
-    write(&set.join(source_path), &source_png);
-    let kept = scene((2, 1), Rgb([20, 90, 40]));
-    let mut moved = scene((2, 1), Rgb([20, 90, 40]));
-    for y in 30..58 {
-        for x in 10..26 {
-            moved.put_pixel(x, y, Rgb([20, 90, 40]));
+    let items = if scaled {
+        let source_png = png(&strip(3));
+        let source_path = "families/strip/source.png";
+        write(&set.join(source_path), &source_png);
+        vec![("wide", item(&set, set_id, "wide", &strip(4), source_path, &source_png))]
+    } else {
+        let source = scene((0, 0), Rgb([20, 90, 40]));
+        let source_png = png(&source);
+        let source_path = "families/door/source.png";
+        write(&set.join(source_path), &source_png);
+        let kept = scene((2, 1), Rgb([20, 90, 40]));
+        let mut moved = scene((2, 1), Rgb([20, 90, 40]));
+        for y in 30..58 {
+            for x in 10..26 {
+                moved.put_pixel(x, y, Rgb([20, 90, 40]));
+            }
         }
-    }
-    let items = [
-        ("kept", item(&set, "kept", &kept, source_path, &source_png)),
-        ("moved", item(&set, "moved", &moved, source_path, &source_png)),
-        ("cut-short", item(&set, "cut-short", &kept, source_path, &source_png)),
-    ];
+        vec![
+            ("kept", item(&set, set_id, "kept", &kept, source_path, &source_png)),
+            ("moved", item(&set, set_id, "moved", &moved, source_path, &source_png)),
+            ("cut-short", item(&set, set_id, "cut-short", &kept, source_path, &source_png)),
+        ]
+    };
 
     for (name, job_path) in items {
         let job = Job::load(&job_path).expect("the job");
@@ -251,6 +279,13 @@ fn main() {
             .map(|i| i.id.clone())
             .collect();
         let script: Vec<Value> = match name {
+            "wide" => vec![
+                calls(
+                    "The whole strip.",
+                    &[tool_use("toolu_w1", "view", json!({"frame": "raw:candidate", "bbox": [0.0, 0.0, 1.0, 1.0]}))],
+                ),
+                submit("toolu_w2", &checklist, &held, "pass"),
+            ],
             "kept" => vec![
                 calls(
                     "I will look closer and register the pair.",
@@ -356,7 +391,7 @@ fn main() {
             .expect("the decision");
         let named = outcome.dir.file_name().expect("a name").to_string_lossy().to_string();
         let result = json!({
-            "set": SET,
+            "set": set_id,
             "item": name,
             "cell": format!("synthetic/{MODEL}/C"),
             "repetition": 1,
