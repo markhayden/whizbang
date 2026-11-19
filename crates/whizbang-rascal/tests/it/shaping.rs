@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use whizbang_core::artifact::{self, Artifact, ArtifactId, ArtifactType, Image, Location, Mask};
-use whizbang_core::capability::Filler;
+use whizbang_core::capability::{Filler, Segmenter};
 use whizbang_core::contract::{Call, Capabilities, Engine, Executor, Outcome, Registry};
 use whizbang_core::identity::{CanonicalPixels, DecodeLimits, Digest};
 use whizbang_core::store::Store;
@@ -26,6 +26,16 @@ impl Shop {
     /// A store, and an executor over every action the shipped recipes call and the
     /// recipes, filled by `filler` when one is given.
     pub fn new(label: &str, filler: Option<Arc<dyn Filler>>) -> Shop {
+        Shop::finding(label, filler, None)
+    }
+
+    /// The same, with this segmenter for `segment` (plan m3, task B1: `remove_prompt`'s
+    /// record).
+    pub fn finding(
+        label: &str,
+        filler: Option<Arc<dyn Filler>>,
+        segmenter: Option<Arc<dyn Segmenter>>,
+    ) -> Shop {
         let dir = Scratch::new(label);
         let store = Arc::new(Store::open(&dir.path().join("store"), Arc::new(RealFs)).unwrap());
         let mut registry = Registry::new();
@@ -60,11 +70,14 @@ impl Shop {
         for recipe in recipes::shipped(&registry).unwrap() {
             registry.register(Arc::new(recipe)).unwrap();
         }
-        let capabilities = match &filler {
+        let mut capabilities = match &filler {
             Some(filler) => Capabilities::none().with_fill(filler.clone()),
             None => Capabilities::none(),
         };
-        let backends = roster(None, filler.as_deref(), None);
+        if let Some(segmenter) = &segmenter {
+            capabilities = capabilities.with_segment(segmenter.clone());
+        }
+        let backends = roster(segmenter.as_deref(), filler.as_deref(), None);
         let engine = Engine::over(
             registry,
             Arc::new(backends),
