@@ -2394,8 +2394,13 @@ the place after the lease and a fake segmenter behind it.
   (`models::an_adapter_replaced_while_a_call_is_admitted_leaves_that_call_on_the_earlier_copy`).
   After `get` and `remove`, under the directory's lock, each copy that neither the
   registry nor any installation's record names is removed; nothing is removed when a
-  record cannot be read or a layout is a link (plan 2C, task F1;
-  `models::removing_a_model_removes_adapter_copies_nothing_names`).
+  record cannot be read or a layout is a link, and names that are no model or no
+  identity (`.DS_Store`) are passed over (plan 2C, task F1;
+  `models::removing_a_model_removes_adapter_copies_nothing_names`). An install reads
+  its adapter's revision before any lock, so its publication, under the directory's
+  lock, refuses a record whose user's copy is gone: "the adapter was replaced while
+  installing", and nothing is pointed to
+  (`models::an_install_whose_adapter_copy_was_removed_while_it_staged_publishes_nothing`).
   No copy is ever removed: a removal of the copies no installation names is on the
   carry-over list.
 

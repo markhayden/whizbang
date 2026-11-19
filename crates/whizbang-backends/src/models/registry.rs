@@ -332,11 +332,18 @@ pub fn remove_unnamed_adapters(dir: &ModelsDir, secrets: &Secrets) -> io::Result
         Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
         Err(error) => return Err(error),
     };
+    let is_identity = |name: &str| {
+        name.len() == 64 && name.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    };
     for path in models {
         let name = path
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("");
+        // A name the system or a user left (`.DS_Store`) is no model: passed over.
+        if name.starts_with('.') {
+            continue;
+        }
         let Ok(model) = ModelName::new(name, secrets) else {
             return Ok(0);
         };
@@ -349,6 +356,15 @@ pub fn remove_unnamed_adapters(dir: &ModelsDir, secrets: &Secrets) -> io::Result
             Err(error) => return Err(error),
         };
         for installation in folders {
+            // Only a folder named by an identity is an installation; anything else
+            // under `installations/` names no adapter.
+            let name = installation
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            if !is_identity(name) {
+                continue;
+            }
             let record = installation.join("RECORD");
             let Read::Bytes(bytes) = dir.read(&record, INSTALLATION_MAX_BYTES)? else {
                 return Ok(0);
@@ -370,9 +386,11 @@ pub fn remove_unnamed_adapters(dir: &ModelsDir, secrets: &Secrets) -> io::Result
         let Some(hex) = name.strip_suffix(".py") else {
             continue;
         };
-        let is_hash =
-            hex.len() == 64 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
-        if is_hash && !named.iter().any(|kept| kept == hex) {
+        if is_identity(hex) && !named.iter().any(|kept| kept == hex) {
+            // Looked at again right before each removal, under the lock.
+            if fs.is_link(&folder)? {
+                return Ok(removed);
+            }
             dir.remove(&path)?;
             removed += 1;
         }

@@ -26,6 +26,7 @@ use whizbang_core::store::fs::{Fs, PIECE_MAX_BYTES};
 use super::checked;
 use super::directory::{Read, refuse_links};
 use super::installation::INSTALLATION_MAX_BYTES;
+use super::registry::is_users;
 use super::remove::stops;
 use super::shared::lock_files;
 use super::stage::{FileRefused, StageRefused, lock_model, stage_locked};
@@ -72,6 +73,11 @@ pub enum InstallRefused {
     /// For a request that attached: it was cancelled while it waited, and waits no
     /// longer. The install goes on.
     Left,
+    /// The record names a user's adapter whose copy was removed while the install ran:
+    /// the registry was changed by `adapter add`, and a removal of copies nothing
+    /// named ran before this record was in place (plan 2C, task F1). Nothing was
+    /// pointed to.
+    AdapterReplaced,
 }
 
 impl std::fmt::Display for InstallRefused {
@@ -95,6 +101,10 @@ impl std::fmt::Display for InstallRefused {
             InstallRefused::Draining => {
                 f.write_str("the model is being removed, and nothing of it is published")
             }
+            InstallRefused::AdapterReplaced => f.write_str(
+                "the adapter was replaced while installing, and nothing was published; run \
+                 `get` again",
+            ),
             InstallRefused::DirectoryBusy => {
                 f.write_str("the models directory is locked by another, which did not let it go")
             }
@@ -582,7 +592,7 @@ impl<'a> Model<'a> {
                 }
                 if self.delete(OsStr::new(&id.hex()))? == Deleted::Held {
                     if named {
-                        self.point_to(id, false)?;
+                        self.point_to(id, false, None)?;
                     }
                     return Err(InstallRefused::Held);
                 }
@@ -599,7 +609,8 @@ impl<'a> Model<'a> {
         // installation already: an earlier publication may have been refused the
         // sync that makes it durable, and no install is reported done on the word
         // of a name that is not.
-        self.point_to(id, true)
+        let user = is_users(record.adapter()).then(|| record.adapter_revision());
+        self.point_to(id, true, user)
     }
 
     /// Whether removal's mark is set and its remover alive: the one question of a
@@ -636,13 +647,30 @@ impl<'a> Model<'a> {
     /// and replaces the pointer. Nothing else is done under that lock. A pointer
     /// that a repair cleared is put back whatever the mark says (`new` is false), so
     /// that nobody finds the model with neither a pointer nor a reason.
-    fn point_to(&self, id: InstallationId, new: bool) -> Result<(), InstallRefused> {
+    fn point_to(
+        &self,
+        id: InstallationId,
+        new: bool,
+        user: Option<&Revision>,
+    ) -> Result<(), InstallRefused> {
         let fs = self.fs();
         let hold = self.holds().join(id.hex());
         let beside = self.folder.join("CURRENT.new");
         let _directory = self.dir.lock()?.ok_or(InstallRefused::DirectoryBusy)?;
         if new && self.draining()? {
             return Err(InstallRefused::Draining);
+        }
+        // Under the directory's lock, which the removal of unnamed copies takes too:
+        // the record is in place now, so no later removal takes its copy; one that
+        // ran before it was may have (plan 2C, task F1).
+        if let Some(revision) = user {
+            let copy = self
+                .dir
+                .adapters()
+                .join(format!("{}.py", revision.as_str()));
+            if !fs.exists(&copy)? || fs.is_link(&copy)? {
+                return Err(InstallRefused::AdapterReplaced);
+            }
         }
         match fs.write_new(&hold, b"") {
             Err(error) if error.kind() != io::ErrorKind::AlreadyExists => return Err(error.into()),

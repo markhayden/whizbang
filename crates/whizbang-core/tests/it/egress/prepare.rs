@@ -240,6 +240,27 @@ fn a_store_under_a_folder_written_in_another_unicode_case_is_kept_out() {
             );
         }
     }
+    // A sigma lowers alike wherever it stands: the folder `/x/ΑΣ` is found in
+    // `/x/ΑΣB/…`, where `str`'s lowering makes the folder's last letter a final sigma
+    // and the text's not.
+    let sigma = || {
+        SendCheck::new()
+            .keeping_out(std::path::Path::new("/x/ΑΣ"))
+            .unwrap()
+    };
+    for written in ["see /x/ΑΣB/runs", "see /x/ας/runs", "see /x/ασ"] {
+        let sender = Arc::new(FakeSender::scripted(vec![ok()]));
+        let words = vec![Piece::of(DataClass::Prompts, written.as_bytes().to_vec())];
+        let ran = run_one(posting(words), ways(&sender, sigma()), Secrets::none());
+        if cfg!(target_os = "macos") {
+            let fault = ran.fault.clone().unwrap();
+            assert_eq!(
+                (fault.sentence(), sender.requests()),
+                (KEPT_OUT, 0),
+                "{written}"
+            );
+        }
+    }
     // Another folder whose letters differ beyond case is sent, here and on macOS.
     let sender = Arc::new(FakeSender::scripted(vec![ok()]));
     let words = vec![Piece::of(

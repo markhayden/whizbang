@@ -16,7 +16,7 @@ use whizbang::pack as kind;
 use whizbang::wiring::{self, Models};
 use whizbang_backends::models::{
     Catalogue, CatalogueFile, Entry, EntryParts, FileName, Installations, Licence, ModelName,
-    ModelsDir, Platform, Revision, Title,
+    ModelsDir, Platform, Revision, Title, remove_unnamed_adapters,
 };
 use whizbang_core::capability::{FaultKind, Installation, Installed, Inventory, Unready};
 use whizbang_core::config::DOWNLOAD_LEAST_KIB_PER_SECOND;
@@ -2246,6 +2246,15 @@ fn removing_a_model_removes_adapter_copies_nothing_names() {
     };
     // The installation names the first copy, the registry the second: both stay.
     assert!(copy(USERS_ADAPTER).is_file() && copy(&changed).is_file());
+    // What the system or a user leaves beside the models and installations is passed
+    // over: it does not stop the removal of a copy nothing names.
+    let models = local.models_dir().join("models");
+    std::fs::write(models.join(".DS_Store"), b"").unwrap();
+    std::fs::write(
+        models.join("mine").join("installations").join(".DS_Store"),
+        b"",
+    )
+    .unwrap();
     let tools = Tools::of(
         local.models(),
         Hand::new(),
@@ -2259,6 +2268,52 @@ fn removing_a_model_removes_adapter_copies_nothing_names() {
     assert!(removed.starts_with("removed mine: "), "{removed}");
     assert!(!copy(USERS_ADAPTER).exists(), "named by nothing now");
     assert!(copy(&changed).is_file(), "the registry names it");
+}
+
+#[test]
+fn an_install_whose_adapter_copy_was_removed_while_it_staged_publishes_nothing() {
+    // The review of #196: `get` reads the adapter's revision before any lock and
+    // publishes its record at the end. Meanwhile `adapter add` replaces the copy in the
+    // registry and a removal of copies nothing names takes the first: the install is
+    // refused at publication, under the directory's lock, and points to nothing.
+    let local = Local::new("models-users-raced");
+    let file = local.models_dir().with_file_name("mine.py");
+    add_under(local.models(), &file, USERS_ADAPTER, "mine");
+    let (mine, _) = users_entry("mine", "user-mine");
+    write_users_catalogue(&local.models_dir(), &[mine]);
+    std::fs::write(local.config_path(), users_config("mine")).unwrap();
+    let config = local.config_path();
+    let content = b"made-up weights of mine".to_vec();
+    let barriers = Barriers::new();
+    let fake = Arc::new(FakeDownloader::new().stopping_after(
+        &at("mine/weights.bin"),
+        content,
+        4,
+        barriers.clone(),
+        "staging",
+    ));
+    let got = threads::scope(|scope| {
+        let installs = scope.spawn(|| get_under(local.models(), Some(&config), &fake, "mine"));
+        barriers.arrived("staging", 1);
+        add_under(local.models(), &file, &users_adapter_changed(), "mine");
+        let dir = ModelsDir::at(Arc::new(RealFs), &local.models_dir());
+        assert_eq!(remove_unnamed_adapters(&dir, &none()).unwrap(), 1);
+        barriers.open("staging");
+        installs.join().unwrap()
+    });
+    let refused = got.unwrap_err();
+    assert!(
+        refused.ends_with(
+            "the adapter was replaced while installing, and nothing was published; run `get` again"
+        ),
+        "{refused}"
+    );
+    let tools = Tools::of(
+        local.models(),
+        Hand::new(),
+        downloads(&Arc::default(), &Arc::default()),
+    );
+    assert_eq!(state_of(&list(&tools), "mine"), "not installed");
 }
 
 #[test]
