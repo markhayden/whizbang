@@ -1,6 +1,7 @@
 //! `whizbang store import`: a developer's command that brings a canonical artifact file
 //! (ADR 0002) into a store, so that a fixture can be an action's input; and, with
-//! `--picture`, a PNG or JPEG picture, committed as an image.
+//! `--picture`, a PNG or JPEG picture, committed as an image; with `--mask` and
+//! `--onto`, a grey picture of an image, committed as a mask on it (plan m3, task F1).
 //!
 //! # A picture
 //!
@@ -64,7 +65,27 @@
 //!   the one before, at the limit of 50,000,000 pixels, has a file of hundreds of
 //!   megabytes. No mask drawn from a shape is like that.
 //!
-//! `docs/carry-over.md` holds both, with the bound on masks.
+//! Both are kept, and the limit with them (plan m3, task F1, item 7, decided with the
+//! row on what a mask costs in memory): the largest file a store's own actions write is
+//! an image's, which the limit holds whole, and a file over it is refused unread,
+//! before a byte of its record or its planes is decoded. A mask whose file the limit
+//! refuses can still travel as a grey picture (`--mask`), whose pixels are bounded by
+//! its image's.
+//!
+//! # A mask drawn on a picture
+//!
+//! With `--mask` and `--onto`, a PNG or JPEG a person drew or edited, of the image
+//! `--onto` names, is brought in as a mask on that image: read as a picture is, then
+//! decoded by the core's `identify` within the core's limits with the pixels lowered to
+//! the image's own count, so a file whose header claims more is refused before its
+//! pixels are decoded; it must then be the image's size exactly, upright. Nothing the
+//! file holds but its pixels is kept (no text, EXIF, profile or name). Each pixel is
+//! grey and opaque, as `store export --mask` writes it: 255 is the mask's core, 1 to 254
+//! its blend, 0 nothing; a pixel of colour or of any transparency is refused, naming
+//! where. Nothing is protected: a protect plane, a band's profile and prescriptions
+//! travel only in the canonical file. The mask is bound to the image `--onto` names
+//! (its binding is the image's own); its use is custom; its origin is one step,
+//! `import-mask`, whose inputs are the image and the digest of the file given.
 //!
 //! # What `--create` makes
 //!
@@ -84,7 +105,9 @@ use std::path::Path;
 use crate::wiring::{self, Make};
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use image::{ExtendedColorType, ImageEncoder};
-use whizbang_core::artifact::{self, Artifact, ArtifactId, Image, ImageRole, Origin, Step};
+use whizbang_core::artifact::{
+    self, Artifact, ArtifactId, Image, ImageRole, Mask, Origin, Source, Step, UseCase,
+};
 use whizbang_core::contract::Recovery;
 use whizbang_core::identity::{
     CanonicalPixels, DecodeLimits, Digest, Projection, Topology, identify,
@@ -93,6 +116,9 @@ use whizbang_core::store::Error;
 
 /// The step a picture's origin names.
 const PICTURE_STEP: &str = "import-picture";
+
+/// The step the origin of a mask drawn on a picture names.
+const MASK_STEP: &str = "import-mask";
 
 /// The names that say where an imported picture came from: this, then the hex of the
 /// SHA-256 of the file it was brought in from. Each holds the image's identity.
@@ -361,6 +387,109 @@ pub fn says_equirectangular(bytes: &[u8]) -> bool {
         from = start;
     }
     false
+}
+
+/// Reads a grey PNG or JPEG of the image `onto` and commits it as a mask on that image;
+/// the module's description says how. A file that is refused creates nothing, and the
+/// store must be there.
+pub fn import_mask(
+    file: &Path,
+    onto: &str,
+    root: &Path,
+    recovery: Recovery,
+) -> Result<String, String> {
+    let shown = file.display();
+    let Ok(onto) = onto.parse::<Digest>() else {
+        return Err(
+            "--onto is no artifact identity: an identity is sha256: and 64 \
+             lower-case hex digits, as `whizbang store import` prints it"
+                .to_owned(),
+        );
+    };
+    let image = {
+        use whizbang_core::store::{Reader, fs::RealFs};
+        let reader = Reader::open(root, std::sync::Arc::new(RealFs)).map_err(|e| e.to_string())?;
+        let read = artifact::get(
+            &reader,
+            artifact::ArtifactType::Image,
+            ArtifactId(onto),
+            &DecodeLimits::default(),
+        );
+        match read.map_err(|e| e.to_string())? {
+            Artifact::Image(image) => image,
+            _ => return Err("the store holds no image of that identity".to_owned()),
+        }
+    };
+    let space = image.binding().source_space();
+    let (width, height) = (space.width(), space.height());
+    // Read as a picture is: the file its path names, through no link, without waiting.
+    let bytes = read_picture(file)?;
+    // The core's limits, with the pixels lowered to the image's: a file that claims more
+    // is refused by its header, before its pixels are decoded.
+    let limits = DecodeLimits {
+        max_pixels: u64::from(width) * u64::from(height),
+        ..DecodeLimits::default()
+    };
+    let identified = identify(&bytes, &limits).map_err(|error| format!("{shown}: {error}"))?;
+    let file_digest = Digest::of_bytes(&bytes);
+    drop(bytes);
+    let mask = mask_of(
+        &identified.pixels,
+        (width, height),
+        &image,
+        onto,
+        file_digest,
+    )
+    .map_err(|why| format!("{shown}: {why}"))?;
+    commit(&Artifact::from(mask), root, false, recovery, None)
+}
+
+/// The mask these grey pixels draw on `image`, whose size they must be.
+fn mask_of(
+    pixels: &CanonicalPixels,
+    (width, height): (u32, u32),
+    image: &Image,
+    onto: Digest,
+    file: Digest,
+) -> Result<Mask, String> {
+    if (pixels.width(), pixels.height()) != (width, height) {
+        return Err(format!(
+            "the file is {} by {}, and the image is {width} by {height}: a mask is its \
+             image's size exactly",
+            pixels.width(),
+            pixels.height()
+        ));
+    }
+    let mut core = Vec::with_capacity(pixels.rgba().len() / 4);
+    let mut blend = Vec::with_capacity(core.capacity());
+    let (each, _) = pixels.rgba().as_chunks::<4>();
+    for (at, &[r, g, b, a]) in each.iter().enumerate() {
+        if r != g || g != b || a != 255 {
+            let (x, y) = (at % width as usize, at / width as usize);
+            return Err(format!(
+                "the pixel at {x}, {y} is not grey and opaque: a mask's file is grey, 255 \
+                 its core, 1 to 254 its blend, 0 nothing"
+            ));
+        }
+        core.push(if r == 255 { 255 } else { 0 });
+        blend.push(if r == 255 { 0 } else { r });
+    }
+    let origin = Origin::new(
+        Step::new(MASK_STEP, "1")
+            .input("image", onto)
+            .input("file", file),
+    )
+    .map_err(|e| e.to_string())?;
+    let mut mask = Mask::from_core(
+        image.binding(),
+        UseCase::Custom,
+        core,
+        Source::default(),
+        origin,
+    )
+    .map_err(|e| e.to_string())?;
+    mask.set_blend(blend).map_err(|e| e.to_string())?;
+    Ok(mask)
 }
 
 /// Brings in the picture of a job's image (plan 2C, task A1, item 4), as `--picture`
@@ -665,6 +794,32 @@ mod tests {
             complaint.contains("changed while it was opened") || complaint.contains("is a FIFO"),
             "{complaint}"
         );
+    }
+
+    #[test]
+    fn a_fifo_at_the_path_is_refused_and_nothing_waits() {
+        // After the look at the path, a regular file, and before the open, the path is
+        // made a FIFO that nobody writes to (plan m3, task F1, item 7). The open does not
+        // wait for a writer, and the look at what was opened refuses it. An open that
+        // waited would hang here until the test's limit.
+        use whizbang_testkit::scratch::Scratch;
+        let dir = Scratch::new("import-fifo");
+        let path = dir.path().join("given");
+        std::fs::write(&path, b"a small file").unwrap();
+        let made = std::cell::Cell::new(false);
+        let to_fifo = || {
+            std::fs::remove_file(&path).unwrap();
+            // A bounded child: `status` waits for it to end.
+            let status = std::process::Command::new("mkfifo").arg(&path).status();
+            made.set(status.is_ok_and(|status| status.success()));
+        };
+        let complaint = read_swapped(&path, &to_fifo);
+        if !made.get() {
+            eprintln!("skip: no FIFO could be made here (mkfifo)");
+            return;
+        }
+        let complaint = complaint.unwrap_err();
+        assert!(complaint.contains("is a FIFO"), "{complaint}");
     }
 
     #[test]

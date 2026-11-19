@@ -355,7 +355,7 @@ store as a file and comes into another with the same identity.
    conformance test reads, committed by the builder. Until it comes, the conformance reads a
    fixture written from fal's published schema, and the evidence clause stays open.
 
-- [ ] Done when:
+- [x] Done when:
   `fal::conformance::a_request_is_written_as_fals_reference_describes_it`,
   `fal::conformance::the_recorded_exchange_is_read_back_to_its_pixels`,
   `fal::a_reply_holding_a_url_is_a_fault_and_nothing_is_fetched`,
@@ -406,6 +406,47 @@ while the `remove-prompt` block waits for R1 and the recorded exchange in place 
 schema's fixture waits for a way to keep a raw exchange, which the binary has none of
 (carry-over rows on each). The filler takes no prompt (Bria Eraser
 has none), so `fill` has no argument `prompt`.
+
+**Status (F1's second pull request, 2026-11-19).** Shown by their named tests: item 6,
+`cli::rascal_remove_prompt_until_feather_hands_back_the_mask` and
+`cli::rascal_remove_prompt_fills_under_a_scripted_filler` (the recipe ends in `fill`, its
+filler chosen by the optional input `filler`; `until` names a step before the last, and a
+need only the last step has is needed only without it, so `--until feather` asks no filler:
+ADR 0033, amended); item 7, `export::a_mask_exported_imports_into_another_store_with_the_same_identity`,
+`import::tests::a_fifo_at_the_path_is_refused_and_nothing_waits` (the unit tests of
+`crates/whizbang/src/import.rs`, which hold the moment between the look and the open),
+`import::a_file_over_the_limit_its_contents_allow_is_refused`,
+`export::a_request_id_of_a_dot_or_two_names_no_file_by_it`; item 8, the `remove-prompt` block of `docs/results/m3-fills.md`, held by
+`evidence::the_fills_record_names_a_commit_of_this_tree_and_holds_no_secret`. From the
+review of the first pull request: a stored artifact handed back is taken as it is only
+when the call gave it or a run it called made it, any other being held to the origin of
+the file the store keeps (`outputs::a_stored_artifact_neither_given_nor_made_by_a_call_it_made_is_held_to_its_origin`,
+ADR 0008); a redirect from fal to another origin sends nothing there
+(`fal::a_redirect_to_another_origin_sends_nothing_there`); ADR 0010 states the assumption
+that fal bills nothing for a request it refused, with the price's date. The examples of
+the spec, the guide and ADR 0011 name `bria-eraser`, and ADR 0011's recorded digest of the
+spec's example changed with it, as it says.
+
+**Reworded with the task** (F1's second pull request, 2026-11-19). Item 7 said "the
+actions `export` and `import` write and read an artifact's canonical file": they are the
+commands `whizbang store export` and `whizbang store import`, not actions. An action has
+no store root to hold an export out of, and a file named by a client of `serve` and
+written or read from inside a run is a door of its own, with its own review; the plan's
+safety for an export (only the file named, no link, not inside the store, no folder made)
+is the command's. `store export <ID> --to <FILE>` writes any artifact's canonical file;
+`store export --mask <ID> --out <FILE>` a grey PNG of a mask that a person can edit, which
+`store import --mask <FILE> --onto <IMAGE>` brings back as a mask on that image. Item 8
+said "The exchange of the first, its picture synthetic and its key absent, is the
+recorded exchange the conformance test reads": the binary keeps no raw exchange, by
+design (a reply holds the picture, and no path of the build writes a reply's bytes), so
+the conformance keeps reading the fixture written from fal's published schema
+(`crates/whizbang-backends/tests/fixtures/fal-bria-eraser/`), and the live calls'
+records, which name the model's version and the outcome, show the wire against fal
+itself; recording an exchange would need a recorder the build does not have, for one
+fixture. And the clause "`gate::a_store_under_a_folder_in_another_normal_form_is_kept_out`"
+is moved out of F1 with its carry-over row: the folding it needs takes two new crates
+(`unicode-normalization` and `tinyvec`), which wait on the owner's yes; the code and the
+test are on the branch `m3-normal-form`, unmerged.
 
 ### Origins (F)
 
