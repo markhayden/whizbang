@@ -579,6 +579,21 @@ tool calls and verdicts for every recorded decision.
 the replay's tests on the three synthetic decisions of item 3 (pictures of at most 128
 pixels), never the package; no live call.
 
+**What E2's pull request built, and what moved (E2).** Built: item 1 (`whizbang_eval::metrics`,
+`bootstrap`, `wilson`, with squint's resampling reproduced and held to squint's own numbers);
+of item 2, the gate file and how a gate is decided (`whizbang_eval::gate`); item 6 (format 2
+in the comparison, `COMPARISON_VERSION` 4, and `scripts/baseline/audit.py --count-scaled-cuts
+--transcripts <folder>`, the owner's command for the fourth item under "What the owner must
+answer", which prints one number). Moved to F1, item 1, each with a carry-over row: the rest
+of item 2 (`eval run`, the gate's digest in its runs, scoring from a labels path), and items
+3, 4, 5 and 7 (the replay and `eval baseline`), which did not fit beside the rest; items 8 and
+9 with them. The box stays open: of its clauses, `metrics::balanced_accuracy_counts_unsure_and_errors_as_neither`,
+`bootstrap::paired_differences_resample_by_family_with_a_fixed_seed`,
+`metrics::the_ported_vectors_of_squint_give_squints_numbers`,
+`gate::a_gate_file_missing_an_item_of_the_spec_is_refused`,
+`gate::too_little_data_is_inconclusive_never_a_pass` and
+`baseline::format_2_compares_a_scaled_tool_images_size_and_mapping_and_not_its_bytes` pass.
+
 ### What the owner provides (E)
 
 The answers to the third, fourth and fifth items under "What the owner must answer"; for
