@@ -45,6 +45,30 @@ pub enum Command {
         #[command(flatten)]
         under: Under,
     },
+    /// The baseline gate: each recorded decision of a baseline package replayed with a judge
+    /// that answers its recorded turns, squint's loop on whizbang's tools and preparation,
+    /// and compared with its recorded transcript. Writes the receipt and prints counts only.
+    Baseline {
+        /// The baseline package's root.
+        #[arg(long, value_name = "DIR")]
+        package: PathBuf,
+        /// The recorded transcripts, as scripts/baseline/convert.py wrote them.
+        #[arg(long, value_name = "DIR")]
+        transcripts: PathBuf,
+        /// Where the receipt is written.
+        #[arg(long, value_name = "FILE")]
+        receipt: PathBuf,
+        /// The full whizbang commit replayed, as `git rev-parse HEAD` prints it.
+        #[arg(long, value_name = "SHA")]
+        commit: String,
+        /// The folder of the evaluation sets the jobs are read from.
+        #[arg(long, value_name = "DIR", default_value = "evalsets")]
+        sets: PathBuf,
+        /// A folder of the sets' pictures, laid out as their repository is
+        /// (`<folder>/<set id>/<path>`), where a picture is not beside its job.
+        #[arg(long, value_name = "DIR")]
+        pictures: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -127,6 +151,24 @@ pub fn run(command: &Command) -> Result<String, String> {
             at,
             under,
         } => run_matrix(matrix, root, at, under, recovery),
+        Command::Baseline {
+            package,
+            transcripts,
+            receipt,
+            commit,
+            sets,
+            pictures,
+        } => {
+            let asked = whizbang::baseline::Asked {
+                package,
+                transcripts,
+                receipt,
+                sets,
+                pictures: pictures.as_deref(),
+                commit,
+            };
+            whizbang::baseline::run(&asked).map(|tally| tally.text())
+        }
     }
 }
 

@@ -110,7 +110,8 @@ new digest.
 
 ## The gate receipt
 
-Milestone 2 writes one receipt when it replays the fixtures. It holds exactly:
+Milestone 2 writes one receipt when it replays the fixtures, with `whizbang eval baseline`
+(`transcript.md`, "The replay"). It holds exactly:
 
 | Field | Meaning |
 |---|---|

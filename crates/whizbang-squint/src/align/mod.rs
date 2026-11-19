@@ -32,7 +32,7 @@ pub use flat::{FlatAlignment, align_flat};
 pub use linalg::{Mat3, apply, invert, matmul};
 pub use tool::{
     ACTION_VERSION, Align, AlignError, Aligned, Frame, MAX_SIDE, Measurement, NAME, REPORT,
-    Transform, VERSION, align, aligned_frame, report, summary,
+    Transform, VERSION, align, aligned_frame, measure, report, summary, warped,
 };
 
 /// What an estimate concluded.

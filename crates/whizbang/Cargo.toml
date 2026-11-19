@@ -27,8 +27,10 @@ clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 # Writing an imported picture again as a PNG of its pixels alone (`store import
-# --picture`), at the version the core decodes with and `whizbang-squint` encodes with.
-image = { version = "=0.25.10", default-features = false, features = ["png"] }
+# --picture`), at the version the core decodes with and `whizbang-squint` encodes with;
+# and squint's digest of a picture's decoded samples, which the baseline gate recomputes
+# (`eval baseline`), for the PNG and JPEG pictures of the sets, as the core decodes them.
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }
 
 [features]
 # What only a test may build: `OneWorker::starting`, a one worker started from what a

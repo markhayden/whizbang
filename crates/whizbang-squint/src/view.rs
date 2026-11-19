@@ -161,19 +161,7 @@ fn crop(image: &Image, bbox: &[f64; 4], limits: &DecodeLimits) -> Result<Crop, V
         ));
     }
     let pixels = image.pixels(limits)?;
-    let (width, height) = scale::fit(region.width(), region.height(), MAX_SIDE);
-    let rgba = if (width, height) == (region.width(), region.height()) {
-        scale::cut(&pixels, &region)
-    } else {
-        scale::downscale(&pixels, &region, width, height).ok_or_else(|| {
-            ViewError::Failed(format!(
-                "a cut of {}x{} pixels is too large to average",
-                region.width(),
-                region.height()
-            ))
-        })?
-    };
-    let shown = CanonicalPixels::from_rgba(width, height, rgba)?;
+    let shown = shown(&pixels, [left, top, right, bottom])?;
     let origin = Origin::new(
         Step::new(NAME, VERSION)
             .argument("left", &bbox[0].to_string())
@@ -214,6 +202,40 @@ fn crop(image: &Image, bbox: &[f64; 4], limits: &DecodeLimits) -> Result<Crop, V
         image: crop,
         binding,
     })
+}
+
+/// The whole pixels a box of fractions covers on a picture of `width` by `height`, snapped
+/// outward: left, top, one past the right and one past the bottom. The box is fractions
+/// from 0 to 1, left under right and top under bottom.
+pub fn snapped(bbox: &[f64; 4], width: u32, height: u32) -> [u32; 4] {
+    let (left, right) = snap(bbox[0], bbox[2], width);
+    let (top, bottom) = snap(bbox[1], bbox[3], height);
+    [left, top, right, bottom]
+}
+
+/// A cut of whole pixels (left, top, one past the right, one past the bottom) as `view`
+/// shows it: pixel for pixel, or scaled down to [`MAX_SIDE`] on its longer side when it is
+/// longer. The one method `view` has, for the action and for the replay of the baseline.
+pub fn shown(pixels: &CanonicalPixels, cut: [u32; 4]) -> Result<CanonicalPixels, ViewError> {
+    let region = Region {
+        left: cut[0],
+        top: cut[1],
+        right: cut[2],
+        bottom: cut[3],
+    };
+    let (width, height) = scale::fit(region.width(), region.height(), MAX_SIDE);
+    let rgba = if (width, height) == (region.width(), region.height()) {
+        scale::cut(pixels, &region)
+    } else {
+        scale::downscale(pixels, &region, width, height).ok_or_else(|| {
+            ViewError::Failed(format!(
+                "a cut of {}x{} pixels is too large to average",
+                region.width(),
+                region.height()
+            ))
+        })?
+    };
+    Ok(CanonicalPixels::from_rgba(width, height, rgba)?)
 }
 
 /// The whole pixels that the fractions `low` to `high` of a side of `size` pixels cover,

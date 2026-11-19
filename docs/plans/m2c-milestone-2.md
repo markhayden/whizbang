@@ -596,6 +596,32 @@ of item 2 (`eval run`, the gate's digest in its runs, scoring from a labels path
 `gate::too_little_data_is_inconclusive_never_a_pass` and
 `baseline::format_2_compares_a_scaled_tool_images_size_and_mapping_and_not_its_bytes` pass.
 
+**What the second pull request of E2 built (E2b).** Items 3, 4 and 7, and of item 5 the
+replay's transcript writer. Item 3: `scripts/baseline/capture/` (a program run in a scratch
+clone of squint at its tag, with `run.sh`) captured three decisions of arm C on synthetic
+pictures, converted by `convert.py` and committed at `fixtures/baseline/synthetic/`, the
+transcripts and what the replay reads of their package (about 6,700 lines, counted apart).
+Item 4: `view` as squint's judge knew it, in the replay (`whizbang_squint::replay`): the
+judge names a frame and is answered with squint's presentation. Item 7: `whizbang eval
+baseline --package <dir> --transcripts <dir> --receipt <file> --commit <sha>` replays each
+recorded decision with squint's loop on whizbang's prompt, checklist, submission, `view`,
+`align` and preparation, compares it, prints counts only and writes the receipt; the three
+synthetic decisions compare with no difference. **Reworded with the task**: item 7 said the
+replay runs "at the core's judge interface"; it runs squint's loop over a judge that answers
+the recorded turns (`replay::Judge`), because a transcript compares the provider-neutral
+request, which the core's interface does not carry (it carries pictures, not the ids a
+transcript names), and `check`'s own loop is not squint's (it neither renders the checklist
+after a batch nor has squint's final turn). What is not built, each with a carry-over row:
+`check` itself taking squint's loop and `view`'s form; item 5's writer of a stored run of
+`check` (`transcript::a_run_of_check_is_written_as_a_transcript_the_comparison_reads`); the
+owner's run and its receipt (`evidence::the_baseline_receipt_names_the_manifests_digest_and_a_commit_of_this_tree`);
+and item 2's rest with items 8 and 9, as before. Passing now beside the six clauses above:
+`view::a_judges_call_names_a_frame_and_is_answered_with_squints_presentation`,
+`baseline::each_synthetic_decision_replayed_through_the_loop_preparation_and_tools_compares_with_no_difference`,
+`baseline::a_replay_that_differs_at_one_place_fails_and_names_the_place`,
+`baseline::the_receipt_holds_exactly_the_four_fields` and
+`cli::eval_baseline_prints_counts_and_no_item`. The box stays open.
+
 ### What the owner provides (E)
 
 The answers to the third, fourth and fifth items under "What the owner must answer"; for
