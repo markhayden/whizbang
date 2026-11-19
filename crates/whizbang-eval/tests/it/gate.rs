@@ -192,3 +192,53 @@ fn a_gate_over_several_judges_is_admitted_only_when_every_judge_is() {
     let refused = one.score(&[judged("a", 20), judged("b", 20)]).unwrap_err();
     assert!(refused.contains("corrects for 1 hypotheses"), "{refused}");
 }
+
+#[test]
+fn a_rise_in_false_accepts_past_its_guardrail_is_not_admitted() {
+    // Plan m3, task U1: a treatment that turns unsure into catches and into passes of items
+    // that fail. Each of 20 families: three fails the control left unsure, two caught by the
+    // treatment and one passed; two passes passed by both.
+    use Computed::{Fail, Pass, Unsure};
+    use Expected::{Fail as F, Pass as P};
+    let (mut c, mut x) = (Vec::new(), Vec::new());
+    for f in 0..20 {
+        let fam = format!("fam{f:02}");
+        let items = [
+            (F, Unsure, Fail),
+            (F, Unsure, Fail),
+            (F, Unsure, Pass),
+            (P, Pass, Pass),
+            (P, Pass, Pass),
+        ];
+        for (i, (expected, control, treatment)) in items.into_iter().enumerate() {
+            let id = format!("{fam}-{i}");
+            c.push(row(&id, &fam, 1, expected, control));
+            x.push(row(&id, &fam, 1, expected, treatment));
+        }
+    }
+    // A gate that states no false-accept guardrail admits it on its gain.
+    let plain = Gate::parse(FILE).unwrap();
+    assert_eq!(plain.guardrails.false_accept_increase_max, None);
+    let paired = metrics::paired(&c, &x, plain.resampling()).unwrap();
+    assert_eq!(plain.decide(&paired).outcome, Outcome::Admitted);
+    assert_eq!(paired.treatment.false_accepts.count, 20);
+    // One that states it rejects it: a third of the fails passed, against 3 points allowed.
+    let guarded = FILE.replace(
+        "error_rate_max = 0.02",
+        "error_rate_max = 0.02\nfalse_accept_increase_max = 0.03",
+    );
+    let gate = Gate::parse(&guarded).unwrap();
+    let verdict = gate.decide(&metrics::paired(&c, &x, gate.resampling()).unwrap());
+    assert_eq!(verdict.outcome, Outcome::Rejected);
+    assert_eq!(verdict.failed, ["false_accepts"]);
+    // And admits the same gain when no fail is passed.
+    let mut kept = x.clone();
+    for r in kept
+        .iter_mut()
+        .filter(|r| r.expected == F && r.computed == Pass)
+    {
+        r.computed = Unsure;
+    }
+    let verdict = gate.decide(&metrics::paired(&c, &kept, gate.resampling()).unwrap());
+    assert_eq!(verdict.outcome, Outcome::Admitted, "{verdict:?}");
+}

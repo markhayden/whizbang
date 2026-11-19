@@ -286,6 +286,7 @@ fn evaluation_never_reads_the_cache() {
         detail: None,
         projection: "full",
         tools: &[],
+        second_look: "off",
     };
     let call: Call = door::check_call(&job, &images, None, &measuring)
         .argument("cell", Value::text("{\"matrix\":\"m\",\"repetition\":1}"));

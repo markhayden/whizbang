@@ -32,7 +32,9 @@ fn the_ported_study_matrices_are_read() {
             "study-sol",
             "study-sonnet",
             "study-terra",
-            "study-tools"
+            "study-tools",
+            "unsure-screen",
+            "unsure-strict"
         ]
     );
     // The models of the Google and OpenAI judges are named, and every model has a
@@ -121,6 +123,103 @@ fn a_matrix_is_read_strictly() {
         Matrix::parse(&spaced).unwrap().identity(),
         matrix.identity()
     );
+}
+
+#[test]
+fn the_unsure_screen_and_its_gate_are_read() {
+    // The screen (plan m3, task U1, item 5): four arms on reality-checks and
+    // reference-consistency, Haiku, three times.
+    let text = std::fs::read_to_string(repo().join("matrices/unsure-screen.toml")).unwrap();
+    let screen = Matrix::parse(&text).unwrap();
+    let arms: Vec<String> = screen.matrix.arms.iter().map(ToString::to_string).collect();
+    assert_eq!(
+        arms,
+        [
+            "F",
+            "F;details=tiles@reality-checks",
+            "F;second_look=on",
+            "F;details=tiles@reality-checks;second_look=on"
+        ]
+    );
+    assert_eq!(screen.matrix.sets.len(), 4);
+    assert_eq!(screen.matrix.repetitions, 3);
+    let judges: Vec<&str> = screen
+        .matrix
+        .judges
+        .iter()
+        .map(|j| j.model.as_str())
+        .collect();
+    assert_eq!(judges, ["claude-haiku-5-5"]);
+    // Tiles go to reality-checks alone; the rest of each arm is F's.
+    for arm in &screen.matrix.arms {
+        assert_eq!(arm.detail_for("reference-consistency"), None);
+        assert_eq!(arm.offered(), "view,align,resize");
+    }
+    // Its forecast for the 44 items: Haiku's settled cost per decision, twice under F,
+    // three times with the second look, the whole doubled.
+    let items: Vec<(String, Vec<String>)> = [20, 2, 20, 2]
+        .iter()
+        .zip(&screen.matrix.sets)
+        .map(|(n, set)| (set.clone(), (0..*n).map(|i| i.to_string()).collect()))
+        .collect();
+    let cells = screen.cells(&items);
+    assert_eq!(cells.len(), 44 * 4 * 3);
+    let rate = 3_293;
+    assert_eq!(
+        matrix::forecast(&cells).unwrap(),
+        2 * 44 * 3 * rate * (2 + 2 + 3 + 3)
+    );
+    // And the strict second look beside it, on reality-checks.
+    let text = std::fs::read_to_string(repo().join("matrices/unsure-strict.toml")).unwrap();
+    let strict = Matrix::parse(&text).unwrap();
+    let arms: Vec<String> = strict.matrix.arms.iter().map(ToString::to_string).collect();
+    assert_eq!(arms, ["F", "F;second_look=on", "F;second_look=strict"]);
+    assert_eq!(
+        strict.matrix.arms[2].second_look_for("reality-checks"),
+        "strict"
+    );
+    // The gates (item 6): one a use case, each F with the second look for that use case
+    // against F on its dev set, frozen with its matrix's identity, with false accepts as a
+    // guardrail beside false rejects.
+    for (use_case, set) in [
+        ("source-fidelity", "scenes-v1"),
+        ("reference-consistency", "pets-v1"),
+        ("reality-checks", "people-v1"),
+        ("brief-compliance", "stills-v1"),
+        ("product-fidelity", "packshots-v1"),
+    ] {
+        let read = |name: &str| std::fs::read_to_string(repo().join("gates").join(name)).unwrap();
+        let gate = whizbang_eval::gate::Gate::parse(&read(&format!("unsure-{use_case}.toml")))
+            .unwrap_or_else(|e| panic!("{use_case}: {e}"));
+        let matrix = Matrix::parse(&read(&gate.run.matrix)).unwrap();
+        assert_eq!(gate.run.matrix_identity, matrix.identity(), "{use_case}");
+        assert_eq!(matrix.matrix.sets, [format!("{use_case}/{set}")]);
+        let arms: Vec<String> = matrix.matrix.arms.iter().map(ToString::to_string).collect();
+        let treatment = format!("F;second_look=on@{use_case}");
+        assert_eq!(arms, ["F".to_owned(), treatment.clone()]);
+        assert_eq!(
+            (
+                gate.baseline.control.as_str(),
+                gate.baseline.treatment.as_str()
+            ),
+            ("F", treatment.as_str())
+        );
+        assert_eq!(matrix.matrix.arms[1].second_look_for(use_case), "on");
+        assert_eq!(gate.guardrails.false_accept_increase_max, Some(0.03));
+        assert_eq!(gate.guardrails.false_reject_increase_max, 0.03);
+        assert_eq!(gate.confidence.hypotheses, matrix.matrix.judges.len());
+        let judges: Vec<(&str, u32)> = (matrix.matrix.judges.iter())
+            .map(|j| (j.model.as_str(), j.repeated(&matrix.matrix)))
+            .collect();
+        assert_eq!(
+            judges,
+            [
+                ("claude-haiku-5-5", 3),
+                ("gemini-3.8-flash", 1),
+                ("gpt-6.1-terra", 1)
+            ]
+        );
+    }
 }
 
 #[test]

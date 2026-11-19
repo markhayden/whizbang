@@ -1428,6 +1428,61 @@ fn squint_check_brief_compliance_without_a_brief_is_refused_before_anything_runs
 }
 
 #[test]
+fn squint_check_detail_tiles_on_a_pair_is_refused_naming_the_use_case() {
+    let scratch = Scratch::new("cli-tiles-pair");
+    let root = scratch.path().join("store");
+    let id = format!("sha256:{}", "0".repeat(64));
+    for (use_case, pair) in [
+        ("source-fidelity", "--source"),
+        ("reference-consistency", "--reference"),
+        ("brief-compliance", "--reference"),
+    ] {
+        let ran = whizbang(
+            &[
+                "squint",
+                "check",
+                use_case,
+                "--candidate",
+                &id,
+                pair,
+                &id,
+                "--brief",
+                "Keep it.",
+                "--detail",
+                "tiles",
+            ],
+            &root,
+        );
+        assert_eq!(ran.code, Some(1), "{use_case}: {}", ran.err);
+        assert!(
+            ran.err.contains(&format!(
+                "the detail tiles is for a use case with one image, and this {use_case} job \
+                 relates a pair"
+            )),
+            "{}",
+            ran.err
+        );
+        assert!(ran.out.is_empty());
+        // Refused before the config, the store or a judge was looked at.
+        assert!(!root.exists());
+    }
+    // A job with one image takes it past that check: what stops it is the empty store.
+    let ran = whizbang(
+        &[
+            "squint",
+            "check",
+            "reality-checks",
+            "--candidate",
+            &id,
+            "--detail",
+            "tiles",
+        ],
+        &root,
+    );
+    assert!(!ran.err.contains("the detail tiles"), "{}", ran.err);
+}
+
+#[test]
 fn squint_check_with_nine_references_is_refused_naming_the_limit() {
     let scratch = Scratch::new("cli-nine-references");
     let root = scratch.path().join("store");

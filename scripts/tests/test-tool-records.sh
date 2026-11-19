@@ -41,7 +41,7 @@ case "$said" in *"not the seven"*) ;; *) fail "a record with parts missing is no
 case "$said" in *"bad/a.png is not beside it"*) ;; *) fail "a picture that is not there is not reported" ;; esac
 
 # The records there are: each tool that ships has one, and each is whole.
-for tool in view grow resize align change_map edge_similarity per_subject; do
+for tool in view grow resize align change_map edge_similarity per_subject tiles; do
   [ -f "docs/reference/tools/$tool.md" ] || fail "the record of $tool is missing"
 done
 # The three tools scored on rung 2 in milestone 2 (plan 2C, task X1, items 7 to 9): each

@@ -1,0 +1,24 @@
+# The matrix of the gate of the second look for reality-checks (plan m3, task U1, item 6; gate file
+# `unsure-reality-checks.toml` beside it): arm F against F with the second look for reality-checks, on its dev
+# set reality-checks/people-v1, under claude-haiku-5-5 three times and gemini-3.8-flash and gpt-6.1-terra
+# once each. Each judge is the config's backend of that name, of the model named. Run by the
+# orchestrator on the owner's Mac.
+[matrix]
+name = "gate-unsure-reality-checks"
+sets = ["reality-checks/people-v1"]
+arms = ["F", { arm = "F", second_look = [{ look = "on", use_cases = ["reality-checks"] }] }]
+repetitions = 1
+concurrency = 4
+
+[[matrix.judges]]
+backend = "haiku"
+model = "claude-haiku-5-5"
+repetitions = 3
+
+[[matrix.judges]]
+backend = "flash"
+model = "gemini-3.8-flash"
+
+[[matrix.judges]]
+backend = "terra"
+model = "gpt-6.1-terra"

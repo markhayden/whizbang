@@ -287,7 +287,9 @@ labels and is separate from evaluation (section 8), which scores tools against k
 - `whizbang runs stats` aggregates over a filter (an action, a recipe, a tool, a model, a
   backend, a period): how many runs; outcome rates; for squint, verdict and unsure rates;
   retries and repairs; time as median and 95th percentile; cost; cache hits. For example,
-  how one tool behaved across its last 100 runs.
+  how one tool behaved across its last 100 runs. With `--unsure-by rule`, it also counts the
+  unsure verdicts by the rule, disposition and confidence of each answer that made one
+  unsure, from the checklist each run of `check` kept: aggregates only, no item.
 - `whizbang runs export` writes the matching records as one JSON object per line, so analysis
   and dashboards can live outside whizbang.
 - The playground shows the same figures in milestone 5.
@@ -659,6 +661,7 @@ Defaults for an evidence tool, to be tuned as results come in:
 | Primary measure | Balanced accuracy; `unsure` and errors count as neither a catch nor a pass |
 | Admission | Observed gain of at least 3 points, and the lower bound of its corrected 95% interval above zero |
 | False rejects | The upper bound of the increase is under 3 points |
+| False accepts | Where the gate states it: the upper bound of the increase is under 3 points |
 | Errors | Under 2% of decisions |
 | Cost | No more than double per decision |
 | Families | At least 20 |

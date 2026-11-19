@@ -7,6 +7,7 @@
 #   scripts/tool-record.sh grow      docs/reference/tools/grow.md and grow/
 #   scripts/tool-record.sh align     docs/reference/tools/align.md and align/
 #   scripts/tool-record.sh resize    docs/reference/tools/resize.md and resize/
+#   scripts/tool-record.sh tiles     the example images of docs/reference/tools/tiles.md, in tiles/
 #   scripts/tool-record.sh change_map, or edge_similarity: both records, change_map.md and
 #                                    edge_similarity.md, and their folders
 #
@@ -33,7 +34,7 @@ case "${1:-}" in
     scripts/thread-guard.sh cargo test --release -p whizbang-rascal --test it -- \
       --ignored --exact record::write_the_record
     ;;
-  align | resize)
+  align | resize | tiles)
     scripts/thread-guard.sh cargo test --release -p whizbang-squint --test it -- \
       --ignored --exact "$1_record::write_the_record"
     ;;
@@ -42,7 +43,7 @@ case "${1:-}" in
       --ignored --exact compare_record::write_the_record
     ;;
   *)
-    echo "tool-record: usage: scripts/tool-record.sh view|grow|align|resize|change_map|edge_similarity" >&2
+    echo "tool-record: usage: scripts/tool-record.sh view|grow|align|resize|tiles|change_map|edge_similarity" >&2
     exit 2
     ;;
 esac

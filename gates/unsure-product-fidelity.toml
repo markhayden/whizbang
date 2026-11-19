@@ -1,0 +1,56 @@
+# The gate of the second look for product-fidelity (plan m3, task U1, item 6), frozen before its run:
+# F with the second look for product-fidelity against F, over the matrix beside it; one gate a use case,
+# so the second look is admitted, or not, for each use case alone. The spec's defaults for an
+# evidence tool (`SPEC.md` section 8, "Gates"), with the false accepts as a guardrail beside
+# the false rejects: a look that turns unsure into passes of pictures that fail is not
+# admitted on its gain. One hypothesis for each of the matrix's three judges. Its dev set has
+# five families, under the spec's twenty, so the minimum here is five and the result is
+# descriptive: dev sets admit nothing, and a default changes only through a gate on fresh data.
+gate_version = 2
+
+[run]
+matrix = "unsure-product-fidelity-matrix.toml"
+matrix_identity = "736cc2b88744edb778d068a02f290727fcaf02cc416aa74daffac8263c3c564c"
+
+[baseline]
+control = "F"
+treatment = "F;second_look=on@product-fidelity"
+
+[measure]
+primary = "balanced_accuracy"
+pass = "pass"
+fail = "catch"
+unsure = "neither"
+error = "neither"
+missing_label = "refuse"
+
+[confidence]
+level = 0.95
+correction = "bonferroni"
+hypotheses = 3
+
+[families]
+minimum = 5
+resampling = "family"
+seed = 20261119
+resamples = 10000
+
+[repetitions]
+count = 3
+combine = "first"
+
+[admission]
+min_gain = 0.03
+lower_bound_above = 0.0
+
+[guardrails]
+false_reject_increase_max = 0.03
+error_rate_max = 0.02
+false_accept_increase_max = 0.03
+
+[limits]
+cost_ratio_max = 2.0
+latency_ratio_max = 2.0
+
+[too_little_data]
+outcome = "inconclusive"

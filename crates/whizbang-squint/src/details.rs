@@ -676,3 +676,63 @@ pub fn compare_detail(
         stated.join("; ")
     )
 }
+
+/// The detail that cuts the candidate into tiles (plan m3, task U1, item 3): for a use case
+/// with one image, which has no pair for `align` to measure. Experimental: its record is
+/// `docs/reference/tools/tiles.md`.
+pub const TILES: &str = "tiles";
+
+/// The four tiles, each named by its place, as a box of left, top, right and bottom in
+/// fractions of the picture: each a little over half of each side, so neighbours overlap by
+/// a tenth of the picture and nothing on a seam is cut in two.
+pub const TILE_BOXES: [(&str, [f64; 4]); 4] = [
+    ("top-left", [0.0, 0.0, 0.55, 0.55]),
+    ("top-right", [0.45, 0.0, 1.0, 0.55]),
+    ("bottom-left", [0.0, 0.45, 0.55, 1.0]),
+    ("bottom-right", [0.45, 0.45, 1.0, 1.0]),
+];
+
+/// The words that open the tiles.
+pub const TILES_INTRO: &str = "Details measured before your first look: the candidate cut \
+    into four overlapping tiles by the tool view, at full resolution up to 1024 pixels a \
+    side, each labelled with its place and its box in fractions of the candidate. A tile \
+    shows what the whole picture is too small to show: hands, faces, text, edges and \
+    contacts. It is part of the candidate, not another picture; a location you submit is on \
+    raw:candidate, so map a tile's place back through its box.";
+
+/// What the opening says of one tile: its name, its place and box, its size, and the name
+/// the tool `view` takes for it.
+pub fn tile_said(image: &str, place: &str, bbox: [f64; 4], size: (u32, u32), id: &str) -> String {
+    let [l, t, r, b] = bbox;
+    format!(
+        "Tile `tile:{image}:{place}` ({} ({}), the {place} of {image}: left {l:.2}, top {t:.2}, \
+         right {r:.2}, bottom {b:.2} of it, {}x{}); for the tool view it is named {id}.",
+        TILES,
+        mark(TILES),
+        size.0,
+        size.1
+    )
+}
+
+/// Whether a detail can be measured first under a use case: `tiles` only where the job has
+/// no pair (`reality-checks`, and `brief-compliance` without a reference); the details of a
+/// pair only where the use case relates one. A job is held to it again when it is known.
+pub fn takes(detail: &str, use_case: &str) -> bool {
+    let paired = matches!(
+        use_case,
+        "source-fidelity" | "reference-consistency" | "product-fidelity"
+    );
+    match detail {
+        TILES => matches!(use_case, "reality-checks" | "brief-compliance"),
+        _ if DETAILED.contains(&detail) => paired || use_case == "brief-compliance",
+        _ => false,
+    }
+}
+
+/// The words of the refusal of `tiles` for a job that relates a pair.
+pub fn tiles_refused(use_case: &str) -> String {
+    format!(
+        "the detail tiles is for a use case with one image, and this {use_case} job relates a \
+         pair: measure its pair with align instead"
+    )
+}
