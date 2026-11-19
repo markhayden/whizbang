@@ -600,7 +600,7 @@ of item 2 (`eval run`, the gate's digest in its runs, scoring from a labels path
 replay's transcript writer. Item 3: `scripts/baseline/capture/` (a program run in a scratch
 clone of squint at its tag, with `run.sh`) captured three decisions of arm C on synthetic
 pictures, converted by `convert.py` and committed at `fixtures/baseline/synthetic/`, the
-transcripts and what the replay reads of their package (about 5,800 lines, counted apart).
+transcripts and what the replay reads of their package (about 6,700 lines, counted apart).
 Item 4: `view` as squint's judge knew it, in the replay (`whizbang_squint::replay`): the
 judge names a frame and is answered with squint's presentation. Item 7: `whizbang eval
 baseline --package <dir> --transcripts <dir> --receipt <file> --commit <sha>` replays each

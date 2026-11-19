@@ -70,4 +70,4 @@ if grep -r -l -F -e "$scratch" -e "$HOME" "$out" >/dev/null; then
 fi
 echo "capture: written to fixtures/baseline/synthetic"
 }
-main "$@"
+main "$@"; exit
