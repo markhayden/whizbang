@@ -4,13 +4,13 @@
 #   scripts/timing.sh [--limit SECONDS] [--junit FILE]
 #
 # Fails when a test fails, and when test time exceeds the limit. The limit is --limit, else
-# WHIZBANG_TIMING_LIMIT, else 300 seconds on GitHub's hosted macOS runner and 180 seconds
-# everywhere else: on the Linux runner, on a self-hosted runner, and on any machine outside
-# CI, the owner's Mac among them (SPEC.md section 13). The hosted macOS runner is known by
-# the variables GitHub sets in every job: GITHUB_ACTIONS=true, RUNNER_OS=macOS and
-# RUNNER_ENVIRONMENT=github-hosted, all three. Its 300 seconds are the owner's decision of
-# 2026-11-17: its test time varies about two-fold on unchanged code. The line with the
-# total names the limit that applied and why. Raising a limit needs the owner.
+# WHIZBANG_TIMING_LIMIT, else 300 seconds everywhere: on GitHub's hosted runners, on a
+# self-hosted runner, and on any machine outside CI, the owner's Mac among them (SPEC.md
+# section 13). The owner set 300 seconds on the hosted macOS runner on 2026-11-17, whose
+# test time varies about two-fold on unchanged code, and everywhere else on 2026-11-19
+# (until then 180), answering "raise local (and Linux) from 180 to 300 seconds?" with
+# "that is ok also i think". The line with the total names the limit that applied and
+# why. Raising a limit needs the owner.
 #
 # Compilation is not counted. Test time is the elapsed time nextest reports for the run,
 # which starts after everything is built; a suite's seconds are the sum of its tests'
@@ -27,15 +27,9 @@ main() {
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-if [ "${GITHUB_ACTIONS:-}" = true ] && [ "${RUNNER_OS:-}" = macOS ] \
-  && [ "${RUNNER_ENVIRONMENT:-}" = github-hosted ]; then
-  limit=300
-  # No apostrophes in these two lines: scripts/tests/test-syntax.sh reads one as quoting.
-  why="the hosted macOS runner of GitHub, whose test time varies about two-fold on unchanged code (the decision of the owner, 2026-11-17; 180 s everywhere else)"
-else
-  limit=180
-  why="the default, everywhere but the hosted macOS runner of GitHub (300 s there)"
-fi
+limit=300
+# No apostrophes in this line: scripts/tests/test-syntax.sh reads one as quoting.
+why="the default, on every runner and machine (the decisions of the owner, 2026-11-17 for the hosted macOS runner and 2026-11-19 everywhere else)"
 if [ -n "${WHIZBANG_TIMING_LIMIT:-}" ]; then
   limit=$WHIZBANG_TIMING_LIMIT
   why="from WHIZBANG_TIMING_LIMIT"

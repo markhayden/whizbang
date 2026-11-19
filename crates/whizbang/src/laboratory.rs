@@ -25,6 +25,7 @@ use whizbang_core::artifact::{ArtifactId, ArtifactType};
 use whizbang_core::capability::Installed;
 use whizbang_core::config::Setting;
 use whizbang_core::contract::{Call, Capability, Recovery, Registry, Request, Value};
+use whizbang_core::identity::Projection;
 use whizbang_core::recipe::{Declared, RecipeAction, SET};
 use whizbang_eval::lab::cell::{self, Backend, Cell, Work};
 use whizbang_eval::lab::corpus::Corpus;
@@ -349,15 +350,28 @@ fn bound(
 }
 
 /// Brings into the store every picture the matrix binds, each read from the corpus's
-/// folder through no link and held to the digest the manifest pins: a picture as an image,
-/// anything else as its canonical file of the type wanted.
+/// folder through no link and held to the digest the manifest pins: a picture as an image
+/// of the projection the manifest says (flat when it says none), anything else as its
+/// canonical file of the type wanted.
 fn bring_in(
     validated: &Validated,
     load: &dyn Fn(&str) -> Result<RecipeAction, String>,
     asked: &Asked<'_>,
 ) -> Result<BTreeMap<String, ArtifactId>, String> {
+    let wanted = bound(validated, load)?;
+    // A projection is a picture's: said of a file brought in as anything else, it is
+    // refused before anything is brought in.
+    for (id, kind) in &wanted {
+        let said = (validated.corpus.picture(id)).is_some_and(|p| p.projection.is_some());
+        if said && *kind != ArtifactType::Image {
+            return Err(format!(
+                "picture {id}: a projection is said of a picture, and it is bound as a \
+                 {kind}; nothing was run"
+            ));
+        }
+    }
     let mut pictures = BTreeMap::new();
-    for (id, kind) in bound(validated, load)? {
+    for (id, kind) in wanted {
         let picture =
             (validated.corpus.picture(&id)).ok_or_else(|| format!("{id} is not in the corpus"))?;
         let bytes = read_relative(asked.corpus, &picture.file, crate::import::MAX_FILE_BYTES)
@@ -370,13 +384,19 @@ fn bring_in(
         }
         let shown = format!("picture {id}");
         let recovery = asked.recovery.clone();
+        // The corpus's word, else flat, as before: a file's own metadata is not read here.
+        let projection = match picture.projection.as_deref() {
+            Some("equirectangular") => Projection::Equirectangular,
+            _ => Projection::Flat,
+        };
         let made = match kind {
-            ArtifactType::Image => crate::import::picture_of_bytes(
+            ArtifactType::Image => crate::import::picture_of_bytes_as(
                 &bytes,
                 &shown,
                 Some(&picture.sha256),
                 asked.root,
                 recovery,
+                projection,
             ),
             other => crate::import::artifact_of_bytes(&bytes, &shown, other, asked.root, recovery),
         }?;
@@ -399,6 +419,9 @@ pub struct Report {
     pub failed: usize,
     pub interrupted: usize,
     pub not_run: usize,
+    /// The first failed cell in the matrix's order, as `<arm> on <image>: <why>`, the why
+    /// being its run's own words: so a round every cell of which failed says why at its end.
+    pub first_failed: Option<String>,
 }
 
 impl Report {
@@ -413,7 +436,9 @@ impl Report {
             self.failed,
             self.interrupted,
             self.not_run
-        )
+        ) + &(self.first_failed.as_ref())
+            .map(|why| format!("first failed: {why}\n"))
+            .unwrap_or_default()
     }
 }
 
@@ -445,11 +470,32 @@ pub fn round(prepared: &Prepared, running: &Running<'_>) -> Result<Report, Strin
         match now.get(&cell.identity).and_then(|list| list.last()) {
             None => report.not_run += 1,
             Some((_, _, Ended::Completed)) => report.completed += 1,
-            Some((_, _, Ended::Failed)) => report.failed += 1,
+            Some((_, run, Ended::Failed)) => {
+                report.failed += 1;
+                if report.first_failed.is_none() {
+                    let why = why_failed(running.root, run)?;
+                    report.first_failed = Some(format!("{} on {}: {why}", cell.arm, cell.image));
+                }
+            }
             Some((_, _, Ended::Interrupted)) => report.interrupted += 1,
         }
     }
     Ok(report)
+}
+
+/// What the record of the run `id` says of why it failed: what it was given found invalid,
+/// else its error, each as printable text on one line.
+fn why_failed(root: &Path, id: &str) -> Result<String, String> {
+    let mut why = None;
+    harness::each_run(root, &mut |record, run, _| {
+        if run == id {
+            let outcome = record.outcome();
+            why = (outcome.invalid.clone())
+                .or_else(|| (outcome.error.as_ref()).map(|e| format!("{}: {}", e.kind, e.message)));
+        }
+    })?;
+    let why = why.unwrap_or_else(|| "its run says no reason".to_owned());
+    Ok(why.escape_debug().to_string())
 }
 
 /// `whizbang lab decode`: the picks decoded against the frozen assignment under the
