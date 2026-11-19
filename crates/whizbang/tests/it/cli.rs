@@ -1738,7 +1738,7 @@ fn three_items(dir: &Path) -> (PathBuf, PathBuf) {
     let (mut labels, mut families) = (String::new(), String::new());
     let items = [
         ("restyled", "scene", "toned", "pass"),
-        ("smaller", "scene-256", "scene", "pass"),
+        ("darkened", "toned", "scene", "pass"),
         ("added", "before", "after", "fail"),
     ];
     for (item, source, candidate, expected) in items {
@@ -1799,7 +1799,7 @@ fn eval_tool_scores_a_tool_on_a_three_item_set() {
     let out = &scored.out;
     // Each item a read with its run, then the score: the added blob reads more changed
     // than the two passes, so the area is 1; three families are too few to halve.
-    for item in ["restyled", "smaller", "added"] {
+    for item in ["restyled", "darkened", "added"] {
         assert!(
             out.lines()
                 .any(|line| line.starts_with(&format!("item {set}/{item} "))
