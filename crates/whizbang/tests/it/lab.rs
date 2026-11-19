@@ -872,6 +872,17 @@ impl ThreeImages {
         left: Option<u64>,
         stop: &dyn Fn() -> bool,
     ) -> Result<laboratory::Report, String> {
+        self.run_resuming(over, left, stop, harness::Resume::KeepFailed)
+    }
+
+    /// The same, with what is done with a failed cell (`--retry-failed`).
+    pub fn run_resuming(
+        &self,
+        over: &Over,
+        left: Option<u64>,
+        stop: &dyn Fn() -> bool,
+        resume: harness::Resume,
+    ) -> Result<laboratory::Report, String> {
         let asked = laboratory::Asked {
             matrix: &self.matrix,
             corpus: &self.corpus,
@@ -889,7 +900,26 @@ impl ThreeImages {
             left_micros: left.unwrap_or(1_000_000),
             stop,
         };
-        laboratory::round(&prepared, &running)
+        laboratory::round_resuming(&prepared, &running, resume)
+    }
+
+    /// `whizbang lab pairs` of the round into `out`, as the binary writes it.
+    pub fn pairs(&self, over: &Over, out: &Path) -> Result<String, String> {
+        let asked = laboratory::Asked {
+            matrix: &self.matrix,
+            corpus: &self.corpus,
+            root: &self.root,
+            over,
+            recovery: wiring::recovery(),
+        };
+        let prepared = laboratory::prepare(&asked)?;
+        let asked = whizbang::pairs_page::Asked {
+            root: &self.root,
+            out,
+            limit: None,
+            force: false,
+        };
+        Ok(whizbang::pairs_page::pairs(&prepared, &asked)?.text())
     }
 
     pub fn calls(&self) -> u64 {
@@ -962,6 +992,109 @@ fn an_interrupted_round_resumes_and_a_failed_cell_is_kept() {
          failed: 1\ninterrupted: 0\nnot run: 0\nfirst failed: filled on b: step: the step fill \
          (fill) ended as an error of the type fill: The scripted filler refused it.\n"
     );
+}
+
+/// Each cell's attempts in the store, as the round recognises them: how each ended.
+fn attempts_of(lab: &ThreeImages, over: &Over) -> Vec<Vec<harness::Ended>> {
+    let asked = laboratory::Asked {
+        matrix: &lab.matrix,
+        corpus: &lab.corpus,
+        root: &lab.root,
+        over,
+        recovery: wiring::recovery(),
+    };
+    let prepared = laboratory::prepare(&asked).unwrap();
+    let cells: Vec<LabCell<'_>> = (prepared.cells.iter())
+        .map(|cell| LabCell {
+            cell,
+            scope: &prepared.scope,
+            pictures: &prepared.pictures,
+        })
+        .collect();
+    let work: Vec<&dyn harness::Work> = cells.iter().map(|c| c as &dyn harness::Work).collect();
+    let recognise = harness::by_request(&prepared.scope, &work);
+    let found = harness::attempts(&lab.root, &recognise).unwrap();
+    (found.values())
+        .map(|list| list.iter().map(|(_, _, ended)| *ended).collect())
+        .collect()
+}
+
+#[test]
+fn a_failed_cell_is_retried_once_under_retry_failed_and_then_its_pairs_are_written() {
+    use harness::Ended::{Completed, Failed};
+    use harness::Resume::RetryFailed;
+    let lab = ThreeImages::new("lab-retry", FILLED_WITH_AND_SOURCE);
+    // The second fill fails, as a provider's transient error would.
+    let over = lab.over(2);
+    let report = lab.run(&over, None, &never).unwrap();
+    assert_eq!(counts(&report), (3, 2, 1, 0, 0));
+    let refused = report.failure().unwrap();
+    assert!(refused.contains("--retry-failed"), "{refused}");
+    let pages = lab.corpus.with_file_name("pages");
+    let refused = lab.pairs(&over, &pages.join("before")).unwrap_err();
+    assert!(refused.contains("with --retry-failed"), "{refused}");
+    // The retry is a new paid attempt: forecast as any other, so one fill's price less a
+    // millionth is refused before anything runs.
+    let short = lab
+        .run_resuming(&over, Some(FILL_PRICE - 1), &never, RetryFailed)
+        .unwrap_err();
+    assert!(short.contains("its 1 runs still to run"), "{short}");
+    assert_eq!(lab.calls(), 3);
+    // Asked to, the failed cell gets one new attempt, which completes; its failed one is
+    // kept and counted.
+    let retried = lab.run_resuming(&over, None, &never, RetryFailed).unwrap();
+    assert_eq!(counts(&retried), (1, 3, 0, 0, 0));
+    assert_eq!((retried.retried, retried.failed_before), (Some(1), 1));
+    assert_eq!(retried.failure(), None);
+    assert_eq!(lab.calls(), 4);
+    assert_eq!(
+        retried.text(),
+        "cells: 6\nhanded back by a reference arm: 3\nstarted now: 1\ncompleted: 3\n\
+         failed: 0\ninterrupted: 0\nnot run: 0\nretried now: 1\n\
+         failed attempts kept from earlier: 1\n"
+    );
+    let mut ended = attempts_of(&lab, &over);
+    ended.sort();
+    assert_eq!(
+        ended,
+        vec![vec![Completed], vec![Completed], vec![Failed, Completed]]
+    );
+    // And the round now writes its page.
+    let written = lab.pairs(&over, &pages.join("after")).unwrap();
+    assert!(
+        written.starts_with("pairs: 3 of the round's 3\n"),
+        "{written}"
+    );
+}
+
+#[test]
+fn retry_failed_never_starts_a_completed_cell_and_without_it_nothing_starts() {
+    use harness::Resume::RetryFailed;
+    let lab = ThreeImages::new("lab-retry-kept", FILLED_WITH_AND_SOURCE);
+    // The first fill fails, and so does the first retry of it.
+    let over = lab.over(1);
+    let report = lab.run(&over, None, &never).unwrap();
+    assert_eq!(counts(&report), (3, 2, 1, 0, 0));
+    let runs = lab.runs();
+    // Without the flag nothing starts, and the report is today's.
+    let again = lab.run(&over, None, &never).unwrap();
+    assert_eq!(counts(&again), (0, 2, 1, 0, 0));
+    assert_eq!((again.retried, again.failed_before), (None, 0));
+    assert_eq!(lab.calls(), 3);
+    assert_eq!(lab.runs(), runs);
+    // With it, only the failed cell starts, once; the completed two are never started.
+    let fresh = lab.over(4);
+    let retried = lab.run_resuming(&fresh, None, &never, RetryFailed).unwrap();
+    assert_eq!(counts(&retried), (1, 2, 1, 0, 0));
+    assert_eq!((retried.retried, retried.failed_before), (Some(1), 1));
+    assert_eq!(lab.calls(), 4);
+    // Once all have completed, the flag starts nothing.
+    let done = lab.run_resuming(&fresh, None, &never, RetryFailed).unwrap();
+    assert_eq!(counts(&done), (1, 3, 0, 0, 0));
+    let still = lab.run_resuming(&fresh, None, &never, RetryFailed).unwrap();
+    assert_eq!(counts(&still), (0, 3, 0, 0, 0));
+    assert_eq!((still.retried, still.failed_before), (Some(0), 2));
+    assert_eq!(lab.calls(), 5);
 }
 
 #[test]

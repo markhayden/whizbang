@@ -73,6 +73,24 @@ pub const PASSED_OVER_LIMIT: u32 = 64;
 /// Each cell's attempts, by identity: the attempt, its run and how it ended, in order.
 pub type Attempts = BTreeMap<String, Vec<(u32, String, Ended)>>;
 
+/// Which cells a run of the work starts beside those never run and those interrupted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Resume {
+    /// A failed cell is kept as failed and not run again (E1's rule).
+    #[default]
+    KeepFailed,
+    /// A cell whose last attempt failed is given one new attempt, its next.
+    RetryFailed,
+}
+
+/// What a run of the work started: attempts in all, and of them those that retried a
+/// failed cell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Started {
+    pub started: usize,
+    pub retried: usize,
+}
+
 /// What the harness is given beside the cells.
 pub struct Running<'a> {
     pub executor: &'a dyn Executor,
@@ -218,15 +236,29 @@ pub fn run(
     at_once: usize,
     what: &str,
 ) -> Result<usize, String> {
+    let started = run_resuming(cells, recognise, running, at_once, what, Resume::KeepFailed)?;
+    Ok(started.started)
+}
+
+/// [`run`], with what is done with a failed cell said by `resume`.
+pub fn run_resuming(
+    cells: &[&dyn Work],
+    recognise: Recognise<'_>,
+    running: &Running<'_>,
+    at_once: usize,
+    what: &str,
+    resume: Resume,
+) -> Result<Started, String> {
     let earlier = attempts(running.root, recognise)?;
     let taken = taken_ids(running.root)?;
     let mut todo = Vec::new();
     for cell in cells {
         let last = earlier.get(&cell.identity()).and_then(|list| list.last());
-        let first = match last {
-            None => 1,
-            Some((attempt, _, Ended::Interrupted)) => attempt + 1,
-            Some(_) => continue,
+        let (first, retry) = match (last, resume) {
+            (None, _) => (1, false),
+            (Some((attempt, _, Ended::Interrupted)), _) => (attempt + 1, false),
+            (Some((attempt, _, Ended::Failed)), Resume::RetryFailed) => (attempt + 1, true),
+            (Some(_), _) => continue,
         };
         // An attempt whose id a run of another request holds is passed over.
         let mut found = None;
@@ -240,7 +272,7 @@ pub fn run(
             }
         }
         match found {
-            Some(Some(request)) => todo.push((*cell, request)),
+            Some(Some(request)) => todo.push((*cell, request, retry)),
             Some(None) => {}
             None => {
                 return Err(format!(
@@ -251,7 +283,7 @@ pub fn run(
         }
     }
     let mut forecast: u64 = 0;
-    for (cell, _) in &todo {
+    for (cell, _, _) in &todo {
         forecast = forecast.saturating_add(cell.forecast()?);
     }
     if forecast > running.left_micros {
@@ -263,16 +295,16 @@ pub fn run(
         ));
     }
     let mut prepared = BTreeSet::new();
-    for (cell, request) in &todo {
+    for (cell, request, _) in &todo {
         if prepared.insert(cell.group()) {
             (running.executor.prepare(request.call()))
                 .map_err(|why| format!("the {what} cannot run, nothing was run: {why}"))?;
         }
     }
-    let mut started = 0;
+    let mut started = Started::default();
     let mut open: VecDeque<RunId> = VecDeque::new();
     let mut failure = None;
-    for (_, request) in todo {
+    for (_, request, retry) in todo {
         if (running.stop)() {
             break;
         }
@@ -282,11 +314,13 @@ pub fn run(
             }
         }
         match running.executor.start(&request) {
-            Ok(Answer::Started(run)) => {
-                open.push_back(run);
-                started += 1;
+            Ok(answer) => {
+                if let Answer::Started(run) = answer {
+                    open.push_back(run);
+                }
+                started.started += 1;
+                started.retried += usize::from(retry);
             }
-            Ok(Answer::Ran(_) | Answer::Repeat(_)) => started += 1,
             Err(why) => {
                 failure = Some(why.to_string());
                 break;

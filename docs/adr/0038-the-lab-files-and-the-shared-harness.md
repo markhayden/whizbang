@@ -164,6 +164,23 @@ counted apart, never as the owner's pick.
   keeps its cells). `lab run` ends, when a cell failed, with the first failed cell and its
   run's own words (`first failed: <arm> on <image>: <why>`), printed escaped on one line.
 
+## Amended with task B1
+
+- **A failed cell retried, when asked.** "Failed is kept and not run again" protects two
+  things: the record of a failure stays in the store and is reported (`SPEC.md` section
+  9, "a failed attempt is reported, never replaced"), and a resume never pays twice for a
+  completed cell. Neither forbids a new attempt asked for by name, and without one a round
+  with one passing provider error could never write its pairs. `whizbang lab run
+  --retry-failed` gives each cell of a recipe whose last attempt failed one new attempt in
+  that run, its next number under the same identity; the failed attempt's record and its
+  charge on the ledger stay, and the report counts it (`failed attempts kept from
+  earlier`) and says how many were retried (`retried now`). The new attempt is forecast
+  against what the allowance has left and reserved as any other. A completed cell is
+  never started again, a reference arm's runs nothing, and a cell whose failure a retry
+  cannot change (what it was given found invalid) is retried all the same when asked.
+  Without the flag nothing changes, and a round that ends with failed cells names the
+  flag. `eval matrix` and the gate runs keep E1's rule: they call the harness without it.
+
 ## Alternatives
 
 - **The cell in an argument of every action**, as `check` has: each action's descriptor

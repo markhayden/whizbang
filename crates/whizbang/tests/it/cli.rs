@@ -2790,12 +2790,14 @@ fn lab_run_runs_a_three_image_round_under_a_scripted_filler_and_resumes() {
             lab.config.to_str().unwrap(),
             "--env-file",
             env.to_str().unwrap(),
+            "--retry-failed",
         ],
         &lab.root,
     );
     assert_eq!(ran.code, Some(1), "{}", ran.out);
     assert_eq!(ran.out, "");
-    // Fal's price, from the config's backend: 40,000 millionths a fill, three fills.
+    // Fal's price, from the config's backend: 40,000 millionths a fill, three fills (the
+    // flag retries failed cells only, and none has run).
     assert_eq!(
         ran.err,
         "whizbang: the round's forecast for its 3 runs still to run is 120000 millionths of a \
