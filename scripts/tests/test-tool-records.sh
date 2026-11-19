@@ -80,6 +80,20 @@ for use_case in source-fidelity reference-consistency product-fidelity brief-com
   printf '%s\n' "$history" | grep -E '^\*\*Unverified\*\*' >/dev/null ||
     fail "the record of $use_case is not marked unverified"
 done
+# The records of the five recipes that end in a fill (plan m3, task B1, item 2): rung 1
+# shown, and rung 2 shown, or in part while its visual quality waits on the owner's picks.
+# The fast tests hold their examples (crates/whizbang-rascal/tests/it/tool_records/recipes.rs)
+# and their rung 2 to the edits' record and the shipped recipes
+# (`evidence::each_model_based_recipes_record_holds_rungs_1_and_2`).
+for recipe in remove remove_prompt repair repair_area seam; do
+  record="docs/reference/tools/$recipe.md"
+  [ -f "$record" ] || fail "the record of the recipe $recipe is missing"
+  history=$(sed -n '/^## Mark and history$/,$p' "$record")
+  printf '%s\n' "$history" | grep -E '^\| 1\. Single examples \| Shown \|' >/dev/null ||
+    fail "the record of $recipe does not show rung 1"
+  printf '%s\n' "$history" | grep -E '^\| 2\. Scored alone \| (Shown|In part) \|' >/dev/null ||
+    fail "the record of $recipe does not show rung 2"
+done
 for record in docs/reference/tools/*.md; do
   wrong=$(shape "$record")
   [ -z "$wrong" ] || fail "$wrong"
