@@ -55,3 +55,11 @@ expect_used = "warn"
 # lean"). Its crate is built optimised in every profile; the checks of debug builds stay on.
 [profile.dev.package.whizbang-squint]
 opt-level = 3
+
+# Every crate from outside the workspace is built optimised too: the digests, the PNG and
+# JPEG coders, the deflate and the JSON reader the tests go through thousands of times
+# took a fifth of the fast tests' processor time built unoptimised (the test-time task of
+# milestone 3). The workspace's own crates are not: their checks of debug builds, and
+# their overflow checks, stay as they were. A release build optimises everything anyway.
+[profile.dev.package."*"]
+opt-level = 2

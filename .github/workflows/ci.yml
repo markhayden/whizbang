@@ -53,6 +53,16 @@ jobs:
         run: |
           echo "UV_PYTHON_INSTALL_DIR=$UV_PYTHON_INSTALL_DIR" >>"$GITHUB_ENV"
           uv python install --no-config --no-bin --mirror https://github.com/astral-sh/python-build-standalone/releases/download "$(cat pack/.python-version)"
+      # On Linux the tests' scratch folders are made in memory (/dev/shm), not on the
+      # runner's disk: the stores the tests open sync every file and folder they publish,
+      # and waiting for a disk to finish a sync is nothing a test can observe (on a Mac it
+      # was three fifths of the test time). The same calls are made; only the wait is gone. The macOS runner keeps
+      # its disk, so a real sync of every kind is still run on every push.
+      - name: Scratch folders in memory on Linux
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          df -h /dev/shm
+          echo "TMPDIR=/dev/shm" >>"$GITHUB_ENV"
       # `just ci` without the script tests, which take a runner three to six minutes: the
       # job `scripts` below runs them beside this one, on the same runner.
       - name: Fast tier without the script tests, advisories, release smoke and secrets scan
