@@ -19,6 +19,7 @@ mod line;
 mod ops_actions;
 mod paste;
 mod plug;
+mod poisson;
 mod put;
 mod rasterize;
 mod record;

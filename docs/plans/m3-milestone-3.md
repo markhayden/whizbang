@@ -831,7 +831,7 @@ Rascal's seam recipe, the one its lab rounds were about, runs on whizbang's runn
    `paste` with the same preservation and its own tests; `poisson` (`poisson.rs`,
    `poisson-v1.toml`) likewise, or dropped with a line on the row (the named seam).
 
-- [ ] Done when:
+- [x] Done when:
   `tighten::the_ported_vectors_give_rascals_masks`,
   `task::repair_fills_along_the_stroke_and_keeps_every_other_pixel`,
   `inspect::the_ported_vectors_give_rascals_report`,
@@ -843,7 +843,7 @@ Rascal's seam recipe, the one its lab rounds were about, runs on whizbang's runn
 **Split at the named seam (O4).** The first pull request is `tighten`, `repair`, `inspect`
 and `hard`, with every test of the "Done when" above but `poisson`'s; with `poisson` it
 would pass about 2,500 changed lines. `poisson` is O4's second pull request, which ticks the
-box.
+box: `poisson` is ported, not dropped.
 
 **Keeping tests lean (O4).** Rascal's vectors; `poisson`'s benchmark `#[ignore]`d. The
 pictures of `tighten`'s vectors are rascal's drawn at 256 by 192, where rascal's were 400 by
