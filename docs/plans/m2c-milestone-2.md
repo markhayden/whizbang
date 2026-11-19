@@ -335,6 +335,14 @@ on the record with both judges' lines, which waits on the owner's yes to the two
 recipients and their keys (nothing has been sent to either) and on A1's record (carry-over
 row on P1's live evidence). Item 6 moved to F1 as the named overflow.
 
+**Reworded with the task (F1, its second pull request).** The owner approved both
+recipients on 2026-11-18 ("Origins (P)"). The last clause read "`evidence::the_use_cases_record_names_a_commit_of_this_tree_and_holds_no_secret`
+on the record with both judges' lines". The record's live lines wait on a run of item 7
+that a builder is permitted to make: F1's attempt was refused by the permission system
+before anything was sent. So that clause is re-owned to milestone 3 with the carry-over row
+on P1's live evidence, and stays unshown here; every other clause is shown by its named
+test. The box stays unticked.
+
 **Keeping tests lean (P1).** The recorded exchanges are read once per test; pictures of
 `many-images` cut to a tenth on each side in the test, as S1 did; one loopback listener
 per test.
@@ -355,6 +363,12 @@ and nothing is sent to either until the owner says yes. On a no, that provider's
 lands with its conformance (which sends nothing) and its live evidence is left on a
 carry-over row; the milestone's row then waits on it. No upstream, no probe. CI contacts
 nothing.
+
+**Approved by the owner on 2026-11-18**, both: the owner put `GEMINI_API_KEY` and
+`OPENAI_API_KEY` in the env file after being told that a key there means yes to
+`https://generativelanguage.googleapis.com` and `https://api.openai.com` as judge
+recipients, and said "keys are both there"; live checks on all three providers then passed
+on the owner's Mac.
 
 ## E1. Evaluation sets, matrices, the runner, `runs stats` and `runs export` (large)
 
@@ -838,7 +852,7 @@ from the decision cache.
    the test kit's, on the owner's Mac, with the Anthropic judge on A1's pictures; then each
    asked again and answered from the cache. The fields go in `docs/results/m2c-use-cases.md`.
 
-- [ ] Done when:
+- [x] Done when:
   `serve::initialize_lists_each_action_as_a_tool_with_its_schema`,
   `serve::check_over_stdio_returns_the_verdict_of_each_use_case_under_a_scripted_judge`,
   `serve::nothing_but_the_protocol_is_written_to_stdout`,
@@ -859,6 +873,11 @@ from the decision cache.
   `evidence::the_use_cases_record_names_a_commit_of_this_tree_and_holds_no_secret` on
   the record with the door's lines, `scripts/crate-graph.txt` holding `whizbang-serve`,
   and the carry-over rows above closed.
+
+**Ticked by F1's second pull request.** The two tests M1 could not write, `cache::a_tool_files_edit_misses`
+and `serve::end_of_input_ends_the_tool_workers_group_with_a_child_holding_its_pipes`, were
+built by X1's second pull request and pass; a cancel from a second process is re-owned to
+milestone 5 with its line (carry-over row on a run cancelled only in its own process).
 
 **Where M1's pull request leaves the box.** Unticked. Shown by the tests named above: the
 seven of `serve::` other than the tool worker's group, `pack::files_are_verified_again_before_a_load_after_a_restart_of_the_worker`,
@@ -960,18 +979,19 @@ of tasks M1, A2 and checkpoint 1D (`serve::a_run_its_deadline_ended_before_the_s
 `spend::judge::a_turn_whose_usage_no_charge_can_hold_is_charged_its_bound`).
 
 **Reworded with the task (F1, its second pull request).** The last clause read "every
-carry-over row owned by milestone 2 closed, re-owned or dropped with a line". Two rows stay
-owned by milestone 2 because they wait on the owner, not on F1: the baseline gate's run
-(fifth item under "What the owner must answer") and P1's live evidence (the first and
-second). F1 cannot close them, and re-owning them would move the milestone's own row. So the
-clause is: every carry-over row owned by milestone 2 closed, re-owned or dropped with a line,
-but those two, each named as open in the note. As reworded, every clause is shown: the tests
+carry-over row owned by milestone 2 closed, re-owned or dropped with a line". One row stays
+owned by milestone 2 because it waits on the owner, not on F1: the baseline gate's run
+(fifth item under "What the owner must answer", with the fourth). F1 cannot close it, and
+re-owning it would move the milestone's own row. So the clause is: every carry-over row
+owned by milestone 2 closed, re-owned or dropped with a line, but that one, named as open in
+the note. As reworded, every clause is shown: the tests
 built and named above, the moved ones each with a line on its row, the note
 (`docs/plans/m2-note.md`) with `scripts/tests/test-notes.sh` reading it (it must cite at
 least 30 tests that exist), and the rows: closed (what X1 did not build; rung 2 of the two
 tools; the time of `check (ubuntu-22.04)` on `main`), re-owned with a line (the order of a
 segmenter's answer and two needs of one capability, to milestone 3; an unacknowledged
-admission in a door that outlives a run, to milestone 5), or the two above. The box is
+admission in a door that outlives a run, to milestone 5; P1's live evidence, to milestone
+3, as P1's status says), or the one above. The box is
 ticked.
 
 **Keeping tests lean (F1).** Each follow-up's test on files made in the test; no model,
@@ -986,6 +1006,9 @@ no network.
    a tracked file): yes/no.
 2. I need `https://api.openai.com` approved as a recipient for judging, with the same
    classes, and `OPENAI_API_KEY` put in the same env file by you: yes/no.
+
+   **Items 1 and 2 approved by the owner on 2026-11-18** ("keys are both there"; "Origins
+   (P)").
 3. I need `https://raw.githubusercontent.com` approved as a download origin for the
    evaluation sets' pictures (GETs of the public `wafflery-evalsets` at a pinned
    revision, checked by hash; nothing of yours is sent): yes/no. No means you place the
