@@ -154,11 +154,18 @@ what was left of it would be reported and written
 what was handed back is committed, the artifacts that were right
 included (`commit::what_an_action_hands_back_is_held_to_the_ports_its_call_returns`).
 
-What is not checked: that an output belongs to the image its port says it is on
-(`OutputPort::on`), that an image is derived from the one its port names
-(`derived_from`), that a mask was rebound (`rebound_onto`), and that an artifact's origin
-names the action that handed it back. The descriptor states these and nothing holds an
-action to them yet (`docs/carry-over.md`).
+**Held to the relations its ports state** (task F1 of plan m3; this paragraph said they
+were not checked): after the ports, and before anything is published, each artifact is
+read back from its canonical file within the executor's decode limits; one the store
+does not already hold has an origin whose last step that is not a rebind names the
+action; an artifact a port says is on an image (`OutputPort::on`) is on that image; a
+mask rebound onto an output image (`rebound_onto`) is on it, its binding placing it onto
+the image its port names by the identity, or that image is unchanged and the mask keeps
+its binding; and an image derived from another (`derived_from`) is its size and differs
+from it only where a mask weighs over 0, the masks rebound onto it or else the masks the
+call gave on that image. Each refusal is an error of the type `output`, and nothing is
+committed (`outputs::…` in the core's tests). An artifact the store already holds keeps
+the file it has, so its origin is the one held when it was first committed.
 
 The outputs of a run are listed, in its outcome and in its record, in the order of the
 descriptor's ports, and within a port in the order they were handed back.

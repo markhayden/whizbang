@@ -339,3 +339,37 @@ fn the_brief_and_each_bindings_role_and_label_are_in_the_run() {
     assert_eq!(kept["images"][2]["label"], "reference 2");
     assert_eq!(kept["checklist"].as_array().unwrap().len(), ids.len());
 }
+
+#[test]
+fn a_fill_run_holds_no_byte_of_its_key() {
+    // One fill under fal's filler: the key was sent in its header alone; the run's
+    // record and everything under the store hold none of it; the record names the model
+    // and its preparation, and the one recipient with the two classes a fill sends.
+    use crate::fal::{FILL_CLASSES, filled_once};
+    let (filled, ran, log) = filled_once("record-fill-key");
+    let (head, body) = log.lock().unwrap()[0].clone();
+    assert_eq!(head.matches(&filled.key).count(), 1, "{head}");
+    assert!(
+        !body
+            .windows(filled.key.len())
+            .any(|at| at == filled.key.as_bytes())
+    );
+    let record = record_of(&filled.world.root, ran.run().as_str());
+    let text = record.to_string();
+    assert!(!text.contains(&filled.key));
+    assert!(!text.to_ascii_lowercase().contains("authorization"));
+    assert!(!filled.store_holds_the_key());
+    let model = &record["models"][0];
+    assert_eq!(model["model"], "bria-eraser");
+    assert_eq!(model["version"], whizbang_backends::fal::identity_version());
+    let egress = record["egress"].as_array().unwrap();
+    assert_eq!(egress.len(), 1, "{egress:?}");
+    assert_eq!(egress[0]["outcome"], "sent");
+    let classes: Vec<&str> = egress[0]["classes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|class| class.as_str().unwrap())
+        .collect();
+    assert_eq!(classes, FILL_CLASSES);
+}

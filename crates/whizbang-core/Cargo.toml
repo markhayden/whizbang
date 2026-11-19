@@ -26,6 +26,11 @@ zune-jpeg = "=0.5.15"
 libm = "=0.2.16"
 # Inflating a PNG's colour profile inside a limit. The version the PNG decoder uses.
 miniz_oxide = "=0.8.9"
+# The one encoder of an image artifact's file (`identity::encode`): `image`'s PNG encoder
+# compresses with `flate2` over another `miniz_oxide` than the decoder's, each pinned so
+# that an artifact's file, part of its identity, changes only by an edit here.
+flate2 = "=1.1.11"
+miniz_oxide_compress = { package = "miniz_oxide", version = "=0.9.1" }
 serde.workspace = true
 serde_json.workspace = true
 # The digest that names stored content, and every identity.

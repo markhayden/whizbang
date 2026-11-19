@@ -408,3 +408,27 @@ mod judge {
         }
     }
 }
+
+mod fill {
+    //! What a fill of fal's filler reserves and settles (plan m3, task F1, item 3).
+
+    use crate::anthropic::record_of;
+    use crate::fal::filled_once;
+
+    #[test]
+    fn a_bria_call_reserves_its_price_and_settles_at_it() {
+        // The price of a call is its bound, 0.04 dollars: reserved before it is sent,
+        // and settled at it, since the answer states no usage.
+        let price =
+            whizbang_backends::fal::spend::bound_micros(whizbang_backends::fal::spend::PRICE);
+        assert_eq!(price, 40_000.0);
+        let (filled, ran, _) = filled_once("spend-fill");
+        let record = record_of(&filled.world.root, ran.run().as_str());
+        assert_eq!(record["spend"]["reserved_micros"], 40_000);
+        let paid = &record["spend"]["requests"];
+        assert_eq!(paid.as_array().unwrap().len(), 1, "{paid}");
+        assert_eq!(paid[0]["reserved_micros"], 40_000);
+        assert_eq!(paid[0]["settled_micros"], 40_000);
+        assert_eq!(paid[0]["stage"], "answered");
+    }
+}

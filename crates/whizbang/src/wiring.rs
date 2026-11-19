@@ -89,6 +89,9 @@ fn registry_of(cached: bool, files: Option<Arc<ToolFiles>>) -> Result<Registry, 
     for action in actions {
         registry.register(action).map_err(|e| said(&e))?;
     }
+    // Each registered by its own module (plan m3, "Shared files").
+    whizbang_rascal::paste::register(&mut registry).map_err(|e| said(&e))?;
+    whizbang_rascal::fill::register(&mut registry).map_err(|e| said(&e))?;
     if let Some(files) = &files {
         for action in files.actions()? {
             registry.register(action).map_err(|e| said(&e))?;

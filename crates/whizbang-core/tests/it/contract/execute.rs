@@ -24,7 +24,7 @@ use whizbang_testkit::scratch::Scratch;
 
 use super::record::{completed, schema};
 use super::redact::made_up_key;
-use crate::artifact::support::{image_of, photo};
+use crate::artifact::support::{image_by, image_of, photo};
 
 /// A clock that says 1000, then 1001, and so on: one more each time it is asked.
 struct Ticking(AtomicU64);
@@ -950,7 +950,7 @@ fn a_snapshot_that_fails_inside_an_action_is_said_without_a_path_as_well() {
     // the look fails, and what the action is handed names the pointer by its last
     // part alone.
     let world = World::new();
-    let image = image_of(photo(), ImageRole::Picture);
+    let image = image_by(photo(), ImageRole::Picture, "makes");
     let draft = ActionDescriptor::draft("makes", "1.0.0", Kind::Primitive, "Makes one.")
         .output(OutputPort::one("made", ArtifactType::Image, "An image."));
     let body: Body = Box::new(move |_, _| Ok(Produced::nothing().with("made", image.clone())));
