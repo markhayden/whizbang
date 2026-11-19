@@ -918,7 +918,7 @@ harness"). Budget: the runner's change about 450; rascal's `lab/cell.rs`, `corpu
    for that item, the clean picture of B1's set, with no recipe run and no filler call. Both
    are part of the cell's identity.
 
-- [ ] Done when:
+- [x] Done when:
   `matrix::eval_matrix_still_resumes_and_keeps_a_failed_attempt_through_the_shared_runner`,
   `runner::a_cell_of_any_action_is_recognised_by_its_identity_in_a_runs_record`,
   `runner::a_fill_cells_forecast_is_its_price_per_call`,
