@@ -21,8 +21,7 @@
 //! whizbang's form, which names an image by its identity; `check` taking squint's form is on
 //! the carry-over list.
 //!
-//! What this does not reproduce, each a difference the comparison reports by place: a call
-//! whose arguments break the tool's schema (squint's schema checker worded the refusal), a
+//! What this does not reproduce, each a difference the comparison reports by place: a
 //! submission that does not validate (whizbang's port words its reasons its own way), a
 //! panorama, and a picture with transparency (squint encoded it as its own PNG).
 
@@ -446,6 +445,40 @@ fn align_call(frames: &Frames, args: &Json, projection: Projection) -> Result<En
     })
 }
 
+/// Squint's check of a judge's arguments against a tool's model schema
+/// (`crates/squint-core/src/tool/mod.rs`, `check_model_args`): an object, without the
+/// harness's own key, with every required argument, and no argument the schema does not
+/// name. Its words are squint's; what a value holds is the tool's to check.
+fn model_args(name: &str, arguments: &Json) -> Result<(), String> {
+    let Some(given) = arguments.as_object() else {
+        return Err("arguments must be an object".to_owned());
+    };
+    if given.contains_key("_squint") {
+        return Err(
+            "_squint is supplied by the harness and may not appear in the model's arguments"
+                .to_owned(),
+        );
+    }
+    let schema = match name {
+        "view" => view_definition()["input_schema"].clone(),
+        _ => align_definition().map(|d| d["input_schema"].clone())?,
+    };
+    let required = schema["required"].as_array().cloned().unwrap_or_default();
+    for key in required.iter().filter_map(Json::as_str) {
+        if !given.contains_key(key) {
+            return Err(format!("missing required argument {key:?}"));
+        }
+    }
+    if let Some(named) = schema["properties"].as_object() {
+        for key in given.keys() {
+            if !named.contains_key(key) {
+                return Err(format!("unknown argument {key:?}"));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// What squint's loop made of a response.
 enum Class {
     Submission,
@@ -690,8 +723,8 @@ impl Run<'_> {
             "align" => (&["image", "against"], &[]),
             _ => return refuse(self, format!("unknown tool {name:?}")),
         };
-        if !arguments.is_object() {
-            return refuse(self, "the arguments are not an object".to_owned());
+        if let Err(why) = model_args(name, &arguments) {
+            return refuse(self, why);
         }
         // An image named by its raw frame is passed on as its id; a frame named by an image's
         // id is passed on as that image's raw frame.
