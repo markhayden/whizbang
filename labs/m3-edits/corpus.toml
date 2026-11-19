@@ -1,0 +1,1084 @@
+# The corpus of the labs `m3-edits-<recipe>` (plan m3, task B1, item 1): every file of
+# the synthetic edit set `edits.toml` beside it, by the path under the folder `whizbang
+# eval edits draw` wrote it to. Written by that program; never edited by hand.
+version = 1
+
+[[image]]
+id = "clean-brick-house-golden-hour"
+file = "clean/brick-house-golden-hour.png"
+sha256 = "sha256:ab26d16cc42d7fe729d3a29bc62eba29f56ea4aee4fe3b66a044cf5e21a33adb"
+licence = "CC-BY-4.0: items/brick-house-golden-hour/candidate.png of the set source-fidelity/scenes-v1, its pixels as decoded"
+
+[[image]]
+id = "ball-brick-house-golden-hour"
+file = "ball/brick-house-golden-hour.png"
+sha256 = "sha256:043d8126dbb30031cb4c556db7ed5015fb49f32df1087cadbbc9e7eb80fff974"
+group = "edits"
+licence = "CC-BY-4.0: items/brick-house-golden-hour/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "ball-brick-house-golden-hour-box"
+file = "ball/brick-house-golden-hour-box.loc"
+sha256 = "sha256:c0886c040e076bf9aac610df4c1b7abc0455dd86300a27ef8f6a5629742c2202"
+licence = "The place of the defect on: CC-BY-4.0: items/brick-house-golden-hour/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-brick-house-golden-hour"
+file = "scratch/brick-house-golden-hour.png"
+sha256 = "sha256:7da9c93531494021e68fd0600d34d82bcc8827c19d04d9607953b1e9458dd13f"
+group = "edits"
+licence = "CC-BY-4.0: items/brick-house-golden-hour/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-brick-house-golden-hour-stroke"
+file = "scratch/brick-house-golden-hour-stroke.loc"
+sha256 = "sha256:8c9c62dcf9c3fced64bbfc039f91ffd160c024f82a670eeba628643f62d63e0f"
+licence = "The place of the defect on: CC-BY-4.0: items/brick-house-golden-hour/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-brick-house-golden-hour"
+file = "spot/brick-house-golden-hour.png"
+sha256 = "sha256:691659b13e0b3c845c4f72585ddf2baf8a413f83b8fe07c9b0043640bfcc69a5"
+group = "edits"
+licence = "CC-BY-4.0: items/brick-house-golden-hour/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-brick-house-golden-hour-box"
+file = "spot/brick-house-golden-hour-box.loc"
+sha256 = "sha256:3857f8f699ec7d04d18d25bab3ecdb698d8326c21daa00a3cb0e302bb80c17fb"
+licence = "The place of the defect on: CC-BY-4.0: items/brick-house-golden-hour/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "clean-brick-house-grade"
+file = "clean/brick-house-grade.png"
+sha256 = "sha256:1e0321a782d935945e737fb5cd09cb171ce95dbb8b4504a400050008ac4d8aff"
+licence = "CC-BY-4.0: items/brick-house-grade/candidate.png of the set source-fidelity/scenes-v1, its pixels as decoded"
+
+[[image]]
+id = "ball-brick-house-grade"
+file = "ball/brick-house-grade.png"
+sha256 = "sha256:82152497467c8f9d99c7ba007e5240d99da0377da379cedab293729563c1c960"
+group = "edits"
+licence = "CC-BY-4.0: items/brick-house-grade/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "ball-brick-house-grade-box"
+file = "ball/brick-house-grade-box.loc"
+sha256 = "sha256:7a5280ae4537fe7d863bb54de1aba3b35a7f8adb2c0864102d64bffa5509586f"
+licence = "The place of the defect on: CC-BY-4.0: items/brick-house-grade/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-brick-house-grade"
+file = "scratch/brick-house-grade.png"
+sha256 = "sha256:08ab68f205794d0c6df36abcff30a697c9a5b004ab55b03b6e165b9b6c545b3d"
+group = "edits"
+licence = "CC-BY-4.0: items/brick-house-grade/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-brick-house-grade-stroke"
+file = "scratch/brick-house-grade-stroke.loc"
+sha256 = "sha256:2643f8b098e4ec13c1c2f52b4d9236e3a732264d85cb590d2e5677757927e160"
+licence = "The place of the defect on: CC-BY-4.0: items/brick-house-grade/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-brick-house-grade"
+file = "spot/brick-house-grade.png"
+sha256 = "sha256:aa2cc96e0d4feeb8bc2eab473a24f55a9dc4ee0c8dc7a3715c14645c38e0506d"
+group = "edits"
+licence = "CC-BY-4.0: items/brick-house-grade/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-brick-house-grade-box"
+file = "spot/brick-house-grade-box.loc"
+sha256 = "sha256:276493346d0cfd4d0452b63dc0699b59bf49e90f15a5c961d12839d5543f8678"
+licence = "The place of the defect on: CC-BY-4.0: items/brick-house-grade/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "clean-brick-house-mirror"
+file = "clean/brick-house-mirror.png"
+sha256 = "sha256:1506cd15e7f6451c370d7dd0a77870b6c2cd4c12d6167e3040439c595adab943"
+licence = "CC-BY-4.0: items/brick-house-mirror/candidate.png of the set source-fidelity/scenes-v1, its pixels as decoded"
+
+[[image]]
+id = "ball-brick-house-mirror"
+file = "ball/brick-house-mirror.png"
+sha256 = "sha256:e643468d49edcfc7f3527aaf2dcb74c7dbb88d6bbb86076e10bd8708cfaafbfe"
+group = "edits"
+licence = "CC-BY-4.0: items/brick-house-mirror/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "ball-brick-house-mirror-box"
+file = "ball/brick-house-mirror-box.loc"
+sha256 = "sha256:f85e6fda1787f3d0b5ab31cdbf75162dc4c94a03ddd626f15a254e1c4db6ab7b"
+licence = "The place of the defect on: CC-BY-4.0: items/brick-house-mirror/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-brick-house-mirror"
+file = "scratch/brick-house-mirror.png"
+sha256 = "sha256:515cce661abbcfba11ab41138cf2688eb1d3d56a8eb9b33c5f59675db1e901c6"
+group = "edits"
+licence = "CC-BY-4.0: items/brick-house-mirror/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-brick-house-mirror-stroke"
+file = "scratch/brick-house-mirror-stroke.loc"
+sha256 = "sha256:e681c11f377969815fd83601378596c8f242de31efc1b24bf44ed95d4a9141f7"
+licence = "The place of the defect on: CC-BY-4.0: items/brick-house-mirror/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-brick-house-mirror"
+file = "spot/brick-house-mirror.png"
+sha256 = "sha256:192624a7818e56f5d15bd4d9a49e7e8ca73b9b76a57e8dd1807ce31e922bc6e9"
+group = "edits"
+licence = "CC-BY-4.0: items/brick-house-mirror/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-brick-house-mirror-box"
+file = "spot/brick-house-mirror-box.loc"
+sha256 = "sha256:5e200fb3a58d9e3779f1e8cf950a8a344ed4fd8785f84fe7582c90bde58de222"
+licence = "The place of the defect on: CC-BY-4.0: items/brick-house-mirror/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "clean-brick-house-source"
+file = "clean/brick-house-source.png"
+sha256 = "sha256:9474c5665754d352be48fcce8d6d13cbb4c67c19899391977fce1506f2f6af5b"
+licence = "CC-BY-4.0: families/brick-house/source.png of the set source-fidelity/scenes-v1, its pixels as decoded"
+
+[[image]]
+id = "ball-brick-house-source"
+file = "ball/brick-house-source.png"
+sha256 = "sha256:7d55b711ee819c2cfd77d12efbf7690a5d7fa726d02fbcb10c5b3bd619a921e1"
+group = "edits"
+licence = "CC-BY-4.0: families/brick-house/source.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "ball-brick-house-source-box"
+file = "ball/brick-house-source-box.loc"
+sha256 = "sha256:2f3bbc2eb47da255adaff3ca3eb266762815ff00415da405dd8fb05ca9e70005"
+licence = "The place of the defect on: CC-BY-4.0: families/brick-house/source.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-brick-house-source"
+file = "scratch/brick-house-source.png"
+sha256 = "sha256:99cca5158f9f247d958281c58fa74e9fb1ec3d349fdb3d3db857af2195a20e01"
+group = "edits"
+licence = "CC-BY-4.0: families/brick-house/source.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-brick-house-source-stroke"
+file = "scratch/brick-house-source-stroke.loc"
+sha256 = "sha256:10dfc0ea9997857514b6dde7cd9ac79f54743600906d56728ba47f63bb799d52"
+licence = "The place of the defect on: CC-BY-4.0: families/brick-house/source.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-brick-house-source"
+file = "spot/brick-house-source.png"
+sha256 = "sha256:537a167ee3beca92c010bb71a769c9aa63ab073af4598d679831bd26655e49e7"
+group = "edits"
+licence = "CC-BY-4.0: families/brick-house/source.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-brick-house-source-box"
+file = "spot/brick-house-source-box.loc"
+sha256 = "sha256:95e18efcf373377d3bbff0ff0987e6324a2759ba8d6d8a1d23beed54e61ce01a"
+licence = "The place of the defect on: CC-BY-4.0: families/brick-house/source.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "clean-hotel-pool-chairs"
+file = "clean/hotel-pool-chairs.png"
+sha256 = "sha256:c327e792e12c6862cdaa6b836403b8d232fdb44b6fb542215f57326b3883c3e9"
+licence = "CC-BY-4.0: items/hotel-pool-chairs/candidate.png of the set source-fidelity/scenes-v1, its pixels as decoded"
+
+[[image]]
+id = "ball-hotel-pool-chairs"
+file = "ball/hotel-pool-chairs.png"
+sha256 = "sha256:f930a35c7afa69681949fa33e32840844bc30ed1a14b2f6deb5e2acc4a90c7cf"
+group = "edits"
+licence = "CC-BY-4.0: items/hotel-pool-chairs/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "ball-hotel-pool-chairs-box"
+file = "ball/hotel-pool-chairs-box.loc"
+sha256 = "sha256:b91a628a5f66f6366b35faf8f3693408037dfcba2c3cfc7a439e83cb9cdf3e87"
+licence = "The place of the defect on: CC-BY-4.0: items/hotel-pool-chairs/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-hotel-pool-chairs"
+file = "scratch/hotel-pool-chairs.png"
+sha256 = "sha256:75affe8638590f0cc1e82f6c59dc7f240e2e354d9175d400af989d618edb2119"
+group = "edits"
+licence = "CC-BY-4.0: items/hotel-pool-chairs/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-hotel-pool-chairs-stroke"
+file = "scratch/hotel-pool-chairs-stroke.loc"
+sha256 = "sha256:ecffb13fa9275d686ddf072b0ef67bb465c262363ebbd03b1267f24ab4a6025c"
+licence = "The place of the defect on: CC-BY-4.0: items/hotel-pool-chairs/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-hotel-pool-chairs"
+file = "spot/hotel-pool-chairs.png"
+sha256 = "sha256:c8ef10dcf4ce146eb7a19a75a5bb52740691b23bd41f41c0c29ba7345d31f2b0"
+group = "edits"
+licence = "CC-BY-4.0: items/hotel-pool-chairs/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-hotel-pool-chairs-box"
+file = "spot/hotel-pool-chairs-box.loc"
+sha256 = "sha256:4815b1421bfc18ba7b1549a7670d86936f746476cb0aea48df5fc9c68021acfc"
+licence = "The place of the defect on: CC-BY-4.0: items/hotel-pool-chairs/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "clean-hotel-pool-crop"
+file = "clean/hotel-pool-crop.png"
+sha256 = "sha256:07574543e61a7b23187881ccb95667ed22f5b89bed81e391b96fb3b09008b748"
+licence = "CC-BY-4.0: items/hotel-pool-crop/candidate.png of the set source-fidelity/scenes-v1, its pixels as decoded"
+
+[[image]]
+id = "ball-hotel-pool-crop"
+file = "ball/hotel-pool-crop.png"
+sha256 = "sha256:cb5e3f65e36692946bf6367700147502d60157434afe2adc33d4cf617ee5b5ed"
+group = "edits"
+licence = "CC-BY-4.0: items/hotel-pool-crop/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "ball-hotel-pool-crop-box"
+file = "ball/hotel-pool-crop-box.loc"
+sha256 = "sha256:5977b4886b23440068a1b78ac37848c3f0c506eb6417a3113a2ad06e734e366d"
+licence = "The place of the defect on: CC-BY-4.0: items/hotel-pool-crop/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-hotel-pool-crop"
+file = "scratch/hotel-pool-crop.png"
+sha256 = "sha256:2675e78b95bd53105000beef242a327421d2ff3a3bd111386a0aa0d73e83fcf5"
+group = "edits"
+licence = "CC-BY-4.0: items/hotel-pool-crop/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-hotel-pool-crop-stroke"
+file = "scratch/hotel-pool-crop-stroke.loc"
+sha256 = "sha256:71056085c980592b17d357bffffd57aae6fc9333fe7d67b213dc236033c427bc"
+licence = "The place of the defect on: CC-BY-4.0: items/hotel-pool-crop/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-hotel-pool-crop"
+file = "spot/hotel-pool-crop.png"
+sha256 = "sha256:17545c28b9f9406dd83f1e5ae886f51da840624ef18d49169f6a0caaddd58902"
+group = "edits"
+licence = "CC-BY-4.0: items/hotel-pool-crop/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-hotel-pool-crop-box"
+file = "spot/hotel-pool-crop-box.loc"
+sha256 = "sha256:b2522ebc1f86b4d731e221a8e92885848c054d2c0a25224a1ff3cdc5f7a071f6"
+licence = "The place of the defect on: CC-BY-4.0: items/hotel-pool-crop/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "clean-hotel-pool-grade"
+file = "clean/hotel-pool-grade.png"
+sha256 = "sha256:2dac11e096d9f27e6d17c706b72a8018ca2e0accbec24542c618858ee5fcbb88"
+licence = "CC-BY-4.0: items/hotel-pool-grade/candidate.png of the set source-fidelity/scenes-v1, its pixels as decoded"
+
+[[image]]
+id = "ball-hotel-pool-grade"
+file = "ball/hotel-pool-grade.png"
+sha256 = "sha256:0b73a131769dc5c9def578b17c66b757bc4133570d9e2cbdc7e05c4028d0847e"
+group = "edits"
+licence = "CC-BY-4.0: items/hotel-pool-grade/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "ball-hotel-pool-grade-box"
+file = "ball/hotel-pool-grade-box.loc"
+sha256 = "sha256:c489f22c3b5c12c135fe65d92186913611eb7958240e573e6acb03c60c08ff43"
+licence = "The place of the defect on: CC-BY-4.0: items/hotel-pool-grade/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-hotel-pool-grade"
+file = "scratch/hotel-pool-grade.png"
+sha256 = "sha256:3988aec1e1d90f09657503bc8913c0a14715ec8dfadd0d3ff2fca7f296523819"
+group = "edits"
+licence = "CC-BY-4.0: items/hotel-pool-grade/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-hotel-pool-grade-stroke"
+file = "scratch/hotel-pool-grade-stroke.loc"
+sha256 = "sha256:d10d4142ec00ce7c9a75596786762860e62b4408ea308f578c47256fbe78c784"
+licence = "The place of the defect on: CC-BY-4.0: items/hotel-pool-grade/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-hotel-pool-grade"
+file = "spot/hotel-pool-grade.png"
+sha256 = "sha256:3d732e6612c1976e742c124a25d0f08e7e8efb8b36f08bac69b03e03719b49a8"
+group = "edits"
+licence = "CC-BY-4.0: items/hotel-pool-grade/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-hotel-pool-grade-box"
+file = "spot/hotel-pool-grade-box.loc"
+sha256 = "sha256:8af838990c265adc146b2310e5aca4060946f3a98f5ba435e96a167351d281e8"
+licence = "The place of the defect on: CC-BY-4.0: items/hotel-pool-grade/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "clean-hotel-pool-no-pool"
+file = "clean/hotel-pool-no-pool.png"
+sha256 = "sha256:a52f4d8fb3d70c8ce8b88ac10d35b4a0711fd7d749652f942e125c61b3632dfe"
+licence = "CC-BY-4.0: items/hotel-pool-no-pool/candidate.png of the set source-fidelity/scenes-v1, its pixels as decoded"
+
+[[image]]
+id = "ball-hotel-pool-no-pool"
+file = "ball/hotel-pool-no-pool.png"
+sha256 = "sha256:13e9c723b0b63140a51311a588d6edcbd00ebb1a0a999ef55102fb4ce3ef7acc"
+group = "edits"
+licence = "CC-BY-4.0: items/hotel-pool-no-pool/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "ball-hotel-pool-no-pool-box"
+file = "ball/hotel-pool-no-pool-box.loc"
+sha256 = "sha256:be39d6e73ac54c66a036320c3e950af1a7728bbefc89070fa49bcb2298e9008d"
+licence = "The place of the defect on: CC-BY-4.0: items/hotel-pool-no-pool/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-hotel-pool-no-pool"
+file = "scratch/hotel-pool-no-pool.png"
+sha256 = "sha256:b923a145713949848a24b137263f39801041ea124f16a6a8ffcaed72ce0b4014"
+group = "edits"
+licence = "CC-BY-4.0: items/hotel-pool-no-pool/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-hotel-pool-no-pool-stroke"
+file = "scratch/hotel-pool-no-pool-stroke.loc"
+sha256 = "sha256:55d40fbbd9074536809190f5883c474788ecc93867fa29355159c79c1f2e69b9"
+licence = "The place of the defect on: CC-BY-4.0: items/hotel-pool-no-pool/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-hotel-pool-no-pool"
+file = "spot/hotel-pool-no-pool.png"
+sha256 = "sha256:f4953ba739a31dbfadfbd0b155d01b246c7658318b524224a4fadded1ef22ac5"
+group = "edits"
+licence = "CC-BY-4.0: items/hotel-pool-no-pool/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-hotel-pool-no-pool-box"
+file = "spot/hotel-pool-no-pool-box.loc"
+sha256 = "sha256:cd83b2e150c2e5dc03a35cd7b26e8fa62db4134591ef3e83f6af41bcf0f704ad"
+licence = "The place of the defect on: CC-BY-4.0: items/hotel-pool-no-pool/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "clean-hotel-pool-source"
+file = "clean/hotel-pool-source.png"
+sha256 = "sha256:d39cb595b22fb08660765ab70f17751005857b71c2656721add38efd565308c4"
+licence = "CC-BY-4.0: families/hotel-pool/source.png of the set source-fidelity/scenes-v1, its pixels as decoded"
+
+[[image]]
+id = "ball-hotel-pool-source"
+file = "ball/hotel-pool-source.png"
+sha256 = "sha256:34fa5fe1aa8f7eabc18553e850037b4b1c37258b30dff45603fa9deae4cead89"
+group = "edits"
+licence = "CC-BY-4.0: families/hotel-pool/source.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "ball-hotel-pool-source-box"
+file = "ball/hotel-pool-source-box.loc"
+sha256 = "sha256:3f519cbbc88d431ca693a905198b01549916eed78df138e58a1dd435a3301de0"
+licence = "The place of the defect on: CC-BY-4.0: families/hotel-pool/source.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-hotel-pool-source"
+file = "scratch/hotel-pool-source.png"
+sha256 = "sha256:88ae1f378efddc5f8b7192f4caf255b01b8bc33bcbbfd9bb1609db6d3b6e7527"
+group = "edits"
+licence = "CC-BY-4.0: families/hotel-pool/source.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-hotel-pool-source-stroke"
+file = "scratch/hotel-pool-source-stroke.loc"
+sha256 = "sha256:cde4e3d48a4b3c77548f80c02748251a313bcc6d86945e7154cf04a2fb8d1039"
+licence = "The place of the defect on: CC-BY-4.0: families/hotel-pool/source.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-hotel-pool-source"
+file = "spot/hotel-pool-source.png"
+sha256 = "sha256:777d72d7bc90b33e3009d488b5a12c535305cd3a7a59239c9cb621f27c9e52ab"
+group = "edits"
+licence = "CC-BY-4.0: families/hotel-pool/source.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-hotel-pool-source-box"
+file = "spot/hotel-pool-source-box.loc"
+sha256 = "sha256:5d5c8c7f95c165b7bcff15ae1b8d3c27e0477349c672bf0726eee82a79d517fc"
+licence = "The place of the defect on: CC-BY-4.0: families/hotel-pool/source.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "clean-red-barn-dusk"
+file = "clean/red-barn-dusk.png"
+sha256 = "sha256:eeb448abccaea39c3c4f15cd1fee9833409d2bcaa2c44dea34e48d2f4d3f7830"
+licence = "CC-BY-4.0: items/red-barn-dusk/candidate.png of the set source-fidelity/scenes-v1, its pixels as decoded"
+
+[[image]]
+id = "ball-red-barn-dusk"
+file = "ball/red-barn-dusk.png"
+sha256 = "sha256:98b663e264b0a32d57feca0ad5d21f9cbac676bd4934fb7566b74ece94d921d9"
+group = "edits"
+licence = "CC-BY-4.0: items/red-barn-dusk/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "ball-red-barn-dusk-box"
+file = "ball/red-barn-dusk-box.loc"
+sha256 = "sha256:06c41f9985e0120a4025c0460bc22dddbbcae2b3154a696169089d9f12e79f82"
+licence = "The place of the defect on: CC-BY-4.0: items/red-barn-dusk/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-red-barn-dusk"
+file = "scratch/red-barn-dusk.png"
+sha256 = "sha256:0054fd77251788c64074deb4fb5b46d2644427a3e733a55cbcc468923642fb12"
+group = "edits"
+licence = "CC-BY-4.0: items/red-barn-dusk/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-red-barn-dusk-stroke"
+file = "scratch/red-barn-dusk-stroke.loc"
+sha256 = "sha256:2dc375649f6e32c733f1f08b0891be8537a7557034b33ca91dd3b3bf57ca5866"
+licence = "The place of the defect on: CC-BY-4.0: items/red-barn-dusk/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-red-barn-dusk"
+file = "spot/red-barn-dusk.png"
+sha256 = "sha256:01a438bebff511107131a20db0b968b3f18a082d3ffdf544c74bb01c5e2e4025"
+group = "edits"
+licence = "CC-BY-4.0: items/red-barn-dusk/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-red-barn-dusk-box"
+file = "spot/red-barn-dusk-box.loc"
+sha256 = "sha256:93d85acb7c43a7139857c4339000c86d8334208ca9b790a529a3011dac4304bd"
+licence = "The place of the defect on: CC-BY-4.0: items/red-barn-dusk/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "clean-red-barn-grade"
+file = "clean/red-barn-grade.png"
+sha256 = "sha256:570fd56c63b4441ae02cd5ee6ecceaa2f36c87fee8ea71c09e146378052d8ab4"
+licence = "CC-BY-4.0: items/red-barn-grade/candidate.png of the set source-fidelity/scenes-v1, its pixels as decoded"
+
+[[image]]
+id = "ball-red-barn-grade"
+file = "ball/red-barn-grade.png"
+sha256 = "sha256:32ef3c96a3d60de09e76b03dd4494289b77217d68bb1a86d16160231155a0898"
+group = "edits"
+licence = "CC-BY-4.0: items/red-barn-grade/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "ball-red-barn-grade-box"
+file = "ball/red-barn-grade-box.loc"
+sha256 = "sha256:13f966fcc2647f3977f72f520670526d4543b387a91e362c796b31fc03352523"
+licence = "The place of the defect on: CC-BY-4.0: items/red-barn-grade/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-red-barn-grade"
+file = "scratch/red-barn-grade.png"
+sha256 = "sha256:972fa55fa9c200392c4644c408bab0e52049315b78eb6d3ed5890efae8de6f0b"
+group = "edits"
+licence = "CC-BY-4.0: items/red-barn-grade/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-red-barn-grade-stroke"
+file = "scratch/red-barn-grade-stroke.loc"
+sha256 = "sha256:e7b0bb0ec7bcf09c7663a4232ec6783066bebda1d8c5cc07288f08ecd441c0a3"
+licence = "The place of the defect on: CC-BY-4.0: items/red-barn-grade/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-red-barn-grade"
+file = "spot/red-barn-grade.png"
+sha256 = "sha256:1476b3b02b59b16b651d1c936e58e0120393640e31685e8a6ab2b3a79777685d"
+group = "edits"
+licence = "CC-BY-4.0: items/red-barn-grade/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-red-barn-grade-box"
+file = "spot/red-barn-grade-box.loc"
+sha256 = "sha256:a738bfdb80636de73b3cc0fb3592f2bf7537c84d3eb2bb9a1ed1b5d2d5c23d6b"
+licence = "The place of the defect on: CC-BY-4.0: items/red-barn-grade/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "clean-red-barn-mirror"
+file = "clean/red-barn-mirror.png"
+sha256 = "sha256:c06887cefbdd11a47ee70bd79a8dcb11a6fc0984f9abe2254fc05316df812728"
+licence = "CC-BY-4.0: items/red-barn-mirror/candidate.png of the set source-fidelity/scenes-v1, its pixels as decoded"
+
+[[image]]
+id = "ball-red-barn-mirror"
+file = "ball/red-barn-mirror.png"
+sha256 = "sha256:57e078c812e6a2635284e9f483a1ae58968fcca65efdc1d4ddd88bd61ba13699"
+group = "edits"
+licence = "CC-BY-4.0: items/red-barn-mirror/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "ball-red-barn-mirror-box"
+file = "ball/red-barn-mirror-box.loc"
+sha256 = "sha256:7a361985e46faa98ab27dc78dc7cf85d544d285666f9230503b908f612541aa8"
+licence = "The place of the defect on: CC-BY-4.0: items/red-barn-mirror/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-red-barn-mirror"
+file = "scratch/red-barn-mirror.png"
+sha256 = "sha256:9392deea4a63f6bd0a672442204dddf1d76504c5a9d95633dab89d46314a96b9"
+group = "edits"
+licence = "CC-BY-4.0: items/red-barn-mirror/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-red-barn-mirror-stroke"
+file = "scratch/red-barn-mirror-stroke.loc"
+sha256 = "sha256:09bab60cf4d293189ca0e7e8c8cca5b662bd1f398bad8faadbe33300deb9d635"
+licence = "The place of the defect on: CC-BY-4.0: items/red-barn-mirror/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-red-barn-mirror"
+file = "spot/red-barn-mirror.png"
+sha256 = "sha256:dd6f0aa609c80e7b04e918ea38b749daf2711d142291b41154d32a6a8ff1c8eb"
+group = "edits"
+licence = "CC-BY-4.0: items/red-barn-mirror/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-red-barn-mirror-box"
+file = "spot/red-barn-mirror-box.loc"
+sha256 = "sha256:7d4837318611689fc4ac9caa27d6233f404d58a7e6f06dd45769f1e1abc9d158"
+licence = "The place of the defect on: CC-BY-4.0: items/red-barn-mirror/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "clean-red-barn-no-silo"
+file = "clean/red-barn-no-silo.png"
+sha256 = "sha256:eb004d13f8a3f13001f8a1b675729a8c8a4cccfced58bc702cd2b0c91a013958"
+licence = "CC-BY-4.0: items/red-barn-no-silo/candidate.png of the set source-fidelity/scenes-v1, its pixels as decoded"
+
+[[image]]
+id = "ball-red-barn-no-silo"
+file = "ball/red-barn-no-silo.png"
+sha256 = "sha256:b85f03a765f9062b93c019982887cf5dddc507077b5f26c5ceb0cc4c42ff97b7"
+group = "edits"
+licence = "CC-BY-4.0: items/red-barn-no-silo/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "ball-red-barn-no-silo-box"
+file = "ball/red-barn-no-silo-box.loc"
+sha256 = "sha256:42985a7818b1fc8a62c922d7d84588a3afcefdbf7a759c39b959e9765cb4a4ff"
+licence = "The place of the defect on: CC-BY-4.0: items/red-barn-no-silo/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-red-barn-no-silo"
+file = "scratch/red-barn-no-silo.png"
+sha256 = "sha256:5a342d05547e89748c99d1922523bf64e94e163d5e5019dcedb719188344b23a"
+group = "edits"
+licence = "CC-BY-4.0: items/red-barn-no-silo/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-red-barn-no-silo-stroke"
+file = "scratch/red-barn-no-silo-stroke.loc"
+sha256 = "sha256:dcd5eb06c197daccf383b802199952bed42308aae51fcc3a2fe813ab2fe405ee"
+licence = "The place of the defect on: CC-BY-4.0: items/red-barn-no-silo/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-red-barn-no-silo"
+file = "spot/red-barn-no-silo.png"
+sha256 = "sha256:1dc016239e4c7538e9c43fecc38c183a9d6212d7c5a141a7c763c4ca11d6f9f5"
+group = "edits"
+licence = "CC-BY-4.0: items/red-barn-no-silo/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-red-barn-no-silo-box"
+file = "spot/red-barn-no-silo-box.loc"
+sha256 = "sha256:c94cf5e8c6e1120137cb6c500300e4cd587fdcd93bed4693ab2c93e401599963"
+licence = "The place of the defect on: CC-BY-4.0: items/red-barn-no-silo/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "clean-red-barn-source"
+file = "clean/red-barn-source.png"
+sha256 = "sha256:54bc4af586494360178e0c3ff9b1e49269ad22ca55f5f687335b64267520e5de"
+licence = "CC-BY-4.0: families/red-barn/source.png of the set source-fidelity/scenes-v1, its pixels as decoded"
+
+[[image]]
+id = "ball-red-barn-source"
+file = "ball/red-barn-source.png"
+sha256 = "sha256:addce47f2f4468d3f9e2d0eb5794da0b5cee8850295b4b9c1ad01fcbe85e893a"
+group = "edits"
+licence = "CC-BY-4.0: families/red-barn/source.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "ball-red-barn-source-box"
+file = "ball/red-barn-source-box.loc"
+sha256 = "sha256:4d9dc1dfe81dcc3d1f1c7506f532c5b49d260c76e17d3bacfbed974d78d65d67"
+licence = "The place of the defect on: CC-BY-4.0: families/red-barn/source.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-red-barn-source"
+file = "scratch/red-barn-source.png"
+sha256 = "sha256:ec3dc6a315acc011a2445629bb7f40b8c7b88532a41c1b243c0621f845caeda7"
+group = "edits"
+licence = "CC-BY-4.0: families/red-barn/source.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-red-barn-source-stroke"
+file = "scratch/red-barn-source-stroke.loc"
+sha256 = "sha256:c48e3e7483fc2761dc26b735940d526af69a9513fd7fa24d6b03d7c6c3d65cab"
+licence = "The place of the defect on: CC-BY-4.0: families/red-barn/source.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-red-barn-source"
+file = "spot/red-barn-source.png"
+sha256 = "sha256:eb172e50292f7978e9b7e8f8129e8d4077b6a2b175f92b07b90ae3b2f625b4e5"
+group = "edits"
+licence = "CC-BY-4.0: families/red-barn/source.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-red-barn-source-box"
+file = "spot/red-barn-source-box.loc"
+sha256 = "sha256:d18df19d5f0a5cd698c8be4d6602675faec42b130f3ae8e3e60de002e7a7ad41"
+licence = "The place of the defect on: CC-BY-4.0: families/red-barn/source.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "clean-river-bridge-autumn"
+file = "clean/river-bridge-autumn.png"
+sha256 = "sha256:27870138de1dd2452f335c59a1ec7c828d04871fa4da41a2c7848af810e3c060"
+licence = "CC-BY-4.0: items/river-bridge-autumn/candidate.png of the set source-fidelity/scenes-v1, its pixels as decoded"
+
+[[image]]
+id = "ball-river-bridge-autumn"
+file = "ball/river-bridge-autumn.png"
+sha256 = "sha256:ad73036ab8f5e0e4a5d2afe44f02aff65b8ba9088335756ee2cb3bc61a37da88"
+group = "edits"
+licence = "CC-BY-4.0: items/river-bridge-autumn/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "ball-river-bridge-autumn-box"
+file = "ball/river-bridge-autumn-box.loc"
+sha256 = "sha256:e3d3b1635cc7ca608828c1b5c5ee4b85eb8e9586ddcf827d7d09776718217fa1"
+licence = "The place of the defect on: CC-BY-4.0: items/river-bridge-autumn/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-river-bridge-autumn"
+file = "scratch/river-bridge-autumn.png"
+sha256 = "sha256:46e39b1ae78f8c1479de33c0d155ef6249aaddd33b95e451aad81f467e2c134e"
+group = "edits"
+licence = "CC-BY-4.0: items/river-bridge-autumn/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-river-bridge-autumn-stroke"
+file = "scratch/river-bridge-autumn-stroke.loc"
+sha256 = "sha256:14ad3ee07efb30951a225204c1867ca978b2910124c18ec275682c8549197ddc"
+licence = "The place of the defect on: CC-BY-4.0: items/river-bridge-autumn/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-river-bridge-autumn"
+file = "spot/river-bridge-autumn.png"
+sha256 = "sha256:f1906d66d4f35d4430e92b7dd712727f79372f1c754fd2af99b02334e9ca4e2e"
+group = "edits"
+licence = "CC-BY-4.0: items/river-bridge-autumn/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-river-bridge-autumn-box"
+file = "spot/river-bridge-autumn-box.loc"
+sha256 = "sha256:245ef6f1f70735085fac30946bd2049f149eb4881ed37eae570ccca41acc4ed6"
+licence = "The place of the defect on: CC-BY-4.0: items/river-bridge-autumn/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "clean-river-bridge-crop"
+file = "clean/river-bridge-crop.png"
+sha256 = "sha256:28e4d6eed92b249ac5ba6fce023b7cc83cb24f2e29c0216e4c0e9b321560ab2e"
+licence = "CC-BY-4.0: items/river-bridge-crop/candidate.png of the set source-fidelity/scenes-v1, its pixels as decoded"
+
+[[image]]
+id = "ball-river-bridge-crop"
+file = "ball/river-bridge-crop.png"
+sha256 = "sha256:bedae05cb700c62bf2826f247482e79ee047cd0977ce1e2ffb7bf2fb57a8f4e5"
+group = "edits"
+licence = "CC-BY-4.0: items/river-bridge-crop/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "ball-river-bridge-crop-box"
+file = "ball/river-bridge-crop-box.loc"
+sha256 = "sha256:f9f9eb06806efb75d7a086fbbd8be6ff4c274e82fa81d0d0986b0a5c9a637450"
+licence = "The place of the defect on: CC-BY-4.0: items/river-bridge-crop/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-river-bridge-crop"
+file = "scratch/river-bridge-crop.png"
+sha256 = "sha256:98806b56f7b80fbd013449ec30b88678b98a0e9760c8dae0312daf18daeb1ecf"
+group = "edits"
+licence = "CC-BY-4.0: items/river-bridge-crop/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-river-bridge-crop-stroke"
+file = "scratch/river-bridge-crop-stroke.loc"
+sha256 = "sha256:62eef1a617988c8a82e582f290cb491e1276ab9eff546a4179ba4942a5fd1415"
+licence = "The place of the defect on: CC-BY-4.0: items/river-bridge-crop/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-river-bridge-crop"
+file = "spot/river-bridge-crop.png"
+sha256 = "sha256:9e7f5d374b136181eab563dd00587d3f3801ecda33592c74b5cf3662c3543fac"
+group = "edits"
+licence = "CC-BY-4.0: items/river-bridge-crop/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-river-bridge-crop-box"
+file = "spot/river-bridge-crop-box.loc"
+sha256 = "sha256:09991870f61b74cb4b30766da9289204acd2b846c15deed856d75868780908f2"
+licence = "The place of the defect on: CC-BY-4.0: items/river-bridge-crop/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "clean-river-bridge-grade"
+file = "clean/river-bridge-grade.png"
+sha256 = "sha256:50693ea3029ec571cd1a152b9a762585b508547061d0863bea534f01ba9a0660"
+licence = "CC-BY-4.0: items/river-bridge-grade/candidate.png of the set source-fidelity/scenes-v1, its pixels as decoded"
+
+[[image]]
+id = "ball-river-bridge-grade"
+file = "ball/river-bridge-grade.png"
+sha256 = "sha256:2174481926415424bbfe578c718788cebbee8a3c5e3cf296466890f8546faf9e"
+group = "edits"
+licence = "CC-BY-4.0: items/river-bridge-grade/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "ball-river-bridge-grade-box"
+file = "ball/river-bridge-grade-box.loc"
+sha256 = "sha256:af7cf32f8eef38bb8ce4606d2aab85a182d5c69782f9934f3b258adc2cc9731a"
+licence = "The place of the defect on: CC-BY-4.0: items/river-bridge-grade/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-river-bridge-grade"
+file = "scratch/river-bridge-grade.png"
+sha256 = "sha256:d5f6f3615f56fce72e0d28d8e0702828b5a460a240941e26b5abb8d421eb3071"
+group = "edits"
+licence = "CC-BY-4.0: items/river-bridge-grade/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-river-bridge-grade-stroke"
+file = "scratch/river-bridge-grade-stroke.loc"
+sha256 = "sha256:ecaea76fb4851dab67c9df4d80751e0a92c92a2e71e7cf043d7095d4bfaf3ec4"
+licence = "The place of the defect on: CC-BY-4.0: items/river-bridge-grade/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-river-bridge-grade"
+file = "spot/river-bridge-grade.png"
+sha256 = "sha256:cd4c133ee9bbafb4deb933bc9edf8e75b321cbcd34532771530de5161c967486"
+group = "edits"
+licence = "CC-BY-4.0: items/river-bridge-grade/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-river-bridge-grade-box"
+file = "spot/river-bridge-grade-box.loc"
+sha256 = "sha256:a437087b5c68a9a610f8149732f986c9c01c026363754ab5f2a8626134d959b3"
+licence = "The place of the defect on: CC-BY-4.0: items/river-bridge-grade/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "clean-river-bridge-source"
+file = "clean/river-bridge-source.png"
+sha256 = "sha256:7338451f26a0d39da77d4025ec544e2184b6840e7f20021c30ec08d1483197ec"
+licence = "CC-BY-4.0: families/river-bridge/source.png of the set source-fidelity/scenes-v1, its pixels as decoded"
+
+[[image]]
+id = "ball-river-bridge-source"
+file = "ball/river-bridge-source.png"
+sha256 = "sha256:ec56d73dac5e8797f05f37aed90f5372e7598ab60ffa5125cf813c57e245642d"
+group = "edits"
+licence = "CC-BY-4.0: families/river-bridge/source.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "ball-river-bridge-source-box"
+file = "ball/river-bridge-source-box.loc"
+sha256 = "sha256:b7b593dc089f62566499715b8e00d99bb65de99985a70406e86482ac07f5b80b"
+licence = "The place of the defect on: CC-BY-4.0: families/river-bridge/source.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-river-bridge-source"
+file = "scratch/river-bridge-source.png"
+sha256 = "sha256:43725b9e834e4e9701c8dae9e6bde9491d65b8528da3e8e3a942b955a01ffe10"
+group = "edits"
+licence = "CC-BY-4.0: families/river-bridge/source.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-river-bridge-source-stroke"
+file = "scratch/river-bridge-source-stroke.loc"
+sha256 = "sha256:5e258dc7a06b72b5f26a3378c7cb1d293a15d9ed66fef3b9df393aecb653e3d4"
+licence = "The place of the defect on: CC-BY-4.0: families/river-bridge/source.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-river-bridge-source"
+file = "spot/river-bridge-source.png"
+sha256 = "sha256:b1a0b18d30177e0a209f6a4328fb5eaf64652b2273f44990576a0d3bfc75a8ed"
+group = "edits"
+licence = "CC-BY-4.0: families/river-bridge/source.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-river-bridge-source-box"
+file = "spot/river-bridge-source-box.loc"
+sha256 = "sha256:b2d4d6e81b67ead067c2cc2223fba2d03451704a27003e6e968dab294c32de99"
+licence = "The place of the defect on: CC-BY-4.0: families/river-bridge/source.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "clean-river-bridge-two-arches"
+file = "clean/river-bridge-two-arches.png"
+sha256 = "sha256:3bd4faf98668f49b43a3bf3b8b24592ed4bd1c0f11dfa73bb2915746bf4926db"
+licence = "CC-BY-4.0: items/river-bridge-two-arches/candidate.png of the set source-fidelity/scenes-v1, its pixels as decoded"
+
+[[image]]
+id = "ball-river-bridge-two-arches"
+file = "ball/river-bridge-two-arches.png"
+sha256 = "sha256:0dc688a31fa3ad80ec203586ea6944970a5f9c204a4bee51dfba31a4fc414ad5"
+group = "edits"
+licence = "CC-BY-4.0: items/river-bridge-two-arches/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "ball-river-bridge-two-arches-box"
+file = "ball/river-bridge-two-arches-box.loc"
+sha256 = "sha256:d10bbd5899b50fdf2f5b9cf2b152680920b4db2fe2d2bb2c82e2965d9d559f0d"
+licence = "The place of the defect on: CC-BY-4.0: items/river-bridge-two-arches/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-river-bridge-two-arches"
+file = "scratch/river-bridge-two-arches.png"
+sha256 = "sha256:8f825f0ecbbf4355db2fd37c5f7a1b0280f55ed0701845f1c272c15c0b056a4d"
+group = "edits"
+licence = "CC-BY-4.0: items/river-bridge-two-arches/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-river-bridge-two-arches-stroke"
+file = "scratch/river-bridge-two-arches-stroke.loc"
+sha256 = "sha256:a829eabaed98006ecf633780496870c1d631fc693fe5d2ab6c066430037d6946"
+licence = "The place of the defect on: CC-BY-4.0: items/river-bridge-two-arches/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-river-bridge-two-arches"
+file = "spot/river-bridge-two-arches.png"
+sha256 = "sha256:c2feac31a9ca817f204a8fc55a146cd6d188bf1011d9c75503b2785a92e0b176"
+group = "edits"
+licence = "CC-BY-4.0: items/river-bridge-two-arches/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-river-bridge-two-arches-box"
+file = "spot/river-bridge-two-arches-box.loc"
+sha256 = "sha256:3172f89dc0c4a7d7c307b32e480928ea8537dc549173375a9efe10fd89becc38"
+licence = "The place of the defect on: CC-BY-4.0: items/river-bridge-two-arches/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "clean-village-street-grade"
+file = "clean/village-street-grade.png"
+sha256 = "sha256:fa69c903a950918b1e105a72f827494b1d667e274e3a39a726286fdf74091a6b"
+licence = "CC-BY-4.0: items/village-street-grade/candidate.png of the set source-fidelity/scenes-v1, its pixels as decoded"
+
+[[image]]
+id = "ball-village-street-grade"
+file = "ball/village-street-grade.png"
+sha256 = "sha256:f23437f9b60aa26b25668bb15dab19f1dc25108b461e239819cec92740d2ed0b"
+group = "edits"
+licence = "CC-BY-4.0: items/village-street-grade/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "ball-village-street-grade-box"
+file = "ball/village-street-grade-box.loc"
+sha256 = "sha256:66f646a9aed28e739056ac8d6725ab4c60265fe575cdb1fa9e9f9d69111a9c09"
+licence = "The place of the defect on: CC-BY-4.0: items/village-street-grade/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-village-street-grade"
+file = "scratch/village-street-grade.png"
+sha256 = "sha256:0e2a66a1e1362338cef14401b7e70d023b6f17a3b9a1dce1f4c03a5aa86fdf01"
+group = "edits"
+licence = "CC-BY-4.0: items/village-street-grade/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-village-street-grade-stroke"
+file = "scratch/village-street-grade-stroke.loc"
+sha256 = "sha256:9dc7e20fba6374dd2b49619b26206e720166a9f41eea88d1658d6be4052f7cdd"
+licence = "The place of the defect on: CC-BY-4.0: items/village-street-grade/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-village-street-grade"
+file = "spot/village-street-grade.png"
+sha256 = "sha256:5517570ce15b8eb0d4dfbdb8a14e2cf991fb40e3648b41e5d6e6cddac9deb575"
+group = "edits"
+licence = "CC-BY-4.0: items/village-street-grade/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-village-street-grade-box"
+file = "spot/village-street-grade-box.loc"
+sha256 = "sha256:8bf4ab8ce0b2b33fdfa3ce4650fda3fb967dd35d217cec74adb6ca77ad918dc3"
+licence = "The place of the defect on: CC-BY-4.0: items/village-street-grade/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "clean-village-street-no-tower"
+file = "clean/village-street-no-tower.png"
+sha256 = "sha256:38b3465d95df9377961d3b87e6511db1ede83b3c78108609d292a66ea7abd1a7"
+licence = "CC-BY-4.0: items/village-street-no-tower/candidate.png of the set source-fidelity/scenes-v1, its pixels as decoded"
+
+[[image]]
+id = "ball-village-street-no-tower"
+file = "ball/village-street-no-tower.png"
+sha256 = "sha256:345b6f243b3b02f0be2a7b12c6ac234f767a1866ae3087ffc78bcd23e1fc0558"
+group = "edits"
+licence = "CC-BY-4.0: items/village-street-no-tower/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "ball-village-street-no-tower-box"
+file = "ball/village-street-no-tower-box.loc"
+sha256 = "sha256:6cc9ca43a077239b18d86a9369dc4a87c27238be99a4c2b8e6d30e5472c98f48"
+licence = "The place of the defect on: CC-BY-4.0: items/village-street-no-tower/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-village-street-no-tower"
+file = "scratch/village-street-no-tower.png"
+sha256 = "sha256:f02c6352cd4d0d371a13839dc4c89ccb751ec104a9be067aab872a69ef1bec50"
+group = "edits"
+licence = "CC-BY-4.0: items/village-street-no-tower/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-village-street-no-tower-stroke"
+file = "scratch/village-street-no-tower-stroke.loc"
+sha256 = "sha256:6d88228e5693d4edce8c7eb0ff0c6b8d6c5f5bf7749df860781ab3a3a04bddfc"
+licence = "The place of the defect on: CC-BY-4.0: items/village-street-no-tower/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-village-street-no-tower"
+file = "spot/village-street-no-tower.png"
+sha256 = "sha256:e3bb1b445e71a1366dad4f6efc4f8f3a5fc0322bd58df3756aace94573d1d0d8"
+group = "edits"
+licence = "CC-BY-4.0: items/village-street-no-tower/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-village-street-no-tower-box"
+file = "spot/village-street-no-tower-box.loc"
+sha256 = "sha256:8760a3ef68d0b40512e3caa726713f2d3b3f524c556ce36149e5b337d6c00d44"
+licence = "The place of the defect on: CC-BY-4.0: items/village-street-no-tower/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "clean-village-street-rotate"
+file = "clean/village-street-rotate.png"
+sha256 = "sha256:f1f7d0e59e188ebab920551df4b564b188474ddaa02ff6f17940d2d0aa2a3acf"
+licence = "CC-BY-4.0: items/village-street-rotate/candidate.png of the set source-fidelity/scenes-v1, its pixels as decoded"
+
+[[image]]
+id = "ball-village-street-rotate"
+file = "ball/village-street-rotate.png"
+sha256 = "sha256:27b6e08c360a724411bdfbbcff168f2f48cd61dc37b786bf294d5907ec65f541"
+group = "edits"
+licence = "CC-BY-4.0: items/village-street-rotate/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "ball-village-street-rotate-box"
+file = "ball/village-street-rotate-box.loc"
+sha256 = "sha256:4a392d18b3f6bbe948835c4e89be1f3e7440324812545a957ecd9e7cdd7cd0aa"
+licence = "The place of the defect on: CC-BY-4.0: items/village-street-rotate/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-village-street-rotate"
+file = "scratch/village-street-rotate.png"
+sha256 = "sha256:be974bf69f3a83561bb379766e53ea6393fad547ee3363bbc883dc7449fd4de1"
+group = "edits"
+licence = "CC-BY-4.0: items/village-street-rotate/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-village-street-rotate-stroke"
+file = "scratch/village-street-rotate-stroke.loc"
+sha256 = "sha256:74a862de8d4ba33e4067ab1af3b5e1dc338069d2d66bcd40394487124c277955"
+licence = "The place of the defect on: CC-BY-4.0: items/village-street-rotate/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-village-street-rotate"
+file = "spot/village-street-rotate.png"
+sha256 = "sha256:091516a996616376777edea2fb29a3e6a1a97f6c7e363408d13f08ef71263900"
+group = "edits"
+licence = "CC-BY-4.0: items/village-street-rotate/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-village-street-rotate-box"
+file = "spot/village-street-rotate-box.loc"
+sha256 = "sha256:dd0a5e3c648c1427e05d4b3c7e57803d318fb8d663f46e8d556197b966e4bb84"
+licence = "The place of the defect on: CC-BY-4.0: items/village-street-rotate/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "clean-village-street-snow"
+file = "clean/village-street-snow.png"
+sha256 = "sha256:eec635217ce2c13be7204b2bf254977ff2e466e19a4d0a9892ac1c820726bd40"
+licence = "CC-BY-4.0: items/village-street-snow/candidate.png of the set source-fidelity/scenes-v1, its pixels as decoded"
+
+[[image]]
+id = "ball-village-street-snow"
+file = "ball/village-street-snow.png"
+sha256 = "sha256:e39d878fd5509603ba0f1330203d148632c1fc32433bb1d636ddd34e8481b799"
+group = "edits"
+licence = "CC-BY-4.0: items/village-street-snow/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "ball-village-street-snow-box"
+file = "ball/village-street-snow-box.loc"
+sha256 = "sha256:41df5dbd2339939f37e2bf8caba1ea92c0d63f1391380981d1954c0b22826142"
+licence = "The place of the defect on: CC-BY-4.0: items/village-street-snow/candidate.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-village-street-snow"
+file = "scratch/village-street-snow.png"
+sha256 = "sha256:30785c97495d3633b5b8552325e27a4e01d01e38511ad0a52d469d2c91db91af"
+group = "edits"
+licence = "CC-BY-4.0: items/village-street-snow/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-village-street-snow-stroke"
+file = "scratch/village-street-snow-stroke.loc"
+sha256 = "sha256:a7aad8756a783510fa2a1e9d9bfd7c6e75ba8b2efc8aefcdb8a43d7d86bcb8f1"
+licence = "The place of the defect on: CC-BY-4.0: items/village-street-snow/candidate.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-village-street-snow"
+file = "spot/village-street-snow.png"
+sha256 = "sha256:2b08f23ca4b4d427834baa93f90754ddf4e2273450c2794bdf84fcce64dd3330"
+group = "edits"
+licence = "CC-BY-4.0: items/village-street-snow/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-village-street-snow-box"
+file = "spot/village-street-snow-box.loc"
+sha256 = "sha256:43ffbe6706f1c84117a9de05f06e68913ef25fd19c9a2164fd7dce920f0d8a23"
+licence = "The place of the defect on: CC-BY-4.0: items/village-street-snow/candidate.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "clean-village-street-source"
+file = "clean/village-street-source.png"
+sha256 = "sha256:96333f5ee177b7791a030655fa440091db83d891a0a8b5545d33e6e68abec22a"
+licence = "CC-BY-4.0: families/village-street/source.png of the set source-fidelity/scenes-v1, its pixels as decoded"
+
+[[image]]
+id = "ball-village-street-source"
+file = "ball/village-street-source.png"
+sha256 = "sha256:8d3ecf77f8c217e43b0a6e14598ce32b1ac8c10b5a118649f9a29fc01a040334"
+group = "edits"
+licence = "CC-BY-4.0: families/village-street/source.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "ball-village-street-source-box"
+file = "ball/village-street-source-box.loc"
+sha256 = "sha256:b7de63e95f296102ea38e5dc03dc8a32a14779f457e1e29243f69e9be95e5b86"
+licence = "The place of the defect on: CC-BY-4.0: families/village-street/source.png of the set source-fidelity/scenes-v1, with a shaded red ball drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-village-street-source"
+file = "scratch/village-street-source.png"
+sha256 = "sha256:d9fd7f154f152e4fea3f86d39c7a16c7c59866edab0801b9e825a6d6dd596c33"
+group = "edits"
+licence = "CC-BY-4.0: families/village-street/source.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "scratch-village-street-source-stroke"
+file = "scratch/village-street-source-stroke.loc"
+sha256 = "sha256:241781bead7ca8c4bb32488845fa97bf98f47ff162b4e997c0bb8e69283f3875"
+licence = "The place of the defect on: CC-BY-4.0: families/village-street/source.png of the set source-fidelity/scenes-v1, with a light scratch drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-village-street-source"
+file = "spot/village-street-source.png"
+sha256 = "sha256:14cb522b4592c5a220ae26998621494d0b25df42b14f69ebe0cd2d9ae98a9cf4"
+group = "edits"
+licence = "CC-BY-4.0: families/village-street/source.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"
+
+[[image]]
+id = "spot-village-street-source-box"
+file = "spot/village-street-source-box.loc"
+sha256 = "sha256:b5abf2d52c34569341ccdda10b689b4630660f10d89915cfb32eb3b9ee44e232"
+licence = "The place of the defect on: CC-BY-4.0: families/village-street/source.png of the set source-fidelity/scenes-v1, with a dark spot drawn by `whizbang eval edits draw` from the seed 20261119"

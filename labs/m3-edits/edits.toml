@@ -1,0 +1,1375 @@
+# The synthetic edit set of plan m3, task B1, item 1, written by `whizbang eval edits
+# draw` from the pictures of the set it names, each held to its job's pin. Never
+# edited by hand: drawn again from the same pictures and seed, it is the same.
+version = 1
+set = "source-fidelity/scenes-v1"
+seed = 20261119
+phrase = "a red ball"
+
+[[source]]
+id = "brick-house-golden-hour"
+path = "items/brick-house-golden-hour/candidate.png"
+sha256 = "sha256:c08f292c547cb73b75226a23e0c3881b253369c984dd40fab45630195056d4a6"
+clean = "clean/brick-house-golden-hour.png"
+clean_sha256 = "sha256:ab26d16cc42d7fe729d3a29bc62eba29f56ea4aee4fe3b66a044cf5e21a33adb"
+
+[[source]]
+id = "brick-house-grade"
+path = "items/brick-house-grade/candidate.png"
+sha256 = "sha256:8f3bdb04b9ca2cac6c89c7dbcfa40c17cac4244784a63d75f6554e480b8d2319"
+clean = "clean/brick-house-grade.png"
+clean_sha256 = "sha256:1e0321a782d935945e737fb5cd09cb171ce95dbb8b4504a400050008ac4d8aff"
+
+[[source]]
+id = "brick-house-mirror"
+path = "items/brick-house-mirror/candidate.png"
+sha256 = "sha256:9f1c9894feff4f315cb7d776ff4aa60483e64f2e854a2775ffd2670e3f81945e"
+clean = "clean/brick-house-mirror.png"
+clean_sha256 = "sha256:1506cd15e7f6451c370d7dd0a77870b6c2cd4c12d6167e3040439c595adab943"
+
+[[source]]
+id = "brick-house-source"
+path = "families/brick-house/source.png"
+sha256 = "sha256:b5902bdc44a8d25b65834ed8b2899f5039352840a52a6dc0f88e3284ed6fd05f"
+clean = "clean/brick-house-source.png"
+clean_sha256 = "sha256:9474c5665754d352be48fcce8d6d13cbb4c67c19899391977fce1506f2f6af5b"
+
+[[source]]
+id = "hotel-pool-chairs"
+path = "items/hotel-pool-chairs/candidate.png"
+sha256 = "sha256:675544d622542683b905032b86833d7e2b11463a7ea0819266018aa74def5b8b"
+clean = "clean/hotel-pool-chairs.png"
+clean_sha256 = "sha256:c327e792e12c6862cdaa6b836403b8d232fdb44b6fb542215f57326b3883c3e9"
+
+[[source]]
+id = "hotel-pool-crop"
+path = "items/hotel-pool-crop/candidate.png"
+sha256 = "sha256:8b5aa513d762816379e1f6e03ed60e4b25ff3e099315715cbc8009f3c359b813"
+clean = "clean/hotel-pool-crop.png"
+clean_sha256 = "sha256:07574543e61a7b23187881ccb95667ed22f5b89bed81e391b96fb3b09008b748"
+
+[[source]]
+id = "hotel-pool-grade"
+path = "items/hotel-pool-grade/candidate.png"
+sha256 = "sha256:7260b93faa1034c58ab7f0411dde4d97eb1e47d8c0a24d62010bea3d25a7d497"
+clean = "clean/hotel-pool-grade.png"
+clean_sha256 = "sha256:2dac11e096d9f27e6d17c706b72a8018ca2e0accbec24542c618858ee5fcbb88"
+
+[[source]]
+id = "hotel-pool-no-pool"
+path = "items/hotel-pool-no-pool/candidate.png"
+sha256 = "sha256:4179ac0940004ba322579d621695eebb80204eba4a5a60f4a8c5ada54b17a76b"
+clean = "clean/hotel-pool-no-pool.png"
+clean_sha256 = "sha256:a52f4d8fb3d70c8ce8b88ac10d35b4a0711fd7d749652f942e125c61b3632dfe"
+
+[[source]]
+id = "hotel-pool-source"
+path = "families/hotel-pool/source.png"
+sha256 = "sha256:8bc8769181a0600fbc005798e40185b816bcc3a5e0b48eab7cca40254f7a9ef6"
+clean = "clean/hotel-pool-source.png"
+clean_sha256 = "sha256:d39cb595b22fb08660765ab70f17751005857b71c2656721add38efd565308c4"
+
+[[source]]
+id = "red-barn-dusk"
+path = "items/red-barn-dusk/candidate.png"
+sha256 = "sha256:17d99269a10dc21dc61d448bcfbc9020dc2a78e9fb190c01fbe96c8c221d3e2d"
+clean = "clean/red-barn-dusk.png"
+clean_sha256 = "sha256:eeb448abccaea39c3c4f15cd1fee9833409d2bcaa2c44dea34e48d2f4d3f7830"
+
+[[source]]
+id = "red-barn-grade"
+path = "items/red-barn-grade/candidate.png"
+sha256 = "sha256:5767c236b33101d61b498d833a895cdc2b29f3e4deafb8fdc5ac62b81d923060"
+clean = "clean/red-barn-grade.png"
+clean_sha256 = "sha256:570fd56c63b4441ae02cd5ee6ecceaa2f36c87fee8ea71c09e146378052d8ab4"
+
+[[source]]
+id = "red-barn-mirror"
+path = "items/red-barn-mirror/candidate.png"
+sha256 = "sha256:2f564ad12f62bf0f9a861b0eab77d53fa92b750e13c32d8cdef6303049dfed0c"
+clean = "clean/red-barn-mirror.png"
+clean_sha256 = "sha256:c06887cefbdd11a47ee70bd79a8dcb11a6fc0984f9abe2254fc05316df812728"
+
+[[source]]
+id = "red-barn-no-silo"
+path = "items/red-barn-no-silo/candidate.png"
+sha256 = "sha256:c2f69f2fcd29bb4bd1f299eec31612185106750b49a54467aa7e07463e41a33b"
+clean = "clean/red-barn-no-silo.png"
+clean_sha256 = "sha256:eb004d13f8a3f13001f8a1b675729a8c8a4cccfced58bc702cd2b0c91a013958"
+
+[[source]]
+id = "red-barn-source"
+path = "families/red-barn/source.png"
+sha256 = "sha256:a9145544e29011ebd068b6a9082318123f64a65278796479f460064da9fdb127"
+clean = "clean/red-barn-source.png"
+clean_sha256 = "sha256:54bc4af586494360178e0c3ff9b1e49269ad22ca55f5f687335b64267520e5de"
+
+[[source]]
+id = "river-bridge-autumn"
+path = "items/river-bridge-autumn/candidate.png"
+sha256 = "sha256:5bd0080bfaeaff6653099aba19068ecc1aee5af59b76ece622dbf2ecb62d8102"
+clean = "clean/river-bridge-autumn.png"
+clean_sha256 = "sha256:27870138de1dd2452f335c59a1ec7c828d04871fa4da41a2c7848af810e3c060"
+
+[[source]]
+id = "river-bridge-crop"
+path = "items/river-bridge-crop/candidate.png"
+sha256 = "sha256:b47d3fbc986e8cb7c48a546673901ba1311adf20bcacd98a703614d9996fc251"
+clean = "clean/river-bridge-crop.png"
+clean_sha256 = "sha256:28e4d6eed92b249ac5ba6fce023b7cc83cb24f2e29c0216e4c0e9b321560ab2e"
+
+[[source]]
+id = "river-bridge-grade"
+path = "items/river-bridge-grade/candidate.png"
+sha256 = "sha256:743e8d93c22ba33c09334db1ed311e9790eca5e145315f2b2298c3a82d65908a"
+clean = "clean/river-bridge-grade.png"
+clean_sha256 = "sha256:50693ea3029ec571cd1a152b9a762585b508547061d0863bea534f01ba9a0660"
+
+[[source]]
+id = "river-bridge-source"
+path = "families/river-bridge/source.png"
+sha256 = "sha256:886ae472291f1767f1bad4369553650c04e93c0369afb9f987ef3cd422010af3"
+clean = "clean/river-bridge-source.png"
+clean_sha256 = "sha256:7338451f26a0d39da77d4025ec544e2184b6840e7f20021c30ec08d1483197ec"
+
+[[source]]
+id = "river-bridge-two-arches"
+path = "items/river-bridge-two-arches/candidate.png"
+sha256 = "sha256:db6901449279b24fc950e6c96f46811f66a66854a8e739a12ed4bcfed6ce9c8e"
+clean = "clean/river-bridge-two-arches.png"
+clean_sha256 = "sha256:3bd4faf98668f49b43a3bf3b8b24592ed4bd1c0f11dfa73bb2915746bf4926db"
+
+[[source]]
+id = "village-street-grade"
+path = "items/village-street-grade/candidate.png"
+sha256 = "sha256:2a9d1b294749728c7a0e28c92b8de6d565ed2d4dc8d9c2dacd50cffa180f3fdd"
+clean = "clean/village-street-grade.png"
+clean_sha256 = "sha256:fa69c903a950918b1e105a72f827494b1d667e274e3a39a726286fdf74091a6b"
+
+[[source]]
+id = "village-street-no-tower"
+path = "items/village-street-no-tower/candidate.png"
+sha256 = "sha256:c1092b8accf7ea0e49b810a6056b6cf30fa2d4ba0dac84240bc6a49a1c81e8b4"
+clean = "clean/village-street-no-tower.png"
+clean_sha256 = "sha256:38b3465d95df9377961d3b87e6511db1ede83b3c78108609d292a66ea7abd1a7"
+
+[[source]]
+id = "village-street-rotate"
+path = "items/village-street-rotate/candidate.png"
+sha256 = "sha256:ed1cd987d8bebaa30db23c819cb646338dc697241b9285d6d9f7b57740524512"
+clean = "clean/village-street-rotate.png"
+clean_sha256 = "sha256:f1f7d0e59e188ebab920551df4b564b188474ddaa02ff6f17940d2d0aa2a3acf"
+
+[[source]]
+id = "village-street-snow"
+path = "items/village-street-snow/candidate.png"
+sha256 = "sha256:fb670eacccfaef85b2dee0931eb50d6c4d647e9e4c0760d0d6904f02b3d04a2a"
+clean = "clean/village-street-snow.png"
+clean_sha256 = "sha256:eec635217ce2c13be7204b2bf254977ff2e466e19a4d0a9892ac1c820726bd40"
+
+[[source]]
+id = "village-street-source"
+path = "families/village-street/source.png"
+sha256 = "sha256:ef7cbd44c628a6ad7da2023499977b33411fd5b33c60112bbad05c8e18236b56"
+clean = "clean/village-street-source.png"
+clean_sha256 = "sha256:96333f5ee177b7791a030655fa440091db83d891a0a8b5545d33e6e68abec22a"
+
+[[item]]
+id = "remove-brick-house-golden-hour"
+recipe = "remove"
+source = "brick-house-golden-hour"
+picture = "ball/brick-house-golden-hour.png"
+picture_sha256 = "sha256:043d8126dbb30031cb4c556db7ed5015fb49f32df1087cadbbc9e7eb80fff974"
+truth = "ball/brick-house-golden-hour-truth.png"
+truth_sha256 = "sha256:7d92daba5ee2a757db7356bf9efe38f8d971e10e37f1c3a4463dba9d38e2ef45"
+truth_pixels = 10583
+location = "ball/brick-house-golden-hour-box.loc"
+location_sha256 = "sha256:c0886c040e076bf9aac610df4c1b7abc0455dd86300a27ef8f6a5629742c2202"
+box = [92.0, 347.0, 212.0, 467.0]
+
+[[item]]
+id = "remove-brick-house-grade"
+recipe = "remove"
+source = "brick-house-grade"
+picture = "ball/brick-house-grade.png"
+picture_sha256 = "sha256:82152497467c8f9d99c7ba007e5240d99da0377da379cedab293729563c1c960"
+truth = "ball/brick-house-grade-truth.png"
+truth_sha256 = "sha256:d59d44d34618ad4b4e9fe09c5276d81c7c52f8a987161ee3c6115683947754cf"
+truth_pixels = 8349
+location = "ball/brick-house-grade-box.loc"
+location_sha256 = "sha256:7a5280ae4537fe7d863bb54de1aba3b35a7f8adb2c0864102d64bffa5509586f"
+box = [358.0, 379.0, 465.0, 487.0]
+
+[[item]]
+id = "remove-brick-house-mirror"
+recipe = "remove"
+source = "brick-house-mirror"
+picture = "ball/brick-house-mirror.png"
+picture_sha256 = "sha256:e643468d49edcfc7f3527aaf2dcb74c7dbb88d6bbb86076e10bd8708cfaafbfe"
+truth = "ball/brick-house-mirror-truth.png"
+truth_sha256 = "sha256:fd3884676fc6b30e09204e30a18543cc8215a6af6ebf9017ef84a0912ec8160b"
+truth_pixels = 10444
+location = "ball/brick-house-mirror-box.loc"
+location_sha256 = "sha256:f85e6fda1787f3d0b5ab31cdbf75162dc4c94a03ddd626f15a254e1c4db6ab7b"
+box = [62.0, 547.0, 182.0, 666.0]
+
+[[item]]
+id = "remove-brick-house-source"
+recipe = "remove"
+source = "brick-house-source"
+picture = "ball/brick-house-source.png"
+picture_sha256 = "sha256:7d55b711ee819c2cfd77d12efbf7690a5d7fa726d02fbcb10c5b3bd619a921e1"
+truth = "ball/brick-house-source-truth.png"
+truth_sha256 = "sha256:f05d8d910107efbc310e7d3c8b8d0ed771f48c07fb289d8b7d179f9452912ddb"
+truth_pixels = 9956
+location = "ball/brick-house-source-box.loc"
+location_sha256 = "sha256:2f3bbc2eb47da255adaff3ca3eb266762815ff00415da405dd8fb05ca9e70005"
+box = [539.0, 801.0, 655.0, 918.0]
+
+[[item]]
+id = "remove-hotel-pool-chairs"
+recipe = "remove"
+source = "hotel-pool-chairs"
+picture = "ball/hotel-pool-chairs.png"
+picture_sha256 = "sha256:f930a35c7afa69681949fa33e32840844bc30ed1a14b2f6deb5e2acc4a90c7cf"
+truth = "ball/hotel-pool-chairs-truth.png"
+truth_sha256 = "sha256:44472e710759f9683cea8210f2068bf549fa3afc42fd43371cc6db0aebb032f9"
+truth_pixels = 23921
+location = "ball/hotel-pool-chairs-box.loc"
+location_sha256 = "sha256:b91a628a5f66f6366b35faf8f3693408037dfcba2c3cfc7a439e83cb9cdf3e87"
+box = [359.0, 134.0, 538.0, 313.0]
+
+[[item]]
+id = "remove-hotel-pool-crop"
+recipe = "remove"
+source = "hotel-pool-crop"
+picture = "ball/hotel-pool-crop.png"
+picture_sha256 = "sha256:cb5e3f65e36692946bf6367700147502d60157434afe2adc33d4cf617ee5b5ed"
+truth = "ball/hotel-pool-crop-truth.png"
+truth_sha256 = "sha256:5f4798a7c5cac2da1c0cc8fc511951316e1097e274791c2ba27f6113b164cf2f"
+truth_pixels = 12220
+location = "ball/hotel-pool-crop-box.loc"
+location_sha256 = "sha256:5977b4886b23440068a1b78ac37848c3f0c506eb6417a3113a2ad06e734e366d"
+box = [137.0, 369.0, 266.0, 498.0]
+
+[[item]]
+id = "remove-hotel-pool-grade"
+recipe = "remove"
+source = "hotel-pool-grade"
+picture = "ball/hotel-pool-grade.png"
+picture_sha256 = "sha256:0b73a131769dc5c9def578b17c66b757bc4133570d9e2cbdc7e05c4028d0847e"
+truth = "ball/hotel-pool-grade-truth.png"
+truth_sha256 = "sha256:d016a10daf47d44b1251c7e423bebbb7250a5b5d534fff7b5527d65a7b329f5f"
+truth_pixels = 18580
+location = "ball/hotel-pool-grade-box.loc"
+location_sha256 = "sha256:c489f22c3b5c12c135fe65d92186913611eb7958240e573e6acb03c60c08ff43"
+box = [590.0, 226.0, 748.0, 384.0]
+
+[[item]]
+id = "remove-hotel-pool-no-pool"
+recipe = "remove"
+source = "hotel-pool-no-pool"
+picture = "ball/hotel-pool-no-pool.png"
+picture_sha256 = "sha256:13e9c723b0b63140a51311a588d6edcbd00ebb1a0a999ef55102fb4ce3ef7acc"
+truth = "ball/hotel-pool-no-pool-truth.png"
+truth_sha256 = "sha256:43f28fc55cfab95563958fc0fe7ccd695a76b6d9d6d6b018bf9e9ffcfc2fc27c"
+truth_pixels = 15697
+location = "ball/hotel-pool-no-pool-box.loc"
+location_sha256 = "sha256:be39d6e73ac54c66a036320c3e950af1a7728bbefc89070fa49bcb2298e9008d"
+box = [842.0, 755.0, 987.0, 900.0]
+
+[[item]]
+id = "remove-hotel-pool-source"
+recipe = "remove"
+source = "hotel-pool-source"
+picture = "ball/hotel-pool-source.png"
+picture_sha256 = "sha256:34fa5fe1aa8f7eabc18553e850037b4b1c37258b30dff45603fa9deae4cead89"
+truth = "ball/hotel-pool-source-truth.png"
+truth_sha256 = "sha256:33fdfae8fb20b6f24350e3d287da695389af62511b9069ee3b37e9f969d42d3e"
+truth_pixels = 25113
+location = "ball/hotel-pool-source-box.loc"
+location_sha256 = "sha256:3f519cbbc88d431ca693a905198b01549916eed78df138e58a1dd435a3301de0"
+box = [230.0, 659.0, 413.0, 841.0]
+
+[[item]]
+id = "remove-red-barn-dusk"
+recipe = "remove"
+source = "red-barn-dusk"
+picture = "ball/red-barn-dusk.png"
+picture_sha256 = "sha256:98b663e264b0a32d57feca0ad5d21f9cbac676bd4934fb7566b74ece94d921d9"
+truth = "ball/red-barn-dusk-truth.png"
+truth_sha256 = "sha256:0082e0807b3e852836dd1bc9344e36b9ff2830e62a6cf9cf6b0ceb16fb3132d6"
+truth_pixels = 8729
+location = "ball/red-barn-dusk-box.loc"
+location_sha256 = "sha256:06c41f9985e0120a4025c0460bc22dddbbcae2b3154a696169089d9f12e79f82"
+box = [834.0, 550.0, 943.0, 660.0]
+
+[[item]]
+id = "remove-red-barn-grade"
+recipe = "remove"
+source = "red-barn-grade"
+picture = "ball/red-barn-grade.png"
+picture_sha256 = "sha256:32ef3c96a3d60de09e76b03dd4494289b77217d68bb1a86d16160231155a0898"
+truth = "ball/red-barn-grade-truth.png"
+truth_sha256 = "sha256:0ccbc3f7188e7e1841adf78381aa566d3c7e1cb3e115253dcb7dd321b3357b76"
+truth_pixels = 23004
+location = "ball/red-barn-grade-box.loc"
+location_sha256 = "sha256:13f966fcc2647f3977f72f520670526d4543b387a91e362c796b31fc03352523"
+box = [77.0, 790.0, 252.0, 966.0]
+
+[[item]]
+id = "remove-red-barn-mirror"
+recipe = "remove"
+source = "red-barn-mirror"
+picture = "ball/red-barn-mirror.png"
+picture_sha256 = "sha256:57e078c812e6a2635284e9f483a1ae58968fcca65efdc1d4ddd88bd61ba13699"
+truth = "ball/red-barn-mirror-truth.png"
+truth_sha256 = "sha256:1bbaa74730016f600b4ff75a15e3602e54c4445dba75d2b5a7e9f1330fab99d0"
+truth_pixels = 19417
+location = "ball/red-barn-mirror-box.loc"
+location_sha256 = "sha256:7a361985e46faa98ab27dc78dc7cf85d544d285666f9230503b908f612541aa8"
+box = [191.0, 468.0, 352.0, 629.0]
+
+[[item]]
+id = "remove-red-barn-no-silo"
+recipe = "remove"
+source = "red-barn-no-silo"
+picture = "ball/red-barn-no-silo.png"
+picture_sha256 = "sha256:b85f03a765f9062b93c019982887cf5dddc507077b5f26c5ceb0cc4c42ff97b7"
+truth = "ball/red-barn-no-silo-truth.png"
+truth_sha256 = "sha256:8df949cf17b63e31560f22d62119ab6fcfc832ffa25b17c7bebfdf34f53a7827"
+truth_pixels = 21030
+location = "ball/red-barn-no-silo-box.loc"
+location_sha256 = "sha256:42985a7818b1fc8a62c922d7d84588a3afcefdbf7a759c39b959e9765cb4a4ff"
+box = [218.0, 111.0, 385.0, 278.0]
+
+[[item]]
+id = "remove-red-barn-source"
+recipe = "remove"
+source = "red-barn-source"
+picture = "ball/red-barn-source.png"
+picture_sha256 = "sha256:addce47f2f4468d3f9e2d0eb5794da0b5cee8850295b4b9c1ad01fcbe85e893a"
+truth = "ball/red-barn-source-truth.png"
+truth_sha256 = "sha256:a75cc79f32b596426d506bfcd7fe11ccf85dcb3befcc8ac212af493923ccd4d2"
+truth_pixels = 24846
+location = "ball/red-barn-source-box.loc"
+location_sha256 = "sha256:4d9dc1dfe81dcc3d1f1c7506f532c5b49d260c76e17d3bacfbed974d78d65d67"
+box = [262.0, 66.0, 444.0, 248.0]
+
+[[item]]
+id = "remove-river-bridge-autumn"
+recipe = "remove"
+source = "river-bridge-autumn"
+picture = "ball/river-bridge-autumn.png"
+picture_sha256 = "sha256:ad73036ab8f5e0e4a5d2afe44f02aff65b8ba9088335756ee2cb3bc61a37da88"
+truth = "ball/river-bridge-autumn-truth.png"
+truth_sha256 = "sha256:2131a26075ee61ef03de809da52f0376fdc847999a2ecc7b3baa69521b96cc68"
+truth_pixels = 13883
+location = "ball/river-bridge-autumn-box.loc"
+location_sha256 = "sha256:e3d3b1635cc7ca608828c1b5c5ee4b85eb8e9586ddcf827d7d09776718217fa1"
+box = [757.0, 902.0, 894.0, 1039.0]
+
+[[item]]
+id = "remove-river-bridge-crop"
+recipe = "remove"
+source = "river-bridge-crop"
+picture = "ball/river-bridge-crop.png"
+picture_sha256 = "sha256:bedae05cb700c62bf2826f247482e79ee047cd0977ce1e2ffb7bf2fb57a8f4e5"
+truth = "ball/river-bridge-crop-truth.png"
+truth_sha256 = "sha256:67db488ffd25fd1252b5eb3e5b40a4aeac3c00cb7f60c94df16e49e27b52f90b"
+truth_pixels = 9200
+location = "ball/river-bridge-crop-box.loc"
+location_sha256 = "sha256:f9f9eb06806efb75d7a086fbbd8be6ff4c274e82fa81d0d0986b0a5c9a637450"
+box = [72.0, 510.0, 184.0, 623.0]
+
+[[item]]
+id = "remove-river-bridge-grade"
+recipe = "remove"
+source = "river-bridge-grade"
+picture = "ball/river-bridge-grade.png"
+picture_sha256 = "sha256:2174481926415424bbfe578c718788cebbee8a3c5e3cf296466890f8546faf9e"
+truth = "ball/river-bridge-grade-truth.png"
+truth_sha256 = "sha256:3f1fc4d8c12d2af91e917bc237b01779c76b5ed6548a2f14569f17a551f8ca91"
+truth_pixels = 9317
+location = "ball/river-bridge-grade-box.loc"
+location_sha256 = "sha256:af7cf32f8eef38bb8ce4606d2aab85a182d5c69782f9934f3b258adc2cc9731a"
+box = [570.0, 75.0, 683.0, 187.0]
+
+[[item]]
+id = "remove-river-bridge-source"
+recipe = "remove"
+source = "river-bridge-source"
+picture = "ball/river-bridge-source.png"
+picture_sha256 = "sha256:ec56d73dac5e8797f05f37aed90f5372e7598ab60ffa5125cf813c57e245642d"
+truth = "ball/river-bridge-source-truth.png"
+truth_sha256 = "sha256:3ab6d6a4a73dbb51574281b47a176d0a76abd85418b1555875569a9dd4ce3d27"
+truth_pixels = 18723
+location = "ball/river-bridge-source-box.loc"
+location_sha256 = "sha256:b7b593dc089f62566499715b8e00d99bb65de99985a70406e86482ac07f5b80b"
+box = [165.0, 787.0, 323.0, 946.0]
+
+[[item]]
+id = "remove-river-bridge-two-arches"
+recipe = "remove"
+source = "river-bridge-two-arches"
+picture = "ball/river-bridge-two-arches.png"
+picture_sha256 = "sha256:0dc688a31fa3ad80ec203586ea6944970a5f9c204a4bee51dfba31a4fc414ad5"
+truth = "ball/river-bridge-two-arches-truth.png"
+truth_sha256 = "sha256:40780ca35b4c5c88426b129795c29ab2cecc006dc5391ff9725cc1256d503e8e"
+truth_pixels = 21598
+location = "ball/river-bridge-two-arches-box.loc"
+location_sha256 = "sha256:d10bbd5899b50fdf2f5b9cf2b152680920b4db2fe2d2bb2c82e2965d9d559f0d"
+box = [245.0, 536.0, 415.0, 706.0]
+
+[[item]]
+id = "remove-village-street-grade"
+recipe = "remove"
+source = "village-street-grade"
+picture = "ball/village-street-grade.png"
+picture_sha256 = "sha256:f23437f9b60aa26b25668bb15dab19f1dc25108b461e239819cec92740d2ed0b"
+truth = "ball/village-street-grade-truth.png"
+truth_sha256 = "sha256:882db9e1106ecb631164c68ed0cf8de98bb8373647d727ea38a3c73e8bab748a"
+truth_pixels = 12023
+location = "ball/village-street-grade-box.loc"
+location_sha256 = "sha256:66f646a9aed28e739056ac8d6725ab4c60265fe575cdb1fa9e9f9d69111a9c09"
+box = [521.0, 248.0, 648.0, 375.0]
+
+[[item]]
+id = "remove-village-street-no-tower"
+recipe = "remove"
+source = "village-street-no-tower"
+picture = "ball/village-street-no-tower.png"
+picture_sha256 = "sha256:345b6f243b3b02f0be2a7b12c6ac234f767a1866ae3087ffc78bcd23e1fc0558"
+truth = "ball/village-street-no-tower-truth.png"
+truth_sha256 = "sha256:a87e1bb0743a847a2fa252ed338474296b9816f787a59ab865ca2d3fe8b7fbad"
+truth_pixels = 15039
+location = "ball/village-street-no-tower-box.loc"
+location_sha256 = "sha256:6cc9ca43a077239b18d86a9369dc4a87c27238be99a4c2b8e6d30e5472c98f48"
+box = [82.0, 376.0, 224.0, 518.0]
+
+[[item]]
+id = "remove-village-street-rotate"
+recipe = "remove"
+source = "village-street-rotate"
+picture = "ball/village-street-rotate.png"
+picture_sha256 = "sha256:27b6e08c360a724411bdfbbcff168f2f48cd61dc37b786bf294d5907ec65f541"
+truth = "ball/village-street-rotate-truth.png"
+truth_sha256 = "sha256:da49137ae0958e48b17aa4321429daac9781765fdbc83888cc12a6985f4e0526"
+truth_pixels = 24397
+location = "ball/village-street-rotate-box.loc"
+location_sha256 = "sha256:4a392d18b3f6bbe948835c4e89be1f3e7440324812545a957ecd9e7cdd7cd0aa"
+box = [499.0, 421.0, 680.0, 602.0]
+
+[[item]]
+id = "remove-village-street-snow"
+recipe = "remove"
+source = "village-street-snow"
+picture = "ball/village-street-snow.png"
+picture_sha256 = "sha256:e39d878fd5509603ba0f1330203d148632c1fc32433bb1d636ddd34e8481b799"
+truth = "ball/village-street-snow-truth.png"
+truth_sha256 = "sha256:4273da457e56b3bb28749ec7781c677884db87c5bcd0b1a587ea870cd2b9fc7d"
+truth_pixels = 9472
+location = "ball/village-street-snow-box.loc"
+location_sha256 = "sha256:41df5dbd2339939f37e2bf8caba1ea92c0d63f1391380981d1954c0b22826142"
+box = [157.0, 221.0, 270.0, 335.0]
+
+[[item]]
+id = "remove-village-street-source"
+recipe = "remove"
+source = "village-street-source"
+picture = "ball/village-street-source.png"
+picture_sha256 = "sha256:8d3ecf77f8c217e43b0a6e14598ce32b1ac8c10b5a118649f9a29fc01a040334"
+truth = "ball/village-street-source-truth.png"
+truth_sha256 = "sha256:d70583767a278a67c0cde1466c9d320459c4edb49c9294c0e8a9c263594ba87e"
+truth_pixels = 25350
+location = "ball/village-street-source-box.loc"
+location_sha256 = "sha256:b7de63e95f296102ea38e5dc03dc8a32a14779f457e1e29243f69e9be95e5b86"
+box = [328.0, 742.0, 512.0, 926.0]
+
+[[item]]
+id = "remove_prompt-brick-house-golden-hour"
+recipe = "remove_prompt"
+source = "brick-house-golden-hour"
+picture = "ball/brick-house-golden-hour.png"
+picture_sha256 = "sha256:043d8126dbb30031cb4c556db7ed5015fb49f32df1087cadbbc9e7eb80fff974"
+truth = "ball/brick-house-golden-hour-truth.png"
+truth_sha256 = "sha256:7d92daba5ee2a757db7356bf9efe38f8d971e10e37f1c3a4463dba9d38e2ef45"
+truth_pixels = 10583
+phrase = "a red ball"
+
+[[item]]
+id = "remove_prompt-brick-house-grade"
+recipe = "remove_prompt"
+source = "brick-house-grade"
+picture = "ball/brick-house-grade.png"
+picture_sha256 = "sha256:82152497467c8f9d99c7ba007e5240d99da0377da379cedab293729563c1c960"
+truth = "ball/brick-house-grade-truth.png"
+truth_sha256 = "sha256:d59d44d34618ad4b4e9fe09c5276d81c7c52f8a987161ee3c6115683947754cf"
+truth_pixels = 8349
+phrase = "a red ball"
+
+[[item]]
+id = "remove_prompt-brick-house-mirror"
+recipe = "remove_prompt"
+source = "brick-house-mirror"
+picture = "ball/brick-house-mirror.png"
+picture_sha256 = "sha256:e643468d49edcfc7f3527aaf2dcb74c7dbb88d6bbb86076e10bd8708cfaafbfe"
+truth = "ball/brick-house-mirror-truth.png"
+truth_sha256 = "sha256:fd3884676fc6b30e09204e30a18543cc8215a6af6ebf9017ef84a0912ec8160b"
+truth_pixels = 10444
+phrase = "a red ball"
+
+[[item]]
+id = "remove_prompt-brick-house-source"
+recipe = "remove_prompt"
+source = "brick-house-source"
+picture = "ball/brick-house-source.png"
+picture_sha256 = "sha256:7d55b711ee819c2cfd77d12efbf7690a5d7fa726d02fbcb10c5b3bd619a921e1"
+truth = "ball/brick-house-source-truth.png"
+truth_sha256 = "sha256:f05d8d910107efbc310e7d3c8b8d0ed771f48c07fb289d8b7d179f9452912ddb"
+truth_pixels = 9956
+phrase = "a red ball"
+
+[[item]]
+id = "remove_prompt-hotel-pool-chairs"
+recipe = "remove_prompt"
+source = "hotel-pool-chairs"
+picture = "ball/hotel-pool-chairs.png"
+picture_sha256 = "sha256:f930a35c7afa69681949fa33e32840844bc30ed1a14b2f6deb5e2acc4a90c7cf"
+truth = "ball/hotel-pool-chairs-truth.png"
+truth_sha256 = "sha256:44472e710759f9683cea8210f2068bf549fa3afc42fd43371cc6db0aebb032f9"
+truth_pixels = 23921
+phrase = "a red ball"
+
+[[item]]
+id = "remove_prompt-hotel-pool-crop"
+recipe = "remove_prompt"
+source = "hotel-pool-crop"
+picture = "ball/hotel-pool-crop.png"
+picture_sha256 = "sha256:cb5e3f65e36692946bf6367700147502d60157434afe2adc33d4cf617ee5b5ed"
+truth = "ball/hotel-pool-crop-truth.png"
+truth_sha256 = "sha256:5f4798a7c5cac2da1c0cc8fc511951316e1097e274791c2ba27f6113b164cf2f"
+truth_pixels = 12220
+phrase = "a red ball"
+
+[[item]]
+id = "remove_prompt-hotel-pool-grade"
+recipe = "remove_prompt"
+source = "hotel-pool-grade"
+picture = "ball/hotel-pool-grade.png"
+picture_sha256 = "sha256:0b73a131769dc5c9def578b17c66b757bc4133570d9e2cbdc7e05c4028d0847e"
+truth = "ball/hotel-pool-grade-truth.png"
+truth_sha256 = "sha256:d016a10daf47d44b1251c7e423bebbb7250a5b5d534fff7b5527d65a7b329f5f"
+truth_pixels = 18580
+phrase = "a red ball"
+
+[[item]]
+id = "remove_prompt-hotel-pool-no-pool"
+recipe = "remove_prompt"
+source = "hotel-pool-no-pool"
+picture = "ball/hotel-pool-no-pool.png"
+picture_sha256 = "sha256:13e9c723b0b63140a51311a588d6edcbd00ebb1a0a999ef55102fb4ce3ef7acc"
+truth = "ball/hotel-pool-no-pool-truth.png"
+truth_sha256 = "sha256:43f28fc55cfab95563958fc0fe7ccd695a76b6d9d6d6b018bf9e9ffcfc2fc27c"
+truth_pixels = 15697
+phrase = "a red ball"
+
+[[item]]
+id = "remove_prompt-hotel-pool-source"
+recipe = "remove_prompt"
+source = "hotel-pool-source"
+picture = "ball/hotel-pool-source.png"
+picture_sha256 = "sha256:34fa5fe1aa8f7eabc18553e850037b4b1c37258b30dff45603fa9deae4cead89"
+truth = "ball/hotel-pool-source-truth.png"
+truth_sha256 = "sha256:33fdfae8fb20b6f24350e3d287da695389af62511b9069ee3b37e9f969d42d3e"
+truth_pixels = 25113
+phrase = "a red ball"
+
+[[item]]
+id = "remove_prompt-red-barn-dusk"
+recipe = "remove_prompt"
+source = "red-barn-dusk"
+picture = "ball/red-barn-dusk.png"
+picture_sha256 = "sha256:98b663e264b0a32d57feca0ad5d21f9cbac676bd4934fb7566b74ece94d921d9"
+truth = "ball/red-barn-dusk-truth.png"
+truth_sha256 = "sha256:0082e0807b3e852836dd1bc9344e36b9ff2830e62a6cf9cf6b0ceb16fb3132d6"
+truth_pixels = 8729
+phrase = "a red ball"
+
+[[item]]
+id = "remove_prompt-red-barn-grade"
+recipe = "remove_prompt"
+source = "red-barn-grade"
+picture = "ball/red-barn-grade.png"
+picture_sha256 = "sha256:32ef3c96a3d60de09e76b03dd4494289b77217d68bb1a86d16160231155a0898"
+truth = "ball/red-barn-grade-truth.png"
+truth_sha256 = "sha256:0ccbc3f7188e7e1841adf78381aa566d3c7e1cb3e115253dcb7dd321b3357b76"
+truth_pixels = 23004
+phrase = "a red ball"
+
+[[item]]
+id = "remove_prompt-red-barn-mirror"
+recipe = "remove_prompt"
+source = "red-barn-mirror"
+picture = "ball/red-barn-mirror.png"
+picture_sha256 = "sha256:57e078c812e6a2635284e9f483a1ae58968fcca65efdc1d4ddd88bd61ba13699"
+truth = "ball/red-barn-mirror-truth.png"
+truth_sha256 = "sha256:1bbaa74730016f600b4ff75a15e3602e54c4445dba75d2b5a7e9f1330fab99d0"
+truth_pixels = 19417
+phrase = "a red ball"
+
+[[item]]
+id = "remove_prompt-red-barn-no-silo"
+recipe = "remove_prompt"
+source = "red-barn-no-silo"
+picture = "ball/red-barn-no-silo.png"
+picture_sha256 = "sha256:b85f03a765f9062b93c019982887cf5dddc507077b5f26c5ceb0cc4c42ff97b7"
+truth = "ball/red-barn-no-silo-truth.png"
+truth_sha256 = "sha256:8df949cf17b63e31560f22d62119ab6fcfc832ffa25b17c7bebfdf34f53a7827"
+truth_pixels = 21030
+phrase = "a red ball"
+
+[[item]]
+id = "remove_prompt-red-barn-source"
+recipe = "remove_prompt"
+source = "red-barn-source"
+picture = "ball/red-barn-source.png"
+picture_sha256 = "sha256:addce47f2f4468d3f9e2d0eb5794da0b5cee8850295b4b9c1ad01fcbe85e893a"
+truth = "ball/red-barn-source-truth.png"
+truth_sha256 = "sha256:a75cc79f32b596426d506bfcd7fe11ccf85dcb3befcc8ac212af493923ccd4d2"
+truth_pixels = 24846
+phrase = "a red ball"
+
+[[item]]
+id = "remove_prompt-river-bridge-autumn"
+recipe = "remove_prompt"
+source = "river-bridge-autumn"
+picture = "ball/river-bridge-autumn.png"
+picture_sha256 = "sha256:ad73036ab8f5e0e4a5d2afe44f02aff65b8ba9088335756ee2cb3bc61a37da88"
+truth = "ball/river-bridge-autumn-truth.png"
+truth_sha256 = "sha256:2131a26075ee61ef03de809da52f0376fdc847999a2ecc7b3baa69521b96cc68"
+truth_pixels = 13883
+phrase = "a red ball"
+
+[[item]]
+id = "remove_prompt-river-bridge-crop"
+recipe = "remove_prompt"
+source = "river-bridge-crop"
+picture = "ball/river-bridge-crop.png"
+picture_sha256 = "sha256:bedae05cb700c62bf2826f247482e79ee047cd0977ce1e2ffb7bf2fb57a8f4e5"
+truth = "ball/river-bridge-crop-truth.png"
+truth_sha256 = "sha256:67db488ffd25fd1252b5eb3e5b40a4aeac3c00cb7f60c94df16e49e27b52f90b"
+truth_pixels = 9200
+phrase = "a red ball"
+
+[[item]]
+id = "remove_prompt-river-bridge-grade"
+recipe = "remove_prompt"
+source = "river-bridge-grade"
+picture = "ball/river-bridge-grade.png"
+picture_sha256 = "sha256:2174481926415424bbfe578c718788cebbee8a3c5e3cf296466890f8546faf9e"
+truth = "ball/river-bridge-grade-truth.png"
+truth_sha256 = "sha256:3f1fc4d8c12d2af91e917bc237b01779c76b5ed6548a2f14569f17a551f8ca91"
+truth_pixels = 9317
+phrase = "a red ball"
+
+[[item]]
+id = "remove_prompt-river-bridge-source"
+recipe = "remove_prompt"
+source = "river-bridge-source"
+picture = "ball/river-bridge-source.png"
+picture_sha256 = "sha256:ec56d73dac5e8797f05f37aed90f5372e7598ab60ffa5125cf813c57e245642d"
+truth = "ball/river-bridge-source-truth.png"
+truth_sha256 = "sha256:3ab6d6a4a73dbb51574281b47a176d0a76abd85418b1555875569a9dd4ce3d27"
+truth_pixels = 18723
+phrase = "a red ball"
+
+[[item]]
+id = "remove_prompt-river-bridge-two-arches"
+recipe = "remove_prompt"
+source = "river-bridge-two-arches"
+picture = "ball/river-bridge-two-arches.png"
+picture_sha256 = "sha256:0dc688a31fa3ad80ec203586ea6944970a5f9c204a4bee51dfba31a4fc414ad5"
+truth = "ball/river-bridge-two-arches-truth.png"
+truth_sha256 = "sha256:40780ca35b4c5c88426b129795c29ab2cecc006dc5391ff9725cc1256d503e8e"
+truth_pixels = 21598
+phrase = "a red ball"
+
+[[item]]
+id = "remove_prompt-village-street-grade"
+recipe = "remove_prompt"
+source = "village-street-grade"
+picture = "ball/village-street-grade.png"
+picture_sha256 = "sha256:f23437f9b60aa26b25668bb15dab19f1dc25108b461e239819cec92740d2ed0b"
+truth = "ball/village-street-grade-truth.png"
+truth_sha256 = "sha256:882db9e1106ecb631164c68ed0cf8de98bb8373647d727ea38a3c73e8bab748a"
+truth_pixels = 12023
+phrase = "a red ball"
+
+[[item]]
+id = "remove_prompt-village-street-no-tower"
+recipe = "remove_prompt"
+source = "village-street-no-tower"
+picture = "ball/village-street-no-tower.png"
+picture_sha256 = "sha256:345b6f243b3b02f0be2a7b12c6ac234f767a1866ae3087ffc78bcd23e1fc0558"
+truth = "ball/village-street-no-tower-truth.png"
+truth_sha256 = "sha256:a87e1bb0743a847a2fa252ed338474296b9816f787a59ab865ca2d3fe8b7fbad"
+truth_pixels = 15039
+phrase = "a red ball"
+
+[[item]]
+id = "remove_prompt-village-street-rotate"
+recipe = "remove_prompt"
+source = "village-street-rotate"
+picture = "ball/village-street-rotate.png"
+picture_sha256 = "sha256:27b6e08c360a724411bdfbbcff168f2f48cd61dc37b786bf294d5907ec65f541"
+truth = "ball/village-street-rotate-truth.png"
+truth_sha256 = "sha256:da49137ae0958e48b17aa4321429daac9781765fdbc83888cc12a6985f4e0526"
+truth_pixels = 24397
+phrase = "a red ball"
+
+[[item]]
+id = "remove_prompt-village-street-snow"
+recipe = "remove_prompt"
+source = "village-street-snow"
+picture = "ball/village-street-snow.png"
+picture_sha256 = "sha256:e39d878fd5509603ba0f1330203d148632c1fc32433bb1d636ddd34e8481b799"
+truth = "ball/village-street-snow-truth.png"
+truth_sha256 = "sha256:4273da457e56b3bb28749ec7781c677884db87c5bcd0b1a587ea870cd2b9fc7d"
+truth_pixels = 9472
+phrase = "a red ball"
+
+[[item]]
+id = "remove_prompt-village-street-source"
+recipe = "remove_prompt"
+source = "village-street-source"
+picture = "ball/village-street-source.png"
+picture_sha256 = "sha256:8d3ecf77f8c217e43b0a6e14598ce32b1ac8c10b5a118649f9a29fc01a040334"
+truth = "ball/village-street-source-truth.png"
+truth_sha256 = "sha256:d70583767a278a67c0cde1466c9d320459c4edb49c9294c0e8a9c263594ba87e"
+truth_pixels = 25350
+phrase = "a red ball"
+
+[[item]]
+id = "repair-brick-house-golden-hour"
+recipe = "repair"
+source = "brick-house-golden-hour"
+picture = "scratch/brick-house-golden-hour.png"
+picture_sha256 = "sha256:7da9c93531494021e68fd0600d34d82bcc8827c19d04d9607953b1e9458dd13f"
+truth = "scratch/brick-house-golden-hour-truth.png"
+truth_sha256 = "sha256:e4e44693fc4ab87ad6117f804ecc58e19555f334628838c15261131e8953b6c9"
+truth_pixels = 1352
+location = "scratch/brick-house-golden-hour-stroke.loc"
+location_sha256 = "sha256:8c9c62dcf9c3fced64bbfc039f91ffd160c024f82a670eeba628643f62d63e0f"
+stroke = { path = [[562.6, 491.7], [360.3, 589.1], [206.3, 742.1]], radius = 12.288 }
+
+[[item]]
+id = "repair-brick-house-grade"
+recipe = "repair"
+source = "brick-house-grade"
+picture = "scratch/brick-house-grade.png"
+picture_sha256 = "sha256:08ab68f205794d0c6df36abcff30a697c9a5b004ab55b03b6e165b9b6c545b3d"
+truth = "scratch/brick-house-grade-truth.png"
+truth_sha256 = "sha256:92e19fc18854c73d79f5df4ba7c4479886e90f102626f9909fa1d1588c93da2a"
+truth_pixels = 1139
+location = "scratch/brick-house-grade-stroke.loc"
+location_sha256 = "sha256:2643f8b098e4ec13c1c2f52b4d9236e3a732264d85cb590d2e5677757927e160"
+stroke = { path = [[356.2, 397.4], [290.4, 574.2], [302.4, 751.8]], radius = 12.288 }
+
+[[item]]
+id = "repair-brick-house-mirror"
+recipe = "repair"
+source = "brick-house-mirror"
+picture = "scratch/brick-house-mirror.png"
+picture_sha256 = "sha256:515cce661abbcfba11ab41138cf2688eb1d3d56a8eb9b33c5f59675db1e901c6"
+truth = "scratch/brick-house-mirror-truth.png"
+truth_sha256 = "sha256:326e06769ba827540ca66e24984a1c2f04a5f4a7c754d0928988b8ea16e71408"
+truth_pixels = 1317
+location = "scratch/brick-house-mirror-stroke.loc"
+location_sha256 = "sha256:e681c11f377969815fd83601378596c8f242de31efc1b24bf44ed95d4a9141f7"
+stroke = { path = [[225.4, 357.5], [435.8, 316.9], [614.9, 202.4]], radius = 12.288 }
+
+[[item]]
+id = "repair-brick-house-source"
+recipe = "repair"
+source = "brick-house-source"
+picture = "scratch/brick-house-source.png"
+picture_sha256 = "sha256:99cca5158f9f247d958281c58fa74e9fb1ec3d349fdb3d3db857af2195a20e01"
+truth = "scratch/brick-house-source-truth.png"
+truth_sha256 = "sha256:7ec26c0cfdda40dd76cf24915c408a7dc56182f9b9e8e9798b3703ea2e31dd48"
+truth_pixels = 1281
+location = "scratch/brick-house-source-stroke.loc"
+location_sha256 = "sha256:10dfc0ea9997857514b6dde7cd9ac79f54743600906d56728ba47f63bb799d52"
+stroke = { path = [[361.1, 873.8], [368.2, 674.3], [409.8, 485.5]], radius = 12.288 }
+
+[[item]]
+id = "repair-hotel-pool-chairs"
+recipe = "repair"
+source = "hotel-pool-chairs"
+picture = "scratch/hotel-pool-chairs.png"
+picture_sha256 = "sha256:75affe8638590f0cc1e82f6c59dc7f240e2e354d9175d400af989d618edb2119"
+truth = "scratch/hotel-pool-chairs-truth.png"
+truth_sha256 = "sha256:8ab01fb8be732697859d2fc819091b774f20b5b48a96fe4d57b42ef9dad63fa8"
+truth_pixels = 1837
+location = "scratch/hotel-pool-chairs-stroke.loc"
+location_sha256 = "sha256:ecffb13fa9275d686ddf072b0ef67bb465c262363ebbd03b1267f24ab4a6025c"
+stroke = { path = [[717.1, 153.1], [577.0, 350.0], [399.6, 521.1]], radius = 15.048 }
+
+[[item]]
+id = "repair-hotel-pool-crop"
+recipe = "repair"
+source = "hotel-pool-crop"
+picture = "scratch/hotel-pool-crop.png"
+picture_sha256 = "sha256:2675e78b95bd53105000beef242a327421d2ff3a3bd111386a0aa0d73e83fcf5"
+truth = "scratch/hotel-pool-crop-truth.png"
+truth_sha256 = "sha256:62f2cc15c1412bd695674d0f84b46c2f57da28a499bf0a6265545774e4ca2ec8"
+truth_pixels = 813
+location = "scratch/hotel-pool-crop-stroke.loc"
+location_sha256 = "sha256:71056085c980592b17d357bffffd57aae6fc9333fe7d67b213dc236033c427bc"
+stroke = { path = [[409.6, 448.5], [545.8, 347.2], [636.4, 213.6]], radius = 9.828 }
+
+[[item]]
+id = "repair-hotel-pool-grade"
+recipe = "repair"
+source = "hotel-pool-grade"
+picture = "scratch/hotel-pool-grade.png"
+picture_sha256 = "sha256:3988aec1e1d90f09657503bc8913c0a14715ec8dfadd0d3ff2fca7f296523819"
+truth = "scratch/hotel-pool-grade-truth.png"
+truth_sha256 = "sha256:dfc9db9dbb228dfa05e0a2da1d403f7e55d6eea6342f4ab3372409db840bde9e"
+truth_pixels = 1388
+location = "scratch/hotel-pool-grade-stroke.loc"
+location_sha256 = "sha256:d10d4142ec00ce7c9a75596786762860e62b4408ea308f578c47256fbe78c784"
+stroke = { path = [[480.5, 789.2], [400.0, 581.3], [224.0, 442.9]], radius = 12.288 }
+
+[[item]]
+id = "repair-hotel-pool-no-pool"
+recipe = "repair"
+source = "hotel-pool-no-pool"
+picture = "scratch/hotel-pool-no-pool.png"
+picture_sha256 = "sha256:b923a145713949848a24b137263f39801041ea124f16a6a8ffcaed72ce0b4014"
+truth = "scratch/hotel-pool-no-pool-truth.png"
+truth_sha256 = "sha256:2ced6c5f04ecbc8e26e0f75ff6358a486e42993745e793990b20feb3ee8b9e5a"
+truth_pixels = 1905
+location = "scratch/hotel-pool-no-pool-stroke.loc"
+location_sha256 = "sha256:55d40fbbd9074536809190f5883c474788ecc93867fa29355159c79c1f2e69b9"
+stroke = { path = [[600.0, 157.7], [648.5, 402.8], [671.4, 655.1]], radius = 15.048 }
+
+[[item]]
+id = "repair-hotel-pool-source"
+recipe = "repair"
+source = "hotel-pool-source"
+picture = "scratch/hotel-pool-source.png"
+picture_sha256 = "sha256:88ae1f378efddc5f8b7192f4caf255b01b8bc33bcbbfd9bb1609db6d3b6e7527"
+truth = "scratch/hotel-pool-source-truth.png"
+truth_sha256 = "sha256:d3a258ec57b99a8ebcb7845f20adb7160f72dd7ca7f5f8910804ca009b7d28ae"
+truth_pixels = 1120
+location = "scratch/hotel-pool-source-stroke.loc"
+location_sha256 = "sha256:cde4e3d48a4b3c77548f80c02748251a313bcc6d86945e7154cf04a2fb8d1039"
+stroke = { path = [[780.9, 164.5], [814.1, 343.0], [775.7, 524.2]], radius = 12.288 }
+
+[[item]]
+id = "repair-red-barn-dusk"
+recipe = "repair"
+source = "red-barn-dusk"
+picture = "scratch/red-barn-dusk.png"
+picture_sha256 = "sha256:0054fd77251788c64074deb4fb5b46d2644427a3e733a55cbcc468923642fb12"
+truth = "scratch/red-barn-dusk-truth.png"
+truth_sha256 = "sha256:fd39e26158a6ab722f42c74a35d88592a99ab97cab226c100d574b9f7daf6124"
+truth_pixels = 1185
+location = "scratch/red-barn-dusk-stroke.loc"
+location_sha256 = "sha256:2dc375649f6e32c733f1f08b0891be8537a7557034b33ca91dd3b3bf57ca5866"
+stroke = { path = [[642.2, 559.1], [470.3, 483.2], [278.1, 515.3]], radius = 12.288 }
+
+[[item]]
+id = "repair-red-barn-grade"
+recipe = "repair"
+source = "red-barn-grade"
+picture = "scratch/red-barn-grade.png"
+picture_sha256 = "sha256:972fa55fa9c200392c4644c408bab0e52049315b78eb6d3ed5890efae8de6f0b"
+truth = "scratch/red-barn-grade-truth.png"
+truth_sha256 = "sha256:c87fec558295ff062260768508708cf32fe73e8decbb47560f0d43bff4cea2d6"
+truth_pixels = 1188
+location = "scratch/red-barn-grade-stroke.loc"
+location_sha256 = "sha256:e7b0bb0ec7bcf09c7663a4232ec6783066bebda1d8c5cc07288f08ecd441c0a3"
+stroke = { path = [[373.2, 421.4], [504.9, 562.6], [690.3, 606.3]], radius = 12.288 }
+
+[[item]]
+id = "repair-red-barn-mirror"
+recipe = "repair"
+source = "red-barn-mirror"
+picture = "scratch/red-barn-mirror.png"
+picture_sha256 = "sha256:9392deea4a63f6bd0a672442204dddf1d76504c5a9d95633dab89d46314a96b9"
+truth = "scratch/red-barn-mirror-truth.png"
+truth_sha256 = "sha256:ac4736b6d39338d840771fce75771474f0e274f817059768154f41cf0f5c7ad2"
+truth_pixels = 1253
+location = "scratch/red-barn-mirror-stroke.loc"
+location_sha256 = "sha256:09bab60cf4d293189ca0e7e8c8cca5b662bd1f398bad8faadbe33300deb9d635"
+stroke = { path = [[438.5, 500.6], [314.4, 655.7], [268.0, 852.0]], radius = 12.288 }
+
+[[item]]
+id = "repair-red-barn-no-silo"
+recipe = "repair"
+source = "red-barn-no-silo"
+picture = "scratch/red-barn-no-silo.png"
+picture_sha256 = "sha256:5a342d05547e89748c99d1922523bf64e94e163d5e5019dcedb719188344b23a"
+truth = "scratch/red-barn-no-silo-truth.png"
+truth_sha256 = "sha256:429daaba9f23213fc7c51cca5401b3d1dc8ed959e59f2544778f14ac15a744cd"
+truth_pixels = 1008
+location = "scratch/red-barn-no-silo-stroke.loc"
+location_sha256 = "sha256:dcd5eb06c197daccf383b802199952bed42308aae51fcc3a2fe813ab2fe405ee"
+stroke = { path = [[547.1, 734.4], [527.6, 572.9], [555.8, 412.8]], radius = 12.288 }
+
+[[item]]
+id = "repair-red-barn-source"
+recipe = "repair"
+source = "red-barn-source"
+picture = "scratch/red-barn-source.png"
+picture_sha256 = "sha256:ec3dc6a315acc011a2445629bb7f40b8c7b88532a41c1b243c0621f845caeda7"
+truth = "scratch/red-barn-source-truth.png"
+truth_sha256 = "sha256:b2b1987c0dd1ff9e1a5752e377fdf2fadd2ed6b5f3c77256ca6e29803ee02cb7"
+truth_pixels = 1551
+location = "scratch/red-barn-source-stroke.loc"
+location_sha256 = "sha256:c48e3e7483fc2761dc26b735940d526af69a9513fd7fa24d6b03d7c6c3d65cab"
+stroke = { path = [[658.9, 599.2], [812.7, 393.8], [839.6, 147.3]], radius = 12.288 }
+
+[[item]]
+id = "repair-river-bridge-autumn"
+recipe = "repair"
+source = "river-bridge-autumn"
+picture = "scratch/river-bridge-autumn.png"
+picture_sha256 = "sha256:46e39b1ae78f8c1479de33c0d155ef6249aaddd33b95e451aad81f467e2c134e"
+truth = "scratch/river-bridge-autumn-truth.png"
+truth_sha256 = "sha256:0bb7635563fd7beeb426a443b4d831152551ec5bd890affe03f65325e0022bbb"
+truth_pixels = 1530
+location = "scratch/river-bridge-autumn-stroke.loc"
+location_sha256 = "sha256:14ad3ee07efb30951a225204c1867ca978b2910124c18ec275682c8549197ddc"
+stroke = { path = [[657.9, 303.2], [855.6, 276.3], [1046.1, 350.8]], radius = 15.048 }
+
+[[item]]
+id = "repair-river-bridge-crop"
+recipe = "repair"
+source = "river-bridge-crop"
+picture = "scratch/river-bridge-crop.png"
+picture_sha256 = "sha256:98806b56f7b80fbd013449ec30b88678b98a0e9760c8dae0312daf18daeb1ecf"
+truth = "scratch/river-bridge-crop-truth.png"
+truth_sha256 = "sha256:6d119e53be96f6da2b8c2f7d03a7af3309c43b2c99653c63ac72250ac16ce541"
+truth_pixels = 588
+location = "scratch/river-bridge-crop-stroke.loc"
+location_sha256 = "sha256:62eef1a617988c8a82e582f290cb491e1276ab9eff546a4179ba4942a5fd1415"
+stroke = { path = [[323.6, 358.3], [408.1, 264.9], [489.4, 167.6]], radius = 9.216000000000001 }
+
+[[item]]
+id = "repair-river-bridge-grade"
+recipe = "repair"
+source = "river-bridge-grade"
+picture = "scratch/river-bridge-grade.png"
+picture_sha256 = "sha256:d5f6f3615f56fce72e0d28d8e0702828b5a460a240941e26b5abb8d421eb3071"
+truth = "scratch/river-bridge-grade-truth.png"
+truth_sha256 = "sha256:82c6e190d2d4cebd3b11df843d5f2489cddb85f1903f1f9d7e13b72009bd3a28"
+truth_pixels = 1283
+location = "scratch/river-bridge-grade-stroke.loc"
+location_sha256 = "sha256:ecaea76fb4851dab67c9df4d80751e0a92c92a2e71e7cf043d7095d4bfaf3ec4"
+stroke = { path = [[369.5, 681.5], [215.5, 548.1], [127.9, 364.1]], radius = 12.288 }
+
+[[item]]
+id = "repair-river-bridge-source"
+recipe = "repair"
+source = "river-bridge-source"
+picture = "scratch/river-bridge-source.png"
+picture_sha256 = "sha256:43725b9e834e4e9701c8dae9e6bde9491d65b8528da3e8e3a942b955a01ffe10"
+truth = "scratch/river-bridge-source-truth.png"
+truth_sha256 = "sha256:caf71f6ea6ebc5e45dfb99d6f1e68a0086c268573bf89780b183c622df021fb6"
+truth_pixels = 1183
+location = "scratch/river-bridge-source-stroke.loc"
+location_sha256 = "sha256:5e258dc7a06b72b5f26a3378c7cb1d293a15d9ed66fef3b9df393aecb653e3d4"
+stroke = { path = [[908.7, 457.3], [762.6, 580.5], [617.5, 708.3]], radius = 12.288 }
+
+[[item]]
+id = "repair-river-bridge-two-arches"
+recipe = "repair"
+source = "river-bridge-two-arches"
+picture = "scratch/river-bridge-two-arches.png"
+picture_sha256 = "sha256:8f825f0ecbbf4355db2fd37c5f7a1b0280f55ed0701845f1c272c15c0b056a4d"
+truth = "scratch/river-bridge-two-arches-truth.png"
+truth_sha256 = "sha256:8a155d4b44d0a5d23f3699e861f4488337e96f5b7437193d961ec6b2139db2dc"
+truth_pixels = 1528
+location = "scratch/river-bridge-two-arches-stroke.loc"
+location_sha256 = "sha256:a829eabaed98006ecf633780496870c1d631fc693fe5d2ab6c066430037d6946"
+stroke = { path = [[497.6, 590.4], [305.6, 520.8], [145.9, 406.1]], radius = 15.048 }
+
+[[item]]
+id = "repair-village-street-grade"
+recipe = "repair"
+source = "village-street-grade"
+picture = "scratch/village-street-grade.png"
+picture_sha256 = "sha256:0e2a66a1e1362338cef14401b7e70d023b6f17a3b9a1dce1f4c03a5aa86fdf01"
+truth = "scratch/village-street-grade-truth.png"
+truth_sha256 = "sha256:d526a017cdacd6c4f2dfe4607f6dfd72aeb34cbe431ac88f35d98b93e4c0bd97"
+truth_pixels = 1274
+location = "scratch/village-street-grade-stroke.loc"
+location_sha256 = "sha256:9dc7e20fba6374dd2b49619b26206e720166a9f41eea88d1658d6be4052f7cdd"
+stroke = { path = [[177.2, 420.5], [315.7, 572.1], [386.6, 759.5]], radius = 12.288 }
+
+[[item]]
+id = "repair-village-street-no-tower"
+recipe = "repair"
+source = "village-street-no-tower"
+picture = "scratch/village-street-no-tower.png"
+picture_sha256 = "sha256:f02c6352cd4d0d371a13839dc4c89ccb751ec104a9be067aab872a69ef1bec50"
+truth = "scratch/village-street-no-tower-truth.png"
+truth_sha256 = "sha256:bdf60e56ee73473c2bca20fe5f136083989cb1b77600407ec1175a086baa2460"
+truth_pixels = 1517
+location = "scratch/village-street-no-tower-stroke.loc"
+location_sha256 = "sha256:6d88228e5693d4edce8c7eb0ff0c6b8d6c5f5bf7749df860781ab3a3a04bddfc"
+stroke = { path = [[293.2, 522.4], [418.2, 306.8], [569.2, 118.5]], radius = 12.288 }
+
+[[item]]
+id = "repair-village-street-rotate"
+recipe = "repair"
+source = "village-street-rotate"
+picture = "scratch/village-street-rotate.png"
+picture_sha256 = "sha256:be974bf69f3a83561bb379766e53ea6393fad547ee3363bbc883dc7449fd4de1"
+truth = "scratch/village-street-rotate-truth.png"
+truth_sha256 = "sha256:237cb4aef24dac7056b130fc5316e2fe01dce3a9931d1861529f11421bf94de3"
+truth_pixels = 1081
+location = "scratch/village-street-rotate-stroke.loc"
+location_sha256 = "sha256:74a862de8d4ba33e4067ab1af3b5e1dc338069d2d66bcd40394487124c277955"
+stroke = { path = [[304.3, 226.3], [297.1, 403.5], [229.3, 561.5]], radius = 12.288 }
+
+[[item]]
+id = "repair-village-street-snow"
+recipe = "repair"
+source = "village-street-snow"
+picture = "scratch/village-street-snow.png"
+picture_sha256 = "sha256:30785c97495d3633b5b8552325e27a4e01d01e38511ad0a52d469d2c91db91af"
+truth = "scratch/village-street-snow-truth.png"
+truth_sha256 = "sha256:fc97ec1aa79892fc8ebdd66ece8151cf392c82006e49ca1ab8a02f74b916fdca"
+truth_pixels = 1546
+location = "scratch/village-street-snow-stroke.loc"
+location_sha256 = "sha256:a7aad8756a783510fa2a1e9d9bfd7c6e75ba8b2efc8aefcdb8a43d7d86bcb8f1"
+stroke = { path = [[84.7, 82.1], [311.0, 187.7], [531.0, 322.3]], radius = 12.288 }
+
+[[item]]
+id = "repair-village-street-source"
+recipe = "repair"
+source = "village-street-source"
+picture = "scratch/village-street-source.png"
+picture_sha256 = "sha256:d9fd7f154f152e4fea3f86d39c7a16c7c59866edab0801b9e825a6d6dd596c33"
+truth = "scratch/village-street-source-truth.png"
+truth_sha256 = "sha256:048fd08571109782662a0bb35df3b3cb7684852bc4f6f3797e69877923d227e5"
+truth_pixels = 1346
+location = "scratch/village-street-source-stroke.loc"
+location_sha256 = "sha256:241781bead7ca8c4bb32488845fa97bf98f47ff162b4e997c0bb8e69283f3875"
+stroke = { path = [[704.5, 94.6], [489.1, 145.2], [300.2, 243.4]], radius = 12.288 }
+
+[[item]]
+id = "repair_area-brick-house-golden-hour"
+recipe = "repair_area"
+source = "brick-house-golden-hour"
+picture = "spot/brick-house-golden-hour.png"
+picture_sha256 = "sha256:691659b13e0b3c845c4f72585ddf2baf8a413f83b8fe07c9b0043640bfcc69a5"
+truth = "spot/brick-house-golden-hour-truth.png"
+truth_sha256 = "sha256:c4dcc05eca4a5dfe8aa931ff921cb9bb17b3bad9db3cdb0c584570b915478db4"
+truth_pixels = 8540
+location = "spot/brick-house-golden-hour-box.loc"
+location_sha256 = "sha256:3857f8f699ec7d04d18d25bab3ecdb698d8326c21daa00a3cb0e302bb80c17fb"
+box = [331.0, 576.0, 446.0, 678.0]
+
+[[item]]
+id = "repair_area-brick-house-grade"
+recipe = "repair_area"
+source = "brick-house-grade"
+picture = "spot/brick-house-grade.png"
+picture_sha256 = "sha256:aa2cc96e0d4feeb8bc2eab473a24f55a9dc4ee0c8dc7a3715c14645c38e0506d"
+truth = "spot/brick-house-grade-truth.png"
+truth_sha256 = "sha256:bf03a28250b0eed58bf854d3733d92919da7de948fe9884abb98bd2490b0e7ee"
+truth_pixels = 5683
+location = "spot/brick-house-grade-box.loc"
+location_sha256 = "sha256:276493346d0cfd4d0452b63dc0699b59bf49e90f15a5c961d12839d5543f8678"
+box = [827.0, 743.0, 921.0, 827.0]
+
+[[item]]
+id = "repair_area-brick-house-mirror"
+recipe = "repair_area"
+source = "brick-house-mirror"
+picture = "spot/brick-house-mirror.png"
+picture_sha256 = "sha256:192624a7818e56f5d15bd4d9a49e7e8ca73b9b76a57e8dd1807ce31e922bc6e9"
+truth = "spot/brick-house-mirror-truth.png"
+truth_sha256 = "sha256:28d1ea3a9cedda53703f50758f974df461cd8721751b0b06a700e2c4976692c7"
+truth_pixels = 5597
+location = "spot/brick-house-mirror-box.loc"
+location_sha256 = "sha256:5e200fb3a58d9e3779f1e8cf950a8a344ed4fd8785f84fe7582c90bde58de222"
+box = [856.0, 125.0, 966.0, 196.0]
+
+[[item]]
+id = "repair_area-brick-house-source"
+recipe = "repair_area"
+source = "brick-house-source"
+picture = "spot/brick-house-source.png"
+picture_sha256 = "sha256:537a167ee3beca92c010bb71a769c9aa63ab073af4598d679831bd26655e49e7"
+truth = "spot/brick-house-source-truth.png"
+truth_sha256 = "sha256:2d2d872b8b6148fb775659fad7c95be0765fc3ce51a9208718dfe61d02b7349b"
+truth_pixels = 10668
+location = "spot/brick-house-source-box.loc"
+location_sha256 = "sha256:95e18efcf373377d3bbff0ff0987e6324a2759ba8d6d8a1d23beed54e61ce01a"
+box = [424.0, 538.0, 548.0, 655.0]
+
+[[item]]
+id = "repair_area-hotel-pool-chairs"
+recipe = "repair_area"
+source = "hotel-pool-chairs"
+picture = "spot/hotel-pool-chairs.png"
+picture_sha256 = "sha256:c8ef10dcf4ce146eb7a19a75a5bb52740691b23bd41f41c0c29ba7345d31f2b0"
+truth = "spot/hotel-pool-chairs-truth.png"
+truth_sha256 = "sha256:74ee5bf1f6138394c196927a35ba3245a185f7bc0fe5adab6a5d81df25ed43bd"
+truth_pixels = 15213
+location = "spot/hotel-pool-chairs-box.loc"
+location_sha256 = "sha256:4815b1421bfc18ba7b1549a7670d86936f746476cb0aea48df5fc9c68021acfc"
+box = [772.0, 124.0, 919.0, 262.0]
+
+[[item]]
+id = "repair_area-hotel-pool-crop"
+recipe = "repair_area"
+source = "hotel-pool-crop"
+picture = "spot/hotel-pool-crop.png"
+picture_sha256 = "sha256:17545c28b9f9406dd83f1e5ae886f51da840624ef18d49169f6a0caaddd58902"
+truth = "spot/hotel-pool-crop-truth.png"
+truth_sha256 = "sha256:faaecdf3fc6744106a86063c192d479bf8c01049e43758c6402ccab8f03f7866"
+truth_pixels = 4961
+location = "spot/hotel-pool-crop-box.loc"
+location_sha256 = "sha256:b2522ebc1f86b4d731e221a8e92885848c054d2c0a25224a1ff3cdc5f7a071f6"
+box = [309.0, 457.0, 409.0, 527.0]
+
+[[item]]
+id = "repair_area-hotel-pool-grade"
+recipe = "repair_area"
+source = "hotel-pool-grade"
+picture = "spot/hotel-pool-grade.png"
+picture_sha256 = "sha256:3d732e6612c1976e742c124a25d0f08e7e8efb8b36f08bac69b03e03719b49a8"
+truth = "spot/hotel-pool-grade-truth.png"
+truth_sha256 = "sha256:992d5d96cd02b1f379a4a473661ec766932537f551324ef9b91f4db533ec8fce"
+truth_pixels = 7835
+location = "spot/hotel-pool-grade-box.loc"
+location_sha256 = "sha256:8af838990c265adc146b2310e5aca4060946f3a98f5ba435e96a167351d281e8"
+box = [580.0, 721.0, 701.0, 810.0]
+
+[[item]]
+id = "repair_area-hotel-pool-no-pool"
+recipe = "repair_area"
+source = "hotel-pool-no-pool"
+picture = "spot/hotel-pool-no-pool.png"
+picture_sha256 = "sha256:f4953ba739a31dbfadfbd0b155d01b246c7658318b524224a4fadded1ef22ac5"
+truth = "spot/hotel-pool-no-pool-truth.png"
+truth_sha256 = "sha256:4087354fb94c7bee5c44f78949fea0e7c4f738a837cba748385eb8fcc7ad63e2"
+truth_pixels = 5571
+location = "spot/hotel-pool-no-pool-box.loc"
+location_sha256 = "sha256:cd83b2e150c2e5dc03a35cd7b26e8fa62db4134591ef3e83f6af41bcf0f704ad"
+box = [1044.0, 946.0, 1147.0, 1022.0]
+
+[[item]]
+id = "repair_area-hotel-pool-source"
+recipe = "repair_area"
+source = "hotel-pool-source"
+picture = "spot/hotel-pool-source.png"
+picture_sha256 = "sha256:777d72d7bc90b33e3009d488b5a12c535305cd3a7a59239c9cb621f27c9e52ab"
+truth = "spot/hotel-pool-source-truth.png"
+truth_sha256 = "sha256:dee0c79fa3aa596cdc37b4874d5bce9bcba7b02891366d4892bef3cdf18f4688"
+truth_pixels = 3107
+location = "spot/hotel-pool-source-box.loc"
+location_sha256 = "sha256:5d5c8c7f95c165b7bcff15ae1b8d3c27e0477349c672bf0726eee82a79d517fc"
+box = [461.0, 645.0, 531.0, 710.0]
+
+[[item]]
+id = "repair_area-red-barn-dusk"
+recipe = "repair_area"
+source = "red-barn-dusk"
+picture = "spot/red-barn-dusk.png"
+picture_sha256 = "sha256:01a438bebff511107131a20db0b968b3f18a082d3ffdf544c74bb01c5e2e4025"
+truth = "spot/red-barn-dusk-truth.png"
+truth_sha256 = "sha256:bbe785865354dc2d96ef0f8b4f7c2b3ed6c0e1b74a35122cda96748d0eb6b58e"
+truth_pixels = 4630
+location = "spot/red-barn-dusk-box.loc"
+location_sha256 = "sha256:93d85acb7c43a7139857c4339000c86d8334208ca9b790a529a3011dac4304bd"
+box = [657.0, 138.0, 751.0, 208.0]
+
+[[item]]
+id = "repair_area-red-barn-grade"
+recipe = "repair_area"
+source = "red-barn-grade"
+picture = "spot/red-barn-grade.png"
+picture_sha256 = "sha256:1476b3b02b59b16b651d1c936e58e0120393640e31685e8a6ab2b3a79777685d"
+truth = "spot/red-barn-grade-truth.png"
+truth_sha256 = "sha256:fff272390dba0af1458d1d7d1eea70aa913fe1f6527a0d7bd2528746d4aa4857"
+truth_pixels = 6738
+location = "spot/red-barn-grade-box.loc"
+location_sha256 = "sha256:a738bfdb80636de73b3cc0fb3592f2bf7537c84d3eb2bb9a1ed1b5d2d5c23d6b"
+box = [166.0, 93.0, 289.0, 170.0]
+
+[[item]]
+id = "repair_area-red-barn-mirror"
+recipe = "repair_area"
+source = "red-barn-mirror"
+picture = "spot/red-barn-mirror.png"
+picture_sha256 = "sha256:dd6f0aa609c80e7b04e918ea38b749daf2711d142291b41154d32a6a8ff1c8eb"
+truth = "spot/red-barn-mirror-truth.png"
+truth_sha256 = "sha256:645cf9c83dac7b9648a54a94da88d02db1c85b76eebcb4bbd8873b66e1d4a8df"
+truth_pixels = 3951
+location = "spot/red-barn-mirror-box.loc"
+location_sha256 = "sha256:7d4837318611689fc4ac9caa27d6233f404d58a7e6f06dd45769f1e1abc9d158"
+box = [242.0, 591.0, 332.0, 653.0]
+
+[[item]]
+id = "repair_area-red-barn-no-silo"
+recipe = "repair_area"
+source = "red-barn-no-silo"
+picture = "spot/red-barn-no-silo.png"
+picture_sha256 = "sha256:1dc016239e4c7538e9c43fecc38c183a9d6212d7c5a141a7c763c4ca11d6f9f5"
+truth = "spot/red-barn-no-silo-truth.png"
+truth_sha256 = "sha256:6bfd0332e76ad46e2e0d93ae4d6afd5480e3fc8e8f9b719ccc19451dc9687a86"
+truth_pixels = 3979
+location = "spot/red-barn-no-silo-box.loc"
+location_sha256 = "sha256:c94cf5e8c6e1120137cb6c500300e4cd587fdcd93bed4693ab2c93e401599963"
+box = [80.0, 848.0, 163.0, 916.0]
+
+[[item]]
+id = "repair_area-red-barn-source"
+recipe = "repair_area"
+source = "red-barn-source"
+picture = "spot/red-barn-source.png"
+picture_sha256 = "sha256:eb172e50292f7978e9b7e8f8129e8d4077b6a2b175f92b07b90ae3b2f625b4e5"
+truth = "spot/red-barn-source-truth.png"
+truth_sha256 = "sha256:01675e0301de9eceaec6ef3b7fc155ea66f9d43b326b2c9a89c7cea428b58966"
+truth_pixels = 2877
+location = "spot/red-barn-source-box.loc"
+location_sha256 = "sha256:d18df19d5f0a5cd698c8be4d6602675faec42b130f3ae8e3e60de002e7a7ad41"
+box = [823.0, 155.0, 889.0, 218.0]
+
+[[item]]
+id = "repair_area-river-bridge-autumn"
+recipe = "repair_area"
+source = "river-bridge-autumn"
+picture = "spot/river-bridge-autumn.png"
+picture_sha256 = "sha256:f1906d66d4f35d4430e92b7dd712727f79372f1c754fd2af99b02334e9ca4e2e"
+truth = "spot/river-bridge-autumn-truth.png"
+truth_sha256 = "sha256:c2bcc6bac0f377b3f01761e75475b43a09b90a302f0f5441852de804ffdf98dc"
+truth_pixels = 5565
+location = "spot/river-bridge-autumn-box.loc"
+location_sha256 = "sha256:245ef6f1f70735085fac30946bd2049f149eb4881ed37eae570ccca41acc4ed6"
+box = [449.0, 781.0, 544.0, 863.0]
+
+[[item]]
+id = "repair_area-river-bridge-crop"
+recipe = "repair_area"
+source = "river-bridge-crop"
+picture = "spot/river-bridge-crop.png"
+picture_sha256 = "sha256:9e7f5d374b136181eab563dd00587d3f3801ecda33592c74b5cf3662c3543fac"
+truth = "spot/river-bridge-crop-truth.png"
+truth_sha256 = "sha256:a225fccdb07381d57d2669b5bf87cf2305e1b56d491b9435ef335acb71f1b9d1"
+truth_pixels = 1914
+location = "spot/river-bridge-crop-box.loc"
+location_sha256 = "sha256:09991870f61b74cb4b30766da9289204acd2b846c15deed856d75868780908f2"
+box = [406.0, 403.0, 472.0, 446.0]
+
+[[item]]
+id = "repair_area-river-bridge-grade"
+recipe = "repair_area"
+source = "river-bridge-grade"
+picture = "spot/river-bridge-grade.png"
+picture_sha256 = "sha256:cd4c133ee9bbafb4deb933bc9edf8e75b321cbcd34532771530de5161c967486"
+truth = "spot/river-bridge-grade-truth.png"
+truth_sha256 = "sha256:c70f3940a67b57f4044e55976ba205a65b51f7bb9d2186c22f63345c565c5b15"
+truth_pixels = 3072
+location = "spot/river-bridge-grade-box.loc"
+location_sha256 = "sha256:a437087b5c68a9a610f8149732f986c9c01c026363754ab5f2a8626134d959b3"
+box = [509.0, 329.0, 578.0, 394.0]
+
+[[item]]
+id = "repair_area-river-bridge-source"
+recipe = "repair_area"
+source = "river-bridge-source"
+picture = "spot/river-bridge-source.png"
+picture_sha256 = "sha256:b1a0b18d30177e0a209f6a4328fb5eaf64652b2273f44990576a0d3bfc75a8ed"
+truth = "spot/river-bridge-source-truth.png"
+truth_sha256 = "sha256:247c048fc3206f858a11c43db83779c2d35c4addd50ad96efc86dc47a9a8b0dc"
+truth_pixels = 5054
+location = "spot/river-bridge-source-box.loc"
+location_sha256 = "sha256:b2d4d6e81b67ead067c2cc2223fba2d03451704a27003e6e968dab294c32de99"
+box = [579.0, 446.0, 671.0, 523.0]
+
+[[item]]
+id = "repair_area-river-bridge-two-arches"
+recipe = "repair_area"
+source = "river-bridge-two-arches"
+picture = "spot/river-bridge-two-arches.png"
+picture_sha256 = "sha256:c2feac31a9ca817f204a8fc55a146cd6d188bf1011d9c75503b2785a92e0b176"
+truth = "spot/river-bridge-two-arches-truth.png"
+truth_sha256 = "sha256:72f0c6a183d8156bd7e47c312144a48c6268ad0cf8eee8cb9e55e740d20f8721"
+truth_pixels = 4068
+location = "spot/river-bridge-two-arches-box.loc"
+location_sha256 = "sha256:3172f89dc0c4a7d7c307b32e480928ea8537dc549173375a9efe10fd89becc38"
+box = [346.0, 181.0, 426.0, 254.0]
+
+[[item]]
+id = "repair_area-village-street-grade"
+recipe = "repair_area"
+source = "village-street-grade"
+picture = "spot/village-street-grade.png"
+picture_sha256 = "sha256:5517570ce15b8eb0d4dfbdb8a14e2cf991fb40e3648b41e5d6e6cddac9deb575"
+truth = "spot/village-street-grade-truth.png"
+truth_sha256 = "sha256:384c48e1afe530c5a1e3998b27ae5ceea0f979ea2b39b2b1b162b891e33dc28f"
+truth_pixels = 2317
+location = "spot/village-street-grade-box.loc"
+location_sha256 = "sha256:8bf4ab8ce0b2b33fdfa3ce4650fda3fb967dd35d217cec74adb6ca77ad918dc3"
+box = [577.0, 828.0, 646.0, 878.0]
+
+[[item]]
+id = "repair_area-village-street-no-tower"
+recipe = "repair_area"
+source = "village-street-no-tower"
+picture = "spot/village-street-no-tower.png"
+picture_sha256 = "sha256:e3bb1b445e71a1366dad4f6efc4f8f3a5fc0322bd58df3756aace94573d1d0d8"
+truth = "spot/village-street-no-tower-truth.png"
+truth_sha256 = "sha256:8a051706f41d21834f992da57816fca9e5dab8df666c68b6605eaf1e3657d0fb"
+truth_pixels = 7276
+location = "spot/village-street-no-tower-box.loc"
+location_sha256 = "sha256:8760a3ef68d0b40512e3caa726713f2d3b3f524c556ce36149e5b337d6c00d44"
+box = [750.0, 564.0, 858.0, 658.0]
+
+[[item]]
+id = "repair_area-village-street-rotate"
+recipe = "repair_area"
+source = "village-street-rotate"
+picture = "spot/village-street-rotate.png"
+picture_sha256 = "sha256:091516a996616376777edea2fb29a3e6a1a97f6c7e363408d13f08ef71263900"
+truth = "spot/village-street-rotate-truth.png"
+truth_sha256 = "sha256:bb0efb4eb901a93095fecbef123ab148e34f6f1355efe77081d6ba50566bd379"
+truth_pixels = 3512
+location = "spot/village-street-rotate-box.loc"
+location_sha256 = "sha256:dd0a5e3c648c1427e05d4b3c7e57803d318fb8d663f46e8d556197b966e4bb84"
+box = [577.0, 95.0, 664.0, 153.0]
+
+[[item]]
+id = "repair_area-village-street-snow"
+recipe = "repair_area"
+source = "village-street-snow"
+picture = "spot/village-street-snow.png"
+picture_sha256 = "sha256:2b08f23ca4b4d427834baa93f90754ddf4e2273450c2794bdf84fcce64dd3330"
+truth = "spot/village-street-snow-truth.png"
+truth_sha256 = "sha256:f1c2d27415b89f97f3193e2a5f2e74f6e04d7c1317435471842f491bbec18f01"
+truth_pixels = 4853
+location = "spot/village-street-snow-box.loc"
+location_sha256 = "sha256:43ffbe6706f1c84117a9de05f06e68913ef25fd19c9a2164fd7dce920f0d8a23"
+box = [78.0, 239.0, 171.0, 312.0]
+
+[[item]]
+id = "repair_area-village-street-source"
+recipe = "repair_area"
+source = "village-street-source"
+picture = "spot/village-street-source.png"
+picture_sha256 = "sha256:14cb522b4592c5a220ae26998621494d0b25df42b14f69ebe0cd2d9ae98a9cf4"
+truth = "spot/village-street-source-truth.png"
+truth_sha256 = "sha256:8ae2bec5949161ba83f383c80d14393df67057fc56a208c22d634c46affaf5f9"
+truth_pixels = 6653
+location = "spot/village-street-source-box.loc"
+location_sha256 = "sha256:b5abf2d52c34569341ccdda10b689b4630660f10d89915cfb32eb3b9ee44e232"
+box = [849.0, 848.0, 967.0, 927.0]

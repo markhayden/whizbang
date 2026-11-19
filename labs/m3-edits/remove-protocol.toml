@@ -1,0 +1,45 @@
+# The lab `m3-edits-remove` (plan m3, task B1, item 1): the visual quality of
+# the shipped recipe `remove` on the synthetic edit set (`edits.toml` beside
+# this file), each result against the clean picture, the reference arm `clean`. Wins
+# are the recipe's. The outcome is rascal's rule: `not_worse` when fewer than a third
+# of the decided pairs prefer the clean picture, `inconclusive` under ten decided
+# pairs. Frozen before the round: its digest is in every cell, and a change is a new
+# lab. Written by `whizbang eval edits draw`.
+version = 1
+name = "m3-edits-remove"
+seed = 20261119
+arms = ["remove", "clean"]
+min_decided = 10
+
+[rules]
+preferred = [2, 3]
+not_worse = [1, 3]
+
+[[group]]
+name = "edits"
+images = [
+  "ball-brick-house-golden-hour",
+  "ball-brick-house-grade",
+  "ball-brick-house-mirror",
+  "ball-brick-house-source",
+  "ball-hotel-pool-chairs",
+  "ball-hotel-pool-crop",
+  "ball-hotel-pool-grade",
+  "ball-hotel-pool-no-pool",
+  "ball-hotel-pool-source",
+  "ball-red-barn-dusk",
+  "ball-red-barn-grade",
+  "ball-red-barn-mirror",
+  "ball-red-barn-no-silo",
+  "ball-red-barn-source",
+  "ball-river-bridge-autumn",
+  "ball-river-bridge-crop",
+  "ball-river-bridge-grade",
+  "ball-river-bridge-source",
+  "ball-river-bridge-two-arches",
+  "ball-village-street-grade",
+  "ball-village-street-no-tower",
+  "ball-village-street-rotate",
+  "ball-village-street-snow",
+  "ball-village-street-source",
+]
