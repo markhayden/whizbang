@@ -58,7 +58,7 @@ fn picture(width: u32, height: u32) -> Vec<u8> {
     rgba
 }
 
-fn main() {
+fn main() -> Result<(), String> {
     for (width, height) in SIZES {
         let rgba = picture(width, height);
         for (name, compression, filter) in SETTINGS {
@@ -67,12 +67,12 @@ fn main() {
             for _ in 0..3 {
                 let started = Instant::now();
                 let file = if name == "default_adaptive" {
-                    encode::png_of(&rgba, width, height, Channels::Rgba).expect("a PNG")
+                    encode::png_of(&rgba, width, height, Channels::Rgba)?
                 } else {
                     let mut file = Vec::new();
                     PngEncoder::new_with_quality(&mut file, compression, filter)
                         .write_image(&rgba, width, height, ExtendedColorType::Rgba8)
-                        .expect("a PNG");
+                        .map_err(|error| error.to_string())?;
                     file
                 };
                 times.push(started.elapsed().as_millis());
@@ -83,4 +83,5 @@ fn main() {
             println!("{name}_{width}x{height}_bytes = \"{bytes}\"");
         }
     }
+    Ok(())
 }
