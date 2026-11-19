@@ -37,10 +37,6 @@ serde_json.workspace = true
 sha2.workspace = true
 # The reader of the config file (`SPEC.md` section 4): see the workspace's manifest.
 toml.workspace = true
-# Unicode's canonical decomposition, so that the check behind a send finds a folder kept
-# out in either normal form, as APFS takes both as one name (plan m3, task F1, item 7).
-# Pinned exactly: a change in its tables changes which texts the check refuses.
-unicode-normalization = { version = "=0.1.25", default-features = false }
 
 [dev-dependencies]
 # A second lossless container, for the tests only: the same pixels in PNG and in BMP.

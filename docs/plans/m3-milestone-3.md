@@ -416,9 +416,7 @@ ADR 0033, amended); item 7, `export::a_mask_exported_imports_into_another_store_
 `import::tests::a_fifo_at_the_path_is_refused_and_nothing_waits` (the unit tests of
 `crates/whizbang/src/import.rs`, which hold the moment between the look and the open),
 `import::a_file_over_the_limit_its_contents_allow_is_refused`,
-`export::a_request_id_of_a_dot_or_two_names_no_file_by_it` and
-`egress::gate::a_store_under_a_folder_in_another_normal_form_is_kept_out` (the core's
-tests of the gate); item 8, the `remove-prompt` block of `docs/results/m3-fills.md`, held by
+`export::a_request_id_of_a_dot_or_two_names_no_file_by_it`; item 8, the `remove-prompt` block of `docs/results/m3-fills.md`, held by
 `evidence::the_fills_record_names_a_commit_of_this_tree_and_holds_no_secret`. From the
 review of the first pull request: a stored artifact handed back is taken as it is only
 when the call gave it or a run it called made it, any other being held to the origin of
@@ -445,7 +443,10 @@ the conformance keeps reading the fixture written from fal's published schema
 (`crates/whizbang-backends/tests/fixtures/fal-bria-eraser/`), and the live calls'
 records, which name the model's version and the outcome, show the wire against fal
 itself; recording an exchange would need a recorder the build does not have, for one
-fixture.
+fixture. And the clause "`gate::a_store_under_a_folder_in_another_normal_form_is_kept_out`"
+is moved out of F1 with its carry-over row: the folding it needs takes two new crates
+(`unicode-normalization` and `tinyvec`), which wait on the owner's yes; the code and the
+test are on the branch `m3-normal-form`, unmerged.
 
 ### Origins (F)
 
