@@ -68,7 +68,7 @@ fn crc(bytes: &[u8]) -> u32 {
 /// A picture of a mask, each pixel shown three wide and three high: a PNG of sixteen
 /// colours, written here byte by byte and not compressed, so that the same mask is the
 /// same file wherever it is written. It is a picture for a page, and no artifact.
-fn picture(mask: &Mask) -> Vec<u8> {
+pub(crate) fn picture(mask: &Mask) -> Vec<u8> {
     const SCALE: usize = 3;
     let space = mask.space();
     let (width, height) = (space.width() as usize, space.height() as usize);
@@ -90,6 +90,26 @@ fn picture(mask: &Mask) -> Vec<u8> {
             rows.extend(&row);
         }
     }
+    png_file(
+        (width * SCALE) as u32,
+        (height * SCALE) as u32,
+        [4, 3],
+        Some(palette()),
+        &rows,
+    )
+}
+
+/// A PNG of these filtered rows, its data in stored blocks and not compressed, so that
+/// the same rows are the same file wherever they are written: `kind` is the bit depth
+/// and the colour type, and a palette is given for colour type 3. The pictures of the
+/// tool records of this crate are all made by it (`tool_records`).
+pub(crate) fn png_file(
+    width: u32,
+    height: u32,
+    kind: [u8; 2],
+    palette: Option<Vec<u8>>,
+    rows: &[u8],
+) -> Vec<u8> {
     // A zlib stream of stored blocks, and its checksum.
     let mut packed = vec![0x78, 0x01];
     let blocks: Vec<&[u8]> = rows.chunks(65_535).collect();
@@ -100,23 +120,21 @@ fn picture(mask: &Mask) -> Vec<u8> {
         packed.extend(*block);
     }
     let (mut a, mut b) = (1u32, 0u32);
-    for byte in &rows {
+    for byte in rows {
         a = (a + u32::from(*byte)) % 65_521;
         b = (b + a) % 65_521;
     }
     packed.extend((b << 16 | a).to_be_bytes());
 
     let mut header = Vec::new();
-    header.extend(((width * SCALE) as u32).to_be_bytes());
-    header.extend(((height * SCALE) as u32).to_be_bytes());
-    header.extend([4, 3, 0, 0, 0]);
+    header.extend(width.to_be_bytes());
+    header.extend(height.to_be_bytes());
+    header.extend([kind[0], kind[1], 0, 0, 0]);
+    let mut chunks = vec![(*b"IHDR", header)];
+    chunks.extend(palette.map(|palette| (*b"PLTE", palette)));
+    chunks.extend([(*b"IDAT", packed), (*b"IEND", Vec::new())]);
     let mut file = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
-    for (kind, data) in [
-        (b"IHDR", header),
-        (b"PLTE", palette()),
-        (b"IDAT", packed),
-        (b"IEND", Vec::new()),
-    ] {
+    for (kind, data) in chunks {
         file.extend((data.len() as u32).to_be_bytes());
         let body = [&kind[..], &data].concat();
         file.extend(&body);
@@ -260,11 +278,11 @@ fn files(examples: &[Example]) -> Vec<(String, Vec<u8>)> {
     pictures.collect()
 }
 
-fn tools() -> PathBuf {
+pub(crate) fn tools() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/reference/tools")
 }
 
-fn marks(name: &str) -> (String, String) {
+pub(crate) fn marks(name: &str) -> (String, String) {
     (
         format!("<!-- {name}: begin -->\n"),
         format!("<!-- {name}: end -->\n"),
@@ -272,7 +290,7 @@ fn marks(name: &str) -> (String, String) {
 }
 
 /// The text between a pair of marks in the record.
-fn between<'a>(record: &'a str, name: &str) -> &'a str {
+pub(crate) fn between<'a>(record: &'a str, name: &str) -> &'a str {
     let (begin, end) = marks(name);
     let from = record.find(&begin).expect("the opening mark") + begin.len();
     let to = record.find(&end).expect("the closing mark");
@@ -280,7 +298,7 @@ fn between<'a>(record: &'a str, name: &str) -> &'a str {
 }
 
 /// The record with the text between a pair of marks replaced.
-fn replaced(record: &str, name: &str, with: &str) -> String {
+pub(crate) fn replaced(record: &str, name: &str, with: &str) -> String {
     let old = between(record, name);
     let at = old.as_ptr() as usize - record.as_ptr() as usize;
     format!("{}{with}{}", &record[..at], &record[at + old.len()..])
@@ -449,7 +467,7 @@ fn a_picture_of_a_mask_is_a_png_of_its_three_planes() {
 
 /// Around each time in the text `timed` builds, so that the times can be told from the
 /// rest of it. It is taken out before anything is written.
-const MARK: char = '\u{1}';
+pub(crate) const MARK: char = '\u{1}';
 /// A time is written again only when it moved by more than this share of the time the
 /// record holds: the rule of `view`'s record, with its reasons
 /// (`crates/whizbang-squint/tests/it/record.rs`).
@@ -459,7 +477,7 @@ const MARGIN: f64 = 1.0 / 3.0;
 /// one (its times between [`MARK`]s) differs from it in times alone, and each of those
 /// by no more than [`MARGIN`] of the committed time. `None` when anything else differs,
 /// or a time moved further: the fresh part is then written.
-fn settled<'a>(committed: &'a str, fresh: &str) -> Option<&'a str> {
+pub(crate) fn settled<'a>(committed: &'a str, fresh: &str) -> Option<&'a str> {
     let mut rest = committed;
     for (at, piece) in fresh.split(MARK).enumerate() {
         if at % 2 == 0 {
@@ -516,7 +534,11 @@ fn the_records_times_are_kept_until_one_moves_by_more_than_a_third() {
 // --- What only the script runs: times, and the other methods -----------------------------------
 
 /// The middle of `runs` timings of `work`, each on what `make` made outside the time.
-fn time<I, T>(runs: usize, mut make: impl FnMut() -> I, mut work: impl FnMut(I) -> T) -> Duration {
+pub(crate) fn time<I, T>(
+    runs: usize,
+    mut make: impl FnMut() -> I,
+    mut work: impl FnMut(I) -> T,
+) -> Duration {
     let mut times: Vec<Duration> = (0..runs)
         .map(|_| {
             let input = make();
@@ -532,7 +554,7 @@ fn time<I, T>(runs: usize, mut make: impl FnMut() -> I, mut work: impl FnMut(I) 
 }
 
 /// A time in milliseconds, between [`MARK`]s.
-fn millis(time: Duration) -> String {
+pub(crate) fn millis(time: Duration) -> String {
     let ms = time.as_secs_f64() * 1000.0;
     if ms < 0.05 {
         // Too short to time, and no number to keep or to compare.
@@ -546,7 +568,7 @@ fn millis(time: Duration) -> String {
 
 /// A mask of any size for the times: a blob and a thin line in every square of 256
 /// pixels, and a protected stripe every 512 rows.
-fn tiled(width: usize, height: usize) -> Mask {
+pub(crate) fn tiled(width: usize, height: usize) -> Mask {
     let core = plane(width, height, |x, y| {
         let (u, v) = ((x % 256) as i64, (y % 256) as i64);
         (u - 128) * (u - 128) + (v - 100) * (v - 100) <= 48 * 48 || (u == 200 && v < 180)
@@ -683,7 +705,7 @@ fn the_other_methods_do_the_same_job_where_the_record_says_they_do() {
     }
 }
 
-fn megapixels(width: usize, height: usize) -> String {
+pub(crate) fn megapixels(width: usize, height: usize) -> String {
     format!("{:.1}", (width * height) as f64 / 1e6)
 }
 
