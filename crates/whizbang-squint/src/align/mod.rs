@@ -24,7 +24,7 @@
 //! is low is `NotRegistered`; none is given a transform.
 
 mod flat;
-mod gray;
+pub(crate) mod gray;
 mod linalg;
 mod tool;
 

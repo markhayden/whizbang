@@ -75,7 +75,10 @@ pub enum Command {
         #[arg(long, value_name = "WHEN", default_value = "first", value_parser = ["first", "none"])]
         details: String,
         /// The tools whose details are measured first, by name, separated by commas:
-        /// align, so far.
+        /// align, and the experimental change_map and edge_similarity, which compare the
+        /// source with the frame align returned (align is then run first, named or not):
+        /// where the picture changed in structure, and how much of its edges it kept.
+        /// Without it, align alone.
         #[arg(long, value_name = "TOOLS")]
         detail: Option<String>,
         /// How a call of align by the judge is answered: `full`, everything it found,

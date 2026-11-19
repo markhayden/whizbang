@@ -16,8 +16,10 @@ use crate::contract::{ActionDescriptor, Kind, Registry};
 /// registered. Version 4 adds `chosen_by` to each need: the argument that chooses the
 /// backend, or null. Version 5 adds `requests` to each need: how many requests one
 /// call may send the backend that answers it. Version 6 adds `feature_from` to each need:
-/// the argument whose value names one more feature, or null (plan 1D, task Q1).
-pub const DESCRIPTION_VERSION: u32 = 6;
+/// the argument whose value names one more feature, or null (plan 1D, task Q1). Version 7
+/// adds `marks`: each tool the upper rungs apply to, with the mark its record states
+/// (`SPEC.md` section 8, "Marks"; plan m2c, task X1, item 6).
+pub const DESCRIPTION_VERSION: u32 = 7;
 
 /// Everything a door can offer, as one document.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -26,7 +28,28 @@ pub struct Description {
     name: String,
     version: String,
     actions: Vec<ActionDescriptor>,
+    marks: Vec<MarkSummary>,
     artifact_types: Vec<ArtifactTypeSummary>,
+}
+
+/// A tool's mark (`SPEC.md` section 8, "Marks"): `experimental`, `unverified` or `admitted`,
+/// as the tool's record states it. A tool without a record has none.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MarkSummary {
+    tool: String,
+    mark: String,
+}
+
+impl MarkSummary {
+    /// The tool's name, as its action is named.
+    pub fn tool(&self) -> &str {
+        &self.tool
+    }
+
+    /// The mark.
+    pub fn mark(&self) -> &str {
+        &self.mark
+    }
 }
 
 /// What a caller is told of an artifact type.
@@ -105,11 +128,33 @@ impl Description {
             name: "whizbang".to_owned(),
             version: version.to_owned(),
             actions,
+            marks: Vec::new(),
             artifact_types: ArtifactType::ALL
                 .into_iter()
                 .map(ArtifactTypeSummary::of)
                 .collect(),
         }
+    }
+
+    /// The same description, with these marks: each a tool and its mark, in this order. A
+    /// mark of a tool this build does not register is left out.
+    pub fn with_marks<'a>(mut self, marks: impl IntoIterator<Item = (&'a str, &'a str)>) -> Self {
+        let registered = |tool: &str| self.actions.iter().any(|action| action.name() == tool);
+        let marks: Vec<MarkSummary> = marks
+            .into_iter()
+            .filter(|(tool, _)| registered(tool))
+            .map(|(tool, mark)| MarkSummary {
+                tool: tool.to_owned(),
+                mark: mark.to_owned(),
+            })
+            .collect();
+        self.marks = marks;
+        self
+    }
+
+    /// Each tool the upper rungs apply to, with its mark.
+    pub fn marks(&self) -> &[MarkSummary] {
+        &self.marks
     }
 
     /// The version of this document's shape.

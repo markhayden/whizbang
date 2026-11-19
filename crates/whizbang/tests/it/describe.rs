@@ -25,7 +25,7 @@ fn indented_description() -> &'static str {
 /// `check`, the recipe.
 fn compact_start() -> String {
     format!(
-        "{{\"description_version\":6,\"name\":\"whizbang\",\"version\":\"{}\",\"actions\":[{{\"name\":\"check\",\"version\":\"1.3.0\",\"kind\":\"recipe\",\"purpose\":\"",
+        "{{\"description_version\":7,\"name\":\"whizbang\",\"version\":\"{}\",\"actions\":[{{\"name\":\"check\",\"version\":\"1.3.0\",\"kind\":\"recipe\",\"purpose\":\"",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -101,7 +101,7 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
     assert!(ok);
     let doc: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
     assert_eq!(doc["name"], "whizbang");
-    assert_eq!(doc["description_version"], 6);
+    assert_eq!(doc["description_version"], 7);
     assert_eq!(doc["version"], env!("CARGO_PKG_VERSION"));
     let names: Vec<&str> = doc["actions"]
         .as_array()
@@ -113,7 +113,17 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
     assert_eq!(
         names,
         [
-            "check", "align", "feather", "grow", "plug", "render", "resize", "segment", "select",
+            "check",
+            "align",
+            "change_map",
+            "edge_similarity",
+            "feather",
+            "grow",
+            "plug",
+            "render",
+            "resize",
+            "segment",
+            "select",
             "view"
         ]
     );
@@ -135,7 +145,7 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
     assert_eq!(doc["actions"][0]["needs"][0]["requests"], 16);
     // `segment` needs a segmenter that takes what the call's `kind` names, a phrase, a
     // point or a box, chosen by its argument `backend`.
-    let need = &doc["actions"][7]["needs"][0];
+    let need = &doc["actions"][9]["needs"][0];
     assert_eq!(need["capability"], "segment");
     assert_eq!(need["features"], serde_json::json!([]));
     assert_eq!(need["feature_from"], "kind");
@@ -170,7 +180,17 @@ fn describe_without_json_names_the_build() {
     assert_eq!(
         names,
         [
-            "check", "align", "feather", "grow", "plug", "render", "resize", "segment", "select",
+            "check",
+            "align",
+            "change_map",
+            "edge_similarity",
+            "feather",
+            "grow",
+            "plug",
+            "render",
+            "resize",
+            "segment",
+            "select",
             "view"
         ],
         "{text}"
@@ -259,7 +279,7 @@ fn a_test_adds_echo_to_the_registry_the_binary_builds() {
 fn describe_json_pretty_starts_and_ends_with_these_bytes() {
     let (_, pretty) = whizbang(&["describe", "--json", "--pretty"]);
     let start = format!(
-        "{{\n  \"description_version\": 6,\n  \"name\": \"whizbang\",\n  \"version\": \"{}\",\n  \"actions\": [\n    {{\n      \"name\": \"check\",\n",
+        "{{\n  \"description_version\": 7,\n  \"name\": \"whizbang\",\n  \"version\": \"{}\",\n  \"actions\": [\n    {{\n      \"name\": \"check\",\n",
         env!("CARGO_PKG_VERSION")
     );
     let types = r#"    {
@@ -326,4 +346,85 @@ fn a_write_that_fails_is_exit_3_with_the_reason() {
         );
         assert_eq!(std::fs::read(&file).unwrap(), b"", "{form}");
     }
+}
+
+// --- marks (plan m2c, task X1, item 6) ---------------------------------------------------------
+
+/// The record of a tool, if it has one.
+fn record_of(tool: &str) -> Option<String> {
+    let dir =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/reference/tools");
+    std::fs::read_to_string(dir.join(format!("{tool}.md"))).ok()
+}
+
+#[test]
+fn each_tool_the_upper_rungs_apply_to_shows_its_mark_from_its_record() {
+    let (ok, text) = whizbang(&["describe", "--json"]);
+    assert!(ok);
+    let doc: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+    let marks: Vec<(String, String)> = doc["marks"]
+        .as_array()
+        .expect("a list")
+        .iter()
+        .map(|m| {
+            (
+                m["tool"].as_str().unwrap().to_owned(),
+                m["mark"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    // Each action whose record states a mark shows that mark, and no other action shows one.
+    let mut want = Vec::new();
+    for action in doc["actions"].as_array().unwrap() {
+        let name = action["name"].as_str().unwrap();
+        let stated = record_of(name).and_then(|record| whizbang_squint::marks::stated(&record));
+        if let Some(mark) = stated {
+            want.push((name.to_owned(), mark.word().to_owned()));
+        }
+    }
+    let shown: Vec<(&str, &str)> = marks
+        .iter()
+        .map(|(t, m)| (t.as_str(), m.as_str()))
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            ("align", "unverified"),
+            ("change_map", "experimental"),
+            ("edge_similarity", "experimental"),
+            ("resize", "experimental"),
+        ]
+    );
+    assert_eq!(marks, want);
+    // The text form shows each beside the tool's name.
+    let (ok, text) = whizbang(&["describe"]);
+    assert!(ok);
+    assert!(
+        text.contains("\n  align  [unverified]  Registers "),
+        "{text}"
+    );
+    assert!(
+        text.contains("\n  change_map  [experimental]  Shows "),
+        "{text}"
+    );
+    assert!(text.contains("\n  view  Shows "), "{text}");
+}
+
+#[test]
+fn a_tool_without_a_record_cannot_be_unverified_or_admitted() {
+    use whizbang_squint::marks::{Mark, of, of_among, stated};
+    let record = "# t\n\n## Mark and history\n\n**Admitted**: cleared its gate.\n";
+    assert_eq!(stated(record), Some(Mark::Admitted));
+    // The same tool, its record not among those compiled in: no mark at all.
+    assert_eq!(of_among(&[("t", record)], "t"), Some(Mark::Admitted));
+    assert_eq!(of_among(&[("u", record)], "t"), None);
+    // The actions that ship without a record have none, and show none.
+    for tool in ["check", "feather", "plug", "render", "segment", "select"] {
+        assert!(record_of(tool).is_none(), "{tool} has a record now");
+        assert_eq!(of(tool), None, "{tool}");
+    }
+    // A record whose part states no mark (a control, a pixel operation) gives none.
+    assert_eq!(of("view"), None);
+    assert!(stated("# t\n\n## Mark and history\n\n**Mark.** None: a control.\n").is_none());
+    assert!(stated("# t\n\n## Limits\n\n**Unverified**\n").is_none());
 }

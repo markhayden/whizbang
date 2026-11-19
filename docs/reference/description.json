@@ -1,5 +1,5 @@
 {
-  "description_version": 6,
+  "description_version": 7,
   "name": "whizbang",
   "version": "0.0.1",
   "actions": [
@@ -60,7 +60,7 @@
         },
         {
           "name": "detail",
-          "purpose": "The tools whose details are measured first, by name, separated by commas: align.",
+          "purpose": "The tools whose details are measured first, by name, separated by commas: align, and the two that compare the source with the frame align returns, which run align first.",
           "type": {
             "type": "text"
           },
@@ -172,6 +172,84 @@
           "rebound_onto": null
         }
       ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "change_map",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Shows where two images in one grid differ in structure: a grey map, bright where the locally normalised luminance disagrees.",
+      "arguments": [],
+      "inputs": [
+        {
+          "name": "frame",
+          "artifact": "image",
+          "purpose": "The image whose grid the comparison is made in, usually the source.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "against",
+          "artifact": "image",
+          "purpose": "The image compared with it, usually the candidate aligned onto it.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "map",
+          "artifact": "image",
+          "purpose": "The map, in the grid of frame: bright is different, dark the same.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "edge_similarity",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Scores how much two images in one grid share the same edges: 1 for the same structure, near 0 for unrelated ones.",
+      "arguments": [],
+      "inputs": [
+        {
+          "name": "frame",
+          "artifact": "image",
+          "purpose": "The image whose grid the comparison is made in, usually the source.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "against",
+          "artifact": "image",
+          "purpose": "The image compared with it, usually the candidate aligned onto it.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [],
       "needs": [],
       "concurrent": true
     },
@@ -690,6 +768,24 @@
       ],
       "needs": [],
       "concurrent": true
+    }
+  ],
+  "marks": [
+    {
+      "tool": "align",
+      "mark": "unverified"
+    },
+    {
+      "tool": "change_map",
+      "mark": "experimental"
+    },
+    {
+      "tool": "edge_similarity",
+      "mark": "experimental"
+    },
+    {
+      "tool": "resize",
+      "mark": "experimental"
     }
   ],
   "artifact_types": [

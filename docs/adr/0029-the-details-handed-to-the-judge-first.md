@@ -4,6 +4,14 @@ Status: accepted.
 Date: 2026-11-18
 Spec: section 3, "What a judge model may call"; plan m2c (`docs/plans/m2c-milestone-2.md`),
 task A2, items 4 and 5
+Amended: 2026-11-18, by task X1 (item 9). `detail` also names `change_map` and
+`edge_similarity`, experimental, each measured on the source and the frame `align` returned
+for the pair; a run that names either runs `align` first, named or not, and a pair that does
+not register says so in place of their measurements. Each is said as `align` is: the tool,
+its mark, squint's sentence, every measurement, and, for the change map, the map as a
+picture the judge may name (`map:<image>:<against>`), with squint's guidance on what the
+number does not say. Either may also be offered to the judge by the run's `tools`, and a
+call of it is answered as squint's harness answered it. Neither runs unless a run names it.
 
 ## Context
 

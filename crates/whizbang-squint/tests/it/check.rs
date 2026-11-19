@@ -639,7 +639,10 @@ fn changing_the_tool_list_after_admission_has_no_effect_on_the_run() {
     };
     barriers.arrived("judge", 1);
     world.toolbox.withdraw("view");
-    assert_eq!(world.toolbox.offered(), ["align", "resize"]);
+    assert_eq!(
+        world.toolbox.offered(),
+        ["align", "change_map", "edge_similarity", "resize"]
+    );
     assert!(
         !world.toolbox.offer("grow"),
         "no tool of that name is linked"
@@ -2195,4 +2198,179 @@ fn a_use_case_with_one_image_adds_no_details() {
         finished.outcome()
     );
     assert_eq!(judge.requests(), 0);
+}
+
+// --- the tools that compare a pair, measured first and called (plan m2c, task X1) -------------
+
+#[test]
+fn an_experimental_tool_is_run_only_when_the_run_names_it() {
+    let (world, source, candidate, _) = paired();
+    // Not named: the details first run align alone, though change_map is on offer.
+    let first = judge(&submitting(&[]), &[]);
+    let executor = world.engine(first, Secrets::none());
+    let call = of_pair(&source, &candidate, &[("details", "first")]);
+    let finished = executor.submit(&call).unwrap();
+    drop(executor);
+    let alone = left(&world.root(), world.fs.clone(), finished.run());
+    assert_eq!(steps(alone.record()), [("align", Some(Status::Completed))]);
+    // Named alone: align runs first, then each comparison on the source and the frame align
+    // returned, and the judge's opening holds what each measured, labelled with its mark.
+    let judge = judge(&submitting(&[]), &[]);
+    let executor = world.engine(judge.clone(), Secrets::none());
+    let named = [
+        ("details", "first"),
+        ("detail", "change_map,edge_similarity"),
+    ];
+    let finished = executor
+        .submit(&of_pair(&source, &candidate, &named))
+        .unwrap();
+    drop(executor);
+    assert!(
+        matches!(finished.outcome(), Outcome::Completed { .. }),
+        "{:?}",
+        finished.outcome()
+    );
+    let left = left(&world.root(), world.fs.clone(), finished.run());
+    assert_eq!(
+        steps(left.record()),
+        [
+            ("align", Some(Status::Completed)),
+            ("change_map", Some(Status::Completed)),
+            ("edge_similarity", Some(Status::Completed)),
+        ]
+    );
+    let aligned = whizbang_squint::align::align(
+        &candidate,
+        &source,
+        &whizbang_squint::align::Options::default(),
+        &limits(),
+    )
+    .unwrap()
+    .frame
+    .unwrap()
+    .image;
+    let (changes, map, _) =
+        whizbang_squint::compare::change_map(&source, &aligned, &limits()).unwrap();
+    let edges = whizbang_squint::compare::edge_similarity(&source, &aligned, &limits()).unwrap();
+    let opening = judge.received()[0].messages()[0].parts().to_vec();
+    let said = texts(&opening);
+    let change = said
+        .iter()
+        .find(|text| {
+            text.starts_with("change_map (experimental), aligned:candidate:t1 against source: ")
+        })
+        .unwrap_or_else(|| panic!("{said:?}"));
+    assert!(
+        change.contains(&format!(
+            "\nMeasurements: changed_fraction {:.4} ratio.\n",
+            changes.fraction
+        )),
+        "{change}"
+    );
+    assert!(change.contains("blind to a change of colour"), "{change}");
+    let map_line = said
+        .iter()
+        .find(|text| text.starts_with("Image `map:candidate:source`"))
+        .unwrap();
+    assert!(
+        map_line.ends_with(&format!("named {}.", map.id())),
+        "{map_line}"
+    );
+    let edge = said
+        .iter()
+        .find(|text| {
+            text.starts_with(
+                "edge_similarity (experimental), aligned:candidate:t1 against source: ",
+            )
+        })
+        .unwrap();
+    assert!(
+        edge.contains(&format!(
+            "\nMeasurements: edge_similarity {:.4} ratio; edge_energy {:.4} intensity per pixel.\n",
+            edges.similarity, edges.energy
+        )),
+        "{edge}"
+    );
+    let pictures: Vec<_> = opening
+        .iter()
+        .filter_map(|part| match part {
+            Part::Image(picture) => Some(picture.digest()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        pictures,
+        [
+            candidate.identity().pixels,
+            source.identity().pixels,
+            aligned.identity().pixels,
+            map.identity().pixels,
+        ]
+    );
+}
+
+#[test]
+fn a_comparison_named_by_a_run_is_offered_to_the_judge_and_answered_with_its_measurements() {
+    let (world, source, candidate, unrelated) = paired();
+    // The judge compares the source with the unrelated scene, by their names.
+    let compares = one_call(
+        "edge_similarity",
+        json!({"frame": "source", "against": unrelated.id().to_string()}),
+    );
+    let general = judge(&compares, &[]);
+    let executor = world.engine(general.clone(), Secrets::none());
+    let call = Call::new("check")
+        .input("images", source.id())
+        .input("images", unrelated.id())
+        .argument("tools", Value::text("view,edge_similarity"));
+    let _ = executor.submit(&call).unwrap();
+    drop(executor);
+    let offered: Vec<String> = general.received()[0]
+        .tools()
+        .iter()
+        .map(|tool| tool.name().to_owned())
+        .collect();
+    assert_eq!(offered, ["view", "edge_similarity"]);
+    let schema = general.received()[0].tools()[1].schema().clone();
+    assert_eq!(schema["required"], json!(["frame", "against"]));
+    // In general use, an image is named by its identity alone: "source" is no name.
+    let first = results(&general, 1);
+    assert!(first[0].is_error(), "{}", first[0].text());
+    assert!(
+        first[0].text().contains("unknown image id"),
+        "{}",
+        first[0].text()
+    );
+    // Under a use case, by its role; answered as squint's harness answered it.
+    let compares = json!({"tool_call": {"id": "t1", "name": "edge_similarity",
+        "arguments": {"frame": "source", "against": "candidate"}}});
+    let script = submitting(&[compares]);
+    let judge = judge(&script, &[]);
+    let executor = world.engine(judge.clone(), Secrets::none());
+    let call = of_pair(
+        &source,
+        &candidate,
+        &[("details", "none"), ("tools", "view,align,edge_similarity")],
+    );
+    let finished = executor.submit(&call).unwrap();
+    drop(executor);
+    assert!(
+        matches!(finished.outcome(), Outcome::Completed { .. }),
+        "{:?}",
+        finished.outcome()
+    );
+    let answered = results(&judge, 1);
+    let said: Json = serde_json::from_str(answered[0].text()).unwrap();
+    let edges = whizbang_squint::compare::edge_similarity(&source, &candidate, &limits()).unwrap();
+    assert_eq!(said["status"], "ok");
+    assert_eq!(said["measurements"][0]["name"], "edge_similarity");
+    assert_eq!(said["measurements"][0]["value"], json!(edges.similarity));
+    assert_eq!(said["measurements"][0]["frame"], "source");
+    assert!(
+        said["summary"]
+            .as_str()
+            .unwrap()
+            .starts_with("Edge similarity of source and candidate: "),
+        "{said}"
+    );
 }

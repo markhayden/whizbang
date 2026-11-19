@@ -28,7 +28,7 @@ use whizbang_core::capability::ToolDefinition;
 use whizbang_core::contract::{Call, Context, Failure, Value};
 use whizbang_core::identity::{DecodeLimits, Digest};
 
-use crate::{align, resize, view};
+use crate::{align, compare, resize, view};
 
 /// What is measured before the first turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,18 +77,18 @@ pub const VISUAL_ONLY_COMPUTED: &str = "Result computed; its measurements are wi
 /// The summary a `visual_only` result carries when the tool had nothing to give.
 pub const VISUAL_ONLY_UNAVAILABLE: &str = "Result not available.";
 
-/// The tools whose results can be measured first, by name: `align` alone, until the
-/// tools that compare a pair's content are ported (`change_map`, `edge_similarity`; X1).
-pub const DETAILED: [&str; 1] = [align::NAME];
+/// The tools whose results can be measured first, by name: `align`, and the two that
+/// compare a pair's content in one grid (plan m2c, task X1, item 9), each measured on the
+/// source and the frame `align` returned, so a run that names either runs `align` first.
+pub const DETAILED: [&str; 3] = [align::NAME, compare::CHANGE_MAP, compare::EDGE_SIMILARITY];
 
-/// A tool's mark (`SPEC.md` section 8, "Marks"): `align` is ported with its record and
-/// rungs 1 and 2, and has faced no gate.
+/// The tools measured on the frame `align` returns.
+pub const AFTER_ALIGN: [&str; 2] = [compare::CHANGE_MAP, compare::EDGE_SIMILARITY];
+
+/// A tool's mark (`SPEC.md` section 8, "Marks"), as its record states it
+/// ([`crate::marks`]): experimental for a tool whose record states no other.
 pub fn mark(tool: &str) -> &'static str {
-    if tool == align::NAME {
-        "unverified"
-    } else {
-        "experimental"
-    }
+    crate::marks::of(tool).map_or("experimental", crate::marks::Mark::word)
 }
 
 /// Squint's manifest of a tool, as its prompt's Tools section read it: the name, the cost
@@ -103,8 +103,8 @@ struct Manifest {
     output: &'static str,
 }
 
-/// Squint's manifests of the three tools (`crates/squint-tools/manifests/`).
-const MANIFESTS: [Manifest; 3] = [
+/// Squint's manifests of the five tools (`crates/squint-tools/manifests/`).
+const MANIFESTS: [Manifest; 5] = [
     Manifest {
         name: view::NAME,
         tier: "Cheap",
@@ -131,6 +131,24 @@ const MANIFESTS: [Manifest; 3] = [
         when_to_use: "To step back from a large or detailed frame and judge its overall structure, or to compare two frames at one size.",
         when_not_to_use: "To see detail; use view for that. It never enlarges.",
         output: "The returned frame covers the same picture as the one you named at a smaller size; findings in it map back one to one.",
+    },
+    Manifest {
+        name: compare::CHANGE_MAP,
+        tier: "Cheap",
+        seconds: "1",
+        purpose: "Shows where two frames in one grid differ in structure: a grey map, bright where the locally normalised luminance disagrees, dark where it agrees.",
+        when_to_use: "After align, over the aligned candidate and the source, to see at a glance where the picture changed before looking closer with view.",
+        when_not_to_use: "Between frames that are not in one grid; everything would light up.",
+        output: "The map is a pointer, not a verdict: bright areas are where to look, and a uniform tone or colour change leaves the map dark, and so does a local change of colour alone (a repainted wall or recoloured roof): the map is luminance structure only, so check colour with regions or view. The flat inside of a changed object can stay dark while its outline lights, so changed_fraction is a floor on the changed area, not its size. Inspect bright areas with view before deciding.",
+    },
+    Manifest {
+        name: compare::EDGE_SIMILARITY,
+        tier: "Cheap",
+        seconds: "1",
+        purpose: "Scores how much two frames share the same edges: the correlation of their edge-strength maps, 1 for the same structure, near 0 for unrelated or featureless frames.",
+        when_to_use: "After align, between the aligned candidate and the source, to tell a restyle that kept the structure from one that moved or removed it.",
+        when_not_to_use: "Between frames that are not in one grid, such as a raw candidate and a raw source that align has not registered; the score would measure the misalignment.",
+        output: "A number, not a verdict: compare it with what you see. Shared edges survive colour and tone changes; a low score with a registered alignment points at changed structure.",
     },
 ];
 
@@ -472,5 +490,189 @@ pub fn align_detail(report: &Json, image: &str, against: &str) -> String {
         mark(align::NAME),
         report["status"].as_str().unwrap_or_default(),
         measured.join("; ")
+    )
+}
+
+/// `change_map` or `edge_similarity` as squint's judge was told of it: its purpose and its
+/// model schema (squint's manifests, `[tool.model_schema]`).
+pub fn compare_tool(name: &str) -> Result<ToolDefinition, String> {
+    let frame = if name == compare::CHANGE_MAP {
+        "The frame whose grid the map is drawn in, usually the source: a frame id (raw:source), or an image id (source) for its raw frame."
+    } else {
+        "One frame, usually the source: a frame id (raw:source), or an image id (source) for its raw frame."
+    };
+    let schema = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["frame", "against"],
+        "properties": {
+            "frame": {"type": "string", "description": frame},
+            "against": {"type": "string", "description": "The frame to compare it with, usually the aligned candidate (aligned:candidate:t1): a frame id, or an image id (candidate) for its raw frame (raw:candidate)."},
+        },
+    });
+    let Some(manifest) = manifest(name).filter(|_| compare_named(name)) else {
+        return Err(format!("{name} is no tool that compares a pair"));
+    };
+    ToolDefinition::new(manifest.name, manifest.purpose, schema).map_err(|why| why.to_string())
+}
+
+fn compare_named(name: &str) -> bool {
+    AFTER_ALIGN.contains(&name)
+}
+
+/// A call of `change_map` or `edge_similarity` a judge asked for: the call, and what squint
+/// would have called its two frames.
+pub struct CompareAsked {
+    pub call: Call,
+    pub tool: &'static str,
+    pub frame: String,
+    pub against: String,
+    pub frame_id: ArtifactId,
+    pub against_id: ArtifactId,
+}
+
+/// The call of `change_map` or `edge_similarity` that the arguments ask for, or why they ask
+/// for none.
+pub fn compare_call(tool: &str, arguments: &Json, names: &Names) -> Result<CompareAsked, String> {
+    let Some(tool) = AFTER_ALIGN.into_iter().find(|named| *named == tool) else {
+        return Err(format!("{tool} is no tool that compares a pair"));
+    };
+    let arguments = object(arguments, &["frame", "against"])?;
+    let (frame_id, frame) = image_of(arguments, "frame", names)?;
+    let (against_id, against) = image_of(arguments, "against", names)?;
+    Ok(CompareAsked {
+        call: compare_of(tool, frame_id, against_id),
+        tool,
+        frame,
+        against,
+        frame_id,
+        against_id,
+    })
+}
+
+/// The call of a comparison of `against` in `frame`'s grid.
+pub fn compare_of(tool: &str, frame: ArtifactId, against: ArtifactId) -> Call {
+    Call::new(tool)
+        .input("frame", frame)
+        .input("against", against)
+}
+
+/// What a call of a comparison that completed measured. As with `align` ([`report_of`]),
+/// the numbers are worked out again by the same function on the same two images, and the
+/// map they come with must be the one the call committed, or the run fails.
+pub fn compare_report_of(
+    context: &Context,
+    tool: &str,
+    frame: ArtifactId,
+    against: ArtifactId,
+    committed: &[ArtifactId],
+) -> Result<Vec<compare::Measurement>, Failure> {
+    let failed = |why: &dyn std::fmt::Display| Failure::error("details", &why.to_string());
+    let limits = DecodeLimits::default();
+    let read =
+        |id: ArtifactId| match artifact::get(context.store(), ArtifactType::Image, id, &limits) {
+            Ok(Artifact::Image(image)) => Ok(image),
+            Ok(_) => Err(failed(&"not an image")),
+            Err(error) => Err(failed(&error)),
+        };
+    let (frame, against) = (read(frame)?, read(against)?);
+    let (measurements, made) = if tool == compare::CHANGE_MAP {
+        let (changes, map, _) =
+            compare::change_map(&frame, &against, &limits).map_err(|e| failed(&e))?;
+        (changes.measurements(), vec![map.id()])
+    } else {
+        let edges = compare::edge_similarity(&frame, &against, &limits).map_err(|e| failed(&e))?;
+        (edges.measurements(), Vec::new())
+    };
+    if made != committed {
+        return Err(failed(&format!(
+            "the call of {tool} and its measurement disagree"
+        )));
+    }
+    Ok(measurements)
+}
+
+/// Squint's sentence of a comparison: the frames named as the judge knows them, the map, if
+/// any, as `map`.
+pub fn compare_said(
+    tool: &str,
+    measurements: &[compare::Measurement],
+    frame: &str,
+    against: &str,
+    map: &str,
+) -> String {
+    let value = |name: &str| {
+        measurements
+            .iter()
+            .find(|m| m.name == name)
+            .map_or(f64::NAN, |m| m.value)
+    };
+    if tool == compare::CHANGE_MAP {
+        let changes = compare::Changes {
+            map: image::RgbImage::new(0, 0),
+            fraction: value("changed_fraction"),
+        };
+        compare::changes_summary(&changes, frame, against, map)
+    } else {
+        let edges = compare::Edges {
+            similarity: value("edge_similarity"),
+            energy: value("edge_energy"),
+        };
+        compare::edges_summary(&edges, frame, against)
+    }
+}
+
+fn measured(measurements: &[compare::Measurement], frame: &str) -> Json {
+    measurements
+        .iter()
+        .map(|m| json!({"name": m.name, "value": m.value, "unit": m.unit, "frame": frame}))
+        .collect()
+}
+
+/// A call of a comparison, answered as squint answered it: the map, if any, named as the
+/// crop of the call in `frame`'s grid.
+pub fn compare_answer(
+    call: &str,
+    asked: &CompareAsked,
+    measurements: &[compare::Measurement],
+) -> String {
+    let map = format!("crop:{call}:0");
+    let said = compare_said(asked.tool, measurements, &asked.frame, &asked.against, &map);
+    let images = if asked.tool == compare::CHANGE_MAP {
+        json!([{"frame": map, "parent": asked.frame, "mapping": {"bbox": [0.0, 0.0, 1.0, 1.0]}}])
+    } else {
+        json!([])
+    };
+    let measurements = measured(measurements, &asked.frame);
+    presentation(call, "ok", &said, measurements, json!([]), images)
+}
+
+/// What the opening says of one comparison `check` made first: the tool, its mark, the
+/// pair, squint's sentence, every measurement, and what the measurement does not say
+/// (squint's guidance on reading it, shortened).
+pub fn compare_detail(
+    tool: &str,
+    measurements: &[compare::Measurement],
+    frame: &str,
+    against: &str,
+    map: &str,
+) -> String {
+    let said = compare_said(tool, measurements, frame, against, map);
+    let stated: Vec<String> = measurements
+        .iter()
+        .map(|m| format!("{} {:.4} {}", m.name, m.value, m.unit))
+        .collect();
+    let reading = if tool == compare::CHANGE_MAP {
+        "The map is a pointer, not a verdict: it is luminance structure only, blind to a \
+         change of colour or tone, and the flat inside of a changed object can stay dark, so \
+         changed_fraction is a floor on the changed area. Look at bright areas with view."
+    } else {
+        "A number, not a verdict: shared edges survive colour and tone; a low score after a \
+         registered alignment points at changed structure."
+    };
+    format!(
+        "{tool} ({}), {against} against {frame}: {said}\nMeasurements: {}.\n{reading}",
+        mark(tool),
+        stated.join("; ")
     )
 }

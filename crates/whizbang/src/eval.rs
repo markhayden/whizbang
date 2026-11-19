@@ -45,6 +45,26 @@ pub enum Command {
         #[command(flatten)]
         under: Under,
     },
+    /// Score a tool on rung 2: its read of each item of each set named, each a run in the
+    /// store (align, then the tool on the source and the aligned frame), scored against the
+    /// sets' labels. Prints each item's number, the area under the ROC curve of the tool's
+    /// primary measurement with its 95% interval resampled by family, and the balanced
+    /// accuracy at a threshold chosen on one half of the families and read on the other.
+    /// An item with no read is an error, apart from the passes and the fails.
+    Tool {
+        /// The tool: change_map or edge_similarity.
+        tool: String,
+        /// A set to score on, by its id (`<use-case>/<set>`); give it again for more.
+        #[arg(long = "set", value_name = "SET", required = true)]
+        sets: Vec<String>,
+        /// The folder of the evaluation sets: `<use-case>/<set>/set.toml` under it.
+        #[arg(long, value_name = "DIR", default_value = "evalsets")]
+        root: PathBuf,
+        #[command(flatten)]
+        at: Where,
+        #[command(flatten)]
+        under: Under,
+    },
     /// The baseline gate: each recorded decision of a baseline package replayed with a judge
     /// that answers its recorded turns, squint's loop on whizbang's tools and preparation,
     /// and compared with its recorded transcript. Writes the receipt and prints counts only.
@@ -151,6 +171,25 @@ pub fn run(command: &Command) -> Result<String, String> {
             at,
             under,
         } => run_matrix(matrix, root, at, under, recovery),
+        Command::Tool {
+            tool,
+            sets,
+            root,
+            at,
+            under,
+        } => {
+            let declared = whizbang::trying::declared(tool)?;
+            let executor = executor(at, under, recovery, None, Uses::Nothing)?;
+            let scored = whizbang::trying::eval_tool(
+                &executor,
+                at.root(),
+                root,
+                &declared,
+                sets,
+                whizbang::trying::RESAMPLES,
+            );
+            scored.map(|(_, text)| text)
+        }
         Command::Baseline {
             package,
             transcripts,

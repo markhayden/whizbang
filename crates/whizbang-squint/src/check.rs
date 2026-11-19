@@ -48,7 +48,7 @@ use whizbang_core::capability::{
 };
 use whizbang_core::contract::record::Decision;
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Argument, Call, CallError, Capability, Context, Count,
+    Action, ActionDescriptor, Argument, Call, CallError, Capability, Committed, Context, Count,
     DescriptorError, Failure, InputPort, Kind, Outcome, PreparedCall, Produced, Requirement, Value,
     ValueType, Verdict,
 };
@@ -57,7 +57,7 @@ use whizbang_core::identity::{DecodeLimits, Digest};
 use crate::details::{self, Details, Names, Projection};
 use crate::job::{Job, Role as ImageRole};
 use crate::use_case::{self, Checklist, Resolved};
-use crate::{align, resize, view};
+use crate::{align, compare, resize, view};
 
 /// The use cases `check` takes, by name: the general one, then the five of the table.
 pub const USE_CASES: [&str; 6] = [
@@ -104,14 +104,22 @@ const SYSTEM: &str = "You check images. Look closer with the tools you are given
 /// this when the run starts; what is offered or withdrawn afterwards is seen by the
 /// next run and by no run that has started.
 ///
-/// The tools there are, are the ones this build links: `view`, `align` and `resize`.
-/// Offering is saying that one of them may be named by a run.
+/// The tools there are, are the ones this build links: `view`, `align`, `resize`,
+/// `change_map` and `edge_similarity`. Offering is saying that one of them may be named
+/// by a run. The last two are experimental (`SPEC.md` section 8): on offer, but run only
+/// when a run names them.
 pub struct Toolbox {
     offered: Mutex<BTreeSet<&'static str>>,
 }
 
 /// The tools this build links, by name.
-const LINKED: [&str; 3] = [view::NAME, align::NAME, resize::NAME];
+const LINKED: [&str; 5] = [
+    view::NAME,
+    align::NAME,
+    resize::NAME,
+    compare::CHANGE_MAP,
+    compare::EDGE_SIMILARITY,
+];
 
 impl Toolbox {
     /// A toolbox that offers every tool this build links.
@@ -194,7 +202,7 @@ impl Check {
         ))
         .argument(Argument::with_default(
             "detail",
-            "The tools whose details are measured first, by name, separated by commas: align.",
+            "The tools whose details are measured first, by name, separated by commas: align, and the two that compare the source with the frame align returns, which run align first.",
             ValueType::Text,
             Value::text(align::NAME),
         ))
@@ -379,6 +387,7 @@ impl Run<'_> {
         let id = format!("call:{}", self.dispatched - 1);
         let mut said_as: Option<details::AlignAsked> = None;
         let mut resized: Option<String> = None;
+        let mut compared: Option<details::CompareAsked> = None;
         let asked = match (listed, call.name()) {
             (true, view::NAME) => view_call(call.arguments()),
             (true, align::NAME) => {
@@ -391,6 +400,13 @@ impl Run<'_> {
             (true, resize::NAME) => {
                 details::resize_call(call.arguments(), &self.names).map(|(call, frame)| {
                     resized = Some(frame);
+                    call
+                })
+            }
+            (true, compare::CHANGE_MAP | compare::EDGE_SIMILARITY) => {
+                details::compare_call(call.name(), call.arguments(), &self.names).map(|asked| {
+                    let call = asked.call.clone();
+                    compared = Some(asked);
                     call
                 })
             }
@@ -433,6 +449,26 @@ impl Run<'_> {
                 pictures.push(picture.picture);
             }
             let said = details::align_answer(&id, &report, asked, self.projection);
+            return answer(&said, false, pictures);
+        }
+        if let Some(asked) = &compared
+            && let Outcome::Completed { outputs } = finished.outcome()
+        {
+            let committed: Vec<ArtifactId> = outputs.iter().map(|output| output.id()).collect();
+            let measured = details::compare_report_of(
+                self.context,
+                asked.tool,
+                asked.frame_id,
+                asked.against_id,
+                &committed,
+            )?;
+            let mut pictures = Vec::new();
+            for output in outputs {
+                let picture = self.evidence(output.id())?;
+                self.names.frame(&format!("crop:{id}:0"), output.id());
+                pictures.push(picture.picture);
+            }
+            let said = details::compare_answer(&id, asked, &measured);
             return answer(&said, false, pictures);
         }
         if let Some(frame) = &resized
@@ -486,7 +522,9 @@ impl Run<'_> {
     /// The details measured first (ADR 0029): for each pair, `image` registered onto
     /// `against`, each named as the judge is told of it, the tools of `detail` are called
     /// through the executor, and what they found is said, with the pictures they returned.
-    /// A call that could not measure is said too, with why.
+    /// `align` comes first; `change_map` and `edge_similarity` then compare the frame it
+    /// returned with `against`, in `against`'s grid (plan m2c, task X1, item 9). A call that
+    /// could not measure is said too, with why.
     fn measure_first(
         &mut self,
         pairs: &[(&str, ArtifactId, &str, ArtifactId)],
@@ -494,32 +532,23 @@ impl Run<'_> {
     ) -> Result<Vec<Part>, Failure> {
         let mut parts = Vec::new();
         for (image, image_id, against, against_id) in pairs {
-            for tool in detail {
-                if *tool != align::NAME {
-                    continue;
-                }
+            let frame = align::aligned_frame(image);
+            // The frame align returned, or why there is none.
+            let mut aligned: Result<ArtifactId, String> =
+                Err(format!("{image} was not registered onto {against}"));
+            if detail.contains(&align::NAME) {
                 let call = Call::new(align::NAME)
                     .input("image", *image_id)
                     .input("against", *against_id);
-                self.context.events().progress("a detail was measured");
-                let finished = match self.context.executor().submit(&call) {
-                    Ok(finished) => finished,
-                    Err(CallError::Refused(refusal)) => {
-                        return Err(failed("details", &refusal));
-                    }
-                    Err(other) => return Err(failed("details", &other)),
-                };
-                let outputs = match finished.outcome() {
-                    Outcome::Completed { outputs } => outputs,
-                    Outcome::Invalid { why } | Outcome::Error { message: why, .. } => {
-                        let mark = details::mark(tool);
+                let outputs = match self.first(&call)? {
+                    Ok(outputs) => outputs,
+                    Err(why) => {
+                        let mark = details::mark(align::NAME);
                         parts.push(Part::Text(format!(
-                            "{tool} ({mark}), {image} onto {against}: not measured: {why}"
+                            "{} ({mark}), {image} onto {against}: not measured: {why}",
+                            align::NAME
                         )));
                         continue;
-                    }
-                    Outcome::Cancelled => {
-                        return Err(failed("cancelled", &"a detail's call was cancelled"));
                     }
                 };
                 let committed: Vec<ArtifactId> = outputs.iter().map(|output| output.id()).collect();
@@ -528,10 +557,10 @@ impl Run<'_> {
                     parts.push(Part::Text(details::DETAILS_INTRO.to_owned()));
                 }
                 parts.push(Part::Text(details::align_detail(&report, image, against)));
-                for output in outputs {
-                    let frame = align::aligned_frame(image);
+                for output in &outputs {
                     let shown = self.evidence(output.id())?;
                     self.names.frame(&frame, output.id());
+                    aligned = Ok(output.id());
                     let (width, height) = (shown.picture.width(), shown.picture.height());
                     parts.push(Part::Text(format!(
                         "Image `{frame}` ({image} warped into {against}'s grid, \
@@ -540,9 +569,81 @@ impl Run<'_> {
                     )));
                     parts.push(Part::Image(shown.picture));
                 }
+                if outputs.is_empty() {
+                    aligned = Err(format!(
+                        "{image} did not register onto {against}, so the two are not in one grid"
+                    ));
+                }
+            }
+            for tool in detail
+                .iter()
+                .filter(|tool| details::AFTER_ALIGN.contains(tool))
+            {
+                let mark = details::mark(tool);
+                let aligned_id = match &aligned {
+                    Ok(id) => *id,
+                    Err(why) => {
+                        parts.push(Part::Text(format!(
+                            "{tool} ({mark}), {frame} against {against}: not measured: {why}"
+                        )));
+                        continue;
+                    }
+                };
+                let call = details::compare_of(tool, *against_id, aligned_id);
+                let outputs = match self.first(&call)? {
+                    Ok(outputs) => outputs,
+                    Err(why) => {
+                        parts.push(Part::Text(format!(
+                            "{tool} ({mark}), {frame} against {against}: not measured: {why}"
+                        )));
+                        continue;
+                    }
+                };
+                let committed: Vec<ArtifactId> = outputs.iter().map(|output| output.id()).collect();
+                let measured = details::compare_report_of(
+                    self.context,
+                    tool,
+                    *against_id,
+                    aligned_id,
+                    &committed,
+                )?;
+                let map = format!("map:{image}:{against}");
+                if parts.is_empty() {
+                    parts.push(Part::Text(details::DETAILS_INTRO.to_owned()));
+                }
+                let said = details::compare_detail(tool, &measured, against, &frame, &map);
+                parts.push(Part::Text(said));
+                for output in &outputs {
+                    let shown = self.evidence(output.id())?;
+                    self.names.frame(&map, output.id());
+                    let (width, height) = (shown.picture.width(), shown.picture.height());
+                    parts.push(Part::Text(format!(
+                        "Image `{map}` (the change map of {frame} against {against}, in \
+                         {against}'s grid, {width}x{height}; bright is different, dark the \
+                         same); for the tool view it is named {}.",
+                        shown.id
+                    )));
+                    parts.push(Part::Image(shown.picture));
+                }
             }
         }
         Ok(parts)
+    }
+
+    /// One call made first, through the executor: what it committed, or why it measured
+    /// nothing. A refusal or a cancellation ends the run.
+    fn first(&mut self, call: &Call) -> Result<Result<Vec<Committed>, String>, Failure> {
+        self.context.events().progress("a detail was measured");
+        let finished = match self.context.executor().submit(call) {
+            Ok(finished) => finished,
+            Err(CallError::Refused(refusal)) => return Err(failed("details", &refusal)),
+            Err(other) => return Err(failed("details", &other)),
+        };
+        match finished.outcome() {
+            Outcome::Completed { outputs } => Ok(Ok(outputs.clone())),
+            Outcome::Invalid { why } | Outcome::Error { message: why, .. } => Ok(Err(why.clone())),
+            Outcome::Cancelled => Err(failed("cancelled", &"a detail's call was cancelled")),
+        }
     }
 
     /// Answers every call of a turn, in the order the judge made them.
@@ -607,6 +708,9 @@ impl Action for Check {
                 resize::NAME => {
                     tools.push(details::resize_tool().map_err(|why| failed("tools", &why))?);
                 }
+                compare::CHANGE_MAP | compare::EDGE_SIMILARITY => {
+                    tools.push(details::compare_tool(name).map_err(|why| failed("tools", &why))?);
+                }
                 _ => {}
             }
         }
@@ -640,6 +744,13 @@ impl Action for Check {
                 if !detail.contains(&name) {
                     detail.push(name);
                 }
+            }
+            // A comparison is measured on the frame align returns: align is run first.
+            let compares = detail
+                .iter()
+                .any(|name| details::AFTER_ALIGN.contains(name));
+            if compares && !detail.contains(&align::NAME) {
+                detail.insert(0, align::NAME);
             }
         }
         let frozen = named.iter().chain(detail.iter()).copied();

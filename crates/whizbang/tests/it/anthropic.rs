@@ -491,6 +491,18 @@ pub fn checked_as(
     details: whizbang::door::Details,
     projection: &str,
 ) -> (Result<String, String>, Log) {
+    checked_measuring(judged, answers, brief, details, None, projection)
+}
+
+/// As `checked_as`, with the tools measured first named, as `--detail` names them.
+pub fn checked_measuring(
+    judged: &Judged,
+    answers: Vec<Vec<u8>>,
+    brief: Option<&str>,
+    details: whizbang::door::Details,
+    detail: Option<&str>,
+    projection: &str,
+) -> (Result<String, String>, Log) {
     let (source, candidate) = pair(judged);
     let (listener, log) = serving(&judged.pki, answers);
     let origin = format!("https://127.0.0.1:{}", listener.port());
@@ -510,7 +522,7 @@ pub fn checked_as(
         brief,
         request_id: None,
         details,
-        detail: None,
+        detail,
         projection,
     };
     let root = judged.world.root.clone();
