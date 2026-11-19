@@ -110,3 +110,65 @@ fn protect_is_kept_where_the_blend_would_lower_it() {
     assert_eq!(out.blend()[c * w + c - 1], 247);
     assert_eq!(out.protect(), protect.as_slice());
 }
+
+#[test]
+fn the_ported_vectors_give_rascals_blends() {
+    // Rascal's blob (`crates/rascal-ops/tests/it/profile_feather.rs`,
+    // `feather_on_a_blob_matches_the_brute_force_and_keeps_protect_and_the_profile`, at the
+    // commit `docs/sources.toml` pins): an ellipse and a corner patch on 40 by 30, its last
+    // two rows protected, sigma 2.5. Every blend is rascal's brute force: the distance to
+    // the nearest core pixel's edge over every core pixel, and the platform's `exp`.
+    let (w, h) = (40usize, 30usize);
+    let core = plane(w, h, |x, y| {
+        let (dx, dy) = (x as f64 - 19.0, y as f64 - 14.0);
+        dx * dx / 64.0 + dy * dy / 25.0 <= 1.0 || (x > 30 && y < 6)
+    });
+    let protect = plane(w, h, |_, y| y >= 28);
+    let mask = feather(mask_of(w, h, core.clone(), &protect), 2.5, &never)
+        .unwrap()
+        .unwrap();
+    assert_eq!(mask.protect(), &protect[..]);
+    let edge = |x: usize, y: usize| {
+        let near = (0..w * h).filter(|at| mask.core()[*at] != 0).map(|at| {
+            let (cx, cy) = ((at % w) as f64, (at / w) as f64);
+            ((cx - x as f64).powi(2) + (cy - y as f64).powi(2)).sqrt()
+        });
+        near.fold(f64::INFINITY, f64::min) - 0.5
+    };
+    let mut painted = 0;
+    for y in 0..h {
+        for x in 0..w {
+            let at = y * w + x;
+            let d = edge(x, y);
+            let expected = if mask.core()[at] != 0 || protect[at] != 0 || !(d > 0.0 && d <= 7.5) {
+                0
+            } else {
+                (255.0 * (-d * d / 12.5).exp()).round() as u8
+            };
+            assert_eq!(mask.blend()[at], expected, "({x}, {y}) at {d}");
+            painted += usize::from(expected != 0);
+        }
+    }
+    assert!(painted > 100, "{painted}");
+    // Rascal's contour: walking out from a straight edge, the blend crosses half between
+    // the last pixel at or over 128 and the first under it, within half a pixel of
+    // 1.1774 sigma, and is 0 past three sigmas.
+    let sigma = 4.0;
+    let straight = feather(
+        mask_of(60, 4, plane(60, 4, |x, _| x < 20), &[0; 240]),
+        sigma,
+        &never,
+    )
+    .unwrap()
+    .unwrap();
+    let row: Vec<f64> = (0..60).map(|x| f64::from(straight.blend()[x])).collect();
+    let over = (20..60).rev().find(|x| row[*x] >= 128.0).unwrap();
+    let (da, db) = (over as f64 - 19.5, over as f64 - 18.5);
+    let (va, vb) = (row[over], row[over + 1]);
+    let half = da + (va - 127.5) / (va - vb) * (db - da);
+    assert!(
+        (half - sigma * (2.0 * 2.0f64.ln()).sqrt()).abs() <= 0.5,
+        "{half}"
+    );
+    assert!(row[20 + 12..].iter().all(|v| *v == 0.0));
+}

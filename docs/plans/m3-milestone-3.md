@@ -1005,16 +1005,22 @@ B1's, since it is model-based), `mask_rect` and `protect`. D2: `rasterize`, `shr
 `invert`, `cut`, `put`, `window`, `unwindow`, `apply`, `fan`, `profile`, `ramp`, `tighten`,
 `inspect` and `measure`.
 
-- [ ] Done when (D1):
+- [x] Done when (D1):
   `scripts/tests/test-tool-records.sh` holding D1's fourteen records, each with rungs 1 and 2
-  (`fill`'s rung 1 alone), and the carry-over row on the records of R2's operations closed.
+  (`fill`'s and `segment`'s rung 1 alone), and the carry-over row on the records of R2's
+  operations closed.
+  **Reworded with the task** (D1, 2026-11-19): "(`fill`'s rung 1 alone)" became "(`fill`'s
+  and `segment`'s rung 1 alone)". `segment` is model-based, like `fill`. Its rung 2 is
+  agreement with reference masks, which B1 cites for the segment step (B1, item 2). ADR
+  0027 measured SAM 3's repeatability, not agreement with a reference, so D1 cannot show
+  it.
   **Split with the task** (D1, 2026-11-19), at the seam named under "Seams": D1's first
   pull request holds nine records, `close`, `subtract`, `line`, `rect`, `stroke`, `paste`,
   `fill` (rung 1), `mask_rect` and `protect`, the shared helper
   (`crates/whizbang-rascal/tests/it/tool_records/`), their hooks in `scripts/tool-record.sh`
   and their lines in `scripts/tests/test-tool-records.sh`. The records of R2's five
-  operations, `segment` with a real model among them, are D1's second pull request; the box
-  stays unticked, and the carry-over row on their records open, until it lands.
+  operations, `segment` with a real model among them, are D1's second pull request, which
+  ticks the box and closes the carry-over row.
 - [ ] Done when (D2):
   `scripts/tests/test-tool-records.sh` holding D2's fourteen records, each with rungs 1 and 2,
   and `describe::each_pixel_operation_and_task_without_a_model_shows_its_record_complete`.

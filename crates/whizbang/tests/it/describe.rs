@@ -467,9 +467,13 @@ fn a_tool_without_a_record_cannot_be_unverified_or_admitted() {
     // The same tool, its record not among those compiled in: no mark at all.
     assert_eq!(of_among(&[("t", record)], "t"), Some(Mark::Admitted));
     assert_eq!(of_among(&[("u", record)], "t"), None);
-    // The actions that ship without a record have none, and show none.
-    for tool in ["check", "feather", "plug", "render", "segment", "select"] {
-        assert!(record_of(tool).is_none(), "{tool} has a record now");
+    // An action that ships without a record has none, and shows none.
+    assert!(record_of("check").is_none(), "check has a record now");
+    assert_eq!(of("check"), None);
+    // Rascal's records (plan m3, task D1) are not squint's: they give no mark here, and
+    // `segment` and `fill`, experimental by theirs, run only when named either way.
+    for tool in ["feather", "fill", "plug", "render", "segment", "select"] {
+        assert!(record_of(tool).is_some(), "{tool} has no record");
         assert_eq!(of(tool), None, "{tool}");
     }
     // A record whose part states no mark (a control, a pixel operation) gives none.
