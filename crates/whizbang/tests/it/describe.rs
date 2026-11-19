@@ -135,7 +135,12 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
             "subtract",
             "view",
             "paste",
-            "fill"
+            "fill",
+            "cut",
+            "put",
+            "window",
+            "unwindow",
+            "apply"
         ]
     );
     let kinds: Vec<&str> = doc["actions"]
@@ -220,7 +225,12 @@ fn describe_without_json_names_the_build() {
             "subtract",
             "view",
             "paste",
-            "fill"
+            "fill",
+            "cut",
+            "put",
+            "window",
+            "unwindow",
+            "apply"
         ],
         "{text}"
     );

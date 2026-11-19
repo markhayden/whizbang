@@ -285,11 +285,11 @@ placement up by an identity it has recomputed from another statement of it. Whet
 bindings place alike is a question about their mappings, within a tolerance, and nothing
 here answers it.
 
-**Points are not hashed.** Mapping a point through a rotation uses the machine's own sine,
-cosine and arc functions, which may differ in their last bits from one machine to another.
-Nothing hashed depends on them today: an identity holds the parameters of a mapping and
-never a mapped point. A mapped point that enters a record whose bytes are hashed must be
-computed with `libm`, as the colour conversion is.
+**Points are not hashed.** An identity holds the parameters of a mapping and never a
+mapped point. A mapped point that enters a record whose bytes are hashed must be computed
+with `libm`, as the colour conversion is; so a rotation's sine, cosine and arc functions
+are `libm`'s and not the machine's, whose last bits may differ from one machine to another
+(plan m3, task O2: a location carried through a rotation is such a record).
 
 ## Consequences
 

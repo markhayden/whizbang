@@ -89,7 +89,12 @@ fn the_shipping_executor_describes_check_and_cannot_run_it_for_want_of_a_judge()
             "subtract",
             "view",
             "paste",
-            "fill"
+            "fill",
+            "cut",
+            "put",
+            "window",
+            "unwindow",
+            "apply"
         ]
     );
     let root = dir.path().join("store");
