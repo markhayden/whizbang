@@ -1162,6 +1162,43 @@ and the milestone's note is written.
   `scripts/tests/test-tool-records.sh` holding the five recipes' records,
   `scripts/tests/test-notes.sh` reading `m3-note.md`, and every carry-over row owned by
   milestone 3 closed, re-owned or dropped with a line.
+  **Split with the task** (B1, 2026-11-19): B1 is two pull requests. The first holds what
+  of item 1 needs no live call: the edit set's program, `whizbang eval edits draw`
+  (`crates/whizbang/src/edits.rs`), and the set it drew from `source-fidelity/scenes-v1`
+  (`labs/m3-edits/edits.toml`); the scoring program, `whizbang eval edits score`, which
+  reads the round's runs from a store and writes `docs/results/m3-edits.md` and
+  `docs/results/m3-edits.toml`, aggregates only; the four labs' files under
+  `labs/m3-edits/` (a corpus manifest the program wrote, and for each recipe a protocol,
+  frozen, and a matrix whose arms are the recipe and the reference arm `clean`); and the
+  first three tests named above, with
+  `edits::the_committed_lab_files_are_the_programs_and_valid_against_their_protocols`. The
+  set has 25 distinct pictures (five families' sources and twenty items), so the program
+  takes 24 of them by its seed. The second pull request holds the rest: the round of the
+  four labs, run by the orchestrator, and its scoring committed as the record; the
+  owner's picks of the four labs' pairs and their decode added to it; the three
+  `evidence::` tests, the transcript test, items 2 to 5, and the box.
+  The orchestrator's commands, from the worktree's root at the head being recorded, with
+  `<P>` a folder of the set's pictures laid out as their repository is (a clone of the
+  sets' repository at the set's `images_rev`), `<E>` a folder for the edit set outside any
+  git work tree, `<S>` a new store, and the config and env file of the fills:
+  1. `whizbang eval edits draw --pictures <P> --out <E>`: draws the set, each picture held
+     to its job's pin, and prints the forecast before anything is paid (96 fills at 0.04
+     dollars, 3.84 dollars). Then `whizbang lab corpus verify --manifest
+     labs/m3-edits/corpus.toml --root <E>`: all 168 files ok, or the draw is not this one.
+  2. `whizbang store import --picture <E>/clean/brick-house-grade.png --store <S>
+     --create` (it makes the store; the round brings that picture in anyway), `whizbang
+     spend reset --allowance 8 --store <S>`, then for each recipe `r` of
+     `remove`, `remove_prompt`, `repair` and `repair_area`: `whizbang lab run --matrix
+     labs/m3-edits/<r>-matrix.toml --corpus <E> --store <S> --config <config> --env-file
+     <env>`, `remove_prompt`'s under `scripts/memory-watch.sh` and the thread guard at 200
+     (SAM 3 on the Mac finds its masks).
+  3. `whizbang eval edits score --set <E> --store <S> --commit "$(git rev-parse HEAD)"
+     --out docs/results`.
+  4. For each recipe `r`: `whizbang lab pairs --matrix labs/m3-edits/<r>-matrix.toml
+     --corpus <E> --store <S> --config <config>` (the page in `<E>/pairs/<r>-vs-clean`), the
+     owner's picks saved beside it, then `whizbang lab decode --protocol
+     labs/m3-edits/<r>-protocol.toml --assignment <E>/pairs/<r>-vs-clean/assignment.json
+     --picks <picks>`.
 
 **Keeping tests lean (B1).** The scoring program's tests on three pictures of 64 by 64; the
 set's fills and SAM 3's masks run by the orchestrator, their numbers held by the evidence

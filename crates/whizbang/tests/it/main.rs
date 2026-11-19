@@ -11,6 +11,7 @@ mod cli;
 mod coverage;
 mod credential;
 mod describe;
+mod edits;
 mod escape;
 mod evidence;
 mod executor;
