@@ -2024,6 +2024,101 @@ fn a_users_entry_for_a_known_adapter_installs_and_runs_from_config_alone() {
 }
 
 #[test]
+fn a_users_catalogue_naming_a_shipped_model_is_refused_whole() {
+    // The review of plan 1D, task U1 (#185): a user's catalogue that names a model of the
+    // build's beside one of its own is refused whole: neither is listed, and the user's
+    // own model is not installed, though its origin is approved.
+    let shelf = Shelf::new("models-users-whole");
+    std::fs::create_dir(shelf.models_dir()).unwrap();
+    let (mine, fake) = users_entry("mine", ADAPTER);
+    let (shadow, _) = users_entry("alpha", ADAPTER);
+    write_users_catalogue(&shelf.models_dir(), &[mine, shadow]);
+    let approving = shelf.path("approving.toml");
+    std::fs::write(
+        &approving,
+        format!("[egress.recipients.weights]\norigin = \"{ORIGIN}\"\nclasses = []\n"),
+    )
+    .unwrap();
+    let fake = Arc::new(fake);
+    let models = || shelf.models(&[alpha()]);
+    let refused = get_under(models(), Some(&approving), &fake, "mine").unwrap_err();
+    assert!(
+        refused.contains("whose place no user's model takes"),
+        "{refused}"
+    );
+    assert!(fake.requests().is_empty());
+    let tools = Tools::of(
+        models(),
+        Hand::new(),
+        downloads(&Arc::default(), &Arc::default()),
+    );
+    let listed = model_commands::list(Under::default(), &tools).unwrap_err();
+    assert!(
+        listed.contains("whose place no user's model takes"),
+        "{listed}"
+    );
+}
+
+#[test]
+fn verify_hashes_every_file_and_writes_the_check_record_only_when_whole() {
+    // `whizbang models verify` (plan 2C, task F1): the full check by hand, which trusts
+    // no earlier check. A file changed in place, of its size, with its time put back, is
+    // what the cached check cannot see; verify reads it, and writes no record of it.
+    let local = Local::new("models-verify");
+    let (mine, fake) = users_entry("my-weights", pack::OK);
+    write_users_catalogue(&local.models_dir(), &[mine]);
+    std::fs::write(local.config_path(), users_config("my-weights")).unwrap();
+    let got = get_under(
+        local.models(),
+        Some(&local.config_path()),
+        &Arc::new(fake),
+        "my-weights",
+    );
+    let identity = identity_in(&got.unwrap(), "my-weights");
+    let hex = identity.strip_prefix("sha256:").unwrap();
+    let model = local.models_dir().join("models").join("my-weights");
+    let checks = model.join("checks");
+    let _ = std::fs::remove_dir_all(&checks);
+    let config = local.config_path();
+    let verify = || {
+        let tools = Tools::of(
+            local.models(),
+            Hand::new(),
+            downloads(&Arc::default(), &Arc::default()),
+        );
+        let under = Under {
+            config: Some(&config),
+            env_file: None,
+        };
+        model_commands::verify(under, "my-weights", &tools)
+    };
+    assert_eq!(verify().unwrap(), format!("whole my-weights: {identity}\n"));
+    let record = checks.join(hex);
+    assert!(record.is_file(), "the check is recorded");
+    // The same bytes changed in place: the stamp the record holds is the file's still.
+    let weights = model
+        .join("installations")
+        .join(hex)
+        .join("files")
+        .join("weights.bin");
+    let was = std::fs::metadata(&weights).unwrap().modified().unwrap();
+    let mut bytes = std::fs::read(&weights).unwrap();
+    bytes[0] ^= 1;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&weights)
+        .unwrap();
+    std::io::Write::write_all(&mut file, &bytes).unwrap();
+    file.set_modified(was).unwrap();
+    drop(file);
+    // The record of the earlier check still holds for those stamps; verify trusts it
+    // not, finds the file changed, and takes the record away.
+    let said = verify().unwrap_err();
+    assert!(said.starts_with("my-weights is not whole: "), "{said}");
+    assert!(!record.exists(), "no record of a check that failed");
+}
+
+#[test]
 fn a_users_entry_naming_an_origin_the_config_does_not_allow_is_refused() {
     let shelf = Shelf::new("models-users-origin");
     std::fs::create_dir(shelf.models_dir()).unwrap();
@@ -2126,6 +2221,44 @@ fn a_users_adapter_survives_setup_again() {
             Revision::new(&hex, &none()).unwrap()
         )]
     );
+}
+
+#[test]
+fn removing_a_model_removes_adapter_copies_nothing_names() {
+    // Plan 2C, task F1: the copy of a user's adapter that only a removed installation
+    // named goes with it; the one the registry names stays.
+    let local = Local::new("models-users-copies");
+    let file = local.models_dir().with_file_name("mine.py");
+    add_under(local.models(), &file, USERS_ADAPTER, "mine");
+    let (mine, fake) = users_entry("mine", "user-mine");
+    write_users_catalogue(&local.models_dir(), &[mine]);
+    std::fs::write(local.config_path(), users_config("mine")).unwrap();
+    let config = local.config_path();
+    get_under(local.models(), Some(&config), &Arc::new(fake), "mine").unwrap();
+    let changed = users_adapter_changed();
+    add_under(local.models(), &file, &changed, "mine");
+    let copy = |text: &str| {
+        let hex = Digest::of_bytes(text.as_bytes()).hex();
+        local
+            .models_dir()
+            .join("adapters")
+            .join(format!("{hex}.py"))
+    };
+    // The installation names the first copy, the registry the second: both stay.
+    assert!(copy(USERS_ADAPTER).is_file() && copy(&changed).is_file());
+    let tools = Tools::of(
+        local.models(),
+        Hand::new(),
+        downloads(&Arc::default(), &Arc::default()),
+    );
+    let under = Under {
+        config: Some(&config),
+        env_file: None,
+    };
+    let removed = model_commands::remove(under, "mine", Duration::ZERO, &tools).unwrap();
+    assert!(removed.starts_with("removed mine: "), "{removed}");
+    assert!(!copy(USERS_ADAPTER).exists(), "named by nothing now");
+    assert!(copy(&changed).is_file(), "the registry names it");
 }
 
 #[test]

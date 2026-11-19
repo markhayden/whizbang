@@ -818,6 +818,37 @@ RUNTIME = {
 }
 
 
+class Load(unittest.TestCase):
+    def test_a_load_with_no_record_beside_files_is_refused(self):
+        # The review of plan 1D, task U1: an installation's folder that holds `files/` and
+        # no record is not run by the adapter its model's name would pick.
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        models = scratch.name
+        identity = record_in(models, "fake-ok", "fake-ok", "7")
+        folder = os.path.join(models, "models", "fake-ok", "installations", identity[len("sha256:") :])
+        os.remove(os.path.join(folder, "RECORD"))
+        running = Running(self, models=models)
+        running.hello()
+        running.ask(load("r1", model="fake-ok", installation=identity))
+        refused = running.read()
+        self.assertEqual((refused["fault"], refused["sentence"]), ("rejected", "the installation's folder holds files and no record"))
+        self.assertIsNone(running.made.resident)
+
+
+class Shipped(unittest.TestCase):
+    def test_the_workers_shipped_map_is_the_shipped_catalogue(self):
+        # The worker's map of shipped models (`SHIPPED`) is each model of the catalogue the
+        # binary ships, by name, with its adapter: the two cannot drift apart.
+        path = os.path.join(os.path.dirname(__file__), "..", "..", "crates", "whizbang", "src", "catalogue.json")
+        with open(path, "rb") as file:
+            catalogue = json.loads(file.read().decode("utf-8"))
+        shipped = {model["name"]: model["adapter"] for model in catalogue["models"]}
+        self.assertEqual(worker.SHIPPED, shipped)
+        for adapter in shipped.values():
+            self.assertIn(adapter, worker.REAL)
+
+
 class Imports(unittest.TestCase):
     def test_the_core_imports_nothing_outside_the_standard_library(self):
         package = os.path.join(kit.SRC, "whizbang_pack")

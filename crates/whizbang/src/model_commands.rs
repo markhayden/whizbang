@@ -42,7 +42,8 @@ use std::time::Duration;
 use whizbang_backends::models::{
     ADAPTER_MAX_BYTES, Carrying, Current, Entry, FileRefused, InstallRefused, ModelsDir,
     PinRefused, Pinned, RemoveRefused, Revision, State, Status, add_adapter, all_held, current,
-    draining, install_or_attach_carrying, pin_file, remove as remove_model, unrunnable,
+    draining, install_or_attach_carrying, pin_file, remove as remove_model,
+    remove_unnamed_adapters, unrunnable, verify_in_full,
 };
 use whizbang_core::capability::{FaultKind, Unready};
 use whizbang_core::config::{
@@ -451,7 +452,7 @@ fn shown(status: Option<Status>) -> String {
 /// before the request is made, so nothing this prints, the status record and every
 /// refusal hold it, and it is dropped when the install ends. One limit: whether every
 /// file is held is looked at before the model's lock is taken, so a file removed in
-/// between is asked for without the token, and its origin refuses it. An origin that refuses the token (401 or
+/// between is asked for without the token, its origin refuses it, and `get` says to run again. An origin that refuses the token (401 or
 /// 403) ends the install with a sentence that says to ask for access.
 pub fn get(
     under: Under<'_>,
@@ -542,7 +543,16 @@ pub fn get(
                     clock.pause(PAUSE);
                 },
             )
-            .map_err(|refused| not_installed(&refused, carried.is_some()))?;
+            .map_err(|refused| {
+                // Every file was held when looked at, so no token was read; one was
+                // removed before the model's lock was taken, and its download went
+                // without one (the review of plan 1D, task Q1).
+                let raced = held && entry.needs_token().is_some();
+                not_installed(&refused, carried.is_some(), raced)
+            })?;
+            // The installation this one replaced was deleted: a copy of a user's
+            // adapter only it named goes with it (plan 2C, task F1).
+            let _ = remove_unnamed_adapters(&dir, &secrets);
             Ok(format!(
                 "installed {}: {}\n",
                 entry.name().as_str(),
@@ -663,7 +673,11 @@ fn credential_of(
 /// What `get` says of an install that was refused. An origin that refused a request
 /// that carried a token refused that token: the account it is of has no access to the
 /// model, or it is not the right token.
-fn not_installed(refused: &InstallRefused, carried: bool) -> String {
+///
+/// When every file was held at the look before the lock, no token was read; an origin
+/// that then refuses a download for want of one met a held file removed in between,
+/// and `get` again reads the token (`raced`).
+fn not_installed(refused: &InstallRefused, carried: bool, raced: bool) -> String {
     let credential = matches!(
         refused,
         InstallRefused::File {
@@ -676,6 +690,13 @@ fn not_installed(refused: &InstallRefused, carried: bool) -> String {
             "the model was not installed: {refused}. The origin refused the token: ask for \
              access to the model on its page with the account the token is of (on the Hub, \
              accept the model's terms there), and check that the token is that account's"
+        );
+    }
+    if credential && raced {
+        return format!(
+            "the model was not installed: {refused}. A file another installation held was \
+             removed while this one was made, and its download carried no token, since none \
+             was to be downloaded: run `whizbang models get` again, which reads the token"
         );
     }
     if credential {
@@ -837,6 +858,49 @@ pub fn adapter_add(
     })
 }
 
+// --- verify --------------------------------------------------------------------------------------
+
+/// `whizbang models verify <model>`: the full check of the model's current installation,
+/// asked for by hand (ADR 0017, "The cached check"; plan 2C, task F1). Every file is
+/// read whole, whatever an earlier check recorded; when all are whole the check record
+/// is written, so the next load trusts them; when one is not, nothing is written and
+/// the answer says to install the model again.
+pub fn verify(under: Under<'_>, model: &str, tools: &Tools) -> Result<String, String> {
+    run(under, tools, |read| {
+        let secrets = &read.secrets;
+        let models = with_users_for(tools, model, read)?;
+        let entry = entry(&models, model, secrets)?;
+        let name = entry.name().as_str();
+        let (said, root) = tools.models.chosen(read.dir.as_deref())?;
+        let not_installed = || format!("{name} is not installed, so nothing was checked");
+        if !there(&root) {
+            return Err(not_installed());
+        }
+        let dir = wiring::open_models_dir(said, &root, tools.clock.clone())?;
+        let record = match current(&dir, entry.name(), secrets) {
+            Ok(Current::Installed(record)) => record,
+            Ok(Current::NotInstalled) => return Err(not_installed()),
+            Ok(Current::Damaged(_)) => {
+                return Err(format!(
+                    "{name} is damaged: its pointer or the record it names cannot be read; \
+                     `get` installs it again"
+                ));
+            }
+            Err(error) => return Err(format!("{name} could not be read: {error}")),
+        };
+        let identity = record.identity();
+        match verify_in_full(&dir, entry.name(), identity, secrets, &|| false) {
+            Ok(true) => Ok(format!("whole {name}: {}\n", identity.digest())),
+            Ok(false) => Err(format!(
+                "{name} is not whole: a file of its installation {} is missing, of another \
+                 size or hash, or a link; `get` installs it again",
+                identity.digest()
+            )),
+            Err(error) => Err(format!("{name} could not be checked: {error}")),
+        }
+    })
+}
+
 // --- remove --------------------------------------------------------------------------------------
 
 /// `whizbang models remove <model> --wait <seconds>`: removes the model (ADR 0017,
@@ -864,6 +928,9 @@ pub fn remove(
             clock.pause(PAUSE);
         })
         .map_err(not_removed)?;
+        // A copy of a user's adapter that only the removed installation named goes
+        // with it (plan 2C, task F1); one that cannot be taken now is taken by the next.
+        let _ = remove_unnamed_adapters(&dir, secrets);
         Ok(match removed.installation() {
             Some(id) => format!("removed {}: {}\n", entry.name().as_str(), id.digest()),
             None => format!("removed {}\n", entry.name().as_str()),
@@ -880,5 +947,33 @@ fn not_removed(refused: RemoveRefused) -> String {
              was"
         ),
         other => format!("the model was not removed: {other}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_refused_download_after_a_held_file_was_removed_says_to_get_again() {
+        // The review of plan 1D, task Q1 (#182): no token was read, every file being
+        // held; one was removed before the lock, and its origin refused the download.
+        let refused = InstallRefused::File {
+            name: "model.safetensors".to_owned(),
+            why: FileRefused::Download(FaultKind::Credential),
+        };
+        let said = not_installed(&refused, false, true);
+        assert!(
+            said.ends_with("run `whizbang models get` again, which reads the token"),
+            "{said}"
+        );
+        assert!(!said.contains("ask for access"), "{said}");
+        let said = not_installed(&refused, false, false);
+        assert!(
+            said.ends_with("does not say that the model needs one"),
+            "{said}"
+        );
+        let said = not_installed(&refused, true, false);
+        assert!(said.contains("ask for access"), "{said}");
     }
 }

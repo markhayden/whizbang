@@ -950,6 +950,32 @@ pub fn verify_checked(
     secrets: &Secrets,
     stop: &dyn Fn() -> bool,
 ) -> io::Result<bool> {
+    checked_or_in_full(dir, model, identity, secrets, stop, true)
+}
+
+/// [`verify_checked`] with no earlier check trusted: every file is read whole, and
+/// the check record is written only when they are whole (`whizbang models verify`;
+/// plan 2C, task F1; the carry-over row on the full check asked for by hand). When one
+/// is not, an earlier check record is removed, so that the next load reads the files
+/// again though their stamps are unchanged.
+pub fn verify_in_full(
+    dir: &ModelsDir,
+    model: &ModelName,
+    identity: InstallationId,
+    secrets: &Secrets,
+    stop: &dyn Fn() -> bool,
+) -> io::Result<bool> {
+    checked_or_in_full(dir, model, identity, secrets, stop, false)
+}
+
+fn checked_or_in_full(
+    dir: &ModelsDir,
+    model: &ModelName,
+    identity: InstallationId,
+    secrets: &Secrets,
+    stop: &dyn Fn() -> bool,
+    trusted: bool,
+) -> io::Result<bool> {
     dir.unlinked(model)?;
     let folder = dir.model(model).join("installations").join(identity.hex());
     refuse_links(dir.fs(), &[&folder, &folder.join("files")])?;
@@ -967,12 +993,16 @@ pub fn verify_checked(
     let files = folder.join("files");
     let stamps = checked::stamps(dir.fs(), &files, record.files());
     let checks = dir.model(model).join("checks");
-    if let Some(stamps) = &stamps
+    if trusted
+        && let Some(stamps) = &stamps
         && checked::holds(dir, &checks, &record, stamps)
     {
         return Ok(true);
     }
     if first_not_whole(dir.fs(), &files, record.files(), stop)?.is_some() {
+        if !trusted {
+            checked::forget(dir, &checks, &record);
+        }
         return Ok(false);
     }
     if let Some(stamps) = &stamps {

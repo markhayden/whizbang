@@ -81,13 +81,32 @@ mod tests {
     #[test]
     fn the_bound_of_a_request_at_the_default_ceilings_is_the_arithmetic_of_the_adr() {
         let prices = prices_of("claude-haiku-5-5").unwrap();
-        // 40,000 at 0.125 and 2,048 at 0.50, in millionths of a dollar.
-        assert!((bound_micros(DEFAULT_CEILINGS, prices) - 6_024.0).abs() < 1e-9);
+        // 40,000 at 0.125 and 4,096 at 0.50, in millionths of a dollar.
+        assert!((bound_micros(DEFAULT_CEILINGS, prices) - 7_048.0).abs() < 1e-9);
         let usage = Usage::new(1_000, 100).cached(10_000, 2_000);
         // 100 + 50 + 100 + 250.
         assert_eq!(charge_of(usage, prices).unwrap().micros(), 500);
         assert_eq!(picture_tokens(64, 48), 6);
         assert_eq!(picture_tokens(2576, 1932), 4_784);
         assert_eq!(input_count(100, 2, &[(28, 28)]), 100 + 32 + 1 + 16);
+    }
+
+    #[test]
+    fn every_priced_models_check_at_the_default_ceilings_fits_the_example_cap() {
+        // The sixteen turns `check` reserves, at the default ceilings, of every model
+        // this build prices, are within the example's cap of 2.00 dollars (ADR 0026).
+        let rows = PRICED
+            .iter()
+            .chain(crate::google::spend::PRICED.iter())
+            .chain(crate::openai::spend::PRICED.iter());
+        let mut dearest: f64 = 0.0;
+        for (model, prices) in rows {
+            let check = bound_micros(DEFAULT_CEILINGS, *prices) * 16.0;
+            assert!(check <= 2_000_000.0, "{model}: {check}");
+            dearest = dearest.max(check);
+        }
+        // gemini-4-argon and gpt-6.1-sol: 40,000 at 2.00 and 4,096 at 10.00, sixteen
+        // times; twice the output ceiling would pass the cap.
+        assert!((dearest - 1_935_360.0).abs() < 1e-6, "{dearest}");
     }
 }

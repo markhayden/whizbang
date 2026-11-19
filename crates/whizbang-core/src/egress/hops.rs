@@ -153,13 +153,19 @@ impl SendCheck {
     }
 
     /// Whether the bytes hold a folder kept out. On macOS, whose file system does not
-    /// tell case apart by default, a folder is found in any case of its ASCII letters.
+    /// tell case apart by default, a folder is found in any case of its letters, ASCII
+    /// or not: both are lowered by Unicode's rules (plan 2C, task F1). What is not
+    /// UTF-8 is read with each byte that is not in its place as the replacement
+    /// character, which no folder written as text holds. APFS also takes the two
+    /// normal forms of an accented letter as one; that is not done here (the
+    /// carry-over row on folding case on macOS).
     fn keeps_out(&self, bytes: &[u8]) -> bool {
         if cfg!(target_os = "macos") {
-            let lower = bytes.to_ascii_lowercase();
+            let folded = |bytes: &[u8]| String::from_utf8_lossy(bytes).to_lowercase();
+            let lower = folded(bytes);
             self.kept_out
                 .iter()
-                .any(|folder| holds(&lower, &folder.to_ascii_lowercase()))
+                .any(|folder| holds(lower.as_bytes(), folded(folder).as_bytes()))
         } else {
             self.kept_out.iter().any(|folder| holds(bytes, folder))
         }

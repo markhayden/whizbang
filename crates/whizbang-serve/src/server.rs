@@ -438,6 +438,16 @@ impl<W: Write> Serving<'_, W> {
             };
             match state {
                 RunState::Ended(outcome) => {
+                    // A run whose own deadline, at the same stated time, ended it before
+                    // the server looked was given up all the same: it is answered so,
+                    // whichever of the two came first (the review of task M1: a race
+                    // seen once on the macOS runner).
+                    if running.gave_up.is_none()
+                        && now >= running.until
+                        && outcome.name() != "completed"
+                    {
+                        running.gave_up = Some(now);
+                    }
                     let journal = self.door.journal(&running.run);
                     self.events(&mut running, &journal)?;
                     if !running.silent {

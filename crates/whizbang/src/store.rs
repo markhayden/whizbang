@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use clap::{Args, Subcommand};
 use whizbang::wiring::{self, Make};
-use whizbang_core::contract::{Recovery, Remover};
+use whizbang_core::contract::{REQUESTS_PREFIX, Recovery, Remover, SPEND_PREFIX};
 use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{Kind, Pruned, Reader};
 
@@ -151,8 +151,18 @@ pub fn run_with(command: &Command, recovery: Recovery) -> Result<String, String>
 fn list(root: &Path) -> Result<String, String> {
     let reader = Reader::open(root, Arc::new(RealFs)).map_err(|e| e.to_string())?;
     let generation = reader.snapshot().map_err(|e| e.to_string())?;
+    // The names outside runs, apart by what they record (plan 2C, task F1: the
+    // overflow of task E1): the records of request ids (two names for every request
+    // that gave one, ADR 0007), those of spend, and any other.
+    let under = |prefix: &str| {
+        let names = generation.entries().keys();
+        names.filter(|name| name.starts_with(prefix)).count()
+    };
+    let (requests, spend) = (under(REQUESTS_PREFIX), under(SPEND_PREFIX));
+    let others = generation.entries().len() - requests - spend;
     let mut text = format!(
-        "generation: {}\nnames outside runs: {}\nruns: {}\n",
+        "generation: {}\nnames outside runs: {} (request ids {requests}, spend {spend}, \
+         other {others})\nruns: {}\n",
         generation.number(),
         generation.entries().len(),
         generation.runs().len()

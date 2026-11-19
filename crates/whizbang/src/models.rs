@@ -1,4 +1,4 @@
-//! `whizbang models list|get|remove|adapter add`: wiring from arguments to the binary's own
+//! `whizbang models list|get|remove|verify|adapter add`: wiring from arguments to the binary's own
 //! functions (`whizbang::model_commands`), which say what each does and when it works
 //! out where the models directory is (plan 1C, task N3b; `docs/guides/models.md`).
 
@@ -44,6 +44,16 @@ pub enum Command {
         #[arg(long, value_name = "SECONDS", default_value_t = 30,
               value_parser = clap::value_parser!(u64).range(0..=WAIT_LIMIT_SECONDS))]
         wait: u64,
+        #[command(flatten)]
+        under: Under,
+    },
+    /// Check the model's installation in full: every file read whole and held to its
+    /// size and hash, whatever an earlier check recorded. Prints `whole` and the
+    /// installation's identity, and records the check, only when every file is whole.
+    #[command(after_help = EXIT_CODES)]
+    Verify {
+        /// The model, by its name in the catalogue.
+        model: String,
         #[command(flatten)]
         under: Under,
     },
@@ -105,6 +115,10 @@ pub fn run(command: &Command, platform: Platform, sign_in: SignIn) -> Result<Str
             let tools = Tools::shipped(under.models_dir(), platform, sign_in)?;
             let wait = Duration::from_secs(*wait);
             model_commands::remove(under.asked(), model, wait, &tools)
+        }
+        Command::Verify { model, under } => {
+            let tools = Tools::shipped(under.models_dir(), platform, sign_in)?;
+            model_commands::verify(under.asked(), model, &tools)
         }
         Command::Adapter(AdapterCommand::Add { file, name, under }) => {
             let tools = Tools::shipped(under.models_dir(), platform, sign_in)?;

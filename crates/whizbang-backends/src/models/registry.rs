@@ -21,7 +21,8 @@
 //! runs the copy only when its bytes hash to it (`pack/src/whizbang_pack/installed.py`).
 //! Adding a changed file under the same name is a new hash: the registry names the new
 //! copy, and the earlier copy is kept, so an installation made under it still runs it.
-//! No copy is ever removed here.
+//! A copy is removed only by [`remove_unnamed_adapters`], once neither the registry nor
+//! any installation's record names it (plan 2C, task F1).
 
 use std::collections::BTreeMap;
 use std::io;
@@ -33,8 +34,9 @@ use whizbang_core::identity::Digest;
 
 use super::catalogue::{CATALOGUE_MAX_BYTES, hash_of};
 use super::directory::Read;
+use super::installation::INSTALLATION_MAX_BYTES;
 use super::json::{self, Object};
-use super::{Catalogue, ModelName, ModelsDir, Refused, Revision, Rule, What};
+use super::{Catalogue, InstallationRecord, ModelName, ModelsDir, Refused, Revision, Rule, What};
 
 /// The format of the registry this reader reads.
 pub const REGISTRY_FORMAT: &str = "adapters/1";
@@ -297,4 +299,86 @@ pub fn add_adapter(
         revision,
         copied: !whole,
     })
+}
+
+/// Removes each copy of a user's adapter that neither the registry nor the record of
+/// any installation in the directory names (plan 2C, task F1; the carry-over row on
+/// copies of users' adapters never removed), under the directory's lock: what `models
+/// remove` and `models get` run after they end. It answers how many it removed. It
+/// removes nothing when the lock is held by another, when `adapters/` or a model's
+/// layout is a link, or when any installation's record cannot be read: a copy is taken
+/// away only when every name that could still run it was read. A copy being written
+/// (`.new`) and the registry are never touched.
+pub fn remove_unnamed_adapters(dir: &ModelsDir, secrets: &Secrets) -> io::Result<usize> {
+    let fs = dir.fs();
+    let folder = dir.adapters();
+    if fs.is_link(&folder)? {
+        return Ok(0);
+    }
+    let copies = match fs.list(&folder) {
+        Ok(copies) => copies,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error),
+    };
+    let Some(_lock) = dir.lock()? else {
+        return Ok(0);
+    };
+    let Ok(table) = read_registry(dir, secrets) else {
+        return Ok(0);
+    };
+    let mut named: Vec<String> = table.values().map(|r| r.as_str().to_owned()).collect();
+    let models = match fs.list(&dir.models()) {
+        Ok(models) => models,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(error),
+    };
+    for path in models {
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        let Ok(model) = ModelName::new(name, secrets) else {
+            return Ok(0);
+        };
+        if dir.has_link(&model)? {
+            return Ok(0);
+        }
+        let folders = match fs.list(&dir.model(&model).join("installations")) {
+            Ok(folders) => folders,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        for installation in folders {
+            let record = installation.join("RECORD");
+            let Read::Bytes(bytes) = dir.read(&record, INSTALLATION_MAX_BYTES)? else {
+                return Ok(0);
+            };
+            let Ok(record) = InstallationRecord::parse(&bytes, secrets) else {
+                return Ok(0);
+            };
+            if is_users(record.adapter()) {
+                named.push(record.adapter_revision().as_str().to_owned());
+            }
+        }
+    }
+    let mut removed = 0;
+    for path in copies {
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        let Some(hex) = name.strip_suffix(".py") else {
+            continue;
+        };
+        let is_hash =
+            hex.len() == 64 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+        if is_hash && !named.iter().any(|kept| kept == hex) {
+            dir.remove(&path)?;
+            removed += 1;
+        }
+    }
+    if removed > 0 {
+        fs.sync_dir(&folder)?;
+    }
+    Ok(removed)
 }
