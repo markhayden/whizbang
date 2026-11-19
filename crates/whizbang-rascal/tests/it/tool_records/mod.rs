@@ -24,6 +24,9 @@ use super::record::{MARK, between, millis, png_file, replaced, settled, tools};
 mod close;
 mod locations;
 mod paste;
+mod render;
+mod segment;
+mod shaping;
 mod subtract;
 mod tasks;
 
@@ -188,5 +191,10 @@ mod writes {
         fill => paste,
         mask_rect => tasks,
         protect => tasks,
+        segment => segment,
+        select => shaping,
+        plug => shaping,
+        feather => shaping,
+        render => render,
     }
 }
