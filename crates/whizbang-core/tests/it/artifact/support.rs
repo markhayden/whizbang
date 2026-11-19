@@ -84,24 +84,35 @@ pub fn rect(x0: u32, y0: u32, x1: u32, y1: u32) -> Vec<u8> {
 
 /// A mask whose core is the box from (2, 1) to (5, 4).
 pub fn rect_mask(binding: Binding) -> Mask {
+    rect_mask_by(binding, "rect")
+}
+
+/// The same mask, its origin naming this action: what an action of a test hands back,
+/// which the executor holds to name it.
+pub fn rect_mask_by(binding: Binding, action: &str) -> Mask {
     Mask::from_core(
         binding,
         UseCase::Custom,
         rect(2, 1, 5, 4),
         Source::default(),
-        made_by("rect"),
+        made_by(action),
     )
     .unwrap()
 }
 
 pub fn line(binding: Binding) -> Location {
+    line_by(binding, "line")
+}
+
+/// The same location, its origin naming this action.
+pub fn line_by(binding: Binding, action: &str) -> Location {
     Location::new(
         binding,
         Shape::Line {
             line: Line::Column(4.0),
             width: 3.0,
         },
-        made_by("line"),
+        made_by(action),
     )
     .unwrap()
 }
@@ -228,12 +239,17 @@ pub fn photo() -> Vec<u8> {
 }
 
 pub fn image_of(file: Vec<u8>, role: ImageRole) -> Image {
+    image_by(file, role, "import")
+}
+
+/// The same image, its origin naming this action.
+pub fn image_by(file: Vec<u8>, role: ImageRole, action: &str) -> Image {
     Image::new(
         file,
         Projection::Flat,
         Topology::Bounded,
         role,
-        made_by("import"),
+        made_by(action),
         &limits(),
     )
     .unwrap()

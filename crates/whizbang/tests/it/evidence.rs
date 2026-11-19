@@ -658,3 +658,56 @@ fn the_per_subject_record_names_a_commit_of_this_tree_and_its_rung_2_numbers() {
         digest_of("pack/src/whizbang_pack/sam3.py")
     );
 }
+
+#[test]
+fn the_fills_record_names_a_commit_of_this_tree_and_holds_no_secret() {
+    // Plan m3, task F1, item 8: the live fill through fal, one block of fields.
+    use whizbang_backends::fal;
+    let page = std::fs::read_to_string(repository().join("docs/results/m3-fills.md"))
+        .expect("the record of the fills is committed");
+    let block = page.split("```toml\n").nth(1).expect("a block of fields");
+    let block = block.split("```").next().unwrap();
+    let fields: Vec<(String, String)> = block
+        .lines()
+        .map(|line| {
+            let (name, value) = line.split_once(" = ").expect("a line is name = value");
+            (name.to_owned(), value.trim_matches('"').to_owned())
+        })
+        .collect();
+    let commit = field(&fields, "commit");
+    assert!(
+        commit.len() == 40
+            && commit
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    );
+    assert_eq!(field(&fields, "whizbang"), env!("CARGO_PKG_VERSION"));
+    assert_eq!(field(&fields, "action"), "fill 1.0.0");
+    assert_eq!(field(&fields, "backend"), fal::ADAPTER);
+    assert_eq!(field(&fields, "adapter_version"), fal::VERSION);
+    assert_eq!(field(&fields, "model"), fal::MODEL);
+    assert_eq!(field(&fields, "model_version"), fal::identity_version());
+    assert_eq!(field(&fields, "price_read"), fal::spend::PRICE.read);
+    let price = fal::spend::bound_micros(fal::spend::PRICE).to_string();
+    for name in ["request_bound_micros", "reserved_micros", "settled_micros"] {
+        assert_eq!(field(&fields, name), price, "{name}");
+    }
+    assert_eq!(field(&fields, "outcome"), "completed");
+    assert_eq!(field(&fields, "outside_support_original"), "true");
+    assert_eq!(field(&fields, "egress_recipient"), "https://fal.run");
+    assert_eq!(
+        field(&fields, "egress_classes"),
+        "source_images derived_images"
+    );
+    // No secret, no path and no reply: no key's form, no header, no absolute path.
+    for held in [
+        "authorization",
+        "Key ",
+        "/Users/",
+        "/home/",
+        "/private/",
+        "data:image",
+    ] {
+        assert!(!page.contains(held), "{held}");
+    }
+}

@@ -20,7 +20,7 @@ use whizbang_testkit::schema::validate;
 
 use super::commit::{World, held};
 use super::record::schema;
-use crate::artifact::support::{on, rect_mask};
+use crate::artifact::support::{on, rect_mask, rect_mask_by};
 
 type Body = Box<dyn Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync>;
 
@@ -194,7 +194,7 @@ fn a_run_that_froze_its_calls_gives_a_call_only_what_it_was_given_or_its_own_cal
     };
     let takes = action("takes", |_, _| Ok(Produced::nothing()));
     let makes = action("makes", |_, _| {
-        Ok(Produced::nothing().with("made", rect_mask(on("made"))))
+        Ok(Produced::nothing().with("made", rect_mask_by(on("made"), "makes")))
     });
     let executor = engine(store.clone(), vec![outer, takes, makes]);
     let call = Call::new("outer").input("masks", given);
@@ -438,7 +438,7 @@ fn what_a_run_froze_binds_every_run_under_it() {
     let takes = action("takes", |_, _| Ok(Produced::nothing()));
     let free = action("free", |_, _| Ok(Produced::nothing()));
     let makes = action("makes", |_, _| {
-        Ok(Produced::nothing().with("made", rect_mask(on("made"))))
+        Ok(Produced::nothing().with("made", rect_mask_by(on("made"), "makes")))
     });
     let executor = engine(store, vec![outer, mid, takes, free, makes]);
     let finished = executor

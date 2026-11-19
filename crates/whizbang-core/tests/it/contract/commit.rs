@@ -25,7 +25,7 @@ use whizbang_testkit::scratch::Scratch;
 
 use super::record::schema;
 use super::redact::made_up_key;
-use crate::artifact::support::{limits, line, made_by, on, rect, rect_mask};
+use crate::artifact::support::{limits, line_by, made_by, on, rect, rect_mask_by};
 
 /// A clock that always says the same.
 struct Stopped(u64);
@@ -82,12 +82,14 @@ pub(super) fn pair(
 }
 
 /// The mask and the location `pair` returns when it returns what it should.
+/// The mask `pair` hands back, its origin naming it.
 pub(super) fn the_mask() -> Mask {
-    rect_mask(on("photo"))
+    rect_mask_by(on("photo"), "pair")
 }
 
+/// The location `pair` hands back, its origin naming it.
 pub(super) fn the_place() -> whizbang_core::artifact::Location {
-    line(on("photo"))
+    line_by(on("photo"), "pair")
 }
 
 pub(super) fn both() -> Produced {
@@ -295,9 +297,10 @@ fn a_port_that_returns_several_numbers_the_references_of_its_run() {
         Arc::new(Scripted(
             draft.build().unwrap(),
             Box::new(|_, _| {
+                let found = line_by(on("photo"), "several");
                 Ok(Produced::nothing()
-                    .with("found", the_place())
-                    .with("found", the_place()))
+                    .with("found", found.clone())
+                    .with("found", found))
             }),
         ))
     };
@@ -1043,7 +1046,7 @@ fn many(count: usize) -> Arc<dyn Action> {
     let body = move |_: &PreparedCall, _: &Context| {
         let mut produced = Produced::nothing();
         for _ in 0..count {
-            produced = produced.with("bulk", the_place());
+            produced = produced.with("bulk", line_by(on("photo"), "many"));
         }
         Ok(produced)
     };

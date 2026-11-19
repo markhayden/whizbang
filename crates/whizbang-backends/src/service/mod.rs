@@ -3,7 +3,9 @@
 //! `anthropic` (the Messages interface, [`crate::anthropic`]), `google` (Gemini's
 //! `generateContent`, [`crate::google`]) and `openai` (the Responses interface,
 //! [`crate::openai`]). A backend of the kind sends each request of a judge to its
-//! provider's one address, through the sender its run hands it.
+//! provider's one address, through the sender its run hands it. A table under
+//! `[backends.fill]` that names the provider `fal` is fal's filler, read and made by
+//! [`crate::fal`] (plan m3, task F1).
 //!
 //! **A table of the kind** is `kind = "service"`, a `provider`, a `model` and a
 //! `key_env`, under `[backends.judge]`; its settings are `effort` (a text, of the values
@@ -72,9 +74,10 @@ pub const OTHER_SUCCESS: &str =
 /// What it says of a request pointed elsewhere more often than the gate follows.
 pub const MOVED_TOO_OFTEN: &str = "the request was pointed elsewhere more often than is followed";
 
-const NOT_JUDGE: &str = "a service backend is a judge, and is offered under backends.judge";
+const NOT_JUDGE: &str = "a service backend is a judge, and is offered under backends.judge, \
+                         or fal's filler, under backends.fill";
 const NO_PROVIDER: &str =
-    "a service backend's provider is one this build has: anthropic, google or openai";
+    "a service backend's provider is one this build has: anthropic, google, openai or fal";
 const A_URL: &str = "a service backend names no url: its provider's address is the kind's own";
 const NO_MODEL: &str = "a service backend names its model";
 const BAD_MODEL: &str = "a service backend's model is 1 to 64 letters, digits, dots and hyphens";
@@ -257,12 +260,20 @@ fn read(table: &Table<'_>) -> Result<Read, KindRefused> {
     Ok(read)
 }
 
+/// Whether a table names fal, whose one backend is a filler ([`crate::fal`]).
+fn names_fal(table: &Table<'_>) -> bool {
+    table.backend().provider() == Some(crate::fal::PROVIDER)
+}
+
 impl Kind for ServiceKind {
     fn name(&self) -> &str {
         KIND
     }
 
     fn make(&self, table: &Table<'_>) -> Result<Made, KindRefused> {
+        if names_fal(table) {
+            return crate::fal::make(table, self.address.as_deref());
+        }
         let read = read(table)?;
         let stated = read.provider.stated();
         let address = self.address(read.provider, &read.model, table.secrets())?;
@@ -292,6 +303,9 @@ impl Kind for ServiceKind {
     /// OpenAI. The address is the one [`ServiceKind::make`] sends to; the key is in no
     /// address.
     fn credential(&self, table: &Table<'_>) -> Result<Option<Credential>, KindRefused> {
+        if names_fal(table) {
+            return crate::fal::credential(table, self.address.as_deref());
+        }
         let read = read(table)?;
         let key = table.key().ok_or(KindRefused::Table(NO_KEY))?;
         let address = self.address(read.provider, &read.model, table.secrets())?;

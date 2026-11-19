@@ -24,25 +24,15 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use image::codecs::png::{CompressionType, FilterType, PngEncoder};
-use image::{ExtendedColorType, ImageEncoder};
 use whizbang_core::artifact::{self, Artifact, ArtifactId, ArtifactType};
 use whizbang_core::identity::{CanonicalPixels, DecodeLimits, Digest};
 use whizbang_core::store::Reader;
 use whizbang_core::store::fs::RealFs;
 
-/// The pixels as a PNG: 8 bits a channel, red, green, blue and alpha, with no other chunk.
+/// The pixels as a PNG, by the core's one encoder (`whizbang_core::identity::encode`).
 pub fn png(pixels: &CanonicalPixels) -> Result<Vec<u8>, String> {
-    let mut file = Vec::new();
-    PngEncoder::new_with_quality(&mut file, CompressionType::Default, FilterType::Adaptive)
-        .write_image(
-            pixels.rgba(),
-            pixels.width(),
-            pixels.height(),
-            ExtendedColorType::Rgba8,
-        )
-        .map_err(|error| format!("cannot write the image as a PNG: {error}"))?;
-    Ok(file)
+    whizbang_core::identity::encode::png(pixels)
+        .map_err(|why| format!("cannot write the image as a PNG: {why}"))
 }
 
 /// Where the file goes, refused as the module's description says: the path to write, and

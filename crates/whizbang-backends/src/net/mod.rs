@@ -83,7 +83,7 @@
 //! thread, closed when the call returns.
 
 mod client;
-mod http;
+pub(crate) mod http;
 mod wire;
 
 #[cfg(test)]

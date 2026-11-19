@@ -20,8 +20,9 @@ use whizbang_core::contract::{Action, ActionDescriptor, Count, Kind, OutputPort,
 use whizbang_testkit::threads;
 
 use super::asked::{Scripted, action, engine, fill_request, stored};
-use super::commit::{World, held, the_place};
+use super::commit::{World, held};
 use super::redact::made_up_key;
+use crate::artifact::support::{line_by, on};
 
 fn origin(address: &str) -> Origin {
     Origin::of(address, &Secrets::none()).unwrap()
@@ -481,7 +482,7 @@ fn a_paid_request_noted_for_a_request_the_run_did_not_send_ends_the_run_as_an_er
         // The run sent one request, which is request 0: there is no request 1,
         // the first place past those it sent.
         assert!(facts.paid(Paid::answered(1, 500, 400).unwrap()));
-        Ok(Produced::nothing().with("bulk", the_place()))
+        Ok(Produced::nothing().with("bulk", line_by(on("photo"), "notes")))
     });
     let executor = engine(
         &world,
@@ -529,7 +530,7 @@ fn pays_and_returns_many(heavy: bool) -> Arc<dyn Action> {
         }
         let mut produced = Produced::nothing();
         for _ in 0..200 {
-            produced = produced.with("bulk", the_place());
+            produced = produced.with("bulk", line_by(on("photo"), "pays"));
         }
         Ok(produced)
     })
