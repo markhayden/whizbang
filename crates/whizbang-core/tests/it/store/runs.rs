@@ -132,7 +132,7 @@ fn a_generation_file_says_the_kind_of_each_reference_and_the_run_it_belongs_to()
     let (b, c) = (Digest::of_bytes(B).hex(), Digest::of_bytes(C).hex());
     let expected = format!(
         r#"{{
-  "format": 2,
+  "format": 3,
   "number": 1,
   "entries": {{
     "a": {{
@@ -1037,25 +1037,50 @@ fn a_generation_file_of_another_format_is_refused_as_another_format_not_as_damag
         Digest::of_bytes(super::A1).hex(),
         super::A1.len()
     );
-    std::fs::write(root.join("generations/1.json"), first_format).unwrap();
-    let reader = Reader::open(&root, Arc::new(RealFs)).unwrap();
-    let by_reader = reader.snapshot().map(|_| ());
-    let by_writer = Store::open(&root, Arc::new(ShimFs::new())).map(|_| ());
-    for result in [by_reader, by_writer] {
-        let error = result.unwrap_err();
-        match &error {
-            Error::OtherFormat {
-                path,
-                format: 1,
-                reads: 2,
-            } => assert_eq!(*path, root.join("generations/1.json")),
-            other => panic!("{other:?}"),
+    // Generation 1 as the second format wrote it, with kinds and runs: the store of a
+    // build whose images were written by the slower PNG setting (plan m3, task O5). A
+    // store written before the switch to the fast setting is refused whole, not read
+    // beside images of the new encoder, and not migrated.
+    let second_format = format!(
+        r#"{{
+  "format": 2,
+  "number": 1,
+  "entries": {{
+    "a": {{
+      "digest": "{}",
+      "bytes": {},
+      "kind": "output"
+    }}
+  }},
+  "runs": {{}}
+}}
+"#,
+        Digest::of_bytes(super::A1).hex(),
+        super::A1.len()
+    );
+    for (format, file) in [(1, &first_format), (2, &second_format)] {
+        std::fs::write(root.join("generations/1.json"), file).unwrap();
+        let reader = Reader::open(&root, Arc::new(RealFs)).unwrap();
+        let by_reader = reader.snapshot().map(|_| ());
+        let by_writer = Store::open(&root, Arc::new(ShimFs::new())).map(|_| ());
+        for result in [by_reader, by_writer] {
+            let error = result.unwrap_err();
+            match &error {
+                Error::OtherFormat {
+                    path,
+                    format: found,
+                    reads: 3,
+                } if *found == format => assert_eq!(*path, root.join("generations/1.json")),
+                other => panic!("{other:?}"),
+            }
+            let message = error.to_string();
+            assert!(
+                message.ends_with(&format!(
+                    "is of another format: {format}, and this build reads format 3"
+                )),
+                "{message}"
+            );
+            assert!(!message.contains("damaged"), "{message}");
         }
-        let message = error.to_string();
-        assert!(
-            message.ends_with("is of another format: 1, and this build reads format 2"),
-            "{message}"
-        );
-        assert!(!message.contains("damaged"), "{message}");
     }
 }

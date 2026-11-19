@@ -20,14 +20,11 @@ serde_json.workspace = true
 serde.workspace = true
 toml.workspace = true
 # Encoding a crop as a PNG. The file's bytes are part of the image artifact's identity
-# (ADR 0002), so what writes them is pinned exactly: `image`, at the version the core
-# decodes with, is what the code calls; the bytes come from `png`, and from the compressor
-# it calls at the setting `view` uses, `flate2` over `miniz_oxide`. Those three are named
-# here only to pin them. This `miniz_oxide` is the one `flate2` compresses with, and is not
-# the one the core pins, which inflates for the PNG decoder. The vectors in
-# `tests/it/vectors.rs` fail when an encoder writes a file differently, and a test there
-# holds these pins to the lock file. An encoder change changes every crop's file digest,
-# and so its artifact's identity; its pixel digest and its binding stay.
+# (ADR 0002), so what writes them is pinned exactly: a crop is written by the core's one
+# encoder (`whizbang_core::identity::encode`), whose manifest pins `image`, `png` and the
+# compressor `png` calls at its setting, `fdeflate`. The vectors in `tests/it/vectors.rs`
+# fail when an encoder writes a file differently. An encoder change changes every crop's
+# file digest, and so its artifact's identity; its pixel digest and its binding stay.
 # Nothing here decodes: an image is read through the core's `identify` alone (ADR 0001).
 image = { version = "=0.25.10", default-features = false, features = ["png"] }
 

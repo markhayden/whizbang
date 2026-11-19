@@ -36,6 +36,9 @@ exist yet", exists.
 Amended: 2026-11-12, a fifth note, with ADR 0007. Corrected: "it is closed" said more
 than the check does; a derivation checked against a mask that weighs every pixel
 compares no pixel.
+Amended: 2026-11-19, a sixth note, plan m3, task O5. Added: "The encoder's setting", the
+owner's choice of the fast PNG setting, which changed the identity of every image the core
+writes, and the store's format that marks it.
 Spec: section 3, "Identities" and "Storage"; section 16, checkpoint 1A
 
 ## Context
@@ -158,6 +161,32 @@ writes an image a tool makes, giving another file for the same pixels, changes t
 artifact's identity through its file digest and leaves its pixel digest and every binding
 that names it as they were, as ADR 0001 says of the JPEG decoder and the pixel digest;
 what writes a crop is pinned for that reason (`docs/reference/tools/view.md`).
+
+**The encoder's setting.** Every image whizbang makes (a crop, a rendering, a painted or
+pasted canvas, a picture brought in from a caller) is written by the core's one encoder,
+`whizbang_core::identity::encode`. Until 2026-11-19 it wrote at the `image` crate's
+default compression with the adaptive filter. `docs/results/m3-encoding.md` measured that
+at about forty times the time of fast compression with the same filter, for files about
+1.4 per cent smaller: six seconds a result at 8192 by 4096. The owner was asked on
+2026-11-19, "Fast PNG saving (40x faster, changes every image's identity): yes or no", and
+answered "yes that seems like a huge speed gain". So the encoder writes at fast
+compression with the adaptive filter (`encode::SETTING` is `fast_adaptive`), whose
+compressor is `fdeflate`, pinned exactly in the core's manifest in place of `flate2` and
+the `miniz_oxide` it compressed with.
+
+What changed is what this record says a change of encoder changes: every image's file,
+and so its identity, and nothing else. Pixel digests, bindings, locations and masks are as
+they were, and so is `image/1`: a file the old setting wrote is still a valid image of
+that kind, as any PNG a caller hands in is. What cannot stay is a store that holds both:
+the same pixels by two identities, an import's name (`imports/picture/`) that leads to the
+old file, and answers kept under the old identities. So the store's format, the version
+its generation files carry (`GENERATION_FORMAT`), went from 2 to 3 with no change of
+shape, and a store of format 2 is refused whole, by reader and writer, as "of another
+format: 2, and this build reads format 3". It is not migrated and not read beside the
+new: nothing has been released, and a store is made again by running what made it. The
+decision cache keys a run by its images' identities, so an answer about the old file is
+not served for the new one even inside one store
+(`cache::the_same_pixels_in_the_fast_encoders_file_miss_what_the_old_encoders_file_was_answered`).
 
 **`location/1`.** The binding; the shape's kind (`u`) and its parameters, in pixels of the
 binding's source space:

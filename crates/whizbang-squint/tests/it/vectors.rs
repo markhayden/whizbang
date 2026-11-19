@@ -9,7 +9,7 @@
 //!
 //! The file digests are what the pinned PNG encoder writes for those pixels: the core's
 //! one encoder (`whizbang_core::identity::encode`), whose pins its own test holds
-//! (`encode::the_core_encoder_keeps_the_four_pins_and_the_squint_vectors`). They were
+//! (`encode::the_core_encoder_keeps_the_three_pins_and_the_squint_vectors`). They were
 //! taken from a run, and they hold the encoder still: a crop's file is part of its
 //! artifact's identity (ADR 0002), so an encoder that writes another file for the same
 //! pixels changes every crop's identity, and must be a deliberate change.
@@ -46,7 +46,7 @@ pub const VECTORS: &[Vector] = &[
         cut: [0.0, 0.0, 2050.0, 9.0],
         shown: (1024, 4),
         pixels: "sha256:72bc845fcdf488b8c0c5d945f7646d3b60991fed5b55a22884f3def8c1fb175b",
-        file: "sha256:1aebc63f3ef4b44b312b4341fa1d6d9214338b2a0693687eb7ba7ecbb177fec8",
+        file: "sha256:21613d6eb49bfe933c8d88478a36511435a49742913170f5aed47cb054deee77",
     },
     Vector {
         name: "tall",
@@ -57,7 +57,7 @@ pub const VECTORS: &[Vector] = &[
         cut: [0.0, 0.0, 9.0, 3000.0],
         shown: (3, 1024),
         pixels: "sha256:a36af55b50d0e73d98ea70e7ff5c4060dc0e30cca892b7b88b8027f148244ed0",
-        file: "sha256:fe4c8a2b43b75ebaacefa7e53c64f8326eaa5eceb7c4067ed832f210e47d8419",
+        file: "sha256:5be78c8d2a252b35c5d8158944662d1007980a1741faa4b5510b72b4f5513eb6",
     },
     // A box inside the image, snapped outward on all four sides, then scaled.
     Vector {
@@ -69,7 +69,7 @@ pub const VECTORS: &[Vector] = &[
         cut: [19.0, 2.0, 1487.0, 109.0],
         shown: (1024, 75),
         pixels: "sha256:0c94e5c22ca385b105b1c9ef87aae2f795f23a13c91a5e2228cc44684ab55880",
-        file: "sha256:720e731ca75903f1f1e945a8d58ed44f9ccc1dae36cc01eb5e9c08be5301811b",
+        file: "sha256:24e3ad4ef2392de811366842f9468c6e856cb6cafc11d92f74868cbc6f662d1d",
     },
     // One pixel over the bound: every output pixel but the ends straddles two.
     Vector {
@@ -81,7 +81,7 @@ pub const VECTORS: &[Vector] = &[
         cut: [0.0, 4.0, 1025.0, 36.0],
         shown: (1024, 32),
         pixels: "sha256:0423afb95b17c7fae95e277de456a6d37f5df37439f2bdc72a9993ab94a065cc",
-        file: "sha256:caebc62f193f97e29b31dd1592ea55a837c52e67b182c0c42f023ad78448d444",
+        file: "sha256:807776e8b9ef73814e2d45db8334406593197040d164552d9c58626a27174832",
     },
     // Under the bound: cut, and not scaled.
     Vector {
@@ -93,7 +93,7 @@ pub const VECTORS: &[Vector] = &[
         cut: [30.0, 40.0, 273.0, 123.0],
         shown: (243, 83),
         pixels: "sha256:ac039282827fe9cd35256aa966fa555923dadc86b0b9b5c2082484ef3cee36c6",
-        file: "sha256:8892c2dbac0394a53bd6c31a0801b54492ade36fbbd9fcd7fcd7c9ea7861293f",
+        file: "sha256:f83ba461e385f87ee923cbb9551c6e3d1d6c1d65901f08806ad4679a682292a3",
     },
 ];
 

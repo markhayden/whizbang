@@ -43,8 +43,6 @@
 
 use std::io::Write;
 
-use image::codecs::png::{CompressionType, FilterType, PngEncoder};
-use image::{ExtendedColorType, ImageEncoder};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -169,10 +167,13 @@ pub fn export_mask(root: &Path, mask: &str, out: &Path, overwrite: bool) -> Resu
             _ => 0,
         })
         .collect();
-    let mut bytes = Vec::new();
-    PngEncoder::new_with_quality(&mut bytes, CompressionType::Default, FilterType::Adaptive)
-        .write_image(&grey, width, height, ExtendedColorType::L8)
-        .map_err(|error| format!("cannot write the mask as a PNG: {error}"))?;
+    let bytes = whizbang_core::identity::encode::png_of(
+        &grey,
+        width,
+        height,
+        whizbang_core::identity::encode::Channels::Grey,
+    )
+    .map_err(|error| format!("cannot write the mask as a PNG: {error}"))?;
     written(&target, replace, &bytes)?;
     Ok(format!(
         "exported mask {} ({width} by {height}) as a grey picture to {}\n",

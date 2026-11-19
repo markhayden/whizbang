@@ -1,6 +1,7 @@
 //! The time of encoding a result (plan m3, task O5, item 3; the carry-over row on large
-//! results): the encoder of an image artifact's file, `identity::encode`, against three
-//! other settings of the same encoder, on a synthetic picture at three sizes, each timed
+//! results): the encoder of an image artifact's file, `identity::encode` (the setting it
+//! names, fast compression since 2026-11-19), against three other settings of the same
+//! encoder, on a synthetic picture at three sizes, each timed
 //! three times and the middle time kept. Run by hand, in a release build, as
 //! `scripts/heavy.sh encoding cargo run --release -p whizbang-core --example encoding`;
 //! it prints the fields `docs/results/m3-encoding.md` holds.
@@ -11,7 +12,7 @@ use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use image::{ExtendedColorType, ImageEncoder};
 use whizbang_core::identity::encode::{self, Channels};
 
-/// The settings measured: the core's first.
+/// The settings measured: the core's until 2026-11-19 first, then the core's since.
 const SETTINGS: [(&str, CompressionType, FilterType); 4] = [
     (
         "default_adaptive",
@@ -66,7 +67,7 @@ fn main() -> Result<(), String> {
             let mut bytes = 0;
             for _ in 0..3 {
                 let started = Instant::now();
-                let file = if name == "default_adaptive" {
+                let file = if name == encode::SETTING {
                     encode::png_of(&rgba, width, height, Channels::Rgba)?
                 } else {
                     let mut file = Vec::new();

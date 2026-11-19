@@ -126,10 +126,10 @@ Measured in a release build on macos aarch64; each time is the middle one of fiv
 
 | Image | `change_map` |
 |---|---|
-| 256x192 | 9 |
-| 512x384 | 34 |
-| 1024x768 | 93 |
-| 2048x1536 | 157 |
+| 256x192 | 3 |
+| 512x384 | 12 |
+| 1024x768 | 42 |
+| 2048x1536 | 104 |
 
 <!-- timed: end -->
 

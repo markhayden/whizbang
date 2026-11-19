@@ -943,6 +943,15 @@ pictures of `tighten`'s vectors are rascal's drawn at 256 by 192, where rascal's
   setting chosen is recorded there; switching the encoder, which changes identities, is a
   carry-over row.
 
+  **The switch, its own pull request** (the owner's yes of 2026-11-19; ADR 0002, "The
+  encoder's setting"): `identity::encode` writes at the chosen setting, the store's format
+  is 3 and a store of format 2 is refused
+  (`store::runs::a_generation_file_of_another_format_is_refused_as_another_format_not_as_damage`),
+  the decision cache misses the new file of the same pixels
+  (`cache::the_same_pixels_in_the_fast_encoders_file_miss_what_the_old_encoders_file_was_answered`),
+  and `evidence::the_encoding_record_names_a_commit_of_this_tree` holds `encode::SETTING`
+  to the record's chosen setting. The carry-over row on the switch is closed.
+
 ## L1. The shared harness, and the lab's files (large)
 
 ### Goal

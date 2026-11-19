@@ -1,8 +1,8 @@
 //! `encode::…`: the one encoder of an image artifact's file (plan m3, task F1), held
 //! still. Its pins moved here from `whizbang-squint` with it; the crops of `view`, whose
 //! file digests `whizbang-squint`'s `vectors::the_crops_are_the_fixed_vectors` holds, are
-//! written by it, and this test holds one picture's file to the digest that encoder wrote
-//! before the move.
+//! written by it, and this test holds one picture's file to the digest it writes at the
+//! fast setting the owner chose on 2026-11-19 (plan m3, task O5).
 
 use whizbang_core::identity::encode::{self, Channels};
 use whizbang_core::identity::{CanonicalPixels, DecodeLimits, Digest, identify};
@@ -33,9 +33,9 @@ fn noisy() -> CanonicalPixels {
 }
 
 #[test]
-fn the_core_encoder_keeps_the_four_pins_and_the_squint_vectors() {
-    // `image`'s PNG encoder is the `png` crate, whose compressor at the setting used is
-    // `flate2` over `miniz_oxide` 0.9.1; each is pinned in this crate's manifest to the
+fn the_core_encoder_keeps_the_three_pins_and_the_squint_vectors() {
+    // `image`'s PNG encoder is the `png` crate, whose compressor at the setting used
+    // (fast compression) is `fdeflate`; each is pinned in this crate's manifest to the
     // version the lock file resolves, so raising one is an edit of the manifest, which
     // the file digests then judge.
     let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -44,8 +44,7 @@ fn the_core_encoder_keeps_the_four_pins_and_the_squint_vectors() {
     for (key, name, version) in [
         ("image", "image", "0.25.10"),
         ("png", "png", "0.18.1"),
-        ("flate2", "flate2", "1.1.11"),
-        ("miniz_oxide_compress", "miniz_oxide", "0.9.1"),
+        ("fdeflate", "fdeflate", "0.3.7"),
     ] {
         let pinned = manifest.lines().any(|line| {
             line.starts_with(&format!("{key} = "))
@@ -59,11 +58,10 @@ fn the_core_encoder_keeps_the_four_pins_and_the_squint_vectors() {
         locked(&lock, name, version);
     }
     assert!(locked(&lock, "image", "0.25.10").contains("\n \"png\",\n"));
-    assert!(locked(&lock, "png", "0.18.1").contains("\n \"flate2\",\n"));
-    assert!(locked(&lock, "flate2", "1.1.11").contains("\n \"miniz_oxide 0.9.1\",\n"));
+    assert!(locked(&lock, "png", "0.18.1").contains("\n \"fdeflate\",\n"));
 
-    // One picture's file, four channels and grey, is what the encoder wrote before it
-    // moved; and it reads back to the same pixels.
+    // One picture's file, four channels and grey, is what the encoder writes at the fast
+    // setting; and it reads back to the same pixels.
     let pixels = noisy();
     let file = encode::png(&pixels).unwrap();
     assert_eq!(
@@ -79,8 +77,8 @@ fn the_core_encoder_keeps_the_four_pins_and_the_squint_vectors() {
     assert_eq!(
         digests,
         [
-            "sha256:e0991ed831b84a5ed4491639233a29d68d14fb3b529944e7e9c02e9718e86277",
-            "sha256:f409ee181d964e72d25e3af4b28b4308329f46328bd34da6b28c6e4f653ac548",
+            "sha256:7b75bc718754f2a67839fefc6ca6eeb8ae5269d79742670bd1382aa2bde92858",
+            "sha256:84d14b0447fa5833b683687c712f711959fd2ba155b68357c540b23b73faf44f",
         ]
     );
     assert!(encode::png_of(&[0; 5], 2, 2, Channels::Rgba).is_err());
