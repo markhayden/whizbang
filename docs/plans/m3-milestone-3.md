@@ -168,7 +168,7 @@ the verdict, the tokens and the spend settled, the run, the recipient. No reply 
 refusal by a provider, or an answer a schema does not read, is recorded as it came and is
 G1's (item 4), not fixed here.
 
-- [ ] Done when:
+- [x] Done when:
   `evidence::the_use_cases_record_names_a_commit_of_this_tree_and_holds_no_secret` passes on
   the record with both judges' lines; P1's last clause in `docs/plans/m2c-milestone-2.md`
   ticked with a line naming this pull request; the carry-over row on P1's live evidence
