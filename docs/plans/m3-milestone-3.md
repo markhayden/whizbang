@@ -451,7 +451,7 @@ gate of details first is run.
    tests. U1's `view` crops are among the tools once U1 lands; whichever lands second adds
    them to the test.
 
-- [ ] Done when:
+- [x] Done when:
   `gate::the_frozen_gates_digest_is_in_every_run_it_makes`,
   `gate::scoring_a_synthetic_blind_set_leaves_the_sets_tree_unchanged_and_writes_only_aggregates`,
   `gate::a_gate_with_too_few_families_is_inconclusive_in_its_receipt`,
@@ -476,12 +476,11 @@ files live in `gates/` at the top of the repository. "Gates over three to six it
 three of the four gate tests run a set of two items in two arms (four runs each), to keep the
 test time down, and the command's test runs three.
 
-**Status (G1's first pull request).** Every named test above passes except the two
-`evidence::` tests, which read records that do not exist yet: the receipt of the gate of
-details first (the orchestrator's run) and the live rerun's two numbers (the owner's run). The
-wire's carry-over row is closed; the rows on gates as files and on the live rerun stay open
-until those runs. The box is ticked by the pull request that commits the two records with
-their tests.
+**Status (G1's first pull request).** Every named test above passed except the two
+`evidence::` tests, which waited for the two runs. **Done (G1's record):** the live rerun is
+in `docs/results/m2c-baseline.md` and the gate of details first, run on 2026-11-19 and
+rejected, in `docs/results/m3-gates.md` with its receipt, so both `evidence::` tests pass; the
+three carry-over rows are closed, and squint's `admissions.rs` has a row of its own for B1.
 
 **Status (the live rerun's record).** `docs/results/m2c-baseline.md` holds the live rerun of
 2026-11-19 (agreement 111 of 143, the recorded run's self-disagreement 29 of 143), and
@@ -1019,6 +1018,13 @@ B1's, since it is model-based), `mask_rect` and `protect`. D2: `rasterize`, `shr
 - [ ] Done when (D1):
   `scripts/tests/test-tool-records.sh` holding D1's fourteen records, each with rungs 1 and 2
   (`fill`'s rung 1 alone), and the carry-over row on the records of R2's operations closed.
+  **Split with the task** (D1, 2026-11-19), at the seam named under "Seams": D1's first
+  pull request holds nine records, `close`, `subtract`, `line`, `rect`, `stroke`, `paste`,
+  `fill` (rung 1), `mask_rect` and `protect`, the shared helper
+  (`crates/whizbang-rascal/tests/it/tool_records/`), their hooks in `scripts/tool-record.sh`
+  and their lines in `scripts/tests/test-tool-records.sh`. The records of R2's five
+  operations, `segment` with a real model among them, are D1's second pull request; the box
+  stays unticked, and the carry-over row on their records open, until it lands.
 - [ ] Done when (D2):
   `scripts/tests/test-tool-records.sh` holding D2's fourteen records, each with rungs 1 and 2,
   and `describe::each_pixel_operation_and_task_without_a_model_shows_its_record_complete`.

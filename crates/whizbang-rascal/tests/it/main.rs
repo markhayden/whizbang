@@ -32,6 +32,7 @@ mod stroke;
 mod subtract;
 mod task;
 mod tighten;
+mod tool_records;
 mod unwindow;
 mod window;
 // The seam (plan m3, task O3).
