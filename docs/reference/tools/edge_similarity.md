@@ -123,8 +123,8 @@ Measured in a release build on macos aarch64; each time is the middle one of fiv
 |---|---|
 | 256x192 | 2 |
 | 512x384 | 7 |
-| 1024x768 | 32 |
-| 2048x1536 | 97 |
+| 1024x768 | 31 |
+| 2048x1536 | 94 |
 
 <!-- timed: end -->
 

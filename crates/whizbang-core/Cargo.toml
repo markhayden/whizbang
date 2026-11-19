@@ -27,10 +27,10 @@ libm = "=0.2.16"
 # Inflating a PNG's colour profile inside a limit. The version the PNG decoder uses.
 miniz_oxide = "=0.8.9"
 # The one encoder of an image artifact's file (`identity::encode`): `image`'s PNG encoder
-# compresses with `flate2` over another `miniz_oxide` than the decoder's, each pinned so
-# that an artifact's file, part of its identity, changes only by an edit here.
-flate2 = "=1.1.11"
-miniz_oxide_compress = { package = "miniz_oxide", version = "=0.9.1" }
+# at fast compression compresses with `fdeflate`, pinned so that an artifact's file, part
+# of its identity, changes only by an edit here (the fast setting since 2026-11-19; until
+# then `flate2` over `miniz_oxide` 0.9.1, which were pinned here for it).
+fdeflate = "=0.3.7"
 serde.workspace = true
 serde_json.workspace = true
 # The digest that names stored content, and every identity.

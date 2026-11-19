@@ -1,14 +1,21 @@
 //! The one encoder of an image artifact's file (plan m3, task F1; the carry-over row on
 //! the encoder inside `whizbang-squint`): pixels written as a PNG of eight bits a channel,
-//! grey or red, green, blue and alpha, by `image`'s encoder at its default compression and
+//! grey or red, green, blue and alpha, by `image`'s encoder at its fast compression and
 //! adaptive filter, with no chunk but the picture's.
 //!
 //! An image artifact's file is part of its identity (ADR 0002), so this encoder is held
-//! still: `image`, `png`, `flate2` and the `miniz_oxide` that `flate2` compresses with
-//! (0.9.1, not the 0.8.9 the decoder reads with) are each pinned exactly in this crate's
-//! manifest, and `encode::the_core_encoder_keeps_the_four_pins_and_the_squint_vectors`
-//! holds them to the lock file and the crops of `view` to their file digests. It was
-//! `whizbang-squint`'s (`view.rs`), with copies in `render` and the binary's `export`.
+//! still: `image`, `png` and `fdeflate`, the compressor `png` calls at fast compression,
+//! are each pinned exactly in this crate's manifest, and
+//! `encode::the_core_encoder_keeps_the_three_pins_and_the_squint_vectors` holds them to the
+//! lock file and the crops of `view` to their file digests. It was `whizbang-squint`'s
+//! (`view.rs`), with copies in `render` and the binary's `export`.
+//!
+//! The setting was default compression until 2026-11-19, when the owner chose the fast
+//! one that `docs/results/m3-encoding.md` measured: about forty times faster, for files
+//! about 1.4 per cent larger (ADR 0002, "The encoder's setting"). The switch gave every
+//! image the core writes another file, and so another identity; a store written before
+//! it is of the generation format before
+//! [`GENERATION_FORMAT`](crate::store::GENERATION_FORMAT), and is refused.
 
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use image::{ExtendedColorType, ImageEncoder};
@@ -16,8 +23,8 @@ use image::{ExtendedColorType, ImageEncoder};
 use super::CanonicalPixels;
 
 /// The encoder's setting, by the name `docs/results/m3-encoding.md` measured it under:
-/// default compression and the adaptive filter.
-pub const SETTING: &str = "default_adaptive";
+/// fast compression and the adaptive filter.
+pub const SETTING: &str = "fast_adaptive";
 
 /// The samples of a picture as the encoder takes them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,7 +56,7 @@ pub fn png_of(
         ));
     }
     let mut file = Vec::new();
-    PngEncoder::new_with_quality(&mut file, CompressionType::Default, FilterType::Adaptive)
+    PngEncoder::new_with_quality(&mut file, CompressionType::Fast, FilterType::Adaptive)
         .write_image(samples, width, height, colour)
         .map_err(|error| format!("cannot write the pixels as a PNG: {error}"))?;
     Ok(file)

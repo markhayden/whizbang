@@ -67,3 +67,43 @@ fn a_changed_use_case_recipe_misses_and_an_unchanged_one_hits() {
     assert!(changed.contains("\"kept\""), "{changed}");
     assert_ne!(other, digest);
 }
+
+#[test]
+fn the_same_pixels_in_the_fast_encoders_file_miss_what_the_old_encoders_file_was_answered() {
+    // Plan m3, task O5: the canonical encoder became the fast one on 2026-11-19, which
+    // gives another file, and so another image identity, for the same pixels. The key
+    // takes each image by its identity, so a cached answer about the old file is not
+    // served for the new one, though the pixels and the binding are the same.
+    use image::ImageEncoder;
+    use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+    use whizbang_core::identity::{DecodeLimits, Projection, Topology, encode, identify};
+
+    let (mut world, source, candidate, _) = paired();
+    world.cached = true;
+    let pixels = identify(candidate.file(), &DecodeLimits::default())
+        .unwrap()
+        .pixels;
+    let mut old = Vec::new();
+    PngEncoder::new_with_quality(&mut old, CompressionType::Default, FilterType::Adaptive)
+        .write_image(
+            pixels.rgba(),
+            pixels.width(),
+            pixels.height(),
+            image::ExtendedColorType::Rgba8,
+        )
+        .unwrap();
+    let new = encode::png(&pixels).unwrap();
+    assert!(old != new, "the core's encoder writes another file");
+    let (old, new) = (
+        super::support::image_in(old, Projection::Flat, Topology::Bounded),
+        super::support::image_in(new, Projection::Flat, Topology::Bounded),
+    );
+    assert_ne!(old.id(), new.id());
+    world.hold(&[&old, &new]);
+    let (first, _) = decided(&world, &source, &old);
+    assert!(first.contains("\"kept\""), "{first}");
+    let (again, _) = decided(&world, &source, &old);
+    assert!(again.contains("\"hit\""), "{again}");
+    let (fast, _) = decided(&world, &source, &new);
+    assert!(fast.contains("\"kept\""), "{fast}");
+}
