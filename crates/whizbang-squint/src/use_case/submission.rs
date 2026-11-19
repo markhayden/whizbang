@@ -258,9 +258,13 @@ fn citable(resolved: &Resolved) -> String {
 }
 
 /// Holds what a submission cites as evidence to the run (squint's rule): each id an item
-/// or a finding lists under `evidence` is a tool call of this run that completed, one of
-/// `completed`; or why not, naming the item or the finding, quoting nothing it says.
-pub fn cited_calls_held(arguments: &Json, completed: &[String]) -> Result<(), String> {
+/// or a finding lists under `evidence` names a tool call of this run that completed, by
+/// the id the judge was shown for it (`shown`: the id a tool's result gives, `call:0`, or
+/// the id of the run that measured a detail handed to it first) or by the provider's own
+/// id of the call (`also`); or why not, naming the item or the finding and the ids it may
+/// cite, quoting nothing it says. The provider's ids are accepted and never listed: no
+/// judge is shown them as text, and some providers make them up for the adapter.
+pub fn cited_calls_held(arguments: &Json, shown: &[String], also: &[String]) -> Result<(), String> {
     let lists = |key: &str| arguments.get(key).and_then(Json::as_array).cloned();
     let items = (lists("items").unwrap_or_default().into_iter()).map(|item| {
         let named = item.get("id").and_then(Json::as_str).unwrap_or("an item");
@@ -279,10 +283,19 @@ pub fn cited_calls_held(arguments: &Json, completed: &[String]) -> Result<(), St
         for id in cited {
             let completed_here = id
                 .as_str()
-                .is_some_and(|id| completed.iter().any(|c| c == id));
+                .is_some_and(|id| shown.iter().chain(also).any(|c| c == id));
             if !completed_here {
+                let may = if shown.is_empty() {
+                    "no call of this run completed, so evidence is an empty list".to_owned()
+                } else {
+                    format!(
+                        "cite only {}, or none",
+                        listed(shown.iter().map(String::as_str))
+                    )
+                };
                 return Err(format!(
-                    "{who}: evidence cites a tool call that is not a completed call of this run"
+                    "{who}: evidence cites a tool call that is not a completed call of this \
+                     run; {may}"
                 ));
             }
         }

@@ -355,6 +355,62 @@ pub const MALFORMED: &str = "the model could not form its answer: MALFORMED_FUNC
 /// [`StopReason::Other`] and the backend makes a fault [`MALFORMED`].
 pub const UNFORMED: [&str; 2] = ["MALFORMED_FUNCTION_CALL", "MALFORMED_RESPONSE"];
 
+/// The codes of Google's errors (`google.rpc.Code`), by the word an error's `status`
+/// gives. A fault names one of these and no other word of an error's body.
+pub(crate) const CODES: [&str; 16] = [
+    "CANCELLED",
+    "UNKNOWN",
+    "INVALID_ARGUMENT",
+    "DEADLINE_EXCEEDED",
+    "NOT_FOUND",
+    "ALREADY_EXISTS",
+    "PERMISSION_DENIED",
+    "RESOURCE_EXHAUSTED",
+    "FAILED_PRECONDITION",
+    "ABORTED",
+    "OUT_OF_RANGE",
+    "UNIMPLEMENTED",
+    "INTERNAL",
+    "UNAVAILABLE",
+    "DATA_LOSS",
+    "UNAUTHENTICATED",
+];
+
+/// The codes Google's documentation of the Gemini interface says a caller may send the
+/// same request again after: the quota or rate, an overload, a deadline and an internal
+/// error.
+pub(crate) const TRANSIENT: [&str; 4] = [
+    "RESOURCE_EXHAUSTED",
+    "UNAVAILABLE",
+    "DEADLINE_EXCEEDED",
+    "INTERNAL",
+];
+
+/// What the body of an error states of itself: the code its `status` gives, when that is
+/// one of [`CODES`], and the wait a `RetryInfo` among its `details` gives
+/// (`retryDelay`, as seconds with an `s`), in milliseconds. Nothing else of the body is
+/// read, and a body that is not an error states nothing.
+pub(crate) fn stated(body: &[u8]) -> (Option<&'static str>, Option<u64>) {
+    let Ok(read) = serde_json::from_slice::<Value>(body) else {
+        return (None, None);
+    };
+    let error = &read["error"];
+    let code = (error["status"].as_str()).and_then(|word| CODES.into_iter().find(|c| *c == word));
+    let details = error["details"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let wait = details
+        .iter()
+        .filter(|detail| detail["@type"] == "type.googleapis.com/google.rpc.RetryInfo")
+        .find_map(|detail| detail["retryDelay"].as_str())
+        .and_then(|delay| delay.strip_suffix('s'))
+        .and_then(|seconds| seconds.parse::<f64>().ok())
+        .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
+        .map(|seconds| (seconds * 1000.0).round().min(u64::MAX as f64) as u64);
+    (code, wait)
+}
+
 /// What a fault says of an answer that is not a `generateContent` response.
 pub(crate) const NOT_A_RESPONSE: &str =
     "the answer is not a generateContent response the adapter reads";
