@@ -294,3 +294,62 @@ fn hard_writes_the_fill_where_the_core_is_set_and_nothing_else() {
     assert_eq!(same.pixels(), &base_pixels);
     assert!(same.derivation().is_none());
 }
+
+#[test]
+fn poisson_keeps_every_pixel_outside_its_domain() {
+    // Rascal's contract (`crates/rascal-ops/src/paste.rs`): the domain is every pixel the
+    // mask weighs over 0; every other pixel, the protected ones too, is the base's four
+    // bytes, and no alpha changes. The fill curves: every channel of the picture is
+    // harmonic, so a fill whose channels are too would be solved back to the picture.
+    let world = World::new("paste-poisson");
+    let base_pixels = pixels();
+    let base = image_of(&base_pixels, "import");
+    let mask = mask_on(&base);
+    let curved: Vec<u8> = (0..W * H)
+        .flat_map(|at| {
+            let (x, y) = (at % W, at / W);
+            [(x * x) as u8, (y * y) as u8, 0, 255]
+        })
+        .collect();
+    let fill = image_of(&CanonicalPixels::from_rgba(W, H, curved).unwrap(), "import");
+    let ids = (
+        world.put(base.clone().into()),
+        world.put(fill.into()),
+        world.put(mask.clone().into()),
+    );
+    let engine = world.engine(Capabilities::none(), Arc::new(NoBackends));
+    let call = Call::new("paste")
+        .argument("mode", Value::text("poisson"))
+        .input("image", ids.0)
+        .input("fill", ids.1)
+        .input("mask", ids.2);
+    let outcome = engine.submit(&call).unwrap().outcome().clone();
+    let [(_, made)] = outputs(&outcome).try_into().unwrap();
+    let made = world.image(made);
+    let step = made.origin().steps().last().unwrap();
+    assert_eq!(step.action, "paste");
+    assert!(
+        step.arguments
+            .contains(&("mode".to_owned(), "poisson".to_owned()))
+    );
+    assert!(
+        step.arguments
+            .contains(&("constants".to_owned(), "poisson-v1".to_owned()))
+    );
+    let after = made.pixels(&DecodeLimits::default()).unwrap();
+    let (before, after) = (base_pixels.rgba(), after.rgba());
+    let mut kept = 0;
+    let mut changed = 0;
+    for at in 0..(W * H) as usize {
+        let (b, a) = (&before[at * 4..at * 4 + 4], &after[at * 4..at * 4 + 4]);
+        assert_eq!(a[3], b[3], "pixel {at}: the alpha");
+        if weighs_nothing(&mask, at) {
+            assert_eq!(a, b, "pixel {at} is outside the domain");
+            kept += 1;
+        } else if a != b {
+            changed += 1;
+        }
+    }
+    assert_eq!(kept, 192 - 30 - 5 + 2);
+    assert!(changed > 0, "the solve wrote inside its domain");
+}
