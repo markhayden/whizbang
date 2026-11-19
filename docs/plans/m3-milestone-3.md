@@ -871,7 +871,7 @@ pictures of `tighten`'s vectors are rascal's drawn at 256 by 192, where rascal's
    result measured at three sizes, and the encoding chosen from the measurement, in
    `docs/results/m3-encoding.md`.
 
-- [ ] Done when:
+- [x] Done when:
   `measure::the_ported_vectors_give_rascals_measures`,
   `describe::each_of_rascals_25_operations_is_an_action`,
   `pixels::a_jpeg_whose_scans_are_short_is_refused`,
@@ -882,9 +882,11 @@ pictures of `tighten`'s vectors are rascal's drawn at 256 by 192, where rascal's
   `constants::every_set_rascal_shipped_is_here_byte_for_byte` (all eleven, or `poisson-v1`
   named as dropped), `just docs` regenerated, and the carry-over rows above closed or narrowed with a line.
 
-  **Split at the seam, as the plan allows:** the first pull request holds items 1 and 2 and
-  every test above but `evidence::the_encoding_record_names_a_commit_of_this_tree`; item 3,
-  large results' encoding and its record, is the second, and the box waits for it.
+  **Split at the seam, as the plan allows:** the first pull request (#225) holds items 1 and
+  2 and every test above but `evidence::the_encoding_record_names_a_commit_of_this_tree`;
+  the second holds item 3, large results' encoding and its record, and ticks the box. The
+  setting chosen is recorded there; switching the encoder, which changes identities, is a
+  carry-over row.
 
 ## L1. The shared harness, and the lab's files (large)
 
