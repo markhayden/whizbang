@@ -9,8 +9,18 @@ use whizbang_core::recipe::{Recipe, RecipeAction, RecipeError};
 /// `remove_prompt`: the mask that removes what a phrase names (rascal's `remove-prompt`).
 pub const REMOVE_PROMPT: &str = include_str!("../recipes/remove_prompt.toml");
 
+/// `remove`: the thing at a location removed, ending in a fill (rascal's `remove`).
+pub const REMOVE: &str = include_str!("../recipes/remove.toml");
+
+/// `repair_area`: a box or a polygon as drawn, feathered and filled (rascal's
+/// `repair-area`).
+pub const REPAIR_AREA: &str = include_str!("../recipes/repair_area.toml");
+
+/// `protect`: the mask for a second pass (rascal's `protect`).
+pub const PROTECT: &str = include_str!("../recipes/protect.toml");
+
 /// Each shipped recipe's text, in the order a door lists them.
-pub const SHIPPED: [&str; 1] = [REMOVE_PROMPT];
+pub const SHIPPED: [&str; 4] = [REMOVE_PROMPT, REMOVE, REPAIR_AREA, PROTECT];
 
 /// A recipe's text, read and checked against the actions of `registry`, as an action.
 pub fn action_of(text: &str, registry: &Registry) -> Result<RecipeAction, RecipeError> {
