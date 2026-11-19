@@ -2263,3 +2263,171 @@ fn rascal_window_unwindow_and_apply_run_from_the_command_line() {
     );
     assert_eq!(zero.code, Some(2), "{}", zero.err);
 }
+
+/// A remote kind at an address of the reserved `.example` domain, which nothing
+/// contacts, whose filler is the test kit's, repainting every pixel (plan m3, task O1).
+struct Repaints;
+
+impl Kind for Repaints {
+    fn name(&self) -> &str {
+        "repaints"
+    }
+
+    fn make(&self, table: &Table<'_>) -> Result<Made, KindRefused> {
+        let model = ModelIdentity::new("repaints", "m", "1");
+        let address = table.backend().address().expect("a url");
+        let declaration = Declaration::new(model, &[])
+            .unwrap()
+            .sending_to(Recipient::new(address.origin().clone()))
+            .priced(Price::at_most(1000.0).unwrap());
+        let filler = whizbang_testkit::capabilities::FakeFiller::new(
+            whizbang_testkit::capabilities::Paint::Inverse,
+        )
+        .declared_as(declaration);
+        Ok(Made::Fill(Arc::new(filler)))
+    }
+}
+
+#[test]
+fn rascal_remove_with_a_box_fills_under_a_scripted_filler() {
+    use crate::recipe::{record, run, with_small_picture};
+    use whizbang_core::contract::Value;
+    let dir = Scratch::new("cli-remove");
+    let (root, image) = with_small_picture(&dir);
+    let config = dir.path().join("whizbang.toml");
+    std::fs::write(
+        &config,
+        "[backends.fill]\nkind = \"repaints\"\nurl = \"https://fill.example.org/v1\"\n\n\
+         [egress.recipients.fill]\norigin = \"https://fill.example.org\"\n\
+         classes = [\"source_images\", \"derived_images\"]\n",
+    )
+    .unwrap();
+    let mut kinds = wiring::kinds(&OneWorker::installed());
+    kinds.register(Arc::new(Repaints)).unwrap();
+    let over = Over::nothing().config(Some(&config)).kinds(kinds);
+    // What `whizbang rascal remove --image <id> --box "20 16 36 28"` asks: `rect` makes
+    // the location, a run of its own, and then the recipe runs on it.
+    let store = Arc::new(Store::open(&root, Arc::new(RealFs)).unwrap());
+    let executor =
+        wiring::runner(wiring::registry_over(&over, false).unwrap(), store, &over).unwrap();
+    let rect = door::OperationAsked {
+        action: "rect",
+        arguments: vec![("box", Value::text("20 16 36 28"))],
+        inputs: vec![("image", "--image", image.as_str())],
+        request_id: None,
+    };
+    let made = door::operation(&executor, &rect).unwrap();
+    drop(executor);
+    let location = made
+        .lines()
+        .find_map(|line| line.strip_prefix("location "))
+        .expect("the location")
+        .to_owned();
+    let asked = door::OperationAsked {
+        action: "remove",
+        arguments: Vec::new(),
+        inputs: vec![
+            ("image", "--image", image.as_str()),
+            ("location", "--location", location.as_str()),
+        ],
+        request_id: None,
+    };
+    let out = run(&over, &root, &asked).unwrap();
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 10, "{out}");
+    let recipe_run = lines[0]
+        .strip_prefix("run ")
+        .unwrap()
+        .strip_suffix(" completed")
+        .unwrap();
+    let steps = [
+        "rasterize",
+        "grow",
+        "close",
+        "plug",
+        "subtract",
+        "feather",
+        "fill",
+    ];
+    for (line, step) in lines[1..8].iter().zip(steps) {
+        assert!(
+            line.starts_with(&format!("step {step} {step} run ")),
+            "{line}"
+        );
+    }
+    let composite = lines[8].strip_prefix("image ").expect("the composite");
+    let mask = lines[9].strip_prefix("mask ").expect("the mask");
+    let stored = record(&root, recipe_run);
+    assert_eq!(stored.steps().len(), 7);
+    // The composite: the box's middle repainted, a far corner the picture's own.
+    let store = Store::open(&root, Arc::new(RealFs)).unwrap();
+    let get = |kind, id: &str| {
+        whizbang_core::artifact::get(
+            &store,
+            kind,
+            whizbang_core::artifact::ArtifactId(id.parse().unwrap()),
+            &DecodeLimits::default(),
+        )
+        .unwrap()
+    };
+    let pixels = |id: &str| match get(whizbang_core::artifact::ArtifactType::Image, id) {
+        whizbang_core::artifact::Artifact::Image(image) => image
+            .pixels(&DecodeLimits::default())
+            .unwrap()
+            .rgba()
+            .to_vec(),
+        other => panic!("{other:?}"),
+    };
+    let (before, after) = (pixels(&image), pixels(composite));
+    let at = |x: usize, y: usize| (y * 64 + x) * 4;
+    let middle = at(28, 22);
+    assert_eq!(after[middle], 255 - before[middle]);
+    assert_eq!(
+        after[at(2, 60)..at(2, 60) + 4],
+        before[at(2, 60)..at(2, 60) + 4]
+    );
+    let rebound = get(whizbang_core::artifact::ArtifactType::Mask, mask)
+        .into_mask()
+        .unwrap();
+    assert_eq!(rebound.image().to_string(), {
+        let image = get(whizbang_core::artifact::ArtifactType::Image, composite);
+        match image {
+            whizbang_core::artifact::Artifact::Image(image) => image.identity().pixels.to_string(),
+            other => panic!("{other:?}"),
+        }
+    });
+    drop(store);
+    // The real binary takes the commands: `mask-rect` runs with no filler, and `remove`
+    // refuses a store that is not there.
+    let rect = whizbang(
+        &[
+            "rascal",
+            "mask-rect",
+            "--image",
+            &image,
+            "--box",
+            "20 16 36 28",
+        ],
+        &root,
+    );
+    assert_eq!(rect.code, Some(0), "{}", rect.err);
+    assert!(
+        rect.out
+            .lines()
+            .any(|line| line.starts_with("mask sha256:")),
+        "{}",
+        rect.out
+    );
+    let refused = whizbang(
+        &[
+            "rascal",
+            "remove",
+            "--image",
+            &image,
+            "--box",
+            "20 16 36 28",
+        ],
+        &dir.path().join("nowhere"),
+    );
+    assert_eq!(refused.code, Some(1), "{}", refused.err);
+}

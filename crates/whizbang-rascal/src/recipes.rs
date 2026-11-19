@@ -16,11 +16,14 @@ pub const REMOVE: &str = include_str!("../recipes/remove.toml");
 /// `repair-area`).
 pub const REPAIR_AREA: &str = include_str!("../recipes/repair_area.toml");
 
+/// `mask_rect`: a rectangle as a mask (rascal's `rect`).
+pub const MASK_RECT: &str = include_str!("../recipes/mask_rect.toml");
+
 /// `protect`: the mask for a second pass (rascal's `protect`).
 pub const PROTECT: &str = include_str!("../recipes/protect.toml");
 
 /// Each shipped recipe's text, in the order a door lists them.
-pub const SHIPPED: [&str; 4] = [REMOVE_PROMPT, REMOVE, REPAIR_AREA, PROTECT];
+pub const SHIPPED: [&str; 5] = [REMOVE_PROMPT, REMOVE, REPAIR_AREA, MASK_RECT, PROTECT];
 
 /// A recipe's text, read and checked against the actions of `registry`, as an action.
 pub fn action_of(text: &str, registry: &Registry) -> Result<RecipeAction, RecipeError> {

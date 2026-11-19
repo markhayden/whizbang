@@ -31,6 +31,8 @@ impl Shop {
         let mut registry = Registry::new();
         for register in [
             whizbang_rascal::line::register,
+            whizbang_rascal::rect::register,
+            whizbang_rascal::stroke::register,
             whizbang_rascal::rasterize::register,
             whizbang_rascal::shrink::register,
             whizbang_rascal::invert::register,

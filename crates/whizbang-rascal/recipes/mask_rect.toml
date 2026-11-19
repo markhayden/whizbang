@@ -1,0 +1,30 @@
+# The utility recipe: a rectangle as a mask.
+#
+# Ported from rascal's `crates/rascal-mask/recipes/rect.toml` at the commit
+# `docs/sources.toml` pins, named `mask_rect` (`SPEC.md` section 7). Rascal's command
+# made the box a location before the recipe ran; here the box is the recipe's text input
+# and its first step, `rect`, makes the location. Rascal's grey rendering is left to the
+# action `render`.
+version = 1
+name = "mask_rect"
+purpose = "Makes a rectangle on an image a mask: the box's pixels the core, no blend and nothing protected."
+use = "To mask a known box, such as a caller's coordinates or a detector's box, with no model."
+use_case = "custom"
+
+[inputs]
+image = { type = "Image" }
+box = { type = "Text" }
+
+[[step]]
+id = "rect"
+op = "rect"
+inputs = { image = "inputs.image" }
+box = "inputs.box"
+
+[[step]]
+id = "rasterize"
+op = "rasterize"
+inputs = { location = "rect.location", image = "inputs.image" }
+
+[outputs]
+mask = "rasterize.mask"
