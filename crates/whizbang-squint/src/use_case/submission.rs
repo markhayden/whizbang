@@ -101,7 +101,12 @@ struct Placed {
 fn place(location: &Location, job: &Job) -> Result<Placed, String> {
     let image = location.frame.strip_prefix("raw:").unwrap_or("");
     if !job.images.iter().any(|i| i.id == image) {
-        return Err("the location's frame is not raw: and an image of the job".to_owned());
+        let frames: Vec<String> = job.images.iter().map(|i| format!("raw:{}", i.id)).collect();
+        return Err(format!(
+            "the location's frame is not one of {}: raw: and the id of an image of the job, \
+             never the frame of a view or of an aligned picture",
+            frames.join(", ")
+        ));
     }
     let clamp = |v: f64, clamped: &mut bool| {
         let c = v.clamp(0.0, 1.0);
@@ -226,6 +231,32 @@ fn applies(by: &str, instances: &[String], resolved: &Resolved, who: &str) -> Re
     Ok(())
 }
 
+/// Ids as a rejection names them: in the order given, each once, or `none is enabled`.
+fn listed<'a>(ids: impl Iterator<Item = &'a str>) -> String {
+    let mut seen: Vec<&str> = Vec::new();
+    for id in ids {
+        if !seen.contains(&id) {
+            seen.push(id);
+        }
+    }
+    if seen.is_empty() {
+        "none is enabled".to_owned()
+    } else {
+        seen.join(", ")
+    }
+}
+
+/// What a finding may cite, as a rejection names it: the obligations of the job, then
+/// its observe rules. Only ids the judge was given (plan 2C, task F1: E1's run ended 10
+/// of 220 decisions at a second submission that cited nothing, or the wrong kind).
+fn citable(resolved: &Resolved) -> String {
+    let obligations = listed(resolved.instances.iter().map(|i| i.obligation_id.as_str()));
+    let observations = listed(resolved.observations.iter().map(|o| o.id.as_str()));
+    format!(
+        "the obligations {obligations}, or for an observed finding the observe rules {observations}"
+    )
+}
+
 /// An answer read, or why not, in words that quote nothing of it.
 fn read(value: &Json, who: &str) -> Result<Answer, String> {
     serde_json::from_value(value.clone()).map_err(|_| {
@@ -244,8 +275,20 @@ pub fn decided_of(
     resolved: &Resolved,
     checklist: &Checklist,
 ) -> Result<Decided, String> {
-    let submission: Submission = serde_json::from_value(arguments.clone())
-        .map_err(|_| "the submission is not an object of items and findings".to_owned())?;
+    let submission: Submission = serde_json::from_value(arguments.clone()).map_err(|_| {
+        let text = ["items", "findings"]
+            .into_iter()
+            .filter(|key| arguments.get(*key).is_some_and(Json::is_string))
+            .collect::<Vec<_>>();
+        match text.as_slice() {
+            [] => "the submission is not an object of items and findings".to_owned(),
+            keys => format!(
+                "the submission is not an object of items and findings: {} is text; each \
+                 is a list of objects, not a string that holds one",
+                keys.join(" and ")
+            ),
+        }
+    })?;
     let items = submission.items.ok_or("items is not a list")?;
     let mut said = Vec::new();
     let mut counted = Vec::new();
@@ -321,7 +364,11 @@ pub fn decided_of(
         }
         let ids = answer.obligation_ids.clone().unwrap_or_default();
         if ids.is_empty() {
-            return Err(format!("{tag}: cites no obligation"));
+            return Err(format!(
+                "{tag}: cites no obligation: obligation_ids lists the rules it bears on, of \
+                 {}",
+                citable(resolved)
+            ));
         }
         let location = answer
             .location
@@ -351,9 +398,18 @@ pub fn decided_of(
                     ));
                 }
                 observed += 1;
-            } else if resolved.exemptions.iter().any(|e| &e.id == id) {
+            } else if let Some(ex) = resolved.exemptions.iter().find(|e| &e.id == id) {
+                let then = if ex.waives.is_empty() {
+                    format!("; {id} waives nothing, so it is never an allowed_by")
+                } else {
+                    format!(
+                        " ({id} waives {}), and name {id} as allowed_by",
+                        ex.waives.join(", ")
+                    )
+                };
                 return Err(format!(
-                    "{tag}: {id} is an exemption; cite the obligation the change bears on"
+                    "{tag}: {id} is an exemption; cite the obligation the change bears \
+                     on{then}"
                 ));
             } else {
                 return Err(format!(
@@ -363,7 +419,11 @@ pub fn decided_of(
         }
         match answer.disposition {
             Disposition::Observed if !mandatory.is_empty() || observed == 0 => {
-                return Err(format!("{tag}: observed findings cite observe rules only"));
+                return Err(format!(
+                    "{tag}: observed findings cite observe rules only ({}); a finding on an \
+                     obligation is a violation, cant_tell or allowed_change",
+                    listed(resolved.observations.iter().map(|o| o.id.as_str()))
+                ));
             }
             Disposition::Violation | Disposition::CantTell if mandatory.is_empty() => {
                 return Err(format!("{tag}: it must cite a mandatory obligation"));

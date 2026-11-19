@@ -5,6 +5,7 @@
 mod chains;
 mod gate;
 mod hops;
+mod jpeg;
 mod pixels;
 mod prepare;
 mod recipients;

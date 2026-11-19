@@ -250,3 +250,50 @@ fn the_ported_rules_are_squints_rules_byte_for_byte_less_the_fields_dropped() {
     let screened = format!("{}\n[screen]\ntools = []\n", TABLE[0].1);
     assert!(toml::from_str::<use_case::Rules>(&screened).is_err());
 }
+
+#[test]
+fn a_rejection_names_the_frames_and_rules_the_judge_may_use() {
+    // E1's live run (plan 2C, task F1): of ten decisions ended as invalid submissions,
+    // the first rejection of five was a frame that was not raw:, and the second of
+    // most a finding that cited nothing or the wrong kind of rule. Each rejection names
+    // what the judge may give instead, of the ids it was given, and nothing it wrote.
+    let job = fitting("reference-consistency", None);
+    let resolved = use_case::resolve(&job).unwrap();
+    let checklist = Checklist::build(&resolved, &job);
+    let rejected = |finding: Json| {
+        let mut submitted = answers(&checklist, "", "held", "confident");
+        submitted["findings"] = json!([finding]);
+        use_case::decided_of(&submitted, &job, &resolved, &checklist).unwrap_err()
+    };
+    let finding = |ids: Json, disposition: &str, frame: &str| {
+        json!({"obligation_ids": ids, "disposition": disposition, "confidence": "confident",
+               "reason": "Seen.", "allowed_by": null, "evidence": [],
+               "location": {"kind": "whole_image", "frame": frame, "bbox": null,
+                            "polygon": null, "yaw": null, "pitch": null, "fov": null}})
+    };
+    let said = rejected(finding(json!(["RC1"]), "violation", "aligned:candidate:t1"));
+    assert!(
+        said.contains("not one of raw:candidate, raw:reference-1:"),
+        "{said}"
+    );
+    let said = rejected(finding(json!([]), "violation", "raw:candidate"));
+    assert!(
+        said.ends_with("cites no obligation: obligation_ids lists the rules it bears on, of the obligations RC1, RC2, RC3, or for an observed finding the observe rules RC5"),
+        "{said}"
+    );
+    let said = rejected(finding(json!(["RC4"]), "allowed_change", "raw:candidate"));
+    assert!(said.contains("RC4 is an exemption"), "{said}");
+    assert!(
+        said.ends_with("RC4 waives nothing, so it is never an allowed_by"),
+        "{said}"
+    );
+    let said = rejected(finding(json!(["RC1"]), "observed", "raw:candidate"));
+    assert!(
+        said.contains("observed findings cite observe rules only (RC5);"),
+        "{said}"
+    );
+    let mut text = answers(&checklist, "", "held", "confident");
+    text["items"] = Json::String(text["items"].to_string());
+    let said = use_case::decided_of(&text, &job, &resolved, &checklist).unwrap_err();
+    assert!(said.contains(": items is text;"), "{said}");
+}

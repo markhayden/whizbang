@@ -48,7 +48,7 @@ pub use directory::{ModelsDir, OpenRefused};
 pub use hold::{Hold, HoldRefused, Holds};
 pub use install::{
     Carrying, Current, Damage, InstallRefused, current, install, install_carrying,
-    install_or_attach, install_or_attach_carrying, verify, verify_checked,
+    install_or_attach, install_or_attach_carrying, verify, verify_checked, verify_in_full,
 };
 pub use installation::{
     INSTALLATION_FORMAT, INSTALLATION_MAX_BYTES, InstallationId, InstallationRecord, InstalledFile,
@@ -62,7 +62,8 @@ pub use pin::{PinRefused, Pinned, pin_file};
 pub use refused::{Refused, Rule, What};
 pub use registry::{
     ADAPTER_MAX_BYTES, AdapterRefused, Added, REGISTRY_FORMAT, REGISTRY_MAX_BYTES,
-    USER_ADAPTERS_LIMIT, USER_PREFIX, add_adapter, is_users, registered, users_catalogue,
+    USER_ADAPTERS_LIMIT, USER_PREFIX, add_adapter, is_users, registered, remove_unnamed_adapters,
+    users_catalogue,
 };
 pub use remove::{
     DRAINING_FORMAT, DRAINING_MAX_BYTES, Mark, REMOVALS_FORMAT, REMOVALS_MAX_BYTES, RemoveRefused,

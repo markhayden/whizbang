@@ -2378,11 +2378,29 @@ the place after the lease and a fake segmenter behind it.
   and for `user-<name>` reads the copy once, compares its SHA-256 with the record's
   revision, and compiles only those bytes; a copy whose hash differs is refused before
   anything of it runs. A model of the shipped catalogue never runs a user's adapter.
+  An installation's folder that holds a folder `files/` and no record is refused, since
+  which adapter its files were installed for is not known
+  (`test_worker.Load.test_a_load_with_no_record_beside_files_is_refused`).
+- **A user's adapter runs with the worker's full privileges.** The hash binds which code
+  runs, not what it may do: once compiled, the adapter is Python in the worker's process,
+  with everything the worker holds. Its open descriptors (the pipes to whizbang among
+  them), its environment, every file the user may read or write, the network, and any
+  process it starts. Nothing sandboxes it. Adding an adapter is trusting it as much as
+  running it by hand.
 - **A replaced adapter.** Adding a changed file under the same name is a new hash: the
   registry names it, the model's installation is out of date until `get` installs it
   again (its files linked, nothing downloaded), and the earlier copy is kept, so a call
   admitted under the earlier installation runs the earlier copy
   (`models::an_adapter_replaced_while_a_call_is_admitted_leaves_that_call_on_the_earlier_copy`).
+  After `get` and `remove`, under the directory's lock, each copy that neither the
+  registry nor any installation's record names is removed; nothing is removed when a
+  record cannot be read or a layout is a link, and names that are no model or no
+  identity (`.DS_Store`) are passed over (plan 2C, task F1;
+  `models::removing_a_model_removes_adapter_copies_nothing_names`). An install reads
+  its adapter's revision before any lock, so its publication, under the directory's
+  lock, refuses a record whose user's copy is gone: "the adapter was replaced while
+  installing", and nothing is pointed to
+  (`models::an_install_whose_adapter_copy_was_removed_while_it_staged_publishes_nothing`).
   No copy is ever removed: a removal of the copies no installation names is on the
   carry-over list.
 
@@ -2537,8 +2555,11 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   filesystem corruption, or a writer below the system's calls, in the owner's own
   directory, where the record lives too. A record is
   not removed with its installation; a reinstall of the same identity writes new
-  files, whose stamps it does not hold. The full check with no record trusted, as a
-  command (`whizbang models verify`), is not built (`docs/carry-over.md`). On the
+  files, whose stamps it does not hold. The full check with no record trusted is
+  `whizbang models verify <model>` (plan 2C, task F1): every file of the current
+  installation is read whole, the record is written when all are whole, and an earlier
+  record is removed when one is not, so the next load hashes again
+  (`models::verify_hashes_every_file_and_writes_the_check_record_only_when_whole`). On the
   owner's Mac the first request of a process came to its `load` in 0.06 s, where the
   full hash took about 26 s, and the model was loaded about 5 s after it
   (`docs/results/m1c-local-pack.md`).

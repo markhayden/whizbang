@@ -88,7 +88,7 @@ fn tree(dir: &Path) -> Vec<(PathBuf, Option<Vec<u8>>)> {
 
 fn listing_of_the_three_runs() -> String {
     format!(
-        "generation: 1\nnames outside runs: 1\nruns: 3\n\
+        "generation: 1\nnames outside runs: 1 (request ids 0, spend 0, other 1)\nruns: 3\n\
          failed\toutputs 0\tdiagnostics 1\tbytes {}\n\
          one\toutputs 2\tdiagnostics 0\tbytes {}\n\
          two\toutputs 1\tdiagnostics 0\tbytes {}\n",
@@ -241,7 +241,7 @@ fn deleting_every_run_leaves_the_records_outside_runs() {
     let listed = whizbang(&["list"], &root);
     assert_eq!(
         listed.out,
-        "generation: 2\nnames outside runs: 1\nruns: 0\n"
+        "generation: 2\nnames outside runs: 1 (request ids 0, spend 0, other 1)\nruns: 0\n"
     );
     assert_eq!(std::fs::read(object(&root, LEDGER)).unwrap(), LEDGER);
     assert_eq!(std::fs::read_dir(root.join("objects")).unwrap().count(), 1);
@@ -335,7 +335,7 @@ fn list_adds_sizes_without_overflowing() {
     assert_eq!(
         listed.out,
         format!(
-            "generation: 1\nnames outside runs: 0\nruns: 1\n\
+            "generation: 1\nnames outside runs: 0 (request ids 0, spend 0, other 0)\nruns: 1\n\
              big\toutputs 1\tdiagnostics 1\tbytes {}\n",
             u64::MAX
         ),
@@ -356,7 +356,7 @@ fn list_escapes_a_run_id_that_would_break_its_lines() {
     assert_eq!(listed.code, Some(0), "{}", listed.err);
     assert_eq!(
         listed.out,
-        "generation: 1\nnames outside runs: 0\nruns: 2\n\
+        "generation: 1\nnames outside runs: 0 (request ids 0, spend 0, other 0)\nruns: 2\n\
          caf\u{e9} \\\"7\\\"\toutputs 0\tdiagnostics 0\tbytes 0\n\
          two\\nlines\\tand a tab \\u{1b}[31m\toutputs 0\tdiagnostics 0\tbytes 0\n"
     );
@@ -386,7 +386,7 @@ fn runs_whose_ids_the_store_would_refuse_are_listed_and_deleted() {
     assert_eq!(
         listed.out,
         format!(
-            "generation: 1\nnames outside runs: 0\nruns: 2\n\
+            "generation: 1\nnames outside runs: 0 (request ids 0, spend 0, other 0)\nruns: 2\n\
              \toutputs 1\tdiagnostics 0\tbytes {size}\n\
              a\\u{{1}}b\toutputs 1\tdiagnostics 0\tbytes {size}\n",
             size = MASK.len()
@@ -405,7 +405,7 @@ fn runs_whose_ids_the_store_would_refuse_are_listed_and_deleted() {
     assert_eq!(
         listed.out,
         format!(
-            "generation: 2\nnames outside runs: 0\nruns: 1\n\
+            "generation: 2\nnames outside runs: 0 (request ids 0, spend 0, other 0)\nruns: 1\n\
              a\\u{{1}}b\toutputs 1\tdiagnostics 0\tbytes {}\n",
             MASK.len()
         )
@@ -421,7 +421,7 @@ fn runs_whose_ids_the_store_would_refuse_are_listed_and_deleted() {
     let listed = whizbang(&["list"], &root);
     assert_eq!(
         listed.out,
-        "generation: 3\nnames outside runs: 0\nruns: 0\n"
+        "generation: 3\nnames outside runs: 0 (request ids 0, spend 0, other 0)\nruns: 0\n"
     );
     assert!(!object(&root, MASK).exists(), "nothing names it any more");
 }
@@ -659,7 +659,12 @@ fn the_records_of_request_ids_are_left_by_delete_and_prune_and_still_answer() {
     let pruned = whizbang(&["prune"], &root);
     assert_eq!(pruned.code, Some(0), "{}", pruned.err);
     let listed = whizbang(&["list"], &root);
-    let outside = format!("names outside runs: {}\nruns: 0\n", before.len());
+    // The records of request ids are named apart from the ledger's (plan 2C, task F1).
+    let outside = format!(
+        "names outside runs: {} (request ids 4, spend {}, other 0)\nruns: 0\n",
+        before.len(),
+        before.len() - 4
+    );
     assert!(listed.out.contains(&outside), "{}", listed.out);
     assert_eq!(records(&root), before);
     // Each reservation is read back, and still names the run it was made for.

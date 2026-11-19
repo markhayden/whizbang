@@ -49,11 +49,14 @@ pub struct Ceilings {
     pub pictures: usize,
 }
 
-/// The ceilings when the table gives none: 40,000 input tokens, 2,048 output tokens
-/// and 24 pictures.
+/// The ceilings when the table gives none: 40,000 input tokens, 4,096 output tokens
+/// and 24 pictures. The output ceiling is the most that keeps the sixteen turns `check`
+/// reserves of every priced model within the example's cap of 2.00 dollars (ADR 0026):
+/// at 2,048, a details-first turn was cut off with no room for its retry (plan 2C,
+/// task F1).
 pub const DEFAULT_CEILINGS: Ceilings = Ceilings {
     input_tokens: 40_000,
-    output_tokens: 2_048,
+    output_tokens: 4_096,
     pictures: 24,
 };
 

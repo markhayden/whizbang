@@ -11,10 +11,19 @@
 //! send reads a part that starts as a JPEG does by those markers and no other
 //! ([`is_plain_jpeg`]): any `APP1` to `APP15` (EXIF, XMP, a colour profile), a
 //! comment, a second frame or scan, a thumbnail, or a byte after the end is refused.
-//! It reads the structure, not the pixels: a JPEG of that structure holds pixels and
-//! nothing else, whoever wrote it.
+//! It reads the structure, not the pixels.
+//!
+//! **Each table is the encoder's own** (plan 2C, task F1; the security review of S1's
+//! second pull request): every `DQT` and `DHT` body is one the encoder writes at
+//! [`JPEG_QUALITY`], byte for byte, so no table carries bytes of another kind; the
+//! frame and the scan's header are held to a baseline JPEG's exact structure (their
+//! lengths, components, sampling, table ids and spectral selection), and a `DRI` to its
+//! two bytes. The scan's data is entropy-coded: any bytes may be valid there, and the
+//! check holds only its markers (the carry-over row on a prepared JPEG known by its
+//! markers).
 
 use std::io::Cursor;
+use std::sync::OnceLock;
 
 use image::codecs::jpeg::JpegEncoder;
 use image::{DynamicImage, ExtendedColorType, ImageEncoder, RgbaImage, imageops};
@@ -118,10 +127,18 @@ pub fn is_plain_jpeg(bytes: &[u8]) -> bool {
                     return false;
                 }
             }
-            0xdb | 0xc4 | 0xdd => {}
-            0xc0 => frames += 1,
+            0xdb | 0xc4 => {
+                if !encoders_tables()
+                    .iter()
+                    .any(|(m, b)| *m == marker && b == body)
+                {
+                    return false;
+                }
+            }
+            0xdd if body.len() == 2 => {}
+            0xc0 if is_baseline_frame(body) => frames += 1,
             0xda => {
-                if frames != 1 {
+                if frames != 1 || !is_baseline_scan(body) {
                     return false;
                 }
                 rest = &rest[2 + length..];
@@ -147,6 +164,71 @@ pub fn is_plain_jpeg(bytes: &[u8]) -> bool {
         }
     }
     true
+}
+
+/// The bodies of the `DQT` and `DHT` segments the encoder writes at [`JPEG_QUALITY`],
+/// by their markers: the same for every picture, read once from an encoding of one.
+fn encoders_tables() -> &'static [(u8, Vec<u8>)] {
+    static TABLES: OnceLock<Vec<(u8, Vec<u8>)>> = OnceLock::new();
+    TABLES.get_or_init(|| {
+        let mut bytes = Vec::new();
+        let rgb = [128u8; 8 * 8 * 3];
+        let written = JpegEncoder::new_with_quality(Cursor::new(&mut bytes), JPEG_QUALITY)
+            .write_image(&rgb, 8, 8, ExtendedColorType::Rgb8);
+        let mut tables = Vec::new();
+        if written.is_err() {
+            return tables;
+        }
+        let mut rest = bytes.get(2..).unwrap_or_default();
+        while let [0xff, marker, high, low, ..] = *rest {
+            let length = usize::from(u16::from_be_bytes([high, low]));
+            if marker == 0xda || length < 2 || rest.len() < 2 + length {
+                break;
+            }
+            if matches!(marker, 0xdb | 0xc4) {
+                tables.push((marker, rest[4..2 + length].to_vec()));
+            }
+            rest = &rest[2 + length..];
+        }
+        tables
+    })
+}
+
+/// A baseline frame's header: 8 bits a sample, a size of at least one pixel, one or
+/// three components of distinct ids, each sampled 1 to 4 times each way and naming a
+/// table of 0 to 3; and nothing more.
+fn is_baseline_frame(body: &[u8]) -> bool {
+    let [8, h1, h0, w1, w0, count, ref components @ ..] = *body else {
+        return false;
+    };
+    let sized = u16::from_be_bytes([h1, h0]) > 0 && u16::from_be_bytes([w1, w0]) > 0;
+    let count = usize::from(count);
+    if !sized || !matches!(count, 1 | 3) || components.len() != 3 * count {
+        return false;
+    }
+    let ids: Vec<u8> = components.chunks(3).map(|c| c[0]).collect();
+    let distinct = ids.iter().enumerate().all(|(i, id)| !ids[..i].contains(id));
+    distinct
+        && components.chunks(3).all(|c| {
+            (1..=4).contains(&(c[1] >> 4)) && (1..=4).contains(&(c[1] & 0x0f)) && c[2] <= 3
+        })
+}
+
+/// A baseline scan's header: one to four components, each naming tables of 0 to 3,
+/// the whole spectrum (0 to 63) and no successive approximation; and nothing more.
+fn is_baseline_scan(body: &[u8]) -> bool {
+    let Some((&count, rest)) = body.split_first() else {
+        return false;
+    };
+    let count = usize::from(count);
+    if !(1..=4).contains(&count) || rest.len() != 2 * count + 3 {
+        return false;
+    }
+    let (components, tail) = rest.split_at(2 * count);
+    components
+        .chunks(2)
+        .all(|c| c[1] >> 4 <= 3 && c[1] & 0x0f <= 3)
+        && tail == [0, 63, 0]
 }
 
 #[cfg(test)]

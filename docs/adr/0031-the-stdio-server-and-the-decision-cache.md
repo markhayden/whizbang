@@ -43,6 +43,20 @@ that it is busy. The four counts the calls on the server's list: a run the serve
 grace after its stated time has passed, is answered and dropped from the list though its
 action may still be running, so more than four may then run, and only the executor's bound
 on started runs holds them (`serve::a_run_given_up_after_its_grace_no_longer_counts_toward_the_limit_of_calls`).
+**The reader when the output fails** (plan 2C, task F1): `serve` returns, and the reader
+is left waiting on its input, which the server does not own and cannot wake from a blocking
+read; it ends when that input ends. That is the bound, and it is enough: the binary serves
+once a process and its input ends with the client, so the reader ends with the process; the
+second place of `READERS_LIMIT` is for a test that starts a second server, and a third is
+refused, never more threads.
+
+**One process owns every run it starts** (plan 2C, task F1; the carry-over row on a cancel
+from another process). The server starts each run in its own process, takes a client's
+cancel over its own input (`notifications/cancelled`), and cancels every run still going at
+the end of that input; no cancel, status or wait reaches it from another process, and none
+needs to while the client of a run is the process's own input. A run whose deadline, at the
+stated time, ended it before the server looked is answered as given up all the same
+(`serve::a_run_its_deadline_ended_before_the_server_looked_is_answered_as_given_up`).
 
 **A call is a call of an action.** It is prepared, admitted, reserved for and sent through
 the gate exactly as from the command line, since it goes through the same entry point; the

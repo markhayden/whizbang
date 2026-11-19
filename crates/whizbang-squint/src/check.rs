@@ -73,7 +73,7 @@ pub const USE_CASES: [&str; 6] = [
 /// The action's name.
 pub const NAME: &str = "check";
 /// The action's version.
-pub const VERSION: &str = "1.3.0";
+pub const VERSION: &str = "1.4.0";
 /// The most requests one run sends its judge, the retry of a cut-off turn included.
 pub const TURNS_LIMIT: usize = 16;
 /// The most tool calls one run dispatches. It is far under what the executor lets one
@@ -881,6 +881,11 @@ impl Action for Check {
         };
         let unfit = |why: whizbang_core::capability::Unfit| failed("judge_request", &why);
         let mut messages = vec![Message::new(Role::User, opening).map_err(unfit)?];
+        // The limit each turn is sent with: the call's, until a turn is cut off; then
+        // the raised limit, for that turn's retry and every turn after it, since a judge
+        // that wrote past the limit once is likely to again (plan 2C, task F1: E1's run
+        // ended 20 of 220 decisions at a cut-off turn whose retry was refused).
+        let mut limit = tokens;
         let mut allowed = tokens;
         let mut retried = false;
         // Each request sent again after the judge could not answer it: its fault's kind
@@ -912,11 +917,12 @@ impl Action for Check {
                     continue;
                 }
             };
-            allowed = tokens;
+            allowed = limit;
             reported &= turn.reported_model().is_some();
             match turn.stop() {
                 // Cut off: the turn is left out of the conversation, whatever it
-                // holds, and asked for once more with a larger limit.
+                // holds, and asked for once more with a larger limit, which the turns
+                // after it keep.
                 // A turn whose backend sends no more than its output ceiling, and was
                 // sent with it already, is not asked for again: the retry would be
                 // sent with the same limit. The fault names the setting to raise.
@@ -938,6 +944,7 @@ impl Action for Check {
                         return Err(failed("judge_output_ceiling", &why));
                     }
                     retried = true;
+                    limit = raised;
                     allowed = raised;
                 }
                 StopReason::Refusal => {

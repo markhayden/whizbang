@@ -205,6 +205,36 @@ fn a_file_already_held_by_another_installation_is_linked_and_not_downloaded() {
 }
 
 #[test]
+fn a_held_file_planted_as_a_link_is_never_linked_and_the_file_is_downloaded() {
+    // The review of plan 1D, task Q1 (#182): a held file that is a link, to a file of
+    // the same bytes outside the directory, is passed over, as a folder that is a link
+    // is: nothing is followed, and the new installation's file is its own.
+    let scratch = Scratch::new("shared-planted");
+    let root = scratch.path();
+    let tiny = sharing(root, &entry_of("tiny", "2026-11.1"), &serving_both()).unwrap();
+    let outside = scratch.path().join("outside.onnx");
+    std::fs::write(&outside, graph()).unwrap();
+    let held = file_of(root, &tiny, "graph.onnx");
+    std::fs::remove_file(&held).unwrap();
+    std::os::unix::fs::symlink(&outside, &held).unwrap();
+    let dir = ModelsDir::at(Arc::new(RealFs), root);
+    assert!(!all_held(&dir, &entry_of("other", "2026-11.1"), &none()).unwrap());
+    let fake = serving_both();
+    let other = sharing(root, &entry_of("other", "2026-11.1"), &fake).unwrap();
+    assert_eq!(fake.asked(&at("graph.onnx")), 1);
+    assert_eq!(fake.asked(&at("LICENSE.txt")), 0);
+    let made = file_of(root, &other, "graph.onnx");
+    assert!(
+        !std::fs::symlink_metadata(&made)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_ne!(inode(&made), inode(&outside));
+    assert!(whole(root, &other));
+}
+
+#[test]
 fn two_installs_sharing_a_file_at_once_download_it_once() {
     let scratch = Scratch::new("shared-once");
     let root = scratch.path().to_path_buf();
