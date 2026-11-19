@@ -6,8 +6,12 @@
 //! Ported from rascal `crates/rascal-ops/src/put.rs` at the commit `docs/sources.toml`
 //! pins. Rascal knew a canvas was this panorama's cut by its frame, named after the image
 //! and the plan. An image here has no frame, so `put` takes the mask the canvas was worked
-//! through as well: on the canvas the plan cuts from this panorama, or rebound onto the
-//! canvas given (as `fill` hands one back, after `apply` or not). The canvas given must be that cut
+//! through as well: on the canvas the plan cuts from this panorama, or rebound by the
+//! identity onto the canvas given, the image it belongs to being that canvas (as `fill`
+//! hands one back, after `apply` or not). Since version 1.1.0 (task O3) the image a mask
+//! was rebound from need not be the cut itself: `apply`'s working image, derived from the
+//! cut, is taken too, and a mask that belongs to any other image than the canvas given
+//! is refused. The canvas given must be that cut
 //! wherever the mask weighs nothing, outside its core and blend or under protect; so
 //! every pixel of the panorama the mask never reaches, and every protected one, is the
 //! panorama's (plan m3, task O2, item 3). A plan made for another panorama, a canvas of
