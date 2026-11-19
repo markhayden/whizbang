@@ -319,8 +319,8 @@ fn mask_of(
     }
     let mut core = Vec::with_capacity(pixels.rgba().len() / 4);
     let mut blend = Vec::with_capacity(core.capacity());
-    for (at, pixel) in pixels.rgba().chunks_exact(4).enumerate() {
-        let [r, g, b, a] = [pixel[0], pixel[1], pixel[2], pixel[3]];
+    let (each, _) = pixels.rgba().as_chunks::<4>();
+    for (at, &[r, g, b, a]) in each.iter().enumerate() {
         if r != g || g != b || a != 255 {
             let (x, y) = (at % width as usize, at / width as usize);
             return Err(format!(

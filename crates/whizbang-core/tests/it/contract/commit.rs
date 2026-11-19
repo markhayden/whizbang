@@ -25,7 +25,7 @@ use whizbang_testkit::scratch::Scratch;
 
 use super::record::schema;
 use super::redact::made_up_key;
-use crate::artifact::support::{limits, line_by, made_by, on, rect, rect_mask_by};
+use crate::artifact::support::{limits, line_by, on, rect, rect_mask_by};
 
 /// A clock that always says the same.
 struct Stopped(u64);
@@ -488,15 +488,19 @@ fn an_action_that_fails_commits_nothing() {
 
 // --- an artifact the store already holds ------------------------------------------------------
 
-/// The mask `pair` returns, as another action would have made it: the same planes on
-/// the same image, so the same identity, and another origin, so another file.
+/// The mask `pair` returns, as an earlier version of `pair` made it: the same planes on
+/// the same image, so the same identity, and another origin, so another file. Its origin
+/// names `pair`: a stored artifact the call neither gave nor made is taken only when the
+/// file the store keeps names the action (plan m3, F1's second pull request;
+/// `outputs::a_stored_artifact_neither_given_nor_made_by_a_call_it_made_is_held_to_its_origin`).
 fn the_mask_made_otherwise() -> Mask {
     Mask::from_core(
         on("photo"),
         UseCase::Custom,
         rect(2, 1, 5, 4),
         Source::default(),
-        made_by("another"),
+        whizbang_core::artifact::Origin::new(whizbang_core::artifact::Step::new("pair", "0.9"))
+            .unwrap(),
     )
     .unwrap()
 }

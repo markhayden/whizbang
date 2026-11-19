@@ -1,6 +1,8 @@
 //! The task `remove_prompt` (plan m3, task R1, item 5): the shipped recipe, read and
 //! checked against this crate's actions, run through the executor over the test kit's
-//! fake segmenter on a picture of 64 by 64, with `protect` left out and given.
+//! fake segmenter and a fake filler that paints the support, on a picture of 64 by 64,
+//! with `protect` left out and given. Its last step fills (plan m3, task F1, item 6): the
+//! mask handed back is the feathered mask rebound onto the composite.
 
 use std::sync::Arc;
 
@@ -13,7 +15,7 @@ use whizbang_core::contract::{Call, Capabilities, Engine, Executor, Outcome, Reg
 use whizbang_core::identity::{DecodeLimits, Digest, Projection, Topology};
 use whizbang_core::store::Store;
 use whizbang_rascal::recipes;
-use whizbang_testkit::capabilities::{FakeSegmenter, roster};
+use whizbang_testkit::capabilities::{FakeFiller, FakeSegmenter, Paint, roster};
 
 use super::grow_action::World;
 
@@ -61,12 +63,17 @@ fn engine(store: Arc<Store>, segmenter: &Arc<FakeSegmenter>) -> Engine {
     whizbang_rascal::plug::register(&mut registry).unwrap();
     whizbang_rascal::subtract::register(&mut registry).unwrap();
     whizbang_rascal::feather::register(&mut registry).unwrap();
+    whizbang_rascal::fill::register(&mut registry).unwrap();
     for recipe in recipes::shipped(&registry).unwrap() {
         registry.register(Arc::new(recipe)).unwrap();
     }
-    let backends = roster(Some(segmenter.as_ref()), None, None);
-    Engine::over(registry, Arc::new(backends), store, Digest::of_bytes(b""))
-        .with_capabilities(Capabilities::none().with_segment(segmenter.clone()))
+    let filler = Arc::new(FakeFiller::new(Paint::Support([250, 10, 10])));
+    let backends = roster(Some(segmenter.as_ref()), Some(filler.as_ref()), None);
+    Engine::over(registry, Arc::new(backends), store, Digest::of_bytes(b"")).with_capabilities(
+        Capabilities::none()
+            .with_segment(segmenter.clone())
+            .with_fill(filler),
+    )
 }
 
 fn mask(store: &Store, id: ArtifactId) -> Mask {
@@ -93,8 +100,9 @@ fn remove_prompt_completes_with_and_without_protect() {
     let Outcome::Completed { outputs } = finished.outcome() else {
         panic!("{:?}", finished.outcome());
     };
-    assert_eq!(outputs.len(), 1);
-    let without = mask(&store, outputs[0].id());
+    // The composite and the mask rebound onto it.
+    assert_eq!(outputs.len(), 2);
+    let without = mask(&store, outputs[1].id());
     // Both instances, grown, closed and feathered: the core holds each box and reaches
     // further down for the shadow; the blend feathers its edge; nothing is protected.
     let at = |m: &Mask, x: u32, y: u32| m.core()[(y * SIDE + x) as usize];
@@ -115,14 +123,10 @@ fn remove_prompt_completes_with_and_without_protect() {
         .map(|s| s.action.clone())
         .collect();
     // An origin is the stored artifact's: a step that changed nothing made the same
-    // identity, which the store holds with the origin it was first committed with.
-    assert_eq!(
-        (
-            names.first().map(String::as_str),
-            names.last().map(String::as_str)
-        ),
-        (Some("select"), Some("feather"))
-    );
+    // identity, which the store holds with the origin it was first committed with. The
+    // last steps are the fill's and its rebind onto the composite.
+    assert_eq!(names.first().map(String::as_str), Some("select"));
+    assert_eq!(names[names.len() - 3..], ["feather", "fill", "rebind"]);
 
     // With protect: a mask over the first instance's left half, which the mask keeps off.
     let guard = Mask::from_core(
@@ -148,7 +152,7 @@ fn remove_prompt_completes_with_and_without_protect() {
     let Outcome::Completed { outputs } = finished.outcome() else {
         panic!("{:?}", finished.outcome());
     };
-    let with = mask(&store, outputs[0].id());
+    let with = mask(&store, outputs[1].id());
     assert_eq!(at(&with, 12, 14), 0, "kept off protect");
     assert_ne!(
         with.protect()[(14 * SIDE + 16) as usize],
