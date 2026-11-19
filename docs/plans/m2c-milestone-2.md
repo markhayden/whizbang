@@ -416,7 +416,7 @@ use cases, sets, judges and arms runs each item as a run of `check`, resumably; 
    aggregates by set and use case: no item's verdict beyond what its set already
    publishes.
 
-- [ ] Done when:
+- [x] Done when:
   `sets::every_file_squint_tracked_under_evalsets_is_here_byte_for_byte`,
   `sets::a_set_whose_seal_does_not_match_is_refused`,
   `sets::corrections_are_applied_as_a_versioned_file_beside_the_set`,
@@ -440,17 +440,16 @@ use cases, sets, judges and arms runs each item as a run of `check`, resumably; 
   `evidence::the_evaluation_record_reports_at_least_100_runs_of_align_by_stats_and_by_export`,
   and the carry-over rows above closed.
 
-**Left unticked by the task (E1).** Built and held by the tests named above: items 1 to 6,
-but for `whizbang store list` naming request ids, which is the named overflow to F1
-(`cli::store_list_says_which_names_are_request_ids`; the carry-over row on the records of
-request ids). Item 7, the evidence, waits on the owner's yes to the third item under "What the
-owner must answer": no picture can be fetched without it, so no matrix has run and
-`docs/results/m2c-evaluation.md` and its two `evidence::` tests are not written (the
-carry-over row on E1's evidence). Two tests live one module deeper than named:
+**Reworded with the task (E1).** The box is ticked with one clause moved:
+`cli::store_list_says_which_names_are_request_ids`, `whizbang store list` naming request
+ids, is the named overflow to F1 (plan 2C, "Overflow"; the carry-over row on the records of
+request ids). Two tests live one module deeper than named:
 `store::volume::request_ids_at_100000_publish_within_the_measured_bound` (`#[ignore]`d, run by
 hand, its numbers in ADR 0030, with `store::volume::request_ids_at_2000_…` in CI) and
-`spend::ledger::an_admission_after_many_paid_runs_and_a_reset_reads_no_closed_epoch`. The copy
-of squint's `evalsets/` is 374 files and 16,428 lines, not the 8,900 the split estimated.
+`spend::ledger::an_admission_after_many_paid_runs_and_a_reset_reads_no_closed_epoch`. Item 7
+ran on 2026-11-18 after the owner's yes (`docs/results/m2c-evaluation.md`): 220 decisions,
+172 runs of `align` by `runs stats` and by `runs export`, 0.77 dollars settled. The copy of
+squint's `evalsets/` is 374 files and 16,428 lines, not the 8,900 the split estimated.
 
 **Keeping tests lean (E1).** Sets made in the test, of three to six items with pictures
 of 32 by 32; the byte-for-byte test compares digests listed in a committed file, not
@@ -462,6 +461,9 @@ recorded, with a test of 2,000 ids in CI.
 `https://raw.githubusercontent.com`, for downloads only (a GET of a picture by its path
 at a pinned revision of the public `wafflery-evalsets` repository; nothing of the
 owner's is sent), on the owner's yes. No other origin.
+
+**Approved by the owner on 2026-11-18**: "approved on #3", the third item under "What the
+owner must answer". Used once, for the evidence of item 7.
 
 ## E2. Metrics, paired statistics, gates and the baseline gate (large)
 
