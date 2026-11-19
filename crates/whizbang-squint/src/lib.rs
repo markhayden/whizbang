@@ -10,8 +10,10 @@
 pub mod align;
 pub mod cache;
 pub mod check;
+pub mod compare;
 pub mod details;
 pub mod job;
+pub mod marks;
 pub mod replay;
 pub mod resize;
 pub mod use_case;

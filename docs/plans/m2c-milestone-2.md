@@ -746,6 +746,18 @@ tool and is scored on rungs 1 and 2.
   `change_map` and `edge_similarity` with rungs 1 and 2, and the carry-over rows above
   closed.
 
+**Built in part (X1, first pull request).** Of the tests above, these are there and pass:
+`change_map::the_ported_vectors_give_squints_map_and_measurements`,
+`edge_similarity::the_ported_vectors_give_squints_ratio`,
+`check::an_experimental_tool_is_run_only_when_the_run_names_it`,
+`cli::squint_check_with_detail_change_map_hands_its_measurements_to_a_scripted_judge`,
+`cli::try_runs_one_tool_on_a_pair_with_no_judge` and
+`cli::eval_tool_scores_a_tool_on_a_three_item_set` (on `change_map`, before tool files),
+the four `eval_tool::` tests, the two `describe::` tests, and
+`scripts/tests/test-tool-records.sh` holding the records of `change_map` and
+`edge_similarity` (rung 1). The rest, and the box, wait for the second pull request
+(`docs/carry-over.md`, the row on what X1 did not build); rung 2 of the two tools is F1's.
+
 **Keeping tests lean (X1).** Tool files in tests are a few lines run by the pack's
 fake models; the worker is started once per test file, as the pack's tests do; SAM 3
 runs only under `just test-models`.

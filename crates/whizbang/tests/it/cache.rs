@@ -105,6 +105,13 @@ fn a_change_of_use_case_brief_role_order_rule_or_tool_misses() {
         "\"version\":\"{}\"",
         cache::tool_version("view").unwrap()
     )));
+    // So are those of the tools that compare a pair (task X1): a run that measures one
+    // first is keyed by squint's version of its code.
+    let compared = key_of(&job, &pictures, &["view", "change_map"], &judge);
+    assert!(compared.material().contains(&format!(
+        "{{\"name\":\"change_map\",\"version\":\"{}\"}}",
+        cache::tool_version("change_map").unwrap()
+    )));
 }
 
 // --- through the door, under a scripted judge ---------------------------------------------------

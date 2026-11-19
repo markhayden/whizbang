@@ -21,6 +21,7 @@ use whizbang_core::store::fs::Fs;
 use whizbang_core::store::{Kind as Stored, Reader, Store};
 use whizbang_squint::align::Align;
 use whizbang_squint::check::{Check, Toolbox};
+use whizbang_squint::compare::Compare;
 use whizbang_squint::resize::Resize;
 use whizbang_squint::view::View;
 use whizbang_testkit::capabilities::{FakeJudge, roster};
@@ -184,6 +185,9 @@ impl World {
         registry
             .register(wrap(Arc::new(Resize::new().unwrap())))
             .unwrap();
+        for compare in [Compare::change_map(), Compare::edge_similarity()] {
+            registry.register(wrap(Arc::new(compare.unwrap()))).unwrap();
+        }
         registry.register(Arc::new(grow)).unwrap();
         let offered = roster(None, None, Some(judge.as_ref()));
         Engine::over(

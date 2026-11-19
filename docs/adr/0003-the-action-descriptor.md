@@ -188,10 +188,10 @@ nothing. The binary builds its registry in one function (`crates/whizbang/src/wi
 that its tests call too; a test then registers its fakes, which live in
 `whizbang-testkit`, a development dependency only (`scripts/crate-graph.txt`).
 
-### The static description, version 6
+### The static description, version 7
 
-`whizbang describe --json` is one object: `description_version` (now 6), `name`, `version`,
-`actions` and `artifact_types`. A `Description` is made from a registry and in no other
+`whizbang describe --json` is one object: `description_version` (now 7), `name`, `version`,
+`actions`, `marks` and `artifact_types`. A `Description` is made from a registry and in no other
 way: its fields are private, so one cannot be written by hand with a name listed twice.
 
 - `actions` holds each registered action's whole descriptor, with every field present; one
@@ -201,6 +201,13 @@ way: its fields are private, so one cannot be written by hand with a name listed
   Version 2 listed actions in registration order. Version 4 gave each need of an action
   the field `chosen_by`, version 5 the field `requests`, and version 6 the field
   `feature_from` ("A feature a call chooses").
+- `marks` (version 7; plan m2c, task X1, item 6) holds each registered tool the upper rungs
+  apply to, with its mark, `experimental`, `unverified` or `admitted` (`SPEC.md` section 8),
+  in the order of the records: the first word in bold of the part "Mark and history" of
+  its record, `docs/reference/tools/<name>.md`, compiled in
+  (`whizbang_squint::marks`). A tool without a record, or whose record states none, is not
+  listed: it cannot be unverified or admitted. The text form prints the mark beside the
+  name.
 - `artifact_types` holds the six types in ADR 0002's order, each with its `name`, a
   `purpose` that keeps the purpose rule, and `travels_as`, which is `canonical_file` for
   all six: a copy of the file is the artifact, and `whizbang store import` reads it.

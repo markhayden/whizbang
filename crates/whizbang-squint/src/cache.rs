@@ -27,7 +27,7 @@ use whizbang_core::identity::{BindingId, Digest};
 use crate::check::{self, TURN_TEXT_LIMIT, TURNS_LIMIT};
 use crate::job::Job;
 use crate::use_case::{self, Checklist, REASONS};
-use crate::{align, details, resize, view};
+use crate::{align, compare, details, resize, view};
 
 /// The name and version of the material's form.
 pub const CONTRACT: &str = "decision-cache/1";
@@ -95,12 +95,22 @@ fn value_json(value: &Value) -> Json {
 }
 
 /// The revision of a tool this build links, by its name: the action's version, and
-/// for `align` its estimator's beside it.
+/// for `align`, `change_map` and `edge_similarity` the version of squint's code beside it.
 pub fn tool_version(name: &str) -> Option<String> {
     match name {
         view::NAME => Some(view::VERSION.to_owned()),
         align::NAME => Some(format!("{}+{}", align::ACTION_VERSION, align::VERSION)),
         resize::NAME => Some(resize::VERSION.to_owned()),
+        compare::CHANGE_MAP => Some(format!(
+            "{}+{}",
+            compare::ACTION_VERSION,
+            compare::CHANGE_MAP_VERSION
+        )),
+        compare::EDGE_SIMILARITY => Some(format!(
+            "{}+{}",
+            compare::ACTION_VERSION,
+            compare::EDGE_SIMILARITY_VERSION
+        )),
         _ => None,
     }
 }

@@ -30,7 +30,7 @@ fn registry() -> Registry {
 fn a_description_lists_what_was_registered_in_order_and_in_full() {
     let description = Description::new("1.2.3", &registry());
     assert_eq!(description.description_version(), DESCRIPTION_VERSION);
-    assert_eq!(DESCRIPTION_VERSION, 6);
+    assert_eq!(DESCRIPTION_VERSION, 7);
     assert_eq!(description.name(), "whizbang");
     assert_eq!(description.version(), "1.2.3");
     let names: Vec<&str> = description.actions().iter().map(|a| a.name()).collect();
@@ -41,6 +41,14 @@ fn a_description_lists_what_was_registered_in_order_and_in_full() {
     );
     let value = serde_json::to_value(&description).unwrap();
     assert_eq!(value["actions"][1]["outputs"][2]["name"], "found");
+    // Marks (version 7): only of actions it registers, in the order given.
+    assert!(description.marks().is_empty());
+    let marked = description.with_marks([("seam", "experimental"), ("nothing", "admitted")]);
+    let value = serde_json::to_value(&marked).unwrap();
+    assert_eq!(
+        value["marks"],
+        serde_json::json!([{"tool": "seam", "mark": "experimental"}])
+    );
 }
 
 #[test]

@@ -16,6 +16,7 @@ mod spending;
 mod squint;
 mod stats;
 mod store;
+mod tool_try;
 
 use std::process::ExitCode;
 
@@ -92,6 +93,11 @@ enum Command {
     /// Setup: installing the Python pack from the lock file this build carries, and
     /// checking that its worker says hello.
     Setup(setup::Args),
+    /// Try a tool on one pair, with no judge: the candidate registered onto the source by
+    /// align, then the tool on the source and the aligned frame. Prints the two runs and
+    /// what the tool measured.
+    #[command(name = "try")]
+    Try(tool_try::Args),
     /// Serve: the MCP server over stdio, for a local agent. Each action is a tool; a
     /// call runs through admission, spend and the egress gate as the command line's
     /// do. It ends when its input does.
@@ -244,6 +250,10 @@ fn main() -> ExitCode {
                 Err(complaint) => complain(&complaint),
             }
         }
+        Command::Try(args) => match tool_try::run(&args) {
+            Ok(text) => emit(text.as_bytes()),
+            Err(complaint) => complain(&complaint),
+        },
         Command::Eval { command } => match eval::run(&command) {
             Ok(text) => emit(text.as_bytes()),
             Err(complaint) => complain(&complaint),

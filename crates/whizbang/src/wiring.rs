@@ -32,9 +32,9 @@ use whizbang_backends::service::ServiceKind;
 /// recipe first, then the primitives. Tools add theirs here as they are ported. What
 /// comes back otherwise is why an action could not be registered, in a sentence.
 ///
-/// `check`, `align`, `resize` and `view` are squint's (ADR 0009); `whizbang squint check`
-/// runs `check`. `check` needs a judge, which a config gives as a backend of the kind
-/// `service` ([`kinds`]); the three tools need none, and are what `check` calls.
+/// `check`, `align`, `change_map`, `edge_similarity`, `resize` and `view` are squint's
+/// (ADR 0009); `whizbang squint check` runs `check`. `check` needs a judge, which a config gives as a backend of the kind
+/// `service` ([`kinds`]); the five tools need none, and are what `check` calls.
 pub fn registry() -> Result<Registry, String> {
     registry_with(false)
 }
@@ -54,9 +54,13 @@ pub fn registry_with(cached: bool) -> Result<Registry, String> {
     let view = whizbang_squint::view::View::new().map_err(|e| said(&e))?;
     let align = whizbang_squint::align::Align::new().map_err(|e| said(&e))?;
     let resize = whizbang_squint::resize::Resize::new().map_err(|e| said(&e))?;
-    let actions: [Arc<dyn Action>; 10] = [
+    let change_map = whizbang_squint::compare::Compare::change_map().map_err(|e| said(&e))?;
+    let edges = whizbang_squint::compare::Compare::edge_similarity().map_err(|e| said(&e))?;
+    let actions: [Arc<dyn Action>; 12] = [
         Arc::new(check),
         Arc::new(align),
+        Arc::new(change_map),
+        Arc::new(edges),
         Arc::new(whizbang_rascal::feather::Feather::new()),
         Arc::new(grow),
         Arc::new(whizbang_rascal::plug::Plug::new()),
@@ -1126,7 +1130,9 @@ pub fn not_opened(error: &store::Error) -> String {
 
 /// The static description of a build of this crate's version that holds this registry.
 pub fn description(registry: &Registry) -> Description {
-    Description::new(env!("CARGO_PKG_VERSION"), registry)
+    let marks = whizbang_squint::marks::all();
+    let marks = marks.iter().map(|(tool, mark)| (*tool, mark.word()));
+    Description::new(env!("CARGO_PKG_VERSION"), registry).with_marks(marks)
 }
 
 /// The description as `whizbang describe` prints it for a person: the build, then each
@@ -1137,7 +1143,19 @@ pub fn describe_text(description: &Description) -> String {
         text.push_str("no actions yet\n");
     }
     for action in description.actions() {
-        text.push_str(&format!("  {}  {}\n", action.name(), action.purpose()));
+        let mark = description
+            .marks()
+            .iter()
+            .find(|mark| mark.tool() == action.name());
+        match mark {
+            Some(mark) => text.push_str(&format!(
+                "  {}  [{}]  {}\n",
+                action.name(),
+                mark.mark(),
+                action.purpose()
+            )),
+            None => text.push_str(&format!("  {}  {}\n", action.name(), action.purpose())),
+        }
     }
     text
 }

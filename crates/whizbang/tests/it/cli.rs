@@ -694,6 +694,58 @@ fn squint_check_details_first_prints_the_verdict_under_a_recorded_fake() {
     assert_eq!(pictures, 3);
 }
 
+#[test]
+fn squint_check_with_detail_change_map_hands_its_measurements_to_a_scripted_judge() {
+    use crate::anthropic::{Judged, checked_measuring, submission};
+    let judged = Judged::new("cli-squint-change-map");
+    let (printed, log) = checked_measuring(
+        &judged,
+        vec![submission("held", "Nothing protected moved.")],
+        None,
+        whizbang::door::Details::First,
+        Some("change_map"),
+        "full",
+    );
+    let printed = printed.unwrap();
+    assert!(printed.lines().nth(1) == Some("verdict: pass"), "{printed}");
+    // Before the judge looked, align registered the candidate onto the source, and
+    // change_map compared the source with the aligned frame: the opening holds what each
+    // measured, labelled with the tool and its mark, the aligned frame and the map.
+    let log = log.lock().unwrap();
+    assert_eq!(log.len(), 1);
+    let sent: serde_json::Value = serde_json::from_slice(&log[0].1).unwrap();
+    let opening = sent["messages"][0]["content"].as_array().unwrap();
+    let texts: Vec<&str> = opening
+        .iter()
+        .filter_map(|part| part["text"].as_str())
+        .collect();
+    assert!(texts[3].starts_with("align (unverified), "), "{}", texts[3]);
+    let measured = texts
+        .iter()
+        .find(|text| {
+            text.starts_with(
+                "change_map (experimental), aligned:candidate:t1 against source: Change map of ",
+            )
+        })
+        .unwrap_or_else(|| panic!("{texts:?}"));
+    assert!(
+        measured.contains("% of pixels differ in structure")
+            && measured.contains("\nMeasurements: changed_fraction 0."),
+        "{measured}"
+    );
+    assert!(
+        texts
+            .iter()
+            .any(|text| text.starts_with("Image `map:candidate:source`")),
+        "{texts:?}"
+    );
+    let pictures = opening
+        .iter()
+        .filter(|part| part["type"] == "image")
+        .count();
+    assert_eq!(pictures, 4);
+}
+
 /// A key of capitals and digits, as one pasted in place of a variable's name would
 /// be: made at run time, the key of nothing.
 pub(crate) fn pasted_key() -> String {
@@ -1595,4 +1647,180 @@ fn eval_baseline_prints_counts_and_no_item() {
             .unwrap()
             .ends_with("result = \"fail\"\n")
     );
+}
+
+// --- `whizbang try` and `whizbang eval tool` (plan m2c, task X1, item 5) ------------------------
+
+/// A scratch folder and an empty store in it.
+fn bare(label: &str) -> (Scratch, PathBuf) {
+    let dir = Scratch::new(label);
+    let root = dir.path().join("store");
+    drop(Store::open(&root, Arc::new(RealFs)).unwrap());
+    (dir, root)
+}
+
+/// A picture of `fixtures/compare/`, squint's painted scenes.
+fn compared(name: &str) -> Vec<u8> {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/compare");
+    std::fs::read(dir.join(format!("{name}.png"))).unwrap()
+}
+
+/// Brings a picture into the store at `root`, as `store import --picture` does: its
+/// identity.
+fn imported(dir: &Scratch, root: &Path, name: &str) -> String {
+    let file = dir.path().join(format!("{name}.png"));
+    std::fs::write(&file, compared(name)).unwrap();
+    let said = whizbang::import::import_picture(&file, root, false, wiring::recovery()).unwrap();
+    let id = said
+        .split_whitespace()
+        .find(|word| word.starts_with("sha256:"))
+        .unwrap()
+        .to_owned();
+    id.trim_end_matches(['.', ',']).to_owned()
+}
+
+#[test]
+fn try_runs_one_tool_on_a_pair_with_no_judge() {
+    let (dir, root) = bare("cli-try");
+    let source = imported(&dir, &root, "before");
+    let candidate = imported(&dir, &root, "after");
+    // No config: no judge and no backend is there to be asked.
+    let tried = whizbang(
+        &[
+            "try",
+            "change_map",
+            "--source",
+            &source,
+            "--candidate",
+            &candidate,
+        ],
+        &root,
+    );
+    assert_eq!(tried.code, Some(0), "{}", tried.err);
+    let lines: Vec<&str> = tried.out.lines().collect();
+    assert!(
+        lines[0].starts_with("run ") && lines[0].ends_with(" align"),
+        "{}",
+        tried.out
+    );
+    assert!(
+        lines[1].starts_with("run ") && lines[1].ends_with(" change_map"),
+        "{}",
+        tried.out
+    );
+    // The fraction is the tool's on the source and the frame align returned.
+    let measured: f64 = lines[2]
+        .strip_prefix("changed_fraction ")
+        .and_then(|rest| rest.strip_suffix(" ratio"))
+        .unwrap_or_else(|| panic!("{}", tried.out))
+        .parse()
+        .unwrap();
+    assert!(measured > 0.0 && measured < 0.05, "{measured}");
+    assert!(lines[3].starts_with("map sha256:"), "{}", tried.out);
+    assert_eq!(lines.len(), 4, "{}", tried.out);
+    // A tool that cannot be tried is refused, naming those that can.
+    let refused = whizbang::trying::declared("grow").unwrap_err();
+    assert!(refused.contains("change_map, edge_similarity"), "{refused}");
+}
+
+/// A set of source-fidelity under `dir` of three items in three families, each its source
+/// and candidate from `fixtures/compare/`, labelled as given; its pictures in a folder beside.
+fn three_items(dir: &Path) -> (PathBuf, PathBuf) {
+    const SET: &str = "source-fidelity/compare-v1";
+    let (root, from) = (dir.join("evalsets"), dir.join("pictures"));
+    let set = root.join(SET);
+    let mut manifest = format!(
+        "[set]\nid = \"{SET}\"\nuse_case = \"source-fidelity\"\nsplit = \"dev\"\n\
+         licence = \"CC-BY-4.0\"\nimages_repo = \"github.com/markhayden/wafflery-evalsets\"\n\
+         images_rev = \"0123456789abcdef0123456789abcdef01234567\"\nlabels = \"labels.toml\"\n\
+         families = \"families.toml\"\nrules = {{ base = \"source-fidelity\", version = 1 }}\n"
+    );
+    let (mut labels, mut families) = (String::new(), String::new());
+    let items = [
+        ("restyled", "scene", "toned", "pass"),
+        ("darkened", "toned", "scene", "pass"),
+        ("added", "before", "after", "fail"),
+    ];
+    for (item, source, candidate, expected) in items {
+        let mut job =
+            "[job]\nuse_case = \"source-fidelity\"\nbrief = \"Keep the scene.\"\n".to_owned();
+        for (role, name) in [("candidate", candidate), ("source", source)] {
+            let bytes = compared(name);
+            let path = format!("items/{item}/{role}.png");
+            let pin = whizbang_core::identity::Digest::of_bytes(&bytes).hex();
+            job.push_str(&format!(
+                "\n[[job.images]]\nid = \"{role}\"\nrole = \"{role}\"\n\
+                 source = {{ path = \"{path}\", sha256 = \"{pin}\" }}\n"
+            ));
+            let file = from.join(SET).join(&path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, &bytes).unwrap();
+        }
+        std::fs::create_dir_all(set.join("items").join(item)).unwrap();
+        std::fs::write(set.join("items").join(item).join("job.toml"), job).unwrap();
+        manifest.push_str(&format!(
+            "\n[[item]]\nid = \"{item}\"\nfamily = \"{item}\"\njob = \"items/{item}/job.toml\"\n"
+        ));
+        families.push_str(&format!(
+            "[[family]]\nid = \"{item}\"\ndescription = \"a scene\"\n\n"
+        ));
+        labels.push_str(&format!(
+            "[[label]]\nitem = \"{item}\"\nexpected = \"{expected}\"\nwords = \"as painted\"\n\
+             adjudicated_by = \"owner\"\nadjudicated_on = \"2026-11-18\"\n\n"
+        ));
+    }
+    std::fs::write(set.join("set.toml"), manifest).unwrap();
+    std::fs::write(set.join("labels.toml"), labels).unwrap();
+    std::fs::write(set.join("families.toml"), families).unwrap();
+    (root, from)
+}
+
+#[test]
+fn eval_tool_scores_a_tool_on_a_three_item_set() {
+    let (dir, root) = bare("cli-eval-tool");
+    let (sets_root, from) = three_items(&dir.path().join("set"));
+    let set = "source-fidelity/compare-v1";
+    let found = whizbang_eval::sets::find(&sets_root, set).unwrap();
+    whizbang::evaluation::from_folder(&found, &from, &root, &wiring::recovery()).unwrap();
+    let sets_root = sets_root.to_str().unwrap();
+    let scored = whizbang(
+        &[
+            "eval",
+            "tool",
+            "change_map",
+            "--set",
+            set,
+            "--root",
+            sets_root,
+        ],
+        &root,
+    );
+    assert_eq!(scored.code, Some(0), "{}", scored.err);
+    let out = &scored.out;
+    // Each item a read with its run, then the score: the added blob reads more changed
+    // than the two passes, so the area is 1; three families are too few to halve.
+    for item in ["restyled", "darkened", "added"] {
+        assert!(
+            out.lines()
+                .any(|line| line.starts_with(&format!("item {set}/{item} "))
+                    && line.contains(" changed_fraction ")
+                    && line.contains(" run ")),
+            "{item}: {out}"
+        );
+    }
+    assert!(
+        out.contains("change_map changed_fraction (larger is changed): 3 items (1 fail, 2 pass) in 3 families\n"),
+        "{out}"
+    );
+    assert!(out.contains("\nauc 1.0000 (95% "), "{out}");
+    assert!(
+        out.contains("balanced accuracy inconclusive: 3 families pooled, fewer than 4"),
+        "{out}"
+    );
+    // Each item a run of its own.
+    let runs: std::collections::BTreeSet<&str> = out
+        .lines()
+        .filter_map(|line| line.split(" run ").nth(1))
+        .collect();
+    assert_eq!(runs.len(), 3, "{out}");
 }

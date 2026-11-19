@@ -2,7 +2,7 @@
 
 # Actions
 
-What `whizbang` 0.0.1 can do, from its static description (version 6).
+What `whizbang` 0.0.1 can do, from its static description (version 7).
 The same as data: [description.json](description.json).
 
 ## `check`
@@ -12,6 +12,14 @@ Has a judge look at images through evidence tools and conclude: pass, fail or un
 ## `align`
 
 Registers one flat image onto another of the same scene and viewpoint, and returns it warped into the other's frame.
+
+## `change_map`
+
+Shows where two images in one grid differ in structure: a grey map, bright where the locally normalised luminance disagrees.
+
+## `edge_similarity`
+
+Scores how much two images in one grid share the same edges: 1 for the same structure, near 0 for unrelated ones.
 
 ## `feather`
 

@@ -67,7 +67,17 @@ fn the_shipping_executor_describes_check_and_cannot_run_it_for_want_of_a_judge()
     assert_eq!(
         names,
         [
-            "check", "align", "feather", "grow", "plug", "render", "resize", "segment", "select",
+            "check",
+            "align",
+            "change_map",
+            "edge_similarity",
+            "feather",
+            "grow",
+            "plug",
+            "render",
+            "resize",
+            "segment",
+            "select",
             "view"
         ]
     );
