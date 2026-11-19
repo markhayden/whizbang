@@ -686,6 +686,31 @@ backend = "inputs.backend"
 image = "fill.image"
 "#;
 
+/// A recipe of the user's own that fills the mask it is given: two runs a cell.
+pub const FILL_WITH: &str = r#"version = 1
+name = "fill_with"
+purpose = "Fills the mask it is given."
+use = "In a test of a lab round."
+
+[inputs]
+image = { type = "Image" }
+protect = { type = "Mask" }
+backend = { type = "Text", optional = true }
+
+[[step]]
+id = "fill"
+op = "fill"
+inputs = { image = "inputs.image", mask = "inputs.protect" }
+backend = "inputs.backend"
+
+[outputs]
+image = "fill.image"
+"#;
+
+/// The arms `filled` of `fill_with` and `source`, which binds no location.
+pub const FILLED_WITH_AND_SOURCE: &str = "[[arm]]\nname = \"filled\"\nrecipe = \"fill_with\"\n\n\
+     [[arm]]\nname = \"source\"\nreference = \"source\"\n";
+
 /// A round of three pictures: a store with an allowance of a dollar; a corpus folder
 /// outside it holding the pictures `a`, `b` and `c` of 64 by 64 and, for each, a box on it
 /// as a location's canonical file (`a-at`, ...) and a mask to protect as a mask's
@@ -791,9 +816,14 @@ impl ThreeImages {
                           protocol = \"protocol.toml\"\nseed = 7\n"
             .to_owned();
         for id in ["a", "b", "c"] {
+            let location = if arms.contains("fill_at") {
+                format!("location = \"{id}-at\", ")
+            } else {
+                String::new()
+            };
             matrix.push_str(&format!(
                 "\n[[image]]\nid = \"{id}\"\n\
-                 inputs = {{ location = \"{id}-at\", protect = \"{id}-keep\", source = \"{id}\" }}\n"
+                 inputs = {{ {location}protect = \"{id}-keep\", source = \"{id}\" }}\n"
             ));
         }
         matrix.push('\n');
@@ -802,11 +832,14 @@ impl ThreeImages {
         std::fs::write(&path, matrix).unwrap();
         let recipe = dir.path().join("fill_at.toml");
         std::fs::write(&recipe, FILL_AT).unwrap();
+        let other = dir.path().join("fill_with.toml");
+        std::fs::write(&other, FILL_WITH).unwrap();
         let config = dir.path().join("whizbang.toml");
         let text = format!(
-            "{}\n[recipes]\npaths = [\"{}\"]\n",
+            "{}\n[recipes]\npaths = [\"{}\", \"{}\"]\n",
             counting_config("https://fill.example.org/v1"),
-            recipe.display()
+            recipe.display(),
+            other.display()
         );
         std::fs::write(&config, text).unwrap();
         ThreeImages {
@@ -889,7 +922,7 @@ fn counts(report: &laboratory::Report) -> (usize, usize, usize, usize, usize) {
 
 #[test]
 fn an_unchanged_cell_resumes_without_another_call() {
-    let lab = ThreeImages::new("lab-resume", FILLED_AND_SOURCE);
+    let lab = ThreeImages::new("lab-resume", FILLED_WITH_AND_SOURCE);
     let over = lab.over(0);
     let report = lab.run(&over, None, &never).unwrap();
     assert_eq!((report.cells, report.handed_back), (6, 3));
@@ -905,7 +938,7 @@ fn an_unchanged_cell_resumes_without_another_call() {
 
 #[test]
 fn an_interrupted_round_resumes_and_a_failed_cell_is_kept() {
-    let lab = ThreeImages::new("lab-interrupted", FILLED_AND_SOURCE);
+    let lab = ThreeImages::new("lab-interrupted", FILLED_WITH_AND_SOURCE);
     // The second fill fails, and the round is stopped after its second cell.
     let over = lab.over(2);
     let asked = std::sync::Mutex::new(0);
@@ -931,7 +964,7 @@ fn an_interrupted_round_resumes_and_a_failed_cell_is_kept() {
 
 #[test]
 fn a_rounds_forecast_passing_the_allowance_left_is_refused_before_its_first_cell() {
-    let lab = ThreeImages::new("lab-forecast", FILLED_AND_SOURCE);
+    let lab = ThreeImages::new("lab-forecast", FILLED_WITH_AND_SOURCE);
     let over = lab.over(0);
     // Three fills at the filler's price: one millionth less is refused, and nothing runs.
     let refused = lab
@@ -953,7 +986,7 @@ fn a_rounds_forecast_passing_the_allowance_left_is_refused_before_its_first_cell
 #[test]
 fn a_run_some_caller_made_under_a_cells_request_id_is_not_its_attempt() {
     use whizbang_core::contract::{Call, Executor, Request};
-    let lab = ThreeImages::new("lab-forged", FILLED_AND_SOURCE);
+    let lab = ThreeImages::new("lab-forged", FILLED_WITH_AND_SOURCE);
     let over = lab.over(0);
     let asked = laboratory::Asked {
         matrix: &lab.matrix,
@@ -963,7 +996,12 @@ fn a_run_some_caller_made_under_a_cells_request_id_is_not_its_attempt() {
         recovery: wiring::recovery(),
     };
     let prepared = laboratory::prepare(&asked).unwrap();
-    let cell = prepared.cells.iter().find(|c| c.arm == "filled").unwrap();
+    let cell = prepared
+        .cells
+        .iter()
+        .find(|c| c.arm == "filled")
+        .unwrap()
+        .clone();
     // A run of the cell's own recipe, of another request (another image's mask to keep),
     // under the id of the cell's first attempt, made past the doors: its action is the
     // cell's, its fingerprint is not.
@@ -976,9 +1014,8 @@ fn a_run_some_caller_made_under_a_cells_request_id_is_not_its_attempt() {
     } else {
         "a-keep"
     };
-    let forged = Call::new("fill_at")
+    let forged = Call::new("fill_with")
         .input("image", prepared.pictures[&cell.image])
-        .input("location", prepared.pictures[&format!("{}-at", cell.image)])
         .input("protect", prepared.pictures[other]);
     executor.request(&Request::new(forged).with_id(id)).unwrap();
     drop(executor);
@@ -1002,16 +1039,30 @@ fn a_run_some_caller_made_under_a_cells_request_id_is_not_its_attempt() {
         "{}",
         refused.err
     );
-    // The round does not take the forged run for the cell's attempt: every cell runs,
-    // the forged one's as its second attempt.
-    let report = lab.run(&over, None, &never).unwrap();
-    assert_eq!(counts(&report), (3, 3, 0, 0, 0));
+    // The round, of that one cell to keep it lean, does not take the forged run for the
+    // cell's attempt: the cell runs, as its second attempt.
+    let one = laboratory::Prepared {
+        cells: vec![cell.clone()],
+        ..prepared
+    };
+    let store = Arc::new(Store::open(&lab.root, Arc::new(RealFs)).unwrap());
+    let registry = wiring::registry_over(&over, false).unwrap();
+    let executor = wiring::runner(registry, store, &over).unwrap();
+    let running = Running {
+        executor: &executor,
+        root: &lab.root,
+        left_micros: 1_000_000,
+        stop: &never,
+    };
+    let report = laboratory::round(&one, &running).unwrap();
+    drop(executor);
+    assert_eq!(counts(&report), (1, 1, 0, 0, 0));
     let mut requests = Vec::new();
     harness::each_run(&lab.root, &mut |record, _, _| {
         requests.extend(record.identity().request.clone());
     })
     .unwrap();
-    let ours = format!("cell.{}.{}.", prepared.scope, cell.identity);
+    let ours = format!("cell.{}.{}.", one.scope, cell.identity);
     let mut of_cell: Vec<&String> = requests.iter().filter(|r| r.starts_with(&ours)).collect();
     of_cell.sort();
     assert_eq!(of_cell, [&format!("{ours}1"), &format!("{ours}2")]);
