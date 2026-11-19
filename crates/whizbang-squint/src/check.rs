@@ -260,10 +260,9 @@ impl Check {
             "The images an earlier step measured first, as it handed them on: aligned frames, maps and tiles.",
             Count::between(0, measured::IMAGES_LIMIT),
         ))
-        .argument(Argument::optional(
+        .argument(Argument::measurements(
             "measured",
-            "What an earlier step measured first, as it handed it on (a recipe binds the measurements of details here): said to the judge before its first turn, never measured again.",
-            ValueType::Text,
+            "What an earlier step of a recipe measured first, bound to its measurements alone: said to the judge before its first turn once held to the runs that made it.",
         ))
         .argument(Argument::optional(
             "recipe_digest",
@@ -982,18 +981,16 @@ impl Action for Check {
             }
             _ => None,
         };
-        // The images handed on with it, and only those, are what its entries name.
+        // The images handed on with it, and only those, are what its entries name; and
+        // each entry is held to the run that made it (ADR 0035).
         let handed_images: Vec<ArtifactId> = (call.inputs().iter())
             .filter(|input| input.port() == MEASURED_IMAGES)
             .map(|input| input.id())
             .collect();
-        for entry in handed_on.iter().flatten() {
-            let ids = entry.image_ids().map_err(|why| Failure::invalid(&why))?;
-            if ids.iter().any(|id| !handed_images.contains(id)) {
-                return Err(Failure::invalid(
-                    "the measurements handed on name an image that was not handed on with them",
-                ));
-            }
+        if let Some(entries) = &handed_on {
+            let ids: Vec<ArtifactId> = images.iter().map(|input| input.id()).collect();
+            measured::held_to_their_runs(context, entries, &ids, &handed_images)
+                .map_err(|why| Failure::invalid(&why))?;
         }
         // A tool file's capabilities are nested calls of this run: `segment` is frozen
         // with the tools when the run names one, and is never offered to the judge.
@@ -1062,6 +1059,26 @@ impl Action for Check {
         // The decision cache's key is known here, before anything is measured or sent;
         // a run of the same key that completed answers this one (crate::cache).
         let mut revisions: Vec<(String, String)> = Vec::new();
+        // What was measured first is in the key as it was measured, not by the runs that
+        // happened to measure it: each run is a new id, and the same measurements of the
+        // same images are the same details.
+        let keyed_arguments: Vec<(String, Value)> = (call.arguments().iter())
+            .map(|(name, value)| match (name.as_str(), &handed_on) {
+                ("measured", Some(entries)) => {
+                    let unrun: Vec<Entry> = (entries.iter())
+                        .map(|entry| Entry {
+                            run: None,
+                            ..entry.clone()
+                        })
+                        .collect();
+                    (
+                        name.clone(),
+                        Value::text(&measured::document(&unrun).to_string()),
+                    )
+                }
+                _ => (name.clone(), value.clone()),
+            })
+            .collect();
         let key = match &judging {
             Some(judging) if self.cache && argument("cell").is_none() => {
                 let images: Vec<_> = (images.iter())
@@ -1083,7 +1100,7 @@ impl Action for Check {
                 );
                 Some(cache::key(&cache::Material {
                     job: &judging.job,
-                    arguments: call.arguments(),
+                    arguments: &keyed_arguments,
                     images: &images,
                     system: &system,
                     checklist: &judging.checklist.render(&judging.resolved),

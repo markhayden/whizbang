@@ -517,6 +517,12 @@ impl Recipe {
                     arguments.push((name.clone(), Param::Measured(from.to_owned())));
                     continue;
                 }
+                if argument.takes_measurements() {
+                    return Err(refuse(format!(
+                        "argument {name} takes only an earlier step's measurements, bound as \
+                         <step>.measurements, and is given another value"
+                    )));
+                }
                 if let Some((input, declared)) = self.bound_text(value) {
                     if !matches!(
                         argument.value_type(),

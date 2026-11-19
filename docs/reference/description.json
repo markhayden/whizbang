@@ -96,12 +96,13 @@
         },
         {
           "name": "measured",
-          "purpose": "What an earlier step measured first, as it handed it on (a recipe binds the measurements of details here): said to the judge before its first turn, never measured again.",
+          "purpose": "What an earlier step of a recipe measured first, bound to its measurements alone: said to the judge before its first turn once held to the runs that made it.",
           "type": {
             "type": "text"
           },
           "required": false,
-          "default": null
+          "default": null,
+          "measurements": true
         },
         {
           "name": "recipe_digest",

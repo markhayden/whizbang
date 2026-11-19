@@ -845,6 +845,9 @@ pub struct Context {
     offer: Arc<Offer>,
     /// The run's place for facts.
     facts: RunFacts,
+    /// The runs from the one nothing called down to this run, this run last; empty for
+    /// a context no executor made.
+    lineage: Arc<Vec<super::RunId>>,
 }
 
 impl Context {
@@ -876,7 +879,21 @@ impl Context {
             diagnostics: Arc::new(NoDiagnostics),
             offer: Arc::new(Offer::default()),
             facts: RunFacts::default(),
+            lineage: Arc::new(Vec::new()),
         }
+    }
+
+    /// The same context, of the run at the end of this lineage.
+    pub(super) fn placed(mut self, lineage: Arc<Vec<super::RunId>>) -> Context {
+        self.lineage = lineage;
+        self
+    }
+
+    /// The runs from the one nothing called down to this run, this run last (ADR 0035):
+    /// what an action holds a run named to it to, as `check` holds the runs that made the
+    /// measurements it is handed. Empty for a context no executor made.
+    pub fn lineage(&self) -> &[super::RunId] {
+        &self.lineage
     }
 
     /// The same context, noting its run's facts here.

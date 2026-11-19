@@ -17,15 +17,16 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
 use whizbang_core::artifact::{ArtifactId, ArtifactType};
+use whizbang_core::contract::record::{DIAGNOSTICS_PREFIX, RunRecord, Status};
 use whizbang_core::contract::{
     Action, ActionDescriptor, Argument, Call, CallError, Context, Count, DescriptorError, Failure,
-    Finished, InputPort, Kind, Outcome, OutputPort, PreparedCall, Produced, ResultKind, Value,
-    ValueType,
+    Finished, InputPort, Kind, Outcome, OutputPort, PreparedCall, Produced, ResultKind, RunId,
+    Value, ValueType,
 };
 
 use crate::details::{self, Details};
 use crate::job::{Job, Role};
-use crate::{align, use_case, view};
+use crate::{align, compare, use_case, view};
 
 /// The image an identity names, as a text.
 fn artifact_of(text: &str) -> Option<ArtifactId> {
@@ -67,6 +68,11 @@ pub struct Entry {
     /// The images the tool's run committed, by identity, in order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<String>,
+    /// The run of the tool that measured it, or that failed to: what a step handed it is
+    /// held to (ADR 0035). None only for a comparison not made, because `align` gave its
+    /// pair no frame.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
 }
 
 impl Entry {
@@ -80,7 +86,13 @@ impl Entry {
             measured: None,
             failed: None,
             images: Vec::new(),
+            run: None,
         }
+    }
+
+    fn by(mut self, run: &RunId) -> Entry {
+        self.run = Some(run.as_str().to_owned());
+        self
     }
 
     fn failing(mut self, why: &str) -> Entry {
@@ -149,7 +161,7 @@ pub fn pairs_of(job: &Job, inputs: &[ArtifactId]) -> (Vec<Pair>, Vec<(String, Ar
 
 /// One call made first, through the executor of `context`: its run, or why it measured
 /// nothing. A refusal or a cancellation ends the run that made it.
-fn first(context: &Context, call: &Call) -> Result<Result<Finished, String>, Failure> {
+fn first(context: &Context, call: &Call) -> Result<(RunId, Result<Finished, String>), Failure> {
     context.events().progress("a detail was measured");
     let finished = match context.executor().submit(call) {
         Ok(finished) => finished,
@@ -158,9 +170,12 @@ fn first(context: &Context, call: &Call) -> Result<Result<Finished, String>, Fai
         }
         Err(other) => return Err(Failure::error("details", &other.to_string())),
     };
+    let run = finished.run().clone();
     match finished.outcome() {
-        Outcome::Completed { .. } => Ok(Ok(finished)),
-        Outcome::Invalid { why } | Outcome::Error { message: why, .. } => Ok(Err(why.clone())),
+        Outcome::Completed { .. } => Ok((run, Ok(finished))),
+        Outcome::Invalid { why } | Outcome::Error { message: why, .. } => {
+            Ok((run, Err(why.clone())))
+        }
         Outcome::Cancelled => Err(Failure::error("cancelled", "a detail's call was cancelled")),
     }
 }
@@ -200,8 +215,9 @@ pub fn measure(
             let call = Call::new(align::NAME)
                 .input("image", pair.image_id)
                 .input("against", pair.against_id);
-            let entry = Entry::of(align::NAME, image, Some(against));
-            let finished = match first(context, &call)? {
+            let (run, done) = first(context, &call)?;
+            let entry = Entry::of(align::NAME, image, Some(against)).by(&run);
+            let finished = match done {
                 Ok(finished) => finished,
                 Err(why) => {
                     entries.push(entry.failing(&why));
@@ -228,7 +244,9 @@ pub fn measure(
                 }
             };
             let call = details::compare_of(tool, pair.against_id, aligned_id);
-            match first(context, &call)? {
+            let (run, done) = first(context, &call)?;
+            let entry = entry.by(&run);
+            match done {
                 Ok(finished) => {
                     let (measured, made) = handed(&finished, tool)?;
                     entries.push(Entry {
@@ -253,7 +271,9 @@ pub fn measure(
                     bbox: Some(bbox),
                     ..Entry::of(details::TILES, image, None)
                 };
-                match first(context, &call)? {
+                let (run, done) = first(context, &call)?;
+                let entry = entry.by(&run);
+                match done {
                     // The first output is the crop of the image; a second would be of `also`.
                     Ok(finished) => {
                         let made = finished.outcome().outputs().iter().take(1);
@@ -417,4 +437,156 @@ impl Action for DetailsStep {
         }
         Ok(produced)
     }
+}
+
+/// What a run of a tool that measured kept of its measurements: its report, the same
+/// document it handed back (`align`'s and the comparisons'; ADR 0035).
+fn report_name(tool: &str) -> Option<&'static str> {
+    match tool {
+        align::NAME => Some(align::REPORT),
+        compare::CHANGE_MAP => Some(compare::CHANGE_MAP_REPORT),
+        compare::EDGE_SIMILARITY => Some(compare::EDGE_SIMILARITY_REPORT),
+        _ => None,
+    }
+}
+
+/// Holds measurements an earlier step handed on to the runs that made them (ADR 0035), or
+/// says why they are not taken. They are taken only by a run that is a step of a recipe
+/// (the run nothing called, an MCP client or a command line, hands none), and each entry
+/// only as the run it names left it, in this store: a completed run of its tool (or one
+/// that failed, for an entry that says why), under a step of the same recipe as this run,
+/// on the images this run was given (`images`) and handed (`handed`), that committed the
+/// images the entry names and kept the measurements it says. An entry that names no run
+/// is only a comparison of a pair whose run of `align`, named before it, gave no frame.
+pub fn held_to_their_runs(
+    context: &Context,
+    entries: &[Entry],
+    images: &[ArtifactId],
+    handed: &[ArtifactId],
+) -> Result<(), String> {
+    let [.., recipe, _] = context.lineage() else {
+        return Err(
+            "measurements are handed on only by an earlier step of a recipe, from the \
+                    runs that made them"
+                .to_owned(),
+        );
+    };
+    let store = context.store();
+    let generation = store.snapshot().map_err(|error| error.to_string())?;
+    let record_of = |run: &str| -> Result<RunRecord, String> {
+        let read = whizbang_core::contract::record::stored(&generation, run, |entry| {
+            store.read_record(entry)
+        });
+        match read {
+            Some(Ok(record)) => Ok(record),
+            _ => Err(format!(
+                "the run {run:?} an entry names is not in this store"
+            )),
+        }
+    };
+    for (at, entry) in entries.iter().enumerate() {
+        let tool = entry.tool.as_str();
+        let ids = entry.image_ids()?;
+        if ids.iter().any(|id| !handed.contains(id)) {
+            return Err(
+                "the measurements handed on name an image that was not handed on with \
+                        them"
+                    .to_owned(),
+            );
+        }
+        let Some(run) = &entry.run else {
+            let image = &entry.image;
+            let against = entry.against.as_deref().unwrap_or_default();
+            let said =
+                format!("{image} did not register onto {against}, so the two are not in one grid");
+            let unaligned = entries[..at].iter().any(|e| {
+                e.tool == align::NAME
+                    && e.image == entry.image
+                    && e.against == entry.against
+                    && e.run.is_some()
+                    && e.failed.is_none()
+                    && e.images.is_empty()
+            });
+            let derived = details::AFTER_ALIGN.contains(&tool)
+                && unaligned
+                && ids.is_empty()
+                && entry.measured.is_none()
+                && entry.failed.as_deref() == Some(said.as_str());
+            if !derived {
+                return Err(format!("an entry of {tool} names no run that measured it"));
+            }
+            continue;
+        };
+        let wrong = |why: &str| format!("the run {run} an entry of {tool} names {why}");
+        let record = record_of(run)?;
+        // A child of a step of the same recipe as this run.
+        let step =
+            (record.identity().parent.as_deref()).ok_or_else(|| wrong("was called by nothing"))?;
+        let step = record_of(step)?;
+        if step.identity().parent.as_deref() != Some(recipe.as_str()) {
+            return Err(wrong("is no call of a step of this run's recipe"));
+        }
+        let action = if tool == details::TILES {
+            view::NAME
+        } else {
+            tool
+        };
+        if record.asked().action.as_deref() != Some(action) {
+            return Err(wrong("is no run of it"));
+        }
+        // On the images of this run: a comparison's second is the frame align made.
+        for input in record.inputs() {
+            let id = ArtifactId(input.artifact);
+            let given = images.contains(&id)
+                || (details::AFTER_ALIGN.contains(&tool) && handed.contains(&id));
+            if !given {
+                return Err(wrong("measured an image this run was not given"));
+            }
+        }
+        let status = record.outcome().status;
+        if let Some(why) = &entry.failed {
+            let said = (record.outcome().invalid.clone())
+                .or_else(|| record.outcome().error.as_ref().map(|e| e.message.clone()));
+            if status == Status::Completed || said.as_deref() != Some(why.as_str()) {
+                return Err(wrong("did not fail as the entry says"));
+            }
+            if !ids.is_empty() || entry.measured.is_some() {
+                return Err(wrong("measured nothing, and the entry says it did"));
+            }
+            continue;
+        }
+        if status != Status::Completed {
+            return Err(wrong("did not complete"));
+        }
+        let made: Vec<ArtifactId> = (record.outputs().iter())
+            .map(|output| ArtifactId(output.artifact))
+            .collect();
+        let committed = if tool == details::TILES {
+            made.into_iter().take(1).collect()
+        } else {
+            made
+        };
+        if committed != ids {
+            return Err(wrong("committed other images than the entry names"));
+        }
+        let kept = match report_name(tool) {
+            None => None,
+            Some(name) => {
+                let named = format!("{DIAGNOSTICS_PREFIX}{name}");
+                let entry = (generation.run(run)).and_then(|kept| kept.get(&named));
+                let bytes = entry
+                    .map(|entry| store.read_record(entry))
+                    .and_then(Result::ok)
+                    .ok_or_else(|| wrong("kept no measurements"))?;
+                Some(
+                    serde_json::from_slice::<Json>(&bytes)
+                        .map_err(|_| wrong("kept measurements that are not read"))?,
+                )
+            }
+        };
+        if kept != entry.measured {
+            return Err(wrong("kept other measurements than the entry says"));
+        }
+    }
+    Ok(())
 }

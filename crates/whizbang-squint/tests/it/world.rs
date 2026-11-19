@@ -103,6 +103,9 @@ pub struct World {
     /// The text of each use case's recipe the executor registers: the shipped ones,
     /// unless a test changes one.
     pub recipes: Vec<String>,
+    /// More actions the executor registers before the recipes, which a test's recipe
+    /// may name.
+    pub more: Vec<Arc<dyn Action>>,
 }
 
 impl World {
@@ -123,6 +126,7 @@ impl World {
             recipes: (whizbang_squint::recipes::SHIPPED.iter())
                 .map(|(_, text)| (*text).to_owned())
                 .collect(),
+            more: Vec::new(),
         };
         let store = world.store();
         let mut publication = store.begin().unwrap();
@@ -202,6 +206,9 @@ impl World {
         // The use cases as recipes (plan m3, task Q1), over the actions above.
         let details = whizbang_squint::measured::DetailsStep::new().unwrap();
         registry.register(wrap(Arc::new(details))).unwrap();
+        for action in &self.more {
+            registry.register(action.clone()).unwrap();
+        }
         for text in &self.recipes {
             let recipe = recipe_of(text, &registry);
             registry.register(Arc::new(recipe)).unwrap();

@@ -309,6 +309,12 @@ impl RecipeAction {
             // refused here, before any step runs.
             let needs = descriptor.needs().iter();
             let mut chooses = needs.flat_map(|need| [need.chooser(), need.feature_argument()]);
+            if taken.takes_measurements() {
+                return Err(format!(
+                    "the override {line:?}: the argument {argument} of the step {step} ({action}) \
+                     takes only what an earlier step measured, and is not overridden"
+                ));
+            }
             if argument == DIGEST_ARGUMENT || chooses.any(|named| named == Some(argument)) {
                 return Err(format!(
                     "the override {line:?}: the argument {argument} of the step {step} ({action}) \

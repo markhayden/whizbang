@@ -246,6 +246,10 @@ pub struct Argument {
     value_type: ValueType,
     required: bool,
     default: Option<Value>,
+    /// It takes only what an earlier step of a recipe measured (ADR 0035): a recipe binds
+    /// it to `<step>.measurements`, and gives it no other value.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    measurements: bool,
 }
 
 impl Argument {
@@ -257,7 +261,23 @@ impl Argument {
             value_type,
             required: true,
             default: None,
+            measurements: false,
         }
+    }
+
+    /// An optional text argument that takes only an earlier step's measurements, as a
+    /// recipe binds them (`<step>.measurements`; ADR 0035): no literal of a recipe and no
+    /// override sets it.
+    pub fn measurements(name: &str, purpose: &str) -> Argument {
+        Argument {
+            measurements: true,
+            ..Argument::optional(name, purpose, ValueType::Text)
+        }
+    }
+
+    /// Whether it takes only an earlier step's measurements.
+    pub fn takes_measurements(&self) -> bool {
+        self.measurements
     }
 
     /// An argument a call may leave out, and that then has no value.

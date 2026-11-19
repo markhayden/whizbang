@@ -1654,7 +1654,8 @@ impl Engine {
         .with_diagnostics(kept.clone())
         .recording(kept.clone(), self.requests, self.exchanges)
         .noting(facts.clone())
-        .offering(offer);
+        .offering(offer)
+        .placed(above.clone());
         live.nest().watch(context.requests().clone());
         // A panic in the action is caught: its run ends as any other does, with its
         // record and what it wrote, and the executor goes on (ADR 0008). The context

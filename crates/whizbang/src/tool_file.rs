@@ -688,6 +688,11 @@ impl Action for ToolFileAction {
     }
 
     fn run(&self, call: &PreparedCall, context: &Context) -> Result<Produced, Failure> {
+        // What a tool file asks for is a call of `segment`, and of nothing else: frozen
+        // here, so a tool file run as a step of a recipe, whose list binds only its own
+        // calls (ADR 0035), is held as it is under a judge. Where the run froze its calls
+        // already (a judge's, which lists `segment`), this changes nothing.
+        let _ = context.freeze_calls([whizbang_rascal::segment::NAME]);
         let images: Vec<(String, ArtifactId)> = (call.inputs().iter())
             .map(|input| (input.port().to_owned(), input.id()))
             .collect();

@@ -44,9 +44,25 @@ that takes several. A step whose action takes `recipe_digest` is given the diges
 recipe's text, which no override sets.
 
 **What a recipe freezes** (amends ADR 0033 and ADR 0009). A recipe freezes the actions it
-calls itself, its steps, and leaves what a step calls to the step (`Context::freeze_steps`):
-`check` as a step freezes its judge's tools for itself, as it does when it is called alone.
-A judge loop's freeze still binds every run under it.
+calls itself, its steps, and nothing under them (`Context::freeze_steps`): a call of the
+recipe's own that is no step is refused. The recipe's list no longer bounds its steps: a
+step that freezes nothing may call any action of the build, and a step that freezes its own
+list (`check`, its judge's tools; a tool file's action, `segment`) binds everything under it
+by that list, as a judge loop's freeze always has
+(`nested::a_recipe_freezes_its_own_calls_and_a_steps_own_list_binds_everything_below_it`).
+Every step this build ships either freezes its list or calls nothing.
+
+**Measurements are taken only from the runs that made them.** `check`'s `measured` is an
+argument that takes only an earlier step's measurements (`Argument::measurements`, shown as
+`measurements: true`): a recipe that gives it a literal is refused when it is read, an
+override of it is refused before anything runs, and a run of `check` that nothing called (a
+command line or an MCP client) is refused it. Each entry names the run of its tool that made
+it, and `check` holds the entry to that run in its store before anything is sent: a call of a
+step of the same recipe, of the tool named, on the images `check` was given and handed, that
+completed (or failed as the entry says), committed exactly the images the entry names, and
+kept exactly the measurements it says in its report. The one entry that names no run is a
+comparison of a pair whose `align`, listed before it, gave no frame, said in fixed words. The
+decision cache's key holds the measurements without those run ids.
 
 **The use cases as recipes** (`crates/whizbang-squint/recipes/`, `whizbang_squint::recipes`).
 Each of the five use cases is a recipe of two steps under the use case's name: `details`,
