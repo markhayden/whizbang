@@ -19,8 +19,9 @@ use crate::recipe::{CONFIG, over, record, with_small_picture};
 use crate::wired::whizbang;
 
 /// A cell of `segment`, an action that is neither `check` nor a recipe.
-struct Finding {
-    image: ArtifactId,
+pub struct Finding {
+    pub image: ArtifactId,
+    pub scope: String,
 }
 
 impl Work for Finding {
@@ -31,7 +32,7 @@ impl Work for Finding {
         let call = Call::new("segment")
             .input("image", self.image)
             .argument("query", Value::text("collar"));
-        let id = harness::request_id("test-scope", &self.identity(), attempt)?;
+        let id = harness::request_id(&self.scope, &self.identity(), attempt)?;
         Ok(Some(Request::new(call).with_id(id)))
     }
     fn forecast(&self) -> Result<u64, String> {
@@ -48,7 +49,10 @@ fn a_cell_of_any_action_is_recognised_by_its_identity_in_a_runs_record() {
     let (root, image) = with_small_picture(&dir);
     let over = over(&dir, CONFIG);
     let image = ArtifactId(Digest::from_hex(image.strip_prefix("sha256:").unwrap()).unwrap());
-    let cell = Finding { image };
+    let cell = Finding {
+        image,
+        scope: "test-scope".to_owned(),
+    };
     let run = || {
         let store = Arc::new(Store::open(&root, Arc::new(RealFs)).unwrap());
         let registry = wiring::registry_over(&over, false).unwrap();

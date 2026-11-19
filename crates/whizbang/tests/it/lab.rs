@@ -345,9 +345,6 @@ impl Round {
 
     /// Runs these cells on the harness under the lab's scope: how many it started.
     fn run(&self, cells: &[&Cell], scope: &str) -> Result<usize, String> {
-        let store = Arc::new(Store::open(&self.root, Arc::new(RealFs)).unwrap());
-        let registry = wiring::registry_over(&self.over, false).unwrap();
-        let executor = wiring::runner(registry, store, &self.over).unwrap();
         let labs: Vec<LabCell<'_>> = (cells.iter())
             .map(|cell| LabCell {
                 cell,
@@ -356,13 +353,21 @@ impl Round {
             })
             .collect();
         let work: Vec<&dyn harness::Work> = labs.iter().map(|c| c as &dyn harness::Work).collect();
+        self.run_work(&work, scope)
+    }
+
+    /// Runs this work on the harness, recognised under `scope`.
+    fn run_work(&self, work: &[&dyn harness::Work], scope: &str) -> Result<usize, String> {
+        let store = Arc::new(Store::open(&self.root, Arc::new(RealFs)).unwrap());
+        let registry = wiring::registry_over(&self.over, false).unwrap();
+        let executor = wiring::runner(registry, store, &self.over).unwrap();
         let running = Running {
             executor: &executor,
             root: &self.root,
             left_micros: 1_000_000,
             stop: &|| false,
         };
-        harness::run(&work, &harness::by_request(scope), &running, 1, "round")
+        harness::run(work, &harness::by_request(scope), &running, 1, "round")
     }
 }
 
@@ -419,18 +424,15 @@ fn a_text_binding_reaches_remove_prompts_prompt() {
 fn a_protocol_changed_after_a_run_is_refused() {
     let round = Round::new("lab-frozen");
     let protocol = protocol_text(["found", "clean"], &["a"], 3);
-    let (validated, cells) = checked(
-        &round_matrix("collar"),
-        &protocol,
-        &corpus_of(b"a mask"),
-        &backends("1", 0),
-    )
-    .unwrap();
-    let digest = validated.protocol_digest.clone();
+    let (_, digest) = Protocol::parse(protocol.as_bytes()).unwrap();
     assert_eq!(laboratory::frozen(&round.root, "tiny-lab", &digest), Ok(()));
-    let found: Vec<&Cell> = cells.iter().filter(|c| c.arm == "found").collect();
+    // One cell of the lab run under its scope: the cheapest action that makes a run.
     let scope = protocol::scope("tiny-lab", &digest);
-    assert_eq!(round.run(&found, &scope), Ok(1));
+    let cell = crate::runner::Finding {
+        image: round.pictures["a"],
+        scope: scope.clone(),
+    };
+    assert_eq!(round.run_work(&[&cell], &scope), Ok(1));
     assert_eq!(laboratory::frozen(&round.root, "tiny-lab", &digest), Ok(()));
     // The protocol edited after the run: refused, whatever was edited.
     let (_, edited) =
