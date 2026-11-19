@@ -322,7 +322,7 @@ fn initialize_lists_each_recipe_before_the_primitives() {
         tool["description"]
             .as_str()
             .unwrap()
-            .starts_with("Makes the mask")
+            .starts_with("Removes what a phrase names")
     );
     let schema = &tool["inputSchema"];
     assert_eq!(

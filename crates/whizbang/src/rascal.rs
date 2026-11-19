@@ -299,11 +299,13 @@ pub enum Command {
     Unwindow(Op<whizbang_rascal::unwindow::Args>),
     #[command(about = whizbang_rascal::apply::ABOUT, after_help = EXIT_CODES)]
     Apply(Op<whizbang_rascal::apply::Args>),
-    /// Make the mask that removes what a phrase names from a picture: the recipe
-    /// `remove_prompt`, whose steps are segment, select, grow, close, plug, subtract and
-    /// feather, each a run of its own under the recipe's. The configured segmenter finds
-    /// the instances. Each step's run is printed, and then the mask, committed to the
-    /// store; with --until, the outputs of that step.
+    /// Remove what a phrase names from a picture: the recipe `remove_prompt`, whose
+    /// steps are segment, select, grow, close, plug, subtract, feather and fill, each a
+    /// run of its own under the recipe's. The configured segmenter finds the instances,
+    /// and the configured filler paints what the mask covers. Each step's run is
+    /// printed, and then the filled picture and the mask rebound onto it, committed to
+    /// the store; with --until, the outputs of that step (--until feather: the mask
+    /// alone, with no filler asked).
     #[command(after_help = EXIT_CODES)]
     RemovePrompt {
         /// The picture, by its identity in the store: sha256: and 64 hex digits, as
@@ -321,6 +323,10 @@ pub enum Command {
         /// none, the config's default for segment answers.
         #[arg(long, value_name = "NAME")]
         backend: Option<String>,
+        /// The filler, by its name in the config's `[backends.fill]` tables. With none,
+        /// the config's default for fill answers. With --until no filler is asked.
+        #[arg(long, value_name = "NAME")]
+        filler: Option<String>,
         #[command(flatten)]
         steps: Steps,
         #[command(flatten)]
@@ -770,12 +776,16 @@ fn run_at(
             prompt,
             protect,
             backend,
+            filler,
             steps,
             common,
         } => {
             let mut arguments = vec![("prompt", Value::text(prompt))];
             if let Some(backend) = backend {
                 arguments.push(("backend", Value::text(backend)));
+            }
+            if let Some(filler) = filler {
+                arguments.push(("filler", Value::text(filler)));
             }
             arguments.extend(steps.arguments());
             let mut inputs = vec![("image", "--image", image.as_str())];
@@ -784,6 +794,10 @@ fn run_at(
             }
             let uses = Uses::One(Capability::Segment, backend.as_deref());
             let over = common.under.over(platform, uses)?;
+            // The last step fills, and is not reached with --until.
+            if steps.until.is_none() {
+                wiring::env_file_asked(&over, Uses::One(Capability::Fill, filler.as_deref()))?;
+            }
             let executor = built(&common.at, &over, recovery, false)?;
             let asked = OperationAsked {
                 action: "remove_prompt",

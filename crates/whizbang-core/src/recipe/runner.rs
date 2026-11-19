@@ -24,9 +24,12 @@
 //! [`SET`], the overrides of one run, one to a line, each `<step>.<argument>=<value>`
 //! (`<step>.constants=<set>` for a step's constant set), refused naming the step before
 //! anything runs when the recipe has no such step or the step's action no such argument;
-//! and [`UNTIL`], a step's id: the recipe runs up to and including that step, and hands
-//! back none of its own outputs, which apply only without it. The step's outputs are what
-//! its run committed, which the recipe's record names.
+//! and [`UNTIL`], the id of a step before the last: the recipe runs up to and including
+//! that step, and hands back none of its own outputs, which apply only without it. The
+//! step's outputs are what its run committed, which the recipe's record names. A
+//! capability only the last step needs is needed only without it, so `until` reserves
+//! nothing for a step it never reaches (plan m3, task F1, item 6). A recipe of one step
+//! has no `until`.
 //!
 //! **Its file.** The digest of the recipe's text is a setting of every run of it,
 //! [`DIGEST_SETTING`]: a run says which file it ran.
@@ -35,8 +38,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::artifact::{self, ArtifactId};
 use crate::contract::{
-    Action, ActionDescriptor, Argument, Call, CallError, Context, Count, Failure, InputPort, Kind,
-    Outcome, OutputPort, PreparedCall, Produced, Registry, Requirement, Value, ValueType, When,
+    Action, ActionDescriptor, Argument, Call, CallError, Capability, Context, Count, Failure,
+    InputPort, Kind, Outcome, OutputPort, PreparedCall, Produced, Registry, Requirement, Value,
+    ValueType, When,
 };
 use crate::identity::{DecodeLimits, Digest};
 
@@ -103,18 +107,23 @@ impl RecipeAction {
                 }
             };
         }
+        // `until` names a step before the last: running to the last is running the
+        // recipe. A recipe of one step has no `until`.
         let ids: Vec<&str> = recipe.steps.iter().map(|step| step.id.as_str()).collect();
-        draft = draft
-            .argument(Argument::optional(
-                SET,
-                "Overrides for this run, one to a line: a step, a dot, an argument, an equals sign and a value.",
-                ValueType::Text,
-            ))
-            .argument(Argument::optional(
+        let before_last = &ids[..ids.len().saturating_sub(1)];
+        let until = !before_last.is_empty();
+        draft = draft.argument(Argument::optional(
+            SET,
+            "Overrides for this run, one to a line: a step, a dot, an argument, an equals sign and a value.",
+            ValueType::Text,
+        ));
+        if until {
+            draft = draft.argument(Argument::optional(
                 UNTIL,
-                "Runs the recipe up to and including this step, and hands back none of its own outputs.",
-                ValueType::choice(&ids),
+                "Runs the recipe up to and including this step, before its last, and hands back none of its own outputs.",
+                ValueType::choice(before_last),
             ));
+        }
         for output in &recipe.outputs {
             let purpose = format!("The output {name} of the recipe.", name = output.name);
             let port = if output.many {
@@ -137,14 +146,26 @@ impl RecipeAction {
             } else {
                 OutputPort::one(&output.name, output.artifact, &purpose)
             };
-            draft = draft.output(port.when(When::not_given(UNTIL)));
+            draft = draft.output(if until {
+                port.when(When::not_given(UNTIL))
+            } else {
+                port
+            });
         }
         // A descriptor states one need of a capability: the steps' needs of one are one
         // need of the recipe, for as many requests as they send together, with every
         // feature any of them asks, and chosen by the recipe's input that chooses each of
         // them, where one does.
+        // A capability only the last step needs is needed only without `until`, which
+        // stops before it (plan m3, task F1, item 6: `--until feather` asks no filler).
         let mut merged: Vec<(Requirement, Option<String>)> = Vec::new();
-        for (step, descriptor) in recipe.steps.iter().zip(&steps) {
+        let mut before: BTreeSet<Capability> = BTreeSet::new();
+        let last = recipe.steps.len().saturating_sub(1);
+        for (at, (step, descriptor)) in recipe.steps.iter().zip(&steps).enumerate() {
+            if at < last {
+                let needs = needs_of(&recipe, step, descriptor);
+                before.extend(needs.iter().map(|(need, _)| need.capability()));
+            }
             for (need, chooser) in needs_of(&recipe, step, descriptor) {
                 match merged
                     .iter_mut()
@@ -170,6 +191,11 @@ impl RecipeAction {
             }
         }
         for (need, chooser) in merged {
+            let need = if until && !before.contains(&need.capability()) {
+                need.when(When::not_given(UNTIL))
+            } else {
+                need
+            };
             draft = draft.needs(match chooser {
                 Some(input) => need.chosen_by(&input),
                 None => need,
@@ -339,9 +365,19 @@ impl Action for RecipeAction {
             .map_err(|why| Failure::invalid(&why))?;
         let last = match text_of(call, UNTIL) {
             Some(until) => {
-                (self.recipe.steps.iter().position(|s| s.id == until)).ok_or_else(|| {
-                    Failure::invalid(&format!("the recipe {name} has no step {until}"))
-                })?
+                let at =
+                    (self.recipe.steps.iter().position(|s| s.id == until)).ok_or_else(|| {
+                        Failure::invalid(&format!("the recipe {name} has no step {until}"))
+                    })?;
+                // Its descriptor offers only the steps before the last, and the runner
+                // holds to that itself: a need only the last step has was not reserved
+                // for a run with `until`.
+                if at + 1 == self.recipe.steps.len() {
+                    return Err(Failure::invalid(&format!(
+                        "until names {until}, the last step of the recipe {name}: leave until out to run it whole"
+                    )));
+                }
+                at
             }
             None => self.recipe.steps.len() - 1,
         };
