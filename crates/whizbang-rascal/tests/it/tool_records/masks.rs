@@ -330,6 +330,6 @@ fn the_records_of_rasterize_shrink_invert_and_inspect_are_what_they_give() {
     assert_eq!(rgb(&shown[1].2, 48, 32), rgb(&scene(), 48, 32));
     assert_eq!(
         rgb(&shown[0].2, 40, 30)[1],
-        ((u16::from(rgb(&scene(), 40, 30)[1]) + 1) / 2) as u8
+        u16::from(rgb(&scene(), 40, 30)[1]).div_ceil(2) as u8
     );
 }
