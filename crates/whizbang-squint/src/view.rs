@@ -10,7 +10,7 @@ use whizbang_core::artifact::{self, Artifact, ArtifactError, ArtifactType, Image
 use whizbang_core::artifact::{Origin, Step};
 use whizbang_core::contract::{
     Action, ActionDescriptor, Argument, Context, Count, DescriptorError, Failure, InputPort, Kind,
-    OutputPort, PreparedCall, Produced, Value, ValueType,
+    OutputPort, PreparedCall, Produced, ResultKind, Value, ValueType,
 };
 use whizbang_core::identity::{
     Binding, CanonicalPixels, DecodeLimits, Direction, IdentityError, Mapping, Projection, Topology,
@@ -310,6 +310,9 @@ impl View {
             "The region of each image, the first image's first.",
             Count::between(1, 2),
         ))
+        // Each crop's place on its source, as the binding a caller maps through (plan m3,
+        // task Q1, item 4; ADR 0035).
+        .results(ResultKind::Measurements)
         .concurrent(true);
         Ok(View(draft.build()?))
     }
@@ -358,9 +361,13 @@ impl Action for View {
             other => failed(&other),
         })?;
         let mut produced = Produced::nothing();
+        let mut placed = Vec::new();
         for crop in crops {
+            let binding = serde_json::to_value(&crop.binding).map_err(|e| failed(&e))?;
+            placed
+                .push(serde_json::json!({"crop": crop.image.id().to_string(), "binding": binding}));
             produced = produced.with("crops", crop.image);
         }
-        Ok(produced)
+        Ok(produced.with_measurements(serde_json::json!({ "crops": placed })))
     }
 }

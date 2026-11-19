@@ -845,6 +845,13 @@ with `use_case::each_use_case_is_a_recipe_with_its_rules_details_and_tools`,
 second, items 3 to 6 and their tests (the carry-over row on Q1's second pull request). The
 plan named item 5 as the seam; the first part alone reached the budget. The box is ticked by
 the second, with item 7's record by the orchestrator.
+The second pull request built item 4's crop place
+(`view::a_crops_place_on_its_source_maps_back_through_its_binding`) and item 6's cited calls
+(`submission::a_cited_call_that_is_not_a_completed_call_of_the_run_is_refused`), and closed,
+dropped or handed on the rest of items 4 and 6 with a line each (`view`'s decoding, a
+manifest's fields, the old configs' keys, squint's milestone 4 follow-ups, `resize`'s
+methods; the stored run as a transcript to B1). Items 3 and 5 are a third pull request
+(the carry-over row on Q1's third pull request), and the box waits for it.
 
 ## O3. The seam (large)
 
