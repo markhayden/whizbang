@@ -40,3 +40,5 @@ mod window;
 mod fan;
 mod profile;
 mod ramp;
+// The last of rascal's operations (plan m3, task O5).
+mod measure;

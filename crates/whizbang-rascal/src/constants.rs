@@ -58,8 +58,25 @@ pub fn value(set: &str, key: &str) -> Option<toml::Value> {
 /// The text of the set of this name this build ships, whichever action reads it: what a
 /// lab's cell takes the contents of each step's set from (plan m3, task L1).
 pub fn text_of(name: &str) -> Option<&'static str> {
-    let sets = [WINDOW_V1, TIGHTEN_V1, POISSON_V1, PROFILE_V1, RAMP_V1];
+    let sets = [
+        WINDOW_V1,
+        TIGHTEN_V1,
+        POISSON_V1,
+        PROFILE_V1,
+        RAMP_V1,
+        MEASURES_V1,
+        FEATHER_V1,
+    ];
     (sets.iter().chain(FAN.iter()))
         .find(|(set, _)| *set == name)
         .map(|(_, text)| *text)
 }
+
+/// `measures-v1`: the chroma below which `measure` omits a hue difference, and the
+/// percentile it reports beside the mean, the median and the largest (task O5).
+pub const MEASURES_V1: (&str, &str) =
+    ("measures-v1", include_str!("../constants/measures-v1.toml"));
+
+/// `feather-v1`: how many sigmas out a feather reaches, which `feather::SUPPORT` holds;
+/// copied with the last of the sets (task O5), and read by a test of this crate.
+pub const FEATHER_V1: (&str, &str) = ("feather-v1", include_str!("../constants/feather-v1.toml"));

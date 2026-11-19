@@ -128,12 +128,27 @@ impl config::Kind for Shared {
         let model = table.backend().model().unwrap_or(MODEL);
         let mut declaration = Declaration::new(ModelIdentity::new("fake", model, "1"), &[])
             .map_err(|_| KindRefused::Table("a fake backend cannot declare that model"))?;
+        // The setting `upstream`, an origin, is one the backend's recipient forwards to.
+        let upstream = table
+            .backend()
+            .settings()
+            .find_map(|(key, setting)| match (key, setting) {
+                ("upstream", Setting::Text(origin)) => Origin::of(origin, &Secrets::none()).ok(),
+                _ => None,
+            });
         if let Some(address) = table.backend().address() {
-            declaration = declaration.sending_to(Recipient::new(address.origin().clone()));
+            let mut recipient = Recipient::new(address.origin().clone());
+            if let Some(upstream) = upstream {
+                recipient = recipient
+                    .forwarding_to(vec![upstream])
+                    .map_err(|_| KindRefused::Table("a fake backend cannot forward there"))?;
+            }
+            declaration = declaration.sending_to(recipient);
         }
         let mut charge = None;
         for (key, setting) in table.backend().settings() {
             match (key, setting) {
+                ("upstream", Setting::Text(_)) => {}
                 ("at_most_micros", Setting::Integer(micros)) => {
                     #[allow(clippy::cast_precision_loss)]
                     let price = Price::at_most(*micros as f64).map_err(|_| {
@@ -146,7 +161,7 @@ impl config::Kind for Shared {
                 }
                 _ => {
                     return Err(KindRefused::Table(
-                        "a fake backend takes at_most_micros and charges_micros",
+                        "a fake backend takes at_most_micros, charges_micros and upstream",
                     ));
                 }
             }
@@ -2463,4 +2478,41 @@ fn a_fill_to_a_recipient_the_config_does_not_name_is_refused_before_a_byte_leave
     }
     assert_eq!(listener.finish(), 0);
     assert!(!filled.store_holds_the_key());
+}
+
+#[test]
+fn a_recipient_with_upstreams_is_sent_to_and_one_without_is_refused_naming_upstreams() {
+    // Plan m3, task O5 (the row on a recipient approved with `upstreams`): the config
+    // approves the origin with one upstream. A backend whose recipient forwards to that
+    // upstream is the recipient approved and is called; one that declares the origin
+    // alone is another recipient, refused before its backend is called, in the words
+    // for upstreams.
+    let world = World::new("wired-upstreams");
+    reset(&world.root, "20");
+    let config = |declared: &str| {
+        format!(
+            "[backends.fill]\nkind = \"fake\"\nurl = \"https://api.example.com/v1\"\n\n\
+             [backends.fill.settings]\nat_most_micros = 250000\n{declared}\n\
+             [egress.recipients.api]\norigin = \"https://api.example.com\"\n\
+             upstreams = [\"https://up.example.com\"]\nclasses = [\"source_images\"]\n"
+        )
+    };
+    let executor = world.runner(&world.config(&config("upstream = \"https://up.example.com\"\n")));
+    let sent = executor.submit(&Call::new("paints")).unwrap();
+    assert_eq!(sent.outcome().name(), "completed");
+    assert_eq!((world.ran(), world.fakes.requests()), (1, 1));
+    drop(executor);
+    let text = shown(&world.root, sent.run().as_str());
+    assert!(!text.contains("request_not_approved"), "{text}");
+    let executor = world.runner(&world.config(&config("")));
+    let refused = executor.submit(&Call::new("paints")).unwrap();
+    assert_eq!(refused.outcome().name(), "error");
+    assert_eq!((world.ran(), world.fakes.requests()), (2, 1));
+    drop(executor);
+    let text = shown(&world.root, refused.run().as_str());
+    assert!(text.contains("\trequest_not_approved\t"), "{text}");
+    assert!(
+        text.contains("but not with the upstreams the backend declares"),
+        "{text}"
+    );
 }

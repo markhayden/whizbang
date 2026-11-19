@@ -16,6 +16,7 @@ mod digest;
 pub mod encode;
 mod mapping;
 mod pixels;
+mod scans;
 mod space;
 
 pub use binding::{Binding, BindingId, Destination, Direction};
