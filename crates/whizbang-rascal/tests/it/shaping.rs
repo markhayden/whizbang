@@ -44,6 +44,8 @@ impl Shop {
             whizbang_rascal::feather::register,
             whizbang_rascal::paste::register,
             whizbang_rascal::fill::register,
+            whizbang_rascal::tighten::register,
+            whizbang_rascal::inspect::register,
         ] {
             register(&mut registry).unwrap();
         }

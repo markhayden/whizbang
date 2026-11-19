@@ -5,8 +5,8 @@
 //! The arithmetic is the composite's ([`crate::composite`], rascal's `feather` paste in
 //! `crates/rascal-ops/src/paste.rs` at the commit `docs/sources.toml` pins): every pixel
 //! the mask weighs nothing, outside its core and blend or under protect, is the base's
-//! four bytes. `mode` is an argument whose one value here is `feather`; `hard` and
-//! `poisson` come with task O4.
+//! four bytes. `mode` is an argument: `feather` (rascal's), by the mask's weight; or
+//! `hard` (rascal's, task O4), the fill on the core alone.
 //!
 //! **An unchanged result:** a fill that changes no pixel of the base makes no
 //! derivation (`Derivation::checked` refuses identical pictures), and the base itself is
@@ -26,7 +26,7 @@ use whizbang_core::contract::{
 };
 use whizbang_core::identity::{DecodeLimits, encode};
 
-use crate::composite::composite;
+use crate::composite::{Mode, composite_in};
 use crate::operation;
 
 /// The action's name.
@@ -36,7 +36,7 @@ pub const NAME: &str = "paste";
 pub const VERSION: &str = "1.0.0";
 
 /// The modes of a paste this build has.
-pub const MODES: [&str; 1] = ["feather"];
+pub const MODES: [&str; 2] = ["feather", "hard"];
 
 /// An image read from the run's store, its pixels as a picture. A rendering is refused:
 /// it is a picture of another artifact, and nothing is pasted onto it.
@@ -79,8 +79,20 @@ pub(crate) fn pasted(
     mask: &Mask,
     step: Step,
 ) -> Result<Pasted, Failure> {
-    let made =
-        composite(picture, fill, mask).map_err(|error| Failure::invalid(&error.to_string()))?;
+    pasted_in(base, picture, fill, mask, Mode::Feather, step)
+}
+
+/// The same, in `mode`.
+pub(crate) fn pasted_in(
+    base: &Image,
+    picture: &Picture,
+    fill: &Painted,
+    mask: &Mask,
+    mode: Mode,
+    step: Step,
+) -> Result<Pasted, Failure> {
+    let made = composite_in(picture, fill, mask, mode)
+        .map_err(|error| Failure::invalid(&error.to_string()))?;
     let Some(derivation) = made.derivation().cloned() else {
         return Ok(Pasted {
             image: base.clone(),
@@ -124,7 +136,7 @@ impl Paste {
         )
         .argument(Argument::with_default(
             "mode",
-            "How the fill is pasted: feather, by the mask's core and blend.",
+            "How the fill is pasted: feather, by the mask's core and blend; hard, on the core alone.",
             ValueType::choice(&MODES),
             Value::text("feather"),
         ))
@@ -174,9 +186,9 @@ impl Action for Paste {
 
     fn run(&self, call: &PreparedCall, context: &Context) -> Result<Produced, Failure> {
         let mode = operation::text(call, "mode").unwrap_or("feather");
-        if !MODES.contains(&mode) {
-            return Err(Failure::invalid("the mode is feather"));
-        }
+        let Some(how) = Mode::named(mode) else {
+            return Err(Failure::invalid("the mode is feather or hard"));
+        };
         let one = |port: &str| {
             operation::given(call, port)
                 .first()
@@ -202,7 +214,7 @@ impl Action for Paste {
             .input("image", image_id.0)
             .input("fill", fill_id.0)
             .input("mask", mask_id.0);
-        let pasted = pasted(&base, &picture, &painted, &mask, step)?;
+        let pasted = pasted_in(&base, &picture, &painted, &mask, how, step)?;
         context.events().progress(&format!(
             "paste: {} pixels read from the fill",
             pasted.painted

@@ -29,6 +29,10 @@ Makes a rectangle on an image a mask: the box's pixels the core, no blend and no
 
 Makes the mask for a second pass: what the first mask reached is protected, the rest of the image the core.
 
+## `repair`
+
+Repairs a scratch or a tear along a stroke: the stroke tightened to the defect's edges, feathered, then filled.
+
 ## `align`
 
 Registers one flat image onto another of the same scene and viewpoint, and returns it warped into the other's frame.
@@ -132,3 +136,11 @@ Shrinks the core of a mask by a disc; a core against the border shrinks from it 
 ## `invert`
 
 The mask for a second pass: what the first mask reached is protected, and every other pixel is the core.
+
+## `tighten`
+
+Tightens a stroke to the defect's edges: at each sample the two strongest opposite edges inside the stroke bound the core.
+
+## `inspect`
+
+A mask for the eye: the overlay on its image, the core's width on each row, and its counts in the journal.
