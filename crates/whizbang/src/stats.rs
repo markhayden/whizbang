@@ -264,3 +264,122 @@ pub fn stats(root: &Path, filter: &Filter) -> Result<String, String> {
     text.push_str("cache hits: not recorded (the decision cache is not built yet)\n");
     Ok(text)
 }
+
+/// The rule an answer of a kept checklist bears on, as `--unsure-by rule` counts it: the
+/// obligation of an item (`chk:ob:RE1@candidate` is `RE1`), `reference` for the item of a
+/// reference, and `RQ` for a requirement of the job, whose number names nothing across
+/// jobs. A finding counts once for each obligation it cites. Nothing of an item's own
+/// words or images is kept: an id that is none of these is `other`.
+fn rules_of(answer: &serde_json::Value) -> Vec<String> {
+    let rule = |id: &str| {
+        let letters: String = id.chars().take_while(char::is_ascii_uppercase).collect();
+        let digits = &id[letters.len()..];
+        let plain = letters.len() == 2 && !digits.is_empty();
+        match () {
+            _ if !plain || !digits.bytes().all(|b| b.is_ascii_digit()) => "other".to_owned(),
+            _ if letters == "RQ" => "RQ".to_owned(),
+            _ => id.to_owned(),
+        }
+    };
+    if let Some(id) = answer["id"].as_str() {
+        if id.starts_with("chk:ref:") {
+            return vec!["reference".to_owned()];
+        }
+        let obligation = id
+            .strip_prefix("chk:ob:")
+            .and_then(|rest| rest.split('@').next());
+        return vec![obligation.map_or_else(|| "other".to_owned(), rule)];
+    }
+    let cited = answer["obligation_ids"].as_array().map(Vec::as_slice);
+    let mut rules: Vec<String> = (cited.unwrap_or_default().iter())
+        .filter_map(|id| id.as_str().map(rule))
+        .collect();
+    rules.dedup();
+    rules
+}
+
+/// One line of the count: the use case, the rule, an item or a finding, the disposition
+/// and the confidence.
+type Cause = (String, String, &'static str, String, String);
+
+/// `runs stats --unsure-by rule` (plan m3, task U1, item 1): of the runs the filter admits
+/// whose verdict is unsure, each answer of the checklist they kept whose row was unsure,
+/// counted by its use case, its rule, whether it was an item or a finding, its
+/// disposition and its confidence: how many such answers, and in how many verdicts. A
+/// verdict may have more than one. Aggregates only: no run, item or reason is printed.
+pub fn unsure_by_rule(root: &Path, filter: &Filter) -> Result<String, String> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let (found, _) = matching(root, filter)?;
+    let mut verdicts = 0usize;
+    let mut unkept = 0usize;
+    let mut counted: BTreeMap<Cause, (usize, usize)> = BTreeMap::new();
+    for (id, record) in &found {
+        if !matches!(record.verdict(), Some((record::Decision::Unsure, _))) {
+            continue;
+        }
+        verdicts += 1;
+        let Ok(run) = whizbang_core::contract::RunId::parse(id) else {
+            unkept += 1;
+            continue;
+        };
+        let kept = whizbang::door::diagnostic(root, &run, whizbang_squint::check::JUDGED);
+        let json = kept
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+        let Some(answers) = json.as_ref().and_then(|j| j["answers"].as_array()) else {
+            unkept += 1;
+            continue;
+        };
+        let use_case = json.as_ref().and_then(|j| j["use_case"].as_str());
+        let use_case = use_case.unwrap_or("none").to_owned();
+        let mut here: BTreeSet<Cause> = BTreeSet::new();
+        for answer in answers.iter().filter(|a| a["row"] == "unsure") {
+            let word = |key: &str| answer[key].as_str().unwrap_or("none").to_owned();
+            let what = if answer["id"].is_string() {
+                "item"
+            } else {
+                "finding"
+            };
+            for rule in rules_of(answer) {
+                let cause = (
+                    use_case.clone(),
+                    rule,
+                    what,
+                    word("disposition"),
+                    word("confidence"),
+                );
+                counted.entry(cause.clone()).or_default().0 += 1;
+                here.insert(cause);
+            }
+        }
+        for cause in here {
+            counted.entry(cause).or_default().1 += 1;
+        }
+    }
+    let mut rows: Vec<(Cause, (usize, usize))> = counted.into_iter().collect();
+    // The commonest causes first; ties in the order of the cause.
+    rows.sort_by(|a, b| {
+        b.1.1
+            .cmp(&a.1.1)
+            .then(b.1.0.cmp(&a.1.0))
+            .then(a.0.cmp(&b.0))
+    });
+    let mut text = format!(
+        "unsure by rule: {verdicts} unsure verdicts, {unkept} of them with no checklist kept\n\
+         use_case\trule\tanswer\tdisposition\tconfidence\tanswers\tverdicts\n"
+    );
+    for ((use_case, rule, what, disposition, confidence), (answers, verdicts)) in rows {
+        let clean = |text: &str| -> String {
+            let cut: String = text.chars().take(32).collect();
+            cut.escape_debug().to_string()
+        };
+        text.push_str(&format!(
+            "{}\t{}\t{what}\t{}\t{}\t{answers}\t{verdicts}\n",
+            clean(&use_case),
+            clean(&rule),
+            clean(&disposition),
+            clean(&confidence)
+        ));
+    }
+    Ok(text)
+}

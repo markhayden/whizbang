@@ -4,7 +4,9 @@
 //! `crates/squint-eval/src/gate_rules.rs`, at the commit `docs/sources.toml` pins, and
 //! changed to the spec's measures: squint gated on the count of failures caught; a gate
 //! here gates on balanced accuracy, with the false rejects, the errors, the cost and the
-//! latency as guardrails.
+//! latency as guardrails, and the false accepts where the file states them (plan m3, task
+//! U1: a change that turns `unsure` into passes of pictures that fail is not admitted on its
+//! gain alone).
 //!
 //! **A gate file states every item the spec lists, and nothing else.** No item has a
 //! default: a file that leaves one out is refused, and so is a key the format does not
@@ -165,6 +167,11 @@ pub struct Guardrails {
     pub false_reject_increase_max: f64,
     /// The treatment's share of decisions that ended in an error must be under this.
     pub error_rate_max: f64,
+    /// The upper bound of the increase in false accepts (a fail item given pass) must be
+    /// under this (plan m3, task U1). A gate frozen before it was an item states none, and
+    /// is not held to it; one that states it is.
+    #[serde(default)]
+    pub false_accept_increase_max: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -255,6 +262,7 @@ impl Gate {
             gate.admission.lower_bound_above,
             gate.guardrails.false_reject_increase_max,
             gate.guardrails.error_rate_max,
+            gate.guardrails.false_accept_increase_max.unwrap_or(0.0),
             gate.limits.cost_ratio_max,
             gate.limits.latency_ratio_max,
         ];
@@ -316,6 +324,19 @@ impl Gate {
         if fr.upper >= g.false_reject_increase_max {
             failed.push("false_rejects");
             rejected |= fr.lower >= g.false_reject_increase_max;
+        }
+        if let Some(max) = g.false_accept_increase_max {
+            match &paired.false_accept_increase {
+                Some(fa) if fa.insufficient_tail => {
+                    return Verdict::inconclusive(vec!["resamples"]);
+                }
+                Some(fa) if fa.upper >= max => {
+                    failed.push("false_accepts");
+                    rejected |= fa.lower >= max;
+                }
+                Some(_) => {}
+                None => return Verdict::inconclusive(vec!["intervals"]),
+            }
         }
         if x.errors.value >= g.error_rate_max {
             failed.push("errors");

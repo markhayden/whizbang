@@ -158,6 +158,7 @@ pub fn every_tool_sent(provider: Provider, label: &str) -> (String, serde_json::
         detail: None,
         projection: "full",
         tools: &more,
+        second_look: "off",
     };
     let root = judged.world.root.clone();
     let printed =

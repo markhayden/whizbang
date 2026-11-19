@@ -403,6 +403,18 @@ call `view`, `align` and `resize`. `--details none --projection visual_only` giv
 baseline arm C instead: nothing measured first, and a call of `align` answered with its
 picture and a fixed sentence.
 
+Two experimental options attack the verdicts that come back `unsure` (plan m3, task U1;
+`docs/results/m3-unsure.md` measures them). `--detail tiles`, for a job with one image
+(`reality-checks`; `brief-compliance` with no reference), opens the conversation with the
+candidate cut into four overlapping tiles at full resolution, each labelled with its place
+(`docs/reference/tools/tiles.md`); a job with a pair is refused, naming its use case.
+`--second-look on` gives the judge one more turn when its submission leaves a mandatory item
+tentative, so that the verdict would be unsure: crops of what it cited for those items (or
+the candidate in four tiles when it cited none), and the question to settle them alone. It
+is inside the run's 16 turns and what the run reserved, and the verdict is still worked out
+from the dispositions. `runs stats --unsure-by rule` counts what made the unsure verdicts of
+a store unsure, by rule.
+
 **What one request may cost** is fixed by three settings of the backend, each held
 before a byte is sent: `max_input_tokens` (40,000 when none is given),
 `max_output_tokens` (4,096) and `max_pictures` (24), in a table

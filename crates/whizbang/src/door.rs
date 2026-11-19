@@ -543,6 +543,7 @@ pub fn check(
         detail: asked.detail,
         projection: asked.projection,
         tools: &[],
+        second_look: "off",
     };
     check_job(
         executor,
@@ -565,6 +566,9 @@ pub struct Measuring<'a> {
     /// More tools offered to the judge beside those `details` gives: tool files the run
     /// names (`--tool`; plan 2C, task X1, item 4), each offered only so.
     pub tools: &'a [String],
+    /// Whether a submission that leaves a mandatory item tentative gets one more turn:
+    /// `off`, `on` or `strict` (plan m3, task U1, item 4).
+    pub second_look: &'a str,
 }
 
 /// Runs `check` through the executor under a job and its images, in its order, and
@@ -609,6 +613,9 @@ pub fn check_call(
         .argument("projection", Value::text(measuring.projection));
     if let Some(detail) = measuring.detail {
         call = call.argument("detail", Value::text(detail));
+    }
+    if measuring.second_look != "off" {
+        call = call.argument("second_look", Value::text(measuring.second_look));
     }
     for image in images {
         call = call.input("images", *image);

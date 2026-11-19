@@ -196,6 +196,7 @@ pub fn check_call(arguments: &Map<String, Json>) -> Result<(Call, Option<String>
         detail: None,
         projection: "full",
         tools: &[],
+        second_look: "off",
     };
     let call = door::check_call(&job, &ids, text(arguments, "judge")?, &measuring);
     let request_id = text(arguments, REQUEST_ID)?.map(str::to_owned);

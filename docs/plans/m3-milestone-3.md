@@ -523,7 +523,7 @@ frozen in a file.
    through a gate on fresh data, milestone E's. A change that does not help is kept as an
    experimental option or dropped, and recorded either way.
 
-- [ ] Done when:
+- [x] Done when:
   `stats::unsure_by_rule_counts_each_unsure_verdict_by_the_rule_that_made_it`,
   `stats::unsure_by_rule_prints_aggregates_and_no_item`,
   `matrix::an_arms_details_and_second_look_are_in_its_cells_identity_and_run`,
@@ -539,6 +539,28 @@ frozen in a file.
   `matrix::the_unsure_screen_and_its_gate_are_read`,
   `evidence::the_unsure_record_names_a_commit_of_this_tree_and_holds_only_aggregates`,
   `scripts/tests/test-tool-records.sh` holding the record of `tiles`.
+
+**Reworded with the task (U1).** Item 5 said "`evalsets/matrix/unsure-screen.toml`": the
+tree under `evalsets/` is held to squint's 374 files byte for byte
+(`sets::every_file_squint_tracked_under_evalsets_is_here_byte_for_byte`), and whizbang's
+matrices are in `matrices/`, so the screen is `matrices/unsure-screen.toml`; the gate goes
+where G1 puts its gates. Item 5 also said "on reference-consistency ..., `F` and `F` with the
+second look (88 items in all)": a matrix crosses every arm with every set, and the two sets of
+each use case hold 44 items, so the screen is one matrix of the four arms on the four sets,
+in which the arms with tiles name them for reality-checks alone and, on reference-consistency,
+are further repetitions of `F` and of `F` with the second look (528 decisions). Item 4 said
+"crops ... of the regions the judge cited for that item": an item left `held` cites no region
+as a rule, so where none is cited the look shows the candidate's four tiles. Item 6 said
+"frozen against `F` in `evalsets/gates/unsure.toml`": gates are in `gates/` (G1), and after
+the screen the second look is gated one use case at a time (`gates/unsure-<use-case>.toml`,
+each on its own dev set), with the false accepts as a guardrail beside the false rejects
+(`false_accept_increase_max`, added to the gate file and to `SPEC.md` section 8's defaults),
+because in reality-checks the look turned unsure into passes of pictures that fail. A dev set
+has five families, so each gate's minimum is five, under the spec's twenty: descriptive, as
+the item says. An arm's `second_look` names the use cases it is given for, and `strict`
+(a pass only with a location cited) was screened on reality-checks beside it
+(`matrices/unsure-strict.toml`, `docs/results/m3-unsure.md`). The gates' runs are the
+orchestrator's.
 
 **Keeping tests lean (U1).** Scripted judges; sets of three to six items made in the test;
 pictures of at most 128 pixels.
