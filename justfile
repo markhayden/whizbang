@@ -140,11 +140,16 @@ scan-range-secrets base head:
 # What a pull request runs: `check` with every script test (check-full), and more.
 ci: check-full deny-advisories smoke compile-fail scan-secrets
 
-# `ci` in two halves, for CI's macOS runner, where the script tests alone take three to five
-# minutes: it runs each half in a job of its own, side by side (.github/workflows/ci.yml).
-# The first half is `ci` without the script tests. The second is the script tests, after
-# `deny` as in `check`: one of them reads the workspace's crates from cargo's home, where
-# `deny` puts them. scripts/tests/test-ci-jobs.sh holds the two to `check-full` and `ci`.
-ci-without-scripts: fmt-check clippy graph deny docs-check timing test-pack deny-advisories smoke compile-fail scan-secrets
+# `ci` in three parts, for CI, where the script tests alone take a runner three to five
+# minutes and the rest took the macOS runner past its limit: it runs each part in a job of
+# its own, side by side, on each runner (.github/workflows/ci.yml). The first is `ci`
+# without the script tests and without the release build and what follows it; the second
+# is those (the smoke of the release binary, the example that must not compile, the
+# secrets scan); the third is the script tests, after `deny` as in `check`: one of them
+# reads the workspace's crates from cargo's home, where `deny` puts them.
+# scripts/tests/test-ci-jobs.sh holds the three to `check-full` and `ci`.
+ci-without-scripts: fmt-check clippy graph deny docs-check timing test-pack deny-advisories
+
+ci-release: smoke compile-fail scan-secrets
 
 ci-scripts: deny test-scripts

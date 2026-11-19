@@ -116,12 +116,14 @@ pub(super) fn system() -> Arc<dyn Clock> {
 /// The machine's clock, moved on by the test: while it rushes, each pause moves it a
 /// second and waits for nothing, so a wait of the supervisor's comes to its end at once.
 /// Given a budget, it rushes only until it has moved that far, and then waits as the
-/// machine's clock does.
+/// machine's clock does. Given a hold, it waits as the machine's clock does until the hold
+/// is over, and only then rushes.
 #[derive(Default)]
 struct Rushed {
     moved_ms: AtomicU64,
     rushing: AtomicBool,
     budget_ms: AtomicU64,
+    held_until: Mutex<Option<Instant>>,
 }
 
 impl Rushed {
@@ -135,6 +137,20 @@ impl Rushed {
         self.budget_ms
             .store(budget.as_millis() as u64, Ordering::SeqCst);
         self.rushing.store(true, Ordering::SeqCst);
+    }
+
+    /// Rushes as [`Rushed::rush_through`] does, but only once `hold` of the machine's time
+    /// has passed from now.
+    fn rush_through_after(&self, budget: Duration, hold: Duration) {
+        *self.held_until.lock().unwrap() = Some(Instant::now() + hold);
+        self.rush_through(budget);
+    }
+
+    fn held(&self) -> bool {
+        self.held_until
+            .lock()
+            .unwrap()
+            .is_some_and(|until| Instant::now() < until)
     }
 }
 
@@ -150,7 +166,7 @@ impl Clock for Rushed {
     fn pause(&self, span: Duration) {
         let budget = self.budget_ms.load(Ordering::SeqCst);
         let within = budget == 0 || self.moved_ms.load(Ordering::SeqCst) < budget;
-        if self.rushing.load(Ordering::SeqCst) && within {
+        if self.rushing.load(Ordering::SeqCst) && within && !self.held() {
             self.moved_ms.fetch_add(1_000, Ordering::SeqCst);
             std::thread::yield_now();
         } else {
@@ -1007,11 +1023,19 @@ fn a_request_the_worker_does_not_read_ends_at_the_calls_limit_as_timed_out_and_l
  {
     // The worker answers its hello and then reads nothing: a request larger than the pipe
     // is never taken whole. The write waits within the call's limit, on the clock.
+    //
+    // The clock is held for half a second of the machine's time before it rushes, so that
+    // the writer has begun the write, and the pipe has taken part of the request, before
+    // the limit passes. Rushed at once, the limit could pass, now and then, before the
+    // writer took the request at all: then no byte of it left, the worker was killed
+    // first, and the call was rightly `not_sent` (CI saw it twice). That case is the
+    // supervisor's to tell truly, and it does: the stage is read once the writer has
+    // ended. This test is of a request the pipe took part of.
     let clock = Arc::new(Rushed::default());
     let mut worker = supervised(Some("deaf-after-hello"), clock.clone());
     worker.ready().unwrap();
     let pid = worker.pid().unwrap();
-    clock.rush_through(CALL_LIMIT);
+    clock.rush_through_after(CALL_LIMIT, Duration::from_millis(500));
     let asked = Instant::now();
     let failed = worker.call(larger_than_a_pipe()).unwrap_err();
     assert!(
@@ -1026,7 +1050,7 @@ fn a_request_the_worker_does_not_read_ends_at_the_calls_limit_as_timed_out_and_l
         "the pack's worker did not end the request within 120 seconds and was killed"
     );
     // Part of it was taken by the pipe: it may have been read.
-    assert_eq!(failed.fault.stage(), Stage::Unresolved);
+    assert_eq!(failed.fault.stage(), Stage::Unresolved, "{failed:?}");
     assert_eq!(failed.ended, Some(Ended::Killed));
     // No process, and no thread of the supervisor's: its readers and its writer ended.
     assert!(!kit::runs_the_pack(pid));
