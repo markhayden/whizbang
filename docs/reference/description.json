@@ -220,7 +220,7 @@
         },
         {
           "name": "until",
-          "purpose": "Runs the recipe up to and including this step, before its last, and hands back none of its own outputs.",
+          "purpose": "Runs the recipe up to and including this step, before its last, and hands back that step's outputs as its own.",
           "type": {
             "type": "choice",
             "choices": [
@@ -289,6 +289,111 @@
           "belongs_to": null,
           "derived_from": null,
           "rebound_onto": null
+        },
+        {
+          "name": "until_segment_mask",
+          "artifact": "mask",
+          "purpose": "With until segment, the output mask of that step.",
+          "count": {
+            "min": 0,
+            "max": 64
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "until_select_mask",
+          "artifact": "mask",
+          "purpose": "With until select, the output mask of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "until_grow_mask",
+          "artifact": "mask",
+          "purpose": "With until grow, the output mask of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "until_close_mask",
+          "artifact": "mask",
+          "purpose": "With until close, the output mask of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "until_plug_mask",
+          "artifact": "mask",
+          "purpose": "With until plug, the output mask of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "until_subtract_mask",
+          "artifact": "mask",
+          "purpose": "With until subtract, the output mask of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "until_feather_mask",
+          "artifact": "mask",
+          "purpose": "With until feather, the output mask of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
         }
       ],
       "needs": [
@@ -342,7 +447,7 @@
         },
         {
           "name": "until",
-          "purpose": "Runs the recipe up to and including this step, before its last, and hands back none of its own outputs.",
+          "purpose": "Runs the recipe up to and including this step, before its last, and hands back that step's outputs as its own.",
           "type": {
             "type": "choice",
             "choices": [
@@ -420,6 +525,96 @@
           "belongs_to": null,
           "derived_from": null,
           "rebound_onto": null
+        },
+        {
+          "name": "until_rasterize_mask",
+          "artifact": "mask",
+          "purpose": "With until rasterize, the output mask of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "until_grow_mask",
+          "artifact": "mask",
+          "purpose": "With until grow, the output mask of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "until_close_mask",
+          "artifact": "mask",
+          "purpose": "With until close, the output mask of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "until_plug_mask",
+          "artifact": "mask",
+          "purpose": "With until plug, the output mask of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "until_subtract_mask",
+          "artifact": "mask",
+          "purpose": "With until subtract, the output mask of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "until_feather_mask",
+          "artifact": "mask",
+          "purpose": "With until feather, the output mask of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
         }
       ],
       "needs": [
@@ -463,7 +658,7 @@
         },
         {
           "name": "until",
-          "purpose": "Runs the recipe up to and including this step, before its last, and hands back none of its own outputs.",
+          "purpose": "Runs the recipe up to and including this step, before its last, and hands back that step's outputs as its own.",
           "type": {
             "type": "choice",
             "choices": [
@@ -527,6 +722,36 @@
           "belongs_to": null,
           "derived_from": null,
           "rebound_onto": null
+        },
+        {
+          "name": "until_rasterize_mask",
+          "artifact": "mask",
+          "purpose": "With until rasterize, the output mask of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "until_feather_mask",
+          "artifact": "mask",
+          "purpose": "With until feather, the output mask of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
         }
       ],
       "needs": [
@@ -570,7 +795,7 @@
         },
         {
           "name": "until",
-          "purpose": "Runs the recipe up to and including this step, before its last, and hands back none of its own outputs.",
+          "purpose": "Runs the recipe up to and including this step, before its last, and hands back that step's outputs as its own.",
           "type": {
             "type": "choice",
             "choices": [
@@ -604,6 +829,21 @@
           },
           "when": {
             "not_given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "until_rect_location",
+          "artifact": "location",
+          "purpose": "With until rect, the output location of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
           },
           "belongs_to": null,
           "derived_from": null,
@@ -697,7 +937,7 @@
         },
         {
           "name": "until",
-          "purpose": "Runs the recipe up to and including this step, before its last, and hands back none of its own outputs.",
+          "purpose": "Runs the recipe up to and including this step, before its last, and hands back that step's outputs as its own.",
           "type": {
             "type": "choice",
             "choices": [
@@ -761,6 +1001,36 @@
           "belongs_to": null,
           "derived_from": null,
           "rebound_onto": null
+        },
+        {
+          "name": "until_tighten_mask",
+          "artifact": "mask",
+          "purpose": "With until tighten, the output mask of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "until_feather_mask",
+          "artifact": "mask",
+          "purpose": "With until feather, the output mask of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
         }
       ],
       "needs": [
@@ -804,7 +1074,7 @@
         },
         {
           "name": "until",
-          "purpose": "Runs the recipe up to and including this step, before its last, and hands back none of its own outputs.",
+          "purpose": "Runs the recipe up to and including this step, before its last, and hands back that step's outputs as its own.",
           "type": {
             "type": "choice",
             "choices": [
@@ -863,6 +1133,156 @@
           "belongs_to": null,
           "derived_from": null,
           "rebound_onto": null
+        },
+        {
+          "name": "until_cut_image",
+          "artifact": "image",
+          "purpose": "With until cut, the output image of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "until_cut_plan",
+          "artifact": "plan",
+          "purpose": "With until cut, the output plan of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "until_line_location",
+          "artifact": "location",
+          "purpose": "With until line, the output location of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "until_fan_band",
+          "artifact": "band_profile",
+          "purpose": "With until fan, the output band of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "until_band_mask",
+          "artifact": "mask",
+          "purpose": "With until band, the output mask of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "until_ramp_mask",
+          "artifact": "mask",
+          "purpose": "With until ramp, the output mask of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "until_apply_image",
+          "artifact": "image",
+          "purpose": "With until apply, the output image of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "until_apply_mask",
+          "artifact": "mask",
+          "purpose": "With until apply, the output mask of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "until_fill_image",
+          "artifact": "image",
+          "purpose": "With until fill, the output image of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "until_fill_mask",
+          "artifact": "mask",
+          "purpose": "With until fill, the output mask of that step.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
         }
       ],
       "needs": [
@@ -913,7 +1333,7 @@
         },
         {
           "name": "until",
-          "purpose": "Runs the recipe up to and including this step, before its last, and hands back none of its own outputs.",
+          "purpose": "Runs the recipe up to and including this step, before its last, and hands back that step's outputs as its own.",
           "type": {
             "type": "choice",
             "choices": [
@@ -936,7 +1356,23 @@
           "belongs_to": null
         }
       ],
-      "outputs": [],
+      "outputs": [
+        {
+          "name": "until_details_images",
+          "artifact": "image",
+          "purpose": "With until details, the output images of that step.",
+          "count": {
+            "min": 0,
+            "max": 32
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
       "results": [
         "verdict"
       ],
@@ -993,7 +1429,7 @@
         },
         {
           "name": "until",
-          "purpose": "Runs the recipe up to and including this step, before its last, and hands back none of its own outputs.",
+          "purpose": "Runs the recipe up to and including this step, before its last, and hands back that step's outputs as its own.",
           "type": {
             "type": "choice",
             "choices": [
@@ -1016,7 +1452,23 @@
           "belongs_to": null
         }
       ],
-      "outputs": [],
+      "outputs": [
+        {
+          "name": "until_details_images",
+          "artifact": "image",
+          "purpose": "With until details, the output images of that step.",
+          "count": {
+            "min": 0,
+            "max": 32
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
       "results": [
         "verdict"
       ],
@@ -1073,7 +1525,7 @@
         },
         {
           "name": "until",
-          "purpose": "Runs the recipe up to and including this step, before its last, and hands back none of its own outputs.",
+          "purpose": "Runs the recipe up to and including this step, before its last, and hands back that step's outputs as its own.",
           "type": {
             "type": "choice",
             "choices": [
@@ -1096,7 +1548,23 @@
           "belongs_to": null
         }
       ],
-      "outputs": [],
+      "outputs": [
+        {
+          "name": "until_details_images",
+          "artifact": "image",
+          "purpose": "With until details, the output images of that step.",
+          "count": {
+            "min": 0,
+            "max": 32
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
       "results": [
         "verdict"
       ],
@@ -1153,7 +1621,7 @@
         },
         {
           "name": "until",
-          "purpose": "Runs the recipe up to and including this step, before its last, and hands back none of its own outputs.",
+          "purpose": "Runs the recipe up to and including this step, before its last, and hands back that step's outputs as its own.",
           "type": {
             "type": "choice",
             "choices": [
@@ -1176,7 +1644,23 @@
           "belongs_to": null
         }
       ],
-      "outputs": [],
+      "outputs": [
+        {
+          "name": "until_details_images",
+          "artifact": "image",
+          "purpose": "With until details, the output images of that step.",
+          "count": {
+            "min": 0,
+            "max": 32
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
       "results": [
         "verdict"
       ],
@@ -1233,7 +1717,7 @@
         },
         {
           "name": "until",
-          "purpose": "Runs the recipe up to and including this step, before its last, and hands back none of its own outputs.",
+          "purpose": "Runs the recipe up to and including this step, before its last, and hands back that step's outputs as its own.",
           "type": {
             "type": "choice",
             "choices": [
@@ -1256,7 +1740,23 @@
           "belongs_to": null
         }
       ],
-      "outputs": [],
+      "outputs": [
+        {
+          "name": "until_details_images",
+          "artifact": "image",
+          "purpose": "With until details, the output images of that step.",
+          "count": {
+            "min": 0,
+            "max": 32
+          },
+          "when": {
+            "given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
       "results": [
         "verdict"
       ],

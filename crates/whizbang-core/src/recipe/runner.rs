@@ -25,8 +25,11 @@
 //! (`<step>.constants=<set>` for a step's constant set), refused naming the step before
 //! anything runs when the recipe has no such step or the step's action no such argument;
 //! and [`UNTIL`], the id of a step before the last: the recipe runs up to and including
-//! that step, and hands back none of its own outputs, which apply only without it. The
-//! step's outputs are what its run committed, which the recipe's record names. A
+//! that step. Its own outputs apply only without it; with it, the recipe hands back that
+//! step's outputs as its own, at the ports [`until_port`] names, so that the recipe's run,
+//! which nothing called, commits them and holds them outside runs: what it prints is an
+//! artifact any later call takes, until the recipe's run is deleted (plan m3, task Q1's
+//! third pull request: a step's own outputs are names of the recipe's run alone). A
 //! capability only the last step needs is needed only without it, so `until` reserves
 //! nothing for a step it never reaches (plan m3, task F1, item 6). A recipe of one step
 //! has no `until`.
@@ -58,6 +61,12 @@ pub const SET: &str = "set";
 
 /// The runner's argument that names the last step to run.
 pub const UNTIL: &str = "until";
+
+/// The port at which a recipe run with [`UNTIL`] hands back the output `port` of its step
+/// `step`: `until_<step>_<port>`.
+pub fn until_port(step: &str, port: &str) -> String {
+    format!("{UNTIL}_{step}_{port}")
+}
 
 /// The version of every recipe's descriptor: the runner's. What a recipe file says is
 /// pinned by its digest, [`DIGEST_SETTING`].
@@ -138,7 +147,7 @@ impl RecipeAction {
         if until {
             draft = draft.argument(Argument::optional(
                 UNTIL,
-                "Runs the recipe up to and including this step, before its last, and hands back none of its own outputs.",
+                "Runs the recipe up to and including this step, before its last, and hands back that step's outputs as its own.",
                 ValueType::choice(before_last),
             ));
         }
@@ -169,6 +178,28 @@ impl RecipeAction {
             } else {
                 port
             });
+        }
+        // With `until`, the outputs of the step it names, each at a port of its own.
+        for (step, descriptor) in recipe.steps.iter().zip(&steps).take(before_last.len()) {
+            for port in descriptor.outputs() {
+                let most = (port.count().max()).ok_or_else(|| {
+                    refuse(format!("{} of {} has no bound", port.name(), step.id))
+                })?;
+                let purpose = format!(
+                    "With until {}, the output {} of that step.",
+                    step.id,
+                    port.name()
+                );
+                draft = draft.output(
+                    OutputPort::counted(
+                        &until_port(&step.id, port.name()),
+                        port.artifact(),
+                        &purpose,
+                        Count::between(0, most),
+                    )
+                    .when(When::given(UNTIL)),
+                );
+            }
         }
         // A descriptor states one need of a capability: the steps' needs of one are one
         // need of the recipe, for as many requests as they send together, with every
@@ -528,12 +559,27 @@ impl Action for RecipeAction {
                 }
             }
         }
+        let limits = DecodeLimits::default();
         if last + 1 < self.recipe.steps.len() {
-            context.events().progress(&format!(
-                "{name}: ran until the step {}",
-                self.recipe.steps[last].id
-            ));
-            return Ok(Produced::nothing());
+            let step = &self.recipe.steps[last];
+            context
+                .events()
+                .progress(&format!("{name}: ran until the step {}", step.id));
+            // The step's outputs, as the recipe's own: committed by the recipe's run and
+            // held by it outside runs.
+            let mut produced = Produced::nothing();
+            for port in self.steps[last].outputs() {
+                let at = until_port(&step.id, port.name());
+                let made = made
+                    .get(step.id.as_str())
+                    .and_then(|by| by.get(port.name()));
+                for id in made.into_iter().flatten() {
+                    let read = artifact::get(context.store(), port.artifact(), *id, &limits)
+                        .map_err(|error| Failure::error("output", &error.without_paths()))?;
+                    produced = produced.with(&at, read);
+                }
+            }
+            return Ok(produced);
         }
         let mut produced = Produced::nothing();
         if self.recipe.verdict
@@ -541,7 +587,6 @@ impl Action for RecipeAction {
         {
             produced = produced.with_verdict(verdict);
         }
-        let limits = DecodeLimits::default();
         for output in &self.recipe.outputs {
             for id in ids(&output.binding, &made) {
                 let read = artifact::get(context.store(), output.artifact, id, &limits)

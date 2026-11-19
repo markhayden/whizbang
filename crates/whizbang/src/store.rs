@@ -268,10 +268,13 @@ fn delete(root: &Path, runs: &[String], recovery: Recovery) -> Result<String, St
         meant.insert(crate::runs::meant(&generation, given)?.0);
     }
     let runs: Vec<&str> = meant.into_iter().collect();
-    let published = store.delete(&runs).map_err(|e| e.to_string())?;
+    // With the runs each one called, at every depth: a run under it holds what it took.
+    let (published, deleted) = store
+        .delete_with_descendants(&runs)
+        .map_err(|e| e.to_string())?;
     let mut text = format!(
         "runs deleted: {}\ngeneration: {}\n",
-        runs.len(),
+        deleted.len(),
         published.generation
     );
     // The deletion is durable from here. What it left without a reference goes now.

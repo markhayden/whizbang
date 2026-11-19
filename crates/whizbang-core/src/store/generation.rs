@@ -17,8 +17,13 @@ pub const SCOPED_PREFIX: &str = "artifacts/";
 /// core's encoder wrote at its fast setting (2026-11-19, plan m3, task O5). A store of
 /// format 2 holds the files of the slower setting, which name the same pixels by other
 /// identities, so it is refused rather than written beside them; a store is not
-/// migrated (ADR 0002, "The encoder's setting").
-pub const GENERATION_FORMAT: u32 = 3;
+/// migrated (ADR 0002, "The encoder's setting"). 4, with the same shape, is a store in
+/// which every name outside runs that holds an artifact was written with a hold of the
+/// run that committed it or the mark of the import that brought it in (plan m3, task Q1,
+/// item 3; ADR 0008, "What deleting a run removes"): a store of format 3 has names that
+/// neither holds, which a deletion could not tell from names nothing needs, so it is
+/// refused whole rather than read with a rule it was not written for.
+pub const GENERATION_FORMAT: u32 = 4;
 
 /// What a reference to stored content is. The kind belongs to the reference, not to the
 /// content: two references to the same bytes can differ, and each is treated as it says.

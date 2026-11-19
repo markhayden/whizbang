@@ -976,3 +976,41 @@ pub fn admitted(
         });
     Some(admission)
 }
+
+/// These runs and every run under them, at any depth: each run whose admission names one
+/// of them as its parent, and so on down, read from the admissions this generation holds
+/// (`store delete` deletes a run with the runs it called, in one publication: plan m3,
+/// task Q1). A run whose admission cannot be read is no run's child here. The given runs
+/// come first, in their order, then the runs under them, each once.
+pub fn with_descendants(
+    generation: &Generation,
+    runs: &[&str],
+    read: impl Fn(&Entry) -> crate::store::Result<Vec<u8>>,
+) -> Vec<String> {
+    let mut children: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for id in generation.runs().keys() {
+        if let Some(Ok(admission)) = admitted(generation, id, &read)
+            && let Some(parent) = admission.parent()
+        {
+            let of = children.entry(parent.as_str().to_owned()).or_default();
+            of.push(id.clone());
+        }
+    }
+    let mut all: Vec<String> = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut next: Vec<String> = runs.iter().map(|run| (*run).to_owned()).collect();
+    let mut at = 0;
+    while at < next.len() {
+        let run = next[at].clone();
+        at += 1;
+        if !seen.insert(run.clone()) {
+            continue;
+        }
+        if let Some(under) = children.get(&run) {
+            next.extend(under.iter().cloned());
+        }
+        all.push(run);
+    }
+    all
+}

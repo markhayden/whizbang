@@ -292,15 +292,29 @@ publication that deletes:
   an artifact the store held already the same way.
 - **A deletion** removes the deleted runs' names, then each name outside runs that one of
   them held and that no remaining run holds and no import marked. A name under `requests/`
-  or `spend/` is never held and never removed. A name that a run committed or took before
-  runs held names is held by none, so no deletion removes it: a store written before this
-  keeps what it kept.
+  or `spend/` is never held and never removed.
+- **Every name of an artifact outside runs is accounted for when it is written**: the run
+  that commits it holds it, and whatever stores one from outside a run (`artifact::put`,
+  which `store import` and the tests use) marks it. So the holds and the marks are the
+  whole account, and a deletion that finds a name it released held by neither may remove
+  it. A store written before this has names that neither holds; a deletion there could
+  take one that a run took and that was never that run's. So the generation format goes
+  from 3 to 4, and a store of format 3 is refused whole with "another format", as #238
+  refused a store of format 2; it is not migrated
+  (`store::runs::a_generation_file_of_another_format_is_refused_as_another_format_not_as_damage`).
+  Within a store of format 4, a name an import marked or a surviving run holds outlives the
+  deletion of a run that took it or committed the same bytes
+  (`store::holds::a_name_another_run_or_an_import_accounts_for_outlives_a_run_that_took_or_recommitted_it`).
 - **The output of a run that another run called** is not a name outside runs: the commit
   step gives it to the first run of its tree, the one nothing called, as a name of that
   run (`Publication::keep_in`). The runs under that run read it, as their view of the store
   adds that run's names (`Generation::scoped_to`); a run of another tree is refused it as
   missing; it goes when that run is deleted. A person reading the store, as `whizbang
   export` does, finds it among any run's names (`artifact::get_anywhere`).
+- **`store delete` deletes a run with the runs under it**, at every depth, found from
+  their admissions, in the same one publication (`Remover::delete_with_descendants`): a
+  run that another called holds what it took, and left behind it would keep a deleted
+  tree's inputs. `Store::delete` itself deletes the runs it is given, and no others.
 - **Crash safety** is the publication's: the deletion is one publication, so a crash
   leaves the store before it or after it, whole, and the content it left without a name is
   removed by the prune that `store delete` runs next, or by the next prune.

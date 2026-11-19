@@ -316,7 +316,7 @@ fn no_store_command_makes_a_store_where_there_is_none() {
 
 /// Replaces the current generation's file of a store with one made by hand.
 fn hand_made(root: &Path, runs: &str) {
-    let text = format!(r#"{{"format": 3, "number": 1, "entries": {{}}, "runs": {{{runs}}}}}"#);
+    let text = format!(r#"{{"format": 4, "number": 1, "entries": {{}}, "runs": {{{runs}}}}}"#);
     std::fs::write(root.join("generations/1.json"), text).unwrap();
 }
 

@@ -469,6 +469,20 @@ impl Remover {
         self.store.delete(runs)
     }
 
+    /// Deletes runs with every run under them, at any depth, in one publication
+    /// ([`super::request::with_descendants`]): a run that another run called holds the
+    /// inputs it took, and would keep them past its caller's deletion. Gives back what
+    /// was deleted, the given runs first.
+    pub fn delete_with_descendants(
+        &self,
+        runs: &[&str],
+    ) -> store::Result<(Published, Vec<String>)> {
+        let generation = self.store.snapshot()?;
+        let all = super::request::with_descendants(&generation, runs, |e| self.store.read(e));
+        let named: Vec<&str> = all.iter().map(String::as_str).collect();
+        Ok((self.store.delete(&named)?, all))
+    }
+
     /// Removes what nothing needs ([`Store::prune`]).
     pub fn prune(&self) -> store::Result<Pruned> {
         self.store.prune()

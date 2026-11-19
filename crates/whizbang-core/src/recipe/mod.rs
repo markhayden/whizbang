@@ -56,7 +56,7 @@ use std::collections::BTreeMap;
 use crate::artifact::ArtifactType;
 use crate::contract::{ActionDescriptor, Registry, ResultKind, Value, ValueType, text};
 
-pub use runner::{RecipeAction, SET, UNTIL};
+pub use runner::{RecipeAction, SET, UNTIL, until_port};
 
 /// The version of the format this build reads: rascal's `version = 1`.
 pub const FORMAT: i64 = 1;

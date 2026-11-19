@@ -60,8 +60,13 @@ each capability, for as many requests as the steps send together. Its run:
 - looks at its signal before each step: a cancelled recipe's step is cancelled with it (its
   signal is under the recipe's), and no other starts;
 - ends with the step that failed, naming it, when one does not complete;
-- with `until`, stops after that step and hands back nothing of its own; the step's outputs
-  are what its run committed, which the record names.
+- with `until`, stops after that step and hands back that step's outputs as its own, at
+  the ports `until_<step>_<port>` (amended with plan m3, task Q1's third pull request: a
+  step's own outputs are names of the recipe's run alone, which no later command could
+  take; handed back, the recipe's run commits them outside runs and holds them, so the id
+  a door prints is an input of any later call until that run is deleted;
+  `runner::a_run_until_a_step_hands_back_its_outputs_which_a_later_call_takes_until_the_recipe_is_deleted`,
+  `cli::rascal_remove_prompt_until_feather_hands_back_the_mask`).
 
 A user's own recipes are files listed under `[recipes] paths` in the config, at most 16
 absolute paths (not in the config's digest: the run records the file's), each read once as a

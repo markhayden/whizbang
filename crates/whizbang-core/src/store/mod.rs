@@ -1743,9 +1743,11 @@ impl Publication<'_> {
             }
         }
         // What the deleted runs held and nothing holds now. Decided from this generation
-        // alone: the holds of the runs left and the marks of imports. A name a run
-        // committed or took before runs held names is held by none, and so is never
-        // released by a deletion.
+        // alone: the holds of the runs left and the marks of imports. That is the whole
+        // account of a name only because every writer of an artifact's name outside runs
+        // leaves a hold or a mark with it (`artifact::commit`, `artifact::put`), and a
+        // store written before they did is of an older format and refused whole
+        // ([`GENERATION_FORMAT`]).
         for name in released {
             let hold = format!("{HOLDS_PREFIX}{name}");
             let still_held = generation

@@ -413,3 +413,66 @@ fn another_root_run_cannot_read_a_childs_image_of_this_one() {
             .any(|run| run.get(&name).is_some())
     );
 }
+
+#[test]
+fn a_name_another_run_or_an_import_accounts_for_outlives_a_run_that_took_or_recommitted_it() {
+    // Within one store of this format every artifact's name outside runs was written with
+    // a mark or a hold. A run that took a name, or committed the same bytes again, and is
+    // then deleted, takes nothing that an import marked or a run left holds.
+    let dir = Scratch::new("store-holds");
+    let store = Arc::new(Store::open(&root(&dir), Arc::new(ShimFs::new())).unwrap());
+    let make = act(
+        draft("make").output(OutputPort::one("mask", ArtifactType::Mask, "A mask.")),
+        Box::new(|_, _| Ok(Produced::nothing().with("mask", made()))),
+    );
+    let take = act(
+        draft("take").input(InputPort::required("mask", ArtifactType::Mask, "A mask.")),
+        Box::new(|_, _| Ok(Produced::nothing())),
+    );
+    let mut registry = Registry::new();
+    for action in [make, take] {
+        registry.register(action).unwrap();
+    }
+    let engine = Engine::over(
+        registry,
+        Arc::new(NoBackends),
+        store.clone(),
+        Digest::of_bytes(b""),
+    );
+    let held = |id| artifact::holds(&store.snapshot().unwrap(), ArtifactType::Mask, id);
+    let run = |call: Call| {
+        let finished = engine.submit(&call).unwrap();
+        assert_eq!(finished.outcome().name(), "completed");
+        finished.run().as_str().to_owned()
+    };
+
+    // Imported, as `store import` stores it: a run takes it and is deleted.
+    let imported = rect_mask_by(on("another photo"), "import");
+    let mut publication = store.begin().unwrap();
+    artifact::put(
+        &mut publication,
+        &artifact::Artifact::Mask(imported.clone()),
+    )
+    .unwrap();
+    publication.publish().unwrap();
+    let took = run(Call::new("take").input("mask", imported.id()));
+    store.delete(&[took.as_str()]).unwrap();
+    store.prune().unwrap();
+    assert!(held(imported.id()), "the import's mark keeps it");
+
+    // Committed by one run; a second takes it, a third commits the same bytes; both
+    // are deleted.
+    let id = made().id();
+    let first = run(Call::new("make"));
+    let took = run(Call::new("take").input("mask", id));
+    let again = run(Call::new("make"));
+    store.delete(&[took.as_str(), again.as_str()]).unwrap();
+    store.prune().unwrap();
+    assert!(held(id), "the run that committed it still holds it");
+    let read = artifact::get(store.as_ref(), ArtifactType::Mask, id, &limits()).unwrap();
+    assert_eq!(read.to_bytes(), made().to_bytes());
+    // And it goes with the last run that holds it.
+    store.delete(&[first.as_str()]).unwrap();
+    assert!(!held(id));
+    assert!(held(imported.id()));
+}

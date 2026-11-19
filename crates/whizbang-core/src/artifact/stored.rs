@@ -20,8 +20,11 @@ pub fn holds(generation: &Generation, artifact: ArtifactType, id: ArtifactId) ->
         .is_some_and(|entry| entry.kind == Kind::Output)
 }
 
-/// Adds the artifact to a publication, as its canonical file under its name. It is in the
-/// store once the publication is published.
+/// Adds the artifact to a publication, as its canonical file under its name, from
+/// outside any run: it is marked as imported ([`Publication::mark_imported`]), so no
+/// deletion of a run removes it. It is in the store once the publication is published.
+/// Every name of an artifact outside runs is so written with a mark, or with the hold of
+/// the run that committed it ([`commit`]): no name that nothing accounts for is written.
 ///
 /// One name holds one reference. Where the name held a diagnostic reference, which
 /// [`holds`] does not count, this replaces it with the output; what the diagnostic
@@ -29,7 +32,9 @@ pub fn holds(generation: &Generation, artifact: ArtifactType, id: ArtifactId) ->
 /// next prune.
 pub fn put(publication: &mut Publication<'_>, artifact: &Artifact) -> Result<ArtifactId> {
     let id = artifact.id();
-    publication.put(&name(artifact.artifact_type(), id), &artifact.to_bytes())?;
+    let name = name(artifact.artifact_type(), id);
+    publication.put(&name, &artifact.to_bytes())?;
+    publication.mark_imported(&name)?;
     Ok(id)
 }
 
