@@ -2280,8 +2280,8 @@ fn only_main_reads_where_the_platforms_data_folder_is() {
     // the models commands (task N3b), to `setup` (task Y1) and to `backends status`
     // (task P7b), which opens the models directory a local backend's model is looked
     // up in; and to `serve` (plan 2C, task M1), which builds an executor as `squint`
-    // does.
-    assert_eq!(calls, ["main.rs"; 7], "the reading is named elsewhere");
+    // does; and to `lab run` (plan m3, task L2), which builds one to run a round.
+    assert_eq!(calls, ["main.rs"; 8], "the reading is named elsewhere");
     let main = std::fs::read_to_string(sources.join("main.rs")).unwrap();
     let main: String = main.chars().filter(|c| !c.is_whitespace()).collect();
     let main = main.replace(",)", ")");
@@ -2293,6 +2293,7 @@ fn only_main_reads_where_the_platforms_data_folder_is() {
         format!("models::run(&command,{platform},"),
         format!("setup::run(&args,{platform},"),
         format!("backends::run(&command,{platform})"),
+        format!("lab::run(&command,{platform})"),
         format!("serve::run(&args,{platform})"),
     ] {
         assert_eq!(main.matches(&handed).count(), 1, "{handed}");

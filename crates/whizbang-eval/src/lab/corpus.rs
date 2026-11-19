@@ -53,7 +53,8 @@ impl Corpus {
     /// A manifest's text, read strictly: version 1, unique plain ids, plain relative files,
     /// digests of the form `sha256:<64 hex>`.
     pub fn parse(text: &str) -> Result<Corpus, String> {
-        let corpus: Corpus = toml::from_str(text).map_err(|e| format!("the corpus: {e}"))?;
+        let corpus: Corpus =
+            toml::from_str(text).map_err(|e| super::unreadable("the corpus", text, &e))?;
         if corpus.version != 1 {
             return Err(format!("the corpus: version {} is not 1", corpus.version));
         }
@@ -61,11 +62,12 @@ impl Corpus {
             return Err(format!("the corpus: at most {PICTURES_LIMIT} pictures"));
         }
         let mut ids = BTreeSet::new();
-        for picture in &corpus.image {
+        for (at, picture) in corpus.image.iter().enumerate() {
             if !is_name(&picture.id) || !ids.insert(picture.id.as_str()) {
                 return Err(format!(
-                    "the corpus: the id {:?} is no plain name, or is repeated",
-                    picture.id.escape_debug().to_string()
+                    "the corpus: the id of picture {} of the list is no plain name, or is \
+                     repeated",
+                    at + 1
                 ));
             }
             let id = &picture.id;
@@ -103,7 +105,7 @@ impl Corpus {
             let found = match std::fs::symlink_metadata(&path) {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Verification::Missing,
                 _ => {
-                    let bytes = crate::sets::read_under(root, &picture.file, limit)
+                    let bytes = super::read_relative(root, &picture.file, limit)
                         .map_err(|why| format!("picture {}: {why}", picture.id))?;
                     let found = digest_of(&bytes);
                     if found == picture.sha256 {

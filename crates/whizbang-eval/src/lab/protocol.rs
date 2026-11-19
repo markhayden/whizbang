@@ -70,7 +70,8 @@ impl Protocol {
     /// unique names, none empty, and a picture in one group at most.
     pub fn parse(bytes: &[u8]) -> Result<(Protocol, String), String> {
         let text = std::str::from_utf8(bytes).map_err(|_| "the protocol is not UTF-8")?;
-        let protocol: Protocol = toml::from_str(text).map_err(|e| format!("the protocol: {e}"))?;
+        let protocol: Protocol =
+            toml::from_str(text).map_err(|e| super::unreadable("the protocol", text, &e))?;
         let refuse = |why: String| Err(format!("the protocol: {why}"));
         if protocol.version != 1 {
             return refuse(format!("version {} is not 1", protocol.version));

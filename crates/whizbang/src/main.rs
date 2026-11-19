@@ -74,7 +74,8 @@ enum Command {
         #[command(subcommand)]
         command: eval::Command,
     },
-    /// The lab: its corpus of pictures, checked against the manifest that pins them.
+    /// The lab: its corpus of pictures checked against the manifest that pins them, a
+    /// round of a recipe and filler matrix run and resumed, and its picks decoded.
     Lab {
         #[command(subcommand)]
         command: lab::Command,
@@ -265,14 +266,16 @@ fn main() -> ExitCode {
             Err(complaint) => complain(&complaint),
         },
         // A check that finds something wrong prints its whole report, then fails.
-        Command::Lab { command } => match lab::run(&command) {
-            Ok((text, None)) => emit(text.as_bytes()),
-            Ok((text, Some(complaint))) => {
-                let _ = emit(text.as_bytes());
-                complain(&complaint)
+        Command::Lab { command } => {
+            match lab::run(&command, std::sync::Arc::new(platforms_models_dir)) {
+                Ok((text, None)) => emit(text.as_bytes()),
+                Ok((text, Some(complaint))) => {
+                    let _ = emit(text.as_bytes());
+                    complain(&complaint)
+                }
+                Err(complaint) => complain(&complaint),
             }
-            Err(complaint) => complain(&complaint),
-        },
+        }
         Command::Spend { command } => match spend::run(&command) {
             Ok(text) => emit(text.as_bytes()),
             Err(complaint) => complain(&complaint),

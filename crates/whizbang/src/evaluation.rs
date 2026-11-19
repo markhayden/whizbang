@@ -527,7 +527,7 @@ pub fn run_under(
         })
         .collect();
     let work: Vec<&dyn harness::Work> = cells.iter().map(|c| c as &dyn harness::Work).collect();
-    let recognise = |record: &RunRecord| {
+    let recognise = |record: &RunRecord, _: Option<&whizbang_core::contract::Admission>| {
         let argument = cell_of(record)?;
         let ours = argument.identity == identity && argument.gate.as_deref() == gate;
         ours.then(|| (key_of(&argument.cell), argument.attempt))

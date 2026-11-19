@@ -952,7 +952,7 @@ shared harness replaces, about 700; `lab/focus.rs` (217) and the decode of
    `not_worse` or `worse` by the protocol's rules; `same` and `neither` count toward neither
    side.
 
-- [ ] Done when:
+- [x] Done when:
   `lab::an_unchanged_cell_resumes_without_another_call`,
   `lab::an_interrupted_round_resumes_and_a_failed_cell_is_kept`,
   `lab::a_rounds_forecast_passing_the_allowance_left_is_refused_before_its_first_cell`,
