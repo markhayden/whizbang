@@ -19,6 +19,8 @@ page, the scripts, the comparison code and `audit.toml`.
 | `scripts/baseline/convert.py` | this repo | Turns each replay fixture of a package into a transcript |
 | `scripts/baseline/audit.py` | this repo | Checks every transcript against the package, and writes `audit.toml` |
 | `whizbang_eval::baseline::compare` | `crates/whizbang-eval` | Compares a replayed transcript with a recorded one |
+| `whizbang eval baseline` | `crates/whizbang/src/baseline.rs` | The gate: replays each recorded decision, compares, writes the receipt (below, "The replay") |
+| `scripts/baseline/capture/` | this repo | Captures synthetic decisions from frozen squint, for the replay's tests (below, "The synthetic fixtures") |
 | `audit.toml` | beside this page | The result of the audit: counts, versions and digests only |
 
 The scripts need Python 3.9 or later and nothing outside the standard library. They read the
@@ -61,7 +63,7 @@ is compared. So `1E2`, `1e2` and `1e+2` are equal. The exponent's digits are kep
 | Field | Type | Compared | Holds |
 |---|---|---|---|
 | `transcript_version` | whole number | yes | `1` |
-| `origin` | text | no | `historical` for a decision of the old runs, `recaptured` for one captured again later |
+| `origin` | text | no | `historical` for a decision of the old runs, `recaptured` for one captured again later, `replayed` for what the gate's replay wrote |
 | `complete` | true or false | yes | Whether the record is whole (see "Complete and incomplete") |
 | `incomplete` | list of text | yes | What is missing; empty when `complete` is true |
 | `subject` | object | yes | Which decision this is (below) |
@@ -400,3 +402,53 @@ a baseline.
 
 The converter and the audit are tested on a synthetic package built in a temporary folder
 (`scripts/baseline/tests/`, run by `scripts/tests/test-baseline.sh`).
+
+## The replay
+
+```
+whizbang eval baseline --package <package root> --transcripts <transcripts folder> \
+    --receipt <file> --commit "$(git rev-parse HEAD)" [--sets <folder>] [--pictures <folder>]
+```
+
+For each recorded transcript, the gate replays the decision it records
+(`crates/whizbang-squint/src/replay.rs`): squint's judge loop, with a judge that answers
+each request with the response recorded for that turn, on whizbang's own parts: the
+prompt, the checklist and the submission of the use case, `view` and `align` as squint's
+judge knew them (a frame is named; `align` under `visual_only`, as in arm C), and each
+picture prepared by the core at the model's long edge. What the replay sent and what came of
+each call is written as a transcript of the recorded one's version, with the recorded
+`subject` and the package's `settings` for the model, and compared. Only arm C is replayed.
+
+It reads, each checked: the package's listing, which must hash to `PACKAGE.digest`, and from
+the package only files whose bytes the listing names; each transcript, which must name that
+package; the decision's `decision.json` (its budget and output limit) and the model's
+preparation; the job, `<sets>/<set>/items/<item>/job.toml` (`--sets`, by default
+`evalsets`); and each picture by the SHA-256 its job pins, beside the job, under
+`--pictures` (`<folder>/<set>/<path>`), or anywhere in the package.
+
+It prints counts only: fixtures, transcripts, how many replays were the same, differed or
+were refused, why each was refused in fixed words, and the places replays differed at, each
+position in a list written `*` and nothing below a call's arguments, a schema, an adapter's
+block, a mapping or the settings. The gate passes when every fixture has a transcript and
+every transcript replays with no difference. The receipt (`README.md`) is written either
+way.
+
+What the replay does not reproduce, each a difference it reports: a call whose arguments
+break the tool's schema (squint's schema checker worded that refusal), a submission that does
+not validate (whizbang words its reasons its own way), a panorama, and a picture with
+transparency (squint encoded it as a PNG of its own).
+
+## The synthetic fixtures
+
+`fixtures/baseline/synthetic/` holds three decisions captured from frozen squint, and what
+the replay reads of their package: its listing and digest, the preparation, the set (three
+jobs of `source-fidelity` and their pictures, 96 by 72) and each decision's header and old
+result; the rest of the package, which the listing still names, is not kept. Each decision
+calls `view` and `align` or `view` twice; one registers and views the aligned frame, one
+views a crop of a crop after a response cut at its token limit. `scripts/baseline/capture/run.sh`
+makes them again: it clones squint at `final-before-whizbang` into a scratch folder, builds
+the program beside it into that clone's workspace, and runs squint's own `run::check` with
+the tools of arm C and a provider that answers scripted turns and prepares as squint's
+adapter did for `claude-haiku-5-5`; then it writes the package's digest and converts it with
+`convert.py`. No model is called, and nothing is anyone's but the program's. The tests of
+`whizbang eval baseline` replay them (`crates/whizbang/tests/it/baseline.rs`).

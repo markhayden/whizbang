@@ -3,6 +3,7 @@
 
 mod anthropic;
 mod backends;
+mod baseline;
 mod cache;
 mod catalogue;
 mod check;

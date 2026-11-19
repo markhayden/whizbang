@@ -1539,3 +1539,60 @@ fn serve_answers_a_client_over_stdio_and_exits_when_its_input_ends() {
     assert_eq!(lines[2]["result"]["isError"], true, "{out}");
     assert_eq!(lines[3]["result"], serde_json::json!({}));
 }
+
+// --- `whizbang eval baseline` (plan 2C, task E2, item 7) ---------------------------------------
+
+#[test]
+fn eval_baseline_prints_counts_and_no_item() {
+    let fixtures = crate::baseline::fixtures();
+    let scratch = Scratch::new("cli-baseline");
+    let at = scratch.path().join("receipt.toml");
+    let path = |p: &Path| p.to_str().unwrap().to_owned();
+    // One decision of the three, the one that calls `view` alone: the rest are not replayed,
+    // so the gate fails, and says so in counts.
+    let one = scratch.path().join("transcripts");
+    let from = fixtures.join("transcripts/historical/synthetic/cut-short");
+    std::fs::create_dir(&one).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        std::fs::copy(entry.path(), one.join(entry.file_name())).unwrap();
+    }
+    let ran = whizbang_storeless(&[
+        "eval",
+        "baseline",
+        "--package",
+        &path(&fixtures.join("package")),
+        "--transcripts",
+        &path(&one),
+        "--receipt",
+        &path(&at),
+        "--commit",
+        crate::baseline::COMMIT,
+        "--sets",
+        &path(&fixtures.join("package/evalsets")),
+    ]);
+    assert_eq!(ran.code, Some(0), "{}", ran.err);
+    assert_eq!(
+        ran.out,
+        "fixtures: 3\ntranscripts: 1\nsame: 1\ndiffered: 0\nrefused: 0\nresult: fail\n"
+    );
+    // Nothing of a decision is printed: no set, item, image, frame, verdict or file.
+    for word in [
+        "synthetic",
+        "kept",
+        "moved",
+        "cut-short",
+        "candidate",
+        "source",
+        "crop",
+        "unsure",
+        "decision",
+    ] {
+        assert!(!ran.out.contains(word) && !ran.err.contains(word), "{word}");
+    }
+    assert!(
+        std::fs::read_to_string(&at)
+            .unwrap()
+            .ends_with("result = \"fail\"\n")
+    );
+}

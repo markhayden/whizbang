@@ -1,0 +1,18 @@
+# The capture program of the synthetic replay fixtures (plan 2C, task E2, item 3). It is not
+# a member of whizbang's workspace: `run.sh` copies it into a scratch clone of squint at the
+# tag `final-before-whizbang` and builds it there, against squint's own crates and lock file.
+[package]
+name = "baseline-capture"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+squint-core = { path = "../squint-core" }
+squint-providers = { path = "../squint-providers" }
+squint-tools = { path = "../squint-tools" }
+squint-testkit = { path = "../squint-testkit" }
+image = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true }

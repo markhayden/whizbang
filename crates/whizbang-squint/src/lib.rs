@@ -12,6 +12,7 @@ pub mod cache;
 pub mod check;
 pub mod details;
 pub mod job;
+pub mod replay;
 pub mod resize;
 pub mod use_case;
 pub mod view;
