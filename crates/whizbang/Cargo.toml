@@ -44,8 +44,8 @@ image = { version = "=0.25.10", default-features = false, features = ["png", "jp
 # the binary that names either compiles there (plan 1C, the review of task P6a).
 fakes = ["whizbang-backends/fakes"]
 # The baseline gate's replay (`whizbang eval baseline`), and with it the JSON Schema validator
-# squint judged submissions with and the 88 crates it brings. The owner decided on 2026-11-19
-# that they stay out of the shipped binary (ADR 0033): off by default, built with
+# squint judged submissions with and the 60 crates it adds to the lock file. The owner decided on 2026-11-19
+# that they stay out of the shipped binary (ADR 0034): off by default, built with
 # `cargo build --release -p whizbang --features baseline-replay`; the tests turn it on below.
 baseline-replay = ["whizbang-squint/baseline-replay"]
 

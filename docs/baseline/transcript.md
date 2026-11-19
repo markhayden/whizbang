@@ -468,15 +468,19 @@ in their order, each refusal in squint's words, and the verdict by its rows
 (`crates/whizbang-squint/src/replay/submission.rs`; the replay's alone, `check` keeps its
 own). `fixtures/baseline/submissions/` holds twelve decisions captured from frozen squint, one
 for each kind of judgement the port must reproduce. The replay is built only with the feature
-`baseline-replay` (ADR 0033).
+`baseline-replay` (ADR 0034).
 
-**The one place the gate matches a set.** When a submission answers several checklist items
-other than once, squint's refusal named one of them, whichever its hash map gave first, so
-which one was not repeatable. The replay works out from the submission alone which items it
-got wrong, and names the one the recorded refusal named when that item is among them;
-otherwise the first in the checklist's order. It cannot name an item the submission answered
-once (`baseline::a_refusal_of_several_missing_items_matches_whichever_squint_named_and_no_other`).
-Everything else is compared exactly.
+**The one place the gate matches a set.** When a submission gets several checklist items
+wrong (leaves them out, or answers them more than once), squint's refusal named one of them,
+whichever its hash map gave first, so which one was not repeatable. The replay works out from
+the submission alone which items it got wrong, and names the one the recorded refusal named
+when that item is among them; otherwise the first in the checklist's order. It cannot name an
+item the submission answered once
+(`baseline::a_refusal_of_several_missing_items_matches_whichever_squint_named_and_no_other`).
+The recorded text is looked for in every refusal and in the ending of the decision, so when
+several refusals of one decision name different items, the replay may pick an item another
+turn named: that gives a false difference, never a false pass, since the item is still one
+this submission got wrong. Everything else is compared exactly.
 
 What the replay does not reproduce, each a difference it reports: a crop cut from a crop squint
 had scaled down (its pixels come from squint's filter, so under either version its prepared

@@ -112,7 +112,7 @@ new digest.
 
 Milestone 2 writes one receipt when it replays the fixtures, with `whizbang eval baseline`
 (`transcript.md`, "The replay"), from a build made with the replay, which the shipped binary
-leaves out (ADR 0033):
+leaves out (ADR 0034):
 
 ```
 cargo build --release -p whizbang --features baseline-replay

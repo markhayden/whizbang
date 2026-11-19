@@ -16,6 +16,10 @@
 //! folder; and each of the job's pictures, by the SHA-256 the job pins: beside the job, in a
 //! folder of pictures laid out as the sets' repository is, or anywhere in the package.
 
+// In a build without the replay (ADR 0034), what the package reader `baseline_live` uses is
+// built and the replay's own helpers are not used.
+#![cfg_attr(not(feature = "baseline-replay"), allow(dead_code, unused_imports))]
+
 use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
@@ -24,8 +28,11 @@ use image::{DynamicImage, ImageReader};
 use serde_json::{Value as Json, json};
 use whizbang_core::identity::{DecodeLimits, Digest, identify};
 use whizbang_eval::baseline::{COMPARISON_VERSION, VOLATILE, compare};
+#[cfg(feature = "baseline-replay")]
 use whizbang_squint::details::Projection;
+#[cfg(feature = "baseline-replay")]
 use whizbang_squint::job::Job;
+#[cfg(feature = "baseline-replay")]
 use whizbang_squint::replay::{self, Budget, Judge, Shown};
 
 /// The files of a transcripts folder that are not transcripts.
@@ -344,7 +351,7 @@ impl Tally {
     }
 }
 
-fn read(path: &Path) -> Result<Vec<u8>, String> {
+pub(crate) fn read(path: &Path) -> Result<Vec<u8>, String> {
     use std::io::Read;
     let file = std::fs::File::open(path).map_err(|_| "a file cannot be read".to_owned())?;
     let mut bytes = Vec::new();
@@ -358,14 +365,14 @@ fn read(path: &Path) -> Result<Vec<u8>, String> {
 }
 
 /// The package: its digest and its listing, path to SHA-256.
-struct Package<'a> {
+pub(crate) struct Package<'a> {
     root: &'a Path,
-    digest: String,
-    listed: BTreeMap<String, String>,
+    pub(crate) digest: String,
+    pub(crate) listed: BTreeMap<String, String>,
 }
 
 impl<'a> Package<'a> {
-    fn open(root: &'a Path) -> Result<Package<'a>, String> {
+    pub(crate) fn open(root: &'a Path) -> Result<Package<'a>, String> {
         let digest = String::from_utf8(read(&root.join("PACKAGE.digest"))?)
             .map_err(|_| "PACKAGE.digest is not text".to_owned())?;
         let digest = digest.trim_end_matches('\n');
@@ -400,7 +407,7 @@ impl<'a> Package<'a> {
         Ok(bytes)
     }
 
-    fn json(&self, path: &str) -> Result<Json, String> {
+    pub(crate) fn json(&self, path: &str) -> Result<Json, String> {
         serde_json::from_slice(&self.file(path)?)
             .map_err(|_| "a file of the package is not JSON".to_owned())
     }
@@ -445,12 +452,14 @@ fn pixel_sha256(bytes: &[u8]) -> Result<String, String> {
 }
 
 /// The judge of a replay: the recorded responses, turn by turn.
+#[cfg(feature = "baseline-replay")]
 struct Recorded<'a> {
     turns: &'a [Json],
     /// The recorded ending's message, if it has one.
     ending: &'a Json,
 }
 
+#[cfg(feature = "baseline-replay")]
 impl Judge for Recorded<'_> {
     fn answer(&mut self, turn: usize, _request: &Json) -> Option<Json> {
         let recorded = self.turns.get(turn.checked_sub(1)?)?;
@@ -490,6 +499,7 @@ fn general(path: &str) -> String {
 }
 
 /// One recorded decision replayed: the replayed transcript's text, or why there is none.
+#[cfg(feature = "baseline-replay")]
 fn replayed(asked: &Asked<'_>, package: &Package<'_>, recorded: &Json) -> Result<String, String> {
     let named = recorded["meta"]["package_digest"].as_str();
     if named != Some(package.digest.as_str()) {
@@ -653,6 +663,7 @@ pub fn receipt(package_digest: &str, commit: &str, passed: bool) -> String {
 
 /// Runs the gate: replays and compares every recorded decision, writes the receipt, and
 /// says what it came to in counts.
+#[cfg(feature = "baseline-replay")]
 pub fn run(asked: &Asked<'_>) -> Result<Tally, String> {
     let hex = |c: char| c.is_ascii_digit() || ('a'..='f').contains(&c);
     if asked.commit.len() != 40 || !asked.commit.chars().all(hex) {

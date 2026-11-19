@@ -122,3 +122,40 @@ fn a_matrix_is_read_strictly() {
         matrix.identity()
     );
 }
+
+#[test]
+fn a_judge_given_its_own_repetitions_is_repeated_so_and_a_matrix_without_keeps_its_identity() {
+    use whizbang_eval::matrix::Matrix;
+    let plain = "[matrix]\nname = \"m\"\nsets = [\"a/b\"]\narms = [\"C\"]\nrepetitions = 1\n\
+                 [[matrix.judges]]\nbackend = \"haiku\"\nmodel = \"claude-haiku-5-5\"\n\
+                 [[matrix.judges]]\nbackend = \"flash\"\nmodel = \"gemini-3.8-flash\"\n";
+    let before = Matrix::parse(plain).unwrap();
+    let three = plain.replace(
+        "model = \"claude-haiku-5-5\"\n",
+        "model = \"claude-haiku-5-5\"\nrepetitions = 3\n",
+    );
+    let matrix = Matrix::parse(&three).unwrap();
+    let cells = matrix.cells(&[("a/b".to_owned(), vec!["i".to_owned()])]);
+    let by: Vec<(&str, u32)> = cells
+        .iter()
+        .map(|c| (c.backend.as_str(), c.repetition))
+        .collect();
+    assert_eq!(by, [("haiku", 1), ("haiku", 2), ("haiku", 3), ("flash", 1)]);
+    // Giving none leaves the identity a matrix had before judges could be repeated apart.
+    assert_ne!(matrix.identity(), before.identity());
+    assert_eq!(
+        before.identity(),
+        Matrix::parse(&plain.replace("repetitions = 1\n", "repetitions = 1\n\n"))
+            .unwrap()
+            .identity()
+    );
+    let canonical = serde_json::to_string(&before).unwrap();
+    assert!(!canonical.contains("\"repetitions\":null"), "{canonical}");
+    // A judge repeated past the limit, or named twice, is refused.
+    assert!(Matrix::parse(&three.replace("repetitions = 3", "repetitions = 11")).is_err());
+    let twice = plain.replace(
+        "backend = \"flash\"\nmodel = \"gemini-3.8-flash\"",
+        "backend = \"haiku\"\nmodel = \"claude-haiku-5-5\"\nrepetitions = 2",
+    );
+    assert!(Matrix::parse(&twice).is_err());
+}

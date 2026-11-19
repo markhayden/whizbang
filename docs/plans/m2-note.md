@@ -112,7 +112,7 @@ by hash, from `https://raw.githubusercontent.com` (approved by the owner on 2026
    ./target/release/whizbang eval baseline --package <package> --transcripts <transcripts> --receipt docs/baseline/receipt.toml --commit "$(git rev-parse HEAD)"
    ```
 
-   The replay is a feature the shipped binary leaves out (ADR 0033), hence the build line.
+   The replay is a feature the shipped binary leaves out (ADR 0034), hence the build line.
 
    It prints counts only and writes the receipt, which is committed, and the fast test the
    carry-over row on the baseline gate's run names is written against it.

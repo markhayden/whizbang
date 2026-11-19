@@ -33,9 +33,10 @@ image = { version = "=0.25.10", default-features = false, features = ["png"] }
 
 # The replay of the baseline checks a submission against squint's JSON Schema with the
 # validator squint checked it with, at the version its lock file pins, so that a refusal
-# reads as squint's did, word for word (plan 2C, task E2; `crate::replay`). It brings 88
-# crates, which the owner decided on 2026-11-19 stay out of the shipped binary: it is
-# optional, behind the feature `baseline-replay` (ADR 0033).
+# reads as squint's did, word for word (plan 2C, task E2; `crate::replay`). It adds 60
+# crates to the lock file (88 in its tree, counting those already there), which the owner
+# decided on 2026-11-19 stay out of the shipped binary: it is optional, behind the feature
+# `baseline-replay` (ADR 0034).
 jsonschema = { version = "=0.60.2", default-features = false, optional = true }
 
 [features]

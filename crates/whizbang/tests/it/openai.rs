@@ -22,3 +22,33 @@ fn the_key_goes_only_to_the_approved_origin_as_a_bearer() {
     let sent: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(sent["store"], false);
 }
+
+#[test]
+fn every_tool_of_the_build_is_sent_and_its_arguments_read_by_its_schema() {
+    use crate::google::{every_tool_sent, schemas};
+    let (printed, first, second) = every_tool_sent(OPENAI, "openai-every-tool");
+    // Each tool is sent once, its schema as the build wrote it, not strict.
+    let sent = first["tools"].as_array().unwrap();
+    let wanted = schemas();
+    assert_eq!(sent.len(), wanted.len(), "{sent:?}");
+    for (name, schema) in &wanted {
+        let found = sent.iter().find(|t| t["name"] == name.as_str()).unwrap();
+        assert_eq!(&found["parameters"], schema, "{name}");
+        assert_eq!(found["strict"], false, "{name}");
+    }
+    // Each call was read as its schema says: answered with what the tool gave, never
+    // refused or left uncalled, and the submission decided the verdict.
+    let second: serde_json::Value = serde_json::from_str(&second).unwrap();
+    let outputs: Vec<&serde_json::Value> = (second["input"].as_array().unwrap().iter())
+        .filter(|item| item["type"] == "function_call_output")
+        .collect();
+    assert_eq!(outputs.len(), 5, "{second}");
+    for output in outputs {
+        let text = output.to_string();
+        assert!(
+            !text.contains("not called") && !text.contains("refused"),
+            "{text}"
+        );
+    }
+    assert!(printed.contains("verdict: pass"), "{printed}");
+}

@@ -16,6 +16,7 @@ mod evidence;
 mod executor;
 mod fal;
 mod fetch;
+mod gate;
 mod google;
 mod import;
 mod matrix;

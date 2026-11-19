@@ -25,7 +25,7 @@
 //! validator squint ran, then its types and its rules, each refusal in squint's words. What
 //! this does not reproduce, each a difference the comparison reports by place: a panorama,
 //! and a picture with transparency (squint encoded it as its own PNG). Built only with the
-//! feature `baseline-replay`, which the shipped binary leaves out (ADR 0033).
+//! feature `baseline-replay`, which the shipped binary leaves out (ADR 0034).
 
 use std::collections::BTreeMap;
 

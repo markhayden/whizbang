@@ -1,4 +1,4 @@
-# 0033. The baseline replay is a feature the shipped binary leaves out
+# 0034. The baseline replay is a feature the shipped binary leaves out
 
 Status: accepted.
 Date: 2026-11-19
@@ -11,7 +11,7 @@ The baseline gate (`whizbang eval baseline`) replays every recorded decision and
 each submission as squint judged it, refusals word for word. Squint checked a submission
 against its JSON Schema with the `jsonschema` crate, and its refusals are that crate's
 messages; the replay reproduces them by running the same crate at the version squint's lock
-file pins (`=0.60.2`). That crate brings 88 crates into the build. Only the gate needs them;
+file pins (`=0.60.2`). That crate adds 60 crates to the lock file (its dependency tree holds 88, counting the ones already there). Only the gate needs them;
 no user of the shipped binary does.
 
 ## Decision
@@ -37,7 +37,7 @@ build line above, which `docs/baseline/README.md` and the note of milestone 2 gi
 
 ## Alternatives
 
-- **The crate in the binary.** Simplest, and exact; the owner turned it down: 88 crates for a
+- **The crate in the binary.** Simplest, and exact; the owner turned it down: 60 more crates for a
   check no user runs.
 - **Squint's schema messages written by hand.** No crate, but every message of every keyword
   in the crate's order and words would be a guess held by a few vectors; a real run would

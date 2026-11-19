@@ -54,6 +54,18 @@ fn two() -> u32 {
 pub struct Judge {
     pub backend: String,
     pub model: String,
+    /// This judge's repetitions, where they are not the matrix's (plan m3, task G1: a
+    /// gate's judges are repeated as often as each needs). Left out of the identity when
+    /// not given, so a matrix that gives none keeps its identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repetitions: Option<u32>,
+}
+
+impl Judge {
+    /// How many times each cell of this judge is run.
+    pub fn repeated(&self, matrix: &Spec) -> u32 {
+        self.repetitions.unwrap_or(matrix.repetitions)
+    }
 }
 
 /// An arm: `C`, nothing measured first and the judge offered `view` and `align`, the
@@ -162,6 +174,12 @@ impl Matrix {
         Ok(matrix)
     }
 
+    /// A matrix built as a value, held to the checks a file is held to.
+    pub fn checked(self) -> Result<Matrix, String> {
+        self.validate()?;
+        Ok(self)
+    }
+
     fn validate(&self) -> Result<(), String> {
         let m = &self.matrix;
         let plain = !m.name.is_empty()
@@ -176,7 +194,12 @@ impl Matrix {
         if m.sets.is_empty() || m.judges.is_empty() || m.arms.is_empty() {
             return Err("a matrix names at least one set, one judge and one arm".to_owned());
         }
-        if !(1..=REPETITIONS_LIMIT).contains(&m.repetitions) {
+        let repeated = std::iter::once(m.repetitions)
+            .chain(m.judges.iter().filter_map(|judge| judge.repetitions));
+        if !repeated
+            .into_iter()
+            .all(|r| (1..=REPETITIONS_LIMIT).contains(&r))
+        {
             return Err(format!("repetitions is 1 to {REPETITIONS_LIMIT}"));
         }
         if !(1..=CONCURRENCY_LIMIT).contains(&m.concurrency) {
@@ -184,7 +207,8 @@ impl Matrix {
         }
         let distinct = |count: usize, set: usize| count == set;
         let sets: BTreeSet<&String> = m.sets.iter().collect();
-        let judges: BTreeSet<&Judge> = m.judges.iter().collect();
+        let judges: BTreeSet<(&String, &String)> =
+            m.judges.iter().map(|j| (&j.backend, &j.model)).collect();
         let arms: BTreeSet<String> = m.arms.iter().map(Arm::to_string).collect();
         if !distinct(m.sets.len(), sets.len())
             || !distinct(m.judges.len(), judges.len())
@@ -211,7 +235,7 @@ impl Matrix {
             for item in its {
                 for judge in &m.judges {
                     for arm in &m.arms {
-                        for repetition in 1..=m.repetitions {
+                        for repetition in 1..=judge.repeated(m) {
                             out.push(Cell {
                                 set: set.clone(),
                                 item: item.clone(),
