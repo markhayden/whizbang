@@ -18,6 +18,11 @@ use super::{IdentityError, Result};
 /// The most scans a JPEG may have: a progressive file has about ten.
 pub(super) const SCANS_MOST: usize = 256;
 
+/// The most times the walk may pass over a frame's blocks, over all its scans: a
+/// progressive file of libjpeg's own script passes over each component's blocks five
+/// times at most. Each pass costs a fixed few steps a block beyond the bits it reads.
+pub(super) const PASSES_MOST: u64 = 16;
+
 fn short() -> IdentityError {
     IdentityError::Image("a JPEG scan does not hold the data its frame calls for".to_owned())
 }
@@ -144,6 +149,8 @@ struct Frame {
     hmax: u32,
     vmax: u32,
     components: Vec<Component>,
+    /// The blocks walked so far, over every scan.
+    walked: u64,
 }
 
 impl Frame {
@@ -282,6 +289,7 @@ fn frame_of(code: u8, segment: &[u8]) -> Result<Frame> {
         hmax: components.iter().map(|c| c.h).max().unwrap_or(1),
         vmax: components.iter().map(|c| c.v).max().unwrap_or(1),
         components,
+        walked: 0,
     })
 }
 
@@ -388,6 +396,30 @@ fn walk(
             if needs_dc { Some(table(dc, *d)?) } else { None },
             if needs_ac { Some(table(ac, *a)?) } else { None },
         ));
+    }
+    // The walk's bound: [`PASSES_MOST`] times the frame's blocks, over all its scans.
+    let blocks: u64 = (frame.components.iter())
+        .map(|c| {
+            let (across, down) = frame.blocks(c);
+            u64::from(across) * u64::from(down)
+        })
+        .sum();
+    let this_scan = if scan.components.len() == 1 {
+        let (across, down) = frame.blocks(&frame.components[scan.components[0].0]);
+        u64::from(across) * u64::from(down)
+    } else {
+        let mcus = u64::from(frame.width.div_ceil(8 * frame.hmax))
+            * u64::from(frame.height.div_ceil(8 * frame.vmax));
+        let each: u64 = (scan.components.iter())
+            .map(|(index, _, _)| u64::from(frame.components[*index].h * frame.components[*index].v))
+            .sum();
+        mcus * each
+    };
+    frame.walked += this_scan;
+    if frame.walked > PASSES_MOST * blocks {
+        return Err(IdentityError::Limit(format!(
+            "the JPEG's scans pass over its blocks more than {PASSES_MOST} times"
+        )));
     }
     let mut eobrun = 0u32;
     let mut units = 0u32;
@@ -531,11 +563,11 @@ fn one_block(
         }
     }
     if *eobrun > 0 {
-        while k <= se {
-            if *nonzero & (1 << k) != 0 {
-                bits.bit()?;
-            }
-            k += 1;
+        // A correction bit for each coefficient from `k` to `se` that is not zero: read
+        // by the count of them, so a block with none costs no steps.
+        if k <= se {
+            let band = (u64::MAX >> (63 - se)) & (u64::MAX << k);
+            bits.bits((*nonzero & band).count_ones())?;
         }
         *eobrun -= 1;
     }
