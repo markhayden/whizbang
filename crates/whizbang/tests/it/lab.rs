@@ -959,7 +959,8 @@ fn an_interrupted_round_resumes_and_a_failed_cell_is_kept() {
     assert_eq!(
         report.text(),
         "cells: 6\nhanded back by a reference arm: 3\nstarted now: 1\ncompleted: 2\n\
-         failed: 1\ninterrupted: 0\nnot run: 0\n"
+         failed: 1\ninterrupted: 0\nnot run: 0\nfirst failed: filled on b: step: the step fill \
+         (fill) ended as an error of the type fill: The scripted filler refused it.\n"
     );
 }
 
@@ -1754,11 +1755,17 @@ fn the_committed_m3_seam_matrix_is_valid_against_its_protocol() {
     let lab = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../labs/m3-seam");
     let read = |name: &str| std::fs::read_to_string(lab.join(name)).unwrap();
     let corpus = read("corpus.toml");
-    // Rascal's `labs/seam-03/corpus.toml` at the pinned commit, byte for byte.
+    // Rascal's `labs/seam-03/corpus.toml` at the pinned commit, byte for byte, with a line
+    // saying each picture is a panorama: its files are plain 2:1 PNGs whose metadata says
+    // no projection, which would be brought in flat.
+    const SAID: &str = "projection = \"equirectangular\"\n";
+    assert_eq!(corpus.matches(SAID).count(), 47);
     assert_eq!(
-        digest_of(corpus.as_bytes()),
+        digest_of(corpus.replace(SAID, "").as_bytes()),
         "sha256:b974abcdd296d876af51a8e6def090fc5be7184aafa29baad8fb8a5eb5656f62"
     );
+    let manifest = Corpus::parse(&corpus).unwrap();
+    assert!((manifest.image.iter()).all(|p| p.projection.as_deref() == Some("equirectangular")));
     let price = 40_000;
     let (validated, cells) = checked(
         &read("matrix.toml"),
@@ -1782,6 +1789,7 @@ fn the_committed_m3_seam_matrix_is_valid_against_its_protocol() {
         let of_arm: Vec<&Cell> = cells.iter().filter(|c| c.arm == arm).collect();
         assert_eq!(of_arm.len(), 47);
         for cell in of_arm {
+            assert_eq!(cell.components.projections["image"], "equirectangular");
             let Work::Recipe {
                 recipe,
                 set: overrides,
@@ -1832,4 +1840,155 @@ fn a_cells_own_run_not_recognised_is_answered_and_not_passed_over() {
     .unwrap();
     assert_eq!(ids, [format!("cell.{scope}.0123abcd.1")]);
     drop(round.dir);
+}
+
+// --- a corpus's projection ----------------------------------------------------------------------
+
+/// A round of one picture of 128 by 64, `p`, whose wrap edge is a step and whose file says
+/// no projection: the shipped `seam` against a reference arm handing `p` back, filled by
+/// the test's counting filler. The manifest says `p`'s projection when `projection` is
+/// given.
+fn panorama_round(label: &str, projection: Option<&str>) -> (ThreeImages, String) {
+    use image::ImageEncoder;
+    let dir = Scratch::new(label);
+    let root = dir.path().join("store");
+    let corpus = dir.path().join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    let made = wiring::opening(&root, wiring::Make::TheRoot, wiring::recovery()).unwrap();
+    let store = made.writer().unwrap();
+    let dollar = whizbang_core::spend::Amount::new(1_000_000).unwrap();
+    whizbang_core::spend::reset(&store, dollar, 1).unwrap();
+    drop((store, made));
+    let (w, h) = (128_u32, 64_u32);
+    let rgba: Vec<u8> = (0..w * h)
+        .flat_map(|at| [(100 + (at % w) / 4) as u8, 120, 90, 255])
+        .collect();
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(&rgba, w, h, image::ExtendedColorType::Rgba8)
+        .unwrap();
+    std::fs::write(corpus.join("p.png"), &png).unwrap();
+    let mut manifest = corpus_text(&[("p", &png, Some("all"))]);
+    if let Some(word) = projection {
+        manifest.push_str(&format!("projection = \"{word}\"\n"));
+    }
+    let lab = dir.path().join("lab");
+    std::fs::create_dir_all(&lab).unwrap();
+    std::fs::write(lab.join("corpus.toml"), &manifest).unwrap();
+    std::fs::write(
+        lab.join("protocol.toml"),
+        protocol_text(["healed", "source"], &["p"], 3),
+    )
+    .unwrap();
+    let matrix = lab.join("matrix.toml");
+    std::fs::write(
+        &matrix,
+        "version = 1\nname = \"tiny-lab\"\ncorpus = \"corpus.toml\"\nprotocol = \"protocol.toml\"\n\
+         seed = 7\n\n[[image]]\nid = \"p\"\ninputs = { source = \"p\" }\n\n\
+         [[arm]]\nname = \"healed\"\nrecipe = \"seam\"\n\n\
+         [[arm]]\nname = \"source\"\nreference = \"source\"\n",
+    )
+    .unwrap();
+    let config = dir.path().join("whizbang.toml");
+    std::fs::write(&config, counting_config("https://fill.example.org/v1")).unwrap();
+    let round = ThreeImages {
+        _dir: dir,
+        root,
+        corpus,
+        matrix,
+        calls: Arc::new(AtomicU64::new(0)),
+        config,
+    };
+    (round, manifest)
+}
+
+#[test]
+fn a_panorama_the_corpus_declares_equirectangular_gets_past_cut_and_one_it_does_not_is_refused_there()
+ {
+    // The real round's defect: a plain 2:1 PNG, its file saying no projection, was brought
+    // in flat, and `seam`'s first step refused every cell.
+    let (declared, _) = panorama_round("lab-panorama", Some("equirectangular"));
+    let report = declared.run(&declared.over(0), None, &never).unwrap();
+    assert_eq!(counts(&report), (1, 1, 0, 0, 0), "{}", report.text());
+    assert_eq!(declared.calls(), 1);
+    let mut cut = Vec::new();
+    harness::each_run(&declared.root, &mut |record, _, ended| {
+        if record.asked().action.as_deref() == Some("cut") {
+            cut.push(ended);
+        }
+    })
+    .unwrap();
+    assert_eq!(cut, [harness::Ended::Completed]);
+
+    // The same picture, the manifest saying nothing: flat, as before, and refused at cut,
+    // which the round's last lines say.
+    let (flat, _) = panorama_round("lab-flat", None);
+    let report = flat.run(&flat.over(0), None, &never).unwrap();
+    assert_eq!(counts(&report), (1, 0, 1, 0, 0));
+    assert_eq!(flat.calls(), 0);
+    let text = report.text();
+    assert!(
+        text.contains("the image is not a complete panorama; cut needs one"),
+        "{text}"
+    );
+    assert!(text.contains("first failed: healed on p:"), "{text}");
+}
+
+#[test]
+fn a_projection_the_corpus_does_not_know_or_on_a_file_not_brought_in_as_an_image_is_refused() {
+    let picture = corpus_text(&[("a", b"a picture", Some("all"))]);
+    for word in ["flat", "equirectangular"] {
+        let said = format!("{picture}projection = \"{word}\"\n");
+        let corpus = Corpus::parse(&said).unwrap();
+        assert_eq!(corpus.image[0].projection.as_deref(), Some(word));
+    }
+    assert_eq!(Corpus::parse(&picture).unwrap().image[0].projection, None);
+    for word in ["cylindrical", "Equirectangular", ""] {
+        let said = format!("{picture}projection = \"{word}\"\n");
+        assert_eq!(
+            Corpus::parse(&said).unwrap_err(),
+            "the corpus: picture a: its projection is flat or equirectangular"
+        );
+    }
+    // A mask the matrix binds is no picture: a projection on it is refused before anything
+    // is brought in or run.
+    let lab = ThreeImages::new("lab-mask-projection", FILLED_WITH_AND_SOURCE);
+    let manifest = lab.matrix.with_file_name("corpus.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    let text = text.replacen(
+        "id = \"a-keep\"\n",
+        "id = \"a-keep\"\nprojection = \"flat\"\n",
+        1,
+    );
+    std::fs::write(&manifest, text).unwrap();
+    let refused = lab.run(&lab.over(0), None, &never).unwrap_err();
+    assert_eq!(
+        refused,
+        "picture a-keep: a projection is said of a picture, and it is bound as a mask; \
+         nothing was run"
+    );
+    assert_eq!(lab.runs(), "runs: 0");
+}
+
+#[test]
+fn two_corpora_differing_only_in_a_pictures_projection_make_two_cells() {
+    let protocol = protocol_text(["wide", "thin"], &["a"], 3);
+    let matrix = bare(&matrix_text("collar", "", SEAMS));
+    let of = |projection: Option<&str>| {
+        let mut corpus = corpus_text(&[("a", b"a picture", Some("all"))]);
+        if let Some(word) = projection {
+            corpus.push_str(&format!("projection = \"{word}\"\n"));
+        }
+        let (_, cells) = checked(&matrix, &protocol, &corpus, &backends("1", 40_000)).unwrap();
+        identity(&cells, "wide")
+    };
+    let (unsaid, flat, panorama) = (of(None), of(Some("flat")), of(Some("equirectangular")));
+    assert_ne!(panorama, unsaid);
+    assert_ne!(panorama, flat);
+    // A corpus that says nothing keeps the cells it had: nothing of a projection is in
+    // what its identity is the digest of.
+    let corpus = corpus_text(&[("a", b"a picture", Some("all"))]);
+    let (_, cells) = checked(&matrix, &protocol, &corpus, &backends("1", 40_000)).unwrap();
+    let held = serde_json::to_string(&cells[0].components).unwrap();
+    assert!(!held.contains("projection"), "{held}");
 }

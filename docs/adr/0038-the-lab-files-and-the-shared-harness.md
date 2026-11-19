@@ -36,8 +36,8 @@ recipe sends and its finder's for each find; a reference arm's cell at nothing.
 anything runs.
 
 - `corpus.toml` is rascal's manifest (`version`, and per picture `id`, `file`, `sha256` as
-  `sha256:<hex>`, `group`, `licence`), so rascal's `seam-03` manifest reads as it is. `file`
-  is a plain path relative to the corpus's root, which the user gives on the command line
+  `sha256:<hex>`, `group`, `licence`, and since task L3 an optional `projection`), so
+  rascal's `seam-03` manifest reads as it is. `file` is a plain path relative to the corpus's root, which the user gives on the command line
   (`whizbang lab corpus verify --manifest <file> --root <dir>`); the manifest names nothing
   else of the machine. `group` may be left out for a picture the matrix only binds (a mask,
   the clean picture of a reference arm).
@@ -63,7 +63,7 @@ digest, each bound input's digest and each bound text, the overrides as applied 
 then the image's), the recipe as it runs (its name, the digest of its text and the runner's
 version) or the reference's input, the name and digest of each constant set a step selects,
 the version of each action, and the filler's and each finder's model, revision and resolved
-settings. An arm's name, a backend's name in the config and a file's name are not in it.
+settings; and, since task L3, the projection the manifest says of a picture it brings in. An arm's name, a backend's name in the config and a file's name are not in it.
 
 **Room for a lighter way to pick, not built.** The owner may later want fewer pairs, or a
 judge to pre-sort the pairs so that the owner settles only the close calls. L3's files leave
@@ -152,6 +152,17 @@ counted apart, never as the owner's pick.
   over only an id whose run's admission holds another request's fingerprint. A run of the
   same request, or one whose admission cannot be read, is left to the executor, which
   answers the request it already ran rather than start a new, paid attempt.
+- **A picture's projection.** The manifest may say a picture's projection, `projection =
+  "flat"` or `"equirectangular"` (the words of `whizbang store import --projection`), and
+  any other word is refused, as is the field on a file the matrix binds as anything but an
+  image. The picture is brought in as the manifest says, and as flat when it says nothing,
+  as before: a file's own metadata is not read there. The first round ran `seam` on 47
+  plain 2:1 PNGs whose files say no projection, all brought in flat, and `cut` refused every
+  cell; `labs/m3-seam/corpus.toml` now says each is equirectangular, rascal's manifest
+  otherwise byte for byte. The word is in the cell's identity, for the image and each bound
+  input it is said of (`projections`, left out when empty, so a manifest that says none
+  keeps its cells). `lab run` ends, when a cell failed, with the first failed cell and its
+  run's own words (`first failed: <arm> on <image>: <why>`), printed escaped on one line.
 
 ## Alternatives
 

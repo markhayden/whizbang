@@ -517,6 +517,20 @@ pub fn picture_of_bytes(
     root: &Path,
     recovery: Recovery,
 ) -> Result<ArtifactId, String> {
+    picture_of_bytes_as(bytes, shown, sha256, root, recovery, Projection::Flat)
+}
+
+/// [`picture_of_bytes`], of a picture whose projection the caller says: a lab corpus's word
+/// of it (plan m3, task L3), so a plain 2:1 file a manifest says is a panorama is brought
+/// in as one, under the name an imported panorama is left under.
+pub fn picture_of_bytes_as(
+    bytes: &[u8],
+    shown: &str,
+    sha256: Option<&str>,
+    root: &Path,
+    recovery: Recovery,
+    projection: Projection,
+) -> Result<ArtifactId, String> {
     let limits = DecodeLimits::default();
     if bytes.len() as u64 > MAX_FILE_BYTES {
         return Err(format!("{shown}: the picture is over {}", limit()));
@@ -531,7 +545,7 @@ pub fn picture_of_bytes(
     }
     let identified = identify(bytes, &limits).map_err(|error| format!("{shown}: {error}"))?;
     let file = identified.identity.file.0;
-    let image = picture(&identified.pixels, file, &limits, Projection::Flat)
+    let image = picture(&identified.pixels, file, &limits, projection)
         .map_err(|error| format!("{shown}: {error}"))?;
     let id = image.id();
     commit(
@@ -539,7 +553,7 @@ pub fn picture_of_bytes(
         root,
         false,
         recovery,
-        Some((IMPORTED, file)),
+        Some((imported_as(projection), file)),
     )?;
     Ok(id)
 }
