@@ -1,7 +1,8 @@
 //! A lab's cells (rascal's `lab/cell.rs`): one arm on one image. A cell's identity is the
 //! SHA-256 over its [`Components`], everything that changes its work and nothing else, all
 //! known before anything runs: the protocol's digest; the image's digest; each bound
-//! input's digest and each bound text; the overrides as applied; the recipe as it runs (its
+//! input's digest and each bound text; the projection the corpus says of each picture it
+//! brings in, when it says one; the overrides as applied; the recipe as it runs (its
 //! name, the digest of its text and the runner's version) or the reference handed back;
 //! the contents of each constant set a step selects; the version of each action; and the
 //! filler's name, revision, resolved settings, provider and endpoint, with each finder's.
@@ -55,6 +56,12 @@ pub struct Components {
     pub inputs: BTreeMap<String, String>,
     /// Each bound text, by input name.
     pub texts: BTreeMap<String, String>,
+    /// The projection the corpus says of the image (`image`) and of each bound input
+    /// (`inputs.<name>`), for those it says one of: the picture brought in, and so the
+    /// work, differs with it. Left out when there is none, so a corpus that says none keeps
+    /// the cells it had.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub projections: BTreeMap<String, String>,
     /// The overrides as applied, the arm's and then the image's, by `<step>.<argument>`:
     /// the line the runner is given.
     pub overrides: BTreeMap<String, String>,
@@ -128,6 +135,7 @@ pub fn cells(
             .map(|p| p.sha256.clone())
             .ok_or_else(|| format!("{id} is not in the corpus"))
     };
+    let projection = |id: &str| (validated.corpus.picture(id)).and_then(|p| p.projection.clone());
     let mut out = Vec::new();
     for (arm, checks) in matrix.arm.iter().zip(&validated.arms) {
         for image in &matrix.image {
@@ -136,6 +144,7 @@ pub fn cells(
                 image: digest(&image.id)?,
                 inputs: BTreeMap::new(),
                 texts: BTreeMap::new(),
+                projections: BTreeMap::new(),
                 overrides: BTreeMap::new(),
                 recipe: None,
                 reference: None,
@@ -148,6 +157,11 @@ pub fn cells(
                 Checks::Reference(input) => {
                     let picture = image.inputs[input].clone();
                     components.inputs.insert(input.clone(), digest(&picture)?);
+                    if let Some(word) = projection(&picture) {
+                        components
+                            .projections
+                            .insert(format!("inputs.{input}"), word);
+                    }
                     components.reference = Some(input.clone());
                     (Work::Reference { picture }, 0)
                 }
@@ -164,10 +178,18 @@ pub fn cells(
                     }
                     let action = load(&recipe.name)?;
                     let checked = action.recipe();
+                    if let Some(word) = projection(&image.id) {
+                        components.projections.insert("image".to_owned(), word);
+                    }
                     let mut inputs = BTreeMap::new();
                     for (name, id) in &image.inputs {
                         if recipe.inputs.get(name).is_some_and(|(text, _)| !text) {
                             components.inputs.insert(name.clone(), digest(id)?);
+                            if let Some(word) = projection(id) {
+                                components
+                                    .projections
+                                    .insert(format!("inputs.{name}"), word);
+                            }
                             inputs.insert(name.clone(), id.clone());
                         }
                     }

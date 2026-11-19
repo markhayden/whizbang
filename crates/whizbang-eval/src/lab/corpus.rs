@@ -3,6 +3,11 @@
 //! came from. The pictures themselves are never committed; the manifest is, and it names no
 //! path but one relative to a root the user gives (`whizbang lab corpus verify --root`).
 //!
+//! A picture may say its projection (`projection = "flat"` or `"equirectangular"`), the word
+//! `whizbang store import --projection` takes: a plain 2:1 file whose metadata says nothing
+//! is otherwise brought in flat, which a panorama's recipe refuses. It is said only of a
+//! file brought in as an image.
+//!
 //! A picture with no group is a file the matrix binds (a mask, a clean picture for a
 //! reference arm), not one judged; the protocol's groups name only pictures with a group.
 
@@ -12,6 +17,9 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::{digest_of, is_digest, is_name, is_plain_relative};
+
+/// The words a picture's projection may be.
+pub const PROJECTIONS: [&str; 2] = ["flat", "equirectangular"];
 
 /// The most pictures a corpus lists.
 pub const PICTURES_LIMIT: usize = 4096;
@@ -39,6 +47,10 @@ pub struct Picture {
     pub group: Option<String>,
     /// Where the picture came from and under what terms it may be used.
     pub licence: String,
+    /// What the picture is: `flat` or `equirectangular`, the word `whizbang store import
+    /// --projection` takes. None for a picture brought in as before, flat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projection: Option<String>,
 }
 
 /// What verifying one picture found.
@@ -51,7 +63,7 @@ pub enum Verification {
 
 impl Corpus {
     /// A manifest's text, read strictly: version 1, unique plain ids, plain relative files,
-    /// digests of the form `sha256:<64 hex>`.
+    /// digests of the form `sha256:<64 hex>`, and a projection, when said, of the two words.
     pub fn parse(text: &str) -> Result<Corpus, String> {
         let corpus: Corpus =
             toml::from_str(text).map_err(|e| super::unreadable("the corpus", text, &e))?;
@@ -84,6 +96,11 @@ impl Corpus {
             if picture.group.as_deref().is_some_and(|g| !is_name(g)) {
                 return Err(format!(
                     "the corpus: picture {id}: its group is no plain name"
+                ));
+            }
+            if (picture.projection.as_deref()).is_some_and(|p| !PROJECTIONS.contains(&p)) {
+                return Err(format!(
+                    "the corpus: picture {id}: its projection is flat or equirectangular"
                 ));
             }
         }

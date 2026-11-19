@@ -22,10 +22,12 @@ pub enum Command {
     /// under the config's filler and finder, one at a time; a reference arm's cell hands
     /// back the picture it binds and runs nothing. The pictures the matrix binds are read
     /// from the corpus's folder, checked against the manifest's digests and brought into
-    /// the store first. Run again, it resumes: a cell that completed or failed is not run
+    /// the store first, each picture as the projection the manifest says (flat when it
+    /// says none). Run again, it resumes: a cell that completed or failed is not run
     /// again, and one that was interrupted is. Refused before its first cell when its
     /// forecast passes what the store's allowance has left, and when the store holds runs
-    /// of the lab under another protocol. Prints counts only.
+    /// of the lab under another protocol. Prints counts, and the first failed cell with
+    /// its run's words.
     Run {
         /// The matrix file; the corpus manifest and the protocol it names are beside it.
         #[arg(long, value_name = "FILE")]
