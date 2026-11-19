@@ -1246,6 +1246,7 @@ fn all_left(protocol: &Protocol, digest: &str) -> Assignment {
         protocol_digest: digest.to_owned(),
         arms: protocol.arms.clone(),
         seed: protocol.seed,
+        subset: None,
         pair: (protocol.group.iter())
             .flat_map(|g| {
                 g.images.iter().map(|id| Pair {
@@ -1396,4 +1397,438 @@ fn the_decode_gives_rascals_outcomes_on_rascals_picks() {
             assert_ne!(outcome, Outcome::NotWorse, "{wins} wins, {losses} losses");
         }
     }
+}
+
+// --- pairs and picks (plan m3, task L3) ---------------------------------------------------------
+
+use whizbang::pairs_page;
+use whizbang_eval::lab::decode::Subset;
+use whizbang_eval::lab::pairs::{self as drawn, Candidate, Draw};
+
+/// The candidates of every image of a protocol: arm a's cell `a-<id>`, b's `b-<id>`.
+fn candidates_of(protocol: &Protocol, limit: Option<u32>) -> Vec<Candidate> {
+    let shown = |cell: String| Shown { cell, attempt: 1 };
+    (drawn::chosen(protocol, limit).unwrap().into_iter())
+        .map(|(image, group)| Candidate {
+            a: shown(format!("a-{image}")),
+            b: shown(format!("b-{image}")),
+            image,
+            group,
+        })
+        .collect()
+}
+
+#[test]
+fn the_pairs_are_blinded_in_the_order_and_sides_the_seed_draws() {
+    // The draw is rascal's: splitmix64, whose first word from 0 is this.
+    assert_eq!(Draw::new(0).bits(), 0xE220_A839_7B1D_CDAF);
+    let (protocol, digest) = decode_protocol(3, "");
+    let assignment = drawn::draw(&protocol, &digest, &candidates_of(&protocol, None), None);
+    let order: Vec<(&str, Side)> = (assignment.pair.iter())
+        .map(|p| (p.id.as_str(), p.a_side))
+        .collect();
+    use Side::{Left as AL, Right as AR};
+    assert_eq!(
+        order,
+        [
+            ("t2", AR),
+            ("s5", AL),
+            ("t3", AR),
+            ("s3", AL),
+            ("s6", AL),
+            ("t1", AR),
+            ("s1", AL),
+            ("s4", AL),
+            ("s2", AR),
+        ]
+    );
+    // Each side shows the arm the draw put there, and one seed draws one page.
+    for pair in &assignment.pair {
+        let (a, b) = match pair.a_side {
+            Side::Left => (&pair.left, &pair.right),
+            Side::Right => (&pair.right, &pair.left),
+        };
+        assert_eq!(
+            (a.cell.clone(), b.cell.clone()),
+            (format!("a-{}", pair.id), format!("b-{}", pair.id))
+        );
+    }
+    let again = drawn::draw(&protocol, &digest, &candidates_of(&protocol, None), None);
+    assert_eq!(again, assignment);
+    assert_eq!(drawn::check_drawn(&protocol, &assignment), Ok(()));
+    // An assignment whose order or a side was changed is not the seed's.
+    let mut swapped = assignment.clone();
+    swapped.pair.swap(0, 1);
+    let mut flipped = assignment.clone();
+    flipped.pair[2].a_side = Side::Left;
+    for changed in [swapped, flipped] {
+        let refused = drawn::check_drawn(&protocol, &changed).unwrap_err();
+        assert!(refused.starts_with("the assignment is not the one the protocol's seed draws"));
+    }
+    // A subset of four of the nine: sky's share is 24/9, structured's 12/9; the one left
+    // goes to the larger remainder, sky's.
+    let shares = drawn::shares(&protocol, 4).unwrap();
+    let counted: Vec<(&str, u32, u32)> = (shares.iter())
+        .map(|s| (s.group.as_str(), s.drawn, s.of))
+        .collect();
+    assert_eq!(counted, [("sky", 3, 6), ("structured", 1, 3)]);
+    assert!(shares[1].short(3) && !shares[0].short(3));
+    for limit in [0, 9] {
+        let refused = drawn::shares(&protocol, limit).unwrap_err();
+        assert!(
+            refused.starts_with("--limit takes 1 to 8 pairs"),
+            "{refused}"
+        );
+    }
+    let subset = Some(Subset { limit: 4, of: 9 });
+    let lighter = drawn::draw(
+        &protocol,
+        &digest,
+        &candidates_of(&protocol, Some(4)),
+        subset,
+    );
+    let ids: Vec<&str> = lighter.pair.iter().map(|p| p.id.as_str()).collect();
+    assert_eq!(ids.len(), 4);
+    assert_eq!(ids.iter().filter(|id| id.starts_with('s')).count(), 3);
+    assert_eq!(drawn::check_drawn(&protocol, &lighter), Ok(()));
+    // A subset that says another size of round is refused.
+    let mut wrong = lighter.clone();
+    wrong.subset = Some(Subset { limit: 4, of: 10 });
+    assert!(drawn::check_drawn(&protocol, &wrong).is_err());
+}
+
+/// A policy's digest of a script, worked out here: the SHA-256 of its text, in base64.
+fn script_digest(text: &str) -> String {
+    let hex = Digest::of_bytes(text.as_bytes()).hex();
+    let raw: Vec<u8> = (0..32)
+        .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap())
+        .collect();
+    let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut bits = String::new();
+    for byte in &raw {
+        bits.push_str(&format!("{byte:08b}"));
+    }
+    while !bits.len().is_multiple_of(6) {
+        bits.push('0');
+    }
+    let mut out: String = (0..bits.len() / 6)
+        .map(|i| alphabet[usize::from_str_radix(&bits[6 * i..6 * i + 6], 2).unwrap()] as char)
+        .collect();
+    while !out.len().is_multiple_of(4) {
+        out.push('=');
+    }
+    out
+}
+
+#[test]
+fn the_pairs_page_loads_nothing_from_the_network() {
+    let hostile = "x\"></script><script src=\"https://evil.example/a.js\"></script><img src=x onerror=alert(1)>\u{2028}";
+    let pairs = [pairs_page::OnPage {
+        id: hostile.to_owned(),
+        file: "001".to_owned(),
+        focus: true,
+        note: hostile.to_owned(),
+    }];
+    let page = pairs_page::page(hostile, hostile, hostile, "sha256:abc", &pairs);
+    // Nothing the page was given is markup in it, or ends its data.
+    assert!(!page.contains("evil.example/a.js\"></script>"), "{page}");
+    assert!(!page.contains("<img src=x"), "{page}");
+    let data = &page[page.find("id=\"data\">").unwrap()..];
+    let data = &data[..data.find("</script>").unwrap()];
+    assert!(
+        !data.contains('\u{2028}') && data.contains("\\u2028"),
+        "{data}"
+    );
+    assert!(page.contains("x&quot;&gt;&lt;/script&gt;"));
+    assert!(page.contains("x\\\"\\u003e\\u003c/script\\u003e"));
+    // Two script elements: the data, which runs nothing, and the page's own code.
+    assert_eq!(page.matches("<script").count(), 2);
+    assert_eq!(
+        page.matches("<script type=\"application/json\" id=\"data\">")
+            .count(),
+        1
+    );
+    let code = &page[page.find("<script>").unwrap() + 8..];
+    let code = &code[..code.find("</script>").unwrap()];
+    let style = &page[page.find("<style>").unwrap() + 7..page.find("</style>").unwrap()];
+    // The policy: nothing from anywhere but the page's own pictures, its own style and its
+    // own script, each by its digest.
+    let policy = format!(
+        "default-src 'none'; img-src 'self' file:; script-src 'sha256-{}'; style-src 'sha256-{}'; \
+         base-uri 'none'; form-action 'none'",
+        script_digest(code),
+        script_digest(style)
+    );
+    let meta = format!(
+        "<meta http-equiv=\"Content-Security-Policy\" content=\"{}\">",
+        policy.replace('\'', "&#39;")
+    );
+    assert!(page.contains(&meta), "{page}");
+    // No address of another place, no way out but the saved file, nothing kept in the
+    // browser, and markup made only by the page's own code.
+    let markup = page.replace(hostile, "");
+    for absent in [
+        "http:",
+        "https:",
+        "://",
+        "<link",
+        "<iframe",
+        "<object",
+        "<embed",
+        "<base",
+        "<form",
+        "@import",
+        "url(",
+        "fetch(",
+        "XMLHttpRequest",
+        "WebSocket",
+        "EventSource",
+        "sendBeacon",
+        "localStorage",
+        "sessionStorage",
+        "indexedDB",
+        "eval(",
+        "Function(",
+        "innerHTML",
+        "outerHTML",
+        "document.write",
+        "import(",
+    ] {
+        assert!(!code.contains(absent), "the script holds {absent}");
+        assert!(!style.contains(absent), "the style holds {absent}");
+    }
+    assert!(!markup.contains(" src=\"http"), "{markup}");
+    assert!(code.contains("\"pictures/\" + pair.file"));
+    assert!(code.contains("download") || page.contains("download=\"picks.json\""));
+}
+
+/// A protocol, an assignment drawn from it and picks of `a`'s side on each pair, written
+/// as files: their paths, and the assignment.
+fn decode_files_of(dir: &Scratch, limit: Option<u32>) -> [std::path::PathBuf; 3] {
+    let text = "version = 1\nname = \"t\"\nseed = 42\narms = [\"a\", \"b\"]\nmin_decided = 3\n\
+         [[group]]\nname = \"sky\"\nimages = [\"s1\", \"s2\", \"s3\", \"s4\", \"s5\", \"s6\"]\n\
+         [[group]]\nname = \"structured\"\nimages = [\"t1\", \"t2\", \"t3\"]\n";
+    let (protocol, digest) = Protocol::parse(text.as_bytes()).unwrap();
+    let subset = limit.map(|limit| Subset { limit, of: 9 });
+    let assignment = drawn::draw(&protocol, &digest, &candidates_of(&protocol, limit), subset);
+    let written = serde_json::to_string_pretty(&assignment).unwrap() + "\n";
+    let picks = Picks {
+        picks_version: 1,
+        assignment_digest: digest_of(written.as_bytes()),
+        pick: (assignment.pair.iter())
+            .map(|p| decode::Pick {
+                pair: p.id.clone(),
+                pick: if p.a_side == Side::Left { L } else { R },
+            })
+            .collect(),
+    };
+    let paths = ["protocol.toml", "assignment.json", "picks.json"].map(|f| dir.path().join(f));
+    std::fs::write(&paths[0], text).unwrap();
+    std::fs::write(&paths[1], written).unwrap();
+    std::fs::write(&paths[2], serde_json::to_string(&picks).unwrap()).unwrap();
+    paths
+}
+
+#[test]
+fn picks_for_a_pair_not_in_the_frozen_assignment_are_refused() {
+    let dir = Scratch::new("lab-foreign-pick");
+    let [protocol, assignment, picks] = decode_files_of(&dir, None);
+    let decoded = laboratory::decode_files(&protocol, &assignment, &picks).unwrap();
+    assert!(
+        decoded.contains("group sky: pairs 6, decided 6, wins 6, losses 0"),
+        "{decoded}"
+    );
+    let mut read: Picks = serde_json::from_slice(&std::fs::read(&picks).unwrap()).unwrap();
+    let kept = read.pick.clone();
+    // A pick for a pair the assignment does not hold is refused by its place, never by
+    // what it names, which the owner's file says.
+    read.pick[2].pair = "the owner's words".to_owned();
+    std::fs::write(&picks, serde_json::to_string(&read).unwrap()).unwrap();
+    let refused = laboratory::decode_files(&protocol, &assignment, &picks).unwrap_err();
+    assert_eq!(
+        refused,
+        "pick 3 of the list names a pair that is not in the assignment"
+    );
+    // A pair left without a pick, and one picked twice, are refused too.
+    read.pick = kept[1..].to_vec();
+    std::fs::write(&picks, serde_json::to_string(&read).unwrap()).unwrap();
+    let refused = laboratory::decode_files(&protocol, &assignment, &picks).unwrap_err();
+    assert_eq!(refused, format!("pair {} has no pick", kept[0].pair));
+    read.pick = [kept.clone(), kept[..1].to_vec()].concat();
+    std::fs::write(&picks, serde_json::to_string(&read).unwrap()).unwrap();
+    let refused = laboratory::decode_files(&protocol, &assignment, &picks).unwrap_err();
+    assert_eq!(refused, format!("pair {} is picked twice", kept[0].pair));
+}
+
+#[test]
+fn an_assignment_whose_digest_differs_is_refused() {
+    let dir = Scratch::new("lab-digest");
+    let [protocol, assignment, picks] = decode_files_of(&dir, None);
+    assert!(laboratory::decode_files(&protocol, &assignment, &picks).is_ok());
+    // The assignment written again, one byte more: the picks were made on another.
+    let mut bytes = std::fs::read(&assignment).unwrap();
+    bytes.push(b'\n');
+    std::fs::write(&assignment, &bytes).unwrap();
+    let refused = laboratory::decode_files(&protocol, &assignment, &picks).unwrap_err();
+    assert_eq!(
+        refused,
+        "the picks were made on another assignment than this one: stale or foreign picks; \
+         nothing was decoded"
+    );
+    // A side changed, and the picks' digest made to agree: not what the seed draws.
+    let mut read: Assignment = serde_json::from_slice(&bytes).unwrap();
+    read.pair[0].a_side = match read.pair[0].a_side {
+        Side::Left => Side::Right,
+        Side::Right => Side::Left,
+    };
+    let written = serde_json::to_string_pretty(&read).unwrap();
+    std::fs::write(&assignment, &written).unwrap();
+    let mut made: Picks = serde_json::from_slice(&std::fs::read(&picks).unwrap()).unwrap();
+    made.assignment_digest = digest_of(written.as_bytes());
+    std::fs::write(&picks, serde_json::to_string(&made).unwrap()).unwrap();
+    let refused = laboratory::decode_files(&protocol, &assignment, &picks).unwrap_err();
+    assert!(refused.starts_with("the assignment is not the one the protocol's seed draws"));
+}
+
+#[test]
+fn an_assignment_naming_a_pair_twice_or_by_no_plain_name_is_refused() {
+    // L2's review: the assignment is held to unique plain names before any is said.
+    let (protocol, digest) = decode_protocol(3, "");
+    let mut twice = all_left(&protocol, &digest);
+    twice.pair[1].id = twice.pair[0].id.clone();
+    let bytes = serde_json::to_vec(&twice).unwrap();
+    assert_eq!(
+        Assignment::parse(&bytes).unwrap_err(),
+        "the assignment: pair s1 is in it twice"
+    );
+    let mut unplain = all_left(&protocol, &digest);
+    unplain.pair[3].id = "../the owner's\nwords".to_owned();
+    let bytes = serde_json::to_vec(&unplain).unwrap();
+    assert_eq!(
+        Assignment::parse(&bytes).unwrap_err(),
+        "the assignment: pair 4 of the list has an id or a group that is no plain name"
+    );
+    // A pair put in a group the protocol does not judge it under is refused at the decode.
+    let mut moved = all_left(&protocol, &digest);
+    moved.pair[0].group = "structured".to_owned();
+    let picks = picks_of([L; 9]);
+    let refused =
+        decode::decode(&protocol, &digest, &moved, "sha256:assignment", &picks).unwrap_err();
+    assert!(
+        refused.starts_with("pair s1 is not an image of the group"),
+        "{refused}"
+    );
+}
+
+#[test]
+fn a_file_under_the_root_slash_is_named_by_its_path_ungarbled() {
+    // L2's review: with the root `/`, the path under it is said as it is.
+    let refused =
+        whizbang_eval::lab::read_relative(Path::new("/"), "no-such-folder-of-whizbang/a.png", 16)
+            .unwrap_err();
+    // The first folder missing on the way is named, under the root.
+    assert!(
+        refused.starts_with("cannot read no-such-folder-of-whizbang: "),
+        "{refused}"
+    );
+}
+
+#[test]
+fn a_subset_round_decodes_every_group_and_says_it_is_a_subset() {
+    let dir = Scratch::new("lab-subset");
+    let [protocol, assignment, picks] = decode_files_of(&dir, Some(4));
+    let decoded = laboratory::decode_files(&protocol, &assignment, &picks).unwrap();
+    assert_eq!(
+        decoded,
+        "arms: a against b\na subset of the round: 4 of its 9 pairs, drawn by group from the \
+         protocol's seed; a group with fewer than 3 decided pairs is inconclusive, never a \
+         win\ngroup sky: pairs 3, decided 3, wins 3, losses 0, same 0, neither 0: preferred\n\
+         group structured: pairs 1, decided 1, wins 1, losses 0, same 0, neither 0: \
+         inconclusive\n"
+    );
+}
+
+#[test]
+fn the_committed_m3_seam_matrix_is_valid_against_its_protocol() {
+    let lab = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../labs/m3-seam");
+    let read = |name: &str| std::fs::read_to_string(lab.join(name)).unwrap();
+    let corpus = read("corpus.toml");
+    // Rascal's `labs/seam-03/corpus.toml` at the pinned commit, byte for byte.
+    assert_eq!(
+        digest_of(corpus.as_bytes()),
+        "sha256:b974abcdd296d876af51a8e6def090fc5be7184aafa29baad8fb8a5eb5656f62"
+    );
+    let price = 40_000;
+    let (validated, cells) = checked(
+        &read("matrix.toml"),
+        &read("protocol.toml"),
+        &corpus,
+        &backends("1", price),
+    )
+    .unwrap();
+    let protocol = &validated.protocol;
+    assert_eq!(protocol.name, "m3-seam");
+    assert_eq!(protocol.arms, ["seam-bria", "thin-bria"]);
+    assert_eq!((protocol.seed, protocol.min_decided), (20_261_031, 10));
+    let groups: Vec<(&str, usize)> = (protocol.group.iter())
+        .map(|g| (g.name.as_str(), g.images.len()))
+        .collect();
+    assert_eq!(groups, [("sky", 21), ("structured", 26)]);
+    // Each of the 47 pictures under both arms: the shipped seam with fan-v3, and with
+    // fan-thin-v1; one fill a cell.
+    assert_eq!(cells.len(), 94);
+    for (arm, set) in [("seam-bria", "fan-v3"), ("thin-bria", "fan-thin-v1")] {
+        let of_arm: Vec<&Cell> = cells.iter().filter(|c| c.arm == arm).collect();
+        assert_eq!(of_arm.len(), 47);
+        for cell in of_arm {
+            let Work::Recipe {
+                recipe,
+                set: overrides,
+                ..
+            } = &cell.work
+            else {
+                panic!("a recipe arm")
+            };
+            assert_eq!(recipe, "seam");
+            assert!(overrides.contains(set), "{overrides}");
+            assert_eq!(cell.forecast_micros, price);
+        }
+    }
+}
+
+#[test]
+fn a_cells_own_run_not_recognised_is_answered_and_not_passed_over() {
+    // L2's review: a run of the cell's own request, which the recogniser did not take for
+    // its attempt (as when its admission cannot be read), is not passed over for a new,
+    // paid attempt; the executor answers the request it already ran.
+    let round = Round::new("lab-own-run");
+    let scope = "own-run";
+    let cell = crate::runner::Finding {
+        image: round.pictures["a"],
+        scope: scope.to_owned(),
+    };
+    assert_eq!(round.run_work(&[&cell], scope), Ok(1));
+    let store = Arc::new(Store::open(&round.root, Arc::new(RealFs)).unwrap());
+    let registry = wiring::registry_over(&round.over, false).unwrap();
+    let executor = wiring::runner(registry, store, &round.over).unwrap();
+    let running = Running {
+        executor: &executor,
+        root: &round.root,
+        left_micros: 1_000_000,
+        stop: &|| false,
+    };
+    let unrecognised = |_: &whizbang_core::contract::record::RunRecord,
+                        _: Option<&whizbang_core::contract::Admission>| None;
+    assert_eq!(
+        harness::run(&[&cell], &unrecognised, &running, 1, "round"),
+        Ok(1)
+    );
+    drop(executor);
+    let mut ids = Vec::new();
+    harness::each_run(&round.root, &mut |record, _, _| {
+        ids.extend(record.identity().request.clone());
+    })
+    .unwrap();
+    assert_eq!(ids, [format!("cell.{scope}.0123abcd.1")]);
+    drop(round.dir);
 }

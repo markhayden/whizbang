@@ -115,6 +115,44 @@ counted apart, never as the owner's pick.
   by its path under its folder, and a file not of its form by the place, never by the
   reader's words, which could quote the owner's line.
 
+## Amended with task L3
+
+- **Pairs and the frozen assignment.** `whizbang lab pairs` draws one pair for each image
+  the protocol judges, its order and sides from the protocol's seed by rascal's draw
+  (splitmix64, Fisher–Yates, a bit a pair), and writes `assignment.json`, the page and its
+  pictures in the folder `--out` names (by default `pairs/<a>-vs-<b>` in the corpus's
+  folder), never in the store's and never inside a git work tree unless `--force`. The
+  picks carry the digest of the assignment file; `lab decode` refuses picks made on
+  another, and an assignment that is not what the seed draws (its images, order or sides
+  changed), before it counts anything.
+- **The page.** It loads nothing from the network: its policy is `default-src 'none'`,
+  pictures from its own place or a local file, its own script and style by their digests.
+  Every string is escaped for where it goes, its script writes text and never markup, and
+  the picks leave it only as a file the owner saves; nothing is kept in the browser.
+  What a picker who inspects the folder could still find: the files' sizes, which can
+  differ by arm, and `assignment.json`, which names the arms and is not to be opened
+  before the picks are saved.
+- **A lighter round** (`--limit <n>`, the owner's wish of 2026-11-18): `n` pairs drawn by
+  the protocol's groups, each its share of `n` by the largest remainder, its images drawn
+  from the seed's own stream; the order and sides are drawn as for a whole round. The rules
+  do not change: the assignment says it is a subset, every group is decoded, and a group
+  with fewer decided pairs than `min_decided` is `inconclusive`, never a win; `lab pairs`
+  says so of each group before anything is picked. A judge's pre-sort stays unbuilt, as
+  above.
+- **What a refusal may name.** A refusal of the lab may name a corpus id, a group, an arm
+  or a lab by its name, and nothing else read from a file: each is held to a plain name
+  (1 to 64 letters, digits, `-`, `_` and `.`) by the reader of the file that holds it
+  before it can be said, so it carries no path, line break or markup; and each is from a
+  file committed with the lab (the manifest, holding ids and digests only, the protocol,
+  the matrix) or from the assignment drawn from them, whose pair ids and groups are held to
+  plain names, unique, when it is read. A pick naming a pair not in the assignment is
+  named by its place in the list, since the picks file is the owner's; a file is named by
+  its path under its root; a file's contents are never quoted.
+- **An id held by a run of the cell's own request** is not passed over: the harness passes
+  over only an id whose run's admission holds another request's fingerprint. A run of the
+  same request, or one whose admission cannot be read, is left to the executor, which
+  answers the request it already ran rather than start a new, paid attempt.
+
 ## Alternatives
 
 - **The cell in an argument of every action**, as `check` has: each action's descriptor

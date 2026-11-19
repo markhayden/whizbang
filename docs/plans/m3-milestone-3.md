@@ -1002,6 +1002,22 @@ about 300.
 
 **Keeping tests lean (L3).** Rounds of three images of 64 by 64; picks files made in the test.
 
+**Status (L3's first pull request).** Item 3 is built: `whizbang lab pairs` with the focus
+view (rascal's `focus.rs`; the look-around view is dropped), the assignment frozen by
+digest and held to the seed's draw by `lab decode`, and, at the owner's wish of 2026-11-18,
+a lighter round, `--limit <n>`, drawn by group (ADR 0038, "Amended with task L3"). Shown:
+`lab::the_pairs_are_blinded_in_the_order_and_sides_the_seed_draws`,
+`lab::the_pairs_page_loads_nothing_from_the_network`,
+`lab::picks_for_a_pair_not_in_the_frozen_assignment_are_refused`,
+`lab::an_assignment_whose_digest_differs_is_refused`,
+`lab::the_committed_m3_seam_matrix_is_valid_against_its_protocol` and
+`cli::lab_run_pairs_and_decode_a_three_image_round_under_a_scripted_filler`. Item 4's files
+are committed (`labs/m3-seam/`). Left, so the box stays open (`docs/carry-over.md`, the row
+on L3's round): item 4's run, picks and `docs/results/m3-lab.md` with its evidence test,
+and `cli::lab_run_pairs_and_decode_remove_prompt_against_a_reference_arm_under_a_scripted_filler`,
+which waits on the step `fill` at the end of `remove_prompt` (its own row): until then the
+recipe hands back a mask, and a pair compares two pictures.
+
 ### What the owner provides (L)
 
 The pictures of rascal's `seam-03` corpus in a folder on the Mac (checked by hash against its

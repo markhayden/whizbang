@@ -14,7 +14,9 @@
 //! cell makes for that attempt, so a run some other caller made under such an id is never
 //! taken for a cell's; and no caller can give an id that starts `cell.`
 //! ([`whizbang_core::contract::RESERVED_REQUEST_PREFIX`]). An attempt whose id a run of
-//! another request holds already is passed over for the next.
+//! another request holds already (its admission says another fingerprint) is passed over
+//! for the next; one held by a run of the same request, or by a run whose admission cannot
+//! be read, is not, and the executor answers it.
 //!
 //! **Resuming.** A cell with a completed attempt is not run again; a cell whose last
 //! attempt failed (an error, or what it was given found invalid) is kept as failed and is
@@ -34,6 +36,7 @@ use std::sync::Arc;
 
 use whizbang_core::contract::record::{RunRecord, Status};
 use whizbang_core::contract::{Admission, Answer, Executor, Request, RequestId, RunId};
+use whizbang_core::identity::Digest;
 use whizbang_core::store::Reader;
 use whizbang_core::store::fs::RealFs;
 
@@ -162,13 +165,28 @@ pub fn each_admitted_run(root: &Path, each: &mut EachAdmitted<'_>) -> Result<(),
     Ok(())
 }
 
-/// Every request id a run the store at `root` holds was made under.
-fn taken_ids(root: &Path) -> Result<BTreeSet<String>, String> {
-    let mut taken = BTreeSet::new();
-    each_run(root, &mut |record, _, _| {
-        taken.extend(record.identity().request.clone());
+/// Every request id a run the store at `root` holds was made under, with the fingerprint
+/// of the request its admission says, for each run whose admission could be read.
+fn taken_ids(root: &Path) -> Result<BTreeMap<String, Vec<Digest>>, String> {
+    let mut taken: BTreeMap<String, Vec<Digest>> = BTreeMap::new();
+    each_admitted_run(root, &mut |record, admission, _, _| {
+        if let Some(id) = record.identity().request.clone() {
+            let held = taken.entry(id).or_default();
+            held.extend(admission.map(Admission::fingerprint));
+        }
     })?;
     Ok(taken)
+}
+
+/// Whether a run of another request holds the id of `request`: one whose admission says
+/// another fingerprint. A run of this very request, or one whose admission could not be
+/// read, does not: the executor answers it (`Repeat` for this request) rather than a new
+/// attempt being started and paid for (plan m3, task L3).
+fn held_by_another(taken: &BTreeMap<String, Vec<Digest>>, request: &Request) -> bool {
+    let Some(held) = request.id().and_then(|id| taken.get(id.as_str())) else {
+        return false;
+    };
+    held.iter().any(|f| *f != request.fingerprint())
 }
 
 /// Every attempt the store at `root` holds of a cell `recognise` knows, by identity.
@@ -214,7 +232,7 @@ pub fn run(
         let mut found = None;
         for attempt in (first..).take(PASSED_OVER_LIMIT as usize) {
             match cell.request(attempt)? {
-                Some(request) if request.id().is_some_and(|id| taken.contains(id.as_str())) => {}
+                Some(request) if held_by_another(&taken, &request) => {}
                 other => {
                     found = Some(other);
                     break;

@@ -13,6 +13,7 @@ pub mod laboratory;
 pub mod model_commands;
 pub mod pack;
 pub mod pack_setup;
+pub mod pairs_page;
 pub mod parity;
 pub mod serving;
 pub mod sign_in;
