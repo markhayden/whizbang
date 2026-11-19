@@ -346,6 +346,15 @@ fn function_response(
     Ok(())
 }
 
+/// What a fault says of an answer whose model could not form it: the finish reasons
+/// [`UNFORMED`]. The same request may not fail so again, and is sent again.
+pub const MALFORMED: &str = "the model could not form its answer: MALFORMED_FUNCTION_CALL or \
+                             MALFORMED_RESPONSE";
+
+/// The finish reasons of an answer the model could not form, which a turn keeps as
+/// [`StopReason::Other`] and the backend makes a fault [`MALFORMED`].
+pub const UNFORMED: [&str; 2] = ["MALFORMED_FUNCTION_CALL", "MALFORMED_RESPONSE"];
+
 /// What a fault says of an answer that is not a `generateContent` response.
 pub(crate) const NOT_A_RESPONSE: &str =
     "the answer is not a generateContent response the adapter reads";

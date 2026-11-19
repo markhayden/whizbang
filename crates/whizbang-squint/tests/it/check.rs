@@ -2231,6 +2231,38 @@ fn under_visual_only_a_call_of_align_is_answered_with_its_pictures_and_squints_s
 }
 
 #[test]
+fn under_a_use_case_a_view_may_name_an_image_by_its_id_or_its_raw_frame() {
+    // A judge told an image's name for `view` may still name it as the opening calls it,
+    // by its id or its raw frame, as `align` takes it: each is the image it names, and
+    // the call is made (the Google judge's gate run named images so in 230 of 998 views).
+    let (world, source, candidate, _) = paired();
+    let viewing = |id: &str, image: &str, also: &str| {
+        json!({"tool_call": {"id": id, "name": "view",
+            "arguments": {"image": image, "also": also, "bbox": [0.0, 0.0, 0.5, 0.5]}}})
+    };
+    let judge = judge(
+        &submitting(&[
+            viewing("v1", "candidate", "source"),
+            viewing("v2", "raw:candidate", "raw:source"),
+        ]),
+        &[],
+    );
+    let executor = world.engine(judge.clone(), Secrets::none());
+    let asked = [("tools", "view"), ("details", "none")];
+    let finished = executor
+        .submit(&of_pair(&source, &candidate, &asked))
+        .unwrap();
+    drop(executor);
+    assert!(matches!(finished.outcome(), Outcome::Completed { .. }));
+    for request in [1, 2] {
+        let said = results(&judge, request);
+        assert_eq!(said.len(), 1);
+        assert!(!said[0].is_error(), "{}", said[0].text());
+        assert_eq!(said[0].images().len(), 2, "{}", said[0].text());
+    }
+}
+
+#[test]
 fn a_use_case_with_one_image_adds_no_details() {
     let world = World::new();
     let script = turns(&[(json!([{"text": "pass\nClean."}]), "end_turn")]);

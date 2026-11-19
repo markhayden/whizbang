@@ -9,7 +9,8 @@ from the review of the first verdict. Changed under "What a request cost": a sta
 success the adapter does not list costs its bound, where it cost nothing. Added: "A long
 prompt", "A turn cut off at the output ceiling" and "What a turn records".
 Amended: 2026-11-18, with task P1 of plan m2c (`docs/plans/m2c-milestone-2.md`, item 4).
-Added: "Google and OpenAI". The ceilings, the bound and the settlement are the kind's,
+Added: "Google and OpenAI". Amended: 2026-11-19, with the fix of the Google judge from
+the gate run of the details first: added "A Google turn's thinking is its output". The ceilings, the bound and the settlement are the kind's,
 the same for each provider (`whizbang_backends::service::spend`).
 
 ## Context
@@ -142,6 +143,17 @@ input, a write to the cache included at the input price
 (`spend::judge::a_google_and_an_openai_turn_reserve_their_bound_and_settle_at_their_usage`).
 A Responses answer of 200 whose status is `failed` may have been charged, and costs its
 bound.
+
+**A Google turn's thinking is its output.** Gemini counts the tokens it thinks against
+`maxOutputTokens` and charges them as output. In the gate run of the details first (200
+checks, no level sent) 131 of 1,248 turns were cut off at the limit, 117 of them holding
+no part at all, and 18 checks failed when the retry at the ceiling was cut off too. A
+table that sets no `effort` now asks for `low`, the level squint's recorded requests
+asked for (`google::a_google_judge_whose_table_sets_no_effort_thinks_at_the_low_level`);
+the bound is unchanged. An answer whose finish reason is `MALFORMED_FUNCTION_CALL` or
+`MALFORMED_RESPONSE` is settled at its usage and is a fault `unavailable`, which `check`
+sends again
+(`google::a_call_the_model_could_not_form_is_a_fault_sent_again_and_charged_its_usage`).
 
 ## Consequences
 
