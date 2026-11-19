@@ -712,3 +712,19 @@ fn end_of_input_ends_the_tool_workers_group_with_a_child_holding_its_pipes() {
     assert_eq!(tools.worker.tool_pid(), None);
     assert!(whizbang_testkit::worker::pack_children().is_empty());
 }
+
+#[test]
+fn a_request_id_reserved_for_a_labs_cells_is_refused_and_nothing_runs() {
+    let (_dir, executor, door) = waiting("serve-reserved");
+    let mut client = Client::new(executor, door, Limits::default());
+    client.initialized();
+    let id = "cell.lab-0123456789ab-0123456789abcdef.0123abcd.1";
+    client.call(1, "deaf", json!({"request_id": id}), None);
+    let mut notes = Vec::new();
+    let answer = client.answer(1, &mut notes);
+    let (text, error) = result_text(&answer);
+    assert!(error, "{answer}");
+    assert!(text.contains("reserved for the cells of a lab"), "{text}");
+    assert!(notes.is_empty(), "{notes:?}");
+    drop(client.close());
+}

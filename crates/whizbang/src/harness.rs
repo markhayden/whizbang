@@ -8,7 +8,13 @@
 //! How a record names its cell is the caller's ([`Recognise`]): a run of `check` holds its
 //! cell in its argument `cell`, as E1's matrices always have, so their stores resume as
 //! they did; a cell of any other action is given a request id, [`request_id`], which the
-//! run's record holds as `identity.request`, and [`by_request`] reads it back.
+//! run's record holds as `identity.request`, and [`by_request`] reads it back. The id
+//! alone is not trusted (plan m3, task L2): a run is a cell's attempt only when its
+//! action is the cell's and its admission holds the fingerprint of the very request the
+//! cell makes for that attempt, so a run some other caller made under such an id is never
+//! taken for a cell's; and no caller can give an id that starts `cell.`
+//! ([`whizbang_core::contract::RESERVED_REQUEST_PREFIX`]). An attempt whose id a run of
+//! another request holds already is passed over for the next.
 //!
 //! **Resuming.** A cell with a completed attempt is not run again; a cell whose last
 //! attempt failed (an error, or what it was given found invalid) is kept as failed and is
@@ -27,7 +33,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use whizbang_core::contract::record::{RunRecord, Status};
-use whizbang_core::contract::{Answer, Executor, Request, RequestId, RunId};
+use whizbang_core::contract::{Admission, Answer, Executor, Request, RequestId, RunId};
 use whizbang_core::store::Reader;
 use whizbang_core::store::fs::RealFs;
 
@@ -54,8 +60,12 @@ pub trait Work {
     fn group(&self) -> String;
 }
 
-/// What a run's record says of the cell it was: its identity and its attempt.
-pub type Recognise<'a> = &'a dyn Fn(&RunRecord) -> Option<(String, u32)>;
+/// What a run's record, and its admission when it has one, say of the cell it was: its
+/// identity and its attempt.
+pub type Recognise<'a> = &'a dyn Fn(&RunRecord, Option<&Admission>) -> Option<(String, u32)>;
+
+/// The most attempt numbers passed over for a cell whose ids runs of other requests hold.
+pub const PASSED_OVER_LIMIT: u32 = 64;
 
 /// Each cell's attempts, by identity: the attempt, its run and how it ended, in order.
 pub type Attempts = BTreeMap<String, Vec<(u32, String, Ended)>>;
@@ -86,13 +96,14 @@ pub fn request_id(scope: &str, identity: &str, attempt: u32) -> Result<RequestId
             "a cell's scope is 1 to {SCOPE_LIMIT} letters, digits and -, and so is its identity"
         ));
     }
-    RequestId::parse(&format!("cell.{scope}.{identity}.{attempt}"))
+    let reserved = whizbang_core::contract::RESERVED_REQUEST_PREFIX;
+    RequestId::parse(&format!("{reserved}{scope}.{identity}.{attempt}"))
 }
 
 /// The cell of a scope a record's request id names: its scope, identity and attempt.
 pub fn named_by_request(record: &RunRecord) -> Option<(String, String, u32)> {
     let id = record.identity().request.as_deref()?;
-    let mut parts = id.strip_prefix("cell.")?.split('.');
+    let mut parts = (id.strip_prefix(whizbang_core::contract::RESERVED_REQUEST_PREFIX)?).split('.');
     let (scope, identity, attempt) = (parts.next()?, parts.next()?, parts.next()?);
     if parts.next().is_some() {
         return None;
@@ -100,21 +111,45 @@ pub fn named_by_request(record: &RunRecord) -> Option<(String, String, u32)> {
     Some((scope.to_owned(), identity.to_owned(), attempt.parse().ok()?))
 }
 
-/// Recognises the cells of one scope by their request ids.
-pub fn by_request(scope: &str) -> impl Fn(&RunRecord) -> Option<(String, u32)> + '_ {
-    move |record| match named_by_request(record) {
-        Some((of, identity, attempt)) if of == scope => Some((identity, attempt)),
-        _ => None,
+/// Recognises the cells of one scope by their request ids: a run whose id names a cell of
+/// `cells` and an attempt, whose action is the one that attempt calls, and whose admission
+/// holds that request's fingerprint. Any other run under such an id is no attempt.
+pub fn by_request<'a>(
+    scope: &'a str,
+    cells: &'a [&'a dyn Work],
+) -> impl Fn(&RunRecord, Option<&Admission>) -> Option<(String, u32)> + 'a {
+    let by_identity: BTreeMap<String, &dyn Work> =
+        cells.iter().map(|cell| (cell.identity(), *cell)).collect();
+    move |record, admission| {
+        let (of, identity, attempt) = named_by_request(record)?;
+        let cell = by_identity.get(&identity).filter(|_| of == scope)?;
+        let request = cell.request(attempt).ok()??;
+        let same_id = request.id().map(RequestId::as_str) == record.identity().request.as_deref();
+        let same_action = record.asked().action.as_deref() == Some(request.call().action());
+        let same_request = admission.is_some_and(|a| a.fingerprint() == request.fingerprint());
+        (same_id && same_action && same_request).then_some((identity, attempt))
     }
 }
 
 /// Every run the store at `root` holds whose record could be read, with how it ended.
 pub fn each_run(root: &Path, each: &mut dyn FnMut(&RunRecord, &str, Ended)) -> Result<(), String> {
+    each_admitted_run(root, &mut |record, _, id, ended| each(record, id, ended))
+}
+
+/// What [`each_admitted_run`] is given each run with: its record, its admission when it
+/// could be read, its id and how it ended.
+pub type EachAdmitted<'a> = dyn FnMut(&RunRecord, Option<&Admission>, &str, Ended) + 'a;
+
+/// The same, with each run's admission when it could be read.
+pub fn each_admitted_run(root: &Path, each: &mut EachAdmitted<'_>) -> Result<(), String> {
     let reader = Reader::open(root, Arc::new(RealFs)).map_err(|e| e.to_string())?;
     let generation = reader.snapshot().map_err(|e| e.to_string())?;
     for id in generation.runs().keys() {
         let stored = whizbang_core::contract::record::stored(&generation, id, |e| reader.read(e));
         let Some(Ok(record)) = stored else { continue };
+        let admitted =
+            whizbang_core::contract::request::admitted(&generation, id, |e| reader.read(e));
+        let admission = admitted.and_then(Result::ok);
         let outcome = record.outcome();
         let ended = match outcome.status {
             _ if !outcome.lost.is_empty() => Ended::Interrupted,
@@ -122,16 +157,25 @@ pub fn each_run(root: &Path, each: &mut dyn FnMut(&RunRecord, &str, Ended)) -> R
             Status::Cancelled => Ended::Interrupted,
             Status::Error | Status::Invalid => Ended::Failed,
         };
-        each(&record, id, ended);
+        each(&record, admission.as_ref(), id, ended);
     }
     Ok(())
+}
+
+/// Every request id a run the store at `root` holds was made under.
+fn taken_ids(root: &Path) -> Result<BTreeSet<String>, String> {
+    let mut taken = BTreeSet::new();
+    each_run(root, &mut |record, _, _| {
+        taken.extend(record.identity().request.clone());
+    })?;
+    Ok(taken)
 }
 
 /// Every attempt the store at `root` holds of a cell `recognise` knows, by identity.
 pub fn attempts(root: &Path, recognise: Recognise<'_>) -> Result<Attempts, String> {
     let mut found: Attempts = BTreeMap::new();
-    each_run(root, &mut |record, id, ended| {
-        if let Some((identity, attempt)) = recognise(record) {
+    each_admitted_run(root, &mut |record, admission, id, ended| {
+        if let Some((identity, attempt)) = recognise(record, admission) {
             found
                 .entry(identity)
                 .or_default()
@@ -157,16 +201,35 @@ pub fn run(
     what: &str,
 ) -> Result<usize, String> {
     let earlier = attempts(running.root, recognise)?;
+    let taken = taken_ids(running.root)?;
     let mut todo = Vec::new();
     for cell in cells {
         let last = earlier.get(&cell.identity()).and_then(|list| list.last());
-        let attempt = match last {
+        let first = match last {
             None => 1,
             Some((attempt, _, Ended::Interrupted)) => attempt + 1,
             Some(_) => continue,
         };
-        if let Some(request) = cell.request(attempt)? {
-            todo.push((*cell, request));
+        // An attempt whose id a run of another request holds is passed over.
+        let mut found = None;
+        for attempt in (first..).take(PASSED_OVER_LIMIT as usize) {
+            match cell.request(attempt)? {
+                Some(request) if request.id().is_some_and(|id| taken.contains(id.as_str())) => {}
+                other => {
+                    found = Some(other);
+                    break;
+                }
+            }
+        }
+        match found {
+            Some(Some(request)) => todo.push((*cell, request)),
+            Some(None) => {}
+            None => {
+                return Err(format!(
+                    "a cell's next {PASSED_OVER_LIMIT} request ids are held by runs of other \
+                     requests; nothing was run"
+                ));
+            }
         }
     }
     let mut forecast: u64 = 0;

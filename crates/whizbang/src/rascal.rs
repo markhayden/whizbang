@@ -568,7 +568,7 @@ pub(crate) fn executor_caching(
     Ok((built(at, &over, recovery, cached)?, over))
 }
 
-fn built(
+pub(crate) fn built(
     at: &Where,
     over: &wiring::Over,
     recovery: Recovery,
