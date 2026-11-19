@@ -394,6 +394,30 @@ fn an_arms_details_and_second_look_are_in_its_cells_identity_and_run() {
     assert_ne!(matrix.identity(), without_look.identity());
     assert_ne!(matrix.identity(), without_detail.identity());
     assert_ne!(without_look.identity(), without_detail.identity());
+    // A second look may be given per use case, `on` or `strict`, named or written as a table.
+    let per = "F;second_look=on@reference-consistency|strict@reality-checks";
+    let arm: whizbang_eval::matrix::Arm = per.parse().unwrap();
+    assert_eq!(arm.to_string(), per);
+    assert_eq!(arm.second_look_for("reference-consistency"), "on");
+    assert_eq!(arm.second_look_for("reality-checks"), "strict");
+    assert_eq!(arm.second_look_for("source-fidelity"), "off");
+    let table = matrix_with(
+        SET,
+        r#"{ arm = "F", second_look = [{ look = "on", use_cases = ["reference-consistency"] }, { look = "strict", use_cases = ["reality-checks"] }] }"#,
+    );
+    assert_eq!(table.matrix.arms[0], arm);
+    assert_eq!(settled.second_look_for("product-fidelity"), "on");
+    for refused in [
+        "F;second_look=on@reality-checks|strict@reality-checks",
+        "F;second_look=maybe@reality-checks",
+        "F;second_look=on|strict@reality-checks",
+        "F;second_look=on@nowhere",
+    ] {
+        assert!(
+            refused.parse::<whizbang_eval::matrix::Arm>().is_err(),
+            "{refused}"
+        );
+    }
     // And of each cell's, and of its run's arguments: arm F as before, then the arm with
     // its settings, whose tentative item gets its second look.
     let (judged, tiny) = world_with("matrix-settings", &["a"]);
@@ -446,7 +470,10 @@ fn an_arm_naming_a_detail_for_a_use_case_that_cannot_take_it_is_refused_before_a
             "is no detail measured first",
         ),
         (r#""C;second_look=on""#, "settings of an arm F"),
-        (r#""F;second_look=maybe""#, "second_look is on or off"),
+        (
+            r#""F;second_look=maybe""#,
+            "second_look is on, strict or off",
+        ),
     ] {
         let text = format!(
             "[matrix]\nname = \"m\"\nsets = [\"{SET}\"]\narms = [{arm}]\nrepetitions = 1\n\

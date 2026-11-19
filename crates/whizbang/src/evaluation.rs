@@ -425,7 +425,10 @@ fn call_of(planned: &Planned, argument: &CellArgument) -> Result<Call, String> {
         .argument("tools", Value::text(&arm.offered()))
         .argument("details", Value::text(arm.details()))
         .argument("projection", Value::text(arm.projection()))
-        .argument("second_look", Value::text(arm.second_look()))
+        .argument(
+            "second_look",
+            Value::text(arm.second_look_for(&planned.job.use_case)),
+        )
         .argument(
             CELL_ARGUMENT,
             Value::text(&serde_json::to_string(argument).map_err(|e| e.to_string())?),

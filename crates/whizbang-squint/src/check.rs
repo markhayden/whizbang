@@ -101,7 +101,7 @@ pub const RETRY_WAIT_LIMIT_MS: u64 = 30_000;
 pub const JUDGED: &str = "judged.json";
 
 /// The values of the argument `second_look`.
-pub const SECOND_LOOK: [&str; 2] = ["off", "on"];
+pub const SECOND_LOOK: [&str; 3] = ["off", "on", "strict"];
 
 const SYSTEM: &str = "You check images. Look closer with the tools you are given when a \
     closer look would change your answer. Then end your turn with one word on the first \
@@ -246,7 +246,7 @@ impl Check {
         ))
         .argument(Argument::with_default(
             "second_look",
-            "off, or on: a submission whose verdict is unsure for a tentative item gets one more turn, inside the run's turns and spend, with crops of what it cited, to settle those items.",
+            "off, on, or strict: one more turn, in the run's budget, to settle items a submission left tentative; strict settles toward pass only with a cited location.",
             ValueType::choice(&SECOND_LOOK),
             Value::text("off"),
         ))
@@ -787,6 +787,7 @@ impl Run<'_> {
         items: &[String],
         decided: &use_case::Decided,
         job: &Job,
+        strict: bool,
     ) -> Result<(Vec<Part>, usize), Failure> {
         let listed = items.join(", ");
         let received = format!(
@@ -872,6 +873,9 @@ impl Run<'_> {
              either way, or tentative if it still does not. Give no findings: those of your \
              submission are kept. Locations stay on the raw frames of the job's images."
         )));
+        if strict {
+            parts.push(Part::Text(STRICT_LOOK.to_owned()));
+        }
         Ok((parts, crops))
     }
 
@@ -1075,7 +1079,10 @@ impl Action for Check {
                 Some(false) => {}
             }
         }
-        let second_look = chosen("second_look", &SECOND_LOOK)? == "on" && judging.is_some();
+        // `on` or `strict`; `off`, or a run with no checklist, gives none.
+        let look_mode = chosen("second_look", &SECOND_LOOK)?;
+        let second_look = look_mode != "off" && judging.is_some();
+        let strict = look_mode == "strict";
         // The decision cache's key is known here, before anything is measured or sent;
         // a run of the same key that completed answers this one (crate::cache).
         let mut revisions: Vec<(String, String)> = Vec::new();
@@ -1315,6 +1322,7 @@ impl Action for Check {
                                         &tentative,
                                         &decided,
                                         &judging.job,
+                                        strict,
                                     )?;
                                     messages.push(said);
                                     messages.push(Message::new(Role::User, asked).map_err(unfit)?);
@@ -1323,6 +1331,7 @@ impl Action for Check {
                                         arguments: arguments.unwrap_or(Json::Null),
                                         items: tentative,
                                         crops,
+                                        strict,
                                     });
                                     continue;
                                 }
@@ -1407,6 +1416,8 @@ struct Looking {
     arguments: Json,
     items: Vec<String>,
     crops: usize,
+    /// Whether an item may be settled toward pass only with a cited location.
+    strict: bool,
 }
 
 /// The box a location cites, in fractions of its frame: a box as it is, a polygon's
@@ -1438,6 +1449,12 @@ fn cited_box(location: &Json) -> Option<[f64; 4]> {
         _ => None,
     }
 }
+
+/// What a strict second look adds to its question.
+pub const STRICT_LOOK: &str = "An item you settle as held or allowed_change counts as \
+    confident only with a location: a bbox or polygon on the raw frame of the part of the \
+    picture that shows it holds. Without one it stays tentative. A violation is settled as \
+    you see it.";
 
 /// The most crops a second look shows.
 pub const SECOND_LOOK_CROPS: usize = 4;
@@ -1475,18 +1492,20 @@ fn second_settled(
         Ok(turn) => {
             let calls: Vec<&ToolCall> = turn.tool_calls().collect();
             match calls.as_slice() {
-                [submit] if submit.name() == use_case::SUBMIT => {
-                    merged(&looking.arguments, submit.arguments(), &looking.items).and_then(
-                        |arguments| {
-                            use_case::decided_of(
-                                &arguments,
-                                &judging.job,
-                                &judging.resolved,
-                                &judging.checklist,
-                            )
-                        },
+                [submit] if submit.name() == use_case::SUBMIT => merged(
+                    &looking.arguments,
+                    submit.arguments(),
+                    &looking.items,
+                    looking.strict,
+                )
+                .and_then(|arguments| {
+                    use_case::decided_of(
+                        &arguments,
+                        &judging.job,
+                        &judging.resolved,
+                        &judging.checklist,
                     )
-                }
+                }),
                 _ => kept("the turn did not call submit_verdict once, alone"),
             }
         }
@@ -1507,6 +1526,7 @@ fn second_settled(
     };
     let mut look = json!({
         "items": looking.items,
+        "strict": looking.strict,
         "crops": looking.crops,
         "before": rows(&looking.first),
         "verdict_before": word(&looking.first),
@@ -1528,8 +1548,10 @@ fn second_settled(
 }
 
 /// The first submission's arguments with the items of the second put in their place:
-/// refused when the second answers an item it was not asked about, or one twice.
-fn merged(first: &Json, second: &Json, asked: &[String]) -> Result<Json, String> {
+/// refused when the second answers an item it was not asked about, or one twice. Under a
+/// strict look, an item settled as held or allowed_change with no box or polygon is kept
+/// tentative: unsure may turn to fail freely, and to pass only with a cited location.
+fn merged(first: &Json, second: &Json, asked: &[String], strict: bool) -> Result<Json, String> {
     let Some(given) = second.get("items").and_then(Json::as_array) else {
         return Err("the second submission holds no list of items".to_owned());
     };
@@ -1546,11 +1568,23 @@ fn merged(first: &Json, second: &Json, asked: &[String]) -> Result<Json, String>
             );
         }
         seen.push(id);
+        let mut item = item.clone();
+        let toward_pass = matches!(
+            item.get("disposition").and_then(Json::as_str),
+            Some("held" | "allowed_change")
+        );
+        let located = matches!(
+            item.pointer("/location/kind").and_then(Json::as_str),
+            Some("bbox" | "polygon")
+        );
+        if strict && toward_pass && !located {
+            item["confidence"] = json!("tentative");
+        }
         if let Some(slot) = items
             .iter_mut()
             .find(|i| i.get("id").and_then(Json::as_str) == Some(id))
         {
-            *slot = item.clone();
+            *slot = item;
         }
     }
     Ok(merged)

@@ -2901,3 +2901,46 @@ fn the_second_look_is_inside_the_runs_turns_and_spend() {
     assert_eq!(left.record().verdict().unwrap().0, Decision::Unsure);
     assert_eq!(second_look_kept(&left), Json::Null);
 }
+
+#[test]
+fn a_strict_second_look_settles_toward_pass_only_with_a_cited_location() {
+    // Settled as held, confidently, with no location: still tentative, so still unsure.
+    let world = World::new();
+    let first = reality_items("held", "tentative", Json::Null);
+    let call = |world: &World| reality(world, "strict");
+    let bare = json!([item(RE2, "held", "confident")]);
+    let (_, left, judge) = judged(&world, &call(&world), &twice(first.clone(), bare));
+    assert_eq!(left.record().verdict().unwrap().0, Decision::Unsure);
+    let look = second_look_kept(&left);
+    assert_eq!(
+        (look["outcome"].as_str(), look["strict"].as_bool()),
+        (Some("settled"), Some(true))
+    );
+    assert_eq!(look["after"][0]["confidence"], "tentative");
+    // The judge was told so.
+    let asked = judge.received()[1]
+        .messages()
+        .last()
+        .unwrap()
+        .parts()
+        .to_vec();
+    assert_eq!(
+        texts(&asked).last().unwrap(),
+        whizbang_squint::check::STRICT_LOOK
+    );
+    // With a box cited for it: a pass.
+    let world = World::new();
+    let mut located = item(RE2, "held", "confident");
+    located["location"] = a_box([0.2, 0.2, 0.6, 0.6]);
+    let (_, left, _) = judged(
+        &world,
+        &call(&world),
+        &twice(first.clone(), json!([located])),
+    );
+    assert_eq!(left.record().verdict().unwrap().0, Decision::Pass);
+    // A violation is settled as seen, toward the stricter reading, freely.
+    let world = World::new();
+    let seen = json!([item(RE2, "violation", "confident")]);
+    let (_, left, _) = judged(&world, &call(&world), &twice(first, seen));
+    assert_eq!(left.record().verdict().unwrap().0, Decision::Fail);
+}

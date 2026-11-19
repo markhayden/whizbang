@@ -1,0 +1,19 @@
+# The strict second look on reality-checks (plan m3, task U1, beside the screen): after the
+# screen, where the second look turned unsure into passes of items labelled fail, an arm
+# whose look may settle an item toward pass only with a location cited for it. Run beside F
+# and the plain second look again, so the three are measured together. claude-haiku-5-5,
+# three repetitions. Run by hand on the owner's Mac; aggregates in docs/results/m3-unsure.md.
+[matrix]
+name = "unsure-strict"
+sets = ["reality-checks/people-v1", "reality-checks/adversarial-v1"]
+arms = [
+  "F",
+  { arm = "F", second_look = "on" },
+  { arm = "F", second_look = "strict" },
+]
+repetitions = 3
+concurrency = 4
+
+[[matrix.judges]]
+backend = "haiku"
+model = "claude-haiku-5-5"

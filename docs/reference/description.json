@@ -82,12 +82,13 @@
         },
         {
           "name": "second_look",
-          "purpose": "off, or on: a submission whose verdict is unsure for a tentative item gets one more turn, inside the run's turns and spend, with crops of what it cited, to settle those items.",
+          "purpose": "off, on, or strict: one more turn, in the run's budget, to settle items a submission left tentative; strict settles toward pass only with a cited location.",
           "type": {
             "type": "choice",
             "choices": [
               "off",
-              "on"
+              "on",
+              "strict"
             ]
           },
           "required": false,

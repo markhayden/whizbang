@@ -63,17 +63,39 @@ pub struct Judge {
 ///
 /// Beside its tools, an arm `F` has two settings (plan m3, task U1, item 2): `details`, the
 /// details measured first, each for the use cases it is named for, where `align` alone is
-/// measured otherwise; and `second_look`, `on` or `off`. Both are part of the arm's name, so
-/// of each cell's identity and of the matrix's: `F;details=tiles@reality-checks;second_look=on`.
+/// measured otherwise; and `second_look`, `on` or `strict` for the use cases it is named for
+/// (every use case when it names none), `off` for the rest. Both are part of the arm's name,
+/// so of each cell's identity and of the matrix's: `F;details=tiles@reality-checks;second_look=on`,
+/// `F;second_look=on@reference-consistency|strict@reality-checks`.
 /// A matrix file may write an arm as that name, or as a table:
-/// `{ arm = "F", details = [{ detail = "tiles", use_cases = ["reality-checks"] }], second_look = "on" }`.
+/// `{ arm = "F", details = [{ detail = "tiles", use_cases = ["reality-checks"] }], second_look = "on" }`,
+/// or with `second_look = [{ look = "strict", use_cases = ["reality-checks"] }]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Arm {
     pub first: bool,
     pub tools: Vec<String>,
     pub details: Vec<Detail>,
-    pub second_look: bool,
+    pub second_look: Vec<Look>,
 }
+
+/// A second look an arm gives, and the use cases it gives it for: every one when none is
+/// named.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Look {
+    pub look: String,
+    #[serde(default)]
+    pub use_cases: Vec<String>,
+}
+
+/// The use cases of the table, by name.
+pub const USE_CASES: [&str; 5] = [
+    "source-fidelity",
+    "reference-consistency",
+    "reality-checks",
+    "brief-compliance",
+    "product-fidelity",
+];
 
 /// A detail an arm measures first, and the use cases it is measured for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,9 +181,16 @@ impl Arm {
         (!named.is_empty()).then(|| named.join(","))
     }
 
-    /// `check`'s argument `second_look`: `on` or `off`.
-    pub fn second_look(&self) -> &'static str {
-        if self.second_look { "on" } else { "off" }
+    /// `check`'s argument `second_look` under a use case: `on`, `strict` or `off`.
+    pub fn second_look_for(&self, use_case: &str) -> &str {
+        (self.second_look.iter())
+            .find(|l| l.use_cases.is_empty() || l.use_cases.iter().any(|u| u == use_case))
+            .map_or("off", |l| l.look.as_str())
+    }
+
+    /// Whether the arm gives a second look under any use case.
+    pub fn looks(&self) -> bool {
+        !self.second_look.is_empty()
     }
 
     /// `check`'s argument `projection`: `visual_only` for the control, `full` otherwise.
@@ -170,7 +199,7 @@ impl Arm {
     }
 
     fn validate(&self) -> Result<(), String> {
-        if !self.first && (!self.details.is_empty() || self.second_look) {
+        if !self.first && (!self.details.is_empty() || self.looks()) {
             return Err(format!(
                 "arm {self}: details and the second look are settings of an arm F; C is the \
                  control"
@@ -178,6 +207,25 @@ impl Arm {
         }
         if self.details.len() > ARM_DETAILS_LIMIT {
             return Err(format!("arm {self}: at most {ARM_DETAILS_LIMIT} details"));
+        }
+        let mut named = BTreeSet::new();
+        let alone = self.second_look.len() == 1 && self.second_look[0].use_cases.is_empty();
+        for look in &self.second_look {
+            if !matches!(look.look.as_str(), "on" | "strict") {
+                return Err(format!("arm {self}: second_look is on, strict or off"));
+            }
+            if look.use_cases.is_empty() && !alone {
+                return Err(format!(
+                    "arm {self}: a second look for every use case is the arm's only one"
+                ));
+            }
+            for use_case in &look.use_cases {
+                if !USE_CASES.contains(&use_case.as_str()) || !named.insert(use_case.as_str()) {
+                    return Err(format!(
+                        "arm {self}: each use case of a second look is one of the table's, once"
+                    ));
+                }
+            }
         }
         let mut seen = BTreeSet::new();
         for detail in &self.details {
@@ -223,8 +271,14 @@ impl std::fmt::Display for Arm {
                 .collect();
             write!(f, ";details={}", named.join("|"))?;
         }
-        if self.second_look {
-            f.write_str(";second_look=on")?;
+        if !self.second_look.is_empty() {
+            let named: Vec<String> = (self.second_look.iter())
+                .map(|l| match l.use_cases.as_slice() {
+                    [] => l.look.clone(),
+                    cases => format!("{}@{}", l.look, cases.join(",")),
+                })
+                .collect();
+            write!(f, ";second_look={}", named.join("|"))?;
         }
         Ok(())
     }
@@ -260,7 +314,7 @@ impl std::str::FromStr for Arm {
             first,
             tools,
             details: Vec::new(),
-            second_look: false,
+            second_look: Vec::new(),
         };
         let mut said = BTreeSet::new();
         for setting in settings {
@@ -287,11 +341,26 @@ impl std::str::FromStr for Arm {
                         });
                     }
                 }
-                "second_look" => match value {
-                    "on" => arm.second_look = true,
-                    "off" => {}
-                    _ => return Err(format!("arm {text:?}: second_look is on or off")),
-                },
+                "second_look" if value == "off" => {}
+                "second_look" => {
+                    for one in value.split('|') {
+                        let (look, cases) = one.split_once('@').unwrap_or((one, ""));
+                        let use_cases: Vec<String> = (cases.split(','))
+                            .filter(|c| !c.is_empty())
+                            .map(str::to_owned)
+                            .collect();
+                        if !plain(look) || !use_cases.iter().all(|c| plain(c)) {
+                            return Err(format!(
+                                "arm {text:?}: second_look is on, strict or off, with \
+                                 @<use case>,... after it"
+                            ));
+                        }
+                        arm.second_look.push(Look {
+                            look: look.to_owned(),
+                            use_cases,
+                        });
+                    }
+                }
                 _ => {
                     return Err(format!(
                         "arm {text:?}: its settings are details and second_look"
@@ -325,7 +394,15 @@ struct Table {
     #[serde(default)]
     details: Vec<Detail>,
     #[serde(default)]
-    second_look: Option<String>,
+    second_look: Option<Looks>,
+}
+
+/// A table's second look: `on`, `strict` or `off` for every use case, or a list of looks.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Looks {
+    Word(String),
+    List(Vec<Look>),
 }
 
 impl<'de> Deserialize<'de> for Arm {
@@ -341,12 +418,14 @@ impl<'de> Deserialize<'de> for Arm {
                 }
                 let mut arm = read(&table.arm)?;
                 arm.details = table.details;
-                arm.second_look = match table.second_look.as_deref() {
-                    None | Some("off") => false,
-                    Some("on") => true,
-                    Some(_) => {
-                        return Err(serde::de::Error::custom("second_look is on or off"));
-                    }
+                arm.second_look = match table.second_look {
+                    None => Vec::new(),
+                    Some(Looks::Word(word)) if word == "off" => Vec::new(),
+                    Some(Looks::Word(word)) => vec![Look {
+                        look: word,
+                        use_cases: Vec::new(),
+                    }],
+                    Some(Looks::List(looks)) => looks,
                 };
                 arm.validate().map_err(serde::de::Error::custom)?;
                 // What the cell will be named must read back as this arm.
@@ -474,7 +553,7 @@ pub fn forecast(cells: &[Cell]) -> Result<u64, String> {
         // Arm F's details are counted at twice arm C, and a second look at three times
         // (plan m3, "Spend").
         let arm = match cell.arm.parse::<Arm>() {
-            Ok(arm) if arm.second_look => 3,
+            Ok(arm) if arm.looks() => 3,
             Ok(arm) if arm.first => 2,
             Ok(_) => 1,
             Err(_) if cell.arm.starts_with('F') => 2,

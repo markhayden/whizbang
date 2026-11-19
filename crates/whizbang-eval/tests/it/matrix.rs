@@ -33,7 +33,8 @@ fn the_ported_study_matrices_are_read() {
             "study-sonnet",
             "study-terra",
             "study-tools",
-            "unsure-screen"
+            "unsure-screen",
+            "unsure-strict"
         ]
     );
     // The models of the Google and OpenAI judges are named, and every model has a
@@ -167,5 +168,14 @@ fn the_unsure_screen_and_its_gate_are_read() {
     assert_eq!(
         matrix::forecast(&cells).unwrap(),
         2 * 44 * 3 * rate * (2 + 2 + 3 + 3)
+    );
+    // And the strict second look beside it, on reality-checks.
+    let text = std::fs::read_to_string(repo().join("matrices/unsure-strict.toml")).unwrap();
+    let strict = Matrix::parse(&text).unwrap();
+    let arms: Vec<String> = strict.matrix.arms.iter().map(ToString::to_string).collect();
+    assert_eq!(arms, ["F", "F;second_look=on", "F;second_look=strict"]);
+    assert_eq!(
+        strict.matrix.arms[2].second_look_for("reality-checks"),
+        "strict"
     );
 }

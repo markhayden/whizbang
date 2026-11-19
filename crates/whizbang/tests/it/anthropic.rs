@@ -574,7 +574,7 @@ pub fn checked_job(
         detail: None,
         projection: "full",
         tools: &[],
-        second_look: false,
+        second_look: "off",
     };
     let printed = whizbang::door::check_job(&executor, job, images, None, None, &measuring, &read);
     drop(executor);

@@ -91,8 +91,9 @@ pub enum Command {
         /// verdict would be unsure, it is given one more turn, inside the run's turns and
         /// spend, with crops at full resolution of what it cited for those items, to settle
         /// them alone; the verdict is still worked out from the dispositions. `off` (the
-        /// default) runs as before. Experimental.
-        #[arg(long, value_name = "WHEN", default_value = "off", value_parser = ["off", "on"])]
+        /// default) runs as before. `strict`: the same, but an item is settled toward pass
+        /// only with a location cited for it, and stays tentative otherwise. Experimental.
+        #[arg(long, value_name = "WHEN", default_value = "off", value_parser = ["off", "on", "strict"])]
         second_look: String,
         /// A tool file the config lists under `[tools] paths`, offered to the judge with
         /// the schema its declaration gives; give it again for more. An experimental tool
@@ -176,7 +177,7 @@ fn run_at(
                 detail: detail.as_deref(),
                 projection,
                 tools,
-                second_look: second_look == "on",
+                second_look: second_look.as_str(),
             };
             let read = |run: &_| door::verdict(&root, run);
             door::check_job(
