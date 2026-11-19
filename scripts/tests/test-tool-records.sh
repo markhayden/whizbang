@@ -41,8 +41,15 @@ case "$said" in *"not the seven"*) ;; *) fail "a record with parts missing is no
 case "$said" in *"bad/a.png is not beside it"*) ;; *) fail "a picture that is not there is not reported" ;; esac
 
 # The records there are: each tool that ships has one, and each is whole.
-for tool in view grow resize align change_map edge_similarity; do
+for tool in view grow resize align change_map edge_similarity per_subject; do
   [ -f "docs/reference/tools/$tool.md" ] || fail "the record of $tool is missing"
+done
+# The three tools scored on rung 2 in milestone 2 (plan 2C, task X1, items 7 to 9): each
+# record's part on rung 2 holds its numbers, the area under the ROC curve among them, which
+# the fast tests hold to the tree (`evidence::the_per_subject_record_names_a_commit_of_this_tree_and_its_rung_2_numbers`).
+for tool in per_subject change_map edge_similarity; do
+  sed -n '/^## Rung 2 results$/,/^## Speed and cost$/p' "docs/reference/tools/$tool.md" |
+    grep -E '^auc = [0-9]' >/dev/null || fail "the record of $tool holds no rung 2 numbers"
 done
 for record in docs/reference/tools/*.md; do
   wrong=$(shape "$record")

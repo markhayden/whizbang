@@ -75,7 +75,7 @@ pub enum Command {
         #[arg(long, value_name = "WHEN", default_value = "first", value_parser = ["first", "none"])]
         details: String,
         /// The tools whose details are measured first, by name, separated by commas:
-        /// align, and the experimental change_map and edge_similarity, which compare the
+        /// align, and the unverified change_map and edge_similarity, which compare the
         /// source with the frame align returned (align is then run first, named or not):
         /// where the picture changed in structure, and how much of its edges it kept.
         /// Without it, align alone.

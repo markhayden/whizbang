@@ -777,11 +777,11 @@
     },
     {
       "tool": "change_map",
-      "mark": "experimental"
+      "mark": "unverified"
     },
     {
       "tool": "edge_similarity",
-      "mark": "experimental"
+      "mark": "unverified"
     },
     {
       "tool": "resize",

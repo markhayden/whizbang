@@ -216,6 +216,11 @@ impl Tier {
     }
 
     fn of(label: &str, model: &str) -> Tier {
+        Tier::with(label, model, "")
+    }
+
+    /// The same, the config ending with `more` (per-subject comparison's `[tools]`).
+    fn with(label: &str, model: &str, more: &str) -> Tier {
         let dir = Scratch::new(label);
         let root = dir.path().join("store");
         drop(Store::open(&root, Arc::new(RealFs)).unwrap());
@@ -224,7 +229,7 @@ impl Tier {
             &config,
             format!(
                 "[backends.segment]\nkind = \"pack\"\nmodel = \"{model}\"\n\n\
-                 [backends.segment.settings]\nmax_lifetime_s = 600\ncall_limit_s = 120\n"
+                 [backends.segment.settings]\nmax_lifetime_s = 600\ncall_limit_s = 120\n{more}"
             ),
         )
         .unwrap();
@@ -603,4 +608,153 @@ fn tiny_answers_a_phrase_a_point_and_a_box_on_the_mac() {
         lines.extend(fields_of(prefix, &one));
     }
     write_out("tiny", &lines);
+}
+
+/// One row of the table of readings in per-subject comparison's record: the example, the
+/// subject, and its six readings in the record's order.
+struct Reading {
+    example: String,
+    subject: String,
+    one_minus_iou: f64,
+    present: (bool, bool),
+    areas: (f64, f64),
+    shift: f64,
+}
+
+/// The rows between the record's marks `read: begin` and `read: end`.
+fn readings_of(record: &str) -> Vec<Reading> {
+    let (_, rest) = record
+        .split_once("<!-- read: begin -->")
+        .expect("the record marks its readings");
+    let (table, _) = rest.split_once("<!-- read: end -->").unwrap();
+    let yes = |cell: &str| match cell {
+        "yes" => true,
+        "no" => false,
+        other => panic!("{other} is not yes or no"),
+    };
+    table
+        .lines()
+        .filter(|line| line.starts_with("| ") && !line.starts_with("| Example"))
+        .map(|line| {
+            let cells: Vec<&str> = line.trim_matches('|').split('|').map(str::trim).collect();
+            assert_eq!(cells.len(), 8, "{line}");
+            let number = |at: usize| cells[at].parse::<f64>().unwrap();
+            Reading {
+                example: cells[0].to_owned(),
+                subject: cells[1].to_owned(),
+                one_minus_iou: number(2),
+                present: (yes(cells[3]), yes(cells[4])),
+                areas: (number(5), number(6)),
+                shift: number(7),
+            }
+        })
+        .collect()
+}
+
+#[test]
+#[ignore = "the model tier: just test-models, on a machine with the model installed"]
+fn per_subject_comparison_answers_the_records_examples_on_the_mac() {
+    // Plan 2C, task X1, item 7, rung 1 (its record made by task F1): the tool file the pack
+    // ships, run by the tool worker of the pack `whizbang setup` installed, asks SAM 3 on
+    // the Mac's GPU for each subject; each example of its record reads as the record says.
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let folder = repository.join("docs/reference/tools");
+    let record = std::fs::read_to_string(folder.join("per_subject.md")).unwrap();
+    let want = readings_of(&record);
+    assert_eq!(want.len(), 4);
+    let tool = repository.join("pack/tools/per_subject.py");
+    let tier = Tier::with(
+        "model-tier-per-subject",
+        SAM3,
+        &format!("\n[tools]\npaths = [\"{}\"]\n", tool.display()),
+    );
+    let root = tier.root.clone();
+    let picture = |name: &str| {
+        let file = folder.join("per_subject").join(format!("{name}.png"));
+        let said =
+            whizbang::import::import_picture(&file, &root, false, wiring::recovery()).unwrap();
+        let id = said
+            .split_whitespace()
+            .find(|word| word.starts_with("sha256:"))
+            .unwrap()
+            .trim_end_matches(['.', ',']);
+        whizbang_core::artifact::ArtifactId(id.parse().unwrap())
+    };
+    let source = picture("source");
+    let candidates = [("removed", picture("removed")), ("toned", picture("toned"))];
+    let over = tier.over();
+    let files = over.tool_files().unwrap();
+    let declared = whizbang::trying::declared_in("per_subject", files.as_deref()).unwrap();
+    assert!(declared.file);
+    let registry = wiring::registry_over(&over, false).unwrap();
+    let store = Arc::new(Store::open(&root, Arc::new(RealFs)).unwrap());
+    let executor = wiring::runner(registry, store, &over).expect("the executor builds");
+    // The tool worker is the one worker's, held by the test kit's guard with it.
+    let arguments = [
+        (
+            "phrases".to_owned(),
+            whizbang_core::contract::Value::text("chair"),
+        ),
+        (
+            "points".to_owned(),
+            whizbang_core::contract::Value::text("158 110"),
+        ),
+    ];
+    let mut lines = Vec::new();
+    for (example, candidate) in candidates {
+        let started = Instant::now();
+        let tried = whizbang::trying::read_pair_with(
+            &executor, &root, &declared, source, candidate, &arguments,
+        )
+        .unwrap();
+        let took = started.elapsed();
+        let run = tried.tool.clone().expect("the pair registered");
+        let shown = whizbang(
+            &[
+                "runs",
+                "show",
+                run.as_str(),
+                "--diagnostic",
+                "diagnostics/tool_file.json",
+            ],
+            &root,
+        );
+        assert_eq!(shown.code, Some(0), "{}", shown.err);
+        let read: serde_json::Value = serde_json::from_str(&shown.out).unwrap();
+        let readings = read["readings"].as_array().unwrap();
+        let mine: Vec<&Reading> = want.iter().filter(|r| r.example == example).collect();
+        assert_eq!(readings.len(), mine.len(), "{example}: {readings:?}");
+        for (got, want) in readings.iter().zip(mine) {
+            assert_eq!(got["subject"], want.subject.as_str(), "{example}");
+            let value = |name: &str| got["values"][name].as_f64().unwrap();
+            // The model's readings on one Mac, within what the record's rounding and the
+            // GPU's own variation allow (ADR 0027 measured masks within an IoU of 0.99).
+            let near = |name: &str, recorded: f64, within: f64| {
+                let read = value(name);
+                assert!(
+                    (read - recorded).abs() <= within,
+                    "{example}, {}: {name} read {read}, the record says {recorded}",
+                    want.subject
+                );
+            };
+            near("one_minus_iou", want.one_minus_iou, 0.02);
+            near("area_source", want.areas.0, 0.005);
+            near("area_candidate", want.areas.1, 0.005);
+            near("shift", want.shift, 0.01);
+            assert_eq!(
+                (
+                    value("present_source") == 1.0,
+                    value("present_candidate") == 1.0
+                ),
+                want.present,
+                "{example}, {}",
+                want.subject
+            );
+        }
+        let primary = tried.primary(&declared).unwrap();
+        lines.push((format!("{example}_value"), primary.to_string()));
+        lines.push((format!("{example}_seconds"), seconds(took)));
+    }
+    drop(executor);
+    write_out("per_subject", &lines);
 }

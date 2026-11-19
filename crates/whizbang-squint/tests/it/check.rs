@@ -2321,7 +2321,7 @@ fn an_experimental_tool_is_run_only_when_the_run_names_it() {
     let change = said
         .iter()
         .find(|text| {
-            text.starts_with("change_map (experimental), aligned:candidate:t1 against source: ")
+            text.starts_with("change_map (unverified), aligned:candidate:t1 against source: ")
         })
         .unwrap_or_else(|| panic!("{said:?}"));
     assert!(
@@ -2343,9 +2343,7 @@ fn an_experimental_tool_is_run_only_when_the_run_names_it() {
     let edge = said
         .iter()
         .find(|text| {
-            text.starts_with(
-                "edge_similarity (experimental), aligned:candidate:t1 against source: ",
-            )
+            text.starts_with("edge_similarity (unverified), aligned:candidate:t1 against source: ")
         })
         .unwrap();
     assert!(

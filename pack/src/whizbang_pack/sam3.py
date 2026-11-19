@@ -13,7 +13,9 @@ What it does with a phrase:
   order of `pack/1` by what is known before a plane is made (score, query, top, left,
   right, bottom), and cut to the request's `max_instances` for each query: only then is a
   full-size plane made for each one kept (`plane`). A plane with nothing on gives no
-  instance;
+  instance, and an instance's box is the bounds of what its plane has on: the model's box
+  ranks the candidates, and the mask, drawn apart from it, can reach past it (plan 2C,
+  task F1, on a picture of `source-fidelity/scenes-v1`);
 - the answer is in the fixed order (ADR 0020, "The fixed order of an answer"), which the
   worker's writer holds it to again.
 
@@ -217,11 +219,14 @@ class Sam3(Adapter):
         ]
         kept.sort(key=_ranked)
         found = []
-        for _, score, box, index in kept[:most]:
+        for _, score, _, index in kept[:most]:
             if call.cancelled():
                 raise Cancelled()
             samples = model.plane(features, answer, index)
-            if 255 in samples:
+            # The model draws the mask apart from its box, and the mask can reach past
+            # it: the instance's box is the bounds of what its plane has on.
+            box = _bounds(samples, width, height)
+            if box is not None:
                 found.append(Found(place, score, None, box, samples))
         return found
 
