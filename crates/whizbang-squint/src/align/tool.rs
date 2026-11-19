@@ -191,7 +191,23 @@ pub fn align(
     }
     let img = rgb(image, limits)?;
     let tgt = rgb(against, limits)?;
-    let a = align_flat(&img, &tgt, options);
+    let (mut aligned, h) = measure(&img, &tgt, options)?;
+    if let Some(h) = h {
+        aligned.frame = Some(frame(image, against, &img, &tgt, &h, limits)?);
+    }
+    Ok(aligned)
+}
+
+/// What `align` finds of two pictures, `img` registered onto `tgt`, before any frame is made:
+/// the status, squint's words, the measurements and the transform, and the homography that
+/// takes `img`'s pixels to `tgt`'s when the pair registers. [`align`] and the replay of the
+/// baseline ([`crate::replay`]) both measure through it.
+pub fn measure(
+    img: &RgbImage,
+    tgt: &RgbImage,
+    options: &Options,
+) -> Result<(Aligned, Option<Mat3>), AlignError> {
+    let a = align_flat(img, tgt, options);
     let quality = a.quality;
     let text_quality = format!(
         "agreement {:.2}, inliers {:.2}, overlap {:.2}, texture {:.3}",
@@ -208,6 +224,7 @@ pub fn align(
         transform: None,
         frame: None,
     };
+    let mut registered = None;
     if a.status == Status::Registered {
         let h = a.homography;
         let (cx, cy) = (f64::from(img.width()) / 2.0, f64::from(img.height()) / 2.0);
@@ -228,11 +245,11 @@ pub fn align(
             measurement("scale", m.scale, "ratio"),
             measurement("perspective", m.perspective, "ratio"),
         ];
-        aligned.frame = Some(frame(image, against, &img, &tgt, &h, limits)?);
         aligned.transform = Some(Transform {
             homography: h,
-            params: normalise_homography(&h, &img, &tgt),
+            params: normalise_homography(&h, img, tgt),
         });
+        registered = Some(h);
     }
     aligned.measurements.extend([
         measurement("ncc", quality.ncc, "ratio"),
@@ -245,7 +262,15 @@ pub fn align(
             "a measurement is not a finite number".to_owned(),
         ));
     }
-    Ok(aligned)
+    Ok((aligned, registered))
+}
+
+/// `img` warped into `tgt`'s grid through the pixel homography `h`, at most [`MAX_SIDE`] on
+/// its longer side: the aligned frame's pixels.
+pub fn warped(img: &RgbImage, tgt: &RgbImage, h: &Mat3) -> Result<RgbImage, AlignError> {
+    let side = tgt.width().max(tgt.height()).min(MAX_SIDE);
+    let scale = f64::from(side) / f64::from(tgt.width().max(tgt.height()));
+    warp_flat(img, tgt, h, scale)
 }
 
 /// The aligned frame: `img` resampled into `tgt`'s grid, at most [`MAX_SIDE`] on its longer
@@ -261,7 +286,7 @@ fn frame(
 ) -> Result<Frame, AlignError> {
     let side = tgt.width().max(tgt.height()).min(MAX_SIDE);
     let scale = f64::from(side) / f64::from(tgt.width().max(tgt.height()));
-    let warped = warp_flat(img, tgt, h, scale)?;
+    let warped = warped(img, tgt, h)?;
     let rgba: Vec<u8> = warped
         .pixels()
         .flat_map(|pixel| [pixel.0[0], pixel.0[1], pixel.0[2], 255])

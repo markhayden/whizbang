@@ -379,3 +379,131 @@ fn a_crop_can_be_viewed_again() {
         outer.image.id().0
     );
 }
+
+/// A judge that answers each turn from a list, and keeps what it was asked.
+struct Answers {
+    answers: Vec<serde_json::Value>,
+    asked: Vec<serde_json::Value>,
+}
+
+impl whizbang_squint::replay::Judge for Answers {
+    fn answer(&mut self, turn: usize, request: &serde_json::Value) -> Option<serde_json::Value> {
+        self.asked.push(request.clone());
+        self.answers.get(turn - 1).cloned()
+    }
+}
+
+fn calling(calls: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({"content": [], "text": [], "tool_calls": calls, "stop_reason": "tool_use"})
+}
+
+#[test]
+fn a_judges_call_names_a_frame_and_is_answered_with_squints_presentation() {
+    use serde_json::json;
+    use whizbang_core::identity::CanonicalPixels;
+    use whizbang_squint::details::Projection;
+    use whizbang_squint::job::Job;
+    use whizbang_squint::replay::{Budget, Shown, replay, view_definition};
+
+    let shown = |seed| Shown {
+        pixels: CanonicalPixels::from_rgba(32, 24, paint(32, 24, noisy(seed, false))).unwrap(),
+        sha256: "file".to_owned(),
+        pixel_sha256: "pixels".to_owned(),
+    };
+    let held = |id: &str| {
+        json!({"id": id, "disposition": "held", "confidence": "confident", "reason": "Kept.",
+               "allowed_by": null, "location": null, "evidence": []})
+    };
+    let submission = json!({"schema_version": 1, "findings": [],
+        "items": [held("chk:ob:SF1@candidate"), held("chk:ob:SF2@candidate")],
+        "opinion": {"verdict": "pass", "reason": "Kept."}});
+    let mut judge = Answers {
+        answers: vec![
+            // The candidate named by its image's id, which stands for its raw frame; then a
+            // frame the run does not have.
+            calling(json!([
+                {"id": "t1", "name": "view",
+                 "arguments": {"frame": "candidate", "also": "raw:source", "bbox": [0.0, 0.0, 0.5, 0.5]}},
+                {"id": "t2", "name": "view", "arguments": {"frame": "crop:call:9:0", "bbox": [0, 0, 1, 1]}},
+            ])),
+            calling(json!([{"id": "t3", "name": "submit_verdict", "arguments": submission}])),
+        ],
+        asked: Vec::new(),
+    };
+    let job = Job::shorthand("source-fidelity", true, 0, None);
+    let done = replay(
+        &job,
+        &[shown(1), shown(2)],
+        &Budget::default(),
+        1568,
+        Projection::VisualOnly,
+        &mut judge,
+    )
+    .unwrap();
+    assert_eq!(done.terminal, json!({"kind": "verdict", "verdict": "pass"}));
+    // The tool as squint's judge was told of it: a frame, not an image's identity.
+    assert_eq!(judge.asked[0]["tools"][0], view_definition());
+    assert_eq!(
+        view_definition()["input_schema"]["required"],
+        json!(["frame"])
+    );
+
+    let calls = done.turns[0]["calls"].as_array().unwrap();
+    let said: serde_json::Value =
+        serde_json::from_str(calls[0]["result"]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        said,
+        json!({
+            "call_id": "call:1",
+            "status": "ok",
+            "summary": "Crop [0.000, 0.000, 0.500, 0.500] of raw:candidate, and the same of \
+                        raw:source (crop:call:1:0 16×12, crop:call:1:1 16×12).",
+            "measurements": [],
+            "regions": [],
+            "images": [
+                {"frame": "crop:call:1:0", "parent": "raw:candidate", "mapping": {"bbox": [0.0, 0.0, 0.5, 0.5]}},
+                {"frame": "crop:call:1:1", "parent": "raw:source", "mapping": {"bbox": [0.0, 0.0, 0.5, 0.5]}},
+            ],
+        })
+    );
+    assert_eq!(calls[0]["disposition"], "executed");
+    assert_eq!(
+        calls[0]["result"]["images"],
+        json!(["crop:call:1:0", "crop:call:1:1"])
+    );
+    assert_eq!(
+        calls[1]["result"],
+        json!({"content": "invalid arguments: frame: unknown frame id \"crop:call:9:0\"",
+               "is_error": true, "images": []})
+    );
+    assert_eq!(calls[1]["disposition"], "rejected");
+    // Each crop is an image the judge is shown, placed on its parent and rooted in its image.
+    let crop = &done.images[2];
+    assert_eq!(
+        (
+            &crop["frame"],
+            &crop["parent"],
+            &crop["root"],
+            &crop["width"],
+            &crop["height"]
+        ),
+        (
+            &json!("crop:call:1:0"),
+            &json!("raw:candidate"),
+            &json!("candidate"),
+            &json!(16),
+            &json!(12)
+        )
+    );
+    // The next request holds both results, then the checklist.
+    let history = judge.asked[1]["history"].as_array().unwrap();
+    let results = history[2]["content"].as_array().unwrap();
+    assert_eq!(results.len(), 3);
+    assert_eq!(results[0]["content"], calls[0]["result"]["content"]);
+    assert!(
+        results[2]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("Checklist.")
+    );
+}

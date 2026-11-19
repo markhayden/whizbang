@@ -40,6 +40,23 @@ pub fn submit_tool() -> Option<ToolDefinition> {
     ToolDefinition::new(SUBMIT, description, tool.get("input_schema")?.clone()).ok()
 }
 
+/// The submission's schema as squint's harness declared the tool, before an adapter fitted
+/// it to its provider's strict mode: squint's `schemas/submission-v1.json`, byte for byte.
+const SUBMISSION_SCHEMA: &str = include_str!("submission-v1.json");
+
+/// The tool the judge answers with as a request carries it, provider apart: its name, its
+/// description and squint's schema of a submission. What a transcript records
+/// (`docs/baseline/transcript.md`); each adapter sends its own form of it.
+pub fn submit_definition() -> Option<Json> {
+    let tool: Json = serde_json::from_str(SUBMIT_TOOL).ok()?;
+    let schema: Json = serde_json::from_str(SUBMISSION_SCHEMA).ok()?;
+    Some(json!({
+        "name": SUBMIT,
+        "description": tool.get("description")?,
+        "input_schema": schema,
+    }))
+}
+
 #[derive(Deserialize)]
 struct Submission {
     #[serde(default)]
