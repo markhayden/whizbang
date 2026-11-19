@@ -758,3 +758,62 @@ fn per_subject_comparison_answers_the_records_examples_on_the_mac() {
     drop(executor);
     write_out("per_subject", &lines);
 }
+
+#[test]
+#[ignore = "the model tier: just test-models, on a machine with the model installed"]
+fn remove_prompt_makes_a_mask_with_sam3_on_the_mac() {
+    use whizbang_core::artifact::{self, Artifact, ArtifactType, Image, ImageRole, Origin, Step};
+    use whizbang_core::identity::{Projection, Topology};
+    let tier = Tier::new("model-tier-remove-prompt");
+    let over = tier.over();
+    let executor = tier.runner(&over);
+    // The fixture, brought into the store as an import brings a picture.
+    let origin = Origin::new(Step::new("fixture", "1")).unwrap();
+    let limits = DecodeLimits::default();
+    let image = Image::new(
+        FIXTURE.to_vec(),
+        Projection::Flat,
+        Topology::Bounded,
+        ImageRole::Picture,
+        origin,
+        &limits,
+    )
+    .unwrap();
+    let store = Store::open(&tier.root, Arc::new(RealFs)).unwrap();
+    let mut publication = store.begin().unwrap();
+    let id = artifact::put(&mut publication, &Artifact::from(image)).unwrap();
+    publication.publish().unwrap();
+    drop(store);
+    let started = Instant::now();
+    let asked = Call::new("remove_prompt")
+        .argument("prompt", whizbang_core::contract::Value::text(PHRASE))
+        .input("image", id);
+    let finished = executor.submit(&asked).unwrap();
+    let took = started.elapsed();
+    let outputs = finished.outcome().outputs().to_vec();
+    assert_eq!(outputs.len(), 1, "{:?}", finished.outcome());
+    let run = finished.run().as_str().to_owned();
+    drop(executor);
+    // The mask holds the disc: its core reaches inside the box drawn by hand.
+    let store = Store::open(&tier.root, Arc::new(RealFs)).unwrap();
+    let read = artifact::get(&store, ArtifactType::Mask, outputs[0].id(), &limits);
+    let mask = read.unwrap().into_mask().unwrap();
+    let width = mask.space().width() as usize;
+    let on = mask.core().iter().filter(|s| **s != 0).count();
+    let centre = (LOOSE_BOX[1] + LOOSE_BOX[3]) as usize / 2 * width
+        + (LOOSE_BOX[0] + LOOSE_BOX[2]) as usize / 2;
+    assert!(on > 0 && mask.core()[centre] != 0, "{on} pixels on");
+    // The segment step's record names the GPU.
+    let recipe = tier.record(&run);
+    let segment = recipe["steps"][0]["run"].as_str().unwrap().to_owned();
+    let (device, _) = device_and_installation(&tier.record(&segment));
+    assert_eq!(device, "mps");
+    write_out(
+        "remove_prompt",
+        &[
+            ("run".to_owned(), run),
+            ("core_pixels".to_owned(), on.to_string()),
+            ("seconds".to_owned(), seconds(took)),
+        ],
+    );
+}

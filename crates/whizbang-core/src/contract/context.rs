@@ -25,7 +25,10 @@ use crate::spend::Amount;
 
 use super::ledger::DispatchRefused;
 use super::nested::Offer;
-use super::{Capability, Clock, Executor, PreparedCall, Refusal, RunFacts};
+use super::record::{
+    Argument, ArgumentValue, RECIPE_ARGUMENTS_LIMIT, RECIPE_TEXT_LIMIT, RecipeStep,
+};
+use super::{Capability, Clock, Executor, PreparedCall, Refusal, RunFacts, RunId, Value};
 
 /// A cancellation signal. Every clone is the same signal: once one is cancelled, all are,
 /// and none is ever uncancelled.
@@ -898,6 +901,42 @@ impl Context {
     pub fn freeze_calls<'a>(&self, actions: impl IntoIterator<Item = &'a str>) -> bool {
         let actions = actions.into_iter().map(str::to_owned).collect();
         self.offer.freeze(actions)
+    }
+
+    /// Says that a run this run called is a step of a recipe, for the run's record (ADR
+    /// 0033): the step's id, the arguments the recipe gave the call, and the constant
+    /// set it named. The runner of recipes says it of each call it made, once the call
+    /// came back; anything else may, of its own calls. Each text has the executor's
+    /// secrets taken out, and is then cut at [`RECIPE_TEXT_LIMIT`] characters; the
+    /// arguments after the first [`RECIPE_ARGUMENTS_LIMIT`] are not listed. False, and
+    /// nothing is said, when the run called no run of that id, or it was said already.
+    pub fn label_step(
+        &self,
+        run: &RunId,
+        id: &str,
+        arguments: &[(String, Value)],
+        constants: Option<&str>,
+    ) -> bool {
+        let secrets = self.offer.secrets();
+        let arguments = arguments.iter().take(RECIPE_ARGUMENTS_LIMIT);
+        let arguments = arguments.map(|(name, value)| Argument {
+            name: name.clone(),
+            value: match value {
+                Value::Number(number) => ArgumentValue::Number(*number),
+                Value::Integer(number) => ArgumentValue::Integer(*number),
+                Value::Boolean(boolean) => ArgumentValue::Boolean(*boolean),
+                Value::Text(text) => {
+                    let redacted = secrets.map_or_else(|| text.clone(), |s| s.redact(text));
+                    ArgumentValue::Text(redacted.chars().take(RECIPE_TEXT_LIMIT).collect())
+                }
+            },
+        });
+        let step = RecipeStep {
+            id: id.to_owned(),
+            arguments: arguments.collect(),
+            constants: constants.map(str::to_owned),
+        };
+        self.offer.label(run, step)
     }
 
     /// Holds the name of an action to what this run froze, before any call is made

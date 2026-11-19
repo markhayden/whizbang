@@ -310,3 +310,10 @@ impl Action for Select {
         Ok(Produced::nothing().with("mask", mask))
     }
 }
+
+/// Registers the action.
+pub fn register(
+    registry: &mut whizbang_core::contract::Registry,
+) -> Result<(), whizbang_core::contract::RegistrationError> {
+    registry.register(std::sync::Arc::new(Select::new()))
+}

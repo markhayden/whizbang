@@ -65,3 +65,16 @@ pub(crate) fn stopped_failure(context: &Context, action: &str) -> Failure {
 pub(crate) fn set(plane: &[u8]) -> u64 {
     plane.iter().filter(|sample| **sample != 0).count() as u64
 }
+
+/// What one operation's command asks, as it was typed: the action it runs, its
+/// arguments, and each input as its port, the flag that gave it and the identity typed.
+/// Each operation's module has its own command's flags (`Args`) and says this of them, so
+/// that the binary's command gains one line for each operation (plan m3, "Shared files").
+pub trait Asked {
+    /// The action the command runs.
+    fn action(&self) -> &'static str;
+    /// The arguments, each by its name.
+    fn arguments(&self) -> Vec<(&'static str, Value)>;
+    /// The inputs: the port, the flag that named it, and the identity as typed.
+    fn inputs(&self) -> Vec<(&'static str, &'static str, &str)>;
+}

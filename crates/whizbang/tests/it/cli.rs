@@ -1918,3 +1918,80 @@ fn a_tool_file_is_tried_scored_edited_and_run_again_without_a_rebuild() {
     );
     assert!((after - before / 2.0).abs() < 1e-9, "{before} {after}");
 }
+
+#[test]
+fn rascal_remove_prompt_makes_a_mask_under_the_fake_segmenter() {
+    use crate::recipe::{CONFIG as SMALL, over, record, run, with_small_picture};
+    use whizbang_core::contract::Value;
+    let dir = Scratch::new("cli-remove-prompt");
+    let (root, image) = with_small_picture(&dir);
+    let over = over(&dir, SMALL);
+    // What `whizbang rascal remove-prompt --image <id> --prompt collar` asks.
+    let asked = door::OperationAsked {
+        action: "remove_prompt",
+        arguments: vec![("prompt", Value::text("collar"))],
+        inputs: vec![("image", "--image", image.as_str())],
+        request_id: None,
+    };
+    let out = run(&over, &root, &asked).unwrap();
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 9, "{out}");
+    let recipe_run = lines[0]
+        .strip_prefix("run ")
+        .unwrap()
+        .strip_suffix(" completed")
+        .unwrap();
+    let steps = [
+        "segment", "select", "grow", "close", "plug", "subtract", "feather",
+    ];
+    for (line, step) in lines[1..8].iter().zip(steps) {
+        assert!(
+            line.starts_with(&format!("step {step} {step} run ")),
+            "{line}"
+        );
+    }
+    let mask = lines[8].strip_prefix("mask ").expect("the mask");
+    assert!(mask.starts_with("sha256:"), "{mask}");
+    let stored = record(&root, recipe_run);
+    assert_eq!(stored.version(), "run/5");
+    assert_eq!(stored.steps().len(), 7);
+
+    // With --until select: the selection, the union of both instances' boxes.
+    let until = door::OperationAsked {
+        arguments: vec![
+            ("prompt", Value::text("collar")),
+            ("until", Value::text("select")),
+            ("set", Value::text("segment.max_instances=1")),
+        ],
+        ..asked
+    };
+    let out = run(&over, &root, &until).unwrap();
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 4, "{out}");
+    assert!(lines[2].starts_with("step select select run "), "{out}");
+    let selected = lines[3].strip_prefix("mask ").expect("the selection");
+    let selected: whizbang_core::identity::Digest = selected.parse().unwrap();
+    let store = Store::open(&root, Arc::new(RealFs)).unwrap();
+    let read = whizbang_core::artifact::get(
+        &store,
+        whizbang_core::artifact::ArtifactType::Mask,
+        whizbang_core::artifact::ArtifactId(selected),
+        &DecodeLimits::default(),
+    );
+    let selection = read.unwrap().into_mask().unwrap();
+    // The override kept one instance: the first box alone, 10 by 8.
+    assert_eq!(selection.core().iter().filter(|s| **s != 0).count(), 80);
+    // The real binary takes the command, and refuses a store that is not there.
+    let refused = whizbang(
+        &[
+            "rascal",
+            "remove-prompt",
+            "--image",
+            &image,
+            "--prompt",
+            "collar",
+        ],
+        &dir.path().join("nowhere"),
+    );
+    assert_eq!(refused.code, Some(1), "{}", refused.err);
+}

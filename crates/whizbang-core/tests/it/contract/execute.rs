@@ -945,10 +945,10 @@ fn an_action_is_handed_the_stores_failures_without_a_path_however_it_quotes_them
 
 #[test]
 fn a_snapshot_that_fails_inside_an_action_is_said_without_a_path_as_well() {
-    // Once a run it called has committed an output, a run's store looks at the current
-    // generation to find it. The pointer is damaged for the length of one look, so
-    // the look fails, and what the action is handed names the pointer by its last
-    // part alone.
+    // Since plan m3, task R1 (ADR 0033), a run's store adds what a run it called
+    // committed with no read: a pointer damaged for the length of one look does not fail
+    // it, so there is no failure to say. Where the store is read, its failures are still
+    // handed over without a path (the test above).
     let world = World::new();
     let image = image_of(photo(), ImageRole::Picture);
     let draft = ActionDescriptor::draft("makes", "1.0.0", Kind::Primitive, "Makes one.")
@@ -960,21 +960,19 @@ fn a_snapshot_that_fails_inside_an_action_is_said_without_a_path_as_well() {
         context.executor().submit(&Call::new("makes")).unwrap();
         let kept = std::fs::read(&pointer).unwrap();
         std::fs::write(&pointer, b"not a pointer").unwrap();
-        let failed = context.store().snapshot().map(|_| ());
+        let looked = context.store().snapshot().map(|_| ());
         std::fs::write(&pointer, kept).unwrap();
-        let failed = failed.unwrap_err();
-        Err(Failure::error("store", &format!("{failed} / {failed:?}")))
+        match looked {
+            Ok(()) => Err(Failure::error("store", "the look read no file")),
+            Err(failed) => Err(Failure::error("store", &format!("{failed} / {failed:?}"))),
+        }
     });
     let engine = world.engine_with(vec![makes, outer]);
     let finished = engine.submit(&Call::new("outer")).unwrap();
     let Outcome::Error { message, .. } = finished.outcome() else {
         panic!("{finished:?}");
     };
-    let said = "the store's file CURRENT is missing or damaged";
-    assert_eq!(
-        message,
-        &format!("{said} / WithoutPaths {{ said: \"{said}\" }}")
-    );
+    assert_eq!(message, "the look read no file");
 }
 
 // --- what a call and a run may hold, so that a record is read back ---------------------------

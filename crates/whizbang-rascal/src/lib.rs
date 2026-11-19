@@ -1,12 +1,19 @@
 //! Rascal's operations and tasks (`SPEC.md` section 3): the composite of a fill onto an
-//! image under a mask, and the actions `segment`, `select`, `grow`, `plug`, `feather` and
-//! `render`.
+//! image under a mask; the actions `segment`, `select`, `grow`, `close`, `plug`,
+//! `subtract`, `feather` and `render`; and the recipes this build ships (`recipes`).
+//!
+//! Each operation's module holds its own descriptor, its own `register` and, where its
+//! command is the common one, its own command's flags (`Args`): so a new operation adds
+//! one line to the binary's registry and one to its command (plan m3, "Shared files").
 
+pub mod close;
 pub mod composite;
 pub mod feather;
 pub mod grow;
-mod operation;
+pub mod operation;
 pub mod plug;
+pub mod recipes;
 pub mod render;
 pub mod segment;
 pub mod select;
+pub mod subtract;

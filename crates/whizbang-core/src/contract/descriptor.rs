@@ -689,6 +689,9 @@ pub struct ActionDescriptor {
     version: String,
     kind: Kind,
     purpose: String,
+    /// When to use it, where it says: a recipe does (ADR 0033).
+    #[serde(rename = "use", skip_serializing_if = "Option::is_none")]
+    when: Option<String>,
     arguments: Vec<Argument>,
     inputs: Vec<InputPort>,
     outputs: Vec<OutputPort>,
@@ -745,6 +748,13 @@ impl Draft {
         self
     }
 
+    /// When to use the action, in one line held to the rule of a purpose: what a recipe
+    /// says beside what it is for (ADR 0033).
+    pub fn use_when(mut self, when: &str) -> Draft {
+        self.0.when = Some(when.to_owned());
+        self
+    }
+
     /// Whether two runs of the action may execute at the same time. Unless it says so,
     /// they may not.
     pub fn concurrent(mut self, concurrent: bool) -> Draft {
@@ -772,6 +782,7 @@ impl ActionDescriptor {
             version: version.to_owned(),
             kind,
             purpose: purpose.to_owned(),
+            when: None,
             arguments: Vec::new(),
             inputs: Vec::new(),
             outputs: Vec::new(),
@@ -795,6 +806,11 @@ impl ActionDescriptor {
 
     pub fn purpose(&self) -> &str {
         &self.purpose
+    }
+
+    /// When to use it, where it says.
+    pub fn use_when(&self) -> Option<&str> {
+        self.when.as_deref()
     }
 
     /// The arguments, in the order they were declared.
@@ -857,6 +873,9 @@ impl ActionDescriptor {
         text::action_name(&self.name)?;
         text::version(&self.version)?;
         text::purpose(&self.purpose)?;
+        if let Some(when) = &self.when {
+            text::plain_line("use", when)?;
+        }
 
         // What a call gives, arguments and input ports, is given under one set of names.
         let mut given = BTreeSet::new();

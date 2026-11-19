@@ -234,7 +234,7 @@ whizbang rascal run <recipe-file> --input <name>=<id|text> …
 8. **The executor built with a digest alone** (row on `Engine::over`): compiled for tests
    alone, or backed by one walk, as the row says.
 
-- [ ] Done when:
+- [x] Done when:
   `recipe::a_recipe_whose_binding_reaches_no_earlier_step_is_refused_when_read`,
   `recipe::a_parameter_the_action_does_not_take_is_refused_naming_the_step`,
   `recipe::the_ported_recipes_of_rascal_read_as_rascal_read_them`,
@@ -248,7 +248,8 @@ whizbang rascal run <recipe-file> --input <name>=<id|text> …
   `record::the_new_record_version_reads_a_record_of_the_version_before`,
   `context::a_childs_names_are_resolved_once_and_a_look_reads_no_file`,
   `store::volume::a_run_of_many_nested_calls_publishes_within_the_measured_bound`
-  (`#[ignore]`d at 1,000 calls, its numbers in the ADR, with a run of 300 in CI),
+  (`#[ignore]`d at 1,000 calls, its numbers in the ADR, with a run of 300 in CI; reworded
+  below),
   `runner::an_override_naming_no_step_of_the_recipe_is_refused_before_anything_runs`,
   `runner::until_a_step_hands_back_that_steps_outputs`,
   `close::the_ported_vectors_give_rascals_masks`,
@@ -261,6 +262,16 @@ whizbang rascal run <recipe-file> --input <name>=<id|text> …
   `model_tier::remove_prompt_makes_a_mask_with_sam3_on_the_mac` (`#[ignore]`, under `just
   test-models`), `just docs` regenerated, and the carry-over rows above closed or narrowed
   with a line. The records of `close` and `subtract` are D1's.
+
+**Reworded with the task** (R1, 2026-11-19). "`#[ignore]`d at 1,000 calls ... with a
+run of 300 in CI": measured on the owner's Mac, 256 nested calls took 18,879 ms and a first
+run of 300 took 23,294 ms, about 74 ms a call, so 300 in CI would take a third of the hosted
+runner's limit and 1,000 over a minute. `STEPS_LIMIT` is kept at 256 with a line (the plan's
+"or kept with a line"): the run `#[ignore]`d is at that limit, 256 calls
+(`store::volume::nested_calls_at_the_limit_publish_within_the_measured_bound`), its numbers
+in ADR 0033, and CI runs eight, under a second. The executor built with a digest alone
+(item 8) is left to a later task with a line on its carry-over row: no test of the list
+names it.
 
 **Keeping tests lean (R1).** Recipes of two to seven steps over the fake segmenter, pictures
 of 64 by 64; the volume measurement `#[ignore]`d and run once.

@@ -8,5 +8,7 @@ mod contract;
 mod egress;
 mod fs;
 mod identity;
+mod recipe;
+mod runner;
 mod spend;
 mod store;

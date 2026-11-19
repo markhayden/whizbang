@@ -30,7 +30,8 @@ use crate::tool_file::Files as ToolFiles;
 use whizbang_backends::service::ServiceKind;
 
 /// Every action this build ships, registered in the order a door lists them: the
-/// recipe first, then the primitives. Tools add theirs here as they are ported. What
+/// recipes first, `check` and then those of the recipe files (`whizbang_rascal::recipes`),
+/// then the primitives. Tools add theirs here as they are ported, one line each. What
 /// comes back otherwise is why an action could not be registered, in a sentence.
 ///
 /// `check`, `align`, `change_map`, `edge_similarity`, `resize` and `view` are squint's
@@ -45,53 +46,89 @@ pub fn registry() -> Result<Registry, String> {
 /// `whizbang serve` build theirs so; evaluation builds [`registry`], which never reads
 /// the cache.
 pub fn registry_with(cached: bool) -> Result<Registry, String> {
-    registry_of(cached, None)
+    registry_of(cached, None, &[])
 }
 
 /// The same, with the tool files the config lists, when it lists any (`[tools] paths`;
 /// plan 2C, task X1; ADR 0032): each an action of its own, and each on offer to `check`,
 /// run only when a run names it. Each file is read, and its declaration held to its
-/// rules, here: a file that breaks one is refused, and nothing is built.
+/// rules, here: a file that breaks one is refused, and nothing is built. And with the
+/// recipe files it lists (`[recipes] paths`; plan m3, task R1, item 6; ADR 0033): each
+/// read and checked as a shipped recipe is, and refused, with nothing built, when it is
+/// not one this build runs.
 pub fn registry_over(over: &Over, cached: bool) -> Result<Registry, String> {
-    registry_of(cached, over.tool_files()?)
+    registry_of(cached, over.tool_files()?, &over.recipe_files()?)
 }
 
-fn registry_of(cached: bool, files: Option<Arc<ToolFiles>>) -> Result<Registry, String> {
+fn registry_of(
+    cached: bool,
+    files: Option<Arc<ToolFiles>>,
+    recipes: &[String],
+) -> Result<Registry, String> {
     let said = |error: &dyn std::fmt::Display| error.to_string();
-    let mut registry = Registry::new();
+    // Everything but the recipes, in the order a door lists them: what a recipe is
+    // checked against.
+    let mut primitives = Registry::new();
     let toolbox = match &files {
         Some(files) => whizbang_squint::check::Toolbox::with_files(files.clone()),
         None => whizbang_squint::check::Toolbox::standard(),
     };
     let check = whizbang_squint::check::Check::new(toolbox).map_err(|e| said(&e))?;
     let check = if cached { check.caching() } else { check };
-    let grow = whizbang_rascal::grow::Grow::new();
-    let segment = whizbang_rascal::segment::Segment::new();
     let view = whizbang_squint::view::View::new().map_err(|e| said(&e))?;
     let align = whizbang_squint::align::Align::new().map_err(|e| said(&e))?;
     let resize = whizbang_squint::resize::Resize::new().map_err(|e| said(&e))?;
     let change_map = whizbang_squint::compare::Compare::change_map().map_err(|e| said(&e))?;
     let edges = whizbang_squint::compare::Compare::edge_similarity().map_err(|e| said(&e))?;
-    let actions: [Arc<dyn Action>; 12] = [
-        Arc::new(check),
-        Arc::new(align),
-        Arc::new(change_map),
-        Arc::new(edges),
-        Arc::new(whizbang_rascal::feather::Feather::new()),
-        Arc::new(grow),
-        Arc::new(whizbang_rascal::plug::Plug::new()),
-        Arc::new(whizbang_rascal::render::Render::new()),
-        Arc::new(resize),
-        Arc::new(segment),
-        Arc::new(whizbang_rascal::select::Select::new()),
-        Arc::new(view),
-    ];
-    for action in actions {
-        registry.register(action).map_err(|e| said(&e))?;
+    let check: Arc<dyn Action> = Arc::new(check);
+    let squint: [Arc<dyn Action>; 3] = [Arc::new(align), Arc::new(change_map), Arc::new(edges)];
+    for action in squint {
+        primitives.register(action).map_err(|e| said(&e))?;
     }
+    whizbang_rascal::close::register(&mut primitives).map_err(|e| said(&e))?;
+    whizbang_rascal::feather::register(&mut primitives).map_err(|e| said(&e))?;
+    whizbang_rascal::grow::register(&mut primitives).map_err(|e| said(&e))?;
+    whizbang_rascal::plug::register(&mut primitives).map_err(|e| said(&e))?;
+    whizbang_rascal::render::register(&mut primitives).map_err(|e| said(&e))?;
+    primitives
+        .register(Arc::new(resize))
+        .map_err(|e| said(&e))?;
+    whizbang_rascal::segment::register(&mut primitives).map_err(|e| said(&e))?;
+    whizbang_rascal::select::register(&mut primitives).map_err(|e| said(&e))?;
+    whizbang_rascal::subtract::register(&mut primitives).map_err(|e| said(&e))?;
+    primitives.register(Arc::new(view)).map_err(|e| said(&e))?;
     if let Some(files) = &files {
         for action in files.actions()? {
-            registry.register(action).map_err(|e| said(&e))?;
+            primitives.register(action).map_err(|e| said(&e))?;
+        }
+    }
+    // A recipe is checked against the build's other actions, `check` among them.
+    let mut against = Registry::new();
+    against.register(check.clone()).map_err(|e| said(&e))?;
+    for descriptor in primitives.descriptors() {
+        if let Some(action) = primitives.get(descriptor.name()) {
+            against.register(action.clone()).map_err(|e| said(&e))?;
+        }
+    }
+    let shipped = whizbang_rascal::recipes::SHIPPED
+        .iter()
+        .map(|text| (*text, false));
+    let users = recipes.iter().map(|text| (text.as_str(), true));
+    let mut registry = Registry::new();
+    registry.register(check).map_err(|e| said(&e))?;
+    for (text, users) in shipped.chain(users) {
+        let action = whizbang_rascal::recipes::action_of(text, &against).map_err(|e| {
+            if users {
+                format!("the config cannot be used: a recipe file is not one this build runs: {e}")
+            } else {
+                said(&e)
+            }
+        })?;
+        registry.register(Arc::new(action)).map_err(|e| said(&e))?;
+    }
+    for descriptor in primitives.descriptors() {
+        if let Some(action) = primitives.get(descriptor.name()) {
+            registry.register(action.clone()).map_err(|e| said(&e))?;
         }
     }
     Ok(registry)
@@ -584,9 +621,19 @@ pub struct Over {
     /// gave one ([`Over::trusting`]): compiled only under the feature `fakes`.
     #[cfg(feature = "fakes")]
     trusting: Option<Arc<whizbang_backends::net::testing::Pki>>,
+    /// The text of a recipe file a command was given to run (`whizbang rascal run`),
+    /// beside those the config lists.
+    recipe: Option<String>,
 }
 
 impl Over {
+    /// The same, with this recipe's text beside the recipe files the config lists: a
+    /// recipe a command was given to run, checked and registered as theirs are.
+    pub fn recipe(mut self, text: String) -> Over {
+        self.recipe = Some(text);
+        self
+    }
+
     /// No config, no env file, no kind and no secret: what a command that names no
     /// config gives. An executor over it is under the empty config (ADR 0011, "Where
     /// the file is").
@@ -772,6 +819,24 @@ impl Over {
         Ok(Some(Arc::new(files)))
     }
 
+    /// The text of each recipe file the config lists (`[recipes] paths`; ADR 0033), in
+    /// its order; none without a config, or with one that lists none. Each is read once:
+    /// a regular file under its own name, not a link, that its group and others cannot
+    /// write, of at most [`whizbang_core::recipe::FILE_MAX_BYTES`] bytes of UTF-8. The
+    /// sentence of a refusal names the file by its name alone.
+    pub fn recipe_files(&self) -> Result<Vec<String>, String> {
+        let mut texts = Vec::new();
+        if let Some(path) = &self.config {
+            let config = Config::read(path, &self.secrets)
+                .map_err(|refused| format!("the config cannot be used: {refused}"))?;
+            for path in config.recipe_paths() {
+                texts.push(recipe_file(path)?);
+            }
+        }
+        texts.extend(self.recipe.clone());
+        Ok(texts)
+    }
+
     /// The one worker of the process, when one was given ([`Over::pack`]): what a
     /// door that outlives a call stops at its end.
     pub fn worker(&self) -> Option<&Arc<OneWorker>> {
@@ -794,6 +859,43 @@ impl Over {
     pub fn installations(&self) -> Option<&Arc<Installations>> {
         self.installed.as_ref().map(|opened| &opened.installations)
     }
+}
+
+/// Reads one recipe file, as [`Over::recipe_files`] says.
+fn recipe_file(path: &Path) -> Result<String, String> {
+    use std::io::Read;
+    let shown = path
+        .file_name()
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    let refused = |why: &str| {
+        format!(
+            "the config cannot be used: the recipe file {}: {why}",
+            shown.escape_debug()
+        )
+    };
+    let meta = std::fs::symlink_metadata(path).map_err(|_| refused("cannot be read"))?;
+    if !meta.file_type().is_file() {
+        return Err(refused("is a link or not a file, and is not read"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if meta.permissions().mode() & 0o022 != 0 {
+            return Err(refused(
+                "can be written by its group or others, and is not run",
+            ));
+        }
+    }
+    let limit = whizbang_core::recipe::FILE_MAX_BYTES;
+    let file = std::fs::File::open(path).map_err(|_| refused("cannot be read"))?;
+    let mut bytes = Vec::new();
+    file.take(limit as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| refused("cannot be read"))?;
+    if bytes.len() > limit {
+        return Err(refused(&format!("is over {limit} bytes")));
+    }
+    String::from_utf8(bytes).map_err(|_| refused("is not UTF-8"))
 }
 
 /// Makes this folder and every folder above it that is not there, each for its
@@ -1194,6 +1296,10 @@ pub fn describe_text(description: &Description) -> String {
                 action.purpose()
             )),
             None => text.push_str(&format!("  {}  {}\n", action.name(), action.purpose())),
+        }
+        // When to use it, where it says: a recipe does.
+        if let Some(when) = action.use_when() {
+            text.push_str(&format!("      use: {when}\n"));
         }
     }
     text

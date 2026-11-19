@@ -186,7 +186,7 @@ fn a_record_of_another_version_is_another_version_not_damage() {
     ));
     let said = RunRecord::from_bytes(other).unwrap_err().to_string();
     assert!(
-        said.contains("run/9") && said.contains("this build reads run/4"),
+        said.contains("run/9") && said.contains("this build reads run/5, run/4"),
         "{said}"
     );
 }
@@ -1905,4 +1905,136 @@ fn a_run_3_record_is_still_read_and_says_its_device_is_not_known() {
         );
         assert!(validate(&schema_3, &document).is_err(), "{field}");
     }
+}
+
+// --- run/5: the steps of a recipe (ADR 0033) ---------------------------------------------------
+
+fn schema_5() -> Json {
+    serde_json::from_str(whizbang_core::contract::RUN_5_SCHEMA).unwrap()
+}
+
+/// The fixed vector of `run/5`: a recipe's run, with its two steps, the first given a
+/// note and a whole number, the second a constant set; and a call that is no step.
+pub fn of_a_recipe() -> String {
+    [
+        r#"{"record":"run/5","#,
+        r#""identity":{"run":"1000-1","request":null,"parent":null,"whizbang":"0.0.1"},"#,
+        r#""asked":{"action":"marks","version":"1.0.0","arguments":[],"settings":[],"#,
+        r#""config":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"#,
+        r#""inputs":[],"outputs":[],"#,
+        r#""outcome":{"status":"completed","error":null,"invalid":null,"refusals":[],"refusals_omitted":0,"lost":[]},"#,
+        r#""time":{"start_ms":1000,"end_ms":1009,"durations":[]},"models":[],"#,
+        r#""spend":{"reserved_micros":null,"requests":[]},"egress":[],"steps":["#,
+        r#"{"step":"recipe","run":"1001-1","action":"mark","status":"completed","id":"first","#,
+        r#""arguments":[{"name":"note","value":{"text":"a note"}},{"name":"x","value":{"integer":0}}],"constants":null},"#,
+        r#"{"step":"recipe","run":"1002-1","action":"mark","status":"completed","id":"second","#,
+        r#""arguments":[{"name":"x","value":{"integer":1}}],"constants":"mark-v2"},"#,
+        r#"{"step":"call","run":"1003-1","action":"view","status":null}],"#,
+        r#""judge":[],"diagnostics":[]}"#,
+        "\n",
+    ]
+    .concat()
+}
+
+#[test]
+fn a_recipe_run_lists_its_steps_in_order_with_arguments_constants_and_results() {
+    use crate::recipe::{TWO_MARKS, recipe};
+    use crate::runner::{World, call, engine};
+    let world = World::new("recipe-record");
+    let seed = world.put(crate::artifact::support::rect_mask(
+        crate::artifact::support::on("photo"),
+    ));
+    let executor = engine(&world, &recipe(TWO_MARKS, "second.mask"), Vec::new());
+    let asked = call(seed).argument("note", whizbang_core::contract::Value::text("a note"));
+    let finished = executor.submit(&asked).unwrap();
+    let stored = world.record(finished.run().as_str());
+    assert_eq!(stored.version(), "run/5");
+    let document: Json = serde_json::from_slice(&stored.to_bytes()).unwrap();
+    validate(&schema_5(), &document).unwrap();
+    // In order, each with its id, its action, its run (the reference to its result), how
+    // it ended, the arguments the recipe gave it and its constant set.
+    let steps = &document["steps"];
+    assert_eq!(steps.as_array().unwrap().len(), 2);
+    for (at, (id, arguments, constants)) in [
+        ("first", json!([{"name": "note", "value": {"text": "a note"}}, {"name": "x", "value": {"integer": 0}}]), Json::Null),
+        ("second", json!([{"name": "x", "value": {"integer": 1}}]), json!("mark-v2")),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let step = &steps[at];
+        assert_eq!(step["step"], "recipe");
+        assert_eq!(step["id"], id);
+        assert_eq!(step["action"], "mark");
+        assert_eq!(step["status"], "completed");
+        assert_eq!(step["arguments"], arguments, "{id}");
+        assert_eq!(step["constants"], constants, "{id}");
+        // The run it names committed the result.
+        let child = world.record(step["run"].as_str().unwrap());
+        assert_eq!(child.asked().action.as_deref(), Some("mark"));
+        assert_eq!(child.outputs().len(), 1);
+    }
+    // The fixed vector reads, and is written back as it was.
+    let vector = of_a_recipe();
+    let read = RunRecord::from_bytes(vector.as_bytes()).unwrap();
+    assert_eq!(read.to_bytes(), vector.as_bytes());
+    validate(&schema_5(), &as_json(&vector)).unwrap();
+    let first = read.steps()[0].recipe().unwrap();
+    assert_eq!(
+        (first.id.as_str(), first.constants.as_deref()),
+        ("first", None)
+    );
+    assert!(read.steps()[2].recipe().is_none());
+}
+
+#[test]
+fn the_new_record_version_reads_a_record_of_the_version_before() {
+    // A record that lists no step of a recipe is written as `run/4`, which holds all of
+    // it, and read as before; `run/5` is read beside it.
+    let before = served();
+    let read = RunRecord::from_bytes(before.as_bytes()).unwrap();
+    assert_eq!(read.version(), "run/4");
+    assert_eq!(read.to_bytes(), before.as_bytes());
+    // A step of a recipe in a record of the version before is refused: no `run/4` holds one.
+    let fifth = of_a_recipe();
+    let as_fourth = fifth.replacen("\"run/5\"", "\"run/4\"", 1);
+    assert!(matches!(
+        RunRecord::from_bytes(as_fourth.as_bytes()),
+        Err(RecordError::Inconsistent(_))
+    ));
+    // A call that says what only a step of a recipe says, or a step of a recipe that
+    // leaves out its constant set, is not written back as it was.
+    let call_with_id = fifth.replacen(
+        r#""step":"call","run":"1003-1","action":"view","status":null"#,
+        r#""step":"call","run":"1003-1","action":"view","status":null,"id":"view""#,
+        1,
+    );
+    assert_eq!(
+        RunRecord::from_bytes(call_with_id.as_bytes()),
+        Err(RecordError::NotCanonical)
+    );
+    let no_set = fifth.replacen(r#","constants":"mark-v2""#, "", 1);
+    assert_eq!(
+        RunRecord::from_bytes(no_set.as_bytes()),
+        Err(RecordError::NotCanonical)
+    );
+    // An id that is not a name, a text longer than a step keeps.
+    let dotted = fifth.replacen(r#""id":"first""#, r#""id":"fir.st""#, 1);
+    assert!(matches!(
+        RunRecord::from_bytes(dotted.as_bytes()),
+        Err(RecordError::Inconsistent(_))
+    ));
+    let long = fifth.replacen("a note", &"n".repeat(65), 1);
+    assert!(matches!(
+        RunRecord::from_bytes(long.as_bytes()),
+        Err(RecordError::Inconsistent(_))
+    ));
+    // The refusal of another version names the four this build reads.
+    let other = fifth.replacen("\"run/5\"", "\"run/6\"", 1);
+    assert_eq!(
+        RunRecord::from_bytes(other.as_bytes())
+            .unwrap_err()
+            .to_string(),
+        "a record of another version: run/6, and this build reads run/5, run/4, run/3 and run/2"
+    );
 }

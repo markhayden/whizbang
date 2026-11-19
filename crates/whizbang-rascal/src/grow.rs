@@ -425,3 +425,10 @@ impl Action for Grow {
         Ok(Produced::nothing().with("mask", grown.mask))
     }
 }
+
+/// Registers the action.
+pub fn register(
+    registry: &mut whizbang_core::contract::Registry,
+) -> Result<(), whizbang_core::contract::RegistrationError> {
+    registry.register(std::sync::Arc::new(Grow::new()))
+}

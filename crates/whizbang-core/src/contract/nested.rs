@@ -8,17 +8,17 @@
 //! from which its end waits for them and its record lists them; and the names a run's
 //! view of the store gains when a run it called commits outputs ([`Added`]).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Instant;
 
 use crate::artifact::{self, ArtifactId};
 use crate::capability::Tally;
-use crate::store::{self, Generation, Store};
+use crate::store::{self, Entry, Generation, Store};
 
 use super::engine::{Admitted, Bounded, Stopped};
 use super::live::LiveRun;
-use super::record::{Inside, REFUSALS_LIMIT, Refused, STEPS_LIMIT, Status, Step};
+use super::record::{Inside, REFUSALS_LIMIT, RecipeStep, Refused, STEPS_LIMIT, Status, Step};
 use super::{
     Allowance, Answer, Call, CallError, Cancel, Cancellation, Committed, Engine, Executor,
     Finished, PreparedCall, Refusal, Request, RequestId, RunId, Secrets, StoreFailure, Watched,
@@ -39,31 +39,74 @@ pub const DESCENDANTS_LIMIT: usize = 1024;
 pub const LEVELS_LIMIT: usize = 4;
 
 /// The names, in the store, of the artifacts that the runs one run called have
-/// committed. The run's view of the store is the generation it was admitted against
-/// with these names added, each as the generation current at the look holds it: so a
-/// run reads what a run it called committed, and nothing else that was published
-/// since it was admitted.
+/// committed, each with its entry once it is resolved. The run's view of the store is
+/// the generation it was admitted against with these names added: so a run reads what
+/// a run it called committed, and nothing else that was published since it was
+/// admitted.
+///
+/// Each child that commits resolves its names once, from the generation current when
+/// its end is published ([`Added::resolve`]): a look then reads no file (plan m3, task
+/// R1, item 2; the carry-over row on a parent reading a child's names). A name whose
+/// resolution failed is resolved at the next look instead, as every name was before.
 #[derive(Default)]
-pub(super) struct Added(Mutex<BTreeSet<String>>);
+pub(super) struct Added(Mutex<Names>);
+
+#[derive(Default)]
+struct Names {
+    resolved: BTreeMap<String, Entry>,
+    pending: BTreeSet<String>,
+}
 
 impl Added {
-    fn names(&self) -> MutexGuard<'_, BTreeSet<String>> {
+    fn names(&self) -> MutexGuard<'_, Names> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// This generation, and each added name it does not hold, as the store's current
-    /// generation holds it.
+    /// The names a child committed, resolved in the generation current now: one read
+    /// of the store for the child. Where that read fails, they are left to the next
+    /// look.
+    pub(super) fn resolve(&self, names: Vec<String>, store: &Store) {
+        if names.is_empty() {
+            return;
+        }
+        let current = store.snapshot();
+        let mut held = self.names();
+        for name in names {
+            match current.as_ref().ok().and_then(|current| current.get(&name)) {
+                Some(entry) => {
+                    held.pending.remove(&name);
+                    held.resolved.insert(name, entry.clone());
+                }
+                None => {
+                    held.pending.insert(name);
+                }
+            }
+        }
+    }
+
+    /// This generation, and each added name it does not hold. A name resolved when its
+    /// child ended costs no read; one left pending is read from the store's current
+    /// generation.
     pub(super) fn onto(
         &self,
         mut generation: Generation,
         store: &Store,
     ) -> store::Result<Generation> {
-        let names: Vec<String> = self.names().iter().cloned().collect();
-        if names.is_empty() {
+        let (resolved, pending) = {
+            let held = self.names();
+            let resolved: Vec<(String, Entry)> = (held.resolved.iter())
+                .filter(|(name, _)| generation.get(name).is_none())
+                .map(|(name, entry)| (name.clone(), entry.clone()))
+                .collect();
+            let pending: Vec<String> = held.pending.iter().cloned().collect();
+            (resolved, pending)
+        };
+        generation.entries.extend(resolved);
+        if pending.is_empty() {
             return Ok(generation);
         }
         let current = store.snapshot()?;
-        for name in names {
+        for name in pending {
             if generation.get(&name).is_none()
                 && let Some(entry) = current.get(&name)
             {
@@ -100,6 +143,20 @@ impl Offer {
             actions: OnceLock::new(),
             run: Some((run, secrets)),
             above,
+        }
+    }
+
+    /// The secrets the run's record is written without, for an offer of a run.
+    pub(super) fn secrets(&self) -> Option<&Secrets> {
+        self.run.as_ref().map(|(_, secrets)| secrets)
+    }
+
+    /// Says that a run the run of this offer called is the step of a recipe. False
+    /// for an offer of no run.
+    pub(super) fn label(&self, run: &RunId, recipe: RecipeStep) -> bool {
+        match &self.run {
+            Some((live, _)) => live.nest().label(run, recipe),
+            None => false,
         }
     }
 
@@ -200,6 +257,8 @@ struct Child {
     status: Option<Status>,
     /// When it started and when it ended, once its end was published.
     times: Option<(u64, u64)>,
+    /// What the recipe that made the call said of it, when one did.
+    recipe: Option<RecipeStep>,
 }
 
 #[derive(Default)]
@@ -330,17 +389,30 @@ impl Nest {
         status: Status,
         outputs: &[Committed],
         times: (u64, u64),
+        store: &Store,
     ) {
-        let mut names = self.added.names();
-        for output in outputs {
-            names.insert(artifact::name(output.artifact(), output.id()));
-        }
-        drop(names);
+        let names = outputs.iter();
+        let names = names.map(|output| artifact::name(output.artifact(), output.id()));
+        self.added.resolve(names.collect(), store);
         let mut calls = self.calls();
         calls.committed.extend(outputs.iter().map(Committed::id));
         if let Some(child) = calls.children.iter_mut().find(|child| child.run == *run) {
             child.status = Some(status);
             child.times = Some(times);
+        }
+    }
+
+    /// Says that a run this run called is the step of a recipe. False when no run this
+    /// run called is that run, or one was said to be a step already: nothing changes.
+    pub(super) fn label(&self, run: &RunId, recipe: RecipeStep) -> bool {
+        let mut calls = self.calls();
+        let child = calls.children.iter_mut().find(|child| child.run == *run);
+        match child {
+            Some(child) if child.recipe.is_none() => {
+                child.recipe = Some(recipe);
+                true
+            }
+            _ => false,
         }
     }
 
@@ -393,7 +465,13 @@ impl Nest {
             steps: calls
                 .children
                 .iter()
-                .map(|child| Step::call(&child.run, &child.action, child.status))
+                .map(|child| {
+                    let step = Step::call(&child.run, &child.action, child.status);
+                    match &child.recipe {
+                        Some(recipe) => step.of_recipe(recipe.clone()),
+                        None => step,
+                    }
+                })
                 .collect(),
             refusals: calls.refusals.clone(),
             refusals_omitted: calls.refusals_omitted,
@@ -632,6 +710,7 @@ impl Nested {
             live: admitted.live.clone(),
             status: None,
             times: None,
+            recipe: None,
         });
         Ok(admitted)
     }

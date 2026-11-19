@@ -161,6 +161,81 @@ pub fn operation(executor: &dyn Executor, asked: &OperationAsked<'_>) -> Result<
     Ok(text)
 }
 
+/// Runs a recipe through the executor, and waits for it (ADR 0033). What comes back is
+/// what to print when the run completed: its line, each step of its record as `step <id>
+/// <action> run <run>`, and then its outputs, or, for a run that stopped after a step
+/// (`until`), that step's outputs, read from that step's run: each as `<port> <identity>`.
+/// Or the complaint, escaped already. `root` is the store's, which a reader of its own
+/// reads the records from.
+pub fn recipe(
+    executor: &dyn Executor,
+    asked: &OperationAsked<'_>,
+    root: &Path,
+) -> Result<String, String> {
+    let mut call = Call::new(asked.action);
+    for (name, value) in &asked.arguments {
+        call = call.argument(name, value.clone());
+    }
+    for (port, flag, typed) in &asked.inputs {
+        let Ok(id) = typed.parse::<Digest>() else {
+            return Err(format!(
+                "{flag} is no artifact identity: an identity is sha256: and 64 lower-case hex \
+                 digits, as `whizbang store import` prints it"
+            ));
+        };
+        call = call.input(port, ArtifactId(id));
+    }
+    let (run, mut text, mut outputs) = completed(executor, call, asked.request_id)?;
+    let read = |run: &str| -> Result<whizbang_core::contract::RunRecord, String> {
+        let reader = Reader::open(root, Arc::new(RealFs)).map_err(|e| e.to_string())?;
+        let generation = reader.snapshot().map_err(|e| e.to_string())?;
+        let stored =
+            whizbang_core::contract::record::stored(&generation, run, |entry| reader.read(entry));
+        match stored {
+            Some(Ok(record)) => Ok(record),
+            Some(Err(error)) => Err(format!(
+                "the record of the run {} cannot be read: {}",
+                printable(run),
+                printable(&error.to_string())
+            )),
+            None => Err(format!("the run {} is not in the store", printable(run))),
+        }
+    };
+    let record = read(run.as_str())?;
+    let mut last = None;
+    for step in record.steps() {
+        let id = step.recipe().map_or("-", |recipe| recipe.id.as_str());
+        text.push_str(&format!(
+            "step {} {} run {}\n",
+            printable(id),
+            printable(step.action()),
+            printable(step.run())
+        ));
+        last = Some(step.run().to_owned());
+    }
+    let until = asked
+        .arguments
+        .iter()
+        .any(|(name, _)| *name == whizbang_core::recipe::UNTIL);
+    if until && let Some(last) = last {
+        let step = read(&last)?;
+        outputs = (step.outputs().iter())
+            .map(|output| {
+                Committed::new(
+                    &output.port,
+                    output.artifact_type,
+                    ArtifactId(output.artifact),
+                )
+            })
+            .collect();
+    }
+    for output in outputs {
+        let port = printable(output.port());
+        text.push_str(&format!("{port} {}\n", output.id().0));
+    }
+    Ok(text)
+}
+
 /// What `whizbang rascal segment` was asked, as it was typed.
 #[derive(Debug, Clone, Copy)]
 pub struct SegmentAsked<'a> {

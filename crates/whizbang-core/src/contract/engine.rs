@@ -1928,9 +1928,10 @@ impl Engine {
         // for.
         if let Some((_, parent)) = &family.parent {
             let times = (start_ms, end_ms);
+            let status = record.outcome().status;
             parent
                 .nest()
-                .ended(&run, record.outcome().status, outcome.outputs(), times);
+                .ended(&run, status, outcome.outputs(), times, &store);
         }
         Ok(Finished::new(run, outcome))
     }

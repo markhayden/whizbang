@@ -272,3 +272,43 @@ impl Action for Feather {
         Ok(Produced::nothing().with("mask", mask))
     }
 }
+
+/// Registers the action.
+pub fn register(
+    registry: &mut whizbang_core::contract::Registry,
+) -> Result<(), whizbang_core::contract::RegistrationError> {
+    registry.register(std::sync::Arc::new(Feather::new()))
+}
+
+/// What the command says the action does.
+pub const ABOUT: &str = "Set the blend of a mask to a feather of its core's edge, outward, out to three sigmas. \
+The core is kept, and protect is kept and wins. The new mask is committed to the store, and \
+its identity is printed.";
+
+/// What `whizbang rascal feather` takes beside what every operation's command does.
+#[derive(clap::Args, Debug)]
+pub struct Args {
+    /// The mask, by its identity in the store.
+    #[arg(long)]
+    pub mask: String,
+    /// The feather's sigma, in pixels of the mask's image, from 0.1 to 10000.
+    #[arg(long)]
+    pub sigma_px: f64,
+}
+
+impl operation::Asked for Args {
+    fn action(&self) -> &'static str {
+        NAME
+    }
+
+    fn arguments(&self) -> Vec<(&'static str, whizbang_core::contract::Value)> {
+        vec![(
+            "sigma_px",
+            whizbang_core::contract::Value::Number(self.sigma_px),
+        )]
+    }
+
+    fn inputs(&self) -> Vec<(&'static str, &'static str, &str)> {
+        vec![("mask", "--mask", self.mask.as_str())]
+    }
+}

@@ -25,7 +25,7 @@ fn indented_description() -> &'static str {
 /// `check`, the recipe.
 fn compact_start() -> String {
     format!(
-        "{{\"description_version\":7,\"name\":\"whizbang\",\"version\":\"{}\",\"actions\":[{{\"name\":\"check\",\"version\":\"1.4.0\",\"kind\":\"recipe\",\"purpose\":\"",
+        "{{\"description_version\":8,\"name\":\"whizbang\",\"version\":\"{}\",\"actions\":[{{\"name\":\"check\",\"version\":\"1.4.0\",\"kind\":\"recipe\",\"purpose\":\"",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -101,7 +101,7 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
     assert!(ok);
     let doc: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
     assert_eq!(doc["name"], "whizbang");
-    assert_eq!(doc["description_version"], 7);
+    assert_eq!(doc["description_version"], 8);
     assert_eq!(doc["version"], env!("CARGO_PKG_VERSION"));
     let names: Vec<&str> = doc["actions"]
         .as_array()
@@ -109,14 +109,16 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
         .iter()
         .map(|action| action["name"].as_str().expect("a name"))
         .collect();
-    // A recipe first, then the primitives, in the order the registry lists them.
+    // The recipes first, then the primitives, in the order the registry lists them.
     assert_eq!(
         names,
         [
             "check",
+            "remove_prompt",
             "align",
             "change_map",
             "edge_similarity",
+            "close",
             "feather",
             "grow",
             "plug",
@@ -124,6 +126,7 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
             "resize",
             "segment",
             "select",
+            "subtract",
             "view"
         ]
     );
@@ -133,9 +136,9 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
         .iter()
         .map(|action| action["kind"].as_str().expect("a kind"))
         .collect();
-    assert_eq!(kinds[0], "recipe");
+    assert_eq!(kinds[..2], ["recipe", "recipe"]);
     assert!(
-        kinds[1..].iter().all(|kind| *kind == "primitive"),
+        kinds[2..].iter().all(|kind| *kind == "primitive"),
         "{kinds:?}"
     );
     // `check` says what it needs: a judge. Whether one is there is no part of a
@@ -145,7 +148,7 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
     assert_eq!(doc["actions"][0]["needs"][0]["requests"], 16);
     // `segment` needs a segmenter that takes what the call's `kind` names, a phrase, a
     // point or a box, chosen by its argument `backend`.
-    let need = &doc["actions"][9]["needs"][0];
+    let need = &doc["actions"][11]["needs"][0];
     assert_eq!(need["capability"], "segment");
     assert_eq!(need["features"], serde_json::json!([]));
     assert_eq!(need["feature_from"], "kind");
@@ -172,7 +175,10 @@ fn describe_without_json_names_the_build() {
         ),
         "{text}"
     );
-    let lines: Vec<&str> = text.lines().skip(1).collect();
+    // Each action's line, and under a recipe the line of when to use it.
+    let lines: Vec<&str> = (text.lines().skip(1))
+        .filter(|line| !line.starts_with("      use: "))
+        .collect();
     let names: Vec<&str> = lines
         .iter()
         .map(|line| line.split_whitespace().next().expect("a name"))
@@ -181,9 +187,11 @@ fn describe_without_json_names_the_build() {
         names,
         [
             "check",
+            "remove_prompt",
             "align",
             "change_map",
             "edge_similarity",
+            "close",
             "feather",
             "grow",
             "plug",
@@ -191,6 +199,7 @@ fn describe_without_json_names_the_build() {
             "resize",
             "segment",
             "select",
+            "subtract",
             "view"
         ],
         "{text}"
@@ -279,7 +288,7 @@ fn a_test_adds_echo_to_the_registry_the_binary_builds() {
 fn describe_json_pretty_starts_and_ends_with_these_bytes() {
     let (_, pretty) = whizbang(&["describe", "--json", "--pretty"]);
     let start = format!(
-        "{{\n  \"description_version\": 7,\n  \"name\": \"whizbang\",\n  \"version\": \"{}\",\n  \"actions\": [\n    {{\n      \"name\": \"check\",\n",
+        "{{\n  \"description_version\": 8,\n  \"name\": \"whizbang\",\n  \"version\": \"{}\",\n  \"actions\": [\n    {{\n      \"name\": \"check\",\n",
         env!("CARGO_PKG_VERSION")
     );
     let types = r#"    {
@@ -427,4 +436,66 @@ fn a_tool_without_a_record_cannot_be_unverified_or_admitted() {
     assert_eq!(of("view"), None);
     assert!(stated("# t\n\n## Mark and history\n\n**Mark.** None: a control.\n").is_none());
     assert!(stated("# t\n\n## Limits\n\n**Unverified**\n").is_none());
+}
+
+#[test]
+fn recipes_are_listed_before_primitives_with_purpose_and_use() {
+    let (ok, text) = whizbang(&["describe", "--json"]);
+    assert!(ok);
+    let doc: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+    let actions = doc["actions"].as_array().expect("a list");
+    let first_primitive = actions
+        .iter()
+        .position(|action| action["kind"] == "primitive")
+        .expect("a primitive");
+    assert!(
+        actions[..first_primitive]
+            .iter()
+            .all(|a| a["kind"] == "recipe")
+    );
+    assert!(
+        actions[first_primitive..]
+            .iter()
+            .all(|a| a["kind"] != "recipe")
+    );
+    // The shipped recipe says what it is for and when to use it, and takes its inputs,
+    // its overrides and the step to stop after.
+    let recipe = actions
+        .iter()
+        .find(|action| action["name"] == "remove_prompt")
+        .expect("remove_prompt");
+    assert_eq!(recipe["kind"], "recipe");
+    assert!(
+        recipe["purpose"]
+            .as_str()
+            .unwrap()
+            .starts_with("Makes the mask that removes")
+    );
+    assert!(
+        recipe["use"]
+            .as_str()
+            .unwrap()
+            .starts_with("To remove a thing you can name")
+    );
+    let arguments: Vec<&str> = (recipe["arguments"].as_array().unwrap().iter())
+        .map(|a| a["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(arguments, ["backend", "prompt", "set", "until"]);
+    let inputs: Vec<&str> = (recipe["inputs"].as_array().unwrap().iter())
+        .map(|a| a["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(inputs, ["image", "protect"]);
+    assert_eq!(recipe["needs"][0]["capability"], "segment");
+    assert_eq!(recipe["needs"][0]["chosen_by"], "backend");
+    // A primitive says nothing of when to use it.
+    assert!(actions[first_primitive].get("use").is_none());
+    // The text the description prints lists the recipes first too.
+    let (ok, text) = whizbang(&["describe"]);
+    assert!(ok);
+    let at = |name: &str| text.find(name).unwrap_or_else(|| panic!("{name}: {text}"));
+    assert!(at("remove_prompt") < at("subtract"));
+    assert!(
+        text.contains("\n      use: To remove a thing you can name in words"),
+        "{text}"
+    );
 }
