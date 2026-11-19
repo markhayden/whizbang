@@ -2,6 +2,8 @@
 //! A4, and the fixed vectors of the six identities.
 
 mod files;
+mod location;
+mod mask;
 mod masks;
 mod rebind;
 mod stored;

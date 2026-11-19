@@ -72,6 +72,27 @@ pub struct Refinement {
     pub profile_cleared: bool,
 }
 
+/// What a mask holds, counted (rascal's `ZoneStatistics`, from
+/// `crates/rascal-core/src/mask.rs` at the commit `docs/sources.toml` pins; plan m3, task
+/// O1, item 2).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ZoneStatistics {
+    pub width: u32,
+    pub height: u32,
+    /// Pixels in the core.
+    pub core: u64,
+    /// Pixels whose blend is not 0.
+    pub blend: u64,
+    /// Protected pixels.
+    pub protect: u64,
+    /// Pixels that weigh more than 0.
+    pub painted: u64,
+    /// The sum of the weights, each as a 32-bit float, added as 64-bit ones.
+    pub weight_sum: f64,
+    /// The box of the pixels that weigh more than 0 ([`Mask::support`]).
+    pub support: Option<[u32; 4]>,
+}
+
 /// The effective weight of one pixel: 0 where protected, else 1 in the core, else the
 /// blend over 255.
 pub fn effective_weight(core: u8, blend: u8, protect: u8) -> f32 {
@@ -212,6 +233,56 @@ impl Mask {
             self.blend[at],
             self.protect[at],
         ))
+    }
+
+    /// Whether no pixel weighs more than 0: rascal's `is_empty`.
+    pub fn is_empty(&self) -> bool {
+        self.support().is_none()
+    }
+
+    /// The box `[left, top, right, bottom)`, in whole pixels, of every pixel that weighs
+    /// more than 0, the right and bottom edges one past the last; none when no pixel
+    /// does. Rascal's `support`.
+    pub fn support(&self) -> Option<[u32; 4]> {
+        let width = self.space().width() as usize;
+        let mut found: Option<[u32; 4]> = None;
+        for at in 0..self.core.len() {
+            if effective_weight(self.core[at], self.blend[at], self.protect[at]) > 0.0 {
+                let (x, y) = ((at % width) as u32, (at / width) as u32);
+                found = Some(match found {
+                    None => [x, y, x + 1, y + 1],
+                    Some([x0, y0, x1, y1]) => [x0.min(x), y0.min(y), x1.max(x + 1), y1.max(y + 1)],
+                });
+            }
+        }
+        found
+    }
+
+    /// The counts of each zone, the pixels that weigh more than 0 and the sum of their
+    /// weights, and the box of those pixels: rascal's `statistics`.
+    pub fn statistics(&self) -> ZoneStatistics {
+        let space = self.space();
+        let mut counts = ZoneStatistics {
+            width: space.width(),
+            height: space.height(),
+            core: 0,
+            blend: 0,
+            protect: 0,
+            painted: 0,
+            weight_sum: 0.0,
+            support: self.support(),
+        };
+        for at in 0..self.core.len() {
+            counts.core += u64::from(self.core[at] != 0);
+            counts.blend += u64::from(self.blend[at] != 0);
+            counts.protect += u64::from(self.protect[at] != 0);
+            let weight = effective_weight(self.core[at], self.blend[at], self.protect[at]);
+            if weight > 0.0 {
+                counts.painted += 1;
+                counts.weight_sum += f64::from(weight);
+            }
+        }
+        counts
     }
 
     // --- changes ------------------------------------------------------------------------

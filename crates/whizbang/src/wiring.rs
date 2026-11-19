@@ -100,6 +100,10 @@ fn registry_of(
     // Each registered by its own module (plan m3, "Shared files").
     whizbang_rascal::paste::register(&mut primitives).map_err(|e| said(&e))?;
     whizbang_rascal::fill::register(&mut primitives).map_err(|e| said(&e))?;
+    whizbang_rascal::line::register(&mut primitives).map_err(|e| said(&e))?;
+    whizbang_rascal::rasterize::register(&mut primitives).map_err(|e| said(&e))?;
+    whizbang_rascal::shrink::register(&mut primitives).map_err(|e| said(&e))?;
+    whizbang_rascal::invert::register(&mut primitives).map_err(|e| said(&e))?;
     if let Some(files) = &files {
         for action in files.actions()? {
             primitives.register(action).map_err(|e| said(&e))?;

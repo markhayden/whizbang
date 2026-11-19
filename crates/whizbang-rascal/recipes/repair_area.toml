@@ -1,0 +1,40 @@
+# Repair a stain or a spot: a box or a polygon as drawn, feathered, and filled.
+#
+# Ported from rascal's `crates/rascal-mask/recipes/repair-area.toml` at the commit
+# `docs/sources.toml` pins, under this build's rule for a name (`_`, not `-`), with what
+# this build's actions take: `rasterize` takes the location on the image; the recipe ends
+# in `fill`, which paints the mask with the configured filler and hands back the
+# composite and the mask rebound onto it (plan m3, task O1, item 3); and rascal's grey
+# rendering is left to the action `render`.
+version = 1
+name = "repair_area"
+purpose = "Repairs a stain or a spot at a location: the box or polygon as drawn, feathered, then filled."
+use = "To repaint a small area whose place you know, keeping its edges as drawn."
+use_case = "repair"
+
+[inputs]
+image = { type = "Image" }
+location = { type = "Location" }
+backend = { type = "Text", optional = true }
+
+[[step]]
+id = "rasterize"
+op = "rasterize"
+inputs = { location = "inputs.location", image = "inputs.image" }
+use_case = "repair"
+
+[[step]]
+id = "feather"
+op = "feather"
+inputs = { mask = "rasterize.mask" }
+sigma_px = 3.0
+
+[[step]]
+id = "fill"
+op = "fill"
+inputs = { image = "inputs.image", mask = "feather.mask" }
+backend = "inputs.backend"
+
+[outputs]
+image = "fill.image"
+mask = "fill.mask"
