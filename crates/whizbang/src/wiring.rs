@@ -36,10 +36,19 @@ use whizbang_backends::service::ServiceKind;
 /// (ADR 0009); `whizbang squint check` runs `check`. `check` needs a judge, which a config gives as a backend of the kind
 /// `service` ([`kinds`]); the five tools need none, and are what `check` calls.
 pub fn registry() -> Result<Registry, String> {
+    registry_with(false)
+}
+
+/// The same actions, with the decision cache of `check` on when `cached` says
+/// (`[cache]`, [`Over::decisions_cached`]; plan 2C, task M1). `whizbang squint check` and
+/// `whizbang serve` build theirs so; evaluation builds [`registry`], which never reads
+/// the cache.
+pub fn registry_with(cached: bool) -> Result<Registry, String> {
     let said = |error: &dyn std::fmt::Display| error.to_string();
     let mut registry = Registry::new();
     let toolbox = whizbang_squint::check::Toolbox::standard();
     let check = whizbang_squint::check::Check::new(toolbox).map_err(|e| said(&e))?;
+    let check = if cached { check.caching() } else { check };
     let grow = whizbang_rascal::grow::Grow::new();
     let segment = whizbang_rascal::segment::Segment::new();
     let view = whizbang_squint::view::View::new().map_err(|e| said(&e))?;
@@ -722,6 +731,23 @@ impl Over {
         }
         self.installed = Some(opened);
         Ok(self)
+    }
+
+    /// The one worker of the process, when one was given ([`Over::pack`]): what a
+    /// door that outlives a call stops at its end.
+    pub fn worker(&self) -> Option<&Arc<OneWorker>> {
+        self.pack.as_ref()
+    }
+
+    /// Whether the config turns the decision cache on (`[cache]`): read here, once and
+    /// by itself, as [`Over::installed`] reads it. No config is no cache.
+    pub fn decisions_cached(&self) -> Result<bool, String> {
+        let Some(path) = &self.config else {
+            return Ok(false);
+        };
+        let config = Config::read(path, &self.secrets)
+            .map_err(|refused| format!("the config cannot be used: {refused}"))?;
+        Ok(config.decisions_cached())
     }
 
     /// What is installed, as this was given it: the inventory of the models

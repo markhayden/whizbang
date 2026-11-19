@@ -1107,7 +1107,7 @@ The conclusions of the 2026-11-11 study are provisional until that write-up exis
 | Models run through ONNX on CPU only | Replaced at checkpoint 1C by PyTorch through the `transformers` library: it runs a SAM 3 phrase request on the Mac's GPU with no CPU fallback, and there is documented evidence it supports point and box requests and CUDA (ADR 0022). Point and box are built and verified at 1D. A comparison of runtimes waits for a measured need |
 | SAM 3 export is text-only | Replaced by new work at checkpoint 1D |
 | The pack is reached over MCP on stdio | Replaced at 1C by the protocol of section 4, `pack/1` (ADR 0020) |
-| Squint's hand-written MCP client and pack server; rascal's use of libraries | For the pack, squint's kind survives: a hand-written client, ported at 1C to the frames of `pack/1`, its MCP parts left behind (ADR 0020). For the server, chosen at milestone 2 |
+| Squint's hand-written MCP client and pack server; rascal's use of libraries | For the pack, squint's kind survives: a hand-written client, ported at 1C to the frames of `pack/1`, its MCP parts left behind (ADR 0020). For the server, chosen at milestone 2: written by hand on the protocol's frames, in `whizbang-serve` (ADR 0031) |
 | Squint's alignment code | Decided at port: keep, or replace with a library |
 | Rascal's hand-written image operations | Each decided at port |
 | Squint's checklist submission format and its 4-turn, 8-call budget | Ported as is, then redesigned through the ladder |

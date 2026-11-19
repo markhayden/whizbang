@@ -291,6 +291,20 @@ impl Supervisor {
     /// One request, in its turn: see the module's words. Its call's result, or a failure
     /// whose fault says how far the request got.
     pub fn call(&self, request: Request, limits: &Limits) -> Result<Called, Box<Failed>> {
+        self.call_checked(request, limits, &|| Ok(()))
+    }
+
+    /// The same, with `before_load` asked in the request's turn right before each
+    /// `load` it makes: after an unload, after a restart of the worker, or at the first
+    /// request (plan 2C, task M1: an installation's files are verified again before
+    /// each load). A fault it answers ends the request, never sent: nothing is loaded,
+    /// and nothing is resident.
+    pub fn call_checked(
+        &self,
+        request: Request,
+        limits: &Limits,
+        before_load: &dyn Fn() -> Result<(), Fault>,
+    ) -> Result<Called, Box<Failed>> {
         let fitting = matches!(
             &request.ask,
             Ask::Segment { model, installation, .. }
@@ -327,7 +341,7 @@ impl Supervisor {
         let turn = self.wait_for_turn(number, &request.model, request.removals, limits)?;
         let (served, next) = {
             let mut worker = self.worker.lock().unwrap_or_else(PoisonError::into_inner);
-            let served = self.serve(&mut worker, number, request, limits);
+            let served = self.serve(&mut worker, number, request, limits, before_load);
             (served, self.what_comes_next(&worker))
         };
         let mut shared = self.lock();
@@ -518,6 +532,7 @@ impl Supervisor {
         number: u64,
         request: Request,
         limits: &Limits,
+        before_load: &dyn Fn() -> Result<(), Fault>,
     ) -> Result<Called, Box<Failed>> {
         let wanted = Resident {
             model: request.model.clone(),
@@ -537,6 +552,7 @@ impl Supervisor {
                 self.step(worker, number, unload, limits)?;
                 self.lock().resident = None;
             }
+            before_load().map_err(failure)?;
             let load = Ask::Load {
                 model: request.model,
                 installation: request.installation,

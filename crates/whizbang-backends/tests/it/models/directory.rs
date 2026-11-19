@@ -545,6 +545,7 @@ fn the_binary_names_a_models_directory_only_through_the_opening_that_asks_whose_
         "whizbang-core",
         "whizbang-eval",
         "whizbang-rascal",
+        "whizbang-serve",
         "whizbang-squint",
     ];
     let listed: Vec<String> = std::fs::read_dir(&crates)

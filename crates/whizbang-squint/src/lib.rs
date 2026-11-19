@@ -8,6 +8,7 @@
 //! check judges, [`job`].
 
 pub mod align;
+pub mod cache;
 pub mod check;
 pub mod compare;
 pub mod details;

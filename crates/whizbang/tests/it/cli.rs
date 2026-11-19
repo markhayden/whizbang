@@ -1521,6 +1521,77 @@ fn eval_matrix_runs_a_three_item_set_under_a_scripted_judge_and_runs_stats_repor
     );
 }
 
+// --- `whizbang serve` (plan 2C, task M1) --------------------------------------------------------
+
+/// A child that is killed and waited for when this is dropped, on every path out of a
+/// test, a panic among them.
+struct Killed(std::process::Child);
+
+impl Drop for Killed {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[test]
+fn serve_answers_a_client_over_stdio_and_exits_when_its_input_ends() {
+    use std::io::{Read, Write};
+    use std::process::Stdio;
+    let scratch = Scratch::new("cli-serve");
+    let root = scratch.path().join("store");
+    drop(Store::open(&root, Arc::new(RealFs)).unwrap());
+    // The command is kept until the child has been waited for: its home goes with it.
+    let mut command = crate::models::binary();
+    let child = command
+        .args(["serve", "--store", root.to_str().unwrap()])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the binary runs");
+    let mut child = Killed(child);
+    let mut stdout = child.0.stdout.take().unwrap();
+    let mut stderr = child.0.stderr.take().unwrap();
+    let (read, has_read) = std::sync::mpsc::channel();
+    let reader = whizbang_testkit::threads::spawn(move || {
+        let (mut out, mut err) = (String::new(), String::new());
+        let _ = stdout.read_to_string(&mut out);
+        let _ = stderr.read_to_string(&mut err);
+        let _ = read.send((out, err));
+    });
+    let messages = [
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}"#,
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"check","arguments":{"use_case":"reality-checks","images":[{"id":"sha256:0000000000000000000000000000000000000000000000000000000000000000","role":"candidate"}]}}}"#,
+        r#"{"jsonrpc":"2.0","id":4,"method":"ping"}"#,
+    ];
+    {
+        let mut stdin = child.0.stdin.take().unwrap();
+        for message in messages {
+            writeln!(stdin, "{message}").unwrap();
+        }
+        // The input ends here.
+    }
+    let (out, err) = has_read
+        .recv_timeout(std::time::Duration::from_secs(20))
+        .expect("the server ended within 20 seconds of the end of its input");
+    reader.join().unwrap();
+    let status = child.0.wait().unwrap();
+    assert_eq!(status.code(), Some(0), "{err}");
+    assert_eq!(err, "");
+    // Every line it wrote is a message of the protocol, and each request is answered.
+    let lines: Vec<serde_json::Value> = out.lines().map(crate::serve::protocol).collect();
+    let ids: Vec<i64> = lines.iter().filter_map(|m| m["id"].as_i64()).collect();
+    assert_eq!(ids, [1, 2, 3, 4], "{out}");
+    assert_eq!(lines[0]["result"]["serverInfo"]["name"], "whizbang");
+    assert!(lines[1]["result"]["tools"].as_array().unwrap().len() >= 10);
+    // No judge is configured: the call is refused before anything runs, as a result.
+    assert_eq!(lines[2]["result"]["isError"], true, "{out}");
+    assert_eq!(lines[3]["result"], serde_json::json!({}));
+}
+
 // --- `whizbang eval baseline` (plan 2C, task E2, item 7) ---------------------------------------
 
 #[test]

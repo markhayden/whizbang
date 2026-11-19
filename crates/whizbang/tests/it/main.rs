@@ -4,6 +4,7 @@
 mod anthropic;
 mod backends;
 mod baseline;
+mod cache;
 mod catalogue;
 mod check;
 mod cli;
@@ -28,6 +29,7 @@ mod record;
 mod runs;
 mod segment;
 mod select;
+mod serve;
 mod setup;
 mod spend;
 mod store;

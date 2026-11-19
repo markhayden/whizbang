@@ -150,6 +150,10 @@ pub struct Config {
     download_least_kib: Option<u64>,
     /// `[[models.tokens]]`, each origin once, in the order of their texts.
     model_tokens: Vec<ModelToken>,
+    /// `[cache]`: whether judges' decisions are cached (`SPEC.md` section 9). Not in
+    /// the digest: whether a run may answer from the cache says nothing of what a run
+    /// means, and the cache's key holds the digest.
+    decisions_cached: bool,
 }
 
 /// The backends of one capability.
@@ -224,6 +228,12 @@ impl Config {
         self.recipients
             .iter()
             .map(|(name, recipient)| (name.as_str(), recipient))
+    }
+
+    /// Whether judges' decisions are cached: the file has a table `[cache]` whose
+    /// `decisions` is not false (plan 2C, task M1; ADR 0031). Off without one.
+    pub fn decisions_cached(&self) -> bool {
+        self.decisions_cached
     }
 
     /// Where the models directory is, when the file says: `[models] dir`, an absolute

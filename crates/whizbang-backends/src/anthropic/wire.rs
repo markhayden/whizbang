@@ -280,5 +280,8 @@ pub(crate) fn turn(body: &[u8]) -> Result<Turn, Fault> {
             )
         });
     let id = parsed.get("id").and_then(Value::as_str);
-    Turn::new(parts, stop, usage, id).map_err(|_| malformed(BAD_TURN))
+    let model = parsed.get("model").and_then(Value::as_str);
+    Turn::new(parts, stop, usage, id)
+        .map(|turn| turn.reported_by(model))
+        .map_err(|_| malformed(BAD_TURN))
 }

@@ -54,6 +54,7 @@ use whizbang_core::contract::{
 };
 use whizbang_core::identity::{DecodeLimits, Digest};
 
+use crate::cache;
 use crate::details::{self, Details, Names, Projection};
 use crate::job::{Job, Role as ImageRole};
 use crate::use_case::{self, Checklist, Resolved};
@@ -155,6 +156,9 @@ impl Toolbox {
 pub struct Check {
     descriptor: ActionDescriptor,
     toolbox: Arc<Toolbox>,
+    /// Whether a run under a use case of the table reads and keeps the decision cache
+    /// ([`crate::cache`]): off unless the registry's maker turns it on.
+    cache: bool,
 }
 
 impl Check {
@@ -234,7 +238,16 @@ impl Check {
         Ok(Check {
             descriptor: draft.build()?,
             toolbox,
+            cache: false,
         })
+    }
+
+    /// The same, with the decision cache on (`[cache]` in the config): a run under a
+    /// use case of the table that names no cell of a matrix answers from an earlier
+    /// run of the same key, and keeps its own key when its judge reported its identity.
+    pub fn caching(mut self) -> Check {
+        self.cache = true;
+        self
     }
 }
 
@@ -780,6 +793,41 @@ impl Action for Check {
             "general" => None,
             _ => Some(judging(call, use_case, argument("job"))?),
         };
+        // The decision cache's key is known here, before anything is measured or sent;
+        // a run of the same key that completed answers this one (crate::cache).
+        let key = match &judging {
+            Some(judging) if self.cache && argument("cell").is_none() => {
+                let images: Vec<_> = (call.inputs().iter())
+                    .map(|input| (input.id(), input.binding()))
+                    .collect();
+                let tools: Vec<&str> = named.iter().chain(detail.iter()).copied().collect();
+                let system = use_case::system_with(
+                    &judging.resolved,
+                    &judging.job,
+                    &details::tools_section(&named),
+                );
+                Some(cache::key(&cache::Material {
+                    job: &judging.job,
+                    arguments: call.arguments(),
+                    images: &images,
+                    system: &system,
+                    checklist: &judging.checklist.render(&judging.resolved),
+                    rules_version: judging.resolved.version,
+                    tools: &tools,
+                    judge: judge.declaration().model(),
+                    config: call.config(),
+                }))
+            }
+            _ => None,
+        };
+        if let Some(key) = &key
+            && let Some(hit) = cache::find(context.store(), key)
+        {
+            return answered_from(context, &hit);
+        }
+        // Whether every turn said which model answered it: only then is the run's
+        // verdict kept for a later run to answer from.
+        let mut reported = true;
         let mut run = Run {
             context,
             judge,
@@ -865,6 +913,7 @@ impl Action for Check {
                 }
             };
             allowed = tokens;
+            reported &= turn.reported_model().is_some();
             match turn.stop() {
                 // Cut off: the turn is left out of the conversation, whatever it
                 // holds, and asked for once more with a larger limit.
@@ -932,6 +981,9 @@ impl Action for Check {
                                     .write(use_case::REASONS, lines.as_bytes());
                                 kept.map_err(|why| failed("reasons", &why))?;
                                 judging.keep(context, call, &retries, &decided)?;
+                                if let Some(key) = &key {
+                                    keep_key(context, key, reported);
+                                }
                                 return Ok(Produced::nothing().with_verdict(decided.verdict));
                             }
                             Err(why) => why,
@@ -1076,6 +1128,45 @@ impl Judging {
             .write(JUDGED, kept.to_string().as_bytes());
         written.map_err(|why| failed("judged", &why))
     }
+}
+
+/// A run answered from the decision cache: the earlier run's verdict, with what it kept
+/// of its reasons and of what it decided, and the earlier run named in this run's
+/// record. Nothing is sent.
+fn answered_from(context: &Context, hit: &cache::Hit) -> Result<Produced, Failure> {
+    let facts = context.facts();
+    facts.setting(cache::SETTING, &Value::text("hit"));
+    facts.setting(cache::ANSWERED_BY, &Value::text(&hit.run));
+    for (name, bytes) in [(use_case::REASONS, &hit.reasons), (JUDGED, &hit.judged)] {
+        if let Some(bytes) = bytes {
+            let written = context.diagnostics().write(name, bytes);
+            written.map_err(|why| failed("cache", &why))?;
+        }
+    }
+    let said = format!(
+        "answered from the decision cache: the verdict of run {}",
+        hit.run
+    );
+    context.events().progress(&said);
+    Ok(Produced::nothing().with_verdict(Verdict::new(hit.decision, &hit.why)))
+}
+
+/// Keeps a run's key for a later run to answer from, when every turn of its judge said
+/// which model answered; and notes in the record whether it was kept. A key that cannot
+/// be written is not kept, and the run's verdict stands.
+fn keep_key(context: &Context, key: &cache::Key, reported: bool) {
+    let said = if !reported {
+        "not kept: the judge did not report its identity"
+    } else if context
+        .diagnostics()
+        .write(&key.name(), key.material().as_bytes())
+        .is_ok()
+    {
+        "kept"
+    } else {
+        "not kept: the key could not be written"
+    };
+    context.facts().setting(cache::SETTING, &Value::text(said));
 }
 
 /// Waits `ms` milliseconds before a request is sent again, looking every 50 at whether

@@ -674,6 +674,9 @@ pub struct Turn {
     output_ceiling: Option<u32>,
     /// Where it was answered, as far as the backend said.
     served: Served,
+    /// The model the provider said answered, cleaned and cut, when it said one: a
+    /// judge whose every turn says one reports its identity (`SPEC.md` section 9).
+    reported_model: Option<String>,
 }
 
 impl super::Answer for Turn {
@@ -691,6 +694,7 @@ impl PartialEq for Turn {
                 turn.request_id.clone(),
                 turn.charge,
                 turn.served.clone(),
+                turn.reported_model.clone(),
             )
         };
         self.parts == other.parts && all(self) == all(other)
@@ -702,6 +706,7 @@ impl std::fmt::Debug for Turn {
         f.debug_struct("Turn")
             .field("parts", &self.parts)
             .field("stop", &self.stop)
+            .field("reported_model", &self.reported_model)
             .field("usage", &self.usage)
             .field("request_id", &self.request_id)
             .field("charge", &self.charge)
@@ -797,7 +802,20 @@ impl Turn {
             counted_input: None,
             output_ceiling: None,
             served: Served::unknown(),
+            reported_model: None,
         })
+    }
+
+    /// The same turn, saying the model the provider said answered it, when the answer
+    /// named one: kept cleaned and cut as an id is. An empty name is none.
+    pub fn reported_by(mut self, model: Option<&str>) -> Turn {
+        self.reported_model = model.map(id_of).filter(|model| !model.is_empty());
+        self
+    }
+
+    /// The model the provider said answered, when it said one.
+    pub fn reported_model(&self) -> Option<&str> {
+        self.reported_model.as_deref()
     }
 
     /// The same turn, with the input tokens the adapter counted for its request

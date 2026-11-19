@@ -391,13 +391,23 @@ fn config(mut table: Table, secrets: &Secrets) -> Read<Config> {
         }
         at.unknown(&models, "dir, download_least_kib_per_second and tokens")?;
     }
+    if let Some(value) = table.remove("cache") {
+        let at = At::top("cache", secrets);
+        let mut cache = at.table(value)?;
+        config.decisions_cached = match cache.remove("decisions") {
+            Some(Value::Boolean(decisions)) => decisions,
+            Some(other) => return Err(at.then("decisions").wrong("true or false", &other)),
+            None => true,
+        };
+        at.unknown(&cache, "decisions")?;
+    }
     if table.contains_key("tools") {
         return Err(At::top("tools", secrets)
             .refuse("is not read yet: the table of tools is given its shape at milestone 2"));
     }
     match table.keys().next() {
         Some(key) => Err(At::top(key, secrets)
-            .refuse("is not known; the tables are backends, spend, egress and models")),
+            .refuse("is not known; the tables are backends, spend, egress, models and cache")),
         None => Ok(config),
     }
 }

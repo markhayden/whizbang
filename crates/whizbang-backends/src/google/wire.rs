@@ -392,7 +392,9 @@ pub(crate) fn turn(body: &[u8]) -> Result<Turn, Fault> {
         .and_then(Value::as_array)
         .and_then(|candidates| candidates.first());
     let Some(candidate) = candidate else {
+        let model = parsed.get("modelVersion").and_then(Value::as_str);
         return Turn::new(Vec::new(), StopReason::Refusal, usage, id)
+            .map(|turn| turn.reported_by(model))
             .map_err(|_| malformed(BAD_TURN));
     };
     let parts_of = candidate
@@ -448,5 +450,8 @@ pub(crate) fn turn(body: &[u8]) -> Result<Turn, Fault> {
         ) => StopReason::Refusal,
         Some(other) => StopReason::Other(other.to_owned()),
     };
-    Turn::new(parts, stop, usage, id).map_err(|_| malformed(BAD_TURN))
+    let model = parsed.get("modelVersion").and_then(Value::as_str);
+    Turn::new(parts, stop, usage, id)
+        .map(|turn| turn.reported_by(model))
+        .map_err(|_| malformed(BAD_TURN))
 }
