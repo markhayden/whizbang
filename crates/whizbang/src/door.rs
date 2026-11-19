@@ -326,21 +326,11 @@ fn completed(
         Answer::Started(run) => (run, RunState::NotEnded { here: true }, ""),
     };
     let run = format!("run {}{before}", printable(id.as_str()));
-    let nothing = "nothing was committed";
     match state {
-        RunState::Ended(Outcome::Completed { outputs }) => {
-            Ok((id, format!("{run} completed\n"), outputs))
+        RunState::Ended(outcome) => {
+            let (text, outputs) = ended(&run, outcome)?;
+            Ok((id, text, outputs))
         }
-        RunState::Ended(Outcome::Cancelled) => Err(format!("{run} was cancelled; {nothing}")),
-        RunState::Ended(Outcome::Error { kind, message }) => Err(format!(
-            "{run} ended in an error ({}): {}; {nothing}",
-            printable(&kind),
-            printable(&message)
-        )),
-        RunState::Ended(Outcome::Invalid { why }) => Err(format!(
-            "{run} found what it was given invalid: {}; {nothing}",
-            printable(&why)
-        )),
         RunState::NotEnded { .. } => Err(format!("{run} was admitted and has not ended")),
         RunState::Abandoned { failure } => Err(format!(
             "{run} was admitted and will not end here{}",
@@ -355,6 +345,25 @@ fn completed(
                 " after it ended as {}",
                 status.name()
             ))
+        )),
+    }
+}
+
+/// What a door says of a run that ended, after `run`, the run's words: the line of a
+/// run that completed, and its outputs; or the complaint, escaped already.
+pub fn ended(run: &str, outcome: Outcome) -> Result<(String, Vec<Committed>), String> {
+    let nothing = "nothing was committed";
+    match outcome {
+        Outcome::Completed { outputs } => Ok((format!("{run} completed\n"), outputs)),
+        Outcome::Cancelled => Err(format!("{run} was cancelled; {nothing}")),
+        Outcome::Error { kind, message } => Err(format!(
+            "{run} ended in an error ({}): {}; {nothing}",
+            printable(&kind),
+            printable(&message)
+        )),
+        Outcome::Invalid { why } => Err(format!(
+            "{run} found what it was given invalid: {}; {nothing}",
+            printable(&why)
         )),
     }
 }
@@ -565,6 +574,21 @@ pub fn check_job(
     measuring: &Measuring<'_>,
     read: &ReadVerdict<'_>,
 ) -> Result<String, String> {
+    let call = check_call(job, images, judge, measuring);
+    let (run, mut text, _) = completed(executor, call, request_id)?;
+    said_verdict(&mut text, read(&run));
+    Ok(text)
+}
+
+/// The call of `check` under a job and its images, in its order, as every door makes
+/// it: the job in the contract `job/1`, the output limit of [`CHECK_OUTPUT_TOKENS`],
+/// what is measured first, and the judge when one is named.
+pub fn check_call(
+    job: &Job,
+    images: &[ArtifactId],
+    judge: Option<&str>,
+    measuring: &Measuring<'_>,
+) -> Call {
     let mut call = Call::new(whizbang_squint::check::NAME)
         .argument("use_case", Value::text(&job.use_case))
         .argument("job", Value::text(&job.to_json()))
@@ -583,8 +607,13 @@ pub fn check_job(
     if let Some(judge) = judge {
         call = call.argument("judge", Value::text(judge));
     }
-    let (run, mut text, _) = completed(executor, call, request_id)?;
-    match read(&run) {
+    call
+}
+
+/// A run's verdict, as `squint check` prints it after the run's line: the word, then
+/// each item of the reason on a line of its own, escaped.
+pub fn said_verdict(text: &mut String, stated: Option<Stated>) {
+    match stated {
         Some(stated) => {
             text.push_str(&format!("verdict: {}\n", printable(&stated.word)));
             if stated.items.is_empty() {
@@ -596,7 +625,6 @@ pub fn check_job(
         }
         None => text.push_str("verdict: none was recorded\n"),
     }
-    Ok(text)
 }
 
 /// The verdict of the run `run` in the store at `root`, as its record holds it, read

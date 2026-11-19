@@ -12,13 +12,13 @@ then. Milestones are those of `SPEC.md` section 16.
 | [Models](models.md) | `whizbang models list`, `get` and `remove`: what the catalogue holds, installing a model, removing one, and where the models directory is | Checkpoint 1C |
 | [Backends](backends.md) | `whizbang backends status`: whether each backend the config offers is ready, and `--probe` | Checkpoint 1C |
 | [Setup](setup.md) | `whizbang setup`: installing the Python pack and its runtime from the lock file, where it goes, and every place it contacts | Checkpoint 1C |
+| [The MCP server over stdio](serve.md) | `whizbang serve` for a local agent: the tools, progress, cancellation, the stated time of a run and the end of the input | 2 |
 
 ## Doors
 
 | Guide | Covers | Milestone |
 |---|---|---|
 | The command line | `whizbang` for a person and for scripts | Checkpoint 1A |
-| The MCP server over stdio | `whizbang serve` for a local agent | 2 |
 | The playground | `whizbang play`: trying tools in a browser | 5 |
 | The MCP server over HTTP, and remote hosting | `whizbang serve --http` as the engine of a hosted app; a model on a GPU host | 6 |
 

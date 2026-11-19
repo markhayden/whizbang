@@ -57,13 +57,14 @@
 //! predicted IoU as the wire held it (plan 1D, task V1: `SegmentResponse::said` and
 //! `SegmentResponse::predicted`).
 //!
-//! **An installation's files are verified before it is loaded** (decision D14): the
-//! first request for an installation in a process reads each of its files whole and
-//! holds it to the size and the hash it was installed with. A damaged one is not
-//! loaded: the request is refused, `unavailable` and never sent, saying the model is
-//! damaged ([`DAMAGED`]), and it is read again at the next request, so that an install
-//! that repairs it is seen. One found whole is not read again in the process: a file
-//! damaged after that is loaded as it is, when the worker loads the model again.
+//! **An installation's files are verified before each load of it** (decision D14;
+//! plan 2C, task M1): in the request's turn, right before the worker is asked to load
+//! the model, each of its files is held to the size and the hash it was installed
+//! with. A damaged one is not loaded: the request is refused, `unavailable` and never
+//! sent, saying the model is damaged ([`DAMAGED`]), and it is read again at the next
+//! request, so that an install that repairs it is seen. A process that lives across
+//! runs looks again before a load that follows an unload or a restart of the worker;
+//! a model that stays resident is not loaded again, and is not looked at again.
 //!
 //! **A later process trusts the last full check while the files are unchanged** (plan
 //! 2A, task R1): a full check that passes leaves a record beside the installation of
@@ -73,7 +74,6 @@
 //! ([`whizbang_backends::models::verify_checked`]).
 
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
@@ -191,11 +191,6 @@ struct Place {
 struct Held {
     place: Option<Place>,
     supervisor: Option<Arc<Supervisor>>,
-    /// The installations whose files were found whole in this process (decision D14):
-    /// each is verified once. Kept by the model and the identity both, though the
-    /// identity alone would do (the model's name is part of what it is the digest
-    /// of, and `verify` holds the record to both): a key that says so needs no proof.
-    verified: BTreeSet<(ModelName, InstallationId)>,
 }
 
 /// The one worker of a process (decision D4): what makes it, where it is, and its
@@ -313,14 +308,16 @@ impl OneWorker {
         Ok(supervisor)
     }
 
-    /// Verifies the files of this installation of this model, the first time it is
-    /// asked in this process, before anything loads it (decision D14): each is read
+    /// Verifies the files of this installation of this model, in the request's turn
+    /// right before each load of it (decision D14; plan 2C, task M1): each is read
     /// whole and held to the size and the hash it was installed with, unless the
     /// record of a full check that passed in this or an earlier process says each is
-    /// unchanged since ([`whizbang_backends::models::verify_checked`]). One found
-    /// whole is not read again in this process; one found damaged is read again the
-    /// next time, so that an
-    /// install that repairs it is seen. The installation is the one the request's
+    /// unchanged since ([`whizbang_backends::models::verify_checked`]). So a process
+    /// that lives across runs, as `whizbang serve` does, looks at the files again
+    /// before a load that follows an unload or a restart of the worker; a model that
+    /// stays resident is not loaded again, and its files are not looked at. One found
+    /// damaged is read again the next time, so that an install that repairs it is
+    /// seen. The installation is the one the request's
     /// lease holds, so nothing deletes it while it is read. The reading ends, never
     /// sent, at the run's cancel (`cancelled`) or its deadline (`timed_out`), looked
     /// at before each piece of a file, so a cancelled run does not wait for gigabytes
@@ -332,12 +329,8 @@ impl OneWorker {
         secrets: &Secrets,
         bounds: &Bounds,
     ) -> Result<(), Fault> {
-        let key = (model.clone(), installation);
         let dir = {
             let held = self.held();
-            if held.verified.contains(&key) {
-                return Ok(());
-            }
             let Some(place) = held.place.as_ref() else {
                 return Err(Fault::new(FaultKind::Unavailable, NO_DIRECTORY).not_sent());
             };
@@ -352,10 +345,7 @@ impl OneWorker {
         // Read without the lock: hashing a model's files takes time, and another
         // request may verify the same installation meanwhile, to the same end.
         match verify_checked(&dir, model, installation, secrets, &stop) {
-            Ok(true) => {
-                self.held().verified.insert(key);
-                Ok(())
-            }
+            Ok(true) => Ok(()),
             Ok(false) => Err(Fault::new(FaultKind::Unavailable, DAMAGED).not_sent()),
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
                 let fault = match bounds.is_cancelled() {
@@ -667,8 +657,6 @@ impl Segmenter for Local {
         };
         let installation = InstallationId::from_text(&handed.to_string(), &self.secrets)
             .map_err(|_| not_leased())?;
-        self.worker
-            .verified(&self.model, installation, &self.secrets, bounds)?;
         let supervisor = self.worker.supervisor(&self.secrets)?;
         let ask = Ask::segment(request, self.model.clone(), installation);
         let queued = Request {
@@ -684,7 +672,14 @@ impl Segmenter for Local {
             call_limit: Some(self.taken.call_limit),
             lifetime_s: Some(self.taken.lifetime_s),
         };
-        match supervisor.call(queued, &limits) {
+        // The installation's files are verified in the request's turn, right before
+        // each load of it: the first in the process, and each after an unload or a
+        // restart of the worker (plan 2C, task M1).
+        let verify = || {
+            self.worker
+                .verified(&self.model, installation, &self.secrets, bounds)
+        };
+        match supervisor.call_checked(queued, &limits, &verify) {
             Ok(called) => answered(request, called),
             Err(failed) => Err(failed.fault),
         }

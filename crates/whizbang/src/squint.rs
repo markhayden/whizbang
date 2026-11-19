@@ -9,7 +9,7 @@ use whizbang::door::{self, CheckAsked};
 use whizbang::wiring::{Platform, Uses};
 use whizbang_core::contract::{Capability, Recovery};
 
-use crate::rascal::{Under, executor};
+use crate::rascal::{Under, executor_caching};
 use crate::store::Where;
 
 const EXIT_CODES: &str = "Exit codes:
@@ -138,7 +138,7 @@ fn run_at(
                 }
             };
             let uses = Uses::One(Capability::Judge, judge.as_deref());
-            let executor = executor(at, under, recovery, platform, uses)?;
+            let (executor, _) = executor_caching(at, under, recovery, platform, uses)?;
             let measuring = door::Measuring {
                 details: if details == "none" {
                     door::Details::None

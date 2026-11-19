@@ -611,6 +611,7 @@ dependencies = [
  "whizbang-core",
  "whizbang-eval",
  "whizbang-rascal",
+ "whizbang-serve",
  "whizbang-squint",
  "whizbang-testkit",
 ]
@@ -666,6 +667,14 @@ dependencies = [
  "serde_json",
  "whizbang-core",
  "whizbang-testkit",
+]
+
+[[package]]
+name = "whizbang-serve"
+version = "0.0.1"
+dependencies = [
+ "serde_json",
+ "whizbang-core",
 ]
 
 [[package]]
