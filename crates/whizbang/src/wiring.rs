@@ -111,6 +111,10 @@ fn registry_of(
     whizbang_rascal::rasterize::register(&mut primitives).map_err(|e| said(&e))?;
     whizbang_rascal::shrink::register(&mut primitives).map_err(|e| said(&e))?;
     whizbang_rascal::invert::register(&mut primitives).map_err(|e| said(&e))?;
+    // The seam (plan m3, task O3).
+    whizbang_rascal::fan::register(&mut primitives).map_err(|e| said(&e))?;
+    whizbang_rascal::profile::register(&mut primitives).map_err(|e| said(&e))?;
+    whizbang_rascal::ramp::register(&mut primitives).map_err(|e| said(&e))?;
     if let Some(files) = &files {
         for action in files.actions()? {
             primitives.register(action).map_err(|e| said(&e))?;

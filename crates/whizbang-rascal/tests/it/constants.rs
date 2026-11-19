@@ -44,7 +44,18 @@ fn every_set_rascal_shipped_is_here_byte_for_byte() {
             "{name} is not listed"
         );
     }
-    assert_eq!(here, 1, "window-v1, with window (O2)");
+    assert_eq!(
+        here, 7,
+        "window-v1, with window (O2); fan's four, profile-v1 and ramp-v1 (O3)"
+    );
+    // The sets fan, profile and ramp read are those files.
+    let (sets, profile, ramp) = (constants::FAN, constants::PROFILE_V1, constants::RAMP_V1);
+    for (name, text) in sets.iter().chain([&profile, &ramp]) {
+        let file = std::fs::read(folder.join(format!("{name}.toml"))).unwrap();
+        assert_eq!(text.as_bytes(), file.as_slice(), "{name}");
+    }
+    assert_eq!(constants::number(profile.1, "feather_ratio"), Some(0.55));
+    assert_eq!(constants::number(ramp.1, "share"), Some(0.5));
     // The set the build holds is the file, and its value is rascal's.
     let file = std::fs::read(folder.join("window-v1.toml")).unwrap();
     assert_eq!(WINDOW_V1.1.as_bytes(), file.as_slice());

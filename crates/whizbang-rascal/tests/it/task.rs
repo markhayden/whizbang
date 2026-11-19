@@ -70,6 +70,14 @@ fn engine(store: Arc<Store>, segmenter: &Arc<FakeSegmenter>) -> Engine {
     whizbang_rascal::rect::register(&mut registry).unwrap();
     whizbang_rascal::invert::register(&mut registry).unwrap();
     whizbang_rascal::fill::register(&mut registry).unwrap();
+    // What the seam calls (task O3).
+    whizbang_rascal::line::register(&mut registry).unwrap();
+    whizbang_rascal::cut::register(&mut registry).unwrap();
+    whizbang_rascal::fan::register(&mut registry).unwrap();
+    whizbang_rascal::profile::register(&mut registry).unwrap();
+    whizbang_rascal::ramp::register(&mut registry).unwrap();
+    whizbang_rascal::apply::register(&mut registry).unwrap();
+    whizbang_rascal::put::register(&mut registry).unwrap();
     for recipe in recipes::shipped(&registry).unwrap() {
         registry.register(Arc::new(recipe)).unwrap();
     }
@@ -434,4 +442,104 @@ fn protect_inverts_an_earlier_mask_onto_its_composite() {
             .input("location", location),
     );
     assert!(both.contains("not both"), "{both}");
+}
+
+// The task `seam` (plan m3, task O3, item 2), on a panorama of 256 by 128 whose wrap edge
+// is a step, under a filler that repaints every pixel it is sent.
+
+#[test]
+fn seam_applies_a_nonzero_ramp_once_to_the_pixels_the_filler_is_sent() {
+    let seam = super::fan::Seam::new("seam-ramp");
+    let ramped = seam.world.mask(seam.ran.1);
+    let cut = seam.canvas_of(seam.panorama);
+    assert_eq!(
+        ramped.image(),
+        cut.digest(),
+        "the seam's mask is on the cut"
+    );
+    let once = whizbang_rascal::apply::performed(&cut, &ramped).unwrap();
+    let twice = whizbang_rascal::apply::performed(&once.pixels, &ramped).unwrap();
+    assert!(once.changed > 0 && once.largest >= 4, "a ramp of no effect");
+    // What the filler was sent, read back from the recipe's panorama: the filler gives
+    // each pixel 255 less what it was sent, and a core pixel is the fill's whole.
+    let canvas = seam.canvas_of(seam.ran.0);
+    let canvas = canvas.rgba();
+    let (mut core, mut moved, mut not_twice) = (0, 0, 0);
+    for (at, weight) in ramped.core().iter().enumerate() {
+        if *weight == 0 || ramped.protect()[at] != 0 {
+            continue;
+        }
+        core += 1;
+        let sent: Vec<u8> = canvas[at * 4..at * 4 + 3].iter().map(|v| 255 - v).collect();
+        assert_eq!(sent, once.pixels.rgba()[at * 4..at * 4 + 3], "pixel {at}");
+        moved += usize::from(sent != cut.rgba()[at * 4..at * 4 + 3]);
+        not_twice += usize::from(sent != twice.pixels.rgba()[at * 4..at * 4 + 3]);
+    }
+    assert!(core > 0 && moved > 0, "{core} core pixels, {moved} moved");
+    assert!(not_twice > 0, "the ramp was applied twice");
+}
+
+#[test]
+fn seam_fills_the_working_image_through_the_mask_apply_rebound_under_the_executors_checks() {
+    use whizbang_core::identity::{Destination, Mapping};
+    let seam = super::fan::Seam::new("seam-rebound");
+    let by_hand = &seam.by_hand();
+    let working = seam.world.image(by_hand.working);
+    let rebound = seam.world.mask(by_hand.rebound);
+    // The mask apply handed back is on the working image, rebound from the cut by the
+    // identity, and keeps the prescription.
+    let cut = seam.world.image(by_hand.cut);
+    assert_eq!(rebound.image(), working.identity().pixels);
+    assert_eq!(
+        rebound.binding().destination(),
+        Destination::Image(cut.identity().pixels)
+    );
+    assert_eq!(*rebound.binding().mapping(), Mapping::Identity);
+    assert_eq!(rebound.prescriptions().len(), 1);
+    // The executor refuses to fill the working image through the mask on the cut,
+    // before the filler is called.
+    let wrong = Call::new("fill")
+        .input("image", by_hand.working)
+        .input("mask", seam.ran.1);
+    let refused = seam.engine.submit(&wrong).err().expect("refused");
+    assert!(format!("{refused:?}").contains("WrongImage"), "{refused:?}");
+    // The recipe's panorama is the one the chain by hand put back: its fill was of the
+    // working image through the rebound mask.
+    assert_eq!(seam.ran.0, by_hand.put);
+}
+
+#[test]
+fn seam_fills_the_wrap_edge_and_keeps_every_other_pixel() {
+    let seam = super::fan::Seam::new("seam-wrap");
+    let before = super::canvases::pixels_of(&seam.world.image(seam.panorama));
+    let after = super::canvases::pixels_of(&seam.world.image(seam.ran.0));
+    let mask = seam.world.mask(seam.ran.1);
+    let (w, s) = (256_u32, super::fan::STRIP);
+    let mut filled = 0;
+    for y in 0..128 {
+        for x in 0..w {
+            // The canvas pixel this panorama pixel is, if any.
+            let from = if x >= w - s {
+                Some(x - (w - s))
+            } else if x < s {
+                Some(x + s)
+            } else {
+                None
+            };
+            let reached =
+                from.is_some_and(|cx| !super::canvases::nothing(&mask, (y * 2 * s + cx) as usize));
+            let (was, is) = (
+                super::canvases::at(&before, x, y),
+                super::canvases::at(&after, x, y),
+            );
+            if reached {
+                filled += 1;
+                assert_ne!(is, was, "({x},{y})");
+            } else {
+                assert_eq!(is, was, "({x},{y})");
+            }
+        }
+    }
+    // The band opens where the edge is smooth: wider than two columns on every row.
+    assert!(filled > 128 * 2, "{filled} pixels filled");
 }

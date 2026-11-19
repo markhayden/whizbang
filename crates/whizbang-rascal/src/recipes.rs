@@ -22,8 +22,11 @@ pub const MASK_RECT: &str = include_str!("../recipes/mask_rect.toml");
 /// `protect`: the mask for a second pass (rascal's `protect`).
 pub const PROTECT: &str = include_str!("../recipes/protect.toml");
 
+/// `seam`: the wrap edge of a panorama healed (rascal's `seam` and its `heal`; task O3).
+pub const SEAM: &str = include_str!("../recipes/seam.toml");
+
 /// Each shipped recipe's text, in the order a door lists them.
-pub const SHIPPED: [&str; 5] = [REMOVE_PROMPT, REMOVE, REPAIR_AREA, MASK_RECT, PROTECT];
+pub const SHIPPED: [&str; 6] = [REMOVE_PROMPT, REMOVE, REPAIR_AREA, MASK_RECT, PROTECT, SEAM];
 
 /// A recipe's text, read and checked against the actions of `registry`, as an action.
 pub fn action_of(text: &str, registry: &Registry) -> Result<RecipeAction, RecipeError> {

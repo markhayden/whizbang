@@ -73,6 +73,7 @@ fn the_shipping_executor_describes_check_and_cannot_run_it_for_want_of_a_judge()
             "repair_area",
             "mask_rect",
             "protect",
+            "seam",
             "align",
             "change_map",
             "edge_similarity",
@@ -98,7 +99,10 @@ fn the_shipping_executor_describes_check_and_cannot_run_it_for_want_of_a_judge()
             "stroke",
             "rasterize",
             "shrink",
-            "invert"
+            "invert",
+            "fan",
+            "profile",
+            "ramp"
         ]
     );
     let root = dir.path().join("store");

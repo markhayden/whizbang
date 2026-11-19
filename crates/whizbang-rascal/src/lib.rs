@@ -2,6 +2,7 @@
 //! image under a mask; the actions `segment`, `select`, `grow`, `close`, `plug`,
 //! `subtract`, `feather`, `render`, `paste`, `fill`, `line`, `rect`, `stroke`, `rasterize`,
 //! `shrink` and `invert`; the canvases `cut`, `put`, `window`, `unwindow` and `apply`;
+//! the seam's `fan`, `profile` and `ramp`;
 //! rascal's constant sets (`constants`); and the recipes this build ships (`recipes`).
 //!
 //! Each operation's module holds its own descriptor, its own `register` and, where its
@@ -34,3 +35,7 @@ pub mod stroke;
 pub mod subtract;
 pub mod unwindow;
 pub mod window;
+// The seam (plan m3, task O3).
+pub mod fan;
+pub mod profile;
+pub mod ramp;
