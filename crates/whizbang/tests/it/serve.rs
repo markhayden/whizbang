@@ -305,6 +305,7 @@ fn initialize_lists_each_recipe_before_the_primitives() {
             "repair_area",
             "mask_rect",
             "protect",
+            "repair",
             "seam"
         ]
     );

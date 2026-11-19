@@ -2197,7 +2197,7 @@ fn rascal_paste_composites_a_fill_onto_its_base() {
     let other = whizbang(
         &[
             "rascal", "paste", "--image", &image, "--fill", &fill, "--mask", &mask, "--mode",
-            "hard",
+            "poisson",
         ],
         &root,
     );
@@ -2430,6 +2430,58 @@ fn rascal_remove_with_a_box_fills_under_a_scripted_filler() {
         &dir.path().join("nowhere"),
     );
     assert_eq!(refused.code, Some(1), "{}", refused.err);
+}
+
+#[test]
+fn rascal_tighten_inspect_and_a_hard_paste_run_from_the_command_line() {
+    // A picture of 64 by 48 (plan m3, task O4): `rascal stroke` makes a stroke on it,
+    // `rascal tighten` a mask of it for a repair, `rascal inspect` the overlay and the
+    // widths of that mask, and `rascal paste --mode hard` of the picture onto itself hands
+    // the picture back. `rascal repair` with no filler configured runs nothing.
+    let dir = Scratch::new("cli-tighten");
+    let root = dir.path().join("store");
+    std::fs::create_dir_all(dir.path().join("in")).unwrap();
+    let ran = |args: &[&str]| {
+        let ran = whizbang(args, &root);
+        assert_eq!(ran.code, Some(0), "{args:?}: {}", ran.err);
+        ran.out
+    };
+    drop(Store::open(&root, Arc::new(RealFs)).unwrap());
+    let image = crate::anthropic::import_picture(&root, &dir.path().join("in"), "base", 40);
+    let out = ran(&[
+        "rascal",
+        "stroke",
+        "--image",
+        &image,
+        "--path",
+        "8 24; 56 24",
+        "--radius-px",
+        "4",
+    ]);
+    let stroke = printed(&out, "location");
+    let out = ran(&["rascal", "tighten", "--stroke", &stroke, "--image", &image]);
+    let mask = printed(&out, "mask");
+    let out = ran(&["rascal", "inspect", "--mask", &mask, "--image", &image]);
+    assert!(printed(&out, "overlay").starts_with("sha256:"), "{out}");
+    assert!(printed(&out, "widths").starts_with("sha256:"), "{out}");
+    let out = ran(&[
+        "rascal", "paste", "--image", &image, "--fill", &image, "--mask", &mask, "--mode", "hard",
+    ]);
+    assert_eq!(printed(&out, "image"), image);
+    // An unknown mode is the command line's error.
+    let unknown = whizbang(
+        &[
+            "rascal", "paste", "--image", &image, "--fill", &image, "--mask", &mask, "--mode",
+            "smudge",
+        ],
+        &root,
+    );
+    assert_eq!(unknown.code, Some(2), "{}", unknown.err);
+    let repair = whizbang(
+        &["rascal", "repair", "--image", &image, "--stroke", &stroke],
+        &root,
+    );
+    assert_eq!(repair.code, Some(1), "{}", repair.err);
 }
 
 #[test]

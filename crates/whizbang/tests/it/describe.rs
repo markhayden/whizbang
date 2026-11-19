@@ -119,6 +119,7 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
             "repair_area",
             "mask_rect",
             "protect",
+            "repair",
             "seam",
             "align",
             "change_map",
@@ -146,6 +147,8 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
             "rasterize",
             "shrink",
             "invert",
+            "tighten",
+            "inspect",
             "fan",
             "profile",
             "ramp"
@@ -157,9 +160,9 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
         .iter()
         .map(|action| action["kind"].as_str().expect("a kind"))
         .collect();
-    assert_eq!(kinds[..7], ["recipe"; 7]);
+    assert_eq!(kinds[..8], ["recipe"; 8]);
     assert!(
-        kinds[7..].iter().all(|kind| *kind == "primitive"),
+        kinds[8..].iter().all(|kind| *kind == "primitive"),
         "{kinds:?}"
     );
     // `check` says what it needs: a judge. Whether one is there is no part of a
@@ -169,7 +172,7 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
     assert_eq!(doc["actions"][0]["needs"][0]["requests"], 16);
     // `segment` needs a segmenter that takes what the call's `kind` names, a phrase, a
     // point or a box, chosen by its argument `backend`.
-    let need = &doc["actions"][16]["needs"][0];
+    let need = &doc["actions"][17]["needs"][0];
     assert_eq!(need["capability"], "segment");
     assert_eq!(need["features"], serde_json::json!([]));
     assert_eq!(need["feature_from"], "kind");
@@ -213,6 +216,7 @@ fn describe_without_json_names_the_build() {
             "repair_area",
             "mask_rect",
             "protect",
+            "repair",
             "seam",
             "align",
             "change_map",
@@ -240,6 +244,8 @@ fn describe_without_json_names_the_build() {
             "rasterize",
             "shrink",
             "invert",
+            "tighten",
+            "inspect",
             "fan",
             "profile",
             "ramp"

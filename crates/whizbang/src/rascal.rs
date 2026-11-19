@@ -1,8 +1,8 @@
 //! `whizbang rascal segment`, `select`, `grow`, `close`, `plug`, `subtract`, `feather`,
 //! `render`, `paste`, `fill`, `line`, `rect`, `stroke`, `rasterize`, `shrink`, `invert`,
-//! `cut`, `put`, `window`, `unwindow`, `apply`, `fan`, `profile` and `ramp`, and the
-//! recipes: wiring from arguments to the door (`whizbang::door`), which runs the action
-//! through the executor.
+//! `cut`, `put`, `window`, `unwindow`, `apply`, `tighten`, `inspect`, `fan`, `profile` and
+//! `ramp`, and the recipes: wiring from arguments to the door (`whizbang::door`), which
+//! runs the action through the executor.
 
 use std::path::PathBuf;
 
@@ -358,8 +358,9 @@ pub enum Command {
         /// The mask on the base, by its identity in the store.
         #[arg(long)]
         mask: String,
-        /// How the fill is pasted: `feather`, by the mask's core and blend.
-        #[arg(long, value_parser = ["feather"], default_value = "feather")]
+        /// How the fill is pasted: `feather`, by the mask's core and blend; `hard`, on
+        /// the core alone.
+        #[arg(long, value_parser = ["feather", "hard"], default_value = "feather")]
         mode: String,
         #[command(flatten)]
         common: Common,
@@ -380,6 +381,30 @@ pub enum Command {
         /// the config's default for fill answers.
         #[arg(long, value_name = "NAME")]
         backend: Option<String>,
+        #[command(flatten)]
+        common: Common,
+    },
+    #[command(about = whizbang_rascal::tighten::ABOUT, after_help = EXIT_CODES)]
+    Tighten(Op<whizbang_rascal::tighten::Args>),
+    #[command(about = whizbang_rascal::inspect::ABOUT, after_help = EXIT_CODES)]
+    Inspect(Op<whizbang_rascal::inspect::Args>),
+    /// Repair a scratch or a tear along a stroke and fill it: the recipe `repair`, whose
+    /// steps are tighten, feather and fill. Each step's run is printed, and then the
+    /// composite and the mask rebound onto it, committed to the store.
+    #[command(after_help = EXIT_CODES)]
+    Repair {
+        /// The picture, by its identity in the store.
+        #[arg(long)]
+        image: String,
+        /// The stroke along the defect, a location on the picture, by its identity in the
+        /// store, as `rascal stroke` prints it.
+        #[arg(long)]
+        stroke: String,
+        /// The filler, by its name in the config's `[backends.fill]` tables.
+        #[arg(long, value_name = "NAME")]
+        backend: Option<String>,
+        #[command(flatten)]
+        steps: Steps,
         #[command(flatten)]
         common: Common,
     },
@@ -839,6 +864,35 @@ fn run_at(
             ];
             let uses = Uses::One(Capability::Fill, backend.as_deref());
             operation_using(common, "fill", arguments, inputs, recovery, platform, uses)
+        }
+        Command::Tighten(op) => op.run(recovery, platform),
+        Command::Inspect(op) => op.run(recovery, platform),
+        Command::Repair {
+            image,
+            stroke,
+            backend,
+            steps,
+            common,
+        } => {
+            let mut arguments = Vec::new();
+            if let Some(backend) = backend {
+                arguments.push(("backend", Value::text(backend)));
+            }
+            arguments.extend(steps.arguments());
+            let inputs = vec![
+                ("image", "--image", image.as_str()),
+                ("stroke", "--stroke", stroke.as_str()),
+            ];
+            let uses = Uses::One(Capability::Fill, backend.as_deref());
+            let over = common.under.over(platform, uses)?;
+            let executor = built(&common.at, &over, recovery, false)?;
+            let asked = OperationAsked {
+                action: "repair",
+                arguments,
+                inputs,
+                request_id: common.request_id.as_deref(),
+            };
+            door::recipe(&executor, &asked, common.at.root())
         }
         Command::Fan(op) => op.run(recovery, platform),
         Command::Profile(op) => op.run(recovery, platform),

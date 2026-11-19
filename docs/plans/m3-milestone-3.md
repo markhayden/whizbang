@@ -850,7 +850,14 @@ pictures made in the tests, the row smoothing's kernel being `feather::exp_neg`.
   `constants::every_set_rascal_shipped_is_here_byte_for_byte`, `just docs` regenerated, and
   the carry-over row on `paste`'s modes closed or dropped with a line.
 
-**Keeping tests lean (O4).** Rascal's vectors; `poisson`'s benchmark `#[ignore]`d.
+**Split at the named seam (O4).** The first pull request is `tighten`, `repair`, `inspect`
+and `hard`, with every test of the "Done when" above but `poisson`'s; with `poisson` it
+would pass about 2,500 changed lines. `poisson` is O4's second pull request, which ticks the
+box.
+
+**Keeping tests lean (O4).** Rascal's vectors; `poisson`'s benchmark `#[ignore]`d. The
+pictures of `tighten`'s vectors are rascal's drawn at 256 by 192, where rascal's were 400 by
+300, under every one of rascal's thresholds.
 
 ## O5. `measure`, pictures from callers, and large results (large)
 

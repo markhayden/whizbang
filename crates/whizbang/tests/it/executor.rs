@@ -73,6 +73,7 @@ fn the_shipping_executor_describes_check_and_cannot_run_it_for_want_of_a_judge()
             "repair_area",
             "mask_rect",
             "protect",
+            "repair",
             "seam",
             "align",
             "change_map",
@@ -100,6 +101,8 @@ fn the_shipping_executor_describes_check_and_cannot_run_it_for_want_of_a_judge()
             "rasterize",
             "shrink",
             "invert",
+            "tighten",
+            "inspect",
             "fan",
             "profile",
             "ramp"

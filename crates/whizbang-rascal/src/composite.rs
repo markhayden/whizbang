@@ -8,7 +8,8 @@
 //! derivation it returns is made.
 //!
 //! The arithmetic is rascal's `feather` paste (`crates/rascal-ops/src/paste.rs`), in
-//! whole numbers.
+//! whole numbers; and its `hard` paste, which writes the fill on the core and nothing
+//! else (plan m3, task O4, item 3).
 
 use whizbang_core::artifact::{ArtifactError, Derivation, Mask};
 use whizbang_core::capability::{Painted, Picture};
@@ -89,9 +90,39 @@ impl Composite {
     }
 }
 
-/// Pastes `fill` onto `image` under `mask`, which belongs to the image.
+/// How a fill is pasted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// By the mask's weight: the core, and the blend mixed.
+    Feather,
+    /// The core alone: the fill on each core pixel not protected, the blend ignored.
+    Hard,
+}
+
+impl Mode {
+    /// The mode of this name.
+    pub fn named(name: &str) -> Option<Mode> {
+        match name {
+            "feather" => Some(Mode::Feather),
+            "hard" => Some(Mode::Hard),
+            _ => None,
+        }
+    }
+}
+
+/// Pastes `fill` onto `image` under `mask`, which belongs to the image, by the mask's
+/// weight: [`composite_in`] in [`Mode::Feather`].
+pub fn composite(
+    image: &Picture,
+    fill: &Painted,
+    mask: &Mask,
+) -> Result<Composite, CompositeError> {
+    composite_in(image, fill, mask, Mode::Feather)
+}
+
+/// Pastes `fill` onto `image` under `mask`, which belongs to the image, in `mode`.
 ///
-/// For each pixel, by the mask's three planes:
+/// For each pixel, by the mask's three planes, in [`Mode::Feather`]:
 ///
 /// - protected: the image's four bytes;
 /// - else in the core: the fill's red, green and blue, and the image's alpha;
@@ -101,10 +132,14 @@ impl Composite {
 ///
 /// Colours are mixed as they are stored, sRGB values of eight bits, straight and not
 /// multiplied by alpha. A pixel's alpha is never changed, whatever it is.
-pub fn composite(
+///
+/// In [`Mode::Hard`], a core pixel not protected takes the fill's red, green and blue and
+/// keeps the image's alpha; every other pixel, the blend's too, is the image's four bytes.
+pub fn composite_in(
     image: &Picture,
     fill: &Painted,
     mask: &Mask,
+    mode: Mode,
 ) -> Result<Composite, CompositeError> {
     let space = mask.space();
     mask.require_image(image.digest(), space)
@@ -131,10 +166,10 @@ pub fn composite(
     let planes = mask.core().iter().zip(mask.blend()).zip(mask.protect());
     let pixels = rgba.chunks_mut(4).zip(fill.rgb().chunks(3));
     for ((pixel, fill), ((core, blend), protect)) in pixels.zip(planes) {
-        let blend = match (*protect, *core, *blend) {
-            (0, 0, 0) => continue,
-            (0, 0, blend) => blend,
-            (0, _, _) => 255,
+        let blend = match (mode, *protect, *core, *blend) {
+            (_, 0, 0, 0) | (Mode::Hard, 0, 0, _) => continue,
+            (Mode::Feather, 0, 0, blend) => blend,
+            (_, 0, _, _) => 255,
             _ => continue,
         };
         for (channel, fill) in pixel[..3].iter_mut().zip(fill) {
