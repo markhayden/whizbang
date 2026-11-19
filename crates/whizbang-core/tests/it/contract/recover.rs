@@ -339,8 +339,9 @@ fn a_part_that_does_not_keep_to_a_name_made_once_fails_the_recovery() {
 
 /// How many events an open of the left store takes, how many more its recovery by
 /// two parts, and which of those is the last sync of the recovery's publication: the
-/// sync of the root after the pointer was replaced. One event follows it, the removal
-/// of the publication's staging, which changes no outcome.
+/// sync of the root after the pointer was replaced. Two events follow it, the removal
+/// of the older generation's file (ADR 0036) and of the publication's staging, which
+/// change no outcome.
 fn events_of_a_recovery() -> (usize, usize, usize) {
     let world = World::left();
     let fs = Arc::new(ShimFs::new());
@@ -351,7 +352,7 @@ fn events_of_a_recovery() -> (usize, usize, usize) {
     let root = Event::SyncDir(world.root());
     assert_eq!(events[0], root, "the confirming sync comes first");
     let last_sync = events.iter().rposition(|event| *event == root).unwrap();
-    assert_eq!(last_sync, events.len() - 2, "{events:?}");
+    assert_eq!(last_sync, events.len() - 3, "{events:?}");
     (opened, events.len(), last_sync)
 }
 
@@ -699,8 +700,11 @@ fn with_the_limit_set_low_a_recovery_that_cannot_be_published_leaves_deleting_an
     let remover = opening.remover().unwrap();
     assert_eq!(remover.snapshot().unwrap().number(), 2);
     remover.delete(&[LEFT[0]]).unwrap();
+    // The deletion's publication removed the older generation's file itself (ADR
+    // 0036); the prune removes the content only the deleted run named.
     let pruned = remover.prune().unwrap();
-    assert!(!pruned.generations_removed.is_empty());
+    assert!(pruned.generations_removed.is_empty(), "{pruned:?}");
+    assert!(pruned.objects_removed > 0, "{pruned:?}");
     assert_eq!(world.held().2.len(), 1);
     assert_eq!(part.asked(), 1);
     drop((remover, opening));

@@ -148,13 +148,15 @@ fn with_the_first_writer_paused_after_staging_a_reader_reads_and_a_second_writer
         b"staged by the first writer"
     );
 
-    // Once it has gone, a second writer is not refused.
+    // Once it has gone, a second writer is not refused. Its publication already removed
+    // generation 1's file (ADR 0036), so the prune finds none to remove.
     drop(first);
+    assert!(!root.join("generations/1.json").exists());
     let second = whizbang(&["prune"], &root);
     assert_eq!(second.code, Some(0), "{}", second.err);
     assert_eq!(
         second.out,
-        "generations removed: 1\ncontent files removed: 0\n"
+        "generations removed: 0\ncontent files removed: 0\n"
     );
 }
 
@@ -208,10 +210,13 @@ fn delete_removes_what_only_the_run_referenced_and_keeps_what_another_run_shares
     let root = with_runs(&dir);
     let deleted = whizbang(&["delete", "one"], &root);
     assert_eq!(deleted.code, Some(0), "{}", deleted.err);
+    // The deletion's own publication removed generation 1's file (ADR 0036); the prune
+    // that follows it removes content.
     assert_eq!(
         deleted.out,
-        "runs deleted: 1\ngeneration: 2\ngenerations removed: 1\ncontent files removed: 1\n"
+        "runs deleted: 1\ngeneration: 2\ngenerations removed: 0\ncontent files removed: 1\n"
     );
+    assert!(!root.join("generations/1.json").exists());
     assert!(!object(&root, RENDER).exists(), "only run one had it");
     assert!(object(&root, MASK).exists(), "run two shares it");
 

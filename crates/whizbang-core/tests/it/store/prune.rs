@@ -42,14 +42,26 @@ fn read_all(
     count
 }
 
+/// A reader that holds the current generation, so that the writer leaves its file as it
+/// publishes the next (ADR 0036) until the reader is dropped.
+fn holding(root: &Path) -> Reader {
+    let reader = Reader::open(root, Arc::new(RealFs)).unwrap();
+    reader.snapshot().unwrap();
+    reader
+}
+
 /// The store of `with_runs` after runs `one` and `two` were deleted, each by a
 /// publication of its own: generation 3, with two older generation files and two files
-/// of content that nothing names any more.
+/// of content that nothing names any more. Readers held the older two while the writer
+/// published, and are gone.
 fn with_deleted_runs(root: &Path) {
     with_runs(root);
+    let first = holding(root);
     let store = Store::open(root, Arc::new(ShimFs::new())).unwrap();
     store.delete(&["one"]).unwrap();
+    let second = holding(root);
     assert_eq!(store.delete(&["two"]).unwrap().generation, 3);
+    drop((first, second));
 }
 
 /// What a finished prune of `with_deleted_runs` leaves.
@@ -83,9 +95,12 @@ fn a_prune_removes_older_generations_and_content_that_nothing_names() {
 
     let fs = Arc::new(ShimFs::new());
     let store = Store::open(&root, fs.clone()).unwrap();
+    // A reader holds generation 1 while the writer publishes 2, and then lets it go.
+    let reader = holding(&root);
     let mut publication = store.begin().unwrap();
     publication.put("a", B).unwrap();
     assert_eq!(publication.publish().unwrap().generation, 2);
+    drop(reader);
     let before = fs.events().len();
     let pruned = store.prune().unwrap();
     assert_eq!(
@@ -203,7 +218,10 @@ fn a_reader_goes_on_reading_its_generation_through_a_prune_at_every_step_of_it()
         let fs = Arc::new(ShimFs::new());
         let store = Store::open(&root, fs.clone()).unwrap();
         store.delete(&["one"]).unwrap();
+        // Another reader holds generation 2 while the writer publishes 3, then goes.
+        let second = holding(&root);
         store.delete(&["two"]).unwrap();
+        drop(second);
         let read = Arc::new(Mutex::new(0));
         let hook = {
             let (reader, generation, read) = (reader.clone(), generation.clone(), read.clone());
@@ -281,10 +299,13 @@ fn a_reader_whose_generation_is_pruned_before_it_holds_it_reads_the_current_one(
     let hook = {
         let root = root.clone();
         move || {
+            // The deletion's publication removes generation 1's file, which nobody
+            // shares yet (ADR 0036); the prune, what only it named.
             let store = Store::open(&root, Arc::new(ShimFs::new())).unwrap();
             store.delete(&["one", "two"]).unwrap();
+            assert!(!root.join("generations/1.json").exists());
             let pruned = store.prune().unwrap();
-            assert_eq!(pruned.generations_removed, vec![1]);
+            assert_eq!(pruned.generations_removed, Vec::<u64>::new());
             assert_eq!(pruned.objects_removed, 2);
         }
     };
@@ -309,10 +330,13 @@ fn a_reader_that_shares_a_generation_file_already_pruned_reads_the_current_one()
     let hook = {
         let root = root.clone();
         move || {
+            // The deletion's publication takes generation 1's file alone and removes it
+            // (ADR 0036); the prune, what only it named.
             let store = Store::open(&root, Arc::new(ShimFs::new())).unwrap();
             store.delete(&["one", "two"]).unwrap();
+            assert!(!root.join("generations/1.json").exists());
             let pruned = store.prune().unwrap();
-            assert_eq!(pruned.generations_removed, vec![1]);
+            assert_eq!(pruned.generations_removed, Vec::<u64>::new());
             assert_eq!(pruned.objects_removed, 2);
         }
     };
@@ -380,9 +404,12 @@ fn no_publication_completes_inside_a_prune() {
     let root = with_old(&dir);
     let fs = Arc::new(ShimFs::new());
     let store = Arc::new(Store::open(&root, fs.clone()).unwrap());
+    // A reader holds generation 1 while the writer publishes 2, and then lets it go.
+    let reader = holding(&root);
     let mut publication = store.begin().unwrap();
     publication.put("a", A2).unwrap();
     assert_eq!(publication.publish().unwrap().generation, 2);
+    drop(reader);
 
     // The prune is stopped at its first event, the removal of generation 1's file: it
     // has read the current generation. Another thread publishes, and the prune goes on
@@ -514,7 +541,12 @@ fn a_prune_keeps_what_a_publication_in_progress_has_named() {
     let mut publication = store.begin().unwrap();
     publication.put("c", C).unwrap();
     publication.publish().unwrap();
-    assert_eq!(store.prune().unwrap().generations_removed, vec![1, 2]);
+    // Each publication removed the file of the generation before it (ADR 0036).
+    assert_eq!(names(&root, "generations"), ["3.json".to_string()].into());
+    assert_eq!(
+        store.prune().unwrap().generations_removed,
+        Vec::<u64>::new()
+    );
     assert_eq!(names(&root, "objects").len(), 5);
 }
 
@@ -684,8 +716,13 @@ fn what_a_writer_holds_is_left_by_its_own_prune_until_it_lets_go() {
     let mut publication = store.begin().unwrap();
     publication.put("kept", b"second").unwrap();
     publication.publish().unwrap();
+    // The publication of 3 removed 2, which nobody held, and left 1 (ADR 0036).
+    assert_eq!(
+        names(&root, "generations"),
+        ["1.json".to_string(), "3.json".to_string()].into()
+    );
     let pruned = store.prune().unwrap();
-    assert_eq!(pruned.generations_removed, vec![2]);
+    assert_eq!(pruned.generations_removed, Vec::<u64>::new());
     assert_eq!(pruned.generations_in_use, vec![1]);
     assert_eq!(pruned.objects_removed, 0);
     assert_eq!(store.read(note).unwrap(), b"the run's alone");
