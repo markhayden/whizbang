@@ -32,5 +32,6 @@ mod stroke;
 mod subtract;
 mod task;
 mod tighten;
+mod tool_records;
 mod unwindow;
 mod window;
