@@ -1219,6 +1219,16 @@ and the milestone's note is written.
   four labs, run by the orchestrator, and its scoring committed as the record; the
   owner's picks of the four labs' pairs and their decode added to it; the three
   `evidence::` tests, the transcript test, items 2 to 5, and the box.
+  **Clarified with the task** (B1, 2026-11-19, item 1, no change of rule): task success
+  keeps the IoU as item 1 names it, and the record gives beside it the drawn defect's
+  coverage (the share of its mask inside the recipe's, at weight 0.5 or more) and the
+  mask's size as a multiple of the defect's, because each recipe grows and feathers its
+  mask on purpose and IoU alone understates a mask that covers the whole defect; held by
+  `edits::task_success_is_the_masks_iou_and_the_fills_error_beside_a_blur_fill`. The
+  record's backends and spend are read from the steps' runs under each cell's run, where
+  the fills and finds are recorded, with the unresolved amount apart. A cell that failed
+  on a passing error is given one new attempt by `whizbang lab run --retry-failed` (ADR
+  0038, "Amended with task B1"), its failed attempt kept.
   The orchestrator's commands, from the worktree's root at the head being recorded, with
   `<P>` a folder of the set's pictures laid out as their repository is (a clone of the
   sets' repository at the set's `images_rev`), `<E>` a folder for the edit set outside any
@@ -1233,7 +1243,8 @@ and the milestone's note is written.
      `remove`, `remove_prompt`, `repair` and `repair_area`: `whizbang lab run --matrix
      labs/m3-edits/<r>-matrix.toml --corpus <E> --store <S> --config <config> --env-file
      <env>`, `remove_prompt`'s under `scripts/memory-watch.sh` and the thread guard at 200
-     (SAM 3 on the Mac finds its masks).
+     (SAM 3 on the Mac finds its masks); a round that ends with failed cells is run again
+     with `--retry-failed` before its pairs are written.
   3. `whizbang eval edits score --set <E> --store <S> --commit "$(git rev-parse HEAD)"
      --out docs/results`.
   4. For each recipe `r`: `whizbang lab pairs --matrix labs/m3-edits/<r>-matrix.toml

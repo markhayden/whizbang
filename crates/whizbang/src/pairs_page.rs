@@ -416,8 +416,13 @@ pub fn pairs(prepared: &Prepared, asked: &Asked<'_>) -> Result<Written, String> 
     if failed + open > 0 {
         return Err(format!(
             "{} cells of the pairs have no completed attempt ({failed} failed, {open} not run \
-             or interrupted); run the round again; no page was written",
-            failed + open
+             or interrupted); run the round again{}; no page was written",
+            failed + open,
+            if failed > 0 {
+                " with --retry-failed"
+            } else {
+                ""
+            }
         ));
     }
     let [a, b] = &protocol.arms;

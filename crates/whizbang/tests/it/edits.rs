@@ -22,7 +22,7 @@ use whizbang_eval::lab::corpus::Corpus;
 use whizbang_eval::lab::digest_of;
 use whizbang_testkit::scratch::Scratch;
 
-use crate::lab::{Counting, backends, checked, counting_config};
+use crate::lab::{Counting, FILL_PRICE, backends, checked, counting_config};
 
 /// A picture of 64 by 64 as a set's file would be: a gradient, its colours shifted by
 /// `tint`, with its pin as a job holds it.
@@ -280,6 +280,10 @@ fn task_success_is_the_masks_iou_and_the_fills_error_beside_a_blur_fill() {
     }
     let weights = block(10, 10, 20, 22, 0.4);
     assert_eq!(edits::iou(&truth, &weights), Ok(100.0 / 120.0));
+    // Beside the IoU, which a mask grown on purpose lowers: the share of the defect the
+    // mask covers, all of it, and the mask's size as a multiple of the defect's.
+    assert_eq!(edits::coverage(&truth, &weights), Ok(1.0));
+    assert_eq!(edits::size_ratio(&truth, &weights), Ok(120.0 / 100.0));
     // A flat clean picture; the defect painted over it; the fill leaves 30 in red over the
     // clean picture inside the defect: a mean error of 10 a channel.
     let flat: Vec<u8> = [120_u8, 140, 160, 255].repeat(64 * 64);
@@ -294,6 +298,7 @@ fn task_success_is_the_masks_iou_and_the_fills_error_beside_a_blur_fill() {
     let scored = edits::score_item(&defect, &flat, &truth, &output, &weights, 64, 64).unwrap();
     assert_eq!(scored.changed_outside, 0);
     assert_eq!(scored.iou, 100.0 / 120.0);
+    assert_eq!((scored.coverage, scored.size_ratio), (1.0, 1.2));
     assert_eq!(scored.fill_error, 10.0);
     // A plain blur fill of the same mask: around a flat picture it is the clean picture
     // inside the defect, and outside the support it changes nothing.
@@ -308,6 +313,12 @@ fn task_success_is_the_masks_iou_and_the_fills_error_beside_a_blur_fill() {
     let away = block(40, 40, 50, 50, 0.0);
     let missed = edits::score_item(&defect, &flat, &truth, &defect, &away, 64, 64).unwrap();
     assert_eq!(missed.iou, 0.0);
+    assert_eq!((missed.coverage, missed.size_ratio), (0.0, 1.0));
+    // A mask half over the defect: half of it covered, at the defect's size.
+    let half = block(15, 10, 25, 20, 0.0);
+    assert_eq!(edits::coverage(&truth, &half), Ok(0.5));
+    assert_eq!(edits::iou(&truth, &half), Ok(50.0 / 150.0));
+    assert_eq!(edits::size_ratio(&truth, &half), Ok(1.0));
     assert_eq!(missed.fill_error, (130.0 + 140.0 + 160.0) / 3.0);
     assert_eq!(missed.blur_error, missed.fill_error);
     scored_from_a_round();
@@ -375,6 +386,21 @@ fn scored_from_a_round() {
     let iou = block.mask_iou_mean.unwrap();
     assert!(iou > 0.0 && iou < 1.0, "{iou}");
     assert!(block.mask_iou_min.unwrap() <= iou);
+    // ... which is why the coverage is beside it: the grown box covers the spot.
+    let coverage = block.coverage_mean.unwrap();
+    assert!(coverage > iou && coverage <= 1.0, "{coverage}");
+    assert!(block.coverage_min.unwrap() <= coverage);
+    assert!(block.size_ratio_mean.unwrap() > 1.0);
+    // The backends as the runs' records hold them (the fill is a step's run, under the
+    // recipe's), no finder for a recipe that uses none, and what the fills settled.
+    assert_eq!(block.filler, "counting eraser 1");
+    assert_eq!(block.finder, "none");
+    assert_eq!(
+        (block.settled_micros, block.unresolved_micros),
+        (3 * FILL_PRICE, 0)
+    );
+    assert_eq!(record.settled_micros, 3 * FILL_PRICE);
+    assert_eq!(record.unresolved_micros, 0);
     // An inverting fill is worse than a blur of what is around the defect.
     let (fill, blur) = (
         block.fill_error_mean.unwrap(),
@@ -390,6 +416,11 @@ fn scored_from_a_round() {
     // The record: the commit, the shipped recipe's digest, and aggregates only.
     let page = record.page();
     assert!(page.contains("commit = \"0123456789abcdef0123456789abcdef01234567\""));
+    assert!(page.contains("filler = \"counting eraser 1\""), "{page}");
+    assert!(
+        page.contains("so IoU alone\n  understates a mask that covers the whole defect"),
+        "{page}"
+    );
     let shipped = digest_of(whizbang_rascal::recipes::REPAIR_AREA.as_bytes());
     assert!(
         page.contains(&format!("recipe_digest = \"{shipped}\"")),

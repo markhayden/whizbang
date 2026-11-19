@@ -33,7 +33,7 @@ use whizbang_eval::lab::matrix::{Checks, Matrix, Validated};
 use whizbang_eval::lab::protocol::{self, Protocol};
 use whizbang_eval::lab::{decode, digest_of, read_relative};
 
-use crate::harness::{self, Ended, Running};
+use crate::harness::{self, Ended, Resume, Running};
 use crate::wiring::{Configured, Over};
 
 /// The most bytes of a lab's file (a manifest, a protocol, a matrix) that are read.
@@ -413,6 +413,12 @@ pub struct Report {
     pub handed_back: usize,
     /// Attempts started by this run of the round.
     pub started: usize,
+    /// Of those, the cells retried after a failed attempt: none unless the run was asked
+    /// to (`--retry-failed`), when it is said.
+    pub retried: Option<usize>,
+    /// Failed attempts the store keeps of cells a later attempt then ran: each a record of
+    /// a failure, never removed.
+    pub failed_before: usize,
     /// Of the other cells, those whose last attempt completed, failed or was interrupted,
     /// and those with none.
     pub completed: usize,
@@ -426,7 +432,7 @@ pub struct Report {
 
 impl Report {
     pub fn text(&self) -> String {
-        format!(
+        let mut text = format!(
             "cells: {}\nhanded back by a reference arm: {}\nstarted now: {}\ncompleted: {}\n\
              failed: {}\ninterrupted: {}\nnot run: {}\n",
             self.cells,
@@ -436,16 +442,49 @@ impl Report {
             self.failed,
             self.interrupted,
             self.not_run
-        ) + &(self.first_failed.as_ref())
-            .map(|why| format!("first failed: {why}\n"))
-            .unwrap_or_default()
+        );
+        if let Some(retried) = self.retried {
+            text.push_str(&format!("retried now: {retried}\n"));
+        }
+        if self.failed_before > 0 {
+            let kept = self.failed_before;
+            text.push_str(&format!("failed attempts kept from earlier: {kept}\n"));
+        }
+        if let Some(why) = &self.first_failed {
+            text.push_str(&format!("first failed: {why}\n"));
+        }
+        text
+    }
+
+    /// Why `lab run` fails after printing the report: some cells' last attempt failed. It
+    /// names the flag that gives each of them one new attempt.
+    pub fn failure(&self) -> Option<String> {
+        (self.failed > 0).then(|| {
+            format!(
+                "{} cells failed; `whizbang lab run --retry-failed` gives each failed cell one \
+                 new attempt, its failed one kept",
+                self.failed
+            )
+        })
     }
 }
 
 /// Runs a prepared round's cells still to run on the shared harness, one at a time, and
 /// reports on every cell as the store then holds it. Its forecast passing what the
-/// allowance has left is refused before its first cell.
+/// allowance has left is refused before its first cell. A failed cell is kept and not
+/// run again.
 pub fn round(prepared: &Prepared, running: &Running<'_>) -> Result<Report, String> {
+    round_resuming(prepared, running, Resume::KeepFailed)
+}
+
+/// [`round`], with what is done with a failed cell said by `resume`: under
+/// [`Resume::RetryFailed`] each cell of a recipe whose last attempt failed is given one new
+/// attempt in this run, forecast and reserved as any other, its failed attempt kept.
+pub fn round_resuming(
+    prepared: &Prepared,
+    running: &Running<'_>,
+    resume: Resume,
+) -> Result<Report, String> {
     let labs: Vec<LabCell<'_>> = (prepared.cells.iter())
         .map(|cell| LabCell {
             cell,
@@ -455,11 +494,12 @@ pub fn round(prepared: &Prepared, running: &Running<'_>) -> Result<Report, Strin
         .collect();
     let work: Vec<&dyn harness::Work> = labs.iter().map(|c| c as &dyn harness::Work).collect();
     let recognise = harness::by_request(&prepared.scope, &work);
-    let started = harness::run(&work, &recognise, running, 1, "round")?;
+    let started = harness::run_resuming(&work, &recognise, running, 1, "round", resume)?;
     let now = harness::attempts(running.root, &recognise)?;
     let mut report = Report {
         cells: prepared.cells.len(),
-        started,
+        started: started.started,
+        retried: (resume == Resume::RetryFailed).then_some(started.retried),
         ..Report::default()
     };
     for cell in &prepared.cells {
@@ -467,7 +507,18 @@ pub fn round(prepared: &Prepared, running: &Running<'_>) -> Result<Report, Strin
             report.handed_back += 1;
             continue;
         }
-        match now.get(&cell.identity).and_then(|list| list.last()) {
+        let list = now
+            .get(&cell.identity)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let (last, before) = match list.split_last() {
+            Some((last, before)) => (Some(last), before),
+            None => (None, &[][..]),
+        };
+        report.failed_before += (before.iter())
+            .filter(|(_, _, ended)| *ended == Ended::Failed)
+            .count();
+        match last {
             None => report.not_run += 1,
             Some((_, _, Ended::Completed)) => report.completed += 1,
             Some((_, run, Ended::Failed)) => {

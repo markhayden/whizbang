@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use clap::Subcommand;
-use whizbang::harness::Running;
+use whizbang::harness::{Resume, Running};
 use whizbang::laboratory::{self, Asked};
 use whizbang::wiring::{Platform, Uses};
 
@@ -24,7 +24,8 @@ pub enum Command {
     /// from the corpus's folder, checked against the manifest's digests and brought into
     /// the store first, each picture as the projection the manifest says (flat when it
     /// says none). Run again, it resumes: a cell that completed or failed is not run
-    /// again, and one that was interrupted is. Refused before its first cell when its
+    /// again, and one that was interrupted is; with --retry-failed, a failed one is too.
+    /// Refused before its first cell when its
     /// forecast passes what the store's allowance has left, and when the store holds runs
     /// of the lab under another protocol. Prints counts, and the first failed cell with
     /// its run's words.
@@ -35,6 +36,13 @@ pub enum Command {
         /// The folder the corpus manifest's files are relative to.
         #[arg(long, value_name = "DIR")]
         corpus: PathBuf,
+        /// Give each cell whose last attempt failed one new attempt in this run, forecast
+        /// and paid as any other; its failed attempt stays on record and its charge on the
+        /// ledger, and a completed cell is never run again. A cell refused for what it was
+        /// given (as `cut` refuses a picture that is not a panorama) is retried too when
+        /// asked, though a retry cannot change that.
+        #[arg(long)]
+        retry_failed: bool,
         #[command(flatten)]
         at: Where,
         #[command(flatten)]
@@ -119,6 +127,7 @@ pub fn run(command: &Command, platform: Platform) -> Result<(String, Option<Stri
         Command::Run {
             matrix,
             corpus,
+            retry_failed,
             at,
             under,
         } => {
@@ -141,9 +150,13 @@ pub fn run(command: &Command, platform: Platform) -> Result<(String, Option<Stri
                 left_micros,
                 stop: &|| false,
             };
-            let report = laboratory::round(&prepared, &running)?;
-            let failed = (report.failed > 0).then(|| "some cells failed".to_owned());
-            Ok((report.text(), failed))
+            let resume = if *retry_failed {
+                Resume::RetryFailed
+            } else {
+                Resume::KeepFailed
+            };
+            let report = laboratory::round_resuming(&prepared, &running, resume)?;
+            Ok((report.text(), report.failure()))
         }
         Command::Pairs {
             matrix,

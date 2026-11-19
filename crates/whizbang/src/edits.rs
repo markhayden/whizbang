@@ -25,11 +25,19 @@
 //!   0 and which differ, in any channel, from the picture the recipe was given (0 is
 //!   required);
 //! - **task success**: the IoU of the result's mask, where its weight is at least a half,
-//!   with the drawn defect's mask; and the fill's mean error, per channel, inside the drawn
+//!   with the drawn defect's mask, and beside it the defect's coverage (the share of the
+//!   drawn defect inside that mask) and the mask's size as a multiple of the defect's,
+//!   since each recipe grows and feathers its mask on purpose and IoU alone understates a
+//!   mask that covers the defect; and the fill's mean error, per channel, inside the drawn
 //!   defect's mask against the clean picture, beside the error there of a plain blur fill
 //!   of the same mask (each pixel the mask weighs filled with the mean of the pixels it
 //!   does not weigh in the smallest square around it that holds any, put back through the
 //!   mask's weights).
+//!
+//! The backends are those the records of the cells' runs, and of the steps' runs under
+//! them, say each request went to (`<provider> <model> <version>`, or `none` for a
+//! capability no request of the recipe used), and the spend is what every attempt's
+//! requests were settled at, failed ones included, with the part no answer settled apart.
 //!
 //! What is written is aggregates by recipe alone, never an item.
 
@@ -1004,6 +1012,42 @@ pub fn iou(truth: &[bool], weights: &[f32]) -> Result<f64, String> {
     })
 }
 
+/// The share of the drawn defect's pixels inside the mask, where its weight is at least a
+/// half.
+pub fn coverage(truth: &[bool], weights: &[f32]) -> Result<f64, String> {
+    let (both, defect, _) = overlap("coverage", truth, weights)?;
+    Ok(if defect == 0 {
+        0.0
+    } else {
+        both as f64 / defect as f64
+    })
+}
+
+/// The mask's pixels, where its weight is at least a half, as a multiple of the drawn
+/// defect's.
+pub fn size_ratio(truth: &[bool], weights: &[f32]) -> Result<f64, String> {
+    let (_, defect, masked) = overlap("the mask's size", truth, weights)?;
+    Ok(if defect == 0 {
+        0.0
+    } else {
+        masked as f64 / defect as f64
+    })
+}
+
+/// The pixels of the drawn defect inside the mask (where its weight is at least a half),
+/// of the defect, and of the mask.
+fn overlap(what: &str, truth: &[bool], weights: &[f32]) -> Result<(u64, u64, u64), String> {
+    sizes(what, truth.len(), &[], &[weights.len()])?;
+    let (mut both, mut defect, mut masked) = (0_u64, 0_u64, 0_u64);
+    for (t, w) in truth.iter().zip(weights) {
+        let inside = *w >= 0.5;
+        both += u64::from(*t && inside);
+        defect += u64::from(*t);
+        masked += u64::from(inside);
+    }
+    Ok((both, defect, masked))
+}
+
 /// The mean absolute error, per channel of red, green and blue, inside `region`.
 fn mean_error(result: &[u8], clean: &[u8], region: &[bool]) -> f64 {
     let (mut sum, mut count) = (0_u64, 0_u64);
@@ -1104,6 +1148,8 @@ pub fn blur_fill(
 pub struct Scored {
     pub changed_outside: u64,
     pub iou: f64,
+    pub coverage: f64,
+    pub size_ratio: f64,
     pub fill_error: f64,
     pub blur_error: f64,
 }
@@ -1130,6 +1176,8 @@ pub fn score_item(
     Ok(Scored {
         changed_outside: changed_outside(input, output, weights)?,
         iou: iou(truth, weights)?,
+        coverage: coverage(truth, weights)?,
+        size_ratio: size_ratio(truth, weights)?,
         fill_error: mean_error(output, clean, truth),
         blur_error: mean_error(&blurred, clean, truth),
     })
@@ -1169,12 +1217,21 @@ pub struct RecipeScore {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mask_iou_min: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub coverage_mean: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coverage_min: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_ratio_mean: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub fill_error_mean: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blur_error_mean: Option<f64>,
     /// Items whose fill's error is below the blur fill's.
     pub fill_beats_blur: u64,
+    /// What the requests of every attempt of the lab's cells, and of the steps' runs under
+    /// them, were settled at; and of that, what no answer settled.
     pub settled_micros: u64,
+    pub unresolved_micros: u64,
 }
 
 /// The record of a scoring: the run's head, and each recipe's aggregates.
@@ -1188,6 +1245,7 @@ pub struct Record {
     pub pictures: u64,
     pub items: u64,
     pub settled_micros: u64,
+    pub unresolved_micros: u64,
     pub recipe: Vec<RecipeScore>,
 }
 
@@ -1214,7 +1272,11 @@ impl Record {
              - **Task success**: the IoU of the result's mask, where its weight is at least a half,\n\
              \x20 with the drawn defect's mask (for `remove_prompt`, the whole recipe's shaped mask);\n\
              \x20 and the fill's mean error per channel (0 to 255) inside the drawn defect's mask\n\
-             \x20 against the clean picture, beside that of a plain blur fill of the same mask.\n\n\
+             \x20 against the clean picture, beside that of a plain blur fill of the same mask.\n\
+             \x20 Beside the IoU, the defect's coverage (the share of the drawn defect inside the\n\
+             \x20 mask, where its weight is at least a half) and the mask's size as a multiple of\n\
+             \x20 the defect's: each recipe grows and feathers its mask on purpose, so IoU alone\n\
+             \x20 understates a mask that covers the whole defect.\n\n\
              ## The run\n\n```toml\n",
         );
         for (name, value) in [
@@ -1226,6 +1288,7 @@ impl Record {
             ("pictures", self.pictures.to_string()),
             ("items", self.items.to_string()),
             ("settled_micros", self.settled_micros.to_string()),
+            ("unresolved_micros", self.unresolved_micros.to_string()),
         ] {
             page.push_str(&format!("{name} = \"{value}\"\n"));
         }
@@ -1256,10 +1319,14 @@ impl Record {
                 ("items_preserved", recipe.items_preserved.to_string()),
                 ("mask_iou_mean", shown(recipe.mask_iou_mean)),
                 ("mask_iou_min", shown(recipe.mask_iou_min)),
+                ("coverage_mean", shown(recipe.coverage_mean)),
+                ("coverage_min", shown(recipe.coverage_min)),
+                ("size_ratio_mean", shown(recipe.size_ratio_mean)),
                 ("fill_error_mean", shown(recipe.fill_error_mean)),
                 ("blur_error_mean", shown(recipe.blur_error_mean)),
                 ("fill_beats_blur", recipe.fill_beats_blur.to_string()),
                 ("settled_micros", recipe.settled_micros.to_string()),
+                ("unresolved_micros", recipe.unresolved_micros.to_string()),
             ] {
                 page.push_str(&format!("{name} = \"{value}\"\n"));
             }
@@ -1272,7 +1339,7 @@ impl Record {
     pub fn toml(&self) -> String {
         let mut text = format!(
             "commit = {}\nwhizbang = {}\nset = {}\nseed = {}\nphrase = {}\npictures = {}\n\
-             items = {}\nsettled_micros = {}\n",
+             items = {}\nsettled_micros = {}\nunresolved_micros = {}\n",
             quote(&self.commit),
             quote(&self.whizbang),
             quote(&self.set),
@@ -1280,7 +1347,8 @@ impl Record {
             quote(&self.phrase),
             self.pictures,
             self.items,
-            self.settled_micros
+            self.settled_micros,
+            self.unresolved_micros
         );
         for r in &self.recipe {
             let sets: Vec<String> = r.constant_sets.iter().map(|s| quote(s)).collect();
@@ -1288,7 +1356,7 @@ impl Record {
                 "\n[[recipe]]\nrecipe = {}\nrecipe_digest = {}\nconstant_sets = [{}]\nlab = {}\n\
                  protocol_digest = {}\nfiller = {}\nfinder = {}\nitems = {}\ncompleted = {}\n\
                  failed = {}\nnot_run = {}\nchanged_outside_mask = {}\nitems_preserved = {}\n\
-                 fill_beats_blur = {}\nsettled_micros = {}\n",
+                 fill_beats_blur = {}\nsettled_micros = {}\nunresolved_micros = {}\n",
                 quote(&r.recipe),
                 quote(&r.recipe_digest),
                 sets.join(", "),
@@ -1303,11 +1371,15 @@ impl Record {
                 r.changed_outside_mask,
                 r.items_preserved,
                 r.fill_beats_blur,
-                r.settled_micros
+                r.settled_micros,
+                r.unresolved_micros
             ));
             for (name, value) in [
                 ("mask_iou_mean", r.mask_iou_mean),
                 ("mask_iou_min", r.mask_iou_min),
+                ("coverage_mean", r.coverage_mean),
+                ("coverage_min", r.coverage_min),
+                ("size_ratio_mean", r.size_ratio_mean),
                 ("fill_error_mean", r.fill_error_mean),
                 ("blur_error_mean", r.blur_error_mean),
             ] {
@@ -1357,13 +1429,26 @@ struct Attempt {
 }
 
 /// What the store holds of one lab: each cell's last attempt by the image it was given,
-/// what was settled, and the models its requests went to.
+/// what every attempt and the steps' runs under it were settled at and of that what no
+/// answer settled, and the models their requests went to.
 #[derive(Default)]
 struct Held {
     attempts: BTreeMap<ArtifactId, Attempt>,
     settled_micros: u64,
+    unresolved_micros: u64,
     models: BTreeMap<Capability, BTreeSet<String>>,
 }
+
+/// What one run of the store says of its spend and its models, and the run that called it.
+struct Spent {
+    parent: Option<String>,
+    settled_micros: u64,
+    unresolved_micros: u64,
+    models: Vec<(Capability, String)>,
+}
+
+/// The most runs walked up from a step's run to the lab's cell that called it.
+const NESTING_LIMIT: usize = 64;
 
 /// One recipe's lab, as committed: its scope, and the shipped recipe it runs.
 struct Lab {
@@ -1414,7 +1499,26 @@ fn lab_of(labs: &Path, recipe: &str) -> Result<Lab, String> {
 /// Every lab's cells the store at `root` holds, by the lab's scope.
 fn held(root: &Path, labs: &[Lab]) -> Result<BTreeMap<String, Held>, String> {
     let mut found: BTreeMap<String, Held> = BTreeMap::new();
-    harness::each_run(root, &mut |record, _, ended| {
+    // Every run's spend and models, and each lab cell's run by its id with its lab's scope:
+    // a fill or a find is a step's run nested under the recipe's, and holds what was paid.
+    let mut spent: BTreeMap<String, Spent> = BTreeMap::new();
+    let mut cells: BTreeMap<String, String> = BTreeMap::new();
+    harness::each_run(root, &mut |record, run, ended| {
+        let paid = &record.spend().requests;
+        spent.insert(
+            run.to_owned(),
+            Spent {
+                parent: record.identity().parent.clone(),
+                settled_micros: paid.iter().map(|p| p.settled_micros()).sum(),
+                unresolved_micros: paid.iter().map(|p| p.unresolved_micros()).sum(),
+                models: (record.models().iter())
+                    .map(|m| {
+                        let name = format!("{} {} {}", m.backend, m.model, m.version);
+                        (m.capability, name)
+                    })
+                    .collect(),
+            },
+        );
         let Some((scope, _, attempt)) = harness::named_by_request(record) else {
             return;
         };
@@ -1427,16 +1531,8 @@ fn held(root: &Path, labs: &[Lab]) -> Result<BTreeMap<String, Held>, String> {
         let Some(image) = (record.inputs().iter()).find(|i| i.port == "image") else {
             return;
         };
+        cells.insert(run.to_owned(), scope.clone());
         let held = found.entry(scope).or_default();
-        for paid in &record.spend().requests {
-            held.settled_micros += paid.settled_micros();
-        }
-        for model in record.models() {
-            (held.models.entry(model.capability).or_default()).insert(format!(
-                "{} {} {}",
-                model.backend, model.model, model.version
-            ));
-        }
         let outputs = (record.outputs().iter())
             .map(|o| (o.port.clone(), ArtifactId(o.artifact)))
             .collect();
@@ -1453,6 +1549,27 @@ fn held(root: &Path, labs: &[Lab]) -> Result<BTreeMap<String, Held>, String> {
             );
         }
     })?;
+    for (run, what) in &spent {
+        // The lab cell this run is, or is nested under.
+        let mut at = Some(run.as_str());
+        let mut scope = None;
+        for _ in 0..NESTING_LIMIT {
+            let Some(here) = at else { break };
+            if let Some(of) = cells.get(here) {
+                scope = Some(of);
+                break;
+            }
+            at = spent.get(here).and_then(|s| s.parent.as_deref());
+        }
+        let Some(held) = scope.and_then(|of| found.get_mut(of)) else {
+            continue;
+        };
+        held.settled_micros += what.settled_micros;
+        held.unresolved_micros += what.unresolved_micros;
+        for (capability, name) in &what.models {
+            (held.models.entry(*capability).or_default()).insert(name.clone());
+        }
+    }
     Ok(found)
 }
 
@@ -1540,12 +1657,17 @@ pub fn score(scoring: &Scoring<'_>) -> Result<Record, String> {
             items_preserved: 0,
             mask_iou_mean: None,
             mask_iou_min: None,
+            coverage_mean: None,
+            coverage_min: None,
+            size_ratio_mean: None,
             fill_error_mean: None,
             blur_error_mean: None,
             fill_beats_blur: 0,
             settled_micros: held.settled_micros,
+            unresolved_micros: held.unresolved_micros,
         };
         let (mut ious, mut fills, mut blurs) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut covered, mut ratios) = (Vec::new(), Vec::new());
         for item in set.item.iter().filter(|i| i.recipe == lab.recipe) {
             score.items += 1;
             let bytes = pinned(scoring.set, &item.picture, &item.picture_sha256)?;
@@ -1589,11 +1711,16 @@ pub fn score(scoring: &Scoring<'_>) -> Result<Record, String> {
             score.items_preserved += u64::from(scored.changed_outside == 0);
             score.fill_beats_blur += u64::from(scored.fill_error < scored.blur_error);
             ious.push(scored.iou);
+            covered.push(scored.coverage);
+            ratios.push(scored.size_ratio);
             fills.push(scored.fill_error);
             blurs.push(scored.blur_error);
         }
         score.mask_iou_mean = mean(&ious);
         score.mask_iou_min = ious.iter().copied().reduce(f64::min);
+        score.coverage_mean = mean(&covered);
+        score.coverage_min = covered.iter().copied().reduce(f64::min);
+        score.size_ratio_mean = mean(&ratios);
         score.fill_error_mean = mean(&fills);
         score.blur_error_mean = mean(&blurs);
         recipes.push(score);
@@ -1607,6 +1734,7 @@ pub fn score(scoring: &Scoring<'_>) -> Result<Record, String> {
         pictures: set.source.len() as u64,
         items: set.item.len() as u64,
         settled_micros: recipes.iter().map(|r| r.settled_micros).sum(),
+        unresolved_micros: recipes.iter().map(|r| r.unresolved_micros).sum(),
         recipe: recipes,
     })
 }
