@@ -617,6 +617,22 @@ Its second pull request; `egress::prepare::…` are its tests, in
   `prepare::an_answer_that_points_to_an_address_holding_a_secret_of_the_run_is_not_handed_to_the_backend`).
   The client's own look at such an address knows only the secrets it was made with.
 
+### The normal form of a folder (plan m3, task F1)
+
+APFS takes the two normal forms of an accented letter (`é` as one letter, U+00E9, and as
+`e` with its accent after it, U+0065 U+0301) as one name. On macOS the check behind a
+send now lowers both texts as above and then puts them in Unicode's canonical
+decomposition (NFD), so a folder kept out is found written in either form, in any case
+(`egress::gate::a_store_under_a_folder_in_another_normal_form_is_kept_out`). Elsewhere a
+folder is still found as it is written.
+
+The decomposition's tables come from two crates new to the build, `unicode-normalization`
+0.1.25 (pinned exactly in `crates/whizbang-core/Cargo.toml`, default features off) and its
+one dependency `tinyvec` 1.13.3 (pinned by the lock); both are on the licence allowlist.
+**The owner approved both on 2026-11-19**, answering "The two small crates
+(unicode-normalization, tinyvec): yes or no" with "yes thats fine". Until then the folding
+waited on its own branch, out of F1's second pull request.
+
 ### Limits, each pinned or stated
 
 - **A refused backend was still called, and is not now.** The plan refuses a request
