@@ -61,7 +61,8 @@ def box_plane(box):
 class StandIn:
     """The runtime, standing in: `answers` gives each phrase its candidates, each a score
     and a box in the picture's pixels; `places` gives a point or a box its candidates,
-    each a predicted IoU and a box; a candidate's plane is on inside its box."""
+    each a predicted IoU and a box; a candidate's plane is on inside its box, or inside a
+    third item a phrase's candidate may give, the box of its plane alone."""
 
     def __init__(self, answers, device="mps", places=()):
         self.answers = answers
@@ -99,13 +100,14 @@ class StandIn:
     def candidates(self, features, phrase):
         assert features == ("features", WIDTH, HEIGHT, 4 * WIDTH * HEIGHT)
         self.asked.append(phrase)
-        return phrase, [(index, score, box) for index, (score, box) in enumerate(self.answers.get(phrase, []))]
+        return phrase, [(index, given[0], given[1]) for index, given in enumerate(self.answers.get(phrase, []))]
 
     def plane(self, features, answer, index):
         self.planes.append((answer, index))
         if answer == ("place",):
             return box_plane(self.place_answers[index][1])
-        return box_plane(self.answers[answer][index][1])
+        given = self.answers[answer][index]
+        return box_plane(given[2] if len(given) > 2 else given[1])
 
     def memory(self):
         return None
@@ -175,6 +177,19 @@ class Phrase(unittest.TestCase):
         # The other settings of the kind are taken, not used, and the load says so.
         _, said = loaded(StandIn(answers), {"min_cover": "0.2", "outline": "whole", "pad": "0.05"})
         self.assertEqual(said, "loaded on mps; threshold 0.5; min_cover, outline, pad taken and not used by sam3")
+
+    def test_a_phrases_box_holds_every_pixel_its_plane_has_on(self):
+        # SAM 3 draws its mask apart from its box, and the mask can reach past the box: on
+        # a picture of milestone 2's sets a door's mask began five pixels left of its box.
+        # The instance's box is then the bounds of what its plane has on, as a point's and
+        # a box's are, so the core can take it: a pixel on outside an instance's box is
+        # refused (`Instance::new`). Where the plane is inside the box, the box is the
+        # plane's bounds too.
+        answers = {"door": [(0.9, [2.4, 1.2, 5.0, 4.0], [1, 1, 5, 4])], "shed": [(0.8, [0.5, 0.5, 7.5, 5.5], [1, 1, 7, 5])]}
+        made, _ = loaded(StandIn(answers))
+        found, _ = made.segment(request(phrases("door", "shed")), Asked())
+        self.assertEqual(answered(found), [(0, 0.9, [1.0, 1.0, 5.0, 4.0]), (1, 0.8, [1.0, 1.0, 7.0, 5.0])])
+        self.assertEqual(found[0].samples, box_plane([1, 1, 5, 4]))
 
     def test_candidates_are_cut_to_the_most_instances_asked_before_a_full_size_plane_is_made(self):
         # Ten candidates over the threshold for one phrase, three for the other; two asked
