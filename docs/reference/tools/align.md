@@ -145,10 +145,10 @@ Measured in a release build on macos aarch64; each time is the middle one of fiv
 
 | Image | `align` |
 |---|---|
-| 256x192 | 75 |
-| 512x384 | 139 |
-| 1024x768 | 384 |
-| 2048x1536 | 388 |
+| 256x192 | 67 |
+| 512x384 | 105 |
+| 1024x768 | 270 |
+| 2048x1536 | 277 |
 
 <!-- timed: end -->
 

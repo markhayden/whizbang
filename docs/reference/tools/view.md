@@ -64,10 +64,11 @@ doubles, so the same request gives the same bytes on every machine.
    of column weight times row weight times source sample. That is the mean to the nearest
    level, a half going up. The four channels are averaged apart.
 6. **The file.** The crop is written as a PNG of 8 bits a channel, red, green, blue and
-   alpha, with no other chunk, by the `image` crate, with its default compression and its
-   adaptive filter. The bytes come from the `png` crate and the compressor it calls at
-   that setting, `flate2` over `miniz_oxide`. All four are pinned to exact versions in
-   `crates/whizbang-squint/Cargo.toml`, and a test holds the pins to the lock file. The
+   alpha, with no other chunk, by the core's one encoder (`whizbang_core::identity::encode`):
+   the `image` crate, with its fast compression and its adaptive filter. The bytes come
+   from the `png` crate and the compressor it calls at that setting, `fdeflate`. All three
+   are pinned to exact versions in `crates/whizbang-core/Cargo.toml`, and a test holds the
+   pins to the lock file. The
    file is then read back through the core's decoder, and must give the pixels that were
    put in it.
 7. **The binding.** The crop's pixels onto the source's pixels, by a crop mapping with the
@@ -188,21 +189,21 @@ Measured on Apple M4 Max (macos, aarch64), in a release build; each time is the 
 
 | Image | Megapixels | File | `view` of the whole image | Of which reading the image | `view` of a box 256 pixels square |
 |---|---|---|---|---|---|
-| 1024x768 | 0.8 | 0.1 MB | 10 | 2.8 | 3.5 |
-| 4096x3072 | 12.6 | 1.5 MB | 72 | 43 | 44 |
-| 8000x6000 | 48.0 | 5.9 MB | 256 | 161 | 162 |
+| 1024x768 | 0.8 | 0.1 MB | 7.9 | 2.7 | 3.4 |
+| 4096x3072 | 12.6 | 1.5 MB | 67 | 51 | 43 |
+| 8000x6000 | 48.0 | 5.9 MB | 246 | 163 | 164 |
 
 | Picture | Method | Samples that differ from the exact mean | Largest difference, in levels | Mean difference | The whole call |
 |---|---|---|---|---|---|
-| The scene of the examples, 1280x800, shown at 1024x640 | The area mean in whole numbers (the method) | 0% | 0 | 0 | 15 |
-| | The `image` crate's `resize` with the triangle filter, as in squint | 12.8% | 33 | 0.99 | 19 |
+| The scene of the examples, 1280x800, shown at 1024x640 | The area mean in whole numbers (the method) | 0% | 0 | 0 | 13 |
+| | The `image` crate's `resize` with the triangle filter, as in squint | 12.8% | 33 | 0.99 | 18 |
 | | The `image` crate's `thumbnail` | 11.9% | 162 | 6.80 | 13 |
-| Noise with alpha, 1500x1100, shown at 1024x751 | The area mean in whole numbers (the method) | 0% | 0 | 0 | 90 |
-| | The `image` crate's `resize` with the triangle filter, as in squint | 94.2% | 41 | 6.61 | 104 |
-| | The `image` crate's `thumbnail` | 99.1% | 215 | 38.50 | 99 |
-| The scene repeated, 4096x3072, shown at 1024x768 | The area mean in whole numbers (the method) | 0% | 0 | 0 | 71 |
+| Noise with alpha, 1500x1100, shown at 1024x751 | The area mean in whole numbers (the method) | 0% | 0 | 0 | 41 |
+| | The `image` crate's `resize` with the triangle filter, as in squint | 94.2% | 41 | 6.61 | 105 |
+| | The `image` crate's `thumbnail` | 99.1% | 215 | 38.50 | 100 |
+| The scene repeated, 4096x3072, shown at 1024x768 | The area mean in whole numbers (the method) | 0% | 0 | 0 | 67 |
 | | The `image` crate's `resize` with the triangle filter, as in squint | 17.7% | 40 | 1.54 | 85 |
-| | The `image` crate's `thumbnail` | 0.0% | 0 | 0.00 | 67 |
+| | The `image` crate's `thumbnail` | 0.0% | 0 | 0.00 | 68 |
 
 <!-- timed: end -->
 
@@ -277,7 +278,7 @@ milestone 2, with image preparation and the judge loop, and the comparison belon
 | An image over the core's decode limits (50 megapixels and 64 MiB unless the caller changes them) is refused before anything is cut | ADR 0001, "Limits" |
 | A box that reaches past the crop it is stated on is clipped to the crop by `box_to_root`, and flagged as partial. That is not what squint did: its `to_root` refused a box outside 0 to 1 of its frame, so a box on a flat crop was never clipped. Whether to refuse as squint did is decided with the scripted run (`docs/carry-over.md`) | `[-10, 20, 30, 80]` on a 50 by 50 crop is clipped to `[0, 20, 30, 50]` of it and maps to `[50, 70, 80, 100]` of its source, with `partial` set (`a_box_past_the_crop_is_clipped_and_flagged`) |
 | The sentences of a refusal are not squint's, and transcript format 1 compares the text of a tool's result: the size is written with "x" where squint wrote "×", the image's size is added, and "image" stands where squint said "frame" | Squint: "bbox … covers only 3×2 pixels; at least 8×8 are needed". Whizbang: "bbox … covers only 3x2 pixels of the 256x192 image; at least 8x8 are needed" |
-| The file's bytes depend on the encoder: a change of the `image`, `png`, `flate2` or `miniz_oxide` version that writes another file for the same pixels changes every crop's file digest, and so the identity of its artifact. The pixel digest and the binding do not change. The four are pinned, and the file digests of the fixed vectors fail on such a change, as ADR 0001's vectors do for the JPEG decoder | The `file` digests in `crates/whizbang-squint/tests/it/vectors.rs` |
+| The file's bytes depend on the encoder: a change of its setting, or of the `image`, `png` or `fdeflate` version, that writes another file for the same pixels changes every crop's file digest, and so the identity of its artifact. The pixel digest and the binding do not change. The three are pinned, and the file digests of the fixed vectors fail on such a change, as ADR 0001's vectors do for the JPEG decoder | The `file` digests in `crates/whizbang-squint/tests/it/vectors.rs` |
 | A crop of a cut over 1024 pixels on a side does not have the pixels squint's `view` gave: the area mean replaced the triangle filter. That is the one difference from squint's pixels that was chosen here and not forced by ADR 0001, and the baseline comparison of milestone 2 has to decide what to do about it (`docs/carry-over.md`). A crop that is not scaled, of an opaque sRGB image, has squint's pixels. The crop's own PNG file differs from squint's too (alpha is kept), which the comparison does not look at: it compares the bytes prepared for the judge | The triangle filter's rows of the second table under "Speed and cost" |
 
 ## Mark and history
@@ -320,3 +321,7 @@ view is not ported.
   filter is stated as it is; the limits name the low-side widening, a second image of
   another shape, the clipping of a box past its crop, the reworded refusals and the
   encoder; the alpha-weighted mean is named as not tried. No crop changed.
+- 2026-11-19, plan m3, task O5: the core's encoder writes at fast compression, the owner's
+  choice from `docs/results/m3-encoding.md`. Every crop's file, and so its identity,
+  changed; its pixels and its binding did not. The fixed vectors' file digests and the
+  example images were made again.

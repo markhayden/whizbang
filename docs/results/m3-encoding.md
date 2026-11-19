@@ -32,6 +32,15 @@ ADR, as a change that is costly to reverse. `docs/carry-over.md` holds it. Rasca
 report page has no counterpart here: whizbang writes no report page until the report viewer
 of milestone 5, so thumbnails in reports wait for it.
 
+**The switch.** Made on 2026-11-19, after the owner's yes ("yes that seems like a huge
+speed gain"; ADR 0002, "The encoder's setting"), at the commit that set `encode::SETTING` to
+`fast_adaptive` (`git log -S fast_adaptive -- crates/whizbang-core/src/identity/encode.rs`
+names it). The table above and the fields below are the record as it was measured, before
+the switch. One large picture timed again at the switch, by the same program on the same
+machine, not quiet and not held by a test: 8192 by 4096 took 7,577 ms at the old setting
+and 160 ms through the core's encoder at the new one, 61,421,508 and 62,265,184 bytes as
+above.
+
 ```toml
 commit = "a933d72dacae1ff37153459d8b34da4134d24072"
 whizbang = "0.0.1"

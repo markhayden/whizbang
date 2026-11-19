@@ -103,8 +103,6 @@ use std::io::Read;
 use std::path::Path;
 
 use crate::wiring::{self, Make};
-use image::codecs::png::{CompressionType, FilterType, PngEncoder};
-use image::{ExtendedColorType, ImageEncoder};
 use whizbang_core::artifact::{
     self, Artifact, ArtifactId, Image, ImageRole, Mask, Origin, Source, Step, UseCase,
 };
@@ -634,14 +632,7 @@ fn picture(
     limits: &DecodeLimits,
     projection: Projection,
 ) -> Result<Image, String> {
-    let mut png = Vec::new();
-    PngEncoder::new_with_quality(&mut png, CompressionType::Default, FilterType::Adaptive)
-        .write_image(
-            pixels.rgba(),
-            pixels.width(),
-            pixels.height(),
-            ExtendedColorType::Rgba8,
-        )
+    let png = whizbang_core::identity::encode::png(pixels)
         .map_err(|error| format!("cannot write the picture as a PNG: {error}"))?;
     let origin =
         Origin::new(Step::new(PICTURE_STEP, "1").input("file", file)).map_err(|e| e.to_string())?;

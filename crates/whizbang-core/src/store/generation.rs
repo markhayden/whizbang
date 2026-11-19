@@ -12,8 +12,13 @@ use super::digest::Digest;
 /// what [`Generation::scoped_to`] adds outside runs: the names of artifacts.
 pub const SCOPED_PREFIX: &str = "artifacts/";
 
-/// The version of the generation file's shape.
-pub const GENERATION_FORMAT: u32 = 2;
+/// The version of the generation file's shape, and of what the store holds: 1 had no
+/// kinds and no runs; 2 added them; 3, with the same shape, is a store whose images the
+/// core's encoder wrote at its fast setting (2026-11-19, plan m3, task O5). A store of
+/// format 2 holds the files of the slower setting, which name the same pixels by other
+/// identities, so it is refused rather than written beside them; a store is not
+/// migrated (ADR 0002, "The encoder's setting").
+pub const GENERATION_FORMAT: u32 = 3;
 
 /// What a reference to stored content is. The kind belongs to the reference, not to the
 /// content: two references to the same bytes can differ, and each is treated as it says.

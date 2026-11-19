@@ -1192,11 +1192,10 @@ dependencies = [
 name = "whizbang-core"
 version = "0.0.1"
 dependencies = [
- "flate2",
+ "fdeflate",
  "image",
  "libm",
  "miniz_oxide 0.8.9",
- "miniz_oxide 0.9.1",
  "png",
  "serde",
  "serde_json",

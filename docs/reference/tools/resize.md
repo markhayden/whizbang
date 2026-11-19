@@ -94,9 +94,9 @@ Measured in a release build on macos aarch64; each time is the middle one of fiv
 
 | Image | `resize` |
 |---|---|
-| 1024x768 | 36 |
-| 2048x1536 | 66 |
-| 4096x3072 | 191 |
+| 1024x768 | 17 |
+| 2048x1536 | 47 |
+| 4096x3072 | 169 |
 
 <!-- timed: end -->
 

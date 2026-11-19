@@ -1148,8 +1148,11 @@ fn the_encoding_record_names_a_commit_of_this_tree() {
         field(&fields, "commit")
     );
     assert_eq!(field(&fields, "whizbang"), env!("CARGO_PKG_VERSION"));
+    // The record keeps the setting it measured against, the one the core had then; the
+    // core has had the chosen one since the owner's yes of 2026-11-19.
+    assert_eq!(field(&fields, "current"), "default_adaptive");
     assert_eq!(
-        field(&fields, "current"),
+        field(&fields, "chosen"),
         whizbang_core::identity::encode::SETTING
     );
     // The choice is the measurement's: the faster setting by far, at a cost in bytes of

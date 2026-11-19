@@ -1095,18 +1095,18 @@ fn a_pointer_or_a_generation_that_cannot_be_read_is_an_error_not_an_empty_store(
         (
             "another generation's number",
             "generations/1.json",
-            Some(generation(2, 5, &a)),
+            Some(generation(3, 5, &a)),
         ),
         (
             "a name twice",
             "generations/1.json",
-            Some(generation(2, 1, &format!("{a}, {a}"))),
+            Some(generation(3, 1, &format!("{a}, {a}"))),
         ),
         (
             "a digest in its own text, with the prefix a generation file leaves out",
             "generations/1.json",
             Some(generation(
-                2,
+                3,
                 1,
                 &a.replace("\"digest\": \"", "\"digest\": \"sha256:"),
             )),
@@ -1114,27 +1114,27 @@ fn a_pointer_or_a_generation_that_cannot_be_read_is_an_error_not_an_empty_store(
         (
             "a field it does not know",
             "generations/1.json",
-            Some(generation(2, 1, &a).replace("{\"format\"", "{\"more\": 1, \"format\"")),
+            Some(generation(3, 1, &a).replace("{\"format\"", "{\"more\": 1, \"format\"")),
         ),
         (
             "an entry that does not say what kind of reference it is",
             "generations/1.json",
-            Some(generation(2, 1, &a).replace(", \"kind\": \"output\"", "")),
+            Some(generation(3, 1, &a).replace(", \"kind\": \"output\"", "")),
         ),
         (
             "a kind it does not know",
             "generations/1.json",
-            Some(generation(2, 1, &a).replace("\"output\"", "\"input\"")),
+            Some(generation(3, 1, &a).replace("\"output\"", "\"input\"")),
         ),
         (
             "no runs",
             "generations/1.json",
-            Some(generation(2, 1, &a).replace(", \"runs\": {}", "")),
+            Some(generation(3, 1, &a).replace(", \"runs\": {}", "")),
         ),
         (
             "a run twice",
             "generations/1.json",
-            Some(generation(2, 1, &a).replace(
+            Some(generation(3, 1, &a).replace(
                 "\"runs\": {}",
                 "\"runs\": {\"r\": {\"entries\": {}}, \"r\": {\"entries\": {}}}",
             )),
@@ -1171,7 +1171,7 @@ fn a_pointer_or_a_generation_that_cannot_be_read_is_an_error_not_an_empty_store(
     // change and nothing else.
     let dir = Scratch::new("store");
     let root = with_old(&dir);
-    std::fs::write(root.join("generations/1.json"), generation(2, 1, &a)).unwrap();
+    std::fs::write(root.join("generations/1.json"), generation(3, 1, &a)).unwrap();
     assert_eq!(seen(&root, Arc::new(RealFs)), (1, contents(&[("a", A1)])));
 }
 
