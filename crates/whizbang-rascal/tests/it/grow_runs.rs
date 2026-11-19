@@ -414,10 +414,10 @@ fn a_commit_of_grow_that_the_store_refuses_publishes_no_mask_and_no_status_or_bo
                 }
                 seen.insert(unconfirmed);
             }
-            // Clearing the staging away, after the commit is durable, can fail without
-            // failing the run.
+            // Removing the older generation's file (ADR 0036) and clearing the staging
+            // away, after the commit is durable, can fail without failing the run.
             Ok(finished) => {
-                assert_eq!(step, steps - 1);
+                assert!(step >= steps - 2, "step {step} of {steps}");
                 assert_eq!(finished.outcome().outputs()[0].id(), made);
                 assert!(has && run.record.is_some());
             }

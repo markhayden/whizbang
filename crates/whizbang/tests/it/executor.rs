@@ -71,6 +71,7 @@ fn the_shipping_executor_describes_check_and_cannot_run_it_for_want_of_a_judge()
             "remove_prompt",
             "remove",
             "repair_area",
+            "mask_rect",
             "protect",
             "align",
             "change_map",
@@ -93,6 +94,8 @@ fn the_shipping_executor_describes_check_and_cannot_run_it_for_want_of_a_judge()
             "unwindow",
             "apply",
             "line",
+            "rect",
+            "stroke",
             "rasterize",
             "shrink",
             "invert"

@@ -512,6 +512,76 @@
       "concurrent": true
     },
     {
+      "name": "mask_rect",
+      "version": "1.0.0",
+      "kind": "recipe",
+      "purpose": "Makes a rectangle on an image a mask: the box's pixels the core, no blend and nothing protected.",
+      "use": "To mask a known box, such as a caller's coordinates or a detector's box, with no model.",
+      "arguments": [
+        {
+          "name": "box",
+          "purpose": "The input box of the recipe.",
+          "type": {
+            "type": "text"
+          },
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "set",
+          "purpose": "Overrides for this run, one to a line: a step, a dot, an argument, an equals sign and a value.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "until",
+          "purpose": "Runs the recipe up to and including this step, before its last, and hands back none of its own outputs.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "rect"
+            ]
+          },
+          "required": false,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The input image of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The output mask of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": {
+            "not_given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
       "name": "protect",
       "version": "1.0.0",
       "kind": "recipe",
@@ -1874,6 +1944,113 @@
           "name": "location",
           "artifact": "location",
           "purpose": "The line location.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "image"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "rect",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "A box as a location on an image, from its left, top, right and bottom edges in pixels.",
+      "arguments": [
+        {
+          "name": "box",
+          "purpose": "The box in pixels of the image: left top right bottom, as segment prints a box.",
+          "type": {
+            "type": "text"
+          },
+          "required": true,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image the box is on.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "location",
+          "artifact": "location",
+          "purpose": "The box as a location.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "image"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "stroke",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "A stroke location on an image: a rough mark along a path, with a radius in pixels.",
+      "arguments": [
+        {
+          "name": "path",
+          "purpose": "Two or more points in pixels of the image, X Y, points apart by ;.",
+          "type": {
+            "type": "text"
+          },
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "radius_px",
+          "purpose": "The stroke's radius in pixels, more than 0 and at most the image's diagonal.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 10000.0
+          },
+          "required": true,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image the stroke is on.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "location",
+          "artifact": "location",
+          "purpose": "The stroke location.",
           "count": {
             "min": 1,
             "max": 1

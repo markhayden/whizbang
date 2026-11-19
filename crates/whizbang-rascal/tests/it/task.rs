@@ -3,7 +3,8 @@
 //! 5) over the test kit's fake segmenter and a fake filler that paints the support, with
 //! `protect` left out and given, its last step a fill (task F1, item 6), so the mask
 //! handed back is the feathered mask rebound onto the composite; and `remove`,
-//! `repair_area` and `protect` (task O1, item 3), the first two under a scripted filler.
+//! `repair_area`, `mask_rect` and `protect` (task O1, item 3), the first two under a
+//! scripted filler.
 
 use std::sync::Arc;
 
@@ -68,6 +69,7 @@ fn engine(store: Arc<Store>, segmenter: &Arc<FakeSegmenter>) -> Engine {
     whizbang_rascal::feather::register(&mut registry).unwrap();
     // What the other shipped recipes call (plan m3, task O1).
     whizbang_rascal::rasterize::register(&mut registry).unwrap();
+    whizbang_rascal::rect::register(&mut registry).unwrap();
     whizbang_rascal::invert::register(&mut registry).unwrap();
     whizbang_rascal::fill::register(&mut registry).unwrap();
     for recipe in recipes::shipped(&registry).unwrap() {
@@ -187,8 +189,8 @@ fn remove_prompt_completes_with_and_without_protect() {
     assert!(names.iter().any(|name| name == "subtract"), "{names:?}");
 }
 
-// --- the tasks of task O1 (plan m3, task O1, item 3): `remove`, `repair_area` and
-// `protect`, the shipped recipes, run on a picture of 64 by 64 under a scripted filler
+// --- the tasks of task O1 (plan m3, task O1, item 3): `remove`, `repair_area`, `mask_rect`
+// and `protect`, the shipped recipes, run on a picture of 64 by 64 under a scripted filler
 // that repaints every pixel: whatever the composite keeps, the paste kept.
 
 fn filling(label: &str) -> Shop {
@@ -347,6 +349,36 @@ fn repair_area_fills_inside_its_mask_and_keeps_every_other_pixel() {
     assert_eq!(mask.use_case(), UseCase::Repair);
     assert!(mask.blend().iter().any(|b| *b != 0), "feathered");
     assert_eq!(held(&image, &composite, &mask), count(&drawn));
+}
+
+#[test]
+fn mask_rect_makes_the_rectangle_as_a_mask() {
+    let shop = Shop::new("mask-rect", None);
+    let image = sized(SIDE, SIDE);
+    let id = shop.put(Artifact::Image(image.clone()));
+    let made = shop.one(
+        &Call::new("mask_rect")
+            .argument("box", Value::text("20 16 36 28"))
+            .input("image", id),
+    );
+    let mask = shop.mask(made);
+    assert_eq!(mask.binding(), &image.binding());
+    assert_eq!(mask.use_case(), UseCase::Custom);
+    for at in 0..(SIDE * SIDE) as usize {
+        let (x, y) = (at as u32 % SIDE, at as u32 / SIDE);
+        let inside = (20..36).contains(&x) && (16..28).contains(&y);
+        assert_eq!(mask.core()[at] != 0, inside, "({x}, {y})");
+    }
+    assert!(mask.blend().iter().chain(mask.protect()).all(|s| *s == 0));
+    assert_eq!(mask.support(), Some([20, 16, 36, 28]));
+    assert_eq!(mask.origin().steps()[0].action, "rasterize");
+    // A box that is not one is refused, naming the step.
+    let refused = shop.refused(
+        &Call::new("mask_rect")
+            .argument("box", Value::text("36 16 20 28"))
+            .input("image", id),
+    );
+    assert!(refused.contains("left < right"), "{refused}");
 }
 
 #[test]

@@ -298,7 +298,14 @@ fn initialize_lists_each_recipe_before_the_primitives() {
         .collect();
     assert_eq!(
         recipes,
-        ["check", "remove_prompt", "remove", "repair_area", "protect"]
+        [
+            "check",
+            "remove_prompt",
+            "remove",
+            "repair_area",
+            "mask_rect",
+            "protect"
+        ]
     );
     assert_eq!(names[..recipes.len()], recipes[..]);
     assert!(

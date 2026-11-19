@@ -117,6 +117,7 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
             "remove_prompt",
             "remove",
             "repair_area",
+            "mask_rect",
             "protect",
             "align",
             "change_map",
@@ -139,6 +140,8 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
             "unwindow",
             "apply",
             "line",
+            "rect",
+            "stroke",
             "rasterize",
             "shrink",
             "invert"
@@ -150,9 +153,9 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
         .iter()
         .map(|action| action["kind"].as_str().expect("a kind"))
         .collect();
-    assert_eq!(kinds[..5], ["recipe"; 5]);
+    assert_eq!(kinds[..6], ["recipe"; 6]);
     assert!(
-        kinds[5..].iter().all(|kind| *kind == "primitive"),
+        kinds[6..].iter().all(|kind| *kind == "primitive"),
         "{kinds:?}"
     );
     // `check` says what it needs: a judge. Whether one is there is no part of a
@@ -162,7 +165,7 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
     assert_eq!(doc["actions"][0]["needs"][0]["requests"], 16);
     // `segment` needs a segmenter that takes what the call's `kind` names, a phrase, a
     // point or a box, chosen by its argument `backend`.
-    let need = &doc["actions"][14]["needs"][0];
+    let need = &doc["actions"][15]["needs"][0];
     assert_eq!(need["capability"], "segment");
     assert_eq!(need["features"], serde_json::json!([]));
     assert_eq!(need["feature_from"], "kind");
@@ -204,6 +207,7 @@ fn describe_without_json_names_the_build() {
             "remove_prompt",
             "remove",
             "repair_area",
+            "mask_rect",
             "protect",
             "align",
             "change_map",
@@ -226,6 +230,8 @@ fn describe_without_json_names_the_build() {
             "unwindow",
             "apply",
             "line",
+            "rect",
+            "stroke",
             "rasterize",
             "shrink",
             "invert"
