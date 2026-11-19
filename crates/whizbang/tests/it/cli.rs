@@ -724,7 +724,7 @@ fn squint_check_with_detail_change_map_hands_its_measurements_to_a_scripted_judg
         .iter()
         .find(|text| {
             text.starts_with(
-                "change_map (experimental), aligned:candidate:t1 against source: Change map of ",
+                "change_map (unverified), aligned:candidate:t1 against source: Change map of ",
             )
         })
         .unwrap_or_else(|| panic!("{texts:?}"));

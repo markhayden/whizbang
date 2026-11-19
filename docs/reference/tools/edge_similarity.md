@@ -74,11 +74,41 @@ change; `change_map` shows where it is.
 
 ## Rung 2 results
 
-Not yet run. Scored alone, for an evidence tool, means its read separates good from bad on a
-development set (`SPEC.md` section 8): `whizbang eval tool edge_similarity --set
-source-fidelity/scenes-v1`, scored by the area under the ROC curve of `edge_similarity`
-(smaller is changed). It is the overflow of task X1 of `docs/plans/m2c-milestone-2.md`, owned
-by task F1 (`docs/carry-over.md`).
+Scored alone on a development set (`SPEC.md` section 8; plan 2C, task X1, items 8 and 9):
+`whizbang eval tool edge_similarity --set source-fidelity/scenes-v1`, on the owner's Mac, through the
+binary built from the commit below with its tree clean, the set's pictures fetched by hash
+from `https://raw.githubusercontent.com` (`whizbang eval sets fetch`). Each item is two runs:
+`align`, the candidate onto the source, then `edge_similarity` on the source and the aligned frame.
+Scored by the area under the ROC curve of `edge_similarity` (smaller is changed), its 95% interval
+resampled by family, and the balanced accuracy at a threshold chosen on half of the families
+and read on the other half, by the seed below. Only aggregates are kept.
+
+```toml
+commit = "4dd4a7b2e798f2818a25b36815b749b9b0b35432"
+whizbang = "0.0.1"
+tool = "edge_similarity"
+sets = "source-fidelity/scenes-v1"
+items = 20
+scored = 15
+fail_items = 7
+pass_items = 8
+families = 5
+errors = 5
+auc = 0.7321
+auc_lower = 0.5741
+auc_upper = 0.9722
+resamples = 2000
+seed = 20261118
+balanced_accuracy = 0.7500
+threshold = 0.9816
+chosen_on = 2
+read_on = 3
+```
+
+What it shows. A little weaker than `change_map` on the same items: five of the eight passes
+kept their edges almost whole (0.999 and over), but three read 0.52, 0.82 and 0.90, among the
+fails' 0.55 to 0.96; a restyle that changes texture lowers the score as a removed object does.
+The interval is wide on five families. The same five items had no reading, unregistered.
 
 ## Speed and cost
 
@@ -113,9 +143,13 @@ None run. Squint's method is kept because it is what squint's judges were handed
 
 ## Mark and history
 
-**Experimental**: ported with its record and rung 1 shown; rung 2 is owed (above). It runs
-only when a run names it.
+**Unverified**: ported, with its record and rungs 1 and 2 (above); its gate is not cleared.
+It runs when a run names it, under `--detail`, and is never described as proven. `SPEC.md`
+section 8 lets an unverified tool be a default while nothing admitted replaces it; `align`
+alone is still the default of `--details first`.
 
 - 2026-11-18, plan m2c task X1: ported from squint (`crates/squint-tools/src/builtin/
   compare.rs`, `manifests/edge_similarity.toml`) at the pinned commit; measured first by
   `check` under `--detail edge_similarity`, and offered to a judge when a run names it.
+- 2026-11-19, plan m2c task F1: rung 2 on `source-fidelity/scenes-v1` (above); marked
+  unverified.

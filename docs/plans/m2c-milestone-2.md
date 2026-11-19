@@ -708,7 +708,7 @@ tool and is scored on rungs 1 and 2.
 10. **The reference page** (carry-over row on what `docs/reference/actions.md` prints):
    each action's arguments, ports and needs, with its mark. Overflow to F1.
 
-- [ ] Done when:
+- [x] Done when:
   `tool_file::a_declaration_missing_its_bounds_is_refused_when_the_config_is_read`,
   `tool_file::an_output_outside_its_declared_bounds_is_refused_before_use`,
   `tool_file::a_tool_reaches_a_capability_only_through_its_context_and_under_the_runs_allowance`,
@@ -777,6 +777,20 @@ comparison's record (rungs 1 and 2, each a run of SAM 3 on the Mac over the sets
 `evidence::the_per_subject_record_names_a_commit_of_this_tree_and_its_rung_2_numbers` and the
 records test's line for it are not built, so the box stays unticked; they are F1's
 (`docs/carry-over.md`, the row on what X1 did not build).
+
+**Built by F1's second pull request; the box is ticked.** Per-subject comparison's record
+(`docs/reference/tools/per_subject.md`) holds two worked examples (rung 1) and rung 2 on
+`source-fidelity/scenes-v1` and `source-fidelity/adversarial-v1`, each a run of SAM 3 on the
+owner's Mac: `model_tier::per_subject_comparison_answers_the_records_examples_on_the_mac` passes
+under `just test-models`, `evidence::the_per_subject_record_names_a_commit_of_this_tree_and_its_rung_2_numbers`
+holds the numbers to the tree's tool file and adapter, and `scripts/tests/test-tool-records.sh`
+holds the records of `per_subject`, `change_map` and `edge_similarity` with their rung 2
+numbers. Item 9's rung 2 (F1's named overflow) is in the records of `change_map` and
+`edge_similarity`, each now unverified. The carry-over rows on what X1 did not build and on
+the two tools' rung 2 are closed; the rows on a tool's mark and on a request from the worker
+were closed by X1. The run found that SAM 3's mask of a phrase can reach past its box, which
+the core refuses; the adapter now gives the mask's bounds as the box
+(`test_sam3.Phrase.test_a_phrases_box_holds_every_pixel_its_plane_has_on`).
 
 **Keeping tests lean (X1).** Tool files in tests are a few lines run by the pack's
 fake models; the worker is started once per test file, as the pack's tests do; SAM 3
@@ -895,7 +909,7 @@ None new: the door is local, on stdio; what it sends a judge goes through the sa
    2 with the tests that show it, the spend, what a reader should not assume, what moved
    to the carry-over list, and what milestone 3 and E start from.
 
-- [ ] Done when:
+- [x] Done when:
   `models::a_users_catalogue_naming_a_shipped_model_is_refused_whole`,
   `test_worker.Load.test_a_load_with_no_record_beside_files_is_refused`,
   `test_worker.Shipped.test_the_workers_shipped_map_is_the_shipped_catalogue`,
@@ -944,6 +958,21 @@ of tasks M1, A2 and checkpoint 1D (`serve::a_run_its_deadline_ended_before_the_s
 `install::a_held_file_planted_as_a_link_is_never_linked_and_the_file_is_downloaded`,
 `model_commands::tests::a_refused_download_after_a_held_file_was_removed_says_to_get_again`,
 `spend::judge::a_turn_whose_usage_no_charge_can_hold_is_charged_its_bound`).
+
+**Reworded with the task (F1, its second pull request).** The last clause read "every
+carry-over row owned by milestone 2 closed, re-owned or dropped with a line". Two rows stay
+owned by milestone 2 because they wait on the owner, not on F1: the baseline gate's run
+(fifth item under "What the owner must answer") and P1's live evidence (the first and
+second). F1 cannot close them, and re-owning them would move the milestone's own row. So the
+clause is: every carry-over row owned by milestone 2 closed, re-owned or dropped with a line,
+but those two, each named as open in the note. As reworded, every clause is shown: the tests
+built and named above, the moved ones each with a line on its row, the note
+(`docs/plans/m2-note.md`) with `scripts/tests/test-notes.sh` reading it (it must cite at
+least 30 tests that exist), and the rows: closed (what X1 did not build; rung 2 of the two
+tools; the time of `check (ubuntu-22.04)` on `main`), re-owned with a line (the order of a
+segmenter's answer and two needs of one capability, to milestone 3; an unacknowledged
+admission in a door that outlives a run, to milestone 5), or the two above. The box is
+ticked.
 
 **Keeping tests lean (F1).** Each follow-up's test on files made in the test; no model,
 no network.

@@ -538,3 +538,123 @@ fn the_evaluation_record_reports_at_least_100_runs_of_align_by_stats_and_by_expo
     assert!(stats >= 100, "{stats}");
     assert_eq!(stats, export);
 }
+
+/// The fields of the block of numbers in a tool record's part "Rung 2 results".
+fn rung_2(tool: &str) -> (String, Fields) {
+    let page =
+        std::fs::read_to_string(repository().join(format!("docs/reference/tools/{tool}.md")))
+            .expect("the tool's record is committed");
+    let (_, part) = page
+        .split_once("\n## Rung 2 results\n")
+        .expect("the record has its part on rung 2");
+    let (part, _) = part.split_once("\n## ").unwrap();
+    let block = part
+        .split("```toml\n")
+        .nth(1)
+        .and_then(|rest| rest.split("```").next())
+        .unwrap_or_else(|| panic!("{tool}: the part on rung 2 holds no numbers"));
+    let fields = block
+        .lines()
+        .map(|line| {
+            let (name, value) = line.split_once(" = ").expect("a line is name = value");
+            (name.to_owned(), value.trim_matches('"').to_owned())
+        })
+        .collect();
+    (page, fields)
+}
+
+#[test]
+fn the_per_subject_record_names_a_commit_of_this_tree_and_its_rung_2_numbers() {
+    use whizbang_squint::marks::{self, Mark};
+    // Plan 2C, task X1, items 7 to 9 (taken by task F1): per-subject comparison on the two
+    // sets of source fidelity, and `change_map` and `edge_similarity` on scenes-v1, each run
+    // by `whizbang eval tool` from a commit, its numbers in the tool's record.
+    let sets_root = repository().join("evalsets");
+    for (tool, sets) in [
+        (
+            "per_subject",
+            "source-fidelity/scenes-v1 source-fidelity/adversarial-v1",
+        ),
+        ("change_map", "source-fidelity/scenes-v1"),
+        ("edge_similarity", "source-fidelity/scenes-v1"),
+    ] {
+        let (page, fields) = rung_2(tool);
+        let commit = field(&fields, "commit");
+        assert!(
+            commit.len() == 40
+                && commit
+                    .bytes()
+                    .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')),
+            "{tool}: {commit}"
+        );
+        assert_eq!(field(&fields, "whizbang"), env!("CARGO_PKG_VERSION"));
+        assert_eq!(field(&fields, "tool"), tool);
+        assert_eq!(field(&fields, "sets"), sets);
+        // The items are the sets' as this tree has them: each scored or an error.
+        let mut items = 0;
+        let mut ids = Vec::new();
+        for id in sets.split(' ') {
+            let set = whizbang_eval::sets::find(&sets_root, id).unwrap();
+            items += set.jobs.len();
+            ids.extend(set.jobs.iter().map(|(item, _)| item.clone()));
+        }
+        let number = |name: &str| -> f64 {
+            field(&fields, name)
+                .parse()
+                .unwrap_or_else(|_| panic!("{tool}: {name}"))
+        };
+        assert_eq!(number("items") as usize, items, "{tool}");
+        assert_eq!(
+            number("items"),
+            number("scored") + number("errors"),
+            "{tool}"
+        );
+        assert_eq!(
+            number("scored"),
+            number("fail_items") + number("pass_items"),
+            "{tool}"
+        );
+        assert_eq!(
+            number("families"),
+            number("chosen_on") + number("read_on"),
+            "{tool}"
+        );
+        let (auc, lower, upper) = (number("auc"), number("auc_lower"), number("auc_upper"));
+        assert!((0.0..=1.0).contains(&lower) && lower <= auc && auc <= upper && upper <= 1.0);
+        assert!((0.0..=1.0).contains(&number("balanced_accuracy")));
+        assert_eq!(number("resamples") as usize, whizbang::trying::RESAMPLES);
+        assert_eq!(number("seed") as u64, whizbang::trying::SEED);
+        // Aggregates alone: no item of the sets is named, and no path.
+        for item in &ids {
+            assert!(!page.contains(item.as_str()), "{tool} names {item}");
+        }
+        for held in ["/Users/", "/private/", "/home/"] {
+            assert!(!page.contains(held), "{tool}: the page holds {held}");
+        }
+        // Its mark, from its record: the two ported tools are unverified with rungs 1 and
+        // 2; per-subject comparison stays experimental (`SPEC.md` section 7).
+        let mark = marks::stated(&page);
+        if tool == "per_subject" {
+            assert_eq!(mark, Some(Mark::Experimental));
+        } else {
+            assert_eq!(mark, Some(Mark::Unverified));
+            assert_eq!(marks::of(tool), Some(Mark::Unverified));
+        }
+    }
+    // Per-subject comparison's numbers are of this tree's tool file and SAM 3's adapter.
+    let (_, fields) = rung_2("per_subject");
+    let file = std::fs::read_to_string(repository().join("pack/tools/per_subject.py")).unwrap();
+    assert!(file.contains(&format!(
+        "# version = \"{}\"\n",
+        field(&fields, "tool_version")
+    )));
+    assert_eq!(
+        field(&fields, "tool_digest"),
+        digest_of("pack/tools/per_subject.py")
+    );
+    assert_eq!(field(&fields, "model"), "sam3");
+    assert_eq!(
+        field(&fields, "adapter_source"),
+        digest_of("pack/src/whizbang_pack/sam3.py")
+    );
+}

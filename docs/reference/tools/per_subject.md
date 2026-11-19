@@ -80,14 +80,57 @@ The item's value is 1.000 for the first and 0.005 for the second.
 
 ## Rung 2 results
 
-Being run: the rung 2 numbers of this record are taken by `whizbang eval tool per_subject` on
-`source-fidelity/scenes-v1` and `source-fidelity/adversarial-v1`, on the Mac, on a commit
-whose tree holds this tool and this adapter.
+Scored alone on the two sets of source fidelity (plan 2C, task X1, item 8): `whizbang eval
+tool per_subject --set source-fidelity/scenes-v1 --set source-fidelity/adversarial-v1`, on
+the owner's Mac, through the binary built from the commit below with its tree clean, SAM 3
+(the catalogue's `sam3`, adapter revision 2) on the GPU, the sets' pictures fetched by hash
+from `https://raw.githubusercontent.com` (`whizbang eval sets fetch`). Each item's subjects
+are its job's requirements of kind `must_hold`; its value is the largest subject's one minus
+IoU, larger is changed. The area under the ROC curve has its 95% interval resampled by
+family; the balanced accuracy is read at a threshold chosen on half of the pooled families
+and read on the other half, by the seed below. Only aggregates are kept.
+
+```toml
+commit = "4dd4a7b2e798f2818a25b36815b749b9b0b35432"
+whizbang = "0.0.1"
+tool = "per_subject"
+tool_version = "0.1.0"
+tool_digest = "sha256:6e2ad13a1a08ff313b3ed7c14eca3c1a3b3df07ae973c4fa76f0f5bc3cfe876e"
+model = "sam3"
+adapter_source = "sha256:0c83e562d8c5a402b64fd891d61b6ea762a3c4c4a6e889822f5c274d54403945"
+sets = "source-fidelity/scenes-v1 source-fidelity/adversarial-v1"
+items = 22
+scored = 16
+fail_items = 7
+pass_items = 9
+families = 6
+errors = 6
+auc = 1.0000
+auc_lower = 1.0000
+auc_upper = 1.0000
+resamples = 2000
+seed = 20261118
+balanced_accuracy = 0.8000
+threshold = 0.6059
+chosen_on = 3
+read_on = 3
+```
+
+What it shows. Of the 16 items with a reading, every fail item read higher than every pass
+item: the fails from 0.37 to 1, four of them at 1 (a subject removed, or cropped out); the
+passes from under 0.01 to 0.28. The interval is as narrow as six families allow, which is not
+much: a resample by family cannot find a pass above a fail where none is. The threshold
+chosen on three families (0.61) misread a fail below it on the other three, hence 0.80. Six
+items had no reading because their candidate did not register onto its source (`align`):
+four fails (three mirrors and a rotation) and two passes (a change of light); per-subject
+comparison cannot speak to them at all.
 
 ## Speed and cost
 
 It spends nothing: SAM 3 runs on the machine, and the comparison is arithmetic in the tool
-worker. Each subject is two requests of the segmenter.
+worker. Each subject is two requests of the segmenter. The rung 2 run above took 91 s for its
+22 items, the start of both workers and SAM 3's load included: about 4 s an item of two or
+three subjects, of which a request of the segmenter is about 0.9 s at the median.
 
 ## Alternatives
 

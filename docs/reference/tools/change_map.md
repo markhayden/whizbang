@@ -77,11 +77,43 @@ Of the second: "Change map of raw:source against aligned:candidate:t1 (the map, 
 
 ## Rung 2 results
 
-Not yet run. Scored alone, for an evidence tool, means its read separates good from bad on a
-development set (`SPEC.md` section 8): `whizbang eval tool change_map --set
-source-fidelity/scenes-v1`, scored by the area under the ROC curve of `changed_fraction`
-(larger is changed). It is the overflow of task X1 of `docs/plans/m2c-milestone-2.md`, owned
-by task F1 (`docs/carry-over.md`).
+Scored alone on a development set (`SPEC.md` section 8; plan 2C, task X1, items 8 and 9):
+`whizbang eval tool change_map --set source-fidelity/scenes-v1`, on the owner's Mac, through the
+binary built from the commit below with its tree clean, the set's pictures fetched by hash
+from `https://raw.githubusercontent.com` (`whizbang eval sets fetch`). Each item is two runs:
+`align`, the candidate onto the source, then `change_map` on the source and the aligned frame.
+Scored by the area under the ROC curve of `changed_fraction` (larger is changed), its 95% interval
+resampled by family, and the balanced accuracy at a threshold chosen on half of the families
+and read on the other half, by the seed below. Only aggregates are kept.
+
+```toml
+commit = "4dd4a7b2e798f2818a25b36815b749b9b0b35432"
+whizbang = "0.0.1"
+tool = "change_map"
+sets = "source-fidelity/scenes-v1"
+items = 20
+scored = 15
+fail_items = 7
+pass_items = 8
+families = 5
+errors = 5
+auc = 0.7679
+auc_lower = 0.6143
+auc_upper = 0.9444
+resamples = 2000
+seed = 20261118
+balanced_accuracy = 0.7500
+threshold = 0.003274
+chosen_on = 2
+read_on = 3
+```
+
+What it shows. It separates fail from pass better than chance and far from cleanly: every fail
+read between 0.6% and 2.3% of pixels changed, five of the eight passes read 0, and three passes
+read 0.8%, 1.7% and 9.5%, a change of tone that moved local structure. The interval is wide
+on five families. Five items had no reading, their candidate not registering onto its source:
+three fails (two mirrors and a rotation) and two passes (a change of light). A judge handed
+the fraction is handed a floor on the changed area, never proof (Limits).
 
 ## Speed and cost
 
@@ -116,9 +148,13 @@ None run. Squint's method is kept because it is what squint's judges were handed
 
 ## Mark and history
 
-**Experimental**: ported with its record and rung 1 shown; rung 2 is owed (above). It runs
-only when a run names it.
+**Unverified**: ported, with its record and rungs 1 and 2 (above); its gate is not cleared.
+It runs when a run names it, under `--detail`, and is never described as proven. `SPEC.md`
+section 8 lets an unverified tool be a default while nothing admitted replaces it; `align`
+alone is still the default of `--details first`.
 
 - 2026-11-18, plan m2c task X1: ported from squint (`crates/squint-tools/src/builtin/
   compare.rs`, `manifests/change_map.toml`) at the pinned commit; measured first by `check`
   under `--detail change_map`, and offered to a judge when a run names it.
+- 2026-11-19, plan m2c task F1: rung 2 on `source-fidelity/scenes-v1` (above); marked
+  unverified.

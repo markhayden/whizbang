@@ -390,8 +390,8 @@ fn each_tool_the_upper_rungs_apply_to_shows_its_mark_from_its_record() {
         shown,
         [
             ("align", "unverified"),
-            ("change_map", "experimental"),
-            ("edge_similarity", "experimental"),
+            ("change_map", "unverified"),
+            ("edge_similarity", "unverified"),
             ("resize", "experimental"),
         ]
     );
@@ -404,7 +404,7 @@ fn each_tool_the_upper_rungs_apply_to_shows_its_mark_from_its_record() {
         "{text}"
     );
     assert!(
-        text.contains("\n  change_map  [experimental]  Shows "),
+        text.contains("\n  change_map  [unverified]  Shows "),
         "{text}"
     );
     assert!(text.contains("\n  view  Shows "), "{text}");

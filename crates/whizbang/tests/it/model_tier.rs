@@ -216,6 +216,11 @@ impl Tier {
     }
 
     fn of(label: &str, model: &str) -> Tier {
+        Tier::with(label, model, "")
+    }
+
+    /// The same, the config ending with `more` (per-subject comparison's `[tools]`).
+    fn with(label: &str, model: &str, more: &str) -> Tier {
         let dir = Scratch::new(label);
         let root = dir.path().join("store");
         drop(Store::open(&root, Arc::new(RealFs)).unwrap());
@@ -224,7 +229,7 @@ impl Tier {
             &config,
             format!(
                 "[backends.segment]\nkind = \"pack\"\nmodel = \"{model}\"\n\n\
-                 [backends.segment.settings]\nmax_lifetime_s = 600\ncall_limit_s = 120\n"
+                 [backends.segment.settings]\nmax_lifetime_s = 600\ncall_limit_s = 120\n{more}"
             ),
         )
         .unwrap();
@@ -657,21 +662,13 @@ fn per_subject_comparison_answers_the_records_examples_on_the_mac() {
     let record = std::fs::read_to_string(folder.join("per_subject.md")).unwrap();
     let want = readings_of(&record);
     assert_eq!(want.len(), 4);
-    let dir = Scratch::new("model-tier-per-subject");
-    let root = dir.path().join("store");
-    drop(Store::open(&root, Arc::new(RealFs)).unwrap());
-    let config = dir.path().join("whizbang.toml");
     let tool = repository.join("pack/tools/per_subject.py");
-    std::fs::write(
-        &config,
-        format!(
-            "[backends.segment]\nkind = \"pack\"\nmodel = \"{SAM3}\"\n\n\
-             [backends.segment.settings]\nmax_lifetime_s = 600\ncall_limit_s = 120\n\n\
-             [tools]\npaths = [\"{}\"]\n",
-            tool.display()
-        ),
-    )
-    .unwrap();
+    let tier = Tier::with(
+        "model-tier-per-subject",
+        SAM3,
+        &format!("\n[tools]\npaths = [\"{}\"]\n", tool.display()),
+    );
+    let root = tier.root.clone();
     let picture = |name: &str| {
         let file = folder.join("per_subject").join(format!("{name}.png"));
         let said =
@@ -685,21 +682,14 @@ fn per_subject_comparison_answers_the_records_examples_on_the_mac() {
     };
     let source = picture("source");
     let candidates = [("removed", picture("removed")), ("toned", picture("toned"))];
-    let worker = kit::installed(OneWorker::installed, |worker| {
-        worker.kill();
-    });
-    let over = Over::nothing()
-        .config(Some(&config))
-        .kinds(wiring::kinds(&worker))
-        .pack((*worker).clone())
-        .installed(Models::shipped().unwrap().flag(Some(&models_dir())))
-        .expect("the models directory is opened");
+    let over = tier.over();
     let files = over.tool_files().unwrap();
     let declared = whizbang::trying::declared_in("per_subject", files.as_deref()).unwrap();
     assert!(declared.file);
     let registry = wiring::registry_over(&over, false).unwrap();
     let store = Arc::new(Store::open(&root, Arc::new(RealFs)).unwrap());
     let executor = wiring::runner(registry, store, &over).expect("the executor builds");
+    // The tool worker is the one worker's, held by the test kit's guard with it.
     let arguments = [
         (
             "phrases".to_owned(),
