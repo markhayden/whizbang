@@ -740,17 +740,19 @@ fn an_imported_picture_keeps_where_it_came_from_by_a_name_of_its_own() {
     for (name, bytes) in [("one.png", &first), ("two.png", &second)] {
         let file = dir.path().join(name);
         std::fs::write(&file, bytes).expect("the fixture is written");
-        let ran = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
-            .args(["store", "import", "--create", "--picture"])
-            .arg(&file)
-            .arg("--store")
-            .arg(&root)
-            .output()
-            .expect("the binary runs");
-        let out = String::from_utf8(ran.stdout).expect("UTF-8");
-        assert!(ran.status.success(), "{out}");
+        let ran = whizbang(
+            &[
+                "import",
+                "--create",
+                "--picture",
+                file.to_str().expect("UTF-8"),
+            ],
+            &root,
+        );
+        assert_eq!(ran.code, Some(0), "{}", ran.err);
         ids.push(
-            out.split_whitespace()
+            ran.out
+                .split_whitespace()
                 .last()
                 .expect("an identity")
                 .to_owned(),
