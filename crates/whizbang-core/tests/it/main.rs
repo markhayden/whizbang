@@ -10,5 +10,7 @@ mod encode;
 mod fs;
 mod identity;
 mod outputs;
+mod recipe;
+mod runner;
 mod spend;
 mod store;

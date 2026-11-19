@@ -1,6 +1,7 @@
 //! Integration tests of whizbang-rascal.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+mod close;
 mod composite;
 mod feather;
 mod fill;
@@ -14,3 +15,5 @@ mod record;
 mod render;
 mod segment;
 mod select;
+mod subtract;
+mod task;

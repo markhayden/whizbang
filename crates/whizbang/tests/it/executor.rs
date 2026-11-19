@@ -68,9 +68,11 @@ fn the_shipping_executor_describes_check_and_cannot_run_it_for_want_of_a_judge()
         names,
         [
             "check",
+            "remove_prompt",
             "align",
             "change_map",
             "edge_similarity",
+            "close",
             "feather",
             "grow",
             "plug",
@@ -78,6 +80,7 @@ fn the_shipping_executor_describes_check_and_cannot_run_it_for_want_of_a_judge()
             "resize",
             "segment",
             "select",
+            "subtract",
             "view",
             "paste",
             "fill"

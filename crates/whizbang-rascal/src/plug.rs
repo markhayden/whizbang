@@ -298,3 +298,42 @@ impl Action for Plug {
         Ok(Produced::nothing().with("mask", mask))
     }
 }
+
+/// Registers the action.
+pub fn register(
+    registry: &mut whizbang_core::contract::Registry,
+) -> Result<(), whizbang_core::contract::RegistrationError> {
+    registry.register(std::sync::Arc::new(Plug::new()))
+}
+
+/// What the command says the action does.
+pub const ABOUT: &str = "Fill the holes of a mask's core: each region outside the core that touches no edge of \
+the image and is at most a share of the area of the shape around it. The blend is cleared, \
+the profile and the prescriptions are removed, and protect is kept. The new mask is \
+committed to the store, and its identity is printed.";
+
+/// What `whizbang rascal plug` takes beside what every operation's command does.
+#[derive(clap::Args, Debug)]
+pub struct Args {
+    /// The mask, by its identity in the store.
+    #[arg(long)]
+    pub mask: String,
+    /// The largest hole filled, as a share of the area of the shape around it, from 0 to
+    /// 1.
+    #[arg(long, default_value_t = MAX_SHARE_DEFAULT)]
+    pub max_share: f64,
+}
+
+impl operation::Asked for Args {
+    fn action(&self) -> &'static str {
+        NAME
+    }
+
+    fn arguments(&self) -> Vec<(&'static str, Value)> {
+        vec![("max_share", Value::Number(self.max_share))]
+    }
+
+    fn inputs(&self) -> Vec<(&'static str, &'static str, &str)> {
+        vec![("mask", "--mask", self.mask.as_str())]
+    }
+}

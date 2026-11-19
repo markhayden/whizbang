@@ -7,5 +7,6 @@ pub mod contract;
 pub mod description;
 pub mod egress;
 pub mod identity;
+pub mod recipe;
 pub mod spend;
 pub mod store;

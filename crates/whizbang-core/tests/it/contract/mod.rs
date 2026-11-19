@@ -11,6 +11,7 @@ mod around;
 mod asked;
 mod cancel;
 mod commit;
+mod context;
 mod describe;
 mod descriptor;
 mod execute;

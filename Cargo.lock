@@ -1207,6 +1207,7 @@ dependencies = [
 name = "whizbang-rascal"
 version = "0.0.1"
 dependencies = [
+ "clap",
  "image",
  "serde_json",
  "whizbang-core",

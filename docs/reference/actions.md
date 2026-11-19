@@ -2,12 +2,16 @@
 
 # Actions
 
-What `whizbang` 0.0.1 can do, from its static description (version 7).
+What `whizbang` 0.0.1 can do, from its static description (version 8).
 The same as data: [description.json](description.json).
 
 ## `check`
 
 Has a judge look at images through evidence tools and conclude: pass, fail or unsure.
+
+## `remove_prompt`
+
+Makes the mask that removes what a phrase names: found, grown, closed, plugged, kept off protect and feathered.
 
 ## `align`
 
@@ -20,6 +24,10 @@ Shows where two images in one grid differ in structure: a grey map, bright where
 ## `edge_similarity`
 
 Scores how much two images in one grid share the same edges: 1 for the same structure, near 0 for unrelated ones.
+
+## `close`
+
+Closes the core of a mask by a disc, so gaps and notches narrower than the disc fill in.
 
 ## `feather`
 
@@ -48,6 +56,10 @@ Finds each instance a phrase, a point or a box asks for in an image, as one mask
 ## `select`
 
 One mask from the instance masks to keep: the union of their cores, minus exclude boxes.
+
+## `subtract`
+
+Protects the pixels of a second mask, grown by a margin; with none the mask is handed back unchanged.
 
 ## `view`
 

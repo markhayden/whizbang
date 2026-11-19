@@ -18,7 +18,7 @@
 //! **Each mask** is one instance's plane as its core, on the image's own binding, with
 //! nothing protected and no blend, and one step in its origin: this action, its version,
 //! the kind and the query asked, `max_instances`, which instance it is, counted from 1 in
-//! the order the segmenter gave them, best first, and the image. A run's output holds an
+//! the fixed order ([`in_order`]), best first, and the image. A run's output holds an
 //! artifact's identity only, and a mask holds no score and no box, so both are in the
 //! run's diagnostic [`DIAGNOSTIC`], one line for each mask in the order of the outputs:
 //!
@@ -61,8 +61,9 @@ use crate::grow::text_of;
 pub const NAME: &str = "segment";
 
 /// The action's version, which a mask it made records in its origin. 2.0.0 took the query
-/// as its kind and its text, where 1.0.0 took a phrase alone.
-pub const VERSION: &str = "2.0.0";
+/// as its kind and its text, where 1.0.0 took a phrase alone; 2.1.0 reads the instances in
+/// the fixed order ([`in_order`]), where 2.0.0 took them in the backend's.
+pub const VERSION: &str = "2.1.0";
 
 /// The kinds of query, by the name the argument `kind` takes, which is the feature a
 /// backend must declare to be asked one.
@@ -102,6 +103,33 @@ pub const DIAGNOSTIC: &str = "segment.txt";
 
 /// How many instances a call asks for when it does not say.
 pub const MAX_INSTANCES_DEFAULT: i64 = 8;
+
+/// The order the instances of an answer are read in, whatever order the backend gave
+/// them in (plan m3, task R1, item 5; the carry-over row on the order of a segmenter's
+/// answer): best score first; then by the box's top, its left, its right and its bottom;
+/// then by the predicted IoU, none first and then the higher; then by the plane's bytes.
+/// It is the order of the pack's answers (ADR 0020, `whizbang_backends::pack::proto`), with
+/// the query left out, since a call asks one, and the predicted IoU, best first, read
+/// here and not from the wire: so a mask's place in a run's outputs, and the instance its
+/// origin names, are the same whichever backend answered. Numbers are compared by IEEE
+/// 754's total order. It is total: two instances it finds equal are the same instance.
+pub fn in_order(
+    one: (f64, [f64; 4], Option<f64>, &[u8]),
+    other: (f64, [f64; 4], Option<f64>, &[u8]),
+) -> std::cmp::Ordering {
+    let number = |a: f64, b: f64| a.total_cmp(&b);
+    let iou = match (one.2, other.2) {
+        (Some(one), Some(other)) => number(other, one),
+        (one, other) => one.is_some().cmp(&other.is_some()),
+    };
+    number(other.0, one.0)
+        .then(number(one.1[1], other.1[1]))
+        .then(number(one.1[0], other.1[0]))
+        .then(number(one.1[2], other.1[2]))
+        .then(number(one.1[3], other.1[3]))
+        .then(iou)
+        .then_with(|| one.3.cmp(other.3))
+}
 
 /// One instance as the diagnostic says it: the mask made of it, its score and its box
 /// (left, top, right, bottom, in pixels of the image).
@@ -250,10 +278,19 @@ impl Action for Segment {
             .segment(&request)
             .map_err(|fault| Failure::error("segment", fault.sentence()))?;
         let found = response.answers().first().map_or(&[][..], Vec::as_slice);
+        // Each instance with its place in the answer, in the fixed order.
+        let key = |at: usize| {
+            let instance = &found[at];
+            let iou = response.predicted_iou(0, at);
+            (instance.score(), instance.bounds(), iou, instance.plane())
+        };
+        let mut order: Vec<usize> = (0..found.len()).collect();
+        order.sort_by(|one, other| in_order(key(*one), key(*other)));
 
         let mut produced = Produced::nothing();
         let mut said = format!("instances {}\n", found.len());
-        for (at, instance) in found.iter().enumerate() {
+        for (at, given) in order.into_iter().enumerate() {
+            let instance = &found[given];
             let step = Step::new(NAME, VERSION)
                 .argument("kind", kind)
                 .argument("query", text)
@@ -270,7 +307,7 @@ impl Action for Segment {
                 )
             });
             let mask = made.map_err(|error| Failure::error("mask", &error.without_paths()))?;
-            let iou = response.predicted_iou(0, at);
+            let iou = response.predicted_iou(0, given);
             said.push_str(&line_of(&mask, instance.score(), instance.bounds(), iou));
             produced = produced.with("mask", mask);
         }
@@ -288,4 +325,11 @@ impl Action for Segment {
         ));
         Ok(produced)
     }
+}
+
+/// Registers the action.
+pub fn register(
+    registry: &mut whizbang_core::contract::Registry,
+) -> Result<(), whizbang_core::contract::RegistrationError> {
+    registry.register(std::sync::Arc::new(Segment::new()))
 }

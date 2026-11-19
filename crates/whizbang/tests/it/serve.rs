@@ -282,6 +282,64 @@ fn initialize_lists_each_action_as_a_tool_with_its_schema() {
 }
 
 #[test]
+fn initialize_lists_each_recipe_before_the_primitives() {
+    let (_dir, executor, door) = waiting("serve-recipes");
+    let mut client = Client::new(executor, door, Limits::default());
+    client.initialized();
+    client.send(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}));
+    let listed = client.read();
+    let tools = listed["result"]["tools"].as_array().unwrap();
+    let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+    // Every recipe of the registry, and then every other action.
+    let registry = whizbang::wiring::registry().unwrap();
+    let recipes: Vec<&str> = (registry.descriptors())
+        .filter(|d| d.kind() == Kind::Recipe)
+        .map(|d| d.name())
+        .collect();
+    assert_eq!(recipes, ["check", "remove_prompt"]);
+    assert_eq!(names[..recipes.len()], recipes[..]);
+    assert!(
+        names[recipes.len()..]
+            .iter()
+            .all(|name| !recipes.contains(name))
+    );
+    // `remove_prompt` as a tool with its schema: its picture and its protect by
+    // identity, its phrase a text, the overrides and the step to stop after.
+    let tool = tools.iter().find(|t| t["name"] == "remove_prompt").unwrap();
+    assert!(
+        tool["description"]
+            .as_str()
+            .unwrap()
+            .starts_with("Makes the mask")
+    );
+    let schema = &tool["inputSchema"];
+    assert_eq!(
+        schema["properties"]["image"]["pattern"],
+        "^sha256:[0-9a-f]{64}$"
+    );
+    assert_eq!(
+        schema["properties"]["protect"]["pattern"],
+        "^sha256:[0-9a-f]{64}$"
+    );
+    assert_eq!(schema["properties"]["prompt"]["type"], "string");
+    assert_eq!(
+        schema["properties"]["until"]["enum"],
+        json!([
+            "segment", "select", "grow", "close", "plug", "subtract", "feather"
+        ])
+    );
+    let required: Vec<&str> = (schema["required"].as_array().unwrap().iter())
+        .map(|name| name.as_str().unwrap())
+        .collect();
+    assert!(
+        required.contains(&"image") && required.contains(&"prompt"),
+        "{required:?}"
+    );
+    assert!(!required.contains(&"protect"), "{required:?}");
+    assert!(client.close().is_empty());
+}
+
+#[test]
 fn check_over_stdio_returns_the_verdict_of_each_use_case_under_a_scripted_judge() {
     use crate::anthropic::{
         CHECK_CLASSES, Judged, checklist_of, import_picture, serving, submission_of,

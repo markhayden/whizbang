@@ -27,6 +27,7 @@ mod pack;
 mod parity;
 mod prepare;
 mod rascal;
+mod recipe;
 mod record;
 mod runs;
 mod segment;

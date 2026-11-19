@@ -18,8 +18,10 @@ use crate::contract::{ActionDescriptor, Kind, Registry};
 /// call may send the backend that answers it. Version 6 adds `feature_from` to each need:
 /// the argument whose value names one more feature, or null (plan 1D, task Q1). Version 7
 /// adds `marks`: each tool the upper rungs apply to, with the mark its record states
-/// (`SPEC.md` section 8, "Marks"; plan m2c, task X1, item 6).
-pub const DESCRIPTION_VERSION: u32 = 7;
+/// (`SPEC.md` section 8, "Marks"; plan m2c, task X1, item 6). Version 8 adds `use` to an
+/// action that says when to use it, as every recipe of a file does (plan m3, task R1,
+/// item 7; ADR 0033); an action that says nothing of it has no `use`.
+pub const DESCRIPTION_VERSION: u32 = 8;
 
 /// Everything a door can offer, as one document.
 #[derive(Debug, Clone, PartialEq, Serialize)]

@@ -1,7 +1,6 @@
-//! `whizbang rascal segment`, `select`, `grow`, `plug`, `feather`, `render`, `paste` and
-//! `fill`: wiring
-//! from arguments to the door (`whizbang::door`), which runs the action through the
-//! executor.
+//! `whizbang rascal segment`, `select`, `grow`, `close`, `plug`, `subtract`, `feather`,
+//! `render`, `paste` and `fill`, and the recipes: wiring from arguments to the door
+//! (`whizbang::door`), which runs the action through the executor.
 
 use std::path::PathBuf;
 
@@ -10,6 +9,7 @@ use whizbang::door::{self, GrowAsked, OperationAsked, SegmentAsked};
 use whizbang::pack::OneWorker;
 use whizbang::wiring::{self, Make, Models, Over, Platform, Uses};
 use whizbang_core::contract::{Capability, Engine, Recovery, Value};
+use whizbang_rascal::operation::Asked;
 
 use crate::store::Where;
 
@@ -196,51 +196,57 @@ pub enum Command {
         #[command(flatten)]
         common: Common,
     },
-    /// Fill the holes of a mask's core: each region outside the core that touches no
-    /// edge of the image and is at most a share of the area of the shape around it. The
-    /// blend is cleared, the profile and the prescriptions are removed, and protect is
-    /// kept. The new mask is committed to the store, and its identity is printed.
+    #[command(about = whizbang_rascal::plug::ABOUT, after_help = EXIT_CODES)]
+    Plug(Op<whizbang_rascal::plug::Args>),
+    #[command(about = whizbang_rascal::feather::ABOUT, after_help = EXIT_CODES)]
+    Feather(Op<whizbang_rascal::feather::Args>),
+    #[command(about = whizbang_rascal::render::ABOUT, after_help = EXIT_CODES)]
+    Render(Op<whizbang_rascal::render::Args>),
+    #[command(about = whizbang_rascal::close::ABOUT, after_help = EXIT_CODES)]
+    Close(Op<whizbang_rascal::close::Args>),
+    #[command(about = whizbang_rascal::subtract::ABOUT, after_help = EXIT_CODES)]
+    Subtract(Op<whizbang_rascal::subtract::Args>),
+    /// Make the mask that removes what a phrase names from a picture: the recipe
+    /// `remove_prompt`, whose steps are segment, select, grow, close, plug, subtract and
+    /// feather, each a run of its own under the recipe's. The configured segmenter finds
+    /// the instances. Each step's run is printed, and then the mask, committed to the
+    /// store; with --until, the outputs of that step.
     #[command(after_help = EXIT_CODES)]
-    Plug {
-        /// The mask, by its identity in the store.
+    RemovePrompt {
+        /// The picture, by its identity in the store: sha256: and 64 hex digits, as
+        /// `whizbang store import` prints it.
         #[arg(long)]
-        mask: String,
-        /// The largest hole filled, as a share of the area of the shape around it, from
-        /// 0 to 1.
-        #[arg(long, default_value_t = whizbang_rascal::plug::MAX_SHARE_DEFAULT)]
-        max_share: f64,
+        image: String,
+        /// What to remove, in words.
+        #[arg(long)]
+        prompt: String,
+        /// A mask on the same picture whose pixels the mask keeps off, by its identity in
+        /// the store.
+        #[arg(long)]
+        protect: Option<String>,
+        /// The segmenter, by its name in the config's `[backends.segment]` tables. With
+        /// none, the config's default for segment answers.
+        #[arg(long, value_name = "NAME")]
+        backend: Option<String>,
+        #[command(flatten)]
+        steps: Steps,
         #[command(flatten)]
         common: Common,
     },
-    /// Set the blend of a mask to a feather of its core's edge, outward, out to three
-    /// sigmas. The core is kept, and protect is kept and wins. The new mask is committed
-    /// to the store, and its identity is printed.
+    /// Run a recipe: a file of the format recipe/1, read and checked against this
+    /// build's actions before anything runs, each of its steps a run of its own under the
+    /// recipe's. Each step's run is printed, and then the recipe's outputs, committed to
+    /// the store; with --until, the outputs of that step.
     #[command(after_help = EXIT_CODES)]
-    Feather {
-        /// The mask, by its identity in the store.
-        #[arg(long)]
-        mask: String,
-        /// The feather's sigma, in pixels of the mask's image, from 0.1 to 10000.
-        #[arg(long)]
-        sigma_px: f64,
+    Run {
+        /// The recipe file.
+        recipe: PathBuf,
+        /// One of the recipe's inputs: NAME=VALUE, where the value is an artifact's
+        /// identity in the store, or the text of a text input. Once for each.
+        #[arg(long = "input", value_name = "NAME=VALUE")]
+        inputs: Vec<String>,
         #[command(flatten)]
-        common: Common,
-    },
-    /// Make a mask into a picture, an image whose role is a rendering: `alpha`, the
-    /// image with the mask's weight as its alpha (the cut-out), or `plain`, the weight in
-    /// grey. The image is committed to the store, and its identity is printed; `store
-    /// export` writes it as a PNG.
-    #[command(after_help = EXIT_CODES)]
-    Render {
-        /// The mask, by its identity in the store.
-        #[arg(long)]
-        mask: String,
-        /// `alpha` or `plain`.
-        #[arg(long, value_parser = ["alpha", "plain"])]
-        profile: String,
-        /// The image the mask is on, by its identity in the store, which `alpha` needs.
-        #[arg(long)]
-        image: Option<String>,
+        steps: Steps,
         #[command(flatten)]
         common: Common,
     },
@@ -284,6 +290,56 @@ pub enum Command {
         #[command(flatten)]
         common: Common,
     },
+}
+
+/// What a recipe's command takes of its steps.
+#[derive(Args)]
+pub struct Steps {
+    /// Run up to and including this step, and print its outputs.
+    #[arg(long, value_name = "STEP")]
+    until: Option<String>,
+    /// Change one step's argument for this run: STEP.ARGUMENT=VALUE, or
+    /// STEP.constants=SET. Once for each; the run's record keeps them.
+    #[arg(long = "set", value_name = "STEP.ARGUMENT=VALUE")]
+    set: Vec<String>,
+}
+
+impl Steps {
+    /// The recipe's own arguments these give.
+    fn arguments(&self) -> Vec<(&'static str, Value)> {
+        let mut arguments = Vec::new();
+        if let Some(until) = &self.until {
+            arguments.push((whizbang_core::recipe::UNTIL, Value::text(until)));
+        }
+        if !self.set.is_empty() {
+            arguments.push((whizbang_core::recipe::SET, Value::Text(self.set.join("\n"))));
+        }
+        arguments
+    }
+}
+
+/// One operation's command: its own flags, which its module holds, and what every
+/// operation's command takes.
+#[derive(Args)]
+pub struct Op<T: Args> {
+    #[command(flatten)]
+    asked: T,
+    #[command(flatten)]
+    common: Common,
+}
+
+impl<T: Args + Asked> Op<T> {
+    fn run(&self, recovery: Recovery, platform: Option<Platform>) -> Result<String, String> {
+        let asked = &self.asked;
+        operation(
+            &self.common,
+            asked.action(),
+            asked.arguments(),
+            asked.inputs(),
+            recovery,
+            platform,
+        )
+    }
 }
 
 /// What every operation's command takes besides its own: the store, the config, and the
@@ -459,36 +515,81 @@ fn run_at(
                 platform,
             )
         }
-        Command::Plug {
-            mask,
-            max_share,
-            common,
-        } => {
-            let arguments = vec![("max_share", Value::Number(*max_share))];
-            let inputs = vec![("mask", "--mask", mask.as_str())];
-            operation(common, "plug", arguments, inputs, recovery, platform)
-        }
-        Command::Feather {
-            mask,
-            sigma_px,
-            common,
-        } => {
-            let arguments = vec![("sigma_px", Value::Number(*sigma_px))];
-            let inputs = vec![("mask", "--mask", mask.as_str())];
-            operation(common, "feather", arguments, inputs, recovery, platform)
-        }
-        Command::Render {
-            mask,
-            profile,
+        Command::Plug(op) => op.run(recovery, platform),
+        Command::Feather(op) => op.run(recovery, platform),
+        Command::Render(op) => op.run(recovery, platform),
+        Command::Close(op) => op.run(recovery, platform),
+        Command::Subtract(op) => op.run(recovery, platform),
+        Command::RemovePrompt {
             image,
+            prompt,
+            protect,
+            backend,
+            steps,
             common,
         } => {
-            let arguments = vec![("profile", Value::text(profile))];
-            let mut inputs = vec![("mask", "--mask", mask.as_str())];
-            if let Some(image) = image {
-                inputs.push(("image", "--image", image.as_str()));
+            let mut arguments = vec![("prompt", Value::text(prompt))];
+            if let Some(backend) = backend {
+                arguments.push(("backend", Value::text(backend)));
             }
-            operation(common, "render", arguments, inputs, recovery, platform)
+            arguments.extend(steps.arguments());
+            let mut inputs = vec![("image", "--image", image.as_str())];
+            if let Some(protect) = protect {
+                inputs.push(("protect", "--protect", protect.as_str()));
+            }
+            let uses = Uses::One(Capability::Segment, backend.as_deref());
+            let over = common.under.over(platform, uses)?;
+            let executor = built(&common.at, &over, recovery, false)?;
+            let asked = OperationAsked {
+                action: "remove_prompt",
+                arguments,
+                inputs,
+                request_id: common.request_id.as_deref(),
+            };
+            door::recipe(&executor, &asked, common.at.root())
+        }
+        Command::Run {
+            recipe,
+            inputs,
+            steps,
+            common,
+        } => {
+            let text = wiring::recipe_file(recipe)?;
+            let read = whizbang_core::recipe::Recipe::read(&text).map_err(|e| e.to_string())?;
+            let mut arguments = Vec::new();
+            let mut ports = Vec::new();
+            for given in inputs {
+                let Some((name, value)) = given.split_once('=') else {
+                    return Err("--input is NAME=VALUE".to_owned());
+                };
+                let Some((declared, input)) = read.inputs.get_key_value(name) else {
+                    return Err(format!(
+                        "--input names {}, which is no input of the recipe",
+                        door::printable(name)
+                    ));
+                };
+                match input.declared {
+                    whizbang_core::recipe::Declared::Text => {
+                        arguments.push((declared.as_str(), Value::text(value)));
+                    }
+                    whizbang_core::recipe::Declared::Artifact(_) => {
+                        ports.push((declared.as_str(), "--input", value));
+                    }
+                }
+            }
+            arguments.extend(steps.arguments());
+            let over = common
+                .under
+                .over(platform, Uses::Every)?
+                .recipe(text.clone());
+            let executor = built(&common.at, &over, recovery, false)?;
+            let asked = OperationAsked {
+                action: &read.name,
+                arguments,
+                inputs: ports,
+                request_id: common.request_id.as_deref(),
+            };
+            door::recipe(&executor, &asked, common.at.root())
         }
         Command::Paste {
             image,

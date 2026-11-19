@@ -233,3 +233,50 @@ impl Action for Render {
         Ok(Produced::nothing().with("image", rendering))
     }
 }
+
+/// Registers the action.
+pub fn register(
+    registry: &mut whizbang_core::contract::Registry,
+) -> Result<(), whizbang_core::contract::RegistrationError> {
+    registry.register(std::sync::Arc::new(Render::new()))
+}
+
+/// What the command says the action does.
+pub const ABOUT: &str = "Make a mask into a picture, an image whose role is a rendering: `alpha`, the image with \
+the mask's weight as its alpha (the cut-out), or `plain`, the weight in grey. The image is \
+committed to the store, and its identity is printed; `store export` writes it as a PNG.";
+
+/// What `whizbang rascal render` takes beside what every operation's command does.
+#[derive(clap::Args, Debug)]
+pub struct Args {
+    /// The mask, by its identity in the store.
+    #[arg(long)]
+    pub mask: String,
+    /// `alpha` or `plain`.
+    #[arg(long, value_parser = ["alpha", "plain"])]
+    pub profile: String,
+    /// The image the mask is on, by its identity in the store, which `alpha` needs.
+    #[arg(long)]
+    pub image: Option<String>,
+}
+
+impl operation::Asked for Args {
+    fn action(&self) -> &'static str {
+        NAME
+    }
+
+    fn arguments(&self) -> Vec<(&'static str, whizbang_core::contract::Value)> {
+        vec![(
+            "profile",
+            whizbang_core::contract::Value::text(&self.profile),
+        )]
+    }
+
+    fn inputs(&self) -> Vec<(&'static str, &'static str, &str)> {
+        let mut inputs = vec![("mask", "--mask", self.mask.as_str())];
+        if let Some(image) = &self.image {
+            inputs.push(("image", "--image", image.as_str()));
+        }
+        inputs
+    }
+}

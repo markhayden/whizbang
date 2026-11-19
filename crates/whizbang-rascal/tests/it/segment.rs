@@ -370,5 +370,77 @@ fn a_masks_origin_names_the_query_asked() {
                 .input("image", id.0)]
         );
     }
-    assert_eq!(VERSION, "2.0.0");
+    assert_eq!(VERSION, "2.1.0");
+}
+
+#[test]
+fn instances_are_read_in_the_order_the_interface_fixes() {
+    // The fake scores a phrase's boxes from 0.9 down by 0.1 and no lower than 0: the
+    // tenth and eleventh both score 0, and the eleventh is higher in the picture. They
+    // are read best score first, then by the box's top, whatever order they came in.
+    let world = World::new();
+    let (_, id) = with_picture(&world);
+    let mut segmenter = FakeSegmenter::new();
+    let mut boxes = Vec::new();
+    for at in 0..9 {
+        boxes.push([at, 0, at + 1, 1]);
+    }
+    boxes.push([0, 10, 2, 12]);
+    boxes.push([5, 3, 7, 5]);
+    for bounds in &boxes {
+        segmenter = segmenter.finding("a dot", *bounds);
+    }
+    let segmenter = Arc::new(segmenter);
+    let finished = engine(&world, &segmenter)
+        .submit(&call(id, "a dot").argument("max_instances", Value::Integer(16)))
+        .unwrap();
+    let masks = masks_of(&world, finished.outcome().outputs());
+    let mut expected: Vec<[u32; 4]> = boxes[..9].to_vec();
+    expected.extend([boxes[10], boxes[9]]);
+    let cores: Vec<Vec<u8>> = masks.iter().map(|mask| mask.core().to_vec()).collect();
+    let planes: Vec<Vec<u8>> = expected.into_iter().map(plane_of).collect();
+    assert_eq!(cores, planes);
+    // The instance an origin names is its place in that order.
+    let last = masks[10].origin().steps()[0].clone();
+    assert_eq!(
+        last,
+        Step::new(NAME, VERSION)
+            .argument("kind", "phrase")
+            .argument("query", "a dot")
+            .argument("max_instances", "16")
+            .argument("instance", "11")
+            .input("image", id.0)
+    );
+
+    // The order itself: the score, then the top, the left, the right and the bottom,
+    // then the predicted IoU, none first and then the higher, then the plane's bytes.
+    use std::cmp::Ordering::{Greater, Less};
+    use whizbang_rascal::segment::in_order;
+    let key = |score: f64, b: [f64; 4], iou: Option<f64>| (score, b, iou, &[0u8][..]);
+    let b = [1.0, 2.0, 3.0, 4.0];
+    assert_eq!(in_order(key(0.9, b, None), key(0.8, b, None)), Less);
+    assert_eq!(
+        in_order(
+            key(0.5, [0.0, 3.0, 9.0, 9.0], None),
+            key(0.5, [9.0, 2.0, 9.0, 9.0], None)
+        ),
+        Greater
+    );
+    assert_eq!(
+        in_order(
+            key(0.5, [1.0, 2.0, 9.0, 9.0], None),
+            key(0.5, [2.0, 2.0, 0.0, 0.0], None)
+        ),
+        Less
+    );
+    assert_eq!(in_order(key(0.5, b, None), key(0.5, b, Some(0.1))), Less);
+    assert_eq!(
+        in_order(key(0.5, b, Some(0.9)), key(0.5, b, Some(0.1))),
+        Less
+    );
+    let (one, other) = ([0u8, 255], [255u8, 0]);
+    assert_eq!(
+        in_order((0.5, b, None, &one[..]), (0.5, b, None, &other[..])),
+        Less
+    );
 }

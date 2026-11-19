@@ -31,8 +31,16 @@ use super::{
     text,
 };
 
-/// The record's kind, with the version this build writes.
+/// The record's kind, with the version this build writes for a record that lists no
+/// step of a recipe; one that does is written as [`RUN_5`] (ADR 0033): a record is
+/// written in the oldest version that holds all of it.
 pub const RUN_RECORD: &str = "run/4";
+
+/// The kind and version of a record that lists a step of a recipe (ADR 0033).
+pub const RUN_5: &str = "run/5";
+
+/// The JSON Schema of a `run/5` record, as a document.
+pub const RUN_5_SCHEMA: &str = include_str!("../../schemas/run-5.json");
 
 /// The JSON Schema of a `run/4` record, as a document.
 pub const RUN_RECORD_SCHEMA: &str = include_str!("../../schemas/run-4.json");
@@ -124,9 +132,20 @@ pub fn is_diagnostic_name(name: &str) -> bool {
 
 /// The most calls a run's record lists in `steps`: the most runs one run may call. One
 /// more is refused where it is made ([`super::Refusal::TooManyCalls`]), so the list
-/// is whole. It is as low as it is because a call is two publications, and the cost of
-/// a publication grows with what the store holds (`docs/carry-over.md`).
+/// is whole. A call is two publications, and the cost of a publication grows with what
+/// the store holds; measured again with the recipe runner and kept, since a recipe has at
+/// most 32 steps (ADR 0033, "How many calls a run makes").
 pub const STEPS_LIMIT: usize = 256;
+
+/// The most steps of a recipe a record lists with their arguments, and the most
+/// arguments of one such step it lists: a recipe has no more steps than this
+/// (`crate::recipe::STEPS_MAX`), and a step no more arguments it sets.
+pub const RECIPE_STEPS_LIMIT: usize = 32;
+pub const RECIPE_ARGUMENTS_LIMIT: usize = 16;
+
+/// The most characters a record keeps of the text of an argument of a recipe's step: the
+/// step's run keeps it whole.
+pub const RECIPE_TEXT_LIMIT: usize = 64;
 
 /// The most refusals a run's record lists. Those after are counted
 /// (`outcome.refusals_omitted`) and not listed.
@@ -330,12 +349,25 @@ fn refusals_wire<'de, D: serde::Deserializer<'de>>(
     Ok(read.into_iter().map(|One(refused)| refused).collect())
 }
 
-/// What kind of step this is, as a word. A call of another action is the one kind
-/// there is; recipe steps come with the recipe runner.
+/// What kind of step this is, as a word: a call of another action, or, in `run/5`, a
+/// step of a recipe, which is a call that the recipe runner made of the step it names
+/// (ADR 0033).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StepKind {
     Call,
+    Recipe,
+}
+
+/// What a step of a recipe says beside what every step does: the step's id in its
+/// recipe, the arguments the recipe gave the call, overrides applied, as the call took
+/// them and each text cut at [`RECIPE_TEXT_LIMIT`] characters, and the constant set it
+/// named, or null.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RecipeStep {
+    pub id: String,
+    pub arguments: Vec<Argument>,
+    pub constants: Option<String>,
 }
 
 /// One step of a run: a call it made of another action, which was admitted and so has
@@ -346,12 +378,14 @@ pub enum StepKind {
 /// refused its end, and it was abandoned.
 ///
 /// It is written as JSON, and read from JSON only as part of a stored record.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Step {
     step: StepKind,
     run: String,
     action: String,
     status: Option<Status>,
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    recipe: Option<RecipeStep>,
 }
 
 impl Step {
@@ -361,7 +395,20 @@ impl Step {
             run: run.as_str().to_owned(),
             action: action.to_owned(),
             status,
+            recipe: None,
         }
+    }
+
+    /// The same call, as the step of a recipe.
+    pub(super) fn of_recipe(mut self, step: RecipeStep) -> Step {
+        self.step = StepKind::Recipe;
+        self.recipe = Some(step);
+        self
+    }
+
+    /// What a step of a recipe says beside a call: none for a call.
+    pub fn recipe(&self) -> Option<&RecipeStep> {
+        self.recipe.as_ref()
     }
 
     pub fn kind(&self) -> StepKind {
@@ -384,21 +431,42 @@ impl Step {
     }
 }
 
+/// A step as it is read. What a step of a recipe says beside a call is read when it is
+/// there, whatever the kind: a record is compared with its own bytes on reading, so a
+/// call with an id, or a step of a recipe without one, is not written back as it was,
+/// and is refused.
 #[derive(Deserialize)]
-#[serde(remote = "Step", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 struct StepWire {
     step: StepKind,
     run: String,
     action: String,
     #[serde(deserialize_with = "present")]
     status: Option<Status>,
+    id: Option<String>,
+    arguments: Option<Vec<Argument>>,
+    #[serde(default, deserialize_with = "present")]
+    constants: Option<String>,
 }
 
 fn steps_wire<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<Step>, D::Error> {
-    #[derive(Deserialize)]
-    struct One(#[serde(with = "StepWire")] Step);
-    let read = Vec::<One>::deserialize(deserializer)?;
-    Ok(read.into_iter().map(|One(step)| step).collect())
+    let read = Vec::<StepWire>::deserialize(deserializer)?;
+    let step = |wire: StepWire| Step {
+        step: wire.step,
+        run: wire.run,
+        action: wire.action,
+        status: wire.status,
+        recipe: match (wire.step, wire.id, wire.arguments) {
+            (StepKind::Recipe, id, arguments) => Some(RecipeStep {
+                id: id.unwrap_or_default(),
+                arguments: arguments.unwrap_or_default(),
+                constants: wire.constants,
+            }),
+            // What a call does not say is not written back, and the bytes then differ.
+            (StepKind::Call, _, _) => None,
+        },
+    };
+    Ok(read.into_iter().map(step).collect())
 }
 
 /// The most capability requests a run's record lists in `models`: the most one run
@@ -1516,8 +1584,8 @@ impl std::fmt::Display for RecordError {
         match self {
             RecordError::OtherVersion { found } => write!(
                 f,
-                "a record of another version: {}, and this build reads {RUN_RECORD}, \
-                 {RUN_3} and {RUN_2}",
+                "a record of another version: {}, and this build reads {RUN_5}, \
+                 {RUN_RECORD}, {RUN_3} and {RUN_2}",
                 found.escape_debug()
             ),
             // The reason can quote what was read: it is shown escaped and cut.
@@ -1866,8 +1934,11 @@ impl RunRecord {
         } = ran.facts;
         settings.sort_by(|a, b| a.name.cmp(&b.name));
         paid.retain(|paid| paid.request < models.len() as u64);
+        // The oldest version that holds all of it (ADR 0033).
+        let steps = &ran.inside.steps;
+        let fifth = steps.iter().any(|step| step.recipe.is_some());
         RunRecord {
-            record: RUN_RECORD.to_owned(),
+            record: if fifth { RUN_5 } else { RUN_RECORD }.to_owned(),
             identity: Identity {
                 run: ran.run.to_owned(),
                 request: ran.request.map(|id| id.as_str().to_owned()),
@@ -2021,7 +2092,9 @@ impl RunRecord {
             record: String,
         }
         let frozen = match serde_json::from_slice::<Version>(bytes) {
-            Ok(Version { record }) if ![RUN_RECORD, RUN_3, RUN_2].contains(&record.as_str()) => {
+            Ok(Version { record })
+                if ![RUN_5, RUN_RECORD, RUN_3, RUN_2].contains(&record.as_str()) =>
+            {
                 // What it says its version is can be anything: its first 64 characters
                 // are kept.
                 return Err(RecordError::OtherVersion {
@@ -2107,6 +2180,39 @@ impl RunRecord {
         if self.steps.len() > STEPS_LIMIT {
             return refuse("more steps than a run may have");
         }
+        // The steps of a recipe (ADR 0033): only in `run/5`, at most as many as a recipe
+        // has, each with an id and a constant set of the rule of a name, no more
+        // arguments than a recipe's step sets, and each text cut.
+        let of_recipes = self.steps.iter().filter_map(|step| step.recipe.as_ref());
+        if of_recipes.clone().count() > RECIPE_STEPS_LIMIT
+            || (self.record != RUN_5 && of_recipes.clone().next().is_some())
+        {
+            return refuse(
+                "more steps of a recipe than a recipe has, or a step of a recipe in a record \
+                 of a version that has none",
+            );
+        }
+        for step in of_recipes {
+            let named = |name: &str| text::action_name(name).is_ok();
+            if !named(&step.id) || step.constants.as_deref().is_some_and(|set| !named(set)) {
+                return refuse(
+                    "a step of a recipe's id or constant set is not a lower-case letter, then \
+                     lower-case letters, digits, _ or -, 64 characters at most",
+                );
+            }
+            let long = |argument: &Argument| match &argument.value {
+                ArgumentValue::Text(text) => text.chars().count() > RECIPE_TEXT_LIMIT,
+                _ => false,
+            };
+            if step.arguments.len() > RECIPE_ARGUMENTS_LIMIT
+                || step.arguments.iter().any(|a| a.name.is_empty() || long(a))
+            {
+                return refuse(
+                    "a step of a recipe lists more arguments than a step sets, an argument \
+                     with no name, or a text longer than one is kept",
+                );
+            }
+        }
         let mut called = std::collections::BTreeSet::new();
         for step in &self.steps {
             let own =
@@ -2161,7 +2267,8 @@ impl RunRecord {
         // which says neither.
         for model in &self.models {
             let said = model.device.is_some() || model.cached.is_some();
-            if said && (model.ended != RequestEnded::Answered || self.record != RUN_RECORD) {
+            let has_none = self.record == RUN_3 || self.record == RUN_2;
+            if said && (model.ended != RequestEnded::Answered || has_none) {
                 return refuse(
                     "a capability request names a device or a cache, and was not answered \
                      or is in a record of a version that has neither",

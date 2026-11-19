@@ -337,6 +337,9 @@ pub fn read(path: &Path) -> Result<ToolFile, String> {
             return Err(refused("was replaced while it was opened"));
         }
     }
+    if !opened.file_type().is_file() {
+        return Err(refused("is a link or not a file, and is not read"));
+    }
     let mut code = Vec::new();
     file.take(CODE_LIMIT as u64 + 1)
         .read_to_end(&mut code)

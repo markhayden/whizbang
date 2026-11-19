@@ -18,8 +18,8 @@ use super::settings::setting_name;
 use super::{
     Approval, BACKENDS_LIMIT, Backend, CALL_CAP_LIMIT_MICROS, CAPABILITIES, CONFIG_BYTES_LIMIT,
     Config, ConfigRefused, DOWNLOAD_LEAST_KIB_LIMIT, MODEL_TOKENS_LIMIT, MODELS_DIR_LIMIT,
-    ModelToken, Offered, RECIPIENTS_LIMIT, SETTING_TEXT_LIMIT, SETTINGS_LIMIT, SIGN_IN_ORIGIN,
-    Setting, TEXT_LIMIT, TOOL_PATHS_LIMIT, TokenFrom, VARIABLE_LIMIT,
+    ModelToken, Offered, RECIPE_PATHS_LIMIT, RECIPIENTS_LIMIT, SETTING_TEXT_LIMIT, SETTINGS_LIMIT,
+    SIGN_IN_ORIGIN, Setting, TEXT_LIMIT, TOOL_PATHS_LIMIT, TokenFrom, VARIABLE_LIMIT,
 };
 use crate::contract::record::SETTING_NAME_LIMIT;
 use crate::contract::{Secrets, text};
@@ -409,9 +409,18 @@ fn config(mut table: Table, secrets: &Secrets) -> Read<Config> {
         }
         at.unknown(&tools, "paths")?;
     }
+    if let Some(value) = table.remove("recipes") {
+        let at = At::top("recipes", secrets);
+        let mut recipes = at.table(value)?;
+        if let Some(value) = recipes.remove("paths") {
+            config.recipe_paths = recipe_paths(&at.then("paths"), value)?;
+        }
+        at.unknown(&recipes, "paths")?;
+    }
     match table.keys().next() {
         Some(key) => Err(At::top(key, secrets).refuse(
-            "is not known; the tables are backends, spend, egress, models, cache and tools",
+            "is not known; the tables are backends, spend, egress, models, cache, tools and \
+             recipes",
         )),
         None => Ok(config),
     }
@@ -433,6 +442,26 @@ fn tool_paths(at: &At, value: Value) -> Read<Vec<String>> {
         let path = models_dir(&at.then(&n.to_string()), item)?;
         if paths.contains(&path) {
             return Err(at.refuse("names a tool file twice"));
+        }
+        paths.push(path);
+    }
+    Ok(paths)
+}
+
+/// A user's recipe files (plan m3, task R1, item 6; ADR 0033): a list of at most
+/// [`RECIPE_PATHS_LIMIT`] absolute paths, each once. Nothing of a path is shown.
+fn recipe_paths(at: &At, value: Value) -> Read<Vec<String>> {
+    let Value::Array(items) = value else {
+        return Err(at.wrong("a list of paths", &value));
+    };
+    if items.len() > RECIPE_PATHS_LIMIT {
+        return Err(at.refuse(format!("names more than {RECIPE_PATHS_LIMIT} recipe files")));
+    }
+    let mut paths: Vec<String> = Vec::new();
+    for (n, item) in items.into_iter().enumerate() {
+        let path = models_dir(&at.then(&n.to_string()), item)?;
+        if paths.contains(&path) {
+            return Err(at.refuse("names a recipe file twice"));
         }
         paths.push(path);
     }

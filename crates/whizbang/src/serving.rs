@@ -17,7 +17,9 @@ use std::sync::Arc;
 use serde_json::{Map, Value as Json, json};
 use whizbang_core::artifact::ArtifactId;
 use whizbang_core::contract::record::JOURNAL_NAME;
-use whizbang_core::contract::{ActionDescriptor, Call, JournalLine, Outcome, RunId, read_journal};
+use whizbang_core::contract::{
+    ActionDescriptor, Call, JournalLine, Kind, Outcome, RunId, read_journal,
+};
 use whizbang_core::store::Reader;
 use whizbang_core::store::fs::RealFs;
 use whizbang_serve::tools::{self, REQUEST_ID, Tool};
@@ -205,7 +207,16 @@ pub fn check_call(arguments: &Map<String, Json>) -> Result<(Call, Option<String>
 
 impl Door for Actions {
     fn tools(&self) -> Vec<Tool> {
-        (self.descriptors.iter())
+        // The recipes first, then the loops, then the primitives, each kind in the order
+        // the registry lists them: what a description lists (ADR 0033).
+        let mut descriptors: Vec<&ActionDescriptor> = self.descriptors.iter().collect();
+        descriptors.sort_by_key(|descriptor| match descriptor.kind() {
+            Kind::Recipe => 0,
+            Kind::Loop => 1,
+            Kind::Primitive => 2,
+        });
+        descriptors
+            .into_iter()
             .map(|descriptor| match descriptor.name() {
                 CHECK => check_tool(),
                 _ => tools::tool_of(descriptor),
