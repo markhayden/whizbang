@@ -1,9 +1,10 @@
-//! `subtract` of a mask: protect is made larger by a second mask's support, its core or
-//! its blend, grown by a margin (`SPEC.md` section 7). The core and the blend are cleared
+//! `subtract`: protect is made larger by a second mask's support, its core or its
+//! blend, or by a location's inside, grown by a margin (`SPEC.md` section 7). The core and the blend are cleared
 //! under the new protect; the profile and the prescriptions stay, since what applies
 //! them honours protect ([`Mask::protect_union`]).
 //!
-//! With no second mask, the mask is handed back unchanged, the same artifact: so a recipe
+//! At most one of the second mask and the location is given. With neither, the mask is
+//! handed back unchanged, the same artifact: so a recipe
 //! whose optional `protect` was left out runs every step, and reads the same either way.
 //!
 //! # The rule, in whole numbers
@@ -12,16 +13,19 @@
 //! support is grown by `grow_px`, as `grow` grows a core with no `down_px`
 //! ([`crate::grow::grown`]): every pixel whose centre is within the whole part of
 //! `grow_px * grow_px`, squared exactly, of a support pixel's centre. Every grown pixel
-//! joins protect.
+//! joins protect. A location's inside is the plane `rasterize` draws of it
+//! ([`crate::rasterize::location_core`]), grown the same way.
 //!
-//! Ported from rascal `crates/rascal-ops/src/subtract.rs`, the form that takes a mask, at
-//! the commit `docs/sources.toml` pins; the form that takes a location needs `rasterize`,
-//! and is ported with it. The disc is `grow`'s, with `grow`'s deliberate differences
+//! Ported from rascal `crates/rascal-ops/src/subtract.rs` at the commit
+//! `docs/sources.toml` pins; the form that takes a location came with `rasterize` (plan
+//! m3, task O1, item 1). Both given are refused, as rascal refused them. A location on
+//! another image, or one with no inside, is refused, as rascal refused one in another
+//! frame or said it did not apply. The disc is `grow`'s, with `grow`'s deliberate differences
 //! from rascal's distance transform (`crate::grow`). A second mask on another image is
 //! refused as rascal refused one in another frame. Rascal handed back a mask under a new
 //! id when it had nothing to protect; here the mask is the same artifact.
 
-use whizbang_core::artifact::{ArtifactError, ArtifactType, Mask, Step};
+use whizbang_core::artifact::{ArtifactError, ArtifactType, Location, Mask, Step};
 use whizbang_core::contract::{
     Action, ActionDescriptor, Argument, Context, Failure, InputPort, Kind, OutputPort,
     PreparedCall, Produced, RegistrationError, Registry, Value, ValueType,
@@ -29,20 +33,21 @@ use whizbang_core::contract::{
 
 use crate::grow::{PX_MAX, grown, text_of};
 use crate::operation;
+use crate::rasterize::{self, location_core};
 
 /// The action's name.
 pub const NAME: &str = "subtract";
 
 /// The action's version, which a mask it made records in its origin.
-pub const VERSION: &str = "1.0.0";
+pub const VERSION: &str = "1.1.0";
 
 /// `grow_px` when a call does not give it: rascal's.
 pub const GROW_PX_DEFAULT: f64 = 0.0;
 
 /// What the command says the action does.
-pub const ABOUT: &str = "Protect the pixels of a second mask: its core and its blend, grown by a margin, join \
-protect, and the core and the blend are cleared under it. The profile and the prescriptions \
-are kept. With no second mask the mask is handed back unchanged. The mask is committed to \
+pub const ABOUT: &str = "Protect the pixels of a second mask, its core and its blend, or of a location's inside: \
+grown by a margin, they join protect, and the core and the blend are cleared under them. The \
+profile and the prescriptions are kept. With neither the mask is handed back unchanged. The mask is committed to \
 the store, and its identity is printed.";
 
 /// Why a mask could not be subtracted.
@@ -66,13 +71,23 @@ pub struct Subtracted {
     pub protect_after: u64,
 }
 
-/// Subtracts `other` from `mask`: protect grows by `other`'s support, grown by
-/// `grow_px`. The mask that comes back has one more step in its origin, which names this
-/// action, its version, `grow_px` and both masks. With no `other` the mask comes back as
-/// it was given. Nothing comes back once `stopped` says so.
+/// What is subtracted from a mask: a second mask, or a location.
+#[derive(Debug, Clone, Copy)]
+pub enum Other<'a> {
+    /// A mask on the same image, whose core and blend are protected.
+    Mask(&'a Mask),
+    /// A location on the same image, whose inside is protected.
+    Location(&'a Location),
+}
+
+/// Subtracts `other` from `mask`: protect grows by `other`'s support, or its inside,
+/// grown by `grow_px`. The mask that comes back has one more step in its origin, which
+/// names this action, its version, `grow_px`, the mask and what was subtracted. With no
+/// `other` the mask comes back as it was given. Nothing comes back once `stopped` says
+/// so.
 pub fn subtract(
     mut mask: Mask,
-    other: Option<&Mask>,
+    other: Option<Other<'_>>,
     grow_px: f64,
     stopped: &dyn Fn() -> bool,
 ) -> Result<Option<Subtracted>, SubtractError> {
@@ -84,17 +99,40 @@ pub fn subtract(
             protect_after: protect_before,
         }));
     };
-    other
-        .require_image(mask.image(), mask.space())
-        .map_err(|error| SubtractError::Invalid(error.without_paths()))?;
     let space = mask.space();
     let (width, height) = (space.width() as usize, space.height() as usize);
-    let support: Vec<u8> = other
-        .core()
-        .iter()
-        .zip(other.blend())
-        .map(|(core, blend)| if *core != 0 || *blend != 0 { 255 } else { 0 })
-        .collect();
+    let (support, port, id) = match other {
+        Other::Mask(other) => {
+            other
+                .require_image(mask.image(), mask.space())
+                .map_err(|error| SubtractError::Invalid(error.without_paths()))?;
+            let support: Vec<u8> = other
+                .core()
+                .iter()
+                .zip(other.blend())
+                .map(|(core, blend)| if *core != 0 || *blend != 0 { 255 } else { 0 })
+                .collect();
+            (support, "subtract", other.id())
+        }
+        Other::Location(location) => {
+            let binding = location.binding();
+            if binding.source() != mask.image() || binding.source_space() != space {
+                return Err(SubtractError::Invalid(format!(
+                    "the location is on the image {}, and the mask on {}",
+                    binding.source(),
+                    mask.image()
+                )));
+            }
+            let shape = location.shape();
+            let inside = location_core(shape, space.width(), space.height()).ok_or_else(|| {
+                SubtractError::Invalid(format!(
+                    "a {} location has no inside to protect",
+                    rasterize::kind(shape)
+                ))
+            })?;
+            (inside, "location", location.id())
+        }
+    };
     let Some(plane) = grown(&support, width, height, grow_px, 0.0, stopped) else {
         return Ok(None);
     };
@@ -103,7 +141,7 @@ pub fn subtract(
     let step = Step::new(NAME, VERSION)
         .argument("grow_px", &text_of(grow_px))
         .input("mask", from.0)
-        .input("subtract", other.id().0);
+        .input(port, id.0);
     mask.record(step).map_err(SubtractError::Mask)?;
     let protect_after = operation::set(mask.protect());
     Ok(Some(Subtracted {
@@ -124,7 +162,7 @@ impl Subtract {
             NAME,
             VERSION,
             Kind::Primitive,
-            "Protects the pixels of a second mask, grown by a margin; with none the mask is handed back unchanged.",
+            "Protects the pixels of a second mask or a location, grown by a margin; with neither the mask is unchanged.",
         )
         .argument(Argument::with_default(
             "grow_px",
@@ -141,6 +179,11 @@ impl Subtract {
             "subtract",
             ArtifactType::Mask,
             "A mask on the same image whose core and blend become protect.",
+        ))
+        .input(InputPort::optional(
+            "location",
+            ArtifactType::Location,
+            "A location on the same image whose inside becomes protect; not with subtract.",
         ))
         .output(OutputPort::one(
             "mask",
@@ -175,8 +218,12 @@ pub struct Args {
     pub mask: String,
     /// The mask whose core and blend are protected, by its identity in the store: on the
     /// same image. Without it the mask is handed back unchanged.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "location")]
     pub subtract: Option<String>,
+    /// A location whose inside is protected, by its identity in the store: on the same
+    /// image.
+    #[arg(long)]
+    pub location: Option<String>,
     /// How far the second mask's support is grown, in pixels of the mask's image, from 0
     /// to 10000.
     #[arg(long, default_value_t = GROW_PX_DEFAULT)]
@@ -197,6 +244,9 @@ impl operation::Asked for Args {
         if let Some(subtract) = &self.subtract {
             inputs.push(("subtract", "--subtract", subtract.as_str()));
         }
+        if let Some(location) = &self.location {
+            inputs.push(("location", "--location", location.as_str()));
+        }
         inputs
     }
 }
@@ -216,21 +266,32 @@ impl Action for Subtract {
             Some(other) => Some(operation::mask(context, *other)?),
             None => None,
         };
+        let location = match operation::given(call, "location").first() {
+            Some(location) => Some(operation::location(context, *location)?),
+            None => None,
+        };
+        let given = match (&other, &location) {
+            (Some(_), Some(_)) => {
+                return Err(Failure::invalid("give subtract or location, not both"));
+            }
+            (Some(other), None) => Some(Other::Mask(other)),
+            (None, Some(location)) => Some(Other::Location(location)),
+            (None, None) => None,
+        };
         let stopped = || operation::stopped(context);
-        let subtracted =
-            subtract(read, other.as_ref(), grow_px, &stopped).map_err(|e| match e {
-                SubtractError::Invalid(why) => Failure::invalid(&why),
-                SubtractError::Mask(error) => Failure::error("mask", &error.without_paths()),
-            })?;
+        let subtracted = subtract(read, given, grow_px, &stopped).map_err(|e| match e {
+            SubtractError::Invalid(why) => Failure::invalid(&why),
+            SubtractError::Mask(error) => Failure::error("mask", &error.without_paths()),
+        })?;
         let Some(subtracted) = subtracted else {
             return Err(operation::stopped_failure(context, NAME));
         };
-        context.events().progress(&match other {
+        context.events().progress(&match given {
             Some(_) => format!(
                 "subtract: protect went from {} to {} pixels",
                 subtracted.protect_before, subtracted.protect_after
             ),
-            None => "subtract: no mask to subtract; the mask is handed back unchanged".to_owned(),
+            None => "subtract: nothing to subtract; the mask is handed back unchanged".to_owned(),
         });
         Ok(Produced::nothing().with("mask", subtracted.mask))
     }

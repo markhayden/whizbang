@@ -284,6 +284,291 @@
       "concurrent": true
     },
     {
+      "name": "remove",
+      "version": "1.0.0",
+      "kind": "recipe",
+      "purpose": "Removes the thing at a location: the mask grown, closed, plugged, kept off protect and feathered, then filled.",
+      "use": "To remove a thing whose place you know, as a box, a polygon or a stroke; give protect to keep what the mask would reach.",
+      "arguments": [
+        {
+          "name": "backend",
+          "purpose": "The input backend of the recipe.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "set",
+          "purpose": "Overrides for this run, one to a line: a step, a dot, an argument, an equals sign and a value.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "until",
+          "purpose": "Runs the recipe up to and including this step, before its last, and hands back none of its own outputs.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "rasterize",
+              "grow",
+              "close",
+              "plug",
+              "subtract",
+              "feather"
+            ]
+          },
+          "required": false,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The input image of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "location",
+          "artifact": "location",
+          "purpose": "The input location of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "protect",
+          "artifact": "mask",
+          "purpose": "The input protect of the recipe.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The output image of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": {
+            "not_given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The output mask of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": {
+            "not_given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [
+        {
+          "capability": "fill",
+          "features": [],
+          "when": {
+            "not_given": "until"
+          },
+          "chosen_by": "backend",
+          "feature_from": null,
+          "requests": 1
+        }
+      ],
+      "concurrent": true
+    },
+    {
+      "name": "repair_area",
+      "version": "1.0.0",
+      "kind": "recipe",
+      "purpose": "Repairs a stain or a spot at a location: the box or polygon as drawn, feathered, then filled.",
+      "use": "To repaint a small area whose place you know, keeping its edges as drawn.",
+      "arguments": [
+        {
+          "name": "backend",
+          "purpose": "The input backend of the recipe.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "set",
+          "purpose": "Overrides for this run, one to a line: a step, a dot, an argument, an equals sign and a value.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "until",
+          "purpose": "Runs the recipe up to and including this step, before its last, and hands back none of its own outputs.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "rasterize",
+              "feather"
+            ]
+          },
+          "required": false,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The input image of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "location",
+          "artifact": "location",
+          "purpose": "The input location of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The output image of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": {
+            "not_given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The output mask of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": {
+            "not_given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [
+        {
+          "capability": "fill",
+          "features": [],
+          "when": {
+            "not_given": "until"
+          },
+          "chosen_by": "backend",
+          "feature_from": null,
+          "requests": 1
+        }
+      ],
+      "concurrent": true
+    },
+    {
+      "name": "protect",
+      "version": "1.0.0",
+      "kind": "recipe",
+      "purpose": "Makes the mask for a second pass: what the first mask reached is protected, the rest of the image the core.",
+      "use": "After a fill, to edit the rest of its composite while keeping the first edit; give the mask the fill handed back.",
+      "arguments": [
+        {
+          "name": "set",
+          "purpose": "Overrides for this run, one to a line: a step, a dot, an argument, an equals sign and a value.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The input image of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The input mask of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The output mask of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
       "name": "align",
       "version": "1.0.0",
       "kind": "primitive",
@@ -882,9 +1167,9 @@
     },
     {
       "name": "subtract",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "kind": "primitive",
-      "purpose": "Protects the pixels of a second mask, grown by a margin; with none the mask is handed back unchanged.",
+      "purpose": "Protects the pixels of a second mask or a location, grown by a margin; with neither the mask is unchanged.",
       "arguments": [
         {
           "name": "grow_px",
@@ -913,6 +1198,16 @@
           "name": "subtract",
           "artifact": "mask",
           "purpose": "A mask on the same image whose core and blend become protect.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "location",
+          "artifact": "location",
+          "purpose": "A location on the same image whose inside becomes protect; not with subtract.",
           "count": {
             "min": 0,
             "max": 1
@@ -1519,6 +1814,237 @@
           },
           "derived_from": null,
           "rebound_onto": "image"
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "line",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "A line location on an image: a whole column or a path, with its full width in pixels.",
+      "arguments": [
+        {
+          "name": "column",
+          "purpose": "The column, in pixels from the image's left edge, for a line from top to bottom.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 10000.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "path",
+          "purpose": "Two or more points in pixels of the image, X Y, points apart by ;.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "width_px",
+          "purpose": "The line's full width in pixels, more than 0 and at most the image's diagonal.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 10000.0
+          },
+          "required": true,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image the line is on.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "location",
+          "artifact": "location",
+          "purpose": "The line location.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "image"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "rasterize",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "A location's inside as the core of a new mask: a box or polygon as drawn, a line as a band, a stroke widened.",
+      "arguments": [
+        {
+          "name": "use_case",
+          "purpose": "What the mask is for, recorded on it.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "seam",
+              "remove",
+              "repair",
+              "protect",
+              "custom"
+            ]
+          },
+          "required": false,
+          "default": "custom"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "location",
+          "artifact": "location",
+          "purpose": "The location to rasterize.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": "image"
+        },
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image the location is on.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask whose core is the location's inside; no blend and nothing protected.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "image"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "shrink",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Shrinks the core of a mask by a disc; a core against the border shrinks from it too.",
+      "arguments": [
+        {
+          "name": "px",
+          "purpose": "The radius of the disc, in pixels of the mask's image, from 0 to 10000.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 10000.0
+          },
+          "required": true,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask whose core is shrunk.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask with the shrunk core, its blend cleared and its protect kept.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "invert",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "The mask for a second pass: what the first mask reached is protected, and every other pixel is the core.",
+      "arguments": [],
+      "inputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The first pass's mask, on the image.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": "image"
+        },
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image of the second pass: after a fill, its composite.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The second pass's mask: the first's reach protected, the rest the core.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "image"
+          },
+          "derived_from": null,
+          "rebound_onto": null
         }
       ],
       "needs": [],

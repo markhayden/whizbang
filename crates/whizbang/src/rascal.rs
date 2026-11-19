@@ -1,7 +1,7 @@
 //! `whizbang rascal segment`, `select`, `grow`, `close`, `plug`, `subtract`, `feather`,
-//! `render`, `paste`, `fill`, `cut`, `put`, `window`, `unwindow` and `apply`, and the
-//! recipes: wiring from arguments to the door
-//! (`whizbang::door`), which runs the action through the executor.
+//! `render`, `paste`, `fill`, `line`, `rasterize`, `shrink`, `invert`, `cut`, `put`,
+//! `window`, `unwindow` and `apply`, and the recipes: wiring from arguments to the
+//! door (`whizbang::door`), which runs the action through the executor.
 
 use std::path::PathBuf;
 
@@ -207,6 +207,66 @@ pub enum Command {
     Close(Op<whizbang_rascal::close::Args>),
     #[command(about = whizbang_rascal::subtract::ABOUT, after_help = EXIT_CODES)]
     Subtract(Op<whizbang_rascal::subtract::Args>),
+    #[command(about = whizbang_rascal::line::ABOUT, after_help = EXIT_CODES)]
+    Line(Op<whizbang_rascal::line::Args>),
+    #[command(about = whizbang_rascal::rasterize::ABOUT, after_help = EXIT_CODES)]
+    Rasterize(Op<whizbang_rascal::rasterize::Args>),
+    #[command(about = whizbang_rascal::shrink::ABOUT, after_help = EXIT_CODES)]
+    Shrink(Op<whizbang_rascal::shrink::Args>),
+    #[command(about = whizbang_rascal::invert::ABOUT, after_help = EXIT_CODES)]
+    Invert(Op<whizbang_rascal::invert::Args>),
+    /// Remove the thing at a location from a picture and fill where it was: the recipe
+    /// `remove`, whose steps are rasterize, grow, close, plug, subtract, feather and fill,
+    /// each a run of its own under the recipe's. Each step's run is printed, and then
+    /// the composite and the mask rebound onto it, committed to the store.
+    #[command(after_help = EXIT_CODES)]
+    Remove {
+        #[command(flatten)]
+        at: Located,
+        /// A mask on the same picture whose pixels the mask keeps off, by its identity in
+        /// the store.
+        #[arg(long)]
+        protect: Option<String>,
+        /// The filler, by its name in the config's `[backends.fill]` tables. With none,
+        /// the config's default for fill answers.
+        #[arg(long, value_name = "NAME")]
+        backend: Option<String>,
+        #[command(flatten)]
+        steps: Steps,
+        #[command(flatten)]
+        common: Common,
+    },
+    /// Repair a stain or a spot at a location and fill it: the recipe `repair_area`,
+    /// whose steps are rasterize, feather and fill. Each step's run is printed, and then
+    /// the composite and the mask rebound onto it, committed to the store.
+    #[command(after_help = EXIT_CODES)]
+    RepairArea {
+        #[command(flatten)]
+        at: Located,
+        /// The filler, by its name in the config's `[backends.fill]` tables.
+        #[arg(long, value_name = "NAME")]
+        backend: Option<String>,
+        #[command(flatten)]
+        steps: Steps,
+        #[command(flatten)]
+        common: Common,
+    },
+    /// Make the mask for a second pass: the recipe `protect`, whose step is invert. Give
+    /// the composite a fill made and the mask it rebound onto it. The run is printed, and
+    /// then the mask.
+    #[command(after_help = EXIT_CODES)]
+    Protect {
+        /// The picture of the second pass: a fill's composite.
+        #[arg(long)]
+        image: String,
+        /// The first pass's mask, on the picture.
+        #[arg(long)]
+        mask: String,
+        #[command(flatten)]
+        steps: Steps,
+        #[command(flatten)]
+        common: Common,
+    },
     #[command(about = whizbang_rascal::cut::ABOUT, after_help = EXIT_CODES)]
     Cut(Op<whizbang_rascal::cut::Args>),
     #[command(about = whizbang_rascal::put::ABOUT, after_help = EXIT_CODES)]
@@ -307,6 +367,18 @@ pub enum Command {
         #[command(flatten)]
         common: Common,
     },
+}
+
+/// Where a recipe that takes a location works: the picture, and the location on it.
+#[derive(Args)]
+pub struct Located {
+    /// The picture, by its identity in the store.
+    #[arg(long)]
+    image: String,
+    /// A location on the picture, by its identity in the store, as `rascal line` prints
+    /// it.
+    #[arg(long)]
+    location: String,
 }
 
 /// What a recipe's command takes of its steps.
@@ -537,6 +609,58 @@ fn run_at(
         Command::Render(op) => op.run(recovery, platform),
         Command::Close(op) => op.run(recovery, platform),
         Command::Subtract(op) => op.run(recovery, platform),
+        Command::Line(op) => op.run(recovery, platform),
+        Command::Rasterize(op) => op.run(recovery, platform),
+        Command::Shrink(op) => op.run(recovery, platform),
+        Command::Invert(op) => op.run(recovery, platform),
+        Command::Remove {
+            at,
+            protect,
+            backend,
+            steps,
+            common,
+        } => {
+            let filled = Filled {
+                action: "remove",
+                backend: backend.as_deref(),
+                steps,
+                common,
+            };
+            filled.run(at, protect.as_deref(), recovery, platform)
+        }
+        Command::RepairArea {
+            at,
+            backend,
+            steps,
+            common,
+        } => {
+            let filled = Filled {
+                action: "repair_area",
+                backend: backend.as_deref(),
+                steps,
+                common,
+            };
+            filled.run(at, None, recovery, platform)
+        }
+        Command::Protect {
+            image,
+            mask,
+            steps,
+            common,
+        } => {
+            let inputs = vec![
+                ("image", "--image", image.as_str()),
+                ("mask", "--mask", mask.as_str()),
+            ];
+            let executor = executor(&common.at, &common.under, recovery, platform, Uses::Nothing)?;
+            let asked = OperationAsked {
+                action: "protect",
+                arguments: steps.arguments(),
+                inputs,
+                request_id: common.request_id.as_deref(),
+            };
+            door::recipe(&executor, &asked, common.at.root())
+        }
         Command::Cut(op) => op.run(recovery, platform),
         Command::Put(op) => op.run(recovery, platform),
         Command::Window(op) => op.run(recovery, platform),
@@ -653,6 +777,50 @@ fn run_at(
             let uses = Uses::One(Capability::Fill, backend.as_deref());
             operation_using(common, "fill", arguments, inputs, recovery, platform, uses)
         }
+    }
+}
+
+/// A recipe that takes a picture and a location and ends in a fill: `remove` and
+/// `repair_area`.
+struct Filled<'a> {
+    action: &'static str,
+    backend: Option<&'a str>,
+    steps: &'a Steps,
+    common: &'a Common,
+}
+
+impl Filled<'_> {
+    /// Runs the recipe on the picture and location of `at`, and `protect`.
+    fn run(
+        &self,
+        at: &Located,
+        protect: Option<&str>,
+        recovery: Recovery,
+        platform: Option<Platform>,
+    ) -> Result<String, String> {
+        let common = self.common;
+        let uses = Uses::One(Capability::Fill, self.backend);
+        let over = common.under.over(platform, uses)?;
+        let executor = built(&common.at, &over, recovery, false)?;
+        let mut inputs = vec![
+            ("image", "--image", at.image.as_str()),
+            ("location", "--location", at.location.as_str()),
+        ];
+        if let Some(protect) = protect {
+            inputs.push(("protect", "--protect", protect));
+        }
+        let mut arguments = Vec::new();
+        if let Some(backend) = self.backend {
+            arguments.push(("backend", Value::text(backend)));
+        }
+        arguments.extend(self.steps.arguments());
+        let asked = OperationAsked {
+            action: self.action,
+            arguments,
+            inputs,
+            request_id: common.request_id.as_deref(),
+        };
+        door::recipe(&executor, &asked, common.at.root())
     }
 }
 

@@ -1,5 +1,13 @@
 //! A location: where something is on an image (ADR 0002). Coordinates are pixels of the
 //! source space of the binding the location belongs to, as ADR 0001 defines them.
+//!
+//! A polygon is simple: no two of its edges that do not share a vertex cross. The rule
+//! and its test of crossing are rascal's (`crates/rascal-core/src/location.rs`,
+//! `is_simple` and `segments_cross`, at the commit `docs/sources.toml` pins): two edges
+//! cross when each one's ends lie strictly on either side of the other's line, so edges
+//! that only touch, or lie along one line, are not refused (plan m3, task O1, item 2).
+//! Rascal's `group`, which tied together the parts of one shape split at a panorama's
+//! seam, is not held: a location here is inside its image, never across its wrap edge.
 
 use crate::identity::{Binding, DecodeLimits, Fields, Point, Projection, Space, Topology};
 
@@ -158,6 +166,9 @@ fn check(shape: &Shape, space: &Space) -> std::result::Result<(), String> {
                     points.len()
                 ));
             }
+            if !is_simple(points) {
+                return Err("a polygon's edges cross; a polygon must be simple".to_owned());
+            }
         }
         Shape::View { yaw, pitch, fov } => {
             if (space.projection(), space.topology())
@@ -201,6 +212,39 @@ fn check(shape: &Shape, space: &Space) -> std::result::Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Whether no two edges of the closed polygon that do not share a vertex cross.
+fn is_simple(points: &[Point]) -> bool {
+    let n = points.len();
+    for i in 0..n {
+        for j in i + 1..n {
+            // Neighbours share a vertex; the first edge and the last are neighbours too.
+            if j == i + 1 || (i == 0 && j == n - 1) {
+                continue;
+            }
+            let (a, b) = (points[i], points[(i + 1) % n]);
+            let (c, d) = (points[j], points[(j + 1) % n]);
+            if segments_cross(a, b, c, d) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Whether the segments `ab` and `cd` cross: each one's ends strictly on either side of
+/// the other's line.
+fn segments_cross(a: Point, b: Point, c: Point, d: Point) -> bool {
+    let orient =
+        |p: Point, q: Point, r: Point| (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+    let (o1, o2, o3, o4) = (
+        orient(a, b, c),
+        orient(a, b, d),
+        orient(c, d, a),
+        orient(c, d, b),
+    );
+    (o1 * o2 < 0.0) && (o3 * o4 < 0.0)
 }
 
 fn write_points(writer: &mut Writer, points: &[Point]) {

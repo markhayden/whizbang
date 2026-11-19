@@ -13,6 +13,18 @@ Has a judge look at images through evidence tools and conclude: pass, fail or un
 
 Removes what a phrase names: its mask found, grown, closed, plugged, kept off protect and feathered, then filled.
 
+## `remove`
+
+Removes the thing at a location: the mask grown, closed, plugged, kept off protect and feathered, then filled.
+
+## `repair_area`
+
+Repairs a stain or a spot at a location: the box or polygon as drawn, feathered, then filled.
+
+## `protect`
+
+Makes the mask for a second pass: what the first mask reached is protected, the rest of the image the core.
+
 ## `align`
 
 Registers one flat image onto another of the same scene and viewpoint, and returns it warped into the other's frame.
@@ -59,7 +71,7 @@ One mask from the instance masks to keep: the union of their cores, minus exclud
 
 ## `subtract`
 
-Protects the pixels of a second mask, grown by a margin; with none the mask is handed back unchanged.
+Protects the pixels of a second mask or a location, grown by a margin; with neither the mask is unchanged.
 
 ## `view`
 
@@ -92,3 +104,19 @@ Writes a crop back into exactly the box of the image window cut it from; nothing
 ## `apply`
 
 Performs a mask's prescriptions on its image, once each and in order, and rebinds the mask onto the working image.
+
+## `line`
+
+A line location on an image: a whole column or a path, with its full width in pixels.
+
+## `rasterize`
+
+A location's inside as the core of a new mask: a box or polygon as drawn, a line as a band, a stroke widened.
+
+## `shrink`
+
+Shrinks the core of a mask by a disc; a core against the border shrinks from it too.
+
+## `invert`
+
+The mask for a second pass: what the first mask reached is protected, and every other pixel is the core.
