@@ -2,12 +2,13 @@
 
 Milestone 3, "Rascal and edit evaluation", ends in code with task B1 of
 `m3-milestone-3.md`. This note was written by B1's second pull request from its branch, with
-`main` at e8cead9 (the merge of #240): every task of the plan but B1 has landed, Q1's box
-waits on its item 7 (the orchestrator's live run of the five recipes) and L3's on its round's
-decode. Four lines are left to B1's last pull request, each marked **To be filled by B1's
-last pull request**: the seam round's decode, the edits rounds' decodes, the re-run of the
-gate of details first on the Google judge, and the milestone's final spend. The clauses of
-the spec's row that rest on the owner's picks are not shown until they are filled.
+`main` at e8cead9 (the merge of #240), and amended by the milestone's closing pull request
+with `main` at 1940c87 (the merge of #242). On 2026-11-19 the owner moved the blinded
+picking rounds to milestone E (below, "What the owner decided"), so the seam's and the
+edits' rounds stand as run and drawn, not picked, and no recipe's visual quality was
+confirmed by a person in milestone 3. Two lines are left, each marked **To be filled by the
+closing pull request**: the re-run of the gate of details first on the Google judge, and the
+milestone's final spend; Q1's box waits on the same re-run (its item 7, the recipes' lines).
 
 ## What whizbang can do at the end of milestone 3
 
@@ -43,7 +44,8 @@ run of `check` is written as a transcript the baseline's comparison reads.
 | #218, #222, #229, #230 | D1, D2 | The records of the operations |
 | #214, #228, #232, #233, #234, #238 | Upkeep | The store's growth, test time, the Mac runner, a folder's normal form, a fast encoder |
 | #237 | B1 | The edit set's program, its scoring program and the four labs' files |
-| This one | B1 | The edits' record, the five recipes' records, the stored transcript, the rows, this note |
+| #241, #242 | B1 | The edits' record, the five recipes' records, the stored transcript, the rows, this note |
+| The closing one | L3, Q1, B1 | The owner's amendment; `remove_prompt` against a reference arm in a lab round; the recipes' lines; the gate's re-run |
 
 ## The clauses of the spec's row, each with its evidence
 
@@ -55,11 +57,11 @@ in CI.
 | Clause | Shown by |
 |---|---|
 | Each task and operation in section 7 passes its acceptance case | Each operation an action: `describe::each_of_rascals_25_operations_is_an_action`; each held to rascal's vectors: `line::the_ported_vectors_give_rascals_locations`, `rect::the_ported_vectors_give_rascals_locations`, `stroke::the_ported_vectors_give_rascals_locations`, `rasterize::the_ported_vectors_give_rascals_masks`, `shrink::the_ported_vectors_give_rascals_masks`, `invert::the_ported_vectors_give_rascals_masks`, `close::the_ported_vectors_give_rascals_masks`, `subtract::the_ported_vectors_of_a_mask_give_rascals_masks`, `cut::the_ported_vectors_give_rascals_canvas_and_plan`, `window::the_ported_vectors_give_rascals_window`, `apply::the_ported_vectors_give_rascals_working_image`, `fan::the_ported_vectors_give_rascals_band_for_each_set`, `profile::the_ported_vectors_give_rascals_mask`, `ramp::the_ported_vectors_give_rascals_prescription`, `tighten::the_ported_vectors_give_rascals_masks`, `inspect::the_ported_vectors_give_rascals_report`, `measure::the_ported_vectors_give_rascals_measures`; and the tasks: `task::remove_fills_inside_its_mask_and_keeps_every_other_pixel`, `task::remove_completes_with_and_without_protect`, `task::remove_prompt_completes_with_and_without_protect`, `task::repair_fills_along_the_stroke_and_keeps_every_other_pixel`, `task::repair_area_fills_inside_its_mask_and_keeps_every_other_pixel`, `task::mask_rect_makes_the_rectangle_as_a_mask`, `task::protect_inverts_an_earlier_mask_onto_its_composite`, `task::seam_fills_the_wrap_edge_and_keeps_every_other_pixel`; every record of D1 and D2 with rungs 1 and 2: `describe::each_pixel_operation_and_task_without_a_model_shows_its_record_complete` and `scripts/tests/test-tool-records.sh` |
-| Each model-based recipe has its ladder record with rungs 1 and 2, with SAM 3 for masks and Bria through fal for fills | The records of `remove`, `remove_prompt`, `repair`, `repair_area` and `seam`: rung 1 by `tool_records::recipes::the_record_of_remove_is_what_it_gives` and its four siblings; rung 2's task success and preservation, measured with Bria through fal and SAM 3 on the Mac (`docs/results/m3-edits.md`), by `evidence::the_edits_record_names_a_commit_of_this_tree_and_holds_only_aggregates`, `evidence::each_model_based_recipes_record_holds_rungs_1_and_2` and `evidence::each_recipes_rung_2_names_the_shipped_recipes_and_constant_sets_digests`; the scoring by `edits::preservation_outside_the_mask_is_counted_exactly`, `edits::task_success_is_the_masks_iou_and_the_fills_error_beside_a_blur_fill` and `edits::the_synthetic_set_is_drawn_by_its_program_from_fixed_seeds`. SAM 3's agreement with reference masks is `segment`'s record. The five use cases' recipes are credited from milestone 2's evaluation (`use_case_records::each_use_case_record_holds_two_worked_examples_that_its_recipe_gives`). **Not yet whole: visual quality waits on the owner's picks (below)** |
+| Each model-based recipe has its ladder record with rungs 1 and 2, with SAM 3 for masks and Bria through fal for fills | The records of `remove`, `remove_prompt`, `repair`, `repair_area` and `seam`: rung 1 by `tool_records::recipes::the_record_of_remove_is_what_it_gives` and its four siblings; rung 2's task success and preservation, measured with Bria through fal and SAM 3 on the Mac (`docs/results/m3-edits.md`), by `evidence::the_edits_record_names_a_commit_of_this_tree_and_holds_only_aggregates`, `evidence::each_model_based_recipes_record_holds_rungs_1_and_2` and `evidence::each_recipes_rung_2_names_the_shipped_recipes_and_constant_sets_digests`; the scoring by `edits::preservation_outside_the_mask_is_counted_exactly`, `edits::task_success_is_the_masks_iou_and_the_fills_error_beside_a_blur_fill` and `edits::the_synthetic_set_is_drawn_by_its_program_from_fixed_seeds`. SAM 3's agreement with reference masks is `segment`'s record. The five use cases' recipes are credited from milestone 2's evaluation (`use_case_records::each_use_case_record_holds_two_worked_examples_that_its_recipe_gives`). **Rung 2 in part: the five fill recipes' visual quality is not yet confirmed by a person, owed by milestone E (the owner's decision of 2026-11-19, below), held by `evidence::the_blinded_rounds_of_milestone_3_are_owed_by_e_with_their_protocols_digests`** |
 | A mask exports and imports | `export::a_mask_exported_imports_into_another_store_with_the_same_identity`, `import::a_file_over_the_limit_its_contents_allow_is_refused`, `import::a_fifo_at_the_path_is_refused_and_nothing_waits` |
 | Rascal's tasks and squint's use cases run as recipes on the core's runner | `runner::each_step_is_a_child_run_on_the_recipes_one_reservation`, `runner::values_pass_between_steps_by_reference`, `runner::a_cancelled_recipe_cancels_its_running_step_and_starts_no_other`, `recipe::the_ported_recipes_of_rascal_read_as_rascal_read_them`, `record::a_recipe_run_lists_its_steps_in_order_with_arguments_constants_and_results`, `use_case::each_use_case_is_a_recipe_with_its_rules_details_and_tools`, `check::each_use_case_through_its_recipe_gives_the_verdict_it_gave_before` |
 | `describe` lists recipes before primitives | `describe::recipes_are_listed_before_primitives_with_purpose_and_use`, `serve::initialize_lists_each_recipe_before_the_primitives` |
-| A lab round runs a recipe and filler matrix, resumes after an interruption, presents blinded pairs, collects the picks, checks them against the frozen assignment and decodes the outcomes | `cli::lab_run_runs_a_three_image_round_under_a_scripted_filler_and_resumes`, `lab::an_interrupted_round_resumes_and_a_failed_cell_is_kept`, `lab::the_pairs_are_blinded_in_the_order_and_sides_the_seed_draws`, `lab::picks_for_a_pair_not_in_the_frozen_assignment_are_refused`, `lab::an_assignment_whose_digest_differs_is_refused`, `lab::the_decode_gives_rascals_outcomes_on_rascals_picks`, `cli::lab_run_pairs_and_decode_a_three_image_round_under_a_scripted_filler`. Live: the round of `labs/m3-seam/` on the owner's pictures, 94 of 94 cells, interrupted once on purpose and resumed (2026-11-19, at 8957f1f), and the four rounds of the edits, 96 of 96 cells (at e8cead9). **Not yet whole: the decodes wait on the owner's picks (below)** |
+| A lab round runs a recipe and filler matrix, resumes after an interruption, presents blinded pairs, collects the picks, checks them against the frozen assignment and decodes the outcomes | `cli::lab_run_runs_a_three_image_round_under_a_scripted_filler_and_resumes`, `lab::an_interrupted_round_resumes_and_a_failed_cell_is_kept`, `lab::the_pairs_are_blinded_in_the_order_and_sides_the_seed_draws`, `lab::picks_for_a_pair_not_in_the_frozen_assignment_are_refused`, `lab::an_assignment_whose_digest_differs_is_refused`, `lab::the_decode_gives_rascals_outcomes_on_rascals_picks`, `cli::lab_run_pairs_and_decode_a_three_image_round_under_a_scripted_filler`, `cli::lab_run_pairs_and_decode_remove_prompt_against_a_reference_arm_under_a_scripted_filler` (a recipe arm against a reference arm, its phrase by a text binding). Live: the round of `labs/m3-seam/` on the owner's pictures, 94 of 94 cells, interrupted once on purpose and resumed (2026-11-19, at 8957f1f), and the four rounds of the edits, 96 of 96 cells (at e8cead9), each with its page of blinded pairs drawn. **No person picked them: the live picks and decodes are owed by milestone E (below)** |
 
 ## The rounds, in numbers
 
@@ -78,15 +80,19 @@ IoU understates each mask: every recipe grows or feathers it on purpose, and eac
 drawn defect whole, or nearly. The fill error is the mean distance per channel, 0 to 255,
 from the clean picture inside the drawn defect.
 
-**The edits' visual quality.** To be filled by B1's last pull request: the decodes of the
-four labs `m3-edits-<recipe>` against the clean picture, by rascal's rule under each frozen
-protocol.
+**The edits' visual quality.** Not decoded; owed by milestone E. The four labs
+`m3-edits-<recipe>` ran at e8cead9, 96 of 96 cells, 3.84 dollars settled, and four pages of
+24 pairs each were drawn against the clean picture; nobody picked them (the owner's decision
+of 2026-11-19, below). Each record's visual quality reads "not yet confirmed by a person".
 
-**The seam's round.** To be filled by B1's last pull request: the decode of `m3-seam`,
-`seam-bria` (`fan-v3`) against `thin-bria` (`fan-thin-v1`), by `seam-03`'s groups, beside
-rascal's `seam-03` (`fan-v1`) and `objects-02` in `docs/results/m3-lab.md`.
+**The seam's round.** Not decoded; owed by milestone E. `m3-seam`, `seam-bria` (`fan-v3`)
+against `thin-bria` (`fan-thin-v1`), ran on 2026-11-19 at 8957f1f on the owner's pictures of
+`seam-03`, interrupted once on purpose and resumed: 94 of 94 cells, 3.76 dollars settled and
+0.04 unresolved from the fill the interruption cut off. A page of 30 pairs was drawn by
+group (`sky` 13, `structured` 17) and not picked, so there is no decode to set beside
+rascal's `seam-03` (`fan-v1`) and `objects-02`.
 
-**The gate of details first, again on the Google judge.** To be filled by B1's last pull
+**The gate of details first, again on the Google judge.** To be filled by the closing pull
 request: the re-run's result after the judge's fix (#223), its errors by kind beside the other
 providers'. Before it (`docs/results/m3-gates.md`): rejected; `claude-haiku-5-5` 0.567 under
 arm C and 0.550 under F, `gemini-3.8-flash` 0.646 and 0.554 with 40 errors of 100 under F,
@@ -102,11 +108,27 @@ baseline's live rerun, 11.908215 together (`docs/results/m3-gates.md`,
 (`docs/results/m3-unsure.md`); the edits' rounds, 3.84 (`docs/results/m3-edits.md`); the
 seam's round, 3.76 and 0.04 unresolved; and the orchestrator's and the owner's other live
 runs and tries, which the stores counted and no record lists one by one. This pull request
-spent nothing. **The final figure: to be filled by B1's last pull request**, with the
-re-run of the gate above.
+spent nothing, and neither did the closing one beyond the gate's re-run. **The final figure:
+to be filled by the closing pull request**, with the re-run of the gate above.
+
+## What the owner decided
+
+- **The blinded picking rounds move to milestone E** (2026-11-19), and milestone 3 closes
+  without them. The orchestrator offered to "close and tag the milestone with those recipes' visual quality
+  recorded as 'not yet confirmed by a person', and fold the picking into milestone E"; the
+  owner answered: "yah i think that makes more sense. dont know that it makes sense to hammer
+  on things when we are going to hammer on them in E right?"
+  So the five recipes that end in a fill keep rung 2 in part and the mark experimental, and
+  one carry-over row owned by E names both rounds, their protocols' digests, and both ways
+  to finish them: the pages drawn again from the kept stores, or the kept stores decoded
+  from picks on the pages drawn (plan, L3 and B1, "Amended by the owner").
 
 ## What a reader should not assume
 
+- **No recipe's visual quality was confirmed by a person in milestone 3.** The seam's and
+  the edits' rounds ran and their pairs were drawn, and nobody picked them; the records say
+  "not yet confirmed by a person", owed by milestone E. Task success and preservation are
+  measured; how a fill looks is not.
 - **Squint's judges agree with the labels about 61% of the time, and a third of verdicts are
   `unsure`** (`docs/results/m2c-evaluation.md`). The attack on `unsure` found the judge mostly
   hedging on clean pictures, and its screen ran on the dev sets it was built against, which
@@ -119,13 +141,13 @@ re-run of the gate above.
   (`docs/results/m3-unsure.md`).
 - **Fill quality is modest.** Bria's fills beat a plain blur of the same mask on 14 to 20 of
   24 items, and their error is about four fifths of the blur's: better, not good. The visual
-  quality rounds are the owner's eye, still to come.
+  quality rounds, a person's eye, are milestone E's.
 - **Rung 2 of the edits is one synthetic set.** 24 pictures of one published set, one drawn
   defect of each kind; a real scratch or object is harder.
 - **IoU is not the measure of these masks.** Each recipe grows and feathers on purpose; the
   coverage and the size beside it say what the mask did.
 - **The seam's round is on rascal's corpus.** Its pictures were picked for seams, and its
-  decode is pending.
+  decode is milestone E's.
 
 ## What moved to the carry-over list
 
@@ -141,8 +163,10 @@ now" and the pairs page (milestone 4); the deletion's follow-ups, every publicat
 the whole generation and a real prober (milestone 5); which tools a gate admitted, a judge's
 failed cell on resume, `fan`'s and `ramp`'s windows on small panoramas and `measure`'s
 continuity (milestone E); two needs of one capability (when an action ships with them).
-Still owned by milestone 3, for B1's last pull request and the boxes it waits on: the
-Google judge's re-run, Q1's item 7, and L3's round.
+Moved to milestone E by the owner, with a row of its own: the blinded picking rounds of
+`m3-seam` and of the edits' four labs. Closed by the closing pull request: L3's round as
+run, and the lab test of `remove_prompt` against a reference arm. Still owned by milestone 3,
+for the closing pull request: the Google judge's re-run, and Q1's item 7, credited from it.
 
 ## What milestone 4 and E start from
 

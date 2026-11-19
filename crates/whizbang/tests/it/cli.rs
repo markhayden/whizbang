@@ -2807,6 +2807,179 @@ fn lab_run_runs_a_three_image_round_under_a_scripted_filler_and_resumes() {
 }
 
 #[test]
+fn lab_run_pairs_and_decode_remove_prompt_against_a_reference_arm_under_a_scripted_filler() {
+    use crate::lab::{FOUND_AND_CLEAN, corpus_text, picture, protocol_text};
+    use crate::recipe::{COLLAR, FILLED, PAINT, over};
+    use whizbang::harness::Running;
+    use whizbang::laboratory::{self, Asked};
+    use whizbang::pairs_page;
+    use whizbang_eval::lab::decode::{Assignment, Side};
+    // The shape of the edits' labs (plan m3, task B1, item 1; task L3): the shipped
+    // `remove_prompt`, its phrase given by a text binding, against the reference arm
+    // `clean` handing back each picture's clean twin. Three pictures of 64 by 64; the
+    // segmenter is the fake that finds `collar`, the filler the fake that paints one
+    // colour over the mask's support; nothing is contacted.
+    let dir = Scratch::new("cli-lab-remove-prompt");
+    let root = dir.path().join("store");
+    let corpus = dir.path().join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    let made = wiring::opening(&root, wiring::Make::TheRoot, wiring::recovery()).unwrap();
+    let store = made.writer().unwrap();
+    let dollar = whizbang_core::spend::Amount::new(1_000_000).unwrap();
+    whizbang_core::spend::reset(&store, dollar, 1).unwrap();
+    drop((store, made));
+    let ids = ["a", "b", "c"];
+    let mut files: Vec<(String, Vec<u8>, Option<&str>)> = Vec::new();
+    for (at, id) in ids.iter().enumerate() {
+        let seed = 60 * at as u8;
+        files.push(((*id).to_owned(), picture(seed), Some("all")));
+        files.push((format!("{id}-clean"), picture(seed + 30), None));
+    }
+    for (id, bytes, _) in &files {
+        std::fs::write(corpus.join(format!("{id}.png")), bytes).unwrap();
+    }
+    let listed: Vec<(&str, &[u8], Option<&str>)> = (files.iter())
+        .map(|(id, bytes, group)| (id.as_str(), bytes.as_slice(), *group))
+        .collect();
+    let lab = dir.path().join("lab");
+    std::fs::create_dir_all(&lab).unwrap();
+    std::fs::write(lab.join("corpus.toml"), corpus_text(&listed)).unwrap();
+    std::fs::write(
+        lab.join("protocol.toml"),
+        protocol_text(["found", "clean"], &ids, 3),
+    )
+    .unwrap();
+    let mut matrix = "version = 1\nname = \"tiny-lab\"\ncorpus = \"corpus.toml\"\n\
+                      protocol = \"protocol.toml\"\nseed = 7\n"
+        .to_owned();
+    for id in ids {
+        matrix.push_str(&format!(
+            "\n[[image]]\nid = \"{id}\"\ninputs = {{ clean = \"{id}-clean\" }}\n\
+             texts = {{ prompt = \"collar\" }}\n"
+        ));
+    }
+    matrix.push('\n');
+    matrix.push_str(FOUND_AND_CLEAN);
+    let matrix_file = lab.join("matrix.toml");
+    std::fs::write(&matrix_file, matrix).unwrap();
+    let over = over(&dir, FILLED);
+    let asked = Asked {
+        matrix: &matrix_file,
+        corpus: &corpus,
+        root: &root,
+        over: &over,
+        recovery: wiring::recovery(),
+    };
+
+    // The round, as `lab run` runs it: three recipe cells, each its eight steps, and three
+    // handed back by the reference arm without a run.
+    let prepared = laboratory::prepare(&asked).unwrap();
+    let store = Arc::new(Store::open(&root, Arc::new(RealFs)).unwrap());
+    let registry = wiring::registry_over(&over, false).unwrap();
+    let executor = wiring::runner(registry, store, &over).unwrap();
+    let running = Running {
+        executor: &executor,
+        root: &root,
+        left_micros: 1_000_000,
+        stop: &|| false,
+    };
+    let report = laboratory::round(&prepared, &running).unwrap();
+    assert_eq!(
+        report.text(),
+        "cells: 6\nhanded back by a reference arm: 3\nstarted now: 3\ncompleted: 3\n\
+         failed: 0\ninterrupted: 0\nnot run: 0\n"
+    );
+    drop(executor);
+
+    // The pairs, as `lab pairs` writes them: the recipe's side is the picture with the
+    // collar painted, the reference arm's is the clean twin, pixel for pixel.
+    let out = dir.path().join("pages");
+    let prepared = laboratory::prepare(&asked).unwrap();
+    let written = pairs_page::pairs(
+        &prepared,
+        &pairs_page::Asked {
+            root: &root,
+            out: &out,
+            limit: None,
+            force: false,
+        },
+    )
+    .unwrap();
+    let assignment_bytes = std::fs::read(out.join("assignment.json")).unwrap();
+    let digest = whizbang_eval::lab::digest_of(&assignment_bytes);
+    assert!(
+        written.text().starts_with(&format!(
+            "pairs: 3 of the round's 3\nassignment: {digest}\n"
+        )),
+        "{}",
+        written.text()
+    );
+    let page = std::fs::read_to_string(out.join("index.html")).unwrap();
+    for named in ["found", "clean", "collar", "remove_prompt"] {
+        assert!(!page.contains(named), "the page names {named}");
+    }
+    let assignment = Assignment::parse(&assignment_bytes).unwrap();
+    let rgba = |bytes: &[u8]| image::load_from_memory(bytes).unwrap().to_rgba8();
+    let [x0, y0, x1, y1] = COLLAR[0];
+    let (cx, cy) = ((x0 + x1) / 2, (y0 + y1) / 2);
+    for (n, pair) in assignment.pair.iter().enumerate() {
+        let file = |side: &str| {
+            let path = out.join(format!("pictures/{:03}-{side}.png", n + 1));
+            rgba(&std::fs::read(path).unwrap())
+        };
+        let (found, clean) = match pair.a_side {
+            Side::Left => ("left", "right"),
+            Side::Right => ("right", "left"),
+        };
+        let twin = (files.iter())
+            .find(|(id, _, _)| *id == format!("{}-clean", pair.id))
+            .unwrap();
+        assert_eq!(file(clean), rgba(&twin.1), "{}", pair.id);
+        let painted = file(found);
+        assert_eq!(&painted.get_pixel(cx, cy).0[..3], PAINT, "{}", pair.id);
+        assert_eq!(painted.get_pixel(63, 63), file("source").get_pixel(63, 63));
+    }
+
+    // The picks: arm a's side on one pair, b's on two, so a loses to the clean picture;
+    // then the real binary's decode.
+    let pick: Vec<String> = (assignment.pair.iter().enumerate())
+        .map(|(n, p)| {
+            let (a, b) = match p.a_side {
+                Side::Left => ("left", "right"),
+                Side::Right => ("right", "left"),
+            };
+            let side = if n == 0 { a } else { b };
+            format!("{{\"pair\": \"{}\", \"pick\": \"{side}\"}}", p.id)
+        })
+        .collect();
+    let picks = out.join("picks.json");
+    std::fs::write(
+        &picks,
+        format!(
+            "{{\"picks_version\": 1, \"assignment_digest\": \"{digest}\", \"pick\": [{}]}}",
+            pick.join(", ")
+        ),
+    )
+    .unwrap();
+    let decoded = whizbang_storeless(&[
+        "lab",
+        "decode",
+        "--protocol",
+        lab.join("protocol.toml").to_str().unwrap(),
+        "--assignment",
+        out.join("assignment.json").to_str().unwrap(),
+        "--picks",
+        picks.to_str().unwrap(),
+    ]);
+    assert_eq!(decoded.code, Some(0), "{}", decoded.err);
+    assert_eq!(
+        decoded.out,
+        "arms: found against clean\ngroup all: pairs 3, decided 3, wins 1, losses 2, same 0, \
+         neither 0: worse\n"
+    );
+}
+
+#[test]
 fn lab_run_pairs_and_decode_a_three_image_round_under_a_scripted_filler() {
     use crate::lab::{FILLED_WITH_AND_SOURCE, ThreeImages};
     use whizbang::laboratory::{self, Asked};

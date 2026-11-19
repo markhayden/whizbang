@@ -57,4 +57,8 @@ done
 [ "$(cited docs/plans/m2-note.md | wc -l | tr -d ' ')" -ge 30 ] ||
   fail "docs/plans/m2-note.md cites fewer than 30 tests: its table of clauses is gone or is no longer read"
 
+# And the note of milestone 3 (plan m3, task B1), for its row.
+[ "$(cited docs/plans/m3-note.md | wc -l | tr -d ' ')" -ge 45 ] ||
+  fail "docs/plans/m3-note.md cites fewer than 45 tests: its table of clauses is gone or is no longer read"
+
 finished

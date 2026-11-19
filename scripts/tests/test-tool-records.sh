@@ -81,7 +81,8 @@ for use_case in source-fidelity reference-consistency product-fidelity brief-com
     fail "the record of $use_case is not marked unverified"
 done
 # The records of the five recipes that end in a fill (plan m3, task B1, item 2): rung 1
-# shown, and rung 2 shown, or in part while its visual quality waits on the owner's picks.
+# shown, and rung 2 shown, or in part while its visual quality is owed by milestone E (the
+# owner's decision of 2026-11-19: no person picked the rounds of milestone 3).
 # The fast tests hold their examples (crates/whizbang-rascal/tests/it/tool_records/recipes.rs)
 # and their rung 2 to the edits' record and the shipped recipes
 # (`evidence::each_model_based_recipes_record_holds_rungs_1_and_2`).
