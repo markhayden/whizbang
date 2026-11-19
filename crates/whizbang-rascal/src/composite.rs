@@ -8,7 +8,9 @@
 //! derivation it returns is made.
 //!
 //! The arithmetic is rascal's `feather` paste (`crates/rascal-ops/src/paste.rs`), in
-//! whole numbers.
+//! whole numbers; its `hard` paste, which writes the fill on the core and nothing else;
+//! and the blend of its `poisson` paste's solution, in 32-bit floats (plan m3, task O4,
+//! item 3).
 
 use whizbang_core::artifact::{ArtifactError, Derivation, Mask};
 use whizbang_core::capability::{Painted, Picture};
@@ -89,9 +91,39 @@ impl Composite {
     }
 }
 
-/// Pastes `fill` onto `image` under `mask`, which belongs to the image.
+/// How a fill is pasted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// By the mask's weight: the core, and the blend mixed.
+    Feather,
+    /// The core alone: the fill on each core pixel not protected, the blend ignored.
+    Hard,
+}
+
+impl Mode {
+    /// The mode of this name.
+    pub fn named(name: &str) -> Option<Mode> {
+        match name {
+            "feather" => Some(Mode::Feather),
+            "hard" => Some(Mode::Hard),
+            _ => None,
+        }
+    }
+}
+
+/// Pastes `fill` onto `image` under `mask`, which belongs to the image, by the mask's
+/// weight: [`composite_in`] in [`Mode::Feather`].
+pub fn composite(
+    image: &Picture,
+    fill: &Painted,
+    mask: &Mask,
+) -> Result<Composite, CompositeError> {
+    composite_in(image, fill, mask, Mode::Feather)
+}
+
+/// Pastes `fill` onto `image` under `mask`, which belongs to the image, in `mode`.
 ///
-/// For each pixel, by the mask's three planes:
+/// For each pixel, by the mask's three planes, in [`Mode::Feather`]:
 ///
 /// - protected: the image's four bytes;
 /// - else in the core: the fill's red, green and blue, and the image's alpha;
@@ -101,10 +133,14 @@ impl Composite {
 ///
 /// Colours are mixed as they are stored, sRGB values of eight bits, straight and not
 /// multiplied by alpha. A pixel's alpha is never changed, whatever it is.
-pub fn composite(
+///
+/// In [`Mode::Hard`], a core pixel not protected takes the fill's red, green and blue and
+/// keeps the image's alpha; every other pixel, the blend's too, is the image's four bytes.
+pub fn composite_in(
     image: &Picture,
     fill: &Painted,
     mask: &Mask,
+    mode: Mode,
 ) -> Result<Composite, CompositeError> {
     let space = mask.space();
     mask.require_image(image.digest(), space)
@@ -131,10 +167,10 @@ pub fn composite(
     let planes = mask.core().iter().zip(mask.blend()).zip(mask.protect());
     let pixels = rgba.chunks_mut(4).zip(fill.rgb().chunks(3));
     for ((pixel, fill), ((core, blend), protect)) in pixels.zip(planes) {
-        let blend = match (*protect, *core, *blend) {
-            (0, 0, 0) => continue,
-            (0, 0, blend) => blend,
-            (0, _, _) => 255,
+        let blend = match (mode, *protect, *core, *blend) {
+            (_, 0, 0, 0) | (Mode::Hard, 0, 0, _) => continue,
+            (Mode::Feather, 0, 0, blend) => blend,
+            (_, 0, _, _) => 255,
             _ => continue,
         };
         for (channel, fill) in pixel[..3].iter_mut().zip(fill) {
@@ -150,6 +186,62 @@ pub fn composite(
     } else {
         // The core looks at both pictures: every pixel the mask weighs nothing is the
         // same in both, or there is no derivation and no composite.
+        let checked = Derivation::checked_of(image, &pixels, mask)
+            .map_err(|error| CompositeError::NotPreserved(reason(error)))?;
+        Some(checked)
+    };
+    Ok(Composite {
+        pixels,
+        derivation,
+        painted,
+    })
+}
+
+/// Pastes a solution of `paste`'s mode `poisson` onto `image` under `mask`, which belongs
+/// to the image: red, green and blue for each pixel as 32-bit floats ([`crate::poisson`]).
+/// Rascal's arithmetic: each pixel the mask weighs over 0 is `(1 - w) image + w solution`
+/// for each of red, green and blue, in 32-bit floats, rounded once and held to `[0, 255]`;
+/// every other pixel is the image's four bytes, and no alpha changes.
+pub fn composite_solved(
+    image: &Picture,
+    solution: &[f32],
+    mask: &Mask,
+) -> Result<Composite, CompositeError> {
+    let space = mask.space();
+    mask.require_image(image.digest(), space)
+        .map_err(|error| CompositeError::WrongImage(reason(error)))?;
+    let size = (image.width(), image.height());
+    let samples = size.0 as usize * size.1 as usize;
+    if (space.width(), space.height()) != size || solution.len() != samples * 3 {
+        return Err(CompositeError::WrongImage(format!(
+            "the image is {} by {}, the mask {} by {}, and the solution has {} samples",
+            size.0,
+            size.1,
+            space.width(),
+            space.height(),
+            solution.len()
+        )));
+    }
+    let mut rgba = image.rgba().to_vec();
+    let mut painted = 0;
+    let planes = mask.core().iter().zip(mask.blend()).zip(mask.protect());
+    let pixels = rgba.chunks_mut(4).zip(solution.chunks(3));
+    for ((pixel, solved), ((core, blend), protect)) in pixels.zip(planes) {
+        let weight = whizbang_core::artifact::effective_weight(*core, *blend, *protect);
+        if weight <= 0.0 {
+            continue;
+        }
+        for (channel, solved) in pixel[..3].iter_mut().zip(solved) {
+            let v = (1.0 - weight) * f32::from(*channel) + weight * solved;
+            *channel = v.round().clamp(0.0, 255.0) as u8;
+        }
+        painted += 1;
+    }
+    let pixels = CanonicalPixels::from_rgba(size.0, size.1, rgba)
+        .map_err(|error| CompositeError::NotPreserved(error.to_string()))?;
+    let derivation = if pixels == *image.pixels() {
+        None
+    } else {
         let checked = Derivation::checked_of(image, &pixels, mask)
             .map_err(|error| CompositeError::NotPreserved(reason(error)))?;
         Some(checked)

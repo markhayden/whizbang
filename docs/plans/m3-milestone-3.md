@@ -492,7 +492,7 @@ gate of details first is run.
    tests. U1's `view` crops are among the tools once U1 lands; whichever lands second adds
    them to the test.
 
-- [ ] Done when:
+- [x] Done when:
   `gate::the_frozen_gates_digest_is_in_every_run_it_makes`,
   `gate::scoring_a_synthetic_blind_set_leaves_the_sets_tree_unchanged_and_writes_only_aggregates`,
   `gate::a_gate_with_too_few_families_is_inconclusive_in_its_receipt`,
@@ -517,12 +517,11 @@ files live in `gates/` at the top of the repository. "Gates over three to six it
 three of the four gate tests run a set of two items in two arms (four runs each), to keep the
 test time down, and the command's test runs three.
 
-**Status (G1's first pull request).** Every named test above passes except the two
-`evidence::` tests, which read records that do not exist yet: the receipt of the gate of
-details first (the orchestrator's run) and the live rerun's two numbers (the owner's run). The
-wire's carry-over row is closed; the rows on gates as files and on the live rerun stay open
-until those runs. The box is ticked by the pull request that commits the two records with
-their tests.
+**Status (G1's first pull request).** Every named test above passed except the two
+`evidence::` tests, which waited for the two runs. **Done (G1's record):** the live rerun is
+in `docs/results/m2c-baseline.md` and the gate of details first, run on 2026-11-19 and
+rejected, in `docs/results/m3-gates.md` with its receipt, so both `evidence::` tests pass; the
+three carry-over rows are closed, and squint's `admissions.rs` has a row of its own for B1.
 
 **Status (the live rerun's record).** `docs/results/m2c-baseline.md` holds the live rerun of
 2026-11-19 (agreement 111 of 143, the recorded run's self-disagreement 29 of 143), and
@@ -849,7 +848,7 @@ Rascal's seam recipe, the one its lab rounds were about, runs on whizbang's runn
    it), `fill` of the working image through `apply`'s mask, `put` back; `fan-v3` the default
    set, as at rascal's tag.
 
-- [ ] Done when:
+- [x] Done when:
   `fan::the_ported_vectors_give_rascals_band_for_each_set`,
   `profile::the_ported_vectors_give_rascals_mask`,
   `ramp::the_ported_vectors_give_rascals_prescription`,
@@ -860,6 +859,16 @@ Rascal's seam recipe, the one its lab rounds were about, runs on whizbang's runn
   `constants::every_set_rascal_shipped_is_here_byte_for_byte`, and `just docs` regenerated.
 
 **Keeping tests lean (O3).** Synthetic panoramas of 256 by 128.
+
+**Built with the task (O3).** Two changes to actions O1 and O2 landed, each with its
+version raised: `line` 1.1.0 takes the column as a share of the image's width,
+`column_share`, rascal's own unit, since the recipe cannot know a cut canvas's width;
+`put` 1.1.0 takes a mask rebound by the identity onto the canvas from an image derived
+from the cut (`apply`'s working image, then `fill`'s composite), and still holds the
+canvas to the cut wherever the mask weighs nothing. `feather-v1` stays owed: `feather`
+reads no set, its support is `feather::SUPPORT`, which `profile` uses too. The vectors
+are what rascal's own `fan_profile`, `band_core`, `feather_blend` and `tone_step` give on
+pictures made in the tests, the row smoothing's kernel being `feather::exp_neg`.
 
 ## O4. `tighten`, `repair`, `inspect` and `paste`'s modes (large)
 
@@ -872,7 +881,7 @@ Rascal's seam recipe, the one its lab rounds were about, runs on whizbang's runn
    `paste` with the same preservation and its own tests; `poisson` (`poisson.rs`,
    `poisson-v1.toml`) likewise, or dropped with a line on the row (the named seam).
 
-- [ ] Done when:
+- [x] Done when:
   `tighten::the_ported_vectors_give_rascals_masks`,
   `task::repair_fills_along_the_stroke_and_keeps_every_other_pixel`,
   `inspect::the_ported_vectors_give_rascals_report`,
@@ -881,7 +890,14 @@ Rascal's seam recipe, the one its lab rounds were about, runs on whizbang's runn
   `constants::every_set_rascal_shipped_is_here_byte_for_byte`, `just docs` regenerated, and
   the carry-over row on `paste`'s modes closed or dropped with a line.
 
-**Keeping tests lean (O4).** Rascal's vectors; `poisson`'s benchmark `#[ignore]`d.
+**Split at the named seam (O4).** The first pull request is `tighten`, `repair`, `inspect`
+and `hard`, with every test of the "Done when" above but `poisson`'s; with `poisson` it
+would pass about 2,500 changed lines. `poisson` is O4's second pull request, which ticks the
+box: `poisson` is ported, not dropped.
+
+**Keeping tests lean (O4).** Rascal's vectors; `poisson`'s benchmark `#[ignore]`d. The
+pictures of `tighten`'s vectors are rascal's drawn at 256 by 192, where rascal's were 400 by
+300, under every one of rascal's thresholds.
 
 ## O5. `measure`, pictures from callers, and large results (large)
 
@@ -896,7 +912,7 @@ Rascal's seam recipe, the one its lab rounds were about, runs on whizbang's runn
    result measured at three sizes, and the encoding chosen from the measurement, in
    `docs/results/m3-encoding.md`.
 
-- [ ] Done when:
+- [x] Done when:
   `measure::the_ported_vectors_give_rascals_measures`,
   `describe::each_of_rascals_25_operations_is_an_action`,
   `pixels::a_jpeg_whose_scans_are_short_is_refused`,
@@ -906,6 +922,12 @@ Rascal's seam recipe, the one its lab rounds were about, runs on whizbang's runn
   `evidence::the_encoding_record_names_a_commit_of_this_tree`,
   `constants::every_set_rascal_shipped_is_here_byte_for_byte` (all eleven, or `poisson-v1`
   named as dropped), `just docs` regenerated, and the carry-over rows above closed or narrowed with a line.
+
+  **Split at the seam, as the plan allows:** the first pull request (#225) holds items 1 and
+  2 and every test above but `evidence::the_encoding_record_names_a_commit_of_this_tree`;
+  the second holds item 3, large results' encoding and its record, and ticks the box. The
+  setting chosen is recorded there; switching the encoder, which changes identities, is a
+  carry-over row.
 
 ## L1. The shared harness, and the lab's files (large)
 
@@ -939,7 +961,7 @@ harness"). Budget: the runner's change about 450; rascal's `lab/cell.rs`, `corpu
    for that item, the clean picture of B1's set, with no recipe run and no filler call. Both
    are part of the cell's identity.
 
-- [ ] Done when:
+- [x] Done when:
   `matrix::eval_matrix_still_resumes_and_keeps_a_failed_attempt_through_the_shared_runner`,
   `runner::a_cell_of_any_action_is_recognised_by_its_identity_in_a_runs_record`,
   `runner::a_fill_cells_forecast_is_its_price_per_call`,
@@ -971,7 +993,7 @@ shared harness replaces, about 700; `lab/focus.rs` (217) and the decode of
    `not_worse` or `worse` by the protocol's rules; `same` and `neither` count toward neither
    side.
 
-- [ ] Done when:
+- [x] Done when:
   `lab::an_unchanged_cell_resumes_without_another_call`,
   `lab::an_interrupted_round_resumes_and_a_failed_cell_is_kept`,
   `lab::a_rounds_forecast_passing_the_allowance_left_is_refused_before_its_first_cell`,
@@ -1040,9 +1062,22 @@ B1's, since it is model-based), `mask_rect` and `protect`. D2: `rasterize`, `shr
 `invert`, `cut`, `put`, `window`, `unwindow`, `apply`, `fan`, `profile`, `ramp`, `tighten`,
 `inspect` and `measure`.
 
-- [ ] Done when (D1):
+- [x] Done when (D1):
   `scripts/tests/test-tool-records.sh` holding D1's fourteen records, each with rungs 1 and 2
-  (`fill`'s rung 1 alone), and the carry-over row on the records of R2's operations closed.
+  (`fill`'s and `segment`'s rung 1 alone), and the carry-over row on the records of R2's
+  operations closed.
+  **Reworded with the task** (D1, 2026-11-19): "(`fill`'s rung 1 alone)" became "(`fill`'s
+  and `segment`'s rung 1 alone)". `segment` is model-based, like `fill`. Its rung 2 is
+  agreement with reference masks, which B1 cites for the segment step (B1, item 2). ADR
+  0027 measured SAM 3's repeatability, not agreement with a reference, so D1 cannot show
+  it.
+  **Split with the task** (D1, 2026-11-19), at the seam named under "Seams": D1's first
+  pull request holds nine records, `close`, `subtract`, `line`, `rect`, `stroke`, `paste`,
+  `fill` (rung 1), `mask_rect` and `protect`, the shared helper
+  (`crates/whizbang-rascal/tests/it/tool_records/`), their hooks in `scripts/tool-record.sh`
+  and their lines in `scripts/tests/test-tool-records.sh`. The records of R2's five
+  operations, `segment` with a real model among them, are D1's second pull request, which
+  ticks the box and closes the carry-over row.
 - [ ] Done when (D2):
   `scripts/tests/test-tool-records.sh` holding D2's fourteen records, each with rungs 1 and 2,
   and `describe::each_pixel_operation_and_task_without_a_model_shows_its_record_complete`.

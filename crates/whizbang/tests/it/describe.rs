@@ -119,6 +119,8 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
             "repair_area",
             "mask_rect",
             "protect",
+            "repair",
+            "seam",
             "align",
             "change_map",
             "edge_similarity",
@@ -144,7 +146,13 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
             "stroke",
             "rasterize",
             "shrink",
-            "invert"
+            "invert",
+            "tighten",
+            "inspect",
+            "fan",
+            "profile",
+            "ramp",
+            "measure"
         ]
     );
     let kinds: Vec<&str> = doc["actions"]
@@ -153,9 +161,9 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
         .iter()
         .map(|action| action["kind"].as_str().expect("a kind"))
         .collect();
-    assert_eq!(kinds[..6], ["recipe"; 6]);
+    assert_eq!(kinds[..8], ["recipe"; 8]);
     assert!(
-        kinds[6..].iter().all(|kind| *kind == "primitive"),
+        kinds[8..].iter().all(|kind| *kind == "primitive"),
         "{kinds:?}"
     );
     // `check` says what it needs: a judge. Whether one is there is no part of a
@@ -165,7 +173,7 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
     assert_eq!(doc["actions"][0]["needs"][0]["requests"], 16);
     // `segment` needs a segmenter that takes what the call's `kind` names, a phrase, a
     // point or a box, chosen by its argument `backend`.
-    let need = &doc["actions"][15]["needs"][0];
+    let need = &doc["actions"][17]["needs"][0];
     assert_eq!(need["capability"], "segment");
     assert_eq!(need["features"], serde_json::json!([]));
     assert_eq!(need["feature_from"], "kind");
@@ -209,6 +217,8 @@ fn describe_without_json_names_the_build() {
             "repair_area",
             "mask_rect",
             "protect",
+            "repair",
+            "seam",
             "align",
             "change_map",
             "edge_similarity",
@@ -234,7 +244,13 @@ fn describe_without_json_names_the_build() {
             "stroke",
             "rasterize",
             "shrink",
-            "invert"
+            "invert",
+            "tighten",
+            "inspect",
+            "fan",
+            "profile",
+            "ramp",
+            "measure"
         ],
         "{text}"
     );
@@ -461,9 +477,13 @@ fn a_tool_without_a_record_cannot_be_unverified_or_admitted() {
     // The same tool, its record not among those compiled in: no mark at all.
     assert_eq!(of_among(&[("t", record)], "t"), Some(Mark::Admitted));
     assert_eq!(of_among(&[("u", record)], "t"), None);
-    // The actions that ship without a record have none, and show none.
-    for tool in ["check", "feather", "plug", "render", "segment", "select"] {
-        assert!(record_of(tool).is_none(), "{tool} has a record now");
+    // An action that ships without a record has none, and shows none.
+    assert!(record_of("check").is_none(), "check has a record now");
+    assert_eq!(of("check"), None);
+    // Rascal's records (plan m3, task D1) are not squint's: they give no mark here, and
+    // `segment` and `fill`, experimental by theirs, run only when named either way.
+    for tool in ["feather", "fill", "plug", "render", "segment", "select"] {
+        assert!(record_of(tool).is_some(), "{tool} has no record");
         assert_eq!(of(tool), None, "{tool}");
     }
     // A record whose part states no mark (a control, a pixel operation) gives none.
@@ -539,4 +559,51 @@ fn recipes_are_listed_before_primitives_with_purpose_and_use() {
         text.contains("\n      use: To remove a thing you can name in words"),
         "{text}"
     );
+}
+
+#[test]
+fn each_of_rascals_25_operations_is_an_action() {
+    // Rascal's operations, as its `crates/rascal-ops/src/lib.rs` registered them at the
+    // commit `docs/sources.toml` pins (plan m3, task O5): each is an action here, under
+    // its own name.
+    const RASCAL: [&str; 25] = [
+        "rect",
+        "rasterize",
+        "render",
+        "cut",
+        "put",
+        "line",
+        "stroke",
+        "inspect",
+        "fan",
+        "profile",
+        "feather",
+        "ramp",
+        "apply",
+        "window",
+        "unwindow",
+        "paste",
+        "measure",
+        "grow",
+        "shrink",
+        "close",
+        "plug",
+        "subtract",
+        "select",
+        "invert",
+        "tighten",
+    ];
+    let (ok, text) = whizbang(&["describe", "--json"]);
+    assert!(ok);
+    let doc: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+    let names: Vec<&str> = (doc["actions"].as_array().expect("a list").iter())
+        .map(|action| action["name"].as_str().expect("a name"))
+        .collect();
+    let missing: Vec<&str> = RASCAL
+        .into_iter()
+        .filter(|name| !names.contains(name))
+        .collect();
+    assert!(missing.is_empty(), "not actions: {missing:?}");
+    let distinct: std::collections::BTreeSet<&str> = RASCAL.into_iter().collect();
+    assert_eq!(distinct.len(), 25);
 }

@@ -52,7 +52,7 @@ use whizbang_core::contract::{
     DescriptorError, Failure, InputPort, Kind, Outcome, PreparedCall, Produced, Requirement, Value,
     ValueType, Verdict,
 };
-use whizbang_core::identity::{DecodeLimits, Digest};
+use whizbang_core::identity::DecodeLimits;
 
 use crate::cache;
 use crate::details::{self, Details, Names, Projection};
@@ -351,9 +351,13 @@ fn view_tool() -> Result<ToolDefinition, Failure> {
 }
 
 /// The call of the action `view` that a judge's arguments ask for, or why they ask for
-/// none. An image is named by its identity, as the judge was told it; whether the run
-/// may read it is not looked at here: the executor holds the call to that.
-fn view_call(arguments: &Json) -> Result<Call, String> {
+/// none. An image is named by its identity, as the judge was told it, or, under a use
+/// case, as the opening calls it, by its id or its raw frame (`candidate`,
+/// `raw:candidate`), as `align` takes it: a judge of the Google kind named images so in
+/// 230 of its 998 calls of `view` in the gate run of the details first, each a turn
+/// spent on a refusal. Whether the run may read it is not looked at here: the executor
+/// holds the call to that.
+fn view_call(arguments: &Json, names: &details::Names) -> Result<Call, String> {
     let Some(arguments) = arguments.as_object() else {
         return Err("the arguments are not an object".to_owned());
     };
@@ -363,9 +367,9 @@ fn view_call(arguments: &Json) -> Result<Call, String> {
     }
     let named = |key: &str| match arguments.get(key) {
         None => Ok(None),
-        Some(Json::String(text)) => match text.parse::<Digest>() {
-            Ok(digest) => Ok(Some(ArtifactId(digest))),
-            Err(_) => Err(format!("{key} is not the name of an image you were shown")),
+        Some(Json::String(text)) => match names.resolve(text) {
+            Some((id, _)) => Ok(Some(id)),
+            None => Err(format!("{key} is not the name of an image you were shown")),
         },
         Some(_) => Err(format!("{key} is not a text")),
     };
@@ -463,7 +467,7 @@ impl Run<'_> {
         let mut resized: Option<String> = None;
         let mut compared: Option<details::CompareAsked> = None;
         let asked = match (listed, call.name()) {
-            (true, view::NAME) => view_call(call.arguments()),
+            (true, view::NAME) => view_call(call.arguments(), &self.names),
             (true, align::NAME) => {
                 details::align_call(call.arguments(), &self.names).map(|asked| {
                     let call = asked.call.clone();

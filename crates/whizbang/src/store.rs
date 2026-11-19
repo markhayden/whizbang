@@ -17,6 +17,7 @@ use std::sync::Arc;
 use clap::{Args, Subcommand};
 use whizbang::wiring::{self, Make};
 use whizbang_core::contract::{REQUESTS_PREFIX, Recovery, Remover, SPEND_PREFIX};
+use whizbang_core::identity::Projection;
 use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{Kind, Pruned, Reader};
 
@@ -79,13 +80,21 @@ pub enum Command {
         /// A PNG or JPEG picture to commit as an image whose role is a picture. It is
         /// decoded within the core's limits (64 MiB, 50,000,000 pixels) and written
         /// again as a PNG of its pixels alone, upright and in sRGB: nothing else the file
-        /// holds (its text, its EXIF, its colour profile, its name) is kept.
+        /// holds (its text, its EXIF, its colour profile, its name) is kept. It is read
+        /// from the file its path names, through no link, and refused unless it is a
+        /// regular file.
         #[arg(long, value_name = "FILE", conflicts_with_all = ["file", "mask"])]
         picture: Option<PathBuf>,
+        /// What the picture is: flat, or an equirectangular panorama, complete, which
+        /// wraps. Without it, a picture whose metadata says it is equirectangular is one,
+        /// and any other is flat.
+        #[arg(long, value_parser = ["flat", "equirectangular"], requires = "picture")]
+        projection: Option<String>,
         /// A grey PNG or JPEG of the image `--onto` names, to commit as a mask on it:
-        /// 255 its core, 1 to 254 its blend, 0 nothing. It is decoded within the core's
-        /// limits, no more pixels than the image has, must be the image's size exactly,
-        /// and keeps nothing of the file but its pixels. Nothing is protected.
+        /// 255 its core, 1 to 254 its blend, 0 nothing. It is read as a picture is, through
+        /// no link; decoded within the core's limits, no more pixels than the image has;
+        /// must be the image's size exactly; and keeps nothing of the file but its pixels.
+        /// Nothing is protected.
         #[arg(long, value_name = "FILE", conflicts_with = "file", requires = "onto")]
         mask: Option<PathBuf>,
         /// The image a mask given with `--mask` is drawn on, by its identity in the store.
@@ -173,13 +182,20 @@ pub fn run_with(command: &Command, recovery: Recovery) -> Result<String, String>
         Command::Import {
             file,
             picture,
+            projection,
             mask,
             onto,
             at,
             create,
         } => match (file, picture, mask, onto) {
             (_, Some(picture), _, _) => {
-                whizbang::import::import_picture(picture, &at.store, *create, recovery)
+                let projection = projection.as_deref().map(|p| match p {
+                    "equirectangular" => Projection::Equirectangular,
+                    _ => Projection::Flat,
+                });
+                whizbang::import::import_picture_as(
+                    picture, &at.store, *create, recovery, projection,
+                )
             }
             (_, None, Some(mask), Some(onto)) => {
                 whizbang::import::import_mask(mask, onto, &at.store, recovery)

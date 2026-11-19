@@ -29,6 +29,14 @@ Makes a rectangle on an image a mask: the box's pixels the core, no blend and no
 
 Makes the mask for a second pass: what the first mask reached is protected, the rest of the image the core.
 
+## `repair`
+
+Repairs a scratch or a tear along a stroke: the stroke tightened to the defect's edges, feathered, then filled.
+
+## `seam`
+
+Heals the wrap edge of a panorama: the band along the seam measured, its tone step ramped, then filled and put back.
+
 ## `align`
 
 Registers one flat image onto another of the same scene and viewpoint, and returns it warped into the other's frame.
@@ -132,3 +140,27 @@ Shrinks the core of a mask by a disc; a core against the border shrinks from it 
 ## `invert`
 
 The mask for a second pass: what the first mask reached is protected, and every other pixel is the core.
+
+## `tighten`
+
+Tightens a stroke to the defect's edges: at each sample the two strongest opposite edges inside the stroke bound the core.
+
+## `inspect`
+
+A mask for the eye: the overlay on its image, the core's width on each row, and its counts in the journal.
+
+## `fan`
+
+Measures the band along a column line: a half-width for each row, wide on smooth surfaces where the sides differ, thin on detail.
+
+## `profile`
+
+Makes the band mask of a band profile: the core at each row's half-width, the blend a feather whose sigma follows the row.
+
+## `ramp`
+
+Measures the colour step across a band mask's line, row by row, and adds it to the mask as a tone ramp for apply.
+
+## `measure`
+
+Measures a seam or a composite: continuity, tone step, transition, texture match and drift, per row; none is a verdict.

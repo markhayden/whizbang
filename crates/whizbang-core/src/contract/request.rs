@@ -33,6 +33,11 @@ use super::{
 /// The longest request id, in characters.
 pub const REQUEST_ID_LIMIT: usize = 128;
 
+/// What the request ids of a lab's cells start with (plan m3, task L2; ADR 0038): no
+/// caller may give an id that starts so ([`super::Executor::request_id`]), so no run a
+/// caller asked for is taken for a cell's attempt.
+pub const RESERVED_REQUEST_PREFIX: &str = "cell.";
+
 /// The most bytes a stored admission or ending may be. The longest one this code writes
 /// is well under it: every text in one is held to a rule with a length.
 pub const REQUEST_RECORD_MAX_BYTES: u64 = 1024;

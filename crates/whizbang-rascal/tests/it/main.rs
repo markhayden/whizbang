@@ -13,11 +13,13 @@ mod grow;
 mod grow_action;
 mod grow_runs;
 mod heal;
+mod inspect;
 mod invert;
 mod line;
 mod ops_actions;
 mod paste;
 mod plug;
+mod poisson;
 mod put;
 mod rasterize;
 mod record;
@@ -30,5 +32,13 @@ mod shrink;
 mod stroke;
 mod subtract;
 mod task;
+mod tighten;
+mod tool_records;
 mod unwindow;
 mod window;
+// The seam (plan m3, task O3).
+mod fan;
+mod profile;
+mod ramp;
+// The last of rascal's operations (plan m3, task O5).
+mod measure;

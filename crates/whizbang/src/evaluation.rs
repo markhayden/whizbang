@@ -1,6 +1,6 @@
 //! What `whizbang eval` does around the evaluation sets (plan 2C, task E1): a set's
 //! pictures fetched by hash and brought into a store, and a matrix of cells run as runs
-//! of `check` through the executor, resumably.
+//! of `check` through the executor, resumably, on the shared harness ([`crate::harness`]).
 //!
 //! # Fetching
 //!
@@ -36,25 +36,21 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use whizbang_core::artifact::ArtifactId;
-use whizbang_core::contract::record::{ArgumentValue, RunRecord, Status};
-use whizbang_core::contract::{
-    Answer, Call, Cancellation, Executor, Recovery, Request, RunId, Secrets, Value,
-};
+use whizbang_core::contract::record::{ArgumentValue, RunRecord};
+use whizbang_core::contract::{Call, Cancellation, Recovery, Request, RunId, Secrets, Value};
 use whizbang_core::egress::{
     Address, CheckedDownloader, DownloadRequest, Downloaded, Downloader, NotAllowed, Origin,
 };
 use whizbang_core::identity::Digest;
-use whizbang_core::store::Reader;
-use whizbang_core::store::fs::RealFs;
 use whizbang_eval::matrix::{self, Cell, Matrix};
 use whizbang_eval::sets::{self, Judging, Set};
 use whizbang_squint::job::{Job, Role as JobRole};
 
 use crate::door::{CHECK_OUTPUT_TOKENS, printable};
+use crate::harness;
 use crate::import;
 
 /// The base the pictures of a set are fetched from: the raw files of a public repository
@@ -357,15 +353,7 @@ pub fn plan(
     Ok((planned, labels))
 }
 
-/// How one attempt of a cell ended, as its run's record says.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Ended {
-    Completed,
-    /// An error, or what it was given found invalid: reported, and not run again.
-    Failed,
-    /// Cancelled, or ended by the next open after its process died: run again.
-    Interrupted,
-}
+pub use crate::harness::{Ended, Running};
 
 /// Each cell's attempts: the attempt, its run and how it ended, in order.
 pub type Attempts = BTreeMap<Cell, Vec<(u32, String, Ended)>>;
@@ -378,30 +366,19 @@ pub fn attempts(root: &Path, identity: &str) -> Result<Attempts, String> {
 
 /// The same, of the runs made under the gate of this digest, or under none.
 pub fn attempts_under(root: &Path, identity: &str, gate: Option<&str>) -> Result<Attempts, String> {
-    let reader = Reader::open(root, Arc::new(RealFs)).map_err(|e| e.to_string())?;
-    let generation = reader.snapshot().map_err(|e| e.to_string())?;
     let mut found: Attempts = BTreeMap::new();
-    for id in generation.runs().keys() {
-        let stored = whizbang_core::contract::record::stored(&generation, id, |e| reader.read(e));
-        let Some(Ok(record)) = stored else { continue };
-        let Some(argument) = cell_of(&record) else {
-            continue;
+    harness::each_run(root, &mut |record, id, ended| {
+        let Some(argument) = cell_of(record) else {
+            return;
         };
         if argument.identity != identity || argument.gate.as_deref() != gate {
-            continue;
+            return;
         }
-        let outcome = record.outcome();
-        let ended = match outcome.status {
-            _ if !outcome.lost.is_empty() => Ended::Interrupted,
-            Status::Completed => Ended::Completed,
-            Status::Cancelled => Ended::Interrupted,
-            Status::Error | Status::Invalid => Ended::Failed,
-        };
         found
             .entry(argument.cell)
             .or_default()
-            .push((argument.attempt, id.clone(), ended));
-    }
+            .push((argument.attempt, id.to_owned(), ended));
+    })?;
     for list in found.values_mut() {
         list.sort();
     }
@@ -422,6 +399,11 @@ pub fn cell_of(record: &RunRecord) -> Option<CellArgument> {
         ArgumentValue::Text(text) => serde_json::from_str(text).ok(),
         _ => None,
     }
+}
+
+/// The identity the harness knows a cell of `check` by: the cell, written as JSON.
+fn key_of(cell: &Cell) -> String {
+    serde_json::to_string(cell).unwrap_or_default()
 }
 
 /// The call of `check` one attempt of a cell is.
@@ -454,15 +436,43 @@ fn call_of(planned: &Planned, argument: &CellArgument) -> Result<Call, String> {
     Ok(call)
 }
 
-/// What the runner is given beside the matrix and its planned cells.
-pub struct Running<'a> {
-    pub executor: &'a dyn Executor,
-    pub root: &'a Path,
-    /// What the store's allowance has left, in millionths of a US dollar.
-    pub left_micros: u64,
-    /// Asked before each run is started: true stops the matrix there, and it is resumed
-    /// by running it again.
-    pub stop: &'a dyn Fn() -> bool,
+/// One cell of a matrix as the shared harness runs it: a run of `check`, forecast at its
+/// judge's rate.
+struct Judged<'a> {
+    planned: &'a Planned,
+    matrix: &'a Matrix,
+    identity: &'a str,
+    gate: Option<&'a str>,
+}
+
+impl harness::Work for Judged<'_> {
+    fn identity(&self) -> String {
+        key_of(&self.planned.cell)
+    }
+
+    fn request(&self, attempt: u32) -> Result<Option<Request>, String> {
+        let argument = CellArgument {
+            matrix: self.matrix.matrix.name.clone(),
+            identity: self.identity.to_owned(),
+            cell: self.planned.cell.clone(),
+            attempt,
+            gate: self.gate.map(str::to_owned),
+        };
+        Ok(Some(Request::new(call_of(self.planned, &argument)?)))
+    }
+
+    fn forecast(&self) -> Result<u64, String> {
+        matrix::forecast(std::slice::from_ref(&self.planned.cell))
+    }
+
+    fn group(&self) -> String {
+        let cell = &self.planned.cell;
+        key_of(&Cell {
+            item: String::new(),
+            repetition: 0,
+            ..cell.clone()
+        })
+    }
 }
 
 /// What a matrix's run did, and what the store now holds of it.
@@ -498,7 +508,8 @@ pub fn run(
 }
 
 /// The same, each run made under the gate of this digest, which its cell holds; a gate's
-/// runs resume from its own runs alone.
+/// runs resume from its own runs alone. The cells run on the shared harness
+/// ([`crate::harness`]), each recognised by its cell in the run's argument `cell`.
 pub fn run_under(
     matrix: &Matrix,
     planned: &[Planned],
@@ -507,88 +518,22 @@ pub fn run_under(
     gate: Option<&str>,
 ) -> Result<Report, String> {
     let identity: String = matrix.identity().chars().take(16).collect();
-    let earlier = attempts_under(running.root, &identity, gate)?;
-    // What is still to run: each cell with no attempt, or whose last was interrupted.
-    let mut todo = Vec::new();
-    for planned in planned {
-        let last = earlier.get(&planned.cell).and_then(|list| list.last());
-        match last {
-            None => todo.push((planned, 1)),
-            Some((attempt, _, Ended::Interrupted)) => todo.push((planned, attempt + 1)),
-            Some(_) => {}
-        }
-    }
-    let cells: Vec<Cell> = todo.iter().map(|(p, _)| p.cell.clone()).collect();
-    let forecast = matrix::forecast(&cells)?;
-    if forecast > running.left_micros {
-        return Err(format!(
-            "the matrix's forecast for its {} runs still to run is {} millionths of a dollar, \
-             more than the {} the store's allowance has left; nothing was run",
-            cells.len(),
-            forecast,
-            running.left_micros
-        ));
-    }
-    let argument = |planned: &Planned, attempt| CellArgument {
-        matrix: matrix.matrix.name.clone(),
-        identity: identity.clone(),
-        cell: planned.cell.clone(),
-        attempt,
-        gate: gate.map(str::to_owned),
+    let cells: Vec<Judged<'_>> = (planned.iter())
+        .map(|planned| Judged {
+            planned,
+            matrix,
+            identity: &identity,
+            gate,
+        })
+        .collect();
+    let work: Vec<&dyn harness::Work> = cells.iter().map(|c| c as &dyn harness::Work).collect();
+    let recognise = |record: &RunRecord, _: Option<&whizbang_core::contract::Admission>| {
+        let argument = cell_of(record)?;
+        let ours = argument.identity == identity && argument.gate.as_deref() == gate;
+        ours.then(|| (key_of(&argument.cell), argument.attempt))
     };
-    // Each judge and arm prepares before anything runs.
-    let mut prepared = std::collections::BTreeSet::new();
-    for (planned, attempt) in &todo {
-        let key = (
-            planned.cell.backend.clone(),
-            planned.cell.arm.clone(),
-            planned.cell.set.clone(),
-        );
-        if prepared.insert(key) {
-            let call = call_of(planned, &argument(planned, *attempt))?;
-            running
-                .executor
-                .prepare(&call)
-                .map_err(|why| format!("the matrix cannot run, nothing was run: {why}"))?;
-        }
-    }
-    let at_once = usize::try_from(matrix.matrix.concurrency)
-        .unwrap_or(1)
-        .max(1);
-    let mut started = 0;
-    let mut open: std::collections::VecDeque<RunId> = std::collections::VecDeque::new();
-    let mut failure = None;
-    for (planned, attempt) in &todo {
-        if (running.stop)() {
-            break;
-        }
-        // At most `at_once` runs started and not waited for.
-        while open.len() >= at_once {
-            if let Some(run) = open.pop_front() {
-                running.executor.wait(&run).map_err(|e| e.to_string())?;
-            }
-        }
-        let call = call_of(planned, &argument(planned, *attempt))?;
-        match running.executor.start(&Request::new(call)) {
-            Ok(Answer::Started(run)) => {
-                open.push_back(run);
-                started += 1;
-            }
-            Ok(Answer::Ran(_) | Answer::Repeat(_)) => started += 1,
-            Err(why) => {
-                failure = Some(why.to_string());
-                break;
-            }
-        }
-    }
-    while let Some(run) = open.pop_front() {
-        running.executor.wait(&run).map_err(|e| e.to_string())?;
-    }
-    if let Some(why) = failure {
-        return Err(format!(
-            "a run of the matrix was refused, and the matrix stopped; run it again to resume: {why}"
-        ));
-    }
+    let at_once = usize::try_from(matrix.matrix.concurrency).unwrap_or(1);
+    let started = harness::run(&work, &recognise, running, at_once, "matrix")?;
     let mut report = summary(planned, labels, running.root, &identity, gate)?;
     report.started = started;
     Ok(report)

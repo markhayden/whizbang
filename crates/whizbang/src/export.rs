@@ -20,6 +20,9 @@
 //!   appears after the look.
 //! - **Not inside the store:** the folder the file goes in, with its links followed, is
 //!   refused when it is the store's directory or inside it. A store's files are its own.
+//!   The file is then written in that folder as it was checked (its canonical path) under
+//!   the name given, never by the path as given, so a link among the folders swapped
+//!   after the check cannot move the file into the store.
 //! - **Not into a folder that is missing:** nothing is made but the file.
 //! - **Named by the caller alone:** the file is the path the command was given, and no
 //!   part of its name comes from the store: not an artifact's identity, not a run's id,
@@ -56,13 +59,15 @@ pub fn png(pixels: &CanonicalPixels) -> Result<Vec<u8>, String> {
         .map_err(|why| format!("cannot write the image as a PNG: {why}"))
 }
 
-/// Where the file goes, refused as the module's description says: the path to write, and
+/// Where the file goes, refused as the module's description says: the path to write,
+/// which is the folder as it was checked, its links followed, joined with the file's
+/// name, so that what is written is in the folder that was held out of the store; and
 /// whether a file is there to be replaced.
-fn destination(out: &Path, root: &Path, overwrite: bool) -> Result<bool, String> {
+fn destination(out: &Path, root: &Path, overwrite: bool) -> Result<(PathBuf, bool), String> {
     let shown = out.display();
-    if out.file_name().is_none() {
+    let Some(name) = out.file_name() else {
         return Err(format!("{shown} names no file"));
-    }
+    };
     let parent = match out.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
         _ => PathBuf::from("."),
@@ -78,7 +83,8 @@ fn destination(out: &Path, root: &Path, overwrite: bool) -> Result<bool, String>
             "{shown} is inside the store: a store's files are its own; write it elsewhere"
         ));
     }
-    match std::fs::symlink_metadata(out) {
+    let target = folder.join(name);
+    match std::fs::symlink_metadata(&target) {
         Ok(found) if found.file_type().is_symlink() => Err(format!(
             "{shown} is a link: export writes no file through a link"
         )),
@@ -86,8 +92,8 @@ fn destination(out: &Path, root: &Path, overwrite: bool) -> Result<bool, String>
         Ok(_) if !overwrite => Err(format!(
             "{shown} is there already: pass --overwrite to replace it"
         )),
-        Ok(_) => Ok(true),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Ok(_) => Ok((target, true)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok((target, false)),
         Err(error) => Err(format!("cannot look at {shown}: {error}")),
     }
 }
@@ -120,7 +126,7 @@ fn identity(given: &str, flag: &str) -> Result<Digest, String> {
 /// complaint.
 pub fn export(root: &Path, image: &str, out: &Path, overwrite: bool) -> Result<String, String> {
     let id = identity(image, "--image")?;
-    let replace = destination(out, root, overwrite)?;
+    let (target, replace) = destination(out, root, overwrite)?;
     let reader = Reader::open(root, Arc::new(RealFs)).map_err(|e| e.to_string())?;
     let limits = DecodeLimits::default();
     let read = artifact::get(&reader, ArtifactType::Image, ArtifactId(id), &limits);
@@ -129,7 +135,7 @@ pub fn export(root: &Path, image: &str, out: &Path, overwrite: bool) -> Result<S
     };
     let pixels = held.pixels(&limits).map_err(|e| e.to_string())?;
     let bytes = png(&pixels)?;
-    written(out, replace, &bytes)?;
+    written(&target, replace, &bytes)?;
     Ok(format!(
         "exported image {} ({} by {}) to {}\n",
         held.id(),
@@ -143,7 +149,7 @@ pub fn export(root: &Path, image: &str, out: &Path, overwrite: bool) -> Result<S
 /// print, or the complaint.
 pub fn export_mask(root: &Path, mask: &str, out: &Path, overwrite: bool) -> Result<String, String> {
     let id = identity(mask, "--mask")?;
-    let replace = destination(out, root, overwrite)?;
+    let (target, replace) = destination(out, root, overwrite)?;
     let reader = Reader::open(root, Arc::new(RealFs)).map_err(|e| e.to_string())?;
     let read = artifact::get(
         &reader,
@@ -167,7 +173,7 @@ pub fn export_mask(root: &Path, mask: &str, out: &Path, overwrite: bool) -> Resu
     PngEncoder::new_with_quality(&mut bytes, CompressionType::Default, FilterType::Adaptive)
         .write_image(&grey, width, height, ExtendedColorType::L8)
         .map_err(|error| format!("cannot write the mask as a PNG: {error}"))?;
-    written(out, replace, &bytes)?;
+    written(&target, replace, &bytes)?;
     Ok(format!(
         "exported mask {} ({width} by {height}) as a grey picture to {}\n",
         held.id(),
@@ -179,7 +185,7 @@ pub fn export_mask(root: &Path, mask: &str, out: &Path, overwrite: bool) -> Resu
 /// `root` to `to`: what to print, or the complaint.
 pub fn export_file(root: &Path, id: &str, to: &Path, overwrite: bool) -> Result<String, String> {
     let id = ArtifactId(identity(id, "the identity")?);
-    let replace = destination(to, root, overwrite)?;
+    let (target, replace) = destination(to, root, overwrite)?;
     let reader = Reader::open(root, Arc::new(RealFs)).map_err(|e| e.to_string())?;
     let generation = reader.snapshot().map_err(|e| e.to_string())?;
     let kinds = [
@@ -198,7 +204,7 @@ pub fn export_file(root: &Path, id: &str, to: &Path, overwrite: bool) -> Result<
     };
     let held =
         artifact::get(&reader, kind, id, &DecodeLimits::default()).map_err(|e| e.to_string())?;
-    written(to, replace, &held.to_bytes())?;
+    written(&target, replace, &held.to_bytes())?;
     Ok(format!(
         "exported {kind} {id} as its canonical file to {}\n",
         whizbang::door::printable(&to.display().to_string())

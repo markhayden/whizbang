@@ -365,9 +365,19 @@ impl Action for RecipeAction {
             .map_err(|why| Failure::invalid(&why))?;
         let last = match text_of(call, UNTIL) {
             Some(until) => {
-                (self.recipe.steps.iter().position(|s| s.id == until)).ok_or_else(|| {
-                    Failure::invalid(&format!("the recipe {name} has no step {until}"))
-                })?
+                let at =
+                    (self.recipe.steps.iter().position(|s| s.id == until)).ok_or_else(|| {
+                        Failure::invalid(&format!("the recipe {name} has no step {until}"))
+                    })?;
+                // Its descriptor offers only the steps before the last, and the runner
+                // holds to that itself: a need only the last step has was not reserved
+                // for a run with `until`.
+                if at + 1 == self.recipe.steps.len() {
+                    return Err(Failure::invalid(&format!(
+                        "until names {until}, the last step of the recipe {name}: leave until out to run it whole"
+                    )));
+                }
+                at
             }
             None => self.recipe.steps.len() - 1,
         };

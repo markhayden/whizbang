@@ -1,7 +1,8 @@
 //! `whizbang rascal segment`, `select`, `grow`, `close`, `plug`, `subtract`, `feather`,
 //! `render`, `paste`, `fill`, `line`, `rect`, `stroke`, `rasterize`, `shrink`, `invert`,
-//! `cut`, `put`, `window`, `unwindow` and `apply`, and the recipes: wiring from arguments
-//! to the door (`whizbang::door`), which runs the action through the executor.
+//! `cut`, `put`, `window`, `unwindow`, `apply`, `tighten`, `inspect`, `fan`, `profile`,
+//! `ramp` and `measure`, and the recipes: wiring from arguments to the door (`whizbang::door`), which
+//! runs the action through the executor.
 
 use std::path::PathBuf;
 
@@ -363,8 +364,9 @@ pub enum Command {
         /// The mask on the base, by its identity in the store.
         #[arg(long)]
         mask: String,
-        /// How the fill is pasted: `feather`, by the mask's core and blend.
-        #[arg(long, value_parser = ["feather"], default_value = "feather")]
+        /// How the fill is pasted: `feather`, by the mask's core and blend; `hard`, on
+        /// the core alone; `poisson`, by the fill's gradients against the base round it.
+        #[arg(long, value_parser = ["feather", "hard", "poisson"], default_value = "feather")]
         mode: String,
         #[command(flatten)]
         common: Common,
@@ -388,6 +390,57 @@ pub enum Command {
         #[command(flatten)]
         common: Common,
     },
+    #[command(about = whizbang_rascal::tighten::ABOUT, after_help = EXIT_CODES)]
+    Tighten(Op<whizbang_rascal::tighten::Args>),
+    #[command(about = whizbang_rascal::inspect::ABOUT, after_help = EXIT_CODES)]
+    Inspect(Op<whizbang_rascal::inspect::Args>),
+    /// Repair a scratch or a tear along a stroke and fill it: the recipe `repair`, whose
+    /// steps are tighten, feather and fill. Each step's run is printed, and then the
+    /// composite and the mask rebound onto it, committed to the store.
+    #[command(after_help = EXIT_CODES)]
+    Repair {
+        /// The picture, by its identity in the store.
+        #[arg(long)]
+        image: String,
+        /// The stroke along the defect, a location on the picture, by its identity in the
+        /// store, as `rascal stroke` prints it.
+        #[arg(long)]
+        stroke: String,
+        /// The filler, by its name in the config's `[backends.fill]` tables.
+        #[arg(long, value_name = "NAME")]
+        backend: Option<String>,
+        #[command(flatten)]
+        steps: Steps,
+        #[command(flatten)]
+        common: Common,
+    },
+    #[command(about = whizbang_rascal::fan::ABOUT, after_help = EXIT_CODES)]
+    Fan(Op<whizbang_rascal::fan::Args>),
+    #[command(about = whizbang_rascal::profile::ABOUT, after_help = EXIT_CODES)]
+    Profile(Op<whizbang_rascal::profile::Args>),
+    #[command(about = whizbang_rascal::ramp::ABOUT, after_help = EXIT_CODES)]
+    Ramp(Op<whizbang_rascal::ramp::Args>),
+    /// Heal the wrap edge of a complete panorama: the recipe `seam`, whose steps are cut,
+    /// line, fan, profile, ramp, apply, fill and put, each a run of its own under the
+    /// recipe's. Each step's run is printed, and then the panorama and the seam's mask,
+    /// committed to the store.
+    #[command(after_help = EXIT_CODES)]
+    Seam {
+        /// The panorama, by its identity in the store.
+        #[arg(long)]
+        image: String,
+        /// The filler, by its name in the config's `[backends.fill]` tables. With none,
+        /// the config's default for fill answers.
+        #[arg(long, value_name = "NAME")]
+        backend: Option<String>,
+        #[command(flatten)]
+        steps: Steps,
+        #[command(flatten)]
+        common: Common,
+    },
+    // The last of rascal's operations (plan m3, task O5).
+    #[command(about = whizbang_rascal::measure::ABOUT, after_help = EXIT_CODES)]
+    Measure(Op<whizbang_rascal::measure::Args>),
 }
 
 /// Where a recipe that takes a location works: the picture, and the location given or
@@ -524,7 +577,7 @@ pub(crate) fn executor_caching(
     Ok((built(at, &over, recovery, cached)?, over))
 }
 
-fn built(
+pub(crate) fn built(
     at: &Where,
     over: &wiring::Over,
     recovery: Recovery,
@@ -829,6 +882,61 @@ fn run_at(
             let uses = Uses::One(Capability::Fill, backend.as_deref());
             operation_using(common, "fill", arguments, inputs, recovery, platform, uses)
         }
+        Command::Tighten(op) => op.run(recovery, platform),
+        Command::Inspect(op) => op.run(recovery, platform),
+        Command::Repair {
+            image,
+            stroke,
+            backend,
+            steps,
+            common,
+        } => {
+            let mut arguments = Vec::new();
+            if let Some(backend) = backend {
+                arguments.push(("backend", Value::text(backend)));
+            }
+            arguments.extend(steps.arguments());
+            let inputs = vec![
+                ("image", "--image", image.as_str()),
+                ("stroke", "--stroke", stroke.as_str()),
+            ];
+            let uses = Uses::One(Capability::Fill, backend.as_deref());
+            let over = common.under.over(platform, uses)?;
+            let executor = built(&common.at, &over, recovery, false)?;
+            let asked = OperationAsked {
+                action: "repair",
+                arguments,
+                inputs,
+                request_id: common.request_id.as_deref(),
+            };
+            door::recipe(&executor, &asked, common.at.root())
+        }
+        Command::Fan(op) => op.run(recovery, platform),
+        Command::Profile(op) => op.run(recovery, platform),
+        Command::Ramp(op) => op.run(recovery, platform),
+        Command::Seam {
+            image,
+            backend,
+            steps,
+            common,
+        } => {
+            let mut arguments = Vec::new();
+            if let Some(backend) = backend {
+                arguments.push(("backend", Value::text(backend)));
+            }
+            arguments.extend(steps.arguments());
+            let uses = Uses::One(Capability::Fill, backend.as_deref());
+            let over = common.under.over(platform, uses)?;
+            let executor = built(&common.at, &over, recovery, false)?;
+            let asked = OperationAsked {
+                action: "seam",
+                arguments,
+                inputs: vec![("image", "--image", image.as_str())],
+                request_id: common.request_id.as_deref(),
+            };
+            door::recipe(&executor, &asked, common.at.root())
+        }
+        Command::Measure(op) => op.run(recovery, platform),
     }
 }
 

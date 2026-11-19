@@ -52,6 +52,7 @@ pub(crate) static STATED: Stated = Stated {
     version: VERSION,
     long_edge: LONG_EDGE,
     efforts: &["low", "medium", "high", "xhigh", "max"],
+    default_effort: None,
     most_output: 128_000,
     key_header: KEY_HEADER,
     bad_setting: "a service backend of anthropic takes the settings effort, one of low, \

@@ -458,7 +458,7 @@ fn judges_are_of_their_models(matrix: &Matrix, under: &Under) -> Result<(), Stri
 }
 
 /// What the allowance of the store at `root` has left, in millionths of a US dollar.
-fn left(root: &Path) -> Result<u64, String> {
+pub(crate) fn left(root: &Path) -> Result<u64, String> {
     let reader = Reader::open(root, Arc::new(RealFs)).map_err(|e| e.to_string())?;
     let generation = reader.snapshot().map_err(|e| e.to_string())?;
     let folded = whizbang_core::spend::fold::fold(&generation, |entry| reader.read(entry));

@@ -51,6 +51,10 @@ pub(crate) static STATED: Stated = Stated {
     version: VERSION,
     long_edge: LONG_EDGE,
     efforts: &["low", "medium", "high"],
+    // No level sent leaves the model its own, which spent whole turns thinking in
+    // the gate run of the details first: 117 of 131 turns cut off at the limit
+    // held no part. `low` is the level squint's recorded requests asked for.
+    default_effort: Some("low"),
     most_output: 65_536,
     key_header: KEY_HEADER,
     bad_setting: "a service backend of google takes the settings effort, one of low, medium \

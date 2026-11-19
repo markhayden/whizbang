@@ -2128,9 +2128,20 @@ fn rascal_remove_prompt_until_feather_hands_back_the_mask() {
         &dir.path().join("nowhere"),
     );
     assert_eq!(refused.code, Some(1), "{}", refused.err);
+    // --until fill names the last step, which is the recipe whole: refused before any
+    // step runs, and no step's run is made.
+    drop(store);
+    let last = door::OperationAsked {
+        arguments: vec![
+            ("prompt", Value::text("collar")),
+            ("until", Value::text("fill")),
+        ],
+        ..until.clone()
+    };
+    let refused = run(&over, &root, &last).unwrap_err();
+    assert!(refused.contains("until"), "{refused}");
     // Without --until the recipe needs a filler, and this config gives none: refused
     // when it is admitted, before any step runs.
-    drop(store);
     let whole = door::OperationAsked {
         arguments: vec![("prompt", Value::text("collar"))],
         ..until
@@ -2277,7 +2288,7 @@ fn rascal_paste_composites_a_fill_onto_its_base() {
     let other = whizbang(
         &[
             "rascal", "paste", "--image", &image, "--fill", &fill, "--mask", &mask, "--mode",
-            "hard",
+            "smudge",
         ],
         &root,
     );
@@ -2510,4 +2521,274 @@ fn rascal_remove_with_a_box_fills_under_a_scripted_filler() {
         &dir.path().join("nowhere"),
     );
     assert_eq!(refused.code, Some(1), "{}", refused.err);
+}
+
+#[test]
+fn rascal_tighten_inspect_and_a_hard_paste_run_from_the_command_line() {
+    // A picture of 64 by 48 (plan m3, task O4): `rascal stroke` makes a stroke on it,
+    // `rascal tighten` a mask of it for a repair, `rascal inspect` the overlay and the
+    // widths of that mask, and `rascal paste --mode hard` of the picture onto itself hands
+    // the picture back. `rascal repair` with no filler configured runs nothing.
+    let dir = Scratch::new("cli-tighten");
+    let root = dir.path().join("store");
+    std::fs::create_dir_all(dir.path().join("in")).unwrap();
+    let ran = |args: &[&str]| {
+        let ran = whizbang(args, &root);
+        assert_eq!(ran.code, Some(0), "{args:?}: {}", ran.err);
+        ran.out
+    };
+    drop(Store::open(&root, Arc::new(RealFs)).unwrap());
+    let image = crate::anthropic::import_picture(&root, &dir.path().join("in"), "base", 40);
+    let out = ran(&[
+        "rascal",
+        "stroke",
+        "--image",
+        &image,
+        "--path",
+        "8 24; 56 24",
+        "--radius-px",
+        "4",
+    ]);
+    let stroke = printed(&out, "location");
+    let out = ran(&["rascal", "tighten", "--stroke", &stroke, "--image", &image]);
+    let mask = printed(&out, "mask");
+    let out = ran(&["rascal", "inspect", "--mask", &mask, "--image", &image]);
+    assert!(printed(&out, "overlay").starts_with("sha256:"), "{out}");
+    assert!(printed(&out, "widths").starts_with("sha256:"), "{out}");
+    let out = ran(&[
+        "rascal", "paste", "--image", &image, "--fill", &image, "--mask", &mask, "--mode", "hard",
+    ]);
+    assert_eq!(printed(&out, "image"), image);
+    let out = ran(&[
+        "rascal", "paste", "--image", &image, "--fill", &image, "--mask", &mask, "--mode",
+        "poisson",
+    ]);
+    assert_eq!(printed(&out, "image"), image);
+    // An unknown mode is the command line's error.
+    let unknown = whizbang(
+        &[
+            "rascal", "paste", "--image", &image, "--fill", &image, "--mask", &mask, "--mode",
+            "smudge",
+        ],
+        &root,
+    );
+    assert_eq!(unknown.code, Some(2), "{}", unknown.err);
+    let repair = whizbang(
+        &["rascal", "repair", "--image", &image, "--stroke", &stroke],
+        &root,
+    );
+    assert_eq!(repair.code, Some(1), "{}", repair.err);
+}
+
+#[test]
+fn rascal_seam_fills_a_synthetic_panorama_under_a_scripted_filler() {
+    // A panorama of 128 by 64 whose wrap edge is a step. What `whizbang rascal seam
+    // --image <id>` asks, through the door, under a filler of the test's own kind, which
+    // the real binary cannot be given: the recipe's eight steps, each a run, and the
+    // panorama put back, changed only in the two strips. The real binary then runs the
+    // steps of the band itself, `cut`, `line`, `fan`, `profile` and `ramp`, and refuses
+    // `rascal seam` on a store that is not there.
+    use crate::recipe::{record, run};
+    use whizbang_core::artifact::{self, Artifact, ArtifactId, ArtifactType};
+    let dir = Scratch::new("cli-seam");
+    let root = dir.path().join("store");
+    let (w, h) = (128_u32, 64_u32);
+    let rgba: Vec<u8> = (0..w * h)
+        .flat_map(|at| [(100 + (at % w) / 4) as u8, 120, 90, 255])
+        .collect();
+    let pixels = CanonicalPixels::from_rgba(w, h, rgba).unwrap();
+    let panorama = Image::new(
+        whizbang_core::identity::encode::png(&pixels).unwrap(),
+        Projection::Equirectangular,
+        Topology::Wrap,
+        ImageRole::Picture,
+        Origin::new(Step::new("fixture", "1")).unwrap(),
+        &DecodeLimits::default(),
+    )
+    .unwrap();
+    let image = {
+        let store = Store::open(&root, Arc::new(RealFs)).unwrap();
+        let mut publication = store.begin().unwrap();
+        let id = artifact::put(&mut publication, &Artifact::Image(panorama)).unwrap();
+        publication.publish().unwrap();
+        id.0.to_string()
+    };
+    let reset = whizbang(&["spend", "reset", "--allowance", "1"], &root);
+    assert_eq!(reset.code, Some(0), "{}", reset.err);
+    let config = dir.path().join("whizbang.toml");
+    std::fs::write(
+        &config,
+        "[backends.fill]\nkind = \"repaints\"\nurl = \"https://fill.example.org/v1\"\n\n\
+         [egress.recipients.fill]\norigin = \"https://fill.example.org\"\n\
+         classes = [\"source_images\", \"derived_images\"]\n",
+    )
+    .unwrap();
+    let mut kinds = wiring::kinds(&OneWorker::installed());
+    kinds.register(Arc::new(Repaints)).unwrap();
+    let over = Over::nothing().config(Some(&config)).kinds(kinds);
+    let asked = door::OperationAsked {
+        action: "seam",
+        arguments: Vec::new(),
+        inputs: vec![("image", "--image", image.as_str())],
+        request_id: None,
+    };
+    let out = run(&over, &root, &asked).unwrap();
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 11, "{out}");
+    let steps = [
+        ("cut", "cut"),
+        ("line", "line"),
+        ("fan", "fan"),
+        ("band", "profile"),
+        ("ramp", "ramp"),
+        ("apply", "apply"),
+        ("fill", "fill"),
+        ("put", "put"),
+    ];
+    for (line, (step, action)) in lines[1..9].iter().zip(steps) {
+        assert!(
+            line.starts_with(&format!("step {step} {action} run ")),
+            "{line}"
+        );
+    }
+    let recipe_run = lines[0]
+        .strip_prefix("run ")
+        .and_then(|l| l.strip_suffix(" completed"))
+        .unwrap();
+    assert_eq!(record(&root, recipe_run).steps().len(), 8);
+    let healed = lines[9].strip_prefix("image ").expect("the panorama");
+    assert!(lines[10].starts_with("mask sha256:"), "{out}");
+    // Only the strips at the wrap edge changed: a strip is 8 columns of 128.
+    let store = Store::open(&root, Arc::new(RealFs)).unwrap();
+    let read = artifact::get(
+        &store,
+        ArtifactType::Image,
+        ArtifactId(healed.parse().unwrap()),
+        &DecodeLimits::default(),
+    )
+    .unwrap();
+    let Artifact::Image(after) = read else {
+        panic!("not an image");
+    };
+    let after = after.pixels(&DecodeLimits::default()).unwrap();
+    let (mut changed, mut outside) = (0, 0);
+    for (at, (was, is)) in pixels
+        .rgba()
+        .chunks(4)
+        .zip(after.rgba().chunks(4))
+        .enumerate()
+    {
+        let x = at as u32 % w;
+        if was != is {
+            changed += 1;
+            outside += usize::from((8..w - 8).contains(&x));
+        }
+    }
+    assert!(changed >= 2 * 64, "{changed} pixels changed");
+    assert_eq!(outside, 0);
+    drop(store);
+
+    // The real binary: the band's steps, each printing what it made.
+    let ran = |args: &[&str], what: &str| {
+        let ran = whizbang(args, &root);
+        assert_eq!(ran.code, Some(0), "{args:?}: {}", ran.err);
+        let prefix = format!("{what} ");
+        ran.out
+            .lines()
+            .find_map(|l| l.strip_prefix(prefix.as_str()))
+            .unwrap_or_else(|| panic!("{args:?}: {}", ran.out))
+            .to_owned()
+    };
+    let canvas = ran(&["rascal", "cut", "--image", &image], "image");
+    let line = ran(
+        &[
+            "rascal",
+            "line",
+            "--image",
+            &canvas,
+            "--column",
+            "8",
+            "--width-px",
+            "2",
+        ],
+        "location",
+    );
+    let band = ran(
+        &["rascal", "fan", "--image", &canvas, "--line", &line],
+        "band",
+    );
+    let mask = ran(&["rascal", "profile", "--band", &band], "mask");
+    let ramped = ran(
+        &["rascal", "ramp", "--image", &canvas, "--mask", &mask],
+        "mask",
+    );
+    assert_ne!(ramped, mask);
+    let refused = whizbang(
+        &["rascal", "seam", "--image", &image],
+        &dir.path().join("nowhere"),
+    );
+    assert_eq!(refused.code, Some(1), "{}", refused.err);
+}
+
+#[test]
+fn lab_run_runs_a_three_image_round_under_a_scripted_filler_and_resumes() {
+    use crate::lab::{FILLED_AND_SOURCE, ThreeImages};
+    // What `whizbang lab run` does, under a filler of the test's own kind, which the real
+    // binary cannot be given: the round stopped after its first cell, then resumed.
+    let lab = ThreeImages::new("cli-lab-run", FILLED_AND_SOURCE);
+    let over = lab.over(0);
+    let asked = std::sync::Mutex::new(0);
+    let stop = || {
+        let mut asked = asked.lock().unwrap();
+        *asked += 1;
+        *asked > 1
+    };
+    let first = lab.run(&over, None, &stop).unwrap();
+    assert_eq!((first.started, first.completed, first.not_run), (1, 1, 2));
+    let resumed = lab.run(&over, None, &|| false).unwrap();
+    assert_eq!(
+        resumed.text(),
+        "cells: 6\nhanded back by a reference arm: 3\nstarted now: 2\ncompleted: 3\n\
+         failed: 0\ninterrupted: 0\nnot run: 0\n"
+    );
+    assert_eq!(lab.calls(), 3);
+    // The real binary: the same round under fal's filler, with nothing left to spend and
+    // no recipient approved, is refused before anything runs, and says no corpus id and
+    // no path.
+    let reset = whizbang(&["spend", "reset", "--allowance", "0"], &lab.root);
+    assert_eq!(reset.code, Some(0), "{}", reset.err);
+    let before = whizbang(&["runs", "list"], &lab.root).out;
+    let config = std::fs::read_to_string(&lab.config).unwrap();
+    let recipes = config.lines().last().unwrap();
+    let fal = format!(
+        "[backends.fill]\nkind = \"service\"\nprovider = \"fal\"\nmodel = \"bria-eraser\"\n\
+         key_env = \"LAB_TEST_KEY\"\n\n[spend]\ncall_cap_usd = 0.10\n\n[recipes]\n{recipes}\n"
+    );
+    std::fs::write(&lab.config, fal).unwrap();
+    let env = lab.config.with_file_name("lab.env");
+    std::fs::write(&env, "LAB_TEST_KEY=made-up-key-0123456789abcdef\n").unwrap();
+    let ran = whizbang(
+        &[
+            "lab",
+            "run",
+            "--matrix",
+            lab.matrix.to_str().unwrap(),
+            "--corpus",
+            lab.corpus.to_str().unwrap(),
+            "--config",
+            lab.config.to_str().unwrap(),
+            "--env-file",
+            env.to_str().unwrap(),
+        ],
+        &lab.root,
+    );
+    assert_eq!(ran.code, Some(1), "{}", ran.out);
+    assert_eq!(ran.out, "");
+    // Fal's price, from the config's backend: 40,000 millionths a fill, three fills.
+    assert_eq!(
+        ran.err,
+        "whizbang: the round's forecast for its 3 runs still to run is 120000 millionths of a \
+         dollar, more than the 0 the store's allowance has left; nothing was run\n"
+    );
+    assert_eq!(whizbang(&["runs", "list"], &lab.root).out, before);
 }

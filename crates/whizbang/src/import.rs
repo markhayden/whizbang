@@ -1,6 +1,7 @@
 //! `whizbang store import`: a developer's command that brings a canonical artifact file
 //! (ADR 0002) into a store, so that a fixture can be an action's input; and, with
-//! `--picture`, a PNG or JPEG picture, committed as an image.
+//! `--picture`, a PNG or JPEG picture, committed as an image; with `--mask` and
+//! `--onto`, a grey picture of an image, committed as a mask on it (plan m3, task F1).
 //!
 //! # A picture
 //!
@@ -10,7 +11,8 @@
 //! channel, red, green, blue and alpha) are written again as a PNG that holds nothing
 //! else, and that PNG is the file the image holds: no text, EXIF, colour profile or other
 //! chunk or segment of the file given is kept, and neither is its name. Its role is a
-//! picture; its space is flat and bounded, as no file can be trusted to say otherwise.
+//! picture; its space is flat and bounded unless the caller or its file says it is a
+//! complete equirectangular panorama.
 //! Its origin is one step, `import-picture`, whose one input is the digest of the file
 //! given, so what was imported can be told apart from what was not; the origin is not
 //! part of the image's identity, so the same pixels from two files are one image. The
@@ -19,15 +21,25 @@
 //!
 //! # What is read, and how much
 //!
-//! The file is a regular file, or a link that leads to one: a link is followed, and what
+//! A picture (`--picture`, and a job's pictures) is a caller's, and is read by
+//! [`read_picture`]: from the file its path names, through no link, by an open that does
+//! not wait, and only when what was opened is the file that was looked at. Its projection
+//! is the caller's word (`--projection`), else the word of its file's XMP
+//! (`GPano:ProjectionType`), else flat; nothing of the metadata is kept. Each import of a
+//! picture leaves a name of its own, `imports/picture/` and its file's SHA-256, which
+//! holds the image's identity: where it came from, found without reading the image. A
+//! panorama's name is under `imports/panorama/` instead, so the same file imported flat
+//! and as a panorama is two images named apart.
+//!
+//! An artifact file is a regular file, or a link that leads to one: a link is followed, and what
 //! it leads to is what is judged. A directory, a FIFO, a socket and a device are refused
 //! by a look at the path, before anything is opened, because opening a FIFO waits for a
-//! writer that may never come and a device may never end. The open itself does not wait
-//! (`O_NONBLOCK`, as `sign-in` opens its file), and the file that was opened is then
-//! looked at again through its handle, so what is judged is what is read: a path that
-//! was a regular file at the first look and is a FIFO, a directory, a device or a larger
-//! file by the time it is opened is refused at the second, and nothing waits (plan m3,
-//! task F1, item 7).
+//! writer that may never come and a device may never end. The file that was opened is
+//! then looked at again through its handle, so what is judged is what is read: a path
+//! that was a regular file at the first look and is a directory, a device or a larger
+//! file by the time it is opened is refused at the second. The open does not wait
+//! (`O_NONBLOCK`), so a path made a FIFO between the look and the open is opened at once
+//! and refused at the second look, never waited on.
 //!
 //! The file is at most [`MAX_FILE_BYTES`], 65 MiB, which is checked by its size before
 //! a byte is read, and again while reading: the reader stops one byte past the limit, so
@@ -108,6 +120,15 @@ const PICTURE_STEP: &str = "import-picture";
 /// The step the origin of a mask drawn on a picture names.
 const MASK_STEP: &str = "import-mask";
 
+/// The names that say where an imported picture came from: this, then the hex of the
+/// SHA-256 of the file it was brought in from. Each holds the image's identity.
+pub const IMPORTED: &str = "imports/picture/";
+
+/// The same names for a picture imported as a complete equirectangular panorama: the same
+/// file imported flat and as a panorama is two images, each named apart, and
+/// [`pictures_by_file`] finds the flat ones, which are what a set's jobs hold.
+pub const IMPORTED_PANORAMA: &str = "imports/panorama/";
+
 /// The most bytes the picture an image artifact holds may have: ADR 0001's limit on a
 /// file, which is the default of [`DecodeLimits`].
 const MAX_PICTURE_BYTES: u64 = 64 * 1024 * 1024;
@@ -157,11 +178,13 @@ fn other_than_a_file(found: &std::fs::Metadata) -> Option<&'static str> {
 
 /// Refuses what is not a regular file, and a file over the limit; gives the file's size.
 fn judge(found: &std::fs::Metadata, file: &Path) -> Result<u64, String> {
+    judge_as(found, file, "import reads a regular file, or a link to one")
+}
+
+/// [`judge`], saying what is read as `reads` when it refuses what is not a regular file.
+fn judge_as(found: &std::fs::Metadata, file: &Path, reads: &str) -> Result<u64, String> {
     if let Some(what) = other_than_a_file(found) {
-        return Err(format!(
-            "{} is {what}: import reads a regular file, or a link to one",
-            file.display()
-        ));
+        return Err(format!("{} is {what}: {reads}", file.display()));
     }
     let bytes = found.len();
     if bytes > MAX_FILE_BYTES {
@@ -196,9 +219,59 @@ fn read_with(file: &Path, looked: &dyn Fn()) -> Result<Vec<u8>, String> {
     // By the path first, which follows a link and opens nothing.
     judge(&std::fs::metadata(file).map_err(cannot)?, file)?;
     looked();
+    // An open that does not wait, so a FIFO put at the path after the look is opened at
+    // once and refused by the second look (plan m3, task O5).
     let opened = crate::sign_in::open_without_waiting(file).map_err(cannot)?;
     // Then the file that was opened, which is the one that is read.
     let bytes = judge(&opened.metadata().map_err(cannot)?, file)?;
+    read_within(opened, MAX_FILE_BYTES, bytes)
+        .map_err(cannot)?
+        .ok_or_else(|| {
+            format!(
+                "{} grew while it was read, past {}",
+                file.display(),
+                limit()
+            )
+        })
+}
+
+/// What a refusal of a picture that is not a regular file says is read.
+const PICTURE_READ: &str = "a picture is read from a regular file, through no link";
+
+/// The bytes of a picture a caller hands in, by a path (plan m3, task O5): the file the
+/// path names and nothing else. The path is looked at without following a link, and a
+/// link there is refused, as are a directory, a FIFO, a socket and a device, and a file
+/// over the limit, all before anything is opened. The open does not wait (`O_NONBLOCK`),
+/// so a FIFO put at the path after the look is opened at once; and what was opened must
+/// be the file looked at, the same device and inode, and a regular file within the limit,
+/// or nothing is read. Reading stops one byte past the limit. The folders the path goes
+/// through are the caller's to name, links among them too.
+pub fn read_picture(file: &Path) -> Result<Vec<u8>, String> {
+    read_picture_with(file, &|| {})
+}
+
+/// [`read_picture`]. `looked` runs between the look and the open.
+fn read_picture_with(file: &Path, looked: &dyn Fn()) -> Result<Vec<u8>, String> {
+    use std::os::unix::fs::MetadataExt;
+    let cannot = |error: std::io::Error| format!("cannot read {}: {error}", file.display());
+    let found = std::fs::symlink_metadata(file).map_err(cannot)?;
+    if found.file_type().is_symlink() {
+        return Err(format!(
+            "{} is a link: a picture is read from the file its path names, through no link",
+            file.display()
+        ));
+    }
+    judge_as(&found, file, PICTURE_READ)?;
+    looked();
+    let opened = crate::sign_in::open_without_waiting(file).map_err(cannot)?;
+    let now = opened.metadata().map_err(cannot)?;
+    if (now.dev(), now.ino()) != (found.dev(), found.ino()) {
+        return Err(format!(
+            "{} changed while it was opened, and is not read",
+            file.display()
+        ));
+    }
+    let bytes = judge_as(&now, file, PICTURE_READ)?;
     read_within(opened, MAX_FILE_BYTES, bytes)
         .map_err(cannot)?
         .ok_or_else(|| {
@@ -225,26 +298,95 @@ pub fn import(
     let artifact = Artifact::from_bytes(&bytes, &DecodeLimits::default())
         .map_err(|error| format!("{}: {error}", file.display()))?;
     drop(bytes);
-    commit(&artifact, root, create, recovery)
+    commit(&artifact, root, create, recovery, None)
 }
 
 /// Reads a PNG or JPEG picture and commits it as an image whose role is a picture,
 /// written again as a PNG of its pixels alone; the module's description says how. A
-/// picture that is refused creates nothing.
+/// picture that is refused creates nothing. A file whose metadata says it is an
+/// equirectangular panorama is one, and any other is flat, with a word printed when it is
+/// two to one.
 pub fn import_picture(
     file: &Path,
     root: &Path,
     create: bool,
     recovery: Recovery,
 ) -> Result<String, String> {
+    import_picture_as(file, root, create, recovery, None)
+}
+
+/// [`import_picture`], with the caller's word of the picture's projection.
+pub fn import_picture_as(
+    file: &Path,
+    root: &Path,
+    create: bool,
+    recovery: Recovery,
+    projection: Option<Projection>,
+) -> Result<String, String> {
     let limits = DecodeLimits::default();
-    let bytes = read(file)?;
+    let bytes = read_picture(file)?;
     let identified =
         identify(&bytes, &limits).map_err(|error| format!("{}: {error}", file.display()))?;
+    let (width, height) = (identified.pixels.width(), identified.pixels.height());
+    let mut said = String::new();
+    let projection = match projection {
+        Some(projection) => projection,
+        None if says_equirectangular(&bytes) => Projection::Equirectangular,
+        None => {
+            if width == 2 * height {
+                said = "the picture is two to one and says no projection: it is taken as flat; \
+                        pass --projection equirectangular if it is a panorama\n"
+                    .to_owned();
+            }
+            Projection::Flat
+        }
+    };
     drop(bytes);
-    let image = picture(&identified.pixels, identified.identity.file.0, &limits)
-        .map_err(|error| format!("{}: {error}", file.display()))?;
-    commit(&Artifact::Image(image), root, create, recovery)
+    let image = picture(
+        &identified.pixels,
+        identified.identity.file.0,
+        &limits,
+        projection,
+    )
+    .map_err(|error| format!("{}: {error}", file.display()))?;
+    let printed = commit(
+        &Artifact::Image(image),
+        root,
+        create,
+        recovery,
+        Some((imported_as(projection), identified.identity.file.0)),
+    )?;
+    Ok(format!("{said}{printed}"))
+}
+
+/// The prefix of the name that says where a picture of this projection came from.
+fn imported_as(projection: Projection) -> &'static str {
+    match projection {
+        Projection::Equirectangular => IMPORTED_PANORAMA,
+        _ => IMPORTED,
+    }
+}
+
+/// True when a file's bytes carry XMP's word that the picture is an equirectangular
+/// panorama (`GPano:ProjectionType`, as an attribute or an element): squint's plain scan
+/// (`crates/squint-core/src/image.rs`, `has_gpano_equirectangular`, at the commit
+/// `docs/sources.toml` pins). It decides the projection only; nothing of the metadata is
+/// kept.
+pub fn says_equirectangular(bytes: &[u8]) -> bool {
+    const KEY: &[u8] = b"GPano:ProjectionType";
+    const VALUE: &[u8] = b"equirectangular";
+    let find =
+        |haystack: &[u8], needle: &[u8]| haystack.windows(needle.len()).position(|w| w == needle);
+    let mut from = 0;
+    while let Some(at) = find(&bytes[from..], KEY) {
+        let start = from + at + KEY.len();
+        let end = (start + 64).min(bytes.len());
+        if find(&bytes[start..end], VALUE).is_some() {
+            return true;
+        }
+        from = start;
+    }
+    false
 }
 
 /// Reads a grey PNG or JPEG of the image `onto` and commits it as a mask on that image;
@@ -280,7 +422,8 @@ pub fn import_mask(
     };
     let space = image.binding().source_space();
     let (width, height) = (space.width(), space.height());
-    let bytes = read(file)?;
+    // Read as a picture is: the file its path names, through no link, without waiting.
+    let bytes = read_picture(file)?;
     // The core's limits, with the pixels lowered to the image's: a file that claims more
     // is refused by its header, before its pixels are decoded.
     let limits = DecodeLimits {
@@ -298,7 +441,7 @@ pub fn import_mask(
         file_digest,
     )
     .map_err(|why| format!("{shown}: {why}"))?;
-    commit(&Artifact::from(mask), root, false, recovery)
+    commit(&Artifact::from(mask), root, false, recovery, None)
 }
 
 /// The mask these grey pixels draw on `image`, whose size they must be.
@@ -359,7 +502,7 @@ pub fn job_picture(
     root: &Path,
     recovery: Recovery,
 ) -> Result<ArtifactId, String> {
-    let bytes = read(file)?;
+    let bytes = read_picture(file)?;
     picture_of_bytes(&bytes, &file.display().to_string(), sha256, root, recovery)
 }
 
@@ -387,41 +530,69 @@ pub fn picture_of_bytes(
         }
     }
     let identified = identify(bytes, &limits).map_err(|error| format!("{shown}: {error}"))?;
-    let image = picture(&identified.pixels, identified.identity.file.0, &limits)
+    let file = identified.identity.file.0;
+    let image = picture(&identified.pixels, file, &limits, Projection::Flat)
         .map_err(|error| format!("{shown}: {error}"))?;
     let id = image.id();
-    commit(&Artifact::Image(image), root, false, recovery)?;
+    commit(
+        &Artifact::Image(image),
+        root,
+        false,
+        recovery,
+        Some((IMPORTED, file)),
+    )?;
+    Ok(id)
+}
+
+/// The canonical file of an artifact of this type, its bytes already read, at most
+/// [`MAX_FILE_BYTES`], brought in (plan m3, task L2): a lab corpus's mask or location,
+/// which `shown` names in a complaint. A file of another type is refused before the store
+/// is touched.
+pub fn artifact_of_bytes(
+    bytes: &[u8],
+    shown: &str,
+    wanted: artifact::ArtifactType,
+    root: &Path,
+    recovery: Recovery,
+) -> Result<ArtifactId, String> {
+    if bytes.len() as u64 > MAX_FILE_BYTES {
+        return Err(format!("{shown}: the file is over {}", limit()));
+    }
+    let read = Artifact::from_bytes_as(wanted, bytes, &DecodeLimits::default())
+        .map_err(|_| format!("{shown}: it is not the canonical file of a {wanted}"))?;
+    let id = read.id();
+    commit(&read, root, false, recovery, None)?;
     Ok(id)
 }
 
 /// The images a store holds that were brought in as pictures, each by the SHA-256 of the
-/// file it was brought in from, as its origin names it (`import-picture`'s input
-/// `file`): how a set's pictures, pinned by their files' digests, are found once fetched.
-/// Every image the store holds is read once.
+/// file it was brought in from: how a set's pictures, pinned by their files' digests, are
+/// found once fetched. Each import leaves a name of its own for that (`imports/picture/`
+/// and the file's digest, which holds the image's identity; plan m3, task O5), so no image
+/// is read here. A picture a store took before those names were left is not found, and is
+/// fetched again by `whizbang eval sets fetch`, whose import then leaves the name.
 pub fn pictures_by_file(
     root: &Path,
 ) -> Result<std::collections::BTreeMap<Digest, ArtifactId>, String> {
     use whizbang_core::store::{Reader, fs::RealFs};
     let reader = Reader::open(root, std::sync::Arc::new(RealFs)).map_err(|e| e.to_string())?;
     let generation = reader.snapshot().map_err(|e| e.to_string())?;
-    let limits = DecodeLimits::default();
     let mut found = std::collections::BTreeMap::new();
-    let prefix = "artifacts/image/";
-    let images = (generation.entries().range(prefix.to_owned()..))
-        .take_while(|(name, _)| name.starts_with(prefix));
-    for (_, entry) in images {
-        let bytes = reader.read(entry).map_err(|e| e.to_string())?;
-        let Ok(artifact) = Artifact::from_bytes_as(artifact::ArtifactType::Image, &bytes, &limits)
-        else {
+    let names = (generation.entries().range(IMPORTED.to_owned()..))
+        .take_while(|(name, _)| name.starts_with(IMPORTED));
+    for (name, entry) in names {
+        let Ok(file) = format!("sha256:{}", &name[IMPORTED.len()..]).parse::<Digest>() else {
             continue;
         };
-        let steps = artifact.origin().steps();
-        let file = steps
-            .first()
-            .filter(|step| step.action == PICTURE_STEP)
-            .and_then(|step| step.inputs.iter().find(|(port, _)| port == "file"));
-        if let Some((_, file)) = file {
-            found.insert(*file, artifact.id());
+        let bytes = reader.read(entry).map_err(|e| e.to_string())?;
+        let id = std::str::from_utf8(&bytes)
+            .ok()
+            .and_then(|text| text.parse::<Digest>().ok())
+            .map(ArtifactId);
+        if let Some(id) = id
+            && artifact::holds(&generation, artifact::ArtifactType::Image, id)
+        {
+            found.insert(file, id);
         }
     }
     Ok(found)
@@ -433,6 +604,7 @@ fn picture(
     pixels: &CanonicalPixels,
     file: whizbang_core::identity::Digest,
     limits: &DecodeLimits,
+    projection: Projection,
 ) -> Result<Image, String> {
     let mut png = Vec::new();
     PngEncoder::new_with_quality(&mut png, CompressionType::Default, FilterType::Adaptive)
@@ -445,10 +617,15 @@ fn picture(
         .map_err(|error| format!("cannot write the picture as a PNG: {error}"))?;
     let origin =
         Origin::new(Step::new(PICTURE_STEP, "1").input("file", file)).map_err(|e| e.to_string())?;
+    // A panorama the caller or its file names is a complete one, which wraps.
+    let topology = match projection {
+        Projection::Equirectangular => Topology::Wrap,
+        _ => Topology::Bounded,
+    };
     Image::new(
         png,
-        Projection::Flat,
-        Topology::Bounded,
+        projection,
+        topology,
         ImageRole::Picture,
         origin,
         limits,
@@ -462,6 +639,7 @@ fn commit(
     root: &Path,
     create: bool,
     recovery: Recovery,
+    from_file: Option<(&str, Digest)>,
 ) -> Result<String, String> {
     let (kind, id) = (artifact.artifact_type(), artifact.id());
 
@@ -489,13 +667,29 @@ fn commit(
     // not be recovered is still said to have been made.
     let store = opening.writer().map_err(|why| format!("{printed}{why}"))?;
     let generation = store.snapshot().map_err(|error| error.to_string())?;
-    if artifact::holds(&generation, kind, id) {
+    // A picture's name of where it came from: the file's digest, holding the image's
+    // identity. One file and one projection make one picture, so a name is never given another.
+    let named = from_file.map(|(prefix, file)| format!("{prefix}{}", file.hex()));
+    let unnamed = named.as_ref().filter(|name| generation.get(name).is_none());
+    let held = artifact::holds(&generation, kind, id);
+    if held && unnamed.is_none() {
         printed.push_str(&format!("already there: {kind} {id}\n"));
         return Ok(printed);
     }
     let mut publication = store.begin().map_err(|error| error.to_string())?;
-    artifact::put(&mut publication, artifact).map_err(|error| error.to_string())?;
+    if !held {
+        artifact::put(&mut publication, artifact).map_err(|error| error.to_string())?;
+    }
+    if let Some(name) = unnamed {
+        publication
+            .put(name, id.to_string().as_bytes())
+            .map_err(|error| error.to_string())?;
+    }
     publication.publish().map_err(|error| error.to_string())?;
+    if held {
+        printed.push_str(&format!("already there: {kind} {id}\n"));
+        return Ok(printed);
+    }
     printed.push_str(&format!("imported {kind} {id}\n"));
     Ok(printed)
 }
@@ -550,6 +744,56 @@ mod tests {
         let complaint = read_swapped(&path, &to_large).unwrap_err();
         let size = format!("is {} bytes, over the limit", MAX_FILE_BYTES + 1);
         assert!(complaint.contains(&size), "{complaint}");
+
+        // Or it becomes a FIFO no one writes to: the open does not wait, and the look at
+        // what was opened refuses it.
+        small();
+        let to_fifo = || {
+            std::fs::remove_file(&path).unwrap();
+            let made = std::process::Command::new("mkfifo").arg(&path).status();
+            assert!(made.is_ok_and(|status| status.success()), "mkfifo");
+        };
+        let complaint = read_swapped(&path, &to_fifo).unwrap_err();
+        assert!(complaint.contains("is a FIFO"), "{complaint}");
+    }
+
+    #[test]
+    fn a_picture_swapped_after_the_look_for_a_link_or_a_fifo_is_not_read_and_not_waited_for() {
+        use whizbang_testkit::scratch::Scratch;
+        let dir = Scratch::new("import-picture-swap");
+        let path = dir.path().join("given");
+        let other = dir.path().join("other");
+        std::fs::write(&other, b"elsewhere").unwrap();
+        let small = || std::fs::write(&path, b"a picture").unwrap();
+        small();
+        assert_eq!(read_picture_with(&path, &|| {}).unwrap(), b"a picture");
+        // Made a link to another file after the look: what opens is not what was looked
+        // at, and nothing is read.
+        let to_link = || {
+            std::fs::remove_file(&path).unwrap();
+            std::os::unix::fs::symlink(&other, &path).unwrap();
+        };
+        let complaint = read_picture_with(&path, &to_link).unwrap_err();
+        assert!(
+            complaint.contains("changed while it was opened"),
+            "{complaint}"
+        );
+        std::fs::remove_file(&path).unwrap();
+        // Made a FIFO no one writes to: the open does not wait for a writer, and the
+        // FIFO is refused.
+        small();
+        let to_fifo = || {
+            std::fs::remove_file(&path).unwrap();
+            let made = std::process::Command::new("mkfifo").arg(&path).status();
+            assert!(made.is_ok_and(|status| status.success()), "mkfifo");
+        };
+        // A file system that gives the FIFO the inode the file had (Linux's temporary
+        // folder does) passes the same-inode look, and the look at its kind refuses it.
+        let complaint = read_picture_with(&path, &to_fifo).unwrap_err();
+        assert!(
+            complaint.contains("changed while it was opened") || complaint.contains("is a FIFO"),
+            "{complaint}"
+        );
     }
 
     #[test]

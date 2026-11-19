@@ -9,7 +9,9 @@ use whizbang_core::artifact::{
     self, Artifact, ArtifactType, BandProfile, ImageRole, Line, Location, Mask, Origin, Plan,
     Series, Shape, Source, Step, UseCase, Windows,
 };
-use whizbang_core::identity::{Binding, DecodeLimits, Digest, PixelDigest, Space, identify};
+use whizbang_core::identity::{
+    Binding, DecodeLimits, Digest, PixelDigest, Projection, Space, Topology, identify,
+};
 use whizbang_core::store::Reader;
 use whizbang_core::store::fs::RealFs;
 use whizbang_testkit::scratch::Scratch;
@@ -888,4 +890,167 @@ fn a_file_over_the_limit_its_contents_allow_is_refused() {
         .map(|d| d.count())
         .ok();
     assert_eq!(before, after);
+}
+
+// A caller's picture (plan m3, task O5).
+
+#[test]
+fn a_picture_is_read_through_no_link_and_nothing_but_a_regular_file_is_opened() {
+    let dir = Scratch::new("import-picture-links");
+    let store = dir.path().join("store");
+    let path = |name: &str| dir.path().join(name);
+    std::fs::write(path("photo.png"), a_png()).expect("the fixture is written");
+    let refused = |what: &str, file: &Path, says: &str| {
+        let args = [
+            "store",
+            "import",
+            "--picture",
+            file.to_str().expect("a path of UTF-8"),
+            "--create",
+            "--store",
+            store.to_str().expect("a path of UTF-8"),
+        ];
+        let (code, printed, complaint) = whizbang_within(&args, 20);
+        assert_eq!((code, printed.as_str()), (1, ""), "{what}: {complaint}");
+        assert!(complaint.contains(says), "{what}: {complaint}");
+        assert!(!store.exists(), "{what}: a store was created");
+    };
+    // A link, to a picture or to anything else, is not followed.
+    std::os::unix::fs::symlink(path("photo.png"), path("to-photo")).expect("a link");
+    refused("a link to a picture", &path("to-photo"), "is a link");
+    std::fs::create_dir(path("folder")).expect("a directory");
+    refused("a directory", &path("folder"), "is a directory");
+    let fifo = path("fifo");
+    if Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .is_ok_and(|s| s.success())
+    {
+        refused("a FIFO", &fifo, "is a FIFO");
+        std::os::unix::fs::symlink(&fifo, path("to-fifo")).expect("a link");
+        refused("a link to a FIFO", &path("to-fifo"), "is a link");
+    } else {
+        eprintln!("skip: no FIFO could be made here (mkfifo)");
+    }
+    if Path::new("/dev/zero").exists() {
+        refused("a device", Path::new("/dev/zero"), "is a device");
+    }
+    // The file itself is read, through the folders the caller named.
+    let (code, printed, complaint) = import_picture(&path("photo.png"), &store);
+    assert_eq!(code, 0, "{complaint}");
+    assert!(printed.contains("imported image sha256:"), "{printed}");
+}
+
+#[test]
+fn a_picture_is_a_panorama_when_its_caller_or_its_file_says_so_and_flat_otherwise() {
+    let dir = Scratch::new("import-picture-projection");
+    let store = dir.path().join("store");
+    // A picture of 8 by 4: two to one.
+    let rgba: Vec<u8> = (0..32u8)
+        .flat_map(|n| [n * 7, 255 - n * 5, n, 255])
+        .collect();
+    let mut wide = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut wide)
+        .write_image(&rgba, 8, 4, image::ExtendedColorType::Rgba8)
+        .expect("a PNG");
+    let file = dir.path().join("wide.png");
+    std::fs::write(&file, &wide).expect("the fixture is written");
+    let id = |printed: &str| printed.split_whitespace().last().unwrap_or("").to_owned();
+    let space = |id: &str| {
+        let reader = Reader::open(&store, Arc::new(RealFs)).expect("a reader");
+        let id = artifact::ArtifactId(id.parse().expect("an identity"));
+        match artifact::get(&reader, ArtifactType::Image, id, &DecodeLimits::default()) {
+            Ok(Artifact::Image(image)) => image.space(),
+            other => panic!("{other:?}"),
+        }
+    };
+    // Said nothing: flat, with a word that it is two to one.
+    let (code, printed, complaint) = import_picture(&file, &store);
+    assert_eq!(code, 0, "{complaint}");
+    assert!(
+        printed.contains("is two to one and says no projection"),
+        "{printed}"
+    );
+    assert_eq!(space(&id(&printed)).projection(), Projection::Flat);
+    // Said by the caller: a complete panorama, which wraps.
+    let (code, printed, complaint) = whizbang(&[
+        "store",
+        "import",
+        "--picture",
+        file.to_str().expect("a path of UTF-8"),
+        "--projection",
+        "equirectangular",
+        "--store",
+        store.to_str().expect("a path of UTF-8"),
+    ]);
+    assert_eq!(code, 0, "{complaint}");
+    let made = space(&id(&printed));
+    assert_eq!(
+        (made.projection(), made.topology()),
+        (Projection::Equirectangular, Topology::Wrap)
+    );
+    // Said by the file's XMP, in a text chunk: the same, and the chunk is not kept.
+    let xmp = b"XML:com.adobe.xmp\0\0\0\0\0<x:xmpmeta GPano:ProjectionType=\"equirectangular\"/>";
+    let mut tagged = wide[..33].to_vec();
+    tagged.extend_from_slice(&chunk(b"iTXt", xmp));
+    tagged.extend_from_slice(&wide[33..]);
+    let file = dir.path().join("tagged.png");
+    std::fs::write(&file, &tagged).expect("the fixture is written");
+    let (code, printed, complaint) = import_picture(&file, &store);
+    assert_eq!(code, 0, "{complaint}");
+    assert!(!printed.contains("two to one"), "{printed}");
+    assert!(whizbang::import::says_equirectangular(&tagged));
+    assert!(!whizbang::import::says_equirectangular(&wide));
+}
+
+#[test]
+fn one_file_imported_flat_and_as_a_panorama_is_two_pictures_named_apart() {
+    // The review of task O5: a second import of a file under another projection makes
+    // another image, and its name of where it came from is its own; the flat one is
+    // still what `pictures_by_file` finds. A refusal of a picture that is not a regular
+    // file does not speak of links, which are refused.
+    let dir = Scratch::new("import-picture-twice");
+    let store = dir.path().join("store");
+    let file = dir.path().join("photo.png");
+    std::fs::write(&file, a_png()).expect("the fixture is written");
+    let as_given = |projection: &str| {
+        let (code, printed, complaint) = whizbang(&[
+            "store",
+            "import",
+            "--create",
+            "--picture",
+            file.to_str().expect("UTF-8"),
+            "--projection",
+            projection,
+            "--store",
+            store.to_str().expect("UTF-8"),
+        ]);
+        assert_eq!(code, 0, "{complaint}");
+        printed.split_whitespace().last().unwrap_or("").to_owned()
+    };
+    let flat = as_given("flat");
+    let panorama = as_given("equirectangular");
+    assert_ne!(flat, panorama);
+    let reader = Reader::open(&store, Arc::new(RealFs)).expect("a reader");
+    let generation = reader.snapshot().expect("a generation");
+    let hex = Digest::of_bytes(&a_png()).hex();
+    for (prefix, id) in [
+        ("imports/picture/", &flat),
+        ("imports/panorama/", &panorama),
+    ] {
+        let entry = generation.get(&format!("{prefix}{hex}")).expect("named");
+        assert_eq!(reader.read(entry).expect("read"), id.as_bytes(), "{prefix}");
+    }
+    let found = whizbang::import::pictures_by_file(&store).expect("the pictures");
+    assert_eq!(
+        found.values().map(ToString::to_string).collect::<Vec<_>>(),
+        [flat]
+    );
+    let (code, _, complaint) = import_picture(dir.path(), &store);
+    assert_eq!(code, 1);
+    assert!(
+        complaint
+            .contains("is a directory: a picture is read from a regular file, through no link"),
+        "{complaint}"
+    );
 }
