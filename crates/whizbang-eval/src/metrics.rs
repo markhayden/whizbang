@@ -90,6 +90,8 @@ pub struct Counts {
     pub passed: usize,
     /// Expected pass, computed fail.
     pub false_rejects: usize,
+    /// Expected fail, computed pass (plan m3, task U1: a guardrail a gate may state).
+    pub false_accepts: usize,
     pub unsure: usize,
     pub errors: usize,
 }
@@ -103,6 +105,7 @@ impl Counts {
                 (Expected::Fail, computed) => {
                     c.expected_fail += 1;
                     c.detected += usize::from(computed == Computed::Fail);
+                    c.false_accepts += usize::from(computed == Computed::Pass);
                 }
                 (Expected::Pass, computed) => {
                     c.expected_pass += 1;
@@ -128,6 +131,11 @@ impl Counts {
         Some((caught + passed) / 2.0)
     }
 
+    /// The share of expected fails passed; `None` without one.
+    pub fn false_accept_rate(&self) -> Option<f64> {
+        (self.expected_fail > 0).then(|| self.false_accepts as f64 / self.expected_fail as f64)
+    }
+
     /// The share of expected passes failed; `None` without one.
     pub fn false_reject_rate(&self) -> Option<f64> {
         (self.expected_pass > 0).then(|| self.false_rejects as f64 / self.expected_pass as f64)
@@ -145,6 +153,8 @@ pub struct CellMetrics {
     pub detected: Proportion,
     /// Over expected passes.
     pub false_rejects: Proportion,
+    /// Over expected fails.
+    pub false_accepts: Proportion,
     /// Over every decision.
     pub unsure: Proportion,
     pub errors: Proportion,
@@ -198,6 +208,7 @@ pub fn cell(rows: &[Row]) -> CellMetrics {
         balanced_accuracy: counts.balanced_accuracy(),
         detected: Proportion::of(counts.detected, counts.expected_fail),
         false_rejects: Proportion::of(counts.false_rejects, counts.expected_pass),
+        false_accepts: Proportion::of(counts.false_accepts, counts.expected_fail),
         unsure: Proportion::of(counts.unsure, counts.items),
         errors: Proportion::of(counts.errors, counts.items),
         cost_total_usd: costs.iter().sum(),
@@ -235,6 +246,8 @@ pub struct Paired {
     pub gain: Option<Interval>,
     /// Treatment minus control, in the share of expected passes failed.
     pub false_reject_increase: Option<Interval>,
+    /// Treatment minus control, in the share of expected fails passed.
+    pub false_accept_increase: Option<Interval>,
 }
 
 /// Compares two arms' rows. A family is named by its set and its id, so two sets never
@@ -320,6 +333,7 @@ pub fn paired(control: &[Row], treatment: &[Row], how: Resampling) -> Result<Pai
         differing_families: families.iter().filter(|f| f.differs()).count(),
         gain: resample(Counts::balanced_accuracy),
         false_reject_increase: resample(Counts::false_reject_rate),
+        false_accept_increase: resample(Counts::false_accept_rate),
     })
 }
 

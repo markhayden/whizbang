@@ -370,3 +370,18 @@ fn the_details_first_gate_holds_together_with_its_matrix() {
     // One hypothesis a judge.
     assert_eq!(frozen.gate.confidence.hypotheses, m.judges.len());
 }
+
+#[test]
+fn the_unsure_gates_hold_together_with_their_matrices() {
+    // Plan m3, task U1, item 6: one gate of the second look a use case, each read as
+    // `eval run --gate` reads it.
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for use_case in whizbang_eval::matrix::USE_CASES {
+        let file = repository.join(format!("gates/unsure-{use_case}.toml"));
+        let frozen = gating::frozen(&file).unwrap_or_else(|e| panic!("{use_case}: {e}"));
+        assert_eq!(
+            frozen.gate.confidence.hypotheses,
+            frozen.matrix.matrix.judges.len()
+        );
+    }
+}

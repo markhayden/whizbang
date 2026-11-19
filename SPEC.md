@@ -661,6 +661,7 @@ Defaults for an evidence tool, to be tuned as results come in:
 | Primary measure | Balanced accuracy; `unsure` and errors count as neither a catch nor a pass |
 | Admission | Observed gain of at least 3 points, and the lower bound of its corrected 95% interval above zero |
 | False rejects | The upper bound of the increase is under 3 points |
+| False accepts | Where the gate states it: the upper bound of the increase is under 3 points |
 | Errors | Under 2% of decisions |
 | Cost | No more than double per decision |
 | Families | At least 20 |

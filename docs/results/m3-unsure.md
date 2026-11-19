@@ -422,6 +422,149 @@ and the first verdict stood):
 Four crops are the candidate's tiles, shown when the judge cited no region for the items it
 was asked about.
 
+## Why the second look passes pictures that fail
+
+Over the screen's runs of `F` with the second look on reality-checks, item by item (counts
+only): on items labelled fail, the rule of the flaw itself (anatomy, `RE1`, on most of them)
+was seldom called a violation, and the look settled the rules the judge had hedged on
+(`RE2`, light and geometry; `RE4`, objects that merge) from `held` tentative to `held`
+confident, with no location cited, in 27 answers (two of them on the flaw's own rule). The look shows what the judge
+cited, or the candidate in tiles; a judge that never saw the six fingers is not shown them by
+being asked to commit. Its passes of clean pictures were made the same way: 61 of the answers
+on items labelled pass went from `held` tentative to `held` confident with no location.
+
+## A stricter second look, on reality-checks
+
+`check`'s `second_look = strict` (an arm's `second_look = "strict"`): the same look, but an
+item settled as `held` or `allowed_change` counts as confident only with a box or polygon
+cited for it, and is kept tentative otherwise; a violation is settled as seen. The judge is
+told so. `matrices/unsure-strict.toml` ran it on reality-checks beside `F` and the plain look,
+three repetitions, 198 decisions, in the same store, through the binary of the commit below
+(its sources, tests apart, by digest), from 2026-11-19T08:01Z to 08:20Z:
+
+```toml
+commit = "72eb23631cfb90758634e6341c2bb032d58bef54"
+matrix = "unsure-strict"
+matrix_identity = "7ef6d6ed8f5198ef"
+model = "claude-haiku-5-5"
+decisions = 198
+completed = 197
+failed = 1
+pass = 57
+fail = 70
+unsure = 70
+agreeing = 95
+settled_micros = 804876
+```
+
+```toml
+matrix = "unsure-strict"
+use_case = "reality-checks"
+arm = "F"
+runs = 66
+completed = 65
+failed = 1
+interrupted = 0
+pass = 1
+fail = 16
+unsure = 48
+agreeing = 16
+labelled_pass = 32
+labelled_fail = 33
+false_rejects = 1
+false_accepts = 0
+unsure_on_pass = 30
+unsure_on_fail = 18
+agreement = 0.246
+agreement_95 = [0.103, 0.369]
+unsure_rate = 0.738
+unsure_rate_95 = [0.600, 0.897]
+false_reject_rate = 0.031
+false_reject_rate_95 = [0.000, 0.094]
+balanced_accuracy = 0.243
+balanced_accuracy_95 = [0.101, 0.365]
+```
+
+```toml
+matrix = "unsure-strict"
+use_case = "reality-checks"
+arm = "F;second_look=on"
+runs = 66
+completed = 66
+failed = 0
+interrupted = 0
+pass = 24
+fail = 27
+unsure = 15
+agreeing = 35
+labelled_pass = 33
+labelled_fail = 33
+false_rejects = 6
+false_accepts = 10
+unsure_on_pass = 13
+unsure_on_fail = 2
+agreement = 0.530
+agreement_95 = [0.317, 0.758]
+agreement_minus_f = 0.284
+agreement_minus_f_95 = [0.167, 0.497]
+unsure_rate = 0.227
+unsure_rate_95 = [0.076, 0.379]
+unsure_rate_minus_f = -0.511
+unsure_rate_minus_f_95 = [-0.677, -0.347]
+false_reject_rate = 0.182
+false_reject_rate_95 = [0.000, 0.545]
+false_reject_rate_minus_f = 0.151
+false_reject_rate_minus_f_95 = [0.000, 0.452]
+balanced_accuracy = 0.530
+balanced_accuracy_95 = [0.317, 0.758]
+balanced_accuracy_minus_f = 0.287
+balanced_accuracy_minus_f_95 = [0.167, 0.499]
+```
+
+```toml
+matrix = "unsure-strict"
+use_case = "reality-checks"
+arm = "F;second_look=strict"
+runs = 66
+completed = 66
+failed = 0
+interrupted = 0
+pass = 32
+fail = 27
+unsure = 7
+agreeing = 44
+labelled_pass = 33
+labelled_fail = 33
+false_rejects = 6
+false_accepts = 9
+unsure_on_pass = 4
+unsure_on_fail = 3
+agreement = 0.667
+agreement_95 = [0.517, 0.806]
+agreement_minus_f = 0.421
+agreement_minus_f_95 = [0.292, 0.556]
+unsure_rate = 0.106
+unsure_rate_95 = [0.056, 0.152]
+unsure_rate_minus_f = -0.632
+unsure_rate_minus_f_95 = [-0.763, -0.494]
+false_reject_rate = 0.182
+false_reject_rate_95 = [0.000, 0.545]
+false_reject_rate_minus_f = 0.151
+false_reject_rate_minus_f_95 = [0.000, 0.452]
+balanced_accuracy = 0.667
+balanced_accuracy_95 = [0.517, 0.806]
+balanced_accuracy_minus_f = 0.424
+balanced_accuracy_minus_f_95 = [0.300, 0.556]
+```
+
+It did not do what it was for. Told that a pass needs a location, the judge cited one: every
+item the strict look settled carried a box (69 of them `held` confident with a box). False
+accepts went from 0 of 33 under `F` to 9 of 33 under the strict look, against 10 of 33 under
+the plain look in the same run; its balanced accuracy rose the most (0.243 to 0.667, by 0.424
+[0.300, 0.556]) because fewer clean pictures stayed unsure. A location is not evidence when
+the judge can name any box. The plain look's second run agrees with the screen: false accepts
+0 to 10 of 33 here, 0 to 6 there.
+
 ## What it comes to
 
 - **The second look is what the screen favours.** It took the unsure rate of reality-checks
@@ -436,13 +579,24 @@ was asked about.
 - **Tiles alone did little**, within the noise the replicate shows (+0.076 balanced accuracy,
   [-0.017, 0.200]), and with the second look they did worse than the second look alone.
   They stay experimental.
-- **The gate** (item 6) freezes `F` with the second look against `F`, on every use case,
-  and is run by G1's `eval run --gate` once it lands; its receipt is added here then. The
-  screen is on dev sets the evaluation of milestone 2 used: the second look becomes a default
-  only through a gate on fresh data, milestone E's. Until then `--second-look off` stays the
-  default.
+- **The strict look does not mend it** (above): the judge cites a box for whatever it
+  settles, and false accepts rose as with the plain look. A guard against passing a picture
+  that fails has to rest on something the judge does not write itself; none is built here.
+- **The gates** (item 6) are one a use case, so the second look is admitted, or not, for
+  each use case alone: `gates/unsure-<use-case>.toml`, each `F` with the second look for that
+  use case against `F` on its dev set, Haiku three times, Flash and Terra once. Each states the
+  false accepts as a guardrail beside the false rejects, the errors, the cost and the latency:
+  the upper bound of the increase in passes of items labelled fail is under 3 points
+  (`false_accept_increase_max`, added to the gate file by this task; `SPEC.md` section 8's
+  defaults gain the row). On this screen reality-checks would fail it and
+  reference-consistency would not. A dev set has five families, under the spec's twenty, so
+  each gate's minimum is five and its result is descriptive. The gates are run by the
+  orchestrator with `whizbang eval run --gate`; their receipts are added here then. The
+  second look becomes a default for any use case only through a gate on fresh data,
+  milestone E's; until then `--second-look off` stays the default.
 
 ## Spend
 
-The screen settled 2.63651 dollars (2,636,510 millionths), of the plan's estimate of 31 for
-U1's screen and gate.
+The screen settled 2.63651 dollars (2,636,510 millionths) and the strict look's run 0.804876
+(804,876 millionths): 3.441386 dollars, of the plan's estimate of 31 for U1's screen and
+gate.

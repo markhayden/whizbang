@@ -1,0 +1,24 @@
+# The matrix of the gate of the second look for product-fidelity (plan m3, task U1, item 6; gate file
+# `unsure-product-fidelity.toml` beside it): arm F against F with the second look for product-fidelity, on its dev
+# set product-fidelity/packshots-v1, under claude-haiku-5-5 three times and gemini-3.8-flash and gpt-6.1-terra
+# once each. Each judge is the config's backend of that name, of the model named. Run by the
+# orchestrator on the owner's Mac.
+[matrix]
+name = "gate-unsure-product-fidelity"
+sets = ["product-fidelity/packshots-v1"]
+arms = ["F", { arm = "F", second_look = [{ look = "on", use_cases = ["product-fidelity"] }] }]
+repetitions = 1
+concurrency = 4
+
+[[matrix.judges]]
+backend = "haiku"
+model = "claude-haiku-5-5"
+repetitions = 3
+
+[[matrix.judges]]
+backend = "flash"
+model = "gemini-3.8-flash"
+
+[[matrix.judges]]
+backend = "terra"
+model = "gpt-6.1-terra"
