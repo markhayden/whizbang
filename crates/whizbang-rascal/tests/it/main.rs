@@ -12,6 +12,7 @@ mod fill;
 mod grow;
 mod grow_action;
 mod grow_runs;
+mod heal;
 mod invert;
 mod line;
 mod ops_actions;
