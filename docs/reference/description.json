@@ -618,6 +618,112 @@
       "concurrent": true
     },
     {
+      "name": "repair",
+      "version": "1.0.0",
+      "kind": "recipe",
+      "purpose": "Repairs a scratch or a tear along a stroke: the stroke tightened to the defect's edges, feathered, then filled.",
+      "use": "To repaint a thin defect a person marked roughly with a brush.",
+      "arguments": [
+        {
+          "name": "backend",
+          "purpose": "The input backend of the recipe.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "set",
+          "purpose": "Overrides for this run, one to a line: a step, a dot, an argument, an equals sign and a value.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "until",
+          "purpose": "Runs the recipe up to and including this step, and hands back none of its own outputs.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "tighten",
+              "feather",
+              "fill"
+            ]
+          },
+          "required": false,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The input image of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "stroke",
+          "artifact": "location",
+          "purpose": "The input stroke of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The output image of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": {
+            "not_given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The output mask of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": {
+            "not_given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [
+        {
+          "capability": "fill",
+          "features": [],
+          "when": "always",
+          "chosen_by": "backend",
+          "feature_from": null,
+          "requests": 1
+        }
+      ],
+      "concurrent": true
+    },
+    {
       "name": "align",
       "version": "1.0.0",
       "kind": "primitive",
@@ -1381,11 +1487,12 @@
       "arguments": [
         {
           "name": "mode",
-          "purpose": "How the fill is pasted: feather, by the mask's core and blend.",
+          "purpose": "How the fill is pasted: feather, by the mask's core and blend; hard, on the core alone.",
           "type": {
             "type": "choice",
             "choices": [
-              "feather"
+              "feather",
+              "hard"
             ]
           },
           "required": false,
@@ -2191,6 +2298,183 @@
           "name": "mask",
           "artifact": "mask",
           "purpose": "The second pass's mask: the first's reach protected, the rest the core.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "image"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "tighten",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Tightens a stroke to the defect's edges: at each sample the two strongest opposite edges inside the stroke bound the core.",
+      "arguments": [
+        {
+          "name": "min_contrast",
+          "purpose": "The least size of the luminance's derivative, in levels per pixel, an edge must have to count.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 255.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "min_defect_px",
+          "purpose": "The narrowest defect, in pixels between its two edges.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 10000.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "max_defect_factor",
+          "purpose": "The widest defect, as a multiple of the stroke's radius (2 is the whole stroke).",
+          "type": {
+            "type": "number",
+            "min": 0.01,
+            "max": 10.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "path_sigma",
+          "purpose": "The sigma, in samples, of the smoothing of the tightened extents along the path.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 1000.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "sample_spacing_px",
+          "purpose": "The spacing of the samples along the path, in pixels.",
+          "type": {
+            "type": "number",
+            "min": 0.25,
+            "max": 1000.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "constants",
+          "purpose": "The constant set a number is taken from when the call does not give it.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "tighten-v1"
+            ]
+          },
+          "required": false,
+          "default": "tighten-v1"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "stroke",
+          "artifact": "location",
+          "purpose": "The stroke, a location on the image.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": "image"
+        },
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image the edges are read from.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The tightened stroke as the core of a mask for a repair; no blend and nothing protected.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "image"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "inspect",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "A mask for the eye: the overlay on its image, the core's width on each row, and its counts in the journal.",
+      "arguments": [],
+      "inputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask to inspect.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": "image"
+        },
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image the mask is on, which the overlay is drawn on.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "overlay",
+          "artifact": "image",
+          "purpose": "The overlay, an image whose role is a rendering.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "widths",
+          "artifact": "series",
+          "purpose": "The core's width on each row of the image, in pixels.",
           "count": {
             "min": 1,
             "max": 1

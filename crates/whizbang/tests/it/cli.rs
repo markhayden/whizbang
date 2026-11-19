@@ -2197,7 +2197,7 @@ fn rascal_paste_composites_a_fill_onto_its_base() {
     let other = whizbang(
         &[
             "rascal", "paste", "--image", &image, "--fill", &fill, "--mask", &mask, "--mode",
-            "hard",
+            "poisson",
         ],
         &root,
     );
