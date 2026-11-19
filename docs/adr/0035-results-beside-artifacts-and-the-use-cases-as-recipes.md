@@ -59,7 +59,7 @@ override of it is refused before anything runs, and a run of `check` that nothin
 command line or an MCP client) is refused it. Each entry names the run of its tool that made
 it, and the document names the run of `details` that made it. `check` holds the document
 to that run before anything is sent: a completed step of `details` of the same recipe, whose
-every call, in order, is the run of one entry, and no other, so no entry it made is left out.
+every call, in order, is the run of one entry, and no other, so no entry it made is left out. That step measured `check`'s own job and images: its record's `job` is the very text `check` was given, and its `images` the same identities in the same order; and the document is the one it kept whole (`measured.json`), every entry in its order, those that name no run among them. Tiles are taken only of the candidate of a job with one image.
 And it holds each entry to the run it names, against the entry's own pair: the job's images
 by the roles the entry names, port by port (`align`'s `image` and `against`; a comparison's
 `frame`, the pair's second image, and `against`, the frame the verified `align` of the same

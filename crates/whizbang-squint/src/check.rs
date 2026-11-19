@@ -1045,10 +1045,15 @@ impl Action for Check {
                 ));
             };
             let ids: Vec<ArtifactId> = images.iter().map(|input| input.id()).collect();
+            let job_text = match argument("job") {
+                Some(Value::Text(text)) => text.as_str(),
+                _ => "",
+            };
             measured::held_to_their_runs(
                 context,
                 made_by.as_deref(),
                 entries,
+                job_text,
                 &judging.job,
                 &ids,
                 &handed_images,

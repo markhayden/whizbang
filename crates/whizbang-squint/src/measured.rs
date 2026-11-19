@@ -39,6 +39,9 @@ fn artifact_of(text: &str) -> Option<ArtifactId> {
 pub const NAME: &str = "details";
 /// The action's version.
 pub const VERSION: &str = "1.0.0";
+/// The diagnostic in which a run of `details` keeps the measurements it handed back whole.
+pub const KEPT: &str = "measured.json";
+
 /// The most images `details` hands back: an aligned frame and a map for each of nine
 /// pairs, and four tiles, with room.
 pub const IMAGES_LIMIT: u32 = 32;
@@ -434,8 +437,13 @@ impl Action for DetailsStep {
         let entries = measure(context, &pairs, &detail, &candidates)?;
         // The document names this run, whose calls it lists whole (ADR 0035).
         let made_by = context.lineage().last().map(|run| run.as_str().to_owned());
-        let mut produced =
-            Produced::nothing().with_measurements(document(&entries, made_by.as_deref()));
+        let handed = document(&entries, made_by.as_deref());
+        // And keeps it whole, for the judge's step to hold what it is handed to.
+        let kept = context
+            .diagnostics()
+            .write(KEPT, handed.to_string().as_bytes());
+        kept.map_err(|why| Failure::error("details", &why.to_string()))?;
+        let mut produced = Produced::nothing().with_measurements(handed);
         for entry in &entries {
             for id in entry
                 .image_ids()
@@ -481,6 +489,7 @@ pub fn held_to_their_runs(
     context: &Context,
     made_by: Option<&str>,
     entries: &[Entry],
+    job_text: &str,
     job: &Job,
     images: &[ArtifactId],
     handed: &[ArtifactId],
@@ -542,6 +551,34 @@ pub fn held_to_their_runs(
                     in its order"
                 .to_owned(),
         );
+    }
+    // Of this run's own job and images: the very job, and the same images in the same
+    // order, as the step's record holds them.
+    let asked_job = step.asked().arguments.iter().find(|a| a.name == "job");
+    let same_job = matches!(asked_job.map(|a| &a.value),
+        Some(ArgumentValue::Text(text)) if text == job_text);
+    let measured_images: Vec<ArtifactId> = (step.inputs().iter())
+        .filter(|input| input.port == "images")
+        .map(|input| ArtifactId(input.artifact))
+        .collect();
+    if !same_job || measured_images != images {
+        return Err(
+            "the step of details measured another job or other images than this run's".to_owned(),
+        );
+    }
+    // Tiles are of the candidate of a job with one image, as `details` cuts them.
+    let paired = job.images.iter().any(|image| image.role != Role::Candidate);
+    let tiled = entries.iter().filter(|entry| entry.tool == details::TILES);
+    for entry in tiled {
+        let candidate = (job.images.iter())
+            .any(|image| image.id == entry.image && image.role == Role::Candidate);
+        if paired || !candidate {
+            return Err(
+                "the measurements handed on hold tiles of no candidate of a job with \
+                        one image"
+                    .to_owned(),
+            );
+        }
     }
     // The job's images, by the names of their roles.
     let id_of = |name: &str| -> Result<ArtifactId, String> {
@@ -678,6 +715,23 @@ pub fn held_to_their_runs(
         }
         if tool == align::NAME {
             frames.push((pair, committed.last().copied()));
+        }
+    }
+    // Every entry it made, and no other, in its order, as it kept them.
+    let kept = (generation.run(made_by))
+        .and_then(|run| run.get(&format!("{DIAGNOSTICS_PREFIX}{KEPT}")))
+        .map(|entry| store.read_record(entry))
+        .and_then(Result::ok)
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .map(|text| read(&text));
+    match kept {
+        Some(Ok((_, made))) if made.as_slice() == entries => {}
+        _ => {
+            return Err(
+                "the measurements handed on are not what the step of details made, \
+                        whole and in order"
+                    .to_owned(),
+            );
         }
     }
     Ok(())

@@ -3215,8 +3215,10 @@ fn measurements_a_step_hands_on_that_no_run_of_their_tool_made_are_refused() {
     }
 }
 
-/// An action of a recipe that hands on what an earlier step measured, less every entry of
-/// `change_map`.
+/// An action of a recipe that hands on what an earlier step measured, changed as `how`
+/// says: `drop-change_map` leaves out every entry of `change_map`; `swap-align` swaps the
+/// image and what it is held against in every entry of `align`; `move-tile` gives the first
+/// tile the place and box of the second.
 struct Dropper(whizbang_core::contract::ActionDescriptor);
 
 impl whizbang_core::contract::Action for Dropper {
@@ -3229,18 +3231,159 @@ impl whizbang_core::contract::Action for Dropper {
         call: &whizbang_core::contract::PreparedCall,
         _: &whizbang_core::contract::Context,
     ) -> Result<whizbang_core::contract::Produced, whizbang_core::contract::Failure> {
-        let from = call.arguments().iter().find_map(|(_, value)| match value {
-            Value::Text(text) => Some(text.clone()),
-            _ => None,
-        });
-        let mut document: Json = serde_json::from_str(&from.unwrap_or_default()).unwrap();
-        let kept: Vec<Json> = (document["entries"].as_array().unwrap().iter())
-            .filter(|entry| entry["tool"] != "change_map")
-            .cloned()
-            .collect();
-        document["entries"] = json!(kept);
+        let text = |named: &str| {
+            call.arguments()
+                .iter()
+                .find_map(|(name, value)| match value {
+                    Value::Text(text) if name == named => Some(text.clone()),
+                    _ => None,
+                })
+        };
+        let mut document: Json = serde_json::from_str(&text("from").unwrap_or_default()).unwrap();
+        let entries = document["entries"].as_array_mut().unwrap();
+        match text("how").as_deref().unwrap_or("drop-change_map") {
+            "swap-align" => {
+                for entry in entries.iter_mut().filter(|e| e["tool"] == "align") {
+                    let image = entry["image"].clone();
+                    entry["image"] = entry["against"].clone();
+                    entry["against"] = image;
+                }
+            }
+            "move-tile" => {
+                let (place, bbox) = (entries[1]["place"].clone(), entries[1]["bbox"].clone());
+                entries[0]["place"] = place;
+                entries[0]["bbox"] = bbox;
+            }
+            _ => entries.retain(|entry| entry["tool"] != "change_map"),
+        }
         Ok(whizbang_core::contract::Produced::nothing().with_measurements(document))
     }
+}
+
+/// `dropper`, among the actions of the world.
+fn with_dropper(world: &mut World) {
+    use whizbang_core::contract::{ActionDescriptor, Argument, Kind, ResultKind, ValueType};
+    let dropper = ActionDescriptor::draft("dropper", "1.0.0", Kind::Primitive, "Drops.")
+        .argument(Argument::measurements("from", "What to drop from."))
+        .argument(Argument::optional("how", "How.", ValueType::Text))
+        .results(ResultKind::Measurements);
+    world.more.push(Arc::new(Dropper(dropper.build().unwrap())));
+}
+
+/// The plain refusal of measurements of another job or other images.
+const ANOTHER_JOB: &str =
+    "the step of details measured another job or other images than this run's";
+
+/// The outcome's reason, of a run refused as invalid.
+fn invalid(finished: &Finished) -> String {
+    match finished.outcome() {
+        Outcome::Invalid { why } => why.clone(),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_details_step_of_another_job_and_images_is_refused() {
+    // The reviewer's recipe: `details` cuts tiles of the source, named the candidate by a
+    // job of its own, and the judge's step is handed them under its own job.
+    let (mut world, source, candidate, _) = paired();
+    world.recipes.push(
+        "version = 1\nname = \"other-job\"\npurpose = \"A test.\"\nuse = \"Never.\"\n\
+         [inputs]\nimages = { type = \"Image\", many = true }\n\
+         fake = { type = \"Image\", many = true }\njob = { type = \"Text\" }\n\
+         job1 = { type = \"Text\" }\n\
+         [[step]]\nid = \"details\"\nop = \"details\"\ninputs = { images = \"inputs.fake\" }\n\
+         use_case = \"reality-checks\"\njob = \"inputs.job1\"\ndetail = \"tiles\"\n\
+         [[step]]\nid = \"judge\"\nop = \"check\"\n\
+         inputs = { images = \"inputs.images\", measured_images = \"details.images\" }\n\
+         use_case = \"reality-checks\"\njob = \"inputs.job\"\nmeasured = \"details.measurements\"\n"
+            .to_owned(),
+    );
+    let job = super::use_case::fitting("reality-checks", None);
+    let call = Call::new("other-job")
+        .argument("job", Value::text(&job.to_json()))
+        .argument("job1", Value::text(&job.to_json()))
+        .input("images", candidate.id())
+        .input("fake", source.id());
+    let (finished, _, judge) = judged(&world, &call, &submitting(&[]));
+    assert!(
+        invalid(&finished).contains(ANOTHER_JOB),
+        "{:?}",
+        finished.outcome()
+    );
+    assert_eq!(judge.requests(), 0);
+}
+
+#[test]
+fn an_override_of_details_job_that_swaps_the_roles_is_refused() {
+    let (world, source, candidate, _) = paired();
+    let job = Job::shorthand("source-fidelity", true, 0, None);
+    // The same ids, the roles swapped: the source registered onto the candidate.
+    let swapped = job
+        .to_json()
+        .replace("\"role\":\"candidate\"", "\"role\":\"X\"")
+        .replace("\"role\":\"source\"", "\"role\":\"candidate\"")
+        .replace("\"role\":\"X\"", "\"role\":\"source\"");
+    assert_ne!(swapped, job.to_json());
+    let call = World::recipe(&job, &[candidate.id(), source.id()])
+        .argument("set", Value::text(&format!("details.job={swapped}")));
+    let (finished, _, judge) = judged(&world, &call, &submitting(&[]));
+    assert!(
+        invalid(&finished).contains(ANOTHER_JOB),
+        "{:?}",
+        finished.outcome()
+    );
+    assert_eq!(judge.requests(), 0);
+}
+
+/// The world with `dropper`, and a recipe of it that hands the judge's step what `details`
+/// measured with `detail`, changed as `how` says.
+fn changed_run(how: &str, detail: &str, job: &Job, images: &[ArtifactId]) -> Finished {
+    let (mut world, _, _, _) = paired();
+    with_dropper(&mut world);
+    world.recipes.push(format!(
+        "version = 1\nname = \"changed\"\npurpose = \"A test.\"\nuse = \"Never.\"\n\
+         [inputs]\nimages = {{ type = \"Image\", many = true }}\njob = {{ type = \"Text\" }}\n\
+         [[step]]\nid = \"details\"\nop = \"details\"\ninputs = {{ images = \"inputs.images\" }}\n\
+         use_case = \"{use_case}\"\njob = \"inputs.job\"\ndetail = \"{detail}\"\n\
+         [[step]]\nid = \"dropper\"\nop = \"dropper\"\nfrom = \"details.measurements\"\n\
+         how = \"{how}\"\n\
+         [[step]]\nid = \"judge\"\nop = \"check\"\n\
+         inputs = {{ images = \"inputs.images\", measured_images = \"details.images\" }}\n\
+         use_case = \"{use_case}\"\njob = \"inputs.job\"\nmeasured = \"dropper.measurements\"\n",
+        use_case = job.use_case
+    ));
+    let mut call = Call::new("changed").argument("job", Value::text(&job.to_json()));
+    for image in images {
+        call = call.input("images", *image);
+    }
+    let (finished, _, judge) = judged(&world, &call, &submitting(&[]));
+    assert_eq!(judge.requests(), 0, "{how}");
+    finished
+}
+
+#[test]
+fn an_align_entry_whose_pair_is_swapped_is_refused() {
+    let (_, source, candidate, _) = paired();
+    let job = Job::shorthand("source-fidelity", true, 0, None);
+    let finished = changed_run("swap-align", "align", &job, &[candidate.id(), source.id()]);
+    assert!(
+        invalid(&finished).contains("was not run on the pair the entry names"),
+        "{:?}",
+        finished.outcome()
+    );
+}
+
+#[test]
+fn a_tile_entry_with_another_box_is_refused() {
+    let (_, _, candidate, _) = paired();
+    let job = super::use_case::fitting("reality-checks", None);
+    let finished = changed_run("move-tile", "tiles", &job, &[candidate.id()]);
+    assert!(
+        invalid(&finished).contains("was not run on the pair the entry names"),
+        "{:?}",
+        finished.outcome()
+    );
 }
 
 /// A user's recipe of these steps after its inputs: the images, a second list, the job.
@@ -3293,10 +3436,7 @@ fn an_align_handed_on_from_another_pair_than_its_entry_names_is_refused() {
     );
     match finished.outcome() {
         Outcome::Invalid { why } => {
-            assert!(
-                why.contains("was not run on the pair the entry names"),
-                "{why}"
-            );
+            assert!(why.contains(ANOTHER_JOB), "{why}");
         }
         other => panic!("{other:?}"),
     }
@@ -3305,12 +3445,8 @@ fn an_align_handed_on_from_another_pair_than_its_entry_names_is_refused() {
 
 #[test]
 fn measurements_that_leave_out_a_call_the_step_of_details_made_are_refused() {
-    use whizbang_core::contract::{ActionDescriptor, Argument, Kind, ResultKind};
     let (mut world, source, candidate, _) = paired();
-    let dropper = ActionDescriptor::draft("dropper", "1.0.0", Kind::Primitive, "Drops.")
-        .argument(Argument::measurements("from", "What to drop from."))
-        .results(ResultKind::Measurements);
-    world.more.push(Arc::new(Dropper(dropper.build().unwrap())));
+    with_dropper(&mut world);
     world.recipes.push(users_recipe(
         "dropped",
         "[[step]]\nid = \"details\"\nop = \"details\"\ninputs = { images = \"inputs.images\" }\n\
