@@ -281,6 +281,19 @@ impl RecipeAction {
                     format!("the override {line:?}: the step {step} ({action}) takes no argument {argument}")
                 }
             })?;
+            // What a step needs was stated in the recipe's descriptor and reserved for
+            // when the recipe was admitted: an override that would change it, the
+            // argument that chooses a need's backend or names one of its features, is
+            // refused here, before any step runs.
+            let needs = descriptor.needs().iter();
+            let mut chooses = needs.flat_map(|need| [need.chooser(), need.feature_argument()]);
+            if chooses.any(|named| named == Some(argument)) {
+                return Err(format!(
+                    "the override {line:?}: the argument {argument} of the step {step} ({action}) \
+                     decides what it needs, which the recipe was admitted with, and is not \
+                     overridden"
+                ));
+            }
             let value = typed_word(taken.value_type(), word)
                 .map_err(|why| format!("the override {line:?}: the step {step}: {why}"))?;
             overrides.push((at, argument.to_owned(), value));

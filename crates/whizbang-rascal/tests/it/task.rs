@@ -156,6 +156,18 @@ fn remove_prompt_completes_with_and_without_protect() {
         "protect grown by 2"
     );
     assert_eq!(at(&with, 45, 33), 255);
+    // An override of what decides a step's needs is refused before anything runs: the
+    // recipe was admitted with what its steps need.
+    let before = segmenter.requests();
+    let chosen = asked
+        .clone()
+        .argument("set", Value::text("segment.backend=another"));
+    let refused = executor.submit(&chosen).unwrap();
+    let Outcome::Invalid { why } = refused.outcome() else {
+        panic!("{:?}", refused.outcome());
+    };
+    assert!(why.contains("decides what it needs"), "{why}");
+    assert_eq!(segmenter.requests(), before);
     let names: Vec<String> = with
         .origin()
         .steps()

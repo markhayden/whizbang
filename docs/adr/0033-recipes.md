@@ -48,7 +48,9 @@ each capability, for as many requests as the steps send together. Its run:
 - notes the digest of the recipe's text as the setting `recipe.digest`, so every run pins the
   file it ran;
 - refuses, before anything runs and naming the step, an override whose step the recipe has
-  not, or whose argument the step's action does not take, or whose value its type refuses;
+  not, or whose argument the step's action does not take, or whose value its type refuses,
+  or whose argument chooses a need's backend or names one of its features: what the steps
+  need was reserved for at admission, and an override does not change it;
 - freezes its calls to its steps' actions (ADR 0009), so it calls nothing else and gives a
   step only its own inputs and what an earlier step committed;
 - calls each step through the executor in its context, in order, with values passed by their
@@ -90,7 +92,9 @@ are resolved once, when its end is published, from the generation current then; 
 the parent's store then adds them with no read (`context::a_childs_names_are_resolved_once_and_a_look_reads_no_file`).
 Where that read fails, the names are left to the next look, which reads as every look did.
 
-**How many calls a run makes (ADR 0008, kept).** `STEPS_LIMIT` stays 256. Measured on the
+**How many calls a run makes (ADR 0008, kept).** Two limits, not to be confused: a recipe
+has at most 32 steps, its own limit (`recipe::STEPS_MAX`, checked when it is read); any run,
+a recipe's among them, makes at most 256 nested calls (`STEPS_LIMIT`). `STEPS_LIMIT` stays 256. Measured on the
 owner's Mac in the tests' build, one run of nested calls of an action that does nothing, in a
 store that held nothing else (`store::volume`): 32 calls in 1,932 ms, 256 in 18,879 ms (about
 74 ms a call, two publications each, every one synced), the last generation 149,793 bytes

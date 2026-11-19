@@ -554,8 +554,7 @@ fn run_at(
             steps,
             common,
         } => {
-            let text = std::fs::read_to_string(recipe)
-                .map_err(|_| "the recipe file cannot be read as text".to_owned())?;
+            let text = wiring::recipe_file(recipe)?;
             let read = whizbang_core::recipe::Recipe::read(&text).map_err(|e| e.to_string())?;
             let mut arguments = Vec::new();
             let mut ports = Vec::new();

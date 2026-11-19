@@ -233,3 +233,40 @@ fn over_text_refused(dir: &Scratch, text: &str) -> String {
         .err()
         .unwrap()
 }
+
+#[test]
+fn rascal_run_refuses_a_link_and_a_file_over_the_limit_before_reading_it() {
+    let dir = Scratch::new("recipe-run-file");
+    let root = dir.path().join("store");
+    let file = dir.path().join("outline.toml");
+    std::fs::write(&file, OUTLINE).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let link = dir.path().join("linked.toml");
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        let ran = whizbang(&["rascal", "run", link.to_str().unwrap()], &root);
+        assert_eq!(ran.code, Some(1), "{}", ran.err);
+        assert!(
+            ran.err
+                .contains("the recipe file linked.toml: is a link or not a file"),
+            "{}",
+            ran.err
+        );
+        // A device is no file, and nothing of it is read.
+        let ran = whizbang(&["rascal", "run", "/dev/zero"], &root);
+        assert_eq!(ran.code, Some(1), "{}", ran.err);
+        assert!(ran.err.contains("is a link or not a file"), "{}", ran.err);
+    }
+    let big = dir.path().join("big.toml");
+    std::fs::write(&big, vec![b'#'; whizbang_core::recipe::FILE_MAX_BYTES + 1]).unwrap();
+    let ran = whizbang(&["rascal", "run", big.to_str().unwrap()], &root);
+    assert_eq!(ran.code, Some(1), "{}", ran.err);
+    assert!(
+        ran.err
+            .contains("the recipe file big.toml: is over 65536 bytes"),
+        "{}",
+        ran.err
+    );
+}

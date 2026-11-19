@@ -833,7 +833,9 @@ impl Over {
             let config = Config::read(path, &self.secrets)
                 .map_err(|refused| format!("the config cannot be used: {refused}"))?;
             for path in config.recipe_paths() {
-                texts.push(recipe_file(path)?);
+                let text =
+                    recipe_file(path).map_err(|why| format!("the config cannot be used: {why}"))?;
+                texts.push(text);
             }
         }
         texts.extend(self.recipe.clone());
@@ -864,18 +866,17 @@ impl Over {
     }
 }
 
-/// Reads one recipe file, as [`Over::recipe_files`] says.
-fn recipe_file(path: &Path) -> Result<String, String> {
+/// Reads one recipe file, as [`Over::recipe_files`] says: what a config lists, and what
+/// `whizbang rascal run` is given. The file that was looked at is the file that is read:
+/// after it is opened, its device and inode are compared with the look's, and a file
+/// replaced between the two is refused, as a set's file is (`whizbang_eval::sets`). Never
+/// more than the limit and one byte is read.
+pub fn recipe_file(path: &Path) -> Result<String, String> {
     use std::io::Read;
     let shown = path
         .file_name()
         .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-    let refused = |why: &str| {
-        format!(
-            "the config cannot be used: the recipe file {}: {why}",
-            shown.escape_debug()
-        )
-    };
+    let refused = |why: &str| format!("the recipe file {}: {why}", shown.escape_debug());
     let meta = std::fs::symlink_metadata(path).map_err(|_| refused("cannot be read"))?;
     if !meta.file_type().is_file() {
         return Err(refused("is a link or not a file, and is not read"));
@@ -890,7 +891,21 @@ fn recipe_file(path: &Path) -> Result<String, String> {
         }
     }
     let limit = whizbang_core::recipe::FILE_MAX_BYTES;
+    if meta.len() > limit as u64 {
+        return Err(refused(&format!("is over {limit} bytes")));
+    }
     let file = std::fs::File::open(path).map_err(|_| refused("cannot be read"))?;
+    let opened = file.metadata().map_err(|_| refused("cannot be read"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if (opened.dev(), opened.ino()) != (meta.dev(), meta.ino()) {
+            return Err(refused("was replaced while it was opened, and is not read"));
+        }
+    }
+    if !opened.file_type().is_file() {
+        return Err(refused("is a link or not a file, and is not read"));
+    }
     let mut bytes = Vec::new();
     file.take(limit as u64 + 1)
         .read_to_end(&mut bytes)

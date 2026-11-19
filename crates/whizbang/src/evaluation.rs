@@ -274,6 +274,10 @@ pub struct CellArgument {
     #[serde(flatten)]
     pub cell: Cell,
     pub attempt: u32,
+    /// The SHA-256 of the gate file the run was made under, when a gate made it (plan m3,
+    /// task G1): a gate's runs are its own, apart from the matrix's runs without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate: Option<String>,
 }
 
 /// One cell, ready to run: its job and its images' identities in the job's order.
@@ -355,6 +359,11 @@ pub type Attempts = BTreeMap<Cell, Vec<(u32, String, Ended)>>;
 /// Every attempt of each cell of the matrix of this identity the store at `root` holds:
 /// its attempt, its run and how it ended, in the order of the attempts.
 pub fn attempts(root: &Path, identity: &str) -> Result<Attempts, String> {
+    attempts_under(root, identity, None)
+}
+
+/// The same, of the runs made under the gate of this digest, or under none.
+pub fn attempts_under(root: &Path, identity: &str, gate: Option<&str>) -> Result<Attempts, String> {
     let reader = Reader::open(root, Arc::new(RealFs)).map_err(|e| e.to_string())?;
     let generation = reader.snapshot().map_err(|e| e.to_string())?;
     let mut found: Attempts = BTreeMap::new();
@@ -364,7 +373,7 @@ pub fn attempts(root: &Path, identity: &str) -> Result<Attempts, String> {
         let Some(argument) = cell_of(&record) else {
             continue;
         };
-        if argument.identity != identity {
+        if argument.identity != identity || argument.gate.as_deref() != gate {
             continue;
         }
         let outcome = record.outcome();
@@ -464,8 +473,20 @@ pub fn run(
     labels: &BTreeMap<(String, String), sets::Expected>,
     running: &Running<'_>,
 ) -> Result<Report, String> {
+    run_under(matrix, planned, labels, running, None)
+}
+
+/// The same, each run made under the gate of this digest, which its cell holds; a gate's
+/// runs resume from its own runs alone.
+pub fn run_under(
+    matrix: &Matrix,
+    planned: &[Planned],
+    labels: &BTreeMap<(String, String), sets::Expected>,
+    running: &Running<'_>,
+    gate: Option<&str>,
+) -> Result<Report, String> {
     let identity: String = matrix.identity().chars().take(16).collect();
-    let earlier = attempts(running.root, &identity)?;
+    let earlier = attempts_under(running.root, &identity, gate)?;
     // What is still to run: each cell with no attempt, or whose last was interrupted.
     let mut todo = Vec::new();
     for planned in planned {
@@ -492,6 +513,7 @@ pub fn run(
         identity: identity.clone(),
         cell: planned.cell.clone(),
         attempt,
+        gate: gate.map(str::to_owned),
     };
     // Each judge and arm prepares before anything runs.
     let mut prepared = std::collections::BTreeSet::new();
@@ -546,7 +568,7 @@ pub fn run(
             "a run of the matrix was refused, and the matrix stopped; run it again to resume: {why}"
         ));
     }
-    let mut report = summary(planned, labels, running.root, &identity)?;
+    let mut report = summary(planned, labels, running.root, &identity, gate)?;
     report.started = started;
     Ok(report)
 }
@@ -558,8 +580,9 @@ fn summary(
     labels: &BTreeMap<(String, String), sets::Expected>,
     root: &Path,
     identity: &str,
+    gate: Option<&str>,
 ) -> Result<Report, String> {
-    let now = attempts(root, identity)?;
+    let now = attempts_under(root, identity, gate)?;
     let mut report = Report {
         cells: planned.len(),
         ..Report::default()

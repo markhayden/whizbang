@@ -33,8 +33,7 @@ impl Where {
         &self.store
     }
 
-    /// The store at this directory.
-    #[cfg(test)]
+    /// The store at this directory: a test's, and the store `eval baseline --live` names.
     pub fn at(store: &Path) -> Where {
         Where {
             store: store.to_path_buf(),
