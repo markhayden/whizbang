@@ -75,7 +75,7 @@ pub fn written(
             continue;
         }
         let kept = (entry["exchange"].as_str())
-            .and_then(|name| read(name))
+            .and_then(read)
             .and_then(|bytes| serde_json::from_slice::<Json>(&bytes).ok());
         if kept.is_none() {
             missing.push(format!("the exchange of turn {}", exchanges.len() + 1));
