@@ -406,7 +406,7 @@ pub fn artifact_of_bytes(
     let read = Artifact::from_bytes_as(wanted, bytes, &DecodeLimits::default())
         .map_err(|_| format!("{shown}: it is not the canonical file of a {wanted}"))?;
     let id = read.id();
-    commit(&read, root, false, recovery)?;
+    commit(&read, root, false, recovery, None)?;
     Ok(id)
 }
 
