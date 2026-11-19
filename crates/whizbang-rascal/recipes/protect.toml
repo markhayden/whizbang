@@ -1,0 +1,25 @@
+# The second pass: everything the first pass's mask reached is protected and the rest of
+# the image is editable. The image is the earlier composite, and the mask the one the
+# first pass's fill rebound onto it.
+#
+# Ported from rascal's `crates/rascal-mask/recipes/protect.toml` at the commit
+# `docs/sources.toml` pins: `invert` takes the image beside the mask, which must be on
+# it, where rascal's took a target frame (`to = "raw"`); rascal's grey rendering is left
+# to the action `render`.
+version = 1
+name = "protect"
+purpose = "Makes the mask for a second pass: what the first mask reached is protected, the rest of the image the core."
+use = "After a fill, to edit the rest of its composite while keeping the first edit; give the mask the fill handed back."
+use_case = "protect"
+
+[inputs]
+image = { type = "Image" }
+mask = { type = "Mask" }
+
+[[step]]
+id = "invert"
+op = "invert"
+inputs = { mask = "inputs.mask", image = "inputs.image" }
+
+[outputs]
+mask = "invert.mask"

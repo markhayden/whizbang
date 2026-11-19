@@ -1,7 +1,8 @@
 //! `whizbang rascal segment`, `select`, `grow`, `close`, `plug`, `subtract`, `feather`,
-//! `render`, `paste`, `fill`, `cut`, `put`, `window`, `unwindow` and `apply`, and the
-//! recipes: wiring from arguments to the door
-//! (`whizbang::door`), which runs the action through the executor.
+//! `render`, `paste`, `fill`, `line`, `rect`, `stroke`, `rasterize`, `shrink`, `invert`,
+//! `cut`, `put`, `window`, `unwindow`, `apply`, `tighten`, `inspect`, `fan`, `profile`,
+//! `ramp` and `measure`, and the recipes: wiring from arguments to the door (`whizbang::door`), which
+//! runs the action through the executor.
 
 use std::path::PathBuf;
 
@@ -207,6 +208,87 @@ pub enum Command {
     Close(Op<whizbang_rascal::close::Args>),
     #[command(about = whizbang_rascal::subtract::ABOUT, after_help = EXIT_CODES)]
     Subtract(Op<whizbang_rascal::subtract::Args>),
+    #[command(about = whizbang_rascal::line::ABOUT, after_help = EXIT_CODES)]
+    Line(Op<whizbang_rascal::line::Args>),
+    #[command(about = whizbang_rascal::rect::ABOUT, after_help = EXIT_CODES)]
+    Rect(Op<whizbang_rascal::rect::Args>),
+    #[command(about = whizbang_rascal::stroke::ABOUT, after_help = EXIT_CODES)]
+    Stroke(Op<whizbang_rascal::stroke::Args>),
+    #[command(about = whizbang_rascal::rasterize::ABOUT, after_help = EXIT_CODES)]
+    Rasterize(Op<whizbang_rascal::rasterize::Args>),
+    #[command(about = whizbang_rascal::shrink::ABOUT, after_help = EXIT_CODES)]
+    Shrink(Op<whizbang_rascal::shrink::Args>),
+    #[command(about = whizbang_rascal::invert::ABOUT, after_help = EXIT_CODES)]
+    Invert(Op<whizbang_rascal::invert::Args>),
+    /// Remove the thing at a location from a picture and fill where it was: the recipe
+    /// `remove`, whose steps are rasterize, grow, close, plug, subtract, feather and fill,
+    /// each a run of its own under the recipe's. With --box, `rect` makes the location
+    /// first, a run of its own. Each run is printed, and then the composite and the mask
+    /// rebound onto it, committed to the store.
+    #[command(after_help = EXIT_CODES)]
+    Remove {
+        #[command(flatten)]
+        at: Located,
+        /// A mask on the same picture whose pixels the mask keeps off, by its identity in
+        /// the store.
+        #[arg(long)]
+        protect: Option<String>,
+        /// The filler, by its name in the config's `[backends.fill]` tables. With none,
+        /// the config's default for fill answers.
+        #[arg(long, value_name = "NAME")]
+        backend: Option<String>,
+        #[command(flatten)]
+        steps: Steps,
+        #[command(flatten)]
+        common: Common,
+    },
+    /// Repair a stain or a spot at a location and fill it: the recipe `repair_area`,
+    /// whose steps are rasterize, feather and fill. With --box, `rect` makes the location
+    /// first, a run of its own. Each run is printed, and then the composite and the mask
+    /// rebound onto it, committed to the store.
+    #[command(after_help = EXIT_CODES)]
+    RepairArea {
+        #[command(flatten)]
+        at: Located,
+        /// The filler, by its name in the config's `[backends.fill]` tables.
+        #[arg(long, value_name = "NAME")]
+        backend: Option<String>,
+        #[command(flatten)]
+        steps: Steps,
+        #[command(flatten)]
+        common: Common,
+    },
+    /// Make a rectangle on a picture a mask: the recipe `mask_rect`, whose steps are rect
+    /// and rasterize. Each step's run is printed, and then the mask.
+    #[command(after_help = EXIT_CODES)]
+    MaskRect {
+        /// The picture, by its identity in the store.
+        #[arg(long)]
+        image: String,
+        /// The box: left, top, right and bottom in pixels of the picture.
+        #[arg(long = "box", value_name = "L T R B", allow_hyphen_values = true)]
+        box_: String,
+        #[command(flatten)]
+        steps: Steps,
+        #[command(flatten)]
+        common: Common,
+    },
+    /// Make the mask for a second pass: the recipe `protect`, whose step is invert. Give
+    /// the composite a fill made and the mask it rebound onto it. The run is printed, and
+    /// then the mask.
+    #[command(after_help = EXIT_CODES)]
+    Protect {
+        /// The picture of the second pass: a fill's composite.
+        #[arg(long)]
+        image: String,
+        /// The first pass's mask, on the picture.
+        #[arg(long)]
+        mask: String,
+        #[command(flatten)]
+        steps: Steps,
+        #[command(flatten)]
+        common: Common,
+    },
     #[command(about = whizbang_rascal::cut::ABOUT, after_help = EXIT_CODES)]
     Cut(Op<whizbang_rascal::cut::Args>),
     #[command(about = whizbang_rascal::put::ABOUT, after_help = EXIT_CODES)]
@@ -276,8 +358,9 @@ pub enum Command {
         /// The mask on the base, by its identity in the store.
         #[arg(long)]
         mask: String,
-        /// How the fill is pasted: `feather`, by the mask's core and blend.
-        #[arg(long, value_parser = ["feather"], default_value = "feather")]
+        /// How the fill is pasted: `feather`, by the mask's core and blend; `hard`, on
+        /// the core alone; `poisson`, by the fill's gradients against the base round it.
+        #[arg(long, value_parser = ["feather", "hard", "poisson"], default_value = "feather")]
         mode: String,
         #[command(flatten)]
         common: Common,
@@ -301,6 +384,80 @@ pub enum Command {
         #[command(flatten)]
         common: Common,
     },
+    #[command(about = whizbang_rascal::tighten::ABOUT, after_help = EXIT_CODES)]
+    Tighten(Op<whizbang_rascal::tighten::Args>),
+    #[command(about = whizbang_rascal::inspect::ABOUT, after_help = EXIT_CODES)]
+    Inspect(Op<whizbang_rascal::inspect::Args>),
+    /// Repair a scratch or a tear along a stroke and fill it: the recipe `repair`, whose
+    /// steps are tighten, feather and fill. Each step's run is printed, and then the
+    /// composite and the mask rebound onto it, committed to the store.
+    #[command(after_help = EXIT_CODES)]
+    Repair {
+        /// The picture, by its identity in the store.
+        #[arg(long)]
+        image: String,
+        /// The stroke along the defect, a location on the picture, by its identity in the
+        /// store, as `rascal stroke` prints it.
+        #[arg(long)]
+        stroke: String,
+        /// The filler, by its name in the config's `[backends.fill]` tables.
+        #[arg(long, value_name = "NAME")]
+        backend: Option<String>,
+        #[command(flatten)]
+        steps: Steps,
+        #[command(flatten)]
+        common: Common,
+    },
+    #[command(about = whizbang_rascal::fan::ABOUT, after_help = EXIT_CODES)]
+    Fan(Op<whizbang_rascal::fan::Args>),
+    #[command(about = whizbang_rascal::profile::ABOUT, after_help = EXIT_CODES)]
+    Profile(Op<whizbang_rascal::profile::Args>),
+    #[command(about = whizbang_rascal::ramp::ABOUT, after_help = EXIT_CODES)]
+    Ramp(Op<whizbang_rascal::ramp::Args>),
+    /// Heal the wrap edge of a complete panorama: the recipe `seam`, whose steps are cut,
+    /// line, fan, profile, ramp, apply, fill and put, each a run of its own under the
+    /// recipe's. Each step's run is printed, and then the panorama and the seam's mask,
+    /// committed to the store.
+    #[command(after_help = EXIT_CODES)]
+    Seam {
+        /// The panorama, by its identity in the store.
+        #[arg(long)]
+        image: String,
+        /// The filler, by its name in the config's `[backends.fill]` tables. With none,
+        /// the config's default for fill answers.
+        #[arg(long, value_name = "NAME")]
+        backend: Option<String>,
+        #[command(flatten)]
+        steps: Steps,
+        #[command(flatten)]
+        common: Common,
+    },
+    // The last of rascal's operations (plan m3, task O5).
+    #[command(about = whizbang_rascal::measure::ABOUT, after_help = EXIT_CODES)]
+    Measure(Op<whizbang_rascal::measure::Args>),
+}
+
+/// Where a recipe that takes a location works: the picture, and the location given or
+/// the box `rect` makes it of.
+#[derive(Args)]
+#[command(group(clap::ArgGroup::new("where").required(true).args(["location", "box_"])))]
+pub struct Located {
+    /// The picture, by its identity in the store.
+    #[arg(long)]
+    image: String,
+    /// A location on the picture, by its identity in the store, as `rascal rect`,
+    /// `stroke` or `line` prints it.
+    #[arg(long)]
+    location: Option<String>,
+    /// A box on the picture: left, top, right and bottom in pixels, such as "10 20 30
+    /// 40". `rect` makes it a location first.
+    #[arg(
+        long = "box",
+        id = "box_",
+        value_name = "L T R B",
+        allow_hyphen_values = true
+    )]
+    box_: Option<String>,
 }
 
 /// What a recipe's command takes of its steps.
@@ -414,7 +571,7 @@ pub(crate) fn executor_caching(
     Ok((built(at, &over, recovery, cached)?, over))
 }
 
-fn built(
+pub(crate) fn built(
     at: &Where,
     over: &wiring::Over,
     recovery: Recovery,
@@ -531,6 +688,78 @@ fn run_at(
         Command::Render(op) => op.run(recovery, platform),
         Command::Close(op) => op.run(recovery, platform),
         Command::Subtract(op) => op.run(recovery, platform),
+        Command::Line(op) => op.run(recovery, platform),
+        Command::Rect(op) => op.run(recovery, platform),
+        Command::Stroke(op) => op.run(recovery, platform),
+        Command::Rasterize(op) => op.run(recovery, platform),
+        Command::Shrink(op) => op.run(recovery, platform),
+        Command::Invert(op) => op.run(recovery, platform),
+        Command::Remove {
+            at,
+            protect,
+            backend,
+            steps,
+            common,
+        } => {
+            let filled = Filled {
+                action: "remove",
+                backend: backend.as_deref(),
+                steps,
+                common,
+            };
+            filled.run(at, protect.as_deref(), recovery, platform)
+        }
+        Command::RepairArea {
+            at,
+            backend,
+            steps,
+            common,
+        } => {
+            let filled = Filled {
+                action: "repair_area",
+                backend: backend.as_deref(),
+                steps,
+                common,
+            };
+            filled.run(at, None, recovery, platform)
+        }
+        Command::MaskRect {
+            image,
+            box_,
+            steps,
+            common,
+        } => {
+            let mut arguments = vec![("box", Value::text(box_))];
+            arguments.extend(steps.arguments());
+            let inputs = vec![("image", "--image", image.as_str())];
+            let executor = executor(&common.at, &common.under, recovery, platform, Uses::Nothing)?;
+            let asked = OperationAsked {
+                action: "mask_rect",
+                arguments,
+                inputs,
+                request_id: common.request_id.as_deref(),
+            };
+            door::recipe(&executor, &asked, common.at.root())
+        }
+        Command::Protect {
+            image,
+            mask,
+            steps,
+            common,
+        } => {
+            let inputs = vec![
+                ("image", "--image", image.as_str()),
+                ("mask", "--mask", mask.as_str()),
+            ];
+            let executor = executor(&common.at, &common.under, recovery, platform, Uses::Nothing)?;
+            let asked = OperationAsked {
+                action: "protect",
+                arguments: steps.arguments(),
+                inputs,
+                request_id: common.request_id.as_deref(),
+            };
+            door::recipe(&executor, &asked, common.at.root())
+        }
         Command::Cut(op) => op.run(recovery, platform),
         Command::Put(op) => op.run(recovery, platform),
         Command::Window(op) => op.run(recovery, platform),
@@ -639,6 +868,127 @@ fn run_at(
             let uses = Uses::One(Capability::Fill, backend.as_deref());
             operation_using(common, "fill", arguments, inputs, recovery, platform, uses)
         }
+        Command::Tighten(op) => op.run(recovery, platform),
+        Command::Inspect(op) => op.run(recovery, platform),
+        Command::Repair {
+            image,
+            stroke,
+            backend,
+            steps,
+            common,
+        } => {
+            let mut arguments = Vec::new();
+            if let Some(backend) = backend {
+                arguments.push(("backend", Value::text(backend)));
+            }
+            arguments.extend(steps.arguments());
+            let inputs = vec![
+                ("image", "--image", image.as_str()),
+                ("stroke", "--stroke", stroke.as_str()),
+            ];
+            let uses = Uses::One(Capability::Fill, backend.as_deref());
+            let over = common.under.over(platform, uses)?;
+            let executor = built(&common.at, &over, recovery, false)?;
+            let asked = OperationAsked {
+                action: "repair",
+                arguments,
+                inputs,
+                request_id: common.request_id.as_deref(),
+            };
+            door::recipe(&executor, &asked, common.at.root())
+        }
+        Command::Fan(op) => op.run(recovery, platform),
+        Command::Profile(op) => op.run(recovery, platform),
+        Command::Ramp(op) => op.run(recovery, platform),
+        Command::Seam {
+            image,
+            backend,
+            steps,
+            common,
+        } => {
+            let mut arguments = Vec::new();
+            if let Some(backend) = backend {
+                arguments.push(("backend", Value::text(backend)));
+            }
+            arguments.extend(steps.arguments());
+            let uses = Uses::One(Capability::Fill, backend.as_deref());
+            let over = common.under.over(platform, uses)?;
+            let executor = built(&common.at, &over, recovery, false)?;
+            let asked = OperationAsked {
+                action: "seam",
+                arguments,
+                inputs: vec![("image", "--image", image.as_str())],
+                request_id: common.request_id.as_deref(),
+            };
+            door::recipe(&executor, &asked, common.at.root())
+        }
+        Command::Measure(op) => op.run(recovery, platform),
+    }
+}
+
+/// A recipe that takes a picture and a location and ends in a fill: `remove` and
+/// `repair_area`.
+struct Filled<'a> {
+    action: &'static str,
+    backend: Option<&'a str>,
+    steps: &'a Steps,
+    common: &'a Common,
+}
+
+impl Filled<'_> {
+    /// Runs the recipe on the picture and location of `at`, and `protect`. With a box,
+    /// `rect` makes the location first, as a run of its own, printed before the recipe's.
+    /// The request's id, if one was given, is the recipe's.
+    fn run(
+        &self,
+        at: &Located,
+        protect: Option<&str>,
+        recovery: Recovery,
+        platform: Option<Platform>,
+    ) -> Result<String, String> {
+        let common = self.common;
+        let uses = Uses::One(Capability::Fill, self.backend);
+        let over = common.under.over(platform, uses)?;
+        let executor = built(&common.at, &over, recovery, false)?;
+        let (printed, location) = match (&at.location, &at.box_) {
+            (Some(location), _) => (String::new(), location.clone()),
+            (None, Some(boxed)) => {
+                let asked = OperationAsked {
+                    action: "rect",
+                    arguments: vec![("box", Value::text(boxed))],
+                    inputs: vec![("image", "--image", at.image.as_str())],
+                    request_id: None,
+                };
+                let printed = door::operation(&executor, &asked)?;
+                let made = printed
+                    .lines()
+                    .find_map(|line| line.strip_prefix("location "))
+                    .ok_or_else(|| "rect made no location".to_owned())?
+                    .to_owned();
+                (printed, made)
+            }
+            (None, None) => return Err("give one of --location and --box".to_owned()),
+        };
+        let mut inputs = vec![
+            ("image", "--image", at.image.as_str()),
+            ("location", "--location", location.as_str()),
+        ];
+        if let Some(protect) = protect {
+            inputs.push(("protect", "--protect", protect));
+        }
+        let mut arguments = Vec::new();
+        if let Some(backend) = self.backend {
+            arguments.push(("backend", Value::text(backend)));
+        }
+        arguments.extend(self.steps.arguments());
+        let asked = OperationAsked {
+            action: self.action,
+            arguments,
+            inputs,
+            request_id: common.request_id.as_deref(),
+        };
+        let ran = door::recipe(&executor, &asked, common.at.root())?;
+        Ok(printed + &ran)
     }
 }
 

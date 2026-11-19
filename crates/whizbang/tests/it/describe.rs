@@ -115,6 +115,12 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
         [
             "check",
             "remove_prompt",
+            "remove",
+            "repair_area",
+            "mask_rect",
+            "protect",
+            "repair",
+            "seam",
             "source-fidelity",
             "reference-consistency",
             "reality-checks",
@@ -140,7 +146,19 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
             "put",
             "window",
             "unwindow",
-            "apply"
+            "apply",
+            "line",
+            "rect",
+            "stroke",
+            "rasterize",
+            "shrink",
+            "invert",
+            "tighten",
+            "inspect",
+            "fan",
+            "profile",
+            "ramp",
+            "measure"
         ]
     );
     let kinds: Vec<&str> = doc["actions"]
@@ -149,10 +167,10 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
         .iter()
         .map(|action| action["kind"].as_str().expect("a kind"))
         .collect();
-    // `check`, `remove_prompt` and the five use cases' recipes (plan m3, task Q1).
-    assert_eq!(kinds[..7], ["recipe"; 7]);
+    // `check`, rascal's seven recipes and the five use cases' (plan m3, task Q1).
+    assert_eq!(kinds[..13], ["recipe"; 13]);
     assert!(
-        kinds[7..].iter().all(|kind| *kind == "primitive"),
+        kinds[13..].iter().all(|kind| *kind == "primitive"),
         "{kinds:?}"
     );
     // `check` says what it needs: a judge. Whether one is there is no part of a
@@ -205,6 +223,12 @@ fn describe_without_json_names_the_build() {
         [
             "check",
             "remove_prompt",
+            "remove",
+            "repair_area",
+            "mask_rect",
+            "protect",
+            "repair",
+            "seam",
             "source-fidelity",
             "reference-consistency",
             "reality-checks",
@@ -230,7 +254,19 @@ fn describe_without_json_names_the_build() {
             "put",
             "window",
             "unwindow",
-            "apply"
+            "apply",
+            "line",
+            "rect",
+            "stroke",
+            "rasterize",
+            "shrink",
+            "invert",
+            "tighten",
+            "inspect",
+            "fan",
+            "profile",
+            "ramp",
+            "measure"
         ],
         "{text}"
     );
@@ -457,15 +493,83 @@ fn a_tool_without_a_record_cannot_be_unverified_or_admitted() {
     // The same tool, its record not among those compiled in: no mark at all.
     assert_eq!(of_among(&[("t", record)], "t"), Some(Mark::Admitted));
     assert_eq!(of_among(&[("u", record)], "t"), None);
-    // The actions that ship without a record have none, and show none.
-    for tool in ["check", "feather", "plug", "render", "segment", "select"] {
-        assert!(record_of(tool).is_none(), "{tool} has a record now");
+    // An action that ships without a record has none, and shows none.
+    assert!(record_of("check").is_none(), "check has a record now");
+    assert_eq!(of("check"), None);
+    // Rascal's records (plan m3, task D1) are not squint's: they give no mark here, and
+    // `segment` and `fill`, experimental by theirs, run only when named either way.
+    for tool in ["feather", "fill", "plug", "render", "segment", "select"] {
+        assert!(record_of(tool).is_some(), "{tool} has no record");
         assert_eq!(of(tool), None, "{tool}");
     }
     // A record whose part states no mark (a control, a pixel operation) gives none.
     assert_eq!(of("view"), None);
     assert!(stated("# t\n\n## Mark and history\n\n**Mark.** None: a control.\n").is_none());
     assert!(stated("# t\n\n## Limits\n\n**Unverified**\n").is_none());
+}
+
+/// Plan m3, task D2: every one of rascal's pixel operations, and every task, that needs no
+/// model has its record, and the record shows rungs 1 and 2. Rascal's operations are
+/// [`RASCAL`]; the tasks are the recipes; what needs a model is what the description says
+/// needs a capability (the tasks that call `segment` or `fill`), whose rung 2 is task B1's.
+/// The description is the reference's copy, which other tests hold to the binary's.
+#[test]
+fn each_pixel_operation_and_task_without_a_model_shows_its_record_complete() {
+    let doc: serde_json::Value = serde_json::from_str(indented_description()).expect("valid JSON");
+    let mut held = Vec::new();
+    for action in doc["actions"].as_array().unwrap() {
+        let name = action["name"].as_str().unwrap();
+        let rascals = action["kind"] == "recipe" || RASCAL.contains(&name);
+        if !rascals || !action["needs"].as_array().unwrap().is_empty() {
+            continue;
+        }
+        let record = record_of(name).unwrap_or_else(|| panic!("{name} has no record"));
+        let history = record
+            .split("\n## Mark and history\n")
+            .nth(1)
+            .unwrap_or_else(|| panic!("the record of {name} has no history"));
+        for rung in [
+            "| 1. Single examples | Shown |",
+            "| 2. Scored alone | Shown |",
+        ] {
+            let shown = history.lines().any(|line| line.starts_with(rung));
+            assert!(shown, "the record of {name} does not show {rung}");
+        }
+        held.push(name);
+    }
+    held.sort_unstable();
+    assert_eq!(
+        held,
+        [
+            "apply",
+            "close",
+            "cut",
+            "fan",
+            "feather",
+            "grow",
+            "inspect",
+            "invert",
+            "line",
+            "mask_rect",
+            "measure",
+            "paste",
+            "plug",
+            "profile",
+            "protect",
+            "put",
+            "ramp",
+            "rasterize",
+            "rect",
+            "render",
+            "select",
+            "shrink",
+            "stroke",
+            "subtract",
+            "tighten",
+            "unwindow",
+            "window"
+        ]
+    );
 }
 
 #[test]
@@ -568,4 +672,52 @@ fn the_five_use_cases_are_listed_as_recipes_first() {
             "{tool}"
         );
     }
+}
+
+// Rascal's operations, as its `crates/rascal-ops/src/lib.rs` registered them at the
+// commit `docs/sources.toml` pins (plan m3, task O5): each is an action here, under
+// its own name.
+const RASCAL: [&str; 25] = [
+    "rect",
+    "rasterize",
+    "render",
+    "cut",
+    "put",
+    "line",
+    "stroke",
+    "inspect",
+    "fan",
+    "profile",
+    "feather",
+    "ramp",
+    "apply",
+    "window",
+    "unwindow",
+    "paste",
+    "measure",
+    "grow",
+    "shrink",
+    "close",
+    "plug",
+    "subtract",
+    "select",
+    "invert",
+    "tighten",
+];
+
+#[test]
+fn each_of_rascals_25_operations_is_an_action() {
+    let (ok, text) = whizbang(&["describe", "--json"]);
+    assert!(ok);
+    let doc: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+    let names: Vec<&str> = (doc["actions"].as_array().expect("a list").iter())
+        .map(|action| action["name"].as_str().expect("a name"))
+        .collect();
+    let missing: Vec<&str> = RASCAL
+        .into_iter()
+        .filter(|name| !names.contains(name))
+        .collect();
+    assert!(missing.is_empty(), "not actions: {missing:?}");
+    let distinct: std::collections::BTreeSet<&str> = RASCAL.into_iter().collect();
+    assert_eq!(distinct.len(), 25);
 }

@@ -157,6 +157,14 @@
 //! directory. It never removes anything the current generation names, so a crash at any
 //! point leaves the store whole, with at worst some of what was to go still there.
 //!
+//! The writer does prune's first half itself, as it publishes (step 6 below; ADR 0036):
+//! the file of every older generation that nobody holds goes, by the same rule. So a
+//! store keeps the current generation's file and those that readers and holds share, and
+//! no trail of the others; a generation let go goes with the next publication. Content
+//! is prune's alone: a generation's file is the large part of what a writer leaves (it is
+//! the whole store's names, every time), and the content that only older generations
+//! named is a file for each change, once.
+//!
 //! # Publication
 //!
 //! 1. Each new payload is written to staging and synced, named by its digest
@@ -170,6 +178,11 @@
 //!    of a process runs at a time.
 //! 4. The new pointer is written to staging and synced, and renamed over `CURRENT`.
 //! 5. The root is synced.
+//! 6. The file of every generation older than the new one that nobody holds is removed,
+//!    each once it is taken alone, as prune removes it; their directory is not synced,
+//!    since a removal a crash undoes leaves an older file that the next publication or
+//!    prune removes again. Nothing here can fail the publication: it is durable already,
+//!    and what is not removed now is removed later. Content is left for prune.
 //!
 //! There are two guarantees, and they are reached at different steps:
 //!
@@ -315,15 +328,59 @@ impl Files {
     }
 
     /// The current generation.
+    ///
+    /// Nothing is held: the writer removes the file of a generation older than the current
+    /// one as it publishes the next ([`Files::remove_older_generations`]), so a file that
+    /// went between the reading of the pointer and the reading of the file is a pointer
+    /// that has moved on, and the pointer is read again. A file missing under a pointer
+    /// that has not moved is damage.
     fn snapshot(&self) -> Result<Generation> {
-        let number = self.current()?;
-        if number == 0 {
-            return Ok(Generation::empty());
+        loop {
+            let number = self.current()?;
+            if number == 0 {
+                return Ok(Generation::empty());
+            }
+            let found = if self.exists(&self.layout.generation(number))? {
+                self.generation(number)
+            } else {
+                Err(self.no_file(number))
+            };
+            match found {
+                Err(_) if self.current()? != number => continue,
+                found => return found,
+            }
         }
-        if !self.exists(&self.layout.generation(number))? {
-            return Err(self.no_file(number));
+    }
+
+    /// Removes the file of every generation older than `current` that nobody shares, and
+    /// returns, each in order, the numbers removed and the numbers left because a reader
+    /// or a hold shares them. A file is removed only once it is taken alone: nobody shares
+    /// it then, and nobody can from there to its removal, since a reader that comes now
+    /// finds the name gone and reads the pointer again. The directory is not synced here.
+    /// Only the writer calls this, under the writer lock and with the publishing step held.
+    fn remove_older_generations(&self, current: u64) -> Result<(Vec<u64>, Vec<u64>)> {
+        let fs = self.fs.as_ref();
+        let generations = self.layout.generations();
+        let (mut removed, mut in_use) = (Vec::new(), Vec::new());
+        for file in fs
+            .list(&generations)
+            .map_err(Error::io("list", &generations))?
+        {
+            let Some(number) = generation_number(&file).filter(|n| *n < current) else {
+                continue;
+            };
+            match fs.try_alone(&file).map_err(Error::io("lock", &file))? {
+                Some(alone) => {
+                    fs.remove_all(&file).map_err(Error::io("remove", &file))?;
+                    drop(alone);
+                    removed.push(number);
+                }
+                None => in_use.push(number),
+            }
         }
-        self.generation(number)
+        removed.sort_unstable();
+        in_use.sort_unstable();
+        Ok((removed, in_use))
     }
 
     /// The pointer names a generation that has no file.
@@ -597,7 +654,8 @@ impl Files {
 ///
 /// A reader keeps the generation of its latest [`Reader::snapshot`] safe from a prune,
 /// with everything that generation names, until its next snapshot or until it is dropped:
-/// it shares the generation's file, and a prune removes only what nobody shares.
+/// it shares the generation's file, and a prune removes only what nobody shares. The
+/// writer's own removal of older generations as it publishes is held to the same rule.
 pub struct Reader {
     files: Files,
     /// The share of the generation of the latest snapshot.
@@ -1026,7 +1084,10 @@ impl Store {
             .map_err(Error::io("sync", root))
     }
 
-    /// The current generation.
+    /// The current generation. It holds nothing: its file goes as the next generation is
+    /// published, which takes nothing from what was read, since content goes by prune
+    /// alone; and a prune may remove what it names. What must stay is held with
+    /// [`Store::hold`].
     pub fn snapshot(&self) -> Result<Generation> {
         self.files.snapshot()
     }
@@ -1123,30 +1184,13 @@ impl Store {
         let mut pruned = Pruned::default();
 
         let generations = layout.generations();
-        for file in fs
-            .list(&generations)
-            .map_err(Error::io("list", &generations))?
-        {
-            let Some(number) = generation_number(&file).filter(|n| *n < current.number()) else {
-                continue;
-            };
-            // Taken alone, nobody shares it, and nobody can from here to its removal: a
-            // reader that comes now finds the name gone and reads the pointer again.
-            match fs.try_alone(&file).map_err(Error::io("lock", &file))? {
-                Some(alone) => {
-                    fs.remove_all(&file).map_err(Error::io("remove", &file))?;
-                    drop(alone);
-                    pruned.generations_removed.push(number);
-                }
-                None => {
-                    let held = files.generation(number)?;
-                    named.extend(held.references().map(|entry| entry.digest));
-                    pruned.generations_in_use.push(number);
-                }
-            }
+        let (removed, in_use) = files.remove_older_generations(current.number())?;
+        for &number in &in_use {
+            let held = files.generation(number)?;
+            named.extend(held.references().map(|entry| entry.digest));
         }
-        pruned.generations_removed.sort_unstable();
-        pruned.generations_in_use.sort_unstable();
+        pruned.generations_removed = removed;
+        pruned.generations_in_use = in_use;
         if !pruned.generations_removed.is_empty() {
             fs.sync_dir(&generations)
                 .map_err(Error::io("sync", &generations))?;
@@ -1653,6 +1697,10 @@ impl Publication<'_> {
                 generation: number,
                 source: Box::new(source),
             })?;
+        // 6. The files of older generations that nobody holds (ADR 0036). Content stays
+        // for prune. The new generation is durable by now, so this is clearing up: a
+        // failure here removes less and reports nothing, and prune still does it all.
+        let _ = files.remove_older_generations(number);
         Ok(Published { generation: number })
     }
 }

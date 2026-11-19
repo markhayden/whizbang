@@ -816,3 +816,190 @@ fn bytes_that_are_not_an_image_are_refused() {
         );
     }
 }
+
+// --- a caller's picture (plan m3, task O5) --------------------------------------------------
+
+/// Where each scan's data begins and the marker after it ends it.
+fn scans_of(jpeg: &[u8]) -> Vec<(usize, usize)> {
+    let mut found = Vec::new();
+    let mut at = 2;
+    while at + 4 <= jpeg.len() {
+        let code = jpeg[at + 1];
+        if code == 0xd9 {
+            break;
+        }
+        let size = usize::from(u16::from_be_bytes([jpeg[at + 2], jpeg[at + 3]]));
+        at += 2 + size;
+        if code == 0xda {
+            let start = at;
+            while !(jpeg[at] == 0xff && !matches!(jpeg[at + 1], 0x00 | 0xd0..=0xd7)) {
+                at += 1;
+            }
+            found.push((start, at));
+        }
+    }
+    found
+}
+
+#[test]
+fn a_jpeg_whose_scans_are_short_is_refused() {
+    let end = |mut bytes: Vec<u8>| {
+        bytes.extend_from_slice(&[0xff, 0xd9]);
+        bytes
+    };
+    let refused_as_short = |bytes: &[u8], what: &str| {
+        let result = identify(bytes, &limits());
+        assert!(
+            matches!(&result, Err(IdentityError::Image(why)) if why.contains("scan")),
+            "{what}: {result:?}"
+        );
+    };
+    for name in [
+        "jpeg-420",
+        "jpeg-444",
+        "jpeg-progressive",
+        "jpeg-grey",
+        "jpeg-restarts",
+        "jpeg-orientation-6",
+    ] {
+        let whole = vector(name);
+        identify(&whole, &limits()).unwrap();
+        let scans = scans_of(&whole);
+        assert!(!scans.is_empty(), "{name}");
+        for (start, stop) in &scans {
+            // A scan cut anywhere in its data, its end marker written after the cut.
+            for cut in *start..*stop {
+                refused_as_short(&end(whole[..cut].to_vec()), &format!("{name} cut at {cut}"));
+            }
+        }
+        // The last scan's header followed at once by the end marker: an empty scan.
+        let (start, _) = scans[scans.len() - 1];
+        refused_as_short(
+            &end(whole[..start].to_vec()),
+            &format!("{name}, an empty scan"),
+        );
+    }
+    // A progressive file that ends after any of its scans but the last: each scan was
+    // whole, and still the coefficients are not coded to their last bit.
+    let progressive = vector("jpeg-progressive");
+    let scans = scans_of(&progressive);
+    assert!(scans.len() > 2, "{}", scans.len());
+    for (_, stop) in &scans[..scans.len() - 1] {
+        refused_as_short(&end(progressive[..*stop].to_vec()), "an early end");
+    }
+}
+
+#[test]
+fn a_picture_with_a_grey_or_lookup_table_profile_is_read_as_its_adr_says() {
+    // ADR 0001, "A caller's picture" (task O5): a grey profile, a profile that works
+    // through lookup tables alone, a CMYK profile and a JPEG of four components are
+    // refused as unsupported, with no reading guessed, whoever hands the picture in.
+    let srgb = matrix_tags(&SRGB_COLORANTS, &Curve::SrgbParametric);
+    for (profile, what) in [
+        (
+            profile_of(b"GRAY", &[(*b"kTRC", vec![0; 12])]),
+            "a grey profile",
+        ),
+        (
+            profile_of(b"RGB ", &[(*b"A2B0", vec![0; 32])]),
+            "lookup tables alone",
+        ),
+        (profile_of(b"CMYK", &srgb), "a CMYK profile"),
+    ] {
+        let result = identify(&with_profile(profile), &limits());
+        assert!(
+            matches!(&result, Err(IdentityError::Unsupported(why)) if why.contains("colour profile")),
+            "{what}: {result:?}"
+        );
+    }
+    let grey_image = png(
+        WIDTH,
+        HEIGHT,
+        ExtendedColorType::L8,
+        &[7; 12],
+        Extras {
+            profile: Some(profile_of(b"GRAY", &[(*b"kTRC", vec![0; 12])])),
+            ..Extras::default()
+        },
+    );
+    assert!(matches!(
+        identify(&grey_image, &limits()),
+        Err(IdentityError::Unsupported(_))
+    ));
+    let cmyk = super::support::flat_jpeg(4, 8);
+    assert!(matches!(
+        identify(&cmyk, &limits()),
+        Err(IdentityError::Unsupported(why)) if why.contains("four")
+    ));
+    // Colour said outside a profile (a PNG's gamma and chromaticity) is not read: the
+    // samples are taken as sRGB, the picture is the one without the chunks.
+    let plain = RawPng::rgb(&picture_grid());
+    let mut chromaticity = Vec::new();
+    for v in [
+        31_270u32, 32_900, 64_000, 33_000, 30_000, 60_000, 15_000, 6_000,
+    ] {
+        chromaticity.extend_from_slice(&v.to_be_bytes());
+    }
+    let with_gamma = RawPng::rgb(&picture_grid())
+        .before(b"gAMA", 100_000u32.to_be_bytes().to_vec())
+        .before(b"cHRM", chromaticity);
+    assert_eq!(
+        identify(&with_gamma.bytes(), &limits())
+            .unwrap()
+            .identity
+            .pixels,
+        identify(&plain.bytes(), &limits()).unwrap().identity.pixels
+    );
+}
+
+#[test]
+fn the_walk_of_a_progressive_jpeg_built_to_be_slow_ends_inside_its_bound() {
+    // The review of task O5: a progressive JPEG of 1024 by 1024 in grey (16,384 blocks)
+    // whose scans after the first are refinements over every block, each an end-of-band
+    // run that reads almost no data. The walk passes over the blocks at most 16 times
+    // (`PASSES_MOST`), so the 17th such scan is refused as over a limit, and the whole
+    // walk, data-free steps and all, ends well inside a second.
+    let mut file = vec![0xff, 0xd8];
+    let mut segment = |marker: u8, payload: &[u8]| {
+        file.extend_from_slice(&[0xff, marker]);
+        file.extend_from_slice(&((payload.len() + 2) as u16).to_be_bytes());
+        file.extend_from_slice(payload);
+    };
+    let mut table = vec![0u8];
+    table.extend_from_slice(&[1; 64]);
+    segment(0xdb, &table);
+    segment(0xc2, &[8, 0x04, 0x00, 0x04, 0x00, 1, 1, 0x11, 0]);
+    // One code each: a DC difference of no bits, and an end-of-band run of 2^14 blocks.
+    let mut dc = vec![0x00, 1];
+    dc.extend_from_slice(&[0; 15]);
+    dc.push(0x00);
+    segment(0xc4, &dc);
+    let mut ac = vec![0x10, 1];
+    ac.extend_from_slice(&[0; 15]);
+    ac.push(0xe0);
+    segment(0xc4, &ac);
+    let mut scans = Vec::new();
+    // The DC scan: a zero bit for each block.
+    scans.push((vec![1, 1, 0x00, 0, 0, 0x00], vec![0u8; 2048]));
+    // Then refinements of 1 to 63, each one code and fourteen bits of zero, padded.
+    for _ in 0..40 {
+        scans.push((vec![1, 1, 0x00, 1, 63, 0x10], vec![0x00, 0x01]));
+    }
+    for (header, data) in scans {
+        let mut sos = header;
+        sos[0] = 1;
+        file.extend_from_slice(&[0xff, 0xda]);
+        file.extend_from_slice(&((sos.len() + 2) as u16).to_be_bytes());
+        file.extend_from_slice(&sos);
+        file.extend_from_slice(&data);
+    }
+    file.extend_from_slice(&[0xff, 0xd9]);
+    let started = std::time::Instant::now();
+    let result = identify(&file, &limits());
+    let took = started.elapsed();
+    assert!(
+        matches!(&result, Err(IdentityError::Limit(why)) if why.contains("16 times")),
+        "{result:?}"
+    );
+    assert!(took < std::time::Duration::from_secs(1), "{took:?}");
+}

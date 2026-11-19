@@ -134,3 +134,38 @@ fn plain_is_the_masks_weight_in_grey() {
         rendering.id()
     );
 }
+
+#[test]
+fn the_ported_vectors_give_rascals_grey() {
+    // Rascal's world (`crates/rascal-ops/tests/it/render.rs` at the commit
+    // `docs/sources.toml` pins): 8 by 4, the core at columns 2 and 3, a blend of 51 at
+    // column 4 and 128 at column 5, protect at (3, 1) and (5, 2). Rascal's `grey` is
+    // `plain`: 255 times the weight, rounded, which is the byte itself.
+    let (_, image) = picture(8, 4);
+    let mut mask = Mask::from_core(
+        image.binding(),
+        UseCase::Custom,
+        plane(8, 4, |x, _| (2..4).contains(&x)),
+        Source::default(),
+        made_by("fixture"),
+    )
+    .unwrap();
+    let blend = (0..32).map(|at| match at % 8 {
+        4 => 51,
+        5 => 128,
+        _ => 0,
+    });
+    mask.set_blend(blend.collect()).unwrap();
+    mask.protect_union(&plane(8, 4, |x, y| (x, y) == (3, 1) || (x, y) == (5, 2)))
+        .unwrap();
+    let grey = whizbang_rascal::render::plain(&mask);
+    let rows: Vec<&[u8]> = grey.chunks(8).collect();
+    assert_eq!(rows[0], [0, 0, 255, 255, 51, 128, 0, 0]);
+    assert_eq!(rows[1], [0, 0, 255, 0, 51, 128, 0, 0]);
+    assert_eq!(rows[2], [0, 0, 255, 255, 51, 0, 0, 0]);
+    for (at, byte) in grey.iter().enumerate() {
+        let (x, y) = ((at % 8) as u32, (at / 8) as u32);
+        let weight = mask.weight(x, y).unwrap();
+        assert_eq!(*byte, (255.0 * weight).round() as u8, "({x}, {y})");
+    }
+}

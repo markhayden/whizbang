@@ -43,7 +43,7 @@ pub const VERSION: &str = "1.0.0";
 pub const MASKS_MAX: u32 = 64;
 
 /// The use cases a call may record, by name.
-const USE_CASES: [(&str, UseCase); 5] = [
+pub(crate) const USE_CASES: [(&str, UseCase); 5] = [
     ("seam", UseCase::Seam),
     ("remove", UseCase::Remove),
     ("repair", UseCase::Repair),

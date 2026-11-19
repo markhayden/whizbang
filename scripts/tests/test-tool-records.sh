@@ -51,6 +51,21 @@ for tool in per_subject change_map edge_similarity; do
   sed -n '/^## Rung 2 results$/,/^## Speed and cost$/p' "docs/reference/tools/$tool.md" |
     grep -E '^auc = [0-9]' >/dev/null || fail "the record of $tool holds no rung 2 numbers"
 done
+# The records of plan m3, tasks D1 and D2 (both pull requests of each): each states rungs 1
+# and 2 in its table under "Mark and history", and the fast tests hold its examples and
+# numbers (crates/whizbang-rascal/tests/it/tool_records/). `fill` and `segment` are
+# model-based: their rung 2 is task B1's, so their records state rung 1 alone.
+for tool in close subtract line rect stroke paste fill mask_rect protect segment select plug feather render \
+  rasterize shrink invert inspect cut put window unwindow tighten fan profile ramp apply measure; do
+  record="docs/reference/tools/$tool.md"
+  [ -f "$record" ] || fail "the record of $tool is missing"
+  history=$(sed -n '/^## Mark and history$/,$p' "$record")
+  printf '%s\n' "$history" | grep -E '^\| 1\. Single examples \| Shown \|' >/dev/null ||
+    fail "the record of $tool does not show rung 1"
+  case $tool in fill | segment) continue ;; esac
+  printf '%s\n' "$history" | grep -E '^\| 2\. Scored alone \| Shown \|' >/dev/null ||
+    fail "the record of $tool does not show rung 2"
+done
 for record in docs/reference/tools/*.md; do
   wrong=$(shape "$record")
   [ -z "$wrong" ] || fail "$wrong"

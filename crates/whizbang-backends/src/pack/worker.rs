@@ -1123,7 +1123,15 @@ impl Worker {
                         "the pack's worker had not stopped the cancelled request by the end of its wait and was killed".to_owned(),
                     ),
                 };
-                let fault = stage(Fault::new(kind, &words), &taken);
+                // The count of the bytes the pipe took is final once the writer is done
+                // with the request, which the kill above makes it be, and which `finish`
+                // waits for. A writer still in the request past that wait may yet have
+                // written some of it: no byte can be said not to have left.
+                let fault = Fault::new(kind, &words);
+                let fault = match written.try_recv() {
+                    Err(TryRecvError::Empty) if wrote.is_none() => fault.unresolved(),
+                    _ => stage(fault, &taken),
+                };
                 // Ended at the caller's deadline or cancel, or with its supervisor, the
                 // worker is not counted as one that fails at its start.
                 let counts = !cancel_sent && why == WaitEnd::Limit;

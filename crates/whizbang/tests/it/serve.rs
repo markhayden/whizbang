@@ -301,6 +301,12 @@ fn initialize_lists_each_recipe_before_the_primitives() {
         [
             "check",
             "remove_prompt",
+            "remove",
+            "repair_area",
+            "mask_rect",
+            "protect",
+            "repair",
+            "seam",
             "source-fidelity",
             "reference-consistency",
             "reality-checks",
@@ -710,4 +716,102 @@ fn end_of_input_ends_the_tool_workers_group_with_a_child_holding_its_pipes() {
     assert!(!lives, "the tool's child {child} outlived the server");
     assert_eq!(tools.worker.tool_pid(), None);
     assert!(whizbang_testkit::worker::pack_children().is_empty());
+}
+
+#[test]
+fn a_client_names_a_picture_by_its_identity_in_the_store_and_never_by_a_path_or_its_bytes() {
+    // Plan m3, task O5 (pictures from callers): over MCP a client passes a picture, or
+    // any artifact, as its identity in the store, `sha256:` and 64 hex digits, and
+    // nothing else. No tool takes a path, a file's bytes or base64; a picture comes
+    // into the store by `whizbang store import`, on the command line, alone.
+    let (_dir, _executor, door) = waiting("serve-pictures");
+    let registry = whizbang::wiring::registry().unwrap();
+    let identity = json!("^sha256:[0-9a-f]{64}$");
+    for tool in door.tools() {
+        let properties = tool.schema["properties"].as_object().unwrap();
+        assert_eq!(tool.schema["additionalProperties"], false, "{}", tool.name);
+        // `check` is offered in a shape of its own, held below.
+        let found = registry.descriptors().find(|d| d.name() == tool.name);
+        let Some(descriptor) = found.filter(|_| tool.name != "check") else {
+            continue;
+        };
+        for port in descriptor.inputs() {
+            let schema = &properties[port.name()];
+            let pattern = schema.get("pattern").or(schema["items"].get("pattern"));
+            assert_eq!(pattern, Some(&identity), "{}: {}", tool.name, port.name());
+        }
+        for argument in descriptor.arguments() {
+            let name = argument.name();
+            // (A `path` of `line` and `stroke` is points on the picture, not a file's.)
+            let words = ["file", "dir", "folder", "base64", "bytes", "url"];
+            assert!(
+                !name.split('_').any(|part| words.contains(&part)),
+                "{}: {name}",
+                tool.name
+            );
+        }
+    }
+    let check = door
+        .tools()
+        .into_iter()
+        .find(|t| t.name == "check")
+        .unwrap();
+    let image = &check.schema["properties"]["images"]["items"];
+    let keys: Vec<&str> = image["properties"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(keys, ["id", "label", "role"]);
+    assert_eq!(image["additionalProperties"], false);
+    assert_eq!(image["properties"]["id"]["pattern"], identity);
+    // A path, a data address or base64 where an identity belongs is refused before a
+    // run, and so is a property no tool has.
+    let call = |name: &str, arguments: Json| door.call(name, arguments.as_object().unwrap());
+    let digest = format!("sha256:{}", "0".repeat(64));
+    for after in [
+        "/etc/hosts",
+        "data:image/png;base64,iVBORw0KGgo=",
+        "aVZCT1J3MEtHZ289",
+    ] {
+        let refused = call("measure", json!({"after": after, "mask": digest})).unwrap_err();
+        assert!(refused.contains("no artifact identity"), "{refused}");
+        assert!(!refused.contains(after), "{refused}");
+    }
+    let refused = call(
+        "measure",
+        json!({"after": digest, "mask": digest, "picture": "aVZCT1J3MEtHZ289"}),
+    )
+    .unwrap_err();
+    assert!(refused.contains("does not take"), "{refused}");
+    for picture in [
+        json!({"path": "/etc/hosts", "role": "candidate"}),
+        json!({"id": digest, "role": "candidate", "base64": "aVZCT1J3MEtHZ289"}),
+        json!({"id": "/etc/hosts", "role": "candidate"}),
+    ] {
+        let refused = call(
+            "check",
+            json!({"use_case": "reality-checks", "images": [picture]}),
+        )
+        .unwrap_err();
+        assert!(refused.starts_with("images 1:"), "{refused}");
+        assert!(!refused.contains("/etc/hosts"), "{refused}");
+    }
+}
+
+#[test]
+fn a_request_id_reserved_for_a_labs_cells_is_refused_and_nothing_runs() {
+    let (_dir, executor, door) = waiting("serve-reserved");
+    let mut client = Client::new(executor, door, Limits::default());
+    client.initialized();
+    let id = "cell.lab-0123456789ab-0123456789abcdef.0123abcd.1";
+    client.call(1, "deaf", json!({"request_id": id}), None);
+    let mut notes = Vec::new();
+    let answer = client.answer(1, &mut notes);
+    let (text, error) = result_text(&answer);
+    assert!(error, "{answer}");
+    assert!(text.contains("reserved for the cells of a lab"), "{text}");
+    assert!(notes.is_empty(), "{notes:?}");
+    drop(client.close());
 }

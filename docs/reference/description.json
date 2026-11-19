@@ -1,11 +1,11 @@
 {
-  "description_version": 9,
+  "description_version": 8,
   "name": "whizbang",
   "version": "0.0.1",
   "actions": [
     {
       "name": "check",
-      "version": "1.6.0",
+      "version": "1.5.0",
       "kind": "recipe",
       "purpose": "Has a judge look at images through evidence tools and conclude: pass, fail or unsure.",
       "arguments": [
@@ -95,25 +95,6 @@
           "default": "off"
         },
         {
-          "name": "measured",
-          "purpose": "What an earlier step of a recipe measured first, bound to its measurements alone: said to the judge before its first turn once held to the runs that made it.",
-          "type": {
-            "type": "text"
-          },
-          "required": false,
-          "default": null,
-          "measurements": true
-        },
-        {
-          "name": "recipe_digest",
-          "purpose": "The digest of the recipe this run is a step of, which a recipe gives: kept in the decision cache's key.",
-          "type": {
-            "type": "text"
-          },
-          "required": false,
-          "default": null
-        },
-        {
           "name": "cell",
           "purpose": "The cell of an evaluation matrix this run is, kept in its record: the matrix, set, item, judge, arm, repetition and attempt. check does not read it.",
           "type": {
@@ -144,22 +125,9 @@
             "max": 10
           },
           "belongs_to": null
-        },
-        {
-          "name": "measured_images",
-          "artifact": "image",
-          "purpose": "The images an earlier step measured first, as it handed them on: aligned frames, maps and tiles.",
-          "count": {
-            "min": 0,
-            "max": 32
-          },
-          "belongs_to": null
         }
       ],
       "outputs": [],
-      "results": [
-        "verdict"
-      ],
       "needs": [
         {
           "capability": "judge",
@@ -282,24 +250,15 @@
       "concurrent": true
     },
     {
-      "name": "source-fidelity",
+      "name": "remove",
       "version": "1.0.0",
       "kind": "recipe",
-      "purpose": "Checks whether an edit kept what mattered in its source: details measured first, then the judge.",
-      "use": "To hold an edited picture to the picture it was edited from.",
+      "purpose": "Removes the thing at a location: the mask grown, closed, plugged, kept off protect and feathered, then filled.",
+      "use": "To remove a thing whose place you know, as a box, a polygon or a stroke; give protect to keep what the mask would reach.",
       "arguments": [
         {
-          "name": "job",
-          "purpose": "The input job of the recipe.",
-          "type": {
-            "type": "text"
-          },
-          "required": true,
-          "default": null
-        },
-        {
-          "name": "judge",
-          "purpose": "The input judge of the recipe.",
+          "name": "backend",
+          "purpose": "The input backend of the recipe.",
           "type": {
             "type": "text"
           },
@@ -321,8 +280,13 @@
           "type": {
             "type": "choice",
             "choices": [
-              "details",
-              "judge"
+              "rasterize",
+              "grow",
+              "close",
+              "plug",
+              "subtract",
+              "feather",
+              "fill"
             ]
           },
           "required": false,
@@ -331,54 +295,90 @@
       ],
       "inputs": [
         {
-          "name": "images",
+          "name": "image",
           "artifact": "image",
-          "purpose": "The input images of the recipe.",
+          "purpose": "The input image of the recipe.",
           "count": {
             "min": 1,
-            "max": null
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "location",
+          "artifact": "location",
+          "purpose": "The input location of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "protect",
+          "artifact": "mask",
+          "purpose": "The input protect of the recipe.",
+          "count": {
+            "min": 0,
+            "max": 1
           },
           "belongs_to": null
         }
       ],
-      "outputs": [],
-      "results": [
-        "verdict"
+      "outputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The output image of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": {
+            "not_given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The output mask of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": {
+            "not_given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
       ],
       "needs": [
         {
-          "capability": "judge",
-          "features": [
-            "image",
-            "tool"
-          ],
+          "capability": "fill",
+          "features": [],
           "when": "always",
-          "chosen_by": "judge",
+          "chosen_by": "backend",
           "feature_from": null,
-          "requests": 16
+          "requests": 1
         }
       ],
       "concurrent": true
     },
     {
-      "name": "reference-consistency",
+      "name": "repair_area",
       "version": "1.0.0",
       "kind": "recipe",
-      "purpose": "Checks whether a subject of the references appears faithfully: details measured first, then the judge.",
-      "use": "To hold a picture to one to eight references of the same subject.",
+      "purpose": "Repairs a stain or a spot at a location: the box or polygon as drawn, feathered, then filled.",
+      "use": "To repaint a small area whose place you know, keeping its edges as drawn.",
       "arguments": [
         {
-          "name": "job",
-          "purpose": "The input job of the recipe.",
-          "type": {
-            "type": "text"
-          },
-          "required": true,
-          "default": null
-        },
-        {
-          "name": "judge",
-          "purpose": "The input judge of the recipe.",
+          "name": "backend",
+          "purpose": "The input backend of the recipe.",
           "type": {
             "type": "text"
           },
@@ -400,8 +400,9 @@
           "type": {
             "type": "choice",
             "choices": [
-              "details",
-              "judge"
+              "rasterize",
+              "feather",
+              "fill"
             ]
           },
           "required": false,
@@ -410,45 +411,80 @@
       ],
       "inputs": [
         {
-          "name": "images",
+          "name": "image",
           "artifact": "image",
-          "purpose": "The input images of the recipe.",
+          "purpose": "The input image of the recipe.",
           "count": {
             "min": 1,
-            "max": null
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "location",
+          "artifact": "location",
+          "purpose": "The input location of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
           },
           "belongs_to": null
         }
       ],
-      "outputs": [],
-      "results": [
-        "verdict"
+      "outputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The output image of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": {
+            "not_given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The output mask of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": {
+            "not_given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
       ],
       "needs": [
         {
-          "capability": "judge",
-          "features": [
-            "image",
-            "tool"
-          ],
+          "capability": "fill",
+          "features": [],
           "when": "always",
-          "chosen_by": "judge",
+          "chosen_by": "backend",
           "feature_from": null,
-          "requests": 16
+          "requests": 1
         }
       ],
       "concurrent": true
     },
     {
-      "name": "reality-checks",
+      "name": "mask_rect",
       "version": "1.0.0",
       "kind": "recipe",
-      "purpose": "Checks a picture for mistakes no real photograph would make: details measured first, then the judge.",
-      "use": "To look for the marks of a made or edited picture with no other picture to hold it to.",
+      "purpose": "Makes a rectangle on an image a mask: the box's pixels the core, no blend and nothing protected.",
+      "use": "To mask a known box, such as a caller's coordinates or a detector's box, with no model.",
       "arguments": [
         {
-          "name": "job",
-          "purpose": "The input job of the recipe.",
+          "name": "box",
+          "purpose": "The input box of the recipe.",
           "type": {
             "type": "text"
           },
@@ -456,8 +492,141 @@
           "default": null
         },
         {
-          "name": "judge",
-          "purpose": "The input judge of the recipe.",
+          "name": "set",
+          "purpose": "Overrides for this run, one to a line: a step, a dot, an argument, an equals sign and a value.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "until",
+          "purpose": "Runs the recipe up to and including this step, and hands back none of its own outputs.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "rect",
+              "rasterize"
+            ]
+          },
+          "required": false,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The input image of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The output mask of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": {
+            "not_given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "protect",
+      "version": "1.0.0",
+      "kind": "recipe",
+      "purpose": "Makes the mask for a second pass: what the first mask reached is protected, the rest of the image the core.",
+      "use": "After a fill, to edit the rest of its composite while keeping the first edit; give the mask the fill handed back.",
+      "arguments": [
+        {
+          "name": "set",
+          "purpose": "Overrides for this run, one to a line: a step, a dot, an argument, an equals sign and a value.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "until",
+          "purpose": "Runs the recipe up to and including this step, and hands back none of its own outputs.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "invert"
+            ]
+          },
+          "required": false,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The input image of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The input mask of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The output mask of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": {
+            "not_given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "repair",
+      "version": "1.0.0",
+      "kind": "recipe",
+      "purpose": "Repairs a scratch or a tear along a stroke: the stroke tightened to the defect's edges, feathered, then filled.",
+      "use": "To repaint a thin defect a person marked roughly with a brush.",
+      "arguments": [
+        {
+          "name": "backend",
+          "purpose": "The input backend of the recipe.",
           "type": {
             "type": "text"
           },
@@ -479,8 +648,9 @@
           "type": {
             "type": "choice",
             "choices": [
-              "details",
-              "judge"
+              "tighten",
+              "feather",
+              "fill"
             ]
           },
           "required": false,
@@ -489,54 +659,80 @@
       ],
       "inputs": [
         {
-          "name": "images",
+          "name": "image",
           "artifact": "image",
-          "purpose": "The input images of the recipe.",
+          "purpose": "The input image of the recipe.",
           "count": {
             "min": 1,
-            "max": null
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "stroke",
+          "artifact": "location",
+          "purpose": "The input stroke of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
           },
           "belongs_to": null
         }
       ],
-      "outputs": [],
-      "results": [
-        "verdict"
+      "outputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The output image of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": {
+            "not_given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The output mask of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": {
+            "not_given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
       ],
       "needs": [
         {
-          "capability": "judge",
-          "features": [
-            "image",
-            "tool"
-          ],
+          "capability": "fill",
+          "features": [],
           "when": "always",
-          "chosen_by": "judge",
+          "chosen_by": "backend",
           "feature_from": null,
-          "requests": 16
+          "requests": 1
         }
       ],
       "concurrent": true
     },
     {
-      "name": "brief-compliance",
+      "name": "seam",
       "version": "1.0.0",
       "kind": "recipe",
-      "purpose": "Checks whether a picture holds what its brief asked for and nothing it forbade: details first, then the judge.",
-      "use": "To hold a picture to a brief in words, with or without references.",
+      "purpose": "Heals the wrap edge of a panorama: the band along the seam measured, its tone step ramped, then filled and put back.",
+      "use": "On a complete panorama whose left and right edges do not meet; give backend to choose the filler.",
       "arguments": [
         {
-          "name": "job",
-          "purpose": "The input job of the recipe.",
-          "type": {
-            "type": "text"
-          },
-          "required": true,
-          "default": null
-        },
-        {
-          "name": "judge",
-          "purpose": "The input judge of the recipe.",
+          "name": "backend",
+          "purpose": "The input backend of the recipe.",
           "type": {
             "type": "text"
           },
@@ -558,8 +754,14 @@
           "type": {
             "type": "choice",
             "choices": [
-              "details",
-              "judge"
+              "cut",
+              "line",
+              "fan",
+              "band",
+              "ramp",
+              "apply",
+              "fill",
+              "put"
             ]
           },
           "required": false,
@@ -568,110 +770,56 @@
       ],
       "inputs": [
         {
-          "name": "images",
+          "name": "image",
           "artifact": "image",
-          "purpose": "The input images of the recipe.",
+          "purpose": "The input image of the recipe.",
           "count": {
             "min": 1,
-            "max": null
+            "max": 1
           },
           "belongs_to": null
         }
       ],
-      "outputs": [],
-      "results": [
-        "verdict"
-      ],
-      "needs": [
+      "outputs": [
         {
-          "capability": "judge",
-          "features": [
-            "image",
-            "tool"
-          ],
-          "when": "always",
-          "chosen_by": "judge",
-          "feature_from": null,
-          "requests": 16
-        }
-      ],
-      "concurrent": true
-    },
-    {
-      "name": "product-fidelity",
-      "version": "1.0.0",
-      "kind": "recipe",
-      "purpose": "Checks whether a product shot keeps the exact product of its references: details first, then the judge.",
-      "use": "To hold a product shot to references of the product.",
-      "arguments": [
-        {
-          "name": "job",
-          "purpose": "The input job of the recipe.",
-          "type": {
-            "type": "text"
-          },
-          "required": true,
-          "default": null
-        },
-        {
-          "name": "judge",
-          "purpose": "The input judge of the recipe.",
-          "type": {
-            "type": "text"
-          },
-          "required": false,
-          "default": null
-        },
-        {
-          "name": "set",
-          "purpose": "Overrides for this run, one to a line: a step, a dot, an argument, an equals sign and a value.",
-          "type": {
-            "type": "text"
-          },
-          "required": false,
-          "default": null
-        },
-        {
-          "name": "until",
-          "purpose": "Runs the recipe up to and including this step, and hands back none of its own outputs.",
-          "type": {
-            "type": "choice",
-            "choices": [
-              "details",
-              "judge"
-            ]
-          },
-          "required": false,
-          "default": null
-        }
-      ],
-      "inputs": [
-        {
-          "name": "images",
+          "name": "image",
           "artifact": "image",
-          "purpose": "The input images of the recipe.",
+          "purpose": "The output image of the recipe.",
           "count": {
             "min": 1,
-            "max": null
+            "max": 1
           },
-          "belongs_to": null
+          "when": {
+            "not_given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The output mask of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": {
+            "not_given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
         }
-      ],
-      "outputs": [],
-      "results": [
-        "verdict"
       ],
       "needs": [
         {
-          "capability": "judge",
-          "features": [
-            "image",
-            "tool"
-          ],
+          "capability": "fill",
+          "features": [],
           "when": "always",
-          "chosen_by": "judge",
+          "chosen_by": "backend",
           "feature_from": null,
-          "requests": 16
+          "requests": 1
         }
       ],
       "concurrent": true
@@ -719,9 +867,6 @@
           "rebound_onto": null
         }
       ],
-      "results": [
-        "measurements"
-      ],
       "needs": [],
       "concurrent": true
     },
@@ -768,9 +913,6 @@
           "rebound_onto": null
         }
       ],
-      "results": [
-        "measurements"
-      ],
       "needs": [],
       "concurrent": true
     },
@@ -803,96 +945,6 @@
         }
       ],
       "outputs": [],
-      "results": [
-        "measurements"
-      ],
-      "needs": [],
-      "concurrent": true
-    },
-    {
-      "name": "details",
-      "version": "1.0.0",
-      "kind": "primitive",
-      "purpose": "Measures the details of a use case's images before its judge looks, and hands on what each tool found.",
-      "arguments": [
-        {
-          "name": "use_case",
-          "purpose": "The use case of the table whose pairs are measured.",
-          "type": {
-            "type": "choice",
-            "choices": [
-              "source-fidelity",
-              "reference-consistency",
-              "reality-checks",
-              "brief-compliance",
-              "product-fidelity"
-            ]
-          },
-          "required": true,
-          "default": null
-        },
-        {
-          "name": "job",
-          "purpose": "The job in the contract job/1: its images in the order of the inputs, with their roles.",
-          "type": {
-            "type": "text"
-          },
-          "required": true,
-          "default": null
-        },
-        {
-          "name": "details",
-          "purpose": "none, which measures nothing, or first.",
-          "type": {
-            "type": "choice",
-            "choices": [
-              "none",
-              "first"
-            ]
-          },
-          "required": false,
-          "default": "first"
-        },
-        {
-          "name": "detail",
-          "purpose": "The details measured, separated by commas: align and the two comparisons that run align first, for each pair; or tiles, for a job with one image.",
-          "type": {
-            "type": "text"
-          },
-          "required": false,
-          "default": "align"
-        }
-      ],
-      "inputs": [
-        {
-          "name": "images",
-          "artifact": "image",
-          "purpose": "The job's images, in its order.",
-          "count": {
-            "min": 1,
-            "max": 10
-          },
-          "belongs_to": null
-        }
-      ],
-      "outputs": [
-        {
-          "name": "images",
-          "artifact": "image",
-          "purpose": "The images the details made, in the order the measurements name them: aligned frames, maps and tiles.",
-          "count": {
-            "min": 0,
-            "max": 32
-          },
-          "when": "always",
-          "belongs_to": null,
-          "derived_from": null,
-          "rebound_onto": null
-        }
-      ],
-      "results": [
-        "measurements"
-      ],
       "needs": [],
       "concurrent": true
     },
@@ -1371,9 +1423,9 @@
     },
     {
       "name": "subtract",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "kind": "primitive",
-      "purpose": "Protects the pixels of a second mask, grown by a margin; with none the mask is handed back unchanged.",
+      "purpose": "Protects the pixels of a second mask or a location, grown by a margin; with neither the mask is unchanged.",
       "arguments": [
         {
           "name": "grow_px",
@@ -1402,6 +1454,16 @@
           "name": "subtract",
           "artifact": "mask",
           "purpose": "A mask on the same image whose core and blend become protect.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "location",
+          "artifact": "location",
+          "purpose": "A location on the same image whose inside becomes protect; not with subtract.",
           "count": {
             "min": 0,
             "max": 1
@@ -1526,15 +1588,29 @@
       "arguments": [
         {
           "name": "mode",
-          "purpose": "How the fill is pasted: feather, by the mask's core and blend.",
+          "purpose": "How the fill is pasted: feather, by the mask's core and blend; hard, on the core alone; poisson, by the fill's gradients.",
           "type": {
             "type": "choice",
             "choices": [
-              "feather"
+              "feather",
+              "hard",
+              "poisson"
             ]
           },
           "required": false,
           "default": "feather"
+        },
+        {
+          "name": "constants",
+          "purpose": "The constant set poisson takes its tolerance and its ceiling of iterations from.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "poisson-v1"
+            ]
+          },
+          "required": false,
+          "default": "poisson-v1"
         }
       ],
       "inputs": [
@@ -1734,7 +1810,7 @@
     },
     {
       "name": "put",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "kind": "primitive",
       "purpose": "Puts a cut's canvas back onto its panorama; nothing outside the two strips changes.",
       "arguments": [],
@@ -2008,6 +2084,1012 @@
           },
           "derived_from": null,
           "rebound_onto": "image"
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "line",
+      "version": "1.1.0",
+      "kind": "primitive",
+      "purpose": "A line location on an image: a whole column or a path, with its full width in pixels.",
+      "arguments": [
+        {
+          "name": "column",
+          "purpose": "The column, in pixels from the image's left edge, for a line from top to bottom.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 10000.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "column_share",
+          "purpose": "The column as a share of the image's width, from 0 to 1, in place of column: 0.5 is the middle.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 1.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "path",
+          "purpose": "Two or more points in pixels of the image, X Y, points apart by ;.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "width_px",
+          "purpose": "The line's full width in pixels, more than 0 and at most the image's diagonal.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 10000.0
+          },
+          "required": true,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image the line is on.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "location",
+          "artifact": "location",
+          "purpose": "The line location.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "image"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "rect",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "A box as a location on an image, from its left, top, right and bottom edges in pixels.",
+      "arguments": [
+        {
+          "name": "box",
+          "purpose": "The box in pixels of the image: left top right bottom, as segment prints a box.",
+          "type": {
+            "type": "text"
+          },
+          "required": true,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image the box is on.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "location",
+          "artifact": "location",
+          "purpose": "The box as a location.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "image"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "stroke",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "A stroke location on an image: a rough mark along a path, with a radius in pixels.",
+      "arguments": [
+        {
+          "name": "path",
+          "purpose": "Two or more points in pixels of the image, X Y, points apart by ;.",
+          "type": {
+            "type": "text"
+          },
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "radius_px",
+          "purpose": "The stroke's radius in pixels, more than 0 and at most the image's diagonal.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 10000.0
+          },
+          "required": true,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image the stroke is on.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "location",
+          "artifact": "location",
+          "purpose": "The stroke location.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "image"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "rasterize",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "A location's inside as the core of a new mask: a box or polygon as drawn, a line as a band, a stroke widened.",
+      "arguments": [
+        {
+          "name": "use_case",
+          "purpose": "What the mask is for, recorded on it.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "seam",
+              "remove",
+              "repair",
+              "protect",
+              "custom"
+            ]
+          },
+          "required": false,
+          "default": "custom"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "location",
+          "artifact": "location",
+          "purpose": "The location to rasterize.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": "image"
+        },
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image the location is on.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask whose core is the location's inside; no blend and nothing protected.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "image"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "shrink",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Shrinks the core of a mask by a disc; a core against the border shrinks from it too.",
+      "arguments": [
+        {
+          "name": "px",
+          "purpose": "The radius of the disc, in pixels of the mask's image, from 0 to 10000.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 10000.0
+          },
+          "required": true,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask whose core is shrunk.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask with the shrunk core, its blend cleared and its protect kept.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "invert",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "The mask for a second pass: what the first mask reached is protected, and every other pixel is the core.",
+      "arguments": [],
+      "inputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The first pass's mask, on the image.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": "image"
+        },
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image of the second pass: after a fill, its composite.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The second pass's mask: the first's reach protected, the rest the core.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "image"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "tighten",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Tightens a stroke to the defect's edges: at each sample the two strongest opposite edges inside the stroke bound the core.",
+      "arguments": [
+        {
+          "name": "min_contrast",
+          "purpose": "The least size of the luminance's derivative, in levels per pixel, an edge must have to count.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 255.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "min_defect_px",
+          "purpose": "The narrowest defect, in pixels between its two edges.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 10000.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "max_defect_factor",
+          "purpose": "The widest defect, as a multiple of the stroke's radius (2 is the whole stroke).",
+          "type": {
+            "type": "number",
+            "min": 0.01,
+            "max": 10.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "path_sigma",
+          "purpose": "The sigma, in samples, of the smoothing of the tightened extents along the path.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 1000.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "sample_spacing_px",
+          "purpose": "The spacing of the samples along the path, in pixels.",
+          "type": {
+            "type": "number",
+            "min": 0.25,
+            "max": 1000.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "constants",
+          "purpose": "The constant set a number is taken from when the call does not give it.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "tighten-v1"
+            ]
+          },
+          "required": false,
+          "default": "tighten-v1"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "stroke",
+          "artifact": "location",
+          "purpose": "The stroke, a location on the image.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": "image"
+        },
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image the edges are read from.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The tightened stroke as the core of a mask for a repair; no blend and nothing protected.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "image"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "inspect",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "A mask for the eye: the overlay on its image, the core's width on each row, and its counts in the journal.",
+      "arguments": [],
+      "inputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask to inspect.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": "image"
+        },
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image the mask is on, which the overlay is drawn on.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "overlay",
+          "artifact": "image",
+          "purpose": "The overlay, an image whose role is a rendering.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "widths",
+          "artifact": "series",
+          "purpose": "The core's width on each row of the image, in pixels.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "image"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "fan",
+      "version": "1.2.1",
+      "kind": "primitive",
+      "purpose": "Measures the band along a column line: a half-width for each row, wide on smooth surfaces where the sides differ, thin on detail.",
+      "arguments": [
+        {
+          "name": "object_edge",
+          "purpose": "The object cap: the luminance step between two columns, in levels, that counts as an object's edge; 0 turns the cap off.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 255.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "object_margin_px",
+          "purpose": "How far short of an object's edge the band stops, in pixels at the reference width.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 10000.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "tex_low",
+          "purpose": "The texture, in percent a pixel, at and under which the surface is wholly smooth.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 100.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "tex_high",
+          "purpose": "The texture at and over which the band stays at its least width.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 100.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "wide_max",
+          "purpose": "The widest half-width, as a share of the image's width; 0 keeps every row thin.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 0.5
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "thin_px",
+          "purpose": "The least half-width in pixels at the reference width, scaled by the image's width.",
+          "type": {
+            "type": "number",
+            "min": 0.5,
+            "max": 10000.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "row_sigma",
+          "purpose": "The smoothing of the two rulers along the rows, as a share of the height.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 1.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "width_sigma",
+          "purpose": "The smoothing of the half-width along the rows, as a share of the height.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 1.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "ref_width",
+          "purpose": "The image width the pixel constants were fitted at.",
+          "type": {
+            "type": "integer",
+            "min": 1,
+            "max": 1000000
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "gate",
+          "purpose": "Whether the tone step across the line gates the opening: a row whose sides agree stays thin.",
+          "type": {
+            "type": "boolean"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "constants",
+          "purpose": "The constant set the values a call does not give are taken from.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "fan-v3",
+              "fan-v1",
+              "fan-thin-v1",
+              "fan-v2"
+            ]
+          },
+          "required": false,
+          "default": "fan-v3"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image, which does not wrap: a cut's canvas, whose middle column is the seam.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "line",
+          "artifact": "location",
+          "purpose": "The line on the image, a whole column.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": "image"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "band",
+          "artifact": "band_profile",
+          "purpose": "The band profile.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "image"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "profile",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Makes the band mask of a band profile: the core at each row's half-width, the blend a feather whose sigma follows the row.",
+      "arguments": [
+        {
+          "name": "feather_ratio",
+          "purpose": "The feather's sigma of a row as a share of its half-width, from 0.05 to 2; unset, the constant set's.",
+          "type": {
+            "type": "number",
+            "min": 0.05,
+            "max": 2.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "constants",
+          "purpose": "The constant set the ratio is taken from when the call does not give it.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "profile-v1"
+            ]
+          },
+          "required": false,
+          "default": "profile-v1"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "band",
+          "artifact": "band_profile",
+          "purpose": "The band profile fan made.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The band mask, on the band's image, with the profile and its sigma kept.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "ramp",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Measures the colour step across a band mask's line, row by row, and adds it to the mask as a tone ramp for apply.",
+      "arguments": [
+        {
+          "name": "share",
+          "purpose": "The share of the step each side moves toward the other at the line, from 0 to 1; unset, the constant set's.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 1.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "ramp_sigma",
+          "purpose": "The smoothing of the step along the rows, as a share of the height, from 0 to 1; unset, the constant set's.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 1.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "constants",
+          "purpose": "The constant set the values a call does not give are taken from.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "ramp-v1"
+            ]
+          },
+          "required": false,
+          "default": "ramp-v1"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image the band was measured on.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The band mask on the image, with its band profile.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": "image"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask with the tone ramp added.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "image"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "measure",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Measures a seam or a composite: continuity, tone step, transition, texture match and drift, per row; none is a verdict.",
+      "arguments": [
+        {
+          "name": "set",
+          "purpose": "The measures to run, separated by commas: continuity, tone step, transition, texture match and drift, each name of two words joined by an underscore; all five when not given.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "constants",
+          "purpose": "The constant set the measures read: the chroma floor of a hue, and the percentile.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "measures-v1"
+            ]
+          },
+          "required": false,
+          "default": "measures-v1"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "after",
+          "artifact": "image",
+          "purpose": "The image to measure, of the mask's size: the composite or the healed cut.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "before",
+          "artifact": "image",
+          "purpose": "The image before the heal or the paste, of the mask's size, for drift.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask, with its band profile for the band's measures.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "line",
+          "artifact": "location",
+          "purpose": "A whole column on the mask's image or on either image, for continuity; the profile's column without it.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "continuity",
+          "artifact": "series",
+          "purpose": "The measure of this name per row, in ratio; absent when it was not asked, not applicable or measured nothing.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "after"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "tone_step_dl",
+          "artifact": "series",
+          "purpose": "The measure of this name per row, in L; absent when it was not asked, not applicable or measured nothing.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "after"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "tone_step_dchroma",
+          "artifact": "series",
+          "purpose": "The measure of this name per row, in chroma; absent when it was not asked, not applicable or measured nothing.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "after"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "tone_step_dhue",
+          "artifact": "series",
+          "purpose": "The measure of this name per row, in degrees; absent when it was not asked, not applicable or measured nothing.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "after"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "transition",
+          "artifact": "series",
+          "purpose": "The measure of this name per row, in ratio; absent when it was not asked, not applicable or measured nothing.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "after"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "texture_match",
+          "artifact": "series",
+          "purpose": "The measure of this name per row, in ratio; absent when it was not asked, not applicable or measured nothing.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "after"
+          },
+          "derived_from": null,
+          "rebound_onto": null
         }
       ],
       "needs": [],

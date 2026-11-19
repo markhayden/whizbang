@@ -818,3 +818,139 @@ fn remove_prompt_makes_a_mask_with_sam3_on_the_mac() {
         ],
     );
 }
+
+/// The scene of `segment`'s record (`docs/reference/tools/segment.md`, plan m3, task D1):
+/// 192 by 128, a grey ground, two red discs (radius 24 at (56, 64), radius 14 at
+/// (150, 32)) and a blue square from (104, 72) to (152, 112), drawn by a program. The
+/// same drawing is in `whizbang-rascal`'s tests of the record (`tool_records::segment`),
+/// which hold it to the digest this test writes.
+fn segment_scene() -> whizbang_core::identity::CanonicalPixels {
+    let rgba = (0..192u32 * 128)
+        .flat_map(|at| {
+            let (x, y) = (i64::from(at % 192), i64::from(at / 192));
+            let disc = |cx: i64, cy: i64, r: i64| (x - cx).pow(2) + (y - cy).pow(2) <= r * r;
+            if disc(56, 64, 24) || disc(150, 32, 14) {
+                [200, 40, 40, 255]
+            } else if (104..152).contains(&x) && (72..112).contains(&y) {
+                [40, 70, 190, 255]
+            } else {
+                [128, 128, 128, 255]
+            }
+        })
+        .collect();
+    whizbang_core::identity::CanonicalPixels::from_rgba(192, 128, rgba).unwrap()
+}
+
+#[test]
+#[ignore = "the model tier: just test-models, on a machine with the model installed"]
+fn segment_answers_the_records_examples_on_the_mac() {
+    use whizbang_core::artifact::{self, Artifact, ArtifactType, Image, ImageRole, Origin, Step};
+    use whizbang_core::contract::Value;
+    use whizbang_core::identity::{Projection, Topology, encode};
+    let tier = Tier::new("model-tier-segment-record");
+    let over = tier.over();
+    let scene = segment_scene();
+    let limits = DecodeLimits::default();
+    let image = Image::new(
+        encode::png(&scene).unwrap(),
+        Projection::Flat,
+        Topology::Bounded,
+        ImageRole::Picture,
+        Origin::new(Step::new("fixture", "1")).unwrap(),
+        &limits,
+    )
+    .unwrap();
+    let store = Store::open(&tier.root, Arc::new(RealFs)).unwrap();
+    let mut publication = store.begin().unwrap();
+    let id = artifact::put(&mut publication, &Artifact::from(image)).unwrap();
+    publication.publish().unwrap();
+    drop(store);
+    let executor = tier.runner(&over);
+    // Each example: its name, the kind of query, the query and the most instances.
+    let examples = [
+        ("phrase", "phrase", "red circle", 4),
+        ("point", "point", "128 92", 1),
+    ];
+    let mut out = format!("scene {}\n", scene.digest().0);
+    let mut runs = Vec::new();
+    for (name, kind, query, most) in examples {
+        let started = Instant::now();
+        let asked = Call::new("segment")
+            .argument("kind", Value::text(kind))
+            .argument("query", Value::text(query))
+            .argument("max_instances", Value::Integer(most))
+            .input("image", id);
+        let finished = executor.submit(&asked).unwrap();
+        let took = started.elapsed();
+        assert_eq!(
+            finished.outcome().name(),
+            "completed",
+            "{:?}",
+            finished.outcome()
+        );
+        let masks: Vec<_> = finished
+            .outcome()
+            .outputs()
+            .iter()
+            .map(|o| o.id())
+            .collect();
+        runs.push((name, finished.run().as_str().to_owned(), masks, took));
+    }
+    drop(executor);
+    let store = Store::open(&tier.root, Arc::new(RealFs)).unwrap();
+    for (name, run, masks, took) in runs {
+        let said = whizbang(
+            &[
+                "runs",
+                "show",
+                &run,
+                "--diagnostic",
+                "diagnostics/segment.txt",
+            ],
+            &tier.root,
+        );
+        assert_eq!(said.code, Some(0), "{}", said.err);
+        let (device, installation) = device_and_installation(&tier.record(&run));
+        assert_eq!(device, "mps");
+        out.push_str(&format!(
+            "example {name} {} {installation} {device} {}\n",
+            masks.len(),
+            seconds(took)
+        ));
+        let lines: Vec<&str> = said
+            .out
+            .lines()
+            .filter(|l| l.starts_with("mask "))
+            .collect();
+        assert_eq!(lines.len(), masks.len());
+        for (line, id) in lines.iter().zip(&masks) {
+            let read = artifact::get(&store, ArtifactType::Mask, *id, &limits);
+            let mask = read.unwrap().into_mask().unwrap();
+            // The core as runs, from a run of 0s: each run's length, apart by commas.
+            let (mut runs, mut last, mut length) = (Vec::new(), 0u8, 0usize);
+            for sample in mask.core() {
+                let on = u8::from(*sample != 0);
+                if on != last {
+                    runs.push(length.to_string());
+                    (last, length) = (on, 0);
+                }
+                length += 1;
+            }
+            runs.push(length.to_string());
+            // "mask <id> score <s> box <l t r b> [iou <i>]": the score and the box.
+            let words: Vec<&str> = line.split(' ').collect();
+            out.push_str(&format!(
+                "mask {} {} {} {} {} {}\n",
+                words[3],
+                words[5],
+                words[6],
+                words[7],
+                words[8],
+                runs.join(",")
+            ));
+        }
+    }
+    let path = shared().join("out");
+    std::fs::create_dir_all(&path).unwrap();
+    std::fs::write(path.join("segment-record.txt"), out).unwrap();
+}

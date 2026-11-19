@@ -446,7 +446,7 @@ use cases, sets, judges and arms runs each item as a run of `check`, resumably; 
   `fetch::a_fetch_to_an_origin_the_config_does_not_name_is_refused_before_a_byte_leaves`,
   `fetch::from_a_folder_imports_the_same_pictures_by_hash`,
   `matrix::each_cell_runs_as_a_run_of_check_with_its_cell_in_the_record`,
-  `matrix::an_interrupted_matrix_resumes_and_a_failed_attempt_is_kept`,
+  `matrix::an_interrupted_matrix_resumes_and_a_failed_attempt_is_kept` (renamed by plan m3, task L1, to `matrix::eval_matrix_still_resumes_and_keeps_a_failed_attempt_through_the_shared_runner`),
   `matrix::a_matrix_whose_forecast_passes_the_allowance_left_is_refused_before_its_first_run`,
   `matrix::at_most_the_concurrency_of_runs_hold_a_reservation_at_once`,
   `ledger::an_admission_after_many_paid_runs_and_a_reset_reads_no_closed_epoch`,

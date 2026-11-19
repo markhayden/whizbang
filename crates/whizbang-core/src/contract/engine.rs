@@ -107,7 +107,8 @@ pub trait Executor: Send + Sync {
     /// The request id this text is. A door hands over the text a caller gave here, and
     /// not to [`RequestId::parse`], whose refusal shows the text: this looks first for
     /// the secrets the executor was told of, in the text as it was given, and refuses
-    /// text that holds one without showing any of it.
+    /// text that holds one without showing any of it. An id that starts
+    /// [`super::RESERVED_REQUEST_PREFIX`] is refused: those are a lab's cells'.
     fn request_id(&self, text: &str) -> Result<RequestId, CallError>;
 }
 
@@ -492,6 +493,14 @@ impl Executor for Engine {
         // Before the text is parsed: a refusal of text that is no id shows the text.
         if self.secrets.now().redact(text) != text {
             return Err(Refusal::SecretInRequestId.into());
+        }
+        // The ids of a lab's cells are the harness's alone (plan m3, task L2).
+        if text.starts_with(super::RESERVED_REQUEST_PREFIX) {
+            let why = format!(
+                "an id that starts {} is reserved for the cells of a lab",
+                super::RESERVED_REQUEST_PREFIX
+            );
+            return Err(Refusal::NotARequestId { why }.into());
         }
         RequestId::parse(text).map_err(|why| Refusal::NotARequestId { why }.into())
     }

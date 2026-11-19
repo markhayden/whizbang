@@ -10,6 +10,16 @@
 #   scripts/tool-record.sh tiles     the example images of docs/reference/tools/tiles.md, in tiles/
 #   scripts/tool-record.sh change_map, or edge_similarity: both records, change_map.md and
 #                                    edge_similarity.md, and their folders
+#   scripts/tool-record.sh close, subtract, line, rect, stroke, paste, fill, mask_rect or
+#                                    protect: that record and its folder (plan m3, task D1;
+#                                    crates/whizbang-rascal/tests/it/tool_records/)
+#   scripts/tool-record.sh select, plug, feather or render: the same
+#   scripts/tool-record.sh rasterize, shrink, invert, inspect, cut, put, window, unwindow,
+#                                    tighten, fan, profile, ramp, apply or measure: the same
+#                                    (plan m3, task D2)
+#   scripts/tool-record.sh segment   the same, from SAM 3's answers, which the model tier's
+#                                    segment_answers_the_records_examples_on_the_mac wrote
+#                                    into target/tmp/model-tier/out/ first
 #
 # It builds in release mode and times real work, so it is heavy: run it through
 # scripts/heavy.sh when another agent may be building. The fast tests then hold the record
@@ -42,8 +52,14 @@ case "${1:-}" in
     scripts/thread-guard.sh cargo test --release -p whizbang-squint --test it -- \
       --ignored --exact compare_record::write_the_record
     ;;
+  close | subtract | line | rect | stroke | paste | fill | mask_rect | protect | segment | select | plug | feather | render | \
+    rasterize | shrink | invert | inspect | cut | put | window | unwindow | tighten | \
+    fan | profile | ramp | apply | measure)
+    scripts/thread-guard.sh cargo test --release -p whizbang-rascal --test it -- \
+      --ignored --exact "tool_records::writes::$1"
+    ;;
   *)
-    echo "tool-record: usage: scripts/tool-record.sh view|grow|align|resize|tiles|change_map|edge_similarity" >&2
+    echo "tool-record: usage: scripts/tool-record.sh view|grow|align|resize|tiles|change_map|edge_similarity|close|subtract|line|rect|stroke|paste|fill|mask_rect|protect|segment|select|plug|feather|render|rasterize|shrink|invert|inspect|cut|put|window|unwindow|tighten|fan|profile|ramp|apply|measure" >&2
     exit 2
     ;;
 esac

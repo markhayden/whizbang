@@ -9,8 +9,36 @@ use whizbang_core::recipe::{Recipe, RecipeAction, RecipeError};
 /// `remove_prompt`: the mask that removes what a phrase names (rascal's `remove-prompt`).
 pub const REMOVE_PROMPT: &str = include_str!("../recipes/remove_prompt.toml");
 
+/// `remove`: the thing at a location removed, ending in a fill (rascal's `remove`).
+pub const REMOVE: &str = include_str!("../recipes/remove.toml");
+
+/// `repair_area`: a box or a polygon as drawn, feathered and filled (rascal's
+/// `repair-area`).
+pub const REPAIR_AREA: &str = include_str!("../recipes/repair_area.toml");
+
+/// `mask_rect`: a rectangle as a mask (rascal's `rect`).
+pub const MASK_RECT: &str = include_str!("../recipes/mask_rect.toml");
+
+/// `protect`: the mask for a second pass (rascal's `protect`).
+pub const PROTECT: &str = include_str!("../recipes/protect.toml");
+
+/// `repair`: a stroke tightened to the defect's edges, feathered and filled (rascal's
+/// `repair`).
+pub const REPAIR: &str = include_str!("../recipes/repair.toml");
+
+/// `seam`: the wrap edge of a panorama healed (rascal's `seam` and its `heal`; task O3).
+pub const SEAM: &str = include_str!("../recipes/seam.toml");
+
 /// Each shipped recipe's text, in the order a door lists them.
-pub const SHIPPED: [&str; 1] = [REMOVE_PROMPT];
+pub const SHIPPED: [&str; 7] = [
+    REMOVE_PROMPT,
+    REMOVE,
+    REPAIR_AREA,
+    MASK_RECT,
+    PROTECT,
+    REPAIR,
+    SEAM,
+];
 
 /// A recipe's text, read and checked against the actions of `registry`, as an action.
 pub fn action_of(text: &str, registry: &Registry) -> Result<RecipeAction, RecipeError> {

@@ -189,8 +189,8 @@ grep -E '^      - uses: taiki-e/install-action@[0-9a-f]{40}$' "$workflow" >/dev/
 grep -E '^          tool: .*(^|,| )uv@[0-9.]+($|,)' "$workflow" >/dev/null || fail "CI installs uv"
 grep -x -F "          uv python install --no-config --no-bin --mirror $mirror \"\$(cat pack/.python-version)\"" "$workflow" >/dev/null ||
   fail "CI installs the Python the pack pins, with no configuration, from GitHub's releases only"
-grep -x -F "          key: python-\${{ hashFiles('pack/.python-version', 'scripts/tool-versions.txt') }}" "$workflow" >/dev/null ||
-  fail "CI's cache is keyed by the pinned Python and the pinned tools"
+grep -x -F "          key: python-\${{ hashFiles('Cargo.toml', 'pack/.python-version', 'scripts/tool-versions.txt') }}" "$workflow" >/dev/null ||
+  fail "CI's cache is keyed by the workspace's Cargo.toml, the pinned Python and the pinned tools"
 grep -x -F "          cache-directories: \${{ runner.temp }}/uv-python" "$workflow" >/dev/null &&
   grep -x -F "          UV_PYTHON_INSTALL_DIR: \${{ runner.temp }}/uv-python" "$workflow" >/dev/null ||
   fail "CI installs the Python into the folder it caches"

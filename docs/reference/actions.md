@@ -2,7 +2,7 @@
 
 # Actions
 
-What `whizbang` 0.0.1 can do, from its static description (version 9).
+What `whizbang` 0.0.1 can do, from its static description (version 8).
 The same as data: [description.json](description.json).
 
 ## `check`
@@ -13,25 +13,29 @@ Has a judge look at images through evidence tools and conclude: pass, fail or un
 
 Makes the mask that removes what a phrase names: found, grown, closed, plugged, kept off protect and feathered.
 
-## `source-fidelity`
+## `remove`
 
-Checks whether an edit kept what mattered in its source: details measured first, then the judge.
+Removes the thing at a location: the mask grown, closed, plugged, kept off protect and feathered, then filled.
 
-## `reference-consistency`
+## `repair_area`
 
-Checks whether a subject of the references appears faithfully: details measured first, then the judge.
+Repairs a stain or a spot at a location: the box or polygon as drawn, feathered, then filled.
 
-## `reality-checks`
+## `mask_rect`
 
-Checks a picture for mistakes no real photograph would make: details measured first, then the judge.
+Makes a rectangle on an image a mask: the box's pixels the core, no blend and nothing protected.
 
-## `brief-compliance`
+## `protect`
 
-Checks whether a picture holds what its brief asked for and nothing it forbade: details first, then the judge.
+Makes the mask for a second pass: what the first mask reached is protected, the rest of the image the core.
 
-## `product-fidelity`
+## `repair`
 
-Checks whether a product shot keeps the exact product of its references: details first, then the judge.
+Repairs a scratch or a tear along a stroke: the stroke tightened to the defect's edges, feathered, then filled.
+
+## `seam`
+
+Heals the wrap edge of a panorama: the band along the seam measured, its tone step ramped, then filled and put back.
 
 ## `align`
 
@@ -44,10 +48,6 @@ Shows where two images in one grid differ in structure: a grey map, bright where
 ## `edge_similarity`
 
 Scores how much two images in one grid share the same edges: 1 for the same structure, near 0 for unrelated ones.
-
-## `details`
-
-Measures the details of a use case's images before its judge looks, and hands on what each tool found.
 
 ## `close`
 
@@ -83,7 +83,7 @@ One mask from the instance masks to keep: the union of their cores, minus exclud
 
 ## `subtract`
 
-Protects the pixels of a second mask, grown by a margin; with none the mask is handed back unchanged.
+Protects the pixels of a second mask or a location, grown by a margin; with neither the mask is unchanged.
 
 ## `view`
 
@@ -116,3 +116,51 @@ Writes a crop back into exactly the box of the image window cut it from; nothing
 ## `apply`
 
 Performs a mask's prescriptions on its image, once each and in order, and rebinds the mask onto the working image.
+
+## `line`
+
+A line location on an image: a whole column or a path, with its full width in pixels.
+
+## `rect`
+
+A box as a location on an image, from its left, top, right and bottom edges in pixels.
+
+## `stroke`
+
+A stroke location on an image: a rough mark along a path, with a radius in pixels.
+
+## `rasterize`
+
+A location's inside as the core of a new mask: a box or polygon as drawn, a line as a band, a stroke widened.
+
+## `shrink`
+
+Shrinks the core of a mask by a disc; a core against the border shrinks from it too.
+
+## `invert`
+
+The mask for a second pass: what the first mask reached is protected, and every other pixel is the core.
+
+## `tighten`
+
+Tightens a stroke to the defect's edges: at each sample the two strongest opposite edges inside the stroke bound the core.
+
+## `inspect`
+
+A mask for the eye: the overlay on its image, the core's width on each row, and its counts in the journal.
+
+## `fan`
+
+Measures the band along a column line: a half-width for each row, wide on smooth surfaces where the sides differ, thin on detail.
+
+## `profile`
+
+Makes the band mask of a band profile: the core at each row's half-width, the blend a feather whose sigma follows the row.
+
+## `ramp`
+
+Measures the colour step across a band mask's line, row by row, and adds it to the mask as a tone ramp for apply.
+
+## `measure`
+
+Measures a seam or a composite: continuity, tone step, transition, texture match and drift, per row; none is a verdict.

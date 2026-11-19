@@ -161,3 +161,32 @@ fn holding_keeps_the_masks_whose_core_holds_the_pixel_in_the_order_given() {
     assert_eq!(point("4, 5.5").unwrap(), [4.0, 5.5]);
     assert!(point("4").is_err() && point("4 5 6").is_err() && point("x 1").is_err());
 }
+
+#[test]
+fn the_ported_vectors_give_rascals_cores() {
+    // Rascal's three planes (`crates/rascal-ops/tests/it/subtract_select_invert.rs`,
+    // `select_keeps_drops_and_excludes_over_three_planes`, at the commit `docs/sources.toml`
+    // pins), on its picture of 100 by 60, each an instance mask here. Rascal's `keep` and
+    // `drop` are the masks given; its exclude box in fractions, 0.65 0 1 1, is in pixels.
+    let (w, h) = (100usize, 60usize);
+    let masks: Vec<Mask> = [[10, 30], [40, 60], [70, 90]]
+        .iter()
+        .map(|[x0, x1]| {
+            let core = plane(w, h, |x, y| {
+                (*x0..*x1).contains(&x) && (10..30).contains(&y)
+            });
+            mask_of(w, h, core, &[0; 6000])
+        })
+        .collect();
+    let count = |m: &Mask| m.core().iter().filter(|s| **s != 0).count();
+    let all = select(&masks, &[], UseCase::Remove).unwrap();
+    assert_eq!(count(&all), 1200);
+    assert!(all.blend().iter().all(|s| *s == 0) && all.protect().iter().all(|s| *s == 0));
+    let kept = select(&[masks[0].clone(), masks[2].clone()], &[], UseCase::Remove).unwrap();
+    assert_eq!((count(&kept), kept.core()[20 * w + 50]), (800, 0));
+    let excluded = select(&masks, &[[65.0, 0.0, 100.0, 60.0]], UseCase::Remove).unwrap();
+    assert_eq!((count(&excluded), excluded.core()[20 * w + 80]), (800, 0));
+    // Everything excluded: rascal said its op did not apply; here the call is refused.
+    let nothing = select(&masks, &[[0.0, 0.0, 100.0, 60.0]], UseCase::Remove);
+    assert!(matches!(nothing, Err(SelectError::Invalid(_))));
+}

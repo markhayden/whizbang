@@ -69,6 +69,12 @@ fn the_shipping_executor_describes_check_and_cannot_run_it_for_want_of_a_judge()
         [
             "check",
             "remove_prompt",
+            "remove",
+            "repair_area",
+            "mask_rect",
+            "protect",
+            "repair",
+            "seam",
             "source-fidelity",
             "reference-consistency",
             "reality-checks",
@@ -94,7 +100,19 @@ fn the_shipping_executor_describes_check_and_cannot_run_it_for_want_of_a_judge()
             "put",
             "window",
             "unwindow",
-            "apply"
+            "apply",
+            "line",
+            "rect",
+            "stroke",
+            "rasterize",
+            "shrink",
+            "invert",
+            "tighten",
+            "inspect",
+            "fan",
+            "profile",
+            "ramp",
+            "measure"
         ]
     );
     let root = dir.path().join("store");
