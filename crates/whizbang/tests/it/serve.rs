@@ -304,7 +304,8 @@ fn initialize_lists_each_recipe_before_the_primitives() {
             "remove",
             "repair_area",
             "mask_rect",
-            "protect"
+            "protect",
+            "seam"
         ]
     );
     assert_eq!(names[..recipes.len()], recipes[..]);

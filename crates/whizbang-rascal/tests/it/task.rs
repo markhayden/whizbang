@@ -501,7 +501,7 @@ fn seam_fills_the_working_image_through_the_mask_apply_rebound_under_the_executo
     let wrong = Call::new("fill")
         .input("image", by_hand.working)
         .input("mask", seam.ran.1);
-    let refused = seam.engine.submit(&wrong).err().expect("refused");
+    let refused = seam.engine.submit(&wrong).expect_err("refused");
     assert!(format!("{refused:?}").contains("WrongImage"), "{refused:?}");
     // The recipe's panorama is the one the chain by hand put back: its fill was of the
     // working image through the rebound mask.
