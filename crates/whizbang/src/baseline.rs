@@ -35,6 +35,12 @@ const NOT_TRANSCRIPTS: [&str; 3] = [
     "audit-findings.jsonl",
 ];
 
+/// How the 2026-11 package's `assembly/generated/preparation.json` names squint's resize, for
+/// each of its seven models: Lanczos3, never larger, which is how the core prepares
+/// (`whizbang_core::egress`, `Piece::prepared`). Any other spelling is refused: it would name
+/// a preparation nobody checked against whizbang's.
+pub const RESIZE: &str = "Lanczos3, never upscaled";
+
 /// The largest file read from a package or a transcripts folder.
 const FILE_LIMIT: u64 = 256 * 1024 * 1024;
 
@@ -278,10 +284,11 @@ fn replayed(asked: &Asked<'_>, package: &Package<'_>, recorded: &Json) -> Result
         .as_u64()
         .and_then(|v| u32::try_from(v).ok())
         .ok_or("the model's preparation names no long edge")?;
-    if settings["jpeg_quality"].as_u64() != Some(u64::from(whizbang_core::egress::JPEG_QUALITY))
-        || settings["resize"].as_str() != Some("lanczos3")
-    {
-        return Err("the model's preparation is not the one whizbang prepares with".to_owned());
+    if settings["jpeg_quality"].as_u64() != Some(u64::from(whizbang_core::egress::JPEG_QUALITY)) {
+        return Err("the model's preparation is not JPEG at whizbang's quality".to_owned());
+    }
+    if settings["resize"].as_str() != Some(RESIZE) {
+        return Err("the model's preparation does not resize as whizbang does".to_owned());
     }
     let version = settings["prep_version"]
         .as_str()

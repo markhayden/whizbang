@@ -371,7 +371,10 @@ fn main() {
         println!("capture: {name}: exit {}", outcome.exit_code);
     }
 
-    // The preparation's settings for the model, as the package's generated file holds them.
+    // The preparation's settings for the model, with the keys of the 2026-11 package's
+    // generated file (docs/baseline/transcript.md). `resize` and `jpeg_quality` are that
+    // package's values, as `whizbang eval baseline` holds them; `metadata`, `plan` and
+    // `png_when_alpha` are this program's words, which the replay copies and never reads.
     let long_edge = images.native_long_edge_px;
     let settings = json!({"settings": {MODEL: {
         "config_max_long_edge": null,
@@ -386,7 +389,7 @@ fn main() {
         "plan": "standard",
         "png_when_alpha": "png",
         "prep_version": PREP_VERSION,
-        "resize": "lanczos3",
+        "resize": "Lanczos3, never upscaled",
     }}});
     write(
         &out.join("assembly/generated/preparation.json"),

@@ -187,3 +187,57 @@ fn a_transcript_of_another_package_or_a_package_whose_listing_was_changed_is_ref
     };
     assert!(run(&short).unwrap_err().contains("--commit"));
 }
+
+#[test]
+fn a_package_that_spells_the_resize_otherwise_is_refused() {
+    let scratch = Scratch::new("baseline-resize");
+    let package = scratch.path().join("package");
+    copy(&fixtures().join("package"), &package);
+    let transcripts = scratch.path().join("transcripts");
+    copy(&fixtures().join("transcripts"), &transcripts);
+    // The synthetic package spells it as the 2026-11 package does.
+    let file = "assembly/generated/preparation.json";
+    let text = std::fs::read_to_string(package.join(file)).unwrap();
+    let spelled = format!("\"resize\": \"{}\"", whizbang::baseline::RESIZE);
+    assert_eq!(text.matches(&spelled).count(), 1, "{text}");
+    // Spelled otherwise, with the listing, the digest and the transcripts made to agree,
+    // so that the spelling is the one thing that changed.
+    let changed = text.replace(&spelled, "\"resize\": \"lanczos3\"");
+    std::fs::write(package.join(file), &changed).unwrap();
+    let sha = |bytes: &[u8]| whizbang_core::identity::Digest::of_bytes(bytes).hex();
+    let listing_at = package.join("PACKAGE.sha256");
+    let listing = std::fs::read_to_string(&listing_at)
+        .unwrap()
+        .replace(&sha(text.as_bytes()), &sha(changed.as_bytes()));
+    std::fs::write(&listing_at, &listing).unwrap();
+    let old = std::fs::read_to_string(package.join("PACKAGE.digest")).unwrap();
+    let new = sha(listing.as_bytes());
+    std::fs::write(package.join("PACKAGE.digest"), format!("{new}\n")).unwrap();
+    for set in ["cut-short", "kept", "moved"] {
+        let folder = transcripts.join("historical/synthetic").join(set);
+        for entry in std::fs::read_dir(&folder).unwrap() {
+            let path = entry.unwrap().path();
+            let t = std::fs::read_to_string(&path).unwrap();
+            std::fs::write(&path, t.replace(old.trim_end(), &new)).unwrap();
+        }
+    }
+    let (sets, at) = (
+        package.join("evalsets"),
+        scratch.path().join("receipt.toml"),
+    );
+    let asked = Asked {
+        package: &package,
+        transcripts: &transcripts,
+        receipt: &at,
+        sets: &sets,
+        pictures: None,
+        commit: COMMIT,
+    };
+    let tally = run(&asked).expect("the gate runs");
+    assert_eq!((tally.same, tally.refused), (0, 3), "{}", tally.text());
+    assert_eq!(
+        tally.reasons.keys().collect::<Vec<_>>(),
+        ["the model's preparation does not resize as whizbang does"]
+    );
+    assert!(!tally.passed());
+}
