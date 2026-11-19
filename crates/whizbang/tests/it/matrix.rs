@@ -146,8 +146,10 @@ fn refused_answer() -> Vec<u8> {
     .into_bytes()
 }
 
+/// `eval matrix` runs on the shared harness (plan m3, task L1, item 0) as it ran before it:
+/// an interrupted matrix resumes, and a failed attempt is kept and not run again.
 #[test]
-fn an_interrupted_matrix_resumes_and_a_failed_attempt_is_kept() {
+fn eval_matrix_still_resumes_and_keeps_a_failed_attempt_through_the_shared_runner() {
     let (judged, tiny) = world_with("matrix-resume", &["a", "b", "c"]);
     let matrix = matrix_of("C", 1, 1);
     // The first time, a passes, b's judge refuses it, and the matrix is stopped before c.
