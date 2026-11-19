@@ -3,10 +3,12 @@
 
 mod composite;
 mod feather;
+mod fill;
 mod grow;
 mod grow_action;
 mod grow_runs;
 mod ops_actions;
+mod paste;
 mod plug;
 mod record;
 mod render;

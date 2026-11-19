@@ -13,6 +13,7 @@ mod binding;
 mod colour;
 mod container;
 mod digest;
+pub mod encode;
 mod mapping;
 mod pixels;
 mod space;

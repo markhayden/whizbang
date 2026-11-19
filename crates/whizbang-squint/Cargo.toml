@@ -30,9 +30,6 @@ toml.workspace = true
 # and so its artifact's identity; its pixel digest and its binding stay.
 # Nothing here decodes: an image is read through the core's `identify` alone (ADR 0001).
 image = { version = "=0.25.10", default-features = false, features = ["png"] }
-png = "=0.18.1"
-flate2 = "=1.1.11"
-miniz_oxide = "=0.9.1"
 
 [dev-dependencies]
 whizbang-testkit.workspace = true

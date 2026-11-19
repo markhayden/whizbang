@@ -14,6 +14,7 @@ mod describe;
 mod escape;
 mod evidence;
 mod executor;
+mod fal;
 mod fetch;
 mod gate;
 mod google;

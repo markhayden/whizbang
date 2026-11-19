@@ -768,6 +768,159 @@
       ],
       "needs": [],
       "concurrent": true
+    },
+    {
+      "name": "paste",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Pastes a fill onto its base image under a mask; every pixel the mask weighs nothing is the base's.",
+      "arguments": [
+        {
+          "name": "mode",
+          "purpose": "How the fill is pasted: feather, by the mask's core and blend.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "feather"
+            ]
+          },
+          "required": false,
+          "default": "feather"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The base image.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "fill",
+          "artifact": "image",
+          "purpose": "The fill: a picture of the base's size, read only where the mask weighs over 0.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask, on the base.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": "image"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The composite, or the base when the fill changed nothing.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": {
+            "input": "image"
+          },
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "fill",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Fills what a mask covers in an image with the configured filler, and rebinds the mask onto the result.",
+      "arguments": [
+        {
+          "name": "backend",
+          "purpose": "The filler, by its name in the config; the default when not given.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The picture to fill.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask on the picture: the filler paints where it weighs over 0.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": "image"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The composite, or the picture when the fill changed nothing.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": {
+            "input": "image"
+          },
+          "rebound_onto": null
+        },
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask, rebound onto the composite.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "image"
+          },
+          "derived_from": null,
+          "rebound_onto": "image"
+        }
+      ],
+      "needs": [
+        {
+          "capability": "fill",
+          "features": [],
+          "when": "always",
+          "chosen_by": "backend",
+          "feature_from": null,
+          "requests": 1
+        }
+      ],
+      "concurrent": true
     }
   ],
   "marks": [
