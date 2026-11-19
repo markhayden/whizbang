@@ -606,6 +606,7 @@ dependencies = [
  "image",
  "serde",
  "serde_json",
+ "toml",
  "whizbang",
  "whizbang-backends",
  "whizbang-core",

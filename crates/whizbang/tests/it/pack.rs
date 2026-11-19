@@ -966,12 +966,23 @@ fn the_shipped_binary_offers_no_fake_model_and_starts_no_entry_point_that_takes_
         assert!(defined == 0 || name == "pack.rs", "{name}");
         let testing = text.matches(test_launch.as_str()).count();
         assert_eq!(testing, 0, "{name} makes a test's launch");
-        let launches = text.matches("Launch::worker(").count();
+        let tools = text.matches("ToolLaunch::worker(").count();
+        let launches = text.matches("Launch::worker(").count() - tools;
         let expected = match name.as_str() {
             "pack.rs" | "pack_setup.rs" => 1,
             _ => 0,
         };
         assert_eq!(launches, expected, "{name}");
+        // The tool worker's one launch is the installed one's (plan 2C, task X1).
+        let expected_tools = usize::from(name == "pack.rs");
+        assert_eq!(tools, expected_tools, "{name} launches a tool worker");
+        let tool_seam = text.matches("OneWorker::starting_with_tools(").count();
+        // Named only in `pack.rs`, by `starting`, both compiled with `fakes` alone.
+        let allowed = usize::from(name == "pack.rs");
+        assert_eq!(
+            tool_seam, allowed,
+            "{name} hands the wiring a tool worker of its own"
+        );
         if text.contains("OneWorker::installed()") {
             installed.push(name);
         }

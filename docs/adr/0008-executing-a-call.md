@@ -74,6 +74,9 @@ the pack's supervisor.
 Amended: 2026-11-17, with task P3b of checkpoint 1C. Changed, in the same place: that
 spawner holds a process to one worker's three threads, not two; the third writes the
 worker's input, so that no write to the worker waits outside the supervisor's clock.
+Amended: 2026-11-18, with task X1 of plan 2C (ADR 0032). Changed, in the same place:
+that spawner holds a process to two workers' three threads, the model's and the tool
+worker's, six in all.
 
 ## Context
 
@@ -606,7 +609,8 @@ part parked threads until the system refused one, and the machine went down.
   workspace, tests included, and is allowed in three places: that helper; the
   executor's own spawner (`spawn_thread`), which the bound above holds; and the spawner
   of the pack's supervisor (`whizbang_backends::pack::threads`), which holds a process to
-  one worker's three threads (two readers and a writer), and which a test replaces with
+  two workers' three threads each (two readers and a writer; the model's worker and the
+  tool worker, ADR 0032), and which a test replaces with
   that helper. `just check`
   lints every target, so a test that makes a thread another way fails it
   (`scripts/tests/test-thread-lint.sh`, on a fixture). This is the stop that works

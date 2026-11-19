@@ -85,6 +85,11 @@ pub enum Command {
         /// or `visual_only`, its pictures and a fixed sentence, as squint's baseline arm C.
         #[arg(long, value_name = "WHICH", default_value = "full", value_parser = ["full", "visual_only"])]
         projection: String,
+        /// A tool file the config lists under `[tools] paths`, offered to the judge with
+        /// the schema its declaration gives; give it again for more. An experimental tool
+        /// is offered only to a run that names it.
+        #[arg(long = "tool", value_name = "NAME")]
+        tools: Vec<String>,
         /// An id for this request, of your choosing: 1 to 128 letters, digits, `_`, `-`,
         /// `.` and `:`. The same request sent again under it is answered with the run
         /// it made the first time, and nothing runs again.
@@ -115,6 +120,7 @@ fn run_at(
             details,
             detail,
             projection,
+            tools,
             at,
             under,
             request_id,
@@ -150,6 +156,7 @@ fn run_at(
                 },
                 detail: detail.as_deref(),
                 projection,
+                tools,
             };
             let read = |run: &_| door::verdict(&root, run);
             door::check_job(

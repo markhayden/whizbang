@@ -407,7 +407,8 @@ A perception tool is a Python file that declares a tool description (name, argum
 bounds, the bindings it reads, the kind of evidence it returns) and one function. The function
 receives a context and reaches images and capabilities only through it. Its output is
 validated against its declared bounds before anything uses it. The exact shape is the first
-decision of milestone 2, made before any tool is written.
+decision of milestone 2, made before any tool is written: ADR 0032, which runs a tool file in a
+second process of the pack's runtime, the tool worker.
 
 - **Discovery** is explicit: files listed under `[tools] paths` in config.
 - **Live editing.** A run pins the digest of each tool file it uses. An edited file is picked

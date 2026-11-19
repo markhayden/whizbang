@@ -12,5 +12,6 @@ pub mod pack_setup;
 pub mod parity;
 pub mod serving;
 pub mod sign_in;
+pub mod tool_file;
 pub mod trying;
 pub mod wiring;

@@ -758,6 +758,26 @@ the four `eval_tool::` tests, the two `describe::` tests, and
 `edge_similarity` (rung 1). The rest, and the box, wait for the second pull request
 (`docs/carry-over.md`, the row on what X1 did not build); rung 2 of the two tools is F1's.
 
+**Built in part (X1, second pull request).** ADR 0032 decides the shape of a tool file and
+states `tool/1`. Of the tests above, these are there and pass as well:
+`tool_file::a_declaration_missing_its_bounds_is_refused_when_the_config_is_read`,
+`tool_file::an_output_outside_its_declared_bounds_is_refused_before_use`,
+`tool_file::a_tool_reaches_a_capability_only_through_its_context_and_under_the_runs_allowance`,
+`test_tool_worker.Capabilities.test_a_tool_file_asks_for_a_segment_and_is_answered`, the
+five `tool_worker::` tests the plan names (and two more, on the group a worker cannot end and a worker for each file),
+`check::a_named_tool_file_is_offered_to_the_judge_with_its_schema_and_called` and
+`check::a_tool_file_not_named_is_never_offered` (in `whizbang-squint`, over a tool file the
+test hands `check`'s toolbox),
+`cli::a_tool_file_is_tried_scored_edited_and_run_again_without_a_rebuild` (through the
+binary's wiring in process, as the other `cli::` tests of `try` are), and the four
+`test_per_subject.` tests; with M1's two, `cache::a_tool_files_edit_misses` and
+`serve::end_of_input_ends_the_tool_workers_group_with_a_child_holding_its_pipes`. Per-subject
+comparison's record (rungs 1 and 2, each a run of SAM 3 on the Mac over the sets' pictures),
+`model_tier::per_subject_comparison_answers_the_records_examples_on_the_mac`,
+`evidence::the_per_subject_record_names_a_commit_of_this_tree_and_its_rung_2_numbers` and the
+records test's line for it are not built, so the box stays unticked; they are F1's
+(`docs/carry-over.md`, the row on what X1 did not build).
+
 **Keeping tests lean (X1).** Tool files in tests are a few lines run by the pack's
 fake models; the worker is started once per test file, as the pack's tests do; SAM 3
 runs only under `just test-models`.

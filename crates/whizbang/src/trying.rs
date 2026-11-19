@@ -3,20 +3,22 @@
 //! judge; and its read of each item of a set, scored against the set's labels on rung 2
 //! ([`whizbang_eval::tool`]).
 //!
-//! The tools that can be tried, so far, are the two that compare a pair in one grid,
-//! `change_map` and `edge_similarity`, each declared here with its primary measurement and
-//! the way that means "changed" ([`declared`]). A read is two runs in the store: `align`,
-//! the candidate registered onto the source; then the tool, on the source and the frame
-//! `align` returned. A pair that does not register gives no read: in a set, that item is
-//! an error, never a pass or a fail. Tool files (item 2 of the task) are not built yet
-//! (`docs/carry-over.md`).
+//! The tools that can be tried are the two that compare a pair in one grid, `change_map`
+//! and `edge_similarity`, each declared here with its primary measurement and the way that
+//! means "changed" ([`declared`]); and each tool file the config lists whose images are
+//! `source` and `candidate`, declared by its file (ADR 0032; [`declared_in`]). A read is two
+//! runs in the store: `align`, the candidate registered onto the source; then the tool, on
+//! the source and the frame `align` returned. A pair that does not register gives no read:
+//! in a set, that item is an error, never a pass or a fail. A tool file that takes the
+//! argument `job` is given each item's job, in the contract `job/1`, by `eval tool`: its
+//! requirements, and never its label.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde_json::Value as Json;
 use whizbang_core::artifact::ArtifactId;
-use whizbang_core::contract::{Call, Executor, RunId};
+use whizbang_core::contract::{Call, Executor, RunId, Value};
 use whizbang_core::identity::Digest;
 use whizbang_eval::sets::{self, Expected};
 use whizbang_eval::tool::{Accuracy, Changed, Read, Scored, score};
@@ -25,46 +27,113 @@ use whizbang_squint::job::{Job, Role};
 
 use crate::door::{self, printable};
 use crate::import;
+use crate::tool_file::{self, Files as ToolFiles};
 
 /// A tool that can be tried: its name, its primary measurement, the way of it that means
-/// changed, and the diagnostic its run states its measurements in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// changed, the diagnostic its run states its measurements in, and whether it is a tool
+/// file that takes the item's job.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Declared {
-    pub tool: &'static str,
-    pub primary: &'static str,
+    pub tool: String,
+    pub primary: String,
     pub changed: Changed,
-    pub report: &'static str,
+    pub report: String,
+    pub file: bool,
+    pub takes_job: bool,
 }
 
-/// The tools that can be tried, by name.
-pub const DECLARED: [Declared; 2] = [
-    Declared {
-        tool: compare::CHANGE_MAP,
-        primary: "changed_fraction",
-        changed: Changed::Larger,
-        report: compare::CHANGE_MAP_REPORT,
-    },
-    Declared {
-        tool: compare::EDGE_SIMILARITY,
-        primary: "edge_similarity",
-        changed: Changed::Smaller,
-        report: compare::EDGE_SIMILARITY_REPORT,
-    },
+/// The tools this build links that can be tried: each its name, primary measurement, the
+/// way that is changed, and its report.
+const LINKED: [(&str, &str, Changed, &str); 2] = [
+    (
+        compare::CHANGE_MAP,
+        "changed_fraction",
+        Changed::Larger,
+        compare::CHANGE_MAP_REPORT,
+    ),
+    (
+        compare::EDGE_SIMILARITY,
+        "edge_similarity",
+        Changed::Smaller,
+        compare::EDGE_SIMILARITY_REPORT,
+    ),
 ];
 
-/// The declaration of the tool of this name.
+/// The declaration of the tool of this name among those this build links.
 pub fn declared(tool: &str) -> Result<Declared, String> {
-    DECLARED
-        .into_iter()
-        .find(|d| d.tool == tool)
-        .ok_or_else(|| {
-            let names: Vec<&str> = DECLARED.iter().map(|d| d.tool).collect();
-            format!(
-                "{} is no tool that can be tried: {}",
-                printable(tool),
-                names.join(", ")
-            )
-        })
+    declared_in(tool, None)
+}
+
+/// The same, among those this build links and the tool files the config lists: a tool
+/// file whose images are `source` and `candidate`.
+pub fn declared_in(tool: &str, files: Option<&ToolFiles>) -> Result<Declared, String> {
+    if let Some((tool, primary, changed, report)) = LINKED.into_iter().find(|d| d.0 == tool) {
+        return Ok(Declared {
+            tool: tool.to_owned(),
+            primary: primary.to_owned(),
+            changed,
+            report: report.to_owned(),
+            file: false,
+            takes_job: false,
+        });
+    }
+    let file = files.and_then(|files| files.declared(tool));
+    if let Some(file) = file.filter(|d| d.bindings == ["source", "candidate"]) {
+        return Ok(Declared {
+            tool: file.name.clone(),
+            primary: file.primary.clone(),
+            changed: file.changed(),
+            report: tool_file::REPORT.to_owned(),
+            file: true,
+            takes_job: file
+                .arguments
+                .iter()
+                .any(|a| a.name == "job" && a.kind == "text"),
+        });
+    }
+    let mut names: Vec<String> = LINKED.iter().map(|d| d.0.to_owned()).collect();
+    names.push("a tool file of the config whose images are source and candidate".to_owned());
+    Err(format!(
+        "{} is no tool that can be tried: {}",
+        printable(tool),
+        names.join(", ")
+    ))
+}
+
+/// The arguments `try` gives a tool file, each `NAME=VALUE`: a name it declares, given
+/// once, and a number where it declares one. A tool this build links takes none.
+pub fn arguments_of(
+    declared: &Declared,
+    files: Option<&ToolFiles>,
+    given: &[String],
+) -> Result<Vec<(String, Value)>, String> {
+    let file = files.and_then(|files| files.declared(&declared.tool));
+    let mut arguments: Vec<(String, Value)> = Vec::new();
+    for text in given {
+        let Some((name, value)) = text.split_once('=') else {
+            return Err(format!("--arg {}: give it as NAME=VALUE", printable(text)));
+        };
+        let Some(argument) = file.and_then(|f| f.arguments.iter().find(|a| a.name == name)) else {
+            return Err(format!(
+                "{} takes no argument {}",
+                declared.tool,
+                printable(name)
+            ));
+        };
+        if arguments.iter().any(|(given, _)| given == name) {
+            return Err(format!("--arg {} is given twice", printable(name)));
+        }
+        let value = if argument.kind == "number" {
+            let number: f64 = value
+                .parse()
+                .map_err(|_| format!("--arg {}: a number", printable(name)))?;
+            Value::Number(number)
+        } else {
+            Value::text(value)
+        };
+        arguments.push((name.to_owned(), value));
+    }
+    Ok(arguments)
 }
 
 /// One read of a pair: the runs it made, and the measurements, or why there are none.
@@ -84,7 +153,7 @@ impl Tried {
         let measured = self.measured.as_ref().map_err(Clone::clone)?;
         measured
             .iter()
-            .find(|(name, _, _)| name == declared.primary)
+            .find(|(name, _, _)| *name == declared.primary)
             .map(|(_, value, _)| *value)
             .ok_or_else(|| format!("the run states no {}", declared.primary))
     }
@@ -129,6 +198,18 @@ pub fn read_pair(
     source: ArtifactId,
     candidate: ArtifactId,
 ) -> Result<Tried, String> {
+    read_pair_with(executor, root, declared, source, candidate, &[])
+}
+
+/// The same, a tool file given these arguments.
+pub fn read_pair_with(
+    executor: &dyn Executor,
+    root: &Path,
+    declared: &Declared,
+    source: ArtifactId,
+    candidate: ArtifactId,
+    arguments: &[(String, Value)],
+) -> Result<Tried, String> {
     let align = Call::new(whizbang_squint::align::NAME)
         .input("image", candidate)
         .input("against", source);
@@ -151,7 +232,17 @@ pub fn read_pair(
             });
         }
     };
-    let call = whizbang_squint::details::compare_of(declared.tool, source, aligned);
+    let call = if declared.file {
+        let mut call = Call::new(&declared.tool)
+            .input("source", source)
+            .input("candidate", aligned);
+        for (name, value) in arguments {
+            call = call.argument(name, value.clone());
+        }
+        call
+    } else {
+        whizbang_squint::details::compare_of(&declared.tool, source, aligned)
+    };
     let (run, outputs) = ran(executor, call)?;
     let outputs = match outputs {
         Ok(outputs) => outputs,
@@ -165,7 +256,7 @@ pub fn read_pair(
         }
     };
     let measured =
-        door::diagnostic(root, &run, declared.report).and_then(|bytes| measurements(&bytes));
+        door::diagnostic(root, &run, &declared.report).and_then(|bytes| measurements(&bytes));
     Ok(Tried {
         align: align_run,
         tool: Some(run),
@@ -250,6 +341,17 @@ fn pair_of(
     Ok((find(Role::Source)?, find(Role::Candidate)?))
 }
 
+/// One item to read: its set, its id, its family, its label, its pair, and the arguments
+/// a tool file is given for it.
+type Planned = (
+    String,
+    String,
+    String,
+    Expected,
+    (ArtifactId, ArtifactId),
+    Vec<(String, Value)>,
+);
+
 /// The seed of the halves and of the bootstrap, and its count of resamples.
 pub const SEED: u64 = 20_261_118;
 pub const RESAMPLES: usize = 2_000;
@@ -266,7 +368,7 @@ pub fn eval_tool(
     resamples: usize,
 ) -> Result<(Scored, String), String> {
     let held = import::pictures_by_file(root)?;
-    let mut planned = Vec::new();
+    let mut planned: Vec<Planned> = Vec::new();
     for id in ids {
         let set = sets::find(sets_root, id)?;
         let Some(labels) = &set.labels else {
@@ -291,19 +393,27 @@ pub fn eval_tool(
             else {
                 return Err(format!("{id}: item {item} has no label or no family"));
             };
+            // A tool file that takes the job is given it whole: its requirements, never
+            // the item's label, which is the set's and not the job's.
+            let arguments = if declared.takes_job {
+                vec![("job".to_owned(), Value::text(&job.to_json()))]
+            } else {
+                Vec::new()
+            };
             planned.push((
                 id.clone(),
                 item.clone(),
                 (*family).to_owned(),
                 *expected,
                 pair,
+                arguments,
             ));
         }
     }
     let mut reads = Vec::new();
     let mut lines = String::new();
-    for (set, item, family, expected, (source, candidate)) in planned {
-        let tried = read_pair(executor, root, declared, source, candidate)?;
+    for (set, item, family, expected, (source, candidate), arguments) in planned {
+        let tried = read_pair_with(executor, root, declared, source, candidate, &arguments)?;
         let value = tried.primary(declared);
         let shown = match &value {
             Ok(value) => format!("{value}"),

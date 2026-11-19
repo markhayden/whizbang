@@ -34,6 +34,17 @@ fn key_of(
     tools: &[&str],
     judge: &ModelIdentity,
 ) -> Key {
+    key_with(job, images, tools, &[], judge)
+}
+
+/// The same, with these tool files among the tools, each its name and revision.
+fn key_with(
+    job: &Job,
+    images: &[(ArtifactId, BindingId)],
+    tools: &[&str],
+    files: &[(String, String)],
+    judge: &ModelIdentity,
+) -> Key {
     let (system, checklist, version) = cache::prompt_of(job, tools).unwrap();
     let arguments = vec![
         ("use_case".to_owned(), Value::text(&job.use_case)),
@@ -51,6 +62,7 @@ fn key_of(
         checklist: &checklist,
         rules_version: version,
         tools,
+        files,
         judge,
         config: Digest::of_bytes(b"the config"),
     })
@@ -273,6 +285,7 @@ fn evaluation_never_reads_the_cache() {
         details: Details::None,
         detail: None,
         projection: "full",
+        tools: &[],
     };
     let call: Call = door::check_call(&job, &images, None, &measuring)
         .argument("cell", Value::text("{\"matrix\":\"m\",\"repetition\":1}"));
@@ -328,4 +341,43 @@ fn a_backend_that_cannot_report_its_identity_is_not_cached() {
     );
     let record = record_of(&judged.world.root, &run_of(&second));
     assert_eq!(setting(&record, cache::ANSWERED_BY), None);
+}
+
+#[test]
+fn a_tool_files_edit_misses() {
+    use whizbang_squint::files::FileTools;
+    // A tool file the run names is keyed by the digest of its bytes as they are now
+    // (plan 2C, task X1): an edit misses, and the same bytes hit.
+    let dir = whizbang_testkit::scratch::Scratch::new("cache-tool-file");
+    let code = "def run(context):\n    return {'readings': []}\n";
+    let text = crate::tool_file::tool_text("probe", crate::tool_file::BOUNDS, code);
+    let path = crate::tool_file::write_tool(dir.path(), "probe.py", &text);
+    let files =
+        whizbang::tool_file::Files::read([path.as_path()], whizbang::pack::OneWorker::installed())
+            .unwrap();
+    let judge = ModelIdentity::new("anthropic", "claude-haiku-5-5", "1+fit1-jpeg90-1568");
+    let pictures = [image(1), image(2)];
+    let job = Job::shorthand("source-fidelity", true, 0, None);
+    let tools = ["view", "probe"];
+    let key = |files: &whizbang::tool_file::Files| {
+        let revision = files.revision("probe").unwrap();
+        key_with(
+            &job,
+            &pictures,
+            &tools,
+            &[("probe".to_owned(), revision)],
+            &judge,
+        )
+    };
+    let base = key(&files);
+    assert_eq!(key(&files), base);
+    assert!(
+        base.material()
+            .contains(&Digest::of_bytes(text.as_bytes()).to_string())
+    );
+    let edited = text.replace("[]", "[ ]");
+    crate::tool_file::write_tool(dir.path(), "probe.py", &edited);
+    assert_ne!(key(&files), base);
+    crate::tool_file::write_tool(dir.path(), "probe.py", &text);
+    assert_eq!(key(&files), base);
 }

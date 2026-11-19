@@ -15,7 +15,7 @@ use whizbang_core::store::fs::RealFs;
 use whizbang_eval::matrix::Matrix;
 use whizbang_eval::sets;
 
-use crate::rascal::{Under, executor};
+use crate::rascal::{Under, executor, executor_caching};
 use crate::store::Where;
 
 /// The most bytes of a matrix file that are read.
@@ -52,7 +52,9 @@ pub enum Command {
     /// accuracy at a threshold chosen on one half of the families and read on the other.
     /// An item with no read is an error, apart from the passes and the fails.
     Tool {
-        /// The tool: change_map or edge_similarity.
+        /// The tool: change_map, edge_similarity, or a tool file the config lists whose
+        /// images are source and candidate; one that takes the argument job is given each
+        /// item's job.
         tool: String,
         /// A set to score on, by its id (`<use-case>/<set>`); give it again for more.
         #[arg(long = "set", value_name = "SET", required = true)]
@@ -178,8 +180,9 @@ pub fn run(command: &Command) -> Result<String, String> {
             at,
             under,
         } => {
-            let declared = whizbang::trying::declared(tool)?;
-            let executor = executor(at, under, recovery, None, Uses::Nothing)?;
+            let (executor, over) = executor_caching(at, under, recovery, None, Uses::Nothing)?;
+            let files = over.tool_files()?;
+            let declared = whizbang::trying::declared_in(tool, files.as_deref())?;
             let scored = whizbang::trying::eval_tool(
                 &executor,
                 at.root(),

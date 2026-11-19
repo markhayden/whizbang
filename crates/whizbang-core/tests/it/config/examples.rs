@@ -64,8 +64,8 @@ fn every_example_in_the_guide_and_in_the_record_is_read() {
     // Task N4 added one of each to the guide, and one read to the record: a
     // download's token. Task S2 of plan 2A added one read to the guide: the judge of a
     // service. Task P1 of plan m2c added two: the judges of Google and of OpenAI.
-    // Task M1 added one: the table `[cache]`.
-    assert_eq!(read_the_examples_of(guide), (10, 7));
+    // Task M1 added one: the table `[cache]`. Task X1 added one: `[tools] paths`.
+    assert_eq!(read_the_examples_of(guide), (11, 7));
     assert_eq!(read_the_examples_of(record), (5, 0));
 }
 

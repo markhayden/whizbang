@@ -315,7 +315,7 @@ fn built(
     let opening = wiring::opening(at.root(), Make::Nothing, recovery)
         .map_err(|error| wiring::not_opened(&error))?;
     let store = opening.writer().map_err(|why| why.to_string())?;
-    let registry = wiring::registry_with(cached)?;
+    let registry = wiring::registry_over(over, cached)?;
     wiring::runner(registry, store, over)
 }
 

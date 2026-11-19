@@ -159,6 +159,32 @@ config. Only a judge whose every answer named the model that gave it is cached. 
 that answers so is recorded, and names the earlier one. `decisions = false` in the table
 turns it off; without the table it is off. Evaluation never reads it (ADR 0031).
 
+## Tool files
+
+```toml
+[tools]
+paths = ["/opt/tools/per_subject.py"]
+```
+
+Each path is a tool file of yours: a Python file that declares, in a block of comments at
+its top, its name, the images it reads, what it measures with each measurement's bounds,
+and its arguments, and has one function, `run(context)` (ADR 0032 gives the whole shape;
+`pack/tools/per_subject.py` is one, and `whizbang setup` puts a copy of it at
+`pack/project/tools/per_subject.py` in the models directory). At most 16, each an absolute path, each named once. A
+file that cannot be read, that its group or others can write, or whose declaration lacks a
+bound, is refused when the config is read. `whizbang try` and `whizbang eval tool` run it
+by its name; `whizbang squint check --tool <name>` offers it to the judge; nothing offers it
+otherwise. Each run uses the file as it is then, records its digest, and an edit is the next
+run's: nothing is rebuilt or installed. A tool file runs in the tool worker, a second
+process of the pack's runtime that `whizbang setup` installed, so the config needs a local
+backend for whizbang to open the models directory it is in.
+
+**A tool file is your code, and runs with your privileges.** Whizbang gives it no key, no
+token and no home of yours, and reaches it only through its context, and it holds what
+comes back to the declaration's bounds; but nothing stops the file from reading your files,
+using the network or starting processes. A process it starts is ended with the worker,
+unless it leaves the worker's process group. List only files you wrote or read.
+
 ## Who may receive data
 
 This table is what will be enforced once the gate is built: nothing will leave the

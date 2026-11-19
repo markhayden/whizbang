@@ -26,6 +26,7 @@ use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{self, Store};
 
 use crate::pack::{OneWorker, PackKind};
+use crate::tool_file::Files as ToolFiles;
 use whizbang_backends::service::ServiceKind;
 
 /// Every action this build ships, registered in the order a door lists them: the
@@ -44,9 +45,24 @@ pub fn registry() -> Result<Registry, String> {
 /// `whizbang serve` build theirs so; evaluation builds [`registry`], which never reads
 /// the cache.
 pub fn registry_with(cached: bool) -> Result<Registry, String> {
+    registry_of(cached, None)
+}
+
+/// The same, with the tool files the config lists, when it lists any (`[tools] paths`;
+/// plan 2C, task X1; ADR 0032): each an action of its own, and each on offer to `check`,
+/// run only when a run names it. Each file is read, and its declaration held to its
+/// rules, here: a file that breaks one is refused, and nothing is built.
+pub fn registry_over(over: &Over, cached: bool) -> Result<Registry, String> {
+    registry_of(cached, over.tool_files()?)
+}
+
+fn registry_of(cached: bool, files: Option<Arc<ToolFiles>>) -> Result<Registry, String> {
     let said = |error: &dyn std::fmt::Display| error.to_string();
     let mut registry = Registry::new();
-    let toolbox = whizbang_squint::check::Toolbox::standard();
+    let toolbox = match &files {
+        Some(files) => whizbang_squint::check::Toolbox::with_files(files.clone()),
+        None => whizbang_squint::check::Toolbox::standard(),
+    };
     let check = whizbang_squint::check::Check::new(toolbox).map_err(|e| said(&e))?;
     let check = if cached { check.caching() } else { check };
     let grow = whizbang_rascal::grow::Grow::new();
@@ -72,6 +88,11 @@ pub fn registry_with(cached: bool) -> Result<Registry, String> {
     ];
     for action in actions {
         registry.register(action).map_err(|e| said(&e))?;
+    }
+    if let Some(files) = &files {
+        for action in files.actions()? {
+            registry.register(action).map_err(|e| said(&e))?;
+        }
     }
     Ok(registry)
 }
@@ -731,6 +752,24 @@ impl Over {
         }
         self.installed = Some(opened);
         Ok(self)
+    }
+
+    /// The tool files the config lists, each read and its declaration held to its
+    /// rules (plan 2C, task X1; ADR 0032), run by the tool worker of the one worker of
+    /// the process; none without a config, or with one that lists none.
+    pub fn tool_files(&self) -> Result<Option<Arc<ToolFiles>>, String> {
+        let Some(path) = &self.config else {
+            return Ok(None);
+        };
+        let config = Config::read(path, &self.secrets)
+            .map_err(|refused| format!("the config cannot be used: {refused}"))?;
+        if config.tool_paths().next().is_none() {
+            return Ok(None);
+        }
+        let worker = self.pack.clone().unwrap_or_else(OneWorker::installed);
+        let files = ToolFiles::read(config.tool_paths(), worker)
+            .map_err(|refused| format!("the config cannot be used: {refused}"))?;
+        Ok(Some(Arc::new(files)))
     }
 
     /// The one worker of the process, when one was given ([`Over::pack`]): what a

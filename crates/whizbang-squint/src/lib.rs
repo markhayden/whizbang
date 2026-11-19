@@ -12,6 +12,7 @@ pub mod cache;
 pub mod check;
 pub mod compare;
 pub mod details;
+pub mod files;
 pub mod job;
 pub mod marks;
 pub mod replay;

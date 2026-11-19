@@ -587,3 +587,58 @@ fn a_run_given_up_after_its_grace_no_longer_counts_toward_the_limit_of_calls() {
     }
     drop(client.close());
 }
+
+const LINGERS: &str = r#"import subprocess, time
+def run(context):
+    child = subprocess.Popen(['/bin/sleep', '30'])
+    with open(context.arguments['phrase'] + '.new', 'w') as noted:
+        noted.write(str(child.pid))
+    import os
+    os.rename(context.arguments['phrase'] + '.new', context.arguments['phrase'])
+    time.sleep(30)
+    return {}
+"#;
+
+#[test]
+fn end_of_input_ends_the_tool_workers_group_with_a_child_holding_its_pipes() {
+    use crate::tool_file::{BOUNDS, Tools, tool_text};
+    let tools = Tools::new(
+        "serve-tool-group",
+        &[("lingers.py", tool_text("lingers", BOUNDS, LINGERS))],
+    );
+    let over = tools.over(None);
+    let executor = Arc::new(tools.runner(&over));
+    let registry = whizbang::wiring::registry_over(&over, false).unwrap();
+    let descriptors = registry.descriptors().cloned().collect();
+    let worker: Arc<whizbang::pack::OneWorker> = (*tools.worker).clone();
+    let door = Arc::new(Actions::new(descriptors, tools.root.clone(), Some(worker)));
+    let mut client = Client::new(executor.clone(), door, Limits::default());
+    client.initialized();
+    // The tool starts a process that holds the worker's input and error output, notes
+    // its id where the test says, and waits, deaf to everything.
+    let noted = tools.dir.path().join("child");
+    let arguments = json!({"source": tools.image, "candidate": tools.image,
+        "phrase": noted.to_str().unwrap()});
+    client.call(1, "lingers", arguments, Some("tok"));
+    let mut notes = vec![client.read()];
+    let run = started(&notes);
+    let mut child = None;
+    for _ in 0..2_000 {
+        if let Ok(text) = std::fs::read_to_string(&noted) {
+            child = text.trim().parse::<u32>().ok();
+            break;
+        }
+        std::thread::park_timeout(Duration::from_millis(5));
+    }
+    let child = child.expect("the tool noted its child");
+    // The input ends: the run is cancelled, and the tool worker's group ended, the
+    // child with it, and waited for.
+    notes.extend(client.close());
+    assert_eq!(ended(&executor, &run), Outcome::Cancelled, "{notes:?}");
+    let lives = whizbang_testkit::worker::processes()
+        .iter()
+        .any(|listed| listed.pid == child && !listed.state.starts_with('Z'));
+    assert!(!lives, "the tool's child {child} outlived the server");
+    assert_eq!(tools.worker.tool_pid(), None);
+    assert!(whizbang_testkit::worker::pack_children().is_empty());
+}

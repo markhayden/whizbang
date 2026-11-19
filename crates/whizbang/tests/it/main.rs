@@ -33,6 +33,8 @@ mod serve;
 mod setup;
 mod spend;
 mod store;
+mod tool_file;
+mod tool_worker;
 mod wired;
 mod writer;
 

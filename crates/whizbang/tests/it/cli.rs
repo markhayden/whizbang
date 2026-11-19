@@ -1667,7 +1667,7 @@ fn compared(name: &str) -> Vec<u8> {
 
 /// Brings a picture into the store at `root`, as `store import --picture` does: its
 /// identity.
-fn imported(dir: &Scratch, root: &Path, name: &str) -> String {
+pub(crate) fn imported(dir: &Scratch, root: &Path, name: &str) -> String {
     let file = dir.path().join(format!("{name}.png"));
     std::fs::write(&file, compared(name)).unwrap();
     let said = whizbang::import::import_picture(&file, root, false, wiring::recovery()).unwrap();
@@ -1725,7 +1725,7 @@ fn try_runs_one_tool_on_a_pair_with_no_judge() {
 
 /// A set of source-fidelity under `dir` of three items in three families, each its source
 /// and candidate from `fixtures/compare/`, labelled as given; its pictures in a folder beside.
-fn three_items(dir: &Path) -> (PathBuf, PathBuf) {
+pub(crate) fn three_items(dir: &Path) -> (PathBuf, PathBuf) {
     const SET: &str = "source-fidelity/compare-v1";
     let (root, from) = (dir.join("evalsets"), dir.join("pictures"));
     let set = root.join(SET);
@@ -1823,4 +1823,95 @@ fn eval_tool_scores_a_tool_on_a_three_item_set() {
         .filter_map(|line| line.split(" run ").nth(1))
         .collect();
     assert_eq!(runs.len(), 3, "{out}");
+}
+
+// --- a tool file, tried, scored, edited and run again (plan m2c, task X1, item 5) ----------
+
+/// A tool file that reads the pair and says how far apart their mean reds are.
+const REDNESS: &str = r#"def run(context):
+    def red(image):
+        samples = image.rgba[0::4]
+        return sum(samples) / (255.0 * len(samples))
+    apart = abs(red(context.image('source')) - red(context.image('candidate')))
+    return {'readings': [{'subject': 'red', 'values': {'covered': apart}}]}
+"#;
+
+/// The digest a run of a tool file noted.
+fn noted_digest(root: &Path, run: &str) -> String {
+    let record = crate::anthropic::record_of(root, run);
+    let settings = record["asked"]["settings"].as_array().unwrap().clone();
+    let noted = settings.iter().find(|s| s["name"] == "tool_file_digest");
+    let value = &noted.unwrap_or_else(|| panic!("{record}"))["value"];
+    value
+        .get("text")
+        .unwrap_or(value)
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+#[test]
+fn a_tool_file_is_tried_scored_edited_and_run_again_without_a_rebuild() {
+    use crate::tool_file::{BOUNDS, Tools, tool_text, write_tool};
+    let first = tool_text("redness", BOUNDS, REDNESS);
+    let tools = Tools::new("cli-tool-file", &[("redness.py", first.clone())]);
+    let root = tools.root.clone();
+    let source = imported(&tools.dir, &root, "before");
+    let candidate = imported(&tools.dir, &root, "after");
+    let (source, candidate) = (source.parse().unwrap(), candidate.parse().unwrap());
+    let (source, candidate) = (
+        whizbang_core::artifact::ArtifactId(source),
+        whizbang_core::artifact::ArtifactId(candidate),
+    );
+    // The set's pictures are brought in first: the executor holds the store's writer.
+    let (sets_root, from) = three_items(&tools.dir.path().join("set"));
+    let set = "source-fidelity/compare-v1";
+    let found = whizbang_eval::sets::find(&sets_root, set).unwrap();
+    whizbang::evaluation::from_folder(&found, &from, &root, &wiring::recovery()).unwrap();
+    // One executor, built once: nothing is rebuilt or installed between the runs.
+    let over = tools.over(None);
+    let files = over.tool_files().unwrap();
+    let declared = whizbang::trying::declared_in("redness", files.as_deref()).unwrap();
+    let executor = tools.runner(&over);
+    // Tried on a pair, with no judge: align, then the tool, each a run.
+    let tried =
+        whizbang::trying::read_pair(&executor, &root, &declared, source, candidate).unwrap();
+    let text = whizbang::trying::tried_text(&declared, &tried).unwrap();
+    assert!(text.lines().nth(1).unwrap().ends_with(" redness"), "{text}");
+    assert!(
+        text.lines().nth(2).unwrap().starts_with("covered "),
+        "{text}"
+    );
+    let ran = tried.tool.clone().unwrap();
+    let digest = whizbang_core::identity::Digest::of_bytes(first.as_bytes()).to_string();
+    assert_eq!(noted_digest(&root, ran.as_str()), digest);
+    // Scored on a set of three items, each a run.
+    let (scored, said) = whizbang::trying::eval_tool(
+        &executor,
+        &root,
+        &sets_root,
+        &declared,
+        &[set.to_owned()],
+        50,
+    )
+    .unwrap();
+    assert_eq!((scored.items, scored.families), (3, 3), "{said}");
+    assert!(
+        said.contains("redness covered (larger is changed): 3 items"),
+        "{said}"
+    );
+    // Edited: the next run is the edited file's, under the same executor.
+    let edited = tool_text("redness", BOUNDS, &REDNESS.replace("abs(", "0.5 * abs("));
+    write_tool(tools.dir.path(), "redness.py", &edited);
+    let again =
+        whizbang::trying::read_pair(&executor, &root, &declared, source, candidate).unwrap();
+    let ran_again = again.tool.clone().unwrap();
+    let edited_digest = whizbang_core::identity::Digest::of_bytes(edited.as_bytes()).to_string();
+    assert_ne!(edited_digest, digest);
+    assert_eq!(noted_digest(&root, ran_again.as_str()), edited_digest);
+    let (before, after) = (
+        tried.primary(&declared).unwrap(),
+        again.primary(&declared).unwrap(),
+    );
+    assert!((after - before / 2.0).abs() < 1e-9, "{before} {after}");
 }

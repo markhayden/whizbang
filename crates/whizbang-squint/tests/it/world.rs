@@ -98,6 +98,8 @@ pub struct World {
     pub toolbox: Arc<Toolbox>,
     /// How many times the stand-in for `grow` ran.
     pub grown: Arc<AtomicU64>,
+    /// Whether `check` reads and keeps the decision cache.
+    pub cached: bool,
 }
 
 impl World {
@@ -114,6 +116,7 @@ impl World {
             other: picture(96, 64, noisy(12, false)),
             toolbox: Toolbox::standard(),
             grown: Arc::new(AtomicU64::new(0)),
+            cached: false,
         };
         let store = world.store();
         let mut publication = store.begin().unwrap();
@@ -176,6 +179,7 @@ impl World {
         let grow = Grow(grow.build().unwrap(), self.grown.clone());
         let mut registry = Registry::new();
         let check = Check::new(self.toolbox.clone()).unwrap();
+        let check = if self.cached { check.caching() } else { check };
         registry.register(wrap(Arc::new(check))).unwrap();
         let view = View::new().unwrap();
         registry.register(wrap(Arc::new(view))).unwrap();
