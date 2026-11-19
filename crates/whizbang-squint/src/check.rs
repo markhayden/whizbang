@@ -442,6 +442,8 @@ struct Run<'a> {
     tools: Vec<ToolDefinition>,
     /// The ids of the tool calls answered so far: an id answers one call.
     answered: BTreeSet<String>,
+    /// The ids of the tool calls that completed: what a submission may cite.
+    completed: Vec<String>,
     dispatched: usize,
     crops: usize,
     /// The names the judge may give an image beside its identity.
@@ -889,7 +891,11 @@ impl Run<'_> {
                 let why = "a tool call has the id of a call that was answered before";
                 return Err(failed("judge_output", &why));
             }
-            results.push(Part::ToolResult(self.dispatch(call)?));
+            let result = self.dispatch(call)?;
+            if !result.is_error() {
+                self.completed.push(call.id().to_owned());
+            }
+            results.push(Part::ToolResult(result));
         }
         Message::new(Role::User, results).map_err(|why| failed("judge_request", &why))
     }
@@ -1150,6 +1156,7 @@ impl Action for Check {
             judge,
             tools,
             answered: BTreeSet::new(),
+            completed: Vec::new(),
             dispatched: 0,
             crops: 0,
             names: Names::default(),
@@ -1303,12 +1310,17 @@ impl Action for Check {
                         let calls = turn.tool_calls().count();
                         let arguments = submitted.first().map(|submit| submit.arguments().clone());
                         let read = match submitted.as_slice() {
-                            [submit] if calls == 1 => use_case::decided_of(
-                                submit.arguments(),
-                                &judging.job,
-                                &judging.resolved,
-                                &judging.checklist,
-                            ),
+                            [submit] if calls == 1 => {
+                                use_case::cited_calls_held(submit.arguments(), &run.completed)
+                                    .and_then(|()| {
+                                        use_case::decided_of(
+                                            submit.arguments(),
+                                            &judging.job,
+                                            &judging.resolved,
+                                            &judging.checklist,
+                                        )
+                                    })
+                            }
                             _ => Err("submit_verdict is called once, alone".to_owned()),
                         };
                         let why = match read {

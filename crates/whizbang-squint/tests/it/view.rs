@@ -556,3 +556,38 @@ fn a_call_outside_the_tools_schema_is_refused_in_squints_words() {
         ]
     );
 }
+
+#[test]
+fn a_crops_place_on_its_source_maps_back_through_its_binding() {
+    // The action hands back, beside each crop, the binding that places it on its source
+    // (plan m3, task Q1, item 4; ADR 0035): a caller maps a point of the crop back through
+    // it, as `view`'s own function does.
+    use whizbang_core::contract::{Call, Executor, Secrets, Value};
+    use whizbang_core::identity::{Binding, Point};
+    let world = super::world::World::new();
+    let judge = super::world::judge(&super::check::turns(&[]), &[]);
+    let executor = world.engine(judge, Secrets::none());
+    let bbox = [0.25, 0.5, 0.75, 1.0];
+    let mut call = Call::new("view").input("image", world.photo.id());
+    for (name, side) in whizbang_squint::view::SIDES.into_iter().zip(bbox) {
+        call = call.argument(name, Value::Number(side));
+    }
+    let finished = executor.submit(&call).unwrap();
+    let handed = finished
+        .measurements()
+        .expect("the crop's place, handed back");
+    let crop = &handed["crops"][0];
+    let binding: Binding = serde_json::from_value(crop["binding"].clone()).unwrap();
+    let want = look(&world.photo, bbox);
+    assert_eq!(crop["crop"], want.image.id().to_string());
+    assert_eq!(binding, want.binding);
+    assert_eq!(cut_of(&binding), cut_of(&want.binding));
+    // The crop's corner is the box's corner on the photograph.
+    let [left, top, _, _] = cut_of(&binding);
+    let back = binding.to_destination(Point { x: 0.0, y: 0.0 }).unwrap();
+    let there = binding.to_source(Point { x: left, y: top }).unwrap();
+    assert_eq!(
+        ((back.x, back.y), (there.x, there.y)),
+        ((left, top), (0.0, 0.0))
+    );
+}

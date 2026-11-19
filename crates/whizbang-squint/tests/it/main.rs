@@ -18,6 +18,7 @@ mod resize_record;
 mod runner;
 mod scale;
 mod scenes;
+mod submission;
 mod support;
 mod tiles_record;
 mod use_case;
