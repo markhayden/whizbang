@@ -951,3 +951,55 @@ fn a_picture_with_a_grey_or_lookup_table_profile_is_read_as_its_adr_says() {
         identify(&plain.bytes(), &limits()).unwrap().identity.pixels
     );
 }
+
+#[test]
+fn the_walk_of_a_progressive_jpeg_built_to_be_slow_ends_inside_its_bound() {
+    // The review of task O5: a progressive JPEG of 1024 by 1024 in grey (16,384 blocks)
+    // whose scans after the first are refinements over every block, each an end-of-band
+    // run that reads almost no data. The walk passes over the blocks at most 16 times
+    // (`PASSES_MOST`), so the 17th such scan is refused as over a limit, and the whole
+    // walk, data-free steps and all, ends well inside a second.
+    let mut file = vec![0xff, 0xd8];
+    let mut segment = |marker: u8, payload: &[u8]| {
+        file.extend_from_slice(&[0xff, marker]);
+        file.extend_from_slice(&((payload.len() + 2) as u16).to_be_bytes());
+        file.extend_from_slice(payload);
+    };
+    let mut table = vec![0u8];
+    table.extend_from_slice(&[1; 64]);
+    segment(0xdb, &table);
+    segment(0xc2, &[8, 0x04, 0x00, 0x04, 0x00, 1, 1, 0x11, 0]);
+    // One code each: a DC difference of no bits, and an end-of-band run of 2^14 blocks.
+    let mut dc = vec![0x00, 1];
+    dc.extend_from_slice(&[0; 15]);
+    dc.push(0x00);
+    segment(0xc4, &dc);
+    let mut ac = vec![0x10, 1];
+    ac.extend_from_slice(&[0; 15]);
+    ac.push(0xe0);
+    segment(0xc4, &ac);
+    let mut scans = Vec::new();
+    // The DC scan: a zero bit for each block.
+    scans.push((vec![1, 1, 0x00, 0, 0, 0x00], vec![0u8; 2048]));
+    // Then refinements of 1 to 63, each one code and fourteen bits of zero, padded.
+    for _ in 0..40 {
+        scans.push((vec![1, 1, 0x00, 1, 63, 0x10], vec![0x00, 0x01]));
+    }
+    for (header, data) in scans {
+        let mut sos = header;
+        sos[0] = 1;
+        file.extend_from_slice(&[0xff, 0xda]);
+        file.extend_from_slice(&((sos.len() + 2) as u16).to_be_bytes());
+        file.extend_from_slice(&sos);
+        file.extend_from_slice(&data);
+    }
+    file.extend_from_slice(&[0xff, 0xd9]);
+    let started = std::time::Instant::now();
+    let result = identify(&file, &limits());
+    let took = started.elapsed();
+    assert!(
+        matches!(&result, Err(IdentityError::Limit(why)) if why.contains("16 times")),
+        "{result:?}"
+    );
+    assert!(took < std::time::Duration::from_secs(1), "{took:?}");
+}
