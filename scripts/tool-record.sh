@@ -14,6 +14,8 @@
 #                                    protect: that record and its folder (plan m3, task D1;
 #                                    crates/whizbang-rascal/tests/it/tool_records/)
 #   scripts/tool-record.sh select, plug, feather or render: the same
+#   scripts/tool-record.sh rasterize, shrink, invert, inspect, cut, put, window, unwindow or
+#                                    tighten: the same (plan m3, task D2)
 #   scripts/tool-record.sh segment   the same, from SAM 3's answers, which the model tier's
 #                                    segment_answers_the_records_examples_on_the_mac wrote
 #                                    into target/tmp/model-tier/out/ first
@@ -49,12 +51,13 @@ case "${1:-}" in
     scripts/thread-guard.sh cargo test --release -p whizbang-squint --test it -- \
       --ignored --exact compare_record::write_the_record
     ;;
-  close | subtract | line | rect | stroke | paste | fill | mask_rect | protect | segment | select | plug | feather | render)
+  close | subtract | line | rect | stroke | paste | fill | mask_rect | protect | segment | select | plug | feather | render | \
+    rasterize | shrink | invert | inspect | cut | put | window | unwindow | tighten)
     scripts/thread-guard.sh cargo test --release -p whizbang-rascal --test it -- \
       --ignored --exact "tool_records::writes::$1"
     ;;
   *)
-    echo "tool-record: usage: scripts/tool-record.sh view|grow|align|resize|tiles|change_map|edge_similarity|close|subtract|line|rect|stroke|paste|fill|mask_rect|protect|segment|select|plug|feather|render" >&2
+    echo "tool-record: usage: scripts/tool-record.sh view|grow|align|resize|tiles|change_map|edge_similarity|close|subtract|line|rect|stroke|paste|fill|mask_rect|protect|segment|select|plug|feather|render|rasterize|shrink|invert|inspect|cut|put|window|unwindow|tighten" >&2
     exit 2
     ;;
 esac

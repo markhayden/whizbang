@@ -1040,6 +1040,14 @@ B1's, since it is model-based), `mask_rect` and `protect`. D2: `rasterize`, `shr
 - [ ] Done when (D2):
   `scripts/tests/test-tool-records.sh` holding D2's fourteen records, each with rungs 1 and 2,
   and `describe::each_pixel_operation_and_task_without_a_model_shows_its_record_complete`.
+  **Split with the task** (D2, 2026-11-19): the fourteen records came to about 3,150
+  changed lines beside their images, so D2 is two pull requests. The seam named under
+  "Seams" (`inspect`'s and `measure`'s records) moves about 450 and leaves the first over
+  2,500, so the split is by the test modules instead: the first holds nine records,
+  `rasterize`, `shrink`, `invert`, `inspect`, `cut`, `put`, `window`, `unwindow` and
+  `tighten`, with their hooks and their lines in `scripts/tests/test-tool-records.sh`; the
+  second holds the five of the seam's chain, `fan`, `profile`, `ramp`, `apply` and
+  `measure`, and the test named above, and ticks the box.
 
 **Keeping tests lean (D1, D2).** The records' tests compare committed images byte for byte
 and the measurements that do not depend on the machine; timing runs only in the script.

@@ -67,6 +67,43 @@ fn on_the_cut(mask: &Mask, cut: PixelDigest, given: PixelDigest, space: Space) -
     mask.space() == space && (mask.image() == cut || rebound)
 }
 
+/// `given`, a canvas of a cut of strip `s` worked through `mask`, put back onto
+/// `panorama` (in `space`) as the action does once it has checked the plan: refused, in
+/// a sentence, when the canvas is of another size than the plan's, when the mask is
+/// neither on the cut nor rebound onto `given`, and when `given` is not the cut wherever
+/// the mask weighs nothing. Nothing comes back once `stopped` says so.
+pub fn put_through(
+    panorama: &CanonicalPixels,
+    space: Space,
+    given: &CanonicalPixels,
+    s: u32,
+    mask: &Mask,
+    stopped: &dyn Fn() -> bool,
+) -> Result<Option<CanonicalPixels>, Failure> {
+    if (given.width(), given.height()) != (2 * s, space.height()) {
+        return Err(Failure::invalid(&format!(
+            "the canvas is {}x{} but the plan's canvas is {}x{}",
+            given.width(),
+            given.height(),
+            2 * s,
+            space.height()
+        )));
+    }
+    let cut = cut::canvas_of(panorama, s)?;
+    let flat =
+        Space::flat(2 * s, space.height()).map_err(|error| Failure::invalid(&error.to_string()))?;
+    if !on_the_cut(mask, cut.digest(), given.digest(), flat) {
+        return Err(Failure::invalid(
+            "the mask is neither on the canvas this plan cuts from the panorama nor rebound onto the canvas given",
+        ));
+    }
+    canvas::kept(&cut, given, mask, "the canvas")?;
+    if stopped() {
+        return Ok(None);
+    }
+    put_back(panorama, given, s).map(Some)
+}
+
 /// The action `put`.
 pub struct Put {
     descriptor: ActionDescriptor,
@@ -185,29 +222,18 @@ impl Action for Put {
                 made_for.source()
             )));
         }
-        let s = plan.strip();
-        if (given.width(), given.height()) != (2 * s, space.height()) {
-            return Err(Failure::invalid(&format!(
-                "the canvas is {}x{} but the plan's canvas is {}x{}",
-                given.width(),
-                given.height(),
-                2 * s,
-                space.height()
-            )));
-        }
-        let cut = cut::canvas_of(panorama.pixels(), s)?;
-        let flat = Space::flat(2 * s, space.height())
-            .map_err(|error| Failure::invalid(&error.to_string()))?;
-        if !on_the_cut(&mask, cut.digest(), given.digest(), flat) {
-            return Err(Failure::invalid(
-                "the mask is neither on the canvas this plan cuts from the panorama nor rebound onto the canvas given",
-            ));
-        }
-        canvas::kept(&cut, given.pixels(), &mask, "the canvas")?;
-        if operation::stopped(context) {
+        let stopped = || operation::stopped(context);
+        let Some(pixels) = put_through(
+            panorama.pixels(),
+            space,
+            given.pixels(),
+            plan.strip(),
+            &mask,
+            &stopped,
+        )?
+        else {
             return Err(operation::stopped_failure(context, NAME));
-        }
-        let pixels = put_back(panorama.pixels(), given.pixels(), s)?;
+        };
         let out = if pixels == *panorama.pixels() {
             image
         } else {
@@ -220,7 +246,7 @@ impl Action for Put {
         };
         context.events().progress(&format!(
             "put: a {}x{} canvas back onto the {}x{} panorama",
-            2 * s,
+            2 * plan.strip(),
             space.height(),
             space.width(),
             space.height()
