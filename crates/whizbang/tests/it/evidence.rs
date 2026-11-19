@@ -1051,3 +1051,60 @@ fn the_baseline_record_holds_the_live_reruns_two_numbers() {
         share(differing, later)
     )));
 }
+
+#[test]
+fn the_gates_record_holds_the_details_first_receipt_and_only_aggregates() {
+    let root = repository();
+    let page = std::fs::read_to_string(root.join("docs/results/m3-gates.md"))
+        .expect("the record of the gate of details first is committed");
+    let bytes = std::fs::read(root.join("docs/results/m3-gates/details-first-receipt.json"))
+        .expect("its receipt is committed");
+    // The record names the receipt by its digest, and the receipt is of the frozen gate,
+    // its matrix and the published labels of its sets.
+    assert!(page.contains(&Digest::of_bytes(&bytes).hex()));
+    let receipt: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let frozen = whizbang::gating::frozen(&root.join("gates/details-first.toml")).unwrap();
+    assert_eq!(receipt["gate_sha256"], frozen.digest.as_str());
+    assert!(page.contains(&frozen.digest));
+    assert_eq!(
+        receipt["matrix_identity"],
+        frozen.matrix.identity().as_str()
+    );
+    assert_eq!(receipt["cells"], 1000);
+    let sets = &frozen.matrix.matrix.sets;
+    let mut ids = Vec::new();
+    for id in sets {
+        let set = whizbang_eval::sets::find(&root.join("evalsets"), id).unwrap();
+        let labels = set.manifest.set.labels.clone().unwrap();
+        let labelled = std::fs::read(set.dir.join(labels)).unwrap();
+        assert_eq!(
+            receipt["labels_sha256"][id.as_str()],
+            Digest::of_bytes(&labelled).hex().as_str()
+        );
+        for (item, family) in set.families_by_item() {
+            ids.push(item);
+            ids.push(family);
+        }
+    }
+    // Aggregates only: no item or family of any set appears in the receipt.
+    let text = String::from_utf8(bytes).unwrap();
+    for id in &ids {
+        assert!(!text.contains(&format!("\"{id}\"")), "{id}");
+    }
+    // Each judge's outcome and gain as the record states them.
+    assert_eq!(receipt["outcome"], "rejected");
+    let judges = receipt["judges"].as_array().unwrap();
+    assert_eq!(judges.len(), 3);
+    for judge in judges {
+        let model = judge["model"].as_str().unwrap();
+        let outcome = judge["outcome"].as_str().unwrap();
+        let gain = judge["paired"]["gain"]["point"].as_f64().unwrap();
+        let row = page
+            .lines()
+            .find(|line| line.starts_with(&format!("| `{model}` | {outcome} |")))
+            .unwrap_or_else(|| panic!("a row of {model}"));
+        assert!(row.contains(&format!("| {gain:.3} [")), "{row}");
+        let keys: Vec<&String> = judge.as_object().unwrap().keys().collect();
+        assert_eq!(keys, ["backend", "failed", "model", "outcome", "paired"]);
+    }
+}
