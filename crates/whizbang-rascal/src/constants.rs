@@ -34,3 +34,23 @@ pub fn number(set: &str, key: &str) -> Option<f64> {
         _ => None,
     }
 }
+
+/// `fan`'s sets, the default first: `fan-v3`, as at rascal's tag (task O3).
+pub const FAN: [(&str, &str); 4] = [
+    ("fan-v3", include_str!("../constants/fan-v3.toml")),
+    ("fan-v1", include_str!("../constants/fan-v1.toml")),
+    ("fan-thin-v1", include_str!("../constants/fan-thin-v1.toml")),
+    ("fan-v2", include_str!("../constants/fan-v2.toml")),
+];
+
+/// `profile-v1`: the feather's sigma as a share of a row's half-width.
+pub const PROFILE_V1: (&str, &str) = ("profile-v1", include_str!("../constants/profile-v1.toml"));
+
+/// `ramp-v1`: the share of the step each side moves, and the rows' smoothing.
+pub const RAMP_V1: (&str, &str) = ("ramp-v1", include_str!("../constants/ramp-v1.toml"));
+
+/// The value `key` of a set's text, of whatever type.
+pub fn value(set: &str, key: &str) -> Option<toml::Value> {
+    let table: toml::Table = toml::from_str(set).ok()?;
+    table.get(key).cloned()
+}

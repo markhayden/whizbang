@@ -5,7 +5,9 @@
 //! Ported from rascal `crates/rascal-ops/src/line.rs` at the commit `docs/sources.toml`
 //! pins, with one difference, on purpose: the column and the path's points are in
 //! pixels of the image, as every location here is (ADR 0002), and not in fractions of a
-//! frame. Exactly one of `column` and `path` is given, as rascal held it.
+//! frame. Exactly one of `column` and `path` is given, as rascal held it. A recipe that
+//! cannot know its image's width, as the seam's on a cut canvas, gives the column as a
+//! share of the width instead, `column_share`, rascal's own unit (task O3).
 
 use std::sync::Arc;
 
@@ -22,7 +24,7 @@ use crate::operation;
 pub const NAME: &str = "line";
 
 /// The action's version, which a location it made records in its origin.
-pub const VERSION: &str = "1.0.0";
+pub const VERSION: &str = "1.1.0";
 
 /// What the command says the action does.
 pub const ABOUT: &str = "Make a line location on an image: a whole column (--column) or a path of two or more \
@@ -59,6 +61,11 @@ impl Line {
             "column",
             "The column, in pixels from the image's left edge, for a line from top to bottom.",
             ValueType::number(Some(0.0), Some(PX_MAX)),
+        ))
+        .argument(Argument::optional(
+            "column_share",
+            "The column as a share of the image's width, from 0 to 1, in place of column: 0.5 is the middle.",
+            ValueType::number(Some(0.0), Some(1.0)),
         ))
         .argument(Argument::optional(
             "path",
@@ -145,17 +152,30 @@ impl Action for Line {
 
     fn run(&self, call: &PreparedCall, context: &Context) -> Result<Produced, Failure> {
         let column = operation::number(call, "column");
+        let share = operation::number(call, "column_share");
         let path = operation::text(call, "path");
         let width_px = operation::number(call, "width_px").unwrap_or(0.0);
         let mut step = Step::new(NAME, VERSION);
         if let Some(column) = column {
             step = step.argument("column", &text_of(column));
         }
+        if let Some(share) = share {
+            step = step.argument("column_share", &text_of(share));
+        }
         if let Some(path) = path {
             step = step.argument("path", path);
         }
         let step = step.argument("width_px", &text_of(width_px));
-        let location = operation::located(call, context, step, |_| shape(column, path, width_px))?;
+        let location = operation::located(call, context, step, |space| {
+            let column = match (column, share) {
+                (None, Some(share)) => Some(share * f64::from(space.width())),
+                (Some(_), Some(_)) => {
+                    return Err("a line takes one of column and column_share".to_owned());
+                }
+                (column, None) => column,
+            };
+            shape(column, path, width_px)
+        })?;
         context.events().progress(&match location.shape() {
             Shape::Line {
                 line: Along::Column(column),

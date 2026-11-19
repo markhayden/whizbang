@@ -45,14 +45,21 @@ fn every_set_rascal_shipped_is_here_byte_for_byte() {
         );
     }
     assert_eq!(
-        here, 3,
-        "window-v1, with window (O2); tighten-v1 and poisson-v1, with tighten and paste (O4)"
+        here, 9,
+        "window-v1, with window (O2); tighten-v1 and poisson-v1, with tighten and paste (O4); fan's four, profile-v1 and ramp-v1 (O3)"
     );
     // Each set the build holds is the file, and its values are rascal's.
-    for (name, text) in [WINDOW_V1, TIGHTEN_V1, POISSON_V1] {
+    let (profile, ramp) = (constants::PROFILE_V1, constants::RAMP_V1);
+    let others = constants::FAN.into_iter().chain([profile, ramp]);
+    for (name, text) in [WINDOW_V1, TIGHTEN_V1, POISSON_V1]
+        .into_iter()
+        .chain(others)
+    {
         let file = std::fs::read(folder.join(format!("{name}.toml"))).unwrap();
         assert_eq!(text.as_bytes(), file.as_slice(), "{name}");
     }
+    assert_eq!(constants::number(profile.1, "feather_ratio"), Some(0.55));
+    assert_eq!(constants::number(ramp.1, "share"), Some(0.5));
     assert_eq!(constants::number(WINDOW_V1.1, "context"), Some(0.5));
     assert_eq!(constants::number(TIGHTEN_V1.1, "min_contrast"), Some(12.0));
     assert_eq!(constants::number(POISSON_V1.1, "tol"), Some(1e-4));

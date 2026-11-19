@@ -46,6 +46,13 @@ impl Shop {
             whizbang_rascal::fill::register,
             whizbang_rascal::tighten::register,
             whizbang_rascal::inspect::register,
+            // What the seam calls (task O3).
+            whizbang_rascal::cut::register,
+            whizbang_rascal::fan::register,
+            whizbang_rascal::profile::register,
+            whizbang_rascal::ramp::register,
+            whizbang_rascal::apply::register,
+            whizbang_rascal::put::register,
         ] {
             register(&mut registry).unwrap();
         }

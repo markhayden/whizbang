@@ -36,3 +36,7 @@ mod tighten;
 mod tool_records;
 mod unwindow;
 mod window;
+// The seam (plan m3, task O3).
+mod fan;
+mod profile;
+mod ramp;

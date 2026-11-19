@@ -26,14 +26,18 @@ pub const PROTECT: &str = include_str!("../recipes/protect.toml");
 /// `repair`).
 pub const REPAIR: &str = include_str!("../recipes/repair.toml");
 
+/// `seam`: the wrap edge of a panorama healed (rascal's `seam` and its `heal`; task O3).
+pub const SEAM: &str = include_str!("../recipes/seam.toml");
+
 /// Each shipped recipe's text, in the order a door lists them.
-pub const SHIPPED: [&str; 6] = [
+pub const SHIPPED: [&str; 7] = [
     REMOVE_PROMPT,
     REMOVE,
     REPAIR_AREA,
     MASK_RECT,
     PROTECT,
     REPAIR,
+    SEAM,
 ];
 
 /// A recipe's text, read and checked against the actions of `registry`, as an action.

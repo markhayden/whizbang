@@ -2488,3 +2488,153 @@ fn rascal_tighten_inspect_and_a_hard_paste_run_from_the_command_line() {
     );
     assert_eq!(repair.code, Some(1), "{}", repair.err);
 }
+
+#[test]
+fn rascal_seam_fills_a_synthetic_panorama_under_a_scripted_filler() {
+    // A panorama of 128 by 64 whose wrap edge is a step. What `whizbang rascal seam
+    // --image <id>` asks, through the door, under a filler of the test's own kind, which
+    // the real binary cannot be given: the recipe's eight steps, each a run, and the
+    // panorama put back, changed only in the two strips. The real binary then runs the
+    // steps of the band itself, `cut`, `line`, `fan`, `profile` and `ramp`, and refuses
+    // `rascal seam` on a store that is not there.
+    use crate::recipe::{record, run};
+    use whizbang_core::artifact::{self, Artifact, ArtifactId, ArtifactType};
+    let dir = Scratch::new("cli-seam");
+    let root = dir.path().join("store");
+    let (w, h) = (128_u32, 64_u32);
+    let rgba: Vec<u8> = (0..w * h)
+        .flat_map(|at| [(100 + (at % w) / 4) as u8, 120, 90, 255])
+        .collect();
+    let pixels = CanonicalPixels::from_rgba(w, h, rgba).unwrap();
+    let panorama = Image::new(
+        whizbang_core::identity::encode::png(&pixels).unwrap(),
+        Projection::Equirectangular,
+        Topology::Wrap,
+        ImageRole::Picture,
+        Origin::new(Step::new("fixture", "1")).unwrap(),
+        &DecodeLimits::default(),
+    )
+    .unwrap();
+    let image = {
+        let store = Store::open(&root, Arc::new(RealFs)).unwrap();
+        let mut publication = store.begin().unwrap();
+        let id = artifact::put(&mut publication, &Artifact::Image(panorama)).unwrap();
+        publication.publish().unwrap();
+        id.0.to_string()
+    };
+    let reset = whizbang(&["spend", "reset", "--allowance", "1"], &root);
+    assert_eq!(reset.code, Some(0), "{}", reset.err);
+    let config = dir.path().join("whizbang.toml");
+    std::fs::write(
+        &config,
+        "[backends.fill]\nkind = \"repaints\"\nurl = \"https://fill.example.org/v1\"\n\n\
+         [egress.recipients.fill]\norigin = \"https://fill.example.org\"\n\
+         classes = [\"source_images\", \"derived_images\"]\n",
+    )
+    .unwrap();
+    let mut kinds = wiring::kinds(&OneWorker::installed());
+    kinds.register(Arc::new(Repaints)).unwrap();
+    let over = Over::nothing().config(Some(&config)).kinds(kinds);
+    let asked = door::OperationAsked {
+        action: "seam",
+        arguments: Vec::new(),
+        inputs: vec![("image", "--image", image.as_str())],
+        request_id: None,
+    };
+    let out = run(&over, &root, &asked).unwrap();
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 11, "{out}");
+    let steps = [
+        ("cut", "cut"),
+        ("line", "line"),
+        ("fan", "fan"),
+        ("band", "profile"),
+        ("ramp", "ramp"),
+        ("apply", "apply"),
+        ("fill", "fill"),
+        ("put", "put"),
+    ];
+    for (line, (step, action)) in lines[1..9].iter().zip(steps) {
+        assert!(
+            line.starts_with(&format!("step {step} {action} run ")),
+            "{line}"
+        );
+    }
+    let recipe_run = lines[0]
+        .strip_prefix("run ")
+        .and_then(|l| l.strip_suffix(" completed"))
+        .unwrap();
+    assert_eq!(record(&root, recipe_run).steps().len(), 8);
+    let healed = lines[9].strip_prefix("image ").expect("the panorama");
+    assert!(lines[10].starts_with("mask sha256:"), "{out}");
+    // Only the strips at the wrap edge changed: a strip is 8 columns of 128.
+    let store = Store::open(&root, Arc::new(RealFs)).unwrap();
+    let read = artifact::get(
+        &store,
+        ArtifactType::Image,
+        ArtifactId(healed.parse().unwrap()),
+        &DecodeLimits::default(),
+    )
+    .unwrap();
+    let Artifact::Image(after) = read else {
+        panic!("not an image");
+    };
+    let after = after.pixels(&DecodeLimits::default()).unwrap();
+    let (mut changed, mut outside) = (0, 0);
+    for (at, (was, is)) in pixels
+        .rgba()
+        .chunks(4)
+        .zip(after.rgba().chunks(4))
+        .enumerate()
+    {
+        let x = at as u32 % w;
+        if was != is {
+            changed += 1;
+            outside += usize::from((8..w - 8).contains(&x));
+        }
+    }
+    assert!(changed >= 2 * 64, "{changed} pixels changed");
+    assert_eq!(outside, 0);
+    drop(store);
+
+    // The real binary: the band's steps, each printing what it made.
+    let ran = |args: &[&str], what: &str| {
+        let ran = whizbang(args, &root);
+        assert_eq!(ran.code, Some(0), "{args:?}: {}", ran.err);
+        let prefix = format!("{what} ");
+        ran.out
+            .lines()
+            .find_map(|l| l.strip_prefix(prefix.as_str()))
+            .unwrap_or_else(|| panic!("{args:?}: {}", ran.out))
+            .to_owned()
+    };
+    let canvas = ran(&["rascal", "cut", "--image", &image], "image");
+    let line = ran(
+        &[
+            "rascal",
+            "line",
+            "--image",
+            &canvas,
+            "--column",
+            "8",
+            "--width-px",
+            "2",
+        ],
+        "location",
+    );
+    let band = ran(
+        &["rascal", "fan", "--image", &canvas, "--line", &line],
+        "band",
+    );
+    let mask = ran(&["rascal", "profile", "--band", &band], "mask");
+    let ramped = ran(
+        &["rascal", "ramp", "--image", &canvas, "--mask", &mask],
+        "mask",
+    );
+    assert_ne!(ramped, mask);
+    let refused = whizbang(
+        &["rascal", "seam", "--image", &image],
+        &dir.path().join("nowhere"),
+    );
+    assert_eq!(refused.code, Some(1), "{}", refused.err);
+}

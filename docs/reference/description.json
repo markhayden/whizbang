@@ -724,6 +724,107 @@
       "concurrent": true
     },
     {
+      "name": "seam",
+      "version": "1.0.0",
+      "kind": "recipe",
+      "purpose": "Heals the wrap edge of a panorama: the band along the seam measured, its tone step ramped, then filled and put back.",
+      "use": "On a complete panorama whose left and right edges do not meet; give backend to choose the filler.",
+      "arguments": [
+        {
+          "name": "backend",
+          "purpose": "The input backend of the recipe.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "set",
+          "purpose": "Overrides for this run, one to a line: a step, a dot, an argument, an equals sign and a value.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "until",
+          "purpose": "Runs the recipe up to and including this step, and hands back none of its own outputs.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "cut",
+              "line",
+              "fan",
+              "band",
+              "ramp",
+              "apply",
+              "fill",
+              "put"
+            ]
+          },
+          "required": false,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The input image of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The output image of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": {
+            "not_given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The output mask of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": {
+            "not_given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [
+        {
+          "capability": "fill",
+          "features": [],
+          "when": "always",
+          "chosen_by": "backend",
+          "feature_from": null,
+          "requests": 1
+        }
+      ],
+      "concurrent": true
+    },
+    {
       "name": "align",
       "version": "1.0.0",
       "kind": "primitive",
@@ -1709,7 +1810,7 @@
     },
     {
       "name": "put",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "kind": "primitive",
       "purpose": "Puts a cut's canvas back onto its panorama; nothing outside the two strips changes.",
       "arguments": [],
@@ -1990,7 +2091,7 @@
     },
     {
       "name": "line",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "kind": "primitive",
       "purpose": "A line location on an image: a whole column or a path, with its full width in pixels.",
       "arguments": [
@@ -2001,6 +2102,17 @@
             "type": "number",
             "min": 0.0,
             "max": 10000.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "column_share",
+          "purpose": "The column as a share of the image's width, from 0 to 1, in place of column: 0.5 is the middle.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 1.0
           },
           "required": false,
           "default": null
@@ -2488,6 +2600,321 @@
           "name": "widths",
           "artifact": "series",
           "purpose": "The core's width on each row of the image, in pixels.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "image"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "fan",
+      "version": "1.2.1",
+      "kind": "primitive",
+      "purpose": "Measures the band along a column line: a half-width for each row, wide on smooth surfaces where the sides differ, thin on detail.",
+      "arguments": [
+        {
+          "name": "object_edge",
+          "purpose": "The object cap: the luminance step between two columns, in levels, that counts as an object's edge; 0 turns the cap off.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 255.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "object_margin_px",
+          "purpose": "How far short of an object's edge the band stops, in pixels at the reference width.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 10000.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "tex_low",
+          "purpose": "The texture, in percent a pixel, at and under which the surface is wholly smooth.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 100.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "tex_high",
+          "purpose": "The texture at and over which the band stays at its least width.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 100.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "wide_max",
+          "purpose": "The widest half-width, as a share of the image's width; 0 keeps every row thin.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 0.5
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "thin_px",
+          "purpose": "The least half-width in pixels at the reference width, scaled by the image's width.",
+          "type": {
+            "type": "number",
+            "min": 0.5,
+            "max": 10000.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "row_sigma",
+          "purpose": "The smoothing of the two rulers along the rows, as a share of the height.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 1.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "width_sigma",
+          "purpose": "The smoothing of the half-width along the rows, as a share of the height.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 1.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "ref_width",
+          "purpose": "The image width the pixel constants were fitted at.",
+          "type": {
+            "type": "integer",
+            "min": 1,
+            "max": 1000000
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "gate",
+          "purpose": "Whether the tone step across the line gates the opening: a row whose sides agree stays thin.",
+          "type": {
+            "type": "boolean"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "constants",
+          "purpose": "The constant set the values a call does not give are taken from.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "fan-v3",
+              "fan-v1",
+              "fan-thin-v1",
+              "fan-v2"
+            ]
+          },
+          "required": false,
+          "default": "fan-v3"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image, which does not wrap: a cut's canvas, whose middle column is the seam.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "line",
+          "artifact": "location",
+          "purpose": "The line on the image, a whole column.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": "image"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "band",
+          "artifact": "band_profile",
+          "purpose": "The band profile.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "image"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "profile",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Makes the band mask of a band profile: the core at each row's half-width, the blend a feather whose sigma follows the row.",
+      "arguments": [
+        {
+          "name": "feather_ratio",
+          "purpose": "The feather's sigma of a row as a share of its half-width, from 0.05 to 2; unset, the constant set's.",
+          "type": {
+            "type": "number",
+            "min": 0.05,
+            "max": 2.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "constants",
+          "purpose": "The constant set the ratio is taken from when the call does not give it.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "profile-v1"
+            ]
+          },
+          "required": false,
+          "default": "profile-v1"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "band",
+          "artifact": "band_profile",
+          "purpose": "The band profile fan made.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The band mask, on the band's image, with the profile and its sigma kept.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "ramp",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Measures the colour step across a band mask's line, row by row, and adds it to the mask as a tone ramp for apply.",
+      "arguments": [
+        {
+          "name": "share",
+          "purpose": "The share of the step each side moves toward the other at the line, from 0 to 1; unset, the constant set's.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 1.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "ramp_sigma",
+          "purpose": "The smoothing of the step along the rows, as a share of the height, from 0 to 1; unset, the constant set's.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 1.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "constants",
+          "purpose": "The constant set the values a call does not give are taken from.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "ramp-v1"
+            ]
+          },
+          "required": false,
+          "default": "ramp-v1"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image the band was measured on.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The band mask on the image, with its band profile.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": "image"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask with the tone ramp added.",
           "count": {
             "min": 1,
             "max": 1

@@ -807,7 +807,7 @@ Rascal's seam recipe, the one its lab rounds were about, runs on whizbang's runn
    it), `fill` of the working image through `apply`'s mask, `put` back; `fan-v3` the default
    set, as at rascal's tag.
 
-- [ ] Done when:
+- [x] Done when:
   `fan::the_ported_vectors_give_rascals_band_for_each_set`,
   `profile::the_ported_vectors_give_rascals_mask`,
   `ramp::the_ported_vectors_give_rascals_prescription`,
@@ -818,6 +818,16 @@ Rascal's seam recipe, the one its lab rounds were about, runs on whizbang's runn
   `constants::every_set_rascal_shipped_is_here_byte_for_byte`, and `just docs` regenerated.
 
 **Keeping tests lean (O3).** Synthetic panoramas of 256 by 128.
+
+**Built with the task (O3).** Two changes to actions O1 and O2 landed, each with its
+version raised: `line` 1.1.0 takes the column as a share of the image's width,
+`column_share`, rascal's own unit, since the recipe cannot know a cut canvas's width;
+`put` 1.1.0 takes a mask rebound by the identity onto the canvas from an image derived
+from the cut (`apply`'s working image, then `fill`'s composite), and still holds the
+canvas to the cut wherever the mask weighs nothing. `feather-v1` stays owed: `feather`
+reads no set, its support is `feather::SUPPORT`, which `profile` uses too. The vectors
+are what rascal's own `fan_profile`, `band_core`, `feather_blend` and `tone_step` give on
+pictures made in the tests, the row smoothing's kernel being `feather::exp_neg`.
 
 ## O4. `tighten`, `repair`, `inspect` and `paste`'s modes (large)
 
