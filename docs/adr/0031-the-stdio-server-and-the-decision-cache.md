@@ -39,7 +39,10 @@ process to two (`READERS_LIMIT`): the fourth place in the workspace that makes a
 channel of eight, so a client that writes faster than the server takes is made to wait. Runs
 are started by the executor's entry point (`Executor::start`), whose bound on started runs
 holds; the server holds at most four calls at once (`CALLS_LIMIT`) and answers one more
-that it is busy.
+that it is busy. The four counts the calls on the server's list: a run the server gave up on, once the
+grace after its stated time has passed, is answered and dropped from the list though its
+action may still be running, so more than four may then run, and only the executor's bound
+on started runs holds them (`serve::a_run_given_up_after_its_grace_no_longer_counts_toward_the_limit_of_calls`).
 
 **A call is a call of an action.** It is prepared, admitted, reserved for and sent through
 the gate exactly as from the command line, since it goes through the same entry point; the

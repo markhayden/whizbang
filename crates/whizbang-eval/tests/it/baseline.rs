@@ -162,7 +162,87 @@ fn an_unchanged_transcript_matches() {
 
 #[test]
 fn the_comparison_has_a_version_for_the_gate_receipt() {
-    assert_eq!(COMPARISON_VERSION, "3");
+    assert_eq!(COMPARISON_VERSION, "4");
+}
+
+#[test]
+fn format_2_compares_a_scaled_tool_images_size_and_mapping_and_not_its_bytes() {
+    // The candidate is 3000 by 2000; the crop cut [0.1, 0.1, 0.6, 0.4] of it, 1500 by 600
+    // pixels, which squint fitted to 1024 by 410. Another crop cut 1024 by 400 exactly and
+    // was not scaled.
+    let format = |version: u64| {
+        let mut t = transcript();
+        t["transcript_version"] = json!(version);
+        t["images"][1]["width"] = json!(3000);
+        t["images"][1]["height"] = json!(2000);
+        let crop = &mut t["images"][2];
+        crop["parent"] = json!("raw:candidate");
+        crop["width"] = json!(1024);
+        crop["height"] = json!(410);
+        crop["mapping"] = json!({"bbox": [0.1, 0.1, 0.6, 0.4]});
+        let mut unscaled = t["images"][2].clone();
+        unscaled["id"] = json!("crop:call:0:1");
+        unscaled["frame"] = json!("crop:call:0:1");
+        unscaled["mapping"] = json!({"bbox": [0.1, 0.1, 0.4413333333333333, 0.3]});
+        t["images"].as_array_mut().unwrap().push(unscaled);
+        t
+    };
+    let changed = |t: &Value, at: &str, value: Value| {
+        let mut t = t.clone();
+        *t.pointer_mut(at).unwrap() = value;
+        t
+    };
+    let two = format(2);
+    assert_eq!(compare(&two, &two), Ok(vec![]));
+    // The scaled crop's prepared bytes are not compared under format 2...
+    let bytes = changed(
+        &two,
+        "/images/2/prepared",
+        json!({"sha256": "c0", "bytes": 6}),
+    );
+    assert_eq!(compare(&two, &bytes), Ok(vec![]));
+    // ...and are under format 1.
+    let one_ = format(1);
+    let bytes_1 = changed(&one_, "/images/2/prepared/sha256", json!("c0"));
+    one(
+        compare(&one_, &bytes_1).unwrap(),
+        "/images/2/prepared/sha256",
+        Kind::Changed,
+    );
+    // Its size and its mapping are compared under format 2.
+    let width = changed(&two, "/images/2/width", json!(1023));
+    one(
+        compare(&two, &width).unwrap(),
+        "/images/2/width",
+        Kind::Changed,
+    );
+    let mapping = changed(&two, "/images/2/mapping/bbox/2", json!(0.61));
+    one(
+        compare(&two, &mapping).unwrap(),
+        "/images/2/mapping/bbox/2",
+        Kind::Changed,
+    );
+    // A crop that was not scaled keeps its bytes compared, and so does a job image.
+    let unscaled = changed(&two, "/images/3/prepared/sha256", json!("c0"));
+    one(
+        compare(&two, &unscaled).unwrap(),
+        "/images/3/prepared/sha256",
+        Kind::Changed,
+    );
+    let job = changed(&two, "/images/1/prepared/sha256", json!("b0"));
+    one(
+        compare(&two, &job).unwrap(),
+        "/images/1/prepared/sha256",
+        Kind::Changed,
+    );
+    // What is let through is worked out from the recorded transcript alone: a replay that
+    // moves its crop's mapping to look unscaled is caught by the mapping, not let in.
+    let smaller = changed(&bytes, "/images/2/mapping/bbox/2", json!(0.3));
+    one(
+        compare(&two, &smaller).unwrap(),
+        "/images/2/mapping/bbox/2",
+        Kind::Changed,
+    );
 }
 
 #[test]
@@ -998,11 +1078,19 @@ fn the_example_on_the_formats_page_compares_with_itself_and_not_with_a_changed_c
 #[test]
 fn another_transcript_version_is_refused() {
     let mut recorded = transcript();
-    recorded["transcript_version"] = json!(2);
+    recorded["transcript_version"] = json!(3);
     assert_eq!(
         compare(&recorded, &transcript()),
         Err(Refusal::Version {
             which: Side::Recorded
+        })
+    );
+    // A pair of two versions is refused: format 2 lets through what format 1 compares.
+    recorded["transcript_version"] = json!(2);
+    assert_eq!(
+        compare(&recorded, &transcript()),
+        Err(Refusal::Version {
+            which: Side::Replayed
         })
     );
     let mut replayed = transcript();

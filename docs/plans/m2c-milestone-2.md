@@ -416,7 +416,7 @@ use cases, sets, judges and arms runs each item as a run of `check`, resumably; 
    aggregates by set and use case: no item's verdict beyond what its set already
    publishes.
 
-- [ ] Done when:
+- [x] Done when:
   `sets::every_file_squint_tracked_under_evalsets_is_here_byte_for_byte`,
   `sets::a_set_whose_seal_does_not_match_is_refused`,
   `sets::corrections_are_applied_as_a_versioned_file_beside_the_set`,
@@ -440,17 +440,16 @@ use cases, sets, judges and arms runs each item as a run of `check`, resumably; 
   `evidence::the_evaluation_record_reports_at_least_100_runs_of_align_by_stats_and_by_export`,
   and the carry-over rows above closed.
 
-**Left unticked by the task (E1).** Built and held by the tests named above: items 1 to 6,
-but for `whizbang store list` naming request ids, which is the named overflow to F1
-(`cli::store_list_says_which_names_are_request_ids`; the carry-over row on the records of
-request ids). Item 7, the evidence, waits on the owner's yes to the third item under "What the
-owner must answer": no picture can be fetched without it, so no matrix has run and
-`docs/results/m2c-evaluation.md` and its two `evidence::` tests are not written (the
-carry-over row on E1's evidence). Two tests live one module deeper than named:
+**Reworded with the task (E1).** The box is ticked with one clause moved:
+`cli::store_list_says_which_names_are_request_ids`, `whizbang store list` naming request
+ids, is the named overflow to F1 (plan 2C, "Overflow"; the carry-over row on the records of
+request ids). Two tests live one module deeper than named:
 `store::volume::request_ids_at_100000_publish_within_the_measured_bound` (`#[ignore]`d, run by
 hand, its numbers in ADR 0030, with `store::volume::request_ids_at_2000_…` in CI) and
-`spend::ledger::an_admission_after_many_paid_runs_and_a_reset_reads_no_closed_epoch`. The copy
-of squint's `evalsets/` is 374 files and 16,428 lines, not the 8,900 the split estimated.
+`spend::ledger::an_admission_after_many_paid_runs_and_a_reset_reads_no_closed_epoch`. Item 7
+ran on 2026-11-18 after the owner's yes (`docs/results/m2c-evaluation.md`): 220 decisions,
+172 runs of `align` by `runs stats` and by `runs export`, 0.77 dollars settled. The copy of
+squint's `evalsets/` is 374 files and 16,428 lines, not the 8,900 the split estimated.
 
 **Keeping tests lean (E1).** Sets made in the test, of three to six items with pictures
 of 32 by 32; the byte-for-byte test compares digests listed in a committed file, not
@@ -462,6 +461,9 @@ recorded, with a test of 2,000 ids in CI.
 `https://raw.githubusercontent.com`, for downloads only (a GET of a picture by its path
 at a pinned revision of the public `wafflery-evalsets` repository; nothing of the
 owner's is sent), on the owner's yes. No other origin.
+
+**Approved by the owner on 2026-11-18**: "approved on #3", the third item under "What the
+owner must answer". Used once, for the evidence of item 7.
 
 ## E2. Metrics, paired statistics, gates and the baseline gate (large)
 
@@ -578,6 +580,21 @@ tool calls and verdicts for every recorded decision.
 **Keeping tests lean (E2).** Statistics on families made in the test, 200 resamples;
 the replay's tests on the three synthetic decisions of item 3 (pictures of at most 128
 pixels), never the package; no live call.
+
+**What E2's pull request built, and what moved (E2).** Built: item 1 (`whizbang_eval::metrics`,
+`bootstrap`, `wilson`, with squint's resampling reproduced and held to squint's own numbers);
+of item 2, the gate file and how a gate is decided (`whizbang_eval::gate`); item 6 (format 2
+in the comparison, `COMPARISON_VERSION` 4, and `scripts/baseline/audit.py --count-scaled-cuts
+--transcripts <folder>`, the owner's command for the fourth item under "What the owner must
+answer", which prints one number). Moved to F1, item 1, each with a carry-over row: the rest
+of item 2 (`eval run`, the gate's digest in its runs, scoring from a labels path), and items
+3, 4, 5 and 7 (the replay and `eval baseline`), which did not fit beside the rest; items 8 and
+9 with them. The box stays open: of its clauses, `metrics::balanced_accuracy_counts_unsure_and_errors_as_neither`,
+`bootstrap::paired_differences_resample_by_family_with_a_fixed_seed`,
+`metrics::the_ported_vectors_of_squint_give_squints_numbers`,
+`gate::a_gate_file_missing_an_item_of_the_spec_is_refused`,
+`gate::too_little_data_is_inconclusive_never_a_pass` and
+`baseline::format_2_compares_a_scaled_tool_images_size_and_mapping_and_not_its_bytes` pass.
 
 ### What the owner provides (E)
 
@@ -776,8 +793,10 @@ seven of `serve::` other than the tool worker's group, `pack::files_are_verified
 four of the five `cache::`, `cli::serve_answers_a_client_over_stdio_and_exits_when_its_input_ends`,
 and `scripts/crate-graph.txt` holding `whizbang-serve`. Not shown, each a carry-over row:
 `cache::a_tool_files_edit_misses` and `serve::end_of_input_ends_the_tool_workers_group_with_a_child_holding_its_pipes`,
-which need X1's tool files; the evidence of item 5 and its `evidence::` test, a live run by
-hand on the owner's Mac; and of item 3, a cancel from a second process (F1, as named). The
+which need X1's tool files; and of item 3, a cancel from a second process (F1, as named).
+Item 5's evidence was narrowed by the orchestrator to one use case asked over stdio and
+then answered from the cache (`docs/results/m2c-use-cases.md`, held by
+`evidence::the_use_cases_record_names_a_commit_of_this_tree_and_holds_no_secret`). The
 carry-over row on files verified once in a process is closed; those on what running an
 action does not do yet and on the events a door shows keep only what no door can do
 (ADR 0031).

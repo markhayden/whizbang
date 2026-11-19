@@ -4,6 +4,11 @@
 
     audit.py --package <package root> --transcripts <folder> [--origin historical]
              [--manifest docs/baseline/manifest.toml] [--summary <file.toml>]
+    audit.py --count-scaled-cuts --transcripts <folder>
+
+The second form prints one number: how many tool images of the transcripts are crops whose
+cut was longer than 1024 pixels on a side, which squint scaled down (transcript format 2,
+docs/baseline/transcript.md). It is counted as whizbang_eval::baseline counts it.
 
 Each transcript ends as one of three things:
 
@@ -479,6 +484,64 @@ def toml_table(name, counter):
     return lines
 
 
+SCALED_ABOVE = 1024
+
+
+def _round(x):
+    """Rounds half away from zero, as Rust's f64::round does."""
+    whole = int(x)
+    rest = x - whole
+    if rest >= 0.5:
+        return whole + 1
+    if rest <= -0.5:
+        return whole - 1
+    return whole
+
+
+def scaled_cuts(t):
+    """The tool images of a transcript squint scaled down: a crop (its mapping a box as
+    fractions of its parent) whose cut is longer than 1024 pixels on a side of its parent."""
+    images = t.get("images") if isinstance(t, dict) else None
+    if not isinstance(images, list):
+        return 0
+    frames = {i.get("frame"): i for i in images if isinstance(i, dict)}
+    count = 0
+    for image in images:
+        if not isinstance(image, dict) or image.get("origin") == "job":
+            continue
+        mapping = image.get("mapping")
+        box = mapping.get("bbox") if isinstance(mapping, dict) else None
+        parent = frames.get(image.get("parent"))
+        if not (isinstance(box, list) and len(box) == 4 and isinstance(parent, dict)):
+            continue
+        numbers = box + [parent.get("width"), parent.get("height")]
+        # A number keeps its text (common.Num) unless it is a plain integer.
+        if not all(isinstance(n, common.Num) or (isinstance(n, int) and not isinstance(n, bool)) for n in numbers):
+            continue
+        x0, y0, x1, y1, w, h = (float(n) for n in numbers)
+        if _round((x1 - x0) * w) > SCALED_ABOVE or _round((y1 - y0) * h) > SCALED_ABOVE:
+            count += 1
+    return count
+
+
+def count_scaled_cuts(top):
+    """Prints the count over every transcript the converter listed in the folder."""
+    for name in (common.LISTING, common.DIGEST):
+        if not os.path.isfile(os.path.join(top, name)):
+            return refuse("the transcripts folder has no %s" % name)
+    data, _count = common.listing(top, leave_out=(common.LISTING, common.DIGEST, common.FINDINGS))
+    with open(os.path.join(top, common.LISTING), "rb") as fh:
+        if fh.read() != data:
+            return refuse("the transcripts are not the ones the converter listed")
+    count = 0
+    for folder, _dirs, files in os.walk(top):
+        for name in sorted(files):
+            if name.endswith(".json"):
+                count += scaled_cuts(common.load_json(os.path.join(folder, name)))
+    print(count)
+    return 0
+
+
 def refuse(text):
     print("audit: %s" % text, file=sys.stderr)
     return 1
@@ -486,13 +549,18 @@ def refuse(text):
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    p.add_argument("--package", required=True)
+    p.add_argument("--package")
     p.add_argument("--transcripts", required=True)
+    p.add_argument("--count-scaled-cuts", action="store_true", help="print the count of scaled tool images, and nothing else")
     p.add_argument("--origin", choices=common.ORIGINS, default="historical")
     p.add_argument("--fixtures", default="replay", help="folder of fixtures inside the package")
     p.add_argument("--manifest", help="the package's public manifest, to check the count against")
     p.add_argument("--summary", help="write the public, counts-only record here")
     args = p.parse_args(argv)
+    if args.count_scaled_cuts:
+        return count_scaled_cuts(os.path.abspath(args.transcripts))
+    if not args.package:
+        return refuse("--package is required")
     package = os.path.abspath(args.package)
     top = os.path.abspath(args.transcripts)
     if args.summary and not args.manifest:

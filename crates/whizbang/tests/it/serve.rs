@@ -56,6 +56,20 @@ fn waits() -> Arc<dyn Action> {
     Arc::new(Waits(draft.build().unwrap()))
 }
 
+/// `deaf`: sleeps 600 ms and ignores its run's cancel and deadline.
+struct Deaf(ActionDescriptor);
+
+impl Action for Deaf {
+    fn descriptor(&self) -> &ActionDescriptor {
+        &self.0
+    }
+
+    fn run(&self, _: &PreparedCall, _: &Context) -> Result<Produced, Failure> {
+        std::thread::sleep(Duration::from_millis(600));
+        Ok(Produced::nothing())
+    }
+}
+
 /// A client of a server running on a thread of the test kit's.
 pub struct Client {
     to: Option<PipeWriter>,
@@ -175,6 +189,10 @@ fn waiting(label: &str) -> (Scratch, Arc<Engine>, Arc<Actions>) {
     let store = Arc::new(Store::open(&root, Arc::new(RealFs)).unwrap());
     let mut registry: Registry = whizbang::wiring::registry().unwrap();
     registry.register(waits()).unwrap();
+    let draft = ActionDescriptor::draft("deaf", "1.0.0", Kind::Primitive, "A test action.");
+    registry
+        .register(Arc::new(Deaf(draft.build().unwrap())))
+        .unwrap();
     let descriptors = registry.descriptors().cloned().collect();
     let engine = crate::runner(registry, store);
     (
@@ -229,7 +247,7 @@ fn initialize_lists_each_action_as_a_tool_with_its_schema() {
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     let registry = whizbang::wiring::registry().unwrap();
     let mut actions: Vec<&str> = registry.descriptors().map(|d| d.name()).collect();
-    actions.push("waits");
+    actions.extend(["waits", "deaf"]);
     assert_eq!(names, actions);
     let tool = |name: &str| tools.iter().find(|t| t["name"] == name).unwrap();
     // `grow`: each argument of its type and bounds, its mask by identity, required.
@@ -500,4 +518,45 @@ fn end_of_input_cancels_waits_and_stops_the_worker() {
     assert!(notes.iter().all(|m| m.get("id").is_none()), "{notes:?}");
     assert_eq!(ended(&executor, &run), Outcome::Cancelled);
     assert!(whizbang_testkit::worker::pack_children().is_empty());
+}
+
+#[test]
+fn a_run_given_up_after_its_grace_no_longer_counts_toward_the_limit_of_calls() {
+    // The bound as it is (ADR 0031, "Threads"; the review of task M1): a run whose action
+    // ignores its cancel is answered and dropped from the server's list once the grace
+    // after its stated time has passed, though it may still be running. The server's
+    // limit of calls then lets another start beside it; only the executor's own bound
+    // on started runs holds them both.
+    let (_dir, executor, door) = waiting("serve-grace");
+    let limits = Limits {
+        wait: Duration::from_millis(100),
+        grace: Duration::from_millis(100),
+        calls: 1,
+        ..Limits::default()
+    };
+    let mut client = Client::new(executor.clone(), door, limits);
+    client.initialized();
+    client.call(1, "deaf", json!({}), Some("one"));
+    let mut notes = Vec::new();
+    let (text, error) = result_text(&client.answer(1, &mut notes));
+    assert!(
+        error && text.ends_with("it was cancelled and has not ended"),
+        "{text}"
+    );
+    let first = started(&notes);
+    assert!(matches!(
+        executor.status(&first).unwrap().state(),
+        RunState::NotEnded { here: true }
+    ));
+    // A second call starts while the first still runs: the limit of one is not met.
+    client.call(2, "deaf", json!({}), Some("two"));
+    let mut second = Vec::new();
+    let answer = client.answer(2, &mut second);
+    let (text, _) = result_text(&answer);
+    assert!(!text.starts_with("the server is busy"), "{text}");
+    let second = started(&second);
+    for run in [&first, &second] {
+        executor.wait(run).unwrap();
+    }
+    drop(client.close());
 }

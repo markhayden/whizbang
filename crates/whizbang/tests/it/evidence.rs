@@ -297,6 +297,45 @@ fn the_use_cases_record_names_a_commit_of_this_tree_and_holds_no_secret() {
             "https://api.anthropic.com"
         );
     }
+    // Plan 2C, task M1, item 5: one call over stdio, then the same call answered from
+    // the decision cache, naming the first run, sending nothing and settling nothing.
+    let door: Vec<Vec<(String, String)>> = page
+        .split("```toml door\n")
+        .skip(1)
+        .map(|rest| {
+            let block = rest.split("```").next().unwrap();
+            let line = |line: &str| {
+                let (name, value) = line.split_once(" = ").expect("a line is name = value");
+                (name.to_owned(), value.trim_matches('"').to_owned())
+            };
+            block.lines().map(line).collect()
+        })
+        .collect();
+    let [asked, again] = &door[..] else {
+        panic!("two calls over stdio are recorded");
+    };
+    for fields in [asked, again] {
+        assert_eq!(field(fields, "action"), "check 1.3.0");
+        assert_eq!(field(fields, "outcome"), "completed");
+        assert_eq!(field(fields, "use_case"), field(asked, "use_case"));
+        assert!(field(fields, "commit").len() == 40);
+    }
+    assert_eq!(field(asked, "decision_cache"), "kept");
+    assert_eq!(
+        field(asked, "egress_recipient"),
+        "https://api.anthropic.com"
+    );
+    assert!(field(asked, "settled_micros").parse::<u64>().unwrap() > 0);
+    assert_eq!(field(again, "decision_cache"), "hit");
+    assert_eq!(field(again, "answered_by_run"), field(asked, "run"));
+    assert_eq!(field(again, "verdict"), field(asked, "verdict"));
+    assert_eq!(field(again, "turns"), "0");
+    assert_eq!(field(again, "settled_micros"), "0");
+    assert_eq!(field(again, "egress_recipient"), "none");
+    assert_eq!(
+        field(again, "reserved_micros"),
+        field(asked, "reserved_micros")
+    );
     // Under a dollar in all, as the brief of the task allowed.
     let spent: u64 = blocks
         .iter()
@@ -392,4 +431,110 @@ fn the_coverage_record_names_a_commit_of_this_tree_and_every_timing() {
     for held in ["/Users/", "/private/", "/home/"] {
         assert!(!page.contains(held), "the page holds {held}");
     }
+}
+
+/// The blocks of fields of the evaluation record (plan 2C, task E1, item 7): the first is
+/// the run's, each after it one set's.
+fn evaluation() -> (String, Vec<Fields>) {
+    let page = std::fs::read_to_string(repository().join("docs/results/m2c-evaluation.md"))
+        .expect("the record of the evaluation is committed");
+    let blocks = page
+        .split("```toml\n")
+        .skip(1)
+        .map(|rest| {
+            let block = rest.split("```").next().unwrap();
+            let line = |line: &str| {
+                let (name, value) = line.split_once(" = ").expect("a line is name = value");
+                (name.to_owned(), value.trim_matches('"').to_owned())
+            };
+            block.lines().map(line).collect()
+        })
+        .collect();
+    (page, blocks)
+}
+
+#[test]
+fn the_evaluation_record_names_a_commit_of_this_tree_and_holds_only_aggregates() {
+    let (page, blocks) = evaluation();
+    let run = &blocks[0];
+    let commit = field(run, "commit");
+    assert!(
+        commit.len() == 40
+            && commit
+                .bytes()
+                .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    );
+    assert_eq!(field(run, "whizbang"), env!("CARGO_PKG_VERSION"));
+    assert_eq!(field(run, "matrix"), "e1-evidence");
+    assert_eq!(field(run, "model"), "claude-haiku-5-5");
+    assert_eq!(field(run, "arm"), "F");
+    // The matrix as committed is the one that ran.
+    let text = std::fs::read_to_string(repository().join("matrices/e1-evidence.toml")).unwrap();
+    let matrix = whizbang_eval::matrix::Matrix::parse(&text).unwrap();
+    assert_eq!(field(run, "matrix_identity"), &matrix.identity()[..16]);
+    let number = |fields: &Fields, name: &str| field(fields, name).parse::<u64>().unwrap();
+    // Each set's block: its id, its counts and nothing of an item.
+    let sets = &blocks[1..];
+    assert_eq!(sets.len(), 10);
+    let decisions: u64 = sets.iter().map(|b| number(b, "runs")).sum();
+    assert_eq!(decisions, number(run, "decisions"));
+    assert_eq!(decisions, 220);
+    for set in sets {
+        assert!(matrix.matrix.sets.iter().any(|id| id == field(set, "set")));
+        let ended = ["completed", "failed", "interrupted"].map(|n| number(set, n));
+        assert_eq!(ended.iter().sum::<u64>(), number(set, "runs"));
+        let verdicts = ["pass", "fail", "unsure"].map(|n| number(set, n));
+        assert_eq!(verdicts.iter().sum::<u64>(), number(set, "completed"));
+        assert!(number(set, "agreeing") <= number(set, "completed"));
+        let names: Vec<&str> = set.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "set",
+                "use_case",
+                "items",
+                "runs",
+                "completed",
+                "failed",
+                "interrupted",
+                "pass",
+                "fail",
+                "unsure",
+                "agreeing"
+            ]
+        );
+    }
+    // Spend within what the task allowed.
+    assert!(number(run, "settled_micros") <= 3_000_000);
+    // No item, no reply, no secret, no path.
+    for dir in whizbang_eval::sets::discover(&repository().join("evalsets")).unwrap() {
+        let set = whizbang_eval::sets::Set::load(&dir).unwrap();
+        for (item, _) in &set.jobs {
+            assert!(
+                !page.contains(&format!("`{item}`")) && !page.contains(&format!("\"{item}\"")),
+                "{item}"
+            );
+        }
+    }
+    for held in [
+        "sk-ant",
+        "x-api-key",
+        "/Users/",
+        "/private/",
+        "/home/",
+        "chk:",
+        "reason",
+    ] {
+        assert!(!page.contains(held), "the page holds {held}");
+    }
+}
+
+#[test]
+fn the_evaluation_record_reports_at_least_100_runs_of_align_by_stats_and_by_export() {
+    let (_, blocks) = evaluation();
+    let run = &blocks[0];
+    let stats: u64 = field(run, "align_runs_by_stats").parse().unwrap();
+    let export: u64 = field(run, "align_runs_by_export").parse().unwrap();
+    assert!(stats >= 100, "{stats}");
+    assert_eq!(stats, export);
 }
