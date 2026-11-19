@@ -8,10 +8,11 @@
 //! gate's. The SHA-256 of the gate file's bytes is in the cell of every run the gate makes
 //! (`gate` in `check`'s argument `cell`), and a gate resumes from its own runs alone.
 //!
-//! **Scoring.** The labels are read from a folder given on the command line, laid out as
-//! the sets are (`<labels>/<set id>/labels.toml`), each held to its set's seal
-//! (`Set::labels_from`): so a blind set's labels, which live outside the repository, are
-//! scored without ever being placed in the sets' tree. Nothing is written under the sets'
+//! **Scoring.** A set that publishes its labels is scored by its own committed labels file.
+//! A blind set's labels are read from a folder given on the command line, laid out as the
+//! sets are (`<labels>/<set id>/labels.toml`), never at or under the sets' folder as the file
+//! system resolves both, and held to the set's seal (`Set::labels_from`): so they are scored
+//! without ever being placed in the sets' tree. Nothing is written under the sets'
 //! folder or the labels' folder: a receipt asked for under either is refused. Each cell of
 //! the gate's arms is one row: its verdict (a run that failed is an error), its item's label
 //! and family, what its paid requests settled at and its wall time. An item with no label
@@ -124,17 +125,23 @@ pub struct Labelled {
     pub digests: BTreeMap<String, String>,
 }
 
-/// Each set's labels from the labels' folder (`<labels>/<set id>/labels.toml`, read through
-/// no link), held to the set's seal.
+/// Each set's labels, held to the set's seal. A set that publishes its labels is read from
+/// its own committed labels file, where it is. A blind set, which publishes none, is read
+/// from the labels' folder (`<labels>/<set id>/labels.toml`, through no link below it), and
+/// never from under the sets' folder: the labels' folder, as the file system resolves it
+/// (so a link to a place in the tree counts as that place), at or below the sets' folder is
+/// refused, as is one that cannot be resolved.
 pub fn labelled(sets_root: &Path, labels_root: &Path, ids: &[String]) -> Result<Labelled, String> {
     let mut out = Labelled::default();
     for id in ids {
         let set = sets::find(sets_root, id)?;
-        let bytes = sets::read_under(
-            labels_root,
-            &format!("{id}/{LABELS_FILE}"),
-            sets::FILE_LIMIT,
-        )?;
+        let bytes = match &set.manifest.set.labels {
+            Some(own) => sets::read_under(&set.dir, own, sets::FILE_LIMIT)?,
+            None => {
+                let base = blind_labels_base(sets_root, labels_root)?;
+                sets::read_under(&base, &format!("{id}/{LABELS_FILE}"), sets::FILE_LIMIT)?
+            }
+        };
         let labels = set.labels_from(&bytes)?;
         out.digests
             .insert(id.clone(), Digest::of_bytes(&bytes).hex());
@@ -149,17 +156,31 @@ pub fn labelled(sets_root: &Path, labels_root: &Path, ids: &[String]) -> Result<
     Ok(out)
 }
 
-/// Whether `path` is at or below `root`, both as the file system has them.
+/// The labels' folder a blind set's labels are read from, as the file system resolves it:
+/// refused when it cannot be resolved, or when it is at or below the sets' folder.
+fn blind_labels_base(sets_root: &Path, labels_root: &Path) -> Result<PathBuf, String> {
+    let unresolved = |_| "the sets' folder or the labels' folder cannot be resolved".to_owned();
+    let tree = sets_root.canonicalize().map_err(unresolved)?;
+    let base = labels_root.canonicalize().map_err(unresolved)?;
+    if base.starts_with(&tree) {
+        return Err(
+            "a blind set's labels are never read from under the sets' folder: give --labels \
+             a folder outside it"
+                .to_owned(),
+        );
+    }
+    Ok(base)
+}
+
+/// Whether a file at `path` would be at or below `root`, both as the file system resolves
+/// them. Fails closed: when either cannot be resolved, it is taken to be below.
 fn under(path: &Path, root: &Path) -> bool {
-    let Ok(root) = root.canonicalize() else {
-        return false;
-    };
     let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
     let parent = parent.unwrap_or(Path::new("."));
-    let Ok(parent) = parent.canonicalize() else {
-        return false;
-    };
-    parent.starts_with(&root)
+    match (root.canonicalize(), parent.canonicalize()) {
+        (Ok(root), Ok(parent)) => parent.starts_with(&root),
+        _ => true,
+    }
 }
 
 /// What a gate is run with beside the runner.
@@ -224,7 +245,8 @@ pub fn run(gating: &Gating<'_>, running: &Running<'_>) -> Result<Receipt, String
     for root in [gating.sets_root, gating.labels_root] {
         if under(gating.receipt, root) {
             return Err(
-                "the receipt is not written under the sets' folder or the labels' folder"
+                "the receipt is not written under the sets' folder or the labels' folder, nor \
+                 where either cannot be resolved"
                     .to_owned(),
             );
         }
@@ -320,12 +342,24 @@ pub fn run(gating: &Gating<'_>, running: &Running<'_>) -> Result<Receipt, String
     Ok(receipt)
 }
 
-/// Writes `bytes` to `path` whole: to a file beside it first, then moved into place.
-fn write_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
+/// Writes `bytes` to `path` whole: to a new file beside it first, made by this call and so
+/// never through a link, then moved into place, which replaces a link there rather than
+/// writing through it.
+pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    let refused = |_| "the receipt cannot be written".to_owned();
     let mut beside = PathBuf::from(path);
     beside.as_mut_os_string().push(".partial");
-    std::fs::write(&beside, bytes).map_err(|_| "the receipt cannot be written".to_owned())?;
-    std::fs::rename(&beside, path).map_err(|_| "the receipt cannot be written".to_owned())
+    let mut file = (std::fs::OpenOptions::new().write(true).create_new(true))
+        .open(&beside)
+        .map_err(refused)?;
+    let written = file.write_all(bytes).and_then(|()| file.sync_all());
+    drop(file);
+    if let Err(e) = written.and_then(|()| std::fs::rename(&beside, path)) {
+        let _ = std::fs::remove_file(&beside);
+        return Err(refused(e));
+    }
+    Ok(())
 }
 
 fn word(outcome: Outcome) -> &'static str {

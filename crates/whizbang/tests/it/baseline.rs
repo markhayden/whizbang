@@ -425,13 +425,37 @@ fn the_live_rerun_prints_its_agreement_and_the_recorded_self_disagreement_and_no
         left_micros: 20_000_000,
         stop: &|| false,
     };
+    let matrix = whizbang::baseline_live::matrix(SET, "claude-haiku-5-5", "default").unwrap();
+    // A judge's name is never spliced into the matrix's text: one with a quote is a name.
+    let quoted = whizbang::baseline_live::matrix(SET, "claude-haiku-5-5", "a\"b").unwrap();
+    assert_eq!(quoted.matrix.judges[0].backend, "a\"b");
+    // A receipt into the package, or where its folder cannot be resolved, is refused
+    // before anything is sent.
+    for receipt in [
+        package.join("r.toml"),
+        judged.world.beside("missing/r.toml"),
+    ] {
+        let into = Live {
+            package: &package,
+            receipt: &receipt,
+            sets: &tiny.root,
+            set: SET,
+            model: "claude-haiku-5-5",
+            matrix: &matrix,
+        };
+        let refused = live_run(&into, &running).unwrap_err();
+        assert!(
+            refused.contains("not written into the package"),
+            "{refused}"
+        );
+    }
     let live = Live {
         package: &package,
         receipt: &receipt,
         sets: &tiny.root,
         set: SET,
         model: "claude-haiku-5-5",
-        judge: "default",
+        matrix: &matrix,
     };
     let rerun = live_run(&live, &running).unwrap();
     // A package whose listing is not the bytes of its files is refused before anything is

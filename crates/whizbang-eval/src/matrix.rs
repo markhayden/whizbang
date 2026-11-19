@@ -174,6 +174,12 @@ impl Matrix {
         Ok(matrix)
     }
 
+    /// A matrix built as a value, held to the checks a file is held to.
+    pub fn checked(self) -> Result<Matrix, String> {
+        self.validate()?;
+        Ok(self)
+    }
+
     fn validate(&self) -> Result<(), String> {
         let m = &self.matrix;
         let plain = !m.name.is_empty()

@@ -41,8 +41,30 @@ pub struct Live<'a> {
     pub sets: &'a Path,
     pub set: &'a str,
     pub model: &'a str,
-    /// The config's judge to run it under: `default` for the config's default.
-    pub judge: &'a str,
+    /// The matrix run: [`matrix`] of the set, the model and the config's judge.
+    pub matrix: &'a Matrix,
+}
+
+/// The live rerun's matrix: arm C of the model on the set, once, under the config's judge of
+/// that name (`default` for the config's default). Built as a value and held to the
+/// matrix's own checks, and a name is never spliced into the file's text.
+pub fn matrix(set: &str, model: &str, judge: &str) -> Result<Matrix, String> {
+    use whizbang_eval::matrix::{Judge, Spec};
+    let built = Matrix {
+        matrix: Spec {
+            name: "baseline-live".to_owned(),
+            sets: vec![set.to_owned()],
+            judges: vec![Judge {
+                backend: judge.to_owned(),
+                model: model.to_owned(),
+                repetitions: None,
+            }],
+            arms: vec!["C".parse()?],
+            repetitions: 1,
+            concurrency: 2,
+        },
+    };
+    built.checked()
 }
 
 /// What the live rerun came to: counts only.
@@ -165,21 +187,30 @@ pub(crate) fn recorded(
 /// run's, writes the receipt, and says what it came to in counts. Refused before anything
 /// runs when the package cannot be read or records no run to set it against.
 pub fn run(live: &Live<'_>, running: &Running<'_>) -> Result<Rerun, String> {
-    if live.receipt.starts_with(live.package) {
-        return Err("the receipt is not written into the package".to_owned());
+    // As the file system resolves them, and closed: a receipt whose folder or package
+    // cannot be resolved is refused, as is one at or below the package.
+    let parent = live.receipt.parent().filter(|p| !p.as_os_str().is_empty());
+    let resolved = (
+        live.package.canonicalize(),
+        parent.unwrap_or(Path::new(".")).canonicalize(),
+    );
+    match resolved {
+        (Ok(package), Ok(folder)) if !folder.starts_with(&package) => {}
+        _ => {
+            return Err(
+                "the receipt is not written into the package, nor where either cannot be \
+                 resolved"
+                    .to_owned(),
+            );
+        }
     }
     let package = Package::open(live.package)?;
     let set = whizbang_eval::sets::find(live.sets, live.set)?;
     let items: Vec<String> = set.jobs.iter().map(|(item, _)| item.clone()).collect();
     let recorded = recorded(&package, live.model, &items)?;
-    let text = format!(
-        "[matrix]\nname = \"baseline-live\"\nsets = [\"{}\"]\narms = [\"C\"]\nrepetitions = 1\n\
-         [[matrix.judges]]\nbackend = \"{}\"\nmodel = \"{}\"\n",
-        live.set, live.judge, live.model
-    );
-    let matrix = Matrix::parse(&text)?;
-    let (planned, labels) = evaluation::plan(&matrix, live.sets, running.root)?;
-    evaluation::run(&matrix, &planned, &labels, running)?;
+    let matrix = live.matrix;
+    let (planned, labels) = evaluation::plan(matrix, live.sets, running.root)?;
+    evaluation::run(matrix, &planned, &labels, running)?;
     let identity: String = matrix.identity().chars().take(16).collect();
     let attempts = evaluation::attempts(running.root, &identity)?;
     let mut rerun = Rerun {
@@ -211,7 +242,6 @@ pub fn run(live: &Live<'_>, running: &Running<'_>) -> Result<Rerun, String> {
             rerun.recorded_differing += usize::from(first != verdict);
         }
     }
-    std::fs::write(live.receipt, rerun.receipt(live.set, live.model))
-        .map_err(|_| "the receipt cannot be written".to_owned())?;
+    crate::gating::write_new(live.receipt, rerun.receipt(live.set, live.model).as_bytes())?;
     Ok(rerun)
 }

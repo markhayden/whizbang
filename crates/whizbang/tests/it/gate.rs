@@ -228,10 +228,37 @@ fn scoring_a_synthetic_blind_set_leaves_the_sets_tree_unchanged_and_writes_only_
         assert!(refused.unwrap_err().contains("not written under"));
         assert_eq!(sent, 0);
     }
+    // A receipt where its folder cannot be resolved is refused: the check fails closed.
+    let nowhere = judged.world.beside("no-such-folder/receipt.json");
+    let (refused, sent) = gated(&judged, &tiny, &gate, &labels, &nowhere, Vec::new());
+    assert!(refused.unwrap_err().contains("cannot be resolved"));
+    assert_eq!(sent, 0);
+    // A blind set's labels are never read from under the sets' folder, even as the very
+    // bytes its seal names, nor through a link that resolves there.
+    let private = tiny.root.join("private");
+    std::fs::create_dir_all(private.join(SET)).unwrap();
+    std::fs::copy(
+        labels.join(SET).join("labels.toml"),
+        private.join(SET).join("labels.toml"),
+    )
+    .unwrap();
+    let linked = judged.world.beside("linked-labels");
+    std::os::unix::fs::symlink(&private, &linked).unwrap();
+    let elsewhere = judged.world.beside("elsewhere.json");
+    for inside in [&private, &linked] {
+        let (refused, sent) = gated(&judged, &tiny, &gate, inside, &elsewhere, Vec::new());
+        let refused = refused.unwrap_err();
+        assert!(
+            refused.contains("never read from under the sets' folder"),
+            "{refused}"
+        );
+        assert_eq!(sent, 0);
+    }
+    std::fs::remove_file(&linked).unwrap();
+    std::fs::remove_dir_all(&private).unwrap();
     // Labels that are not the ones the set seals are refused before anything runs.
     let wrong = judged.world.beside("wrong-labels");
     blinded_copy(&labels, &wrong);
-    let elsewhere = judged.world.beside("elsewhere.json");
     let (refused, sent) = gated(&judged, &tiny, &gate, &wrong, &elsewhere, Vec::new());
     let refused = refused.unwrap_err();
     assert!(
@@ -300,7 +327,11 @@ fn a_gate_with_too_few_families_is_inconclusive_in_its_receipt() {
     let gate = frozen_gate(&judged.world.beside("gates"), &gate_matrix());
     let receipt = judged.world.beside("receipt.json");
     let answers = vec![submission("held", "Kept."); 4];
-    let (written, _) = gated(&judged, &tiny, &gate, &tiny.root, &receipt, answers);
+    // A set that publishes its labels is scored by its own committed labels file, where it
+    // is: the labels' folder given holds nothing of it.
+    let empty = judged.world.beside("empty-labels");
+    std::fs::create_dir_all(&empty).unwrap();
+    let (written, _) = gated(&judged, &tiny, &gate, &empty, &receipt, answers);
     let written = written.unwrap();
     let json: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&receipt).unwrap()).unwrap();

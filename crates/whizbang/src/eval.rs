@@ -52,8 +52,9 @@ pub enum Command {
         /// The gate file; the matrix it names is beside it.
         #[arg(long, value_name = "FILE")]
         gate: PathBuf,
-        /// The folder the labels are read from, laid out as the sets are
-        /// (`<folder>/<set id>/labels.toml`): for a blind set, wherever its labels are kept.
+        /// The folder a blind set's labels are read from, laid out as the sets are
+        /// (`<folder>/<set id>/labels.toml`), outside the sets' folder; a set that publishes
+        /// its labels is scored by its own labels file.
         #[arg(long, value_name = "DIR")]
         labels: PathBuf,
         /// Where the receipt is written: not under the sets' or the labels' folder.
@@ -360,12 +361,7 @@ fn live_rerun(
     recovery: Recovery,
 ) -> Result<String, String> {
     use whizbang::baseline_live::{LIVE_MODEL, LIVE_SET, Live};
-    let text = format!(
-        "[matrix]\nname = \"baseline-live\"\nsets = [\"{LIVE_SET}\"]\narms = [\"C\"]\n\
-         repetitions = 1\n[[matrix.judges]]\nbackend = \"{}\"\nmodel = \"{LIVE_MODEL}\"\n",
-        judge.replace(['"', '\\'], "")
-    );
-    let matrix = Matrix::parse(&text)?;
+    let matrix = whizbang::baseline_live::matrix(LIVE_SET, LIVE_MODEL, judge)?;
     judges_are_of_their_models(&matrix, under)?;
     let executor = executor(at, under, recovery, None, uses_of(&matrix))?;
     let running = Running {
@@ -380,7 +376,7 @@ fn live_rerun(
         sets,
         set: LIVE_SET,
         model: LIVE_MODEL,
-        judge,
+        matrix: &matrix,
     };
     whizbang::baseline_live::run(&live, &running).map(|rerun| rerun.text())
 }
