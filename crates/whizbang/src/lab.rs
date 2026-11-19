@@ -1,4 +1,4 @@
-//! `whizbang lab`: the lab's corpus, a round, and its decode (plan m3, tasks L1 and L2):
+//! `whizbang lab`: the lab's corpus, a round, its pairs and its decode (plan m3, tasks L1 to L3):
 //! wiring from arguments to `whizbang::laboratory`, which says what each does.
 
 use std::path::PathBuf;
@@ -33,6 +33,39 @@ pub enum Command {
         /// The folder the corpus manifest's files are relative to.
         #[arg(long, value_name = "DIR")]
         corpus: PathBuf,
+        #[command(flatten)]
+        at: Where,
+        #[command(flatten)]
+        under: Under,
+    },
+    /// Write a round's blinded pairs as a static page, for one person to pick on, and the
+    /// assignment beside it, frozen by its digest: for each image the protocol judges, the
+    /// two arms' results side by side in an order and on sides drawn from the protocol's
+    /// seed, at their focus (the region both changed, at full size) or whole. The page
+    /// loads nothing from the network, runs no script from elsewhere, and writes the picks
+    /// only as a file you save (`picks.json`); open a saved one on it to resume. Takes the
+    /// round's own matrix, corpus folder and config, and reads the store; refused while a
+    /// cell has no completed attempt. Prints counts and the assignment's digest.
+    Pairs {
+        /// The matrix file; the corpus manifest and the protocol it names are beside it.
+        #[arg(long, value_name = "FILE")]
+        matrix: PathBuf,
+        /// The folder the corpus manifest's files are relative to.
+        #[arg(long, value_name = "DIR")]
+        corpus: PathBuf,
+        /// The folder the page, its pictures and the assignment are written in: by default
+        /// `pairs/<a>-vs-<b>` in the corpus's folder. Never the store's; never inside a git
+        /// work tree unless --force.
+        #[arg(long, value_name = "DIR")]
+        out: Option<PathBuf>,
+        /// A lighter round: this many pairs, drawn by the protocol's groups from its seed,
+        /// each group its share. The rules do not change: a group with fewer decided pairs
+        /// than the protocol's `min_decided` is inconclusive, never a win.
+        #[arg(long, value_name = "N")]
+        limit: Option<u32>,
+        /// Write the page inside a git work tree.
+        #[arg(long)]
+        force: bool,
         #[command(flatten)]
         at: Where,
         #[command(flatten)]
@@ -109,6 +142,41 @@ pub fn run(command: &Command, platform: Platform) -> Result<(String, Option<Stri
             let report = laboratory::round(&prepared, &running)?;
             let failed = (report.failed > 0).then(|| "some cells failed".to_owned());
             Ok((report.text(), failed))
+        }
+        Command::Pairs {
+            matrix,
+            corpus,
+            out,
+            limit,
+            force,
+            at,
+            under,
+        } => {
+            let over = under.over(Some(platform), Uses::Every)?;
+            // A folder named that cannot be written is refused before the round is read.
+            if let Some(out) = out {
+                whizbang::pairs_page::checked_out(out, at.root(), *force)?;
+            }
+            let asked = Asked {
+                matrix,
+                corpus,
+                root: at.root(),
+                over: &over,
+                recovery: whizbang::wiring::recovery(),
+            };
+            let prepared = laboratory::prepare(&asked)?;
+            let [a, b] = &prepared.validated.protocol.arms;
+            let default = corpus.join("pairs").join(format!("{a}-vs-{b}"));
+            let written = whizbang::pairs_page::pairs(
+                &prepared,
+                &whizbang::pairs_page::Asked {
+                    root: at.root(),
+                    out: out.as_deref().unwrap_or(&default),
+                    limit: *limit,
+                    force: *force,
+                },
+            )?;
+            Ok((written.text(), None))
         }
         Command::Decode {
             protocol,

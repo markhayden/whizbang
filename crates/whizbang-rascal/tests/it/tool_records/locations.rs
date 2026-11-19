@@ -15,7 +15,7 @@ use super::{Page, SIZES, count, hold, image_picture, scene, timed_head, timed_ro
 
 /// The scene with a scratch: a dark line about two pixels wide from (20, 20) to
 /// (76, 44).
-fn scratched() -> CanonicalPixels {
+pub fn scratched() -> CanonicalPixels {
     let scene = scene();
     let mut rgba = scene.rgba().to_vec();
     for at in 0..96 * 64 {

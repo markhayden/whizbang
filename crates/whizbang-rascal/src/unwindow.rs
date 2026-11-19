@@ -20,7 +20,9 @@ use whizbang_core::contract::{
     Action, ActionDescriptor, Context, Failure, InputPort, Kind, OutputPort, PreparedCall,
     Produced, RegistrationError, Registry, Value,
 };
-use whizbang_core::identity::{Destination, Direction, Mapping, PixelDigest, Space};
+use whizbang_core::identity::{
+    CanonicalPixels, Destination, Direction, Mapping, PixelDigest, Space,
+};
 
 use crate::{canvas, operation, paste};
 
@@ -74,6 +76,44 @@ pub fn placed_box(mask: &Mask, onto: PixelDigest, space: Space) -> Result<[u32; 
         ));
     }
     Ok([l, t, r, b])
+}
+
+/// `given` written back into the box of `picture` (an image in `space`) that `mask`, the
+/// mask `window` handed back, places its crop at, with the box: refused, in a sentence,
+/// when the mask places no crop of this image in whole pixels, when `given` is of another
+/// size than the box, when the mask is not on the crop the box cuts, and when `given` is
+/// not that crop wherever the mask weighs nothing. Nothing comes back once `stopped` says
+/// so.
+pub fn unwound(
+    picture: &CanonicalPixels,
+    space: Space,
+    given: &CanonicalPixels,
+    mask: &Mask,
+    stopped: &dyn Fn() -> bool,
+) -> Result<Option<(CanonicalPixels, [u32; 4])>, Failure> {
+    let [l, t, r, b] =
+        placed_box(mask, picture.digest(), space).map_err(|why| Failure::invalid(&why))?;
+    if (given.width(), given.height()) != (r - l, b - t) {
+        return Err(Failure::invalid(&format!(
+            "the crop is {}x{} but the window's box is {}x{}",
+            given.width(),
+            given.height(),
+            r - l,
+            b - t
+        )));
+    }
+    let window = canvas::crop(picture, [l, t, r - l, b - t])?;
+    if window.digest() != mask.image() {
+        return Err(Failure::invalid(
+            "the mask is not on the crop of this image that its box cuts",
+        ));
+    }
+    canvas::kept(&window, given, mask, "the crop")?;
+    if stopped() {
+        return Ok(None);
+    }
+    let pixels = canvas::written(picture, given, l, t)?;
+    Ok(Some((pixels, [l, t, r, b])))
 }
 
 /// The action `unwindow`.
@@ -176,28 +216,12 @@ impl Action for Unwindow {
         let (_, given) = paste::picture(context, ids.1)?;
         let mask = operation::mask(context, ids.2)?;
         let space = image.space();
-        let [l, t, r, b] =
-            placed_box(&mask, picture.digest(), space).map_err(|why| Failure::invalid(&why))?;
-        if (given.width(), given.height()) != (r - l, b - t) {
-            return Err(Failure::invalid(&format!(
-                "the crop is {}x{} but the window's box is {}x{}",
-                given.width(),
-                given.height(),
-                r - l,
-                b - t
-            )));
-        }
-        let window = canvas::crop(picture.pixels(), [l, t, r - l, b - t])?;
-        if window.digest() != mask.image() {
-            return Err(Failure::invalid(
-                "the mask is not on the crop of this image that its box cuts",
-            ));
-        }
-        canvas::kept(&window, given.pixels(), &mask, "the crop")?;
-        if operation::stopped(context) {
+        let stopped = || operation::stopped(context);
+        let Some((pixels, [l, t, r, b])) =
+            unwound(picture.pixels(), space, given.pixels(), &mask, &stopped)?
+        else {
             return Err(operation::stopped_failure(context, NAME));
-        }
-        let pixels = canvas::written(picture.pixels(), given.pixels(), l, t)?;
+        };
         let out = if pixels == *picture.pixels() {
             image
         } else {

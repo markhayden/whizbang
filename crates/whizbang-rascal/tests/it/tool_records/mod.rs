@@ -1,4 +1,4 @@
-//! The tool records of plan m3, task D1 (`SPEC.md` section 8, "Tool records"): each
+//! The tool records of plan m3, tasks D1 and D2 (`SPEC.md` section 8, "Tool records"): each
 //! record's worked examples run here, so a page cannot drift from its tool.
 //!
 //! What every record shares, as the record of `grow` has it (`super::record`):
@@ -22,13 +22,17 @@ use whizbang_core::identity::CanonicalPixels;
 use super::record::{MARK, between, millis, png_file, replaced, settled, tools};
 
 mod close;
+mod frames;
 mod locations;
+mod masks;
 mod paste;
 mod render;
+mod seams;
 mod segment;
 mod shaping;
 mod subtract;
 mod tasks;
+mod tighten;
 
 /// What a record's fast test holds: the tool, its example images by file name, and the
 /// part between its `measured` marks.
@@ -196,5 +200,19 @@ mod writes {
         plug => shaping,
         feather => shaping,
         render => render,
+        rasterize => masks,
+        shrink => masks,
+        invert => masks,
+        inspect => masks,
+        cut => frames,
+        put => frames,
+        window => frames,
+        unwindow => frames,
+        tighten => tighten,
+        fan => seams,
+        profile => seams,
+        ramp => seams,
+        apply => seams,
+        measure => seams,
     }
 }

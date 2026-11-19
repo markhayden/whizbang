@@ -2792,3 +2792,172 @@ fn lab_run_runs_a_three_image_round_under_a_scripted_filler_and_resumes() {
     );
     assert_eq!(whizbang(&["runs", "list"], &lab.root).out, before);
 }
+
+#[test]
+fn lab_run_pairs_and_decode_a_three_image_round_under_a_scripted_filler() {
+    use crate::lab::{FILLED_WITH_AND_SOURCE, ThreeImages};
+    use whizbang::laboratory::{self, Asked};
+    use whizbang::pairs_page;
+    use whizbang_eval::lab::decode::{Assignment, Side};
+    // The round as `lab run` runs it, under the test's filler (which the real binary
+    // cannot be given), then its pairs as `lab pairs` writes them, then the real binary's
+    // decode of picks made on them.
+    let lab = ThreeImages::new("cli-lab-pairs", FILLED_WITH_AND_SOURCE);
+    let over = lab.over(0);
+    let report = lab.run(&over, None, &|| false).unwrap();
+    assert_eq!((report.completed, report.handed_back), (3, 3));
+    let asked = Asked {
+        matrix: &lab.matrix,
+        corpus: &lab.corpus,
+        root: &lab.root,
+        over: &over,
+        recovery: wiring::recovery(),
+    };
+    let prepared = laboratory::prepare(&asked).unwrap();
+    let pages = lab.corpus.with_file_name("pages");
+    let write = |out: &Path, limit: Option<u32>| {
+        let asked = pairs_page::Asked {
+            root: &lab.root,
+            out,
+            limit,
+            force: false,
+        };
+        pairs_page::pairs(&prepared, &asked)
+    };
+    let whole = pages.join("whole");
+    let written = write(&whole, None).unwrap();
+    let assignment_bytes = std::fs::read(whole.join("assignment.json")).unwrap();
+    let digest = whizbang_eval::lab::digest_of(&assignment_bytes);
+    assert!(
+        written.text().starts_with(&format!(
+            "pairs: 3 of the round's 3\nassignment: {digest}\nwritten: index.html, \
+             assignment.json and pictures/, "
+        )),
+        "{}",
+        written.text()
+    );
+    // The page names no arm, no cell and no side of an arm; its pictures are named by
+    // their place and side.
+    let page = std::fs::read_to_string(whole.join("index.html")).unwrap();
+    let assignment = Assignment::parse(&assignment_bytes).unwrap();
+    assert!(page.contains(&digest));
+    assert!(!page.contains("filled") && !page.contains("a_side"));
+    for cell in &prepared.cells {
+        assert!(!page.contains(&cell.identity));
+    }
+    // Each side shows what the assignment says: the reference arm's side is the source
+    // itself, the recipe's is not, and its focus is written.
+    for (n, pair) in assignment.pair.iter().enumerate() {
+        let file =
+            |name: &str| std::fs::read(whole.join(format!("pictures/{:03}-{name}.png", n + 1)));
+        let (filled, source) = match pair.a_side {
+            Side::Left => ("left", "right"),
+            Side::Right => ("right", "left"),
+        };
+        assert_eq!(file(source).unwrap(), file("source").unwrap());
+        assert_ne!(file(filled).unwrap(), file("source").unwrap());
+        assert!(file(&format!("{filled}-focus")).is_ok());
+    }
+    // Picks of arm a's side on two pairs and of b's on one: two wins of three.
+    let picks = |assignment: &Assignment, digest: &str, out: &Path| {
+        let pick: Vec<String> = (assignment.pair.iter().enumerate())
+            .map(|(n, p)| {
+                let a = if p.a_side == Side::Left {
+                    "left"
+                } else {
+                    "right"
+                };
+                let b = if a == "left" { "right" } else { "left" };
+                format!(
+                    "{{\"pair\": \"{}\", \"pick\": \"{}\"}}",
+                    p.id,
+                    if n == 0 { b } else { a }
+                )
+            })
+            .collect();
+        let text = format!(
+            "{{\"picks_version\": 1, \"assignment_digest\": \"{digest}\", \"pick\": [{}]}}",
+            pick.join(", ")
+        );
+        std::fs::write(out.join("picks.json"), text).unwrap();
+    };
+    picks(&assignment, &digest, &whole);
+    let protocol = lab.matrix.with_file_name("protocol.toml");
+    let decode = |out: &Path| {
+        whizbang_storeless(&[
+            "lab",
+            "decode",
+            "--protocol",
+            protocol.to_str().unwrap(),
+            "--assignment",
+            out.join("assignment.json").to_str().unwrap(),
+            "--picks",
+            out.join("picks.json").to_str().unwrap(),
+        ])
+    };
+    let decoded = decode(&whole);
+    assert_eq!(decoded.code, Some(0), "{}", decoded.err);
+    assert_eq!(
+        decoded.out,
+        "arms: filled against source\ngroup all: pairs 3, decided 3, wins 2, losses 1, same 0, \
+         neither 0: preferred\n"
+    );
+    // A lighter round of two pairs: it says, before anything is picked, that its one group
+    // cannot reach min_decided, and its decode says it is a subset.
+    let lighter = pages.join("lighter");
+    let written = write(&lighter, Some(2)).unwrap();
+    assert!(
+        written.text().contains(
+            "group all: 2 of 3 pairs drawn, fewer than min_decided 3: inconclusive whatever \
+             is picked\n"
+        ),
+        "{}",
+        written.text()
+    );
+    let bytes = std::fs::read(lighter.join("assignment.json")).unwrap();
+    let drawn = Assignment::parse(&bytes).unwrap();
+    picks(&drawn, &whizbang_eval::lab::digest_of(&bytes), &lighter);
+    assert!(
+        std::fs::read_to_string(lighter.join("index.html"))
+            .unwrap()
+            .contains("This round is a subset: 2 of its 3 pairs")
+    );
+    let decoded = decode(&lighter);
+    assert_eq!(
+        decoded.out,
+        "arms: filled against source\na subset of the round: 2 of its 3 pairs, drawn by group \
+         from the protocol's seed; a group with fewer than 3 decided pairs is inconclusive, \
+         never a win\ngroup all: pairs 2, decided 2, wins 1, losses 1, same 0, neither 0: \
+         inconclusive\n"
+    );
+    // Never in the store's folder (the real binary, before the round is read), and never
+    // inside a git work tree unless forced.
+    let refused = whizbang(
+        &[
+            "lab",
+            "pairs",
+            "--matrix",
+            lab.matrix.to_str().unwrap(),
+            "--corpus",
+            lab.corpus.to_str().unwrap(),
+            "--out",
+            lab.root.join("pairs").to_str().unwrap(),
+        ],
+        &lab.root,
+    );
+    assert_eq!(refused.code, Some(1), "{}", refused.out);
+    assert_eq!(
+        refused.err,
+        "whizbang: the pairs page is never written in the store's folder; name another with \
+         --out\n"
+    );
+    let tree = pages.join("a-repository");
+    std::fs::create_dir_all(tree.join(".git")).unwrap();
+    let inside = tree.join("pairs");
+    let refused = pairs_page::checked_out(&inside, &lab.root, false).unwrap_err();
+    assert!(
+        refused.starts_with("the folder of --out is inside a git work tree"),
+        "{refused}"
+    );
+    assert!(pairs_page::checked_out(&inside, &lab.root, true).is_ok());
+}

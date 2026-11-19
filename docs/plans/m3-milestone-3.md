@@ -1043,6 +1043,22 @@ about 300.
 
 **Keeping tests lean (L3).** Rounds of three images of 64 by 64; picks files made in the test.
 
+**Status (L3's first pull request).** Item 3 is built: `whizbang lab pairs` with the focus
+view (rascal's `focus.rs`; the look-around view is dropped), the assignment frozen by
+digest and held to the seed's draw by `lab decode`, and, at the owner's wish of 2026-11-18,
+a lighter round, `--limit <n>`, drawn by group (ADR 0038, "Amended with task L3"). Shown:
+`lab::the_pairs_are_blinded_in_the_order_and_sides_the_seed_draws`,
+`lab::the_pairs_page_loads_nothing_from_the_network`,
+`lab::picks_for_a_pair_not_in_the_frozen_assignment_are_refused`,
+`lab::an_assignment_whose_digest_differs_is_refused`,
+`lab::the_committed_m3_seam_matrix_is_valid_against_its_protocol` and
+`cli::lab_run_pairs_and_decode_a_three_image_round_under_a_scripted_filler`. Item 4's files
+are committed (`labs/m3-seam/`). Left, so the box stays open (`docs/carry-over.md`, the row
+on L3's round): item 4's run, picks and `docs/results/m3-lab.md` with its evidence test,
+and `cli::lab_run_pairs_and_decode_remove_prompt_against_a_reference_arm_under_a_scripted_filler`,
+which waits on the step `fill` at the end of `remove_prompt` (its own row): until then the
+recipe hands back a mask, and a pair compares two pictures.
+
 ### What the owner provides (L)
 
 The pictures of rascal's `seam-03` corpus in a folder on the Mac (checked by hash against its
@@ -1078,9 +1094,17 @@ B1's, since it is model-based), `mask_rect` and `protect`. D2: `rasterize`, `shr
   and their lines in `scripts/tests/test-tool-records.sh`. The records of R2's five
   operations, `segment` with a real model among them, are D1's second pull request, which
   ticks the box and closes the carry-over row.
-- [ ] Done when (D2):
+- [x] Done when (D2):
   `scripts/tests/test-tool-records.sh` holding D2's fourteen records, each with rungs 1 and 2,
   and `describe::each_pixel_operation_and_task_without_a_model_shows_its_record_complete`.
+  **Split with the task** (D2, 2026-11-19): the fourteen records came to about 3,150
+  changed lines beside their images, so D2 is two pull requests. The seam named under
+  "Seams" (`inspect`'s and `measure`'s records) moves about 450 and leaves the first over
+  2,500, so the split is by the test modules instead: the first holds nine records,
+  `rasterize`, `shrink`, `invert`, `inspect`, `cut`, `put`, `window`, `unwindow` and
+  `tighten`, with their hooks and their lines in `scripts/tests/test-tool-records.sh`; the
+  second holds the five of the seam's chain, `fan`, `profile`, `ramp`, `apply` and
+  `measure`, and the test named above, and ticks the box.
 
 **Keeping tests lean (D1, D2).** The records' tests compare committed images byte for byte
 and the measurements that do not depend on the machine; timing runs only in the script.

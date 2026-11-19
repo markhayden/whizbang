@@ -26,7 +26,7 @@ use whizbang_core::contract::{
     Action, ActionDescriptor, Argument, Context, Failure, InputPort, Kind, OutputPort, PortRef,
     PreparedCall, Produced, RegistrationError, Registry, Value, ValueType,
 };
-use whizbang_core::identity::{Binding, Direction, Mapping, Space};
+use whizbang_core::identity::{Binding, CanonicalPixels, Direction, Mapping, Space};
 
 use crate::constants::{self, WINDOW_V1};
 use crate::{canvas, operation, paste};
@@ -151,6 +151,79 @@ pub fn crop_mask(
         .map_err(fail)?;
     out.record(step).map_err(fail)?;
     Ok(out)
+}
+
+/// What [`windowed`] cut.
+#[derive(Debug, Clone)]
+pub struct Windowed {
+    /// The mask's support: left, top, right and bottom.
+    pub support: [u32; 4],
+    /// The window's box, the same way.
+    pub bounds: [u32; 4],
+    /// The crop's pixels.
+    pub pixels: CanonicalPixels,
+    /// The crop's space: the image's for a window of the whole image, flat otherwise.
+    pub space: Space,
+    /// The mask cut to the box, on the crop, placing it onto the image, with `step`.
+    pub mask: Mask,
+}
+
+/// The window of `pixels` (an image in `space`) around `mask`'s support, as the action
+/// cuts it: refused, in a sentence, when the support is empty or larger than `max_side`.
+/// `step` is recorded on the mask handed back.
+pub fn windowed(
+    pixels: &CanonicalPixels,
+    space: Space,
+    mask: &Mask,
+    max_side: Option<u32>,
+    share: f64,
+    step: Step,
+) -> Result<Windowed, Failure> {
+    let Some(support) = support_of(mask) else {
+        return Err(Failure::invalid(
+            "the mask's support is empty: no pixel has an effective weight over 0",
+        ));
+    };
+    let bounds =
+        window_box(support, space.width(), space.height(), max_side, share).map_err(|too| {
+            let [l, t, r, b] = too.support;
+            Failure::invalid(&format!(
+                "the support is {}x{} and max_side is {}; a window is never scaled",
+                r - l,
+                b - t,
+                too.max_side
+            ))
+        })?;
+    let [l, t, r, b] = bounds;
+    let whole = (r - l, b - t) == (space.width(), space.height());
+    let crop_space = if whole {
+        space
+    } else {
+        Space::flat(r - l, b - t).map_err(|error| Failure::invalid(&error.to_string()))?
+    };
+    let crop = canvas::crop(pixels, [l, t, r - l, b - t])?;
+    let placed = Binding::new(
+        crop.digest(),
+        crop_space,
+        pixels.digest(),
+        space,
+        Direction::SourceToDestination,
+        Mapping::Crop {
+            left: f64::from(l),
+            top: f64::from(t),
+            right: f64::from(r),
+            bottom: f64::from(b),
+        },
+    )
+    .map_err(|error| Failure::error("binding", &error.to_string()))?;
+    let cut = crop_mask(mask, bounds, placed, step)?;
+    Ok(Windowed {
+        support,
+        bounds,
+        pixels: crop,
+        space: crop_space,
+        mask: cut,
+    })
 }
 
 /// The action `window`.
@@ -300,28 +373,6 @@ impl Action for Window {
         let space = image.space();
         mask.require_image(picture.digest(), space)
             .map_err(|error| Failure::invalid(&error.without_paths()))?;
-        let Some(support) = support_of(&mask) else {
-            return Err(Failure::invalid(
-                "the mask's support is empty: no pixel has an effective weight over 0",
-            ));
-        };
-        let bounds =
-            window_box(support, space.width(), space.height(), max_side, share).map_err(|too| {
-                let [l, t, r, b] = too.support;
-                Failure::invalid(&format!(
-                    "the support is {}x{} and max_side is {}; a window is never scaled",
-                    r - l,
-                    b - t,
-                    too.max_side
-                ))
-            })?;
-        let [l, t, r, b] = bounds;
-        let whole = (r - l, b - t) == (space.width(), space.height());
-        let crop_space = if whole {
-            space
-        } else {
-            Space::flat(r - l, b - t).map_err(|error| Failure::invalid(&error.to_string()))?
-        };
         let mut step = Step::new(NAME, VERSION)
             .argument("context", &share.to_string())
             .argument(constants::ARGUMENT, set);
@@ -329,23 +380,17 @@ impl Action for Window {
             step = step.argument("max_side", &side.to_string());
         }
         let step = step.input("image", image_id.0).input("mask", mask_id.0);
-        let pixels = canvas::crop(picture.pixels(), [l, t, r - l, b - t])?;
-        let crop = canvas::image(&pixels, crop_space, step.clone())?;
-        let placed = Binding::new(
-            pixels.digest(),
-            crop_space,
-            picture.digest(),
+        let made = windowed(
+            picture.pixels(),
             space,
-            Direction::SourceToDestination,
-            Mapping::Crop {
-                left: f64::from(l),
-                top: f64::from(t),
-                right: f64::from(r),
-                bottom: f64::from(b),
-            },
-        )
-        .map_err(|error| Failure::error("binding", &error.to_string()))?;
-        let cropped = crop_mask(&mask, bounds, placed, step)?;
+            &mask,
+            max_side,
+            share,
+            step.clone(),
+        )?;
+        let crop = canvas::image(&made.pixels, made.space, step)?;
+        let ([l, t, r, b], support) = (made.bounds, made.support);
+        let cropped = made.mask;
         context.events().progress(&format!(
             "window: [{l}, {t}, {r}, {b}) around a {}x{} support",
             support[2] - support[0],
