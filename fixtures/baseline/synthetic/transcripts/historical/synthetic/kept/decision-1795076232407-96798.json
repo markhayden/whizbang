@@ -6,73 +6,108 @@
   ],
   "files": [
     {
-      "bytes": 6105,
-      "path": "replay/synthetic/unknown-frame/decision-1795070781171-51629/run-1/journal.jsonl",
+      "bytes": 9088,
+      "path": "replay/synthetic/kept/decision-1795076232407-96798/run-1/journal.jsonl",
       "role": "journal",
-      "sha256": "80f4c89772a7823105586624320220f66b21b901794b2b4bd8f74cf96b5b3e3d",
+      "sha256": "91edc7998e48f230869164cd084bc3b11b0b070d86f17154e859144b515949da",
       "truncated": false
     },
     {
-      "bytes": 213,
-      "path": "replay/synthetic/unknown-frame/result.json",
+      "bytes": 202,
+      "path": "replay/synthetic/kept/result.json",
       "role": "result",
-      "sha256": "598da02adabe678ae925c7b2355bdfdb571bf2e54612546acc068216c1692afa",
+      "sha256": "e0a3eb76fbb360e370014678601dcab11177905449b2128e070b0e31c4cab26f",
       "truncated": false
     },
     {
-      "bytes": 5820,
-      "path": "replay/synthetic/unknown-frame/decision-1795070781171-51629/decision.json",
+      "bytes": 5811,
+      "path": "replay/synthetic/kept/decision-1795076232407-96798/decision.json",
       "role": "decision",
-      "sha256": "897b8f538e61c72c88cf6c7be2eefb7aeec03313df7f0c17c2f8ae00a7dfbaa4",
+      "sha256": "4b38e0ce03c8515b3844d4c34c5485ac23e5ea453b5ede21c2c6a90740385da5",
       "truncated": false
     },
     {
-      "bytes": 14352,
-      "path": "replay/synthetic/unknown-frame/decision-1795070781171-51629/report.json",
+      "bytes": 17577,
+      "path": "replay/synthetic/kept/decision-1795076232407-96798/report.json",
       "role": "report",
-      "sha256": "daf83ba234eacda07c05b30697ab13a0030f0a2d6927fd7d52b49ca6fab4a122",
+      "sha256": "c247366db6b410772d99d6ac57e7a5f11b354fb9c85c4156e8fa5521893bbc9b",
       "truncated": false
     },
     {
       "bytes": 4747,
-      "path": "replay/synthetic/unknown-frame/decision-1795070781171-51629/run-1/artifacts/0568346d1c7fba1395ebdda4fa253abd0eeda8cc09187cbd0ed6042675596219",
+      "path": "replay/synthetic/kept/decision-1795076232407-96798/run-1/artifacts/0568346d1c7fba1395ebdda4fa253abd0eeda8cc09187cbd0ed6042675596219",
       "role": "image raw:candidate",
       "sha256": "0568346d1c7fba1395ebdda4fa253abd0eeda8cc09187cbd0ed6042675596219",
       "truncated": false
     },
     {
       "bytes": 4278,
-      "path": "replay/synthetic/unknown-frame/decision-1795070781171-51629/run-1/artifacts/a0e98bc18dda9253e6227aaa1963dd90a9034f0245bc27988c89e7eb6ded924f",
+      "path": "replay/synthetic/kept/decision-1795076232407-96798/run-1/artifacts/a0e98bc18dda9253e6227aaa1963dd90a9034f0245bc27988c89e7eb6ded924f",
       "role": "image raw:source",
       "sha256": "a0e98bc18dda9253e6227aaa1963dd90a9034f0245bc27988c89e7eb6ded924f",
       "truncated": false
     },
     {
       "bytes": 11869,
-      "path": "replay/synthetic/unknown-frame/decision-1795070781171-51629/run-1/artifacts/d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
+      "path": "replay/synthetic/kept/decision-1795076232407-96798/run-1/artifacts/d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
       "role": "request 1",
       "sha256": "d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
       "truncated": false
     },
     {
-      "bytes": 1699,
-      "path": "replay/synthetic/unknown-frame/decision-1795070781171-51629/run-1/artifacts/bdd8db070cfce8d164b90fccfe57a90b503c9946599e69277986d884aed11f62",
+      "bytes": 695,
+      "path": "replay/synthetic/kept/decision-1795076232407-96798/run-1/artifacts/7ef84d02d8e51c6d8e3084a20a8adf6e0aa656d75fce1e9a2d0e2037d799ac7a",
       "role": "response 1",
-      "sha256": "bdd8db070cfce8d164b90fccfe57a90b503c9946599e69277986d884aed11f62",
+      "sha256": "7ef84d02d8e51c6d8e3084a20a8adf6e0aa656d75fce1e9a2d0e2037d799ac7a",
       "truncated": false
     },
     {
-      "bytes": 13064,
-      "path": "replay/synthetic/unknown-frame/decision-1795070781171-51629/run-1/artifacts/cd75146956685a9848a68af12caa5264d9e5bd17e5e24d64920f7c4a4350d870",
+      "bytes": 13832,
+      "path": "replay/synthetic/kept/decision-1795076232407-96798/run-1/artifacts/22398a970230e4ad6532d9f6a45184f206a2a6042dc2ca2ad16285228493cd6e",
       "role": "request 2",
-      "sha256": "cd75146956685a9848a68af12caa5264d9e5bd17e5e24d64920f7c4a4350d870",
+      "sha256": "22398a970230e4ad6532d9f6a45184f206a2a6042dc2ca2ad16285228493cd6e",
       "truncated": false
     },
     {
       "bytes": 1469,
-      "path": "replay/synthetic/unknown-frame/decision-1795070781171-51629/run-1/artifacts/449bb749a6f6a8932c817c279d3807cd2b32e744f775d3d82dbcbad9754ce754",
+      "path": "replay/synthetic/kept/decision-1795076232407-96798/run-1/artifacts/c634fb53bcaf167e0ff661f23fecdd51fdd4f4d7cd2ba68854d13283cc4524a1",
       "role": "response 2",
-      "sha256": "449bb749a6f6a8932c817c279d3807cd2b32e744f775d3d82dbcbad9754ce754",
+      "sha256": "c634fb53bcaf167e0ff661f23fecdd51fdd4f4d7cd2ba68854d13283cc4524a1",
+      "truncated": false
+    },
+    {
+      "bytes": 590,
+      "path": "replay/synthetic/kept/decision-1795076232407-96798/run-1/artifacts/816a8a5adfdf97c1c1d3447e3c8a12e3890961cdfe2268fc5e75899efa20f113",
+      "role": "envelope call:1",
+      "sha256": "816a8a5adfdf97c1c1d3447e3c8a12e3890961cdfe2268fc5e75899efa20f113",
+      "truncated": false
+    },
+    {
+      "bytes": 1874,
+      "path": "replay/synthetic/kept/decision-1795076232407-96798/run-1/artifacts/57b156193e260596316736f43d82cec625537ed6264203d17da5da7d797a6576",
+      "role": "image crop:call:1:0",
+      "sha256": "57b156193e260596316736f43d82cec625537ed6264203d17da5da7d797a6576",
+      "truncated": false
+    },
+    {
+      "bytes": 1878,
+      "path": "replay/synthetic/kept/decision-1795076232407-96798/run-1/artifacts/7d0f608889e946c55d3dc600af5776ce81f363f8e47fffedbbda69dc237c8ec0",
+      "role": "image crop:call:1:1",
+      "sha256": "7d0f608889e946c55d3dc600af5776ce81f363f8e47fffedbbda69dc237c8ec0",
+      "truncated": false
+    },
+    {
+      "bytes": 802,
+      "path": "replay/synthetic/kept/decision-1795076232407-96798/run-1/artifacts/981a244d7ea7849a9424076913359c99a048c456bdc3932ca4353620162cdcc0",
+      "role": "envelope call:2",
+      "sha256": "981a244d7ea7849a9424076913359c99a048c456bdc3932ca4353620162cdcc0",
+      "truncated": false
+    },
+    {
+      "bytes": 4609,
+      "path": "replay/synthetic/kept/decision-1795076232407-96798/run-1/artifacts/c6cd5cd5f1fa82f443c57f140259a79e50e988214d463a367dfc9fcfc345e156",
+      "role": "image aligned:candidate:t1",
+      "sha256": "c6cd5cd5f1fa82f443c57f140259a79e50e988214d463a367dfc9fcfc345e156",
       "truncated": false
     }
   ],
@@ -108,17 +143,85 @@
         "sha256": "6f4285de4007013d0a439746cc25a11d6530be9571d6ff0472c4f0510ef14970"
       },
       "width": 96
+    },
+    {
+      "frame": "crop:call:1:0",
+      "height": 36,
+      "id": "crop:call:1:0",
+      "mapping": {
+        "bbox": [
+          0.25,
+          0.25,
+          0.75,
+          0.75
+        ]
+      },
+      "origin": "toolu_k1",
+      "parent": "raw:candidate",
+      "prepared": {
+        "bytes": 1874,
+        "sha256": "57b156193e260596316736f43d82cec625537ed6264203d17da5da7d797a6576"
+      },
+      "root": "candidate",
+      "width": 48
+    },
+    {
+      "frame": "crop:call:1:1",
+      "height": 36,
+      "id": "crop:call:1:1",
+      "mapping": {
+        "bbox": [
+          0.25,
+          0.25,
+          0.75,
+          0.75
+        ]
+      },
+      "origin": "toolu_k1",
+      "parent": "raw:source",
+      "prepared": {
+        "bytes": 1878,
+        "sha256": "7d0f608889e946c55d3dc600af5776ce81f363f8e47fffedbbda69dc237c8ec0"
+      },
+      "root": "source",
+      "width": 48
+    },
+    {
+      "frame": "aligned:candidate:t1",
+      "height": 72,
+      "id": "aligned:candidate:t1",
+      "mapping": {
+        "homography": [
+          1.0000000915693426,
+          1.0207487625125601e-8,
+          -0.02083335204103836,
+          6.981169030107303e-8,
+          1.0000001189189072,
+          -0.01388895471203315,
+          1.02501885010426e-7,
+          2.45584064386236e-8,
+          1.0
+        ]
+      },
+      "origin": "toolu_k2",
+      "parent": "raw:source",
+      "prepared": {
+        "bytes": 4609,
+        "sha256": "c6cd5cd5f1fa82f443c57f140259a79e50e988214d463a367dfc9fcfc345e156"
+      },
+      "root": "candidate",
+      "width": 96
     }
   ],
   "incomplete": [],
   "meta": {
     "attempt": "run-1",
-    "decision": "replay/synthetic/unknown-frame/decision-1795070781171-51629",
+    "decision": "replay/synthetic/kept/decision-1795076232407-96798",
     "fixtures": "replay",
     "harness": "squint",
     "harness_version": "capture",
-    "name": "synthetic/unknown-frame/decision-1795070781171-51629",
-    "package_digest": "sha256:1ff4ab2017f5dfdad75e0a935cb704d475ad24e7edb94782eb46906775b943f0",
+    "name": "synthetic/kept/decision-1795076232407-96798",
+    "package_digest": "sha256:a044ec8a9b1ba72425088e9b365f0dbe0cf85e51d51c9c746e7900b18ac00477",
     "prompt_version": "v1",
     "run": "synthetic",
     "tools_version": "2"
@@ -147,19 +250,13 @@
     },
     "version": "1"
   },
-  "repairs": [
-    {
-      "after_turn": 1,
-      "form": "rejected",
-      "reason": "invalid_submission"
-    }
-  ],
+  "repairs": [],
   "subject": {
     "arm": "C",
-    "item": "unknown-frame",
+    "item": "kept",
     "model": "claude-haiku-5-5",
     "repetition": 1,
-    "set": "source-fidelity/submissions-v1",
+    "set": "source-fidelity/synthetic-v1",
     "use_case": "source-fidelity"
   },
   "submission_tool": "submit_verdict",
@@ -173,65 +270,53 @@
       "calls": [
         {
           "arguments": {
-            "findings": [],
-            "items": [
-              {
-                "allowed_by": null,
-                "confidence": "confident",
-                "disposition": "violation",
-                "evidence": [],
-                "id": "chk:ob:SF1@candidate",
-                "location": {
-                  "bbox": [
-                    0.1,
-                    0.1,
-                    0.5,
-                    0.5
-                  ],
-                  "fov": null,
-                  "frame": "crop:call:9:0",
-                  "kind": "bbox",
-                  "pitch": null,
-                  "polygon": null,
-                  "yaw": null
-                },
-                "reason": "It matches the source."
-              },
-              {
-                "allowed_by": null,
-                "confidence": "confident",
-                "disposition": "held",
-                "evidence": [],
-                "id": "chk:ob:SF2@candidate",
-                "location": null,
-                "reason": "It matches the source."
-              },
-              {
-                "allowed_by": null,
-                "confidence": "confident",
-                "disposition": "held",
-                "evidence": [],
-                "id": "chk:ob:RQ1@candidate",
-                "location": null,
-                "reason": "It matches the source."
-              }
+            "also": "raw:source",
+            "bbox": [
+              0.25,
+              0.25,
+              0.75,
+              0.75
             ],
-            "opinion": {
-              "reason": "As the items say.",
-              "verdict": "pass"
-            },
-            "schema_version": 1
+            "frame": "raw:candidate"
           },
-          "disposition": "rejected",
-          "id": "toolu_s1",
+          "disposition": "executed",
+          "id": "toolu_k1",
           "meta": {
-            "reason": "invalid_submission"
+            "call_id": "call:1",
+            "duration_ms": 5,
+            "envelope_file": "816a8a5adfdf97c1c1d3447e3c8a12e3890961cdfe2268fc5e75899efa20f113",
+            "status": "ok"
           },
-          "name": "submit_verdict",
+          "name": "view",
           "result": {
-            "content": "Submission rejected: chk:ob:SF1@candidate: location invalid: submission: unknown frame \"crop:call:9:0\"",
-            "images": [],
-            "is_error": true
+            "content": "{\"call_id\":\"call:1\",\"images\":[{\"frame\":\"crop:call:1:0\",\"mapping\":{\"bbox\":[0.25,0.25,0.75,0.75]},\"parent\":\"raw:candidate\"},{\"frame\":\"crop:call:1:1\",\"mapping\":{\"bbox\":[0.25,0.25,0.75,0.75]},\"parent\":\"raw:source\"}],\"measurements\":[],\"regions\":[],\"status\":\"ok\",\"summary\":\"Crop [0.250, 0.250, 0.750, 0.750] of raw:candidate, and the same of raw:source (crop:call:1:0 48×36, crop:call:1:1 48×36).\"}",
+            "images": [
+              "crop:call:1:0",
+              "crop:call:1:1"
+            ],
+            "is_error": false
+          }
+        },
+        {
+          "arguments": {
+            "against": "source",
+            "image": "candidate"
+          },
+          "disposition": "executed",
+          "id": "toolu_k2",
+          "meta": {
+            "call_id": "call:2",
+            "duration_ms": 2568,
+            "envelope_file": "981a244d7ea7849a9424076913359c99a048c456bdc3932ca4353620162cdcc0",
+            "status": "ok"
+          },
+          "name": "align",
+          "result": {
+            "content": "{\"call_id\":\"call:2\",\"images\":[{\"frame\":\"aligned:candidate:t1\",\"mapping\":{\"homography\":[1.0000000915693426,1.0207487625125601e-8,-0.02083335204103836,6.981169030107303e-8,1.0000001189189072,-0.01388895471203315,1.02501885010426e-7,2.45584064386236e-8,1.0]},\"parent\":\"raw:source\"}],\"measurements\":[],\"regions\":[],\"status\":\"ok\",\"summary\":\"Result computed; its measurements are withheld.\"}",
+            "images": [
+              "aligned:candidate:t1"
+            ],
+            "is_error": false
           }
         }
       ],
@@ -244,7 +329,7 @@
         "estimated": false,
         "provider_request_id": null,
         "request_file": "d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
-        "response_file": "bdd8db070cfce8d164b90fccfe57a90b503c9946599e69277986d884aed11f62",
+        "response_file": "7ef84d02d8e51c6d8e3084a20a8adf6e0aa656d75fce1e9a2d0e2037d799ac7a",
         "usage": {
           "input_tokens": 1200,
           "output_tokens": 80
@@ -650,123 +735,60 @@
       "response": {
         "content": [
           {
-            "text": "Submitting.",
+            "text": "I will look closer and register the pair.",
             "type": "text"
           },
           {
             "arguments": {
-              "findings": [],
-              "items": [
-                {
-                  "allowed_by": null,
-                  "confidence": "confident",
-                  "disposition": "violation",
-                  "evidence": [],
-                  "id": "chk:ob:SF1@candidate",
-                  "location": {
-                    "bbox": [
-                      0.1,
-                      0.1,
-                      0.5,
-                      0.5
-                    ],
-                    "fov": null,
-                    "frame": "crop:call:9:0",
-                    "kind": "bbox",
-                    "pitch": null,
-                    "polygon": null,
-                    "yaw": null
-                  },
-                  "reason": "It matches the source."
-                },
-                {
-                  "allowed_by": null,
-                  "confidence": "confident",
-                  "disposition": "held",
-                  "evidence": [],
-                  "id": "chk:ob:SF2@candidate",
-                  "location": null,
-                  "reason": "It matches the source."
-                },
-                {
-                  "allowed_by": null,
-                  "confidence": "confident",
-                  "disposition": "held",
-                  "evidence": [],
-                  "id": "chk:ob:RQ1@candidate",
-                  "location": null,
-                  "reason": "It matches the source."
-                }
+              "also": "raw:source",
+              "bbox": [
+                0.25,
+                0.25,
+                0.75,
+                0.75
               ],
-              "opinion": {
-                "reason": "As the items say.",
-                "verdict": "pass"
-              },
-              "schema_version": 1
+              "frame": "raw:candidate"
             },
-            "id": "toolu_s1",
-            "name": "submit_verdict",
+            "id": "toolu_k1",
+            "name": "view",
+            "type": "tool_use"
+          },
+          {
+            "arguments": {
+              "against": "source",
+              "image": "candidate"
+            },
+            "id": "toolu_k2",
+            "name": "align",
             "type": "tool_use"
           }
         ],
         "stop_reason": "tool_use",
         "text": [
-          "Submitting."
+          "I will look closer and register the pair."
         ],
         "tool_calls": [
           {
             "arguments": {
-              "findings": [],
-              "items": [
-                {
-                  "allowed_by": null,
-                  "confidence": "confident",
-                  "disposition": "violation",
-                  "evidence": [],
-                  "id": "chk:ob:SF1@candidate",
-                  "location": {
-                    "bbox": [
-                      0.1,
-                      0.1,
-                      0.5,
-                      0.5
-                    ],
-                    "fov": null,
-                    "frame": "crop:call:9:0",
-                    "kind": "bbox",
-                    "pitch": null,
-                    "polygon": null,
-                    "yaw": null
-                  },
-                  "reason": "It matches the source."
-                },
-                {
-                  "allowed_by": null,
-                  "confidence": "confident",
-                  "disposition": "held",
-                  "evidence": [],
-                  "id": "chk:ob:SF2@candidate",
-                  "location": null,
-                  "reason": "It matches the source."
-                },
-                {
-                  "allowed_by": null,
-                  "confidence": "confident",
-                  "disposition": "held",
-                  "evidence": [],
-                  "id": "chk:ob:RQ1@candidate",
-                  "location": null,
-                  "reason": "It matches the source."
-                }
+              "also": "raw:source",
+              "bbox": [
+                0.25,
+                0.25,
+                0.75,
+                0.75
               ],
-              "opinion": {
-                "reason": "As the items say.",
-                "verdict": "pass"
-              },
-              "schema_version": 1
+              "frame": "raw:candidate"
             },
-            "id": "toolu_s1",
-            "name": "submit_verdict"
+            "id": "toolu_k1",
+            "name": "view"
+          },
+          {
+            "arguments": {
+              "against": "source",
+              "image": "candidate"
+            },
+            "id": "toolu_k2",
+            "name": "align"
           }
         ]
       },
@@ -813,7 +835,7 @@
             "schema_version": 1
           },
           "disposition": "final",
-          "id": "toolu_s9",
+          "id": "toolu_k3",
           "meta": {},
           "name": "submit_verdict",
           "result": null
@@ -823,12 +845,12 @@
       "meta": {
         "answered": true,
         "attempts": 1,
-        "bound_usd": 0.0071124000000000005,
+        "bound_usd": 0.0077247,
         "cost_usd": 0.000152,
         "estimated": false,
         "provider_request_id": null,
-        "request_file": "cd75146956685a9848a68af12caa5264d9e5bd17e5e24d64920f7c4a4350d870",
-        "response_file": "449bb749a6f6a8932c817c279d3807cd2b32e744f775d3d82dbcbad9754ce754",
+        "request_file": "22398a970230e4ad6532d9f6a45184f206a2a6042dc2ca2ad16285228493cd6e",
+        "response_file": "c634fb53bcaf167e0ff661f23fecdd51fdd4f4d7cd2ba68854d13283cc4524a1",
         "usage": {
           "input_tokens": 1200,
           "output_tokens": 80
@@ -868,62 +890,31 @@
           {
             "content": [
               {
-                "text": "Submitting.",
+                "text": "I will look closer and register the pair.",
                 "type": "text"
               },
               {
                 "arguments": {
-                  "findings": [],
-                  "items": [
-                    {
-                      "allowed_by": null,
-                      "confidence": "confident",
-                      "disposition": "violation",
-                      "evidence": [],
-                      "id": "chk:ob:SF1@candidate",
-                      "location": {
-                        "bbox": [
-                          0.1,
-                          0.1,
-                          0.5,
-                          0.5
-                        ],
-                        "fov": null,
-                        "frame": "crop:call:9:0",
-                        "kind": "bbox",
-                        "pitch": null,
-                        "polygon": null,
-                        "yaw": null
-                      },
-                      "reason": "It matches the source."
-                    },
-                    {
-                      "allowed_by": null,
-                      "confidence": "confident",
-                      "disposition": "held",
-                      "evidence": [],
-                      "id": "chk:ob:SF2@candidate",
-                      "location": null,
-                      "reason": "It matches the source."
-                    },
-                    {
-                      "allowed_by": null,
-                      "confidence": "confident",
-                      "disposition": "held",
-                      "evidence": [],
-                      "id": "chk:ob:RQ1@candidate",
-                      "location": null,
-                      "reason": "It matches the source."
-                    }
+                  "also": "raw:source",
+                  "bbox": [
+                    0.25,
+                    0.25,
+                    0.75,
+                    0.75
                   ],
-                  "opinion": {
-                    "reason": "As the items say.",
-                    "verdict": "pass"
-                  },
-                  "schema_version": 1
+                  "frame": "raw:candidate"
                 },
-                "id": "toolu_s1",
-                "name": "submit_verdict",
+                "id": "toolu_k1",
+                "name": "view",
+                "type": "tool_use"
+              },
+              {
+                "arguments": {
+                  "against": "source",
+                  "image": "candidate"
+                },
+                "id": "toolu_k2",
+                "name": "align",
                 "type": "tool_use"
               }
             ],
@@ -932,14 +923,26 @@
           {
             "content": [
               {
-                "content": "Submission rejected: chk:ob:SF1@candidate: location invalid: submission: unknown frame \"crop:call:9:0\"",
-                "images": [],
-                "is_error": true,
-                "tool_use_id": "toolu_s1",
+                "content": "{\"call_id\":\"call:1\",\"images\":[{\"frame\":\"crop:call:1:0\",\"mapping\":{\"bbox\":[0.25,0.25,0.75,0.75]},\"parent\":\"raw:candidate\"},{\"frame\":\"crop:call:1:1\",\"mapping\":{\"bbox\":[0.25,0.25,0.75,0.75]},\"parent\":\"raw:source\"}],\"measurements\":[],\"regions\":[],\"status\":\"ok\",\"summary\":\"Crop [0.250, 0.250, 0.750, 0.750] of raw:candidate, and the same of raw:source (crop:call:1:0 48×36, crop:call:1:1 48×36).\"}",
+                "images": [
+                  "crop:call:1:0",
+                  "crop:call:1:1"
+                ],
+                "is_error": false,
+                "tool_use_id": "toolu_k1",
                 "type": "tool_result"
               },
               {
-                "text": "Repair: call submit_verdict once, alone, with exactly one disposition per checklist item. This is the only repair.",
+                "content": "{\"call_id\":\"call:2\",\"images\":[{\"frame\":\"aligned:candidate:t1\",\"mapping\":{\"homography\":[1.0000000915693426,1.0207487625125601e-8,-0.02083335204103836,6.981169030107303e-8,1.0000001189189072,-0.01388895471203315,1.02501885010426e-7,2.45584064386236e-8,1.0]},\"parent\":\"raw:source\"}],\"measurements\":[],\"regions\":[],\"status\":\"ok\",\"summary\":\"Result computed; its measurements are withheld.\"}",
+                "images": [
+                  "aligned:candidate:t1"
+                ],
+                "is_error": false,
+                "tool_use_id": "toolu_k2",
+                "type": "tool_result"
+              },
+              {
+                "text": "Checklist. Give every item below exactly one disposition.\n- chk:ob:SF1@candidate: Every protected subject or feature named in the job requirements keeps its identity, shape, position and extent relative to the source.\n- chk:ob:SF2@candidate: The candidate is derived from the source: same scene, same camera, same projection; nothing rotated, stretched or cropped away.\n- chk:ob:RQ1@candidate: The front door keeps its identity, shape, position and extent relative to the source.\n",
                 "type": "text"
               }
             ],
@@ -1355,7 +1358,7 @@
               },
               "schema_version": 1
             },
-            "id": "toolu_s9",
+            "id": "toolu_k3",
             "name": "submit_verdict",
             "type": "tool_use"
           }
@@ -1403,7 +1406,7 @@
               },
               "schema_version": 1
             },
-            "id": "toolu_s9",
+            "id": "toolu_k3",
             "name": "submit_verdict"
           }
         ]

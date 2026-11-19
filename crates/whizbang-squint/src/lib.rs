@@ -15,6 +15,7 @@ pub mod details;
 pub mod files;
 pub mod job;
 pub mod marks;
+#[cfg(feature = "baseline-replay")]
 pub mod replay;
 pub mod resize;
 pub mod use_case;

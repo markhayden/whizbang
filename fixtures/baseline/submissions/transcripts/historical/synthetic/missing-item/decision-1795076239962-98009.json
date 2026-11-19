@@ -6,108 +6,73 @@
   ],
   "files": [
     {
-      "bytes": 9088,
-      "path": "replay/synthetic/kept/decision-1795070774207-50403/run-1/journal.jsonl",
+      "bytes": 6104,
+      "path": "replay/synthetic/missing-item/decision-1795076239962-98009/run-1/journal.jsonl",
       "role": "journal",
-      "sha256": "2e0b3d0f82e87d6dd0839bc0f457360dc2e58987a39a31c3ff8c934ad96a08e0",
+      "sha256": "c16a59f18c655af561cdba635c2e18d8f6c3d7d9c8e340641ab45c076fc7a03c",
       "truncated": false
     },
     {
-      "bytes": 202,
-      "path": "replay/synthetic/kept/result.json",
+      "bytes": 212,
+      "path": "replay/synthetic/missing-item/result.json",
       "role": "result",
-      "sha256": "91d3683f2e2c48239ef69e4922985a44a9a9e7977153ddda905ec9392f6c313a",
+      "sha256": "ae1cd5e6eeac09fa959d3453b203b2f050f0a834528ed14f68528baa898eaeed",
       "truncated": false
     },
     {
-      "bytes": 5811,
-      "path": "replay/synthetic/kept/decision-1795070774207-50403/decision.json",
+      "bytes": 5819,
+      "path": "replay/synthetic/missing-item/decision-1795076239962-98009/decision.json",
       "role": "decision",
-      "sha256": "4b38e0ce03c8515b3844d4c34c5485ac23e5ea453b5ede21c2c6a90740385da5",
+      "sha256": "12bc7402f3b768a38b5b8a1fdedeee32d4d35bac538f19e434feb22db157f339",
       "truncated": false
     },
     {
-      "bytes": 17577,
-      "path": "replay/synthetic/kept/decision-1795070774207-50403/report.json",
+      "bytes": 14351,
+      "path": "replay/synthetic/missing-item/decision-1795076239962-98009/report.json",
       "role": "report",
-      "sha256": "d8e5f66ac96acf6715c2da787490e99ef7f8b921a9fde996889c0c9eb1bd546a",
+      "sha256": "18e0275142e239ffb637db3074cb2974c3098857cdc92729e4a65dd7b6fc3032",
       "truncated": false
     },
     {
       "bytes": 4747,
-      "path": "replay/synthetic/kept/decision-1795070774207-50403/run-1/artifacts/0568346d1c7fba1395ebdda4fa253abd0eeda8cc09187cbd0ed6042675596219",
+      "path": "replay/synthetic/missing-item/decision-1795076239962-98009/run-1/artifacts/0568346d1c7fba1395ebdda4fa253abd0eeda8cc09187cbd0ed6042675596219",
       "role": "image raw:candidate",
       "sha256": "0568346d1c7fba1395ebdda4fa253abd0eeda8cc09187cbd0ed6042675596219",
       "truncated": false
     },
     {
       "bytes": 4278,
-      "path": "replay/synthetic/kept/decision-1795070774207-50403/run-1/artifacts/a0e98bc18dda9253e6227aaa1963dd90a9034f0245bc27988c89e7eb6ded924f",
+      "path": "replay/synthetic/missing-item/decision-1795076239962-98009/run-1/artifacts/a0e98bc18dda9253e6227aaa1963dd90a9034f0245bc27988c89e7eb6ded924f",
       "role": "image raw:source",
       "sha256": "a0e98bc18dda9253e6227aaa1963dd90a9034f0245bc27988c89e7eb6ded924f",
       "truncated": false
     },
     {
       "bytes": 11869,
-      "path": "replay/synthetic/kept/decision-1795070774207-50403/run-1/artifacts/d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
+      "path": "replay/synthetic/missing-item/decision-1795076239962-98009/run-1/artifacts/d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
       "role": "request 1",
       "sha256": "d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
       "truncated": false
     },
     {
-      "bytes": 695,
-      "path": "replay/synthetic/kept/decision-1795070774207-50403/run-1/artifacts/7ef84d02d8e51c6d8e3084a20a8adf6e0aa656d75fce1e9a2d0e2037d799ac7a",
+      "bytes": 1153,
+      "path": "replay/synthetic/missing-item/decision-1795076239962-98009/run-1/artifacts/eecdac8a48929a71ebbba53d793129ba3fe01da4a4cc966ee1caab867410273d",
       "role": "response 1",
-      "sha256": "7ef84d02d8e51c6d8e3084a20a8adf6e0aa656d75fce1e9a2d0e2037d799ac7a",
+      "sha256": "eecdac8a48929a71ebbba53d793129ba3fe01da4a4cc966ee1caab867410273d",
       "truncated": false
     },
     {
-      "bytes": 13832,
-      "path": "replay/synthetic/kept/decision-1795070774207-50403/run-1/artifacts/22398a970230e4ad6532d9f6a45184f206a2a6042dc2ca2ad16285228493cd6e",
+      "bytes": 12790,
+      "path": "replay/synthetic/missing-item/decision-1795076239962-98009/run-1/artifacts/e824b6adbeb69d1d8fed67e02f205a27b8ef074aca4169d6559b5758a1ef2f31",
       "role": "request 2",
-      "sha256": "22398a970230e4ad6532d9f6a45184f206a2a6042dc2ca2ad16285228493cd6e",
+      "sha256": "e824b6adbeb69d1d8fed67e02f205a27b8ef074aca4169d6559b5758a1ef2f31",
       "truncated": false
     },
     {
       "bytes": 1469,
-      "path": "replay/synthetic/kept/decision-1795070774207-50403/run-1/artifacts/c634fb53bcaf167e0ff661f23fecdd51fdd4f4d7cd2ba68854d13283cc4524a1",
+      "path": "replay/synthetic/missing-item/decision-1795076239962-98009/run-1/artifacts/449bb749a6f6a8932c817c279d3807cd2b32e744f775d3d82dbcbad9754ce754",
       "role": "response 2",
-      "sha256": "c634fb53bcaf167e0ff661f23fecdd51fdd4f4d7cd2ba68854d13283cc4524a1",
-      "truncated": false
-    },
-    {
-      "bytes": 590,
-      "path": "replay/synthetic/kept/decision-1795070774207-50403/run-1/artifacts/816a8a5adfdf97c1c1d3447e3c8a12e3890961cdfe2268fc5e75899efa20f113",
-      "role": "envelope call:1",
-      "sha256": "816a8a5adfdf97c1c1d3447e3c8a12e3890961cdfe2268fc5e75899efa20f113",
-      "truncated": false
-    },
-    {
-      "bytes": 1874,
-      "path": "replay/synthetic/kept/decision-1795070774207-50403/run-1/artifacts/57b156193e260596316736f43d82cec625537ed6264203d17da5da7d797a6576",
-      "role": "image crop:call:1:0",
-      "sha256": "57b156193e260596316736f43d82cec625537ed6264203d17da5da7d797a6576",
-      "truncated": false
-    },
-    {
-      "bytes": 1878,
-      "path": "replay/synthetic/kept/decision-1795070774207-50403/run-1/artifacts/7d0f608889e946c55d3dc600af5776ce81f363f8e47fffedbbda69dc237c8ec0",
-      "role": "image crop:call:1:1",
-      "sha256": "7d0f608889e946c55d3dc600af5776ce81f363f8e47fffedbbda69dc237c8ec0",
-      "truncated": false
-    },
-    {
-      "bytes": 802,
-      "path": "replay/synthetic/kept/decision-1795070774207-50403/run-1/artifacts/bdfbfc0404923fea131082022f8b28201261f2b1ce26bc45231942763074314d",
-      "role": "envelope call:2",
-      "sha256": "bdfbfc0404923fea131082022f8b28201261f2b1ce26bc45231942763074314d",
-      "truncated": false
-    },
-    {
-      "bytes": 4609,
-      "path": "replay/synthetic/kept/decision-1795070774207-50403/run-1/artifacts/c6cd5cd5f1fa82f443c57f140259a79e50e988214d463a367dfc9fcfc345e156",
-      "role": "image aligned:candidate:t1",
-      "sha256": "c6cd5cd5f1fa82f443c57f140259a79e50e988214d463a367dfc9fcfc345e156",
+      "sha256": "449bb749a6f6a8932c817c279d3807cd2b32e744f775d3d82dbcbad9754ce754",
       "truncated": false
     }
   ],
@@ -143,85 +108,17 @@
         "sha256": "6f4285de4007013d0a439746cc25a11d6530be9571d6ff0472c4f0510ef14970"
       },
       "width": 96
-    },
-    {
-      "frame": "crop:call:1:0",
-      "height": 36,
-      "id": "crop:call:1:0",
-      "mapping": {
-        "bbox": [
-          0.25,
-          0.25,
-          0.75,
-          0.75
-        ]
-      },
-      "origin": "toolu_k1",
-      "parent": "raw:candidate",
-      "prepared": {
-        "bytes": 1874,
-        "sha256": "57b156193e260596316736f43d82cec625537ed6264203d17da5da7d797a6576"
-      },
-      "root": "candidate",
-      "width": 48
-    },
-    {
-      "frame": "crop:call:1:1",
-      "height": 36,
-      "id": "crop:call:1:1",
-      "mapping": {
-        "bbox": [
-          0.25,
-          0.25,
-          0.75,
-          0.75
-        ]
-      },
-      "origin": "toolu_k1",
-      "parent": "raw:source",
-      "prepared": {
-        "bytes": 1878,
-        "sha256": "7d0f608889e946c55d3dc600af5776ce81f363f8e47fffedbbda69dc237c8ec0"
-      },
-      "root": "source",
-      "width": 48
-    },
-    {
-      "frame": "aligned:candidate:t1",
-      "height": 72,
-      "id": "aligned:candidate:t1",
-      "mapping": {
-        "homography": [
-          1.0000000915693426,
-          1.0207487625125601e-8,
-          -0.02083335204103836,
-          6.981169030107303e-8,
-          1.0000001189189072,
-          -0.01388895471203315,
-          1.02501885010426e-7,
-          2.45584064386236e-8,
-          1.0
-        ]
-      },
-      "origin": "toolu_k2",
-      "parent": "raw:source",
-      "prepared": {
-        "bytes": 4609,
-        "sha256": "c6cd5cd5f1fa82f443c57f140259a79e50e988214d463a367dfc9fcfc345e156"
-      },
-      "root": "candidate",
-      "width": 96
     }
   ],
   "incomplete": [],
   "meta": {
     "attempt": "run-1",
-    "decision": "replay/synthetic/kept/decision-1795070774207-50403",
+    "decision": "replay/synthetic/missing-item/decision-1795076239962-98009",
     "fixtures": "replay",
     "harness": "squint",
     "harness_version": "capture",
-    "name": "synthetic/kept/decision-1795070774207-50403",
-    "package_digest": "sha256:884bc9b7cfefb1da72aa916977befa90de168a25a5ada7187c0ad0e7ecd81546",
+    "name": "synthetic/missing-item/decision-1795076239962-98009",
+    "package_digest": "sha256:7f8c96aa797ac86b48e6a276942d7f94f6e64fa47d02f45f143d7c8932359a23",
     "prompt_version": "v1",
     "run": "synthetic",
     "tools_version": "2"
@@ -250,13 +147,19 @@
     },
     "version": "1"
   },
-  "repairs": [],
+  "repairs": [
+    {
+      "after_turn": 1,
+      "form": "rejected",
+      "reason": "invalid_submission"
+    }
+  ],
   "subject": {
     "arm": "C",
-    "item": "kept",
+    "item": "missing-item",
     "model": "claude-haiku-5-5",
     "repetition": 1,
-    "set": "source-fidelity/synthetic-v1",
+    "set": "source-fidelity/submissions-v1",
     "use_case": "source-fidelity"
   },
   "submission_tool": "submit_verdict",
@@ -270,53 +173,43 @@
       "calls": [
         {
           "arguments": {
-            "also": "raw:source",
-            "bbox": [
-              0.25,
-              0.25,
-              0.75,
-              0.75
+            "findings": [],
+            "items": [
+              {
+                "allowed_by": null,
+                "confidence": "confident",
+                "disposition": "held",
+                "evidence": [],
+                "id": "chk:ob:SF1@candidate",
+                "location": null,
+                "reason": "It matches the source."
+              },
+              {
+                "allowed_by": null,
+                "confidence": "confident",
+                "disposition": "held",
+                "evidence": [],
+                "id": "chk:ob:SF2@candidate",
+                "location": null,
+                "reason": "It matches the source."
+              }
             ],
-            "frame": "raw:candidate"
+            "opinion": {
+              "reason": "As the items say.",
+              "verdict": "pass"
+            },
+            "schema_version": 1
           },
-          "disposition": "executed",
-          "id": "toolu_k1",
+          "disposition": "rejected",
+          "id": "toolu_s1",
           "meta": {
-            "call_id": "call:1",
-            "duration_ms": 5,
-            "envelope_file": "816a8a5adfdf97c1c1d3447e3c8a12e3890961cdfe2268fc5e75899efa20f113",
-            "status": "ok"
+            "reason": "invalid_submission"
           },
-          "name": "view",
+          "name": "submit_verdict",
           "result": {
-            "content": "{\"call_id\":\"call:1\",\"images\":[{\"frame\":\"crop:call:1:0\",\"mapping\":{\"bbox\":[0.25,0.25,0.75,0.75]},\"parent\":\"raw:candidate\"},{\"frame\":\"crop:call:1:1\",\"mapping\":{\"bbox\":[0.25,0.25,0.75,0.75]},\"parent\":\"raw:source\"}],\"measurements\":[],\"regions\":[],\"status\":\"ok\",\"summary\":\"Crop [0.250, 0.250, 0.750, 0.750] of raw:candidate, and the same of raw:source (crop:call:1:0 48×36, crop:call:1:1 48×36).\"}",
-            "images": [
-              "crop:call:1:0",
-              "crop:call:1:1"
-            ],
-            "is_error": false
-          }
-        },
-        {
-          "arguments": {
-            "against": "source",
-            "image": "candidate"
-          },
-          "disposition": "executed",
-          "id": "toolu_k2",
-          "meta": {
-            "call_id": "call:2",
-            "duration_ms": 2573,
-            "envelope_file": "bdfbfc0404923fea131082022f8b28201261f2b1ce26bc45231942763074314d",
-            "status": "ok"
-          },
-          "name": "align",
-          "result": {
-            "content": "{\"call_id\":\"call:2\",\"images\":[{\"frame\":\"aligned:candidate:t1\",\"mapping\":{\"homography\":[1.0000000915693426,1.0207487625125601e-8,-0.02083335204103836,6.981169030107303e-8,1.0000001189189072,-0.01388895471203315,1.02501885010426e-7,2.45584064386236e-8,1.0]},\"parent\":\"raw:source\"}],\"measurements\":[],\"regions\":[],\"status\":\"ok\",\"summary\":\"Result computed; its measurements are withheld.\"}",
-            "images": [
-              "aligned:candidate:t1"
-            ],
-            "is_error": false
+            "content": "Submission rejected: checklist item \"chk:ob:RQ1@candidate\" must appear exactly once, appeared 0 times",
+            "images": [],
+            "is_error": true
           }
         }
       ],
@@ -329,7 +222,7 @@
         "estimated": false,
         "provider_request_id": null,
         "request_file": "d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
-        "response_file": "7ef84d02d8e51c6d8e3084a20a8adf6e0aa656d75fce1e9a2d0e2037d799ac7a",
+        "response_file": "eecdac8a48929a71ebbba53d793129ba3fe01da4a4cc966ee1caab867410273d",
         "usage": {
           "input_tokens": 1200,
           "output_tokens": 80
@@ -735,60 +628,79 @@
       "response": {
         "content": [
           {
-            "text": "I will look closer and register the pair.",
+            "text": "Submitting.",
             "type": "text"
           },
           {
             "arguments": {
-              "also": "raw:source",
-              "bbox": [
-                0.25,
-                0.25,
-                0.75,
-                0.75
+              "findings": [],
+              "items": [
+                {
+                  "allowed_by": null,
+                  "confidence": "confident",
+                  "disposition": "held",
+                  "evidence": [],
+                  "id": "chk:ob:SF1@candidate",
+                  "location": null,
+                  "reason": "It matches the source."
+                },
+                {
+                  "allowed_by": null,
+                  "confidence": "confident",
+                  "disposition": "held",
+                  "evidence": [],
+                  "id": "chk:ob:SF2@candidate",
+                  "location": null,
+                  "reason": "It matches the source."
+                }
               ],
-              "frame": "raw:candidate"
+              "opinion": {
+                "reason": "As the items say.",
+                "verdict": "pass"
+              },
+              "schema_version": 1
             },
-            "id": "toolu_k1",
-            "name": "view",
-            "type": "tool_use"
-          },
-          {
-            "arguments": {
-              "against": "source",
-              "image": "candidate"
-            },
-            "id": "toolu_k2",
-            "name": "align",
+            "id": "toolu_s1",
+            "name": "submit_verdict",
             "type": "tool_use"
           }
         ],
         "stop_reason": "tool_use",
         "text": [
-          "I will look closer and register the pair."
+          "Submitting."
         ],
         "tool_calls": [
           {
             "arguments": {
-              "also": "raw:source",
-              "bbox": [
-                0.25,
-                0.25,
-                0.75,
-                0.75
+              "findings": [],
+              "items": [
+                {
+                  "allowed_by": null,
+                  "confidence": "confident",
+                  "disposition": "held",
+                  "evidence": [],
+                  "id": "chk:ob:SF1@candidate",
+                  "location": null,
+                  "reason": "It matches the source."
+                },
+                {
+                  "allowed_by": null,
+                  "confidence": "confident",
+                  "disposition": "held",
+                  "evidence": [],
+                  "id": "chk:ob:SF2@candidate",
+                  "location": null,
+                  "reason": "It matches the source."
+                }
               ],
-              "frame": "raw:candidate"
+              "opinion": {
+                "reason": "As the items say.",
+                "verdict": "pass"
+              },
+              "schema_version": 1
             },
-            "id": "toolu_k1",
-            "name": "view"
-          },
-          {
-            "arguments": {
-              "against": "source",
-              "image": "candidate"
-            },
-            "id": "toolu_k2",
-            "name": "align"
+            "id": "toolu_s1",
+            "name": "submit_verdict"
           }
         ]
       },
@@ -835,7 +747,7 @@
             "schema_version": 1
           },
           "disposition": "final",
-          "id": "toolu_k3",
+          "id": "toolu_s9",
           "meta": {},
           "name": "submit_verdict",
           "result": null
@@ -845,12 +757,12 @@
       "meta": {
         "answered": true,
         "attempts": 1,
-        "bound_usd": 0.0077247,
+        "bound_usd": 0.007105500000000001,
         "cost_usd": 0.000152,
         "estimated": false,
         "provider_request_id": null,
-        "request_file": "22398a970230e4ad6532d9f6a45184f206a2a6042dc2ca2ad16285228493cd6e",
-        "response_file": "c634fb53bcaf167e0ff661f23fecdd51fdd4f4d7cd2ba68854d13283cc4524a1",
+        "request_file": "e824b6adbeb69d1d8fed67e02f205a27b8ef074aca4169d6559b5758a1ef2f31",
+        "response_file": "449bb749a6f6a8932c817c279d3807cd2b32e744f775d3d82dbcbad9754ce754",
         "usage": {
           "input_tokens": 1200,
           "output_tokens": 80
@@ -890,31 +802,40 @@
           {
             "content": [
               {
-                "text": "I will look closer and register the pair.",
+                "text": "Submitting.",
                 "type": "text"
               },
               {
                 "arguments": {
-                  "also": "raw:source",
-                  "bbox": [
-                    0.25,
-                    0.25,
-                    0.75,
-                    0.75
+                  "findings": [],
+                  "items": [
+                    {
+                      "allowed_by": null,
+                      "confidence": "confident",
+                      "disposition": "held",
+                      "evidence": [],
+                      "id": "chk:ob:SF1@candidate",
+                      "location": null,
+                      "reason": "It matches the source."
+                    },
+                    {
+                      "allowed_by": null,
+                      "confidence": "confident",
+                      "disposition": "held",
+                      "evidence": [],
+                      "id": "chk:ob:SF2@candidate",
+                      "location": null,
+                      "reason": "It matches the source."
+                    }
                   ],
-                  "frame": "raw:candidate"
+                  "opinion": {
+                    "reason": "As the items say.",
+                    "verdict": "pass"
+                  },
+                  "schema_version": 1
                 },
-                "id": "toolu_k1",
-                "name": "view",
-                "type": "tool_use"
-              },
-              {
-                "arguments": {
-                  "against": "source",
-                  "image": "candidate"
-                },
-                "id": "toolu_k2",
-                "name": "align",
+                "id": "toolu_s1",
+                "name": "submit_verdict",
                 "type": "tool_use"
               }
             ],
@@ -923,26 +844,14 @@
           {
             "content": [
               {
-                "content": "{\"call_id\":\"call:1\",\"images\":[{\"frame\":\"crop:call:1:0\",\"mapping\":{\"bbox\":[0.25,0.25,0.75,0.75]},\"parent\":\"raw:candidate\"},{\"frame\":\"crop:call:1:1\",\"mapping\":{\"bbox\":[0.25,0.25,0.75,0.75]},\"parent\":\"raw:source\"}],\"measurements\":[],\"regions\":[],\"status\":\"ok\",\"summary\":\"Crop [0.250, 0.250, 0.750, 0.750] of raw:candidate, and the same of raw:source (crop:call:1:0 48×36, crop:call:1:1 48×36).\"}",
-                "images": [
-                  "crop:call:1:0",
-                  "crop:call:1:1"
-                ],
-                "is_error": false,
-                "tool_use_id": "toolu_k1",
+                "content": "Submission rejected: checklist item \"chk:ob:RQ1@candidate\" must appear exactly once, appeared 0 times",
+                "images": [],
+                "is_error": true,
+                "tool_use_id": "toolu_s1",
                 "type": "tool_result"
               },
               {
-                "content": "{\"call_id\":\"call:2\",\"images\":[{\"frame\":\"aligned:candidate:t1\",\"mapping\":{\"homography\":[1.0000000915693426,1.0207487625125601e-8,-0.02083335204103836,6.981169030107303e-8,1.0000001189189072,-0.01388895471203315,1.02501885010426e-7,2.45584064386236e-8,1.0]},\"parent\":\"raw:source\"}],\"measurements\":[],\"regions\":[],\"status\":\"ok\",\"summary\":\"Result computed; its measurements are withheld.\"}",
-                "images": [
-                  "aligned:candidate:t1"
-                ],
-                "is_error": false,
-                "tool_use_id": "toolu_k2",
-                "type": "tool_result"
-              },
-              {
-                "text": "Checklist. Give every item below exactly one disposition.\n- chk:ob:SF1@candidate: Every protected subject or feature named in the job requirements keeps its identity, shape, position and extent relative to the source.\n- chk:ob:SF2@candidate: The candidate is derived from the source: same scene, same camera, same projection; nothing rotated, stretched or cropped away.\n- chk:ob:RQ1@candidate: The front door keeps its identity, shape, position and extent relative to the source.\n",
+                "text": "Repair: call submit_verdict once, alone, with exactly one disposition per checklist item. This is the only repair.",
                 "type": "text"
               }
             ],
@@ -1358,7 +1267,7 @@
               },
               "schema_version": 1
             },
-            "id": "toolu_k3",
+            "id": "toolu_s9",
             "name": "submit_verdict",
             "type": "tool_use"
           }
@@ -1406,7 +1315,7 @@
               },
               "schema_version": 1
             },
-            "id": "toolu_k3",
+            "id": "toolu_s9",
             "name": "submit_verdict"
           }
         ]

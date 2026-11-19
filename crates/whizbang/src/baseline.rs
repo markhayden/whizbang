@@ -445,12 +445,27 @@ fn pixel_sha256(bytes: &[u8]) -> Result<String, String> {
 }
 
 /// The judge of a replay: the recorded responses, turn by turn.
-struct Recorded<'a>(&'a [Json]);
+struct Recorded<'a> {
+    turns: &'a [Json],
+    /// The recorded ending's message, if it has one.
+    ending: &'a Json,
+}
 
 impl Judge for Recorded<'_> {
     fn answer(&mut self, turn: usize, _request: &Json) -> Option<Json> {
-        let recorded = self.0.get(turn.checked_sub(1)?)?;
+        let recorded = self.turns.get(turn.checked_sub(1)?)?;
         recorded.get("response").filter(|r| !r.is_null()).cloned()
+    }
+
+    fn said(&self) -> Vec<String> {
+        let mut said: Vec<String> = self
+            .turns
+            .iter()
+            .flat_map(|turn| turn["calls"].as_array().cloned().unwrap_or_default())
+            .filter_map(|call| call["result"]["content"].as_str().map(str::to_owned))
+            .collect();
+        said.extend(self.ending.as_str().map(str::to_owned));
+        said
     }
 }
 
@@ -565,7 +580,10 @@ fn replayed(asked: &Asked<'_>, package: &Package<'_>, recorded: &Json) -> Result
         });
     }
     let turns = recorded["turns"].as_array().cloned().unwrap_or_default();
-    let mut judge = Recorded(&turns);
+    let mut judge = Recorded {
+        turns: &turns,
+        ending: &recorded["terminal"]["message"],
+    };
     let done = replay::replay(
         &job,
         &pictures,

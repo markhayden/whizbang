@@ -6,73 +6,73 @@
   ],
   "files": [
     {
-      "bytes": 6104,
-      "path": "replay/synthetic/bad-enum/decision-1795070781619-51629/run-1/journal.jsonl",
+      "bytes": 5662,
+      "path": "replay/synthetic/twice-invalid/decision-1795076240866-98009/run-1/journal.jsonl",
       "role": "journal",
-      "sha256": "4fcf8997f74292c0c190bb14eea4feb67b3d13ba999e76706b6e2a928deec9c8",
+      "sha256": "cd053096069e73d7cb6d42f63c8babdf1754daa1779a1d884456e4ec856a55ff",
       "truncated": false
     },
     {
-      "bytes": 208,
-      "path": "replay/synthetic/bad-enum/result.json",
+      "bytes": 211,
+      "path": "replay/synthetic/twice-invalid/result.json",
       "role": "result",
-      "sha256": "6df56669af1c45b0d80e1300d0ffdded698fcfff238a89f71239b0080a12559e",
+      "sha256": "cab41202fbe2b723061a40a8769d8867be75682a4c6753677470771ff523edf9",
       "truncated": false
     },
     {
-      "bytes": 5815,
-      "path": "replay/synthetic/bad-enum/decision-1795070781619-51629/decision.json",
+      "bytes": 5820,
+      "path": "replay/synthetic/twice-invalid/decision-1795076240866-98009/decision.json",
       "role": "decision",
-      "sha256": "1d85e09d9f59916d66f9b9114d8d86f2c54f38d9a8df46afa0594ac791440df9",
+      "sha256": "ed8922b5e879632b644e9c75fe6da4dec7fa254edb24356c2bc3cd9d995f0455",
       "truncated": false
     },
     {
-      "bytes": 14347,
-      "path": "replay/synthetic/bad-enum/decision-1795070781619-51629/report.json",
+      "bytes": 13763,
+      "path": "replay/synthetic/twice-invalid/decision-1795076240866-98009/report.json",
       "role": "report",
-      "sha256": "308ae775aaec436ac1c8e8db305a3b6f19b87b0af084c5f750578a454f3e1990",
+      "sha256": "ce1612a99cbeebe9f6dbbf157242ce955500d6648a52c6488889317424aa52f8",
       "truncated": false
     },
     {
       "bytes": 4747,
-      "path": "replay/synthetic/bad-enum/decision-1795070781619-51629/run-1/artifacts/0568346d1c7fba1395ebdda4fa253abd0eeda8cc09187cbd0ed6042675596219",
+      "path": "replay/synthetic/twice-invalid/decision-1795076240866-98009/run-1/artifacts/0568346d1c7fba1395ebdda4fa253abd0eeda8cc09187cbd0ed6042675596219",
       "role": "image raw:candidate",
       "sha256": "0568346d1c7fba1395ebdda4fa253abd0eeda8cc09187cbd0ed6042675596219",
       "truncated": false
     },
     {
       "bytes": 4278,
-      "path": "replay/synthetic/bad-enum/decision-1795070781619-51629/run-1/artifacts/a0e98bc18dda9253e6227aaa1963dd90a9034f0245bc27988c89e7eb6ded924f",
+      "path": "replay/synthetic/twice-invalid/decision-1795076240866-98009/run-1/artifacts/a0e98bc18dda9253e6227aaa1963dd90a9034f0245bc27988c89e7eb6ded924f",
       "role": "image raw:source",
       "sha256": "a0e98bc18dda9253e6227aaa1963dd90a9034f0245bc27988c89e7eb6ded924f",
       "truncated": false
     },
     {
       "bytes": 11869,
-      "path": "replay/synthetic/bad-enum/decision-1795070781619-51629/run-1/artifacts/d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
+      "path": "replay/synthetic/twice-invalid/decision-1795076240866-98009/run-1/artifacts/d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
       "role": "request 1",
       "sha256": "d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
       "truncated": false
     },
     {
       "bytes": 1469,
-      "path": "replay/synthetic/bad-enum/decision-1795070781619-51629/run-1/artifacts/8ac79bd75c70d5154cc9afae637eb99b7f1ce9ce9e73b843bf5977e2476b3c99",
+      "path": "replay/synthetic/twice-invalid/decision-1795076240866-98009/run-1/artifacts/8ac79bd75c70d5154cc9afae637eb99b7f1ce9ce9e73b843bf5977e2476b3c99",
       "role": "response 1",
       "sha256": "8ac79bd75c70d5154cc9afae637eb99b7f1ce9ce9e73b843bf5977e2476b3c99",
       "truncated": false
     },
     {
       "bytes": 13004,
-      "path": "replay/synthetic/bad-enum/decision-1795070781619-51629/run-1/artifacts/bb507fe79204ede57bfd74e96c66a65f6d064683b5bf3915f2d154663a59e186",
+      "path": "replay/synthetic/twice-invalid/decision-1795076240866-98009/run-1/artifacts/bb507fe79204ede57bfd74e96c66a65f6d064683b5bf3915f2d154663a59e186",
       "role": "request 2",
       "sha256": "bb507fe79204ede57bfd74e96c66a65f6d064683b5bf3915f2d154663a59e186",
       "truncated": false
     },
     {
       "bytes": 1469,
-      "path": "replay/synthetic/bad-enum/decision-1795070781619-51629/run-1/artifacts/449bb749a6f6a8932c817c279d3807cd2b32e744f775d3d82dbcbad9754ce754",
+      "path": "replay/synthetic/twice-invalid/decision-1795076240866-98009/run-1/artifacts/2cc1ed3169c77e35554afaa759bd69ccfa6894ec71f63b06be2fa2d61d9349b2",
       "role": "response 2",
-      "sha256": "449bb749a6f6a8932c817c279d3807cd2b32e744f775d3d82dbcbad9754ce754",
+      "sha256": "2cc1ed3169c77e35554afaa759bd69ccfa6894ec71f63b06be2fa2d61d9349b2",
       "truncated": false
     }
   ],
@@ -113,12 +113,12 @@
   "incomplete": [],
   "meta": {
     "attempt": "run-1",
-    "decision": "replay/synthetic/bad-enum/decision-1795070781619-51629",
+    "decision": "replay/synthetic/twice-invalid/decision-1795076240866-98009",
     "fixtures": "replay",
     "harness": "squint",
     "harness_version": "capture",
-    "name": "synthetic/bad-enum/decision-1795070781619-51629",
-    "package_digest": "sha256:1ff4ab2017f5dfdad75e0a935cb704d475ad24e7edb94782eb46906775b943f0",
+    "name": "synthetic/twice-invalid/decision-1795076240866-98009",
+    "package_digest": "sha256:7f8c96aa797ac86b48e6a276942d7f94f6e64fa47d02f45f143d7c8932359a23",
     "prompt_version": "v1",
     "run": "synthetic",
     "tools_version": "2"
@@ -156,7 +156,7 @@
   ],
   "subject": {
     "arm": "C",
-    "item": "bad-enum",
+    "item": "twice-invalid",
     "model": "claude-haiku-5-5",
     "repetition": 1,
     "set": "source-fidelity/submissions-v1",
@@ -164,8 +164,9 @@
   },
   "submission_tool": "submit_verdict",
   "terminal": {
-    "kind": "verdict",
-    "verdict": "pass"
+    "class": "submission_invalid",
+    "kind": "error",
+    "message": "submission: does not match the submission schema: \"fine\" is not valid under any of the schemas listed in the 'oneOf' keyword at /items/0/disposition"
   },
   "transcript_version": 1,
   "turns": [
@@ -742,7 +743,7 @@
               {
                 "allowed_by": null,
                 "confidence": "confident",
-                "disposition": "held",
+                "disposition": "fine",
                 "evidence": [],
                 "id": "chk:ob:SF1@candidate",
                 "location": null,
@@ -774,7 +775,7 @@
             "schema_version": 1
           },
           "disposition": "final",
-          "id": "toolu_s9",
+          "id": "toolu_s2",
           "meta": {},
           "name": "submit_verdict",
           "result": null
@@ -789,7 +790,7 @@
         "estimated": false,
         "provider_request_id": null,
         "request_file": "bb507fe79204ede57bfd74e96c66a65f6d064683b5bf3915f2d154663a59e186",
-        "response_file": "449bb749a6f6a8932c817c279d3807cd2b32e744f775d3d82dbcbad9754ce754",
+        "response_file": "2cc1ed3169c77e35554afaa759bd69ccfa6894ec71f63b06be2fa2d61d9349b2",
         "usage": {
           "input_tokens": 1200,
           "output_tokens": 80
@@ -1272,7 +1273,7 @@
                 {
                   "allowed_by": null,
                   "confidence": "confident",
-                  "disposition": "held",
+                  "disposition": "fine",
                   "evidence": [],
                   "id": "chk:ob:SF1@candidate",
                   "location": null,
@@ -1303,7 +1304,7 @@
               },
               "schema_version": 1
             },
-            "id": "toolu_s9",
+            "id": "toolu_s2",
             "name": "submit_verdict",
             "type": "tool_use"
           }
@@ -1320,7 +1321,7 @@
                 {
                   "allowed_by": null,
                   "confidence": "confident",
-                  "disposition": "held",
+                  "disposition": "fine",
                   "evidence": [],
                   "id": "chk:ob:SF1@candidate",
                   "location": null,
@@ -1351,7 +1352,7 @@
               },
               "schema_version": 1
             },
-            "id": "toolu_s9",
+            "id": "toolu_s2",
             "name": "submit_verdict"
           }
         ]

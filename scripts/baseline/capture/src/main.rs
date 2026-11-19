@@ -41,8 +41,9 @@ const SCALED_SET: &str = "source-fidelity/scaled-v1";
 const SUBMISSIONS_SET: &str = "source-fidelity/submissions-v1";
 
 /// The decisions of the set of submissions: each a way squint judged a submission.
-const SUBMISSIONS: [&str; 11] = [
+const SUBMISSIONS: [&str; 12] = [
     "unknown-frame",
+    "two-missing",
     "outside",
     "missing-item",
     "observed-item",
@@ -86,6 +87,8 @@ fn submissions(name: &str, checklist: &[String]) -> Vec<Value> {
             i["disposition"] = json!("violation");
             i["location"] = located("raw:candidate", [0.5, 0.5, 1.2, 0.9]);
         }),
+        // Two items left out: squint named one of them, whichever its hash map gave first.
+        "two-missing" => vec![submit("toolu_s1", &checklist[..1], &held, "pass"), fine],
         "missing-item" => {
             let short = &checklist[..checklist.len() - 1];
             vec![submit("toolu_s1", short, &held, "pass"), fine]

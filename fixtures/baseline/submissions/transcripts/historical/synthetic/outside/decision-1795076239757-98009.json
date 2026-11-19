@@ -6,73 +6,73 @@
   ],
   "files": [
     {
-      "bytes": 5662,
-      "path": "replay/synthetic/twice-invalid/decision-1795070782506-51629/run-1/journal.jsonl",
+      "bytes": 6105,
+      "path": "replay/synthetic/outside/decision-1795076239757-98009/run-1/journal.jsonl",
       "role": "journal",
-      "sha256": "9c9cdf3ade587a9f164cb382be3a2e11aba7d45750fad0cf424716ff089ca9be",
+      "sha256": "e18637d2a591b2a36bb851e4372aa926b6da5c2ab7fe3706d3a652e3bc9a3b25",
       "truncated": false
     },
     {
-      "bytes": 211,
-      "path": "replay/synthetic/twice-invalid/result.json",
+      "bytes": 207,
+      "path": "replay/synthetic/outside/result.json",
       "role": "result",
-      "sha256": "8fa93a4461d3a6085a4b8244128608a207456004085cc765d407faffb9afbe55",
+      "sha256": "08915e14f534f23ae640483389b39517cba16040afc3f496f2c54e1f5f5be4fe",
       "truncated": false
     },
     {
-      "bytes": 5820,
-      "path": "replay/synthetic/twice-invalid/decision-1795070782506-51629/decision.json",
+      "bytes": 5814,
+      "path": "replay/synthetic/outside/decision-1795076239757-98009/decision.json",
       "role": "decision",
-      "sha256": "ed8922b5e879632b644e9c75fe6da4dec7fa254edb24356c2bc3cd9d995f0455",
+      "sha256": "745c3a09d35aad2d820308b004d0fe160f66a56b8350ad7f4b7825a00481d21a",
       "truncated": false
     },
     {
-      "bytes": 13763,
-      "path": "replay/synthetic/twice-invalid/decision-1795070782506-51629/report.json",
+      "bytes": 14347,
+      "path": "replay/synthetic/outside/decision-1795076239757-98009/report.json",
       "role": "report",
-      "sha256": "8d84c25ec409caad5c2fcbb5bad321b474199727e915bbcd403fec950e2d78da",
+      "sha256": "d1d9bc2aa39916e72f30fb8f91d01f87e47f7eaf520bba3f767f3b5972af31a4",
       "truncated": false
     },
     {
       "bytes": 4747,
-      "path": "replay/synthetic/twice-invalid/decision-1795070782506-51629/run-1/artifacts/0568346d1c7fba1395ebdda4fa253abd0eeda8cc09187cbd0ed6042675596219",
+      "path": "replay/synthetic/outside/decision-1795076239757-98009/run-1/artifacts/0568346d1c7fba1395ebdda4fa253abd0eeda8cc09187cbd0ed6042675596219",
       "role": "image raw:candidate",
       "sha256": "0568346d1c7fba1395ebdda4fa253abd0eeda8cc09187cbd0ed6042675596219",
       "truncated": false
     },
     {
       "bytes": 4278,
-      "path": "replay/synthetic/twice-invalid/decision-1795070782506-51629/run-1/artifacts/a0e98bc18dda9253e6227aaa1963dd90a9034f0245bc27988c89e7eb6ded924f",
+      "path": "replay/synthetic/outside/decision-1795076239757-98009/run-1/artifacts/a0e98bc18dda9253e6227aaa1963dd90a9034f0245bc27988c89e7eb6ded924f",
       "role": "image raw:source",
       "sha256": "a0e98bc18dda9253e6227aaa1963dd90a9034f0245bc27988c89e7eb6ded924f",
       "truncated": false
     },
     {
       "bytes": 11869,
-      "path": "replay/synthetic/twice-invalid/decision-1795070782506-51629/run-1/artifacts/d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
+      "path": "replay/synthetic/outside/decision-1795076239757-98009/run-1/artifacts/d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
       "role": "request 1",
       "sha256": "d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
       "truncated": false
     },
     {
-      "bytes": 1469,
-      "path": "replay/synthetic/twice-invalid/decision-1795070782506-51629/run-1/artifacts/8ac79bd75c70d5154cc9afae637eb99b7f1ce9ce9e73b843bf5977e2476b3c99",
+      "bytes": 1699,
+      "path": "replay/synthetic/outside/decision-1795076239757-98009/run-1/artifacts/a8bdbc240fba973df48afcb28ebea1169e548c964e581d3d18abef8bd43ca39e",
       "role": "response 1",
-      "sha256": "8ac79bd75c70d5154cc9afae637eb99b7f1ce9ce9e73b843bf5977e2476b3c99",
+      "sha256": "a8bdbc240fba973df48afcb28ebea1169e548c964e581d3d18abef8bd43ca39e",
       "truncated": false
     },
     {
-      "bytes": 13004,
-      "path": "replay/synthetic/twice-invalid/decision-1795070782506-51629/run-1/artifacts/bb507fe79204ede57bfd74e96c66a65f6d064683b5bf3915f2d154663a59e186",
+      "bytes": 13073,
+      "path": "replay/synthetic/outside/decision-1795076239757-98009/run-1/artifacts/39d81944349e507adb3df6c7faaf0dde1064098dd2b519b7d15481fc61e9d95d",
       "role": "request 2",
-      "sha256": "bb507fe79204ede57bfd74e96c66a65f6d064683b5bf3915f2d154663a59e186",
+      "sha256": "39d81944349e507adb3df6c7faaf0dde1064098dd2b519b7d15481fc61e9d95d",
       "truncated": false
     },
     {
       "bytes": 1469,
-      "path": "replay/synthetic/twice-invalid/decision-1795070782506-51629/run-1/artifacts/2cc1ed3169c77e35554afaa759bd69ccfa6894ec71f63b06be2fa2d61d9349b2",
+      "path": "replay/synthetic/outside/decision-1795076239757-98009/run-1/artifacts/449bb749a6f6a8932c817c279d3807cd2b32e744f775d3d82dbcbad9754ce754",
       "role": "response 2",
-      "sha256": "2cc1ed3169c77e35554afaa759bd69ccfa6894ec71f63b06be2fa2d61d9349b2",
+      "sha256": "449bb749a6f6a8932c817c279d3807cd2b32e744f775d3d82dbcbad9754ce754",
       "truncated": false
     }
   ],
@@ -113,12 +113,12 @@
   "incomplete": [],
   "meta": {
     "attempt": "run-1",
-    "decision": "replay/synthetic/twice-invalid/decision-1795070782506-51629",
+    "decision": "replay/synthetic/outside/decision-1795076239757-98009",
     "fixtures": "replay",
     "harness": "squint",
     "harness_version": "capture",
-    "name": "synthetic/twice-invalid/decision-1795070782506-51629",
-    "package_digest": "sha256:1ff4ab2017f5dfdad75e0a935cb704d475ad24e7edb94782eb46906775b943f0",
+    "name": "synthetic/outside/decision-1795076239757-98009",
+    "package_digest": "sha256:7f8c96aa797ac86b48e6a276942d7f94f6e64fa47d02f45f143d7c8932359a23",
     "prompt_version": "v1",
     "run": "synthetic",
     "tools_version": "2"
@@ -156,7 +156,7 @@
   ],
   "subject": {
     "arm": "C",
-    "item": "twice-invalid",
+    "item": "outside",
     "model": "claude-haiku-5-5",
     "repetition": 1,
     "set": "source-fidelity/submissions-v1",
@@ -164,9 +164,8 @@
   },
   "submission_tool": "submit_verdict",
   "terminal": {
-    "class": "submission_invalid",
-    "kind": "error",
-    "message": "submission: does not match the submission schema: \"fine\" is not valid under any of the schemas listed in the 'oneOf' keyword at /items/0/disposition"
+    "kind": "verdict",
+    "verdict": "pass"
   },
   "transcript_version": 1,
   "turns": [
@@ -179,10 +178,23 @@
               {
                 "allowed_by": null,
                 "confidence": "confident",
-                "disposition": "fine",
+                "disposition": "violation",
                 "evidence": [],
                 "id": "chk:ob:SF1@candidate",
-                "location": null,
+                "location": {
+                  "bbox": [
+                    0.5,
+                    0.5,
+                    1.2,
+                    0.9
+                  ],
+                  "fov": null,
+                  "frame": "raw:candidate",
+                  "kind": "bbox",
+                  "pitch": null,
+                  "polygon": null,
+                  "yaw": null
+                },
                 "reason": "It matches the source."
               },
               {
@@ -217,7 +229,7 @@
           },
           "name": "submit_verdict",
           "result": {
-            "content": "Submission rejected: does not match the submission schema: \"fine\" is not valid under any of the schemas listed in the 'oneOf' keyword at /items/0/disposition",
+            "content": "Submission rejected: chk:ob:SF1@candidate: location invalid: submission: bbox [0.5, 0.5, 1.2, 0.9] outside [0, 1]",
             "images": [],
             "is_error": true
           }
@@ -232,7 +244,7 @@
         "estimated": false,
         "provider_request_id": null,
         "request_file": "d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
-        "response_file": "8ac79bd75c70d5154cc9afae637eb99b7f1ce9ce9e73b843bf5977e2476b3c99",
+        "response_file": "a8bdbc240fba973df48afcb28ebea1169e548c964e581d3d18abef8bd43ca39e",
         "usage": {
           "input_tokens": 1200,
           "output_tokens": 80
@@ -648,10 +660,23 @@
                 {
                   "allowed_by": null,
                   "confidence": "confident",
-                  "disposition": "fine",
+                  "disposition": "violation",
                   "evidence": [],
                   "id": "chk:ob:SF1@candidate",
-                  "location": null,
+                  "location": {
+                    "bbox": [
+                      0.5,
+                      0.5,
+                      1.2,
+                      0.9
+                    ],
+                    "fov": null,
+                    "frame": "raw:candidate",
+                    "kind": "bbox",
+                    "pitch": null,
+                    "polygon": null,
+                    "yaw": null
+                  },
                   "reason": "It matches the source."
                 },
                 {
@@ -696,10 +721,23 @@
                 {
                   "allowed_by": null,
                   "confidence": "confident",
-                  "disposition": "fine",
+                  "disposition": "violation",
                   "evidence": [],
                   "id": "chk:ob:SF1@candidate",
-                  "location": null,
+                  "location": {
+                    "bbox": [
+                      0.5,
+                      0.5,
+                      1.2,
+                      0.9
+                    ],
+                    "fov": null,
+                    "frame": "raw:candidate",
+                    "kind": "bbox",
+                    "pitch": null,
+                    "polygon": null,
+                    "yaw": null
+                  },
                   "reason": "It matches the source."
                 },
                 {
@@ -743,7 +781,7 @@
               {
                 "allowed_by": null,
                 "confidence": "confident",
-                "disposition": "fine",
+                "disposition": "held",
                 "evidence": [],
                 "id": "chk:ob:SF1@candidate",
                 "location": null,
@@ -775,7 +813,7 @@
             "schema_version": 1
           },
           "disposition": "final",
-          "id": "toolu_s2",
+          "id": "toolu_s9",
           "meta": {},
           "name": "submit_verdict",
           "result": null
@@ -785,12 +823,12 @@
       "meta": {
         "answered": true,
         "attempts": 1,
-        "bound_usd": 0.007110900000000001,
+        "bound_usd": 0.0071127000000000004,
         "cost_usd": 0.000152,
         "estimated": false,
         "provider_request_id": null,
-        "request_file": "bb507fe79204ede57bfd74e96c66a65f6d064683b5bf3915f2d154663a59e186",
-        "response_file": "2cc1ed3169c77e35554afaa759bd69ccfa6894ec71f63b06be2fa2d61d9349b2",
+        "request_file": "39d81944349e507adb3df6c7faaf0dde1064098dd2b519b7d15481fc61e9d95d",
+        "response_file": "449bb749a6f6a8932c817c279d3807cd2b32e744f775d3d82dbcbad9754ce754",
         "usage": {
           "input_tokens": 1200,
           "output_tokens": 80
@@ -840,10 +878,23 @@
                     {
                       "allowed_by": null,
                       "confidence": "confident",
-                      "disposition": "fine",
+                      "disposition": "violation",
                       "evidence": [],
                       "id": "chk:ob:SF1@candidate",
-                      "location": null,
+                      "location": {
+                        "bbox": [
+                          0.5,
+                          0.5,
+                          1.2,
+                          0.9
+                        ],
+                        "fov": null,
+                        "frame": "raw:candidate",
+                        "kind": "bbox",
+                        "pitch": null,
+                        "polygon": null,
+                        "yaw": null
+                      },
                       "reason": "It matches the source."
                     },
                     {
@@ -881,7 +932,7 @@
           {
             "content": [
               {
-                "content": "Submission rejected: does not match the submission schema: \"fine\" is not valid under any of the schemas listed in the 'oneOf' keyword at /items/0/disposition",
+                "content": "Submission rejected: chk:ob:SF1@candidate: location invalid: submission: bbox [0.5, 0.5, 1.2, 0.9] outside [0, 1]",
                 "images": [],
                 "is_error": true,
                 "tool_use_id": "toolu_s1",
@@ -1273,7 +1324,7 @@
                 {
                   "allowed_by": null,
                   "confidence": "confident",
-                  "disposition": "fine",
+                  "disposition": "held",
                   "evidence": [],
                   "id": "chk:ob:SF1@candidate",
                   "location": null,
@@ -1304,7 +1355,7 @@
               },
               "schema_version": 1
             },
-            "id": "toolu_s2",
+            "id": "toolu_s9",
             "name": "submit_verdict",
             "type": "tool_use"
           }
@@ -1321,7 +1372,7 @@
                 {
                   "allowed_by": null,
                   "confidence": "confident",
-                  "disposition": "fine",
+                  "disposition": "held",
                   "evidence": [],
                   "id": "chk:ob:SF1@candidate",
                   "location": null,
@@ -1352,7 +1403,7 @@
               },
               "schema_version": 1
             },
-            "id": "toolu_s2",
+            "id": "toolu_s9",
             "name": "submit_verdict"
           }
         ]

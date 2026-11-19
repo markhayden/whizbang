@@ -7,70 +7,70 @@
   "files": [
     {
       "bytes": 6093,
-      "path": "replay/synthetic/missing-field/decision-1795070781977-51629/run-1/journal.jsonl",
+      "path": "replay/synthetic/extra-field/decision-1795076240370-98009/run-1/journal.jsonl",
       "role": "journal",
-      "sha256": "c1a85bff37f25e88c11024d6160ef2220089c178cb5ad90a760d79cca19e3489",
+      "sha256": "5b8b804c09cd689344c01e3fa973cc9a01b6e5125f47d24be7c7176923f6b889",
       "truncated": false
     },
     {
-      "bytes": 213,
-      "path": "replay/synthetic/missing-field/result.json",
+      "bytes": 211,
+      "path": "replay/synthetic/extra-field/result.json",
       "role": "result",
-      "sha256": "3f046d49b171befb1bdfc7642c020cb3dd0509b30e9270dccb8a2cb70fd7d581",
+      "sha256": "b89db8fa4505639f41d013775dca1ad07c9d82af1c193bc769b3b1b7b7247633",
       "truncated": false
     },
     {
-      "bytes": 5820,
-      "path": "replay/synthetic/missing-field/decision-1795070781977-51629/decision.json",
+      "bytes": 5818,
+      "path": "replay/synthetic/extra-field/decision-1795076240370-98009/decision.json",
       "role": "decision",
-      "sha256": "da89270c531e7a6d3daf6e8814286d22093e7e1729a64a780cf33c4605b0ec0b",
+      "sha256": "f19fda0f58bd1a5911746784730fbcf3e37bd9ebe5d71e393f38f8edd41af783",
       "truncated": false
     },
     {
-      "bytes": 14341,
-      "path": "replay/synthetic/missing-field/decision-1795070781977-51629/report.json",
+      "bytes": 14338,
+      "path": "replay/synthetic/extra-field/decision-1795076240370-98009/report.json",
       "role": "report",
-      "sha256": "bc9878c0689b42cbc56401a90800f4058911514206614c06ad4c2bc224622804",
+      "sha256": "6c318ef4eb0b72406eccf088be417d5caf6002c0f573cc052521aac8766e2300",
       "truncated": false
     },
     {
       "bytes": 4747,
-      "path": "replay/synthetic/missing-field/decision-1795070781977-51629/run-1/artifacts/0568346d1c7fba1395ebdda4fa253abd0eeda8cc09187cbd0ed6042675596219",
+      "path": "replay/synthetic/extra-field/decision-1795076240370-98009/run-1/artifacts/0568346d1c7fba1395ebdda4fa253abd0eeda8cc09187cbd0ed6042675596219",
       "role": "image raw:candidate",
       "sha256": "0568346d1c7fba1395ebdda4fa253abd0eeda8cc09187cbd0ed6042675596219",
       "truncated": false
     },
     {
       "bytes": 4278,
-      "path": "replay/synthetic/missing-field/decision-1795070781977-51629/run-1/artifacts/a0e98bc18dda9253e6227aaa1963dd90a9034f0245bc27988c89e7eb6ded924f",
+      "path": "replay/synthetic/extra-field/decision-1795076240370-98009/run-1/artifacts/a0e98bc18dda9253e6227aaa1963dd90a9034f0245bc27988c89e7eb6ded924f",
       "role": "image raw:source",
       "sha256": "a0e98bc18dda9253e6227aaa1963dd90a9034f0245bc27988c89e7eb6ded924f",
       "truncated": false
     },
     {
       "bytes": 11869,
-      "path": "replay/synthetic/missing-field/decision-1795070781977-51629/run-1/artifacts/d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
+      "path": "replay/synthetic/extra-field/decision-1795076240370-98009/run-1/artifacts/d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
       "role": "request 1",
       "sha256": "d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
       "truncated": false
     },
     {
-      "bytes": 1441,
-      "path": "replay/synthetic/missing-field/decision-1795070781977-51629/run-1/artifacts/25467504504a7d6d435e85262179ce00411124f7352882e088897454dd999b2b",
+      "bytes": 1505,
+      "path": "replay/synthetic/extra-field/decision-1795076240370-98009/run-1/artifacts/f8690e2a93c926c47bb5ddec3f00ab1f0a374878414ded9110ddf78caedaf849",
       "role": "response 1",
-      "sha256": "25467504504a7d6d435e85262179ce00411124f7352882e088897454dd999b2b",
+      "sha256": "f8690e2a93c926c47bb5ddec3f00ab1f0a374878414ded9110ddf78caedaf849",
       "truncated": false
     },
     {
-      "bytes": 12937,
-      "path": "replay/synthetic/missing-field/decision-1795070781977-51629/run-1/artifacts/67d593b006f60fc421bd6951ea6a2bcba78437e6c7119a0a650668c103fe04d7",
+      "bytes": 12995,
+      "path": "replay/synthetic/extra-field/decision-1795076240370-98009/run-1/artifacts/4b9bf033185aae396c2d1d7715d3fc5e12c335e9c8afc3380ef3da34b3bdafc0",
       "role": "request 2",
-      "sha256": "67d593b006f60fc421bd6951ea6a2bcba78437e6c7119a0a650668c103fe04d7",
+      "sha256": "4b9bf033185aae396c2d1d7715d3fc5e12c335e9c8afc3380ef3da34b3bdafc0",
       "truncated": false
     },
     {
       "bytes": 1469,
-      "path": "replay/synthetic/missing-field/decision-1795070781977-51629/run-1/artifacts/449bb749a6f6a8932c817c279d3807cd2b32e744f775d3d82dbcbad9754ce754",
+      "path": "replay/synthetic/extra-field/decision-1795076240370-98009/run-1/artifacts/449bb749a6f6a8932c817c279d3807cd2b32e744f775d3d82dbcbad9754ce754",
       "role": "response 2",
       "sha256": "449bb749a6f6a8932c817c279d3807cd2b32e744f775d3d82dbcbad9754ce754",
       "truncated": false
@@ -113,12 +113,12 @@
   "incomplete": [],
   "meta": {
     "attempt": "run-1",
-    "decision": "replay/synthetic/missing-field/decision-1795070781977-51629",
+    "decision": "replay/synthetic/extra-field/decision-1795076240370-98009",
     "fixtures": "replay",
     "harness": "squint",
     "harness_version": "capture",
-    "name": "synthetic/missing-field/decision-1795070781977-51629",
-    "package_digest": "sha256:1ff4ab2017f5dfdad75e0a935cb704d475ad24e7edb94782eb46906775b943f0",
+    "name": "synthetic/extra-field/decision-1795076240370-98009",
+    "package_digest": "sha256:7f8c96aa797ac86b48e6a276942d7f94f6e64fa47d02f45f143d7c8932359a23",
     "prompt_version": "v1",
     "run": "synthetic",
     "tools_version": "2"
@@ -156,7 +156,7 @@
   ],
   "subject": {
     "arm": "C",
-    "item": "missing-field",
+    "item": "extra-field",
     "model": "claude-haiku-5-5",
     "repetition": 1,
     "set": "source-fidelity/submissions-v1",
@@ -179,8 +179,10 @@
                 "allowed_by": null,
                 "confidence": "confident",
                 "disposition": "held",
+                "evidence": [],
                 "id": "chk:ob:SF1@candidate",
                 "location": null,
+                "note": "an extra",
                 "reason": "It matches the source."
               },
               {
@@ -215,7 +217,7 @@
           },
           "name": "submit_verdict",
           "result": {
-            "content": "Submission rejected: does not match the submission schema: \"evidence\" is a required property at /items/0",
+            "content": "Submission rejected: does not match the submission schema: Additional properties are not allowed ('note' was unexpected) at /items/0",
             "images": [],
             "is_error": true
           }
@@ -230,7 +232,7 @@
         "estimated": false,
         "provider_request_id": null,
         "request_file": "d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
-        "response_file": "25467504504a7d6d435e85262179ce00411124f7352882e088897454dd999b2b",
+        "response_file": "f8690e2a93c926c47bb5ddec3f00ab1f0a374878414ded9110ddf78caedaf849",
         "usage": {
           "input_tokens": 1200,
           "output_tokens": 80
@@ -647,8 +649,10 @@
                   "allowed_by": null,
                   "confidence": "confident",
                   "disposition": "held",
+                  "evidence": [],
                   "id": "chk:ob:SF1@candidate",
                   "location": null,
+                  "note": "an extra",
                   "reason": "It matches the source."
                 },
                 {
@@ -694,8 +698,10 @@
                   "allowed_by": null,
                   "confidence": "confident",
                   "disposition": "held",
+                  "evidence": [],
                   "id": "chk:ob:SF1@candidate",
                   "location": null,
+                  "note": "an extra",
                   "reason": "It matches the source."
                 },
                 {
@@ -781,11 +787,11 @@
       "meta": {
         "answered": true,
         "attempts": 1,
-        "bound_usd": 0.0071092,
+        "bound_usd": 0.0071107,
         "cost_usd": 0.000152,
         "estimated": false,
         "provider_request_id": null,
-        "request_file": "67d593b006f60fc421bd6951ea6a2bcba78437e6c7119a0a650668c103fe04d7",
+        "request_file": "4b9bf033185aae396c2d1d7715d3fc5e12c335e9c8afc3380ef3da34b3bdafc0",
         "response_file": "449bb749a6f6a8932c817c279d3807cd2b32e744f775d3d82dbcbad9754ce754",
         "usage": {
           "input_tokens": 1200,
@@ -837,8 +843,10 @@
                       "allowed_by": null,
                       "confidence": "confident",
                       "disposition": "held",
+                      "evidence": [],
                       "id": "chk:ob:SF1@candidate",
                       "location": null,
+                      "note": "an extra",
                       "reason": "It matches the source."
                     },
                     {
@@ -876,7 +884,7 @@
           {
             "content": [
               {
-                "content": "Submission rejected: does not match the submission schema: \"evidence\" is a required property at /items/0",
+                "content": "Submission rejected: does not match the submission schema: Additional properties are not allowed ('note' was unexpected) at /items/0",
                 "images": [],
                 "is_error": true,
                 "tool_use_id": "toolu_s1",

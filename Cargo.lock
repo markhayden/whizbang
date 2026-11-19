@@ -1231,6 +1231,7 @@ dependencies = [
  "serde_json",
  "toml",
  "whizbang-core",
+ "whizbang-squint",
  "whizbang-testkit",
 ]
 

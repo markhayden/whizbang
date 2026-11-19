@@ -6,71 +6,71 @@
   ],
   "files": [
     {
-      "bytes": 6105,
-      "path": "replay/synthetic/outside/decision-1795070781291-51629/run-1/journal.jsonl",
+      "bytes": 6093,
+      "path": "replay/synthetic/bad-evidence/decision-1795076240667-98009/run-1/journal.jsonl",
       "role": "journal",
-      "sha256": "a4afc4920f31563d4743e7260f2bc38c3ab533ad2325890e11090337502b2db5",
+      "sha256": "acaebb3e787b9a65f8a60f526fac10547ffef73f7cbafb9b904e4146231a0c7f",
       "truncated": false
     },
     {
-      "bytes": 207,
-      "path": "replay/synthetic/outside/result.json",
+      "bytes": 212,
+      "path": "replay/synthetic/bad-evidence/result.json",
       "role": "result",
-      "sha256": "fdbd4bf3ddb62e8df755895cb7f50e93ca81a9419e3d82f94182f5a89a7da8f2",
+      "sha256": "acf5870f582f1b8f9bc160f863f373adcc4db4904bae333c92f677d25c1ab630",
       "truncated": false
     },
     {
-      "bytes": 5814,
-      "path": "replay/synthetic/outside/decision-1795070781291-51629/decision.json",
+      "bytes": 5819,
+      "path": "replay/synthetic/bad-evidence/decision-1795076240667-98009/decision.json",
       "role": "decision",
-      "sha256": "745c3a09d35aad2d820308b004d0fe160f66a56b8350ad7f4b7825a00481d21a",
+      "sha256": "e722883af38cd26caae63c51b32dbfbdd8df599dea67df40446b5a2c74d89a1a",
       "truncated": false
     },
     {
-      "bytes": 14346,
-      "path": "replay/synthetic/outside/decision-1795070781291-51629/report.json",
+      "bytes": 14339,
+      "path": "replay/synthetic/bad-evidence/decision-1795076240667-98009/report.json",
       "role": "report",
-      "sha256": "d6399ca3bb862a18ec6e9e239396550c1f16abeb07bae5d3b7a95c68bc4008e5",
+      "sha256": "60a62dc3939e475f36bf2717acc89076a474fe987f2811be570e872804d7aa1e",
       "truncated": false
     },
     {
       "bytes": 4747,
-      "path": "replay/synthetic/outside/decision-1795070781291-51629/run-1/artifacts/0568346d1c7fba1395ebdda4fa253abd0eeda8cc09187cbd0ed6042675596219",
+      "path": "replay/synthetic/bad-evidence/decision-1795076240667-98009/run-1/artifacts/0568346d1c7fba1395ebdda4fa253abd0eeda8cc09187cbd0ed6042675596219",
       "role": "image raw:candidate",
       "sha256": "0568346d1c7fba1395ebdda4fa253abd0eeda8cc09187cbd0ed6042675596219",
       "truncated": false
     },
     {
       "bytes": 4278,
-      "path": "replay/synthetic/outside/decision-1795070781291-51629/run-1/artifacts/a0e98bc18dda9253e6227aaa1963dd90a9034f0245bc27988c89e7eb6ded924f",
+      "path": "replay/synthetic/bad-evidence/decision-1795076240667-98009/run-1/artifacts/a0e98bc18dda9253e6227aaa1963dd90a9034f0245bc27988c89e7eb6ded924f",
       "role": "image raw:source",
       "sha256": "a0e98bc18dda9253e6227aaa1963dd90a9034f0245bc27988c89e7eb6ded924f",
       "truncated": false
     },
     {
       "bytes": 11869,
-      "path": "replay/synthetic/outside/decision-1795070781291-51629/run-1/artifacts/d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
+      "path": "replay/synthetic/bad-evidence/decision-1795076240667-98009/run-1/artifacts/d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
       "role": "request 1",
       "sha256": "d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
       "truncated": false
     },
     {
-      "bytes": 1699,
-      "path": "replay/synthetic/outside/decision-1795070781291-51629/run-1/artifacts/a8bdbc240fba973df48afcb28ebea1169e548c964e581d3d18abef8bd43ca39e",
+      "bytes": 1485,
+      "path": "replay/synthetic/bad-evidence/decision-1795076240667-98009/run-1/artifacts/c5bbb6fda2505dd9448ae0830eca4aa19f2ac88cefa4ba1863da334f0ed934c3",
       "role": "response 1",
-      "sha256": "a8bdbc240fba973df48afcb28ebea1169e548c964e581d3d18abef8bd43ca39e",
+      "sha256": "c5bbb6fda2505dd9448ae0830eca4aa19f2ac88cefa4ba1863da334f0ed934c3",
       "truncated": false
     },
     {
-      "bytes": 13073,
-      "path": "replay/synthetic/outside/decision-1795070781291-51629/run-1/artifacts/39d81944349e507adb3df6c7faaf0dde1064098dd2b519b7d15481fc61e9d95d",
+      "bytes": 12961,
+      "path": "replay/synthetic/bad-evidence/decision-1795076240667-98009/run-1/artifacts/9534e2ca794434d49b6e1d68e271d0d2f30eb5fbd4bb30995593911194ae296e",
       "role": "request 2",
-      "sha256": "39d81944349e507adb3df6c7faaf0dde1064098dd2b519b7d15481fc61e9d95d",
+      "sha256": "9534e2ca794434d49b6e1d68e271d0d2f30eb5fbd4bb30995593911194ae296e",
       "truncated": false
     },
     {
       "bytes": 1469,
-      "path": "replay/synthetic/outside/decision-1795070781291-51629/run-1/artifacts/449bb749a6f6a8932c817c279d3807cd2b32e744f775d3d82dbcbad9754ce754",
+      "path": "replay/synthetic/bad-evidence/decision-1795076240667-98009/run-1/artifacts/449bb749a6f6a8932c817c279d3807cd2b32e744f775d3d82dbcbad9754ce754",
       "role": "response 2",
       "sha256": "449bb749a6f6a8932c817c279d3807cd2b32e744f775d3d82dbcbad9754ce754",
       "truncated": false
@@ -113,12 +113,12 @@
   "incomplete": [],
   "meta": {
     "attempt": "run-1",
-    "decision": "replay/synthetic/outside/decision-1795070781291-51629",
+    "decision": "replay/synthetic/bad-evidence/decision-1795076240667-98009",
     "fixtures": "replay",
     "harness": "squint",
     "harness_version": "capture",
-    "name": "synthetic/outside/decision-1795070781291-51629",
-    "package_digest": "sha256:1ff4ab2017f5dfdad75e0a935cb704d475ad24e7edb94782eb46906775b943f0",
+    "name": "synthetic/bad-evidence/decision-1795076240667-98009",
+    "package_digest": "sha256:7f8c96aa797ac86b48e6a276942d7f94f6e64fa47d02f45f143d7c8932359a23",
     "prompt_version": "v1",
     "run": "synthetic",
     "tools_version": "2"
@@ -156,7 +156,7 @@
   ],
   "subject": {
     "arm": "C",
-    "item": "outside",
+    "item": "bad-evidence",
     "model": "claude-haiku-5-5",
     "repetition": 1,
     "set": "source-fidelity/submissions-v1",
@@ -178,23 +178,12 @@
               {
                 "allowed_by": null,
                 "confidence": "confident",
-                "disposition": "violation",
-                "evidence": [],
+                "disposition": "held",
+                "evidence": [
+                  "call:7"
+                ],
                 "id": "chk:ob:SF1@candidate",
-                "location": {
-                  "bbox": [
-                    0.5,
-                    0.5,
-                    1.2,
-                    0.9
-                  ],
-                  "fov": null,
-                  "frame": "raw:candidate",
-                  "kind": "bbox",
-                  "pitch": null,
-                  "polygon": null,
-                  "yaw": null
-                },
+                "location": null,
                 "reason": "It matches the source."
               },
               {
@@ -229,7 +218,7 @@
           },
           "name": "submit_verdict",
           "result": {
-            "content": "Submission rejected: chk:ob:SF1@candidate: location invalid: submission: bbox [0.5, 0.5, 1.2, 0.9] outside [0, 1]",
+            "content": "Submission rejected: chk:ob:SF1@candidate: evidence \"call:7\" is not a tool call that completed in this run",
             "images": [],
             "is_error": true
           }
@@ -244,7 +233,7 @@
         "estimated": false,
         "provider_request_id": null,
         "request_file": "d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
-        "response_file": "a8bdbc240fba973df48afcb28ebea1169e548c964e581d3d18abef8bd43ca39e",
+        "response_file": "c5bbb6fda2505dd9448ae0830eca4aa19f2ac88cefa4ba1863da334f0ed934c3",
         "usage": {
           "input_tokens": 1200,
           "output_tokens": 80
@@ -660,23 +649,12 @@
                 {
                   "allowed_by": null,
                   "confidence": "confident",
-                  "disposition": "violation",
-                  "evidence": [],
+                  "disposition": "held",
+                  "evidence": [
+                    "call:7"
+                  ],
                   "id": "chk:ob:SF1@candidate",
-                  "location": {
-                    "bbox": [
-                      0.5,
-                      0.5,
-                      1.2,
-                      0.9
-                    ],
-                    "fov": null,
-                    "frame": "raw:candidate",
-                    "kind": "bbox",
-                    "pitch": null,
-                    "polygon": null,
-                    "yaw": null
-                  },
+                  "location": null,
                   "reason": "It matches the source."
                 },
                 {
@@ -721,23 +699,12 @@
                 {
                   "allowed_by": null,
                   "confidence": "confident",
-                  "disposition": "violation",
-                  "evidence": [],
+                  "disposition": "held",
+                  "evidence": [
+                    "call:7"
+                  ],
                   "id": "chk:ob:SF1@candidate",
-                  "location": {
-                    "bbox": [
-                      0.5,
-                      0.5,
-                      1.2,
-                      0.9
-                    ],
-                    "fov": null,
-                    "frame": "raw:candidate",
-                    "kind": "bbox",
-                    "pitch": null,
-                    "polygon": null,
-                    "yaw": null
-                  },
+                  "location": null,
                   "reason": "It matches the source."
                 },
                 {
@@ -823,11 +790,11 @@
       "meta": {
         "answered": true,
         "attempts": 1,
-        "bound_usd": 0.0071127000000000004,
+        "bound_usd": 0.0071098,
         "cost_usd": 0.000152,
         "estimated": false,
         "provider_request_id": null,
-        "request_file": "39d81944349e507adb3df6c7faaf0dde1064098dd2b519b7d15481fc61e9d95d",
+        "request_file": "9534e2ca794434d49b6e1d68e271d0d2f30eb5fbd4bb30995593911194ae296e",
         "response_file": "449bb749a6f6a8932c817c279d3807cd2b32e744f775d3d82dbcbad9754ce754",
         "usage": {
           "input_tokens": 1200,
@@ -878,23 +845,12 @@
                     {
                       "allowed_by": null,
                       "confidence": "confident",
-                      "disposition": "violation",
-                      "evidence": [],
+                      "disposition": "held",
+                      "evidence": [
+                        "call:7"
+                      ],
                       "id": "chk:ob:SF1@candidate",
-                      "location": {
-                        "bbox": [
-                          0.5,
-                          0.5,
-                          1.2,
-                          0.9
-                        ],
-                        "fov": null,
-                        "frame": "raw:candidate",
-                        "kind": "bbox",
-                        "pitch": null,
-                        "polygon": null,
-                        "yaw": null
-                      },
+                      "location": null,
                       "reason": "It matches the source."
                     },
                     {
@@ -932,7 +888,7 @@
           {
             "content": [
               {
-                "content": "Submission rejected: chk:ob:SF1@candidate: location invalid: submission: bbox [0.5, 0.5, 1.2, 0.9] outside [0, 1]",
+                "content": "Submission rejected: chk:ob:SF1@candidate: evidence \"call:7\" is not a tool call that completed in this run",
                 "images": [],
                 "is_error": true,
                 "tool_use_id": "toolu_s1",

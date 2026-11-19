@@ -23,9 +23,9 @@
 //!
 //! A submission is judged as squint judged it ([`submission`]): its JSON Schema, by the
 //! validator squint ran, then its types and its rules, each refusal in squint's words. What
-//! this does not reproduce, each a difference the comparison reports by place: a panorama, a
-//! picture with transparency (squint encoded it as its own PNG), and which item a refusal
-//! names when several are missing (squint walked a hash map).
+//! this does not reproduce, each a difference the comparison reports by place: a panorama,
+//! and a picture with transparency (squint encoded it as its own PNG). Built only with the
+//! feature `baseline-replay`, which the shipped binary leaves out (ADR 0033).
 
 use std::collections::BTreeMap;
 
@@ -87,6 +87,13 @@ pub struct Shown {
 /// turn, numbered from 1, or `None` when the record holds no more.
 pub trait Judge {
     fn answer(&mut self, turn: usize, request: &Json) -> Option<Json>;
+
+    /// What the recorded decision said when it refused a submission or ended: the texts of
+    /// its calls' results and its ending's message. The replay reads them for one thing
+    /// only ([`submission`], the items a submission got wrong). None, by default.
+    fn said(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// What a replay came to: the parts of a transcript the decision makes.
@@ -827,11 +834,13 @@ impl Run<'_> {
                 (name.clone(), link)
             })
             .collect();
+        let said = self.judge.said();
         let judged = submission::Judged {
             checklist: &self.checklist,
             resolved: &self.resolved,
             frames: &frames,
             completed: &self.completed,
+            said: &said,
         };
         let verdict = submission::judged(&arguments, &judged)?;
         self.settled(call, "final", Json::Null);

@@ -43,13 +43,18 @@ image = { version = "=0.25.10", default-features = false, features = ["png", "jp
 # (`cargo build --release -p whizbang`) build the binary without it, so no source of
 # the binary that names either compiles there (plan 1C, the review of task P6a).
 fakes = ["whizbang-backends/fakes"]
+# The baseline gate's replay (`whizbang eval baseline`), and with it the JSON Schema validator
+# squint judged submissions with and the 88 crates it brings. The owner decided on 2026-11-19
+# that they stay out of the shipped binary (ADR 0033): off by default, built with
+# `cargo build --release -p whizbang --features baseline-replay`; the tests turn it on below.
+baseline-replay = ["whizbang-squint/baseline-replay"]
 
 [dev-dependencies]
 whizbang-testkit.workspace = true
 # Pictures to import, as a PNG and a JPEG, for the tests of `store import --picture`.
 image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }
-# This crate itself, with the feature `fakes`, for its own tests.
-whizbang = { path = ".", features = ["fakes"] }
+# This crate itself, with the features `fakes` and `baseline-replay`, for its own tests.
+whizbang = { path = ".", features = ["fakes", "baseline-replay"] }
 
 [lints]
 workspace = true

@@ -111,7 +111,16 @@ new digest.
 ## The gate receipt
 
 Milestone 2 writes one receipt when it replays the fixtures, with `whizbang eval baseline`
-(`transcript.md`, "The replay"). It holds exactly:
+(`transcript.md`, "The replay"), from a build made with the replay, which the shipped binary
+leaves out (ADR 0033):
+
+```
+cargo build --release -p whizbang --features baseline-replay
+./target/release/whizbang eval baseline --package <package root> --transcripts <transcripts folder> \
+    --receipt docs/baseline/receipt.toml --commit "$(git rev-parse HEAD)"
+```
+
+It holds exactly:
 
 | Field | Meaning |
 |---|---|

@@ -126,6 +126,9 @@ pub(super) struct Judged<'a> {
     pub frames: &'a BTreeMap<String, Link>,
     /// The ids (`call:<n>`) of the run's calls that completed.
     pub completed: &'a [String],
+    /// What the recorded decision said when it refused a submission ([`super::Judge::said`]):
+    /// read for one thing only, which of the items a submission got wrong squint named.
+    pub said: &'a [String],
 }
 
 /// Squint's schema check: every error the validator finds, each with where it is.
@@ -253,14 +256,27 @@ fn items(sub: &Submission, ctx: &Judged<'_>) -> Result<(), Refused> {
         }
         evidence(&item.evidence, ctx, &item.id)?;
     }
-    // Squint walked a hash map here; with every item answered once there is nothing to
-    // report, and the order matters only for which of several items is named.
-    for (id, n) in counts {
-        if n != 1 {
-            return Err(format!(
-                "checklist item {id:?} must appear exactly once, appeared {n} times"
-            ));
-        }
+    // Every item must be answered once. Squint walked a hash map here, so when several are
+    // not, which one its refusal names was not repeatable: any of them could be. The one
+    // place the gate matches a set (`docs/baseline/transcript.md`, "The replay"): the
+    // replay names the item the recorded refusal named when that item is one of the items
+    // this submission got wrong, worked out here from the submission alone; otherwise the
+    // first of them in the checklist's order. A replay cannot name an item this submission
+    // answered once.
+    let wrong: Vec<String> = ctx
+        .checklist
+        .ids()
+        .filter(|id| counts.get(id) != Some(&1))
+        .map(|id| {
+            let n = counts.get(id).copied().unwrap_or(0);
+            format!("checklist item {id:?} must appear exactly once, appeared {n} times")
+        })
+        .collect();
+    if let Some(first) = wrong.first() {
+        let named = wrong
+            .iter()
+            .find(|refusal| ctx.said.iter().any(|said| said.contains(refusal.as_str())));
+        return Err(named.unwrap_or(first).clone());
     }
     Ok(())
 }

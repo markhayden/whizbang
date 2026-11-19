@@ -2,6 +2,7 @@
 //! argument parsing; this is the wiring it calls.
 
 pub mod backend_status;
+#[cfg(feature = "baseline-replay")]
 pub mod baseline;
 pub mod door;
 pub mod evaluation;

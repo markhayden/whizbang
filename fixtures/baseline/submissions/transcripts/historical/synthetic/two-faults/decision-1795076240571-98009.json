@@ -7,70 +7,70 @@
   "files": [
     {
       "bytes": 6104,
-      "path": "replay/synthetic/missing-item/decision-1795070781394-51629/run-1/journal.jsonl",
+      "path": "replay/synthetic/two-faults/decision-1795076240571-98009/run-1/journal.jsonl",
       "role": "journal",
-      "sha256": "8a9ff2c65f86f12304d854c7850e2e9927cbfcf03c137563221ee9a7ce9f0d2c",
+      "sha256": "1a47326713460d516188026623f04c74b2be3c7c9019818374620f6ed89feaf2",
       "truncated": false
     },
     {
-      "bytes": 212,
-      "path": "replay/synthetic/missing-item/result.json",
+      "bytes": 210,
+      "path": "replay/synthetic/two-faults/result.json",
       "role": "result",
-      "sha256": "e9f93d93ece703fbbada16dd27bedc29de2ec974e1982d109db362aafdca443e",
+      "sha256": "b9261a545cf7e46dd70cebe9f9c9a3ac0c17f4a99d56b94fe96c6a917d1cfbf9",
       "truncated": false
     },
     {
-      "bytes": 5819,
-      "path": "replay/synthetic/missing-item/decision-1795070781394-51629/decision.json",
+      "bytes": 5817,
+      "path": "replay/synthetic/two-faults/decision-1795076240571-98009/decision.json",
       "role": "decision",
-      "sha256": "12bc7402f3b768a38b5b8a1fdedeee32d4d35bac538f19e434feb22db157f339",
+      "sha256": "179b6a051b67d6324c7cef6fc127ab36431857f3b5d7be1bbbc57d209aa5e04e",
       "truncated": false
     },
     {
-      "bytes": 14350,
-      "path": "replay/synthetic/missing-item/decision-1795070781394-51629/report.json",
+      "bytes": 14348,
+      "path": "replay/synthetic/two-faults/decision-1795076240571-98009/report.json",
       "role": "report",
-      "sha256": "31497dfc2e68e70ab8fa66bf2d8440bb75b33a5ef54af927b9cf0054b35412ed",
+      "sha256": "404adc3f699d40f408205d1e3c909646253f94edf1009f3fda73cf89d607ae33",
       "truncated": false
     },
     {
       "bytes": 4747,
-      "path": "replay/synthetic/missing-item/decision-1795070781394-51629/run-1/artifacts/0568346d1c7fba1395ebdda4fa253abd0eeda8cc09187cbd0ed6042675596219",
+      "path": "replay/synthetic/two-faults/decision-1795076240571-98009/run-1/artifacts/0568346d1c7fba1395ebdda4fa253abd0eeda8cc09187cbd0ed6042675596219",
       "role": "image raw:candidate",
       "sha256": "0568346d1c7fba1395ebdda4fa253abd0eeda8cc09187cbd0ed6042675596219",
       "truncated": false
     },
     {
       "bytes": 4278,
-      "path": "replay/synthetic/missing-item/decision-1795070781394-51629/run-1/artifacts/a0e98bc18dda9253e6227aaa1963dd90a9034f0245bc27988c89e7eb6ded924f",
+      "path": "replay/synthetic/two-faults/decision-1795076240571-98009/run-1/artifacts/a0e98bc18dda9253e6227aaa1963dd90a9034f0245bc27988c89e7eb6ded924f",
       "role": "image raw:source",
       "sha256": "a0e98bc18dda9253e6227aaa1963dd90a9034f0245bc27988c89e7eb6ded924f",
       "truncated": false
     },
     {
       "bytes": 11869,
-      "path": "replay/synthetic/missing-item/decision-1795070781394-51629/run-1/artifacts/d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
+      "path": "replay/synthetic/two-faults/decision-1795076240571-98009/run-1/artifacts/d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
       "role": "request 1",
       "sha256": "d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
       "truncated": false
     },
     {
-      "bytes": 1153,
-      "path": "replay/synthetic/missing-item/decision-1795070781394-51629/run-1/artifacts/eecdac8a48929a71ebbba53d793129ba3fe01da4a4cc966ee1caab867410273d",
+      "bytes": 1505,
+      "path": "replay/synthetic/two-faults/decision-1795076240571-98009/run-1/artifacts/0fe56801aca29be68684d766fe0e6a2397d410b48f40e26b855c8b387271f5e7",
       "role": "response 1",
-      "sha256": "eecdac8a48929a71ebbba53d793129ba3fe01da4a4cc966ee1caab867410273d",
+      "sha256": "0fe56801aca29be68684d766fe0e6a2397d410b48f40e26b855c8b387271f5e7",
       "truncated": false
     },
     {
-      "bytes": 12790,
-      "path": "replay/synthetic/missing-item/decision-1795070781394-51629/run-1/artifacts/e824b6adbeb69d1d8fed67e02f205a27b8ef074aca4169d6559b5758a1ef2f31",
+      "bytes": 13097,
+      "path": "replay/synthetic/two-faults/decision-1795076240571-98009/run-1/artifacts/7cfc6d08e98c6d5aabd30af557adc2d16763c9e41cccb5f2623d792934708ee9",
       "role": "request 2",
-      "sha256": "e824b6adbeb69d1d8fed67e02f205a27b8ef074aca4169d6559b5758a1ef2f31",
+      "sha256": "7cfc6d08e98c6d5aabd30af557adc2d16763c9e41cccb5f2623d792934708ee9",
       "truncated": false
     },
     {
       "bytes": 1469,
-      "path": "replay/synthetic/missing-item/decision-1795070781394-51629/run-1/artifacts/449bb749a6f6a8932c817c279d3807cd2b32e744f775d3d82dbcbad9754ce754",
+      "path": "replay/synthetic/two-faults/decision-1795076240571-98009/run-1/artifacts/449bb749a6f6a8932c817c279d3807cd2b32e744f775d3d82dbcbad9754ce754",
       "role": "response 2",
       "sha256": "449bb749a6f6a8932c817c279d3807cd2b32e744f775d3d82dbcbad9754ce754",
       "truncated": false
@@ -113,12 +113,12 @@
   "incomplete": [],
   "meta": {
     "attempt": "run-1",
-    "decision": "replay/synthetic/missing-item/decision-1795070781394-51629",
+    "decision": "replay/synthetic/two-faults/decision-1795076240571-98009",
     "fixtures": "replay",
     "harness": "squint",
     "harness_version": "capture",
-    "name": "synthetic/missing-item/decision-1795070781394-51629",
-    "package_digest": "sha256:1ff4ab2017f5dfdad75e0a935cb704d475ad24e7edb94782eb46906775b943f0",
+    "name": "synthetic/two-faults/decision-1795076240571-98009",
+    "package_digest": "sha256:7f8c96aa797ac86b48e6a276942d7f94f6e64fa47d02f45f143d7c8932359a23",
     "prompt_version": "v1",
     "run": "synthetic",
     "tools_version": "2"
@@ -156,7 +156,7 @@
   ],
   "subject": {
     "arm": "C",
-    "item": "missing-item",
+    "item": "two-faults",
     "model": "claude-haiku-5-5",
     "repetition": 1,
     "set": "source-fidelity/submissions-v1",
@@ -178,10 +178,11 @@
               {
                 "allowed_by": null,
                 "confidence": "confident",
-                "disposition": "held",
+                "disposition": "fine",
                 "evidence": [],
                 "id": "chk:ob:SF1@candidate",
                 "location": null,
+                "note": "an extra",
                 "reason": "It matches the source."
               },
               {
@@ -190,6 +191,15 @@
                 "disposition": "held",
                 "evidence": [],
                 "id": "chk:ob:SF2@candidate",
+                "location": null,
+                "reason": "It matches the source."
+              },
+              {
+                "allowed_by": null,
+                "confidence": "confident",
+                "disposition": "held",
+                "evidence": [],
+                "id": "chk:ob:RQ1@candidate",
                 "location": null,
                 "reason": "It matches the source."
               }
@@ -207,7 +217,7 @@
           },
           "name": "submit_verdict",
           "result": {
-            "content": "Submission rejected: checklist item \"chk:ob:RQ1@candidate\" must appear exactly once, appeared 0 times",
+            "content": "Submission rejected: does not match the submission schema: \"fine\" is not valid under any of the schemas listed in the 'oneOf' keyword at /items/0/disposition; Additional properties are not allowed ('note' was unexpected) at /items/0",
             "images": [],
             "is_error": true
           }
@@ -222,7 +232,7 @@
         "estimated": false,
         "provider_request_id": null,
         "request_file": "d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
-        "response_file": "eecdac8a48929a71ebbba53d793129ba3fe01da4a4cc966ee1caab867410273d",
+        "response_file": "0fe56801aca29be68684d766fe0e6a2397d410b48f40e26b855c8b387271f5e7",
         "usage": {
           "input_tokens": 1200,
           "output_tokens": 80
@@ -638,10 +648,11 @@
                 {
                   "allowed_by": null,
                   "confidence": "confident",
-                  "disposition": "held",
+                  "disposition": "fine",
                   "evidence": [],
                   "id": "chk:ob:SF1@candidate",
                   "location": null,
+                  "note": "an extra",
                   "reason": "It matches the source."
                 },
                 {
@@ -650,6 +661,15 @@
                   "disposition": "held",
                   "evidence": [],
                   "id": "chk:ob:SF2@candidate",
+                  "location": null,
+                  "reason": "It matches the source."
+                },
+                {
+                  "allowed_by": null,
+                  "confidence": "confident",
+                  "disposition": "held",
+                  "evidence": [],
+                  "id": "chk:ob:RQ1@candidate",
                   "location": null,
                   "reason": "It matches the source."
                 }
@@ -677,10 +697,11 @@
                 {
                   "allowed_by": null,
                   "confidence": "confident",
-                  "disposition": "held",
+                  "disposition": "fine",
                   "evidence": [],
                   "id": "chk:ob:SF1@candidate",
                   "location": null,
+                  "note": "an extra",
                   "reason": "It matches the source."
                 },
                 {
@@ -689,6 +710,15 @@
                   "disposition": "held",
                   "evidence": [],
                   "id": "chk:ob:SF2@candidate",
+                  "location": null,
+                  "reason": "It matches the source."
+                },
+                {
+                  "allowed_by": null,
+                  "confidence": "confident",
+                  "disposition": "held",
+                  "evidence": [],
+                  "id": "chk:ob:RQ1@candidate",
                   "location": null,
                   "reason": "It matches the source."
                 }
@@ -757,11 +787,11 @@
       "meta": {
         "answered": true,
         "attempts": 1,
-        "bound_usd": 0.007105500000000001,
+        "bound_usd": 0.007113200000000001,
         "cost_usd": 0.000152,
         "estimated": false,
         "provider_request_id": null,
-        "request_file": "e824b6adbeb69d1d8fed67e02f205a27b8ef074aca4169d6559b5758a1ef2f31",
+        "request_file": "7cfc6d08e98c6d5aabd30af557adc2d16763c9e41cccb5f2623d792934708ee9",
         "response_file": "449bb749a6f6a8932c817c279d3807cd2b32e744f775d3d82dbcbad9754ce754",
         "usage": {
           "input_tokens": 1200,
@@ -812,10 +842,11 @@
                     {
                       "allowed_by": null,
                       "confidence": "confident",
-                      "disposition": "held",
+                      "disposition": "fine",
                       "evidence": [],
                       "id": "chk:ob:SF1@candidate",
                       "location": null,
+                      "note": "an extra",
                       "reason": "It matches the source."
                     },
                     {
@@ -824,6 +855,15 @@
                       "disposition": "held",
                       "evidence": [],
                       "id": "chk:ob:SF2@candidate",
+                      "location": null,
+                      "reason": "It matches the source."
+                    },
+                    {
+                      "allowed_by": null,
+                      "confidence": "confident",
+                      "disposition": "held",
+                      "evidence": [],
+                      "id": "chk:ob:RQ1@candidate",
                       "location": null,
                       "reason": "It matches the source."
                     }
@@ -844,7 +884,7 @@
           {
             "content": [
               {
-                "content": "Submission rejected: checklist item \"chk:ob:RQ1@candidate\" must appear exactly once, appeared 0 times",
+                "content": "Submission rejected: does not match the submission schema: \"fine\" is not valid under any of the schemas listed in the 'oneOf' keyword at /items/0/disposition; Additional properties are not allowed ('note' was unexpected) at /items/0",
                 "images": [],
                 "is_error": true,
                 "tool_use_id": "toolu_s1",
