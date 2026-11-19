@@ -34,6 +34,15 @@
 //! mask = "feather.mask"
 //! ```
 //!
+//! An input may say `many = true`: it is then every artifact a caller gives at its port,
+//! in the order given, and binds only a port that takes several (squint's use cases take a
+//! candidate, a source and up to eight references so; plan m3, task Q1).
+//!
+//! A step's argument written `"<step>.measurements"`, naming an earlier step whose action
+//! hands back measurements (ADR 0035), is bound to what that step measured, as one JSON
+//! text: a text argument only. A recipe whose last step answers with a verdict hands that
+//! verdict back to its caller with the outcome, and may hand back no artifact.
+//!
 //! `constants = "<set>"` in a step names a constant set: the action's argument
 //! `constants`, which an action that has sets declares as a choice of their names.
 //! Rascal's `projection` is read and kept, and its `[outputs] render` is read and kept
@@ -45,7 +54,7 @@ pub mod runner;
 use std::collections::BTreeMap;
 
 use crate::artifact::ArtifactType;
-use crate::contract::{ActionDescriptor, Registry, Value, ValueType, text};
+use crate::contract::{ActionDescriptor, Registry, ResultKind, Value, ValueType, text};
 
 pub use runner::{RecipeAction, SET, UNTIL};
 
@@ -99,6 +108,8 @@ pub struct Input {
     /// The caller may leave it out: it is then absent, and binds only an optional port
     /// or an argument a call may leave out.
     pub optional: bool,
+    /// It is every artifact the caller gives at its port, in order (`many = true`).
+    pub many: bool,
 }
 
 /// Where a port's artifacts come from: a declared input, or an output of an earlier step.
@@ -313,6 +324,19 @@ impl Recipe {
         }
     }
 
+    /// The earlier step a parameter binds the measurements of (`<step>.measurements`).
+    fn bound_measurements<'a>(
+        &self,
+        written: &'a Written,
+        before: &[CheckedStep],
+    ) -> Option<&'a str> {
+        let Written::Text(text) = written else {
+            return None;
+        };
+        let step = text.strip_suffix(MEASUREMENTS)?.strip_suffix('.')?;
+        before.iter().any(|b| b.id == step).then_some(step)
+    }
+
     /// The text input a parameter names as its value, with its name.
     fn bound_text<'a>(&'a self, written: &'a Written) -> Option<(&'a str, &'a Input)> {
         let Written::Text(text) = written else {
@@ -475,6 +499,24 @@ impl Recipe {
                         refuse(format!("{op} takes no argument {name}"))
                     }
                 })?;
+                if let Some(from) = self.bound_measurements(value, &checked) {
+                    let measures = (checked.iter().find(|b| b.id == from))
+                        .and_then(|b| registry.get(&b.action))
+                        .is_some_and(|a| a.descriptor().answers_with(ResultKind::Measurements));
+                    if !measures {
+                        return Err(refuse(format!(
+                            "argument {name} is bound to {from}.measurements, and the step \
+                             {from} hands back no measurements"
+                        )));
+                    }
+                    if !matches!(argument.value_type(), ValueType::Text) {
+                        return Err(refuse(format!(
+                            "argument {name} is bound to {from}.measurements, and is not a text"
+                        )));
+                    }
+                    arguments.push((name.clone(), Param::Measured(from.to_owned())));
+                    continue;
+                }
                 if let Some((input, declared)) = self.bound_text(value) {
                     if !matches!(
                         argument.value_type(),
@@ -542,10 +584,14 @@ impl Recipe {
                 many,
             });
         }
-        if outputs.is_empty() {
+        // A recipe whose last step answers with a verdict hands it back (ADR 0035).
+        let verdict = (checked.last())
+            .and_then(|last| registry.get(&last.action))
+            .is_some_and(|last| last.descriptor().answers_with(ResultKind::Verdict));
+        if outputs.is_empty() && !verdict {
             return Err(refuse(
                 "outputs",
-                "a recipe hands back at least one output".to_owned(),
+                "a recipe hands back at least one output, or its last step a verdict".to_owned(),
             ));
         }
         Ok(Checked {
@@ -555,6 +601,7 @@ impl Recipe {
             inputs: self.inputs.clone(),
             steps: checked,
             outputs,
+            verdict,
         })
     }
 
@@ -572,7 +619,8 @@ impl Recipe {
                 Input {
                     declared: Declared::Artifact(artifact),
                     optional,
-                } => Some((*artifact, false, *optional)),
+                    many,
+                } => Some((*artifact, *many, *optional)),
                 _ => None,
             },
             Binding::Step { step, port } => {
@@ -588,6 +636,10 @@ impl Recipe {
 /// The argument an action that has constant sets takes them by: a choice of their
 /// names.
 pub const CONSTANTS: &str = "constants";
+
+/// What a step's argument names after an earlier step's id to be bound to what that step
+/// measured (ADR 0035).
+pub const MEASUREMENTS: &str = "measurements";
 
 fn read_input(name: &str, value: toml::Value) -> Result<Input, String> {
     let toml::Value::Table(mut table) = value else {
@@ -618,10 +670,22 @@ fn read_input(name: &str, value: toml::Value) -> Result<Input, String> {
         Some(toml::Value::Boolean(optional)) => optional,
         Some(_) => return Err(format!("input {name}: `optional` must be a boolean")),
     };
+    let many = match table.remove("many") {
+        None => false,
+        Some(toml::Value::Boolean(many)) => many,
+        Some(_) => return Err(format!("input {name}: `many` must be a boolean")),
+    };
+    if many && declared == Declared::Text {
+        return Err(format!("input {name}: a text is one, and is never many"));
+    }
     if let Some(key) = table.keys().next() {
         return Err(format!("input {name}: `{key}` is not a key of an input"));
     }
-    Ok(Input { declared, optional })
+    Ok(Input {
+        declared,
+        optional,
+        many,
+    })
 }
 
 fn read_step(mut table: toml::Table) -> Result<Step, (String, String)> {
@@ -730,11 +794,13 @@ pub fn typed_word(value_type: &ValueType, word: &str) -> Result<Value, String> {
     typed(value_type, &written)
 }
 
-/// An argument a checked step gives: a value, or the text of a declared text input.
+/// An argument a checked step gives: a value, the text of a declared text input, or what
+/// an earlier step measured, by its id.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Param {
     Value(Value),
     Input(String),
+    Measured(String),
 }
 
 /// One step, checked.
@@ -766,6 +832,8 @@ pub struct Checked {
     pub inputs: BTreeMap<String, Input>,
     pub steps: Vec<CheckedStep>,
     pub outputs: Vec<Output>,
+    /// Whether its last step answers with a verdict, which the recipe hands back.
+    pub verdict: bool,
 }
 
 impl Checked {

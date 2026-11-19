@@ -1,13 +1,16 @@
 //! `details::…`: what `check` measures before the judge's first turn, under a scripted
-//! judge (plan m3, task U1, item 3: the tiles of a job with one image).
+//! judge (plan m3, task U1, item 3: the tiles of a job with one image); and `details` as
+//! the first step of a use case's recipe (plan m3, task Q1, item 1).
 
 use serde_json::json;
+use whizbang_core::artifact::ArtifactId;
 use whizbang_core::capability::Part;
 use whizbang_core::contract::record::Status;
 use whizbang_core::contract::{Executor, Outcome, Secrets, Value};
 use whizbang_squint::details::{TILE_BOXES, TILES_INTRO};
 
-use super::check::{judged_call, turns};
+use super::check::{judged_call, paired, texts, turns};
+use super::runner::{calls, fidelity_recipe, steps_of};
 use super::support::look;
 use super::world::{World, judge, left};
 
@@ -85,4 +88,102 @@ fn tiles_hands_the_judge_four_overlapping_tiles_at_full_resolution_before_the_fi
         other => panic!("{other:?}"),
     }
     assert_eq!(judge.requests(), 0);
+}
+
+// --- `details` as the first step of a use case's recipe (plan m3, task Q1, item 1) ---------
+
+#[test]
+fn a_pair_that_does_not_register_is_judged_with_its_failure_and_no_comparison() {
+    let (world, source, _, unrelated) = paired();
+    let set = "details.detail=align,change_map";
+    let (finished, judge) = fidelity_recipe(&world, unrelated.id(), source.id(), set);
+    let steps = steps_of(&world, &finished);
+    let (details, judged) = (&steps[0].1, &steps[1].1);
+    // align ran and gave no frame; no comparison ran on the pair.
+    assert_eq!(calls(details), [("align", Some(Status::Completed))]);
+    assert!(details.record().outputs().is_empty());
+    let said = texts(judge.received()[0].messages()[0].parts());
+    let align = said.iter().find(|t| t.starts_with("align (")).unwrap();
+    assert!(
+        align.contains("candidate onto source: not_registered"),
+        "{align}"
+    );
+    let compared = said.iter().find(|t| t.starts_with("change_map (")).unwrap();
+    assert!(
+        compared.ends_with(
+            "aligned:candidate:t1 against source: not measured: candidate did not register \
+             onto source, so the two are not in one grid"
+        ),
+        "{compared}"
+    );
+    assert!(
+        !said.iter().any(|t| t.starts_with("Image `aligned:")),
+        "{said:?}"
+    );
+    // The judge's step still ran and concluded.
+    assert_eq!(calls(judged), []);
+    assert!(finished.verdict().is_some());
+}
+
+#[test]
+fn details_none_measures_nothing_and_the_judge_step_still_runs() {
+    let (world, source, candidate, _) = paired();
+    let set = "details.details=none";
+    let (finished, judge) = fidelity_recipe(&world, candidate.id(), source.id(), set);
+    let steps = steps_of(&world, &finished);
+    let (details, judged) = (&steps[0].1, &steps[1].1);
+    assert_eq!(calls(details), []);
+    assert!(details.record().outputs().is_empty());
+    assert_eq!(
+        super::runner::argument(judged, "measured").as_deref(),
+        Some("{\"entries\":[]}")
+    );
+    let said = texts(judge.received()[0].messages()[0].parts());
+    assert!(
+        !said
+            .iter()
+            .any(|t| t == whizbang_squint::details::DETAILS_INTRO),
+        "{said:?}"
+    );
+    assert_eq!(steps[1].1.record().outcome().status, Status::Completed);
+    assert!(finished.verdict().is_some());
+}
+
+#[test]
+fn three_references_are_each_aligned_in_the_order_given() {
+    let (world, scene, candidate, unrelated) = paired();
+    let job = whizbang_squint::job::Job::shorthand("reference-consistency", false, 3, None);
+    let references = [scene.id(), unrelated.id(), world.photo.id()];
+    let mut images: Vec<ArtifactId> = vec![candidate.id()];
+    images.extend(references);
+    let call = World::recipe(&job, &images);
+    let checklist = super::check::checklist_of(&job);
+    let last = checklist.ids().last().unwrap().to_owned();
+    let items = super::use_case::answers(&checklist, &last, "held", "confident");
+    let judge = judge(&super::check::submits(items), &[]);
+    let executor = world.engine(judge.clone(), Secrets::none());
+    let finished = executor.submit(&call).unwrap();
+    drop(executor);
+    assert_eq!(
+        finished.outcome().name(),
+        "completed",
+        "{:?}",
+        finished.outcome()
+    );
+    let steps = steps_of(&world, &finished);
+    let details = &steps[0].1;
+    assert_eq!(calls(details), [("align", Some(Status::Completed)); 3]);
+    // Each call of align registered the candidate onto the next reference, in order.
+    for (at, step) in details.record().steps().iter().enumerate() {
+        let run = whizbang_core::contract::RunId::parse(step.run()).unwrap();
+        let aligned = left(&world.root(), world.fs.clone(), &run);
+        let against = super::runner::given(&aligned, "against");
+        assert_eq!(against, [references[at]], "reference {}", at + 1);
+    }
+    let said = texts(judge.received()[0].messages()[0].parts());
+    let order: Vec<&str> = (said.iter())
+        .filter_map(|t| t.strip_prefix("align (unverified), candidate onto "))
+        .map(|rest| rest.split(':').next().unwrap())
+        .collect();
+    assert_eq!(order, ["reference-1", "reference-2", "reference-3"]);
 }

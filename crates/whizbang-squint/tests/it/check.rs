@@ -1195,7 +1195,7 @@ fn the_records_of_check_completed_failed_and_cancelled_hold_what_the_spec_lists(
         // value by default among them; no settings yet; the config's digest.
         assert_eq!(
             record["asked"],
-            json!({"action": "check", "version": "1.5.0", "settings": [],
+            json!({"action": "check", "version": "1.6.0", "settings": [],
                    "arguments": [{"name": "tools", "value": {"text": "view"}},
                                  {"name": "use_case", "value": {"text": "general"}},
                                  {"name": "details", "value": {"text": "none"}},
@@ -1588,12 +1588,12 @@ use whizbang_squint::job::Job;
 use whizbang_squint::use_case::{self, Checklist};
 
 /// The checklist of a job, as the run will make it.
-fn checklist_of(job: &Job) -> Checklist {
+pub fn checklist_of(job: &Job) -> Checklist {
     Checklist::build(&use_case::resolve(job).unwrap(), job)
 }
 
 /// A script whose one turn submits these answers.
-fn submits(answers: Json) -> String {
+pub fn submits(answers: Json) -> String {
     let call = json!({"tool_call": {"id": "s1", "name": "submit_verdict", "arguments": answers}});
     turns(&[(json!([call]), "tool_use")])
 }
@@ -1904,7 +1904,7 @@ fn plane(name: &str) -> Image {
 
 /// A world that also holds a pair that registers, the source and its restyled, turned
 /// candidate, and a scene unrelated to them.
-fn paired() -> (World, Image, Image, Image) {
+pub fn paired() -> (World, Image, Image, Image) {
     let world = World::new();
     let (source, candidate, unrelated) = (plane("scene"), plane("registered"), plane("unrelated"));
     world.hold(&[&source, &candidate, &unrelated]);
@@ -1922,7 +1922,7 @@ fn of_pair(source: &Image, candidate: &Image, arguments: &[(&str, &str)]) -> Cal
 }
 
 /// A judge that submits a verdict at once, or after the calls given.
-fn submitting(before: &[Json]) -> String {
+pub fn submitting(before: &[Json]) -> String {
     let items = json!([
         item("chk:ob:SF1@candidate", "held", "confident"),
         item("chk:ob:SF2@candidate", "held", "confident"),
@@ -1935,7 +1935,7 @@ fn submitting(before: &[Json]) -> String {
     turns(&script)
 }
 
-fn texts(parts: &[Part]) -> Vec<String> {
+pub fn texts(parts: &[Part]) -> Vec<String> {
     parts
         .iter()
         .filter_map(|part| match part {
@@ -2943,4 +2943,94 @@ fn a_strict_second_look_settles_toward_pass_only_with_a_cited_location() {
     let seen = json!([item(RE2, "violation", "confident")]);
     let (_, left, _) = judged(&world, &call(&world), &twice(first, seen));
     assert_eq!(left.record().verdict().unwrap().0, Decision::Fail);
+}
+
+// --- the use cases as recipes (plan m3, task Q1, item 1) --------------------------------------
+
+/// `check` called as each use case's recipe calls its judge's step, measuring first itself:
+/// how `squint check` called it before the recipes.
+fn as_check_was_called(job: &Job, images: &[ArtifactId]) -> Call {
+    judged_call(job, images)
+        .argument("details", Value::text("first"))
+        .argument("tools", Value::text("view,align,resize"))
+        .argument("max_output_tokens", Value::Integer(2048))
+}
+
+#[test]
+fn each_use_case_through_its_recipe_gives_the_verdict_it_gave_before() {
+    let (world, source, candidate, _) = paired();
+    for name in use_case::NAMES {
+        let brief = (name == "brief-compliance").then_some("A scene, kept as it was.");
+        let job = super::use_case::fitting(name, brief);
+        let images: Vec<ArtifactId> = [candidate.id(), source.id()]
+            .into_iter()
+            .take(job.images.len())
+            .collect();
+        let checklist = checklist_of(&job);
+        let last = checklist.ids().last().unwrap().to_owned();
+        for (disposition, confidence) in [
+            ("held", "confident"),
+            ("violation", "confident"),
+            ("cant_tell", "tentative"),
+        ] {
+            let answers = super::use_case::answers(&checklist, &last, disposition, confidence);
+            let script = submits(answers);
+            let (before, kept_before, asked_before) =
+                judged(&world, &as_check_was_called(&job, &images), &script);
+            let (after, _, asked_after) = judged(&world, &World::recipe(&job, &images), &script);
+            assert_eq!(
+                after.outcome().name(),
+                "completed",
+                "{name}: {:?}",
+                after.outcome()
+            );
+            // The same verdict, given with the outcome and kept in the record.
+            assert!(before.verdict().is_some(), "{name}");
+            assert_eq!(after.verdict(), before.verdict(), "{name} {disposition}");
+            let recipe = left(&world.root(), world.fs.clone(), after.run());
+            assert_eq!(recipe.record().verdict(), kept_before.record().verdict());
+            // From the same requests: the same system, opening, details and tools.
+            assert_eq!(asked_after.received(), asked_before.received(), "{name}");
+        }
+    }
+}
+
+#[test]
+fn the_judge_crops_an_aligned_frame_handed_on_by_details() {
+    let (world, source, candidate, _) = paired();
+    let aligned = whizbang_squint::align::align(
+        &candidate,
+        &source,
+        &whizbang_squint::align::Options::default(),
+        &limits(),
+    )
+    .unwrap();
+    let frame = aligned.frame.unwrap().image;
+    let look = json!({"tool_call": {"id": "v1", "name": "view", "arguments":
+        {"image": frame.id().to_string(), "bbox": [0.25, 0.25, 0.75, 0.75]}}});
+    let job = Job::shorthand("source-fidelity", true, 0, None);
+    let call = World::recipe(&job, &[candidate.id(), source.id()]);
+    let (finished, _, judge) = judged(&world, &call, &submitting(&[look]));
+    assert_eq!(
+        finished.outcome().name(),
+        "completed",
+        "{:?}",
+        finished.outcome()
+    );
+    let steps = super::runner::steps_of(&world, &finished);
+    let judged_step = &steps[1].1;
+    // The frame was handed on by `details`, and the judge's `view` of it ran as a call of
+    // the judge's step and cut it.
+    assert_eq!(
+        super::runner::given(judged_step, whizbang_squint::check::MEASURED_IMAGES),
+        [frame.id()]
+    );
+    assert_eq!(
+        super::runner::calls(judged_step),
+        [("view", Some(Status::Completed))]
+    );
+    let answered = results(&judge, 1);
+    assert!(!answered[0].is_error(), "{:?}", answered[0]);
+    let crop = crop_of(&frame, [0.25, 0.25, 0.75, 0.75]);
+    assert_eq!(answered[0].images()[0].digest(), crop.identity().pixels);
 }

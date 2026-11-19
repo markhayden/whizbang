@@ -30,6 +30,28 @@ pub enum Kind {
     Loop,
 }
 
+/// A kind of result an action hands back beside its artifacts (ADR 0035): neither is an
+/// artifact, and an action hands back only the kinds its descriptor declares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResultKind {
+    /// What a judging action concluded: a decision and its reason (ADR 0009).
+    Verdict,
+    /// What an evidence tool measured: one JSON document, which a recipe binds to a text
+    /// argument of a later step (`<step>.measurements`).
+    Measurements,
+}
+
+impl ResultKind {
+    /// The kind's name, as a descriptor and a recipe spell it.
+    pub fn name(self) -> &'static str {
+        match self {
+            ResultKind::Verdict => "verdict",
+            ResultKind::Measurements => "measurements",
+        }
+    }
+}
+
 /// What a model does for an action. The request and the response of each are the
 /// capability interfaces; a descriptor only names which an action needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -695,6 +717,10 @@ pub struct ActionDescriptor {
     arguments: Vec<Argument>,
     inputs: Vec<InputPort>,
     outputs: Vec<OutputPort>,
+    /// What it hands back beside its artifacts, where it hands back anything
+    /// (description version 9; ADR 0035).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    results: Vec<ResultKind>,
     needs: Vec<Requirement>,
     concurrent: bool,
 }
@@ -742,6 +768,16 @@ impl Draft {
         self
     }
 
+    /// A kind of result the action hands back beside its artifacts (ADR 0035). An
+    /// action that does not declare one cannot hand one back.
+    pub fn results(mut self, kind: ResultKind) -> Draft {
+        if !self.0.results.contains(&kind) {
+            self.0.results.push(kind);
+            self.0.results.sort();
+        }
+        self
+    }
+
     /// A capability the action needs.
     pub fn needs(mut self, requirement: Requirement) -> Draft {
         self.0.needs.push(requirement);
@@ -786,6 +822,7 @@ impl ActionDescriptor {
             arguments: Vec::new(),
             inputs: Vec::new(),
             outputs: Vec::new(),
+            results: Vec::new(),
             needs: Vec::new(),
             concurrent: false,
         })
@@ -838,6 +875,16 @@ impl ActionDescriptor {
 
     pub fn output(&self, name: &str) -> Option<&OutputPort> {
         self.outputs.iter().find(|port| port.name == name)
+    }
+
+    /// The kinds of result it hands back beside its artifacts.
+    pub fn results(&self) -> &[ResultKind] {
+        &self.results
+    }
+
+    /// Whether it hands back a result of this kind.
+    pub fn answers_with(&self, kind: ResultKind) -> bool {
+        self.results.contains(&kind)
     }
 
     /// Every capability the action can need, whatever the call.

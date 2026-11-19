@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use serde_json::{Value as Json, json};
-use whizbang::door::{self, CheckAsked, Details, Measuring};
+use whizbang::door::{self, CheckAsked, Details};
 use whizbang_core::artifact::ArtifactId;
 use whizbang_core::contract::{Call, Engine, Executor, ModelIdentity, Registry, Value};
 use whizbang_core::identity::{BindingId, Digest};
@@ -177,8 +177,15 @@ fn checked(executor: &Engine, judged: &Judged, (source, candidate): &(String, St
     door::check(executor, &asked, &|run| door::verdict(&root, run)).unwrap()
 }
 
+/// The run that judged, of the run a door's first line names: the judge's step of a use
+/// case's recipe (plan m3, task Q1), whose record holds the judge's turns.
+fn judged_of(root: &std::path::Path, printed: &str) -> String {
+    let run = whizbang_core::contract::RunId::parse(&printed_run(printed)).unwrap();
+    whizbang::door::judged_run(root, &run).as_str().to_owned()
+}
+
 /// The run a door's first line names.
-fn run_of(printed: &str) -> String {
+fn printed_run(printed: &str) -> String {
     let first = printed.lines().next().unwrap();
     first
         .strip_prefix("run ")
@@ -206,7 +213,8 @@ fn an_unchanged_job_hits_and_records_a_run_naming_the_earlier_one() {
     let second = checked(&executor, &judged, &pictures);
     drop(executor);
     assert_eq!(listener.finish(), 1);
-    let (earlier, later) = (run_of(&first), run_of(&second));
+    let root = &judged.world.root;
+    let (earlier, later) = (judged_of(root, &first), judged_of(root, &second));
     assert_ne!(earlier, later);
     // The same verdict and reasons, from a run of its own.
     let after = |printed: &str| {
@@ -262,7 +270,7 @@ fn evaluation_never_reads_the_cache() {
     let kept = checked(&caching, &judged, &pictures);
     let root = &judged.world.root;
     assert_eq!(
-        setting(&record_of(root, &run_of(&kept)), cache::SETTING),
+        setting(&record_of(root, &judged_of(root, &kept)), cache::SETTING),
         Some(json!({"text": "kept"}))
     );
     // A run that names its cell of a matrix, as every run of an evaluation does, never
@@ -281,15 +289,19 @@ fn evaluation_never_reads_the_cache() {
         projection: "full",
     };
     let (job, images) = door::shorthand(&asked).unwrap();
-    let measuring = Measuring {
-        details: Details::None,
-        detail: None,
-        projection: "full",
-        tools: &[],
-        second_look: "off",
-    };
-    let call: Call = door::check_call(&job, &images, None, &measuring)
+    // An evaluation's cell is a call of `check` itself, as `whizbang eval` makes it.
+    let mut call = Call::new(whizbang_squint::check::NAME)
+        .argument("use_case", Value::text(&job.use_case))
+        .argument("job", Value::text(&job.to_json()))
+        .argument("tools", Value::text("view,align"))
+        .argument(
+            "max_output_tokens",
+            Value::Integer(door::CHECK_OUTPUT_TOKENS),
+        )
         .argument("cell", Value::text("{\"matrix\":\"m\",\"repetition\":1}"));
+    for image in &images {
+        call = call.input("images", *image);
+    }
     let ran = caching.submit(&call).unwrap();
     assert_eq!(ran.outcome().name(), "completed");
     assert_eq!(
@@ -302,7 +314,7 @@ fn evaluation_never_reads_the_cache() {
     let evaluating = runner(&judged, &over, false);
     let again = checked(&evaluating, &judged, &pictures);
     assert_eq!(
-        setting(&record_of(root, &run_of(&again)), cache::SETTING),
+        setting(&record_of(root, &judged_of(root, &again)), cache::SETTING),
         None
     );
     drop(evaluating);
@@ -333,14 +345,14 @@ fn a_backend_that_cannot_report_its_identity_is_not_cached() {
     drop(executor);
     // Both asked the judge: the first kept no key.
     assert_eq!(listener.finish(), 2);
-    let record = record_of(&judged.world.root, &run_of(&first));
+    let record = record_of(&judged.world.root, &judged_of(&judged.world.root, &first));
     let said = "not kept: the judge did not report its identity";
     assert_eq!(
         setting(&record, cache::SETTING),
         Some(json!({"text": said})),
         "{record}"
     );
-    let record = record_of(&judged.world.root, &run_of(&second));
+    let record = record_of(&judged.world.root, &judged_of(&judged.world.root, &second));
     assert_eq!(setting(&record, cache::ANSWERED_BY), None);
 }
 

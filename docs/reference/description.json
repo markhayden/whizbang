@@ -1,11 +1,11 @@
 {
-  "description_version": 8,
+  "description_version": 9,
   "name": "whizbang",
   "version": "0.0.1",
   "actions": [
     {
       "name": "check",
-      "version": "1.5.0",
+      "version": "1.6.0",
       "kind": "recipe",
       "purpose": "Has a judge look at images through evidence tools and conclude: pass, fail or unsure.",
       "arguments": [
@@ -95,6 +95,24 @@
           "default": "off"
         },
         {
+          "name": "measured",
+          "purpose": "What an earlier step measured first, as it handed it on (a recipe binds the measurements of details here): said to the judge before its first turn, never measured again.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "recipe_digest",
+          "purpose": "The digest of the recipe this run is a step of, which a recipe gives: kept in the decision cache's key.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
           "name": "cell",
           "purpose": "The cell of an evaluation matrix this run is, kept in its record: the matrix, set, item, judge, arm, repetition and attempt. check does not read it.",
           "type": {
@@ -125,9 +143,22 @@
             "max": 10
           },
           "belongs_to": null
+        },
+        {
+          "name": "measured_images",
+          "artifact": "image",
+          "purpose": "The images an earlier step measured first, as it handed them on: aligned frames, maps and tiles.",
+          "count": {
+            "min": 0,
+            "max": 32
+          },
+          "belongs_to": null
         }
       ],
       "outputs": [],
+      "results": [
+        "verdict"
+      ],
       "needs": [
         {
           "capability": "judge",
@@ -250,6 +281,401 @@
       "concurrent": true
     },
     {
+      "name": "source-fidelity",
+      "version": "1.0.0",
+      "kind": "recipe",
+      "purpose": "Checks whether an edit kept what mattered in its source: details measured first, then the judge.",
+      "use": "To hold an edited picture to the picture it was edited from.",
+      "arguments": [
+        {
+          "name": "job",
+          "purpose": "The input job of the recipe.",
+          "type": {
+            "type": "text"
+          },
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "judge",
+          "purpose": "The input judge of the recipe.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "set",
+          "purpose": "Overrides for this run, one to a line: a step, a dot, an argument, an equals sign and a value.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "until",
+          "purpose": "Runs the recipe up to and including this step, and hands back none of its own outputs.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "details",
+              "judge"
+            ]
+          },
+          "required": false,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "images",
+          "artifact": "image",
+          "purpose": "The input images of the recipe.",
+          "count": {
+            "min": 1,
+            "max": null
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [],
+      "results": [
+        "verdict"
+      ],
+      "needs": [
+        {
+          "capability": "judge",
+          "features": [
+            "image",
+            "tool"
+          ],
+          "when": "always",
+          "chosen_by": "judge",
+          "feature_from": null,
+          "requests": 16
+        }
+      ],
+      "concurrent": true
+    },
+    {
+      "name": "reference-consistency",
+      "version": "1.0.0",
+      "kind": "recipe",
+      "purpose": "Checks whether a subject of the references appears faithfully: details measured first, then the judge.",
+      "use": "To hold a picture to one to eight references of the same subject.",
+      "arguments": [
+        {
+          "name": "job",
+          "purpose": "The input job of the recipe.",
+          "type": {
+            "type": "text"
+          },
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "judge",
+          "purpose": "The input judge of the recipe.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "set",
+          "purpose": "Overrides for this run, one to a line: a step, a dot, an argument, an equals sign and a value.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "until",
+          "purpose": "Runs the recipe up to and including this step, and hands back none of its own outputs.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "details",
+              "judge"
+            ]
+          },
+          "required": false,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "images",
+          "artifact": "image",
+          "purpose": "The input images of the recipe.",
+          "count": {
+            "min": 1,
+            "max": null
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [],
+      "results": [
+        "verdict"
+      ],
+      "needs": [
+        {
+          "capability": "judge",
+          "features": [
+            "image",
+            "tool"
+          ],
+          "when": "always",
+          "chosen_by": "judge",
+          "feature_from": null,
+          "requests": 16
+        }
+      ],
+      "concurrent": true
+    },
+    {
+      "name": "reality-checks",
+      "version": "1.0.0",
+      "kind": "recipe",
+      "purpose": "Checks a picture for mistakes no real photograph would make: details measured first, then the judge.",
+      "use": "To look for the marks of a made or edited picture with no other picture to hold it to.",
+      "arguments": [
+        {
+          "name": "job",
+          "purpose": "The input job of the recipe.",
+          "type": {
+            "type": "text"
+          },
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "judge",
+          "purpose": "The input judge of the recipe.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "set",
+          "purpose": "Overrides for this run, one to a line: a step, a dot, an argument, an equals sign and a value.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "until",
+          "purpose": "Runs the recipe up to and including this step, and hands back none of its own outputs.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "details",
+              "judge"
+            ]
+          },
+          "required": false,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "images",
+          "artifact": "image",
+          "purpose": "The input images of the recipe.",
+          "count": {
+            "min": 1,
+            "max": null
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [],
+      "results": [
+        "verdict"
+      ],
+      "needs": [
+        {
+          "capability": "judge",
+          "features": [
+            "image",
+            "tool"
+          ],
+          "when": "always",
+          "chosen_by": "judge",
+          "feature_from": null,
+          "requests": 16
+        }
+      ],
+      "concurrent": true
+    },
+    {
+      "name": "brief-compliance",
+      "version": "1.0.0",
+      "kind": "recipe",
+      "purpose": "Checks whether a picture holds what its brief asked for and nothing it forbade: details first, then the judge.",
+      "use": "To hold a picture to a brief in words, with or without references.",
+      "arguments": [
+        {
+          "name": "job",
+          "purpose": "The input job of the recipe.",
+          "type": {
+            "type": "text"
+          },
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "judge",
+          "purpose": "The input judge of the recipe.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "set",
+          "purpose": "Overrides for this run, one to a line: a step, a dot, an argument, an equals sign and a value.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "until",
+          "purpose": "Runs the recipe up to and including this step, and hands back none of its own outputs.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "details",
+              "judge"
+            ]
+          },
+          "required": false,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "images",
+          "artifact": "image",
+          "purpose": "The input images of the recipe.",
+          "count": {
+            "min": 1,
+            "max": null
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [],
+      "results": [
+        "verdict"
+      ],
+      "needs": [
+        {
+          "capability": "judge",
+          "features": [
+            "image",
+            "tool"
+          ],
+          "when": "always",
+          "chosen_by": "judge",
+          "feature_from": null,
+          "requests": 16
+        }
+      ],
+      "concurrent": true
+    },
+    {
+      "name": "product-fidelity",
+      "version": "1.0.0",
+      "kind": "recipe",
+      "purpose": "Checks whether a product shot keeps the exact product of its references: details first, then the judge.",
+      "use": "To hold a product shot to references of the product.",
+      "arguments": [
+        {
+          "name": "job",
+          "purpose": "The input job of the recipe.",
+          "type": {
+            "type": "text"
+          },
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "judge",
+          "purpose": "The input judge of the recipe.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "set",
+          "purpose": "Overrides for this run, one to a line: a step, a dot, an argument, an equals sign and a value.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "until",
+          "purpose": "Runs the recipe up to and including this step, and hands back none of its own outputs.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "details",
+              "judge"
+            ]
+          },
+          "required": false,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "images",
+          "artifact": "image",
+          "purpose": "The input images of the recipe.",
+          "count": {
+            "min": 1,
+            "max": null
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [],
+      "results": [
+        "verdict"
+      ],
+      "needs": [
+        {
+          "capability": "judge",
+          "features": [
+            "image",
+            "tool"
+          ],
+          "when": "always",
+          "chosen_by": "judge",
+          "feature_from": null,
+          "requests": 16
+        }
+      ],
+      "concurrent": true
+    },
+    {
       "name": "align",
       "version": "1.0.0",
       "kind": "primitive",
@@ -291,6 +717,9 @@
           "derived_from": null,
           "rebound_onto": null
         }
+      ],
+      "results": [
+        "measurements"
       ],
       "needs": [],
       "concurrent": true
@@ -338,6 +767,9 @@
           "rebound_onto": null
         }
       ],
+      "results": [
+        "measurements"
+      ],
       "needs": [],
       "concurrent": true
     },
@@ -370,6 +802,96 @@
         }
       ],
       "outputs": [],
+      "results": [
+        "measurements"
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "details",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Measures the details of a use case's images before its judge looks, and hands on what each tool found.",
+      "arguments": [
+        {
+          "name": "use_case",
+          "purpose": "The use case of the table whose pairs are measured.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "source-fidelity",
+              "reference-consistency",
+              "reality-checks",
+              "brief-compliance",
+              "product-fidelity"
+            ]
+          },
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "job",
+          "purpose": "The job in the contract job/1: its images in the order of the inputs, with their roles.",
+          "type": {
+            "type": "text"
+          },
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "details",
+          "purpose": "none, which measures nothing, or first.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "none",
+              "first"
+            ]
+          },
+          "required": false,
+          "default": "first"
+        },
+        {
+          "name": "detail",
+          "purpose": "The details measured, separated by commas: align and the two comparisons that run align first, for each pair; or tiles, for a job with one image.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": "align"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "images",
+          "artifact": "image",
+          "purpose": "The job's images, in its order.",
+          "count": {
+            "min": 1,
+            "max": 10
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "artifact": "image",
+          "purpose": "The images the details made, in the order the measurements name them: aligned frames, maps and tiles.",
+          "count": {
+            "min": 0,
+            "max": 32
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "results": [
+        "measurements"
+      ],
       "needs": [],
       "concurrent": true
     },

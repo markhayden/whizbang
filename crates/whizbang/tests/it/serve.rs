@@ -296,7 +296,18 @@ fn initialize_lists_each_recipe_before_the_primitives() {
         .filter(|d| d.kind() == Kind::Recipe)
         .map(|d| d.name())
         .collect();
-    assert_eq!(recipes, ["check", "remove_prompt"]);
+    assert_eq!(
+        recipes,
+        [
+            "check",
+            "remove_prompt",
+            "source-fidelity",
+            "reference-consistency",
+            "reality-checks",
+            "brief-compliance",
+            "product-fidelity"
+        ]
+    );
     assert_eq!(names[..recipes.len()], recipes[..]);
     assert!(
         names[recipes.len()..]

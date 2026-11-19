@@ -663,40 +663,54 @@ pub fn check_job(
     Ok(text)
 }
 
-/// The call of `check` under a job and its images, in its order, as every door makes
-/// it: the job in the contract `job/1`, the output limit of [`CHECK_OUTPUT_TOKENS`],
-/// what is measured first, and the judge when one is named.
+/// The call of a use case's recipe under a job and its images, in its order, as every door
+/// makes it (plan m3, task Q1): the recipe of the job's use case
+/// (`whizbang_squint::recipes`), whose step `details` measures first and whose step `judge`
+/// is `check` with the output limit of [`CHECK_OUTPUT_TOKENS`]; the job in the contract
+/// `job/1`; the judge when one is named; and what differs from the recipe's own steps as
+/// its overrides (`set`): what is measured first, the tools offered, the projection and the
+/// second look.
 pub fn check_call(
     job: &Job,
     images: &[ArtifactId],
     judge: Option<&str>,
     measuring: &Measuring<'_>,
 ) -> Call {
-    let mut call = Call::new(whizbang_squint::check::NAME)
-        .argument("use_case", Value::text(&job.use_case))
-        .argument("job", Value::text(&job.to_json()))
-        .argument("max_output_tokens", Value::Integer(CHECK_OUTPUT_TOKENS));
-    let (tools, details) = measuring.details.tools_and_name();
-    let mut tools = tools.to_owned();
-    for tool in measuring.tools {
-        tools.push(',');
-        tools.push_str(tool);
-    }
-    call = call
-        .argument("tools", Value::text(&tools))
-        .argument("details", Value::text(details))
-        .argument("projection", Value::text(measuring.projection));
-    if let Some(detail) = measuring.detail {
-        call = call.argument("detail", Value::text(detail));
-    }
-    if measuring.second_look != "off" {
-        call = call.argument("second_look", Value::text(measuring.second_look));
-    }
+    use whizbang_squint::recipes::{DETAILS_STEP, JUDGE_STEP};
+    let mut call = Call::new(&job.use_case).argument("job", Value::text(&job.to_json()));
     for image in images {
         call = call.input("images", *image);
     }
     if let Some(judge) = judge {
         call = call.argument("judge", Value::text(judge));
+    }
+    let (tools, details) = measuring.details.tools_and_name();
+    let mut offered = tools.to_owned();
+    for tool in measuring.tools {
+        offered.push(',');
+        offered.push_str(tool);
+    }
+    let mut set: Vec<String> = Vec::new();
+    if details != "first" {
+        set.push(format!("{DETAILS_STEP}.details={details}"));
+    }
+    if let Some(detail) = measuring.detail {
+        set.push(format!("{DETAILS_STEP}.detail={detail}"));
+    }
+    if offered != Details::First.tools_and_name().0 {
+        set.push(format!("{JUDGE_STEP}.tools={offered}"));
+    }
+    if measuring.projection != "full" {
+        set.push(format!("{JUDGE_STEP}.projection={}", measuring.projection));
+    }
+    if measuring.second_look != "off" {
+        set.push(format!(
+            "{JUDGE_STEP}.second_look={}",
+            measuring.second_look
+        ));
+    }
+    if !set.is_empty() {
+        call = call.argument(whizbang_core::recipe::SET, Value::text(&set.join("\n")));
     }
     call
 }
@@ -718,6 +732,30 @@ pub fn said_verdict(text: &mut String, stated: Option<Stated>) {
     }
 }
 
+/// The run of the judge's step of a use case's recipe, as its record lists it: the last
+/// step that is `check`. None for a run that is no recipe's.
+fn judge_step(record: &whizbang_core::contract::RunRecord) -> Option<RunId> {
+    (record.steps().iter())
+        .rev()
+        .find(|step| step.recipe().is_some() && step.action() == whizbang_squint::check::NAME)
+        .and_then(|step| RunId::parse(step.run()).ok())
+}
+
+/// The run that judged in the run `run` in the store at `root`: the judge's step of a use
+/// case's recipe, or the run itself when it is no recipe's (or its record is not read).
+pub fn judged_run(root: &Path, run: &RunId) -> RunId {
+    let found = || {
+        let reader = Reader::open(root, Arc::new(RealFs)).ok()?;
+        let generation = reader.snapshot().ok()?;
+        let record = whizbang_core::contract::record::stored(&generation, run.as_str(), |entry| {
+            reader.read(entry)
+        })?
+        .ok()?;
+        judge_step(&record)
+    };
+    found().unwrap_or_else(|| run.clone())
+}
+
 /// The verdict of the run `run` in the store at `root`, as its record holds it, read
 /// by a reader of its own: its decision's word and its reason, and the items of its
 /// reason from the run's diagnostic of them.
@@ -730,6 +768,10 @@ pub fn verdict(root: &Path, run: &RunId) -> Option<Stated> {
     .ok()?;
     let (decision, why) = record.verdict()?;
     let word = serde_json::to_value(decision).ok()?;
+    // A use case's recipe hands back its judge's verdict; the items of its reason are kept
+    // by the judge's step (plan m3, task Q1).
+    let judged = judge_step(&record);
+    let run = judged.as_ref().unwrap_or(run);
     // The items, each a JSON string on a line of its own; a line that is not one is
     // left out, and a diagnostic that is not there gives none.
     let items = diagnostic(root, run, whizbang_squint::use_case::REASONS)

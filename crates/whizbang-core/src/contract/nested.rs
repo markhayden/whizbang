@@ -126,7 +126,10 @@ impl Added {
 /// a run it called committed.
 #[derive(Default)]
 pub(super) struct Offer {
-    actions: OnceLock<BTreeSet<String>>,
+    /// The actions, and whether they bind the runs under this one too: a judge's
+    /// loop's do (ADR 0009); a recipe's bind only its own calls, its steps, whose own
+    /// calls each step freezes for itself (ADR 0035).
+    actions: OnceLock<(BTreeSet<String>, bool)>,
     /// The run whose calls these are, and the secrets its record is written without:
     /// where a name the action itself held to the list, and refused, is recorded.
     run: Option<(Arc<LiveRun>, Secrets)>,
@@ -160,19 +163,23 @@ impl Offer {
         }
     }
 
-    /// Freezes the actions. False when they were frozen before: nothing changes.
-    pub(super) fn freeze(&self, actions: BTreeSet<String>) -> bool {
-        self.actions.set(actions).is_ok()
+    /// Freezes the actions, for every run under this one too when `below` says. False
+    /// when they were frozen before: nothing changes.
+    pub(super) fn freeze(&self, actions: BTreeSet<String>, below: bool) -> bool {
+        self.actions.set((actions, below)).is_ok()
     }
 
     /// Each list that binds the run: its own, when it froze one, and that of every
-    /// run above it that did.
+    /// run above it that froze one binding the runs under it.
     fn lists(&self) -> impl Iterator<Item = &BTreeSet<String>> {
         let mut next = Some(self);
+        let mut own = true;
         std::iter::from_fn(move || {
             let offer = next?;
             next = offer.above.as_deref();
-            Some(offer.actions.get())
+            let binds = offer.actions.get().filter(|(_, below)| own || *below);
+            own = false;
+            Some(binds.map(|(actions, _)| actions))
         })
         .flatten()
     }

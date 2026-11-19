@@ -900,7 +900,15 @@ impl Context {
     /// reads.
     pub fn freeze_calls<'a>(&self, actions: impl IntoIterator<Item = &'a str>) -> bool {
         let actions = actions.into_iter().map(str::to_owned).collect();
-        self.offer.freeze(actions)
+        self.offer.freeze(actions, true)
+    }
+
+    /// Freezes the actions this run calls itself, as [`Context::freeze_calls`] does, and
+    /// leaves what those calls call to each of them (ADR 0035): what a recipe freezes, its
+    /// steps, whose own calls (a judge's tools) each step freezes for itself.
+    pub fn freeze_steps<'a>(&self, actions: impl IntoIterator<Item = &'a str>) -> bool {
+        let actions = actions.into_iter().map(str::to_owned).collect();
+        self.offer.freeze(actions, false)
     }
 
     /// Says that a run this run called is a step of a recipe, for the run's record (ADR

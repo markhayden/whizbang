@@ -20,8 +20,11 @@ use crate::contract::{ActionDescriptor, Kind, Registry};
 /// adds `marks`: each tool the upper rungs apply to, with the mark its record states
 /// (`SPEC.md` section 8, "Marks"; plan m2c, task X1, item 6). Version 8 adds `use` to an
 /// action that says when to use it, as every recipe of a file does (plan m3, task R1,
-/// item 7; ADR 0033); an action that says nothing of it has no `use`.
-pub const DESCRIPTION_VERSION: u32 = 8;
+/// item 7; ADR 0033); an action that says nothing of it has no `use`. Version 9 adds
+/// `results` to an action that hands back a result beside its artifacts, `verdict` or
+/// `measurements` (plan m3, task Q1, item 2; ADR 0035); an action that hands back none has
+/// no `results`.
+pub const DESCRIPTION_VERSION: u32 = 9;
 
 /// Everything a door can offer, as one document.
 #[derive(Debug, Clone, PartialEq, Serialize)]

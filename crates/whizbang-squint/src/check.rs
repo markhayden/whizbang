@@ -49,8 +49,8 @@ use whizbang_core::capability::{
 use whizbang_core::contract::record::Decision;
 use whizbang_core::contract::{
     Action, ActionDescriptor, Argument, Call, CallError, Capability, Committed, Context, Count,
-    DescriptorError, Failure, InputPort, Kind, Outcome, PreparedCall, Produced, Requirement, Value,
-    ValueType, Verdict,
+    DescriptorError, Failure, InputPort, Kind, Outcome, PreparedCall, Produced, Requirement,
+    ResultKind, Value, ValueType, Verdict,
 };
 use whizbang_core::identity::{DecodeLimits, Digest};
 
@@ -58,6 +58,7 @@ use crate::cache;
 use crate::details::{self, Details, Names, Projection};
 use crate::files::{self, FileTool, FileTools};
 use crate::job::{Job, Role as ImageRole};
+use crate::measured::{self, Entry};
 use crate::use_case::{self, Checklist, Resolved};
 use crate::{align, compare, resize, view};
 
@@ -76,7 +77,7 @@ pub const NAME: &str = "check";
 /// The action a tool file's capability is asked through (`whizbang_rascal::segment`).
 const SEGMENT: &str = "segment";
 /// The action's version.
-pub const VERSION: &str = "1.5.0";
+pub const VERSION: &str = "1.6.0";
 /// The most requests one run sends its judge, the retry of a cut-off turn included.
 pub const TURNS_LIMIT: usize = 16;
 /// The most tool calls one run dispatches. It is far under what the executor lets one
@@ -99,6 +100,9 @@ pub const RETRY_WAIT_LIMIT_MS: u64 = 30_000;
 /// job's images with their roles, labels and identities; the checklist; each repair and
 /// each retry; and each answer's disposition, confidence, row and location.
 pub const JUDGED: &str = "judged.json";
+
+/// The input that takes the images an earlier step measured first and handed on.
+pub const MEASURED_IMAGES: &str = "measured_images";
 
 /// The values of the argument `second_look`.
 pub const SECOND_LOOK: [&str; 3] = ["off", "on", "strict"];
@@ -250,6 +254,22 @@ impl Check {
             ValueType::choice(&SECOND_LOOK),
             Value::text("off"),
         ))
+        .input(InputPort::variadic(
+            MEASURED_IMAGES,
+            ArtifactType::Image,
+            "The images an earlier step measured first, as it handed them on: aligned frames, maps and tiles.",
+            Count::between(0, measured::IMAGES_LIMIT),
+        ))
+        .argument(Argument::optional(
+            "measured",
+            "What an earlier step measured first, as it handed it on (a recipe binds the measurements of details here): said to the judge before its first turn, never measured again.",
+            ValueType::Text,
+        ))
+        .argument(Argument::optional(
+            "recipe_digest",
+            "The digest of the recipe this run is a step of, which a recipe gives: kept in the decision cache's key.",
+            ValueType::Text,
+        ))
         .argument(Argument::optional(
             "cell",
             "The cell of an evaluation matrix this run is, kept in its record: the matrix, set, item, judge, arm, repetition and attempt. check does not read it.",
@@ -268,7 +288,8 @@ impl Check {
                 .chosen_by("judge")
                 // What a call reserves covers every turn of the loop.
                 .requests(TURNS_LIMIT as u64),
-        );
+        )
+        .results(ResultKind::Verdict);
         Ok(Check {
             descriptor: draft.build()?,
             toolbox,
@@ -512,9 +533,8 @@ impl Run<'_> {
         if let Some(asked) = &said_as
             && let Outcome::Completed { outputs } = finished.outcome()
         {
-            let committed: Vec<ArtifactId> = outputs.iter().map(|output| output.id()).collect();
-            let report =
-                details::report_of(self.context, asked.image_id, asked.against_id, &committed)?;
+            // What align's own run measured, handed back with its outcome.
+            let report = finished.measurements().cloned().unwrap_or(Json::Null);
             let mut pictures = Vec::new();
             for output in outputs {
                 let picture = self.evidence(output.id())?;
@@ -528,14 +548,8 @@ impl Run<'_> {
         if let Some(asked) = &compared
             && let Outcome::Completed { outputs } = finished.outcome()
         {
-            let committed: Vec<ArtifactId> = outputs.iter().map(|output| output.id()).collect();
-            let measured = details::compare_report_of(
-                self.context,
-                asked.tool,
-                asked.frame_id,
-                asked.against_id,
-                &committed,
-            )?;
+            let measured = finished.measurements().cloned().unwrap_or(Json::Null);
+            let measured = details::measures_of(&measured);
             let mut pictures = Vec::new();
             for output in outputs {
                 let picture = self.evidence(output.id())?;
@@ -632,48 +646,65 @@ impl Run<'_> {
         Ok(shown)
     }
 
-    /// The details measured first (ADR 0029): for each pair, `image` registered onto
-    /// `against`, each named as the judge is told of it, the tools of `detail` are called
-    /// through the executor, and what they found is said, with the pictures they returned.
-    /// `align` comes first; `change_map` and `edge_similarity` then compare the frame it
-    /// returned with `against`, in `against`'s grid (plan m2c, task X1, item 9). A call that
-    /// could not measure is said too, with why.
-    fn measure_first(
-        &mut self,
-        pairs: &[(&str, ArtifactId, &str, ArtifactId)],
-        detail: &[&str],
-    ) -> Result<Vec<Part>, Failure> {
+    /// The details measured first (ADR 0029), said as `check` has said them: for each pair,
+    /// what `align` found and the frame it returned, then each comparison of that frame and
+    /// its map; then each candidate's tiles. Each entry is what a tool's own run handed back
+    /// (plan m3, task Q1, item 2), whether this run called the tool or an earlier step of its
+    /// recipe did and handed it on; each image is kept as the run's evidence and named as
+    /// the judge is told of it. An entry that measured nothing is said with why.
+    fn said_details(&mut self, entries: &[Entry]) -> Result<Vec<Part>, Failure> {
         let mut parts = Vec::new();
-        for (image, image_id, against, against_id) in pairs {
+        let mut tiles: Vec<Part> = Vec::new();
+        let mut tiled: Option<&str> = None;
+        for entry in entries {
+            let image = entry.image.as_str();
+            let against = entry.against.as_deref().unwrap_or_default();
             let frame = align::aligned_frame(image);
-            // The frame align returned, or why there is none.
-            let mut aligned: Result<ArtifactId, String> =
-                Err(format!("{image} was not registered onto {against}"));
-            if detail.contains(&align::NAME) {
-                let call = Call::new(align::NAME)
-                    .input("image", *image_id)
-                    .input("against", *against_id);
-                let outputs = match self.first(&call)? {
-                    Ok(outputs) => outputs,
-                    Err(why) => {
-                        let mark = details::mark(align::NAME);
-                        parts.push(Part::Text(format!(
-                            "{} ({mark}), {image} onto {against}: not measured: {why}",
-                            align::NAME
-                        )));
-                        continue;
-                    }
-                };
-                let committed: Vec<ArtifactId> = outputs.iter().map(|output| output.id()).collect();
-                let report = details::report_of(self.context, *image_id, *against_id, &committed)?;
-                if parts.is_empty() {
-                    parts.push(Part::Text(details::DETAILS_INTRO.to_owned()));
+            let ids = entry.image_ids().map_err(|why| failed("details", &why))?;
+            let tool = entry.tool.as_str();
+            let mark = details::mark(tool);
+            if tool == details::TILES {
+                if tiled != Some(image) {
+                    tiles.push(Part::Text(details::TILES_INTRO.to_owned()));
+                    tiled = Some(image);
                 }
-                parts.push(Part::Text(details::align_detail(&report, image, against)));
-                for output in &outputs {
-                    let shown = self.evidence(output.id())?;
-                    self.names.frame(&frame, output.id());
-                    aligned = Ok(output.id());
+                let place = entry.place.as_deref().unwrap_or_default();
+                if let Some(why) = &entry.failed {
+                    tiles.push(Part::Text(format!(
+                        "Tile `tile:{image}:{place}` ({}): not measured: {why}",
+                        details::TILES
+                    )));
+                    continue;
+                }
+                let bbox = entry.bbox.unwrap_or([0.0, 0.0, 1.0, 1.0]);
+                for id in ids {
+                    let shown = self.evidence(id)?;
+                    self.names.frame(&format!("tile:{image}:{place}"), shown.id);
+                    let size = (shown.picture.width(), shown.picture.height());
+                    let id = shown.id.to_string();
+                    let said = details::tile_said(image, place, bbox, size, &id);
+                    tiles.push(Part::Text(said));
+                    tiles.push(Part::Image(shown.picture));
+                }
+                continue;
+            }
+            if let Some(why) = &entry.failed {
+                parts.push(Part::Text(if tool == align::NAME {
+                    format!("{tool} ({mark}), {image} onto {against}: not measured: {why}")
+                } else {
+                    format!("{tool} ({mark}), {frame} against {against}: not measured: {why}")
+                }));
+                continue;
+            }
+            let measured = entry.measured.clone().unwrap_or(Json::Null);
+            if parts.is_empty() {
+                parts.push(Part::Text(details::DETAILS_INTRO.to_owned()));
+            }
+            if tool == align::NAME {
+                parts.push(Part::Text(details::align_detail(&measured, image, against)));
+                for id in ids {
+                    let shown = self.evidence(id)?;
+                    self.names.frame(&frame, id);
                     let (width, height) = (shown.picture.width(), shown.picture.height());
                     parts.push(Part::Text(format!(
                         "Image `{frame}` ({image} warped into {against}'s grid, \
@@ -682,91 +713,26 @@ impl Run<'_> {
                     )));
                     parts.push(Part::Image(shown.picture));
                 }
-                if outputs.is_empty() {
-                    aligned = Err(format!(
-                        "{image} did not register onto {against}, so the two are not in one grid"
-                    ));
-                }
+                continue;
             }
-            for tool in detail
-                .iter()
-                .filter(|tool| details::AFTER_ALIGN.contains(tool))
-            {
-                let mark = details::mark(tool);
-                let aligned_id = match &aligned {
-                    Ok(id) => *id,
-                    Err(why) => {
-                        parts.push(Part::Text(format!(
-                            "{tool} ({mark}), {frame} against {against}: not measured: {why}"
-                        )));
-                        continue;
-                    }
-                };
-                let call = details::compare_of(tool, *against_id, aligned_id);
-                let outputs = match self.first(&call)? {
-                    Ok(outputs) => outputs,
-                    Err(why) => {
-                        parts.push(Part::Text(format!(
-                            "{tool} ({mark}), {frame} against {against}: not measured: {why}"
-                        )));
-                        continue;
-                    }
-                };
-                let committed: Vec<ArtifactId> = outputs.iter().map(|output| output.id()).collect();
-                let measured = details::compare_report_of(
-                    self.context,
-                    tool,
-                    *against_id,
-                    aligned_id,
-                    &committed,
-                )?;
-                let map = format!("map:{image}:{against}");
-                if parts.is_empty() {
-                    parts.push(Part::Text(details::DETAILS_INTRO.to_owned()));
-                }
-                let said = details::compare_detail(tool, &measured, against, &frame, &map);
-                parts.push(Part::Text(said));
-                for output in &outputs {
-                    let shown = self.evidence(output.id())?;
-                    self.names.frame(&map, output.id());
-                    let (width, height) = (shown.picture.width(), shown.picture.height());
-                    parts.push(Part::Text(format!(
-                        "Image `{map}` (the change map of {frame} against {against}, in \
-                         {against}'s grid, {width}x{height}; bright is different, dark the \
-                         same); for the tool view it is named {}.",
-                        shown.id
-                    )));
-                    parts.push(Part::Image(shown.picture));
-                }
+            let map = format!("map:{image}:{against}");
+            let measurements = details::measures_of(&measured);
+            let said = details::compare_detail(tool, &measurements, against, &frame, &map);
+            parts.push(Part::Text(said));
+            for id in ids {
+                let shown = self.evidence(id)?;
+                self.names.frame(&map, id);
+                let (width, height) = (shown.picture.width(), shown.picture.height());
+                parts.push(Part::Text(format!(
+                    "Image `{map}` (the change map of {frame} against {against}, in \
+                     {against}'s grid, {width}x{height}; bright is different, dark the \
+                     same); for the tool view it is named {}.",
+                    shown.id
+                )));
+                parts.push(Part::Image(shown.picture));
             }
         }
-        Ok(parts)
-    }
-
-    /// The tiles measured first (plan m3, task U1, item 3): the image cut by `view` into
-    /// the four overlapping tiles of [`details::TILE_BOXES`], each a call of the run, kept
-    /// as its evidence, named `tile:<image>:<place>` and labelled with its place.
-    fn tiles_first(&mut self, image: &str, id: ArtifactId) -> Result<Vec<Part>, Failure> {
-        let mut parts = vec![Part::Text(details::TILES_INTRO.to_owned())];
-        for (place, bbox) in details::TILE_BOXES {
-            match self.crops_of(id, bbox)? {
-                Ok(shown) => {
-                    for shown in shown {
-                        let name = format!("tile:{image}:{place}");
-                        self.names.frame(&name, shown.id);
-                        let size = (shown.picture.width(), shown.picture.height());
-                        let id = shown.id.to_string();
-                        let said = details::tile_said(image, place, bbox, size, &id);
-                        parts.push(Part::Text(said));
-                        parts.push(Part::Image(shown.picture));
-                    }
-                }
-                Err(why) => parts.push(Part::Text(format!(
-                    "Tile `tile:{image}:{place}` ({}): not measured: {why}",
-                    details::TILES
-                ))),
-            }
-        }
+        parts.extend(tiles);
         Ok(parts)
     }
 
@@ -941,6 +907,10 @@ impl Action for Check {
         let Some(judge) = context.capabilities().judge() else {
             return Err(failed("no_judge", &"the run was handed no judge"));
         };
+        // The images the judge is shown, apart from those an earlier step handed on.
+        let images: Vec<&whizbang_core::contract::ResolvedInput> = (call.inputs().iter())
+            .filter(|input| input.port() == "images")
+            .collect();
         // A turn with more text than the loop reads is not taken, and not stored.
         let judge = &judge.clone().turns_within(TURN_TEXT_LIMIT as u64);
         // The run's tools are frozen here, once: the names its call gave, each a tool
@@ -997,36 +967,32 @@ impl Action for Check {
             let Some(Value::Text(asked)) = argument("detail") else {
                 return Err(Failure::invalid("the call names no detail"));
             };
-            for name in asked
-                .split(',')
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-            {
-                // `tiles` is cut by `view`, which must be on offer.
-                let tool = if name == details::TILES {
-                    view::NAME
-                } else {
-                    name
-                };
-                let known = details::DETAILED.contains(&name) || name == details::TILES;
-                if !known || !offered.iter().any(|o| o == tool) {
-                    let shown: String = name.chars().take(64).collect();
-                    return Err(Failure::invalid(&format!(
-                        "{shown:?} is no tool whose details are measured first: {}, {}",
-                        details::DETAILED.join(", "),
-                        details::TILES
-                    )));
+            detail = measured::named_details(asked, &offered)?;
+        }
+        // What an earlier step measured and handed on (plan m3, task Q1): said to the
+        // judge, and never measured again here.
+        let handed_on = match argument("measured") {
+            Some(Value::Text(text)) => {
+                if details == Details::First {
+                    return Err(Failure::invalid(
+                        "a run handed what was measured first measures nothing itself: details is none",
+                    ));
                 }
-                if !detail.contains(&name) {
-                    detail.push(name);
-                }
+                Some(measured::entries_of(text).map_err(|why| Failure::invalid(&why))?)
             }
-            // A comparison is measured on the frame align returns: align is run first.
-            let compares = detail
-                .iter()
-                .any(|name| details::AFTER_ALIGN.contains(name));
-            if compares && !detail.contains(&align::NAME) {
-                detail.insert(0, align::NAME);
+            _ => None,
+        };
+        // The images handed on with it, and only those, are what its entries name.
+        let handed_images: Vec<ArtifactId> = (call.inputs().iter())
+            .filter(|input| input.port() == MEASURED_IMAGES)
+            .map(|input| input.id())
+            .collect();
+        for entry in handed_on.iter().flatten() {
+            let ids = entry.image_ids().map_err(|why| Failure::invalid(&why))?;
+            if ids.iter().any(|id| !handed_images.contains(id)) {
+                return Err(Failure::invalid(
+                    "the measurements handed on name an image that was not handed on with them",
+                ));
             }
         }
         // A tool file's capabilities are nested calls of this run: `segment` is frozen
@@ -1098,7 +1064,7 @@ impl Action for Check {
         let mut revisions: Vec<(String, String)> = Vec::new();
         let key = match &judging {
             Some(judging) if self.cache && argument("cell").is_none() => {
-                let images: Vec<_> = (call.inputs().iter())
+                let images: Vec<_> = (images.iter())
                     .map(|input| (input.id(), input.binding()))
                     .collect();
                 let tools: Vec<&str> = named.iter().chain(detail.iter()).copied().collect();
@@ -1155,7 +1121,7 @@ impl Action for Check {
         // The images open the conversation, each with the name a tool call gives.
         let mut opening = Vec::new();
         let system = if let Some(judging) = &judging {
-            for (image, input) in judging.job.images.iter().zip(call.inputs()) {
+            for (image, input) in judging.job.images.iter().zip(images.iter()) {
                 run.names.role(&image.id, input.id());
                 let (_, shown) = shown(context, input.id())?;
                 let (width, height) = (shown.picture.width(), shown.picture.height());
@@ -1165,33 +1131,24 @@ impl Action for Check {
                 opening.push(Part::Image(shown.picture));
             }
             // The pairs the use case relates: the candidate registered onto the source,
-            // and onto each reference, in the job's order.
-            let images = judging.job.images.iter().zip(call.inputs());
-            let candidates: Vec<_> = images
-                .clone()
-                .filter(|(image, _)| image.role == ImageRole::Candidate)
-                .collect();
-            let mut pairs = Vec::new();
-            for (candidate, c) in &candidates {
-                for (other, o) in images.clone() {
-                    if other.role != ImageRole::Candidate {
-                        pairs.push((candidate.id.as_str(), c.id(), other.id.as_str(), o.id()));
-                    }
+            // and onto each reference, in the job's order; measured here, unless an
+            // earlier step measured them and handed them on.
+            let entries = match &handed_on {
+                Some(entries) => entries.clone(),
+                None => {
+                    let ids: Vec<ArtifactId> = images.iter().map(|input| input.id()).collect();
+                    let (pairs, candidates) = measured::pairs_of(&judging.job, &ids);
+                    measured::measure(context, &pairs, &detail, &candidates)?
                 }
-            }
-            opening.extend(run.measure_first(&pairs, &detail)?);
-            if detail.contains(&details::TILES) {
-                for (candidate, c) in &candidates {
-                    opening.extend(run.tiles_first(&candidate.id, c.id())?);
-                }
-            }
+            };
+            opening.extend(run.said_details(&entries)?);
             opening.push(Part::Text(judging.checklist.render(&judging.resolved)));
             opening.push(Part::Text(use_case::INSTRUCTION.to_owned()));
             run_tools_submit(&mut run.tools)?;
             let tools = details::tools_section(&named);
             use_case::system_with(&judging.resolved, &judging.job, &tools)
         } else {
-            for input in call.inputs() {
+            for input in &images {
                 let (_, image) = shown(context, input.id())?;
                 opening.push(Part::Text(label(&image)));
                 opening.push(Part::Image(image.picture));
@@ -1666,7 +1623,10 @@ fn judging(call: &PreparedCall, use_case: &str, job: Option<&Value>) -> Result<J
             "the job is of another use case than the call",
         ));
     }
-    let (named, given) = (job.images.len(), call.inputs().len());
+    let given = (call.inputs().iter())
+        .filter(|input| input.port() == "images")
+        .count();
+    let named = job.images.len();
     if named != given {
         return Err(Failure::invalid(&format!(
             "the job names {named} images, and the call gives {given}"
@@ -1699,7 +1659,8 @@ impl Judging {
         decided: &use_case::Decided,
         second: Option<&Json>,
     ) -> Result<(), Failure> {
-        let images: Vec<Json> = (self.job.images.iter().zip(call.inputs()))
+        let given = (call.inputs().iter()).filter(|input| input.port() == "images");
+        let images: Vec<Json> = (self.job.images.iter().zip(given))
             .map(|(image, input)| {
                 json!({"id": image.id, "role": image.role, "label": image.label,
                        "artifact": input.id().to_string()})

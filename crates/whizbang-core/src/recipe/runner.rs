@@ -29,14 +29,22 @@
 //! its run committed, which the recipe's record names.
 //!
 //! **Its file.** The digest of the recipe's text is a setting of every run of it,
-//! [`DIGEST_SETTING`]: a run says which file it ran.
+//! [`DIGEST_SETTING`]: a run says which file it ran. A step whose action takes the
+//! argument [`DIGEST_ARGUMENT`] is given it too, so what the step keeps of its call (a
+//! key of the decision cache, ADR 0031) changes with the file.
+//!
+//! **What is not an artifact** (ADR 0035). A step's argument bound to an earlier step's
+//! measurements is given them as one JSON text, as that step's run handed them back; and
+//! the verdict of a last step that answers with one is the recipe's, handed back with its
+//! outcome.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::artifact::{self, ArtifactId};
 use crate::contract::{
     Action, ActionDescriptor, Argument, Call, CallError, Context, Count, Failure, InputPort, Kind,
-    Outcome, OutputPort, PreparedCall, Produced, Registry, Requirement, Value, ValueType, When,
+    Outcome, OutputPort, PreparedCall, Produced, Registry, Requirement, ResultKind, Value,
+    ValueType, Verdict, When,
 };
 use crate::identity::{DecodeLimits, Digest};
 
@@ -54,6 +62,9 @@ pub const VERSION: &str = "1.0.0";
 
 /// The setting each run of a recipe notes: the digest of the recipe's text.
 pub const DIGEST_SETTING: &str = "recipe.digest";
+
+/// The argument a step's action may take to be given the digest of the recipe's text.
+pub const DIGEST_ARGUMENT: &str = "recipe_digest";
 
 /// A recipe, checked, as an action.
 pub struct RecipeAction {
@@ -88,6 +99,14 @@ impl RecipeAction {
                 .use_when(&recipe.when);
         for (name, input) in &recipe.inputs {
             let purpose = format!("The input {name} of the recipe.");
+            if let Declared::Artifact(artifact) = input.declared
+                && input.many
+            {
+                let least = u32::from(!input.optional);
+                let port = InputPort::variadic(name, artifact, &purpose, Count::at_least(least));
+                draft = draft.input(port);
+                continue;
+            }
             draft = match (input.declared, input.optional) {
                 (Declared::Text, false) => {
                     draft.argument(Argument::required(name, &purpose, ValueType::Text))
@@ -175,6 +194,9 @@ impl RecipeAction {
                 None => need,
             });
         }
+        if recipe.verdict {
+            draft = draft.results(ResultKind::Verdict);
+        }
         let descriptor = draft
             .concurrent(true)
             .build()
@@ -217,7 +239,7 @@ fn needs_of(
     let value_of = |name: &str| -> Option<Value> {
         match step.arguments.iter().find(|(n, _)| n == name) {
             Some((_, Param::Value(value))) => Some(value.clone()),
-            Some((_, Param::Input(_))) => None,
+            Some((_, Param::Input(_) | Param::Measured(_))) => None,
             None => descriptor.argument(name).and_then(|a| a.default().cloned()),
         }
     };
@@ -287,7 +309,7 @@ impl RecipeAction {
             // refused here, before any step runs.
             let needs = descriptor.needs().iter();
             let mut chooses = needs.flat_map(|need| [need.chooser(), need.feature_argument()]);
-            if chooses.any(|named| named == Some(argument)) {
+            if argument == DIGEST_ARGUMENT || chooses.any(|named| named == Some(argument)) {
                 return Err(format!(
                     "the override {line:?}: the argument {argument} of the step {step} ({action}) \
                      decides what it needs, which the recipe was admitted with, and is not \
@@ -345,7 +367,7 @@ impl Action for RecipeAction {
             }
             None => self.recipe.steps.len() - 1,
         };
-        context.freeze_calls(self.recipe.steps.iter().map(|step| step.action.as_str()));
+        context.freeze_steps(self.recipe.steps.iter().map(|step| step.action.as_str()));
 
         let mut given: BTreeMap<&str, Vec<ArtifactId>> = BTreeMap::new();
         for input in call.inputs() {
@@ -363,6 +385,8 @@ impl Action for RecipeAction {
         };
 
         let mut made: BTreeMap<&str, BTreeMap<String, Vec<ArtifactId>>> = BTreeMap::new();
+        let mut measured: BTreeMap<&str, String> = BTreeMap::new();
+        let mut verdict: Option<Verdict> = None;
         for (at, step) in self.recipe.steps[..=last].iter().enumerate() {
             if context.cancellation().is_cancelled() || context.deadline_passed() {
                 return Err(stopped(context, name));
@@ -373,6 +397,11 @@ impl Action for RecipeAction {
                     Param::Value(value) => Some(value.clone()),
                     // An absent optional text leaves the argument out.
                     Param::Input(input) => text_of(call, input).map(Value::text),
+                    // What the earlier step measured, as its run handed it back; a step
+                    // that handed back none gives an empty document.
+                    Param::Measured(from) => Some(Value::text(
+                        measured.get(from.as_str()).map_or("null", String::as_str),
+                    )),
                 };
                 arguments.extend(value.map(|value| (argument.clone(), value)));
             }
@@ -384,6 +413,13 @@ impl Action for RecipeAction {
                 Value::Text(set) if name == super::CONSTANTS => Some(set.clone()),
                 _ => None,
             });
+            if self.steps[at].argument(DIGEST_ARGUMENT).is_some() {
+                arguments.retain(|(name, _)| name != DIGEST_ARGUMENT);
+                arguments.push((
+                    DIGEST_ARGUMENT.to_owned(),
+                    Value::text(&self.digest.to_string()),
+                ));
+            }
             let mut asked = Call::new(&step.action);
             for (argument, value) in &arguments {
                 asked = asked.argument(argument, value.clone());
@@ -428,6 +464,10 @@ impl Action for RecipeAction {
                             .push(output.id());
                     }
                     made.insert(step.id.as_str(), by_port);
+                    if let Some(measurements) = finished.measurements() {
+                        measured.insert(step.id.as_str(), measurements.to_string());
+                    }
+                    verdict = finished.verdict().cloned();
                 }
                 Outcome::Cancelled => return Err(stopped(context, name)),
                 Outcome::Error { kind, message } => {
@@ -455,6 +495,11 @@ impl Action for RecipeAction {
             return Ok(Produced::nothing());
         }
         let mut produced = Produced::nothing();
+        if self.recipe.verdict
+            && let Some(verdict) = verdict
+        {
+            produced = produced.with_verdict(verdict);
+        }
         let limits = DecodeLimits::default();
         for output in &self.recipe.outputs {
             for id in ids(&output.binding, &made) {

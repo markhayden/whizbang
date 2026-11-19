@@ -24,7 +24,7 @@ use whizbang_core::contract::{
     ARGUMENTS_TEXT_MAX_BYTES, Action, ActionDescriptor, Argument, Backends, Call, Capabilities,
     Capability, Clock, Context, Count, DIAGNOSTICS_LIMIT, EXCHANGE_PREFIX, Engine, Executor,
     Failure, INPUTS_LIMIT, InputPort, Kind, NoBackends, PreparedCall, Produced, RECORD_MAX_BYTES,
-    RecordError, Registry, Requirement, RunId, Secrets, ValueType, Verdict,
+    RecordError, Registry, Requirement, ResultKind, RunId, Secrets, ValueType, Verdict,
 };
 use whizbang_core::contract::{MESSAGE_LIMIT, Value};
 use whizbang_core::identity::{CanonicalPixels, Digest};
@@ -74,7 +74,9 @@ pub(super) fn action(
 ) -> Arc<dyn Action> {
     let mut draft = ActionDescriptor::draft(name, "1.0.0", Kind::Primitive, "A test action.")
         .argument(Argument::optional("judge", "A judge.", ValueType::Text))
-        .argument(Argument::optional("note", "A note.", ValueType::Text));
+        .argument(Argument::optional("note", "A note.", ValueType::Text))
+        // A test action may conclude: each declares it answers with a verdict (ADR 0035).
+        .results(ResultKind::Verdict);
     for need in needs {
         draft = draft.needs(need);
     }

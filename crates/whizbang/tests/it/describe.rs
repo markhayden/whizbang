@@ -25,7 +25,7 @@ fn indented_description() -> &'static str {
 /// `check`, the recipe.
 fn compact_start() -> String {
     format!(
-        "{{\"description_version\":8,\"name\":\"whizbang\",\"version\":\"{}\",\"actions\":[{{\"name\":\"check\",\"version\":\"1.5.0\",\"kind\":\"recipe\",\"purpose\":\"",
+        "{{\"description_version\":9,\"name\":\"whizbang\",\"version\":\"{}\",\"actions\":[{{\"name\":\"check\",\"version\":\"1.6.0\",\"kind\":\"recipe\",\"purpose\":\"",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -101,7 +101,7 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
     assert!(ok);
     let doc: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
     assert_eq!(doc["name"], "whizbang");
-    assert_eq!(doc["description_version"], 8);
+    assert_eq!(doc["description_version"], 9);
     assert_eq!(doc["version"], env!("CARGO_PKG_VERSION"));
     let names: Vec<&str> = doc["actions"]
         .as_array()
@@ -115,9 +115,15 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
         [
             "check",
             "remove_prompt",
+            "source-fidelity",
+            "reference-consistency",
+            "reality-checks",
+            "brief-compliance",
+            "product-fidelity",
             "align",
             "change_map",
             "edge_similarity",
+            "details",
             "close",
             "feather",
             "grow",
@@ -138,9 +144,10 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
         .iter()
         .map(|action| action["kind"].as_str().expect("a kind"))
         .collect();
-    assert_eq!(kinds[..2], ["recipe", "recipe"]);
+    // `check`, `remove_prompt` and the five use cases' recipes (plan m3, task Q1).
+    assert_eq!(kinds[..7], ["recipe"; 7]);
     assert!(
-        kinds[2..].iter().all(|kind| *kind == "primitive"),
+        kinds[7..].iter().all(|kind| *kind == "primitive"),
         "{kinds:?}"
     );
     // `check` says what it needs: a judge. Whether one is there is no part of a
@@ -150,7 +157,10 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
     assert_eq!(doc["actions"][0]["needs"][0]["requests"], 16);
     // `segment` needs a segmenter that takes what the call's `kind` names, a phrase, a
     // point or a box, chosen by its argument `backend`.
-    let need = &doc["actions"][11]["needs"][0];
+    let segment = (doc["actions"].as_array().unwrap().iter())
+        .find(|action| action["name"] == "segment")
+        .unwrap();
+    let need = &segment["needs"][0];
     assert_eq!(need["capability"], "segment");
     assert_eq!(need["features"], serde_json::json!([]));
     assert_eq!(need["feature_from"], "kind");
@@ -190,9 +200,15 @@ fn describe_without_json_names_the_build() {
         [
             "check",
             "remove_prompt",
+            "source-fidelity",
+            "reference-consistency",
+            "reality-checks",
+            "brief-compliance",
+            "product-fidelity",
             "align",
             "change_map",
             "edge_similarity",
+            "details",
             "close",
             "feather",
             "grow",
@@ -292,7 +308,7 @@ fn a_test_adds_echo_to_the_registry_the_binary_builds() {
 fn describe_json_pretty_starts_and_ends_with_these_bytes() {
     let (_, pretty) = whizbang(&["describe", "--json", "--pretty"]);
     let start = format!(
-        "{{\n  \"description_version\": 8,\n  \"name\": \"whizbang\",\n  \"version\": \"{}\",\n  \"actions\": [\n    {{\n      \"name\": \"check\",\n",
+        "{{\n  \"description_version\": 9,\n  \"name\": \"whizbang\",\n  \"version\": \"{}\",\n  \"actions\": [\n    {{\n      \"name\": \"check\",\n",
         env!("CARGO_PKG_VERSION")
     );
     let types = r#"    {
@@ -502,4 +518,44 @@ fn recipes_are_listed_before_primitives_with_purpose_and_use() {
         text.contains("\n      use: To remove a thing you can name in words"),
         "{text}"
     );
+}
+
+#[test]
+fn the_five_use_cases_are_listed_as_recipes_first() {
+    // Squint's use cases are recipes of the build (plan m3, task Q1): each listed among
+    // the recipes, before every primitive, with when to use it, its inputs, and the
+    // verdict it answers with; and `details`, their first step, among the primitives.
+    let (ok, json) = whizbang(&["describe", "--json"]);
+    assert!(ok);
+    let doc: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let actions = doc["actions"].as_array().unwrap();
+    let at = |name: &str| actions.iter().position(|a| a["name"] == name).unwrap();
+    let first_primitive = actions
+        .iter()
+        .position(|a| a["kind"] == "primitive")
+        .unwrap();
+    for name in whizbang_squint::use_case::NAMES {
+        let action = &actions[at(name)];
+        assert_eq!(action["kind"], "recipe", "{name}");
+        assert!(at(name) < first_primitive, "{name}");
+        assert!(
+            action["use"].as_str().is_some_and(|u| !u.is_empty()),
+            "{name}"
+        );
+        assert_eq!(action["results"], serde_json::json!(["verdict"]), "{name}");
+        let inputs: Vec<&str> = (action["inputs"].as_array().unwrap().iter())
+            .map(|port| port["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(inputs, ["images"], "{name}");
+    }
+    let details = &actions[at("details")];
+    assert_eq!(details["kind"], "primitive");
+    assert_eq!(details["results"], serde_json::json!(["measurements"]));
+    for tool in ["align", "change_map", "edge_similarity"] {
+        assert_eq!(
+            actions[at(tool)]["results"],
+            serde_json::json!(["measurements"]),
+            "{tool}"
+        );
+    }
 }

@@ -81,7 +81,14 @@ fn registry_of(
     let change_map = whizbang_squint::compare::Compare::change_map().map_err(|e| said(&e))?;
     let edges = whizbang_squint::compare::Compare::edge_similarity().map_err(|e| said(&e))?;
     let check: Arc<dyn Action> = Arc::new(check);
-    let squint: [Arc<dyn Action>; 3] = [Arc::new(align), Arc::new(change_map), Arc::new(edges)];
+    // What each use case's recipe measures first (plan m3, task Q1).
+    let details = whizbang_squint::measured::DetailsStep::new().map_err(|e| said(&e))?;
+    let squint: [Arc<dyn Action>; 4] = [
+        Arc::new(align),
+        Arc::new(change_map),
+        Arc::new(edges),
+        Arc::new(details),
+    ];
     for action in squint {
         primitives.register(action).map_err(|e| said(&e))?;
     }
@@ -115,7 +122,13 @@ fn registry_of(
     }
     let shipped = whizbang_rascal::recipes::SHIPPED
         .iter()
-        .map(|text| (*text, false));
+        .map(|text| (*text, false))
+        // Squint's use cases as recipes (plan m3, task Q1).
+        .chain(
+            whizbang_squint::recipes::SHIPPED
+                .iter()
+                .map(|(_, text)| (*text, false)),
+        );
     let users = recipes.iter().map(|text| (text.as_str(), true));
     let mut registry = Registry::new();
     registry.register(check).map_err(|e| said(&e))?;

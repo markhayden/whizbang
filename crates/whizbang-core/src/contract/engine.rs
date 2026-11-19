@@ -26,14 +26,16 @@ use super::record::{
     Diagnostic, Facts, Inside, OUTPUTS_PREFIX, RECORD_KIND, RECORD_MAX_BYTES, RECORD_NAME, Ran,
     RunRecord, StoredRecordError,
 };
+use super::registry::MEASUREMENTS_MAX_BYTES;
 use super::request::{Found, look_up, outcome_of};
 use super::snapshot::Known;
 use super::{
     ADMITTED_NAME, Action, ActionDescriptor, Admission, AdmissionPart, Allowance, Answer, Backends,
     Call, CallError, Cancel, Cancellation, Capabilities, Clock, Committed, ConfigSource, Context,
     Ending, Estimate, Failure, Finished, Ledger, MESSAGE_LIMIT, Outcome, PreparedCall, Produced,
-    Readiness, Refusal, Registry, Request, RequestId, RunFacts, RunId, RunState, Secrets, Snapshot,
-    Stale, StoreFailure, SystemClock, Value, Watched, request_fingerprint,
+    Readiness, Refusal, Registry, Request, RequestId, ResultKind, RunFacts, RunId, RunState,
+    Secrets, Snapshot, Stale, StoreFailure, SystemClock, Value, Verdict, Watched,
+    request_fingerprint,
 };
 
 /// What runs actions. A door, the evaluation harness and an action that calls another
@@ -1708,11 +1710,17 @@ impl Engine {
         };
         let mut outputs = Vec::new();
         let mut verdict = None;
+        let mut measurements = None;
         let mut outcome = match handed {
             None => Outcome::Cancelled,
             Some(Ok(Ok(produced))) => {
                 verdict = produced.verdict().cloned();
-                let held = held_to_ports(&prepared, action.descriptor(), produced, secrets)
+                measurements = produced.measurements().cloned();
+                // What is handed back beside the artifacts is held to the kinds the
+                // descriptor declares (ADR 0035).
+                let undeclared = held_to_results(action.descriptor(), &produced);
+                let held = undeclared
+                    .and_then(|()| held_to_ports(&prepared, action.descriptor(), produced, secrets))
                     .and_then(|held| {
                         let store = context.store();
                         super::outputs::held_to_relations(
@@ -1764,6 +1772,8 @@ impl Engine {
         // now on, and what was noted is in the record or was answered no.
         let mut noted = facts.close();
         let mut inside = live.nest().inside(parent);
+        // The caller is given the verdict with the outcome, as the record keeps it.
+        let handed_verdict = (verdict.as_ref()).map(|v| Verdict::new(v.decision(), &said(v.why())));
         inside.verdict = verdict;
         // A record lists what a request cost only for a request it lists. What was
         // noted for a request the run did not send cannot be written, and leaving it
@@ -1958,8 +1968,32 @@ impl Engine {
                 .nest()
                 .ended(&run, status, outcome.outputs(), times, &store);
         }
-        Ok(Finished::new(run, outcome))
+        Ok(Finished::new(run, outcome).with_results(handed_verdict, measurements))
     }
+}
+
+/// What an action handed back beside its artifacts, held to the kinds of result its
+/// descriptor declares (ADR 0035): a verdict only from an action that answers with one,
+/// and measurements only from one that measures, at most [`MEASUREMENTS_MAX_BYTES`].
+fn held_to_results(descriptor: &ActionDescriptor, produced: &Produced) -> Result<(), String> {
+    if produced.verdict().is_some() && !descriptor.answers_with(ResultKind::Verdict) {
+        return Err(
+            "the action handed back a verdict, and its descriptor declares none".to_owned(),
+        );
+    }
+    if let Some(measured) = produced.measurements() {
+        if !descriptor.answers_with(ResultKind::Measurements) {
+            return Err(
+                "the action handed back measurements, and its descriptor declares none".to_owned(),
+            );
+        }
+        if measured.to_string().len() > MEASUREMENTS_MAX_BYTES {
+            return Err(format!(
+                "the action's measurements are over {MEASUREMENTS_MAX_BYTES} bytes"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// What an action handed back, held to the output ports its call returns (ADR 0008):

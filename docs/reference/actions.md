@@ -2,7 +2,7 @@
 
 # Actions
 
-What `whizbang` 0.0.1 can do, from its static description (version 8).
+What `whizbang` 0.0.1 can do, from its static description (version 9).
 The same as data: [description.json](description.json).
 
 ## `check`
@@ -12,6 +12,26 @@ Has a judge look at images through evidence tools and conclude: pass, fail or un
 ## `remove_prompt`
 
 Makes the mask that removes what a phrase names: found, grown, closed, plugged, kept off protect and feathered.
+
+## `source-fidelity`
+
+Checks whether an edit kept what mattered in its source: details measured first, then the judge.
+
+## `reference-consistency`
+
+Checks whether a subject of the references appears faithfully: details measured first, then the judge.
+
+## `reality-checks`
+
+Checks a picture for mistakes no real photograph would make: details measured first, then the judge.
+
+## `brief-compliance`
+
+Checks whether a picture holds what its brief asked for and nothing it forbade: details first, then the judge.
+
+## `product-fidelity`
+
+Checks whether a product shot keeps the exact product of its references: details first, then the judge.
 
 ## `align`
 
@@ -24,6 +44,10 @@ Shows where two images in one grid differ in structure: a grey map, bright where
 ## `edge_similarity`
 
 Scores how much two images in one grid share the same edges: 1 for the same structure, near 0 for unrelated ones.
+
+## `details`
+
+Measures the details of a use case's images before its judge looks, and hands on what each tool found.
 
 ## `close`
 
