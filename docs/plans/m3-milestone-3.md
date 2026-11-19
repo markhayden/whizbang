@@ -435,6 +435,21 @@ gate of details first is run.
 **Keeping tests lean (G1).** Gates over three to six items made in the test, 200 resamples;
 scripted judges; pictures of at most 128 pixels.
 
+**Reworded with the task.** Item 3 said "frozen in `evalsets/gates/details-first.toml`"; the
+gate is frozen in `gates/details-first.toml`, its matrix beside it in
+`gates/details-first-matrix.toml`, because `evalsets/` is held byte for byte to the files squint
+tracked there (`sets::every_file_squint_tracked_under_evalsets_is_here_byte_for_byte`). Gate
+files live in `gates/` at the top of the repository. "Gates over three to six items" said;
+three of the four gate tests run a set of two items in two arms (four runs each), to keep the
+test time down, and the command's test runs three.
+
+**Status (G1's first pull request).** Every named test above passes except the two
+`evidence::` tests, which read records that do not exist yet: the receipt of the gate of
+details first (the orchestrator's run) and the live rerun's two numbers (the owner's run). The
+wire's carry-over row is closed; the rows on gates as files and on the live rerun stay open
+until those runs. The box is ticked by the pull request that commits the two records with
+their tests.
+
 ### Origins (G)
 
 None new: the three judges approved in milestone 2.
