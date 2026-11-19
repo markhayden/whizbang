@@ -491,6 +491,33 @@ fn a_run_waiting_past_its_stated_time_gives_up() {
 }
 
 #[test]
+fn a_run_its_deadline_ended_before_the_server_looked_is_answered_as_given_up() {
+    // The race behind a flake of the test above (the review of task M1): the run's own
+    // deadline, at the stated time, ends it before the server looks again. Looking
+    // only every 1.5 s makes that the order every time.
+    let (_dir, executor, door) = waiting("serve-gives-up-late");
+    let limits = Limits {
+        wait: Duration::from_millis(200),
+        look: Duration::from_millis(1500),
+        ..Limits::default()
+    };
+    let mut client = Client::new(executor.clone(), door, limits);
+    client.initialized();
+    client.call(1, "waits", json!({}), Some("tok"));
+    let mut notes = Vec::new();
+    let answer = client.answer(1, &mut notes);
+    let run = started(&notes);
+    let (text, error) = result_text(&answer);
+    assert!(error);
+    let said = format!(
+        "gave up on run {} after its stated time of 0.2 s",
+        run.as_str()
+    );
+    assert!(text.starts_with(&said), "{text}");
+    assert!(client.close().is_empty());
+}
+
+#[test]
 fn end_of_input_cancels_waits_and_stops_the_worker() {
     use crate::pack::{Local, one};
     use whizbang_backends::pack::queue::Status;

@@ -405,14 +405,17 @@ picture and a fixed sentence.
 
 **What one request may cost** is fixed by three settings of the backend, each held
 before a byte is sent: `max_input_tokens` (40,000 when none is given),
-`max_output_tokens` (2,048) and `max_pictures` (24), in a table
+`max_output_tokens` (4,096) and `max_pictures` (24), in a table
 `[backends.judge.settings]` (`max_output_tokens` is at most 65,536 for Google). A
 request is bound at its ceilings: for `claude-haiku-5-5`, 40,000 input tokens at 0.125
-dollars a million and 2,048 output tokens at 0.50, which is 0.006024 dollars; a check
-reserves that for each of its 16 turns, 0.096384 dollars, within the cap of 2.00. For
-`gemini-3.8-flash` the bound is 40,000 at 0.75 and 2,048 at 3.75, 0.03768 dollars, 0.60288
-for a check; for `gpt-6.1-terra`, 40,000 at 1.00 and 2,048 at 5.00, 0.05024 dollars,
-0.80384 for a check.
+dollars a million and 4,096 output tokens at 0.50, which is 0.007048 dollars; a check
+reserves that for each of its 16 turns, 0.112768 dollars, within the cap of 2.00. For
+`gemini-3.8-flash` the bound is 40,000 at 0.75 and 4,096 at 3.75, 0.04536 dollars, 0.72576
+for a check; for `gpt-6.1-terra`, 40,000 at 1.00 and 4,096 at 5.00, 0.06048 dollars,
+0.96768 for a check; for the dearest rows, `gemini-4-argon` and `gpt-6.1-sol`, 1.93536.
+A check asks 2,048 output tokens of each turn; a turn cut off there is asked again with
+the ceiling, which every later turn of the check keeps. A turn cut off at the ceiling
+ends the check as `judge_output_ceiling`, naming `max_output_tokens`.
 Each turn is then settled at what its answer says it used. A conversation that needs
 more raises the settings, and the cap with them (ADR 0026).
 

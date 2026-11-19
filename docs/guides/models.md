@@ -47,7 +47,14 @@ download (`crates/whizbang/tests/it/models.rs`); nothing in them leaves the mach
 whizbang models list   [--config <file> [--env-file <file>]] [--models-dir <dir>]
 whizbang models get    <model> [--config <file> [--env-file <file>]] [--models-dir <dir>]
 whizbang models remove <model> [--wait <seconds>] [--config <file> [--env-file <file>]] [--models-dir <dir>]
+whizbang models verify <model> [--config <file> [--env-file <file>]] [--models-dir <dir>]
 ```
+
+`verify` reads every file of the model's installation whole and holds it to its size and
+hash, whatever an earlier check recorded, and prints `whole` and the installation's
+identity; a file that is not whole is named as such, and `get` installs the model again.
+A load trusts a file whose size, times and inode are as its last full check recorded, so
+`verify` is the check to ask for when you doubt the disk.
 
 Each exits 0 when it did what was asked, 1 with one line on the standard error that
 says why when it did not, and 2 when the command line was not understood.
@@ -276,7 +283,10 @@ together, each answer held to the protocol's contract; it ends 0 when every run 
 The second copies the file into the models directory, read-only and named by its SHA-256,
 as the adapter `user-mine`, which an entry of your `catalogue.json` may name. The file is
 your code and runs in the worker: only for a model installed under that hash, and only
-after the copy's bytes are checked against it. Adding a changed file under the same name
+after the copy's bytes are checked against it. The check says which code runs, not what
+it may do: it runs with the worker's full privileges, its open descriptors, its
+environment, your files and the network, with nothing around it. Add only an adapter you
+would run by hand. Adding a changed file under the same name
 makes a new hash; `get` installs the model again under it, and a run already admitted
 keeps the earlier copy. `whizbang setup` leaves both alone.
 

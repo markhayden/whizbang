@@ -12,8 +12,8 @@
 //!   download.
 //! - **Where a held copy is looked for:** every installation of every model of the
 //!   directory, by the record in its folder. A model whose layout has a link, a folder
-//!   that is a link, a record that cannot be read and a name that is not an identity are
-//!   passed over: nothing is followed or trusted, and what is linked is read whole.
+//!   that is a link, a held file that is a link, a record that cannot be read and a name
+//!   that is not an identity are passed over: nothing is followed or trusted, and what is linked is read whole.
 //! - **The lock of a shared file** (`shared/<64 hex digits>`, by the file's hash) is
 //!   taken alone by an install before it stages, for every file of its entry, in the
 //!   order of the hashes, and held until the install ends: after its publication or its
@@ -114,8 +114,11 @@ fn held(dir: &ModelsDir, size: u64, sha256: Digest, secrets: &Secrets) -> io::Re
                 continue;
             };
             for file in record.files() {
-                if file.size() == size && file.sha256() == sha256 {
-                    found.push(folder.join("files").join(file.name().as_str()));
+                let path = folder.join("files").join(file.name().as_str());
+                // A held file that is a link is passed over, as a folder that is one
+                // is: it would be linked, and read, through it.
+                if file.size() == size && file.sha256() == sha256 && !fs.is_link(&path)? {
+                    found.push(path);
                 }
             }
         }

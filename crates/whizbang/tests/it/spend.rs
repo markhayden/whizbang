@@ -144,9 +144,9 @@ mod judge {
     };
 
     /// The bound of one request at the default ceilings: 40,000 input tokens at the
-    /// dearest input price of the row, 0.125 dollars a million, and 2,048 output tokens
+    /// dearest input price of the row, 0.125 dollars a million, and 4,096 output tokens
     /// at 0.50 (ADR 0026).
-    const BOUND: u64 = 6_024;
+    const BOUND: u64 = 7_048;
 
     fn paid(record: &Json) -> Vec<(u64, u64, String)> {
         record["spend"]["requests"]
@@ -194,19 +194,19 @@ mod judge {
     #[test]
     fn a_google_and_an_openai_turn_reserve_their_bound_and_settle_at_their_usage() {
         // Each reserves the bound of its default ceilings at its model's row: 40,000
-        // input tokens and 2,048 output, at 0.75 and 3.75 for gemini-3.8-flash (30,000
-        // and 7,680) and at 1.00 and 5.00 for gpt-6.1-terra (40,000 and 10,240). Each
+        // input tokens and 4,096 output, at 0.75 and 3.75 for gemini-3.8-flash (30,000
+        // and 15,360) and at 1.00 and 5.00 for gpt-6.1-terra (40,000 and 20,480). Each
         // settles at its usage: 30,000 input of which 10,000 read from the cache, and
         // 1,000 output (thoughts with it, for Google).
         let usage = (30_000, 10_000, 1_000);
         // 20,000 at 0.75, 10,000 at 0.075 and 1,000 at 3.75.
         let (record, _) = one_turn_of(GOOGLE, "spend-google", said_by(GOOGLE, "Seen.", usage));
-        assert_eq!(record["spend"]["reserved_micros"], 37_680);
-        assert_eq!(paid(&record), [(37_680, 19_500, "answered".to_owned())]);
+        assert_eq!(record["spend"]["reserved_micros"], 45_360);
+        assert_eq!(paid(&record), [(45_360, 19_500, "answered".to_owned())]);
         // 20,000 at 1.00, 10,000 at 0.05 and 1,000 at 5.00.
         let (record, _) = one_turn_of(OPENAI, "spend-openai", said_by(OPENAI, "Seen.", usage));
-        assert_eq!(record["spend"]["reserved_micros"], 50_240);
-        assert_eq!(paid(&record), [(50_240, 25_500, "answered".to_owned())]);
+        assert_eq!(record["spend"]["reserved_micros"], 60_480);
+        assert_eq!(paid(&record), [(60_480, 25_500, "answered".to_owned())]);
     }
 
     #[test]
@@ -253,6 +253,18 @@ mod judge {
     }
 
     #[test]
+    fn a_turn_whose_usage_no_charge_can_hold_is_charged_its_bound() {
+        // The review of plan 1D, task F1 (#181): a usage so large that its charge is no
+        // amount (`Charge::of_micros` refuses it) is not settled at nothing, nor at the
+        // count: the turn says no charge, and the meter charges it its bound.
+        let (record, _) = one_turn(
+            "spend-huge",
+            turn_with("Seen.", "end_turn", Some((u64::MAX, u64::MAX))),
+        );
+        assert_eq!(paid(&record), [(BOUND, BOUND, "answered".to_owned())]);
+    }
+
+    #[test]
     fn a_judge_call_whose_bound_is_over_the_call_cap_is_refused_before_dispatch() {
         let judged = Judged::new("spend-cap");
         let listener = whizbang_testkit::loopback::Listener::serve(1, |_, _| {});
@@ -274,7 +286,7 @@ mod judge {
     #[test]
     fn a_retry_with_a_larger_limit_is_admitted_as_its_own_attempt() {
         // `check` asks with 1,024 output tokens, is cut off, and asks again with four
-        // times that, which the ceiling holds to 2,048: two requests, each reserved
+        // times that, 4,096, which the ceiling allows: two requests, each reserved
         // its own bound and settled at its own usage.
         let judged = Judged::new("spend-retry");
         let answers = vec![
@@ -317,7 +329,7 @@ mod judge {
                 sent[0]["max_tokens"].as_u64(),
                 sent[1]["max_tokens"].as_u64()
             ),
-            (Some(1_024), Some(2_048))
+            (Some(1_024), Some(4_096))
         );
         let record = record_of(&judged.world.root, ran.run().as_str());
         // The call reserved the bound of each of check's sixteen turns.
@@ -354,8 +366,8 @@ mod judge {
             .collect();
         let expected = [
             ("claude-haiku-5-5", "ANTHROPIC_API_KEY", BOUND),
-            ("gemini-3.8-flash", "GEMINI_API_KEY", 37_680),
-            ("gpt-6.1-terra", "OPENAI_API_KEY", 50_240),
+            ("gemini-3.8-flash", "GEMINI_API_KEY", 45_360),
+            ("gpt-6.1-terra", "OPENAI_API_KEY", 60_480),
         ];
         assert_eq!(examples.len(), expected.len());
         for (toml, (model, variable, bound)) in examples.into_iter().zip(expected) {

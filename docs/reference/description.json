@@ -5,7 +5,7 @@
   "actions": [
     {
       "name": "check",
-      "version": "1.3.0",
+      "version": "1.4.0",
       "kind": "recipe",
       "purpose": "Has a judge look at images through evidence tools and conclude: pass, fail or unsure.",
       "arguments": [

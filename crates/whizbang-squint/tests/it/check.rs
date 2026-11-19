@@ -385,6 +385,27 @@ fn a_response_cut_off_by_the_token_limit_then_a_retry_with_a_larger_limit() {
     assert_eq!(cut["answer"]["turn"]["stop"], "max_tokens");
 }
 
+const CUT_OFF_THEN_A_CALL: &str = r#"{"script":"judge-script/1","entries":[
+  {"turn":{"parts":[{"text":"pass\nThe label rea"}],"stop":"max_tokens","usage":null,"request_id":null}},
+  {"turn":{"parts":[{"tool_call":{"id":"c1","name":"view","arguments":{"image":"$photo","bbox":[0,0,1,1]}}}],
+    "stop":"tool_use","usage":null,"request_id":null}},
+  {"turn":{"parts":[{"text":"fail\nThe label reads wrong."}],"stop":"end_turn","usage":null,"request_id":null}}]}"#;
+
+#[test]
+fn after_a_cut_off_turn_the_raised_limit_holds_for_the_rest_of_the_run() {
+    // E1's live run (plan 2C, task F1): a judge that wrote past its limit once wrote
+    // past it again on a later turn. The turn after the retry keeps the raised limit.
+    let world = World::new();
+    let (finished, _, judge) = run(&world, CUT_OFF_THEN_A_CALL, &[("photo", world.photo.id())]);
+    assert_eq!(finished.outcome().name(), "completed");
+    let limits: Vec<u32> = judge
+        .received()
+        .iter()
+        .map(|request| request.controls().max_output_tokens())
+        .collect();
+    assert_eq!(limits, [1024, 1024 * RETRY_FACTOR, 1024 * RETRY_FACTOR]);
+}
+
 /// One call, then `unsure`: the script of each transcript in which a call is refused.
 fn one_call(name: &str, arguments: Json) -> String {
     let call = json!({"tool_call": {"id": "c1", "name": name, "arguments": arguments}});
@@ -1174,7 +1195,7 @@ fn the_records_of_check_completed_failed_and_cancelled_hold_what_the_spec_lists(
         // value by default among them; no settings yet; the config's digest.
         assert_eq!(
             record["asked"],
-            json!({"action": "check", "version": "1.3.0", "settings": [],
+            json!({"action": "check", "version": "1.4.0", "settings": [],
                    "arguments": [{"name": "tools", "value": {"text": "view"}},
                                  {"name": "use_case", "value": {"text": "general"}},
                                  {"name": "details", "value": {"text": "none"}},
@@ -1921,6 +1942,49 @@ fn texts(parts: &[Part]) -> Vec<String> {
             _ => None,
         })
         .collect()
+}
+
+#[test]
+fn details_first_on_a_reference_pair_aligns_the_candidate_onto_its_reference() {
+    // The review of task A2 (#189): details first under a use case of references,
+    // product-fidelity, measures the candidate against its reference as it does
+    // against a source.
+    let (world, reference, candidate, _) = paired();
+    let items = json!([
+        item("chk:ob:PF1@candidate", "held", "confident"),
+        item("chk:ob:PF2@candidate", "held", "confident"),
+        item("chk:ob:PF3@candidate", "held", "confident"),
+        item("chk:ref:reference-1", "held", "confident"),
+    ]);
+    let judge = judge(&turns(&[(json!([submission(items)]), "tool_use")]), &[]);
+    let executor = world.engine(judge.clone(), Secrets::none());
+    let job = whizbang_squint::job::Job::shorthand("product-fidelity", false, 1, None);
+    let call = judged_call(&job, &[candidate.id(), reference.id()])
+        .argument("details", Value::text("first"));
+    let finished = executor.submit(&call).unwrap();
+    drop(executor);
+    assert_eq!(
+        finished.outcome().name(),
+        "completed",
+        "{:?}",
+        finished.outcome()
+    );
+    let left = left(&world.root(), world.fs.clone(), finished.run());
+    assert_eq!(steps(left.record()), [("align", Some(Status::Completed))]);
+    let said = texts(judge.received()[0].messages()[0].parts());
+    assert!(said[1].starts_with("Image `reference-1`"), "{said:?}");
+    assert_eq!(said[2], whizbang_squint::details::DETAILS_INTRO);
+    assert!(
+        said[3].starts_with("align (unverified), candidate onto reference-1: "),
+        "{}",
+        said[3]
+    );
+    assert!(
+        said[4]
+            .starts_with("Image `aligned:candidate:t1` (candidate warped into reference-1's grid"),
+        "{}",
+        said[4]
+    );
 }
 
 #[test]

@@ -32,7 +32,7 @@ before anything is sent, and what a request cost is worked out after.
   published formula on its prepared size (one token for each patch of 28 by 28 pixels,
   rounded up on each side, 4,784 at most), and 16 tokens for each message and each
   picture. A request counted over the ceiling is refused `not_sent`.
-- `max_output_tokens`, 2,048, 1 to 128,000. A request asking more is sent asking the
+- `max_output_tokens`, 4,096 (2,048 until plan 2C, task F1), 1 to 128,000. A request asking more is sent asking the
   ceiling: the retry of a cut-off turn, which `check` asks with four times the limit,
   included.
 - `max_pictures`, 24, 1 to 64. A request of more pictures is refused `not_sent`.
@@ -45,8 +45,8 @@ million written to it. A model with no row is refused by the kind.
 **The bound of one request** is the input ceiling at the dearer of the input and the
 cache-write prices, and the output ceiling at the output price. At the defaults:
 
-    40,000 × 0.125 + 2,048 × 0.50 = 5,000 + 1,024 = 6,024 millionths of a dollar
-    16 turns of `check` × 6,024 = 96,384 millionths, about 0.10 dollars
+    40,000 × 0.125 + 4,096 × 0.50 = 5,000 + 2,048 = 7,048 millionths of a dollar
+    16 turns of `check` × 7,048 = 112,768 millionths, about 0.11 dollars
 
 which is within the example config's `call_cap_usd = 2.00` (`docs/guides/config.md`)
 twenty times over (`spend::the_example_configs_whole_call_reservation_fits_its_cap`). A
@@ -88,6 +88,20 @@ with no more than the cut-off turn was: a failure of the kind `judge_output_ceil
 that names the setting to raise, `max_output_tokens` in the judge's table, after one
 request (`check::a_turn_cut_off_at_the_output_ceiling_is_not_retried_with_the_same_limit`).
 
+**Amended by plan 2C, task F1: the output ceiling and the retry.** E1's live run of arm F
+(`docs/results/m2c-evaluation.md`) ended 20 of 220 decisions as `judge_output_ceiling`:
+`check` asked 2,048 output tokens, the default ceiling was 2,048, so no cut-off turn
+could be asked again, and a details-first turn often runs past 2,000 tokens (the
+completed turns' longest was over 2,000 in one run of a hundred). The default output
+ceiling is now 4,096, the most that keeps the sixteen turns of every model this build
+prices within the example's cap of 2.00 dollars
+(`anthropic::spend::every_priced_models_check_at_the_default_ceilings_fits_the_example_cap`);
+the bound, and so the reservation, rises with it, as above. `check` still asks 2,048
+first; a cut-off turn is asked again with four times that, held to the ceiling, and the
+turns after it keep the raised limit, so a judge that writes long is not cut off a second
+time at the first limit
+(`check::after_a_cut_off_turn_the_raised_limit_holds_for_the_rest_of_the_run`).
+
 **What a turn records.** The input the adapter counted for a request before it was sent
 is kept on its turn (`Turn::counted_input`) and written into the run's exchange of that
 turn as `counted_input_tokens`, beside the usage the provider reported, so the two can be
@@ -109,8 +123,9 @@ catalogue states for none of them a price of a cache write or of a long prompt: 
 write is taken at the input price and a long prompt at the row's own, the input ceiling
 being held under the line. At the default ceilings:
 
-    gemini-3.8-flash: 40,000 × 0.75 + 2,048 × 3.75 = 37,680 millionths; 16 turns 0.60288 dollars
-    gpt-6.1-terra:    40,000 × 1.00 + 2,048 × 5.00 = 50,240 millionths; 16 turns 0.80384 dollars
+    gemini-3.8-flash: 40,000 × 0.75 + 4,096 × 3.75 = 45,360 millionths; 16 turns 0.72576 dollars
+    gpt-6.1-terra:    40,000 × 1.00 + 4,096 × 5.00 = 60,480 millionths; 16 turns 0.96768 dollars
+    gemini-4-argon, gpt-6.1-sol: 40,000 × 2.00 + 4,096 × 10.00 = 120,960; 16 turns 1.93536 dollars
 
 each within the example's cap of 2.00
 (`spend::the_example_configs_whole_call_reservation_fits_its_cap_for_each_judge`). The

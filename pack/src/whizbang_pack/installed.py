@@ -96,11 +96,17 @@ def identity_of(record):
 
 def record_of(installation):
     """The record of this installation, held to the identity its `load` names; `None` when
-    the installation's folder holds no record (the pack's own tests, which install
-    nothing). A record that is there and cannot be read, or whose identity is another, is
-    refused."""
+    the installation's folder holds no record and no folder `files/` (the pack's own tests,
+    which install nothing, and the conformance suite, whose `files` is a link to the
+    folder it is given). A folder `files/` is made only by the binary's install, which
+    writes a record beside it: without it, which adapter the files were installed for is
+    not known, and the load is refused (the review of plan 1D, task U1). A record that is
+    there and cannot be read, or whose identity is another, is refused."""
     data = _read(os.path.join(installation.folder, "RECORD"), RECORD_MAX_BYTES)
     if data is None:
+        files = os.path.join(installation.folder, "files")
+        if os.path.isdir(files) and not os.path.islink(files):
+            raise Fault("rejected", "the installation's folder holds files and no record")
         return None
     unread = Fault("rejected", "the installation's record cannot be read")
     if len(data) > RECORD_MAX_BYTES:

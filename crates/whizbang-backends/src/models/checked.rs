@@ -103,6 +103,16 @@ pub(super) fn holds(
     }
 }
 
+/// Removes the check record of this installation, whose files a full check asked for
+/// by hand found not whole, so that the next load reads them again whatever their
+/// stamps say. Nothing is removed through a `checks/` that is a link; a failure leaves
+/// the record, which then holds only while no file's stamp changes.
+pub(super) fn forget(dir: &ModelsDir, checks: &Path, record: &InstallationRecord) {
+    if usable(dir.fs(), checks) {
+        let _ = dir.remove(&at(checks, record));
+    }
+}
+
 /// Writes the check record of this installation, whose files a full check found
 /// whole, with the stamps they had before it read them: under a name of this
 /// writing's own, readable by its owner only, then renamed into place and the

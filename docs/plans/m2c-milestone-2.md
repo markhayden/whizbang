@@ -911,6 +911,40 @@ None new: the door is local, on stdio; what it sends a judge goes through the sa
   `scripts/tests/test-notes.sh` reading `m2-note.md`, and every carry-over row owned by
   milestone 2 closed, re-owned or dropped with a line.
 
+**Reworded with the task (F1, its first pull request).** The box waits for the note, item
+4, which is F1's second pull request, after X1's second has landed (rung 2 of `change_map`
+and `edge_similarity`, X1's named overflow, goes with it). Built and named, as the list
+above has them or one module deeper: `models::a_users_catalogue_naming_a_shipped_model_is_refused_whole`,
+`test_worker.Load.test_a_load_with_no_record_beside_files_is_refused`,
+`test_worker.Shipped.test_the_workers_shipped_map_is_the_shipped_catalogue`,
+`models::verify_hashes_every_file_and_writes_the_check_record_only_when_whole`,
+`models::removing_a_model_removes_adapter_copies_nothing_names`,
+`egress::jpeg::a_table_body_out_of_its_structure_is_refused_by_the_check` (the tables only:
+the scan's data stays held by its markers, with a line on its row), and
+`egress::prepare::a_store_under_a_folder_written_in_another_unicode_case_is_kept_out` (case
+only: the normal form is a row of its own). E1's overflow, `whizbang store list` naming
+request ids, is shown by `store::the_records_of_request_ids_are_left_by_delete_and_prune_and_still_answer`
+in place of `cli::store_list_says_which_names_are_request_ids`. Moved, each with a line on
+its row: `pixels::a_jpeg_whose_scans_are_short_is_refused` (milestone 3: every picture of
+milestone 2 is pinned by its hash), `check::a_tools_image_is_a_reference_only_its_parent_reads`
+(milestone 3: a kind of reference the store does not have), `view::a_run_reading_an_image_twice_decodes_it_once`
+(milestone 3), `view::a_reduced_crop_with_transparency_is_the_mean_weighted_by_alpha` (milestone
+E: no set of milestone 2 has a clear pixel), `space::a_point_on_the_edge_of_a_magnified_crop_of_a_crop_lands`
+(milestone E: no judge of milestone 2 is shown a crop of a crop), and E2's gate files and
+`eval run --gate` (milestone 3: they did not fit beside the work below). Added, from the
+evaluation of E1 (`docs/results/m2c-evaluation.md`): the default output ceiling of a judge of
+a service is 4,096 tokens (ADR 0026, amended;
+`anthropic::spend::every_priced_models_check_at_the_default_ceilings_fits_the_example_cap`),
+a cut-off turn's raised limit holds for the rest of the run
+(`check::after_a_cut_off_turn_the_raised_limit_holds_for_the_rest_of_the_run`), and a rejected
+submission names the frames and rules the judge may give
+(`use_case::a_rejection_names_the_frames_and_rules_the_judge_may_use`); the review follow-ups
+of tasks M1, A2 and checkpoint 1D (`serve::a_run_its_deadline_ended_before_the_server_looked_is_answered_as_given_up`,
+`check::details_first_on_a_reference_pair_aligns_the_candidate_onto_its_reference`,
+`install::a_held_file_planted_as_a_link_is_never_linked_and_the_file_is_downloaded`,
+`model_commands::tests::a_refused_download_after_a_held_file_was_removed_says_to_get_again`,
+`spend::judge::a_turn_whose_usage_no_charge_can_hold_is_charged_its_bound`).
+
 **Keeping tests lean (F1).** Each follow-up's test on files made in the test; no model,
 no network.
 

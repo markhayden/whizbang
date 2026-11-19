@@ -43,7 +43,7 @@ fn picture_of(width: u32, height: u32, rgba: Vec<u8>) -> Picture {
 
 /// A picture with something in it, every pixel opaque, or every fourth one half
 /// clear.
-fn patterned(width: u32, height: u32, clear: bool) -> Picture {
+pub(super) fn patterned(width: u32, height: u32, clear: bool) -> Picture {
     let pixels = width as usize * height as usize;
     let rgba = (0..pixels)
         .flat_map(|at| {
@@ -67,7 +67,7 @@ fn sent(bytes: Vec<u8>) -> (Option<Fault>, u64) {
 }
 
 /// The JPEG with this segment put in after its start.
-fn with_segment(jpeg: &[u8], marker: u8, body: &[u8]) -> Vec<u8> {
+pub(super) fn with_segment(jpeg: &[u8], marker: u8, body: &[u8]) -> Vec<u8> {
     let mut segment = vec![0xff, marker];
     segment.extend_from_slice(&u16::try_from(body.len() + 2).unwrap().to_be_bytes());
     segment.extend_from_slice(body);
@@ -209,6 +209,66 @@ fn the_check_looks_at_a_requests_own_fields_and_finds_a_folder_kept_out_in_any_c
     } else {
         assert_eq!((ran.fault.clone(), sender.requests()), (None, 1));
     }
+}
+
+#[test]
+fn a_store_under_a_folder_written_in_another_unicode_case_is_kept_out() {
+    // The security review of S1's second pull request: APFS does not tell case apart in
+    // letters beyond ASCII either, so a store under `/Work/Ölwerk` is the folder
+    // `/work/ölwerk` there. On macOS the words are refused; elsewhere they are sent.
+    let check = || {
+        SendCheck::new()
+            .keeping_out(std::path::Path::new("/Work/Ölwerk/Store"))
+            .unwrap()
+    };
+    for written in ["see /work/ölwerk/store/runs", "see /WORK/ÖLWERK/STORE/runs"] {
+        let sender = Arc::new(FakeSender::scripted(vec![ok()]));
+        let words = vec![Piece::of(DataClass::Prompts, written.as_bytes().to_vec())];
+        let ran = run_one(posting(words), ways(&sender, check()), Secrets::none());
+        if cfg!(target_os = "macos") {
+            let fault = ran.fault.clone().unwrap();
+            assert_eq!(
+                (fault.sentence(), sender.requests()),
+                (KEPT_OUT, 0),
+                "{written}"
+            );
+        } else {
+            assert_eq!(
+                (ran.fault.clone(), sender.requests()),
+                (None, 1),
+                "{written}"
+            );
+        }
+    }
+    // A sigma lowers alike wherever it stands: the folder `/x/ΑΣ` is found in
+    // `/x/ΑΣB/…`, where `str`'s lowering makes the folder's last letter a final sigma
+    // and the text's not.
+    let sigma = || {
+        SendCheck::new()
+            .keeping_out(std::path::Path::new("/x/ΑΣ"))
+            .unwrap()
+    };
+    for written in ["see /x/ΑΣB/runs", "see /x/ας/runs", "see /x/ασ"] {
+        let sender = Arc::new(FakeSender::scripted(vec![ok()]));
+        let words = vec![Piece::of(DataClass::Prompts, written.as_bytes().to_vec())];
+        let ran = run_one(posting(words), ways(&sender, sigma()), Secrets::none());
+        if cfg!(target_os = "macos") {
+            let fault = ran.fault.clone().unwrap();
+            assert_eq!(
+                (fault.sentence(), sender.requests()),
+                (KEPT_OUT, 0),
+                "{written}"
+            );
+        }
+    }
+    // Another folder whose letters differ beyond case is sent, here and on macOS.
+    let sender = Arc::new(FakeSender::scripted(vec![ok()]));
+    let words = vec![Piece::of(
+        DataClass::Prompts,
+        b"see /work/olwerk/store".to_vec(),
+    )];
+    let ran = run_one(posting(words), ways(&sender, check()), Secrets::none());
+    assert_eq!((ran.fault.clone(), sender.requests()), (None, 1));
 }
 
 #[test]
