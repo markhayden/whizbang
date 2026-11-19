@@ -63,7 +63,7 @@ is compared. So `1E2`, `1e2` and `1e+2` are equal. The exponent's digits are kep
 | Field | Type | Compared | Holds |
 |---|---|---|---|
 | `transcript_version` | whole number | yes | `1`, or `2` (below, "Version 2") |
-| `origin` | text | no | `historical` for a decision of the old runs, `recaptured` for one captured again later, `replayed` for what the gate's replay wrote |
+| `origin` | text | no | `historical` for a decision of the old runs, `recaptured` for one captured again later, `replayed` for what the gate's replay wrote, `stored` for a run of `check` written from the store (below, "A stored run of `check`") |
 | `complete` | true or false | yes | Whether the record is whole (see "Complete and incomplete") |
 | `incomplete` | list of text | yes | What is missing; empty when `complete` is true |
 | `subject` | object | yes | Which decision this is (below) |
@@ -486,6 +486,34 @@ What the replay does not reproduce, each a difference it reports: a crop cut fro
 had scaled down (its pixels come from squint's filter, so under either version its prepared
 bytes differ), a panorama, and a picture with transparency (squint encoded it as a PNG of its
 own).
+
+## A stored run of `check`
+
+`whizbang::transcript::of_run` writes a run of `check` that a store holds as a transcript of
+version 1, from what the run recorded: its record's judge group, each exchange it kept
+(`exchange-NNNN`) and what it decided (`judged.json`). The comparison reads it as it reads
+the replay's (`transcript::a_run_of_check_is_written_as_a_transcript_the_comparison_reads`):
+two runs of one job under the same answers compare with no difference. Its `origin` is
+`stored`. Where the store keeps less than the format names, it says so in the same places
+every time:
+
+- an image's `id` is its canonical pixel digest, and `prepared` and `source` hold that
+  digest as `pixels`: a run keeps pixels, not the bytes a backend sent or the job's file;
+- a job image's `frame` is `raw:` and its name in the job, and its `role` is the job's;
+- a tool image's `frame` is `crop:`, the call and its place among that call's images, and
+  its `parent`, `root` and `mapping` are null: its place is the binding of the crop in the
+  store, not in an exchange;
+- an opaque block is its adapter, the digest of its body and its length, since a body that
+  cannot be redacted is never stored;
+- `subject` and `preparation` are the caller's, since a run of `check` names neither an
+  item of a set nor an arm;
+- a repair is read from the exchanges: a turn left out and asked again (`reissue`, its
+  reason), a submission answered with why it is not one (`rejected`,
+  `invalid_submission`), or a turn that ended with no call and was asked again
+  (`reissue`, `no_call`).
+
+The transcript is incomplete when an exchange, an answer, a call's result or a job image's
+role could not be read.
 
 ## The synthetic fixtures
 

@@ -43,6 +43,7 @@ mod stats;
 mod store;
 mod tool_file;
 mod tool_worker;
+mod transcript;
 mod wired;
 mod writer;
 

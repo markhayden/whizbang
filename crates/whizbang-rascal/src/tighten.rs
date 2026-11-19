@@ -459,42 +459,93 @@ pub fn stroke_core(
             ([p[0] + m * n[0], p[1] + m * n[1]], (e.b - e.a) / 2.0)
         })
         .collect();
-    for y in y_lo..y_hi {
+    // Each cap and each segment is drawn over its own box, cut to the stroke's: a pixel is
+    // set when it is inside any of them, as before, and a pixel outside an element's box
+    // cannot be inside it, so the core is the same pixel for pixel. The cost is the sum of
+    // the elements' boxes, which grows with the stroke's length, not with the box of the
+    // whole stroke times its samples (plan m3, task B1: a diagonal stroke across 8000 by
+    // 6000 took minutes so).
+    let bounds = Bounds {
+        x: (x_lo, x_hi),
+        y: (y_lo, y_hi),
+    };
+    for (c, r) in &caps {
         if stopped() {
             return None;
         }
-        let cy = f64::from(y) + 0.5;
-        for x in x_lo..x_hi {
-            let cx = f64::from(x) + 0.5;
-            let in_cap = caps
-                .iter()
-                .any(|(c, r)| (cx - c[0]).powi(2) + (cy - c[1]).powi(2) <= r * r + 1e-9);
-            let in_tube = !in_cap
-                && samples.windows(2).enumerate().any(|(i, seg)| {
-                    let (p, q) = (seg[0], seg[1]);
-                    let (dx, dy) = (q[0] - p[0], q[1] - p[1]);
-                    let len2 = dx * dx + dy * dy;
-                    if len2 == 0.0 {
-                        return false;
-                    }
-                    let u = ((cx - p[0]) * dx + (cy - p[1]) * dy) / len2;
-                    if !(0.0..=1.0).contains(&u) {
-                        return false;
-                    }
-                    let len = len2.sqrt();
-                    // The signed offset along the segment's left normal (-dy, dx).
-                    let d = (-dy * (cx - p[0]) + dx * (cy - p[1])) / len;
-                    let (ea, eb) = (&extents[i], &extents[i + 1]);
-                    let a = ea.a + u * (eb.a - ea.a);
-                    let b = ea.b + u * (eb.b - ea.b);
-                    d >= a - 1e-9 && d <= b + 1e-9
-                });
-            if in_cap || in_tube {
-                core[(y * width + x) as usize] = 255;
+        let reach = r.abs();
+        let inside = |cx: f64, cy: f64| (cx - c[0]).powi(2) + (cy - c[1]).powi(2) <= r * r + 1e-9;
+        let corners = [c[0] - reach, c[0] + reach, c[1] - reach, c[1] + reach];
+        bounds.draw(corners, width, &mut core, &inside);
+    }
+    for (i, seg) in samples.windows(2).enumerate() {
+        if stopped() {
+            return None;
+        }
+        let (p, q) = (seg[0], seg[1]);
+        let (dx, dy) = (q[0] - p[0], q[1] - p[1]);
+        let len2 = dx * dx + dy * dy;
+        if len2 == 0.0 {
+            continue;
+        }
+        let len = len2.sqrt();
+        let (ea, eb) = (&extents[i], &extents[i + 1]);
+        let inside = |cx: f64, cy: f64| {
+            let u = ((cx - p[0]) * dx + (cy - p[1]) * dy) / len2;
+            if !(0.0..=1.0).contains(&u) {
+                return false;
+            }
+            // The signed offset along the segment's left normal (-dy, dx).
+            let d = (-dy * (cx - p[0]) + dx * (cy - p[1])) / len;
+            let a = ea.a + u * (eb.a - ea.a);
+            let b = ea.b + u * (eb.b - ea.b);
+            d >= a - 1e-9 && d <= b + 1e-9
+        };
+        // A pixel inside is p + u (q - p) + d n with u in [0, 1] and d between the
+        // interpolated extents, each no further from 0 than the larger of the four.
+        let reach = [ea.a, ea.b, eb.a, eb.b]
+            .iter()
+            .fold(0.0_f64, |m, e| m.max(e.abs()));
+        let corners = [
+            p[0].min(q[0]) - reach,
+            p[0].max(q[0]) + reach,
+            p[1].min(q[1]) - reach,
+            p[1].max(q[1]) + reach,
+        ];
+        bounds.draw(corners, width, &mut core, &inside);
+    }
+    Some(core)
+}
+
+/// The box of pixels a stroke's core may hold, as half-open ranges of columns and rows.
+struct Bounds {
+    x: (u32, u32),
+    y: (u32, u32),
+}
+
+impl Bounds {
+    /// Sets every pixel of the box `[left, right, top, bottom]`, widened by a pixel and cut
+    /// to these bounds, whose centre is `inside`.
+    fn draw(
+        &self,
+        [left, right, top, bottom]: [f64; 4],
+        width: u32,
+        core: &mut [u8],
+        inside: &dyn Fn(f64, f64) -> bool,
+    ) {
+        let lo =
+            |v: f64, (min, max): (u32, u32)| ((v - 1.0).floor().max(0.0) as u32).clamp(min, max);
+        let hi =
+            |v: f64, (min, max): (u32, u32)| ((v + 1.0).ceil().max(0.0) as u32).clamp(min, max);
+        for y in lo(top, self.y)..hi(bottom, self.y) {
+            let cy = f64::from(y) + 0.5;
+            for x in lo(left, self.x)..hi(right, self.x) {
+                if inside(f64::from(x) + 0.5, cy) {
+                    core[(y * width + x) as usize] = 255;
+                }
             }
         }
     }
-    Some(core)
 }
 
 /// Tightens the stroke along `path`, in pixels, with this radius, on an image `width` by
