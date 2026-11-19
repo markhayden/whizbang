@@ -49,29 +49,36 @@ pub struct Tiny {
 /// A set of source-fidelity of these items under `dir`, each a source and a candidate,
 /// with a label of `pass` for each; its pictures in a folder beside it.
 pub fn tiny(dir: &Path, items: &[&str]) -> Tiny {
+    tiny_of(dir, SET, "source-fidelity", &["candidate", "source"], items)
+}
+
+/// A set of this id and use case under `dir`, each item a picture for each of these roles,
+/// with a label of `pass` for each; its pictures in a folder beside it.
+pub fn tiny_of(dir: &Path, id: &str, use_case: &str, roles: &[&str], items: &[&str]) -> Tiny {
     let root = dir.join("evalsets");
-    let set = root.join(SET);
+    let set = root.join(id);
     let from = dir.join("pictures");
     let mut manifest = format!(
-        "[set]\nid = \"{SET}\"\nuse_case = \"source-fidelity\"\nsplit = \"dev\"\n\
+        "[set]\nid = \"{id}\"\nuse_case = \"{use_case}\"\nsplit = \"dev\"\n\
          licence = \"CC-BY-4.0\"\nimages_repo = \"github.com/markhayden/wafflery-evalsets\"\n\
          images_rev = \"{REVISION}\"\nlabels = \"labels.toml\"\nfamilies = \"families.toml\"\n\
-         rules = {{ base = \"source-fidelity\", version = 1 }}\n"
+         rules = {{ base = \"{use_case}\", version = 1 }}\n"
     );
     let mut labels = String::new();
     let mut pictures = Vec::new();
     for (at, item) in items.iter().enumerate() {
         let shade = u8::try_from(at).unwrap();
-        let mut job =
-            "[job]\nuse_case = \"source-fidelity\"\nbrief = \"Keep the house.\"\n".to_owned();
-        for (role, bytes) in [("candidate", png(200 - shade)), ("source", png(10 + shade))] {
+        let mut job = format!("[job]\nuse_case = \"{use_case}\"\nbrief = \"Keep the house.\"\n");
+        let shades = [200 - shade, 10 + shade, 100 + shade];
+        for (role, shade) in roles.iter().zip(shades) {
+            let bytes = png(shade);
             let path = format!("items/{item}/{role}.png");
             let pin = Digest::of_bytes(&bytes).hex();
             job.push_str(&format!(
                 "\n[[job.images]]\nid = \"{role}\"\nrole = \"{role}\"\n\
                  source = {{ path = \"{path}\", sha256 = \"{pin}\" }}\n"
             ));
-            let file = from.join(SET).join(&path);
+            let file = from.join(id).join(&path);
             std::fs::create_dir_all(file.parent().unwrap()).unwrap();
             std::fs::write(file, &bytes).unwrap();
             pictures.push((path, bytes));
@@ -102,7 +109,12 @@ pub fn tiny(dir: &Path, items: &[&str]) -> Tiny {
 
 /// Every picture of the set, from the folder, into the store at `root`.
 pub fn fetched(tiny: &Tiny, root: &Path) {
-    let set = sets::find(&tiny.root, SET).unwrap();
+    fetched_of(tiny, root, SET);
+}
+
+/// Every picture of the set of this id, from the folder, into the store at `root`.
+pub fn fetched_of(tiny: &Tiny, root: &Path, id: &str) {
+    let set = sets::find(&tiny.root, id).unwrap();
     evaluation::from_folder(&set, &tiny.from, root, &whizbang::wiring::recovery()).unwrap();
 }
 

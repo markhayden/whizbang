@@ -1,0 +1,28 @@
+# The screen of plan m3, task U1, item 5: what turns the judge's `unsure` into answers, on the
+# two use cases that hold most of it (reality-checks and reference-consistency, 50 of the 71
+# unsure verdicts of milestone 2's evaluation). Arm F as milestone 2 ran it; F with the
+# candidate in tiles, measured for reality-checks alone (a job with one image); F with the
+# second look; and both. On reference-consistency the tiles are not measured, so its runs
+# under the two arms with tiles are further repetitions of F and of F with the second look.
+# claude-haiku-5-5, three repetitions. Run by hand on the owner's Mac; aggregates in
+# docs/results/m3-unsure.md.
+[matrix]
+name = "unsure-screen"
+sets = [
+  "reality-checks/people-v1",
+  "reality-checks/adversarial-v1",
+  "reference-consistency/pets-v1",
+  "reference-consistency/adversarial-v1",
+]
+arms = [
+  "F",
+  { arm = "F", details = [{ detail = "tiles", use_cases = ["reality-checks"] }] },
+  { arm = "F", second_look = "on" },
+  { arm = "F", details = [{ detail = "tiles", use_cases = ["reality-checks"] }], second_look = "on" },
+]
+repetitions = 3
+concurrency = 4
+
+[[matrix.judges]]
+backend = "haiku"
+model = "claude-haiku-5-5"

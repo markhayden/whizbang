@@ -1191,16 +1191,17 @@ fn the_records_of_check_completed_failed_and_cancelled_hold_what_the_spec_lists(
                    "whizbang": env!("CARGO_PKG_VERSION")}),
             "{how}"
         );
-        // What was asked: the action, and its exact arguments, the six that have a
+        // What was asked: the action, and its exact arguments, the seven that have a
         // value by default among them; no settings yet; the config's digest.
         assert_eq!(
             record["asked"],
-            json!({"action": "check", "version": "1.4.0", "settings": [],
+            json!({"action": "check", "version": "1.5.0", "settings": [],
                    "arguments": [{"name": "tools", "value": {"text": "view"}},
                                  {"name": "use_case", "value": {"text": "general"}},
                                  {"name": "details", "value": {"text": "none"}},
                                  {"name": "detail", "value": {"text": "align"}},
                                  {"name": "projection", "value": {"text": "full"}},
+                                 {"name": "second_look", "value": {"text": "off"}},
                                  {"name": "max_output_tokens", "value": {"integer": 1024}}],
                    "config": Digest::of_bytes(b"").to_string()}),
             "{how}"
@@ -2645,4 +2646,258 @@ fn a_run_whose_tool_file_was_edited_after_its_key_was_made_keeps_no_key() {
         edited.contains("not kept: a tool file it ran was edited"),
         "{edited}"
     );
+}
+
+// --- the second look (plan m3, task U1, item 4) -----------------------------------------------
+
+/// A reality-checks job on the photograph, its call with the second look as given.
+fn reality(world: &World, second_look: &str) -> Call {
+    let job = super::use_case::fitting("reality-checks", None);
+    judged_call(&job, &[world.photo.id()]).argument("second_look", Value::text(second_look))
+}
+
+/// The four items of reality-checks: `RE2` as given, with this location; the rest held,
+/// confidently.
+fn reality_items(disposition: &str, confidence: &str, location: Json) -> Json {
+    let mut items = Vec::new();
+    for rule in ["RE1", "RE2", "RE3", "RE4"] {
+        let id = format!("chk:ob:{rule}@candidate");
+        if rule == "RE2" {
+            let mut said = item(&id, disposition, confidence);
+            said["location"] = location.clone();
+            items.push(said);
+        } else {
+            items.push(item(&id, "held", "confident"));
+        }
+    }
+    json!(items)
+}
+
+const RE2: &str = "chk:ob:RE2@candidate";
+
+fn a_box(bbox: [f64; 4]) -> Json {
+    json!({"kind": "bbox", "frame": "raw:candidate", "bbox": bbox, "polygon": null,
+           "yaw": null, "pitch": null, "fov": null})
+}
+
+/// A script that submits the first items, then, asked again, the second.
+fn twice(first: Json, second: Json) -> String {
+    turns(&[
+        (json!([submission(first)]), "tool_use"),
+        (json!([submission(second)]), "tool_use"),
+    ])
+}
+
+fn pictures_of(parts: &[Part]) -> Vec<whizbang_core::identity::PixelDigest> {
+    parts
+        .iter()
+        .filter_map(|part| match part {
+            Part::Image(picture) => Some(picture.digest()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn second_look_kept(left: &Left) -> Json {
+    let kept: Json =
+        serde_json::from_slice(left.diagnostic(whizbang_squint::check::JUDGED)).unwrap();
+    kept["second_look"].clone()
+}
+
+#[test]
+fn a_tentative_mandatory_item_gets_one_second_look_with_the_cited_crops() {
+    let world = World::new();
+    let cited = [0.2, 0.3, 0.5, 0.6];
+    let first = reality_items("held", "tentative", a_box(cited));
+    let settled = json!([item(RE2, "held", "confident")]);
+    let (finished, left, judge) = judged(&world, &reality(&world, "on"), &twice(first, settled));
+    assert_eq!(
+        finished.outcome().name(),
+        "completed",
+        "{:?}",
+        finished.outcome()
+    );
+    // One more turn: the submission is answered, the cited region shown at full
+    // resolution with a margin of a twentieth, and the item asked about alone.
+    assert_eq!(judge.requests(), 2);
+    let asked = judge.received()[1]
+        .messages()
+        .last()
+        .unwrap()
+        .parts()
+        .to_vec();
+    let Part::ToolResult(received) = &asked[0] else {
+        panic!("{:?}", asked[0]);
+    };
+    assert_eq!(received.call(), "s1");
+    assert!(received.text().contains(&format!("leaves {RE2} tentative")));
+    let margin = [
+        cited[0] - 0.05,
+        cited[1] - 0.05,
+        cited[2] + 0.05,
+        cited[3] + 0.05,
+    ];
+    let crop = crop_of(&world.photo, margin);
+    assert_eq!(pictures_of(&asked), [crop.identity().pixels]);
+    let said = texts(&asked);
+    assert!(
+        said[0].starts_with(&format!("Second look at {RE2}.")),
+        "{said:?}"
+    );
+    assert!(said[1].starts_with("Crop `look:1` of candidate: left 0.15, top 0.25"));
+    assert!(
+        said[2].starts_with(&format!("Settle {RE2} alone.")),
+        "{said:?}"
+    );
+    // The crop is a call of the run, and its evidence.
+    assert_eq!(steps(left.record()), [("view", Some(Status::Completed))]);
+    assert_eq!(left.evidence(1).id(), crop.id());
+    assert_eq!(left.record().verdict().unwrap().0, Decision::Pass);
+    let look = second_look_kept(&left);
+    assert_eq!(look["items"], json!([RE2]));
+    assert_eq!(look["crops"], 1);
+    assert_eq!(look["outcome"], "settled");
+    assert_eq!(look["verdict_before"], "unsure");
+    assert_eq!(look["verdict_after"], "pass");
+    assert_eq!(look["before"][0]["confidence"], "tentative");
+    assert_eq!(look["after"][0]["confidence"], "confident");
+    // An item that cites no region is shown the candidate in its four tiles.
+    let world = World::new();
+    let first = reality_items("held", "tentative", Json::Null);
+    let settled = json!([item(RE2, "held", "confident")]);
+    let (_, left, judge) = judged(&world, &reality(&world, "on"), &twice(first, settled));
+    let asked = judge.received()[1]
+        .messages()
+        .last()
+        .unwrap()
+        .parts()
+        .to_vec();
+    let tiles: Vec<_> = whizbang_squint::details::TILE_BOXES
+        .iter()
+        .map(|(_, bbox)| crop_of(&world.photo, *bbox).identity().pixels)
+        .collect();
+    assert_eq!(pictures_of(&asked), tiles);
+    assert_eq!(second_look_kept(&left)["crops"], 4);
+    // Once a run: a second submission that is still tentative is the verdict.
+    let world = World::new();
+    let first = reality_items("held", "tentative", Json::Null);
+    let again = json!([item(RE2, "held", "tentative")]);
+    let (_, left, judge) = judged(&world, &reality(&world, "on"), &twice(first, again));
+    assert_eq!(judge.requests(), 2);
+    assert_eq!(left.record().verdict().unwrap().0, Decision::Unsure);
+    assert_eq!(second_look_kept(&left)["outcome"], "settled");
+}
+
+#[test]
+fn a_verdict_after_a_second_look_is_still_worked_out_from_the_dispositions() {
+    // A violation seen, confidently: fail, whatever the submission's opinion says.
+    let world = World::new();
+    let first = reality_items("held", "tentative", Json::Null);
+    let seen = json!([{
+        "id": RE2, "disposition": "violation", "confidence": "confident",
+        "reason": "The shadow falls the wrong way.", "allowed_by": null, "evidence": [],
+        "location": a_box([0.1, 0.1, 0.3, 0.3])}]);
+    let (_, left, _) = judged(&world, &reality(&world, "on"), &twice(first, seen));
+    let (decision, why) = left.record().verdict().unwrap();
+    assert_eq!(decision, Decision::Fail);
+    assert!(
+        why.starts_with(&format!("{RE2}: violation (confident)")),
+        "{why}"
+    );
+    // A second submission that answers an item it was not asked about settles nothing:
+    // the first verdict stands, and the look is kept with why.
+    let world = World::new();
+    let first = reality_items("held", "tentative", Json::Null);
+    let other = json!([item("chk:ob:RE1@candidate", "violation", "confident")]);
+    let (finished, left, _) = judged(&world, &reality(&world, "on"), &twice(first, other));
+    assert_eq!(finished.outcome().name(), "completed");
+    assert_eq!(left.record().verdict().unwrap().0, Decision::Unsure);
+    let look = second_look_kept(&left);
+    assert_eq!(look["outcome"], "kept");
+    assert_eq!(look["verdict_after"], "unsure");
+    // So does a turn that ends without a submission.
+    let world = World::new();
+    let first = reality_items("held", "tentative", Json::Null);
+    let script = turns(&[
+        (json!([submission(first)]), "tool_use"),
+        (json!([{"text": "pass\nAll fine."}]), "end_turn"),
+    ]);
+    let (_, left, _) = judged(&world, &reality(&world, "on"), &script);
+    assert_eq!(left.record().verdict().unwrap().0, Decision::Unsure);
+    assert_eq!(second_look_kept(&left)["outcome"], "kept");
+}
+
+#[test]
+fn second_look_off_runs_as_before() {
+    for second_look in ["off", "default"] {
+        let world = World::new();
+        let first = reality_items("held", "tentative", Json::Null);
+        let settled = json!([item(RE2, "held", "confident")]);
+        let call = if second_look == "off" {
+            reality(&world, "off")
+        } else {
+            let job = super::use_case::fitting("reality-checks", None);
+            judged_call(&job, &[world.photo.id()])
+        };
+        let (_, left, judge) = judged(&world, &call, &twice(first, settled));
+        assert_eq!(judge.requests(), 1, "{second_look}");
+        assert_eq!(left.record().verdict().unwrap().0, Decision::Unsure);
+        assert!(steps(left.record()).is_empty());
+        assert_eq!(second_look_kept(&left), Json::Null);
+    }
+    // And a verdict that is not unsure is given no second look, the argument on.
+    let world = World::new();
+    let first = reality_items("held", "confident", Json::Null);
+    let (_, left, judge) = judged(&world, &reality(&world, "on"), &twice(first, json!([])));
+    assert_eq!(judge.requests(), 1);
+    assert_eq!(left.record().verdict().unwrap().0, Decision::Pass);
+}
+
+#[test]
+fn the_second_look_is_inside_the_runs_turns_and_spend() {
+    // What a call reserves is the same with the second look as without: it covers every
+    // turn of the loop, and the second look is one of them.
+    let world = World::new();
+    let script = twice(
+        reality_items("held", "tentative", Json::Null),
+        json!([item(RE2, "held", "confident")]),
+    );
+    for second_look in ["off", "on"] {
+        let executor = world.engine_priced(judge(&script, &[]), Secrets::none(), |a| a, 250);
+        let prepared = executor.prepare(&reality(&world, second_look)).unwrap();
+        assert_eq!(prepared.estimate().micros(), 250 * TURNS_LIMIT as u64);
+    }
+    // The second look is recorded as a turn of its own, beside the first.
+    let (_, left, _) = judged(&world, &reality(&world, "on"), &script);
+    let turns_recorded = (left.record().judge().iter())
+        .filter(|judged| matches!(judged, Judged::Turn { .. }))
+        .count();
+    assert_eq!(turns_recorded, 2);
+    // A submission in the run's last turn is given none: the verdict stands as unsure.
+    let world = World::new();
+    let view = |n: usize| {
+        json!([{"tool_call": {"id": format!("v{n}"), "name": "view",
+                              "arguments": looking_at(world.photo.id(), None)}}])
+    };
+    let mut script: Vec<(Json, &str)> = (0..TURNS_LIMIT - 1)
+        .map(|n| (view(n), "tool_use"))
+        .collect();
+    script.push((
+        json!([submission(reality_items("held", "tentative", Json::Null))]),
+        "tool_use",
+    ));
+    script.push((
+        json!([submission(json!([item(RE2, "held", "confident")]))]),
+        "tool_use",
+    ));
+    let (finished, left, judge) = judged(&world, &reality(&world, "on"), &turns(&script));
+    assert_eq!(
+        finished.outcome().name(),
+        "completed",
+        "{:?}",
+        finished.outcome()
+    );
+    assert_eq!(judge.requests(), TURNS_LIMIT as u64);
+    assert_eq!(left.record().verdict().unwrap().0, Decision::Unsure);
+    assert_eq!(second_look_kept(&left), Json::Null);
 }

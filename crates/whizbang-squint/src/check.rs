@@ -76,7 +76,7 @@ pub const NAME: &str = "check";
 /// The action a tool file's capability is asked through (`whizbang_rascal::segment`).
 const SEGMENT: &str = "segment";
 /// The action's version.
-pub const VERSION: &str = "1.4.0";
+pub const VERSION: &str = "1.5.0";
 /// The most requests one run sends its judge, the retry of a cut-off turn included.
 pub const TURNS_LIMIT: usize = 16;
 /// The most tool calls one run dispatches. It is far under what the executor lets one
@@ -99,6 +99,9 @@ pub const RETRY_WAIT_LIMIT_MS: u64 = 30_000;
 /// job's images with their roles, labels and identities; the checklist; each repair and
 /// each retry; and each answer's disposition, confidence, row and location.
 pub const JUDGED: &str = "judged.json";
+
+/// The values of the argument `second_look`.
+pub const SECOND_LOOK: [&str; 2] = ["off", "on"];
 
 const SYSTEM: &str = "You check images. Look closer with the tools you are given when a \
     closer look would change your answer. Then end your turn with one word on the first \
@@ -231,7 +234,7 @@ impl Check {
         ))
         .argument(Argument::with_default(
             "detail",
-            "The tools whose details are measured first, by name, separated by commas: align, and the two that compare the source with the frame align returns, which run align first.",
+            "The details measured first, separated by commas: align, and the two comparisons that run align first, for a pair; or tiles, for one image: its candidate in four tiles by view.",
             ValueType::Text,
             Value::text(align::NAME),
         ))
@@ -240,6 +243,12 @@ impl Check {
             "How a call of align by the judge is answered: full, or visual only, its pictures and a fixed sentence (squint's projection of arm C).",
             ValueType::choice(&Projection::NAMES),
             Value::text("full"),
+        ))
+        .argument(Argument::with_default(
+            "second_look",
+            "off, or on: a submission whose verdict is unsure for a tentative item gets one more turn, inside the run's turns and spend, with crops of what it cited, to settle those items.",
+            ValueType::choice(&SECOND_LOOK),
+            Value::text("off"),
         ))
         .argument(Argument::optional(
             "cell",
@@ -717,6 +726,155 @@ impl Run<'_> {
         Ok(parts)
     }
 
+    /// The tiles measured first (plan m3, task U1, item 3): the image cut by `view` into
+    /// the four overlapping tiles of [`details::TILE_BOXES`], each a call of the run, kept
+    /// as its evidence, named `tile:<image>:<place>` and labelled with its place.
+    fn tiles_first(&mut self, image: &str, id: ArtifactId) -> Result<Vec<Part>, Failure> {
+        let mut parts = vec![Part::Text(details::TILES_INTRO.to_owned())];
+        for (place, bbox) in details::TILE_BOXES {
+            match self.crops_of(id, bbox)? {
+                Ok(shown) => {
+                    for shown in shown {
+                        let name = format!("tile:{image}:{place}");
+                        self.names.frame(&name, shown.id);
+                        let size = (shown.picture.width(), shown.picture.height());
+                        let id = shown.id.to_string();
+                        let said = details::tile_said(image, place, bbox, size, &id);
+                        parts.push(Part::Text(said));
+                        parts.push(Part::Image(shown.picture));
+                    }
+                }
+                Err(why) => parts.push(Part::Text(format!(
+                    "Tile `tile:{image}:{place}` ({}): not measured: {why}",
+                    details::TILES
+                ))),
+            }
+        }
+        Ok(parts)
+    }
+
+    /// The crop `view` cuts of this image for this box, as a call of the run, kept as its
+    /// evidence; or why it cut none.
+    fn crops_of(
+        &mut self,
+        id: ArtifactId,
+        bbox: [f64; 4],
+    ) -> Result<Result<Vec<Shown>, String>, Failure> {
+        let mut call = Call::new(view::NAME).input("image", id);
+        for (name, side) in view::SIDES.into_iter().zip(bbox) {
+            call = call.argument(name, Value::Number(side));
+        }
+        let outputs = match self.first(&call)? {
+            Ok(outputs) => outputs,
+            Err(why) => return Ok(Err(why)),
+        };
+        let mut shown = Vec::new();
+        // The first output is the crop of the image; a second would be of `also`.
+        for output in outputs.iter().take(1) {
+            shown.push(self.evidence(output.id())?);
+        }
+        Ok(Ok(shown))
+    }
+
+    /// What the second look shows and asks (plan m3, task U1, item 4): the submission
+    /// received; crops by `view` at full resolution of the regions the judge cited for the
+    /// items it left tentative, at most [`SECOND_LOOK_CROPS`], each with a margin of a
+    /// twentieth of the picture; where it cited none, the four tiles of the candidate; and
+    /// the question to settle those items alone. The parts, and how many crops they hold.
+    fn second_look(
+        &mut self,
+        submit: &str,
+        items: &[String],
+        decided: &use_case::Decided,
+        job: &Job,
+    ) -> Result<(Vec<Part>, usize), Failure> {
+        let listed = items.join(", ");
+        let received = format!(
+            "Submission received. It leaves {listed} tentative, so the verdict would be \
+             unsure. A second look follows."
+        );
+        let result = ToolResult::new(submit, &received, false, Vec::new());
+        let mut parts = vec![Part::ToolResult(
+            result.map_err(|why| failed("tool_result", &why))?,
+        )];
+        parts.push(Part::Text(format!(
+            "Second look at {listed}. Below, at full resolution, are crops of what you cited \
+             for them (or, where you cited no region, the candidate in four tiles)."
+        )));
+        // The regions cited, each once, in the order of the items.
+        let mut regions: Vec<(String, ArtifactId, [f64; 4])> = Vec::new();
+        for answer in &decided.answers {
+            let id = answer["id"].as_str().unwrap_or_default();
+            if !items.iter().any(|item| item == id) {
+                continue;
+            }
+            let location = &answer["location"];
+            let Some(frame) = location["frame"].as_str() else {
+                continue;
+            };
+            let Some((artifact, image)) = self.names.resolve(frame) else {
+                continue;
+            };
+            let Some(bbox) = cited_box(location) else {
+                continue;
+            };
+            let margin = 0.05;
+            let bbox = [
+                (bbox[0] - margin).max(0.0),
+                (bbox[1] - margin).max(0.0),
+                (bbox[2] + margin).min(1.0),
+                (bbox[3] + margin).min(1.0),
+            ];
+            if regions.len() < SECOND_LOOK_CROPS
+                && !regions.iter().any(|(_, a, b)| *a == artifact && *b == bbox)
+            {
+                regions.push((image, artifact, bbox));
+            }
+        }
+        if regions.is_empty() {
+            let candidate = job.images.iter().find(|i| i.role == ImageRole::Candidate);
+            if let Some(candidate) = candidate
+                && let Some((artifact, image)) = self.names.resolve(&candidate.id)
+            {
+                for (_, bbox) in details::TILE_BOXES {
+                    regions.push((image.clone(), artifact, bbox));
+                }
+            }
+        }
+        let mut crops = 0;
+        for (image, artifact, bbox) in regions {
+            let [l, t, r, b] = bbox;
+            match self.crops_of(artifact, bbox)? {
+                Ok(shown) => {
+                    for shown in shown {
+                        crops += 1;
+                        let name = format!("look:{crops}");
+                        self.names.frame(&name, shown.id);
+                        let (width, height) = (shown.picture.width(), shown.picture.height());
+                        parts.push(Part::Text(format!(
+                            "Crop `{name}` of {image}: left {l:.2}, top {t:.2}, right {r:.2}, \
+                             bottom {b:.2} of it, {width}x{height}; for the tool view it is \
+                             named {}.",
+                            shown.id
+                        )));
+                        parts.push(Part::Image(shown.picture));
+                    }
+                }
+                Err(why) => parts.push(Part::Text(format!(
+                    "A crop of {image} at left {l:.2}, top {t:.2}, right {r:.2}, bottom {b:.2} \
+                     was not cut: {why}"
+                ))),
+            }
+        }
+        parts.push(Part::Text(format!(
+            "Settle {listed} alone. Call submit_verdict once more, its items holding only \
+             {listed}, each with its disposition: confident if what you now see settles it, \
+             either way, or tentative if it still does not. Give no findings: those of your \
+             submission are kept. Locations stay on the raw frames of the job's images."
+        )));
+        Ok((parts, crops))
+    }
+
     /// One call made first, through the executor: what it committed, or why it measured
     /// nothing. A refusal or a cancellation ends the run.
     fn first(&mut self, call: &Call) -> Result<Result<Vec<Committed>, String>, Failure> {
@@ -830,11 +988,19 @@ impl Action for Check {
                 .map(str::trim)
                 .filter(|name| !name.is_empty())
             {
-                if !details::DETAILED.contains(&name) || !offered.iter().any(|o| o == name) {
+                // `tiles` is cut by `view`, which must be on offer.
+                let tool = if name == details::TILES {
+                    view::NAME
+                } else {
+                    name
+                };
+                let known = details::DETAILED.contains(&name) || name == details::TILES;
+                if !known || !offered.iter().any(|o| o == tool) {
                     let shown: String = name.chars().take(64).collect();
                     return Err(Failure::invalid(&format!(
-                        "{shown:?} is no tool whose details are measured first: {}",
-                        details::DETAILED.join(", ")
+                        "{shown:?} is no tool whose details are measured first: {}, {}",
+                        details::DETAILED.join(", "),
+                        details::TILES
                     )));
                 }
                 if !detail.contains(&name) {
@@ -860,7 +1026,13 @@ impl Action for Check {
             .iter()
             .chain(detail.iter())
             .chain(asks.iter())
-            .copied();
+            .map(|name| {
+                if *name == details::TILES {
+                    view::NAME
+                } else {
+                    *name
+                }
+            });
         if !context.freeze_calls(frozen) {
             return Err(failed(
                 "tools",
@@ -887,6 +1059,23 @@ impl Action for Check {
             "general" => None,
             _ => Some(judging(call, use_case, argument("job"))?),
         };
+        // Tiles are of a job with one image: one that relates a pair is refused, naming
+        // its use case, before anything is measured or sent.
+        if detail.contains(&details::TILES) {
+            let paired = judging.as_ref().map(|judging| {
+                (judging.job.images.iter()).any(|image| image.role != ImageRole::Candidate)
+            });
+            match paired {
+                None => {
+                    return Err(Failure::invalid(
+                        "the detail tiles is measured under a use case of the table",
+                    ));
+                }
+                Some(true) => return Err(Failure::invalid(&details::tiles_refused(use_case))),
+                Some(false) => {}
+            }
+        }
+        let second_look = chosen("second_look", &SECOND_LOOK)? == "on" && judging.is_some();
         // The decision cache's key is known here, before anything is measured or sent;
         // a run of the same key that completed answers this one (crate::cache).
         let mut revisions: Vec<(String, String)> = Vec::new();
@@ -974,6 +1163,11 @@ impl Action for Check {
                 }
             }
             opening.extend(run.measure_first(&pairs, &detail)?);
+            if detail.contains(&details::TILES) {
+                for (candidate, c) in &candidates {
+                    opening.extend(run.tiles_first(&candidate.id, c.id())?);
+                }
+            }
             opening.push(Part::Text(judging.checklist.render(&judging.resolved)));
             opening.push(Part::Text(use_case::INSTRUCTION.to_owned()));
             run_tools_submit(&mut run.tools)?;
@@ -1002,11 +1196,31 @@ impl Action for Check {
         // A submission that is not a verdict, or a turn that ends without one, is
         // answered with why and asked for once more: one repair, as squint allowed.
         let mut repaired = false;
-        for _ in 0..TURNS_LIMIT {
+        // The second look, once asked: what the first submission decided, and what was
+        // asked of it (plan m3, task U1, item 4).
+        let mut looking: Option<Looking> = None;
+        for sent_turns in 0..TURNS_LIMIT {
             let sent = allowed;
             let controls = Controls::new(allowed).map_err(unfit)?;
             let request = JudgeRequest::new(&system, messages.clone(), run.tools.clone(), controls);
-            let turn = match run.judge.send(&request.map_err(unfit)?) {
+            let answered = run.judge.send(&request.map_err(unfit)?);
+            // The turn of the second look settles its items or leaves the first verdict
+            // standing; nothing it does fails the run.
+            if let Some(looking) = looking.take() {
+                let judging = judging
+                    .as_ref()
+                    .ok_or_else(|| failed("judged", &"no job"))?;
+                let (decided, look) = second_settled(answered, &looking, judging, run.judge);
+                let concluded = Concluded {
+                    retries: &retries,
+                    second: Some(look),
+                    key: key.as_ref(),
+                    reported,
+                    edited: run.edited,
+                };
+                return conclude(context, call, judging, &decided, &concluded);
+            }
+            let turn = match answered {
                 Ok(turn) => turn,
                 Err(fault) => {
                     let again =
@@ -1072,6 +1286,7 @@ impl Action for Check {
                         && !submitted.is_empty()
                     {
                         let calls = turn.tool_calls().count();
+                        let arguments = submitted.first().map(|submit| submit.arguments().clone());
                         let read = match submitted.as_slice() {
                             [submit] if calls == 1 => use_case::decided_of(
                                 submit.arguments(),
@@ -1083,23 +1298,42 @@ impl Action for Check {
                         };
                         let why = match read {
                             Ok(decided) => {
-                                // Each item of the reason whole, one to a line, beside
-                                // the verdict's summary: the writer takes the secrets
-                                // out of the whole first.
-                                let mut lines = String::new();
-                                for item in &decided.items {
-                                    lines.push_str(&Json::from(item.as_str()).to_string());
-                                    lines.push('\n');
+                                let tentative = tentative_items(&decided);
+                                // A turn is left for the second look, or none is asked.
+                                let room = sent_turns + 1 < TURNS_LIMIT;
+                                if second_look
+                                    && room
+                                    && decided.verdict.decision() == Decision::Unsure
+                                    && !tentative.is_empty()
+                                {
+                                    let submit_id = submitted
+                                        .first()
+                                        .map(|submit| submit.id().to_owned())
+                                        .unwrap_or_default();
+                                    let (asked, crops) = run.second_look(
+                                        &submit_id,
+                                        &tentative,
+                                        &decided,
+                                        &judging.job,
+                                    )?;
+                                    messages.push(said);
+                                    messages.push(Message::new(Role::User, asked).map_err(unfit)?);
+                                    looking = Some(Looking {
+                                        first: decided,
+                                        arguments: arguments.unwrap_or(Json::Null),
+                                        items: tentative,
+                                        crops,
+                                    });
+                                    continue;
                                 }
-                                let kept = context
-                                    .diagnostics()
-                                    .write(use_case::REASONS, lines.as_bytes());
-                                kept.map_err(|why| failed("reasons", &why))?;
-                                judging.keep(context, call, &retries, &decided)?;
-                                if let Some(key) = &key {
-                                    keep_key(context, key, reported, run.edited);
-                                }
-                                return Ok(Produced::nothing().with_verdict(decided.verdict));
+                                let concluded = Concluded {
+                                    retries: &retries,
+                                    second: None,
+                                    key: key.as_ref(),
+                                    reported,
+                                    edited: run.edited,
+                                };
+                                return conclude(context, call, judging, &decided, &concluded);
                             }
                             Err(why) => why,
                         };
@@ -1166,6 +1400,203 @@ impl Action for Check {
     }
 }
 
+/// A second look asked (plan m3, task U1, item 4): what the first submission decided, its
+/// arguments, the items asked to be settled, and how many crops were shown.
+struct Looking {
+    first: use_case::Decided,
+    arguments: Json,
+    items: Vec<String>,
+    crops: usize,
+}
+
+/// The box a location cites, in fractions of its frame: a box as it is, a polygon's
+/// bounds; none for the whole image or an absence.
+fn cited_box(location: &Json) -> Option<[f64; 4]> {
+    let number = |v: &Json| v.as_f64();
+    match location["kind"].as_str()? {
+        "bbox" => {
+            let b: Vec<f64> = location["bbox"]
+                .as_array()?
+                .iter()
+                .filter_map(number)
+                .collect();
+            let [l, t, r, b] = b.as_slice() else {
+                return None;
+            };
+            Some([*l, *t, *r, *b])
+        }
+        "polygon" => {
+            let points = location["polygon"].as_array()?;
+            let (mut l, mut t, mut r, mut b) = (1.0f64, 1.0f64, 0.0f64, 0.0f64);
+            for point in points {
+                let x = number(point.get(0)?)?;
+                let y = number(point.get(1)?)?;
+                (l, t, r, b) = (l.min(x), t.min(y), r.max(x), b.max(y));
+            }
+            (l < r && t < b).then_some([l, t, r, b])
+        }
+        _ => None,
+    }
+}
+
+/// The most crops a second look shows.
+pub const SECOND_LOOK_CROPS: usize = 4;
+
+/// The items of the checklist a submission left tentative so that its verdict is unsure:
+/// each answered with confidence `tentative` at the row `unsure`.
+fn tentative_items(decided: &use_case::Decided) -> Vec<String> {
+    (decided.answers.iter())
+        .filter(|answer| answer["row"] == "unsure" && answer["confidence"] == "tentative")
+        .filter_map(|answer| answer["id"].as_str().map(str::to_owned))
+        .collect()
+}
+
+/// What the turn of the second look comes to: the verdict worked out again by squint's
+/// table from the first submission with the items it settled put in their place, or the
+/// first verdict when the turn settles nothing; and what the run keeps of the look. Only
+/// the items asked about may be answered, each once; findings are the first submission's.
+fn second_settled(
+    answered: Result<Turn, whizbang_core::capability::Fault>,
+    looking: &Looking,
+    judging: &Judging,
+    judge: &JudgeHandle,
+) -> (use_case::Decided, Json) {
+    let kept = |why: &str| -> Result<use_case::Decided, String> { Err(why.to_owned()) };
+    let settled = match &answered {
+        Err(_) => kept("the judge could not answer"),
+        Ok(turn) if matches!(turn.stop(), StopReason::MaxTokens) => {
+            judge.exclude_last(Excluded::Truncated);
+            kept("the turn was cut off")
+        }
+        Ok(turn) if matches!(turn.stop(), StopReason::Refusal) => {
+            judge.exclude_last(Excluded::Refusal);
+            kept("the judge declined")
+        }
+        Ok(turn) => {
+            let calls: Vec<&ToolCall> = turn.tool_calls().collect();
+            match calls.as_slice() {
+                [submit] if submit.name() == use_case::SUBMIT => {
+                    merged(&looking.arguments, submit.arguments(), &looking.items).and_then(
+                        |arguments| {
+                            use_case::decided_of(
+                                &arguments,
+                                &judging.job,
+                                &judging.resolved,
+                                &judging.checklist,
+                            )
+                        },
+                    )
+                }
+                _ => kept("the turn did not call submit_verdict once, alone"),
+            }
+        }
+    };
+    let rows = |decided: &use_case::Decided| -> Vec<Json> {
+        (decided.answers.iter())
+            .filter(|answer| {
+                (answer["id"].as_str()).is_some_and(|id| looking.items.iter().any(|i| i == id))
+            })
+            .map(|answer| {
+                json!({"id": answer["id"], "disposition": answer["disposition"],
+                       "confidence": answer["confidence"], "row": answer["row"]})
+            })
+            .collect()
+    };
+    let word = |decided: &use_case::Decided| {
+        serde_json::to_value(decided.verdict.decision()).unwrap_or(Json::Null)
+    };
+    let mut look = json!({
+        "items": looking.items,
+        "crops": looking.crops,
+        "before": rows(&looking.first),
+        "verdict_before": word(&looking.first),
+    });
+    match settled {
+        Ok(decided) => {
+            look["outcome"] = json!("settled");
+            look["after"] = json!(rows(&decided));
+            look["verdict_after"] = word(&decided);
+            (decided, look)
+        }
+        Err(why) => {
+            look["outcome"] = json!("kept");
+            look["why"] = json!(why);
+            look["verdict_after"] = word(&looking.first);
+            (looking.first.clone(), look)
+        }
+    }
+}
+
+/// The first submission's arguments with the items of the second put in their place:
+/// refused when the second answers an item it was not asked about, or one twice.
+fn merged(first: &Json, second: &Json, asked: &[String]) -> Result<Json, String> {
+    let Some(given) = second.get("items").and_then(Json::as_array) else {
+        return Err("the second submission holds no list of items".to_owned());
+    };
+    let mut merged = first.clone();
+    let Some(items) = merged.get_mut("items").and_then(Json::as_array_mut) else {
+        return Err("the first submission holds no list of items".to_owned());
+    };
+    let mut seen: Vec<&str> = Vec::new();
+    for item in given {
+        let id = item.get("id").and_then(Json::as_str).unwrap_or_default();
+        if !asked.iter().any(|a| a == id) || seen.contains(&id) {
+            return Err(
+                "the second submission answers an item it was not asked, or one twice".to_owned(),
+            );
+        }
+        seen.push(id);
+        if let Some(slot) = items
+            .iter_mut()
+            .find(|i| i.get("id").and_then(Json::as_str) == Some(id))
+        {
+            *slot = item.clone();
+        }
+    }
+    Ok(merged)
+}
+
+/// What a run that reached a verdict keeps beside it.
+struct Concluded<'a> {
+    retries: &'a [Json],
+    second: Option<Json>,
+    key: Option<&'a cache::Key>,
+    reported: bool,
+    edited: bool,
+}
+
+/// A run under a use case that reached its verdict: each item of its reason whole, one to
+/// a line, beside the verdict's summary (the writer takes the secrets out of the whole
+/// first); what it decided ([`JUDGED`]); and its key for the decision cache.
+fn conclude(
+    context: &Context,
+    call: &PreparedCall,
+    judging: &Judging,
+    decided: &use_case::Decided,
+    concluded: &Concluded<'_>,
+) -> Result<Produced, Failure> {
+    let mut lines = String::new();
+    for item in &decided.items {
+        lines.push_str(&Json::from(item.as_str()).to_string());
+        lines.push('\n');
+    }
+    let kept = context
+        .diagnostics()
+        .write(use_case::REASONS, lines.as_bytes());
+    kept.map_err(|why| failed("reasons", &why))?;
+    judging.keep(
+        context,
+        call,
+        concluded.retries,
+        decided,
+        concluded.second.as_ref(),
+    )?;
+    if let Some(key) = concluded.key {
+        keep_key(context, key, concluded.reported, concluded.edited);
+    }
+    Ok(Produced::nothing().with_verdict(decided.verdict.clone()))
+}
+
 /// A run under a use case of the table: its job, what resolution made of it, its
 /// checklist, and the repairs it has asked for.
 struct Judging {
@@ -1222,6 +1653,7 @@ impl Judging {
         call: &PreparedCall,
         retries: &[Json],
         decided: &use_case::Decided,
+        second: Option<&Json>,
     ) -> Result<(), Failure> {
         let images: Vec<Json> = (self.job.images.iter().zip(call.inputs()))
             .map(|(image, input)| {
@@ -1229,7 +1661,7 @@ impl Judging {
                        "artifact": input.id().to_string()})
             })
             .collect();
-        let kept = json!({
+        let mut kept = json!({
             "use_case": self.resolved.use_case,
             "rules_version": self.resolved.version,
             "images": images,
@@ -1238,6 +1670,9 @@ impl Judging {
             "retries": retries,
             "answers": decided.answers,
         });
+        if let Some(second) = second {
+            kept["second_look"] = second.clone();
+        }
         let written = context
             .diagnostics()
             .write(JUDGED, kept.to_string().as_bytes());

@@ -52,7 +52,7 @@ use whizbang_core::store::Reader;
 use whizbang_core::store::fs::RealFs;
 use whizbang_eval::matrix::{self, Cell, Matrix};
 use whizbang_eval::sets::{self, Judging, Set};
-use whizbang_squint::job::Job;
+use whizbang_squint::job::{Job, Role as JobRole};
 
 use crate::door::{CHECK_OUTPUT_TOKENS, printable};
 use crate::import;
@@ -323,6 +323,20 @@ pub fn plan(
                 };
                 images.push(*found);
             }
+            // An arm that measures tiles for this use case cannot take a job that relates
+            // a pair: the matrix is refused before anything runs.
+            let paired = (job.images.iter()).any(|image| image.role != JobRole::Candidate);
+            for arm in &matrix.matrix.arms {
+                let tiles = arm
+                    .detail_for(&job.use_case)
+                    .is_some_and(|d| d.split(',').any(|d| d == whizbang_squint::details::TILES));
+                if tiles && paired {
+                    return Err(format!(
+                        "{id}: item {item}: arm {arm}: {}; nothing was run",
+                        whizbang_squint::details::tiles_refused(&job.use_case)
+                    ));
+                }
+            }
             jobs.insert((id.clone(), item.clone()), (job, images));
             its.push(item.clone());
         }
@@ -411,10 +425,14 @@ fn call_of(planned: &Planned, argument: &CellArgument) -> Result<Call, String> {
         .argument("tools", Value::text(&arm.offered()))
         .argument("details", Value::text(arm.details()))
         .argument("projection", Value::text(arm.projection()))
+        .argument("second_look", Value::text(arm.second_look()))
         .argument(
             CELL_ARGUMENT,
             Value::text(&serde_json::to_string(argument).map_err(|e| e.to_string())?),
         );
+    if let Some(detail) = arm.detail_for(&planned.job.use_case) {
+        call = call.argument("detail", Value::text(&detail));
+    }
     if planned.cell.backend != "default" {
         call = call.argument("judge", Value::text(&planned.cell.backend));
     }

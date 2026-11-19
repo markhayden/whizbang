@@ -417,6 +417,21 @@ pub fn submission_of(items: &[&str], disposition: &str, said: &str) -> Vec<u8> {
     }))
 }
 
+/// An answer of 200 whose turn, as Anthropic answers, calls `submit_verdict` once with
+/// these arguments.
+pub fn submitting(input: serde_json::Value) -> Vec<u8> {
+    ok(&serde_json::json!({
+        "id": "msg_2", "type": "message", "role": "assistant", "model": "claude-haiku-5-5",
+        "content": [
+            { "type": "thinking", "thinking": "", "signature": "c2lnbmVk" },
+            { "type": "tool_use", "id": "toolu_1", "name": "submit_verdict", "caller": { "type": "direct" },
+              "input": input }
+        ],
+        "stop_reason": "tool_use",
+        "usage": { "input_tokens": 3_000, "output_tokens": 400 }
+    }))
+}
+
 /// An answer of 200 of this provider whose turn says `text` and ends, reporting this
 /// usage: the whole input, how much of it was read from a cache, and the output.
 pub fn said_by(provider: Provider, text: &str, usage: (u64, u64, u64)) -> Vec<u8> {
@@ -559,6 +574,7 @@ pub fn checked_job(
         detail: None,
         projection: "full",
         tools: &[],
+        second_look: false,
     };
     let printed = whizbang::door::check_job(&executor, job, images, None, None, &measuring, &read);
     drop(executor);

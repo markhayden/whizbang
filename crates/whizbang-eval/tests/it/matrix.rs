@@ -32,7 +32,8 @@ fn the_ported_study_matrices_are_read() {
             "study-sol",
             "study-sonnet",
             "study-terra",
-            "study-tools"
+            "study-tools",
+            "unsure-screen"
         ]
     );
     // The models of the Google and OpenAI judges are named, and every model has a
@@ -120,5 +121,51 @@ fn a_matrix_is_read_strictly() {
     assert_eq!(
         Matrix::parse(&spaced).unwrap().identity(),
         matrix.identity()
+    );
+}
+
+#[test]
+fn the_unsure_screen_and_its_gate_are_read() {
+    // The screen (plan m3, task U1, item 5): four arms on reality-checks and
+    // reference-consistency, Haiku, three times.
+    let text = std::fs::read_to_string(repo().join("matrices/unsure-screen.toml")).unwrap();
+    let screen = Matrix::parse(&text).unwrap();
+    let arms: Vec<String> = screen.matrix.arms.iter().map(ToString::to_string).collect();
+    assert_eq!(
+        arms,
+        [
+            "F",
+            "F;details=tiles@reality-checks",
+            "F;second_look=on",
+            "F;details=tiles@reality-checks;second_look=on"
+        ]
+    );
+    assert_eq!(screen.matrix.sets.len(), 4);
+    assert_eq!(screen.matrix.repetitions, 3);
+    let judges: Vec<&str> = screen
+        .matrix
+        .judges
+        .iter()
+        .map(|j| j.model.as_str())
+        .collect();
+    assert_eq!(judges, ["claude-haiku-5-5"]);
+    // Tiles go to reality-checks alone; the rest of each arm is F's.
+    for arm in &screen.matrix.arms {
+        assert_eq!(arm.detail_for("reference-consistency"), None);
+        assert_eq!(arm.offered(), "view,align,resize");
+    }
+    // Its forecast for the 44 items: Haiku's settled cost per decision, twice under F,
+    // three times with the second look, the whole doubled.
+    let items: Vec<(String, Vec<String>)> = [20, 2, 20, 2]
+        .iter()
+        .zip(&screen.matrix.sets)
+        .map(|(n, set)| (set.clone(), (0..*n).map(|i| i.to_string()).collect()))
+        .collect();
+    let cells = screen.cells(&items);
+    assert_eq!(cells.len(), 44 * 4 * 3);
+    let rate = 3_293;
+    assert_eq!(
+        matrix::forecast(&cells).unwrap(),
+        2 * 44 * 3 * rate * (2 + 2 + 3 + 3)
     );
 }

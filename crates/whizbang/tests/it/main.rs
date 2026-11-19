@@ -32,6 +32,7 @@ mod select;
 mod serve;
 mod setup;
 mod spend;
+mod stats;
 mod store;
 mod tool_file;
 mod tool_worker;

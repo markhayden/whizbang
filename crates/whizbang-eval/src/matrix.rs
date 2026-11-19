@@ -60,11 +60,72 @@ pub struct Judge {
 /// latter answered with its pictures alone (squint's control); or `F`, the details of each
 /// pair measured first and opening the conversation. Either may name more tools after a
 /// `+` each, which the judge is offered too: `C+outline`.
+///
+/// Beside its tools, an arm `F` has two settings (plan m3, task U1, item 2): `details`, the
+/// details measured first, each for the use cases it is named for, where `align` alone is
+/// measured otherwise; and `second_look`, `on` or `off`. Both are part of the arm's name, so
+/// of each cell's identity and of the matrix's: `F;details=tiles@reality-checks;second_look=on`.
+/// A matrix file may write an arm as that name, or as a table:
+/// `{ arm = "F", details = [{ detail = "tiles", use_cases = ["reality-checks"] }], second_look = "on" }`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Arm {
     pub first: bool,
     pub tools: Vec<String>,
+    pub details: Vec<Detail>,
+    pub second_look: bool,
 }
+
+/// A detail an arm measures first, and the use cases it is measured for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Detail {
+    pub detail: String,
+    pub use_cases: Vec<String>,
+}
+
+/// The details an arm may name: `align` and the two that compare a pair in one grid, each
+/// for a use case that relates a pair; and `tiles`, for a use case with one image. The
+/// binary's tests hold this to `whizbang_squint::details::takes`.
+pub const DETAILS_TAKEN: [(&str, &[&str]); 4] = [
+    (
+        "align",
+        &[
+            "source-fidelity",
+            "reference-consistency",
+            "product-fidelity",
+            "brief-compliance",
+        ],
+    ),
+    (
+        "change_map",
+        &[
+            "source-fidelity",
+            "reference-consistency",
+            "product-fidelity",
+            "brief-compliance",
+        ],
+    ),
+    (
+        "edge_similarity",
+        &[
+            "source-fidelity",
+            "reference-consistency",
+            "product-fidelity",
+            "brief-compliance",
+        ],
+    ),
+    ("tiles", &["reality-checks", "brief-compliance"]),
+];
+
+/// Whether a detail can be measured first under a use case.
+pub fn takes(detail: &str, use_case: &str) -> bool {
+    DETAILS_TAKEN
+        .iter()
+        .any(|(named, cases)| *named == detail && cases.contains(&use_case))
+}
+
+/// The most details an arm names.
+pub const ARM_DETAILS_LIMIT: usize = 8;
 
 impl Arm {
     /// The tools the judge is offered, separated by commas.
@@ -88,9 +149,65 @@ impl Arm {
         if self.first { "first" } else { "none" }
     }
 
+    /// `check`'s argument `detail` under a use case: the details the arm names for it,
+    /// separated by commas; none when it names none, and `check` then measures `align`.
+    pub fn detail_for(&self, use_case: &str) -> Option<String> {
+        let named: Vec<&str> = (self.details.iter())
+            .filter(|d| d.use_cases.iter().any(|u| u == use_case))
+            .map(|d| d.detail.as_str())
+            .collect();
+        (!named.is_empty()).then(|| named.join(","))
+    }
+
+    /// `check`'s argument `second_look`: `on` or `off`.
+    pub fn second_look(&self) -> &'static str {
+        if self.second_look { "on" } else { "off" }
+    }
+
     /// `check`'s argument `projection`: `visual_only` for the control, `full` otherwise.
     pub fn projection(&self) -> &'static str {
         if self.first { "full" } else { "visual_only" }
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if !self.first && (!self.details.is_empty() || self.second_look) {
+            return Err(format!(
+                "arm {self}: details and the second look are settings of an arm F; C is the \
+                 control"
+            ));
+        }
+        if self.details.len() > ARM_DETAILS_LIMIT {
+            return Err(format!("arm {self}: at most {ARM_DETAILS_LIMIT} details"));
+        }
+        let mut seen = BTreeSet::new();
+        for detail in &self.details {
+            if !DETAILS_TAKEN
+                .iter()
+                .any(|(named, _)| *named == detail.detail)
+            {
+                return Err(format!(
+                    "arm {self}: {:?} is no detail measured first: align, change_map, \
+                     edge_similarity or tiles",
+                    detail.detail
+                ));
+            }
+            if detail.use_cases.is_empty() || !seen.insert(detail.detail.as_str()) {
+                return Err(format!(
+                    "arm {self}: each detail is named once, for at least one use case"
+                ));
+            }
+            for use_case in &detail.use_cases {
+                if !takes(&detail.detail, use_case) {
+                    let shown: String = use_case.chars().take(64).collect();
+                    return Err(format!(
+                        "arm {self}: the detail {} cannot be measured for the use case \
+                         {shown:?}",
+                        detail.detail
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -100,32 +217,90 @@ impl std::fmt::Display for Arm {
         for tool in &self.tools {
             write!(f, "+{tool}")?;
         }
+        if !self.details.is_empty() {
+            let named: Vec<String> = (self.details.iter())
+                .map(|d| format!("{}@{}", d.detail, d.use_cases.join(",")))
+                .collect();
+            write!(f, ";details={}", named.join("|"))?;
+        }
+        if self.second_look {
+            f.write_str(";second_look=on")?;
+        }
         Ok(())
     }
+}
+
+/// A name of a tool, a detail or a use case: a lower-case letter, then lower-case
+/// letters, digits, `_` and `-`, at most 64.
+fn plain(name: &str) -> bool {
+    name.starts_with(|c: char| c.is_ascii_lowercase())
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
 }
 
 impl std::str::FromStr for Arm {
     type Err = String;
 
     fn from_str(text: &str) -> Result<Arm, String> {
-        let mut parts = text.split('+');
+        let mut settings = text.split(';');
+        let base = settings.next().unwrap_or_default();
+        let mut parts = base.split('+');
         let first = match parts.next() {
             Some("C") => false,
             Some("F") => true,
             _ => return Err(format!("arm {text:?} is not C or F, with +<tool> after it")),
         };
         let tools: Vec<String> = parts.map(str::to_owned).collect();
-        let plain = |tool: &String| {
-            tool.starts_with(|c: char| c.is_ascii_lowercase())
-                && tool.len() <= 64
-                && tool
-                    .chars()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
-        };
-        if tools.len() > ARM_TOOLS_LIMIT || !tools.iter().all(plain) {
+        if tools.len() > ARM_TOOLS_LIMIT || !tools.iter().all(|tool| plain(tool)) {
             return Err(format!("arm {text:?} names a tool that is no tool's name"));
         }
-        Ok(Arm { first, tools })
+        let mut arm = Arm {
+            first,
+            tools,
+            details: Vec::new(),
+            second_look: false,
+        };
+        let mut said = BTreeSet::new();
+        for setting in settings {
+            let (name, value) = setting.split_once('=').unwrap_or((setting, ""));
+            if !said.insert(name) {
+                return Err(format!("arm {text:?} gives {name} twice"));
+            }
+            match name {
+                "details" => {
+                    for one in value.split('|') {
+                        let (detail, cases) = one.split_once('@').unwrap_or((one, ""));
+                        let use_cases: Vec<String> = (cases.split(','))
+                            .filter(|c| !c.is_empty())
+                            .map(str::to_owned)
+                            .collect();
+                        if !plain(detail) || !use_cases.iter().all(|c| plain(c)) {
+                            return Err(format!(
+                                "arm {text:?}: details is <detail>@<use case>,..., separated by |"
+                            ));
+                        }
+                        arm.details.push(Detail {
+                            detail: detail.to_owned(),
+                            use_cases,
+                        });
+                    }
+                }
+                "second_look" => match value {
+                    "on" => arm.second_look = true,
+                    "off" => {}
+                    _ => return Err(format!("arm {text:?}: second_look is on or off")),
+                },
+                _ => {
+                    return Err(format!(
+                        "arm {text:?}: its settings are details and second_look"
+                    ));
+                }
+            }
+        }
+        arm.validate()?;
+        Ok(arm)
     }
 }
 
@@ -135,10 +310,49 @@ impl Serialize for Arm {
     }
 }
 
+/// An arm as a matrix file writes it: its name, or a table of its base and its settings.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Written {
+    Name(String),
+    Table(Table),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Table {
+    arm: String,
+    #[serde(default)]
+    details: Vec<Detail>,
+    #[serde(default)]
+    second_look: Option<String>,
+}
+
 impl<'de> Deserialize<'de> for Arm {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Arm, D::Error> {
-        let text = String::deserialize(d)?;
-        text.parse().map_err(serde::de::Error::custom)
+        let read = |text: &str| text.parse::<Arm>().map_err(serde::de::Error::custom);
+        match Written::deserialize(d)? {
+            Written::Name(text) => read(&text),
+            Written::Table(table) => {
+                if table.arm.contains(';') {
+                    return Err(serde::de::Error::custom(
+                        "a table's arm is C or F with its tools; its settings are its keys",
+                    ));
+                }
+                let mut arm = read(&table.arm)?;
+                arm.details = table.details;
+                arm.second_look = match table.second_look.as_deref() {
+                    None | Some("off") => false,
+                    Some("on") => true,
+                    Some(_) => {
+                        return Err(serde::de::Error::custom("second_look is on or off"));
+                    }
+                };
+                arm.validate().map_err(serde::de::Error::custom)?;
+                // What the cell will be named must read back as this arm.
+                read(&arm.to_string())
+            }
+        }
     }
 }
 
@@ -244,7 +458,8 @@ pub const SETTLED_PER_DECISION: [(&str, u64); 7] = [
 
 /// What a matrix is forecast to cost, in millionths of a US dollar: each cell at its
 /// model's settled cost per decision ([`SETTLED_PER_DECISION`]), twice that under arm `F`,
-/// whose opening details are counted at twice arm C, and the whole doubled. A model with
+/// whose opening details are counted at twice arm C, three times under an arm with the
+/// second look, and the whole doubled. A model with
 /// no settled cost is refused: nothing can be forecast of it.
 pub fn forecast(cells: &[Cell]) -> Result<u64, String> {
     let mut total: u64 = 0;
@@ -256,7 +471,15 @@ pub fn forecast(cells: &[Cell]) -> Result<u64, String> {
                 cell.model
             ));
         };
-        let arm = if cell.arm.starts_with('F') { 2 } else { 1 };
+        // Arm F's details are counted at twice arm C, and a second look at three times
+        // (plan m3, "Spend").
+        let arm = match cell.arm.parse::<Arm>() {
+            Ok(arm) if arm.second_look => 3,
+            Ok(arm) if arm.first => 2,
+            Ok(_) => 1,
+            Err(_) if cell.arm.starts_with('F') => 2,
+            Err(_) => 1,
+        };
         total = total.saturating_add(rate.saturating_mul(arm));
     }
     Ok(total.saturating_mul(2))

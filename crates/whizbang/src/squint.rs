@@ -78,13 +78,22 @@ pub enum Command {
         /// align, and the unverified change_map and edge_similarity, which compare the
         /// source with the frame align returned (align is then run first, named or not):
         /// where the picture changed in structure, and how much of its edges it kept.
-        /// Without it, align alone.
+        /// Or `tiles`, for a job with one image (reality-checks; brief-compliance with no
+        /// reference): the experimental candidate cut by view into four overlapping tiles
+        /// at full resolution, each labelled with its place. Without it, align alone.
         #[arg(long, value_name = "TOOLS")]
         detail: Option<String>,
         /// How a call of align by the judge is answered: `full`, everything it found,
         /// or `visual_only`, its pictures and a fixed sentence, as squint's baseline arm C.
         #[arg(long, value_name = "WHICH", default_value = "full", value_parser = ["full", "visual_only"])]
         projection: String,
+        /// `on`: when the judge's submission leaves a mandatory item tentative, so that the
+        /// verdict would be unsure, it is given one more turn, inside the run's turns and
+        /// spend, with crops at full resolution of what it cited for those items, to settle
+        /// them alone; the verdict is still worked out from the dispositions. `off` (the
+        /// default) runs as before. Experimental.
+        #[arg(long, value_name = "WHEN", default_value = "off", value_parser = ["off", "on"])]
+        second_look: String,
         /// A tool file the config lists under `[tools] paths`, offered to the judge with
         /// the schema its declaration gives; give it again for more. An experimental tool
         /// is offered only to a run that names it.
@@ -120,6 +129,7 @@ fn run_at(
             details,
             detail,
             projection,
+            second_look,
             tools,
             at,
             under,
@@ -146,6 +156,15 @@ fn run_at(
                     })?
                 }
             };
+            // Tiles are of a job with one image: one that relates a pair is refused here,
+            // naming its use case, before the config or a judge is looked at.
+            let tiles = (detail.as_deref().unwrap_or_default().split(','))
+                .any(|d| d.trim() == whizbang_squint::details::TILES);
+            let paired = (job.images.iter())
+                .any(|image| image.role != whizbang_squint::job::Role::Candidate);
+            if tiles && paired {
+                return Err(whizbang_squint::details::tiles_refused(use_case));
+            }
             let uses = Uses::One(Capability::Judge, judge.as_deref());
             let (executor, _) = executor_caching(at, under, recovery, platform, uses)?;
             let measuring = door::Measuring {
@@ -157,6 +176,7 @@ fn run_at(
                 detail: detail.as_deref(),
                 projection,
                 tools,
+                second_look: second_look == "on",
             };
             let read = |run: &_| door::verdict(&root, run);
             door::check_job(

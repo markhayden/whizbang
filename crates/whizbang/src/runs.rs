@@ -59,6 +59,12 @@ pub enum Command {
         filter: crate::stats::Filter,
         #[command(flatten)]
         at: Where,
+        /// Count the unsure verdicts by what made each unsure: `rule`, the rule of each
+        /// answer whose row was unsure, with its disposition and confidence, by use case,
+        /// read from the checklist each run of `check` kept. Aggregates only: no run and
+        /// no item is named.
+        #[arg(long, value_name = "BY", value_parser = ["rule"])]
+        unsure_by: Option<String>,
     },
     /// Write the record of each run a filter admits, as it is stored: one JSON object a
     /// line, for analysis outside whizbang. A record holds no label of an evaluation set.
@@ -80,8 +86,16 @@ pub fn run(command: &Command) -> Result<Vec<u8>, String> {
             json,
             diagnostic,
         } => show(at.root(), run, *json, diagnostic.as_deref()),
-        Command::Stats { filter, at } => {
-            crate::stats::stats(at.root(), filter).map(String::into_bytes)
+        Command::Stats {
+            filter,
+            at,
+            unsure_by,
+        } => {
+            let mut text = crate::stats::stats(at.root(), filter)?;
+            if unsure_by.is_some() {
+                text.push_str(&crate::stats::unsure_by_rule(at.root(), filter)?);
+            }
+            Ok(text.into_bytes())
         }
         Command::Export { filter, at } => crate::stats::export(at.root(), filter),
     }

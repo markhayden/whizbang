@@ -79,9 +79,9 @@ pub fn ran(
     evaluation::run(matrix, &planned, &labels, &running)
 }
 
-const PLENTY: u64 = 20_000_000;
+pub const PLENTY: u64 = 20_000_000;
 
-fn never() -> bool {
+pub fn never() -> bool {
     false
 }
 
@@ -299,4 +299,289 @@ fn at_most_the_concurrency_of_runs_hold_a_reservation_at_once() {
         (1..=2).contains(&most),
         "{most} reservations were open at once"
     );
+}
+
+// --- an arm's details and second look (plan m3, task U1, item 2) ------------------------------
+
+use crate::anthropic::submitting;
+
+/// A matrix over the set of this id, at one run at a time, under the config's default judge
+/// of Haiku, with these arms as the file writes them.
+pub fn matrix_with(set: &str, arms: &str) -> Matrix {
+    Matrix::parse(&format!(
+        "[matrix]\nname = \"settings\"\nsets = [\"{set}\"]\narms = [{arms}]\n\
+         repetitions = 1\nconcurrency = 1\n\
+         [[matrix.judges]]\nbackend = \"default\"\nmodel = \"claude-haiku-5-5\"\n"
+    ))
+    .unwrap()
+}
+
+/// A submission of these items: each id with its disposition and confidence.
+pub fn items(answers: &[(&str, &str, &str)]) -> Vec<u8> {
+    let items: Vec<serde_json::Value> = answers
+        .iter()
+        .map(|(id, disposition, confidence)| {
+            let location = (*disposition == "violation").then(|| {
+                serde_json::json!({"kind": "bbox", "frame": "raw:candidate",
+                                   "bbox": [0.1, 0.1, 0.4, 0.4], "polygon": null})
+            });
+            serde_json::json!({"id": id, "disposition": disposition, "confidence": confidence,
+                               "reason": "Looked at.", "allowed_by": null, "evidence": [],
+                               "location": location})
+        })
+        .collect();
+    submitting(
+        serde_json::json!({"schema_version": 1, "items": items, "findings": [],
+                                  "opinion": {"verdict": "pass", "reason": "Recorded only."}}),
+    )
+}
+
+pub const SF1: &str = "chk:ob:SF1@candidate";
+pub const SF2: &str = "chk:ob:SF2@candidate";
+
+/// Each run of `check` in the store: its id and its record, in the order of the runs.
+pub fn checks(root: &Path) -> Vec<(String, serde_json::Value)> {
+    let listed = crate::wired::whizbang(&["runs", "list"], root);
+    let mut found = Vec::new();
+    for line in listed.out.lines().skip(1) {
+        let run = line.split('\t').next().unwrap().to_owned();
+        let record = record_of(root, &run);
+        if record["asked"]["action"] == "check" {
+            found.push((run, record));
+        }
+    }
+    found
+}
+
+/// The text of a run's argument of this name, if it has one.
+fn argument(record: &serde_json::Value, name: &str) -> Option<String> {
+    let arguments = record["asked"]["arguments"].as_array().unwrap();
+    let found = arguments.iter().find(|a| a["name"] == name)?;
+    Some(found["value"]["text"].as_str().unwrap().to_owned())
+}
+
+fn steps_of(record: &serde_json::Value) -> Vec<String> {
+    (record["steps"].as_array().unwrap().iter())
+        .map(|step| step["action"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// What a run kept of its judging.
+fn judged_of(root: &Path, run: &str) -> serde_json::Value {
+    let run = RunId::parse(run).unwrap();
+    let kept = whizbang::door::diagnostic(root, &run, whizbang_squint::check::JUDGED).unwrap();
+    serde_json::from_slice(&kept).unwrap()
+}
+
+#[test]
+fn an_arms_details_and_second_look_are_in_its_cells_identity_and_run() {
+    let arm = r#"{ arm = "F", details = [{ detail = "change_map", use_cases = ["source-fidelity"] }], second_look = "on" }"#;
+    let matrix = matrix_with(SET, &format!("\"F\", {arm}"));
+    // The arm's name holds both settings, and reads back as the same arm.
+    let named = "F;details=change_map@source-fidelity;second_look=on";
+    let settled = &matrix.matrix.arms[1];
+    assert_eq!(settled.to_string(), named);
+    assert_eq!(
+        &named.parse::<whizbang_eval::matrix::Arm>().unwrap(),
+        settled
+    );
+    // Each setting is part of the matrix's identity.
+    let without_look = matrix_with(
+        SET,
+        r#""F", { arm = "F", details = [{ detail = "change_map", use_cases = ["source-fidelity"] }] }"#,
+    );
+    let without_detail = matrix_with(SET, r#""F", { arm = "F", second_look = "on" }"#);
+    assert_ne!(matrix.identity(), without_look.identity());
+    assert_ne!(matrix.identity(), without_detail.identity());
+    assert_ne!(without_look.identity(), without_detail.identity());
+    // And of each cell's, and of its run's arguments: arm F as before, then the arm with
+    // its settings, whose tentative item gets its second look.
+    let (judged, tiny) = world_with("matrix-settings", &["a"]);
+    let answers = vec![
+        items(&[(SF1, "held", "confident"), (SF2, "held", "confident")]),
+        items(&[(SF1, "held", "confident"), (SF2, "held", "tentative")]),
+        items(&[(SF2, "held", "confident")]),
+    ];
+    let (report, log) = run_matrix(&judged, answers, &|e| {
+        ran(e, &judged, &tiny, &matrix, PLENTY, &never)
+    });
+    let report = report.unwrap();
+    assert_eq!(
+        (report.completed, report.verdicts.get("pass")),
+        (2, Some(&2))
+    );
+    assert_eq!(log.lock().unwrap().len(), 3);
+    let root = &judged.world.root;
+    let mut runs = checks(root);
+    runs.sort_by_key(|(_, record)| argument(record, "second_look"));
+    let (plain, set) = (&runs[0].1, &runs[1].1);
+    let cell = |record: &serde_json::Value| -> serde_json::Value {
+        serde_json::from_str(&argument(record, "cell").unwrap()).unwrap()
+    };
+    assert_eq!(cell(plain)["arm"], "F");
+    assert_eq!(cell(set)["arm"], named);
+    assert_eq!(argument(plain, "second_look").as_deref(), Some("off"));
+    assert_eq!(argument(set, "second_look").as_deref(), Some("on"));
+    assert_eq!(argument(plain, "detail").as_deref(), Some("align"));
+    assert_eq!(argument(set, "detail").as_deref(), Some("change_map"));
+    assert_eq!(steps_of(plain), ["align"]);
+    assert_eq!(steps_of(set)[..2], ["align", "change_map"]);
+}
+
+#[test]
+fn an_arm_naming_a_detail_for_a_use_case_that_cannot_take_it_is_refused_before_anything_runs() {
+    // Tiles for a use case that relates a pair, a pair's detail for one that has none, a
+    // detail that is none, and a setting of the control: each refused as the file is read.
+    for (arm, says) in [
+        (
+            r#"{ arm = "F", details = [{ detail = "tiles", use_cases = ["source-fidelity"] }] }"#,
+            "the detail tiles cannot be measured for the use case \"source-fidelity\"",
+        ),
+        (
+            r#"{ arm = "F", details = [{ detail = "align", use_cases = ["reality-checks"] }] }"#,
+            "the detail align cannot be measured for the use case \"reality-checks\"",
+        ),
+        (
+            r#"{ arm = "F", details = [{ detail = "outline", use_cases = ["reality-checks"] }] }"#,
+            "is no detail measured first",
+        ),
+        (r#""C;second_look=on""#, "settings of an arm F"),
+        (r#""F;second_look=maybe""#, "second_look is on or off"),
+    ] {
+        let text = format!(
+            "[matrix]\nname = \"m\"\nsets = [\"{SET}\"]\narms = [{arm}]\nrepetitions = 1\n\
+             [[matrix.judges]]\nbackend = \"default\"\nmodel = \"claude-haiku-5-5\"\n"
+        );
+        let refused = Matrix::parse(&text).unwrap_err();
+        assert!(refused.contains(says), "{arm}: {refused}");
+    }
+    // What the matrix takes of each use case is what check takes.
+    for (detail, _) in whizbang_eval::matrix::DETAILS_TAKEN {
+        for use_case in whizbang_squint::use_case::NAMES {
+            assert_eq!(
+                whizbang_eval::matrix::takes(detail, use_case),
+                whizbang_squint::details::takes(detail, use_case),
+                "{detail} {use_case}"
+            );
+        }
+    }
+    // Tiles for brief-compliance, whose job here has a reference: refused as the matrix is
+    // planned, naming the item, before any run.
+    let judged = crate::anthropic::Judged::new("matrix-tiles-pair");
+    let id = "brief-compliance/tiny-v1";
+    let tiny = crate::fetch::tiny_of(
+        &judged.world.beside("set"),
+        id,
+        "brief-compliance",
+        &["candidate", "reference"],
+        &["a"],
+    );
+    crate::fetch::fetched_of(&tiny, &judged.world.root, id);
+    let matrix = matrix_with(
+        id,
+        r#"{ arm = "F", details = [{ detail = "tiles", use_cases = ["brief-compliance"] }] }"#,
+    );
+    let Err(refused) = evaluation::plan(&matrix, &tiny.root, &judged.world.root) else {
+        panic!("planned");
+    };
+    assert!(refused.contains("item a"), "{refused}");
+    assert!(
+        refused.contains("this brief-compliance job relates a pair"),
+        "{refused}"
+    );
+    assert!(checks(&judged.world.root).is_empty());
+}
+
+const REALITY: &str = "reality-checks/tiny-v1";
+
+/// A judged world with a set of reality-checks of these items in its store.
+fn reality_world(label: &str, items: &[&str]) -> (crate::anthropic::Judged, Tiny) {
+    let judged = crate::anthropic::Judged::new(label);
+    let tiny = crate::fetch::tiny_of(
+        &judged.world.beside("set"),
+        REALITY,
+        "reality-checks",
+        &["candidate"],
+        items,
+    );
+    crate::fetch::fetched_of(&tiny, &judged.world.root, REALITY);
+    (judged, tiny)
+}
+
+/// The four items of reality-checks, `RE2` as given and the rest held, confidently.
+fn reality(disposition: &str, confidence: &str) -> Vec<u8> {
+    let ids: Vec<String> = ["RE1", "RE2", "RE3", "RE4"]
+        .iter()
+        .map(|rule| format!("chk:ob:{rule}@candidate"))
+        .collect();
+    let answers: Vec<(&str, &str, &str)> = ids
+        .iter()
+        .map(|id| match id.as_str() {
+            "chk:ob:RE2@candidate" => (id.as_str(), disposition, confidence),
+            _ => (id.as_str(), "held", "confident"),
+        })
+        .collect();
+    items(&answers)
+}
+
+#[test]
+fn an_arm_with_tiles_measures_the_tiles_first_in_each_of_its_runs() {
+    let (judged, tiny) = reality_world("matrix-tiles", &["a", "b"]);
+    let matrix = matrix_with(
+        REALITY,
+        r#"{ arm = "F", details = [{ detail = "tiles", use_cases = ["reality-checks"] }] }"#,
+    );
+    let answers = vec![reality("held", "confident"); 2];
+    let (report, log) = run_matrix(&judged, answers, &|e| {
+        ran(e, &judged, &tiny, &matrix, PLENTY, &never)
+    });
+    assert_eq!(report.unwrap().completed, 2);
+    let runs = checks(&judged.world.root);
+    assert_eq!(runs.len(), 2);
+    for (_, record) in &runs {
+        assert_eq!(argument(record, "detail").as_deref(), Some("tiles"));
+        assert_eq!(steps_of(record), ["view", "view", "view", "view"]);
+    }
+    // Each request opened with the tiles, before the judge's first turn.
+    for (_, request) in log.lock().unwrap().iter() {
+        let words = whizbang_squint::details::TILES_INTRO;
+        let body = String::from_utf8_lossy(request);
+        assert!(
+            body.contains(&words[..60]),
+            "{}",
+            &body[..200.min(body.len())]
+        );
+    }
+}
+
+#[test]
+fn an_arm_with_the_second_look_gives_one_on_a_tentative_item() {
+    let (judged, tiny) = reality_world("matrix-second-look", &["a", "b"]);
+    let matrix = matrix_with(REALITY, r#"{ arm = "F", second_look = "on" }"#);
+    // Item a is left tentative and settled; item b is confident at once.
+    let answers = vec![
+        reality("held", "tentative"),
+        items(&[("chk:ob:RE2@candidate", "held", "confident")]),
+        reality("held", "confident"),
+    ];
+    let (report, log) = run_matrix(&judged, answers, &|e| {
+        ran(e, &judged, &tiny, &matrix, PLENTY, &never)
+    });
+    let report = report.unwrap();
+    assert_eq!(report.verdicts.get("pass"), Some(&2));
+    assert_eq!(log.lock().unwrap().len(), 3);
+    let root = &judged.world.root;
+    let mut looks: Vec<serde_json::Value> = checks(root)
+        .iter()
+        .map(|(run, _)| judged_of(root, run)["second_look"].clone())
+        .collect();
+    looks.sort_by_key(|look| look.is_null());
+    assert_eq!(
+        looks[0]["items"],
+        serde_json::json!(["chk:ob:RE2@candidate"])
+    );
+    assert_eq!(looks[0]["outcome"], "settled");
+    assert_eq!(looks[0]["verdict_before"], "unsure");
+    assert_eq!(looks[0]["verdict_after"], "pass");
+    assert!(looks[1].is_null());
 }
