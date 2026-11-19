@@ -4,6 +4,7 @@
 //!
 //! The one writer, and what is and is not a store, are in `store/locking.rs` (task A3).
 
+mod growth;
 mod locking;
 mod prune;
 mod runs;
@@ -208,7 +209,9 @@ impl Hooked {
     }
 
     fn run(&self) {
-        if let Some(hook) = self.hook.lock().unwrap().take() {
+        // Taken out first, so that a hook may call this file system again.
+        let hook = self.hook.lock().unwrap().take();
+        if let Some(hook) = hook {
             hook();
         }
     }
@@ -703,7 +706,14 @@ fn files_are_synced_then_their_directory_then_the_pointer_then_its_directory() {
         1,
         "one pointer, replaced once"
     );
-    for event in &events[root_synced + 1..] {
+    // After it, the file of the older generation, which nobody holds, is removed
+    // (ADR 0036), and then staging.
+    assert_eq!(
+        events[root_synced + 1],
+        Event::Remove(generations.join("1.json")),
+        "{events:#?}"
+    );
+    for event in &events[root_synced + 2..] {
         assert!(
             matches!(event, Event::Remove(path) if path.starts_with(root.join("staging"))),
             "after the final sync: {event:?}"
@@ -718,6 +728,9 @@ fn a_published_generation_is_never_written_again() {
     let first = std::fs::read(root.join("generations/1.json")).unwrap();
     assert_eq!(std::fs::read(root.join("CURRENT")).unwrap(), b"1\n");
 
+    // A reader holds generation 1, so the writer leaves its file (ADR 0036).
+    let reader = Reader::open(&root, Arc::new(RealFs)).unwrap();
+    assert_eq!(reader.snapshot().unwrap().number(), 1);
     publish_new(&root, Arc::new(ShimFs::new())).unwrap();
     assert_eq!(
         std::fs::read(root.join("generations/1.json")).unwrap(),
