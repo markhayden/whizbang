@@ -257,6 +257,39 @@ fn citable(resolved: &Resolved) -> String {
     )
 }
 
+/// Holds what a submission cites as evidence to the run (squint's rule): each id an item
+/// or a finding lists under `evidence` is a tool call of this run that completed, one of
+/// `completed`; or why not, naming the item or the finding, quoting nothing it says.
+pub fn cited_calls_held(arguments: &Json, completed: &[String]) -> Result<(), String> {
+    let lists = |key: &str| arguments.get(key).and_then(Json::as_array).cloned();
+    let items = (lists("items").unwrap_or_default().into_iter()).map(|item| {
+        let named = item.get("id").and_then(Json::as_str).unwrap_or("an item");
+        (named.to_owned(), item)
+    });
+    let findings = (lists("findings").unwrap_or_default().into_iter())
+        .enumerate()
+        .map(|(at, finding)| (format!("finding {}", at + 1), finding));
+    for (who, answer) in items.chain(findings) {
+        let Some(cited) = answer.get("evidence") else {
+            continue;
+        };
+        let Some(cited) = cited.as_array() else {
+            return Err(format!("{who}: evidence is a list of tool call ids"));
+        };
+        for id in cited {
+            let completed_here = id
+                .as_str()
+                .is_some_and(|id| completed.iter().any(|c| c == id));
+            if !completed_here {
+                return Err(format!(
+                    "{who}: evidence cites a tool call that is not a completed call of this run"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// An answer read, or why not, in words that quote nothing of it.
 fn read(value: &Json, who: &str) -> Result<Answer, String> {
     serde_json::from_value(value.clone()).map_err(|_| {

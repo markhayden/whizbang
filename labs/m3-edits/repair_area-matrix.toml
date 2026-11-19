@@ -1,0 +1,115 @@
+# The matrix of the lab `m3-edits-repair_area`; the protocol beside it says what is
+# compared. Each picture of the edit set, with its defect, through the shipped recipe
+# `repair_area`, filled by the config's default fill backend (a mask found by its default
+# segmenter), and the clean picture handed back by the reference arm. The commands
+# that run it are under task B1 of `docs/plans/m3-milestone-3.md`. Written by
+# `whizbang eval edits draw`.
+version = 1
+name = "m3-edits-repair_area"
+corpus = "corpus.toml"
+protocol = "repair_area-protocol.toml"
+seed = 20261119
+
+[[image]]
+id = "spot-brick-house-golden-hour"
+inputs = { clean = "clean-brick-house-golden-hour", location = "spot-brick-house-golden-hour-box" }
+
+[[image]]
+id = "spot-brick-house-grade"
+inputs = { clean = "clean-brick-house-grade", location = "spot-brick-house-grade-box" }
+
+[[image]]
+id = "spot-brick-house-mirror"
+inputs = { clean = "clean-brick-house-mirror", location = "spot-brick-house-mirror-box" }
+
+[[image]]
+id = "spot-brick-house-source"
+inputs = { clean = "clean-brick-house-source", location = "spot-brick-house-source-box" }
+
+[[image]]
+id = "spot-hotel-pool-chairs"
+inputs = { clean = "clean-hotel-pool-chairs", location = "spot-hotel-pool-chairs-box" }
+
+[[image]]
+id = "spot-hotel-pool-crop"
+inputs = { clean = "clean-hotel-pool-crop", location = "spot-hotel-pool-crop-box" }
+
+[[image]]
+id = "spot-hotel-pool-grade"
+inputs = { clean = "clean-hotel-pool-grade", location = "spot-hotel-pool-grade-box" }
+
+[[image]]
+id = "spot-hotel-pool-no-pool"
+inputs = { clean = "clean-hotel-pool-no-pool", location = "spot-hotel-pool-no-pool-box" }
+
+[[image]]
+id = "spot-hotel-pool-source"
+inputs = { clean = "clean-hotel-pool-source", location = "spot-hotel-pool-source-box" }
+
+[[image]]
+id = "spot-red-barn-dusk"
+inputs = { clean = "clean-red-barn-dusk", location = "spot-red-barn-dusk-box" }
+
+[[image]]
+id = "spot-red-barn-grade"
+inputs = { clean = "clean-red-barn-grade", location = "spot-red-barn-grade-box" }
+
+[[image]]
+id = "spot-red-barn-mirror"
+inputs = { clean = "clean-red-barn-mirror", location = "spot-red-barn-mirror-box" }
+
+[[image]]
+id = "spot-red-barn-no-silo"
+inputs = { clean = "clean-red-barn-no-silo", location = "spot-red-barn-no-silo-box" }
+
+[[image]]
+id = "spot-red-barn-source"
+inputs = { clean = "clean-red-barn-source", location = "spot-red-barn-source-box" }
+
+[[image]]
+id = "spot-river-bridge-autumn"
+inputs = { clean = "clean-river-bridge-autumn", location = "spot-river-bridge-autumn-box" }
+
+[[image]]
+id = "spot-river-bridge-crop"
+inputs = { clean = "clean-river-bridge-crop", location = "spot-river-bridge-crop-box" }
+
+[[image]]
+id = "spot-river-bridge-grade"
+inputs = { clean = "clean-river-bridge-grade", location = "spot-river-bridge-grade-box" }
+
+[[image]]
+id = "spot-river-bridge-source"
+inputs = { clean = "clean-river-bridge-source", location = "spot-river-bridge-source-box" }
+
+[[image]]
+id = "spot-river-bridge-two-arches"
+inputs = { clean = "clean-river-bridge-two-arches", location = "spot-river-bridge-two-arches-box" }
+
+[[image]]
+id = "spot-village-street-grade"
+inputs = { clean = "clean-village-street-grade", location = "spot-village-street-grade-box" }
+
+[[image]]
+id = "spot-village-street-no-tower"
+inputs = { clean = "clean-village-street-no-tower", location = "spot-village-street-no-tower-box" }
+
+[[image]]
+id = "spot-village-street-rotate"
+inputs = { clean = "clean-village-street-rotate", location = "spot-village-street-rotate-box" }
+
+[[image]]
+id = "spot-village-street-snow"
+inputs = { clean = "clean-village-street-snow", location = "spot-village-street-snow-box" }
+
+[[image]]
+id = "spot-village-street-source"
+inputs = { clean = "clean-village-street-source", location = "spot-village-street-source-box" }
+
+[[arm]]
+name = "repair_area"
+recipe = "repair_area"
+
+[[arm]]
+name = "clean"
+reference = "clean"

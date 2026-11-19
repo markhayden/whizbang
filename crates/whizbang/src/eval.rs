@@ -90,6 +90,12 @@ pub enum Command {
         #[command(flatten)]
         under: Under,
     },
+    /// The synthetic edit set of the edits' rung 2 (plan m3, task B1): drawing it from a
+    /// set's pictures, and scoring a lab round of its recipes from the store.
+    Edits {
+        #[command(subcommand)]
+        command: EditsCommand,
+    },
     /// The baseline gate: each recorded decision of a baseline package replayed with a judge
     /// that answers its recorded turns, squint's loop on whizbang's tools and preparation,
     /// and compared with its recorded transcript. Writes the receipt and prints counts only.
@@ -133,6 +139,58 @@ pub enum Command {
         /// they are not beside the jobs: a decision whose picture is found nowhere is refused.
         #[arg(long, value_name = "DIR")]
         pictures: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum EditsCommand {
+    /// Draw the edit set from the set's pictures, each read from a folder laid out as the
+    /// set's repository is and held to the SHA-256 its job pins: 24 pictures chosen by the
+    /// seed, on each a shaded red ball with a box (for remove, and for remove_prompt named
+    /// by a phrase), a scratch with a stroke along it (repair) and a spot with a box
+    /// (repair_area), the drawn defect's exact mask kept as truth and the clean picture as
+    /// the reference. Writes the pictures, the masks, the locations' canonical files and the
+    /// manifest, edits.toml; with --lab, the lab's corpus manifest, protocols and matrices
+    /// too. Prints counts, and the forecast of the fills a round of them makes. Reads and
+    /// sends nothing else.
+    Draw {
+        /// A folder of the set's pictures, laid out as their repository is
+        /// (`<folder>/<set id>/<path>`).
+        #[arg(long, value_name = "DIR")]
+        pictures: PathBuf,
+        /// The folder the edit set is written to: never inside a git work tree unless --force.
+        #[arg(long, value_name = "DIR")]
+        out: PathBuf,
+        /// A folder the lab's files made from the manifest are written to as well.
+        #[arg(long, value_name = "DIR")]
+        lab: Option<PathBuf>,
+        /// The folder of the evaluation sets: `<use-case>/<set>/set.toml` under it.
+        #[arg(long, value_name = "DIR", default_value = "evalsets")]
+        root: PathBuf,
+        /// Write the edit set inside a git work tree.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Score the lab round of each recipe of the edit set from the store's runs: by recipe,
+    /// the pixels changed outside the result's mask, the IoU of its mask with the drawn
+    /// defect's, and the fill's mean error inside the drawn defect against the clean
+    /// picture beside a plain blur fill's. Writes m3-edits.md and m3-edits.toml in --out,
+    /// aggregates only, and prints counts. Reads the store only.
+    Score {
+        /// The folder the edit set was drawn to.
+        #[arg(long, value_name = "DIR")]
+        set: PathBuf,
+        /// The folder of the lab's files: the protocols and matrices the round ran.
+        #[arg(long, value_name = "DIR", default_value = "labs/m3-edits")]
+        labs: PathBuf,
+        /// The full whizbang commit the round ran, as `git rev-parse HEAD` prints it.
+        #[arg(long, value_name = "SHA")]
+        commit: String,
+        /// The folder the record is written to.
+        #[arg(long, value_name = "DIR")]
+        out: PathBuf,
+        #[command(flatten)]
+        at: Where,
     },
 }
 
@@ -216,6 +274,61 @@ pub fn run(command: &Command) -> Result<String, String> {
             at,
             under,
         } => run_matrix(matrix, root, at, under, recovery),
+        Command::Edits {
+            command:
+                EditsCommand::Draw {
+                    pictures,
+                    out,
+                    lab,
+                    root,
+                    force,
+                },
+        } => {
+            if !force && whizbang::edits::inside_a_work_tree(out) {
+                return Err(
+                    "the edit set's folder is inside a git work tree; its pictures are not \
+                     committed (--force writes them there anyway); nothing was drawn"
+                        .to_owned(),
+                );
+            }
+            let set = sets::find(root, whizbang::edits::SET)?;
+            let sources = whizbang::edits::sources_of(&set, pictures)?;
+            let drawn = whizbang::edits::draw(
+                set.id(),
+                &sources,
+                whizbang::edits::COUNT,
+                whizbang::edits::SEED,
+            )?;
+            whizbang::edits::write(&drawn, out)?;
+            if let Some(lab) = lab {
+                let failed = |why: std::io::Error| format!("the lab's files: {why}");
+                std::fs::create_dir_all(lab).map_err(failed)?;
+                for (name, text) in whizbang::edits::lab_files(&drawn.set) {
+                    std::fs::write(lab.join(name), text).map_err(failed)?;
+                }
+            }
+            Ok(whizbang::edits::drawn_text(&drawn))
+        }
+        Command::Edits {
+            command:
+                EditsCommand::Score {
+                    set,
+                    labs,
+                    commit,
+                    out,
+                    at,
+                },
+        } => {
+            let scoring = whizbang::edits::Scoring {
+                set,
+                labs,
+                root: at.root(),
+                commit,
+            };
+            let record = whizbang::edits::score(&scoring)?;
+            whizbang::edits::write_record(&record, out)?;
+            Ok(record.text())
+        }
         Command::Run {
             gate,
             labels,

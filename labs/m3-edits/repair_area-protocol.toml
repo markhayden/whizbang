@@ -1,0 +1,45 @@
+# The lab `m3-edits-repair_area` (plan m3, task B1, item 1): the visual quality of
+# the shipped recipe `repair_area` on the synthetic edit set (`edits.toml` beside
+# this file), each result against the clean picture, the reference arm `clean`. Wins
+# are the recipe's. The outcome is rascal's rule: `not_worse` when fewer than a third
+# of the decided pairs prefer the clean picture, `inconclusive` under ten decided
+# pairs. Frozen before the round: its digest is in every cell, and a change is a new
+# lab. Written by `whizbang eval edits draw`.
+version = 1
+name = "m3-edits-repair_area"
+seed = 20261119
+arms = ["repair_area", "clean"]
+min_decided = 10
+
+[rules]
+preferred = [2, 3]
+not_worse = [1, 3]
+
+[[group]]
+name = "edits"
+images = [
+  "spot-brick-house-golden-hour",
+  "spot-brick-house-grade",
+  "spot-brick-house-mirror",
+  "spot-brick-house-source",
+  "spot-hotel-pool-chairs",
+  "spot-hotel-pool-crop",
+  "spot-hotel-pool-grade",
+  "spot-hotel-pool-no-pool",
+  "spot-hotel-pool-source",
+  "spot-red-barn-dusk",
+  "spot-red-barn-grade",
+  "spot-red-barn-mirror",
+  "spot-red-barn-no-silo",
+  "spot-red-barn-source",
+  "spot-river-bridge-autumn",
+  "spot-river-bridge-crop",
+  "spot-river-bridge-grade",
+  "spot-river-bridge-source",
+  "spot-river-bridge-two-arches",
+  "spot-village-street-grade",
+  "spot-village-street-no-tower",
+  "spot-village-street-rotate",
+  "spot-village-street-snow",
+  "spot-village-street-source",
+]

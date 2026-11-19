@@ -556,6 +556,20 @@ pub fn picture_of_bytes_as(
     Ok(id)
 }
 
+/// The image a picture's file makes, as `store import --picture` brings it in as this
+/// projection, with no store: its identity and its binding are the ones the import gives
+/// it (plan m3, task B1: the edit set's locations are drawn on the pictures it imports).
+pub fn image_of_bytes(bytes: &[u8], projection: Projection) -> Result<Image, String> {
+    let limits = DecodeLimits::default();
+    let identified = identify(bytes, &limits).map_err(|error| error.to_string())?;
+    picture(
+        &identified.pixels,
+        identified.identity.file.0,
+        &limits,
+        projection,
+    )
+}
+
 /// The canonical file of an artifact of this type, its bytes already read, at most
 /// [`MAX_FILE_BYTES`], brought in (plan m3, task L2): a lab corpus's mask or location,
 /// which `shown` names in a complaint. A file of another type is refused before the store
