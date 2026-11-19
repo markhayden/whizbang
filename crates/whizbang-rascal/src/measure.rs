@@ -41,7 +41,7 @@ use std::sync::Arc;
 use whizbang_core::artifact::{ArtifactType, BandProfile, Line, Mask, Origin, Series, Shape, Step};
 use whizbang_core::contract::{
     Action, ActionDescriptor, Argument, Context, Count, Failure, InputPort, Kind, OutputPort,
-    PortRef, PreparedCall, Produced, RegistrationError, Registry, Value, ValueType,
+    PortRef, PreparedCall, Produced, RegistrationError, Registry, ResultKind, Value, ValueType,
 };
 use whizbang_core::identity::CanonicalPixels;
 
@@ -566,9 +566,9 @@ impl Measure {
                 .on(PortRef::input("after")),
             );
         }
-        // Q1 (#210) declares results beside artifacts; once it lands, measure declares
-        // `.results(ResultKind::Measurements)` here and hands back `Measured::numbers`.
-        let draft = draft.concurrent(true);
+        // What it measured is handed back beside its series too (plan m3, task Q1; ADR
+        // 0035): the numbers `Measured::numbers` holds.
+        let draft = draft.results(ResultKind::Measurements).concurrent(true);
         match draft.build() {
             Ok(descriptor) => Measure { descriptor },
             // The draft is written above, in full, and a test of this crate builds it.
@@ -669,8 +669,12 @@ impl Action for Measure {
         };
         let measured = measuring.run(&set);
         context.events().progress(&measured.line());
+        let numbers: Vec<serde_json::Value> = (measured.numbers.iter())
+            .map(|(name, value, unit)| serde_json::json!({"name": name, "value": value, "unit": unit}))
+            .collect();
+        let handed = serde_json::json!({ "numbers": numbers });
         if !measured.ok() {
-            return Ok(Produced::nothing());
+            return Ok(Produced::nothing().with_measurements(handed));
         }
         let mut step = Step::new(NAME, VERSION)
             .argument("set", &set.join(","))
@@ -687,7 +691,7 @@ impl Action for Measure {
             Failure::error("series", &error.without_paths())
         };
         let origin = Origin::new(step).map_err(fail)?;
-        let mut produced = Produced::nothing();
+        let mut produced = Produced::nothing().with_measurements(handed);
         for (port, name, unit, rows) in measured.series {
             let series = Series::with_rows(
                 after_image.binding(),

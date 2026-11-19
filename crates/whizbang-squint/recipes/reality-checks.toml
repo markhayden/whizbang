@@ -1,0 +1,43 @@
+# The use case reality-checks as a recipe (plan m3, task Q1, item 1): `details` measures what
+# can be measured before the judge looks, each tool a nested call of its own run, and hands
+# on the images it made and what each tool's run handed back; the judge's step is `check`,
+# the loop under the use case's rules (`rules/reality-checks.toml`, squint's), told what was
+# measured first and offered the tools it may call.
+#
+# Ported from squint's run of a use case (`crates/squint-core/src/run.rs` and
+# `crates/squint-core/rules/reality-checks.toml` at the commit `docs/sources.toml` pins), with the
+# details `check` measured first since plan 2C's task A2 (ADR 0029) as a step of their own.
+# The second look stays off here: on reality-checks it raised false accepts (plan m3,
+# task U1, docs/results/m3-unsure.md); a run sets it with --set judge.second_look=on.
+version = 1
+name = "reality-checks"
+purpose = "Checks a picture for mistakes no real photograph would make: details measured first, then the judge."
+use = "To look for the marks of a made or edited picture with no other picture to hold it to."
+use_case = "reality-checks"
+
+[inputs]
+images = { type = "Image", many = true }
+job = { type = "Text" }
+judge = { type = "Text", optional = true }
+
+[[step]]
+id = "details"
+op = "details"
+inputs = { images = "inputs.images" }
+use_case = "reality-checks"
+job = "inputs.job"
+details = "first"
+detail = "align"
+
+[[step]]
+id = "judge"
+op = "check"
+inputs = { images = "inputs.images", measured_images = "details.images" }
+use_case = "reality-checks"
+job = "inputs.job"
+judge = "inputs.judge"
+measured = "details.measurements"
+tools = "view,align,resize"
+projection = "full"
+second_look = "off"
+max_output_tokens = 2048

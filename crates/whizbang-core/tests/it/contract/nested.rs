@@ -2415,3 +2415,86 @@ fn an_abandoned_run_is_shown_to_an_action_with_a_failure_that_holds_no_path() {
     let stored = record(&world, finished.run());
     holds_no_path(&world, &String::from_utf8(stored.to_bytes()).unwrap());
 }
+
+// --- what a recipe freezes, and what each step does (plan m3, task Q1; ADR 0035) ---------
+
+#[test]
+fn a_recipe_freezes_its_own_calls_and_a_steps_own_list_binds_everything_below_it() {
+    use whizbang_core::contract::{
+        Call, Capabilities, Context, Executor, Failure, PreparedCall, Produced,
+    };
+    let world = super::commit::World::new();
+    let call = |context: &Context, name: &str| -> Result<String, String> {
+        let finished = context.executor().submit(&Call::new(name));
+        finished
+            .map(|finished| finished.outcome().name().to_owned())
+            .map_err(|error| error.to_string())
+    };
+    let expect = |held: bool, what: &str| {
+        if held {
+            Ok(Produced::nothing())
+        } else {
+            Err(Failure::error("scope", what))
+        }
+    };
+    let actions = vec![
+        // The recipe's level: its list holds its own calls; a call of no step is refused.
+        super::asked::action(
+            "recipe",
+            Vec::new(),
+            move |_: &PreparedCall, context: &Context| {
+                context.freeze_steps(["frozen-step", "open-step"]);
+                let refused = call(context, "other").is_err();
+                let frozen = call(context, "frozen-step").as_deref() == Ok("completed");
+                let open = call(context, "open-step").as_deref() == Ok("completed");
+                expect(refused && frozen && open, "the recipe's own calls")
+            },
+        ),
+        // A step that freezes its own list: it binds every run under it.
+        super::asked::action(
+            "frozen-step",
+            Vec::new(),
+            move |_: &PreparedCall, context: &Context| {
+                context.freeze_calls(["leaf"]);
+                let leaf = call(context, "leaf").as_deref() == Ok("completed");
+                expect(leaf, "the step's own list")
+            },
+        ),
+        super::asked::action(
+            "leaf",
+            Vec::new(),
+            move |_: &PreparedCall, context: &Context| {
+                expect(
+                    call(context, "other").is_err(),
+                    "the leaf under a step's list",
+                )
+            },
+        ),
+        // A step that freezes nothing: the recipe's list does not bound it, and it may
+        // call any action of the build.
+        super::asked::action(
+            "open-step",
+            Vec::new(),
+            move |_: &PreparedCall, context: &Context| {
+                let other = call(context, "other").as_deref() == Ok("completed");
+                expect(other, "a step that freezes nothing")
+            },
+        ),
+        super::asked::action("other", Vec::new(), |_: &PreparedCall, _: &Context| {
+            Ok(Produced::nothing())
+        }),
+    ];
+    let executor = super::asked::engine(
+        &world,
+        whizbang_core::capability::Roster::new(),
+        Capabilities::none(),
+        actions,
+    );
+    let finished = executor.submit(&Call::new("recipe")).unwrap();
+    assert_eq!(
+        finished.outcome().name(),
+        "completed",
+        "{:?}",
+        finished.outcome()
+    );
+}

@@ -100,6 +100,12 @@ pub struct World {
     pub grown: Arc<AtomicU64>,
     /// Whether `check` reads and keeps the decision cache.
     pub cached: bool,
+    /// The text of each use case's recipe the executor registers: the shipped ones,
+    /// unless a test changes one.
+    pub recipes: Vec<String>,
+    /// More actions the executor registers before the recipes, which a test's recipe
+    /// may name.
+    pub more: Vec<Arc<dyn Action>>,
 }
 
 impl World {
@@ -117,6 +123,10 @@ impl World {
             toolbox: Toolbox::standard(),
             grown: Arc::new(AtomicU64::new(0)),
             cached: false,
+            recipes: (whizbang_squint::recipes::SHIPPED.iter())
+                .map(|(_, text)| (*text).to_owned())
+                .collect(),
+            more: Vec::new(),
         };
         let store = world.store();
         let mut publication = store.begin().unwrap();
@@ -193,6 +203,16 @@ impl World {
             registry.register(wrap(Arc::new(compare.unwrap()))).unwrap();
         }
         registry.register(Arc::new(grow)).unwrap();
+        // The use cases as recipes (plan m3, task Q1), over the actions above.
+        let details = whizbang_squint::measured::DetailsStep::new().unwrap();
+        registry.register(wrap(Arc::new(details))).unwrap();
+        for action in &self.more {
+            registry.register(action.clone()).unwrap();
+        }
+        for text in &self.recipes {
+            let recipe = recipe_of(text, &registry);
+            registry.register(Arc::new(recipe)).unwrap();
+        }
         let offered = roster(None, None, Some(judge.as_ref()));
         Engine::over(
             registry,
@@ -205,10 +225,29 @@ impl World {
         .with_secrets(secrets)
     }
 
+    /// A use case's recipe (plan m3, task Q1) under a job, of these images, in its order.
+    pub fn recipe(job: &whizbang_squint::job::Job, images: &[ArtifactId]) -> Call {
+        let mut call = Call::new(&job.use_case)
+            .argument("job", whizbang_core::contract::Value::text(&job.to_json()));
+        for image in images {
+            call = call.input("images", *image);
+        }
+        call
+    }
+
     /// `check` on the photograph.
     pub fn check(&self) -> Call {
         Call::new("check").input("images", self.photo.id())
     }
+}
+
+/// A recipe's text, read and checked against this registry, as an action.
+pub fn recipe_of(text: &str, registry: &Registry) -> whizbang_core::recipe::RecipeAction {
+    let checked = whizbang_core::recipe::Recipe::read(text)
+        .unwrap()
+        .check(registry)
+        .unwrap();
+    whizbang_core::recipe::RecipeAction::new(checked, text, registry).unwrap()
 }
 
 /// A scripted judge read from data (`judge-script/1`): the text, with each `$name`
@@ -270,8 +309,14 @@ pub fn left(root: &Path, fs: Arc<dyn Fs>, run: &RunId) -> Left {
         names.insert(name.clone(), (entry.kind, reader.read(entry).unwrap()));
     }
     let record = names.get("record").map(|(_, bytes)| {
-        let schema: Json = serde_json::from_str(RUN_RECORD_SCHEMA).unwrap();
-        validate(&schema, &serde_json::from_slice(bytes).unwrap()).unwrap();
+        let written: Json = serde_json::from_slice(bytes).unwrap();
+        // A recipe's run, which lists its steps, is written as run/5 (ADR 0033).
+        let schema = match written["record"].as_str() {
+            Some("run/5") => whizbang_core::contract::RUN_5_SCHEMA,
+            _ => RUN_RECORD_SCHEMA,
+        };
+        let schema: Json = serde_json::from_str(schema).unwrap();
+        validate(&schema, &written).unwrap();
         RunRecord::from_bytes(bytes).unwrap()
     });
     Left { record, names }

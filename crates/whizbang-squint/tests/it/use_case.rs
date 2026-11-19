@@ -297,3 +297,87 @@ fn a_rejection_names_the_frames_and_rules_the_judge_may_use() {
     let said = use_case::decided_of(&text, &job, &resolved, &checklist).unwrap_err();
     assert!(said.contains(": items is text;"), "{said}");
 }
+
+#[test]
+fn each_use_case_is_a_recipe_with_its_rules_details_and_tools() {
+    use whizbang_core::recipe::{Recipe, Written};
+    // Each use case of the table, and no other, has a recipe, in the table's order.
+    let named: Vec<&str> = (whizbang_squint::recipes::SHIPPED.iter())
+        .map(|(name, _)| *name)
+        .collect();
+    assert_eq!(named, use_case::NAMES);
+    let text = |value: &str| Written::Text(value.to_owned());
+    for (name, file) in whizbang_squint::recipes::SHIPPED {
+        let recipe = Recipe::read(file).unwrap();
+        assert_eq!(recipe.name, name);
+        assert_eq!(recipe.use_case.as_deref(), Some(name));
+        // Two steps: the details measured first, then the judge's.
+        let steps: Vec<(&str, &str)> = (recipe.steps.iter())
+            .map(|step| (step.id.as_str(), step.op.as_str()))
+            .collect();
+        assert_eq!(
+            steps,
+            [("details", "details"), ("judge", "check")],
+            "{name}"
+        );
+        let (details, judge) = (&recipe.steps[0], &recipe.steps[1]);
+        // Its rules: the use case's, whose rule file the judge's step reads.
+        assert!(use_case::rules(name).is_some(), "{name}");
+        for step in [details, judge] {
+            assert_eq!(step.params["use_case"], text(name), "{name}");
+            assert_eq!(step.params["job"], text("inputs.job"), "{name}");
+        }
+        // The tools that run before the judge, and what they hand the judge's step.
+        assert_eq!(details.params["details"], text("first"), "{name}");
+        assert_eq!(details.params["detail"], text("align"), "{name}");
+        assert_eq!(details.inputs["images"], "inputs.images");
+        assert_eq!(judge.params["measured"], text("details.measurements"));
+        assert_eq!(judge.inputs["measured_images"], "details.images");
+        assert_eq!(judge.inputs["images"], "inputs.images");
+        // The tools the judge may call, its output limit (the door's), and the second
+        // look, off in every recipe: on reality-checks it raised false accepts (plan m3,
+        // task U1), and elsewhere a run sets it.
+        assert_eq!(judge.params["tools"], text("view,align,resize"), "{name}");
+        assert_eq!(judge.params["projection"], text("full"), "{name}");
+        assert_eq!(judge.params["second_look"], text("off"), "{name}");
+        assert_eq!(judge.params["max_output_tokens"], Written::Integer(2048));
+        assert_eq!(judge.params["judge"], text("inputs.judge"));
+    }
+    // Each is checked against the actions of the build, as every recipe is, and answers
+    // with the judge's verdict.
+    use std::sync::Arc;
+    use whizbang_core::contract::{Kind as Level, Registry, ResultKind};
+    let mut registry = Registry::new();
+    let toolbox = whizbang_squint::check::Toolbox::standard();
+    registry
+        .register(Arc::new(
+            whizbang_squint::check::Check::new(toolbox).unwrap(),
+        ))
+        .unwrap();
+    registry
+        .register(Arc::new(whizbang_squint::view::View::new().unwrap()))
+        .unwrap();
+    registry
+        .register(Arc::new(whizbang_squint::align::Align::new().unwrap()))
+        .unwrap();
+    registry
+        .register(Arc::new(whizbang_squint::resize::Resize::new().unwrap()))
+        .unwrap();
+    for compare in [
+        whizbang_squint::compare::Compare::change_map(),
+        whizbang_squint::compare::Compare::edge_similarity(),
+    ] {
+        registry.register(Arc::new(compare.unwrap())).unwrap();
+    }
+    let details = whizbang_squint::measured::DetailsStep::new().unwrap();
+    registry.register(Arc::new(details)).unwrap();
+    for (name, file) in whizbang_squint::recipes::SHIPPED {
+        let recipe = super::world::recipe_of(file, &registry);
+        let descriptor = whizbang_core::contract::Action::descriptor(&recipe);
+        assert_eq!(descriptor.name(), name);
+        assert_eq!(descriptor.kind(), Level::Recipe);
+        assert!(descriptor.answers_with(ResultKind::Verdict), "{name}");
+        assert!(descriptor.input("images").is_some(), "{name}");
+        assert!(recipe.recipe().outputs.is_empty(), "{name}");
+    }
+}

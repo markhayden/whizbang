@@ -15,7 +15,7 @@ use whizbang_core::artifact::{self, Artifact, ArtifactError, ArtifactType, Image
 use whizbang_core::artifact::{Origin, Step};
 use whizbang_core::contract::{
     Action, ActionDescriptor, Context, Count, DescriptorError, Failure, InputPort, Kind,
-    OutputPort, PreparedCall, Produced,
+    OutputPort, PreparedCall, Produced, ResultKind,
 };
 use whizbang_core::identity::{
     Binding, CanonicalPixels, DecodeLimits, Direction, IdentityError, Mapping, Projection, Topology,
@@ -476,6 +476,7 @@ impl Align {
             "The image warped into the other's grid, when the pair registers.",
             Count::between(0, 1),
         ))
+        .results(ResultKind::Measurements)
         .concurrent(true);
         Ok(Align(draft.build()?))
     }
@@ -508,7 +509,9 @@ impl Action for Align {
         let said = report(&aligned).to_string();
         let kept = context.diagnostics().write(REPORT, said.as_bytes());
         kept.map_err(|why| failed(&why))?;
-        let mut produced = Produced::nothing();
+        // What it found is handed back as its measurements too (ADR 0035): a later step
+        // is given them by this run, and never works them out again.
+        let mut produced = Produced::nothing().with_measurements(report(&aligned));
         if let Some(frame) = aligned.frame {
             produced = produced.with("aligned", frame.image);
         }

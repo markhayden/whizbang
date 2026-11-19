@@ -1,6 +1,7 @@
 //! `whizbang squint check <use-case>` (`SPEC.md` section 11; plan 2A, task S2; plan 2C,
 //! task A1): wiring from arguments to the door (`whizbang::door::check_job`), which runs
-//! `check` through the executor under the use case and a job, and says its verdict.
+//! the use case's recipe through the executor under a job (plan m3, task Q1: `details`,
+//! then `check` as the judge's step), and says its verdict.
 
 use std::path::PathBuf;
 

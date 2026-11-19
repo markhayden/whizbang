@@ -18,13 +18,14 @@ whizbang-core.workspace = true
 clap.workspace = true
 # Rascal's constant sets are TOML files, copied byte for byte (`constants`).
 toml.workspace = true
+# What `measure` measured is handed back beside its series as one JSON document (ADR 0035).
+serde_json.workspace = true
 
 [dev-dependencies]
 # The tests of `segment` and `render` paint and read their pictures with it, at the version
 # the core decodes with. A rendering's file is written by the core's one encoder.
 image = { version = "=0.25.10", default-features = false, features = ["png"] }
 whizbang-testkit.workspace = true
-serde_json.workspace = true
 
 [lints]
 workspace = true

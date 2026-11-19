@@ -142,11 +142,44 @@ impl Outcome {
 pub struct Finished {
     run: RunId,
     outcome: Outcome,
+    verdict: Option<super::Verdict>,
+    measurements: Option<serde_json::Value>,
 }
 
 impl Finished {
     pub fn new(run: RunId, outcome: Outcome) -> Finished {
-        Finished { run, outcome }
+        Finished {
+            run,
+            outcome,
+            verdict: None,
+            measurements: None,
+        }
+    }
+
+    /// The same, with what a run that completed handed back beside its artifacts
+    /// (ADR 0035): its verdict and its measurements. A run that did not complete hands
+    /// back neither.
+    pub fn with_results(
+        mut self,
+        verdict: Option<super::Verdict>,
+        measurements: Option<serde_json::Value>,
+    ) -> Finished {
+        if matches!(self.outcome, Outcome::Completed { .. }) {
+            self.verdict = verdict;
+            self.measurements = measurements;
+        }
+        self
+    }
+
+    /// The verdict the run concluded, when it completed with one: given with the
+    /// outcome, as its record holds it too.
+    pub fn verdict(&self) -> Option<&super::Verdict> {
+        self.verdict.as_ref()
+    }
+
+    /// What the run measured, when it completed with measurements.
+    pub fn measurements(&self) -> Option<&serde_json::Value> {
+        self.measurements.as_ref()
     }
 
     pub fn run(&self) -> &RunId {

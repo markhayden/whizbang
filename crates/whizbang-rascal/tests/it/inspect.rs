@@ -134,6 +134,12 @@ fn inspect_as_an_action_hands_back_the_overlay_and_the_widths() {
     assert_eq!(widths.values(), core_widths(&mask).as_slice());
     assert_eq!(widths.binding(), mask.binding());
     assert_eq!(widths.unit(), "px");
+    // Its report is its measurements, a result kind it declares (plan m3, task Q1).
+    let report = whizbang_rascal::inspect::report(&mask);
+    assert_eq!(report.measured()["line"], report.line());
+    let inspect = whizbang_rascal::inspect::Inspect::new();
+    let declared = whizbang_core::contract::Action::descriptor(&inspect);
+    assert!(declared.answers_with(whizbang_core::contract::ResultKind::Measurements));
     // A rendering is not a picture to draw on.
     let rendering = shop.put(Artifact::Image(drawn));
     let why = shop.refused(

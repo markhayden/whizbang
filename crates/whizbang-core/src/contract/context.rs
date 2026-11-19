@@ -845,6 +845,9 @@ pub struct Context {
     offer: Arc<Offer>,
     /// The run's place for facts.
     facts: RunFacts,
+    /// The runs from the one nothing called down to this run, this run last; empty for
+    /// a context no executor made.
+    lineage: Arc<Vec<super::RunId>>,
 }
 
 impl Context {
@@ -876,7 +879,21 @@ impl Context {
             diagnostics: Arc::new(NoDiagnostics),
             offer: Arc::new(Offer::default()),
             facts: RunFacts::default(),
+            lineage: Arc::new(Vec::new()),
         }
+    }
+
+    /// The same context, of the run at the end of this lineage.
+    pub(super) fn placed(mut self, lineage: Arc<Vec<super::RunId>>) -> Context {
+        self.lineage = lineage;
+        self
+    }
+
+    /// The runs from the one nothing called down to this run, this run last (ADR 0035):
+    /// what an action holds a run named to it to, as `check` holds the runs that made the
+    /// measurements it is handed. Empty for a context no executor made.
+    pub fn lineage(&self) -> &[super::RunId] {
+        &self.lineage
     }
 
     /// The same context, noting its run's facts here.
@@ -900,7 +917,15 @@ impl Context {
     /// reads.
     pub fn freeze_calls<'a>(&self, actions: impl IntoIterator<Item = &'a str>) -> bool {
         let actions = actions.into_iter().map(str::to_owned).collect();
-        self.offer.freeze(actions)
+        self.offer.freeze(actions, true)
+    }
+
+    /// Freezes the actions this run calls itself, as [`Context::freeze_calls`] does, and
+    /// leaves what those calls call to each of them (ADR 0035): what a recipe freezes, its
+    /// steps, whose own calls (a judge's tools) each step freezes for itself.
+    pub fn freeze_steps<'a>(&self, actions: impl IntoIterator<Item = &'a str>) -> bool {
+        let actions = actions.into_iter().map(str::to_owned).collect();
+        self.offer.freeze(actions, false)
     }
 
     /// Says that a run this run called is a step of a recipe, for the run's record (ADR
