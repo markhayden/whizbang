@@ -1588,16 +1588,29 @@
       "arguments": [
         {
           "name": "mode",
-          "purpose": "How the fill is pasted: feather, by the mask's core and blend; hard, on the core alone.",
+          "purpose": "How the fill is pasted: feather, by the mask's core and blend; hard, on the core alone; poisson, by the fill's gradients.",
           "type": {
             "type": "choice",
             "choices": [
               "feather",
-              "hard"
+              "hard",
+              "poisson"
             ]
           },
           "required": false,
           "default": "feather"
+        },
+        {
+          "name": "constants",
+          "purpose": "The constant set poisson takes its tolerance and its ceiling of iterations from.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "poisson-v1"
+            ]
+          },
+          "required": false,
+          "default": "poisson-v1"
         }
       ],
       "inputs": [

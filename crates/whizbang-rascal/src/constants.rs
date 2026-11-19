@@ -18,6 +18,9 @@ pub const WINDOW_V1: (&str, &str) = ("window-v1", include_str!("../constants/win
 /// the path and spacing of its samples.
 pub const TIGHTEN_V1: (&str, &str) = ("tighten-v1", include_str!("../constants/tighten-v1.toml"));
 
+/// `poisson-v1`: the tolerance and the ceiling of iterations of `paste`'s mode `poisson`.
+pub const POISSON_V1: (&str, &str) = ("poisson-v1", include_str!("../constants/poisson-v1.toml"));
+
 /// The list of every set rascal shipped and its digest.
 pub const DIGESTS: &str = include_str!("../constants/digests.txt");
 

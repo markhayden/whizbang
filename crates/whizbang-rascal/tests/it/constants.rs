@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use whizbang_core::identity::Digest;
-use whizbang_rascal::constants::{self, DIGESTS, TIGHTEN_V1, WINDOW_V1};
+use whizbang_rascal::constants::{self, DIGESTS, POISSON_V1, TIGHTEN_V1, WINDOW_V1};
 
 #[test]
 fn every_set_rascal_shipped_is_here_byte_for_byte() {
@@ -45,13 +45,16 @@ fn every_set_rascal_shipped_is_here_byte_for_byte() {
         );
     }
     assert_eq!(
-        here, 8,
-        "window-v1, with window (O2); tighten-v1, with tighten (O4); fan's four, profile-v1 and ramp-v1 (O3)"
+        here, 9,
+        "window-v1, with window (O2); tighten-v1 and poisson-v1, with tighten and paste (O4); fan's four, profile-v1 and ramp-v1 (O3)"
     );
     // Each set the build holds is the file, and its values are rascal's.
     let (profile, ramp) = (constants::PROFILE_V1, constants::RAMP_V1);
     let others = constants::FAN.into_iter().chain([profile, ramp]);
-    for (name, text) in [WINDOW_V1, TIGHTEN_V1].into_iter().chain(others) {
+    for (name, text) in [WINDOW_V1, TIGHTEN_V1, POISSON_V1]
+        .into_iter()
+        .chain(others)
+    {
         let file = std::fs::read(folder.join(format!("{name}.toml"))).unwrap();
         assert_eq!(text.as_bytes(), file.as_slice(), "{name}");
     }
@@ -59,4 +62,6 @@ fn every_set_rascal_shipped_is_here_byte_for_byte() {
     assert_eq!(constants::number(ramp.1, "share"), Some(0.5));
     assert_eq!(constants::number(WINDOW_V1.1, "context"), Some(0.5));
     assert_eq!(constants::number(TIGHTEN_V1.1, "min_contrast"), Some(12.0));
+    assert_eq!(constants::number(POISSON_V1.1, "tol"), Some(1e-4));
+    assert_eq!(constants::number(POISSON_V1.1, "max_iter"), Some(2000.0));
 }

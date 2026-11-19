@@ -359,8 +359,8 @@ pub enum Command {
         #[arg(long)]
         mask: String,
         /// How the fill is pasted: `feather`, by the mask's core and blend; `hard`, on
-        /// the core alone.
-        #[arg(long, value_parser = ["feather", "hard"], default_value = "feather")]
+        /// the core alone; `poisson`, by the fill's gradients against the base round it.
+        #[arg(long, value_parser = ["feather", "hard", "poisson"], default_value = "feather")]
         mode: String,
         #[command(flatten)]
         common: Common,

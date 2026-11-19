@@ -2197,7 +2197,7 @@ fn rascal_paste_composites_a_fill_onto_its_base() {
     let other = whizbang(
         &[
             "rascal", "paste", "--image", &image, "--fill", &fill, "--mask", &mask, "--mode",
-            "poisson",
+            "smudge",
         ],
         &root,
     );
@@ -2466,6 +2466,11 @@ fn rascal_tighten_inspect_and_a_hard_paste_run_from_the_command_line() {
     assert!(printed(&out, "widths").starts_with("sha256:"), "{out}");
     let out = ran(&[
         "rascal", "paste", "--image", &image, "--fill", &image, "--mask", &mask, "--mode", "hard",
+    ]);
+    assert_eq!(printed(&out, "image"), image);
+    let out = ran(&[
+        "rascal", "paste", "--image", &image, "--fill", &image, "--mask", &mask, "--mode",
+        "poisson",
     ]);
     assert_eq!(printed(&out, "image"), image);
     // An unknown mode is the command line's error.

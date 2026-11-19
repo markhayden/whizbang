@@ -24,6 +24,7 @@ pub mod line;
 pub mod operation;
 pub mod paste;
 pub mod plug;
+pub mod poisson;
 pub mod put;
 pub mod rasterize;
 pub mod recipes;
