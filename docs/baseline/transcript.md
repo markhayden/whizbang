@@ -462,12 +462,30 @@ every transcript replays with no difference. The receipt (`README.md`) is writte
 way.
 
 A call whose arguments break the tool's schema is refused in squint's words (its
-`check_model_args`, ported). What the replay does not reproduce, each a difference it reports:
-a submission squint judged otherwise (squint validated it against its JSON Schema and its own
-rules, in its own words; whizbang's port clamps a location outside its frame and reads a
-location on a raw frame only), a crop cut from a crop squint had scaled down (its pixels come
-from squint's filter, so under either version its prepared bytes differ), a panorama, and a
-picture with transparency (squint encoded it as a PNG of its own).
+`check_model_args`, ported), and a submission is judged as squint judged it: its JSON Schema by
+the validator squint ran, at the version squint's lock file pins, then its types and its rules
+in their order, each refusal in squint's words, and the verdict by its rows
+(`crates/whizbang-squint/src/replay/submission.rs`; the replay's alone, `check` keeps its
+own). `fixtures/baseline/submissions/` holds twelve decisions captured from frozen squint, one
+for each kind of judgement the port must reproduce. The replay is built only with the feature
+`baseline-replay` (ADR 0034).
+
+**The one place the gate matches a set.** When a submission gets several checklist items
+wrong (leaves them out, or answers them more than once), squint's refusal named one of them,
+whichever its hash map gave first, so which one was not repeatable. The replay works out from
+the submission alone which items it got wrong, and names the one the recorded refusal named
+when that item is among them; otherwise the first in the checklist's order. It cannot name an
+item the submission answered once
+(`baseline::a_refusal_of_several_missing_items_matches_whichever_squint_named_and_no_other`).
+The recorded text is looked for in every refusal and in the ending of the decision, so when
+several refusals of one decision name different items, the replay may pick an item another
+turn named: that gives a false difference, never a false pass, since the item is still one
+this submission got wrong. Everything else is compared exactly.
+
+What the replay does not reproduce, each a difference it reports: a crop cut from a crop squint
+had scaled down (its pixels come from squint's filter, so under either version its prepared
+bytes differ), a panorama, and a picture with transparency (squint encoded it as a PNG of its
+own).
 
 ## The synthetic fixtures
 

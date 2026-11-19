@@ -281,17 +281,54 @@ pub fn run(command: &Command) -> Result<String, String> {
             let (Some(transcripts), Some(commit)) = (transcripts, commit) else {
                 return Err("the replay is given --transcripts and --commit".to_owned());
             };
-            let asked = whizbang::baseline::Asked {
+            baseline(
                 package,
                 transcripts,
                 receipt,
-                sets,
-                pictures: pictures.as_deref(),
                 commit,
-            };
-            whizbang::baseline::run(&asked).map(|tally| tally.text())
+                sets,
+                pictures.as_deref(),
+            )
         }
     }
+}
+
+/// `eval baseline`: the gate, in a build made with the replay.
+#[cfg(feature = "baseline-replay")]
+fn baseline(
+    package: &Path,
+    transcripts: &Path,
+    receipt: &Path,
+    commit: &str,
+    sets: &Path,
+    pictures: Option<&Path>,
+) -> Result<String, String> {
+    let asked = whizbang::baseline::Asked {
+        package,
+        transcripts,
+        receipt,
+        sets,
+        pictures,
+        commit,
+    };
+    whizbang::baseline::run(&asked).map(|tally| tally.text())
+}
+
+/// `eval baseline` in a build made without the replay: it says so, and how to build it.
+#[cfg(not(feature = "baseline-replay"))]
+fn baseline(
+    _package: &Path,
+    _transcripts: &Path,
+    _receipt: &Path,
+    _commit: &str,
+    _sets: &Path,
+    _pictures: Option<&Path>,
+) -> Result<String, String> {
+    Err(
+        "this build was made without the baseline replay; build it with \
+         `cargo build --release -p whizbang --features baseline-replay`"
+            .to_owned(),
+    )
 }
 
 /// The origins the config approves as recipients, each recipient's and those it may pass

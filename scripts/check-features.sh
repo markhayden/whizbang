@@ -90,6 +90,13 @@ if [ "$computed" = 1 ]; then
     exit 1
   fi
   echo "features: ok (the binary is built without the feature fakes)"
+  # The baseline replay's validator and the crates it brings are the feature
+  # `baseline-replay`'s alone: the owner's decision of 2026-11-19 (ADR 0034).
+  if grep -E '^jsonschema v' "$tmp/crates" >/dev/null; then
+    echo "features: the binary (-p whizbang) links jsonschema, which only the feature baseline-replay may bring (ADR 0034)" >&2
+    exit 1
+  fi
+  echo "features: ok (the binary links no jsonschema)"
 fi
 done_ok=1
 exit 0

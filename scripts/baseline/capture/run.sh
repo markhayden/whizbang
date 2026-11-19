@@ -10,7 +10,7 @@
 # cache) and runs it, which writes a synthetic package; then it writes the package's listing
 # and digest as docs/baseline/README.md says, converts the package with
 # scripts/baseline/convert.py, and copies the set, the decisions' package files the replay
-# reads and the transcripts into fixtures/baseline/synthetic/ and fixtures/baseline/scaled/.
+# reads and the transcripts into fixtures/baseline/{synthetic,scaled,submissions}/.
 # Nothing is pushed, nothing in
 # the old repository changes, and no model is called. It builds, so it is heavy: run it
 # through scripts/heavy.sh.
@@ -36,9 +36,10 @@ awk '{ print } $0 == "  \"crates/squint-cli\"," { print "  \"crates/baseline-cap
 mv "$scratch/Cargo.toml.joined" "$scratch/squint/Cargo.toml"
 grep -q -F '"crates/baseline-capture"' "$scratch/squint/Cargo.toml" || { echo "capture: the workspace was not joined" >&2; exit 1; }
 (cd "$scratch/squint" && cargo build --offline --quiet -p baseline-capture)
-# Two packages: `synthetic`, the three ordinary decisions, and `scaled`, the one whose crop
-# is scaled down (transcript format 2).
-for which in synthetic scaled; do
+# Three packages: `synthetic`, the three ordinary decisions; `scaled`, the one whose crop is
+# scaled down (transcript format 2); and `submissions`, the decisions whose submissions squint
+# refused, or took where whizbang's own port would not.
+for which in synthetic scaled submissions; do
 package="$scratch/$which/package"
 mkdir -p "$package"
 "$scratch/squint/target/debug/baseline-capture" "$package" "$which"
