@@ -12,6 +12,7 @@ mod fill;
 mod grow;
 mod grow_action;
 mod grow_runs;
+mod heal;
 mod ops_actions;
 mod paste;
 mod plug;
