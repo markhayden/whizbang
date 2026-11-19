@@ -1,7 +1,7 @@
 //! Rascal's operations and tasks (`SPEC.md` section 3): the composite of a fill onto an
 //! image under a mask; the actions `segment`, `select`, `grow`, `close`, `plug`,
 //! `subtract`, `feather`, `render`, `paste`, `fill`, `line`, `rect`, `stroke`, `rasterize`,
-//! `shrink` and `invert`; the canvases `cut`, `put`, `window`, `unwindow` and `apply`;
+//! `shrink`, `invert`, `tighten` and `inspect`; the canvases `cut`, `put`, `window`, `unwindow` and `apply`;
 //! rascal's constant sets (`constants`); and the recipes this build ships (`recipes`).
 //!
 //! Each operation's module holds its own descriptor, its own `register` and, where its
@@ -17,6 +17,7 @@ pub mod cut;
 pub mod feather;
 pub mod fill;
 pub mod grow;
+pub mod inspect;
 pub mod invert;
 pub mod line;
 pub mod operation;
@@ -32,5 +33,6 @@ pub mod select;
 pub mod shrink;
 pub mod stroke;
 pub mod subtract;
+pub mod tighten;
 pub mod unwindow;
 pub mod window;
