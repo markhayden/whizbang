@@ -216,6 +216,20 @@ pub fn compare(recorded: &str, replayed: &str) -> Result<Vec<Difference>, Refusa
     Ok(differences)
 }
 
+/// The places of a recorded transcript that format 2 leaves out of the comparison
+/// (`/images/<n>/prepared`), worked out whatever version the transcript is of: where its
+/// tool images squint scaled down are. Empty for text that is not a transcript.
+pub fn scaled_places(recorded: &str) -> Vec<String> {
+    parse(recorded)
+        .map(|t| {
+            scaled_tool_images(&t)
+                .into_iter()
+                .map(|i| format!("/images/{i}/prepared"))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// The places in `images` of the recorded transcript's tool images that squint scaled
 /// down: a crop (its mapping a box, as fractions of its parent) whose cut is longer than
 /// [`SCALED_ABOVE`] pixels on a side of the parent it was cut from. The cut is counted, not

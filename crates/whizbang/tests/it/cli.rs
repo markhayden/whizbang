@@ -1681,16 +1681,19 @@ fn eval_baseline_prints_counts_and_no_item() {
     assert_eq!(ran.code, Some(0), "{}", ran.err);
     assert_eq!(
         ran.out,
-        "fixtures: 3\ntranscripts: 1\ntranscript version: 1\nsame: 1\ndiffered: 0\nrefused: 0\nresult: fail\n"
+        "fixtures: 3\ntranscripts: 1\ntranscript version: 1\nsame: 1\ndiffered: 0\nrefused: 0\n\
+         model claude-haiku-5-5: same 1, differed 0\nuse case source-fidelity: same 1, differed 0\n\
+         result: fail\n"
     );
-    // Nothing of a decision is printed: no set, item, image, frame, verdict or file.
+    // Nothing of a decision is printed: no set, item, image, frame, verdict or file. The model
+    // and the use case are named, and nothing else.
     for word in [
         "synthetic",
         "kept",
         "moved",
         "cut-short",
         "candidate",
-        "source",
+        "raw:",
         "crop",
         "unsure",
         "decision",
