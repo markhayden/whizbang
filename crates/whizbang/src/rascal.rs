@@ -1,6 +1,6 @@
 //! `whizbang rascal segment`, `select`, `grow`, `close`, `plug`, `subtract`, `feather`,
-//! `render`, `paste`, `fill`, `line`, `rasterize`, `shrink` and `invert`, and the
-//! recipes: wiring from arguments to the door (`whizbang::door`), which
+//! `render`, `paste`, `fill`, `line`, `rect`, `stroke`, `rasterize`, `shrink` and
+//! `invert`, and the recipes: wiring from arguments to the door (`whizbang::door`), which
 //! runs the action through the executor.
 
 use std::path::PathBuf;
@@ -209,6 +209,10 @@ pub enum Command {
     Subtract(Op<whizbang_rascal::subtract::Args>),
     #[command(about = whizbang_rascal::line::ABOUT, after_help = EXIT_CODES)]
     Line(Op<whizbang_rascal::line::Args>),
+    #[command(about = whizbang_rascal::rect::ABOUT, after_help = EXIT_CODES)]
+    Rect(Op<whizbang_rascal::rect::Args>),
+    #[command(about = whizbang_rascal::stroke::ABOUT, after_help = EXIT_CODES)]
+    Stroke(Op<whizbang_rascal::stroke::Args>),
     #[command(about = whizbang_rascal::rasterize::ABOUT, after_help = EXIT_CODES)]
     Rasterize(Op<whizbang_rascal::rasterize::Args>),
     #[command(about = whizbang_rascal::shrink::ABOUT, after_help = EXIT_CODES)]
@@ -217,8 +221,9 @@ pub enum Command {
     Invert(Op<whizbang_rascal::invert::Args>),
     /// Remove the thing at a location from a picture and fill where it was: the recipe
     /// `remove`, whose steps are rasterize, grow, close, plug, subtract, feather and fill,
-    /// each a run of its own under the recipe's. Each step's run is printed, and then
-    /// the composite and the mask rebound onto it, committed to the store.
+    /// each a run of its own under the recipe's. With --box, `rect` makes the location
+    /// first, a run of its own. Each run is printed, and then the composite and the mask
+    /// rebound onto it, committed to the store.
     #[command(after_help = EXIT_CODES)]
     Remove {
         #[command(flatten)]
@@ -237,8 +242,9 @@ pub enum Command {
         common: Common,
     },
     /// Repair a stain or a spot at a location and fill it: the recipe `repair_area`,
-    /// whose steps are rasterize, feather and fill. Each step's run is printed, and then
-    /// the composite and the mask rebound onto it, committed to the store.
+    /// whose steps are rasterize, feather and fill. With --box, `rect` makes the location
+    /// first, a run of its own. Each run is printed, and then the composite and the mask
+    /// rebound onto it, committed to the store.
     #[command(after_help = EXIT_CODES)]
     RepairArea {
         #[command(flatten)]
@@ -246,6 +252,21 @@ pub enum Command {
         /// The filler, by its name in the config's `[backends.fill]` tables.
         #[arg(long, value_name = "NAME")]
         backend: Option<String>,
+        #[command(flatten)]
+        steps: Steps,
+        #[command(flatten)]
+        common: Common,
+    },
+    /// Make a rectangle on a picture a mask: the recipe `mask_rect`, whose steps are rect
+    /// and rasterize. Each step's run is printed, and then the mask.
+    #[command(after_help = EXIT_CODES)]
+    MaskRect {
+        /// The picture, by its identity in the store.
+        #[arg(long)]
+        image: String,
+        /// The box: left, top, right and bottom in pixels of the picture.
+        #[arg(long = "box", value_name = "L T R B", allow_hyphen_values = true)]
+        box_: String,
         #[command(flatten)]
         steps: Steps,
         #[command(flatten)]
@@ -353,16 +374,27 @@ pub enum Command {
     },
 }
 
-/// Where a recipe that takes a location works: the picture, and the location on it.
+/// Where a recipe that takes a location works: the picture, and the location given or
+/// the box `rect` makes it of.
 #[derive(Args)]
+#[command(group(clap::ArgGroup::new("where").required(true).args(["location", "box_"])))]
 pub struct Located {
     /// The picture, by its identity in the store.
     #[arg(long)]
     image: String,
-    /// A location on the picture, by its identity in the store, as `rascal line` prints
-    /// it.
+    /// A location on the picture, by its identity in the store, as `rascal rect`,
+    /// `stroke` or `line` prints it.
     #[arg(long)]
-    location: String,
+    location: Option<String>,
+    /// A box on the picture: left, top, right and bottom in pixels, such as "10 20 30
+    /// 40". `rect` makes it a location first.
+    #[arg(
+        long = "box",
+        id = "box_",
+        value_name = "L T R B",
+        allow_hyphen_values = true
+    )]
+    box_: Option<String>,
 }
 
 /// What a recipe's command takes of its steps.
@@ -594,6 +626,8 @@ fn run_at(
         Command::Close(op) => op.run(recovery, platform),
         Command::Subtract(op) => op.run(recovery, platform),
         Command::Line(op) => op.run(recovery, platform),
+        Command::Rect(op) => op.run(recovery, platform),
+        Command::Stroke(op) => op.run(recovery, platform),
         Command::Rasterize(op) => op.run(recovery, platform),
         Command::Shrink(op) => op.run(recovery, platform),
         Command::Invert(op) => op.run(recovery, platform),
@@ -625,6 +659,24 @@ fn run_at(
                 common,
             };
             filled.run(at, None, recovery, platform)
+        }
+        Command::MaskRect {
+            image,
+            box_,
+            steps,
+            common,
+        } => {
+            let mut arguments = vec![("box", Value::text(box_))];
+            arguments.extend(steps.arguments());
+            let inputs = vec![("image", "--image", image.as_str())];
+            let executor = executor(&common.at, &common.under, recovery, platform, Uses::Nothing)?;
+            let asked = OperationAsked {
+                action: "mask_rect",
+                arguments,
+                inputs,
+                request_id: common.request_id.as_deref(),
+            };
+            door::recipe(&executor, &asked, common.at.root())
         }
         Command::Protect {
             image,
@@ -761,7 +813,9 @@ struct Filled<'a> {
 }
 
 impl Filled<'_> {
-    /// Runs the recipe on the picture and location of `at`, and `protect`.
+    /// Runs the recipe on the picture and location of `at`, and `protect`. With a box,
+    /// `rect` makes the location first, as a run of its own, printed before the recipe's.
+    /// The request's id, if one was given, is the recipe's.
     fn run(
         &self,
         at: &Located,
@@ -773,9 +827,28 @@ impl Filled<'_> {
         let uses = Uses::One(Capability::Fill, self.backend);
         let over = common.under.over(platform, uses)?;
         let executor = built(&common.at, &over, recovery, false)?;
+        let (printed, location) = match (&at.location, &at.box_) {
+            (Some(location), _) => (String::new(), location.clone()),
+            (None, Some(boxed)) => {
+                let asked = OperationAsked {
+                    action: "rect",
+                    arguments: vec![("box", Value::text(boxed))],
+                    inputs: vec![("image", "--image", at.image.as_str())],
+                    request_id: None,
+                };
+                let printed = door::operation(&executor, &asked)?;
+                let made = printed
+                    .lines()
+                    .find_map(|line| line.strip_prefix("location "))
+                    .ok_or_else(|| "rect made no location".to_owned())?
+                    .to_owned();
+                (printed, made)
+            }
+            (None, None) => return Err("give one of --location and --box".to_owned()),
+        };
         let mut inputs = vec![
             ("image", "--image", at.image.as_str()),
-            ("location", "--location", at.location.as_str()),
+            ("location", "--location", location.as_str()),
         ];
         if let Some(protect) = protect {
             inputs.push(("protect", "--protect", protect));
@@ -791,7 +864,8 @@ impl Filled<'_> {
             inputs,
             request_id: common.request_id.as_deref(),
         };
-        door::recipe(&executor, &asked, common.at.root())
+        let ran = door::recipe(&executor, &asked, common.at.root())?;
+        Ok(printed + &ran)
     }
 }
 

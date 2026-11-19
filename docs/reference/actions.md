@@ -21,6 +21,10 @@ Removes the thing at a location: the mask grown, closed, plugged, kept off prote
 
 Repairs a stain or a spot at a location: the box or polygon as drawn, feathered, then filled.
 
+## `mask_rect`
+
+Makes a rectangle on an image a mask: the box's pixels the core, no blend and nothing protected.
+
 ## `protect`
 
 Makes the mask for a second pass: what the first mask reached is protected, the rest of the image the core.
@@ -88,6 +92,14 @@ Fills what a mask covers in an image with the configured filler, and rebinds the
 ## `line`
 
 A line location on an image: a whole column or a path, with its full width in pixels.
+
+## `rect`
+
+A box as a location on an image, from its left, top, right and bottom edges in pixels.
+
+## `stroke`
+
+A stroke location on an image: a rough mark along a path, with a radius in pixels.
 
 ## `rasterize`
 

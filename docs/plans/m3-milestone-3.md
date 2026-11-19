@@ -603,7 +603,7 @@ records, and the tasks `remove`, `repair_area`, `mask_rect` and `protect` run as
    and without `protect` where it takes one. `mask_rect` and `protect` use no model; their
    records are D1's.
 
-- [ ] Done when:
+- [x] Done when:
   `line::the_ported_vectors_give_rascals_locations`,
   `rect::the_ported_vectors_give_rascals_locations`,
   `stroke::the_ported_vectors_give_rascals_locations`,
@@ -648,7 +648,10 @@ and the tests `rect::the_ported_vectors_give_rascals_locations`,
 `stroke::the_ported_vectors_give_rascals_locations`,
 `task::mask_rect_makes_the_rectangle_as_a_mask` and
 `cli::rascal_remove_with_a_box_fills_under_a_scripted_filler`. The box is ticked by the
-second.
+second. That test asks through the door what `rascal remove --box` asks (`rect` of the box,
+then `remove`), since a scripted filler is a kind of the test's own, which the real binary
+cannot be given; the real binary runs `rascal mask-rect` in the same test and refuses
+`rascal remove` on a store that is not there.
 
 ## O2. Canvases, and a fill put back (large)
 
