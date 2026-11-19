@@ -64,7 +64,7 @@ fn drawn(w: u32, h: u32, drawing: &Drawing) -> CanonicalPixels {
 fn ball(x: f64, y: f64, r: f64) -> impl Fn(f64, f64) -> Option<[u8; 3]> {
     move |cx, cy| {
         let d = ((cx - x).powi(2) + (cy - y).powi(2)).sqrt() / r;
-        (d <= 1.0).then(|| [(215.0 - 70.0 * d) as u8, 40, 40])
+        (d <= 1.0).then_some([(215.0 - 70.0 * d) as u8, 40, 40])
     }
 }
 
