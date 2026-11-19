@@ -5,6 +5,7 @@ mod bindings;
 mod containers;
 mod digests;
 mod jpeg_sources;
+mod located;
 mod mappings;
 mod pixels;
 mod spaces;

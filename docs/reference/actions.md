@@ -72,3 +72,23 @@ Pastes a fill onto its base image under a mask; every pixel the mask weighs noth
 ## `fill`
 
 Fills what a mask covers in an image with the configured filler, and rebinds the mask onto the result.
+
+## `cut`
+
+Cuts a panorama at its seam: its last and first strips side by side on a flat canvas whose middle column is the seam.
+
+## `put`
+
+Puts a cut's canvas back onto its panorama; nothing outside the two strips changes.
+
+## `window`
+
+Crops an image and its mask around the mask's support, with context; the mask handed back places the crop onto the image.
+
+## `unwindow`
+
+Writes a crop back into exactly the box of the image window cut it from; nothing outside the box changes.
+
+## `apply`
+
+Performs a mask's prescriptions on its image, once each and in order, and rebinds the mask onto the working image.
