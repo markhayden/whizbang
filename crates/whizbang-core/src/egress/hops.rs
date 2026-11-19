@@ -155,20 +155,24 @@ impl SendCheck {
     /// Whether the bytes hold a folder kept out. On macOS, whose file system does not
     /// tell case apart by default, a folder is found in any case of its letters, ASCII
     /// or not: both are lowered one letter at a time by Unicode's rules, a final sigma
-    /// taken as any other (plan 2C, task F1). What is not
-    /// UTF-8 is read with each byte that is not in its place as the replacement
-    /// character, which no folder written as text holds. APFS also takes the two
-    /// normal forms of an accented letter as one; that is not done here (the
-    /// carry-over row on folding case on macOS).
+    /// taken as any other (plan 2C, task F1). APFS also takes the two normal forms of
+    /// an accented letter as one name, so both are then put in Unicode's canonical
+    /// decomposition (NFD), and a folder written composed is found written decomposed,
+    /// and the other way (plan m3, task F1, item 7). What is not UTF-8 is read with
+    /// each byte that is not in its place as the replacement character, which no folder
+    /// written as text holds.
     fn keeps_out(&self, bytes: &[u8]) -> bool {
         if cfg!(target_os = "macos") {
+            use unicode_normalization::UnicodeNormalization;
             // One letter at a time, so that no letter folds by its neighbours (`str`'s
-            // lowering makes a final sigma `ς`), and `ς` as `σ`, as APFS folds them.
+            // lowering makes a final sigma `ς`), and `ς` as `σ`, as APFS folds them;
+            // then decomposed.
             let folded = |bytes: &[u8]| -> String {
                 String::from_utf8_lossy(bytes)
                     .chars()
                     .flat_map(char::to_lowercase)
                     .map(|c| if c == 'ς' { 'σ' } else { c })
+                    .nfd()
                     .collect()
             };
             let lower = folded(bytes);

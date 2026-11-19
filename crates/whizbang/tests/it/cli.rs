@@ -2046,16 +2046,22 @@ fn a_tool_file_is_tried_scored_edited_and_run_again_without_a_rebuild() {
 }
 
 #[test]
-fn rascal_remove_prompt_makes_a_mask_under_the_fake_segmenter() {
+fn rascal_remove_prompt_until_feather_hands_back_the_mask() {
+    // Under a config that gives no filler: with --until feather the recipe stops before
+    // its step `fill`, asks no filler, and hands back the feathered mask.
     use crate::recipe::{CONFIG as SMALL, over, record, run, with_small_picture};
     use whizbang_core::contract::Value;
     let dir = Scratch::new("cli-remove-prompt");
     let (root, image) = with_small_picture(&dir);
     let over = over(&dir, SMALL);
-    // What `whizbang rascal remove-prompt --image <id> --prompt collar` asks.
+    // What `whizbang rascal remove-prompt --image <id> --prompt collar --until feather`
+    // asks.
     let asked = door::OperationAsked {
         action: "remove_prompt",
-        arguments: vec![("prompt", Value::text("collar"))],
+        arguments: vec![
+            ("prompt", Value::text("collar")),
+            ("until", Value::text("feather")),
+        ],
         inputs: vec![("image", "--image", image.as_str())],
         request_id: None,
     };
@@ -2116,10 +2122,84 @@ fn rascal_remove_prompt_makes_a_mask_under_the_fake_segmenter() {
             &image,
             "--prompt",
             "collar",
+            "--until",
+            "feather",
         ],
         &dir.path().join("nowhere"),
     );
     assert_eq!(refused.code, Some(1), "{}", refused.err);
+    // Without --until the recipe needs a filler, and this config gives none: refused
+    // when it is admitted, before any step runs.
+    drop(store);
+    let whole = door::OperationAsked {
+        arguments: vec![("prompt", Value::text("collar"))],
+        ..until
+    };
+    assert!(run(&over, &root, &whole).is_err());
+}
+
+#[test]
+fn rascal_remove_prompt_fills_under_a_scripted_filler() {
+    // The whole recipe, its last step `fill` answered by a scripted filler that paints
+    // one colour over the support: the composite and the mask rebound onto it come out;
+    // every pixel the mask weighs nothing is the picture's, and the core is the paint.
+    use crate::recipe::{FILLED, PAINT, over, record, run, with_small_picture};
+    use whizbang_core::artifact::{Artifact, ArtifactId, ArtifactType, get};
+    use whizbang_core::contract::Value;
+    let dir = Scratch::new("cli-remove-prompt-fill");
+    let (root, image) = with_small_picture(&dir);
+    let over = over(&dir, FILLED);
+    let asked = door::OperationAsked {
+        action: "remove_prompt",
+        arguments: vec![("prompt", Value::text("collar"))],
+        inputs: vec![("image", "--image", image.as_str())],
+        request_id: None,
+    };
+    let out = run(&over, &root, &asked).unwrap();
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 11, "{out}");
+    assert!(lines[8].starts_with("step fill fill run "), "{out}");
+    let id = |line: &str, kind: &str| -> ArtifactId {
+        let digest = line.strip_prefix(&format!("{kind} ")).expect(kind);
+        ArtifactId(digest.parse().unwrap())
+    };
+    let (made, mask) = (id(lines[9], "image"), id(lines[10], "mask"));
+    let recipe_run = lines[0]
+        .strip_prefix("run ")
+        .unwrap()
+        .strip_suffix(" completed")
+        .unwrap();
+    assert_eq!(record(&root, recipe_run).steps().len(), 8);
+    let store = Store::open(&root, Arc::new(RealFs)).unwrap();
+    let limits = DecodeLimits::default();
+    let picture = |id: ArtifactId| match get(&store, ArtifactType::Image, id, &limits).unwrap() {
+        Artifact::Image(image) => image,
+        _ => panic!("no image"),
+    };
+    let (before, after) = (picture(ArtifactId(image.parse().unwrap())), picture(made));
+    let mask = get(&store, ArtifactType::Mask, mask, &limits)
+        .unwrap()
+        .into_mask()
+        .unwrap();
+    // The mask is rebound onto the composite.
+    assert_eq!(mask.image(), after.identity().pixels);
+    let (was, now) = (
+        before.pixels(&limits).unwrap(),
+        after.pixels(&limits).unwrap(),
+    );
+    let (mut kept, mut painted) = (0, 0);
+    for (at, (a, b)) in now.rgba().chunks(4).zip(was.rgba().chunks(4)).enumerate() {
+        let (x, y) = ((at % 64) as u32, (at / 64) as u32);
+        let weight = mask.weight(x, y).unwrap();
+        if weight == 0.0 {
+            assert_eq!(a, b, "{x}, {y}");
+            kept += 1;
+        } else if weight == 1.0 {
+            assert_eq!(&a[..3], PAINT, "{x}, {y}");
+            painted += 1;
+        }
+    }
+    assert!(kept > 0 && painted > 0, "{kept} {painted}");
 }
 
 #[test]

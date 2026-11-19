@@ -69,7 +69,7 @@ fn the_digests_of_three_fixed_configs_are_the_records() {
         ),
         (
             the_specs_example(),
-            "sha256:e0f7ca76571f20c077084f4dcb18a57c0adf857b37d59928546508937fa31c7f",
+            "sha256:c68b8a0023476607843cce194c511e0b1fdfa487d527abe3b1520e119f85671a",
         ),
         (
             FULL,

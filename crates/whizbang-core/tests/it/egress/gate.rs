@@ -724,3 +724,39 @@ fn what_is_printed_of_the_check_is_its_name_and_how_many_folders_it_keeps_out() 
         "SendCheck(0 folders kept out)"
     );
 }
+
+#[test]
+fn a_store_under_a_folder_in_another_normal_form_is_kept_out() {
+    // APFS takes `é` written as one letter (U+00E9) and as `e` with its accent after it
+    // (U+0065 U+0301) as one name (plan m3, task F1, item 7). A store under the folder
+    // written one way is found in words that write it the other, in either case; on
+    // macOS the words are refused, elsewhere they are sent.
+    const KEPT_OUT: &str =
+        "the request holds the path of a folder that is kept out of what leaves the machine";
+    let (composed, decomposed) = ("/work/caf\u{e9}/store", "/work/cafe\u{301}/store");
+    let pairs = [
+        (composed, decomposed),
+        (decomposed, composed),
+        (composed, "/WORK/CAFE\u{301}/STORE"),
+    ];
+    for (folder, written) in pairs {
+        let check = SendCheck::new()
+            .keeping_out(std::path::Path::new(folder))
+            .unwrap();
+        let sender = Arc::new(FakeSender::scripted(vec![ok()]));
+        let ways = Ways::through(sender.clone())
+            .checked_by(Arc::new(check))
+            .under(policy(&approving(&["prompts"])));
+        let words = format!("see {written}/runs");
+        let words = vec![Piece::of(DataClass::Prompts, words.into_bytes())];
+        let filler = FakeFiller::new(Paint::Inverse).sending_to(recipient());
+        let filler = Arc::new(filler.posting(address(&format!("{API}/v1/fill")), words));
+        let ran = run_one(filler, ways, Secrets::none());
+        if cfg!(target_os = "macos") {
+            let fault = ran.fault.clone().expect(written);
+            assert_eq!((fault.sentence(), sender.requests()), (KEPT_OUT, 0));
+        } else {
+            assert_eq!((ran.fault.clone(), sender.requests()), (None, 1));
+        }
+    }
+}

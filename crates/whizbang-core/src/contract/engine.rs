@@ -1721,6 +1721,7 @@ impl Engine {
                             &held,
                             store,
                             &self.limits,
+                            &|id| live.nest().committed(id),
                         )
                         .map(|()| held)
                     });

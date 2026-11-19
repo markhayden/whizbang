@@ -147,12 +147,21 @@
       "name": "remove_prompt",
       "version": "1.0.0",
       "kind": "recipe",
-      "purpose": "Makes the mask that removes what a phrase names: found, grown, closed, plugged, kept off protect and feathered.",
-      "use": "To remove a thing you can name in words from a picture; give protect to keep what the mask would reach.",
+      "purpose": "Removes what a phrase names: its mask found, grown, closed, plugged, kept off protect and feathered, then filled.",
+      "use": "To remove a thing you can name in words from a picture; give protect to keep what the mask would reach; until feather gives the mask alone.",
       "arguments": [
         {
           "name": "backend",
           "purpose": "The input backend of the recipe.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "filler",
+          "purpose": "The input filler of the recipe.",
           "type": {
             "type": "text"
           },
@@ -179,7 +188,7 @@
         },
         {
           "name": "until",
-          "purpose": "Runs the recipe up to and including this step, and hands back none of its own outputs.",
+          "purpose": "Runs the recipe up to and including this step, before its last, and hands back none of its own outputs.",
           "type": {
             "type": "choice",
             "choices": [
@@ -220,6 +229,21 @@
       ],
       "outputs": [
         {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The output image of the recipe.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": {
+            "not_given": "until"
+          },
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
           "name": "mask",
           "artifact": "mask",
           "purpose": "The output mask of the recipe.",
@@ -243,6 +267,16 @@
           ],
           "when": "always",
           "chosen_by": "backend",
+          "feature_from": null,
+          "requests": 1
+        },
+        {
+          "capability": "fill",
+          "features": [],
+          "when": {
+            "not_given": "until"
+          },
+          "chosen_by": "filler",
           "feature_from": null,
           "requests": 1
         }

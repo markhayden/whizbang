@@ -229,3 +229,30 @@ fn the_key_goes_only_to_the_approved_origin_in_its_header() {
     );
     assert!(!filled.store_holds_the_key());
 }
+
+#[test]
+fn a_redirect_to_another_origin_sends_nothing_there() {
+    // fal's approved origin answers by pointing the fill to another origin, on another
+    // port of loopback: the backend asks the gate of that address, which is not the
+    // recipient's, and is refused; the other server sees no connection, so neither the
+    // key nor the picture reached it. The same rule as every provider's
+    // (`wired::a_redirect_to_another_origin_is_refused_and_the_key_is_not_sent_there`),
+    // through fal's own wire.
+    let filled = Filled::new("fal-redirect");
+    let elsewhere = whizbang_testkit::loopback::Listener::serve(1, |_, _| {});
+    let there = format!("https://127.0.0.1:{}/fal-ai/bria/eraser", elsewhere.port());
+    let moved = format!("HTTP/1.1 307 Temporary Redirect\r\nLocation: {there}\r\n\r\n");
+    let (listener, log) = serving(&filled.pki, vec![moved.into_bytes()]);
+    let origin = format!("https://127.0.0.1:{}", listener.port());
+    let over = filled.over(&format!("{origin}/fal-ai/bria/eraser"), Some(&origin));
+    let executor = filled.runner(&over);
+    let refused = filled.fill(&executor);
+    assert_eq!(refused.outcome().name(), "error", "{:?}", refused.outcome());
+    drop(executor);
+    assert_eq!(listener.finish(), 1);
+    assert_eq!(elsewhere.finish(), 0);
+    assert!(log.lock().unwrap()[0].0.contains(&filled.key));
+    let text = crate::wired::shown(&filled.world.root, refused.run().as_str());
+    assert!(text.contains("\trequest_not_approved\t"), "{text}");
+    assert!(!filled.store_holds_the_key());
+}

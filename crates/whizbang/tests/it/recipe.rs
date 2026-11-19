@@ -14,12 +14,12 @@ use whizbang::wiring::{self, Over};
 use whizbang_core::capability::{Declaration, Price, feature};
 use whizbang_core::config::{Kind, KindRefused, Table};
 use whizbang_core::contract::record::stored;
-use whizbang_core::contract::{Made, ModelIdentity, RunRecord, Value};
+use whizbang_core::contract::{Capability, Made, ModelIdentity, RunRecord, Value};
 use whizbang_core::egress::Recipient;
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{Reader, Store};
-use whizbang_testkit::capabilities::FakeSegmenter;
+use whizbang_testkit::capabilities::{FakeFiller, FakeSegmenter, Paint};
 use whizbang_testkit::scratch::Scratch;
 
 use crate::wired::whizbang;
@@ -31,8 +31,19 @@ pub(crate) const COLLAR: [[u32; 4]; 2] = [[10, 10, 20, 18], [40, 30, 50, 36]];
 pub(crate) const CONFIG: &str = "[backends.segment]\nkind = \"small\"\nurl = \"https://segment.example.org/v1\"\n\n\
      [egress.recipients.segment]\norigin = \"https://segment.example.org\"\nclasses = [\"prompts\"]\n";
 
+/// [`CONFIG`] with a filler of the kind [`Small`] too, its recipient approved for the
+/// classes a fill sends.
+pub(crate) const FILLED: &str = "[backends.segment]\nkind = \"small\"\nurl = \"https://segment.example.org/v1\"\n\n\
+     [backends.fill]\nkind = \"small\"\nurl = \"https://fill.example.org/v1\"\n\n\
+     [egress.recipients.segment]\norigin = \"https://segment.example.org\"\nclasses = [\"prompts\"]\n\n\
+     [egress.recipients.fill]\norigin = \"https://fill.example.org\"\nclasses = [\"source_images\", \"derived_images\"]\n";
+
+/// The colour the filler of the kind [`Small`] paints where the support is.
+pub(crate) const PAINT: [u8; 3] = [250, 10, 10];
+
 /// A remote kind at an address of the reserved `.example` domain, which nothing
-/// contacts, whose segmenter is the fake, finding [`COLLAR`] for `collar`.
+/// contacts: its segmenter is the fake, finding [`COLLAR`] for `collar`, and its filler
+/// the fake that paints [`PAINT`] over the support and nothing else.
 struct Small;
 
 impl Kind for Small {
@@ -42,12 +53,19 @@ impl Kind for Small {
 
     fn make(&self, table: &Table<'_>) -> Result<Made, KindRefused> {
         let model = ModelIdentity::new("small", "m", "1");
-        let features = [feature::PHRASE, feature::POINT, feature::BOX];
-        let declaration = Declaration::new(model, &features).unwrap();
         let address = table.backend().address().expect("a url");
-        let declaration = declaration
-            .sending_to(Recipient::new(address.origin().clone()))
-            .priced(Price::at_most(1000.0).unwrap());
+        let sent = |declaration: Declaration| {
+            declaration
+                .sending_to(Recipient::new(address.origin().clone()))
+                .priced(Price::at_most(1000.0).unwrap())
+        };
+        if table.capability() == Capability::Fill {
+            let declaration = sent(Declaration::new(model, &[]).unwrap());
+            let filler = FakeFiller::new(Paint::Support(PAINT)).declared_as(declaration);
+            return Ok(Made::Fill(Arc::new(filler)));
+        }
+        let features = [feature::PHRASE, feature::POINT, feature::BOX];
+        let declaration = sent(Declaration::new(model, &features).unwrap());
         let mut fake = FakeSegmenter::new().declared_as(declaration);
         for bounds in COLLAR {
             fake = fake.finding("collar", bounds);

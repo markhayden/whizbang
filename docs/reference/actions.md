@@ -11,7 +11,7 @@ Has a judge look at images through evidence tools and conclude: pass, fail or un
 
 ## `remove_prompt`
 
-Makes the mask that removes what a phrase names: found, grown, closed, plugged, kept off protect and feathered.
+Removes what a phrase names: its mask found, grown, closed, plugged, kept off protect and feathered, then filled.
 
 ## `align`
 

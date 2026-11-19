@@ -64,22 +64,33 @@ pub enum Command {
         #[command(flatten)]
         at: Where,
     },
-    /// For developers: bring a canonical artifact file into a store, under its type and
-    /// identity, or, with `--picture`, a PNG or JPEG picture as an image. The file is a
-    /// regular file, or a link to one, of at most 65 MiB: the largest picture an image
-    /// artifact holds, and the record around it.
+    /// Bring a canonical artifact file into a store, under its type and identity (as
+    /// `store export ID --to` writes one); with `--picture`, a PNG or JPEG picture as an
+    /// image; with `--mask` and `--onto`, a grey PNG or JPEG of an image as a mask on it
+    /// (as `store export --mask` writes one). The file is a regular file, or a link to
+    /// one, of at most 65 MiB: the largest picture an image artifact holds, and the
+    /// record around it. It is opened without waiting, and a FIFO is refused.
     Import {
         /// The canonical file of a mask, a location, an image, a band profile, a series
         /// or a plan: a regular file, or a link to one, of at most 65 MiB. A picture is
         /// not an artifact file: give it with `--picture`.
-        #[arg(required_unless_present = "picture")]
+        #[arg(required_unless_present_any = ["picture", "mask"])]
         file: Option<PathBuf>,
         /// A PNG or JPEG picture to commit as an image whose role is a picture. It is
         /// decoded within the core's limits (64 MiB, 50,000,000 pixels) and written
         /// again as a PNG of its pixels alone, upright and in sRGB: nothing else the file
         /// holds (its text, its EXIF, its colour profile, its name) is kept.
-        #[arg(long, value_name = "FILE", conflicts_with = "file")]
+        #[arg(long, value_name = "FILE", conflicts_with_all = ["file", "mask"])]
         picture: Option<PathBuf>,
+        /// A grey PNG or JPEG of the image `--onto` names, to commit as a mask on it:
+        /// 255 its core, 1 to 254 its blend, 0 nothing. It is decoded within the core's
+        /// limits, no more pixels than the image has, must be the image's size exactly,
+        /// and keeps nothing of the file but its pixels. Nothing is protected.
+        #[arg(long, value_name = "FILE", conflicts_with = "file", requires = "onto")]
+        mask: Option<PathBuf>,
+        /// The image a mask given with `--mask` is drawn on, by its identity in the store.
+        #[arg(long, value_name = "IMAGE", requires = "mask")]
+        onto: Option<String>,
         #[command(flatten)]
         at: Where,
         /// Make the store if there is none: at a path with nothing at it, in an empty
@@ -91,18 +102,33 @@ pub enum Command {
         create: bool,
     },
     /// Write an image in the store as a PNG file of its pixels alone, upright and in
-    /// sRGB, whatever form the store holds it in: no text, time, colour profile or EXIF.
-    /// Reads only: it works while another process writes. It writes no file over
-    /// another unless `--overwrite` is given, none through a link, and none inside the
-    /// store.
+    /// sRGB, whatever form the store holds it in: no text, time, colour profile or EXIF;
+    /// a mask, with `--mask`, as a grey PNG a person can edit and bring back with `store
+    /// import --mask`; or any artifact, by its identity alone with `--to`, as its
+    /// canonical file, which `store import` brings into another store with the same
+    /// identity. Reads only: it works while another process writes. It writes only the
+    /// file it is given, in a folder that is there: none over another unless
+    /// `--overwrite` is given, none through a link, and none inside the store.
+    #[command(group(clap::ArgGroup::new("what").required(true).args(["id", "image", "mask"])))]
     Export {
+        /// An artifact of any type, by its identity in the store: its canonical file is
+        /// written to `--to`.
+        #[arg(value_name = "ID", requires = "to", conflicts_with_all = ["image", "mask", "out"])]
+        id: Option<String>,
+        /// The canonical file to write, in a folder that is there.
+        #[arg(long, value_name = "FILE", requires = "id")]
+        to: Option<PathBuf>,
         /// The image, by its identity in the store, as `store import` or `rascal render`
         /// prints it.
-        #[arg(long)]
-        image: String,
+        #[arg(long, requires = "out", conflicts_with = "mask")]
+        image: Option<String>,
+        /// A mask, by its identity in the store, written as a grey PNG of its weights: 255
+        /// its core, its blend's samples, 0 elsewhere and under protect.
+        #[arg(long, requires = "out")]
+        mask: Option<String>,
         /// The PNG file to write, in a folder that is there.
         #[arg(long, value_name = "FILE")]
-        out: PathBuf,
+        out: Option<PathBuf>,
         /// Replace a file that is there already.
         #[arg(long)]
         overwrite: bool,
@@ -121,23 +147,47 @@ pub fn run_with(command: &Command, recovery: Recovery) -> Result<String, String>
     match command {
         Command::List { at } => list(&at.store),
         Command::Export {
+            id,
+            to,
             image,
+            mask,
             out,
             overwrite,
             at,
-        } => crate::export::export(&at.store, image, out, *overwrite),
+        } => match (id, to, image, mask, out) {
+            (Some(id), Some(to), None, None, None) => {
+                crate::export::export_file(&at.store, id, to, *overwrite)
+            }
+            (None, None, Some(image), None, Some(out)) => {
+                crate::export::export(&at.store, image, out, *overwrite)
+            }
+            (None, None, None, Some(mask), Some(out)) => {
+                crate::export::export_mask(&at.store, mask, out, *overwrite)
+            }
+            _ => Err(
+                "export takes an identity and --to, --image and --out, or --mask and --out"
+                    .to_owned(),
+            ),
+        },
         Command::Delete { at, runs } => delete(&at.store, runs, recovery),
         Command::Import {
             file,
             picture,
+            mask,
+            onto,
             at,
             create,
-        } => match (file, picture) {
-            (_, Some(picture)) => {
+        } => match (file, picture, mask, onto) {
+            (_, Some(picture), _, _) => {
                 whizbang::import::import_picture(picture, &at.store, *create, recovery)
             }
-            (Some(file), None) => whizbang::import::import(file, &at.store, *create, recovery),
-            (None, None) => Err("import takes an artifact file or --picture".to_owned()),
+            (_, None, Some(mask), Some(onto)) => {
+                whizbang::import::import_mask(mask, onto, &at.store, recovery)
+            }
+            (Some(file), None, None, _) => {
+                whizbang::import::import(file, &at.store, *create, recovery)
+            }
+            _ => Err("import takes an artifact file, --picture, or --mask and --onto".to_owned()),
         },
         Command::Prune { at } => {
             let pruned = remover(&at.store, recovery)?;

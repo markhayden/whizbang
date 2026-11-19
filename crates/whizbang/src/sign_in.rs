@@ -230,9 +230,9 @@ const O_NONBLOCK: i32 = 0x0004;
 #[cfg(target_os = "linux")]
 const O_NONBLOCK: i32 = 0o4000;
 
-/// Opens the file to read, without waiting.
+/// Opens the file to read, without waiting: also what `store import` opens with.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn open_without_waiting(place: &Path) -> std::io::Result<std::fs::File> {
+pub(crate) fn open_without_waiting(place: &Path) -> std::io::Result<std::fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
     std::fs::OpenOptions::new()
         .read(true)

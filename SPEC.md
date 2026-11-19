@@ -348,7 +348,7 @@ model = "sam3"
 [backends.fill]
 kind = "service"
 provider = "fal"
-model = "bria-erase"
+model = "bria-eraser"
 key_env = "FAL_KEY"
 ```
 

@@ -833,3 +833,59 @@ fn the_committed_picture_holds_no_metadata_of_the_file() {
         );
     }
 }
+
+#[test]
+fn a_file_over_the_limit_its_contents_allow_is_refused() {
+    // A mask drawn on a picture holds no more pixels than its image: a file whose header
+    // claims more is refused by that header, before its pixels are decoded (here its
+    // pixels could not be: they are a few bytes of nothing). A canonical file is held to
+    // the 65 MiB the largest image's file allows, by its size, unread
+    // (`import_refuses_a_file_over_its_limit_by_its_size_and_reads_one_at_the_limit`).
+    let dir = Scratch::new("import-mask-limit");
+    let store = dir.path().join("store");
+    let file = dir.path().join("base.png");
+    image::RgbImage::from_pixel(8, 6, image::Rgb([90, 90, 90]))
+        .save(&file)
+        .unwrap();
+    let (code, out, err) = import_picture(&file, &store);
+    assert_eq!(code, 0, "{err}");
+    let image = out
+        .lines()
+        .last()
+        .unwrap()
+        .strip_prefix("imported image ")
+        .unwrap()
+        .to_owned();
+    let mut ihdr = Vec::new();
+    ihdr.extend_from_slice(&100u32.to_be_bytes());
+    ihdr.extend_from_slice(&100u32.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 0, 0, 0, 0]);
+    let mut claims = b"\x89PNG\r\n\x1a\n".to_vec();
+    claims.extend(chunk(b"IHDR", &ihdr));
+    claims.extend(chunk(b"IDAT", &[0; 4]));
+    claims.extend(chunk(b"IEND", &[]));
+    let big = dir.path().join("claims.png");
+    std::fs::write(&big, claims).unwrap();
+    let before = std::fs::read_dir(store.join("objects"))
+        .map(|d| d.count())
+        .ok();
+    let (code, _, err) = whizbang(&[
+        "store",
+        "import",
+        "--mask",
+        big.to_str().unwrap(),
+        "--onto",
+        &image,
+        "--store",
+        store.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 1, "{err}");
+    assert!(
+        err.contains("100x100 is 10000 pixels, over the limit of 48"),
+        "{err}"
+    );
+    let after = std::fs::read_dir(store.join("objects"))
+        .map(|d| d.count())
+        .ok();
+    assert_eq!(before, after);
+}

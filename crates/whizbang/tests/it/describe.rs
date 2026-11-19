@@ -473,7 +473,7 @@ fn recipes_are_listed_before_primitives_with_purpose_and_use() {
         recipe["purpose"]
             .as_str()
             .unwrap()
-            .starts_with("Makes the mask that removes")
+            .starts_with("Removes what a phrase names")
     );
     assert!(
         recipe["use"]
@@ -484,13 +484,20 @@ fn recipes_are_listed_before_primitives_with_purpose_and_use() {
     let arguments: Vec<&str> = (recipe["arguments"].as_array().unwrap().iter())
         .map(|a| a["name"].as_str().unwrap())
         .collect();
-    assert_eq!(arguments, ["backend", "prompt", "set", "until"]);
+    assert_eq!(arguments, ["backend", "filler", "prompt", "set", "until"]);
     let inputs: Vec<&str> = (recipe["inputs"].as_array().unwrap().iter())
         .map(|a| a["name"].as_str().unwrap())
         .collect();
     assert_eq!(inputs, ["image", "protect"]);
     assert_eq!(recipe["needs"][0]["capability"], "segment");
     assert_eq!(recipe["needs"][0]["chosen_by"], "backend");
+    // Its last step fills, chosen by `filler`, and is needed only without `until`.
+    assert_eq!(recipe["needs"][1]["capability"], "fill");
+    assert_eq!(recipe["needs"][1]["chosen_by"], "filler");
+    assert_eq!(
+        recipe["needs"][1]["when"],
+        serde_json::json!({ "not_given": "until" })
+    );
     // A primitive says nothing of when to use it.
     assert!(actions[first_primitive].get("use").is_none());
     // The text the description prints lists the recipes first too.
