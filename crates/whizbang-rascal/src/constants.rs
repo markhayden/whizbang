@@ -14,6 +14,10 @@ pub const ARGUMENT: &str = "constants";
 /// `window-v1`: `window`'s context, as a share of the support's width and height.
 pub const WINDOW_V1: (&str, &str) = ("window-v1", include_str!("../constants/window-v1.toml"));
 
+/// `tighten-v1`: `tighten`'s least contrast, narrowest and widest defect, smoothing along
+/// the path and spacing of its samples.
+pub const TIGHTEN_V1: (&str, &str) = ("tighten-v1", include_str!("../constants/tighten-v1.toml"));
+
 /// The list of every set rascal shipped and its digest.
 pub const DIGESTS: &str = include_str!("../constants/digests.txt");
 

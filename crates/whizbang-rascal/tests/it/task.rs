@@ -2,7 +2,7 @@
 //! through the executor on pictures of 64 by 64: `remove_prompt` (plan m3, task R1, item
 //! 5) over the test kit's fake segmenter, with `protect` left out and given; and
 //! `remove`, `repair_area`, `mask_rect` and `protect` (task O1, item 3), the first two
-//! under a scripted filler.
+//! under a scripted filler; and `repair` (task O4, item 1), under the same filler.
 
 use std::sync::Arc;
 
@@ -70,6 +70,7 @@ fn engine(store: Arc<Store>, segmenter: &Arc<FakeSegmenter>) -> Engine {
     whizbang_rascal::rect::register(&mut registry).unwrap();
     whizbang_rascal::invert::register(&mut registry).unwrap();
     whizbang_rascal::fill::register(&mut registry).unwrap();
+    whizbang_rascal::tighten::register(&mut registry).unwrap();
     for recipe in recipes::shipped(&registry).unwrap() {
         registry.register(Arc::new(recipe)).unwrap();
     }
@@ -434,4 +435,83 @@ fn protect_inverts_an_earlier_mask_onto_its_composite() {
             .input("location", location),
     );
     assert!(both.contains("not both"), "{both}");
+}
+
+// --- `repair` (plan m3, task O4, item 1): a stroke along a scratch, tightened, feathered
+// and filled.
+
+#[test]
+fn repair_fills_along_the_stroke_and_keeps_every_other_pixel() {
+    let shop = filling("repair");
+    // A flat ground with a scratch 3 pixels wide along y = 32, 100 levels darker, from
+    // x = 10 to x = 54; the stroke drawn along it has a radius of 6.
+    let mut rgba = Vec::new();
+    for y in 0..SIDE {
+        for x in 0..SIDE {
+            let scratch = (10..54).contains(&x) && (31..34).contains(&y);
+            let v = if scratch { 60 } else { 160 };
+            rgba.extend_from_slice(&[v, v + 10, v - 20, 255]);
+        }
+    }
+    let pixels = whizbang_core::identity::CanonicalPixels::from_rgba(SIDE, SIDE, rgba).unwrap();
+    let image = super::paste::image_of(&pixels, "import");
+    let id = shop.put(Artifact::Image(image.clone()));
+    let path = vec![Point::new(12.0, 32.5), Point::new(52.0, 32.5)];
+    let stroke = shop.put(Artifact::Location(
+        Location::new(
+            image.binding(),
+            Shape::Stroke {
+                path: path.clone(),
+                radius: 6.0,
+            },
+            Origin::new(Step::new("stroke", "1")).unwrap(),
+        )
+        .unwrap(),
+    ));
+    let (composite, mask) = filled(
+        &shop,
+        &Call::new("repair")
+            .input("image", id)
+            .input("stroke", stroke),
+    );
+    // The core is the stroke tightened under tighten-v1, far narrower than the stroke as
+    // drawn, and it covers the scratch.
+    let tunables =
+        whizbang_rascal::tighten::Tunables::of(whizbang_rascal::constants::TIGHTEN_V1.1, |_| None)
+            .unwrap();
+    let tightened = whizbang_rascal::tighten::tighten(
+        &path,
+        6.0,
+        pixels.rgba(),
+        SIDE,
+        SIDE,
+        &tunables,
+        &|| false,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(mask.core(), tightened.core.as_slice());
+    let drawn = whizbang_rascal::rasterize::dilate_path(&path, 6.0, SIDE, SIDE);
+    assert!(
+        count(mask.core()) * 2 < count(&drawn),
+        "{}",
+        count(mask.core())
+    );
+    for x in 14..50 {
+        for y in 31..34 {
+            assert_eq!(mask.core()[(y * SIDE + x) as usize], 255, "({x}, {y})");
+        }
+    }
+    assert_eq!(mask.use_case(), UseCase::Repair);
+    assert!(mask.blend().iter().any(|b| *b != 0), "feathered");
+    // Every pixel the mask weighs nothing is the original's, and the core the filler's.
+    assert_eq!(held(&image, &composite, &mask), count(mask.core()));
+    let steps: Vec<&str> = mask
+        .origin()
+        .steps()
+        .iter()
+        .map(|s| s.action.as_str())
+        .collect();
+    assert_eq!(steps.first().copied(), Some("tighten"));
+    assert!(steps.contains(&"fill"), "{steps:?}");
 }

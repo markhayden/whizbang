@@ -111,6 +111,8 @@ fn registry_of(
     whizbang_rascal::rasterize::register(&mut primitives).map_err(|e| said(&e))?;
     whizbang_rascal::shrink::register(&mut primitives).map_err(|e| said(&e))?;
     whizbang_rascal::invert::register(&mut primitives).map_err(|e| said(&e))?;
+    whizbang_rascal::tighten::register(&mut primitives).map_err(|e| said(&e))?;
+    whizbang_rascal::inspect::register(&mut primitives).map_err(|e| said(&e))?;
     if let Some(files) = &files {
         for action in files.actions()? {
             primitives.register(action).map_err(|e| said(&e))?;

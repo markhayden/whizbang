@@ -19,7 +19,7 @@ answer by the same code.
 The action `paste`, version 1.0.0:
 
 ```
-whizbang rascal paste --image <base> --fill <fill> --mask <mask> [--mode feather] --store <dir>
+whizbang rascal paste --image <base> --fill <fill> --mask <mask> [--mode feather|hard] --store <dir>
 ```
 
 | Name | Meaning |
@@ -27,17 +27,18 @@ whizbang rascal paste --image <base> --fill <fill> --mask <mask> [--mode feather
 | `image` (input) | The base image; a rendering is refused |
 | `fill` (input) | The fill: a picture of the base's size, read only where the mask weighs over 0 |
 | `mask` (input) | The mask, on the base |
-| `mode` | How the fill is pasted: `feather`, the one mode this build has, and the default |
+| `mode` | How the fill is pasted: `feather`, the default, by the mask's core and blend; or `hard`, on the unprotected core alone, the blend read as nothing |
 
 **Output.** One image at the port `image`: the composite, derived from the base, written
 by the core's one encoder, whose origin names `paste`, its version, the mode and the three
 inputs. When the fill changes no pixel of the base, nothing is derived and the base itself
 is handed back.
 
-**The rule.** For each pixel: under protect, or with no core and no blend, the base's four
+**The rule,** in the mode `feather`, which the examples use. For each pixel: under protect, or with no core and no blend, the base's four
 bytes; in the core, each of red, green and blue the fill's; on a blend `b`, each channel
 `((255 - b) base + b fill + 127) / 255` in whole numbers, the nearest whole number to the
-mix (no mix is half way, since 255 is odd). Alpha is the base's, always. The result is
+mix (no mix is half way, since 255 is odd). In the mode `hard`, a blend pixel is the base's
+too. Alpha is the base's, always. The result is
 checked against the base and the mask once more by the core (`Derivation::checked`).
 
 ## Examples
@@ -112,14 +113,16 @@ Writing the composite's PNG costs about five times the paste.
 ## Alternatives
 
 Rascal's `feather` paste in `f32`, the same byte in every case (rung 2); the integer rule
-was kept so that no float is in the path. Rascal's `hard` and `poisson` modes are task O4's.
+was kept so that no float is in the path. Rascal's `hard` came with task O4
+(`paste::hard_writes_the_fill_where_the_core_is_set_and_nothing_else`); its `poisson` is O4's
+second part.
 
 ## Limits
 
 | Limit | Example |
 |---|---|
 | A flat fill under a wide feather shows as a halo: the mix is by weight, not by content | The first example |
-| One mode, `feather`, in this build | `--mode hard` is refused by the command line |
+| The examples and the rung 2 above are of `feather`; `hard` is held by its own test, not by an example here | `paste::hard_writes_the_fill_where_the_core_is_set_and_nothing_else` |
 | The fill's alpha is not read; the base's is kept | `composite::a_transparent_source_pixel_keeps_its_alpha_and_takes_colour_like_any_other` |
 | A fill that changes nothing hands back the base, with no new image | `composite::a_composite_that_changed_nothing_states_no_derivation` |
 
