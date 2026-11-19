@@ -47,7 +47,7 @@ git log origin/main..HEAD
 scripts/heavy.sh check just check              # heavy: it waits its turn; it asks first
 just scan-range <base> <head>
 gh run list --commit <head> --json databaseId,headSha,workflowName,status,conclusion
-gh pr checks <pr>                              # check and scripts on macos-15 and ubuntu-22.04, secrets, ci
+gh pr checks <pr>                              # check, scripts and release on macos-15 and ubuntu-22.04, secrets, ci
 ```
 
 If the worktree is not clean, or the three commits are not one commit, stop and say so: there
