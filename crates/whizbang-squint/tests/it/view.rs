@@ -507,3 +507,52 @@ fn a_judges_call_names_a_frame_and_is_answered_with_squints_presentation() {
             .starts_with("Checklist.")
     );
 }
+
+#[test]
+fn a_call_outside_the_tools_schema_is_refused_in_squints_words() {
+    use serde_json::json;
+    use whizbang_core::identity::CanonicalPixels;
+    use whizbang_squint::details::Projection;
+    use whizbang_squint::job::Job;
+    use whizbang_squint::replay::{Budget, Shown, replay};
+
+    let shown = |seed| Shown {
+        pixels: CanonicalPixels::from_rgba(32, 24, paint(32, 24, noisy(seed, false))).unwrap(),
+        sha256: "file".to_owned(),
+        pixel_sha256: "pixels".to_owned(),
+    };
+    let mut judge = Answers {
+        answers: vec![calling(json!([
+            {"id": "t1", "name": "view", "arguments": {"bbox": [0, 0, 1, 1]}},
+            {"id": "t2", "name": "view", "arguments": {"frame": "candidate", "zoom": 2}},
+            {"id": "t3", "name": "align", "arguments": "candidate onto source"},
+            {"id": "t4", "name": "align", "arguments": {"image": "candidate", "against": "source", "_squint": {}}},
+        ]))],
+        asked: Vec::new(),
+    };
+    let job = Job::shorthand("source-fidelity", true, 0, None);
+    let done = replay(
+        &job,
+        &[shown(1), shown(2)],
+        &Budget::default(),
+        1568,
+        Projection::VisualOnly,
+        &mut judge,
+    )
+    .unwrap();
+    let said: Vec<&str> = done.turns[0]["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|call| call["result"]["content"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        said,
+        [
+            "invalid arguments: missing required argument \"frame\"",
+            "invalid arguments: unknown argument \"zoom\"",
+            "invalid arguments: arguments must be an object",
+            "invalid arguments: _squint is supplied by the harness and may not appear in the model's arguments",
+        ]
+    );
+}
