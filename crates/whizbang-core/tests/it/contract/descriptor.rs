@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use whizbang_core::artifact::ArtifactType;
 use whizbang_core::contract::{
     ActionDescriptor, Argument, Capability, Count, Draft, InputPort, Kind, OutputPort, PortRef,
-    Requirement, Value, ValueType, When,
+    Requirement, ResultKind, Value, ValueType, When,
 };
 
 fn draft() -> Draft {
@@ -1109,4 +1109,130 @@ fn a_requirement_chosen_by_an_argument_is_checked_at_prepare_and_at_admission() 
         }
         other => panic!("admitted a point against a backend that takes phrases alone: {other:?}"),
     }
+}
+
+// --- what an action hands back beside its artifacts (plan m3, task Q1, item 2; ADR 0035) ---
+
+/// An action that hands back a verdict and measurements, whether or not its descriptor
+/// says it does.
+struct Answers(ActionDescriptor);
+
+impl whizbang_core::contract::Action for Answers {
+    fn descriptor(&self) -> &ActionDescriptor {
+        &self.0
+    }
+
+    fn run(
+        &self,
+        _: &whizbang_core::contract::PreparedCall,
+        _: &whizbang_core::contract::Context,
+    ) -> Result<whizbang_core::contract::Produced, whizbang_core::contract::Failure> {
+        use whizbang_core::contract::record::Decision;
+        let produced = whizbang_core::contract::Produced::nothing();
+        Ok(match self.0.name() {
+            "concludes" | "says-nothing" => {
+                produced.with_verdict(whizbang_core::contract::Verdict::new(Decision::Fail, "no"))
+            }
+            _ => produced.with_measurements(serde_json::json!({"ncc": 0.5})),
+        })
+    }
+}
+
+fn answering(
+    name: &str,
+    kinds: &[ResultKind],
+) -> std::sync::Arc<dyn whizbang_core::contract::Action> {
+    let mut draft = ActionDescriptor::draft(name, "1.0.0", Kind::Primitive, "A fake action.");
+    for kind in kinds {
+        draft = draft.results(*kind);
+    }
+    std::sync::Arc::new(Answers(draft.build().unwrap()))
+}
+
+fn ended(
+    name: &str,
+    actions: Vec<std::sync::Arc<dyn whizbang_core::contract::Action>>,
+) -> (
+    whizbang_core::contract::Finished,
+    Option<whizbang_core::contract::record::Decision>,
+) {
+    use whizbang_core::contract::{Call, Capabilities, Executor};
+    let world = super::commit::World::new();
+    let executor = super::asked::engine(
+        &world,
+        whizbang_core::capability::Roster::new(),
+        Capabilities::none(),
+        actions,
+    );
+    let finished = executor.submit(&Call::new(name)).unwrap();
+    let (record, _) = super::asked::stored(&world, finished.run());
+    let decision = record.verdict().map(|(decision, _)| decision);
+    (finished, decision)
+}
+
+#[test]
+fn an_action_that_does_not_say_it_answers_with_a_verdict_cannot_hand_one_back() {
+    use whizbang_core::contract::Outcome;
+    use whizbang_core::contract::record::Decision;
+    let actions = vec![
+        answering("concludes", &[ResultKind::Verdict]),
+        answering("says-nothing", &[]),
+    ];
+    // Declared: the caller is given the verdict with the outcome, and the record holds it.
+    let (finished, recorded) = ended("concludes", actions.clone());
+    assert!(matches!(finished.outcome(), Outcome::Completed { .. }));
+    let verdict = finished.verdict().unwrap();
+    assert_eq!((verdict.decision(), verdict.why()), (Decision::Fail, "no"));
+    assert_eq!(recorded, Some(Decision::Fail));
+    // Not declared: the run ends as an error of its output, with no verdict anywhere.
+    let (finished, recorded) = ended("says-nothing", actions);
+    match finished.outcome() {
+        Outcome::Error { kind, message } => {
+            assert_eq!(kind, "output");
+            assert!(message.contains("declares none"), "{message}");
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(finished.verdict().is_none());
+    assert_eq!(recorded, None);
+    // What a description says of each.
+    let said = |kinds: &[ResultKind]| {
+        let action = answering("concludes", kinds);
+        serde_json::to_value(action.descriptor()).unwrap()["results"].clone()
+    };
+    assert_eq!(said(&[ResultKind::Verdict]), serde_json::json!(["verdict"]));
+    assert_eq!(said(&[]), serde_json::Value::Null);
+}
+
+#[test]
+fn an_evidence_tools_measurements_are_a_declared_result_kind() {
+    use whizbang_core::contract::Outcome;
+    let actions = vec![
+        answering("measures", &[ResultKind::Measurements]),
+        answering("measures-unsaid", &[]),
+    ];
+    let (finished, _) = ended("measures", actions.clone());
+    assert!(matches!(finished.outcome(), Outcome::Completed { .. }));
+    assert_eq!(
+        finished.measurements(),
+        Some(&serde_json::json!({"ncc": 0.5}))
+    );
+    let declared = answering("measures", &[ResultKind::Measurements, ResultKind::Verdict]);
+    assert_eq!(
+        declared.descriptor().results(),
+        [ResultKind::Verdict, ResultKind::Measurements]
+    );
+    assert_eq!(
+        serde_json::to_value(declared.descriptor()).unwrap()["results"],
+        serde_json::json!(["verdict", "measurements"])
+    );
+    let (finished, _) = ended("measures-unsaid", actions);
+    match finished.outcome() {
+        Outcome::Error { kind, message } => {
+            assert_eq!(kind, "output");
+            assert!(message.contains("measurements"), "{message}");
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(finished.measurements().is_none());
 }

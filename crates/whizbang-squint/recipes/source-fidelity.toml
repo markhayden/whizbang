@@ -1,0 +1,43 @@
+# The use case source-fidelity as a recipe (plan m3, task Q1, item 1): `details` measures what
+# can be measured before the judge looks, each tool a nested call of its own run, and hands
+# on the images it made and what each tool's run handed back; the judge's step is `check`,
+# the loop under the use case's rules (`rules/source-fidelity.toml`, squint's), told what was
+# measured first and offered the tools it may call.
+#
+# Ported from squint's run of a use case (`crates/squint-core/src/run.rs` and
+# `crates/squint-core/rules/source-fidelity.toml` at the commit `docs/sources.toml` pins), with the
+# details `check` measured first since plan 2C's task A2 (ADR 0029) as a step of their own.
+# The second look is off unless a run sets it (--set judge.second_look=on), as `check`'s
+# own default is (plan m3, task U1); whether this recipe turns it on is its gate's to decide.
+version = 1
+name = "source-fidelity"
+purpose = "Checks whether an edit kept what mattered in its source: details measured first, then the judge."
+use = "To hold an edited picture to the picture it was edited from."
+use_case = "source-fidelity"
+
+[inputs]
+images = { type = "Image", many = true }
+job = { type = "Text" }
+judge = { type = "Text", optional = true }
+
+[[step]]
+id = "details"
+op = "details"
+inputs = { images = "inputs.images" }
+use_case = "source-fidelity"
+job = "inputs.job"
+details = "first"
+detail = "align"
+
+[[step]]
+id = "judge"
+op = "check"
+inputs = { images = "inputs.images", measured_images = "details.images" }
+use_case = "source-fidelity"
+job = "inputs.job"
+judge = "inputs.judge"
+measured = "details.measurements"
+tools = "view,align,resize"
+projection = "full"
+second_look = "off"
+max_output_tokens = 2048

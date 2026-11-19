@@ -306,7 +306,12 @@ fn initialize_lists_each_recipe_before_the_primitives() {
             "mask_rect",
             "protect",
             "repair",
-            "seam"
+            "seam",
+            "source-fidelity",
+            "reference-consistency",
+            "reality-checks",
+            "brief-compliance",
+            "product-fidelity"
         ]
     );
     assert_eq!(names[..recipes.len()], recipes[..]);

@@ -835,6 +835,17 @@ and gives the verdicts it gave before.
 **Keeping tests lean (Q1).** Scripted judges in process; the existing `check::` and `serve::`
 tests run through the recipes unchanged, so few new ones are needed.
 
+**Split with the task (Q1).** Items 1 and 2 came to about 2,000 changed lines beside the
+generated reference, so Q1 is two pull requests: the first builds items 1 and 2 (ADR 0035),
+with `use_case::each_use_case_is_a_recipe_with_its_rules_details_and_tools`,
+`check::each_use_case_through_its_recipe_gives_the_verdict_it_gave_before`, the three
+`details::` tests, the cache's, both `descriptor::` tests, both `runner::` tests,
+`check::the_judge_crops_an_aligned_frame_handed_on_by_details`,
+`describe::the_five_use_cases_are_listed_as_recipes_first` and `serve::` unchanged; the
+second, items 3 to 6 and their tests (the carry-over row on Q1's second pull request). The
+plan named item 5 as the seam; the first part alone reached the budget. The box is ticked by
+the second, with item 7's record by the orchestrator.
+
 ## O3. The seam (large)
 
 ### Goal

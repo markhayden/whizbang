@@ -6,8 +6,15 @@ use crate::anthropic::{
     CHECK_CLASSES, GOOGLE, Judged, OPENAI, checked, record_of, submission, submission_by,
 };
 
-/// The run's id, from what the door printed.
-fn run_of(printed: &str) -> String {
+/// The run that judged, of the run a door's first line names: the judge's step of a use
+/// case's recipe (plan m3, task Q1), whose record holds the judge's turns.
+fn judged_of(root: &std::path::Path, printed: &str) -> String {
+    let run = whizbang_core::contract::RunId::parse(&printed_run(printed)).unwrap();
+    whizbang::door::judged_run(root, &run).as_str().to_owned()
+}
+
+/// The run a door's first line names.
+fn printed_run(printed: &str) -> String {
     let line = printed.lines().next().unwrap();
     line.strip_prefix("run ")
         .unwrap()
@@ -30,7 +37,7 @@ fn the_runs_record_diagnostics_and_faults_hold_no_byte_of_the_key() {
     assert!(printed.contains("verdict: pass"), "{printed}");
     // It went to the provider in its header, and nowhere into the store.
     assert!(log.lock().unwrap()[0].0.contains(&judged.key));
-    let run = run_of(&printed);
+    let run = judged_of(&judged.world.root, &printed);
     let record = record_of(&judged.world.root, &run);
     assert!(!record.to_string().contains(&judged.key));
     let body = format!(
@@ -65,7 +72,7 @@ fn a_run_on_each_new_judge_holds_no_byte_of_its_key() {
         let (head, body) = log.lock().unwrap()[0].clone();
         assert_eq!(head.matches(&judged.key).count(), 1, "{head}");
         assert!(!String::from_utf8(body).unwrap().contains(&judged.key));
-        let record = record_of(&judged.world.root, &run_of(&printed));
+        let record = record_of(&judged.world.root, &judged_of(&judged.world.root, &printed));
         assert!(!record.to_string().contains(&judged.key));
         assert!(!judged.store_holds_the_key(), "{}", provider.name);
     }
@@ -86,7 +93,7 @@ fn the_run_records_the_recipient_and_the_classes_sent() {
             .to_owned();
         host.rsplit(':').next().unwrap().to_owned()
     };
-    let record = record_of(&judged.world.root, &run_of(&printed));
+    let record = record_of(&judged.world.root, &judged_of(&judged.world.root, &printed));
     let egress = record["egress"].as_array().unwrap();
     assert_eq!(egress.len(), 1, "{egress:?}");
     assert_eq!(egress[0]["origin"], format!("https://127.0.0.1:{port}"));
@@ -174,7 +181,7 @@ fn each_judge_turn_records_its_counted_input_beside_its_usage() {
     let judged = Judged::new("record-counted");
     let (printed, log) = checked(&judged, vec![submission("held", "Nothing moved.")]);
     let printed = printed.unwrap();
-    let run = run_of(&printed);
+    let run = judged_of(&judged.world.root, &printed);
     let record = record_of(&judged.world.root, &run);
     let turns = record["judge"].as_array().unwrap();
     let turn = turns.iter().find(|turn| turn["judge"] == "turn").unwrap();
@@ -226,7 +233,7 @@ fn a_reason_item_is_redacted_before_it_is_cut_or_escaped() {
     for piece in &pieces {
         assert!(!printed.contains(piece), "{piece} in {printed}");
     }
-    let run = run_of(&printed);
+    let run = judged_of(&judged.world.root, &printed);
     let record = record_of(&judged.world.root, &run).to_string();
     let id = whizbang_core::contract::RunId::parse(&run).unwrap();
     let items =
@@ -282,7 +289,7 @@ fn the_brief_and_each_bindings_role_and_label_are_in_the_run() {
         vec![submission_of(&ids, "held", "Same.")],
     );
     let printed = printed.unwrap();
-    let run = run_of(&printed);
+    let run = judged_of(&judged.world.root, &printed);
     let record = record_of(&judged.world.root, &run);
     let arguments = record["asked"]["arguments"].as_array().unwrap();
     let argument = |name: &str| {

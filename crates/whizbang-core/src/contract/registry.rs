@@ -24,7 +24,12 @@ use super::{ActionDescriptor, Context, PreparedCall};
 pub struct Produced {
     outputs: Vec<(String, Artifact)>,
     verdict: Option<Verdict>,
+    measurements: Option<serde_json::Value>,
 }
+
+/// The most bytes an action's measurements take, written as JSON (ADR 0035): what a
+/// recipe binds to a later step's text argument, inside the bytes a call's texts hold.
+pub const MEASUREMENTS_MAX_BYTES: usize = 32 * 1024;
 
 /// What a judging action concluded: a decision and the reason for it (ADR 0009). It is
 /// no artifact: it is handed back beside them, and the executor writes it in the run's
@@ -91,6 +96,18 @@ impl Produced {
         self.verdict.as_ref()
     }
 
+    /// The same, with what the action measured (ADR 0035): one JSON document. A
+    /// second replaces the first.
+    pub fn with_measurements(mut self, measurements: serde_json::Value) -> Produced {
+        self.measurements = Some(measurements);
+        self
+    }
+
+    /// The measurements handed back, when there are any.
+    pub fn measurements(&self) -> Option<&serde_json::Value> {
+        self.measurements.as_ref()
+    }
+
     /// What was handed back, to be committed.
     pub(super) fn into_outputs(self) -> Vec<(String, Artifact)> {
         self.outputs
@@ -117,6 +134,9 @@ impl std::fmt::Debug for Produced {
         }
         if let Some(verdict) = &self.verdict {
             list.entry(verdict);
+        }
+        if self.measurements.is_some() {
+            list.entry(&format_args!("measurements"));
         }
         list.finish()
     }

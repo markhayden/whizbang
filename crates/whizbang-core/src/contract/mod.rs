@@ -62,7 +62,7 @@ pub use context::{
 };
 pub use descriptor::{
     ActionDescriptor, Argument, Capability, Count, DescriptorError, Draft, InputPort, Kind,
-    OutputPort, PortRef, Requirement, Value, ValueType, When,
+    OutputPort, PortRef, Requirement, ResultKind, Value, ValueType, When,
 };
 pub use engine::{
     BoundRefused, Engine, Executor, NOT_CONFIRMED_KIND, STARTED_RUNS_CEILING, STARTED_RUNS_DEFAULT,
@@ -98,7 +98,9 @@ pub use recover::{
     Remover,
 };
 pub use redact::{REDACTED, SECRET_MIN_BYTES, SecretRefused, Secrets};
-pub use registry::{Action, Failure, Produced, RegistrationError, Registry, Verdict};
+pub use registry::{
+    Action, Failure, MEASUREMENTS_MAX_BYTES, Produced, RegistrationError, Registry, Verdict,
+};
 pub use request::{
     ADMISSION_RECORD, ADMITTED_NAME, Admission, Answer, Cancel, ENDING_RECORD, Earlier, Ending,
     REQUEST_ID_LIMIT, REQUEST_RECORD_MAX_BYTES, REQUESTS_PREFIX, RESERVED_REQUEST_PREFIX, Request,

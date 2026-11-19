@@ -23,10 +23,10 @@
 use std::collections::BTreeMap;
 
 use serde_json::{Value as Json, json};
-use whizbang_core::artifact::{self, Artifact, ArtifactId, ArtifactType};
+use whizbang_core::artifact::ArtifactId;
 use whizbang_core::capability::ToolDefinition;
-use whizbang_core::contract::{Call, Context, Failure, Value};
-use whizbang_core::identity::{DecodeLimits, Digest};
+use whizbang_core::contract::{Call, Value};
+use whizbang_core::identity::Digest;
 
 use crate::{align, compare, resize, view};
 
@@ -313,42 +313,6 @@ pub fn resize_call(arguments: &Json, names: &Names) -> Result<(Call, String), St
     Ok((call, name))
 }
 
-/// What a call of `align` that completed found, as its report ([`align::report`]).
-///
-/// A port returns artifacts, and a measurement is none (`docs/carry-over.md`, the row on a
-/// result that is not an artifact): the action states what it found in its run's diagnostic
-/// [`align::REPORT`], which a calling run cannot read. So the numbers are worked out again
-/// here, by the same function on the same two images, which gives the same numbers on the
-/// same machine; and the frame they come with must be the one the call committed, or the
-/// run fails. The executor's run of the call stays the record of it.
-pub fn report_of(
-    context: &Context,
-    image: ArtifactId,
-    against: ArtifactId,
-    committed: &[ArtifactId],
-) -> Result<Json, Failure> {
-    let failed = |why: &dyn std::fmt::Display| Failure::error("details", &why.to_string());
-    let limits = DecodeLimits::default();
-    let read =
-        |id: ArtifactId| match artifact::get(context.store(), ArtifactType::Image, id, &limits) {
-            Ok(Artifact::Image(image)) => Ok(image),
-            Ok(_) => Err(failed(&"not an image")),
-            Err(error) => Err(failed(&error)),
-        };
-    let aligned = align::align(
-        &read(image)?,
-        &read(against)?,
-        &align::Options::default(),
-        &limits,
-    )
-    .map_err(|error| failed(&error))?;
-    let made: Vec<ArtifactId> = aligned.frame.iter().map(|frame| frame.image.id()).collect();
-    if made != committed {
-        return Err(failed(&"the call of align and its measurement disagree"));
-    }
-    Ok(align::report(&aligned))
-}
-
 /// One result as squint's harness presented it to the judge: the envelope without its
 /// pixels, keys in order, written as one line.
 pub fn presentation(
@@ -557,46 +521,32 @@ pub fn compare_of(tool: &str, frame: ArtifactId, against: ArtifactId) -> Call {
         .input("against", against)
 }
 
-/// What a call of a comparison that completed measured. As with `align` ([`report_of`]),
-/// the numbers are worked out again by the same function on the same two images, and the
-/// map they come with must be the one the call committed, or the run fails.
-pub fn compare_report_of(
-    context: &Context,
-    tool: &str,
-    frame: ArtifactId,
-    against: ArtifactId,
-    committed: &[ArtifactId],
-) -> Result<Vec<compare::Measurement>, Failure> {
-    let failed = |why: &dyn std::fmt::Display| Failure::error("details", &why.to_string());
-    let limits = DecodeLimits::default();
-    let read =
-        |id: ArtifactId| match artifact::get(context.store(), ArtifactType::Image, id, &limits) {
-            Ok(Artifact::Image(image)) => Ok(image),
-            Ok(_) => Err(failed(&"not an image")),
-            Err(error) => Err(failed(&error)),
-        };
-    let (frame, against) = (read(frame)?, read(against)?);
-    let (measurements, made) = if tool == compare::CHANGE_MAP {
-        let (changes, map, _) =
-            compare::change_map(&frame, &against, &limits).map_err(|e| failed(&e))?;
-        (changes.measurements(), vec![map.id()])
-    } else {
-        let edges = compare::edge_similarity(&frame, &against, &limits).map_err(|e| failed(&e))?;
-        (edges.measurements(), Vec::new())
-    };
-    if made != committed {
-        return Err(failed(&format!(
-            "the call of {tool} and its measurement disagree"
-        )));
-    }
-    Ok(measurements)
+/// One measurement of a comparison: its name, its value and its unit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Measure {
+    pub name: String,
+    pub value: f64,
+    pub unit: String,
+}
+
+/// The measurements a comparison's run handed back (`{"measurements": [...]}`,
+/// [`compare::report`]), as they are said; a value that is not a number is not one.
+pub fn measures_of(measured: &Json) -> Vec<Measure> {
+    let listed = measured["measurements"].as_array().map(Vec::as_slice);
+    (listed.unwrap_or_default().iter())
+        .map(|m| Measure {
+            name: m["name"].as_str().unwrap_or_default().to_owned(),
+            value: m["value"].as_f64().unwrap_or(f64::NAN),
+            unit: m["unit"].as_str().unwrap_or_default().to_owned(),
+        })
+        .collect()
 }
 
 /// Squint's sentence of a comparison: the frames named as the judge knows them, the map, if
 /// any, as `map`.
 pub fn compare_said(
     tool: &str,
-    measurements: &[compare::Measurement],
+    measurements: &[Measure],
     frame: &str,
     against: &str,
     map: &str,
@@ -622,7 +572,7 @@ pub fn compare_said(
     }
 }
 
-fn measured(measurements: &[compare::Measurement], frame: &str) -> Json {
+fn measured(measurements: &[Measure], frame: &str) -> Json {
     measurements
         .iter()
         .map(|m| json!({"name": m.name, "value": m.value, "unit": m.unit, "frame": frame}))
@@ -631,11 +581,7 @@ fn measured(measurements: &[compare::Measurement], frame: &str) -> Json {
 
 /// A call of a comparison, answered as squint answered it: the map, if any, named as the
 /// crop of the call in `frame`'s grid.
-pub fn compare_answer(
-    call: &str,
-    asked: &CompareAsked,
-    measurements: &[compare::Measurement],
-) -> String {
+pub fn compare_answer(call: &str, asked: &CompareAsked, measurements: &[Measure]) -> String {
     let map = format!("crop:{call}:0");
     let said = compare_said(asked.tool, measurements, &asked.frame, &asked.against, &map);
     let images = if asked.tool == compare::CHANGE_MAP {
@@ -652,7 +598,7 @@ pub fn compare_answer(
 /// (squint's guidance on reading it, shortened).
 pub fn compare_detail(
     tool: &str,
-    measurements: &[compare::Measurement],
+    measurements: &[Measure],
     frame: &str,
     against: &str,
     map: &str,

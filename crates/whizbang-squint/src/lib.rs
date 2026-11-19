@@ -15,6 +15,8 @@ pub mod details;
 pub mod files;
 pub mod job;
 pub mod marks;
+pub mod measured;
+pub mod recipes;
 #[cfg(feature = "baseline-replay")]
 pub mod replay;
 pub mod resize;

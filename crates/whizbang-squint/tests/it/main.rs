@@ -4,6 +4,7 @@
 mod align;
 mod align_record;
 mod binding;
+mod cache;
 mod change_map;
 mod check;
 mod compare_record;
@@ -14,6 +15,7 @@ mod locate;
 mod record;
 mod resize;
 mod resize_record;
+mod runner;
 mod scale;
 mod scenes;
 mod support;

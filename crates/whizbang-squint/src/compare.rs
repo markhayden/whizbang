@@ -20,7 +20,7 @@ use whizbang_core::artifact::{self, Artifact, ArtifactError, ArtifactType, Image
 use whizbang_core::artifact::{Origin, Step};
 use whizbang_core::contract::{
     Action, ActionDescriptor, Context, Count, DescriptorError, Draft, Failure, InputPort, Kind,
-    OutputPort, PreparedCall, Produced,
+    OutputPort, PreparedCall, Produced, ResultKind,
 };
 use whizbang_core::identity::{
     Binding, CanonicalPixels, DecodeLimits, Direction, Mapping, Projection, Topology,
@@ -376,6 +376,7 @@ impl Compare {
                 ArtifactType::Image,
                 "The image compared with it, usually the candidate aligned onto it.",
             ))
+            .results(ResultKind::Measurements)
             .concurrent(true)
     }
 
@@ -446,6 +447,7 @@ impl Action for Compare {
                 (changes.measurements(), CHANGE_MAP_REPORT)
             }
         };
+        produced = produced.with_measurements(report(&measurements));
         let said = report(&measurements).to_string();
         let kept = context.diagnostics().write(report_name, said.as_bytes());
         kept.map_err(|why| failed(&why))?;

@@ -9,8 +9,8 @@
 //! the commit `docs/sources.toml` pins: the overlay's arithmetic is rascal's, in 32-bit
 //! floats rounded once; the report is rascal's but for the path of the mask's folder,
 //! which a mask in the store has not. The overlay is opaque, as rascal's was. The report
-//! is said in the run's journal; handing it back as a result of its own waits for the
-//! result kinds of task Q1 (row on what an action hands back that is not an artifact).
+//! is said in the run's journal, and handed back as its measurements (plan m3, task Q1;
+//! ADR 0035): [`Report::measured`].
 
 use std::sync::Arc;
 
@@ -20,7 +20,7 @@ use whizbang_core::artifact::{
 };
 use whizbang_core::contract::{
     Action, ActionDescriptor, Context, Failure, InputPort, Kind, OutputPort, PortRef, PreparedCall,
-    Produced, RegistrationError, Registry, Value,
+    Produced, RegistrationError, Registry, ResultKind, Value,
 };
 use whizbang_core::identity::encode::{self, Channels};
 use whizbang_core::identity::{CanonicalPixels, DecodeLimits};
@@ -85,6 +85,21 @@ pub fn report(mask: &Mask) -> Report {
 }
 
 impl Report {
+    /// The report as measurements handed back beside the overlay: the numbers its line
+    /// says, by name.
+    pub fn measured(&self) -> serde_json::Value {
+        let z = &self.zones;
+        serde_json::json!({
+            "width": z.width, "height": z.height, "core": z.core, "blend": z.blend,
+            "protect": z.protect, "painted": z.painted, "weight_sum": z.weight_sum,
+            "support": z.support,
+            "band": self.profile.as_ref().map(|p| serde_json::json!({
+                "rows": p.rows, "column_px": p.column_px, "thin_px": p.thin_px})),
+            "prescriptions": self.prescriptions,
+            "line": self.line(),
+        })
+    }
+
     /// The report in one line, as the run's journal says it.
     pub fn line(&self) -> String {
         let z = &self.zones;
@@ -203,6 +218,7 @@ impl Inspect {
             )
             .on(PortRef::input("image")),
         )
+        .results(ResultKind::Measurements)
         .concurrent(true);
         match draft.build() {
             Ok(descriptor) => Inspect { descriptor },
@@ -295,8 +311,10 @@ impl Action for Inspect {
             origin,
         )
         .map_err(failed)?;
-        context.events().progress(&report(&mask).line());
+        let report = report(&mask);
+        context.events().progress(&report.line());
         Ok(Produced::nothing()
+            .with_measurements(report.measured())
             .with("overlay", overlay)
             .with("widths", widths))
     }
