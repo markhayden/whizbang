@@ -21,6 +21,9 @@ sha2.workspace = true
 # The download client's TLS, and the roots it trusts, compiled in (ADR 0024).
 rustls.workspace = true
 webpki-roots.workspace = true
+# Scaling a picture to the side fal's filler is sent at, and its answer back: the version
+# and the features the core decodes with, so the lock gains nothing.
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }
 
 [features]
 # What only a test may build: `Launch::testing`, a launch of the pack's fakes. Only the
@@ -31,9 +34,6 @@ fakes = []
 
 [dev-dependencies]
 whizbang-testkit.workspace = true
-# Reading back the pictures a request carried, in the tests of the judge of a service:
-# the version and the features the core decodes with, so the lock gains nothing.
-image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }
 # This crate itself, with the feature `fakes`, for its own tests.
 whizbang-backends = { path = ".", features = ["fakes"] }
 

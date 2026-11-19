@@ -1576,6 +1576,77 @@ fn eval_matrix_runs_a_three_item_set_under_a_scripted_judge_and_runs_stats_repor
     );
 }
 
+#[test]
+fn eval_run_gate_runs_a_three_item_gate_under_a_scripted_judge_and_writes_its_receipt() {
+    use crate::anthropic::submission;
+    use crate::gate::{frozen_gate, gate_matrix, gated};
+    use crate::matrix::world_with;
+    use crate::wired::whizbang;
+    // The gate runs through what the command calls, over the binary's executor and a judge
+    // on loopback: three items under arms C and F.
+    let (judged, tiny) = world_with("cli-eval-gate", &["a", "b", "c"]);
+    let gates = judged.world.beside("gates");
+    let gate = frozen_gate(&gates, &gate_matrix());
+    let receipt = judged.world.beside("receipt.json");
+    let answers = vec![submission("held", "Kept."); 6];
+    let (written, sent) = gated(&judged, &tiny, &gate, &tiny.root, &receipt, answers);
+    let written = written.unwrap();
+    assert_eq!(sent, 6);
+    let text = whizbang::gating::text(&written);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[0], format!("gate: {}", &written.gate_sha256[..16]));
+    assert_eq!(lines[2..4], ["cells scored: 6", "outcome: inconclusive"]);
+    assert!(
+        lines[4].starts_with(
+            "judge default (claude-haiku-5-5): inconclusive; items 3, families 1, differing 0"
+        ),
+        "{text}"
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&receipt).unwrap()).unwrap();
+    assert_eq!(json["cells"], 6);
+    // The command refuses, before anything runs: a receipt under the sets' folder, and a
+    // matrix changed after its gate was frozen.
+    let config = judged.world.beside("gate-config.toml");
+    std::fs::write(
+        &config,
+        "[backends.judge]\nkind = \"service\"\nprovider = \"anthropic\"\nmodel = \"claude-haiku-5-5\"\n",
+    )
+    .unwrap();
+    let path = |p: &Path| p.to_str().unwrap().to_owned();
+    let command = |receipt: &Path| {
+        whizbang(
+            &[
+                "eval",
+                "run",
+                "--gate",
+                &path(&gate),
+                "--labels",
+                &path(&tiny.root),
+                "--receipt",
+                &path(receipt),
+                "--root",
+                &path(&tiny.root),
+                "--config",
+                &path(&config),
+            ],
+            &judged.world.root,
+        )
+    };
+    let inside = command(&tiny.root.join("receipt.json"));
+    assert_eq!(inside.code, Some(1));
+    assert!(inside.err.contains("not written under"), "{}", inside.err);
+    std::fs::write(
+        gates.join("matrix.toml"),
+        gate_matrix().replace("tiny-gate", "other"),
+    )
+    .unwrap();
+    let changed = command(&judged.world.beside("other.json"));
+    assert_eq!(changed.code, Some(1));
+    assert!(changed.err.contains("frozen with"), "{}", changed.err);
+    assert!(!judged.world.beside("other.json").exists());
+}
+
 // --- `whizbang serve` (plan 2C, task M1) --------------------------------------------------------
 
 /// A child that is killed and waited for when this is dropped, on every path out of a
@@ -1972,4 +2043,86 @@ fn a_tool_file_is_tried_scored_edited_and_run_again_without_a_rebuild() {
         again.primary(&declared).unwrap(),
     );
     assert!((after - before / 2.0).abs() < 1e-9, "{before} {after}");
+}
+
+#[test]
+fn rascal_paste_composites_a_fill_onto_its_base() {
+    // A picture of 64 by 48 with a mask on it, a block from 8, 8 to 24, 20, and a fill of
+    // one colour of its size, brought in as a picture: `rascal paste` prints the
+    // composite, whose every pixel outside the mask is the picture's and whose block is
+    // the fill's colour.
+    let dir = Scratch::new("cli-paste");
+    let root = dir.path().join("store");
+    std::fs::create_dir_all(dir.path().join("in")).unwrap();
+    let ran = |args: &[&str]| {
+        let ran = whizbang(args, &root);
+        assert_eq!(ran.code, Some(0), "{args:?}: {}", ran.err);
+        ran.out
+    };
+    drop(Store::open(&root, Arc::new(RealFs)).unwrap());
+    let image = crate::anthropic::import_picture(&root, &dir.path().join("in"), "base", 40);
+    let mask = crate::fal::put_mask(
+        &root,
+        whizbang_core::artifact::ArtifactId(image.parse().unwrap()),
+    );
+    let fill = dir.path().join("in").join("fill.png");
+    image::RgbImage::from_pixel(64, 48, image::Rgb([7, 200, 9]))
+        .save_with_format(&fill, image::ImageFormat::Png)
+        .unwrap();
+    let fill = ran(&["store", "import", "--picture", fill.to_str().unwrap()]);
+    let fill = fill
+        .lines()
+        .last()
+        .unwrap()
+        .strip_prefix("imported image ")
+        .unwrap()
+        .to_owned();
+    let mask = mask.0.to_string();
+    let out = ran(&[
+        "rascal", "paste", "--image", &image, "--fill", &fill, "--mask", &mask,
+    ]);
+    let made = printed(&out, "image");
+    assert_ne!(made, image);
+    let file = dir.path().join("pasted.png");
+    ran(&[
+        "store",
+        "export",
+        "--image",
+        &made,
+        "--out",
+        file.to_str().unwrap(),
+    ]);
+    let shown = pixels_of(&std::fs::read(&file).unwrap());
+    let base = dir.path().join("base.png");
+    ran(&[
+        "store",
+        "export",
+        "--image",
+        &image,
+        "--out",
+        base.to_str().unwrap(),
+    ]);
+    let picture = pixels_of(&std::fs::read(&base).unwrap());
+    for (at, (a, b)) in shown
+        .rgba()
+        .chunks(4)
+        .zip(picture.rgba().chunks(4))
+        .enumerate()
+    {
+        let (x, y) = (at % 64, at / 64);
+        if (8..24).contains(&x) && (8..20).contains(&y) {
+            assert_eq!(a, [7, 200, 9, b[3]], "{x}, {y}");
+        } else {
+            assert_eq!(a, b, "{x}, {y}");
+        }
+    }
+    // A mode this build does not have is the command line's error.
+    let other = whizbang(
+        &[
+            "rascal", "paste", "--image", &image, "--fill", &fill, "--mask", &mask, "--mode",
+            "hard",
+        ],
+        &root,
+    );
+    assert_eq!(other.code, Some(2), "{}", other.err);
 }

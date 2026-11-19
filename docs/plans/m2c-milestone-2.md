@@ -307,7 +307,7 @@ with its spend bound, so that every use case can be asked of a judge of any of t
    each of the five use cases once on each of the two new judges, on the synthetic
    pictures of A1, and adds the fields to `docs/results/m2c-use-cases.md`.
 
-- [ ] Done when:
+- [x] Done when:
   `google::conformance::each_recorded_exchange_of_squint_is_read_back_to_its_turn`,
   `google::conformance::a_request_is_written_as_the_recorded_request_was`,
   `openai::conformance::each_recorded_exchange_of_squint_is_read_back_to_its_turn`,
@@ -342,6 +342,12 @@ that a builder is permitted to make: F1's attempt was refused by the permission 
 before anything was sent. So that clause is re-owned to milestone 3 with the carry-over row
 on P1's live evidence, and stays unshown here; every other clause is shown by its named
 test. The box stays unticked.
+
+**Ticked by plan 3, task L0's pull request (branch `m3-l0`).** The last clause is shown:
+the orchestrator asked each of the five use cases once of each new judge, and
+`evidence::the_use_cases_record_names_a_commit_of_this_tree_and_holds_no_secret` passes
+on `docs/results/m2c-use-cases.md` with both judges' lines; the carry-over row on P1's live
+evidence is closed. Every clause is now shown, so the box is ticked.
 
 **Keeping tests lean (P1).** The recorded exchanges are read once per test; pictures of
 `many-images` cut to a tenth on each side in the test, as S1 did; one loopback listener

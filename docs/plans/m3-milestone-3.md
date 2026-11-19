@@ -168,7 +168,7 @@ the verdict, the tokens and the spend settled, the run, the recipient. No reply 
 refusal by a provider, or an answer a schema does not read, is recorded as it came and is
 G1's (item 4), not fixed here.
 
-- [ ] Done when:
+- [x] Done when:
   `evidence::the_use_cases_record_names_a_commit_of_this_tree_and_holds_no_secret` passes on
   the record with both judges' lines; P1's last clause in `docs/plans/m2c-milestone-2.md`
   ticked with a line naming this pull request; the carry-over row on P1's live evidence
@@ -378,6 +378,24 @@ store as a file and comes into another with the same identity.
 **Keeping tests lean (F1).** A scripted filler in process; one loopback listener with a test
 certificate for the conformance; pictures of 64 by 64.
 
+**Status (F1's first pull request, 2026-11-18).** Left unticked. Shown by their named tests
+(the backend's under `fal::tests::`, the binary's under `fal::`): items 1 to 5, every clause
+from `fal::conformance::a_request_is_written_as_fals_reference_describes_it` to
+`encode::the_core_encoder_keeps_the_four_pins_and_the_squint_vectors`, and
+`record::a_fill_run_holds_no_byte_of_its_key`; `just docs` regenerated; the rows on what an
+action hands back, on the encoder inside `whizbang-squint`, on what a filler was sent, and
+on a stated price for one request closed or narrowed. Not shown here: item 6, the two
+`cli::rascal_remove_prompt_…` clauses, waits for R1's runner and recipe; item 7, the five
+clauses from `export::a_mask_exported_…` to `gate::a_store_under_a_folder_…`, is the
+seam this plan names, F1's second pull request, since this one passed the budget without
+it (about 3,000 changed lines beside the generated reference); and of item 8, the live fill
+was made by the builder on the owner's Mac (0.04 dollars, `docs/results/m3-fills.md`,
+`evidence::the_fills_record_names_a_commit_of_this_tree_and_holds_no_secret` on its block),
+while the `remove-prompt` block waits for R1 and the recorded exchange in place of the
+schema's fixture waits for a way to keep a raw exchange, which the binary has none of
+(carry-over rows on each). The filler takes no prompt (Bria Eraser
+has none), so `fill` has no argument `prompt`.
+
 ### Origins (F)
 
 `https://fal.run`, for filling, with the classes `source_images` and `derived_images` (the
@@ -386,6 +404,10 @@ media hosts are never contacted. A new recipient: nothing is sent until the owne
 (second item under "What the owner must answer"). On a no, the kind lands with its
 conformance, which sends nothing; every live fill of this plan waits, and the milestone's row
 waits on it.
+
+**Approved by the owner, 2026-11-18:** `https://fal.run` as a recipient for filling, with the
+classes `source_images` and `derived_images` ("yes thats fine"), and `FAL_KEY` put in the env
+file whizbang reads by `--env-file` ("fal key updated"). No other host of fal's is approved.
 
 ## G1. Gates, the baseline's live rerun, and squint's wire (large)
 
@@ -434,6 +456,21 @@ gate of details first is run.
 
 **Keeping tests lean (G1).** Gates over three to six items made in the test, 200 resamples;
 scripted judges; pictures of at most 128 pixels.
+
+**Reworded with the task.** Item 3 said "frozen in `evalsets/gates/details-first.toml`"; the
+gate is frozen in `gates/details-first.toml`, its matrix beside it in
+`gates/details-first-matrix.toml`, because `evalsets/` is held byte for byte to the files squint
+tracked there (`sets::every_file_squint_tracked_under_evalsets_is_here_byte_for_byte`). Gate
+files live in `gates/` at the top of the repository. "Gates over three to six items" said;
+three of the four gate tests run a set of two items in two arms (four runs each), to keep the
+test time down, and the command's test runs three.
+
+**Status (G1's first pull request).** Every named test above passes except the two
+`evidence::` tests, which read records that do not exist yet: the receipt of the gate of
+details first (the orchestrator's run) and the live rerun's two numbers (the owner's run). The
+wire's carry-over row is closed; the rows on gates as files and on the live rerun stay open
+until those runs. The box is ticked by the pull request that commits the two records with
+their tests.
 
 ### Origins (G)
 

@@ -2430,3 +2430,37 @@ fn the_binary_opens_a_models_directory_only_for_a_config_that_has_a_local_backen
     assert!(run(&[]).is_empty());
     assert!(configured.is_dir());
 }
+
+#[test]
+fn a_fill_to_a_recipient_the_config_does_not_name_is_refused_before_a_byte_leaves() {
+    // fal's filler, as a judge is above: a config that approves no recipient, then one
+    // that approves another origin, then fal's origin for prompts alone, which are not
+    // what a fill sends. The gate refuses each request before anything is handed to the
+    // sender, and the server sees no connection.
+    use crate::fal::Filled;
+    let filled = Filled::new("wired-fill-unnamed");
+    let listener = whizbang_testkit::loopback::Listener::serve(1, |_, _| {});
+    let origin = format!("https://127.0.0.1:{}", listener.port());
+    let address = format!("{origin}/fal-ai/bria/eraser");
+    for approved in [
+        None,
+        Some("https://api.example.com".to_owned()),
+        Some(origin.clone()),
+    ] {
+        let mut over = filled.over(&address, approved.as_deref());
+        if approved.as_deref() == Some(origin.as_str()) {
+            let config = std::fs::read_to_string(filled.world.config_path()).unwrap();
+            let config = config.replace("[\"source_images\", \"derived_images\"]", "[\"prompts\"]");
+            std::fs::write(filled.world.config_path(), config).unwrap();
+            over = filled.over_written(&address);
+        }
+        let executor = filled.runner(&over);
+        let refused = filled.fill(&executor);
+        assert_eq!(refused.outcome().name(), "error", "{:?}", refused.outcome());
+        drop(executor);
+        let text = shown(&filled.world.root, refused.run().as_str());
+        assert!(text.contains("\trequest_not_approved\t"), "{text}");
+    }
+    assert_eq!(listener.finish(), 0);
+    assert!(!filled.store_holds_the_key());
+}

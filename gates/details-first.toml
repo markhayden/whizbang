@@ -1,0 +1,51 @@
+# The gate of details first (plan m3, task G1, item 3; plan 2C, task E2, item 9), frozen before
+# its run: arm F against arm C over the matrix beside it. The spec's defaults for an evidence
+# tool (`SPEC.md` section 8, "Gates"); one hypothesis for each of the matrix's three judges,
+# each decided alone. Dev sets admit nothing: the receipt says whether the details helped.
+gate_version = 2
+
+[run]
+matrix = "details-first-matrix.toml"
+matrix_identity = "5b463d736c8e9b13e34304025530feba73de93f047ae9fe705d3fbdaf4e47af6"
+
+[baseline]
+control = "C"
+treatment = "F"
+
+[measure]
+primary = "balanced_accuracy"
+pass = "pass"
+fail = "catch"
+unsure = "neither"
+error = "neither"
+missing_label = "refuse"
+
+[confidence]
+level = 0.95
+correction = "bonferroni"
+hypotheses = 3
+
+[families]
+minimum = 20
+resampling = "family"
+seed = 20261118
+resamples = 10000
+
+[repetitions]
+count = 3
+combine = "first"
+
+[admission]
+min_gain = 0.03
+lower_bound_above = 0.0
+
+[guardrails]
+false_reject_increase_max = 0.03
+error_rate_max = 0.02
+
+[limits]
+cost_ratio_max = 2.0
+latency_ratio_max = 2.0
+
+[too_little_data]
+outcome = "inconclusive"

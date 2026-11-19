@@ -178,4 +178,83 @@ fn the_unsure_screen_and_its_gate_are_read() {
         strict.matrix.arms[2].second_look_for("reality-checks"),
         "strict"
     );
+    // The gates (item 6): one a use case, each F with the second look for that use case
+    // against F on its dev set, frozen with its matrix's identity, with false accepts as a
+    // guardrail beside false rejects.
+    for (use_case, set) in [
+        ("source-fidelity", "scenes-v1"),
+        ("reference-consistency", "pets-v1"),
+        ("reality-checks", "people-v1"),
+        ("brief-compliance", "stills-v1"),
+        ("product-fidelity", "packshots-v1"),
+    ] {
+        let read = |name: &str| std::fs::read_to_string(repo().join("gates").join(name)).unwrap();
+        let gate = whizbang_eval::gate::Gate::parse(&read(&format!("unsure-{use_case}.toml")))
+            .unwrap_or_else(|e| panic!("{use_case}: {e}"));
+        let matrix = Matrix::parse(&read(&gate.run.matrix)).unwrap();
+        assert_eq!(gate.run.matrix_identity, matrix.identity(), "{use_case}");
+        assert_eq!(matrix.matrix.sets, [format!("{use_case}/{set}")]);
+        let arms: Vec<String> = matrix.matrix.arms.iter().map(ToString::to_string).collect();
+        let treatment = format!("F;second_look=on@{use_case}");
+        assert_eq!(arms, ["F".to_owned(), treatment.clone()]);
+        assert_eq!(
+            (
+                gate.baseline.control.as_str(),
+                gate.baseline.treatment.as_str()
+            ),
+            ("F", treatment.as_str())
+        );
+        assert_eq!(matrix.matrix.arms[1].second_look_for(use_case), "on");
+        assert_eq!(gate.guardrails.false_accept_increase_max, Some(0.03));
+        assert_eq!(gate.guardrails.false_reject_increase_max, 0.03);
+        assert_eq!(gate.confidence.hypotheses, matrix.matrix.judges.len());
+        let judges: Vec<(&str, u32)> = (matrix.matrix.judges.iter())
+            .map(|j| (j.model.as_str(), j.repeated(&matrix.matrix)))
+            .collect();
+        assert_eq!(
+            judges,
+            [
+                ("claude-haiku-5-5", 3),
+                ("gemini-3.8-flash", 1),
+                ("gpt-6.1-terra", 1)
+            ]
+        );
+    }
+}
+
+#[test]
+fn a_judge_given_its_own_repetitions_is_repeated_so_and_a_matrix_without_keeps_its_identity() {
+    use whizbang_eval::matrix::Matrix;
+    let plain = "[matrix]\nname = \"m\"\nsets = [\"a/b\"]\narms = [\"C\"]\nrepetitions = 1\n\
+                 [[matrix.judges]]\nbackend = \"haiku\"\nmodel = \"claude-haiku-5-5\"\n\
+                 [[matrix.judges]]\nbackend = \"flash\"\nmodel = \"gemini-3.8-flash\"\n";
+    let before = Matrix::parse(plain).unwrap();
+    let three = plain.replace(
+        "model = \"claude-haiku-5-5\"\n",
+        "model = \"claude-haiku-5-5\"\nrepetitions = 3\n",
+    );
+    let matrix = Matrix::parse(&three).unwrap();
+    let cells = matrix.cells(&[("a/b".to_owned(), vec!["i".to_owned()])]);
+    let by: Vec<(&str, u32)> = cells
+        .iter()
+        .map(|c| (c.backend.as_str(), c.repetition))
+        .collect();
+    assert_eq!(by, [("haiku", 1), ("haiku", 2), ("haiku", 3), ("flash", 1)]);
+    // Giving none leaves the identity a matrix had before judges could be repeated apart.
+    assert_ne!(matrix.identity(), before.identity());
+    assert_eq!(
+        before.identity(),
+        Matrix::parse(&plain.replace("repetitions = 1\n", "repetitions = 1\n\n"))
+            .unwrap()
+            .identity()
+    );
+    let canonical = serde_json::to_string(&before).unwrap();
+    assert!(!canonical.contains("\"repetitions\":null"), "{canonical}");
+    // A judge repeated past the limit, or named twice, is refused.
+    assert!(Matrix::parse(&three.replace("repetitions = 3", "repetitions = 11")).is_err());
+    let twice = plain.replace(
+        "backend = \"flash\"\nmodel = \"gemini-3.8-flash\"",
+        "backend = \"haiku\"\nmodel = \"claude-haiku-5-5\"\nrepetitions = 2",
+    );
+    assert!(Matrix::parse(&twice).is_err());
 }

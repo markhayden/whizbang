@@ -1,4 +1,5 @@
-//! `whizbang rascal segment`, `select`, `grow`, `plug`, `feather` and `render`: wiring
+//! `whizbang rascal segment`, `select`, `grow`, `plug`, `feather`, `render`, `paste` and
+//! `fill`: wiring
 //! from arguments to the door (`whizbang::door`), which runs the action through the
 //! executor.
 
@@ -243,6 +244,46 @@ pub enum Command {
         #[command(flatten)]
         common: Common,
     },
+    /// Paste a fill onto its base image under a mask: every pixel the mask weighs
+    /// nothing, outside its core and blend or under protect, is the base's. The
+    /// composite, an image derived from the base, is committed to the store, and its
+    /// identity is printed; when the fill changed nothing, the base's is.
+    #[command(after_help = EXIT_CODES)]
+    Paste {
+        /// The base image, by its identity in the store.
+        #[arg(long)]
+        image: String,
+        /// The fill, an image of the base's size, by its identity in the store.
+        #[arg(long)]
+        fill: String,
+        /// The mask on the base, by its identity in the store.
+        #[arg(long)]
+        mask: String,
+        /// How the fill is pasted: `feather`, by the mask's core and blend.
+        #[arg(long, value_parser = ["feather"], default_value = "feather")]
+        mode: String,
+        #[command(flatten)]
+        common: Common,
+    },
+    /// Fill what a mask covers in an image with the configured filler, and paste the
+    /// answer: every pixel the mask weighs nothing is the original's. The composite and
+    /// the mask rebound onto it are committed to the store, and both identities are
+    /// printed; when the fill changed nothing, the image's and the mask's are.
+    #[command(after_help = EXIT_CODES)]
+    Fill {
+        /// The image, by its identity in the store.
+        #[arg(long)]
+        image: String,
+        /// The mask on the image, by its identity in the store.
+        #[arg(long)]
+        mask: String,
+        /// The filler, by its name in the config's `[backends.fill]` tables. With none,
+        /// the config's default for fill answers.
+        #[arg(long, value_name = "NAME")]
+        backend: Option<String>,
+        #[command(flatten)]
+        common: Common,
+    },
 }
 
 /// What every operation's command takes besides its own: the store, the config, and the
@@ -449,6 +490,38 @@ fn run_at(
             }
             operation(common, "render", arguments, inputs, recovery, platform)
         }
+        Command::Paste {
+            image,
+            fill,
+            mask,
+            mode,
+            common,
+        } => {
+            let arguments = vec![("mode", Value::text(mode))];
+            let inputs = vec![
+                ("image", "--image", image.as_str()),
+                ("fill", "--fill", fill.as_str()),
+                ("mask", "--mask", mask.as_str()),
+            ];
+            operation(common, "paste", arguments, inputs, recovery, platform)
+        }
+        Command::Fill {
+            image,
+            mask,
+            backend,
+            common,
+        } => {
+            let mut arguments = Vec::new();
+            if let Some(backend) = backend {
+                arguments.push(("backend", Value::text(backend)));
+            }
+            let inputs = vec![
+                ("image", "--image", image.as_str()),
+                ("mask", "--mask", mask.as_str()),
+            ];
+            let uses = Uses::One(Capability::Fill, backend.as_deref());
+            operation_using(common, "fill", arguments, inputs, recovery, platform, uses)
+        }
     }
 }
 
@@ -461,7 +534,28 @@ fn operation(
     recovery: Recovery,
     platform: Option<Platform>,
 ) -> Result<String, String> {
-    let executor = executor(&common.at, &common.under, recovery, platform, Uses::Nothing)?;
+    operation_using(
+        common,
+        action,
+        arguments,
+        inputs,
+        recovery,
+        platform,
+        Uses::Nothing,
+    )
+}
+
+/// The same, for an operation that uses the backends `uses` names.
+fn operation_using(
+    common: &Common,
+    action: &str,
+    arguments: Vec<(&str, Value)>,
+    inputs: Vec<(&str, &str, &str)>,
+    recovery: Recovery,
+    platform: Option<Platform>,
+    uses: Uses<'_>,
+) -> Result<String, String> {
+    let executor = executor(&common.at, &common.under, recovery, platform, uses)?;
     let asked = OperationAsked {
         action,
         arguments,

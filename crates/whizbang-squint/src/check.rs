@@ -316,6 +316,23 @@ fn label(shown: &Shown) -> String {
     format!("image {} ({width} by {height} pixels)", shown.id)
 }
 
+/// Every tool this build links, by name: what a run may offer a judge beside tool files
+/// and the submission (plan m3, task G1, item 4: each is sent to every judge in a test).
+pub fn linked() -> &'static [&'static str] {
+    &LINKED
+}
+
+/// What a judge is told of a tool this build links.
+pub fn definition(name: &str) -> Result<ToolDefinition, String> {
+    match name {
+        view::NAME => view_tool().map_err(|_| "the tool view cannot be described".to_owned()),
+        align::NAME => details::align_tool(),
+        resize::NAME => details::resize_tool(),
+        compare::CHANGE_MAP | compare::EDGE_SIMILARITY => details::compare_tool(name),
+        other => Err(format!("{other:?} is no tool this build links")),
+    }
+}
+
 /// The tool `view` as a judge is told of it.
 fn view_tool() -> Result<ToolDefinition, Failure> {
     let schema = json!({
@@ -954,15 +971,8 @@ impl Action for Check {
         let mut named_files: Vec<FileTool> = Vec::new();
         for name in &named {
             match *name {
-                view::NAME => tools.push(view_tool()?),
-                align::NAME => {
-                    tools.push(details::align_tool().map_err(|why| failed("tools", &why))?);
-                }
-                resize::NAME => {
-                    tools.push(details::resize_tool().map_err(|why| failed("tools", &why))?);
-                }
-                compare::CHANGE_MAP | compare::EDGE_SIMILARITY => {
-                    tools.push(details::compare_tool(name).map_err(|why| failed("tools", &why))?);
+                linked if LINKED.contains(&linked) => {
+                    tools.push(definition(linked).map_err(|why| failed("tools", &why))?);
                 }
                 other => {
                     if let Some(tool) = self.toolbox.file(other) {

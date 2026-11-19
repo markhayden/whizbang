@@ -6,8 +6,6 @@
 //! perspective view into a panorama is not here yet (`docs/carry-over.md`). The tool's
 //! record is `docs/reference/tools/view.md`.
 
-use image::codecs::png::{CompressionType, FilterType, PngEncoder};
-use image::{ExtendedColorType, ImageEncoder};
 use whizbang_core::artifact::{self, Artifact, ArtifactError, ArtifactType, Image, ImageRole};
 use whizbang_core::artifact::{Origin, Step};
 use whizbang_core::contract::{
@@ -257,18 +255,11 @@ fn snap(low: f64, high: f64, size: u32) -> (u32, u32) {
     (first, up.clamp(first + 1, size))
 }
 
-/// The pixels as a PNG: 8 bits a channel, red, green, blue and alpha, with no other chunk.
+/// The pixels as a PNG, by the core's one encoder of an image artifact's file
+/// (`whizbang_core::identity::encode`).
 pub(crate) fn png(pixels: &CanonicalPixels) -> Result<Vec<u8>, ViewError> {
-    let mut file = Vec::new();
-    PngEncoder::new_with_quality(&mut file, CompressionType::Default, FilterType::Adaptive)
-        .write_image(
-            pixels.rgba(),
-            pixels.width(),
-            pixels.height(),
-            ExtendedColorType::Rgba8,
-        )
-        .map_err(|error| ViewError::Failed(format!("cannot encode the crop as a PNG: {error}")))?;
-    Ok(file)
+    whizbang_core::identity::encode::png(pixels)
+        .map_err(|why| ViewError::Failed(format!("cannot encode the crop: {why}")))
 }
 
 /// `view` as an action (ADR 0009): it takes the image at `image`, and a second at
