@@ -20,18 +20,16 @@
 //! this one keeps what the mask covers, as the plan's cut-out asks, and keeps the blend
 //! where rascal kept only the core. `binary`, `tinted` and `overlay` wait for milestone 3.
 //!
-//! The PNG is written as `view` writes a crop: the encoder `image` at the version the core
-//! decodes with, the default compression and the adaptive filter, and no chunk but the
-//! picture's. Its file is part of the rendering's identity, so a change of that encoder
+//! The PNG is written by the core's one encoder of an image artifact's file
+//! (`whizbang_core::identity::encode`), as `view` writes a crop. Its file is part of the rendering's identity, so a change of that encoder
 //! changes the identity; its pixel digest stays.
 
-use image::codecs::png::{CompressionType, FilterType, PngEncoder};
-use image::{ExtendedColorType, ImageEncoder};
 use whizbang_core::artifact::{self, Artifact, ArtifactType, Image, ImageRole, Mask, Origin, Step};
 use whizbang_core::contract::{
     Action, ActionDescriptor, Argument, Context, Failure, InputPort, Kind, OutputPort,
     PreparedCall, Produced, ValueType,
 };
+use whizbang_core::identity::encode::{self, Channels};
 use whizbang_core::identity::{CanonicalPixels, DecodeLimits};
 
 use crate::operation;
@@ -104,18 +102,11 @@ pub fn alpha(mask: &Mask, pixels: &CanonicalPixels) -> Result<Vec<u8>, String> {
     Ok(rgba)
 }
 
-/// The samples as a PNG of `channels` grey or red, green, blue and alpha.
-fn png(
-    samples: &[u8],
-    width: u32,
-    height: u32,
-    colour: ExtendedColorType,
-) -> Result<Vec<u8>, String> {
-    let mut file = Vec::new();
-    PngEncoder::new_with_quality(&mut file, CompressionType::Default, FilterType::Adaptive)
-        .write_image(samples, width, height, colour)
-        .map_err(|error| format!("cannot encode the rendering as a PNG: {error}"))?;
-    Ok(file)
+/// The samples as a PNG of grey or red, green, blue and alpha, by the core's one
+/// encoder (`whizbang_core::identity::encode`).
+fn png(samples: &[u8], width: u32, height: u32, channels: Channels) -> Result<Vec<u8>, String> {
+    encode::png_of(samples, width, height, channels)
+        .map_err(|why| format!("cannot encode the rendering: {why}"))
 }
 
 /// The rendering of `mask` in `profile`: an image whose role is a rendering, in the
@@ -132,21 +123,11 @@ pub fn render(
         .argument("profile", profile.name())
         .input("mask", mask.id().0);
     let file = match (profile, image) {
-        (Profile::Plain, _) => png(
-            &plain(mask),
-            space.width(),
-            space.height(),
-            ExtendedColorType::L8,
-        )?,
+        (Profile::Plain, _) => png(&plain(mask), space.width(), space.height(), Channels::Grey)?,
         (Profile::Alpha, Some((pixels, id))) => {
             step = step.input("image", id.0);
             let rgba = alpha(mask, pixels)?;
-            png(
-                &rgba,
-                space.width(),
-                space.height(),
-                ExtendedColorType::Rgba8,
-            )?
+            png(&rgba, space.width(), space.height(), Channels::Rgba)?
         }
         (Profile::Alpha, None) => {
             return Err("alpha draws on the image the mask is on: give it".to_owned());

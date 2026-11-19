@@ -409,6 +409,19 @@ impl Engine {
         self
     }
 
+    /// For tests: the same executor, reading inputs and holding what is handed back
+    /// within these decode limits, each never past the default's (plan m3, task F1).
+    #[doc(hidden)]
+    pub fn with_decode_limits(mut self, limits: DecodeLimits) -> Engine {
+        let most = DecodeLimits::default();
+        self.limits = DecodeLimits {
+            max_pixels: limits.max_pixels.min(most.max_pixels),
+            max_bytes: limits.max_bytes.min(most.max_bytes),
+            max_profile_bytes: limits.max_profile_bytes.min(most.max_profile_bytes),
+        };
+        self
+    }
+
     /// The actions this executor runs.
     pub fn registry(&self) -> &Registry {
         &self.registry
@@ -1699,7 +1712,19 @@ impl Engine {
             None => Outcome::Cancelled,
             Some(Ok(Ok(produced))) => {
                 verdict = produced.verdict().cloned();
-                match held_to_ports(&prepared, action.descriptor(), produced, secrets) {
+                let held = held_to_ports(&prepared, action.descriptor(), produced, secrets)
+                    .and_then(|held| {
+                        let store = context.store();
+                        super::outputs::held_to_relations(
+                            &prepared,
+                            action.descriptor(),
+                            &held,
+                            store,
+                            &self.limits,
+                        )
+                        .map(|()| held)
+                    });
+                match held {
                     Ok(held) => {
                         outputs = held;
                         Outcome::Completed {

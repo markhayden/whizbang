@@ -1995,3 +1995,85 @@ fn rascal_remove_prompt_makes_a_mask_under_the_fake_segmenter() {
     );
     assert_eq!(refused.code, Some(1), "{}", refused.err);
 }
+
+#[test]
+fn rascal_paste_composites_a_fill_onto_its_base() {
+    // A picture of 64 by 48 with a mask on it, a block from 8, 8 to 24, 20, and a fill of
+    // one colour of its size, brought in as a picture: `rascal paste` prints the
+    // composite, whose every pixel outside the mask is the picture's and whose block is
+    // the fill's colour.
+    let dir = Scratch::new("cli-paste");
+    let root = dir.path().join("store");
+    std::fs::create_dir_all(dir.path().join("in")).unwrap();
+    let ran = |args: &[&str]| {
+        let ran = whizbang(args, &root);
+        assert_eq!(ran.code, Some(0), "{args:?}: {}", ran.err);
+        ran.out
+    };
+    drop(Store::open(&root, Arc::new(RealFs)).unwrap());
+    let image = crate::anthropic::import_picture(&root, &dir.path().join("in"), "base", 40);
+    let mask = crate::fal::put_mask(
+        &root,
+        whizbang_core::artifact::ArtifactId(image.parse().unwrap()),
+    );
+    let fill = dir.path().join("in").join("fill.png");
+    image::RgbImage::from_pixel(64, 48, image::Rgb([7, 200, 9]))
+        .save_with_format(&fill, image::ImageFormat::Png)
+        .unwrap();
+    let fill = ran(&["store", "import", "--picture", fill.to_str().unwrap()]);
+    let fill = fill
+        .lines()
+        .last()
+        .unwrap()
+        .strip_prefix("imported image ")
+        .unwrap()
+        .to_owned();
+    let mask = mask.0.to_string();
+    let out = ran(&[
+        "rascal", "paste", "--image", &image, "--fill", &fill, "--mask", &mask,
+    ]);
+    let made = printed(&out, "image");
+    assert_ne!(made, image);
+    let file = dir.path().join("pasted.png");
+    ran(&[
+        "store",
+        "export",
+        "--image",
+        &made,
+        "--out",
+        file.to_str().unwrap(),
+    ]);
+    let shown = pixels_of(&std::fs::read(&file).unwrap());
+    let base = dir.path().join("base.png");
+    ran(&[
+        "store",
+        "export",
+        "--image",
+        &image,
+        "--out",
+        base.to_str().unwrap(),
+    ]);
+    let picture = pixels_of(&std::fs::read(&base).unwrap());
+    for (at, (a, b)) in shown
+        .rgba()
+        .chunks(4)
+        .zip(picture.rgba().chunks(4))
+        .enumerate()
+    {
+        let (x, y) = (at % 64, at / 64);
+        if (8..24).contains(&x) && (8..20).contains(&y) {
+            assert_eq!(a, [7, 200, 9, b[3]], "{x}, {y}");
+        } else {
+            assert_eq!(a, b, "{x}, {y}");
+        }
+    }
+    // A mode this build does not have is the command line's error.
+    let other = whizbang(
+        &[
+            "rascal", "paste", "--image", &image, "--fill", &fill, "--mask", &mask, "--mode",
+            "hard",
+        ],
+        &root,
+    );
+    assert_eq!(other.code, Some(2), "{}", other.err);
+}

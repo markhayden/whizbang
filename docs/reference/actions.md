@@ -64,3 +64,11 @@ Protects the pixels of a second mask, grown by a margin; with none the mask is h
 ## `view`
 
 Shows a region of an image closer, and the same region of a second image when one is given.
+
+## `paste`
+
+Pastes a fill onto its base image under a mask; every pixel the mask weighs nothing is the base's.
+
+## `fill`
+
+Fills what a mask covers in an image with the configured filler, and rebinds the mask onto the result.

@@ -39,6 +39,7 @@ mod journal;
 pub mod ledger;
 mod live;
 mod nested;
+mod outputs;
 mod part;
 mod prepare;
 pub mod record;

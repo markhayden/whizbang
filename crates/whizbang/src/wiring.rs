@@ -97,6 +97,9 @@ fn registry_of(
     whizbang_rascal::select::register(&mut primitives).map_err(|e| said(&e))?;
     whizbang_rascal::subtract::register(&mut primitives).map_err(|e| said(&e))?;
     primitives.register(Arc::new(view)).map_err(|e| said(&e))?;
+    // Each registered by its own module (plan m3, "Shared files").
+    whizbang_rascal::paste::register(&mut primitives).map_err(|e| said(&e))?;
+    whizbang_rascal::fill::register(&mut primitives).map_err(|e| said(&e))?;
     if let Some(files) = &files {
         for action in files.actions()? {
             primitives.register(action).map_err(|e| said(&e))?;
