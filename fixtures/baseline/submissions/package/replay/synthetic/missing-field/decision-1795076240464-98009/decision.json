@@ -1,0 +1,249 @@
+{
+  "report_version": 1,
+  "harness_version": "capture",
+  "use_case": "source-fidelity",
+  "job": {
+    "use_case": "source-fidelity",
+    "brief": "Restyle the scene; keep the structure and every named subject.",
+    "images": [
+      {
+        "id": "candidate",
+        "role": "candidate",
+        "label": null,
+        "source": "path:items/missing-field/candidate.png",
+        "projection": null
+      },
+      {
+        "id": "source",
+        "role": "source",
+        "label": null,
+        "source": "path:families/door/source.png",
+        "projection": null
+      }
+    ]
+  },
+  "config": {
+    "budget": {
+      "decision_runs": 1,
+      "evidence_items": 24,
+      "repair_output_tokens": 32000,
+      "repairs": 1,
+      "request_timeout_s": 300,
+      "retries": 3,
+      "spend_cap_usd": 2.0,
+      "tool_calls": 8,
+      "tool_timeout_s": 120,
+      "tool_turns": 4
+    },
+    "cache": {
+      "dir": null,
+      "read": true,
+      "write": true
+    },
+    "config_version": 1,
+    "images": {
+      "max_decode_bytes": 67108864,
+      "max_decode_pixels": 50000000,
+      "max_long_edge": null
+    },
+    "output": {
+      "dir": "./squint-out"
+    },
+    "policy": {
+      "on_error": "review",
+      "on_unsure": "review"
+    },
+    "privacy": {
+      "account": "anthropic:synthetic",
+      "cloud_calls": true
+    },
+    "provider": {
+      "controls": {},
+      "max_output_tokens": 16000,
+      "model": "claude-haiku-5-5",
+      "profile": "anthropic"
+    },
+    "rules": null,
+    "tools": {
+      "enabled": [
+        "view",
+        "align"
+      ],
+      "order": [],
+      "packs": {}
+    }
+  },
+  "rules": {
+    "base": "source-fidelity",
+    "profile": null,
+    "versions": {
+      "base:source-fidelity": 1
+    },
+    "obligations": [
+      {
+        "id": "SF1",
+        "kind": "must_hold",
+        "text": "Every protected subject or feature named in the job requirements keeps its identity, shape, position and extent relative to the source.",
+        "matters": null,
+        "hidden_ok": false,
+        "scope": [
+          "candidate"
+        ],
+        "evidence": [
+          "source"
+        ],
+        "evidence_kinds": null,
+        "waives": [],
+        "condition": null,
+        "disabled": false,
+        "provenance": "base:source-fidelity"
+      },
+      {
+        "id": "SF2",
+        "kind": "must_hold",
+        "text": "The candidate is derived from the source: same scene, same camera, same projection; nothing rotated, stretched or cropped away.",
+        "matters": null,
+        "hidden_ok": false,
+        "scope": [
+          "candidate"
+        ],
+        "evidence": [
+          "source"
+        ],
+        "evidence_kinds": [
+          "alignment_failure"
+        ],
+        "waives": [],
+        "condition": null,
+        "disabled": false,
+        "provenance": "base:source-fidelity"
+      },
+      {
+        "id": "SF3",
+        "kind": "allowed",
+        "text": "Changes the job requirements permit are not violations.",
+        "matters": null,
+        "hidden_ok": false,
+        "scope": null,
+        "evidence": null,
+        "evidence_kinds": null,
+        "waives": [],
+        "condition": null,
+        "disabled": false,
+        "provenance": "base:source-fidelity"
+      },
+      {
+        "id": "SF4",
+        "kind": "observe",
+        "text": "Any other change is noted with its location.",
+        "matters": null,
+        "hidden_ok": false,
+        "scope": null,
+        "evidence": null,
+        "evidence_kinds": null,
+        "waives": [],
+        "condition": null,
+        "disabled": false,
+        "provenance": "base:source-fidelity"
+      },
+      {
+        "id": "RQ1",
+        "kind": "must_hold",
+        "text": "The front door keeps its identity, shape, position and extent relative to the source.",
+        "matters": null,
+        "hidden_ok": false,
+        "scope": [
+          "candidate"
+        ],
+        "evidence": [
+          "source"
+        ],
+        "evidence_kinds": null,
+        "waives": [],
+        "condition": null,
+        "disabled": false,
+        "provenance": "job"
+      }
+    ],
+    "warnings": []
+  },
+  "prompt_version": "v1",
+  "provider": "anthropic-messages",
+  "tools": [
+    "view@1.0.0",
+    "align@1.1.0"
+  ],
+  "decision_runs": 1,
+  "policy": {
+    "on_unsure": "review",
+    "on_error": "review"
+  },
+  "cap_usd": 2.0,
+  "envelope": {
+    "usd": 0.19336060000000002,
+    "decision_runs": 1,
+    "requests": [
+      {
+        "kind": "tool_turn",
+        "shape": {
+          "input_tokens": 5894,
+          "output_tokens": 16000,
+          "images": 2
+        },
+        "bound_usd": 0.007389400000000001
+      },
+      {
+        "kind": "tool_turn",
+        "shape": {
+          "input_tokens": 42586,
+          "output_tokens": 16000,
+          "images": 18
+        },
+        "bound_usd": 0.014258600000000001
+      },
+      {
+        "kind": "tool_turn",
+        "shape": {
+          "input_tokens": 63273,
+          "output_tokens": 16000,
+          "images": 18
+        },
+        "bound_usd": 0.0163273
+      },
+      {
+        "kind": "tool_turn",
+        "shape": {
+          "input_tokens": 83959,
+          "output_tokens": 16000,
+          "images": 18
+        },
+        "bound_usd": 0.0183959
+      },
+      {
+        "kind": "final_turn",
+        "shape": {
+          "input_tokens": 106230,
+          "output_tokens": 16000,
+          "images": 18
+        },
+        "bound_usd": 0.020623
+      },
+      {
+        "kind": "repair",
+        "shape": {
+          "input_tokens": 126916,
+          "output_tokens": 32000,
+          "images": 18
+        },
+        "bound_usd": 0.029091600000000002
+      }
+    ],
+    "retry_reserve_usd": 0.08727480000000001,
+    "attempts": 9
+  },
+  "cache": {
+    "status": "off",
+    "key": null,
+    "source": null
+  }
+}

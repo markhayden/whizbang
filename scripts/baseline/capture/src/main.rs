@@ -36,6 +36,93 @@ const MODEL: &str = "claude-haiku-5-5";
 /// The set of the three ordinary decisions, and of the one whose crop is scaled down.
 const SET: &str = "source-fidelity/synthetic-v1";
 const SCALED_SET: &str = "source-fidelity/scaled-v1";
+/// The set of the decisions whose submissions squint refused, or took where whizbang's own
+/// port would not.
+const SUBMISSIONS_SET: &str = "source-fidelity/submissions-v1";
+
+/// The decisions of the set of submissions: each a way squint judged a submission.
+const SUBMISSIONS: [&str; 12] = [
+    "unknown-frame",
+    "two-missing",
+    "outside",
+    "missing-item",
+    "observed-item",
+    "bad-enum",
+    "extra-field",
+    "missing-field",
+    "two-faults",
+    "bad-evidence",
+    "on-a-crop",
+    "twice-invalid",
+];
+
+/// One submission, its first item changed as `change` says.
+fn submission(id: &str, checklist: &[String], change: &dyn Fn(&mut Value)) -> Value {
+    let mut items: Vec<Value> = checklist.iter().map(|item| held(item)).collect();
+    change(&mut items[0]);
+    let arguments = json!({
+        "schema_version": 1,
+        "items": items,
+        "findings": [],
+        "opinion": {"verdict": "pass", "reason": "As the items say."},
+    });
+    calls("Submitting.", &[tool_use(id, "submit_verdict", arguments)])
+}
+
+/// The turns of a decision of the set of submissions: a submission squint refused, then one it
+/// took; or, for `on-a-crop`, a look and then a violation located on the crop.
+fn submissions(name: &str, checklist: &[String]) -> Vec<Value> {
+    let fine = submit("toolu_s9", checklist, &held, "pass");
+    let refused = |change: &dyn Fn(&mut Value)| vec![submission("toolu_s1", checklist, change), fine.clone()];
+    let located = |frame: &str, bbox: [f64; 4]| {
+        json!({"kind": "bbox", "frame": frame, "bbox": bbox, "polygon": null, "yaw": null,
+               "pitch": null, "fov": null})
+    };
+    match name {
+        "unknown-frame" => refused(&|i| {
+            i["disposition"] = json!("violation");
+            i["location"] = located("crop:call:9:0", [0.1, 0.1, 0.5, 0.5]);
+        }),
+        "outside" => refused(&|i| {
+            i["disposition"] = json!("violation");
+            i["location"] = located("raw:candidate", [0.5, 0.5, 1.2, 0.9]);
+        }),
+        // Two items left out: squint named one of them, whichever its hash map gave first.
+        "two-missing" => vec![submit("toolu_s1", &checklist[..1], &held, "pass"), fine],
+        "missing-item" => {
+            let short = &checklist[..checklist.len() - 1];
+            vec![submit("toolu_s1", short, &held, "pass"), fine]
+        }
+        "observed-item" => refused(&|i| i["disposition"] = json!("observed")),
+        "bad-enum" => refused(&|i| i["disposition"] = json!("fine")),
+        "extra-field" => refused(&|i| i["note"] = json!("an extra")),
+        "missing-field" => refused(&|i| {
+            if let Some(o) = i.as_object_mut() {
+                o.remove("evidence");
+            }
+        }),
+        "two-faults" => refused(&|i| {
+            i["disposition"] = json!("fine");
+            i["note"] = json!("an extra");
+        }),
+        "bad-evidence" => refused(&|i| i["evidence"] = json!(["call:7"])),
+        "on-a-crop" => vec![
+            calls(
+                "A closer look.",
+                &[tool_use("toolu_c1", "view", json!({"frame": "raw:candidate", "bbox": [0.25, 0.25, 0.75, 0.75]}))],
+            ),
+            submission("toolu_c2", checklist, &|i| {
+                i["disposition"] = json!("violation");
+                i["location"] = located("crop:call:1:0", [0.2, 0.2, 0.6, 0.6]);
+                i["evidence"] = json!(["call:1"]);
+            }),
+        ],
+        _ => vec![
+            submission("toolu_s1", checklist, &|i| i["disposition"] = json!("fine")),
+            submission("toolu_s2", checklist, &|i| i["disposition"] = json!("fine")),
+        ],
+    }
+}
 
 const CONFIG: &str = r#"
 [provider]
@@ -228,9 +315,15 @@ fn strip(salt: u32) -> RgbImage {
 
 fn main() {
     let out = PathBuf::from(std::env::args().nth(1).expect("the package folder"));
-    // `scaled`: the one decision whose crop is scaled down; otherwise the three ordinary ones.
-    let scaled = std::env::args().nth(2).as_deref() == Some("scaled");
-    let set_id = if scaled { SCALED_SET } else { SET };
+    // `scaled`: the one decision whose crop is scaled down; `submissions`: the decisions whose
+    // submissions squint judged; otherwise the three ordinary ones.
+    let mode = std::env::args().nth(2).unwrap_or_default();
+    let scaled = mode == "scaled";
+    let set_id = match mode.as_str() {
+        "scaled" => SCALED_SET,
+        "submissions" => SUBMISSIONS_SET,
+        _ => SET,
+    };
     let catalog = Catalog::shipped().expect("the catalogue");
     let images = catalog.model(MODEL).expect("the model").images.clone();
     let config = Config::parse(CONFIG, &[], &|_| None).expect("the config");
@@ -253,11 +346,18 @@ fn main() {
                 moved.put_pixel(x, y, Rgb([20, 90, 40]));
             }
         }
-        vec![
-            ("kept", item(&set, set_id, "kept", &kept, source_path, &source_png)),
-            ("moved", item(&set, set_id, "moved", &moved, source_path, &source_png)),
-            ("cut-short", item(&set, set_id, "cut-short", &kept, source_path, &source_png)),
-        ]
+        if mode == "submissions" {
+            SUBMISSIONS
+                .iter()
+                .map(|name| (*name, item(&set, set_id, name, &kept, source_path, &source_png)))
+                .collect()
+        } else {
+            vec![
+                ("kept", item(&set, set_id, "kept", &kept, source_path, &source_png)),
+                ("moved", item(&set, set_id, "moved", &moved, source_path, &source_png)),
+                ("cut-short", item(&set, set_id, "cut-short", &kept, source_path, &source_png)),
+            ]
+        }
     };
 
     for (name, job_path) in items {
@@ -279,6 +379,7 @@ fn main() {
             .map(|i| i.id.clone())
             .collect();
         let script: Vec<Value> = match name {
+            _ if mode == "submissions" => submissions(name, &checklist),
             "wide" => vec![
                 calls(
                     "The whole strip.",

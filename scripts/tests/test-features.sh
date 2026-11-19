@@ -78,4 +78,19 @@ expect_fail "the binary's own build turns the tests' feature fakes on" \
   "is built with the feature fakes" \
   bash -c 'cd "$1" && scripts/check-features.sh' _ "$copy"
 
+# The baseline replay in the binary's own build: the copy's whizbang is put back, then its
+# dependency on whizbang-squint turns `baseline-replay` on, which brings jsonschema.
+cp crates/whizbang/Cargo.toml "$copy/crates/whizbang/Cargo.toml"
+(cd "$copy" && "$PWD/scripts/check-features.sh") >"$tmp/clean" 2>&1 \
+  || { cat "$tmp/clean" >&2; fail "the copy put back again: expected success"; }
+grep -F -e 'features: ok (the binary links no jsonschema)' "$tmp/clean" >/dev/null \
+  || { cat "$tmp/clean" >&2; fail "the copy: the binary was not checked for jsonschema"; }
+sed 's/^whizbang-squint.workspace = true$/whizbang-squint = { workspace = true, features = ["baseline-replay"] }/' \
+  crates/whizbang/Cargo.toml >"$copy/crates/whizbang/Cargo.toml"
+grep -F -e 'features = ["baseline-replay"] }' "$copy/crates/whizbang/Cargo.toml" >/dev/null \
+  || fail "the copy's whizbang has no whizbang-squint line to plant the feature in"
+expect_fail "the binary's own build turns the baseline replay on" \
+  "links jsonschema" \
+  bash -c 'cd "$1" && scripts/check-features.sh' _ "$copy"
+
 finished

@@ -594,3 +594,80 @@ fn the_breakdown_names_endings_dispositions_and_refusals_from_closed_lists() {
         "{text}"
     );
 }
+
+#[test]
+fn squints_judgement_of_each_kind_of_submission_replays_the_same() {
+    // Twelve decisions captured from frozen squint (`scripts/baseline/capture/`, the set of
+    // submissions): squint's schema refusals (a bad enum, an extra field, a missing field, two
+    // faults at once), its rules (an unknown frame, a box outside its frame, a missing item,
+    // `observed` on an item, evidence that is no completed call), a violation located on a
+    // crop, which squint took, two refusals in a row, which end the run, and two items left out,
+    // of which squint named one.
+    let scratch = Scratch::new("baseline-submissions");
+    let recorded = fixtures().join("../submissions/transcripts");
+    let tally = gate_over("submissions", &recorded, &scratch.path().join("r.toml")).unwrap();
+    assert_eq!(
+        (tally.transcripts, tally.same, tally.differed, tally.refused),
+        (12, 12, 0, 0),
+        "{}",
+        tally.text()
+    );
+    // The recorded words are squint's own: the replay matched them, schema refusals included.
+    let mut said = String::new();
+    for entry in std::fs::read_dir(recorded.join("historical/synthetic")).unwrap() {
+        for file in std::fs::read_dir(entry.unwrap().path()).unwrap() {
+            said.push_str(&std::fs::read_to_string(file.unwrap().path()).unwrap());
+        }
+    }
+    for words in [
+        "is not valid under any of the schemas listed in the 'oneOf' keyword at /items/0/disposition",
+        "Additional properties are not allowed ('note' was unexpected) at /items/0",
+        "\\\"evidence\\\" is a required property at /items/0",
+        "location invalid: submission: bbox [0.5, 0.5, 1.2, 0.9] outside [0, 1]",
+        "is not a tool call that completed in this run",
+    ] {
+        assert!(said.contains(words), "{words}");
+    }
+}
+
+#[test]
+fn a_refusal_of_several_missing_items_matches_whichever_squint_named_and_no_other() {
+    // In `two-missing` the submission answered the first item only. Squint named the third,
+    // `chk:ob:RQ1@candidate`, whichever its hash map gave; it could as well have named the
+    // second. The replay names the one the record named, among the items this submission
+    // got wrong; an item it answered is never among them.
+    let scratch = Scratch::new("baseline-two-missing");
+    let named = |item: &str| format!("checklist item \\\"{item}\\\" must appear exactly once");
+    let run_with = |item: &str| {
+        let transcripts = scratch.path().join(item.replace([':', '@'], "-"));
+        copy(&fixtures().join("../submissions/transcripts"), &transcripts);
+        let folder = transcripts.join("historical/synthetic/two-missing");
+        let file = std::fs::read_dir(&folder)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(
+            text.matches(&named("chk:ob:RQ1@candidate")).count(),
+            2,
+            "{text}"
+        );
+        std::fs::write(
+            &file,
+            text.replace(&named("chk:ob:RQ1@candidate"), &named(item)),
+        )
+        .unwrap();
+        gate_over("submissions", &transcripts, &scratch.path().join("r.toml")).unwrap()
+    };
+    let other = run_with("chk:ob:SF2@candidate");
+    assert_eq!((other.same, other.differed), (12, 0), "{}", other.text());
+    let answered = run_with("chk:ob:SF1@candidate");
+    assert_eq!(
+        (answered.same, answered.differed),
+        (11, 1),
+        "{}",
+        answered.text()
+    );
+}
