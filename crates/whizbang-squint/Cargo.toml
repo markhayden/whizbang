@@ -34,6 +34,11 @@ png = "=0.18.1"
 flate2 = "=1.1.11"
 miniz_oxide = "=0.9.1"
 
+# The replay of the baseline checks a submission against squint's JSON Schema with the
+# validator squint checked it with, at the version its lock file pins, so that a refusal
+# reads as squint's did, word for word (plan 2C, task E2; `crate::replay`).
+jsonschema = { version = "=0.60.2", default-features = false }
+
 [dev-dependencies]
 whizbang-testkit.workspace = true
 

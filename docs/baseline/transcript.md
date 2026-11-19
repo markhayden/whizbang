@@ -462,12 +462,16 @@ every transcript replays with no difference. The receipt (`README.md`) is writte
 way.
 
 A call whose arguments break the tool's schema is refused in squint's words (its
-`check_model_args`, ported). What the replay does not reproduce, each a difference it reports:
-a submission squint judged otherwise (squint validated it against its JSON Schema and its own
-rules, in its own words; whizbang's port clamps a location outside its frame and reads a
-location on a raw frame only), a crop cut from a crop squint had scaled down (its pixels come
-from squint's filter, so under either version its prepared bytes differ), a panorama, and a
-picture with transparency (squint encoded it as a PNG of its own).
+`check_model_args`, ported), and a submission is judged as squint judged it: its JSON Schema by
+the validator squint ran, at the version squint's lock file pins, then its types and its rules
+in their order, each refusal in squint's words, and the verdict by its rows
+(`crates/whizbang-squint/src/replay/submission.rs`; the replay's alone, `check` keeps its
+own). `fixtures/baseline/submissions/` holds eleven decisions captured from frozen squint, one
+for each kind of judgement the port must reproduce. What the replay does not reproduce, each a
+difference it reports: a crop cut from a crop squint had scaled down (its pixels come from
+squint's filter, so under either version its prepared bytes differ), which item a refusal
+names when several are missing (squint walked a hash map), a panorama, and a picture with
+transparency (squint encoded it as a PNG of its own).
 
 ## The synthetic fixtures
 

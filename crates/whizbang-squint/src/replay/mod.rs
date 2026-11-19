@@ -21,16 +21,19 @@
 //! whizbang's form, which names an image by its identity; `check` taking squint's form is on
 //! the carry-over list.
 //!
-//! What this does not reproduce, each a difference the comparison reports by place: a
-//! submission that does not validate (whizbang's port words its reasons its own way), a
-//! panorama, and a picture with transparency (squint encoded it as its own PNG).
+//! A submission is judged as squint judged it ([`submission`]): its JSON Schema, by the
+//! validator squint ran, then its types and its rules, each refusal in squint's words. What
+//! this does not reproduce, each a difference the comparison reports by place: a panorama, a
+//! picture with transparency (squint encoded it as its own PNG), and which item a refusal
+//! names when several are missing (squint walked a hash map).
 
 use std::collections::BTreeMap;
+
+mod submission;
 
 use image::RgbImage;
 use serde_json::{Value as Json, json};
 use whizbang_core::capability::Picture;
-use whizbang_core::contract::record::Decision;
 use whizbang_core::egress::{DataClass, Piece};
 use whizbang_core::identity::{CanonicalPixels, Digest};
 
@@ -115,6 +118,9 @@ fn ended(class: &'static str, prefix: &str, message: &str) -> Ended {
 struct Frame {
     pixels: CanonicalPixels,
     root: String,
+    /// The frame it was cut from or warped into, and how it sits there; none for a raw frame.
+    parent: Option<String>,
+    mapping: Option<Json>,
 }
 
 /// What a tool returned, before it is presented.
@@ -602,7 +608,6 @@ fn discarded(last: Option<&str>) -> Json {
 
 /// One run of the loop.
 struct Run<'a> {
-    job: &'a Job,
     resolved: Resolved,
     checklist: Checklist,
     budget: Budget,
@@ -617,6 +622,8 @@ struct Run<'a> {
     repairs: Vec<Json>,
     repairs_used: u32,
     next_call: u32,
+    /// The ids of the calls that completed.
+    completed: Vec<String>,
 }
 
 impl Run<'_> {
@@ -780,9 +787,14 @@ impl Run<'_> {
                 Frame {
                     pixels: returned.pixels,
                     root: returned.root,
+                    parent: Some(returned.parent),
+                    mapping: Some(returned.mapping),
                 },
             );
         }
+        // Squint counted a call that settled as completed, whatever it found: the calls a
+        // submission may cite as its evidence.
+        self.completed.push(call_id.clone());
         let said = details::presentation(
             &call_id,
             envelope.status,
@@ -802,14 +814,28 @@ impl Run<'_> {
     /// The verdict a submission states, or squint's error for one that states none.
     fn finish(&mut self, call: &Json) -> Result<String, String> {
         let arguments = call.get("arguments").cloned().unwrap_or(Json::Null);
-        let decided = use_case::decided_of(&arguments, self.job, &self.resolved, &self.checklist)?;
+        let frames: BTreeMap<String, submission::Link> = self
+            .frames
+            .frames
+            .iter()
+            .map(|(name, frame)| {
+                let link = submission::Link {
+                    parent: frame.parent.clone(),
+                    mapping: frame.mapping.clone(),
+                    root: frame.root.clone(),
+                };
+                (name.clone(), link)
+            })
+            .collect();
+        let judged = submission::Judged {
+            checklist: &self.checklist,
+            resolved: &self.resolved,
+            frames: &frames,
+            completed: &self.completed,
+        };
+        let verdict = submission::judged(&arguments, &judged)?;
         self.settled(call, "final", Json::Null);
-        Ok(match decided.verdict.decision() {
-            Decision::Pass => "pass",
-            Decision::Fail => "fail",
-            Decision::Unsure => "unsure",
-        }
-        .to_owned())
+        Ok(verdict.to_owned())
     }
 
     /// Squint's `drive`, from the first request to the verdict or the error.
@@ -1005,7 +1031,6 @@ pub fn replay(
     let submit = use_case::submit_definition().ok_or("the submission's schema is not read")?;
     let tools = vec![view_definition(), align_definition()?, submit];
     let mut run = Run {
-        job,
         resolved,
         checklist,
         budget: *budget,
@@ -1023,6 +1048,7 @@ pub fn replay(
         repairs: Vec::new(),
         repairs_used: 0,
         next_call: 1,
+        completed: Vec::new(),
     };
     let mut opening = Vec::new();
     for (image, shown) in job.images.iter().zip(pictures) {
@@ -1039,6 +1065,8 @@ pub fn replay(
             Frame {
                 pixels: shown.pixels.clone(),
                 root: image.id.clone(),
+                parent: None,
+                mapping: None,
             },
         );
         let role = match image.role {

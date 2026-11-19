@@ -426,3 +426,37 @@ fn the_breakdown_names_endings_dispositions_and_refusals_from_closed_lists() {
         "{text}"
     );
 }
+
+#[test]
+fn squints_judgement_of_each_kind_of_submission_replays_the_same() {
+    // Eleven decisions captured from frozen squint (`scripts/baseline/capture/`, the set of
+    // submissions): squint's schema refusals (a bad enum, an extra field, a missing field, two
+    // faults at once), its rules (an unknown frame, a box outside its frame, a missing item,
+    // `observed` on an item, evidence that is no completed call), a violation located on a
+    // crop, which squint took, and two refusals in a row, which end the run.
+    let scratch = Scratch::new("baseline-submissions");
+    let recorded = fixtures().join("../submissions/transcripts");
+    let tally = gate_over("submissions", &recorded, &scratch.path().join("r.toml")).unwrap();
+    assert_eq!(
+        (tally.transcripts, tally.same, tally.differed, tally.refused),
+        (11, 11, 0, 0),
+        "{}",
+        tally.text()
+    );
+    // The recorded words are squint's own: the replay matched them, schema refusals included.
+    let mut said = String::new();
+    for entry in std::fs::read_dir(recorded.join("historical/synthetic")).unwrap() {
+        for file in std::fs::read_dir(entry.unwrap().path()).unwrap() {
+            said.push_str(&std::fs::read_to_string(file.unwrap().path()).unwrap());
+        }
+    }
+    for words in [
+        "is not valid under any of the schemas listed in the 'oneOf' keyword at /items/0/disposition",
+        "Additional properties are not allowed ('note' was unexpected) at /items/0",
+        "\\\"evidence\\\" is a required property at /items/0",
+        "location invalid: submission: bbox [0.5, 0.5, 1.2, 0.9] outside [0, 1]",
+        "is not a tool call that completed in this run",
+    ] {
+        assert!(said.contains(words), "{words}");
+    }
+}
