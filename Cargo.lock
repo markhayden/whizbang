@@ -1210,6 +1210,7 @@ dependencies = [
  "clap",
  "image",
  "serde_json",
+ "toml",
  "whizbang-core",
  "whizbang-testkit",
 ]
