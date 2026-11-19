@@ -27,6 +27,7 @@ mod locations;
 mod masks;
 mod paste;
 mod render;
+mod seams;
 mod segment;
 mod shaping;
 mod subtract;
@@ -208,5 +209,10 @@ mod writes {
         window => frames,
         unwindow => frames,
         tighten => tighten,
+        fan => seams,
+        profile => seams,
+        ramp => seams,
+        apply => seams,
+        measure => seams,
     }
 }

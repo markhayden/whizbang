@@ -492,6 +492,70 @@ fn a_tool_without_a_record_cannot_be_unverified_or_admitted() {
     assert!(stated("# t\n\n## Limits\n\n**Unverified**\n").is_none());
 }
 
+/// Plan m3, task D2: every one of rascal's pixel operations, and every task, that needs no
+/// model has its record, and the record shows rungs 1 and 2. Rascal's operations are
+/// [`RASCAL`]; the tasks are the recipes; what needs a model is what the description says
+/// needs a capability (the tasks that call `segment` or `fill`), whose rung 2 is task B1's.
+/// The description is the reference's copy, which other tests hold to the binary's.
+#[test]
+fn each_pixel_operation_and_task_without_a_model_shows_its_record_complete() {
+    let doc: serde_json::Value = serde_json::from_str(indented_description()).expect("valid JSON");
+    let mut held = Vec::new();
+    for action in doc["actions"].as_array().unwrap() {
+        let name = action["name"].as_str().unwrap();
+        let rascals = action["kind"] == "recipe" || RASCAL.contains(&name);
+        if !rascals || !action["needs"].as_array().unwrap().is_empty() {
+            continue;
+        }
+        let record = record_of(name).unwrap_or_else(|| panic!("{name} has no record"));
+        let history = record
+            .split("\n## Mark and history\n")
+            .nth(1)
+            .unwrap_or_else(|| panic!("the record of {name} has no history"));
+        for rung in [
+            "| 1. Single examples | Shown |",
+            "| 2. Scored alone | Shown |",
+        ] {
+            let shown = history.lines().any(|line| line.starts_with(rung));
+            assert!(shown, "the record of {name} does not show {rung}");
+        }
+        held.push(name);
+    }
+    held.sort_unstable();
+    assert_eq!(
+        held,
+        [
+            "apply",
+            "close",
+            "cut",
+            "fan",
+            "feather",
+            "grow",
+            "inspect",
+            "invert",
+            "line",
+            "mask_rect",
+            "measure",
+            "paste",
+            "plug",
+            "profile",
+            "protect",
+            "put",
+            "ramp",
+            "rasterize",
+            "rect",
+            "render",
+            "select",
+            "shrink",
+            "stroke",
+            "subtract",
+            "tighten",
+            "unwindow",
+            "window"
+        ]
+    );
+}
+
 #[test]
 fn recipes_are_listed_before_primitives_with_purpose_and_use() {
     let (ok, text) = whizbang(&["describe", "--json"]);
@@ -554,38 +618,39 @@ fn recipes_are_listed_before_primitives_with_purpose_and_use() {
     );
 }
 
+// Rascal's operations, as its `crates/rascal-ops/src/lib.rs` registered them at the
+// commit `docs/sources.toml` pins (plan m3, task O5): each is an action here, under
+// its own name.
+const RASCAL: [&str; 25] = [
+    "rect",
+    "rasterize",
+    "render",
+    "cut",
+    "put",
+    "line",
+    "stroke",
+    "inspect",
+    "fan",
+    "profile",
+    "feather",
+    "ramp",
+    "apply",
+    "window",
+    "unwindow",
+    "paste",
+    "measure",
+    "grow",
+    "shrink",
+    "close",
+    "plug",
+    "subtract",
+    "select",
+    "invert",
+    "tighten",
+];
+
 #[test]
 fn each_of_rascals_25_operations_is_an_action() {
-    // Rascal's operations, as its `crates/rascal-ops/src/lib.rs` registered them at the
-    // commit `docs/sources.toml` pins (plan m3, task O5): each is an action here, under
-    // its own name.
-    const RASCAL: [&str; 25] = [
-        "rect",
-        "rasterize",
-        "render",
-        "cut",
-        "put",
-        "line",
-        "stroke",
-        "inspect",
-        "fan",
-        "profile",
-        "feather",
-        "ramp",
-        "apply",
-        "window",
-        "unwindow",
-        "paste",
-        "measure",
-        "grow",
-        "shrink",
-        "close",
-        "plug",
-        "subtract",
-        "select",
-        "invert",
-        "tighten",
-    ];
     let (ok, text) = whizbang(&["describe", "--json"]);
     assert!(ok);
     let doc: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
