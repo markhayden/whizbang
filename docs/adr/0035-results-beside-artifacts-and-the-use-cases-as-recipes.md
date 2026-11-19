@@ -57,10 +57,15 @@ argument that takes only an earlier step's measurements (`Argument::measurements
 `measurements: true`): a recipe that gives it a literal is refused when it is read, an
 override of it is refused before anything runs, and a run of `check` that nothing called (a
 command line or an MCP client) is refused it. Each entry names the run of its tool that made
-it, and `check` holds the entry to that run in its store before anything is sent: a call of a
-step of the same recipe, of the tool named, on the images `check` was given and handed, that
-completed (or failed as the entry says), committed exactly the images the entry names, and
-kept exactly the measurements it says in its report. The one entry that names no run is a
+it, and the document names the run of `details` that made it. `check` holds the document
+to that run before anything is sent: a completed step of `details` of the same recipe, whose
+every call, in order, is the run of one entry, and no other, so no entry it made is left out.
+And it holds each entry to the run it names, against the entry's own pair: the job's images
+by the roles the entry names, port by port (`align`'s `image` and `against`; a comparison's
+`frame`, the pair's second image, and `against`, the frame the verified `align` of the same
+pair committed; a tile's `view` on the candidate, with the entry's box, the box of its
+place); a run of the tool named, that completed (or failed as the entry says), committed
+exactly the images the entry names, and kept exactly the measurements it says in its report. The one entry that names no run is a
 comparison of a pair whose `align`, listed before it, gave no frame, said in fixed words. The
 decision cache's key holds the measurements without those run ids.
 

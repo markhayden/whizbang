@@ -977,7 +977,7 @@ impl Action for Check {
                         "a run handed what was measured first measures nothing itself: details is none",
                     ));
                 }
-                Some(measured::entries_of(text).map_err(|why| Failure::invalid(&why))?)
+                Some(measured::read(text).map_err(|why| Failure::invalid(&why))?)
             }
             _ => None,
         };
@@ -987,11 +987,6 @@ impl Action for Check {
             .filter(|input| input.port() == MEASURED_IMAGES)
             .map(|input| input.id())
             .collect();
-        if let Some(entries) = &handed_on {
-            let ids: Vec<ArtifactId> = images.iter().map(|input| input.id()).collect();
-            measured::held_to_their_runs(context, entries, &ids, &handed_images)
-                .map_err(|why| Failure::invalid(&why))?;
-        }
         // A tool file's capabilities are nested calls of this run: `segment` is frozen
         // with the tools when the run names one, and is never offered to the judge.
         let asks: &[&str] = if named_files.is_empty() {
@@ -1036,6 +1031,26 @@ impl Action for Check {
             "general" => None,
             _ => Some(judging(call, use_case, argument("job"))?),
         };
+        // Each entry handed on is held to the run that made it, on its own pair of the
+        // job's images, and the document to the step of details that made it whole (ADR
+        // 0035).
+        if let Some((made_by, entries)) = &handed_on {
+            let Some(judging) = &judging else {
+                return Err(Failure::invalid(
+                    "measurements are handed on only under a use case of the table",
+                ));
+            };
+            let ids: Vec<ArtifactId> = images.iter().map(|input| input.id()).collect();
+            measured::held_to_their_runs(
+                context,
+                made_by.as_deref(),
+                entries,
+                &judging.job,
+                &ids,
+                &handed_images,
+            )
+            .map_err(|why| Failure::invalid(&why))?;
+        }
         // Tiles are of a job with one image: one that relates a pair is refused, naming
         // its use case, before anything is measured or sent.
         if detail.contains(&details::TILES) {
@@ -1064,7 +1079,7 @@ impl Action for Check {
         // same images are the same details.
         let keyed_arguments: Vec<(String, Value)> = (call.arguments().iter())
             .map(|(name, value)| match (name.as_str(), &handed_on) {
-                ("measured", Some(entries)) => {
+                ("measured", Some((_, entries))) => {
                     let unrun: Vec<Entry> = (entries.iter())
                         .map(|entry| Entry {
                             run: None,
@@ -1073,7 +1088,7 @@ impl Action for Check {
                         .collect();
                     (
                         name.clone(),
-                        Value::text(&measured::document(&unrun).to_string()),
+                        Value::text(&measured::document(&unrun, None).to_string()),
                     )
                 }
                 _ => (name.clone(), value.clone()),
@@ -1151,7 +1166,7 @@ impl Action for Check {
             // and onto each reference, in the job's order; measured here, unless an
             // earlier step measured them and handed them on.
             let entries = match &handed_on {
-                Some(entries) => entries.clone(),
+                Some((_, entries)) => entries.clone(),
                 None => {
                     let ids: Vec<ArtifactId> = images.iter().map(|input| input.id()).collect();
                     let (pairs, candidates) = measured::pairs_of(&judging.job, &ids);

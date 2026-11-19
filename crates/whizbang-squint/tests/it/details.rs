@@ -134,9 +134,11 @@ fn details_none_measures_nothing_and_the_judge_step_still_runs() {
     let (details, judged) = (&steps[0].1, &steps[1].1);
     assert_eq!(calls(details), []);
     assert!(details.record().outputs().is_empty());
-    assert_eq!(
-        super::runner::argument(judged, "measured").as_deref(),
-        Some("{\"entries\":[]}")
+    let handed = super::runner::argument(judged, "measured").unwrap();
+    assert!(
+        whizbang_squint::measured::entries_of(&handed)
+            .unwrap()
+            .is_empty()
     );
     let said = texts(judge.received()[0].messages()[0].parts());
     assert!(

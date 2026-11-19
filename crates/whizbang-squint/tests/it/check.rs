@@ -3154,7 +3154,10 @@ fn measurements_a_step_hands_on_that_no_run_of_their_tool_made_are_refused() {
     world.more.push(forger());
     let cases = [
         // align's measurements, said of no run of align.
-        (forged_entry(json!([])), "names no run that measured it"),
+        (
+            forged_entry(json!([])),
+            "name no run of details that made them",
+        ),
         // An image that was not handed on with them.
         (
             forged_entry(json!([candidate.id().to_string()])),
@@ -3178,4 +3181,127 @@ fn measurements_a_step_hands_on_that_no_run_of_their_tool_made_are_refused() {
         }
         assert_eq!(judge.requests(), 0, "{said}");
     }
+}
+
+/// An action of a recipe that hands on what an earlier step measured, less every entry of
+/// `change_map`.
+struct Dropper(whizbang_core::contract::ActionDescriptor);
+
+impl whizbang_core::contract::Action for Dropper {
+    fn descriptor(&self) -> &whizbang_core::contract::ActionDescriptor {
+        &self.0
+    }
+
+    fn run(
+        &self,
+        call: &whizbang_core::contract::PreparedCall,
+        _: &whizbang_core::contract::Context,
+    ) -> Result<whizbang_core::contract::Produced, whizbang_core::contract::Failure> {
+        let from = call.arguments().iter().find_map(|(_, value)| match value {
+            Value::Text(text) => Some(text.clone()),
+            _ => None,
+        });
+        let mut document: Json = serde_json::from_str(&from.unwrap_or_default()).unwrap();
+        let kept: Vec<Json> = (document["entries"].as_array().unwrap().iter())
+            .filter(|entry| entry["tool"] != "change_map")
+            .cloned()
+            .collect();
+        document["entries"] = json!(kept);
+        Ok(whizbang_core::contract::Produced::nothing().with_measurements(document))
+    }
+}
+
+/// A user's recipe of these steps after its inputs: the images, a second list, the job.
+fn users_recipe(name: &str, steps: &str) -> String {
+    format!(
+        "version = 1\nname = \"{name}\"\npurpose = \"A test.\"\nuse = \"Never.\"\n\
+         [inputs]\nimages = {{ type = \"Image\", many = true }}\n\
+         fake = {{ type = \"Image\", many = true }}\njob = {{ type = \"Text\" }}\n\
+         {steps}"
+    )
+}
+
+/// Runs a user's recipe on the pair under source-fidelity, `fake` given as said: what the
+/// run ended as, and the judge.
+fn users_run(
+    world: &World,
+    name: &str,
+    fake: &[ArtifactId],
+    pair: [ArtifactId; 2],
+) -> (Finished, Arc<FakeJudge>) {
+    let job = Job::shorthand("source-fidelity", true, 0, None);
+    let mut call = Call::new(name).argument("job", Value::text(&job.to_json()));
+    for image in pair {
+        call = call.input("images", image);
+    }
+    for image in fake {
+        call = call.input("fake", *image);
+    }
+    let (finished, _, judge) = judged(world, &call, &submitting(&[]));
+    (finished, judge)
+}
+
+#[test]
+fn an_align_handed_on_from_another_pair_than_its_entry_names_is_refused() {
+    // The candidate aligned onto itself, said of the candidate onto the source.
+    let (mut world, source, candidate, _) = paired();
+    world.recipes.push(users_recipe(
+        "swapped",
+        "[[step]]\nid = \"details\"\nop = \"details\"\ninputs = { images = \"inputs.fake\" }\n\
+         use_case = \"source-fidelity\"\njob = \"inputs.job\"\n\
+         [[step]]\nid = \"judge\"\nop = \"check\"\n\
+         inputs = { images = \"inputs.images\", measured_images = \"details.images\" }\n\
+         use_case = \"source-fidelity\"\njob = \"inputs.job\"\nmeasured = \"details.measurements\"\n",
+    ));
+    let (finished, judge) = users_run(
+        &world,
+        "swapped",
+        &[candidate.id(), candidate.id()],
+        [candidate.id(), source.id()],
+    );
+    match finished.outcome() {
+        Outcome::Invalid { why } => {
+            assert!(
+                why.contains("was not run on the pair the entry names"),
+                "{why}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(judge.requests(), 0);
+}
+
+#[test]
+fn measurements_that_leave_out_a_call_the_step_of_details_made_are_refused() {
+    use whizbang_core::contract::{ActionDescriptor, Argument, Kind, ResultKind};
+    let (mut world, source, candidate, _) = paired();
+    let dropper = ActionDescriptor::draft("dropper", "1.0.0", Kind::Primitive, "Drops.")
+        .argument(Argument::measurements("from", "What to drop from."))
+        .results(ResultKind::Measurements);
+    world.more.push(Arc::new(Dropper(dropper.build().unwrap())));
+    world.recipes.push(users_recipe(
+        "dropped",
+        "[[step]]\nid = \"details\"\nop = \"details\"\ninputs = { images = \"inputs.images\" }\n\
+         use_case = \"source-fidelity\"\njob = \"inputs.job\"\ndetail = \"align,change_map\"\n\
+         [[step]]\nid = \"dropper\"\nop = \"dropper\"\nfrom = \"details.measurements\"\n\
+         [[step]]\nid = \"judge\"\nop = \"check\"\n\
+         inputs = { images = \"inputs.images\", measured_images = \"details.images\" }\n\
+         use_case = \"source-fidelity\"\njob = \"inputs.job\"\nmeasured = \"dropper.measurements\"\n",
+    ));
+    let (finished, judge) = users_run(
+        &world,
+        "dropped",
+        &[candidate.id()],
+        [candidate.id(), source.id()],
+    );
+    match finished.outcome() {
+        Outcome::Invalid { why } => {
+            assert!(
+                why.contains("not every call the step of details made"),
+                "{why}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(judge.requests(), 0);
 }

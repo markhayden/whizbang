@@ -17,7 +17,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
 use whizbang_core::artifact::{ArtifactId, ArtifactType};
-use whizbang_core::contract::record::{DIAGNOSTICS_PREFIX, RunRecord, Status};
+use whizbang_core::contract::record::{ArgumentValue, DIAGNOSTICS_PREFIX, RunRecord, Status};
 use whizbang_core::contract::{
     Action, ActionDescriptor, Argument, Call, CallError, Context, Count, DescriptorError, Failure,
     Finished, InputPort, Kind, Outcome, OutputPort, PreparedCall, Produced, ResultKind, RunId,
@@ -110,20 +110,33 @@ impl Entry {
 }
 
 /// Everything measured first, in the order it is said: the measurements of `details`.
-pub fn document(entries: &[Entry]) -> Json {
-    json!({ "entries": entries })
+/// `run` is the run of `details` that made them, which a judge's step holds the whole
+/// document to (ADR 0035); a document `check` makes for itself names none.
+pub fn document(entries: &[Entry], run: Option<&str>) -> Json {
+    match run {
+        Some(run) => json!({ "run": run, "entries": entries }),
+        None => json!({ "entries": entries }),
+    }
 }
 
-/// The entries of a document of measurements, or why it is not one.
-pub fn entries_of(text: &str) -> Result<Vec<Entry>, String> {
+/// A document of measurements read: the run that made it, and its entries; or why it is
+/// not one.
+pub fn read(text: &str) -> Result<(Option<String>, Vec<Entry>), String> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Document {
+        #[serde(default)]
+        run: Option<String>,
         entries: Vec<Entry>,
     }
     let read: Document = serde_json::from_str(text)
         .map_err(|_| "the measurements handed on are not read".to_owned())?;
-    Ok(read.entries)
+    Ok((read.run, read.entries))
+}
+
+/// The entries of a document of measurements, or why it is not one.
+pub fn entries_of(text: &str) -> Result<Vec<Entry>, String> {
+    read(text).map(|(_, entries)| entries)
 }
 
 /// One pair the use case relates: the image registered, onto the image it is held to, each
@@ -419,7 +432,10 @@ impl Action for DetailsStep {
             .map(|d| if *d == details::TILES { view::NAME } else { *d });
         context.freeze_calls(calls);
         let entries = measure(context, &pairs, &detail, &candidates)?;
-        let mut produced = Produced::nothing().with_measurements(document(&entries));
+        // The document names this run, whose calls it lists whole (ADR 0035).
+        let made_by = context.lineage().last().map(|run| run.as_str().to_owned());
+        let mut produced =
+            Produced::nothing().with_measurements(document(&entries, made_by.as_deref()));
         for entry in &entries {
             for id in entry
                 .image_ids()
@@ -450,6 +466,9 @@ fn report_name(tool: &str) -> Option<&'static str> {
     }
 }
 
+/// A pair as an entry names it: the image, and what it is held against.
+type PairNames = (String, Option<String>);
+
 /// Holds measurements an earlier step handed on to the runs that made them (ADR 0035), or
 /// says why they are not taken. They are taken only by a run that is a step of a recipe
 /// (the run nothing called, an MCP client or a command line, hands none), and each entry
@@ -460,7 +479,9 @@ fn report_name(tool: &str) -> Option<&'static str> {
 /// is only a comparison of a pair whose run of `align`, named before it, gave no frame.
 pub fn held_to_their_runs(
     context: &Context,
+    made_by: Option<&str>,
     entries: &[Entry],
+    job: &Job,
     images: &[ArtifactId],
     handed: &[ArtifactId],
 ) -> Result<(), String> {
@@ -480,33 +501,70 @@ pub fn held_to_their_runs(
         match read {
             Some(Ok(record)) => Ok(record),
             _ => Err(format!(
-                "the run {run:?} an entry names is not in this store"
+                "the run {run:?} the measurements name is not in this store"
             )),
         }
     };
-    for (at, entry) in entries.iter().enumerate() {
-        let tool = entry.tool.as_str();
-        let ids = entry.image_ids()?;
-        if ids.iter().any(|id| !handed.contains(id)) {
+    // Every image an entry names was handed on with it.
+    for entry in entries {
+        if entry.image_ids()?.iter().any(|id| !handed.contains(id)) {
             return Err(
                 "the measurements handed on name an image that was not handed on with \
                         them"
                     .to_owned(),
             );
         }
+    }
+    // The whole document: made by a run of `details` that is a step of this run's recipe,
+    // whose every call, in order, is the run of one entry, and no other.
+    let made_by =
+        made_by.ok_or("the measurements handed on name no run of details that made them")?;
+    let step = record_of(made_by)?;
+    let completed = step.outcome().status == Status::Completed;
+    if step.asked().action.as_deref() != Some(NAME)
+        || step.identity().parent.as_deref() != Some(recipe.as_str())
+        || !completed
+    {
+        return Err(
+            "the measurements handed on were not made by a step of details of this \
+                    run's recipe"
+                .to_owned(),
+        );
+    }
+    let called: Vec<&str> = step.steps().iter().map(|call| call.run()).collect();
+    let named: Vec<&str> = entries
+        .iter()
+        .filter_map(|entry| entry.run.as_deref())
+        .collect();
+    if called != named {
+        return Err(
+            "the measurements handed on are not every call the step of details made, \
+                    in its order"
+                .to_owned(),
+        );
+    }
+    // The job's images, by the names of their roles.
+    let id_of = |name: &str| -> Result<ArtifactId, String> {
+        (job.images.iter().zip(images))
+            .find(|(image, _)| image.id == name)
+            .map(|(_, id)| *id)
+            .ok_or_else(|| format!("an entry names {name:?}, no image of the job"))
+    };
+    // The frame each verified run of align made, by its pair.
+    let mut frames: Vec<(PairNames, Option<ArtifactId>)> = Vec::new();
+    for entry in entries {
+        let tool = entry.tool.as_str();
+        let ids = entry.image_ids()?;
+        let pair = (entry.image.clone(), entry.against.clone());
+        let image_id = id_of(&entry.image)?;
         let Some(run) = &entry.run else {
             let image = &entry.image;
             let against = entry.against.as_deref().unwrap_or_default();
             let said =
                 format!("{image} did not register onto {against}, so the two are not in one grid");
-            let unaligned = entries[..at].iter().any(|e| {
-                e.tool == align::NAME
-                    && e.image == entry.image
-                    && e.against == entry.against
-                    && e.run.is_some()
-                    && e.failed.is_none()
-                    && e.images.is_empty()
-            });
+            let unaligned = frames
+                .iter()
+                .any(|(of, frame)| *of == pair && frame.is_none());
             let derived = details::AFTER_ALIGN.contains(&tool)
                 && unaligned
                 && ids.is_empty()
@@ -519,13 +577,6 @@ pub fn held_to_their_runs(
         };
         let wrong = |why: &str| format!("the run {run} an entry of {tool} names {why}");
         let record = record_of(run)?;
-        // A child of a step of the same recipe as this run.
-        let step =
-            (record.identity().parent.as_deref()).ok_or_else(|| wrong("was called by nothing"))?;
-        let step = record_of(step)?;
-        if step.identity().parent.as_deref() != Some(recipe.as_str()) {
-            return Err(wrong("is no call of a step of this run's recipe"));
-        }
         let action = if tool == details::TILES {
             view::NAME
         } else {
@@ -534,14 +585,52 @@ pub fn held_to_their_runs(
         if record.asked().action.as_deref() != Some(action) {
             return Err(wrong("is no run of it"));
         }
-        // On the images of this run: a comparison's second is the frame align made.
-        for input in record.inputs() {
-            let id = ArtifactId(input.artifact);
-            let given = images.contains(&id)
-                || (details::AFTER_ALIGN.contains(&tool) && handed.contains(&id));
-            if !given {
-                return Err(wrong("measured an image this run was not given"));
+        // On the entry's own pair, port by port.
+        let at = |port: &str| -> Vec<ArtifactId> {
+            (record.inputs().iter())
+                .filter(|input| input.port == port)
+                .map(|input| ArtifactId(input.artifact))
+                .collect()
+        };
+        let inputs = record.inputs().len();
+        let on_its_pair = match tool {
+            align::NAME => {
+                let against = id_of(entry.against.as_deref().unwrap_or_default())?;
+                inputs == 2 && at("image") == [image_id] && at("against") == [against]
             }
+            details::TILES => {
+                let place = entry.place.as_deref().unwrap_or_default();
+                let boxed = details::TILE_BOXES.iter().find(|(p, _)| *p == place);
+                let bbox = entry.bbox.unwrap_or_default();
+                let sides: Vec<Option<f64>> = (view::SIDES.iter())
+                    .map(|side| {
+                        let given = record.asked().arguments.iter().find(|a| a.name == *side);
+                        match given.map(|a| &a.value) {
+                            Some(ArgumentValue::Number(number)) => Some(*number),
+                            _ => None,
+                        }
+                    })
+                    .collect();
+                inputs == 1
+                    && at("image") == [image_id]
+                    && boxed.is_some_and(|(_, b)| *b == bbox)
+                    && sides == bbox.map(Some)
+            }
+            _ => {
+                // A comparison of the frame the verified align of this pair made, in the
+                // grid of the image it was registered onto.
+                let against = id_of(entry.against.as_deref().unwrap_or_default())?;
+                let frame = frames
+                    .iter()
+                    .find(|(of, _)| *of == pair)
+                    .and_then(|(_, f)| *f);
+                inputs == 2
+                    && at("frame") == [against]
+                    && frame.is_some_and(|frame| at("against") == [frame])
+            }
+        };
+        if !on_its_pair {
+            return Err(wrong("was not run on the pair the entry names"));
         }
         let status = record.outcome().status;
         if let Some(why) = &entry.failed {
@@ -561,7 +650,7 @@ pub fn held_to_their_runs(
         let made: Vec<ArtifactId> = (record.outputs().iter())
             .map(|output| ArtifactId(output.artifact))
             .collect();
-        let committed = if tool == details::TILES {
+        let committed: Vec<ArtifactId> = if tool == details::TILES {
             made.into_iter().take(1).collect()
         } else {
             made
@@ -586,6 +675,9 @@ pub fn held_to_their_runs(
         };
         if kept != entry.measured {
             return Err(wrong("kept other measurements than the entry says"));
+        }
+        if tool == align::NAME {
+            frames.push((pair, committed.last().copied()));
         }
     }
     Ok(())
