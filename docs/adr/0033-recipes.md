@@ -108,6 +108,25 @@ the run at the limit is `#[ignore]`d and run by hand.
 answered: best score first, then the box's top, left, right and bottom, then the predicted
 IoU, none first and then the higher, then the plane's bytes (`segment::in_order`).
 
+**`until` and the last step (amended with F1's second pull request of plan m3).** `until`
+names a step before the last: running to the last step is running the recipe, so a recipe
+of one step has no `until`. A capability only the last step needs (no earlier step states
+it) is needed only when `until` is not given (`When::NotGiven`), so a run that stops
+early reserves nothing for a step it never reaches and needs no backend for it:
+`remove_prompt` ends in `fill`, and `--until feather` gives the mask alone with no filler
+configured (`cli::rascal_remove_prompt_until_feather_hands_back_the_mask`). A need an
+earlier step states too is needed whatever `until` says
+(`recipe::a_checked_recipe_gives_each_value_its_arguments_type_and_states_what_its_steps_need`).
+A condition on the value of `until` (a need for each step it may stop before) would take
+a new kind of condition in the descriptor, which says only whether an argument is given;
+the recipes that fill end in `fill`, so the last step is where the paid need is.
+
+**What a recipe hands back is its steps'.** An output a step committed is taken as the
+recipe's output by the executor's check of what an action hands back, since a run the
+recipe called committed it (ADR 0008; plan m3, F1's second pull request: a stored
+artifact handed back is taken as it is only when the call gave it or a run it called
+made it; any other must be one the store holds as this action's).
+
 ## Consequences
 
 The tasks of rascal and the use cases of squint are recipe files from here on (O1 to O5, Q1).

@@ -29,7 +29,7 @@ model = "sam3"
 [backends.fill]
 kind = "service"
 provider = "fal"
-model = "bria-erase"
+model = "bria-eraser"
 key_env = "FAL_KEY"
 ```
 
@@ -46,7 +46,7 @@ default = "bria"
 [backends.fill.bria]
 kind = "service"
 provider = "fal"
-model = "bria-erase"
+model = "bria-eraser"
 key_env = "FAL_KEY"
 
 [backends.fill.local]
@@ -443,7 +443,7 @@ A key that is not known:
 ```toml refused
 [backends.fill]
 kind = "service"
-modle = "bria-erase"
+modle = "bria-eraser"
 ```
 
 ```text

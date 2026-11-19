@@ -406,6 +406,15 @@ judge's does. The price and the date it was read are the adapter's row
 quote is worked out from a request's shape
 (`spend::fill::a_bria_call_reserves_its_price_and_settles_at_it`).
 
+**An assumption, stated (F1's second pull request, from the review of the first).** An
+answer of an error status from fal is settled at nothing: the build assumes fal bills
+nothing for a request it refused (an error status, no picture made). The page read on
+2026-11-18 prices "a generation", 0.04 dollars, and says nothing of a refused request;
+the assumption is that page's wording, not a statement of fal's, and it is read again
+with the price. Where fal is found to bill a refusal, its answer is settled at the
+bound instead, which the ledger already reserved, so no spend passes the allowance
+either way: only the record of what was spent would be short.
+
 ### What this record leaves to others
 
 - **Settling a request by its stage and its charge** is task S5b's, and the place of

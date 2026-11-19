@@ -417,7 +417,7 @@ impl Nest {
     }
 
     /// Whether a run this run called committed an output of this identity.
-    fn committed(&self, id: ArtifactId) -> bool {
+    pub(super) fn committed(&self, id: ArtifactId) -> bool {
         self.calls().committed.contains(&id)
     }
 

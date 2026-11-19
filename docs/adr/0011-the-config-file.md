@@ -173,7 +173,7 @@ stands (`file::the_specs_example_is_read_to_the_backends_it_shows`):
 [backends.fill]
 kind = "service"
 provider = "fal"
-model = "bria-erase"
+model = "bria-eraser"
 key_env = "FAL_KEY"
 ```
 
@@ -191,7 +191,7 @@ default = "bria"
 [backends.fill.bria]
 kind = "service"
 provider = "fal"
-model = "bria-erase"
+model = "bria-eraser"
 key_env = "FAL_KEY"
 
 [backends.fill.local]
@@ -731,8 +731,19 @@ the test that held the fourth holds that instead:
 | Config | Digest |
 |---|---|
 | The empty one | `sha256:9d60a543ea39be1ca1bc2c4e1a90094a59ded6bdcfdf1c21436f4026f207c4a6` |
-| The example of `SPEC.md` section 4 | `sha256:e0f7ca76571f20c077084f4dcb18a57c0adf857b37d59928546508937fa31c7f` |
+| The example of `SPEC.md` section 4 | `sha256:c68b8a0023476607843cce194c511e0b1fdfa487d527abe3b1520e119f85671a` |
 | The config `FULL` of the digest's tests, with something in every place 1B had | `sha256:c151bf69e75bfec361a2018365535e49731847d0dbf6d13f4bb71b06356d6399` |
+
+**The example's digest changed with F1's second pull request of plan m3.** The example
+named fal's model `bria-erase`, and the adapter and the plan name it `bria-eraser`, so
+the example's table was refused by the kind as written. The example now names
+`bria-eraser`, the adapter's name, and its digest moved from
+`sha256:e0f7ca76571f20c077084f4dcb18a57c0adf857b37d59928546508937fa31c7f` to the one
+above: one text of one backend changed, and nothing else. Both were worked out again
+from this section and ADR 0001's "How an identity is hashed" alone, with a few lines of
+a scripting language's standard library: the old one first, which matched the record,
+then the new. No run's record had kept the old digest of the example: it is a config of
+the documents, not of anyone's runs.
 
 What follows from hashing what was read:
 

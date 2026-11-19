@@ -60,6 +60,8 @@ fn left(dir: &Scratch) -> (PathBuf, PathBuf, String) {
         file: Some(file.clone()),
         picture: None,
         projection: None,
+        mask: None,
+        onto: None,
         at: Where::at(&root),
         create: false,
     };
@@ -112,6 +114,8 @@ fn import(root: &Path, file: &Path) -> store::Command {
         file: Some(file.to_path_buf()),
         picture: None,
         projection: None,
+        mask: None,
+        onto: None,
         at: Where::at(root),
         create: false,
     }

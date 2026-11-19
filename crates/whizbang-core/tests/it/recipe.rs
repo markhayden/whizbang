@@ -8,7 +8,7 @@ use std::sync::Arc;
 use whizbang_core::artifact::{self, ArtifactType, Mask, Step as Made};
 use whizbang_core::contract::{
     Action, ActionDescriptor, Argument, Capability, Context, Count, Failure, InputPort, Kind,
-    OutputPort, PreparedCall, Produced, Registry, Requirement, Value, ValueType,
+    OutputPort, PreparedCall, Produced, Registry, Requirement, Value, ValueType, When,
 };
 use whizbang_core::identity::DecodeLimits;
 use whizbang_core::recipe::{Binding, Declared, Param, Recipe, RecipeAction, RecipeError, Written};
@@ -562,12 +562,22 @@ fn the_ported_recipes_of_rascal_read_as_rascal_read_them() {
 
     // The port: the same steps in the same order, each with rascal's numbers, under
     // this build's names for what differs (ADR 0033): the phrase is `segment`'s `query`
-    // and the segmenter its `backend`; `select` takes masks; no rendering.
+    // and the segmenter its `backend`; `select` takes masks; no rendering. Then one step
+    // more, `fill` (plan m3, task F1, item 6), whose image and mask are the recipe's
+    // outputs.
     let port = Recipe::read(SHIPPED_REMOVE_PROMPT).unwrap();
     let ported: Vec<(&str, &str)> = (port.steps.iter())
         .map(|step| (step.id.as_str(), step.op.as_str()))
         .collect();
-    assert_eq!(ported, rascal);
+    assert_eq!(ported[..7], rascal);
+    assert_eq!(ported[7..], [("fill", "fill")]);
+    assert_eq!(port.steps[7].inputs["image"], "inputs.image");
+    assert_eq!(port.steps[7].inputs["mask"], "feather.mask");
+    assert_eq!(port.steps[7].params["backend"], text("inputs.filler"));
+    assert_eq!(
+        port.outputs.get("image").map(String::as_str),
+        Some("fill.image")
+    );
     for at in 2..7 {
         assert_eq!(
             port.steps[at].params, read.steps[at].params,
@@ -586,7 +596,7 @@ fn the_ported_recipes_of_rascal_read_as_rascal_read_them() {
     assert_eq!(port.steps[1].inputs["mask"], "segment.mask");
     assert_eq!(
         port.outputs.get("mask").map(String::as_str),
-        Some("feather.mask")
+        Some("fill.mask")
     );
     assert!(port.render.is_empty());
     assert_eq!(port.name, "remove_prompt");
@@ -636,4 +646,26 @@ fn a_checked_recipe_gives_each_value_its_arguments_type_and_states_what_its_step
     assert_eq!(names, ["note", "set", "until"]);
     let ports: Vec<&str> = descriptor.inputs().iter().map(InputPort::name).collect();
     assert_eq!(ports, ["protect", "seed"]);
+    // `until` names a step before the last, and what only the last step needs is needed
+    // only without it (plan m3, task F1, item 6).
+    let until = descriptor.argument("until").unwrap().value_type();
+    assert_eq!(*until, ValueType::choice(&["first", "second"]));
+    assert_eq!(*descriptor.needs()[0].applies(), When::not_given("until"));
+    // A need an earlier step states too is needed whatever `until` says.
+    let earlier = recipe(
+        &format!(
+            "[[step]]\nid = \"early\"\nop = \"paid\"\ninputs = {{ mask = \"inputs.seed\" }}\n\n{TWO_MARKS}\n[[step]]\nid = \"cost\"\nop = \"paid\"\ninputs = {{ mask = \"second.mask\" }}\n"
+        ),
+        "cost.mask",
+    );
+    let action = action_of(&earlier, &registry).unwrap();
+    assert_eq!(*action.descriptor().needs()[0].applies(), When::Always);
+    // A recipe of one step has no `until`.
+    let one = recipe(
+        "[[step]]\nid = \"cost\"\nop = \"paid\"\ninputs = { mask = \"inputs.seed\" }\n",
+        "cost.mask",
+    );
+    let action = action_of(&one, &registry).unwrap();
+    assert!(action.descriptor().argument("until").is_none());
+    assert_eq!(*action.descriptor().needs()[0].applies(), When::Always);
 }

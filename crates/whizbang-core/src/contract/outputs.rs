@@ -6,10 +6,13 @@
 //! - **Within the decode limits:** each artifact is written as its canonical file and
 //!   read back under the executor's limits.
 //! - **Its origin names the action:** the last of its steps that is not a rebind names
-//!   the action that handed it back. An artifact the store already holds (one the call
-//!   gave, handed back as it was for an unchanged result, or one a run it called
-//!   committed) is not made here: the store keeps the file it has (ADR 0008), whose
-//!   origin was held when it was first committed.
+//!   the action that handed it back. An artifact the store already holds is not made
+//!   here: the store keeps the file it has (ADR 0008). It is taken as it is when it is
+//!   an input of the call (handed back as it was for an unchanged result) or an output
+//!   a run the call made committed; any other the store holds is taken only when the
+//!   file the store keeps names this action, as a run made again does, so a record
+//!   never lists another action's artifact as this one's output (plan m3, F1's second
+//!   pull request, from the review of the first).
 //! - **On its image** (`OutputPort::on`): an artifact other than an image belongs to the
 //!   image of the port it names, an input of the call or an output.
 //! - **Rebound** (`OutputPort::rebound_onto`): a mask is on the image it is rebound onto,
@@ -22,7 +25,7 @@
 //!
 //! What comes back is why not, in fixed words with the port's name, never a path.
 
-use crate::artifact::{self, Artifact, ArtifactType, Contents, Mask};
+use crate::artifact::{self, Artifact, ArtifactId, ArtifactType, Contents, Mask};
 use crate::identity::{Binding, CanonicalPixels, DecodeLimits, Destination, Mapping, PixelDigest};
 
 use super::descriptor::{ActionDescriptor, OutputPort, PortRef};
@@ -50,14 +53,23 @@ fn binding_of(artifact: &Artifact) -> Option<&Binding> {
     }
 }
 
+/// The action an artifact's origin names: the last of its steps that is not a rebind.
+fn named(artifact: &Artifact) -> Option<&str> {
+    let steps = artifact.origin().steps().iter().rev();
+    let mut made = steps.filter(|step| step.action != REBIND);
+    made.next().map(|step| step.action.as_str())
+}
+
 /// Holds what was handed back, each output at its port, to everything the descriptor
-/// says of its port. `store` is the run's, which holds the call's inputs.
+/// says of its port. `store` is the run's, which holds the call's inputs; `called`
+/// says whether a run the call made committed an artifact of this identity.
 pub(super) fn held_to_relations(
     prepared: &PreparedCall,
     descriptor: &ActionDescriptor,
     held: &[(Committed, Artifact)],
     store: &(dyn Contents + Send + Sync),
     limits: &DecodeLimits,
+    called: &dyn Fn(ArtifactId) -> bool,
 ) -> Result<(), String> {
     let generation = store
         .snapshot()
@@ -70,17 +82,23 @@ pub(super) fn held_to_relations(
                  executor's decode limits"
             ));
         }
-        if artifact::holds(&generation, artifact.artifact_type(), artifact.id()) {
-            continue;
-        }
-        let named = artifact
-            .origin()
-            .steps()
-            .iter()
-            .rev()
-            .find(|step| step.action != REBIND)
-            .map(|step| step.action.as_str());
-        if named != Some(descriptor.name()) {
+        let (kind, id) = (artifact.artifact_type(), artifact.id());
+        let given = prepared.inputs().iter().any(|input| input.id() == id);
+        if artifact::holds(&generation, kind, id) {
+            if given || called(id) {
+                continue;
+            }
+            // The file the store keeps is what the record lists.
+            let kept = artifact::get(store, kind, id, limits).map_err(|_| {
+                format!("the action handed back at {port} an artifact the store could not read")
+            })?;
+            if named(&kept) != Some(descriptor.name()) {
+                return Err(format!(
+                    "the action handed back at {port} an artifact the store holds already, \
+                     made by another action, which the call neither gave nor made"
+                ));
+            }
+        } else if named(artifact) != Some(descriptor.name()) {
             return Err(format!(
                 "the action handed back at {port} an artifact whose origin does not name it"
             ));

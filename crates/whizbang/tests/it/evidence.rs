@@ -784,44 +784,32 @@ fn the_per_subject_record_names_a_commit_of_this_tree_and_its_rung_2_numbers() {
 
 #[test]
 fn the_fills_record_names_a_commit_of_this_tree_and_holds_no_secret() {
-    // Plan m3, task F1, item 8: the live fill through fal, one block of fields.
-    use whizbang_backends::fal;
+    // Plan m3, task F1, item 8: the live fill through fal, and the live `remove-prompt`
+    // with SAM 3 and Bria, a block of fields each.
     let page = std::fs::read_to_string(repository().join("docs/results/m3-fills.md"))
         .expect("the record of the fills is committed");
-    let block = page.split("```toml\n").nth(1).expect("a block of fields");
-    let block = block.split("```").next().unwrap();
-    let fields: Vec<(String, String)> = block
-        .lines()
-        .map(|line| {
-            let (name, value) = line.split_once(" = ").expect("a line is name = value");
-            (name.to_owned(), value.trim_matches('"').to_owned())
+    let blocks: Vec<Fields> = page
+        .split("```toml\n")
+        .skip(1)
+        .map(|rest| {
+            let block = rest.split("```").next().unwrap();
+            let line = |line: &str| {
+                let (name, value) = line.split_once(" = ").expect("a line is name = value");
+                (name.to_owned(), value.trim_matches('"').to_owned())
+            };
+            block.lines().map(line).collect()
         })
         .collect();
-    let commit = field(&fields, "commit");
-    assert!(
-        commit.len() == 40
-            && commit
-                .bytes()
-                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-    );
-    assert_eq!(field(&fields, "whizbang"), env!("CARGO_PKG_VERSION"));
-    assert_eq!(field(&fields, "action"), "fill 1.0.0");
-    assert_eq!(field(&fields, "backend"), fal::ADAPTER);
-    assert_eq!(field(&fields, "adapter_version"), fal::VERSION);
-    assert_eq!(field(&fields, "model"), fal::MODEL);
-    assert_eq!(field(&fields, "model_version"), fal::identity_version());
-    assert_eq!(field(&fields, "price_read"), fal::spend::PRICE.read);
-    let price = fal::spend::bound_micros(fal::spend::PRICE).to_string();
-    for name in ["request_bound_micros", "reserved_micros", "settled_micros"] {
-        assert_eq!(field(&fields, name), price, "{name}");
+    assert_eq!(blocks.len(), 2, "a fill and a remove-prompt");
+    for (fields, action) in blocks.iter().zip(["fill 1.0.0", "remove_prompt 1.0.0"]) {
+        a_fills_block(fields, action);
     }
-    assert_eq!(field(&fields, "outcome"), "completed");
-    assert_eq!(field(&fields, "outside_support_original"), "true");
-    assert_eq!(field(&fields, "egress_recipient"), "https://fal.run");
-    assert_eq!(
-        field(&fields, "egress_classes"),
-        "source_images derived_images"
-    );
+    // The recipe's block names the recipe this tree ships, its eight steps, and SAM 3.
+    let recipe = &blocks[1];
+    let shipped = Digest::of_bytes(whizbang_rascal::recipes::REMOVE_PROMPT.as_bytes());
+    assert_eq!(field(recipe, "recipe_digest"), shipped.to_string());
+    assert_eq!(field(recipe, "steps"), "8");
+    assert_eq!(field(recipe, "segmenter_model"), "sam3");
     // No secret, no path and no reply: no key's form, no header, no absolute path.
     for held in [
         "authorization",
@@ -833,6 +821,36 @@ fn the_fills_record_names_a_commit_of_this_tree_and_holds_no_secret() {
     ] {
         assert!(!page.contains(held), "{held}");
     }
+}
+
+/// One block of the record of the fills: the fields every live fill through fal holds.
+fn a_fills_block(fields: &Fields, action: &str) {
+    use whizbang_backends::fal;
+    let commit = field(fields, "commit");
+    assert!(
+        commit.len() == 40
+            && commit
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    );
+    assert_eq!(field(fields, "whizbang"), env!("CARGO_PKG_VERSION"));
+    assert_eq!(field(fields, "action"), action);
+    assert_eq!(field(fields, "backend"), fal::ADAPTER);
+    assert_eq!(field(fields, "adapter_version"), fal::VERSION);
+    assert_eq!(field(fields, "model"), fal::MODEL);
+    assert_eq!(field(fields, "model_version"), fal::identity_version());
+    assert_eq!(field(fields, "price_read"), fal::spend::PRICE.read);
+    let price = fal::spend::bound_micros(fal::spend::PRICE).to_string();
+    for name in ["request_bound_micros", "reserved_micros", "settled_micros"] {
+        assert_eq!(field(fields, name), price, "{name}");
+    }
+    assert_eq!(field(fields, "outcome"), "completed");
+    assert_eq!(field(fields, "outside_support_original"), "true");
+    assert_eq!(field(fields, "egress_recipient"), "https://fal.run");
+    assert_eq!(
+        field(fields, "egress_classes"),
+        "source_images derived_images"
+    );
 }
 
 #[test]

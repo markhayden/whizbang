@@ -7,20 +7,20 @@
 use std::sync::Arc;
 
 use whizbang_core::artifact::{
-    self, Artifact, ArtifactId, ArtifactType, Derivation, Image, ImageRole, Mask,
+    self, Artifact, ArtifactId, ArtifactType, Derivation, Image, ImageRole, Mask, Source, UseCase,
 };
 use whizbang_core::contract::{
     Action, ActionDescriptor, Call, Context, Engine, Executor, Failure, InputPort, Kind,
     NoBackends, Outcome, OutputPort, PortRef, PreparedCall, Produced, Registry,
 };
 use whizbang_core::identity::{
-    CanonicalPixels, DecodeLimits, Digest, Projection, Topology, encode,
+    Binding, CanonicalPixels, DecodeLimits, Digest, Projection, Topology, encode,
 };
 use whizbang_core::store::Store;
 use whizbang_core::store::fs::RealFs;
 use whizbang_testkit::scratch::Scratch;
 
-use crate::artifact::support::{image_by, limits, made_by, on, photo, rect_mask_by};
+use crate::artifact::support::{image_by, limits, made_by, on, photo, rect, rect_mask_by};
 
 type Body = Box<dyn Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync>;
 
@@ -80,6 +80,20 @@ impl World {
     fn holds(&self, artifact: ArtifactType, id: ArtifactId) -> bool {
         artifact::get(&*self.store, artifact, id, &limits()).is_ok()
     }
+}
+
+/// A mask on this binding whose core is the box from `x0, y0` to `x1, y1`, its origin
+/// naming `action`. A mask's identity is of its planes and its binding, not its origin.
+fn box_by(binding: Binding, (x0, y0, x1, y1): (u32, u32, u32, u32), action: &str) -> Mask {
+    let core = rect(x0, y0, x1, y1);
+    Mask::from_core(
+        binding,
+        UseCase::Custom,
+        core,
+        Source::default(),
+        made_by(action),
+    )
+    .unwrap()
 }
 
 /// Runs the action once with the world's image and mask: the outcome.
@@ -202,7 +216,7 @@ fn a_mask_on_another_image_than_its_port_names_is_refused() {
         "the output mask is on another image than its port names",
     );
     assert!(!world.holds(ArtifactType::Mask, id));
-    let on_it = rect_mask_by(world.image.binding(), "finds");
+    let on_it = box_by(world.image.binding(), (0, 0, 2, 2), "finds");
     completed(&ran(
         &world,
         finds(),
@@ -335,4 +349,47 @@ fn an_output_past_the_decode_limits_is_refused_before_publication() {
         .clone();
     refused(&outcome, "not read within the executor's decode limits");
     assert!(!world.holds(ArtifactType::Mask, id));
+}
+
+#[test]
+fn a_stored_artifact_neither_given_nor_made_by_a_call_it_made_is_held_to_its_origin() {
+    // The store holds a mask on the image that another action made. Handed back by
+    // `finds`, which was not given it and called nothing that made it, it is refused:
+    // the record would list another action's mask as this one's output. One the store
+    // holds that `finds` made before, as a run made again hands back, completes; and so
+    // does the mask the call gave, handed back as it was (`fills`, above).
+    let world = World::new("outputs-stored");
+    let other = box_by(world.image.binding(), (0, 0, 2, 2), "someone-else");
+    let again = box_by(world.image.binding(), (1, 1, 3, 3), "finds");
+    let mut publication = world.store.begin().unwrap();
+    artifact::put(&mut publication, &Artifact::from(other.clone())).unwrap();
+    artifact::put(&mut publication, &Artifact::from(again.clone())).unwrap();
+    publication.publish().unwrap();
+    assert_ne!(other.id(), again.id());
+    let outcome = ran(
+        &world,
+        finds(),
+        Box::new(move |_, _| Ok(Produced::nothing().with("mask", other.clone()))),
+    );
+    refused(
+        &outcome,
+        "an artifact the store holds already, made by another action",
+    );
+    // The same mask with an origin of its own that names `finds` is the same artifact:
+    // what the record would list is the file the store keeps.
+    let disguised = box_by(world.image.binding(), (0, 0, 2, 2), "finds");
+    let outcome = ran(
+        &world,
+        finds(),
+        Box::new(move |_, _| Ok(Produced::nothing().with("mask", disguised.clone()))),
+    );
+    refused(
+        &outcome,
+        "an artifact the store holds already, made by another action",
+    );
+    completed(&ran(
+        &world,
+        finds(),
+        Box::new(move |_, _| Ok(Produced::nothing().with("mask", again.clone()))),
+    ));
 }

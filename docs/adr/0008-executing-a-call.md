@@ -165,7 +165,13 @@ its binding; and an image derived from another (`derived_from`) is its size and 
 from it only where a mask weighs over 0, the masks rebound onto it or else the masks the
 call gave on that image. Each refusal is an error of the type `output`, and nothing is
 committed (`outputs::…` in the core's tests). An artifact the store already holds keeps
-the file it has, so its origin is the one held when it was first committed.
+the file it has, so its origin is the one held when it was first committed. Since F1's
+second pull request it is taken as it is only when the call gave it (an unchanged result)
+or a run the call made committed it (a recipe's step); any other the store holds is held
+to the file the store keeps, whose origin must name the action, as a run made again
+hands back: so a record never lists another action's artifact as this action's output,
+a mask's or an image's identity being of its content and not of its origin
+(`outputs::a_stored_artifact_neither_given_nor_made_by_a_call_it_made_is_held_to_its_origin`).
 
 The outputs of a run are listed, in its outcome and in its record, in the order of the
 descriptor's ports, and within a port in the order they were handed back.

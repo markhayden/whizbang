@@ -23,7 +23,7 @@ use whizbang_eval::lab::matrix::{Matrix, Validated};
 use whizbang_eval::lab::protocol::{self, Protocol};
 use whizbang_testkit::scratch::Scratch;
 
-use crate::recipe::{CONFIG, over, with_small_picture};
+use crate::recipe::{FILLED, over, with_small_picture};
 use crate::wired::{whizbang, whizbang_storeless};
 
 /// A corpus manifest of these pictures: id, bytes, group.
@@ -331,7 +331,8 @@ impl Round {
     fn new(label: &str) -> Round {
         let dir = Scratch::new(label);
         let (root, image) = with_small_picture(&dir);
-        let over = over(&dir, CONFIG);
+        // `remove_prompt` ends in `fill` (plan m3, task F1, item 6): a filler as well.
+        let over = over(&dir, FILLED);
         let id = ArtifactId(Digest::from_hex(image.strip_prefix("sha256:").unwrap()).unwrap());
         let pictures = ["a", "a-protect", "a-clean"]
             .into_iter()

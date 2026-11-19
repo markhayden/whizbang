@@ -71,7 +71,7 @@ fn the_specs_example_is_read_to_the_backends_it_shows() {
     assert_eq!(config.default_of(Capability::Fill), Some("default"));
     assert_eq!(backend.kind(), "service");
     assert_eq!(backend.provider(), Some("fal"));
-    assert_eq!(backend.model(), Some("bria-erase"));
+    assert_eq!(backend.model(), Some("bria-eraser"));
     assert_eq!(backend.url(), None);
     assert!(backend.address().is_none());
     assert_eq!(
@@ -100,7 +100,7 @@ default = "bria"
 [backends.fill.bria]
 kind = "service"
 provider = "fal"
-model = "bria-erase"
+model = "bria-eraser"
 key_env = "FAL_KEY"
 
 [backends.fill.local]
