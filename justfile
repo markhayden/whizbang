@@ -36,8 +36,8 @@ test:
 test-only +args:
     scripts/test-only.sh "$@"
 
-# The fast tests, then seconds per suite; fails when test time exceeds 180 seconds (300 on
-# GitHub's hosted macOS runner: see scripts/timing.sh). They run through
+# The fast tests, then seconds per suite; fails when test time exceeds 300 seconds (see
+# scripts/timing.sh). They run through
 # scripts/thread-guard.sh too.
 timing:
     scripts/timing.sh

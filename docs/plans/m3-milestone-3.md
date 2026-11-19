@@ -141,8 +141,8 @@ on a side; fillers and judges are scripted or served by a recorded fake on a loo
 listener; a recipe in a test runs over the fake segmenter and a scripted filler; sets and
 corpora in tests are three to six items made in the test. Each pull request reports its
 `just check` and CI test times, says in its hand-back how it kept them lean, and stops and
-says so if the hosted macOS runner passes about 270 s, or Linux or a local run about 150 s of
-its 180 s.
+says so if a run passes about 250 s of its 300 s (Linux and local raised from 180 s by the
+owner on 2026-11-19).
 
 **Live runs are the orchestrator's.** In milestone 2 a builder's live call on the new judges
 was refused by the permission system (plan 2C, P1's status). So every live run this plan

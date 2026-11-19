@@ -844,7 +844,7 @@ just setup              # install the git hooks; check the pinned tools
 just check              # fast tier: format check, lint, the crate graph, licences and
                         # sources, the script tests, the reference against a fresh
                         # copy, then the fast tests with seconds per suite and the
-                        # 180-second limit, then the pack's Python tests
+                        # 300-second limit, then the pack's Python tests
 just test-pack          # the pack's Python tests, with the Python the pack pins,
                         # offline, through the thread guard; the runner ends itself
                         # at 60 seconds
@@ -922,9 +922,12 @@ GitHub redirects; the old name must never be reused.
   warm build cache and compilation not counted.
 - Pull-request CI: under 10 minutes on GitHub's hosted `macos-15` and `ubuntu-22.04` runners,
   compilation included, with caches.
-- Fast tier's limit (`scripts/timing.sh`): on GitHub's hosted `macos-15` runner the test
-  time is limited to 300 s, by the owner's decision of 2026-11-17, because its test time
-  varies about two-fold on unchanged code; Linux CI and the owner's Mac keep 180 s.
+- Fast tier's limit (`scripts/timing.sh`): test time is limited to 300 s everywhere. On
+  GitHub's hosted `macos-15` runner by the owner's decision of 2026-11-17, because its test
+  time varies about two-fold on unchanged code; on Linux CI and the owner's Mac, until
+  then 180 s, by the owner's decision of 2026-11-19, answering "raise local (and Linux)
+  from 180 to 300 seconds?" with "that is ok also i think". One test stays limited to
+  30 s (`.config/nextest.toml`).
 
 These are targets, not measurements: squint's Rust tests alone took about 3 minutes a pass.
 Each milestone's note includes a timing report by suite. When a budget is exceeded, coverage
