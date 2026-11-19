@@ -1053,7 +1053,7 @@ B1's, since it is model-based), `mask_rect` and `protect`. D2: `rasterize`, `shr
   and their lines in `scripts/tests/test-tool-records.sh`. The records of R2's five
   operations, `segment` with a real model among them, are D1's second pull request, which
   ticks the box and closes the carry-over row.
-- [ ] Done when (D2):
+- [x] Done when (D2):
   `scripts/tests/test-tool-records.sh` holding D2's fourteen records, each with rungs 1 and 2,
   and `describe::each_pixel_operation_and_task_without_a_model_shows_its_record_complete`.
   **Split with the task** (D2, 2026-11-19): the fourteen records came to about 3,150
