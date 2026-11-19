@@ -13,8 +13,11 @@
 
 pub mod cell;
 pub mod corpus;
+pub mod decode;
 pub mod matrix;
 pub mod protocol;
+
+use std::path::Path;
 
 use whizbang_core::identity::Digest;
 
@@ -47,4 +50,38 @@ pub fn is_plain_relative(text: &str) -> bool {
                 && part != ".."
                 && (part.chars()).all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
         })
+}
+
+/// Why a lab's file could not be read as its form, in fixed words and the place (plan m3,
+/// task L2): the reader's own words are not passed on, since they can quote a line of the
+/// file, and a corpus, a protocol and the picks are the owner's.
+pub fn unreadable(what: &str, text: &str, error: &toml::de::Error) -> String {
+    let place = error.span().map(|span| place_of(text, span.start));
+    format!(
+        "{what} is not of the form this build reads{}",
+        place.unwrap_or_default()
+    )
+}
+
+/// `, at line <l>, column <c>` of a byte's place in a text, both from 1.
+pub fn place_of(text: &str, at: usize) -> String {
+    let before = &text.as_bytes()[..at.min(text.len())];
+    let line = before.iter().filter(|b| **b == b'\n').count() + 1;
+    let start = before
+        .iter()
+        .rposition(|b| *b == b'\n')
+        .map_or(0, |i| i + 1);
+    let column = String::from_utf8_lossy(&before[start..]).chars().count() + 1;
+    format!(", at line {line}, column {column}")
+}
+
+/// The bytes of a file under `root`, read as [`crate::sets::read_under`] reads one, with
+/// the root left out of any refusal: the file is named by its path under the root, never
+/// by where the root is on the machine.
+pub fn read_relative(root: &Path, relative: &str, limit: u64) -> Result<Vec<u8>, String> {
+    crate::sets::read_under(root, relative, limit).map_err(|why| {
+        let base = root.display().to_string();
+        let base = base.trim_end_matches('/');
+        why.replace(&format!("{base}/"), "").replace(base, ".")
+    })
 }

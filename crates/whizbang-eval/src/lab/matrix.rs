@@ -134,6 +134,8 @@ pub struct Recipe {
     /// How many requests one run sends to the filler and to the finder.
     pub fills: u64,
     pub finds: u64,
+    /// The name of each capability the recipe needs, as its descriptor says.
+    pub needs: Vec<String>,
 }
 
 /// What an arm is, checked.
@@ -161,7 +163,8 @@ impl Matrix {
     /// A matrix's text, read strictly: version 1, plain names, images and arms present,
     /// unique and within their limits, the corpus and protocol plain files beside it.
     pub fn parse(text: &str) -> Result<Matrix, String> {
-        let matrix: Matrix = toml::from_str(text).map_err(|e| format!("the matrix: {e}"))?;
+        let matrix: Matrix =
+            toml::from_str(text).map_err(|e| super::unreadable("the matrix", text, &e))?;
         let refuse = |why: String| Err(format!("the matrix: {why}"));
         if matrix.version != 1 {
             return refuse(format!("version {} is not 1", matrix.version));
@@ -452,6 +455,9 @@ impl Matrix {
             finder_input,
             fills,
             finds,
+            needs: (action.descriptor().needs().iter())
+                .map(|n| n.capability().name().to_owned())
+                .collect(),
         })
     }
 }

@@ -82,14 +82,38 @@ counted apart, never as the owner's pick.
 - The owner's pictures and picks stay outside the repository: the committed files are
   manifests, protocols and matrices with ids and digests only, and every path is relative
   to a root given when the command runs. Tests use synthetic pictures.
-- A lab arm names a recipe this build ships; a user's own recipe from the config is not yet
-  an arm (`docs/carry-over.md`).
+- A lab arm names a recipe this build ships, or (from task L2) one of the config's own
+  recipe files by its name.
 - Each attempt of a lab's cell adds the two names of a request id to the store's
   generation (`docs/carry-over.md`, the row on publications writing the whole generation):
   about a hundred for a round of `seam-03`'s size, against the tens of thousands that row
   measures. An evaluation matrix still gives its runs none.
 - Reversing the request-id recognition would orphan the runs of rounds already made; the
   scope's form is therefore fixed here.
+
+## Amended with task L2
+
+- **An id alone is no attempt.** A run is a cell's attempt only when its request id names
+  the cell and an attempt, its action is the one that attempt calls, and its admission holds
+  the fingerprint of the very request the cell makes for that attempt; any other run under
+  such an id is passed over, and the cell's next attempt takes the next number whose id no
+  run holds. No caller may give an id that starts `cell.`: the executor refuses it at the
+  door it hands a caller's id through, so the CLI and the MCP server refuse it alike
+  (`RESERVED_REQUEST_PREFIX`).
+- **Backends from the config.** `whizbang lab run` resolves each arm's filler and finder
+  from what the config offers: the model, the revision (an installation's identity for a
+  local model), the settings, the provider (the kind, where the config names none) and the
+  address, all in the cell's identity, and the most one request may cost as its forecast. A
+  backend the config does not give, one not ready, and one that names a recipient and
+  states no price are refused, never priced at nothing; so is a recipe that needs a
+  capability other than fill and segment, which a forecast would not count. Two cells of
+  one identity in a matrix are refused.
+- **The corpus brought in.** Every picture the matrix binds is read from the corpus's
+  folder through no link, held to the manifest's digest, and brought into the store as the
+  type the recipe's input declares: a picture as an image, a mask or a location as its
+  canonical file. What `lab run` and `lab decode` print is counts; a refusal names a file
+  by its path under its folder, and a file not of its form by the place, never by the
+  reader's words, which could quote the owner's line.
 
 ## Alternatives
 

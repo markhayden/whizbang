@@ -65,14 +65,14 @@ fn a_cell_of_any_action_is_recognised_by_its_identity_in_a_runs_record() {
         };
         harness::run(
             &[&cell],
-            &harness::by_request("test-scope"),
+            &harness::by_request("test-scope", &[&cell]),
             &running,
             1,
             "test",
         )
     };
     assert_eq!(run(), Ok(1));
-    let found = harness::attempts(&root, &harness::by_request("test-scope")).unwrap();
+    let found = harness::attempts(&root, &harness::by_request("test-scope", &[&cell])).unwrap();
     let attempts = &found["0123abcd"];
     assert_eq!(attempts.len(), 1);
     assert_eq!((attempts[0].0, attempts[0].2), (1, Ended::Completed));
@@ -83,7 +83,7 @@ fn a_cell_of_any_action_is_recognised_by_its_identity_in_a_runs_record() {
         Some("cell.test-scope.0123abcd.1")
     );
     // Another scope's cells are not these.
-    let other = harness::attempts(&root, &harness::by_request("other-scope")).unwrap();
+    let other = harness::attempts(&root, &harness::by_request("other-scope", &[&cell])).unwrap();
     assert!(other.is_empty());
     // Run again, the completed cell is recognised and not run again.
     assert_eq!(run(), Ok(0));
@@ -142,7 +142,13 @@ fn a_fill_cells_forecast_is_its_price_per_call() {
         left_micros: price - 1,
         stop: &|| false,
     };
-    let refused = harness::run(&work, &harness::by_request(&scope), &running, 1, "round");
+    let refused = harness::run(
+        &work,
+        &harness::by_request(&scope, &work),
+        &running,
+        1,
+        "round",
+    );
     assert_eq!(
         refused,
         Err(format!(

@@ -4,8 +4,11 @@
 //! input's digest and each bound text; the overrides as applied; the recipe as it runs (its
 //! name, the digest of its text and the runner's version) or the reference handed back;
 //! the contents of each constant set a step selects; the version of each action; and the
-//! filler's name, revision and resolved settings, with each finder's. An arm's name is
-//! not in it, nor a backend's name in the config, nor a file's name: their bytes are.
+//! filler's name, revision, resolved settings, provider and endpoint, with each finder's.
+//! An arm's name is not in it, nor a backend's name in the config, nor a file's name:
+//! their bytes are. Two cells of one identity in a matrix are refused, as is a recipe
+//! that needs anything but a filler and a finder, which a cell's forecast would not
+//! count.
 
 use std::collections::BTreeMap;
 
@@ -23,6 +26,11 @@ pub struct Backend {
     pub revision: String,
     /// Its settings, as resolved.
     pub settings: BTreeMap<String, String>,
+    /// Who serves it: the config's provider, or its kind when it names none (plan m3,
+    /// task L2), so two backends of one model at two providers are two cells.
+    pub provider: String,
+    /// Where its requests go: the recipient's origin, or empty for a local backend.
+    pub endpoint: String,
     /// What one request is forecast to cost, in millionths of a US dollar: a fill's
     /// price per call. Not part of the identity.
     #[serde(skip)]
@@ -99,7 +107,8 @@ pub struct Cell {
 }
 
 /// What resolves a cell's backends: the config's backend of this name, or its default for
-/// the capability when none is named (`fill` or `segment`).
+/// the capability when none is named (`fill` or `segment`). A backend it does not know,
+/// or whose price it does not know, it refuses: nothing is priced at nothing by default.
 pub type Resolve<'a> = &'a dyn Fn(&str, Option<&str>) -> Result<Backend, String>;
 
 /// What gives a constant set's text by its name.
@@ -143,6 +152,16 @@ pub fn cells(
                     (Work::Reference { picture }, 0)
                 }
                 Checks::Recipe(recipe) => {
+                    if let Some(other) =
+                        (recipe.needs.iter()).find(|n| !["fill", "segment"].contains(&n.as_str()))
+                    {
+                        return Err(format!(
+                            "arm {}: its recipe {} needs {other}, which a lab's cell cannot \
+                             forecast: a lab's recipe needs a filler and a finder at most; \
+                             nothing was run",
+                            arm.name, recipe.name
+                        ));
+                    }
                     let action = load(&recipe.name)?;
                     let checked = action.recipe();
                     let mut inputs = BTreeMap::new();
@@ -215,10 +234,18 @@ pub fn cells(
                     (work, forecast)
                 }
             };
+            let identity = components.identity();
+            if let Some(twin) = out.iter().find(|c: &&Cell| c.identity == identity) {
+                return Err(format!(
+                    "arm {} and arm {} make the same cell of image {}: two arms of one matrix \
+                     differ in what they run; nothing was run",
+                    twin.arm, arm.name, image.id
+                ));
+            }
             out.push(Cell {
                 arm: arm.name.clone(),
                 image: image.id.clone(),
-                identity: components.identity(),
+                identity,
                 components,
                 work,
                 forecast_micros,

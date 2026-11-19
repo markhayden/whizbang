@@ -415,6 +415,27 @@ pub fn picture_of_bytes(
     Ok(id)
 }
 
+/// The canonical file of an artifact of this type, its bytes already read, at most
+/// [`MAX_FILE_BYTES`], brought in (plan m3, task L2): a lab corpus's mask or location,
+/// which `shown` names in a complaint. A file of another type is refused before the store
+/// is touched.
+pub fn artifact_of_bytes(
+    bytes: &[u8],
+    shown: &str,
+    wanted: artifact::ArtifactType,
+    root: &Path,
+    recovery: Recovery,
+) -> Result<ArtifactId, String> {
+    if bytes.len() as u64 > MAX_FILE_BYTES {
+        return Err(format!("{shown}: the file is over {}", limit()));
+    }
+    let read = Artifact::from_bytes_as(wanted, bytes, &DecodeLimits::default())
+        .map_err(|_| format!("{shown}: it is not the canonical file of a {wanted}"))?;
+    let id = read.id();
+    commit(&read, root, false, recovery, None)?;
+    Ok(id)
+}
+
 /// The images a store holds that were brought in as pictures, each by the SHA-256 of the
 /// file it was brought in from: how a set's pictures, pinned by their files' digests, are
 /// found once fetched. Each import leaves a name of its own for that (`imports/picture/`

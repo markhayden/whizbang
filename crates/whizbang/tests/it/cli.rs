@@ -2638,3 +2638,66 @@ fn rascal_seam_fills_a_synthetic_panorama_under_a_scripted_filler() {
     );
     assert_eq!(refused.code, Some(1), "{}", refused.err);
 }
+
+#[test]
+fn lab_run_runs_a_three_image_round_under_a_scripted_filler_and_resumes() {
+    use crate::lab::{FILLED_AND_SOURCE, ThreeImages};
+    // What `whizbang lab run` does, under a filler of the test's own kind, which the real
+    // binary cannot be given: the round stopped after its first cell, then resumed.
+    let lab = ThreeImages::new("cli-lab-run", FILLED_AND_SOURCE);
+    let over = lab.over(0);
+    let asked = std::sync::Mutex::new(0);
+    let stop = || {
+        let mut asked = asked.lock().unwrap();
+        *asked += 1;
+        *asked > 1
+    };
+    let first = lab.run(&over, None, &stop).unwrap();
+    assert_eq!((first.started, first.completed, first.not_run), (1, 1, 2));
+    let resumed = lab.run(&over, None, &|| false).unwrap();
+    assert_eq!(
+        resumed.text(),
+        "cells: 6\nhanded back by a reference arm: 3\nstarted now: 2\ncompleted: 3\n\
+         failed: 0\ninterrupted: 0\nnot run: 0\n"
+    );
+    assert_eq!(lab.calls(), 3);
+    // The real binary: the same round under fal's filler, with nothing left to spend and
+    // no recipient approved, is refused before anything runs, and says no corpus id and
+    // no path.
+    let reset = whizbang(&["spend", "reset", "--allowance", "0"], &lab.root);
+    assert_eq!(reset.code, Some(0), "{}", reset.err);
+    let before = whizbang(&["runs", "list"], &lab.root).out;
+    let config = std::fs::read_to_string(&lab.config).unwrap();
+    let recipes = config.lines().last().unwrap();
+    let fal = format!(
+        "[backends.fill]\nkind = \"service\"\nprovider = \"fal\"\nmodel = \"bria-eraser\"\n\
+         key_env = \"LAB_TEST_KEY\"\n\n[spend]\ncall_cap_usd = 0.10\n\n[recipes]\n{recipes}\n"
+    );
+    std::fs::write(&lab.config, fal).unwrap();
+    let env = lab.config.with_file_name("lab.env");
+    std::fs::write(&env, "LAB_TEST_KEY=made-up-key-0123456789abcdef\n").unwrap();
+    let ran = whizbang(
+        &[
+            "lab",
+            "run",
+            "--matrix",
+            lab.matrix.to_str().unwrap(),
+            "--corpus",
+            lab.corpus.to_str().unwrap(),
+            "--config",
+            lab.config.to_str().unwrap(),
+            "--env-file",
+            env.to_str().unwrap(),
+        ],
+        &lab.root,
+    );
+    assert_eq!(ran.code, Some(1), "{}", ran.out);
+    assert_eq!(ran.out, "");
+    // Fal's price, from the config's backend: 40,000 millionths a fill, three fills.
+    assert_eq!(
+        ran.err,
+        "whizbang: the round's forecast for its 3 runs still to run is 120000 millionths of a \
+         dollar, more than the 0 the store's allowance has left; nothing was run\n"
+    );
+    assert_eq!(whizbang(&["runs", "list"], &lab.root).out, before);
+}
