@@ -696,3 +696,91 @@ fn the_records_of_request_ids_are_left_by_delete_and_prune_and_still_answer() {
     }
     assert_eq!(records(&root), before);
 }
+
+#[test]
+fn an_imported_picture_keeps_where_it_came_from_by_a_name_of_its_own() {
+    use image::ImageEncoder;
+    // Plan m3, task O5 (the row on where an imported picture came from): each import of
+    // a picture leaves the name `imports/picture/` and its file's SHA-256, holding the
+    // image's identity, and the pictures of a store are found by those names alone.
+    let dir = Scratch::new("store-imported");
+    let root = dir.path().join("store");
+    let rgba: Vec<u8> = (0..24u8)
+        .flat_map(|n| [n * 9, 200 - n, n * 2, 255])
+        .collect();
+    let png = |extra: &[u8]| {
+        let mut file = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut file)
+            .write_image(&rgba, 6, 4, image::ExtendedColorType::Rgba8)
+            .expect("a PNG");
+        // The same pixels in another file: a text chunk after the header.
+        if !extra.is_empty() {
+            let mut chunk = (extra.len() as u32).to_be_bytes().to_vec();
+            let mut covered = b"tEXt".to_vec();
+            covered.extend_from_slice(extra);
+            let mut crc = 0xffff_ffffu32;
+            for byte in &covered {
+                crc ^= u32::from(*byte);
+                for _ in 0..8 {
+                    crc = if crc & 1 == 1 {
+                        (crc >> 1) ^ 0xedb8_8320
+                    } else {
+                        crc >> 1
+                    };
+                }
+            }
+            chunk.extend_from_slice(&covered);
+            chunk.extend_from_slice(&(!crc).to_be_bytes());
+            file.splice(33..33, chunk);
+        }
+        file
+    };
+    let (first, second) = (png(b""), png(b"Comment\0another file"));
+    let mut ids = Vec::new();
+    for (name, bytes) in [("one.png", &first), ("two.png", &second)] {
+        let file = dir.path().join(name);
+        std::fs::write(&file, bytes).expect("the fixture is written");
+        let ran = whizbang(
+            &[
+                "import",
+                "--create",
+                "--picture",
+                file.to_str().expect("UTF-8"),
+            ],
+            &root,
+        );
+        assert_eq!(ran.code, Some(0), "{}", ran.err);
+        ids.push(
+            ran.out
+                .split_whitespace()
+                .last()
+                .expect("an identity")
+                .to_owned(),
+        );
+    }
+    // One picture, from two files: the second is already there, and still named.
+    assert_eq!(ids[0], ids[1]);
+    let reader = Reader::open(&root, Arc::new(RealFs)).expect("a reader");
+    let generation = reader.snapshot().expect("a generation");
+    for bytes in [&first, &second] {
+        let name = format!("imports/picture/{}", Digest::of_bytes(bytes).hex());
+        let entry = generation.get(&name).expect("the import's name");
+        assert_eq!(reader.read(entry).expect("its content"), ids[0].as_bytes());
+    }
+    let found = whizbang::import::pictures_by_file(&root).expect("the pictures");
+    assert_eq!(found.len(), 2);
+    assert!(found.values().all(|id| id.to_string() == ids[0]));
+    // A name under the prefix whose tail is no file's digest is passed over.
+    let store = Store::open(&root, Arc::new(RealFs)).expect("a store");
+    let mut publication = store.begin().expect("a publication");
+    publication
+        .put("imports/picture/not-a-digest", b"sha256:0")
+        .expect("a name");
+    publication.publish().expect("published");
+    assert_eq!(
+        whizbang::import::pictures_by_file(&root)
+            .expect("the pictures")
+            .len(),
+        2
+    );
+}

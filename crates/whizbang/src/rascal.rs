@@ -1,7 +1,7 @@
 //! `whizbang rascal segment`, `select`, `grow`, `close`, `plug`, `subtract`, `feather`,
 //! `render`, `paste`, `fill`, `line`, `rect`, `stroke`, `rasterize`, `shrink`, `invert`,
-//! `cut`, `put`, `window`, `unwindow`, `apply`, `tighten`, `inspect`, `fan`, `profile` and
-//! `ramp`, and the recipes: wiring from arguments to the door (`whizbang::door`), which
+//! `cut`, `put`, `window`, `unwindow`, `apply`, `tighten`, `inspect`, `fan`, `profile`,
+//! `ramp` and `measure`, and the recipes: wiring from arguments to the door (`whizbang::door`), which
 //! runs the action through the executor.
 
 use std::path::PathBuf;
@@ -432,6 +432,9 @@ pub enum Command {
         #[command(flatten)]
         common: Common,
     },
+    // The last of rascal's operations (plan m3, task O5).
+    #[command(about = whizbang_rascal::measure::ABOUT, after_help = EXIT_CODES)]
+    Measure(Op<whizbang_rascal::measure::Args>),
 }
 
 /// Where a recipe that takes a location works: the picture, and the location given or
@@ -919,6 +922,7 @@ fn run_at(
             };
             door::recipe(&executor, &asked, common.at.root())
         }
+        Command::Measure(op) => op.run(recovery, platform),
     }
 }
 

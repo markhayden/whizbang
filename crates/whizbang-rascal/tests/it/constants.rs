@@ -45,12 +45,17 @@ fn every_set_rascal_shipped_is_here_byte_for_byte() {
         );
     }
     assert_eq!(
-        here, 9,
-        "window-v1, with window (O2); tighten-v1 and poisson-v1, with tighten and paste (O4); fan's four, profile-v1 and ramp-v1 (O3)"
+        here, 11,
+        "window-v1, with window (O2); tighten-v1 and poisson-v1, with tighten and paste (O4); fan's four, profile-v1 and ramp-v1 (O3); measures-v1 with measure, and feather-v1 (O5)"
     );
     // Each set the build holds is the file, and its values are rascal's.
     let (profile, ramp) = (constants::PROFILE_V1, constants::RAMP_V1);
-    let others = constants::FAN.into_iter().chain([profile, ramp]);
+    let others = constants::FAN.into_iter().chain([
+        profile,
+        ramp,
+        constants::MEASURES_V1,
+        constants::FEATHER_V1,
+    ]);
     for (name, text) in [WINDOW_V1, TIGHTEN_V1, POISSON_V1]
         .into_iter()
         .chain(others)
@@ -64,4 +69,17 @@ fn every_set_rascal_shipped_is_here_byte_for_byte() {
     assert_eq!(constants::number(TIGHTEN_V1.1, "min_contrast"), Some(12.0));
     assert_eq!(constants::number(POISSON_V1.1, "tol"), Some(1e-4));
     assert_eq!(constants::number(POISSON_V1.1, "max_iter"), Some(2000.0));
+    assert_eq!(
+        constants::number(constants::MEASURES_V1.1, "chroma_floor"),
+        Some(1.0)
+    );
+    assert_eq!(
+        constants::number(constants::MEASURES_V1.1, "percentile"),
+        Some(95.0)
+    );
+    // `feather` holds its support as a constant of its own: it is the set's.
+    assert_eq!(
+        constants::number(constants::FEATHER_V1.1, "support"),
+        Some(whizbang_rascal::feather::SUPPORT)
+    );
 }

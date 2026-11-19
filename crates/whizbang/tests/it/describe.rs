@@ -151,7 +151,8 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
             "inspect",
             "fan",
             "profile",
-            "ramp"
+            "ramp",
+            "measure"
         ]
     );
     let kinds: Vec<&str> = doc["actions"]
@@ -248,7 +249,8 @@ fn describe_without_json_names_the_build() {
             "inspect",
             "fan",
             "profile",
-            "ramp"
+            "ramp",
+            "measure"
         ],
         "{text}"
     );
@@ -550,4 +552,51 @@ fn recipes_are_listed_before_primitives_with_purpose_and_use() {
         text.contains("\n      use: To remove a thing you can name in words"),
         "{text}"
     );
+}
+
+#[test]
+fn each_of_rascals_25_operations_is_an_action() {
+    // Rascal's operations, as its `crates/rascal-ops/src/lib.rs` registered them at the
+    // commit `docs/sources.toml` pins (plan m3, task O5): each is an action here, under
+    // its own name.
+    const RASCAL: [&str; 25] = [
+        "rect",
+        "rasterize",
+        "render",
+        "cut",
+        "put",
+        "line",
+        "stroke",
+        "inspect",
+        "fan",
+        "profile",
+        "feather",
+        "ramp",
+        "apply",
+        "window",
+        "unwindow",
+        "paste",
+        "measure",
+        "grow",
+        "shrink",
+        "close",
+        "plug",
+        "subtract",
+        "select",
+        "invert",
+        "tighten",
+    ];
+    let (ok, text) = whizbang(&["describe", "--json"]);
+    assert!(ok);
+    let doc: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+    let names: Vec<&str> = (doc["actions"].as_array().expect("a list").iter())
+        .map(|action| action["name"].as_str().expect("a name"))
+        .collect();
+    let missing: Vec<&str> = RASCAL
+        .into_iter()
+        .filter(|name| !names.contains(name))
+        .collect();
+    assert!(missing.is_empty(), "not actions: {missing:?}");
+    let distinct: std::collections::BTreeSet<&str> = RASCAL.into_iter().collect();
+    assert_eq!(distinct.len(), 25);
 }
