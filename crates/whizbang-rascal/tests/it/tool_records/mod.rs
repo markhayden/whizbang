@@ -1,4 +1,4 @@
-//! The tool records of plan m3, tasks D1 and D2 (`SPEC.md` section 8, "Tool records"): each
+//! The tool records of plan m3, tasks D1, D2 and B1 (`SPEC.md` section 8, "Tool records"): each
 //! record's worked examples run here, so a page cannot drift from its tool.
 //!
 //! What every record shares, as the record of `grow` has it (`super::record`):
@@ -26,6 +26,7 @@ mod frames;
 mod locations;
 mod masks;
 mod paste;
+mod recipes;
 mod render;
 mod seams;
 mod segment;
@@ -214,5 +215,10 @@ mod writes {
         ramp => seams,
         apply => seams,
         measure => seams,
+        remove => recipes,
+        remove_prompt => recipes,
+        repair => recipes,
+        repair_area => recipes,
+        seam => recipes,
     }
 }

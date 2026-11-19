@@ -17,6 +17,8 @@
 #   scripts/tool-record.sh rasterize, shrink, invert, inspect, cut, put, window, unwindow,
 #                                    tighten, fan, profile, ramp, apply or measure: the same
 #                                    (plan m3, task D2)
+#   scripts/tool-record.sh remove, remove_prompt, repair, repair_area or seam: the same, each
+#                                    run under a scripted filler (plan m3, task B1)
 #   scripts/tool-record.sh source-fidelity, reference-consistency, product-fidelity,
 #                                    brief-compliance or reality-checks: the five records of
 #                                    the use cases' recipes and their folders, all five
@@ -58,7 +60,7 @@ case "${1:-}" in
     ;;
   close | subtract | line | rect | stroke | paste | fill | mask_rect | protect | segment | select | plug | feather | render | \
     rasterize | shrink | invert | inspect | cut | put | window | unwindow | tighten | \
-    fan | profile | ramp | apply | measure)
+    fan | profile | ramp | apply | measure | remove | remove_prompt | repair | repair_area | seam)
     scripts/thread-guard.sh cargo test --release -p whizbang-rascal --test it -- \
       --ignored --exact "tool_records::writes::$1"
     ;;
@@ -67,7 +69,7 @@ case "${1:-}" in
       --ignored --exact use_case_records::write_the_records
     ;;
   *)
-    echo "tool-record: usage: scripts/tool-record.sh view|grow|align|resize|tiles|change_map|edge_similarity|close|subtract|line|rect|stroke|paste|fill|mask_rect|protect|segment|select|plug|feather|render|rasterize|shrink|invert|inspect|cut|put|window|unwindow|tighten|fan|profile|ramp|apply|measure|source-fidelity|reference-consistency|product-fidelity|brief-compliance|reality-checks" >&2
+    echo "tool-record: usage: scripts/tool-record.sh view|grow|align|resize|tiles|change_map|edge_similarity|close|subtract|line|rect|stroke|paste|fill|mask_rect|protect|segment|select|plug|feather|render|rasterize|shrink|invert|inspect|cut|put|window|unwindow|tighten|fan|profile|ramp|apply|measure|remove|remove_prompt|repair|repair_area|seam|source-fidelity|reference-consistency|product-fidelity|brief-compliance|reality-checks" >&2
     exit 2
     ;;
 esac

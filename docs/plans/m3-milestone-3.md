@@ -1219,6 +1219,17 @@ and the milestone's note is written.
   four labs, run by the orchestrator, and its scoring committed as the record; the
   owner's picks of the four labs' pairs and their decode added to it; the three
   `evidence::` tests, the transcript test, items 2 to 5, and the box.
+  **Split again with the task** (B1, 2026-11-19): the second part holds everything of the
+  rest that needs no pick of the owner's, in two pull requests since it came to about 2,800
+  changed lines (the records and the evidence; then the rows, `tighten`, the transcript and
+  the note): the round's scoring as the record
+  (`docs/results/m3-edits.md` and `.toml`), the three `evidence::` tests, the transcript
+  test, items 2 to 5, with each record's visual quality reading "round pending: the owner's
+  picks" while `EDITS_DECODED` in `crates/whizbang/tests/it/evidence.rs` is false, and the
+  note with four lines marked "To be filled by B1's last pull request". The third adds only
+  the two rounds' decodes (the edits' four labs and `m3-seam`), sets `EDITS_DECODED`, fills
+  the four lines, adds the note to the citation counts of `scripts/tests/test-notes.sh`,
+  and ticks the box.
   **Clarified with the task** (B1, 2026-11-19, item 1, no change of rule): task success
   keeps the IoU as item 1 names it, and the record gives beside it the drawn defect's
   coverage (the share of its mask inside the recipe's, at weight 0.5 or more) and the

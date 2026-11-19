@@ -1167,3 +1167,271 @@ fn the_encoding_record_names_a_commit_of_this_tree() {
         assert!(!page.contains(held), "{held}");
     }
 }
+
+// --- The edits' rung 2 and the records of the five recipes that end in a fill (plan m3,
+// task B1, items 1 and 2).
+
+/// Whether the two rounds' decodes are in (B1's last pull request): the edits' four labs
+/// and the seam's. While false, each record's visual quality reads exactly
+/// [`PENDING`], its rung 2 is "In part" and its mark experimental, and the edits' record
+/// has no part on visual quality. The pull request that adds the decodes sets this true,
+/// and then each must hold a decode and none may say pending.
+const EDITS_DECODED: bool = false;
+/// What a record's visual quality says until the owner's picks are decoded.
+const PENDING: &str = "round pending: the owner's picks";
+/// The four recipes of the edit set, and the fifth, whose rung 2 is the lab's round.
+const EDIT_RECIPES: [&str; 4] = ["remove", "remove_prompt", "repair", "repair_area"];
+const FILL_RECIPES: [&str; 5] = ["remove", "remove_prompt", "repair", "repair_area", "seam"];
+
+/// The blocks of fields of a page, each `name = value` with its quotes taken off.
+fn blocks_of(page: &str) -> Vec<Fields> {
+    let line = |line: &str| {
+        let (name, value) = line.split_once(" = ").expect("a line is name = value");
+        (name.to_owned(), value.trim_matches('"').to_owned())
+    };
+    (page.split("```toml\n").skip(1))
+        .map(|rest| {
+            rest.split("```")
+                .next()
+                .unwrap()
+                .lines()
+                .map(line)
+                .collect()
+        })
+        .collect()
+}
+
+/// The edits' record: the page and its numbers file, as text.
+fn edits() -> (String, String) {
+    let read = |name: &str| std::fs::read_to_string(repository().join("docs/results").join(name));
+    let page = read("m3-edits.md").expect("the edits' record is committed");
+    let numbers = read("m3-edits.toml").expect("its numbers are committed");
+    (page, numbers)
+}
+
+/// A recipe's record and the part of it on rung 2.
+fn recipe_record(recipe: &str) -> (String, String) {
+    let path = repository().join(format!("docs/reference/tools/{recipe}.md"));
+    let record = std::fs::read_to_string(path).expect("the recipe's record is committed");
+    let rung_2 = record
+        .split("## Rung 2 results\n")
+        .nth(1)
+        .and_then(|rest| rest.split("\n## ").next())
+        .expect("a part on rung 2")
+        .to_owned();
+    (record, rung_2)
+}
+
+/// The text of the shipped recipe `name`.
+fn shipped(name: &str) -> &'static str {
+    (whizbang_rascal::recipes::SHIPPED.iter())
+        .find(|text| text.contains(&format!("\nname = \"{name}\"\n")))
+        .unwrap_or_else(|| panic!("{name} is no shipped recipe"))
+}
+
+/// The constant sets the shipped recipe's steps name, each with the digest of its text,
+/// in the order of their names, as the edits' record writes them.
+fn constant_sets_of(name: &str) -> Vec<String> {
+    let mut names: Vec<&str> = (shipped(name).lines())
+        .filter_map(|line| line.strip_prefix("constants = \""))
+        .map(|rest| rest.trim_end_matches('"'))
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    (names.iter())
+        .map(|set| {
+            let text = whizbang_rascal::constants::text_of(set).expect("a shipped set");
+            format!("{set} {}", whizbang_eval::lab::digest_of(text.as_bytes()))
+        })
+        .collect()
+}
+
+#[test]
+fn the_edits_record_names_a_commit_of_this_tree_and_holds_only_aggregates() {
+    let (page, numbers) = edits();
+    let blocks = blocks_of(&page);
+    let run = &blocks[0];
+    assert!(
+        is_ancestor(field(run, "commit")),
+        "{}",
+        field(run, "commit")
+    );
+    assert_eq!(field(run, "whizbang"), env!("CARGO_PKG_VERSION"));
+    // The set the round ran is the committed one.
+    let set_text = std::fs::read_to_string(repository().join("labs/m3-edits/edits.toml")).unwrap();
+    let set = whizbang::edits::EditSet::parse(&set_text).unwrap();
+    assert_eq!(field(run, "set"), set.set);
+    assert_eq!(field(run, "seed"), set.seed.to_string());
+    assert_eq!(field(run, "phrase"), set.phrase);
+    let number = |fields: &Fields, name: &str| field(fields, name).parse::<u64>().expect(name);
+    let real = |fields: &Fields, name: &str| field(fields, name).parse::<f64>().expect(name);
+    assert_eq!((number(run, "pictures"), number(run, "items")), (24, 96));
+    // One block a recipe, in the order of the set; their counts add up, nothing changed
+    // outside a mask, and the spend is within the plan's estimate for B1.
+    let recipes = &blocks[1..];
+    let named: Vec<&str> = recipes.iter().map(|b| field(b, "recipe")).collect();
+    assert_eq!(named, EDIT_RECIPES);
+    let mut settled = 0;
+    for (recipe, block) in EDIT_RECIPES.iter().zip(recipes) {
+        let ended = ["completed", "failed", "not_run"].map(|n| number(block, n));
+        assert_eq!(
+            ended.iter().sum::<u64>(),
+            number(block, "items"),
+            "{recipe}"
+        );
+        assert_eq!(number(block, "items"), 24, "{recipe}");
+        assert_eq!(number(block, "changed_outside_mask"), 0, "{recipe}");
+        assert!(number(block, "items_preserved") <= number(block, "completed"));
+        assert!(number(block, "fill_beats_blur") <= number(block, "completed"));
+        for share in [
+            "mask_iou_mean",
+            "mask_iou_min",
+            "coverage_mean",
+            "coverage_min",
+        ] {
+            assert!(
+                (0.0..=1.0).contains(&real(block, share)),
+                "{recipe} {share}"
+            );
+        }
+        assert!(real(block, "mask_iou_min") <= real(block, "mask_iou_mean"));
+        assert!(real(block, "mask_iou_mean") <= real(block, "coverage_mean"));
+        // The lab is the committed one, under its frozen protocol.
+        assert_eq!(field(block, "lab"), whizbang::edits::lab_name(recipe));
+        let protocol = format!("labs/m3-edits/{recipe}-protocol.toml");
+        let bytes = std::fs::read(repository().join(&protocol)).unwrap();
+        assert_eq!(
+            field(block, "protocol_digest"),
+            whizbang_eval::lab::digest_of(&bytes)
+        );
+        // The backends are named: Bria through fal for every fill, SAM 3 for the phrase.
+        assert!(field(block, "filler").starts_with("fal bria-eraser "));
+        let finder = field(block, "finder");
+        assert_eq!(
+            finder.starts_with("pack sam3 sha256:"),
+            *recipe == "remove_prompt"
+        );
+        settled += number(block, "settled_micros");
+    }
+    assert_eq!(settled, number(run, "settled_micros"));
+    assert!(settled <= 4_000_000, "{settled}");
+    // The numbers file says what the page says, to the page's four places.
+    let file: toml::Table = numbers.parse().expect("the numbers file is TOML");
+    assert_eq!(file["commit"].as_str(), Some(field(run, "commit")));
+    assert_eq!(file["settled_micros"].as_integer(), Some(settled as i64));
+    let rows = file["recipe"].as_array().expect("a table a recipe");
+    assert_eq!(rows.len(), EDIT_RECIPES.len());
+    for (row, block) in rows.iter().zip(recipes) {
+        for (name, value) in block {
+            match &row[name.as_str()] {
+                toml::Value::Float(f) => assert_eq!(&format!("{f:.4}"), value, "{name}"),
+                toml::Value::Integer(i) => assert_eq!(&i.to_string(), value, "{name}"),
+                toml::Value::String(s) => assert_eq!(s, value, "{name}"),
+                toml::Value::Array(sets) if sets.is_empty() => assert_eq!(value, "none"),
+                toml::Value::Array(sets) => {
+                    let sets: Vec<&str> = sets.iter().filter_map(toml::Value::as_str).collect();
+                    assert_eq!(&sets.join(", "), value, "{name}");
+                }
+                other => panic!("{name}: {other:?}"),
+            }
+        }
+    }
+    // The part on visual quality is added with the owner's picks, and only then.
+    assert_eq!(page.contains("## Visual quality"), EDITS_DECODED);
+    // Aggregates only: no item of the set, no picture's name, no path.
+    for item in &set.item {
+        for held in [&item.id, &item.picture, &item.truth] {
+            assert!(!page.contains(held.as_str()) && !numbers.contains(held.as_str()));
+        }
+    }
+    for held in ["/Users/", "/home/", "/private/", "FAL_KEY", "Key "] {
+        assert!(!page.contains(held) && !numbers.contains(held), "{held}");
+    }
+}
+
+#[test]
+fn each_model_based_recipes_record_holds_rungs_1_and_2() {
+    let (page, _) = edits();
+    let blocks = blocks_of(&page);
+    for recipe in FILL_RECIPES {
+        let (record, rung_2) = recipe_record(recipe);
+        let history = record
+            .split("## Mark and history\n")
+            .nth(1)
+            .expect("its history");
+        assert!(
+            history.contains("\n| 1. Single examples | Shown |"),
+            "{recipe}"
+        );
+        let (rung, mark) = if EDITS_DECODED {
+            ("\n| 2. Scored alone | Shown |", "**Unverified**")
+        } else {
+            ("\n| 2. Scored alone | In part |", "**Mark.** Experimental")
+        };
+        assert!(history.contains(rung), "{recipe}: {rung}");
+        assert!(history.contains(mark), "{recipe}: {mark}");
+        // Its visual quality: pending, said so in the one way, or decoded.
+        let line = (rung_2.lines())
+            .find(|line| line.contains("visual quality.**") || line.contains("Visual quality.**"))
+            .unwrap_or_else(|| panic!("{recipe}: no line on visual quality"));
+        let said = (rung_2.split(line).nth(1).unwrap().lines().skip(1))
+            .take_while(|l| !l.trim().is_empty() && !l.starts_with("- **"))
+            .fold(line.to_owned(), |all, l| format!("{all} {}", l.trim()));
+        if EDITS_DECODED {
+            assert!(!said.contains("pending"), "{recipe}: {said}");
+            assert!(
+                said.contains("not_worse") || said.contains("worse"),
+                "{recipe}: {said}"
+            );
+        } else {
+            assert!(said.ends_with(PENDING), "{recipe}: {said}");
+        }
+        if recipe == "seam" {
+            // The seam's round: the lab of task L3, on the shipped recipe.
+            let block = &blocks_of(&rung_2)[0];
+            assert_eq!(field(block, "lab"), "m3-seam");
+            assert_eq!(field(block, "completed"), field(block, "cells"));
+            continue;
+        }
+        // The edits' figures, as the edits' record has them.
+        let ours = blocks_of(&rung_2);
+        let theirs = (blocks.iter()).find(|b| b.iter().any(|(n, v)| n == "recipe" && v == recipe));
+        assert_eq!(Some(&ours[0]), theirs, "{recipe}");
+        for name in ["changed_outside_mask", "items_preserved", "fill_beats_blur"] {
+            let value = field(&ours[0], name);
+            assert!(rung_2.contains(&format!(" {value} ")), "{recipe}: {name}");
+        }
+    }
+}
+
+#[test]
+fn each_recipes_rung_2_names_the_shipped_recipes_and_constant_sets_digests() {
+    let (_, numbers) = edits();
+    let file: toml::Table = numbers.parse().unwrap();
+    let rows = file["recipe"].as_array().unwrap();
+    for recipe in FILL_RECIPES {
+        let digest = whizbang_eval::lab::digest_of(shipped(recipe).as_bytes());
+        let sets = constant_sets_of(recipe);
+        let (_, rung_2) = recipe_record(recipe);
+        let block = &blocks_of(&rung_2)[0];
+        assert_eq!(field(block, "recipe"), recipe);
+        assert_eq!(field(block, "recipe_digest"), digest, "{recipe}");
+        let named = if sets.is_empty() {
+            "none".to_owned()
+        } else {
+            sets.join(", ")
+        };
+        assert_eq!(field(block, "constant_sets"), named, "{recipe}");
+        if recipe == "seam" {
+            continue;
+        }
+        let row = (rows.iter())
+            .find(|row| row["recipe"].as_str() == Some(recipe))
+            .unwrap();
+        assert_eq!(row["recipe_digest"].as_str(), Some(digest.as_str()));
+        let written: Vec<&str> = (row["constant_sets"].as_array().unwrap().iter())
+            .filter_map(toml::Value::as_str)
+            .collect();
+        assert_eq!(written, sets, "{recipe}");
+    }
+}

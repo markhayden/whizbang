@@ -14,7 +14,8 @@ use whizbang_core::identity::{CanonicalPixels, Point};
 use whizbang_rascal::constants::{self, TIGHTEN_V1};
 use whizbang_rascal::rasterize::dilate_path;
 use whizbang_rascal::tighten::{
-    Extent, Settings, Tightened, Tunables, best_pair, directions, resample, smooth_extents, tighten,
+    Extent, Settings, Tightened, Tunables, best_pair, directions, resample, smooth_extents,
+    stroke_core, tighten,
 };
 
 use super::shaping::{Shop, count};
@@ -438,4 +439,117 @@ fn tighten_as_an_action_makes_a_repair_mask_on_the_image() {
             .input("image", image_id),
     );
     assert!(why.contains("not a box"), "{why}");
+}
+
+/// The core as `stroke_core` drew it before plan m3, task B1: every pixel of the stroke's
+/// box asked of every cap and every segment. The reference the drawing by elements is held
+/// to.
+fn core_by_the_whole_box(samples: &[[f64; 2]], extents: &[Extent], w: u32, h: u32) -> Vec<u8> {
+    let dirs = directions(samples).unwrap();
+    let reach = extents
+        .iter()
+        .map(|e| e.a.abs().max(e.b.abs()))
+        .fold(0.0, f64::max);
+    let xs = samples.iter().map(|p| p[0]);
+    let ys = samples.iter().map(|p| p[1]);
+    let (min_x, max_x) = (
+        xs.clone().fold(f64::INFINITY, f64::min),
+        xs.fold(f64::NEG_INFINITY, f64::max),
+    );
+    let (min_y, max_y) = (
+        ys.clone().fold(f64::INFINITY, f64::min),
+        ys.fold(f64::NEG_INFINITY, f64::max),
+    );
+    let x_lo = (min_x - reach - 1.0).floor().max(0.0) as u32;
+    let x_hi = ((max_x + reach + 1.0).ceil().max(0.0) as u32).min(w);
+    let y_lo = (min_y - reach - 1.0).floor().max(0.0) as u32;
+    let y_hi = ((max_y + reach + 1.0).ceil().max(0.0) as u32).min(h);
+    let caps: Vec<([f64; 2], f64)> = (samples.iter().zip(&dirs).zip(extents))
+        .map(|((p, d), e)| {
+            let m = (e.a + e.b) / 2.0;
+            ([p[0] - m * d[1], p[1] + m * d[0]], (e.b - e.a) / 2.0)
+        })
+        .collect();
+    let mut core = vec![0u8; (w * h) as usize];
+    for y in y_lo..y_hi {
+        let cy = f64::from(y) + 0.5;
+        for x in x_lo..x_hi {
+            let cx = f64::from(x) + 0.5;
+            let in_cap = (caps.iter())
+                .any(|(c, r)| (cx - c[0]).powi(2) + (cy - c[1]).powi(2) <= r * r + 1e-9);
+            let in_tube = samples.windows(2).enumerate().any(|(i, seg)| {
+                let (p, q) = (seg[0], seg[1]);
+                let (dx, dy) = (q[0] - p[0], q[1] - p[1]);
+                let len2 = dx * dx + dy * dy;
+                if len2 == 0.0 {
+                    return false;
+                }
+                let u = ((cx - p[0]) * dx + (cy - p[1]) * dy) / len2;
+                if !(0.0..=1.0).contains(&u) {
+                    return false;
+                }
+                let d = (-dy * (cx - p[0]) + dx * (cy - p[1])) / len2.sqrt();
+                let (ea, eb) = (&extents[i], &extents[i + 1]);
+                d >= ea.a + u * (eb.a - ea.a) - 1e-9 && d <= ea.b + u * (eb.b - ea.b) + 1e-9
+            });
+            if in_cap || in_tube {
+                core[(y * w + x) as usize] = 255;
+            }
+        }
+    }
+    core
+}
+
+#[test]
+fn the_core_drawn_by_elements_is_the_core_of_the_whole_box_and_grows_with_the_strokes_length() {
+    // Strokes of every kind on a picture of 96 by 64: straight, bending back, partly
+    // outside the picture, with extents tightened, lopsided, crossed and full, each core
+    // the same pixel for pixel as the whole box gives.
+    let (w, h) = (96u32, 64u32);
+    let mut noise = Lcg(20_261_119);
+    let mut unit = || f64::from(noise.next() % 10_000) / 10_000.0;
+    for case in 0..40 {
+        let points = 2 + case % 5;
+        let path: Vec<[f64; 2]> = (0..points)
+            .map(|_| [unit() * 120.0 - 12.0, unit() * 88.0 - 12.0])
+            .collect();
+        let samples = resample(&path, 0.5 + unit() * 2.0);
+        if directions(&samples).is_none() {
+            continue;
+        }
+        let extents: Vec<Extent> = samples
+            .iter()
+            .map(|_| match case % 4 {
+                0 => Extent::full(1.0 + unit() * 8.0),
+                1 => Extent {
+                    a: -unit() * 6.0,
+                    b: unit() * 6.0,
+                    tightened: true,
+                },
+                2 => Extent {
+                    a: unit() * 3.0,
+                    b: 3.0 + unit() * 4.0,
+                    tightened: true,
+                },
+                _ => Extent {
+                    a: unit() * 4.0 - 2.0,
+                    b: unit() * 4.0 - 2.0,
+                    tightened: true,
+                },
+            })
+            .collect();
+        let dirs = directions(&samples).unwrap();
+        let by_elements = stroke_core(&samples, &dirs, &extents, w, h, &never).unwrap();
+        let reference = core_by_the_whole_box(&samples, &extents, w, h);
+        assert!(by_elements == reference, "case {case}: the cores differ");
+    }
+    // A diagonal stroke across 8000 by 6000, one sample a pixel: about 10,000 samples,
+    // which the whole box asked of each would take hours; drawn by elements, a moment.
+    let (w, h) = (8000u32, 6000u32);
+    let samples = resample(&[[10.0, 10.0], [7990.0, 5990.0]], 1.0);
+    let dirs = directions(&samples).unwrap();
+    let extents = vec![Extent::full(6.0); samples.len()];
+    let core = stroke_core(&samples, &dirs, &extents, w, h, &never).unwrap();
+    let set = count(&core);
+    assert!(set > 9_000 * 12 && set < 10_100 * 13, "{set}");
 }
