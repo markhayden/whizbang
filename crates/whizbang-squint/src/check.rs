@@ -401,6 +401,10 @@ struct Run<'a> {
     /// The tool files the run named, and what runs them.
     files: Vec<FileTool>,
     file_tools: Option<Arc<dyn FileTools>>,
+    /// The revision of each tool file the decision cache's key holds, and whether one
+    /// ran as another: then the key is not kept.
+    revisions: Vec<(String, String)>,
+    edited: bool,
 }
 
 impl Run<'_> {
@@ -575,6 +579,12 @@ impl Run<'_> {
                 self.context
                     .facts()
                     .setting(&setting, &Value::text(&ran.digest));
+                // The key holds the file as it was when the run began: a run of another
+                // digest is no answer that key may give again.
+                let keyed = self.revisions.iter().find(|(name, _)| *name == tool.name);
+                if keyed.is_some_and(|(_, revision)| *revision != ran.digest) {
+                    self.edited = true;
+                }
                 answer(&files::answer(id, &tool.name, &ran), false)
             }
             Err(why) => answer(&format!("the tool failed: {why}"), true),
@@ -879,13 +889,14 @@ impl Action for Check {
         };
         // The decision cache's key is known here, before anything is measured or sent;
         // a run of the same key that completed answers this one (crate::cache).
+        let mut revisions: Vec<(String, String)> = Vec::new();
         let key = match &judging {
             Some(judging) if self.cache && argument("cell").is_none() => {
                 let images: Vec<_> = (call.inputs().iter())
                     .map(|input| (input.id(), input.binding()))
                     .collect();
                 let tools: Vec<&str> = named.iter().chain(detail.iter()).copied().collect();
-                let revisions: Vec<(String, String)> = named_files
+                revisions = named_files
                     .iter()
                     .map(|tool| {
                         let files = self.toolbox.files.as_ref();
@@ -932,6 +943,8 @@ impl Action for Check {
             projection,
             files: named_files,
             file_tools: self.toolbox.files.clone(),
+            revisions,
+            edited: false,
         };
         // The images open the conversation, each with the name a tool call gives.
         let mut opening = Vec::new();
@@ -1077,7 +1090,7 @@ impl Action for Check {
                                 kept.map_err(|why| failed("reasons", &why))?;
                                 judging.keep(context, call, &retries, &decided)?;
                                 if let Some(key) = &key {
-                                    keep_key(context, key, reported);
+                                    keep_key(context, key, reported, run.edited);
                                 }
                                 return Ok(Produced::nothing().with_verdict(decided.verdict));
                             }
@@ -1249,9 +1262,11 @@ fn answered_from(context: &Context, hit: &cache::Hit) -> Result<Produced, Failur
 /// Keeps a run's key for a later run to answer from, when every turn of its judge said
 /// which model answered; and notes in the record whether it was kept. A key that cannot
 /// be written is not kept, and the run's verdict stands.
-fn keep_key(context: &Context, key: &cache::Key, reported: bool) {
+fn keep_key(context: &Context, key: &cache::Key, reported: bool, edited: bool) {
     let said = if !reported {
         "not kept: the judge did not report its identity"
+    } else if edited {
+        "not kept: a tool file it ran was edited after its key was made"
     } else if context
         .diagnostics()
         .write(&key.name(), key.material().as_bytes())

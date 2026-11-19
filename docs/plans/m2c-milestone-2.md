@@ -764,7 +764,7 @@ states `tool/1`. Of the tests above, these are there and pass as well:
 `tool_file::an_output_outside_its_declared_bounds_is_refused_before_use`,
 `tool_file::a_tool_reaches_a_capability_only_through_its_context_and_under_the_runs_allowance`,
 `test_tool_worker.Capabilities.test_a_tool_file_asks_for_a_segment_and_is_answered`, the
-five `tool_worker::` tests,
+five `tool_worker::` tests the plan names (and two more, on the group a worker cannot end and a worker for each file),
 `check::a_named_tool_file_is_offered_to_the_judge_with_its_schema_and_called` and
 `check::a_tool_file_not_named_is_never_offered` (in `whizbang-squint`, over a tool file the
 test hands `check`'s toolbox),

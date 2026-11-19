@@ -54,7 +54,8 @@ that digest to the tool worker, which hashes them again and compiles only bytes 
 An edited file is the next run's. An edit that changes a tool's name, images or arguments,
 which made its action when the registry was built, is refused until whizbang starts again.
 The decision cache keys a run of `check` that names a tool file by the file's digest as it is
-then, so an edit misses.
+then, so an edit misses; a run whose call of a tool file ran another digest (the file edited
+while it ran) keeps no key.
 
 **Where a tool file runs: the tool worker, a second process of the pack's runtime.** The one
 worker of a process (`OneWorker`, of the kind `pack`) holds it beside the model's worker: at
@@ -86,16 +87,27 @@ is being answered is refused, and a run asks at most 64 times. A mask in the sto
 score, so an answer gives none.
 
 **Nothing left running.** The tool worker is started as the leader of a process group of its
-own (`process_group(0)`, which the standard library sets before the program starts). Every
-stop of it closes its input: at a tool's failure, a cancellation, the run's time, a frame
-that breaks `tool/1`, the end of a door's input and the drop of its supervisor. At the end of
-its input the worker sends `SIGKILL` to its whole group, itself last; a process a tool
-started, one holding the worker's pipes among them, ends with it, and whizbang waits for the
-worker and for its pipes' readers. A worker not ended 5 seconds after its input closed is
-killed and waited for; only then may a process it started outlive it, and its readers are let
-go and no worker is started while they live. The group's end is the worker's, not whizbang's:
-a signal to a group takes `libc` or `unsafe`, which the workspace forbids, or the system's
-`kill` program. A worker started outside a group of its own ends itself alone.
+own (`process_group(0)`, which the standard library sets before the program starts); the
+group's id is the worker's process id, recorded when it is started. Every stop of it closes
+its input: at a tool's failure, a cancellation, the run's time, a frame that breaks `tool/1`,
+the end of a door's input and the drop of its supervisor. At the end of its input the worker
+sends `SIGKILL` to its whole group, itself last; a process a tool started, one holding the
+worker's pipes among them, ends with it, and whizbang waits for the worker and for its
+pipes' readers. A worker that has not ended 5 seconds after its input closed could not act
+(a tool holding Python's lock in C code keeps its reader from the end of its input): whizbang
+then ends the group itself, with the system's `kill` program, `/bin/kill -KILL -- -<group>`
+started by its absolute path in a cleared environment, waits for the program, and kills and
+waits for the worker; the drop of a running worker does the same. Only the group whizbang
+made for that worker is named, never 0, 1 or whizbang's own. **The owner approved whizbang
+signalling its tool worker's group so on 2026-11-18**: the workspace forbids the `unsafe` a
+signal to a group would take in Rust, and a probe of the review showed a tool's child
+outliving a worker that could not end its group. A process a tool moved out of the group is
+not ended; its readers are let go, and no worker is started while they live.
+
+**One worker for one file.** A run of a tool file whose digest is not that of the file the
+running worker last ran ends the worker and starts another, so that nothing one file's code
+left in the process (a module, a thread, a global) is there for another file, or for an edit
+of the same one.
 
 **A tool file is offered to a judge only when a run names it** (`squint check --tool`, or an
 arm of a matrix): it is on offer in `check`'s toolbox with the schema its declaration gives,

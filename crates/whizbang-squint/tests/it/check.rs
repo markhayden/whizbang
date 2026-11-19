@@ -2382,6 +2382,8 @@ fn a_comparison_named_by_a_run_is_offered_to_the_judge_and_answered_with_its_mea
 #[derive(Default)]
 struct Probe {
     ran: std::sync::Mutex<Vec<Probed>>,
+    /// The digest it says it ran, when not [`PROBE_DIGEST`]: a file edited mid-run.
+    ran_as: Option<&'static str>,
 }
 
 type Probed = (Vec<(String, ArtifactId)>, Json);
@@ -2418,7 +2420,7 @@ impl whizbang_squint::files::FileTools for Probe {
         let mut ran = self.ran.lock().unwrap();
         ran.push((images.to_vec(), Json::Object(arguments.clone())));
         Ok(whizbang_squint::files::FileRan {
-            digest: PROBE_DIGEST.to_owned(),
+            digest: self.ran_as.unwrap_or(PROBE_DIGEST).to_owned(),
             output: json!({"readings": [{"subject": "door", "values": {"kept": 0.75}}]}),
         })
     }
@@ -2538,4 +2540,47 @@ fn a_tool_file_not_named_is_never_offered() {
 
 fn judge_none() -> Arc<FakeJudge> {
     judge(&submitting(&[]), &[])
+}
+
+#[test]
+fn a_run_whose_tool_file_was_edited_after_its_key_was_made_keeps_no_key() {
+    // The key holds each tool file's digest when the run begins; a call that ran the
+    // file as another digest leaves the run's verdict unkept (the review of task X1).
+    let decided = |ran_as: Option<&'static str>| {
+        let (mut world, source, candidate, _) = paired();
+        world.cached = true;
+        let probe = Arc::new(Probe {
+            ran_as,
+            ..Probe::default()
+        });
+        world.toolbox = whizbang_squint::check::Toolbox::with_files(probe);
+        let asked = json!({"tool_call": {"id": "p1", "name": "probe", "arguments":
+            {"source": "source", "candidate": "candidate", "phrase": "door"}}});
+        let script = submitting(&[asked]);
+        let turns = whizbang_core::capability::written::read_script(script.as_bytes()).unwrap();
+        let turns = turns
+            .into_iter()
+            .map(|turn| turn.map(|turn| turn.reported_by(Some("fake-judge"))))
+            .collect();
+        let judge = Arc::new(FakeJudge::scripted(turns));
+        let executor = world.engine(judge, Secrets::none());
+        let call = of_pair(&source, &candidate, &[("tools", "view,probe")]);
+        let finished = executor.submit(&call).unwrap();
+        drop(executor);
+        let left = left(&world.root(), world.fs.clone(), finished.run());
+        let settings = left.record().asked().settings.clone();
+        let said = settings
+            .iter()
+            .find(|s| s.name() == "decision_cache")
+            .map(|s| format!("{:?}", s.value()));
+        said.unwrap_or_default()
+    };
+    assert!(decided(None).contains("\"kept\""), "{}", decided(None));
+    let edited = decided(Some(
+        "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    ));
+    assert!(
+        edited.contains("not kept: a tool file it ran was edited"),
+        "{edited}"
+    );
 }

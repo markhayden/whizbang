@@ -189,13 +189,7 @@ def run(context):
 fn a_second_capability_request_while_one_is_open_is_refused() {
     let mut worker = supervisor();
     let cancellation = Cancellation::new();
-    // A first run starts the worker, so that the count of asks it reads can be watched.
-    let empty = "def run(context):\n    return {}\n";
-    let started = worker.run(run_of(empty), &limits(&cancellation), &mut |_| {
-        Ok(Vec::new())
-    });
-    assert_eq!(started, Ok(json!({})));
-    let heard = worker.asks_heard().unwrap();
+    let heard = worker.asks_heard();
     // The first ask is answered only once the second is there: the second came while the
     // first was open, and is refused.
     let mut answered = 0;
@@ -287,4 +281,64 @@ fn a_cancellation_ends_the_group_and_waits_for_it() {
     );
     assert!(kit::readers_ended(Duration::from_secs(5)));
     assert!(kit::pack_children().is_empty());
+}
+
+const HOLDS_THE_LOCK: &str = r#"import subprocess, sys
+def run(context):
+    child = subprocess.Popen(['/bin/sleep', '30'])
+    sys.stderr.write('child %d\n' % child.pid)
+    sys.stderr.flush()
+    sum(range(4 * 10**9))
+    return {}
+"#;
+
+#[test]
+fn a_worker_that_cannot_end_its_group_has_it_ended_by_whizbang() {
+    // The tool starts a process that holds the worker's pipes, then holds Python's lock in
+    // C code, so the worker's reader cannot act on the end of its input. The run is given
+    // up at its time; past the wait for the worker, whizbang kills the group it made for
+    // it (the owner's approval of 2026-11-18, ADR 0032), and the child goes with it.
+    let mut worker = supervisor();
+    let cancellation = Cancellation::new();
+    let limits = ToolLimits {
+        cancellation: &cancellation,
+        deadline: None,
+        limit: Duration::from_secs(2),
+    };
+    let ended = worker.run(run_of(HOLDS_THE_LOCK), &limits, &mut |_| Ok(Vec::new()));
+    assert_eq!(ended, Err(ToolFault::TimedOut));
+    assert_eq!(worker.pid(), None);
+    let child = child_of(&worker);
+    assert!(
+        !lives(child),
+        "the tool's child {child} outlived the worker"
+    );
+    assert!(kit::readers_ended(Duration::from_secs(5)));
+    assert!(kit::pack_children().is_empty());
+}
+
+#[test]
+fn a_tool_file_of_another_digest_is_run_by_a_worker_of_its_own() {
+    let mut worker = supervisor();
+    let cancellation = Cancellation::new();
+    let one = "def run(context):\n    return {}\n";
+    let other = "def run(context):\n    return {'readings': []}\n";
+    let mut nothing = |_: &Asked| Ok(Vec::new());
+    worker
+        .run(run_of(one), &limits(&cancellation), &mut nothing)
+        .unwrap();
+    let first = worker.pid().unwrap();
+    // The same file again: the same worker.
+    worker
+        .run(run_of(one), &limits(&cancellation), &mut nothing)
+        .unwrap();
+    assert_eq!(worker.pid(), Some(first));
+    // Another file, or an edit: the worker is ended, and another started.
+    worker
+        .run(run_of(other), &limits(&cancellation), &mut nothing)
+        .unwrap();
+    let second = worker.pid().unwrap();
+    assert_ne!(second, first);
+    assert!(!lives(first));
+    worker.stop();
 }

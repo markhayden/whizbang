@@ -12,14 +12,23 @@
 //! user chose and runs with the user's privileges, as a user's adapter does (ADR 0032).
 //!
 //! **It leads a process group of its own** (`process_group(0)`, set before its program
-//! starts). Every stop closes its input, and the worker, at the end of its input, ends
-//! every process of its group with itself (`pack/src/whizbang_pack/tool_worker.py`,
-//! `end_group`): a process a tool started is ended with it, one holding its pipes among
-//! them, and the readers here end with the last holder. A worker that has not ended
-//! [`END_LIMIT`] after its input closed is killed and waited for; only then could a
-//! process it started outlive it, and its readers are let go, and no worker is started
-//! again while they live. The workspace forbids the `unsafe` a signal to a group would
-//! take here, so the group's end is the worker's.
+//! starts), whose id is its process id, recorded when it is started. Every stop closes its
+//! input, and the worker, at the end of its input, ends every process of its group with
+//! itself (`pack/src/whizbang_pack/tool_worker.py`, `end_group`): a process a tool started
+//! is ended with it, one holding its pipes among them, and the readers here end with the
+//! last holder. A worker that has not ended [`END_LIMIT`] after its input closed cannot
+//! act (a tool holding Python's lock in C code, say): whizbang then kills that group
+//! itself, with the system's `kill` program (`/bin/kill -KILL -- -<group>`, [`kill_group`]),
+//! waits for the program, and kills and waits for the worker, on that path of
+//! [`ToolWorker::finish`] and of the drop of a running worker. Only the group whizbang made
+//! for that worker is named: never 0 or 1, never this process's own. The owner approved
+//! whizbang signalling its tool worker's group so on 2026-11-18; the workspace forbids the
+//! `unsafe` a signal would take in Rust. A process a tool moved out of the group is not
+//! ended; its readers are let go, and no worker is started again while they live.
+//!
+//! **One worker for one file.** A run of a file of another digest than the worker's last
+//! ends that worker and starts a new one, so that nothing one file's code left in the
+//! process (a module, a thread, a global) is there for another, or for an edit of it.
 //!
 //! **A run** carries the tool file's bytes, their digest, the run's arguments and the
 //! images the tool declared, each its samples. Its end is the tool's output, or a fault;
@@ -193,9 +202,12 @@ struct Running {
     reaped: Option<Ended>,
     input: Option<SyncSender<Vec<Vec<u8>>>>,
     heard: Receiver<Heard>,
-    asks: Arc<AtomicU64>,
     readers: Vec<JoinHandle<()>>,
     home: Option<PathBuf>,
+    /// The process group whizbang made for the worker: its process id.
+    group: u32,
+    /// The digest of the tool file it was started for.
+    digest: String,
 }
 
 impl Drop for Running {
@@ -208,6 +220,9 @@ impl Drop for Running {
             let until = Instant::now() + END_LIMIT;
             while matches!(self.child.try_wait(), Ok(None)) && Instant::now() < until {
                 std::thread::sleep(PACE);
+            }
+            if matches!(self.child.try_wait(), Ok(None)) {
+                kill_group(self.group);
             }
             kill(&mut self.child);
         }
@@ -232,6 +247,7 @@ pub struct ToolWorker {
     /// started while one lives.
     lingering: Vec<JoinHandle<()>>,
     ended: Option<Ended>,
+    asks: Arc<AtomicU64>,
 }
 
 impl ToolWorker {
@@ -248,6 +264,7 @@ impl ToolWorker {
             runs: 0,
             lingering: Vec::new(),
             ended: None,
+            asks: Arc::default(),
         }
     }
 
@@ -288,10 +305,10 @@ impl ToolWorker {
         kept.iter().cloned().collect()
     }
 
-    /// How many asks the reader of the running worker's output has read, counted as it
-    /// reads them: for a test that waits until a second is there.
-    pub fn asks_heard(&self) -> Option<Arc<AtomicU64>> {
-        self.running.as_ref().map(|running| running.asks.clone())
+    /// How many asks the readers of this supervisor's workers have read, counted as
+    /// they read them: for a test that waits until a second is there.
+    pub fn asks_heard(&self) -> Arc<AtomicU64> {
+        self.asks.clone()
     }
 
     /// Ends the worker that runs, and its group: its input closed, [`END_LIMIT`] for it
@@ -309,7 +326,11 @@ impl ToolWorker {
         let ended = until(&*clock, END_LIMIT, || {
             running.child.try_wait().ok().flatten().map(Ended::of)
         })
-        .unwrap_or_else(|| kill(&mut running.child));
+        .unwrap_or_else(|| {
+            // The worker could not end its group: whizbang ends it, then the worker.
+            kill_group(running.group);
+            kill(&mut running.child)
+        });
         running.reaped = Some(ended);
         until(&*clock, END_LIMIT, || {
             running
@@ -332,11 +353,12 @@ impl ToolWorker {
     }
 
     /// Starts the worker unless one runs, and waits for its hello.
-    fn ready(&mut self) -> Result<(), ToolFault> {
+    fn ready(&mut self, digest: &str) -> Result<(), ToolFault> {
         if let Some(running) = &mut self.running {
-            if matches!(running.child.try_wait(), Ok(None)) {
+            if running.digest == digest && matches!(running.child.try_wait(), Ok(None)) {
                 return Ok(());
             }
+            // Ended, or started for another file: a file is run by a worker of its own.
             self.stop();
         }
         self.lingering.retain(|reader| !reader.is_finished());
@@ -378,19 +400,21 @@ impl ToolWorker {
                 ));
             }
         };
+        let group = child.id();
         let streams = (child.stdin.take(), child.stdout.take(), child.stderr.take());
         let (tell, heard) = mpsc::sync_channel(FRAMES_WAITING);
         let (jobs, queued) = mpsc::sync_channel::<Vec<Vec<u8>>>(4);
-        let asks = Arc::new(AtomicU64::new(0));
+        let asks = self.asks.clone();
         self.kept = Arc::default();
         let mut running = Running {
             child,
             reaped: None,
             input: Some(jobs),
             heard,
-            asks: asks.clone(),
             readers: Vec::new(),
             home: Some(home),
+            group,
+            digest: String::new(),
         };
         let (Some(input), Some(output), Some(errors)) = streams else {
             self.finish(running);
@@ -480,7 +504,10 @@ impl ToolWorker {
         if let Some(fault) = ended_before(&*self.clock) {
             return Err(fault);
         }
-        self.ready()?;
+        self.ready(&run.digest)?;
+        if let Some(running) = &mut self.running {
+            running.digest = run.digest.clone();
+        }
         if let Some(fault) = ended_before(&*self.clock) {
             return Err(fault);
         }
@@ -571,8 +598,15 @@ impl ToolWorker {
                     last_ask = number;
                     let answered = answer(&asked);
                     // An ask heard while this one was open is refused, and what else
-                    // came meanwhile is taken next.
-                    while let Some(more) = next(running) {
+                    // came meanwhile is taken next: at most [`FRAMES_WAITING`] of it,
+                    // looked at for at most twice that many frames, within the run's time.
+                    for _ in 0..2 * FRAMES_WAITING {
+                        if self.clock.now() >= end {
+                            return Err(ToolFault::TimedOut);
+                        }
+                        let Some(more) = next(running) else {
+                            break;
+                        };
                         match &more {
                             Heard::Frame(other)
                                 if other.get("type") == Some(&json!("ask"))
@@ -590,6 +624,11 @@ impl ToolWorker {
                                     "sentence": "one capability request is open at a time; this one came while another was"});
                                 send(running, &refused, Vec::new())
                                     .map_err(|why| ToolFault::Unavailable(why.to_owned()))?;
+                            }
+                            _ if pending.len() >= FRAMES_WAITING => {
+                                return Err(broke(
+                                    "more frames came while an ask was open than are kept",
+                                ));
                             }
                             _ => pending.push_back(more),
                         }
@@ -609,6 +648,40 @@ impl Drop for ToolWorker {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+/// The system's `kill` program, by its absolute path: never looked for on `PATH`.
+const KILL: &str = "/bin/kill";
+
+/// Ends every process of the group whizbang made for a tool worker, by the system's
+/// `kill` program (`/bin/kill -KILL -- -<group>`), and waits for the program, at most
+/// [`END_LIMIT`]. The owner approved it on 2026-11-18 (ADR 0032, "Nothing left
+/// running"). `group` is the worker's process id, which `process_group(0)` made the id of
+/// a new group of its own: never 0 or 1, and never this process's group, which is not one
+/// a child of it was made the leader of. A group that is none of these is not signalled.
+fn kill_group(group: u32) {
+    let named = group > 1 && group != std::process::id();
+    debug_assert!(named, "a tool worker's group is never 0, 1 or this process");
+    if !named {
+        return;
+    }
+    let started = Command::new(KILL)
+        .arg("-KILL")
+        .arg("--")
+        .arg(format!("-{group}"))
+        .env_clear()
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    let Ok(mut killing) = started else {
+        return;
+    };
+    let until = Instant::now() + END_LIMIT;
+    while matches!(killing.try_wait(), Ok(None)) && Instant::now() < until {
+        std::thread::sleep(PACE);
+    }
+    kill(&mut killing);
 }
 
 /// Waits for `look` to give something, looking every [`PACE`] of the clock, until `limit`
