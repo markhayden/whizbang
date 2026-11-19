@@ -7,105 +7,105 @@
   "files": [
     {
       "bytes": 9088,
-      "path": "replay/synthetic/kept/decision-1795048357628-56390/run-1/journal.jsonl",
+      "path": "replay/synthetic/kept/decision-1795066652472-36546/run-1/journal.jsonl",
       "role": "journal",
-      "sha256": "2a95e166455c642c24eae5278e4f29938bcf79670e01105af79a4a44296110db",
+      "sha256": "b2f7a305c1405df21246e490029d7e468dbff1a15074f9c7770180bf2b867edd",
       "truncated": false
     },
     {
       "bytes": 202,
       "path": "replay/synthetic/kept/result.json",
       "role": "result",
-      "sha256": "a4ef1fc1ee4438a8f969679beac2d06e41d36f44d698159d529016f8322aa274",
+      "sha256": "234de9d81be3d7bd90f7d16e7467485956a5a55d12caf6a39ead3e847badec04",
       "truncated": false
     },
     {
       "bytes": 5811,
-      "path": "replay/synthetic/kept/decision-1795048357628-56390/decision.json",
+      "path": "replay/synthetic/kept/decision-1795066652472-36546/decision.json",
       "role": "decision",
       "sha256": "4b38e0ce03c8515b3844d4c34c5485ac23e5ea453b5ede21c2c6a90740385da5",
       "truncated": false
     },
     {
       "bytes": 17577,
-      "path": "replay/synthetic/kept/decision-1795048357628-56390/report.json",
+      "path": "replay/synthetic/kept/decision-1795066652472-36546/report.json",
       "role": "report",
-      "sha256": "2667430b8b3644f0a36d42019adffa09fcf4a58de0bde32f10b1761934db0ff4",
+      "sha256": "8ab84cbe2187ea8da93cb3084a1a7ba5842521f14feb175eccca0a06a853edb0",
       "truncated": false
     },
     {
       "bytes": 4747,
-      "path": "replay/synthetic/kept/decision-1795048357628-56390/run-1/artifacts/0568346d1c7fba1395ebdda4fa253abd0eeda8cc09187cbd0ed6042675596219",
+      "path": "replay/synthetic/kept/decision-1795066652472-36546/run-1/artifacts/0568346d1c7fba1395ebdda4fa253abd0eeda8cc09187cbd0ed6042675596219",
       "role": "image raw:candidate",
       "sha256": "0568346d1c7fba1395ebdda4fa253abd0eeda8cc09187cbd0ed6042675596219",
       "truncated": false
     },
     {
       "bytes": 4278,
-      "path": "replay/synthetic/kept/decision-1795048357628-56390/run-1/artifacts/a0e98bc18dda9253e6227aaa1963dd90a9034f0245bc27988c89e7eb6ded924f",
+      "path": "replay/synthetic/kept/decision-1795066652472-36546/run-1/artifacts/a0e98bc18dda9253e6227aaa1963dd90a9034f0245bc27988c89e7eb6ded924f",
       "role": "image raw:source",
       "sha256": "a0e98bc18dda9253e6227aaa1963dd90a9034f0245bc27988c89e7eb6ded924f",
       "truncated": false
     },
     {
       "bytes": 11869,
-      "path": "replay/synthetic/kept/decision-1795048357628-56390/run-1/artifacts/d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
+      "path": "replay/synthetic/kept/decision-1795066652472-36546/run-1/artifacts/d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
       "role": "request 1",
       "sha256": "d52290a9d8a0094ad73b9b7029ad81278c70a4076d86c1408526c0b60564ac91",
       "truncated": false
     },
     {
       "bytes": 695,
-      "path": "replay/synthetic/kept/decision-1795048357628-56390/run-1/artifacts/7ef84d02d8e51c6d8e3084a20a8adf6e0aa656d75fce1e9a2d0e2037d799ac7a",
+      "path": "replay/synthetic/kept/decision-1795066652472-36546/run-1/artifacts/7ef84d02d8e51c6d8e3084a20a8adf6e0aa656d75fce1e9a2d0e2037d799ac7a",
       "role": "response 1",
       "sha256": "7ef84d02d8e51c6d8e3084a20a8adf6e0aa656d75fce1e9a2d0e2037d799ac7a",
       "truncated": false
     },
     {
       "bytes": 13832,
-      "path": "replay/synthetic/kept/decision-1795048357628-56390/run-1/artifacts/22398a970230e4ad6532d9f6a45184f206a2a6042dc2ca2ad16285228493cd6e",
+      "path": "replay/synthetic/kept/decision-1795066652472-36546/run-1/artifacts/22398a970230e4ad6532d9f6a45184f206a2a6042dc2ca2ad16285228493cd6e",
       "role": "request 2",
       "sha256": "22398a970230e4ad6532d9f6a45184f206a2a6042dc2ca2ad16285228493cd6e",
       "truncated": false
     },
     {
       "bytes": 1469,
-      "path": "replay/synthetic/kept/decision-1795048357628-56390/run-1/artifacts/c634fb53bcaf167e0ff661f23fecdd51fdd4f4d7cd2ba68854d13283cc4524a1",
+      "path": "replay/synthetic/kept/decision-1795066652472-36546/run-1/artifacts/c634fb53bcaf167e0ff661f23fecdd51fdd4f4d7cd2ba68854d13283cc4524a1",
       "role": "response 2",
       "sha256": "c634fb53bcaf167e0ff661f23fecdd51fdd4f4d7cd2ba68854d13283cc4524a1",
       "truncated": false
     },
     {
       "bytes": 590,
-      "path": "replay/synthetic/kept/decision-1795048357628-56390/run-1/artifacts/816a8a5adfdf97c1c1d3447e3c8a12e3890961cdfe2268fc5e75899efa20f113",
+      "path": "replay/synthetic/kept/decision-1795066652472-36546/run-1/artifacts/816a8a5adfdf97c1c1d3447e3c8a12e3890961cdfe2268fc5e75899efa20f113",
       "role": "envelope call:1",
       "sha256": "816a8a5adfdf97c1c1d3447e3c8a12e3890961cdfe2268fc5e75899efa20f113",
       "truncated": false
     },
     {
       "bytes": 1874,
-      "path": "replay/synthetic/kept/decision-1795048357628-56390/run-1/artifacts/57b156193e260596316736f43d82cec625537ed6264203d17da5da7d797a6576",
+      "path": "replay/synthetic/kept/decision-1795066652472-36546/run-1/artifacts/57b156193e260596316736f43d82cec625537ed6264203d17da5da7d797a6576",
       "role": "image crop:call:1:0",
       "sha256": "57b156193e260596316736f43d82cec625537ed6264203d17da5da7d797a6576",
       "truncated": false
     },
     {
       "bytes": 1878,
-      "path": "replay/synthetic/kept/decision-1795048357628-56390/run-1/artifacts/7d0f608889e946c55d3dc600af5776ce81f363f8e47fffedbbda69dc237c8ec0",
+      "path": "replay/synthetic/kept/decision-1795066652472-36546/run-1/artifacts/7d0f608889e946c55d3dc600af5776ce81f363f8e47fffedbbda69dc237c8ec0",
       "role": "image crop:call:1:1",
       "sha256": "7d0f608889e946c55d3dc600af5776ce81f363f8e47fffedbbda69dc237c8ec0",
       "truncated": false
     },
     {
       "bytes": 802,
-      "path": "replay/synthetic/kept/decision-1795048357628-56390/run-1/artifacts/2a8a75a5090b4e2e883bf261e7ba11edc872f6af72f4921e683c32de47cf1dc0",
+      "path": "replay/synthetic/kept/decision-1795066652472-36546/run-1/artifacts/0886391f70b89d227d22b7ef1ea3ac2afa7c4897e82c455bd428b85774a2bd31",
       "role": "envelope call:2",
-      "sha256": "2a8a75a5090b4e2e883bf261e7ba11edc872f6af72f4921e683c32de47cf1dc0",
+      "sha256": "0886391f70b89d227d22b7ef1ea3ac2afa7c4897e82c455bd428b85774a2bd31",
       "truncated": false
     },
     {
       "bytes": 4609,
-      "path": "replay/synthetic/kept/decision-1795048357628-56390/run-1/artifacts/c6cd5cd5f1fa82f443c57f140259a79e50e988214d463a367dfc9fcfc345e156",
+      "path": "replay/synthetic/kept/decision-1795066652472-36546/run-1/artifacts/c6cd5cd5f1fa82f443c57f140259a79e50e988214d463a367dfc9fcfc345e156",
       "role": "image aligned:candidate:t1",
       "sha256": "c6cd5cd5f1fa82f443c57f140259a79e50e988214d463a367dfc9fcfc345e156",
       "truncated": false
@@ -216,12 +216,12 @@
   "incomplete": [],
   "meta": {
     "attempt": "run-1",
-    "decision": "replay/synthetic/kept/decision-1795048357628-56390",
+    "decision": "replay/synthetic/kept/decision-1795066652472-36546",
     "fixtures": "replay",
     "harness": "squint",
     "harness_version": "capture",
-    "name": "synthetic/kept/decision-1795048357628-56390",
-    "package_digest": "sha256:325728ebd947636f4537ed348c8f9d19574d211db652b0ddb12e9c8cdd1f2bfe",
+    "name": "synthetic/kept/decision-1795066652472-36546",
+    "package_digest": "sha256:5b625ea8e0e501ee9f5b90206b11b4be8a301a239fb25a3400562e76469fa441",
     "prompt_version": "v1",
     "run": "synthetic",
     "tools_version": "2"
@@ -246,7 +246,7 @@
       "plan": "standard",
       "png_when_alpha": "png",
       "prep_version": "1",
-      "resize": "lanczos3"
+      "resize": "Lanczos3, never upscaled"
     },
     "version": "1"
   },
@@ -306,8 +306,8 @@
           "id": "toolu_k2",
           "meta": {
             "call_id": "call:2",
-            "duration_ms": 2524,
-            "envelope_file": "2a8a75a5090b4e2e883bf261e7ba11edc872f6af72f4921e683c32de47cf1dc0",
+            "duration_ms": 2534,
+            "envelope_file": "0886391f70b89d227d22b7ef1ea3ac2afa7c4897e82c455bd428b85774a2bd31",
             "status": "ok"
           },
           "name": "align",

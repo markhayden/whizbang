@@ -18,7 +18,7 @@
       "plan": "standard",
       "png_when_alpha": "png",
       "prep_version": "1",
-      "resize": "lanczos3"
+      "resize": "Lanczos3, never upscaled"
     }
   }
 }

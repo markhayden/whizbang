@@ -127,6 +127,11 @@ the 2026-11 package every model's object holds exactly these keys:
 
 The example's object holds two invented keys, because it describes no real model.
 
+In the 2026-11 package `resize` is `Lanczos3, never upscaled` and `jpeg_quality` is `90` for
+every model; `whizbang eval baseline` refuses a package that says otherwise, since that would
+be a preparation no one checked against whizbang's. The synthetic fixtures carry those two
+values; their `metadata`, `plan` and `png_when_alpha` are the capture program's own words.
+
 ### `images`
 
 One entry per image: the job's images first, then tool images in the order their calls appear
