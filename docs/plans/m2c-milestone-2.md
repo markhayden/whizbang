@@ -642,6 +642,13 @@ and item 2's rest with items 8 and 9, as before. Passing now beside the six clau
 `baseline::the_receipt_holds_exactly_the_four_fields` and
 `cli::eval_baseline_prints_counts_and_no_item`. The box stays open.
 
+**The gate's run (E2, 2026-11-19).** The owner's package replayed with no difference, 1,144 of
+1,144 in transcript version 2; the receipt is `docs/baseline/receipt.toml`, and
+`evidence::the_baseline_receipt_names_the_manifests_digest_and_a_commit_of_this_tree` passes;
+the carry-over row on the baseline gate's run is closed. The box stays open for item 5's
+writer of a stored run of `check` and the gate's lines in the evaluation record, each on the
+carry-over list.
+
 ### What the owner provides (E)
 
 The answers to the third, fourth and fifth items under "What the owner must answer"; for
@@ -1028,6 +1035,11 @@ no network.
 5. I need you to run the baseline gate and its descriptive live rerun on your Mac on E2's
    pushed head, before it is merged (two commands, each printing counts only; about 1
    dollar to Anthropic), and to hand the builder the receipt file it writes: yes/no.
+   **Done 2026-11-19**, run for the owner by the orchestrator: the gate passed, 1,144 of
+   1,144 the same in transcript version 2 (`docs/baseline/receipt.toml`,
+   `evidence::the_baseline_receipt_names_the_manifests_digest_and_a_commit_of_this_tree`), and
+   the live rerun agreed with the recorded run on 111 of 143 decisions
+   (`docs/results/m2c-baseline.md`).
 6. I need the allowance of the evaluation store set to 40 dollars for milestone 2's live
    runs (`whizbang spend reset --allowance 40` on that store, by you): yes/no.
 

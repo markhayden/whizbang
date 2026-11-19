@@ -1,0 +1,4 @@
+package_digest = "sha256:d2edd3bb789370d2e99e85a212c07f31a7b1e00e76d98ce38b7170ea9db7e726"
+comparison_version = "4"
+whizbang_commit = "b964f7511e96055d00ce07272d9a385fd29af03d"
+result = "pass"

@@ -483,6 +483,12 @@ wire's carry-over row is closed; the rows on gates as files and on the live reru
 until those runs. The box is ticked by the pull request that commits the two records with
 their tests.
 
+**Status (the live rerun's record).** `docs/results/m2c-baseline.md` holds the live rerun of
+2026-11-19 (agreement 111 of 143, the recorded run's self-disagreement 29 of 143), and
+`evidence::the_baseline_record_holds_the_live_reruns_two_numbers` passes; the carry-over row on
+the live rerun now leaves only the gate run. The box stays open for the gates' record
+(`evidence::the_gates_record_holds_the_details_first_receipt_and_only_aggregates`).
+
 ### Origins (G)
 
 None new: the three judges approved in milestone 2.
