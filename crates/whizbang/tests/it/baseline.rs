@@ -488,3 +488,85 @@ fn the_live_rerun_prints_its_agreement_and_the_recorded_self_disagreement_and_no
         ran.err
     );
 }
+
+#[test]
+fn the_breakdown_counts_scaled_cuts_models_use_cases_and_first_places() {
+    let scratch = Scratch::new("baseline-breakdown-scaled");
+    let at = scratch.path().join("r.toml");
+    let scaled = gate_over("scaled", &fixtures().join("../scaled/transcripts"), &at).unwrap();
+    let b = &scaled.breakdown;
+    assert_eq!((b.only_scaled, b.elsewhere), (1, 0));
+    assert_eq!(b.models["claude-haiku-5-5"], (0, 1));
+    assert_eq!(b.use_cases["source-fidelity"], (0, 1));
+    assert_eq!(
+        b.first.iter().collect::<Vec<_>>(),
+        [(&"/images/*/prepared/bytes".to_owned(), &1)]
+    );
+    assert!(
+        scaled
+            .text()
+            .contains("differed only at scaled cuts: 1\ndiffered elsewhere: 0\n")
+    );
+    let same = gate_over("synthetic", &fixtures().join("transcripts"), &at).unwrap();
+    assert_eq!(same.breakdown.models["claude-haiku-5-5"], (3, 0));
+    assert_eq!(same.breakdown.first.len(), 0);
+}
+
+#[test]
+fn the_breakdown_names_endings_dispositions_and_refusals_from_closed_lists() {
+    let scratch = Scratch::new("baseline-breakdown");
+    let transcripts = scratch.path().join("transcripts");
+    copy(&fixtures().join("transcripts"), &transcripts);
+    // The decision `kept` as if squint had refused its first call for its arguments, and
+    // ended in another verdict: the replay runs the call and ends in its own.
+    let kept = transcripts.join("historical/synthetic/kept");
+    let file = std::fs::read_dir(&kept)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let mut t: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    t["terminal"]["verdict"] = "fail".into();
+    let call = &mut t["turns"][0]["calls"][0];
+    assert_eq!(call["name"], "view");
+    call["disposition"] = "rejected".into();
+    call["result"] = serde_json::json!({"content": "invalid arguments: missing required argument \"frame\"",
+                                        "is_error": true, "images": []});
+    std::fs::write(&file, t.to_string()).unwrap();
+
+    let tally = gate_over("synthetic", &transcripts, &scratch.path().join("r.toml")).unwrap();
+    let b = &tally.breakdown;
+    let listed = |m: &std::collections::BTreeMap<String, usize>| {
+        m.iter().map(|(k, v)| (k.clone(), *v)).collect::<Vec<_>>()
+    };
+    assert_eq!((b.only_scaled, b.elsewhere), (0, 1));
+    assert_eq!(
+        listed(&b.endings),
+        [("verdict fail -> verdict pass".to_owned(), 1)]
+    );
+    assert_eq!(
+        listed(&b.dispositions),
+        [("view rejected -> executed".to_owned(), 1)]
+    );
+    assert_eq!(
+        listed(&b.results),
+        [("view rejected, schema".to_owned(), 1)]
+    );
+    assert_eq!(listed(&b.first), [("/terminal/verdict".to_owned(), 1)]);
+    assert_eq!(b.models["claude-haiku-5-5"], (2, 1));
+    let text = tally.text();
+    for line in [
+        "ending verdict fail -> verdict pass: 1\n",
+        "disposition view rejected -> executed: 1\n",
+        "result text of view rejected, schema: 1\n",
+        "first difference at /terminal/verdict: 1\n",
+    ] {
+        assert!(text.contains(line), "{text}");
+    }
+    assert!(
+        !text.contains("frame\\\"") && !text.contains("missing required"),
+        "{text}"
+    );
+}

@@ -449,14 +449,25 @@ preparation; the job, `<sets>/<set>/items/<item>/job.toml` (`--sets`, by default
 It prints counts only: fixtures, transcripts, how many replays were the same, differed or
 were refused, why each was refused in fixed words, and the places replays differed at, each
 position in a list written `*` and nothing below a call's arguments, a schema, an adapter's
-block, a mapping or the settings. The gate passes when every fixture has a transcript and
+block, a mapping or the settings. Then a breakdown, every label fixed words or a value from a
+closed list (a tool's name, a disposition, a verdict word, squint's error classes, the model,
+the use case, or `other`): how many decisions differed only where squint scaled a cut down and
+how many elsewhere; same and differed per model and per use case; the recorded ending against
+the replayed one; the recorded disposition against the replayed one, by tool; the calls whose
+result's text differs, by tool and by what the recorded call came to, a refusal sorted by the
+fixed opening words squint's loop wrote (`schema`, `unknown frame`, `tool`, `budget`,
+`submission`, `other`), never by what follows them; and the place of each decision's first
+difference, since what follows it is usually its consequence. The gate passes when every fixture has a transcript and
 every transcript replays with no difference. The receipt (`README.md`) is written either
 way.
 
-What the replay does not reproduce, each a difference it reports: a call whose arguments
-break the tool's schema (squint's schema checker worded that refusal), a submission that does
-not validate (whizbang words its reasons its own way), a panorama, and a picture with
-transparency (squint encoded it as a PNG of its own).
+A call whose arguments break the tool's schema is refused in squint's words (its
+`check_model_args`, ported). What the replay does not reproduce, each a difference it reports:
+a submission squint judged otherwise (squint validated it against its JSON Schema and its own
+rules, in its own words; whizbang's port clamps a location outside its frame and reads a
+location on a raw frame only), a crop cut from a crop squint had scaled down (its pixels come
+from squint's filter, so under either version its prepared bytes differ), a panorama, and a
+picture with transparency (squint encoded it as a PNG of its own).
 
 ## The synthetic fixtures
 

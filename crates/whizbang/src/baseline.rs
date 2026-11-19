@@ -76,6 +76,240 @@ pub struct Tally {
     pub places: BTreeMap<String, usize>,
     /// Why decisions were refused, in fixed words, with how many each.
     pub reasons: BTreeMap<String, usize>,
+    /// What a difference was, in words fixed here and values from closed lists, with how
+    /// many each: the breakdown that makes a failing gate diagnosable without showing a
+    /// transcript ([`Breakdown`]).
+    pub breakdown: Breakdown,
+}
+
+/// The differences of the replays broken down, every label made of fixed words and values
+/// from closed lists: a tool's name, a disposition, an ending, a model and a use case, or
+/// `other`. Nothing the judge wrote and nothing of an item is ever a label.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Breakdown {
+    /// Decisions that differed only where squint scaled a cut down, and those that differed
+    /// anywhere else.
+    pub only_scaled: usize,
+    pub elsewhere: usize,
+    /// Per model and per use case: same, then differed.
+    pub models: BTreeMap<String, (usize, usize)>,
+    pub use_cases: BTreeMap<String, (usize, usize)>,
+    /// Of decisions whose ending differs: the recorded ending, then the replayed one.
+    pub endings: BTreeMap<String, usize>,
+    /// Of calls whose disposition differs, by tool: recorded, then replayed.
+    pub dispositions: BTreeMap<String, usize>,
+    /// Of calls whose result's text differs, by tool and what the recorded call came to.
+    pub results: BTreeMap<String, usize>,
+    /// The place of each differing decision's first difference.
+    pub first: BTreeMap<String, usize>,
+}
+
+/// A value from a closed list, or `other`.
+fn closed<'a>(value: &'a Json, list: &[&'a str]) -> &'a str {
+    value
+        .as_str()
+        .and_then(|v| list.iter().find(|l| **l == v).copied())
+        .unwrap_or("other")
+}
+
+const TOOLS: [&str; 3] = ["view", "align", "submit_verdict"];
+const DISPOSITIONS: [&str; 4] = ["executed", "rejected", "excluded", "final"];
+/// Squint's error classes (`crates/squint-core/src/lib.rs`, `Error::class`).
+const CLASSES: [&str; 15] = [
+    "resolve",
+    "provider_rejected",
+    "provider",
+    "tool",
+    "budget",
+    "cap",
+    "stale_estimate",
+    "input",
+    "cancelled",
+    "image_limit",
+    "credential",
+    "submission_invalid",
+    "no_submission",
+    "model_output",
+    "io",
+];
+
+/// A decision's ending as a label: its kind, then its verdict or its class.
+fn ending(terminal: &Json) -> String {
+    let kind = closed(&terminal["kind"], &["verdict", "error", "cancelled"]);
+    let what = match kind {
+        "verdict" => closed(&terminal["verdict"], &["pass", "fail", "unsure"]),
+        "other" => "other",
+        _ => closed(&terminal["class"], &CLASSES),
+    };
+    format!("{kind} {what}")
+}
+
+/// A model's or a use case's name as a label: its own characters when they are plain.
+fn plain(value: &Json) -> String {
+    match value.as_str() {
+        Some(v)
+            if !v.is_empty()
+                && v.len() <= 64
+                && v.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "-_.:".contains(c)) =>
+        {
+            v.to_owned()
+        }
+        _ => "other".to_owned(),
+    }
+}
+
+/// What kind of refusal squint's harness answered a call with, from the fixed opening words
+/// its loop writes before anything else (`crates/squint-core/src/run.rs`): never the words
+/// that follow them.
+fn refusal_kind(content: &str) -> &'static str {
+    let schema = [
+        "missing required argument ",
+        "unknown argument ",
+        "arguments must be an object",
+    ];
+    if let Some(rest) = content.strip_prefix("invalid arguments: ") {
+        if schema.iter().any(|s| rest.starts_with(s)) {
+            return "schema";
+        }
+        let named = [
+            "frame: unknown frame id ",
+            "also: unknown frame id ",
+            "image: unknown image id ",
+            "against: unknown image id ",
+            "unknown tool ",
+        ];
+        if named.iter().any(|s| rest.starts_with(s)) {
+            return "unknown frame";
+        }
+        return "tool";
+    }
+    if content.starts_with("Not executed: this batch of ") {
+        return "budget";
+    }
+    if content.starts_with("Submission rejected: ") {
+        return "submission";
+    }
+    "other"
+}
+
+/// The calls of a transcript by turn and position.
+fn calls(t: &Json) -> BTreeMap<(usize, usize), Json> {
+    let mut out = BTreeMap::new();
+    for (at, turn) in t["turns"].as_array().into_iter().flatten().enumerate() {
+        for (n, call) in turn["calls"].as_array().into_iter().flatten().enumerate() {
+            out.insert((at, n), call.clone());
+        }
+    }
+    out
+}
+
+impl Breakdown {
+    fn same(&mut self, recorded: &Json) {
+        self.models
+            .entry(plain(&recorded["subject"]["model"]))
+            .or_default()
+            .0 += 1;
+        self.use_cases
+            .entry(plain(&recorded["subject"]["use_case"]))
+            .or_default()
+            .0 += 1;
+    }
+
+    fn differed(
+        &mut self,
+        recorded_text: &str,
+        recorded: &Json,
+        replayed: &Json,
+        paths: &[String],
+    ) {
+        self.models
+            .entry(plain(&recorded["subject"]["model"]))
+            .or_default()
+            .1 += 1;
+        self.use_cases
+            .entry(plain(&recorded["subject"]["use_case"]))
+            .or_default()
+            .1 += 1;
+        let scaled = whizbang_eval::baseline::scaled_places(recorded_text);
+        let at_scaled = |path: &String| {
+            scaled
+                .iter()
+                .any(|s| path == s || path.starts_with(&format!("{s}/")))
+        };
+        if paths.iter().all(at_scaled) {
+            self.only_scaled += 1;
+        } else {
+            self.elsewhere += 1;
+        }
+        if let Some(first) = paths.first() {
+            *self.first.entry(general(first)).or_default() += 1;
+        }
+        if recorded["terminal"] != replayed["terminal"] {
+            let label = format!(
+                "{} -> {}",
+                ending(&recorded["terminal"]),
+                ending(&replayed["terminal"])
+            );
+            *self.endings.entry(label).or_default() += 1;
+        }
+        let theirs = calls(replayed);
+        for (at, call) in calls(recorded) {
+            let tool = closed(&call["name"], &TOOLS);
+            let was = closed(&call["disposition"], &DISPOSITIONS);
+            let other = theirs.get(&at);
+            let now = other.map_or("missing", |c| closed(&c["disposition"], &DISPOSITIONS));
+            if other.map(|c| &c["disposition"]) != Some(&call["disposition"]) {
+                *self
+                    .dispositions
+                    .entry(format!("{tool} {was} -> {now}"))
+                    .or_default() += 1;
+            }
+            let content = call["result"]["content"].as_str();
+            if content.is_some() && other.map(|c| c["result"]["content"].as_str()) != Some(content)
+            {
+                let how = match was {
+                    "rejected" => {
+                        format!("rejected, {}", refusal_kind(content.unwrap_or_default()))
+                    }
+                    other => other.to_owned(),
+                };
+                *self.results.entry(format!("{tool} {how}")).or_default() += 1;
+            }
+        }
+    }
+
+    fn text(&self) -> String {
+        let mut out = String::new();
+        if self.only_scaled + self.elsewhere > 0 {
+            out.push_str(&format!(
+                "differed only at scaled cuts: {}\ndiffered elsewhere: {}\n",
+                self.only_scaled, self.elsewhere
+            ));
+        }
+        for (model, (same, differed)) in &self.models {
+            out.push_str(&format!(
+                "model {model}: same {same}, differed {differed}\n"
+            ));
+        }
+        for (use_case, (same, differed)) in &self.use_cases {
+            out.push_str(&format!(
+                "use case {use_case}: same {same}, differed {differed}\n"
+            ));
+        }
+        let tables = [
+            ("ending", &self.endings),
+            ("disposition", &self.dispositions),
+            ("result text of", &self.results),
+            ("first difference at", &self.first),
+        ];
+        for (label, table) in tables {
+            for (key, count) in table {
+                out.push_str(&format!("{label} {key}: {count}\n"));
+            }
+        }
+        out
+    }
 }
 
 impl Tally {
@@ -101,6 +335,7 @@ impl Tally {
         for (place, count) in &self.places {
             out.push_str(&format!("differences at {place}: {count}\n"));
         }
+        out.push_str(&self.breakdown.text());
         out.push_str(&format!(
             "result: {}\n",
             if self.passed() { "pass" } else { "fail" }
@@ -458,12 +693,18 @@ pub fn run(asked: &Asked<'_>) -> Result<Tally, String> {
             }
         };
         match compare(&recorded_text, &replayed) {
-            Ok(differences) if differences.is_empty() => tally.same += 1,
+            Ok(differences) if differences.is_empty() => {
+                tally.same += 1;
+                tally.breakdown.same(&recorded);
+            }
             Ok(differences) => {
                 tally.differed += 1;
-                for difference in differences {
-                    *tally.places.entry(general(&difference.path)).or_default() += 1;
+                let paths: Vec<String> = differences.into_iter().map(|d| d.path).collect();
+                for path in &paths {
+                    *tally.places.entry(general(path)).or_default() += 1;
                 }
+                let replayed: Json = serde_json::from_str(&replayed).unwrap_or(Json::Null);
+                (tally.breakdown).differed(&recorded_text, &recorded, &replayed, &paths);
             }
             Err(refusal) => refuse(&mut tally, refusal.to_string()),
         }
