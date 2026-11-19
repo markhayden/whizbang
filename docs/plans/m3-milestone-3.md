@@ -444,9 +444,12 @@ the conformance keeps reading the fixture written from fal's published schema
 records, which name the model's version and the outcome, show the wire against fal
 itself; recording an exchange would need a recorder the build does not have, for one
 fixture. And the clause "`gate::a_store_under_a_folder_in_another_normal_form_is_kept_out`"
-is moved out of F1 with its carry-over row: the folding it needs takes two new crates
-(`unicode-normalization` and `tinyvec`), which wait on the owner's yes; the code and the
-test are on the branch `m3-normal-form`, unmerged.
+was moved out of F1's second pull request with its carry-over row: the folding it needs
+takes two new crates (`unicode-normalization` and `tinyvec`), which waited on the owner's
+yes. **Restored** (2026-11-19): the owner approved both crates ("yes thats fine"), and a
+pull request of its own landed the folding; the clause is shown by
+`egress::gate::a_store_under_a_folder_in_another_normal_form_is_kept_out` (ADR 0019, "The
+normal form of a folder").
 
 ### Origins (F)
 
