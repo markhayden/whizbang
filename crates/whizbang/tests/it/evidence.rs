@@ -1108,3 +1108,41 @@ fn the_gates_record_holds_the_details_first_receipt_and_only_aggregates() {
         assert_eq!(keys, ["backend", "failed", "model", "outcome", "paired"]);
     }
 }
+
+#[test]
+fn the_encoding_record_names_a_commit_of_this_tree() {
+    // Plan m3, task O5, item 3: the time of encoding a result at three sizes, and the
+    // setting chosen from it.
+    let page = std::fs::read_to_string(repository().join("docs/results/m3-encoding.md"))
+        .expect("the record of the encoding is committed");
+    let block = page.split("```toml\n").nth(1).expect("a block of fields");
+    let block = block.split("```").next().unwrap();
+    let fields: Vec<(String, String)> = block
+        .lines()
+        .map(|line| {
+            let (name, value) = line.split_once(" = ").expect("a line is name = value");
+            (name.to_owned(), value.trim_matches('"').to_owned())
+        })
+        .collect();
+    assert!(
+        is_ancestor(field(&fields, "commit")),
+        "{}",
+        field(&fields, "commit")
+    );
+    assert_eq!(field(&fields, "whizbang"), env!("CARGO_PKG_VERSION"));
+    assert_eq!(
+        field(&fields, "current"),
+        whizbang_core::identity::encode::SETTING
+    );
+    // The choice is the measurement's: the faster setting by far, at a cost in bytes of
+    // under five per cent.
+    let number = |name: &str| field(&fields, name).parse::<f64>().expect(name);
+    assert_eq!(field(&fields, "chosen"), "fast_adaptive");
+    assert!(number("fast_adaptive_8192x4096_ms") * 10.0 < number("default_adaptive_8192x4096_ms"));
+    assert!(
+        number("fast_adaptive_8192x4096_bytes") < 1.05 * number("default_adaptive_8192x4096_bytes")
+    );
+    for held in ["/Users/", "/home/", "/private/"] {
+        assert!(!page.contains(held), "{held}");
+    }
+}

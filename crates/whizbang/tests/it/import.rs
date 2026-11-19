@@ -946,3 +946,55 @@ fn a_picture_is_a_panorama_when_its_caller_or_its_file_says_so_and_flat_otherwis
     assert!(whizbang::import::says_equirectangular(&tagged));
     assert!(!whizbang::import::says_equirectangular(&wide));
 }
+
+#[test]
+fn one_file_imported_flat_and_as_a_panorama_is_two_pictures_named_apart() {
+    // The review of task O5: a second import of a file under another projection makes
+    // another image, and its name of where it came from is its own; the flat one is
+    // still what `pictures_by_file` finds. A refusal of a picture that is not a regular
+    // file does not speak of links, which are refused.
+    let dir = Scratch::new("import-picture-twice");
+    let store = dir.path().join("store");
+    let file = dir.path().join("photo.png");
+    std::fs::write(&file, a_png()).expect("the fixture is written");
+    let as_given = |projection: &str| {
+        let (code, printed, complaint) = whizbang(&[
+            "store",
+            "import",
+            "--create",
+            "--picture",
+            file.to_str().expect("UTF-8"),
+            "--projection",
+            projection,
+            "--store",
+            store.to_str().expect("UTF-8"),
+        ]);
+        assert_eq!(code, 0, "{complaint}");
+        printed.split_whitespace().last().unwrap_or("").to_owned()
+    };
+    let flat = as_given("flat");
+    let panorama = as_given("equirectangular");
+    assert_ne!(flat, panorama);
+    let reader = Reader::open(&store, Arc::new(RealFs)).expect("a reader");
+    let generation = reader.snapshot().expect("a generation");
+    let hex = Digest::of_bytes(&a_png()).hex();
+    for (prefix, id) in [
+        ("imports/picture/", &flat),
+        ("imports/panorama/", &panorama),
+    ] {
+        let entry = generation.get(&format!("{prefix}{hex}")).expect("named");
+        assert_eq!(reader.read(entry).expect("read"), id.as_bytes(), "{prefix}");
+    }
+    let found = whizbang::import::pictures_by_file(&store).expect("the pictures");
+    assert_eq!(
+        found.values().map(ToString::to_string).collect::<Vec<_>>(),
+        [flat]
+    );
+    let (code, _, complaint) = import_picture(dir.path(), &store);
+    assert_eq!(code, 1);
+    assert!(
+        complaint
+            .contains("is a directory: a picture is read from a regular file, through no link"),
+        "{complaint}"
+    );
+}

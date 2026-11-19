@@ -26,7 +26,9 @@
 //! is the caller's word (`--projection`), else the word of its file's XMP
 //! (`GPano:ProjectionType`), else flat; nothing of the metadata is kept. Each import of a
 //! picture leaves a name of its own, `imports/picture/` and its file's SHA-256, which
-//! holds the image's identity: where it came from, found without reading the image.
+//! holds the image's identity: where it came from, found without reading the image. A
+//! panorama's name is under `imports/panorama/` instead, so the same file imported flat
+//! and as a panorama is two images named apart.
 //!
 //! An artifact file is a regular file, or a link that leads to one: a link is followed, and what
 //! it leads to is what is judged. A directory, a FIFO, a socket and a device are refused
@@ -96,6 +98,11 @@ const PICTURE_STEP: &str = "import-picture";
 /// SHA-256 of the file it was brought in from. Each holds the image's identity.
 pub const IMPORTED: &str = "imports/picture/";
 
+/// The same names for a picture imported as a complete equirectangular panorama: the same
+/// file imported flat and as a panorama is two images, each named apart, and
+/// [`pictures_by_file`] finds the flat ones, which are what a set's jobs hold.
+pub const IMPORTED_PANORAMA: &str = "imports/panorama/";
+
 /// The most bytes the picture an image artifact holds may have: ADR 0001's limit on a
 /// file, which is the default of [`DecodeLimits`].
 const MAX_PICTURE_BYTES: u64 = 64 * 1024 * 1024;
@@ -145,11 +152,13 @@ fn other_than_a_file(found: &std::fs::Metadata) -> Option<&'static str> {
 
 /// Refuses what is not a regular file, and a file over the limit; gives the file's size.
 fn judge(found: &std::fs::Metadata, file: &Path) -> Result<u64, String> {
+    judge_as(found, file, "import reads a regular file, or a link to one")
+}
+
+/// [`judge`], saying what is read as `reads` when it refuses what is not a regular file.
+fn judge_as(found: &std::fs::Metadata, file: &Path, reads: &str) -> Result<u64, String> {
     if let Some(what) = other_than_a_file(found) {
-        return Err(format!(
-            "{} is {what}: import reads a regular file, or a link to one",
-            file.display()
-        ));
+        return Err(format!("{} is {what}: {reads}", file.display()));
     }
     let bytes = found.len();
     if bytes > MAX_FILE_BYTES {
@@ -200,6 +209,9 @@ fn read_with(file: &Path, looked: &dyn Fn()) -> Result<Vec<u8>, String> {
         })
 }
 
+/// What a refusal of a picture that is not a regular file says is read.
+const PICTURE_READ: &str = "a picture is read from a regular file, through no link";
+
 /// The bytes of a picture a caller hands in, by a path (plan m3, task O5): the file the
 /// path names and nothing else. The path is looked at without following a link, and a
 /// link there is refused, as are a directory, a FIFO, a socket and a device, and a file
@@ -223,7 +235,7 @@ fn read_picture_with(file: &Path, looked: &dyn Fn()) -> Result<Vec<u8>, String> 
             file.display()
         ));
     }
-    judge(&found, file)?;
+    judge_as(&found, file, PICTURE_READ)?;
     looked();
     let opened = crate::sign_in::open_without_waiting(file).map_err(cannot)?;
     let now = opened.metadata().map_err(cannot)?;
@@ -233,7 +245,7 @@ fn read_picture_with(file: &Path, looked: &dyn Fn()) -> Result<Vec<u8>, String> 
             file.display()
         ));
     }
-    let bytes = judge(&now, file)?;
+    let bytes = judge_as(&now, file, PICTURE_READ)?;
     read_within(opened, MAX_FILE_BYTES, bytes)
         .map_err(cannot)?
         .ok_or_else(|| {
@@ -316,9 +328,17 @@ pub fn import_picture_as(
         root,
         create,
         recovery,
-        Some(identified.identity.file.0),
+        Some((imported_as(projection), identified.identity.file.0)),
     )?;
     Ok(format!("{said}{printed}"))
+}
+
+/// The prefix of the name that says where a picture of this projection came from.
+fn imported_as(projection: Projection) -> &'static str {
+    match projection {
+        Projection::Equirectangular => IMPORTED_PANORAMA,
+        _ => IMPORTED,
+    }
 }
 
 /// True when a file's bytes carry XMP's word that the picture is an equirectangular
@@ -385,7 +405,13 @@ pub fn picture_of_bytes(
     let image = picture(&identified.pixels, file, &limits, Projection::Flat)
         .map_err(|error| format!("{shown}: {error}"))?;
     let id = image.id();
-    commit(&Artifact::Image(image), root, false, recovery, Some(file))?;
+    commit(
+        &Artifact::Image(image),
+        root,
+        false,
+        recovery,
+        Some((IMPORTED, file)),
+    )?;
     Ok(id)
 }
 
@@ -484,7 +510,7 @@ fn commit(
     root: &Path,
     create: bool,
     recovery: Recovery,
-    from_file: Option<Digest>,
+    from_file: Option<(&str, Digest)>,
 ) -> Result<String, String> {
     let (kind, id) = (artifact.artifact_type(), artifact.id());
 
@@ -513,8 +539,8 @@ fn commit(
     let store = opening.writer().map_err(|why| format!("{printed}{why}"))?;
     let generation = store.snapshot().map_err(|error| error.to_string())?;
     // A picture's name of where it came from: the file's digest, holding the image's
-    // identity. One file decodes to one picture, so a name is never given another.
-    let named = from_file.map(|file| format!("{IMPORTED}{}", file.hex()));
+    // identity. One file and one projection make one picture, so a name is never given another.
+    let named = from_file.map(|(prefix, file)| format!("{prefix}{}", file.hex()));
     let unnamed = named.as_ref().filter(|name| generation.get(name).is_none());
     let held = artifact::holds(&generation, kind, id);
     if held && unnamed.is_none() {

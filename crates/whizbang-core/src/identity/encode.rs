@@ -15,6 +15,10 @@ use image::{ExtendedColorType, ImageEncoder};
 
 use super::CanonicalPixels;
 
+/// The encoder's setting, by the name `docs/results/m3-encoding.md` measured it under:
+/// default compression and the adaptive filter.
+pub const SETTING: &str = "default_adaptive";
+
 /// The samples of a picture as the encoder takes them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Channels {
