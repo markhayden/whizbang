@@ -5,8 +5,12 @@ use whizbang_eval::metrics::{self, Computed, Expected, Row};
 
 use crate::metrics::row;
 
-const FILE: &str = r#"
-gate_version = 1
+pub const FILE: &str = r#"
+gate_version = 2
+
+[run]
+matrix = "matrix.toml"
+matrix_identity = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 [baseline]
 control = "C"
@@ -81,6 +85,10 @@ fn a_gate_file_missing_an_item_of_the_spec_is_refused() {
         ("resampling = \"family\"", "resampling = \"item\""),
         ("level = 0.95", "level = 1.0"),
         ("minimum = 20", "minimum = 0"),
+        ("matrix = \"matrix.toml\"", "matrix = \"../matrix.toml\""),
+        ("matrix_identity = \"0123", "matrix_identity = \"X123"),
+        ("treatment = \"F\"", "treatment = \"C\""),
+        ("gate_version = 2", "gate_version = 1"),
     ] {
         assert!(Gate::parse(&FILE.replace(from, to)).is_err(), "{to}");
     }
@@ -144,4 +152,43 @@ fn too_little_data_is_inconclusive_never_a_pass() {
     let verdict = gate.decide(&errors);
     assert_eq!(verdict.outcome, Outcome::Rejected);
     assert!(verdict.failed.contains(&"errors".to_string()));
+}
+
+#[test]
+fn a_gate_over_several_judges_is_admitted_only_when_every_judge_is() {
+    use whizbang_eval::gate::Judged;
+    // Two hypotheses halve each tail: 2,000 resamples resolve it.
+    let two = FILE
+        .replace("hypotheses = 1", "hypotheses = 2")
+        .replace("resamples = 1000", "resamples = 2000");
+    let gate = Gate::parse(&two).unwrap();
+    let judged = |name: &str, families: usize| {
+        let (control, treatment) = rows(families);
+        Judged {
+            backend: name.into(),
+            model: "m".into(),
+            control,
+            treatment,
+        }
+    };
+    let both = gate.score(&[judged("a", 20), judged("b", 20)]).unwrap();
+    assert_eq!(both.outcome, Outcome::Admitted);
+    assert_eq!(both.judges.len(), 2);
+    // One judge on too little data: the gate is inconclusive, never admitted.
+    let short = gate.score(&[judged("a", 20), judged("b", 19)]).unwrap();
+    assert_eq!(
+        (short.judges[1].outcome, short.outcome),
+        (Outcome::Inconclusive, Outcome::Inconclusive)
+    );
+    // One judge rejected: the gate is rejected.
+    let mut errors = judged("b", 20);
+    errors.treatment[2].computed = Computed::Error;
+    errors.treatment[3].computed = Computed::Error;
+    let rejected = gate.score(&[judged("a", 20), errors]).unwrap();
+    assert_eq!(rejected.outcome, Outcome::Rejected);
+    // No judge: inconclusive. More judges than the correction covers: refused.
+    assert_eq!(gate.score(&[]).unwrap().outcome, Outcome::Inconclusive);
+    let one = Gate::parse(FILE).unwrap();
+    let refused = one.score(&[judged("a", 20), judged("b", 20)]).unwrap_err();
+    assert!(refused.contains("corrects for 1 hypotheses"), "{refused}");
 }

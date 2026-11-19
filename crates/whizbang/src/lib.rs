@@ -3,8 +3,10 @@
 
 pub mod backend_status;
 pub mod baseline;
+pub mod baseline_live;
 pub mod door;
 pub mod evaluation;
+pub mod gating;
 pub mod import;
 pub mod model_commands;
 pub mod pack;

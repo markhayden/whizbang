@@ -514,6 +514,46 @@ impl Set {
         &self.manifest.set.id
     }
 
+    /// The labels a scorer was handed as a file's bytes, held to the set's seal (plan m3,
+    /// task G1): a blind set's must hash to its `labels_sha256`; any other set's must be
+    /// the bytes of its own labels file, whose corrections are then applied. Every item
+    /// labelled once. What a refusal says names no item.
+    pub fn labels_from(&self, bytes: &[u8]) -> Result<Labels, String> {
+        let id = self.id();
+        let digest = hex(bytes);
+        let meta = &self.manifest.set;
+        let labels = match (&meta.labels, &meta.labels_sha256) {
+            (Some(relative), _) => {
+                if hex(read_text(&self.dir, relative)?.as_bytes()) != digest {
+                    return Err(said(id, "the labels given are not the set's labels file"));
+                }
+                self.labels.clone().ok_or_else(|| said(id, "no labels"))?
+            }
+            (None, Some(sealed)) => {
+                if sealed.to_ascii_lowercase() != digest {
+                    return Err(said(
+                        id,
+                        "the labels given do not hash to the set's labels_sha256",
+                    ));
+                }
+                let text =
+                    std::str::from_utf8(bytes).map_err(|_| said(id, "the labels are not UTF-8"))?;
+                toml::from_str(text).map_err(|_| said(id, "the labels cannot be read"))?
+            }
+            (None, None) => return Err(said(id, "no labels file and no labels_sha256")),
+        };
+        self.check_labels(&labels)
+            .map_err(|_| said(id, "the labels do not label each item once"))?;
+        Ok(labels)
+    }
+
+    /// Each item's family, by item.
+    pub fn families_by_item(&self) -> BTreeMap<String, String> {
+        (self.manifest.item.iter())
+            .map(|item| (item.id.clone(), item.family.clone()))
+            .collect()
+    }
+
     /// Every picture of every item, by its pin. A picture with no pin, or one given
     /// inline, is refused: a set's pictures are files fetched by hash.
     pub fn pictures(&self) -> Result<Vec<Picture>, String> {
