@@ -1599,7 +1599,7 @@ fn prepare_returns_an_estimate_with_readiness_and_it_is_not_in_the_fingerprint()
     let most = shop.engine.prepare(&shop.call(shop.photo)).unwrap();
     assert_eq!(most.estimate().micros(), u64::MAX);
     // Preparing wrote nothing: the photographs and the owner's reset are all there is.
-    assert_eq!(shop.state(), (2, 5, 0));
+    assert_eq!(shop.state(), (2, 7, 0));
 }
 
 #[test]
@@ -2222,8 +2222,9 @@ fn reservations_in_objects(root: &Path) -> Vec<Reservation> {
 #[test]
 fn admission_reserves_the_estimate_in_the_step_that_makes_the_run_and_the_ids_record() {
     let shop = shop();
-    // The photographs, and then the owner's reset: two generations, and five names.
-    assert_eq!(shop.state(), (2, 5, 0));
+    // The photographs, each with its mark, and then the owner's reset: two generations,
+    // and seven names.
+    assert_eq!(shop.state(), (2, 7, 0));
     let prepared = shop.engine.prepare(&shop.call(shop.photo)).unwrap();
     assert_eq!(prepared.estimate().micros(), 500_000);
     assert_eq!((shop.ledger.asked(), shop.reserved()), (0, vec![]));
@@ -2264,7 +2265,7 @@ fn admission_reserves_the_estimate_in_the_step_that_makes_the_run_and_the_ids_re
         .entries()
         .keys()
         .map(String::as_str)
-        .filter(|name| !name.starts_with("artifacts/"))
+        .filter(|name| !name.starts_with("artifacts/") && !name.starts_with("imported/"))
         .collect();
     let reservation_name = format!("spend/reservations/{run}");
     assert_eq!(

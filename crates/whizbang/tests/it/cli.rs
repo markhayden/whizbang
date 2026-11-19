@@ -2103,6 +2103,17 @@ fn rascal_remove_prompt_until_feather_hands_back_the_mask() {
     assert!(lines[2].starts_with("step select select run "), "{out}");
     let selected = lines[3].strip_prefix("mask ").expect("the selection");
     let selected: whizbang_core::identity::Digest = selected.parse().unwrap();
+    // The recipe's run handed the step's output back as its own, so it is an artifact any
+    // later command takes: `rascal grow --mask <it>` shapes it by hand (plan m3, task Q1's
+    // third pull request).
+    let grown = door::OperationAsked {
+        action: "grow",
+        arguments: vec![("px", Value::Number(1.0))],
+        inputs: vec![("mask", "--mask", lines[3].strip_prefix("mask ").unwrap())],
+        request_id: None,
+    };
+    let out = run(&over, &root, &grown).unwrap();
+    assert!(out.lines().next().unwrap().ends_with(" completed"), "{out}");
     let store = Store::open(&root, Arc::new(RealFs)).unwrap();
     let read = whizbang_core::artifact::get(
         &store,

@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use whizbang_core::artifact::{self, Artifact, ArtifactId, ArtifactType, Mask};
 use whizbang_core::contract::record::{self, RunRecord, Status, StepKind};
+use whizbang_core::contract::request::with_descendants;
 use whizbang_core::contract::{
     Action, ActionDescriptor, Backends, Call, Cancellation, Capability, Context, Engine, Estimate,
     Executor, Failure, InputPort, Kind, ModelIdentity, Outcome, OutputPort, Produced, Request,
@@ -65,7 +66,7 @@ impl World {
 
     /// The mask of this identity.
     pub fn mask(&self, id: ArtifactId) -> Mask {
-        let read = artifact::get(
+        let read = artifact::get_anywhere(
             self.store.as_ref(),
             ArtifactType::Mask,
             id,
@@ -354,13 +355,16 @@ fn until_a_step_hands_back_that_steps_outputs() {
     let finished = executor
         .submit(&call(seed).argument("until", Value::text("first")))
         .unwrap();
-    // The recipe completed after its first step, and handed back none of its own outputs:
-    // they apply only without `until`. The step's are what its run committed.
-    assert_eq!(outputs(finished.outcome()), []);
+    // The recipe completed after its first step, and handed back none of its own outputs,
+    // which apply only without `until`: it handed back the step's as its own.
     let recipe = world.record(finished.run().as_str());
     assert_eq!(recipe.steps().len(), 1);
     let first = world.record(recipe.steps()[0].run());
     let made = ArtifactId(first.outputs()[0].artifact);
+    assert_eq!(
+        outputs(finished.outcome()),
+        [(whizbang_core::recipe::until_port("first", "mask"), made)]
+    );
     assert_eq!(world.mask(made).core()[0], 255);
     assert_eq!(recipe.steps()[0].recipe().unwrap().id, "first");
     // A step that is not the recipe's is refused when the call is prepared.
@@ -375,6 +379,42 @@ fn until_a_step_hands_back_that_steps_outputs() {
         .map(|s| (s.name(), serde_json::to_string(s.value()).unwrap()))
         .collect();
     assert_eq!(noted[DIGEST_SETTING], format!(r#"{{"text":"{digest}"}}"#));
+}
+
+#[test]
+fn a_run_until_a_step_hands_back_its_outputs_which_a_later_call_takes_until_the_recipe_is_deleted()
+{
+    // The step's own output is a name of the recipe's run alone (plan m3, task Q1, item 3).
+    // The recipe hands it back as its own, so its run, which nothing called, commits it
+    // outside runs and holds it: what `--until` prints is an input of any later call.
+    let world = World::new("recipe-until");
+    let seed = world.put(rect_mask(on("photo")));
+    let executor = engine(&world, &recipe(TWO_MARKS, "second.mask"), Vec::new());
+    let until = executor
+        .submit(&call(seed).argument("until", Value::text("first")))
+        .unwrap();
+    let made = outputs(until.outcome())[0].1;
+    let public = |id| artifact::holds(&world.store.snapshot().unwrap(), ArtifactType::Mask, id);
+    assert!(public(made));
+    // A later call of another tree takes it.
+    let later = executor.submit(&call(made)).unwrap();
+    assert_eq!(later.outcome().name(), "completed", "{:?}", later.outcome());
+    // Each run is deleted with the steps it called, as `store delete` deletes it: the
+    // later run lets the mask go; the recipe's run still holds it, until it is deleted.
+    let delete = |run: &str, runs: usize| {
+        let generation = world.store.snapshot().unwrap();
+        let all = with_descendants(&generation, &[run], |e| world.store.read(e));
+        assert_eq!(all.len(), runs, "the run and each step it called: {all:?}");
+        world
+            .store
+            .delete(&all.iter().map(String::as_str).collect::<Vec<_>>())
+            .unwrap();
+    };
+    delete(later.run().as_str(), 3);
+    assert!(public(made));
+    delete(until.run().as_str(), 2);
+    assert!(!public(made));
+    assert!(world.store.snapshot().unwrap().runs().is_empty());
 }
 
 fn recipe_text() -> String {

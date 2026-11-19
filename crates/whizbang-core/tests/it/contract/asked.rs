@@ -28,7 +28,7 @@ use whizbang_core::contract::{
 };
 use whizbang_core::contract::{MESSAGE_LIMIT, Value};
 use whizbang_core::identity::{CanonicalPixels, Digest};
-use whizbang_core::store::{Kind as Stored, Reader};
+use whizbang_core::store::{HOLDS_PREFIX, Kind as Stored, Reader};
 use whizbang_testkit::barrier::Barriers;
 use whizbang_testkit::capabilities::{FakeFiller, FakeJudge, Paint, roster};
 use whizbang_testkit::schema::validate;
@@ -114,7 +114,12 @@ pub(super) fn stored(world: &World, run: &RunId) -> (RunRecord, BTreeMap<String,
     let generation = reader.snapshot().unwrap();
     let entries = generation.run(run.as_str()).unwrap().entries();
     let mut names = BTreeMap::new();
-    for (name, entry) in entries {
+    // A run's holds on its inputs are references to the artifacts it took, not
+    // anything it wrote.
+    let written = entries
+        .iter()
+        .filter(|(name, _)| !name.starts_with(HOLDS_PREFIX));
+    for (name, entry) in written {
         assert_eq!(entry.kind, Stored::Diagnostic, "{name}");
         names.insert(name.clone(), reader.read(entry).unwrap());
     }

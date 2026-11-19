@@ -20,8 +20,11 @@ pub fn holds(generation: &Generation, artifact: ArtifactType, id: ArtifactId) ->
         .is_some_and(|entry| entry.kind == Kind::Output)
 }
 
-/// Adds the artifact to a publication, as its canonical file under its name. It is in the
-/// store once the publication is published.
+/// Adds the artifact to a publication, as its canonical file under its name, from
+/// outside any run: it is marked as imported ([`Publication::mark_imported`]), so no
+/// deletion of a run removes it. It is in the store once the publication is published.
+/// Every name of an artifact outside runs is so written with a mark, or with the hold of
+/// the run that committed it ([`commit`]): no name that nothing accounts for is written.
 ///
 /// One name holds one reference. Where the name held a diagnostic reference, which
 /// [`holds`] does not count, this replaces it with the output; what the diagnostic
@@ -29,7 +32,9 @@ pub fn holds(generation: &Generation, artifact: ArtifactType, id: ArtifactId) ->
 /// next prune.
 pub fn put(publication: &mut Publication<'_>, artifact: &Artifact) -> Result<ArtifactId> {
     let id = artifact.id();
-    publication.put(&name(artifact.artifact_type(), id), &artifact.to_bytes())?;
+    let name = name(artifact.artifact_type(), id);
+    publication.put(&name, &artifact.to_bytes())?;
+    publication.mark_imported(&name)?;
     Ok(id)
 }
 
@@ -38,22 +43,62 @@ pub fn put(publication: &mut Publication<'_>, artifact: &Artifact) -> Result<Art
 /// step").
 ///
 /// One is the run's own, among its names, under `reference`: it is to the file this run
-/// made, and goes when the run is deleted. The other is the artifact's name, outside
-/// runs, which is how a later call takes it; it is given this file unless the store
-/// already holds an artifact under that name when the publication is published. Then
-/// the name keeps the file it has, which is the same artifact with the origin it was
-/// first stored with: an identity does not cover an origin, and a name holds one file.
-/// The store decides that inside its publishing step ([`Publication::keep`]).
+/// made, and goes when the run is deleted. The other is the artifact's name, which is how
+/// a later call takes it; it is given this file unless the store already holds an
+/// artifact under that name when the publication is published. Then the name keeps the
+/// file it has, which is the same artifact with the origin it was first stored with: an
+/// identity does not cover an origin, and a name holds one file. The store decides that
+/// inside its publishing step ([`Publication::keep`]).
+///
+/// Where the name is depends on who called the run (plan m3, task Q1, item 3). For a run
+/// that nothing called (`first` is `None`) it is outside runs, and the run holds it
+/// ([`Publication::hold_in`]): a deletion removes it once no run holds it and no import
+/// marked it. For a run that another run called it is a name of `first`, the run that
+/// nothing called at the top of its tree ([`Publication::keep_in`]): the runs under that
+/// run read it, no other run does, and it goes when that run is deleted.
 pub fn commit(
     publication: &mut Publication<'_>,
     run: &str,
+    first: Option<&str>,
     reference: &str,
     artifact: &Artifact,
 ) -> store::Result<ArtifactId> {
     let id = artifact.id();
     let bytes = artifact.to_bytes();
+    let name = name(artifact.artifact_type(), id);
     publication.put_in(run, reference, Kind::Output, &bytes)?;
-    publication.keep(&name(artifact.artifact_type(), id), &bytes)?;
+    match first {
+        Some(first) => {
+            publication.keep_in(first, &name, &bytes)?;
+        }
+        None => {
+            let digest = publication.keep(&name, &bytes)?;
+            let entry = Entry {
+                digest,
+                bytes: bytes.len() as u64,
+                kind: Kind::Output,
+            };
+            publication.hold_in(run, &name, entry)?;
+        }
+    }
+    Ok(id)
+}
+
+/// Adds the artifact to a publication as an import brings it in: under its name, as
+/// [`put`] does, and marked as imported, so that no deletion of a run removes it
+/// ([`Publication::mark_imported`]). An artifact the store holds already is marked alone,
+/// whatever made it.
+pub fn import(
+    publication: &mut Publication<'_>,
+    artifact: &Artifact,
+    held: bool,
+) -> Result<ArtifactId> {
+    let id = artifact.id();
+    let name = name(artifact.artifact_type(), id);
+    if !held {
+        publication.put(&name, &artifact.to_bytes())?;
+    }
+    publication.mark_imported(&name)?;
     Ok(id)
 }
 
@@ -96,6 +141,50 @@ impl Contents for Reader {
 
     fn read_record(&self, entry: &Entry) -> store::Result<Vec<u8>> {
         Reader::read(self, entry)
+    }
+}
+
+/// As [`get`], for a person reading the store and not for a run: where no name outside
+/// runs holds the artifact, a name that the first run of a tree keeps for the runs under
+/// it ([`commit`]) is read too. What a run takes is read by [`get`] alone, through its
+/// own view of the store, so a run of another tree is never handed it (plan m3, task Q1,
+/// item 3); a person exporting what a step of a recipe made is.
+pub fn get_anywhere(
+    store: &(impl Contents + ?Sized),
+    expected: ArtifactType,
+    id: ArtifactId,
+    limits: &DecodeLimits,
+) -> Result<Artifact> {
+    get(&Anywhere(store), expected, id, limits)
+}
+
+/// Whether this generation holds the artifact outside runs or among the names a first run
+/// keeps for its tree: what [`get_anywhere`] reads.
+pub fn holds_anywhere(generation: &Generation, artifact: ArtifactType, id: ArtifactId) -> bool {
+    holds(&everywhere(generation.clone()), artifact, id)
+}
+
+/// A generation with the names every first run keeps for its tree added outside runs.
+fn everywhere(generation: Generation) -> Generation {
+    let runs: Vec<String> = generation.runs().keys().cloned().collect();
+    runs.iter()
+        .fold(generation, |generation, run| generation.scoped_to(run))
+}
+
+/// The store as a person reads it: see [`get_anywhere`].
+struct Anywhere<'a, C: ?Sized>(&'a C);
+
+impl<C: Contents + ?Sized> Contents for Anywhere<'_, C> {
+    fn snapshot(&self) -> store::Result<Generation> {
+        self.0.snapshot().map(everywhere)
+    }
+
+    fn read(&self, entry: &Entry) -> store::Result<Vec<u8>> {
+        self.0.read(entry)
+    }
+
+    fn read_record(&self, entry: &Entry) -> store::Result<Vec<u8>> {
+        self.0.read_record(entry)
     }
 }
 

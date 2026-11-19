@@ -19,7 +19,7 @@ use whizbang::wiring::{self, Make};
 use whizbang_core::contract::{REQUESTS_PREFIX, Recovery, Remover, SPEND_PREFIX};
 use whizbang_core::identity::Projection;
 use whizbang_core::store::fs::RealFs;
-use whizbang_core::store::{Kind, Pruned, Reader};
+use whizbang_core::store::{HOLDS_PREFIX, Kind, Pruned, Reader, SCOPED_PREFIX};
 
 #[derive(Args)]
 pub struct Where {
@@ -233,16 +233,18 @@ fn list(root: &Path) -> Result<String, String> {
         generation.runs().len()
     );
     for (id, run) in generation.runs() {
-        let count = |kind: Kind| {
-            let of_kind = run.entries().values().filter(|entry| entry.kind == kind);
-            of_kind.count()
+        // A run's holds on the artifacts it took or committed, and what it keeps for the
+        // runs it called, reference content its outputs and other runs account for: they
+        // are not counted (ADR 0008, "What deleting a run removes").
+        let own = || {
+            (run.entries().iter())
+                .filter(|(name, _)| !name.starts_with(HOLDS_PREFIX))
+                .filter(|(name, _)| !name.starts_with(SCOPED_PREFIX))
         };
+        let count = |kind: Kind| own().filter(|(_, entry)| entry.kind == kind).count();
         // The sizes are what the store's files say, and a sum of them stops at the
         // largest number there is.
-        let bytes = run
-            .entries()
-            .values()
-            .fold(0u64, |sum, entry| sum.saturating_add(entry.bytes));
+        let bytes = own().fold(0u64, |sum, (_, entry)| sum.saturating_add(entry.bytes));
         // One run, one line: an id is printed with anything that is not printable, and
         // the quote and backslash that the escapes use, escaped.
         text.push_str(&format!(
@@ -266,10 +268,13 @@ fn delete(root: &Path, runs: &[String], recovery: Recovery) -> Result<String, St
         meant.insert(crate::runs::meant(&generation, given)?.0);
     }
     let runs: Vec<&str> = meant.into_iter().collect();
-    let published = store.delete(&runs).map_err(|e| e.to_string())?;
+    // With the runs each one called, at every depth: a run under it holds what it took.
+    let (published, deleted) = store
+        .delete_with_descendants(&runs)
+        .map_err(|e| e.to_string())?;
     let mut text = format!(
         "runs deleted: {}\ngeneration: {}\n",
-        runs.len(),
+        deleted.len(),
         published.generation
     );
     // The deletion is durable from here. What it left without a reference goes now.

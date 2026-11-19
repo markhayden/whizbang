@@ -22,6 +22,7 @@ mod submission;
 mod support;
 mod tiles_record;
 mod use_case;
+mod use_case_records;
 mod vectors;
 mod view;
 mod world;

@@ -830,8 +830,8 @@ struct Pinned {
 
 impl Contents for Pinned {
     fn snapshot(&self) -> store::Result<store::Generation> {
-        self.added
-            .onto(self.holding.generation().clone(), &self.store)
+        let scoped = self.added.scoped(self.holding.generation().clone());
+        self.added.onto(scoped, &self.store)
     }
 
     fn read(&self, entry: &store::Entry) -> store::Result<Vec<u8>> {
@@ -991,6 +991,12 @@ impl Engine {
             return Err(CallError::Refused(Refusal::SecretInRequestId).into());
         }
         let added = Arc::new(Added::default());
+        // A run under another reads what the runs of its tree committed for them: the
+        // names of the first run of the tree (plan m3, task Q1, item 3). A run nothing
+        // called is that first run, and says so once it is named.
+        if let Some(first) = under.and_then(|under| under.above.first()) {
+            added.under_first(first.as_str());
+        }
         // The generation the run is admitted against is held from here, before the
         // call is prepared, until the executor is done with the run: the inputs are
         // read from it, and so is everything the action reads.
@@ -1049,6 +1055,17 @@ impl Engine {
             .into());
         };
         let failed = |error| CallError::Store(StoreFailure::new(error));
+        // The run holds each input it takes that is a name outside runs, as it holds
+        // each output it commits: a deletion of another run then leaves it (ADR 0008,
+        // "What deleting a run removes"). An input that only the first run of this
+        // tree holds for its calls is that run's, and goes with it.
+        let holds: Vec<(String, store::Entry)> = (prepared.inputs().iter())
+            .filter_map(|input| {
+                let name = artifact::name(input.artifact(), input.id());
+                let entry = view.holding.generation().get(&name)?;
+                (entry.kind == store::Kind::Output).then(|| (name, entry.clone()))
+            })
+            .collect();
         // What the run will execute under is made of the snapshot here, before
         // anything is taken or staged for the call (ADR 0015): the backends it is
         // handed, by the name its call resolved, and the settings it records. A
@@ -1281,6 +1298,11 @@ impl Engine {
             publication
                 .put_in(run.as_str(), ADMITTED_NAME, RECORD_KIND, &admission)
                 .map_err(failed)?;
+            for (name, entry) in &holds {
+                publication
+                    .hold_in(run.as_str(), name, entry.clone())
+                    .map_err(failed)?;
+            }
             if let Some(id) = request {
                 publication
                     .create(&id.admission_name(), RECORD_KIND, &admission)
@@ -1330,6 +1352,10 @@ impl Engine {
             }
         }
 
+        // A run that nothing called is the first of its tree.
+        if under.is_none() {
+            view.added.under_first(run.as_str());
+        }
         // The run is made: what was taken from its caller's allowance stays taken.
         if let Some(taken) = taken {
             taken.keep();
@@ -1910,7 +1936,8 @@ impl Engine {
                 let first = at == 0 || outputs[at - 1].0.port() != output.port();
                 place = if first { 0 } else { place + 1 };
                 let reference = format!("{OUTPUTS_PREFIX}{}/{place}", output.port());
-                artifact::commit(&mut publication, run.as_str(), &reference, artifact)
+                let first = family.first().map(RunId::as_str);
+                artifact::commit(&mut publication, run.as_str(), first, &reference, artifact)
                     .map_err(failed)?;
             }
             for (diagnostic, bytes) in &kept {

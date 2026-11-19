@@ -66,6 +66,20 @@ for tool in close subtract line rect stroke paste fill mask_rect protect segment
   printf '%s\n' "$history" | grep -E '^\| 2\. Scored alone \| Shown \|' >/dev/null ||
     fail "the record of $tool does not show rung 2"
 done
+# The records of the five use cases' recipes (plan m3, task Q1, item 5): rung 1 shown, rung 2
+# credited from milestone 2's evaluation of `check`, and each unverified. The fast tests hold
+# their examples (crates/whizbang-squint/tests/it/use_case_records.rs).
+for use_case in source-fidelity reference-consistency product-fidelity brief-compliance reality-checks; do
+  record="docs/reference/tools/$use_case.md"
+  [ -f "$record" ] || fail "the record of the use case $use_case is missing"
+  history=$(sed -n '/^## Mark and history$/,$p' "$record")
+  printf '%s\n' "$history" | grep -E '^\| 1\. Single examples \| Shown \|' >/dev/null ||
+    fail "the record of $use_case does not show rung 1"
+  printf '%s\n' "$history" | grep -E '^\| 2\. Scored alone \| Credited \|' >/dev/null ||
+    fail "the record of $use_case does not credit rung 2"
+  printf '%s\n' "$history" | grep -E '^\*\*Unverified\*\*' >/dev/null ||
+    fail "the record of $use_case is not marked unverified"
+done
 for record in docs/reference/tools/*.md; do
   wrong=$(shape "$record")
   [ -z "$wrong" ] || fail "$wrong"

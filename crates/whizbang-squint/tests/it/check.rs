@@ -13,8 +13,8 @@ use whizbang_core::capability::{
 };
 use whizbang_core::contract::record::{Decision, Judged, RunRecord, Status, Stop};
 use whizbang_core::contract::{
-    Answer, Call, CallError, Cancel, Executor, Finished, Outcome, RefusalKind, Request, RunId,
-    RunState, Secrets, Value,
+    Answer, Call, CallError, Cancel, Executor, Finished, InputFault, Outcome, Refusal, RefusalKind,
+    Request, RunId, RunState, Secrets, Value,
 };
 use whizbang_core::identity::Digest;
 use whizbang_core::store::Kind as Stored;
@@ -83,12 +83,15 @@ fn refusals(record: &RunRecord) -> Vec<(Option<&str>, RefusalKind)> {
         .collect()
 }
 
-/// No reference of the run is a committed output: it holds diagnostics alone.
+/// No reference of the run is a committed output: it holds diagnostics, and beside them
+/// only its holds on its inputs and the crops its tools' runs committed for it (plan m3,
+/// task Q1, item 3), which are no outputs of its own.
 fn commits_nothing(left: &Left) {
+    let own = (left.names.iter())
+        .filter(|(name, _)| !name.starts_with("holds/") && !name.starts_with("artifacts/"));
     assert!(
-        left.names
-            .values()
-            .all(|(kind, _)| *kind == Stored::Diagnostic)
+        own.clone()
+            .all(|(_, (kind, _))| *kind == Stored::Diagnostic)
     );
     assert!(!left.names.keys().any(|name| name.starts_with("outputs/")));
     if let Some(record) = &left.record {
@@ -620,21 +623,36 @@ fn evidence_is_no_output_of_check_and_another_runs_judge_cannot_read_it() {
 }
 
 #[test]
-fn known_a_crop_that_a_view_run_committed_is_an_artifact_a_caller_of_the_executor_may_take() {
-    // What is not held, pinned as known (ADR 0009, "Evidence"): the crop is also the
-    // committed output of the `view` run that cut it, and a caller of the executor,
-    // which is no judge, takes an artifact by its identity as it takes any other.
+fn a_tools_image_is_a_reference_only_its_parent_reads() {
+    // The crop is the committed output of the `view` run that cut it, and a name of
+    // the run of `check` that called it, which nothing called (plan m3, task Q1, item
+    // 3): the judge's second look takes it within that run, and a run of another tree
+    // that names it, a caller of the executor that is no judge, is refused.
     let world = World::new();
     let crop = crop_of(&world.photo, HALF);
     let names = [("photo", world.photo.id()), ("crop", crop.id())];
-    run(&world, LOOK_CLOSER, &names);
+    let (finished, left, _) = run(&world, LOOK_CLOSER, &names);
+    assert_eq!(finished.outcome().name(), "completed");
+    let reader = whizbang_core::store::Reader::open(&world.root(), world.fs.clone()).unwrap();
+    let generation = reader.snapshot().unwrap();
+    let kind = whizbang_core::artifact::ArtifactType::Image;
+    let name = whizbang_core::artifact::name(kind, crop.id());
+    assert!(generation.get(&name).is_none(), "no name outside runs");
+    assert!(
+        left.names.contains_key(&name),
+        "a name of the run that called the tool"
+    );
     let executor = world.engine(judge(&one_call("view", json!({})), &[]), Secrets::none());
     let mut call = Call::new("view").input("image", crop.id());
     for (side, at) in ["left", "top", "right", "bottom"].into_iter().zip(CORNER) {
         call = call.argument(side, Value::Number(at));
     }
-    let finished = executor.submit(&call).unwrap();
-    assert_eq!(finished.outcome().name(), "completed");
+    match executor.submit(&call) {
+        Err(CallError::Refused(Refusal::Input { fault, .. })) => {
+            assert_eq!(fault, InputFault::Missing);
+        }
+        other => panic!("{other:?}"),
+    }
 }
 
 // --- the tool list after admission ------------------------------------------------------------
@@ -938,7 +956,7 @@ fn evidence_that_holds_a_secrets_bytes_is_not_kept_altered_and_the_run_fails() {
     // The crop the tool's run committed is whole.
     let reader = whizbang_core::store::Reader::open(&world.root(), world.fs.clone()).unwrap();
     let kind = whizbang_core::artifact::ArtifactType::Image;
-    let held = whizbang_core::artifact::get(&reader, kind, crop.id(), &limits()).unwrap();
+    let held = whizbang_core::artifact::get_anywhere(&reader, kind, crop.id(), &limits()).unwrap();
     assert_eq!(held.to_bytes(), file);
 }
 

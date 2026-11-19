@@ -119,9 +119,18 @@
 //!
 //! Deleting a run ([`Store::delete`]) publishes a generation without that run's names.
 //! Content that another reference still names, in another run or outside runs, is still
-//! named. Nothing removes a name that belongs to no run: that is where the records that
+//! named. A run may hold a name outside runs ([`Publication::hold_in`]: its name
+//! `holds/<name>`), and an import may mark one ([`Publication::mark_imported`]: the name
+//! `imported/<name>`); a deletion also removes each name outside runs that a deleted run
+//! held and that no remaining run holds and no import marked, decided from the generation
+//! it publishes onto alone. Nothing else removes a name that belongs to no run, and no
+//! name under [`MADE_PREFIXES`] is ever held or removed: that is where the records that
 //! must outlive every run, of spend and of request ids, are published. That is all the
-//! protection there is against removal. Against replacement there is
+//! protection there is against removal.
+//!
+//! A run may also be given a name of its own that the runs under it read as if it were
+//! outside runs ([`Publication::keep_in`], [`Generation::scoped_to`]): what a run that
+//! another run called commits. It goes with that run. Against replacement there is
 //! [`Publication::create`]: a publication that makes a name is refused, whole, when the
 //! store already holds the name, so a record that must be kept is published under a name
 //! that is made, and is never given other content by code that makes its names.
@@ -229,7 +238,7 @@ use std::sync::{Arc, Mutex, TryLockError};
 
 pub use digest::Digest;
 pub use error::Error;
-pub use generation::{Entry, GENERATION_FORMAT, Generation, Kind, Run};
+pub use generation::{Entry, GENERATION_FORMAT, Generation, Kind, Run, SCOPED_PREFIX};
 
 use fs::{Fs, Held, LockFile};
 
@@ -1147,13 +1156,19 @@ impl Store {
             kept: BTreeMap::new(),
             attached: BTreeMap::new(),
             when_deleted: BTreeMap::new(),
+            held_in: BTreeMap::new(),
+            kept_in: BTreeMap::new(),
+            marked: BTreeSet::new(),
         })
     }
 
     /// Deletes runs: publishes a generation without them, in which nothing they alone
-    /// referenced is named any more. Names that belong to no run are not touched. A run
-    /// the store does not hold is refused with [`Error::NoSuchRun`], and nothing is
-    /// published. The content itself stays on disk until [`Store::prune`].
+    /// referenced is named any more. A name that belongs to no run goes too when a deleted
+    /// run held it and no remaining run holds it and no import marked it
+    /// ([`Publication::hold_in`]); no other is touched. It is one publication, so a crash
+    /// leaves the store before it or after it. A run the store does not hold is refused
+    /// with [`Error::NoSuchRun`], and nothing is published. The content itself stays on
+    /// disk until [`Store::prune`].
     pub fn delete(&self, runs: &[&str]) -> Result<Published> {
         let mut publication = self.begin()?;
         publication.deleted = runs.iter().map(|run| run.to_string()).collect();
@@ -1319,6 +1334,12 @@ pub struct Publication<'s> {
     attached: BTreeMap<String, Attached>,
     /// What it has the store do when a run it makes is deleted while it is open.
     when_deleted: BTreeMap<String, WhenDeleted>,
+    /// The names outside runs that runs hold, by run, each with the entry it was read as.
+    held_in: BTreeMap<String, BTreeMap<String, Entry>>,
+    /// The names it keeps in runs, by run.
+    kept_in: BTreeMap<String, BTreeMap<String, Entry>>,
+    /// The names outside runs it marks as imported.
+    marked: BTreeSet<String>,
 }
 
 /// What the names that are made and never put start with: the records of request ids
@@ -1326,6 +1347,14 @@ pub struct Publication<'s> {
 /// these is given content by [`Publication::create`] and by nothing else, so that no
 /// publication replaces what a name that was made holds.
 pub const MADE_PREFIXES: [&str; 2] = ["requests/", "spend/"];
+
+/// What the name of each hold a run has on a name outside runs starts with, among the
+/// run's names: the name it holds follows ([`Publication::hold_in`]).
+pub const HOLDS_PREFIX: &str = "holds/";
+
+/// What the mark an import leaves on a name outside runs starts with: the name it marks
+/// follows ([`Publication::mark_imported`]).
+pub const IMPORTED_PREFIX: &str = "imported/";
 
 /// Refuses a name that is only ever made.
 fn made_only(name: &str) -> Result<()> {
@@ -1493,6 +1522,62 @@ impl Publication<'_> {
         self.held_closed.insert(run.to_string());
     }
 
+    /// Says that the run `run` holds `name`, a name outside runs: the run is given the
+    /// name `holds/<name>`, with what `name` holds when this is published, and a deletion
+    /// keeps `name` for as long as a run holds it ([`Store::delete`]). Where the generation
+    /// this is published onto does not hold `name` as an output, a deletion having removed
+    /// it since `entry` was read, `name` is given `entry` again: whoever holds a name read
+    /// it, and a run that read it holds it. The content of `entry` must be in the store,
+    /// named by the generation it was read from, which its reader holds; from this call on
+    /// a prune of this process keeps it too. A name under [`MADE_PREFIXES`] is refused
+    /// ([`Error::MadeOnly`]): a record that outlives every run is no run's to hold.
+    pub fn hold_in(&mut self, run: &str, name: &str, entry: Entry) -> Result<()> {
+        check_run_id(run)?;
+        made_only(name)?;
+        self.store
+            .in_progress
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(self.number)
+            .or_default()
+            .insert(entry.digest);
+        self.held_in
+            .entry(run.to_string())
+            .or_default()
+            .insert(name.to_string(), entry);
+        Ok(())
+    }
+
+    /// As [`Publication::keep`], for a name of the run `run` in place of a name outside
+    /// runs: the run's name `name` is given this content as an output unless the run
+    /// holds it as an output already. It is how a run that another run called commits an
+    /// artifact that only the runs under the same first run read: it is a name of that
+    /// first run, and it goes when that run is deleted. Where the generation this is
+    /// published onto does not hold the run, nothing is given: a run that was deleted is
+    /// not made again from a name of it, and what only its calls read has no reader left.
+    pub fn keep_in(&mut self, run: &str, name: &str, bytes: &[u8]) -> Result<Digest> {
+        check_run_id(run)?;
+        let entry = self.stage(bytes, Kind::Output)?;
+        let digest = entry.digest;
+        self.kept_in
+            .entry(run.to_string())
+            .or_default()
+            .entry(name.to_string())
+            .or_insert(entry);
+        Ok(digest)
+    }
+
+    /// Marks `name`, a name outside runs, as brought in by an import: the name
+    /// `imported/<name>` is given what `name` holds when this is published, and a
+    /// deletion never removes a name that is marked. A name under [`MADE_PREFIXES`] is
+    /// refused ([`Error::MadeOnly`]). Where the generation does not hold `name` then,
+    /// nothing is marked.
+    pub fn mark_imported(&mut self, name: &str) -> Result<()> {
+        made_only(name)?;
+        self.marked.insert(name.to_string());
+        Ok(())
+    }
+
     /// Stages the bytes unless the store or this publication already holds them.
     fn stage(&mut self, bytes: &[u8], kind: Kind) -> Result<Entry> {
         let fs = self.files.fs.as_ref();
@@ -1546,7 +1631,12 @@ impl Publication<'_> {
         for digest in &self.staged {
             files.move_into_place(&self.staged_path(digest), &layout.object(digest))?;
         }
-        if !self.names.is_empty() || !self.run_names.is_empty() || !self.kept.is_empty() {
+        if !self.names.is_empty()
+            || !self.run_names.is_empty()
+            || !self.kept.is_empty()
+            || !self.kept_in.is_empty()
+            || !self.held_in.is_empty()
+        {
             let objects = layout.objects();
             fs.sync_dir(&objects).map_err(Error::io("sync", &objects))?;
         }
@@ -1574,10 +1664,16 @@ impl Publication<'_> {
             )
         })?;
         generation.number = number;
+        // The names outside runs that a deleted run held: each goes at the end of this
+        // step unless a run that is left holds it or an import marked it.
+        let mut released = BTreeSet::new();
         for run in &self.deleted {
-            if generation.runs.remove(run).is_none() {
+            let Some(gone) = generation.runs.remove(run) else {
                 return Err(Error::NoSuchRun { run: run.clone() });
-            }
+            };
+            let held = gone.entries.into_keys();
+            released
+                .extend(held.filter_map(|name| name.strip_prefix(HOLDS_PREFIX).map(str::to_owned)));
         }
         // The runs this publication deletes are gone from `generation` by now, so no
         // case is left to exempt: a run that is there is a run that exists.
@@ -1612,6 +1708,57 @@ impl Publication<'_> {
         for (run, names) in &self.run_names {
             let run = generation.runs.entry(run.clone()).or_default();
             run.entries.extend(names.clone());
+        }
+        for (run, names) in &self.kept_in {
+            // Only into a run that is there: a deleted run is not made again.
+            let Some(run) = generation.runs.get_mut(run) else {
+                continue;
+            };
+            for (name, entry) in names {
+                let held = run.entries.get(name);
+                if held.is_none_or(|held| held.kind != Kind::Output) {
+                    run.entries.insert(name.clone(), entry.clone());
+                }
+            }
+        }
+        for (run, names) in &self.held_in {
+            for (name, read) in names {
+                let entry = match generation.entries.get(name) {
+                    Some(held) if held.kind == Kind::Output => held.clone(),
+                    // Removed since it was read: given back, as it was read.
+                    _ => {
+                        generation.entries.insert(name.clone(), read.clone());
+                        read.clone()
+                    }
+                };
+                let run = generation.runs.entry(run.clone()).or_default();
+                run.entries.insert(format!("{HOLDS_PREFIX}{name}"), entry);
+            }
+        }
+        for name in &self.marked {
+            if let Some(entry) = generation.entries.get(name).cloned() {
+                generation
+                    .entries
+                    .insert(format!("{IMPORTED_PREFIX}{name}"), entry);
+            }
+        }
+        // What the deleted runs held and nothing holds now. Decided from this generation
+        // alone: the holds of the runs left and the marks of imports. That is the whole
+        // account of a name only because every writer of an artifact's name outside runs
+        // leaves a hold or a mark with it (`artifact::commit`, `artifact::put`), and a
+        // store written before they did is of an older format and refused whole
+        // ([`GENERATION_FORMAT`]).
+        for name in released {
+            let hold = format!("{HOLDS_PREFIX}{name}");
+            let still_held = generation
+                .runs
+                .values()
+                .any(|run| run.entries.contains_key(&hold));
+            let marked = format!("{IMPORTED_PREFIX}{name}");
+            if !still_held && !generation.entries.contains_key(&marked) && made_only(&name).is_ok()
+            {
+                generation.entries.remove(&name);
+            }
         }
         let mut text = serde_json::to_vec_pretty(&generation)
             .map_err(|e| Error::corrupt(&layout.generation(number), e.to_string()))?;

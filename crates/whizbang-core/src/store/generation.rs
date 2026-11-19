@@ -8,13 +8,22 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use super::digest::Digest;
 
+/// What the names a run keeps for the runs under it start with, among its names, and
+/// what [`Generation::scoped_to`] adds outside runs: the names of artifacts.
+pub const SCOPED_PREFIX: &str = "artifacts/";
+
 /// The version of the generation file's shape, and of what the store holds: 1 had no
 /// kinds and no runs; 2 added them; 3, with the same shape, is a store whose images the
 /// core's encoder wrote at its fast setting (2026-11-19, plan m3, task O5). A store of
 /// format 2 holds the files of the slower setting, which name the same pixels by other
 /// identities, so it is refused rather than written beside them; a store is not
-/// migrated (ADR 0002, "The encoder's setting").
-pub const GENERATION_FORMAT: u32 = 3;
+/// migrated (ADR 0002, "The encoder's setting"). 4, with the same shape, is a store in
+/// which every name outside runs that holds an artifact was written with a hold of the
+/// run that committed it or the mark of the import that brought it in (plan m3, task Q1,
+/// item 3; ADR 0008, "What deleting a run removes"): a store of format 3 has names that
+/// neither holds, which a deletion could not tell from names nothing needs, so it is
+/// refused whole rather than read with a rule it was not written for.
+pub const GENERATION_FORMAT: u32 = 4;
 
 /// What a reference to stored content is. The kind belongs to the reference, not to the
 /// content: two references to the same bytes can differ, and each is treated as it says.
@@ -109,6 +118,28 @@ impl Generation {
     /// One run.
     pub fn run(&self, id: &str) -> Option<&Run> {
         self.runs.get(id)
+    }
+
+    /// This generation as the runs under the first run `run` read it: each name the run
+    /// was given by [`super::Publication::keep_in`] that is an output, and no name outside
+    /// runs has, is added outside runs. A name of the run under [`super::HOLDS_PREFIX`],
+    /// or one that is a diagnostic, is not. The runs are as they were.
+    pub fn scoped_to(mut self, run: &str) -> Generation {
+        let Some(own) = self.runs.get(run) else {
+            return self;
+        };
+        let added: Vec<(String, Entry)> = own
+            .entries
+            .iter()
+            .filter(|(name, entry)| {
+                entry.kind == Kind::Output
+                    && name.starts_with(SCOPED_PREFIX)
+                    && !self.entries.contains_key(*name)
+            })
+            .map(|(name, entry)| (name.clone(), entry.clone()))
+            .collect();
+        self.entries.extend(added);
+        self
     }
 
     /// Every reference the generation holds, outside runs and in them.

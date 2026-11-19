@@ -36,7 +36,8 @@ fn each_type_is_created_stored_read_back_and_has_the_same_identity() {
     // Read by another process's view of the store: a reader, after the writer is gone.
     let reader = Reader::open(&dir.path().join("store"), Arc::new(RealFs)).unwrap();
     let generation = reader.snapshot().unwrap();
-    assert_eq!(generation.entries().len(), 6);
+    // Each artifact's name, and the mark of the import that stored it.
+    assert_eq!(generation.entries().len(), 12);
     for artifact in &artifacts {
         let (kind, id) = (artifact.artifact_type(), artifact.id());
         assert!(artifact::holds(&generation, kind, id));
@@ -193,7 +194,8 @@ fn an_artifact_is_stored_as_an_output_and_a_diagnostic_of_its_name_is_not_taken_
     // It is read as a diagnostic is, and it is not an artifact to anyone who asks for one.
     let file = root.join("generations/1.json");
     let text = std::fs::read_to_string(&file).unwrap();
-    assert_eq!(text.matches("\"kind\": \"output\"").count(), 1);
+    // The artifact's name, and the mark that holds the same file.
+    assert_eq!(text.matches("\"kind\": \"output\"").count(), 2);
     std::fs::write(
         &file,
         text.replace("\"kind\": \"output\"", "\"kind\": \"diagnostic\""),

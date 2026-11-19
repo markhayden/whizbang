@@ -132,7 +132,7 @@ fn a_generation_file_says_the_kind_of_each_reference_and_the_run_it_belongs_to()
     let (b, c) = (Digest::of_bytes(B).hex(), Digest::of_bytes(C).hex());
     let expected = format!(
         r#"{{
-  "format": 3,
+  "format": 4,
   "number": 1,
   "entries": {{
     "a": {{
@@ -1058,7 +1058,10 @@ fn a_generation_file_of_another_format_is_refused_as_another_format_not_as_damag
         Digest::of_bytes(super::A1).hex(),
         super::A1.len()
     );
-    for (format, file) in [(1, &first_format), (2, &second_format)] {
+    // Generation 1 as the third format wrote it: the shape of the second, from a build
+    // whose runs held no names and whose imports marked none (plan m3, task Q1, item 3).
+    let third_format = second_format.replace("\"format\": 2", "\"format\": 3");
+    for (format, file) in [(1, &first_format), (2, &second_format), (3, &third_format)] {
         std::fs::write(root.join("generations/1.json"), file).unwrap();
         let reader = Reader::open(&root, Arc::new(RealFs)).unwrap();
         let by_reader = reader.snapshot().map(|_| ());
@@ -1069,14 +1072,14 @@ fn a_generation_file_of_another_format_is_refused_as_another_format_not_as_damag
                 Error::OtherFormat {
                     path,
                     format: found,
-                    reads: 3,
+                    reads: 4,
                 } if *found == format => assert_eq!(*path, root.join("generations/1.json")),
                 other => panic!("{other:?}"),
             }
             let message = error.to_string();
             assert!(
                 message.ends_with(&format!(
-                    "is of another format: {format}, and this build reads format 3"
+                    "is of another format: {format}, and this build reads format 4"
                 )),
                 "{message}"
             );
