@@ -766,8 +766,8 @@ fn remove_prompt_makes_a_mask_with_sam3_on_the_mac() {
     use whizbang_core::identity::{Projection, Topology};
     let tier = Tier::new("model-tier-remove-prompt");
     let over = tier.over();
-    let executor = tier.runner(&over);
-    // The fixture, brought into the store as an import brings a picture.
+    // The fixture, brought into the store as an import brings a picture, before the
+    // executor holds the store's writer.
     let origin = Origin::new(Step::new("fixture", "1")).unwrap();
     let limits = DecodeLimits::default();
     let image = Image::new(
@@ -784,6 +784,7 @@ fn remove_prompt_makes_a_mask_with_sam3_on_the_mac() {
     let id = artifact::put(&mut publication, &Artifact::from(image)).unwrap();
     publication.publish().unwrap();
     drop(store);
+    let executor = tier.runner(&over);
     let started = Instant::now();
     let asked = Call::new("remove_prompt")
         .argument("prompt", whizbang_core::contract::Value::text(PHRASE))
