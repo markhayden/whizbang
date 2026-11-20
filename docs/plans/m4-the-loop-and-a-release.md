@@ -1445,9 +1445,11 @@ and "Workflows").
 **Split at its seam** (R2, 2026-11-19). The task passed 2,500 changed lines before the
 skill, so it is two pull requests, as "Seams" allows. The first holds items 1 to 5 and
 what R1 owed; the second holds item 6, the skill `release` with its row in `AGENTS.md`
-and the two tests that hold it. The box is ticked by the second, not by the first.
-Item 7, the spec's table, waits for the owner's yes to open question 1 and is in
-neither until that is recorded.
+and the two tests that hold it. The second also places three carry-over rows from the
+review of the first (the orchestrator lifted "R2 closes no row" for those three). Item 7,
+the spec's table, waits for the owner's yes to open question 1 and is in neither: **the
+box stays unticked after both**, its last clause, "the spec's table edited", being the
+one not met, and is ticked by the pull request that makes that edit.
 
 **Reworded with the task** (R2, 2026-11-19). Eight things are as the task found them.
 
