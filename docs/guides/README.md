@@ -32,7 +32,7 @@ then. Milestones are those of `SPEC.md` section 16.
 | Adding a tool | Writing an experimental tool, trying and scoring it, and taking it up the ladder of `SPEC.md` section 8. Says that an experimental tool and a user's adapter are trusted code | 2 |
 | Running an evaluation | Freezing a gate, running it, writing up the result | 2 |
 | Writing a recipe | A named, typed sequence of steps over primitives and other recipes, including a user's own recipe file | 3 |
-| Adding a top-level tool | A tool beside rascal and squint | When Pixel starts |
+| Adding a kit | A kit beside rascal and squint | When Pixel starts |
 
 ## Rules for a guide
 

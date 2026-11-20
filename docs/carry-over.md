@@ -277,7 +277,7 @@ Not ported as they are; if the behaviour is kept, the test is rewritten to wait 
 
 ## Later
 
-- Pixel, the image generation agent, as a third top-level tool.
+- Pixel, the image generation agent, as a third kit.
 - Seasonal presets for allowed changes.
 - Recording a job's hash before generation.
 - A click-to-outline interface in the playground on SAM 3's point requests.
