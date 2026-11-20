@@ -16,8 +16,8 @@ use whizbang_core::artifact::Contents;
 use whizbang_core::capability::{Inventory, NoInventory};
 use whizbang_core::config::{Config, Credentials, Files, Kinds, Loaded, Offers};
 use whizbang_core::contract::{
-    Action, Capability, ConfigSource, Engine, Interrupted, NoBackends, Opening, Place, Recovery,
-    Registry, Secrets, Snapshot, SystemClock,
+    Action, Capability, ConfigSource, Engine, Interrupted, Opening, Place, Recovery, Registry,
+    Secrets, Snapshot, SystemClock,
 };
 use whizbang_core::description::Description;
 use whizbang_core::egress::{DispatchPolicy, Ways};
@@ -1176,12 +1176,14 @@ pub fn loaded(over: &Over) -> Result<(), String> {
 ///   (`spend::PreparationAge`), then the cap of one call (`spend::CallCap`). A
 ///   preparation that is too old is refused as stale before its estimate, which is
 ///   as old, is held to a cap. Neither writes a record into an admission.
-fn wired(engine: Engine, over: &Over) -> Result<Engine, String> {
+fn wired(
+    over: &Over,
+    built: impl FnOnce(Arc<dyn ConfigSource>) -> Engine,
+) -> Result<Engine, String> {
     if let Some(refused) = &over.unplaced {
         return Err(refused.clone());
     }
-    Ok(engine
-        .with_config(over.source()?)
+    Ok(built(over.source()?)
         .with_secrets(over.secrets.clone())
         .with_part(Arc::new(PreparationAge))
         .with_part(Arc::new(CallCap)))
@@ -1195,13 +1197,7 @@ pub fn executor(
     store: Arc<dyn Contents + Send + Sync>,
     over: &Over,
 ) -> Result<Engine, String> {
-    // The digest an executor is built with is the one it has until it is given a
-    // source, which is on the next line: it is never asked.
-    let digest = Config::empty().digest();
-    wired(
-        Engine::new(registry, Arc::new(NoBackends), store, digest),
-        over,
-    )
+    wired(over, |source| Engine::reading(registry, store, source))
 }
 
 /// The executor of this build that runs actions: over a registry and a store opened to
@@ -1237,13 +1233,11 @@ pub fn executor(
 ///
 /// What comes back otherwise is why the executor could not be built.
 pub fn runner(registry: Registry, store: Arc<Store>, over: &Over) -> Result<Engine, String> {
-    let digest = Config::empty().digest();
     let meter = Meter::new(store.clone(), Arc::new(SystemClock));
     let ways = over
         .ways(store.root())
         .map_err(|refused| format!("the ways out of the store cannot be made: {refused}"))?;
-    let engine = Engine::over(registry, Arc::new(NoBackends), store, digest);
-    let engine = wired(engine, over)?
+    let engine = wired(over, |source| Engine::writing(registry, store, source))?
         .with_ways(ways)
         .with_ledger(Arc::new(StoreLedger))
         .with_wrapper(Place::Meter, Arc::new(meter));

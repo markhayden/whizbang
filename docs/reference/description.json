@@ -5,7 +5,7 @@
   "actions": [
     {
       "name": "check",
-      "version": "1.6.0",
+      "version": "1.7.0",
       "kind": "recipe",
       "purpose": "Has a judge look at images through evidence tools and conclude: pass, fail or unsure.",
       "arguments": [
@@ -158,7 +158,8 @@
       ],
       "outputs": [],
       "results": [
-        "verdict"
+        "verdict",
+        "findings"
       ],
       "needs": [
         {
@@ -1773,7 +1774,8 @@
         }
       ],
       "results": [
-        "verdict"
+        "verdict",
+        "findings"
       ],
       "needs": [
         {
@@ -1892,7 +1894,8 @@
         }
       ],
       "results": [
-        "verdict"
+        "verdict",
+        "findings"
       ],
       "needs": [
         {
@@ -2011,7 +2014,8 @@
         }
       ],
       "results": [
-        "verdict"
+        "verdict",
+        "findings"
       ],
       "needs": [
         {
@@ -2130,7 +2134,8 @@
         }
       ],
       "results": [
-        "verdict"
+        "verdict",
+        "findings"
       ],
       "needs": [
         {
@@ -2249,7 +2254,8 @@
         }
       ],
       "results": [
-        "verdict"
+        "verdict",
+        "findings"
       ],
       "needs": [
         {

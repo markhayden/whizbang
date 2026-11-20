@@ -220,18 +220,20 @@ impl Resolved {
     }
 }
 
-/// Rule ids are two capital letters and a number (`SF1`); requirement ids are `RQ` and
-/// a number.
+/// Rule ids are two capital letters and a number of at most four digits (`SF1`);
+/// requirement ids are `RQ` and such a number. Four digits is what a finding may cite
+/// (`findings/1`), so an obligation that passes here is never left out of the findings
+/// for its id.
 fn check_id(id: &str, job: bool) -> Result<(), String> {
     let at = id.find(|c: char| c.is_ascii_digit()).unwrap_or(id.len());
     let (letters, digits) = id.split_at(at);
     let ok = letters.len() == 2
         && letters.chars().all(|c| c.is_ascii_uppercase())
-        && !digits.is_empty()
+        && (1..=4).contains(&digits.len())
         && digits.chars().all(|c| c.is_ascii_digit());
     if !ok {
         return Err(format!(
-            "id {id:?} must be two capital letters and a number (SF1, RQ2)"
+            "id {id:?} must be two capital letters and a number of at most four digits (SF1, RQ2)"
         ));
     }
     if job && letters != "RQ" {

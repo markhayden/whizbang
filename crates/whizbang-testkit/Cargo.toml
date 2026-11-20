@@ -13,7 +13,11 @@ name = "it"
 path = "tests/it/main.rs"
 
 [dependencies]
-whizbang-core.workspace = true
+# With the core's feature `fakes`: an executor given its backends apart from what it
+# holds is a test's alone, and this crate is a development dependency alone
+# (`scripts/crate-graph.txt`), so every crate's tests build the core with it and the
+# binary's own build never does (plan m4, task K1, item 5).
+whizbang-core = { workspace = true, features = ["fakes"] }
 # For the schema validator the tests hold a record to.
 serde_json.workspace = true
 

@@ -456,6 +456,9 @@ the type `not_runnable`.
 refuses to run one (`Refusal::ReadOnly`), because it was given no way to write.
 `Engine::over` is given a store opened to write, which makes its process the store's one
 writer for as long as the executor lives; it reads that store and writes its runs to it.
+Since task K1 of plan m4 both are a test's alone, and every build has the same two under
+a source of the config, `Engine::reading` and `Engine::writing` (ADR 0015, "One snapshot
+of the config").
 
 **What `submit` does, in order.** `Executor::request`, which takes a call that may carry
 a request id, first looks the id up (ADR 0007), and then does the same.

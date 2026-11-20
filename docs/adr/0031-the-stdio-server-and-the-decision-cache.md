@@ -2,6 +2,9 @@
 
 Status: accepted.
 Date: 2026-11-18
+Amended: 2026-11-19, with task K2 of plan m4. Changed under "The decision cache": a hit
+answers with the earlier run's findings too, and a run that kept no document of what it
+decided is not answered from.
 Spec: sections 1, 3, 9 and 17; plan m2c (`docs/plans/m2c-milestone-2.md`), task M1;
 ADR 0008, ADR 0009, ADR 0020
 
@@ -99,7 +102,15 @@ diagnostic named by the key, only when every turn of its judge named the model t
 (`Turn::reported_model`, read from each provider's answer); a hit reads that material back
 and compares it whole before it answers, with the earlier run's verdict, reasons and
 decisions, and notes `decision_cache = hit` and `answered_by_run` in its record. A hit is
-admitted like any run: its reservation is taken and settled at nothing.
+admitted like any run: its reservation is taken and settled at nothing. Since task K2 of
+plan m4 a hit hands back the earlier run's findings as well, worked out again from the
+`judged.json` that run kept, by the code that made them the first time (ADR 0035, "What
+`check` hands back"): two identical checks give a caller identical findings whether or
+not the second was answered from the cache. A run that kept no `judged.json`, or one
+that does not give findings carrying its verdict's decision, is passed over as if it
+were not there: the check runs, and the newer run is the one found next time. A run
+whose `judged.json` held a secret, and so is stored with it taken out, keeps no key. An entry
+of an earlier `check` is never met, because the version of `check` is in the key.
 
 ## Consequences
 

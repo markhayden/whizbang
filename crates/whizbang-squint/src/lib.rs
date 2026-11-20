@@ -5,7 +5,7 @@
 //! [`view`], [`resize`] and [`align`]; [`check`], the judge loop: a judge looks at images
 //! through the tools its run froze, after [`details`] has handed it what the tools
 //! measured, and concludes; the five use cases as one table, [`use_case`]; and the job a
-//! check judges, [`job`].
+//! check judges, [`job`]; and the findings a check hands its caller, [`findings`].
 
 pub mod align;
 pub mod cache;
@@ -13,6 +13,7 @@ pub mod check;
 pub mod compare;
 pub mod details;
 pub mod files;
+pub mod findings;
 pub mod job;
 pub mod marks;
 pub mod measured;

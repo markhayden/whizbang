@@ -428,7 +428,7 @@ of preparation each change once, in one place.
    `OneWorker::starting` is, or backed by one walk of the config, as the row allows. K1
    builds it and does not edit the row: K2 closes it (below).
 
-- [ ] Done when:
+- [x] Done when:
   `prepare::an_action_that_plans_is_prepared_with_the_needs_and_the_estimate_of_its_plan`,
   `prepare::a_plan_fitted_to_the_call_cap_says_what_was_asked_and_what_it_allows`,
   `prepare::a_capability_the_plan_leaves_out_is_not_resolved_and_nothing_is_reserved_for_it`,
@@ -487,6 +487,23 @@ the tests of every crate that builds an executor (a feature on their manifests a
 crate graph's checks, or a held backend for every roster a test gives), which is more
 than a few hundred lines and reaches scripts and tests other tasks of this wave own. It
 goes to wave 2, before K2 closes the row.
+
+**Item 5, built in wave 2 with K2's pull request, as its own commit.** The executor
+given its backends apart (`Engine::new`, `Engine::over`, `Engine::with_capabilities`) is
+compiled for tests alone, behind a feature of the core, `fakes`; every build has
+`Engine::reading` and `Engine::writing`, over a source of the config and nothing beside
+it, which is how the binary's wiring builds its two executors now (ADR 0015, "One
+snapshot of the config"). The feature is turned on in one manifest, the test kit's,
+not five: the test kit is a development dependency alone, so every crate's tests build
+the core with it and the binary's build never does. So the crate graph has no new edge
+and `scripts/tests/test-crate-graph.sh` is unchanged; `scripts/check-features.sh` holds
+the binary's build to the core without the feature, and
+`scripts/tests/test-features.sh` plants it there and sees the check fail. The test is
+`asked::an_executor_built_with_a_digest_alone_is_a_tests_alone` (the core's
+`contract::asked`), which also holds that an executor every build has resolves nothing
+it does not hold. The one walk at admission, the other way the row allowed, was tried
+first: it refused 153 of the core's tests, whose rosters price or resolve a call that
+asks no backend for anything.
 
 **Owed after K1** (follow-ups of that review, not built here):
 
@@ -559,7 +576,7 @@ would have been lost before the loop classed anything.
 4. **The use cases.** Each of the five recipes hands its caller the findings of its step
    `check`; `whizbang squint check` prints their counts; the server's answer carries them.
 
-- [ ] Done when:
+- [x] Done when:
   `check::a_checklist_item_and_a_separate_observation_are_each_handed_back_as_a_finding`,
   `check::a_finding_keeps_every_obligation_it_cites_its_disposition_and_its_confidence`,
   `check::the_verdict_worked_out_from_complete_findings_is_the_decision_they_carry`,
@@ -583,6 +600,81 @@ would have been lost before the loop classed anything.
 
 **Keeping tests lean (K2).** Findings are read from scripted submissions on the pictures the
 use cases' tests already draw.
+
+**Where the tests are (K2).** Those named `check::`, `cache::` and `use_case::` are in
+squint's tests, in a module of their own, `findings` (`findings::check::…`,
+`findings::cache::…`, `findings::use_case::…`,
+`crates/whizbang-squint/tests/it/findings.rs`): the files the names would put them in
+are being changed by A1 in the same wave. `cli::squint_check_prints_the_counts_of_its_findings`
+is the binary's; beside it `serve::check_over_stdio_answers_with_the_counts_of_its_findings`
+shows the server's answer of item 4. Each of the decision table's inputs (L1, item 4) is
+run on a check that was made and on the same check answered from the cache: a confident
+`RQ1` violation alone (in `…the_verdict_worked_out_from_complete_findings…`), beside a
+separate `SF1` violation (`…a_checklist_item_and_a_separate_observation…`), 32 tentative
+kept with the only confident one cut (`…findings_carry_the_decision…`), and an
+observation that cites several obligations (`…a_finding_keeps_every_obligation…`,
+`…a_check_answered_from_the_cache…`). The job of those tests is the one a loop gives a
+check: `source-fidelity` with `RQ1` to `RQ3`.
+
+**Reworded with the task** (K2, 2026-11-19). One clause of the "Done when" above is met
+otherwise than it is worded.
+
+- "`check::findings_cut_short_in_any_way_say_they_are_not_complete_and_count_what_was_left_out`
+  (a 33rd finding, a ninth place, a place on another image), on a check that was made
+  and on the same check answered from the cache". The 33rd finding and the ninth place
+  are shown so. A place on another image cannot come from a check that was made: a
+  submission whose location names a frame outside its job is refused before anything is
+  kept (`use_case/submission.rs`, `place`), and the job's images are the call's. It is
+  shown, there and in `check::a_place_on_an_image_the_run_was_not_given_is_left_out_and_counted`,
+  on the document a run keeps of what it decided, changed by the test, which is what
+  the findings are made from on a check that was made and on a hit alike
+  (`findings::of_judged`). The same test shows the other ways a list is short on that
+  document: a box with no area, an obligation's id the kind does not take, and a list
+  over 32 KiB.
+
+**After the review of the pull request (K2).** Fixed in it: the two other ways
+`cache::find` passes a run over have their tests (a document that gives no findings; one
+whose findings would not carry the recorded verdict); a run whose kept document held a
+secret keeps no key, so that no entry is left that a hit cannot read; an obligation's
+id is held to four digits where a job is resolved; a polygon that encloses no area is
+left out and counted, as a box with none is; and an answer that counts and is about no
+obligation is counted as a finding left out. Their tests are
+`cache::an_entry_whose_judged_document_gives_no_findings_is_not_answered_from`,
+`cache::an_entry_whose_findings_would_not_carry_its_verdict_is_not_answered_from`,
+`cache::a_check_whose_kept_document_held_a_secret_keeps_no_key`,
+`use_case::a_requirements_id_is_held_to_what_a_finding_may_cite`, and two more cases of
+`check::findings_cut_short_in_any_way_say_they_are_not_complete_and_count_what_was_left_out`.
+
+**Owed after K2** (a follow-up of that review, not built here):
+
+- The item of a reference image is handed back as one finding for each obligation, and
+  each of them carries the item's one location, so one location takes as many of the
+  eight places as the item has obligations. One place for the item, shared by its
+  findings, would leave the others for other answers. For the task that first reads
+  places under a use case with references; the loop's `source-fidelity` has no such item.
+
+**Decided with the task (K2).** ADR 0035, "What `check` hands back", has each.
+
+- **Made from `judged.json` alone,** by one function, on a check that was made (from
+  the document it has just written) and on a hit (from the document of the run that
+  answered). For that, what is kept of a checklist item names the obligations the item
+  is about. `check` is 1.7.0.
+- **An old cache entry is never met, and there is no shim.** The version of `check` is
+  in the cache's key, so a check of 1.7.0 finds no run of 1.6.0. A run of the same key
+  that kept no `judged.json`, or one the findings cannot be made from, or whose findings
+  would not carry its verdict's decision, is passed over: the check runs, and the newer
+  run is the one found next.
+- **The item of a reference image** (`chk:ref:<image>`) is about several obligations,
+  and an item of `findings/1` cites one: it is handed back as one finding of the form
+  `item` for each obligation, in the rules' order, so none is dropped and no field is
+  added. The loop's use case, `source-fidelity`, has no such item.
+- **A place is a box or a polygon.** A location that is the whole image, or an absence,
+  is no place and is not counted as one left out: nothing can be aimed at it.
+- **Under `general`,** where the judge answers with a word and no submission, `check`
+  hands back no findings.
+- **The doors print nothing for a check with no finding and nothing left out,** so a
+  pass reads as it did; otherwise one line says whether the list is complete, with
+  what was left out, and one line follows for each count the record keeps.
 
 ## L1. The loop: remove, check, retry (large)
 

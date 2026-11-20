@@ -81,7 +81,9 @@ What is not held, and is known:
 - The roster prepare asks and the backends an executor holds are given apart, and nothing
   holds one to the other. A call that resolved a model no held backend declares is
   admitted, and its action finds no handle
-  (`asked::known_an_executor_built_with_a_digest_alone_holds_its_backends_apart_from_its_roster`).
+  (`asked::an_executor_built_with_a_digest_alone_is_a_tests_alone`, as the test is named
+  since task K1 of plan m4, which made that way of building an executor a test's alone:
+  ADR 0015, "One snapshot of the config").
   The binary's executor holds none (until its wiring at checkpoint 1B: ADR 0015,
   "The binary wired"). Both are the config's, at checkpoint 1B: under a
   snapshot of the config that holds backends, one thing makes both, and such a call is

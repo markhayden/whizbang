@@ -6,6 +6,10 @@ Amended: 2026-11-19, with task K1 of plan m4. Added: "Findings": a third kind of
 one JSON document of the kind `findings/1` with a fixed schema and no text of a judge's,
 refused from an action that does not declare it, handed to the caller, and counted in
 the record.
+Amended: 2026-11-19, with task K2 of plan m4. Added under "Findings": what `check` puts in
+the document ("What `check` hands back"): both forms the judge answers in, the decision
+of the whole submission, what is left out and counted, and the same from the decision
+cache. `check` is 1.7.0.
 Spec: section 3 ("Primitives, recipes and loops", "What a judge model may call"), section 7
 ("Use cases expressed as recipes on the shared mechanism"); plan m3
 (`docs/plans/m3-milestone-3.md`), task Q1, items 1 and 2; ADR 0003, ADR 0009, ADR 0029,
@@ -135,6 +139,84 @@ judge pointed needs them as a result.
   (`Finished::findings`), as they were read. A recipe whose last step declares findings
   declares them itself and hands its caller that step's, with the verdict.
 - **In the record**, counts and places, not the document (`run/6`, ADR 0005).
+
+**What `check` hands back** (plan m4, task K2; `crates/whizbang-squint/src/findings.rs`).
+Under a use case of the table `check` declares findings and hands back one document with
+every verdict (1.7.0); under `general`, where the judge answers with a word and no
+submission, it hands back none.
+
+- **Made from what the run keeps.** One function, `findings::of_judged`, reads the
+  document a run keeps of what it decided (`judged.json`), and nothing else. A run that
+  was made reads the document it has just written; a run answered from the decision cache
+  reads the document of the run that answered it. So the two hand back the same findings
+  by the same code. For that, what is kept of an item of the checklist now names the
+  obligations the item is about (`obligations`), beside its id.
+- **Both forms.** A finding is every answer whose row of the aggregation is not
+  `recorded`: an item of the checklist, and a separate observation, with every
+  obligation it cites, each once, in the order cited, its disposition and its confidence.
+  An item is about one obligation, but for the item of a reference image
+  (`chk:ref:<image>`), which is about each obligation that consults the reference: it is
+  one finding of the form `item` for each of them, since an item of `findings/1` cites
+  one obligation and none may be dropped. `check` never hands back a finding that is
+  `observed`: an observation under an observe rule is recorded.
+- **The decision** is the strictest row of every answer the document holds, worked out
+  before anything is cut. It is the verdict's, and the run fails if it is not. Where the
+  list is complete, a caller that works the verdict out from the list alone (fail on a
+  confident violation, unsure on any other finding, pass on none) gets the same; where it
+  is not, only the carried decision is right.
+- **A place** is a box or a polygon the answer cited on an image the run was given, by
+  that image's identity, each number held from 0 to 1. A location that is the whole
+  image, or an absence, is no place, and nothing is counted for it.
+- **What is left out is counted, and the document then says `complete: false`:** a
+  finding past the 32nd, in the order of the submission; a finding whose obligations the
+  kind does not take (more than 16, none at all, or an id that is not one to eight
+  letters and one to four digits); a place past the eighth; a place on an image that is
+  not among the run's; a place that is no box or polygon of the kind once its numbers
+  are held (a box or a polygon that encloses no area, a polygon of more than 64 points);
+  and, last, whatever is cut from the
+  end to fit 32 KiB, places before findings. A place is counted only for a finding that
+  was kept.
+- **An obligation's id** is two capital letters and at most four digits where a job is
+  resolved (`use_case::resolve`), which is what a finding may cite: a requirement with a
+  longer number is refused with its job, in the job's own words, and is never left out
+  of the findings for its id.
+- **A run whose kept document holds a secret keeps no key.** `judged.json` is first
+  written exactly as it was made (`Diagnostics::write_exact`), which is refused when the
+  bytes hold a secret of the run's; it is then written as any text is, with the secret
+  taken out, and the run notes `decision_cache = not kept: what the run decided holds a
+  secret, and is kept without it`. Taken out as bytes, a secret that a number spells
+  could leave a document that gives other findings or none; a key is kept only beside a
+  document a later run reads exactly as the run that made it did. The run's own
+  findings and verdict are as for any run.
+- **The decision cache** (ADR 0031). A hit hands back the findings worked out from the
+  `judged.json` of the run that answered. A run that kept no such document, or one the
+  findings cannot be made from, or whose findings would not carry its verdict's
+  decision, is not answered from: the check runs, and its run is the one a later check
+  finds. No migration and no second reading of an old shape: the version of `check` is
+  in the key, so no run of 1.6.0 or earlier is found by a check of 1.7.0 at all.
+- **At the doors.** `whizbang squint check` prints, after the verdict and its reasons,
+  what the run's record keeps of its findings, and the server's answer for `check`
+  carries the same lines: nothing when there is no finding and nothing was left out;
+  otherwise `findings: complete`, or `findings: not complete, <n> findings and <m> places
+  left out`, then `finding: <obligation> <disposition> <confidence>: <count>` for each
+  count of the record.
+
+Tests (squint's, in `findings::`): `check::a_checklist_item_and_a_separate_observation_are_each_handed_back_as_a_finding`,
+`check::a_finding_keeps_every_obligation_it_cites_its_disposition_and_its_confidence`,
+`check::the_verdict_worked_out_from_complete_findings_is_the_decision_they_carry`,
+`check::findings_carry_the_decision_of_the_whole_submission_whatever_was_cut`,
+`check::an_answer_whose_row_is_recorded_is_no_finding`,
+`check::a_place_on_an_image_the_run_was_not_given_is_left_out_and_counted`,
+`check::no_more_than_32_findings_and_eight_places_are_handed_back_and_no_text_of_the_judges`,
+`check::findings_cut_short_in_any_way_say_they_are_not_complete_and_count_what_was_left_out`,
+`check::a_check_answered_from_the_cache_hands_back_the_findings_of_the_run_that_answered`,
+`cache::an_entry_that_kept_no_judged_document_is_not_answered_from`,
+`cache::an_entry_whose_judged_document_gives_no_findings_is_not_answered_from`,
+`cache::an_entry_whose_findings_would_not_carry_its_verdict_is_not_answered_from`,
+`cache::a_check_whose_kept_document_held_a_secret_keeps_no_key`,
+`use_case::a_requirements_id_is_held_to_what_a_finding_may_cite`,
+`use_case::a_use_case_recipe_hands_its_caller_the_findings_of_its_last_step`; and the
+binary's `cli::squint_check_prints_the_counts_of_its_findings`.
 
 Tests: `executor::findings_from_an_action_that_does_not_declare_them_end_the_run_as_an_error`,
 `executor::findings_that_are_not_of_their_schema_end_the_run_as_an_error`,

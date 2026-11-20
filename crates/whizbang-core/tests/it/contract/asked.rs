@@ -21,10 +21,11 @@ use whizbang_core::contract::record::{
     Decision, Judged, MODELS_LIMIT, RequestEnded, RunRecord, Status, Stop, Timed,
 };
 use whizbang_core::contract::{
-    ARGUMENTS_TEXT_MAX_BYTES, Action, ActionDescriptor, Argument, Backends, Call, Capabilities,
-    Capability, Clock, Context, Count, DIAGNOSTICS_LIMIT, EXCHANGE_PREFIX, Engine, Executor,
-    Failure, INPUTS_LIMIT, InputPort, Kind, NoBackends, PreparedCall, Produced, RECORD_MAX_BYTES,
-    RecordError, Registry, Requirement, ResultKind, RunId, Secrets, ValueType, Verdict,
+    ARGUMENTS_TEXT_MAX_BYTES, Action, ActionDescriptor, Argument, Backends, Call, CallError,
+    Capabilities, Capability, Clock, ConfigSource, Context, Count, DIAGNOSTICS_LIMIT,
+    EXCHANGE_PREFIX, Engine, Executor, Failure, INPUTS_LIMIT, InputPort, Kind, NoBackends,
+    PreparedCall, Produced, RECORD_MAX_BYTES, RecordError, Refusal, Registry, Requirement,
+    ResultKind, RunId, Secrets, ValueType, Verdict,
 };
 use whizbang_core::contract::{MESSAGE_LIMIT, Value};
 use whizbang_core::identity::{CanonicalPixels, Digest};
@@ -263,17 +264,20 @@ fn a_call_that_resolved_a_model_its_snapshot_does_not_hold_is_refused_and_not_ha
 }
 
 #[test]
-fn known_an_executor_built_with_a_digest_alone_holds_its_backends_apart_from_its_roster() {
-    // What is left of the limit, pinned as known: an executor that is given no
-    // snapshot with backends, as 1A's tests build one, is given its roster and its
-    // backends apart, and nothing holds one to the other. A call that resolved a
-    // model no held backend declares is admitted, and its action finds no handle.
-    // The binary is built from a source (task W1), where this cannot be.
+fn an_executor_built_with_a_digest_alone_is_a_tests_alone() {
+    // An executor that is given its roster and its backends apart, as 1A's tests build
+    // one (`Engine::over`, `Engine::with_capabilities`), has nothing that holds one to
+    // the other: a call that resolved a model no held backend declares is admitted,
+    // and its action finds no handle. That way of building one is compiled for tests
+    // alone, behind the core's feature `fakes`, which the test kit turns on and the
+    // binary's build never has (plan m4, task K1, item 5;
+    // `scripts/tests/test-features.sh`). This test is built with it, and pins what it
+    // still does.
     let world = World::new();
     let offered = Arc::new(FakeJudge::scripted(Vec::new()).as_model("judge-elsewhere"));
     let held = Arc::new(FakeJudge::scripted(Vec::new()));
     let seen: Noted<bool> = Noted::default();
-    let asks = {
+    let asking = || {
         let seen = seen.clone();
         action("asks", judging(), move |_, context| {
             let handed = context.capabilities().judge().is_some();
@@ -285,12 +289,30 @@ fn known_an_executor_built_with_a_digest_alone_holds_its_backends_apart_from_its
         &world,
         roster(None, None, Some(offered.as_ref())),
         Capabilities::none().with_judge(held.clone()),
-        vec![asks],
+        vec![asking()],
     );
     let finished = executor.submit(&Call::new("asks")).unwrap();
     assert_eq!(finished.outcome().name(), "error");
     assert_eq!(*seen.lock().unwrap(), [false]);
     assert_eq!(held.requests(), 0);
+    drop(executor);
+
+    // The executor every build has is given a source of its config and nothing else
+    // (`Engine::writing`): no roster and no backend apart from it. Under a digest
+    // alone, which is a source of a snapshot that holds nothing, no model answers the
+    // call, so it is refused as not ready and its action never runs: there is no way
+    // left to resolve a model that is not held.
+    let mut registry = Registry::new();
+    registry.register(asking()).unwrap();
+    let digest: Arc<dyn ConfigSource> = Arc::new(Digest::of_bytes(b""));
+    let shipped = Engine::writing(registry, world.store(), digest);
+    let refused = shipped.submit(&Call::new("asks")).unwrap_err();
+    let CallError::Refused(Refusal::NotReady { missing, .. }) = refused else {
+        panic!("{refused:?}");
+    };
+    assert_eq!(missing.len(), 1);
+    assert_eq!(missing[0].capability(), Capability::Judge);
+    assert_eq!(*seen.lock().unwrap(), [false]);
 }
 
 // --- the requests in the record ---------------------------------------------------------------

@@ -109,6 +109,11 @@ request": what the places hand on to the backend of one request (`Open::removals
 backend under, and the count of removals the lease's hold read. Changed under "An
 inventory": the lease's place hands that count on, and a local backend loads by the
 identity it was handed under.
+Amended: 2026-11-19, with task K1 of plan m4, its item 5. Changed under "One snapshot of
+the config": an executor given its backends apart from what resolves a call
+(`Engine::new`, `Engine::over`, `Engine::with_capabilities`) is compiled for tests alone,
+behind the core's feature `fakes`; the binary's executor is built over a source of its
+config and nothing else (`Engine::reading`, `Engine::writing`).
 
 ## Context
 
@@ -587,6 +592,26 @@ asks and hands over those it was built with (`Engine::over`,
 run sends through the ways the executor was given (`Engine::with_ways`); and with no
 `Settings` a run records none. So the binary and the tests of checkpoint 1A are as they
 were (`snapshot::a_digest_alone_is_a_source_of_a_snapshot_that_holds_nothing_else`).
+**An executor given its backends apart is a test's alone** (plan m4, task K1, item 5).
+`Engine::new`, `Engine::over` and `Engine::with_capabilities` are compiled only with the
+core's feature `fakes`, as `OneWorker::starting` is with the backends' feature. The
+test kit turns it on, and the test kit is a development dependency alone
+(`scripts/crate-graph.txt`), so every crate's tests build the core with it and the
+binary's own build (`cargo build -p whizbang`) never does: a source of the binary that
+named one of the three would not compile there, and `scripts/check-features.sh` fails
+when the binary's build has the feature on the core
+(`scripts/tests/test-features.sh`). Every build has `Engine::reading` and
+`Engine::writing`, which take the actions, the store and a source of the config: the
+backends are each snapshot's, made by the walk that resolves a call's models, and no
+roster or backend is given beside it. Under a source that holds no backends (a digest
+alone) nothing answers a capability, so a call that needs one is not ready. What a
+test's executor still does is pinned as
+`asked::an_executor_built_with_a_digest_alone_is_a_tests_alone`. The other way the
+carry-over row allowed, holding the backends an executor was built with to what its
+call resolved at admission, was tried first and not taken: it refuses about 150 of the
+core's tests, which give a roster to price or resolve a call and hold no backend
+because their actions ask for none.
+
 One helper of `admit.rs`, a source of its own that implemented `digest()`, implements
 `snapshot()` instead: three lines, and no test of that file changed.
 
@@ -715,8 +740,9 @@ its reason and never by another
   (`snapshot::a_call_cannot_resolve_a_model_its_snapshot_holds_no_backend_for`). The pin
   of ADR 0009 is turned round:
   `asked::a_call_that_resolved_a_model_its_snapshot_does_not_hold_is_refused_and_not_handed_no_handle`.
-  What is left of it, for an executor built with a digest alone, is pinned as
-  `asked::known_an_executor_built_with_a_digest_alone_holds_its_backends_apart_from_its_roster`.
+  What is left of it, for an executor built with a digest alone, which only a test
+  can build since task K1 of plan m4 ("One snapshot of the config"), is pinned as
+  `asked::an_executor_built_with_a_digest_alone_is_a_tests_alone`.
 - **A backend belongs to its snapshot.** A source that reads a config again makes
   backends again: the runs admitted under one snapshot are answered by its backends
   and by no other's

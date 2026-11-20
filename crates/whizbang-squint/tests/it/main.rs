@@ -10,6 +10,7 @@ mod check;
 mod compare_record;
 mod details;
 mod edge_similarity;
+mod findings;
 mod job;
 mod locate;
 mod record;
