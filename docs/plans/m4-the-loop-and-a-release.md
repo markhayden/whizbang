@@ -1,8 +1,8 @@
 # Plan: milestone 4, the loop and a release
 
-Draft 3, 2026-11-19, from `main` at 0c75eedd (the merge of #244, which closed milestone 3;
-its note is `docs/plans/m3-note.md`), after two outside review rounds ("Review rounds", at
-the end). Milestone 4 is `SPEC.md` section 16, row 4, "The loop and a release": "Remove
+Draft 4, 2026-11-19, from `main` at 0c75eedd (the merge of #244, which closed milestone 3;
+its note is `docs/plans/m3-note.md`), after three outside review rounds ("Review rounds",
+at the end). Milestone 4 is `SPEC.md` section 16, row 4, "The loop and a release": "Remove
 with a check and bounded retries runs as nested calls on one budget; the `prerelease`
 workflow passes and a release archive installs and runs on both targets". Beside the row it
 takes every carry-over row that names milestone 4 (the table "Carry-over rows owned by
@@ -139,6 +139,19 @@ answered "1, 2, 3 good". They are settled, and the tasks below build on them.
    developer identity, the guide gives a download command that sets no mark on the file,
    and notarisation gets a carry-over row.
 
+## What the orchestrator decided
+
+Under the rule that review rounds replace the owner's approval of a plan (`SPEC.md` section
+14, "Review before building"), the orchestrator settled one of draft 3's open questions on
+2026-11-19, and the owner was told the same day.
+
+- **No `unsure` enlarges a mask.** Rascal retried when its checker was unsure and named a
+  place. The loop does not: it retries only on a confident report that the named thing is
+  still there (L1, item 4), at most three attempts, the first included. This is the
+  stricter of the two rules. The live evidence reports how often the loop stopped where
+  rascal's rule would have gone on (E1, item 1), so the choice can be looked at again
+  with numbers.
+
 ## How the work is split
 
 Nine pull requests, where the owner asked for few and large. Sizes are changed lines of
@@ -250,18 +263,34 @@ judged under, a setting its own gate refused. Nothing about details first is rem
 stays one flag away. With it, in the same pull request, go the carry-over rows that name
 milestone 4 and belong to neither strand.
 
-1. **The recipes.** In each of the five files under `crates/whizbang-squint/recipes/`, the
-   step `details` says `details = "none"`. The step stays, so `--set details.details=first`
-   and the command's `--details first` select it for one run. A step that measures nothing
-   sends nothing and starts no tool.
-2. **The command.** `whizbang squint check --details` defaults to `none`. With `none` the
-   judge is offered exactly what the gate's control arm (arm C) offered, as
-   `door::Details::None` gives it today, so the new default is the arm that was measured,
-   not a third thing.
-3. **The server.** A use case called over MCP without `details` measures none.
-4. **Evaluation is unchanged.** A matrix's arm states its own details
-   (`crates/whizbang/src/evaluation.rs` passes `arm.details()`), so every committed matrix
-   and gate means what it meant; a test holds that an arm F cell still measures first.
+1. **The new default is the arm that was measured, whole.** The gate's control arm (arm
+   C, `crates/whizbang-eval/src/matrix.rs`) is three settings together, and the gate
+   measured them together: nothing measured first (`details = none`); the judge offered
+   `view` and `align`; and a call of `align` answered with its pictures alone (`projection =
+   visual_only`). Today's recipes say `first`, offer `view,align,resize` and answer in
+   `full`, which is arm F. Turning off the first setting alone would make a fourth
+   combination that no gate has measured, with `resize` offered and the measurements of
+   `align` shown. So the default becomes arm C exactly, because it is the one arm with
+   evidence behind it; `resize` and the full answer come back with `--details first`, as
+   arm F had them.
+2. **The recipes.** In each of the five files under `crates/whizbang-squint/recipes/`, the
+   step `details` says `details = "none"`, and the step `judge` says `tools = "view,align"`
+   and `projection = "visual_only"`. The step `details` stays, and a step that measures
+   nothing sends nothing and starts no tool. So a recipe called directly, by a caller that
+   sets nothing, is arm C.
+3. **The command, and the call every door makes.** `whizbang squint check --details`
+   defaults to `none`, and `--projection` to `visual_only` with it. `door::check_call`
+   builds the recipe's overrides, and today it leaves each one out when it equals what the
+   recipe used to say (`if details != "first"`, and the same for the tools, the projection
+   and the second look): after item 2 that would make `--details first` do nothing. It is
+   changed to state all four settings on every call, whatever the recipes say, so no door
+   depends on a recipe's default again. `--details first` then gives arm F as it was
+   measured: the details first, `view,align,resize`, and `full`.
+4. **The server.** A use case called over MCP that sets nothing is arm C: no details, `view`
+   and `align` offered, `visual_only`. **Evaluation is unchanged.** A matrix's arm states
+   its own details, tools and projection on `check` itself (`crates/whizbang/src/evaluation.rs`,
+   `call_of`), not through a recipe, so every committed matrix and gate means what it meant;
+   a test holds an arm F cell and an arm C cell to what they sent before.
 5. **The records.** `check`'s record and the five use cases' records
    (`docs/reference/tools/`) say that details first is off by default, name the gate that
    rejected it, and say how to turn it on; their worked examples are made again under the
@@ -280,11 +309,13 @@ milestone 4 and belong to neither strand.
    drawn again from the kept stores after this lands.
 
 - [ ] Done when:
-  `use_case::each_shipped_recipe_measures_no_details_unless_a_run_asks`,
-  `cli::squint_check_measures_no_details_by_default_and_first_when_asked`,
-  `check::the_default_offers_the_judge_what_the_gates_control_arm_offered`,
-  `serve::a_use_case_called_without_details_measures_none`,
-  `evaluation::an_arm_states_its_own_details_whatever_the_default_is`,
+  `use_case::each_shipped_recipe_called_with_nothing_set_is_the_control_arm`
+  (no details, `view,align` offered and no `resize`, `visual_only`),
+  `cli::squint_check_with_nothing_set_is_the_control_arm`,
+  `cli::squint_check_details_first_measures_first_offers_resize_and_answers_in_full`,
+  `door::the_call_of_a_check_states_all_four_settings_whatever_the_recipe_says`,
+  `serve::a_use_case_called_with_nothing_set_is_the_control_arm_and_offers_no_resize`,
+  `evaluation::an_arm_f_and_an_arm_c_cell_send_what_they_sent_before`,
   `use_case_records::each_use_case_record_holds_two_worked_examples_that_its_recipe_gives`
   (on the records made again),
   `evidence::the_record_of_check_says_details_first_is_off_and_names_its_gate`,
@@ -407,10 +438,15 @@ would have been lost before the loop classed anything.
    was read. They are made from what `check` already keeps in `judged.json`, by the same
    code, so the two cannot differ, and the verdict worked out from the findings alone is
    the verdict `check` gave: a test holds that.
-2. **A finding is data from a model.** At most 32 findings are handed back, in the order of
-   the submission, and the rest counted; among them at most eight places, and the rest
-   counted; a place on an image the run was not given is left out and counted; numbers are
-   held inside the picture; no text of the judge's travels with a finding.
+2. **A finding is data from a model, and a short list says it is short.** A submission may
+   hold any number of answers, and every one enters the verdict. At most 32 findings are
+   handed back, in the order of the submission; among them at most eight places; a place
+   on an image the run was not given is left out; numbers are held inside the picture; no
+   text of the judge's travels with a finding. Whenever anything was left out, a finding,
+   a place, or a part cut to fit the 32 KiB, the document says **`complete: false`** and
+   counts what was left out; otherwise it says `complete: true`. A caller that would act
+   on the findings must read that word first, because the finding that was dropped may be
+   the one that matters: the loop's table makes it its first row (L1, item 4).
 3. **The same on a cache hit.** A run of `check` answered from the decision cache hands
    back the findings the earlier run handed back. They are worked out again from the
    `judged.json` the hit holds, by the same code, and held by the same rules. An entry
@@ -427,6 +463,9 @@ would have been lost before the loop classed anything.
   `check::an_answer_whose_row_is_recorded_is_no_finding`,
   `check::a_place_on_an_image_the_run_was_not_given_is_left_out_and_counted`,
   `check::no_more_than_32_findings_and_eight_places_are_handed_back_and_no_text_of_the_judges`,
+  `check::findings_cut_short_in_any_way_say_they_are_not_complete_and_count_what_was_left_out`
+  (a 33rd finding, a ninth place, a place on another image), on a check that was made and
+  on the same check answered from the cache,
   `check::a_check_answered_from_the_cache_hands_back_the_findings_of_the_run_that_answered`
   (on a submission with a checklist violation of one obligation beside a separate
   observation that cites two),
@@ -501,18 +540,20 @@ for both.
 
    | Row | A finding that cites | With disposition and confidence | What it does |
    |---|---|---|---|
+   | 0 | (not a finding: the findings say `complete: false`, K2, item 2) | | **Ends the attempts.** Findings that were cut short never enlarge a mask: what was dropped may be a row 1 finding. This row is read before any other |
    | 1 | anything that must be preserved, alone or beside other obligations, `RQ1` among them | `violation`, confident or tentative | **Ends the attempts.** The removal damaged something, and painting more cannot mend it. This row beats every other |
    | 2 | `RQ1`, and nothing that must be preserved (`RQ3` or `SF4` may be cited beside it) | `violation`, confident | **Allows a retry**, and only its own place may be used: the located retry when it cites a place on the candidate (L2); a wider mask, once in a run, when it cites none |
    | 3 | `RQ1`, and nothing that must be preserved | `violation`, tentative | Enlarges nothing. The judge is not sure the thing is there |
    | 4 | anything | `held`, `allowed_change`, `hidden` or `cant_tell`, at either confidence; or `observed` | Enlarges nothing. None of these says the named thing is still there, though at a tentative confidence, or where the judge cannot tell, they make the verdict `unsure` |
    | 5 | `RQ3` or `SF4` alone | `violation` | Enlarges nothing, and forbids nothing: beside a finding of row 2 the retry goes on |
 
-   **What the loop does with a verdict's findings.** If any finding is of row 1, the
-   attempts end. Otherwise, if at least one is of row 2 and the plan has an attempt left,
+   **What the loop does with a verdict's findings.** If the findings are not complete (row
+   0), the attempts end. If any finding is of row 1, the attempts end. Otherwise, if at
+   least one is of row 2 and the plan has an attempt left,
    one retry is made, from the places of the row 2 findings alone. Otherwise the attempts
    end. So a `fail` retries only on a confident report that the thing remains, and an
    `unsure` never enlarges a mask: this is narrower than rascal, which retried on an
-   `unsure` that named a place (open question 4). When the attempts end the loop hands
+   `unsure` that named a place ("What the orchestrator decided"). When the attempts end the loop hands
    back its best attempt with the verdict (item 8).
 5. **What a retry changes, in L1.** After a verdict the table allows a retry on, whose row
    2 findings cite no place: the shape stretch is run again from the same found mask with
@@ -534,7 +575,7 @@ for both.
    balance"), so the reservation covers every attempt at its bound and, when nothing
    overruns, cannot run out part-way.
    - **How many attempts.** At most `attempts`, from 1 to 3, 3 by default, the first
-     included: rascal's limit, kept (open question 4).
+     included: rascal's limit, kept.
    - **When the bound is over the call cap.** The plan is the most attempts, up to the
      number asked, whose whole bound is within `spend.call_cap_usd`, and it says how many
      were asked and how many the cap allows. When the cap covers a removal and no check,
@@ -608,6 +649,9 @@ for both.
   `checked::a_retry_whose_shaped_mask_is_the_one_before_is_not_filled`, and one test for
   each row of the table, each run twice, on a check that was made and on the same check
   answered from the cache, with the same result:
+  `table::row_0_an_rq1_violation_kept_with_an_sf1_violation_cut_off_ends_the_attempts`,
+  `table::row_0_findings_whose_only_confident_violation_was_cut_off_enlarge_nothing`,
+  `table::row_0_findings_cut_short_end_the_attempts_whatever_was_kept`,
   `table::row_1_a_violation_of_a_protected_subject_of_the_geometry_or_of_rq2_ends_the_attempts`
   (each of the three, confident and tentative, as a checklist item and as a separate
   observation),
@@ -909,8 +953,25 @@ and "Workflows").
    was new and the cache off; and one entry for each required check, by a fixed name: the
    checkout's model tests; the archive's `setup` with the extra; its mask on SAM 3; its
    fill; its check by each of the three providers, one entry each; and its loop. An entry
-   is read from the run's own record by the script, never typed, and holds what shows the
-   work was done:
+   is taken by the script from something a machine wrote, never typed, and holds what
+   shows the work was done. Two of the checks are not runs and have no run record, so
+   each has evidence of its own kind:
+   - **for the checkout's model tests:** `scripts/test-models.sh` is a test run, and what
+     it leaves is a test report. The profile `model-tier` (`.config/nextest.toml`) gains
+     the report the default profile already writes (`junit`), and the entry holds: the
+     commit of the checkout, which must be the tag's; the script's exit status, which must
+     be 0; from the report, the names of the tests run, which must be exactly the tests
+     the script's filter names at that commit (listed by the same command with its list
+     option, before the run), none failed, none timed out, none left out; and the
+     report's SHA-256;
+   - **for the archive's `setup` with the extra:** `whizbang setup` prints a summary and
+     writes no run. The entry holds: its exit status, which must be 0; from what it
+     printed, the extra, which must be `torch`, and the worker's hello with its device and
+     its thread count, which must be there; and then, from `whizbang backends status
+     --probe` by the same installed binary, that the installed pack's worker said hello
+     again. No run is named for either.
+
+   The rest are runs, and are read from their records:
    - **for the mask:** the run, completed; the segmenter's model and its version; the
      device;
    - **for the fill and for each provider's check:** the run, completed; the backend, the
@@ -930,8 +991,10 @@ and "Workflows").
    candidates, so a receipt of an earlier candidate that a later one superseded is not
    taken; the candidate holds a receipt that is read whole by its schema; the receipt
    names this candidate and this commit; **every required check is there exactly once and
-   meets item 4's conditions for its kind**: completed, not from a cache, a dispatch and a
-   settled answer where one is required, the loop checked with its child check completed;
+   meets item 4's conditions for its kind**: for the model tests, exit 0 and a report that
+   names every expected test and no failure; for `setup`, exit 0, the extra `torch`, and
+   the hello heard twice; for a run, completed, not from a cache, a dispatch and a settled
+   answer where one is required, the loop checked with its child check completed;
    and the digests the receipt names are those of the archives the candidate holds, which
    the gate takes again from their bytes, and those of `SHA256SUMS`. This is section 14's
    "A release is refused unless this passed on the same commit". The workflow then
@@ -959,7 +1022,10 @@ and "Workflows").
   `scripts/tests/test-release-gate.sh` (the release is refused when no `prerelease` run
   succeeded on the commit; when the receipt is missing; when it is malformed or holds a
   field its schema does not; when a required check is missing, is there twice, or did not
-  complete; **when a provider's check was answered from a cache, or names no dispatched and
+  complete; when the model tests' exit status is not 0, when their report holds a failed
+  or a timed-out test, when it lacks a test the filter names, or when there is no report;
+  when `setup` exited with a failure, installed another extra, or printed no hello, or the
+  probe heard none; **when a provider's check was answered from a cache, or names no dispatched and
   settled request; when the loop completed unchecked, or its plan did not check, or its
   child check did not complete**; when the store was not new or the cache was on; when it
   names another commit or another candidate; when it is of a candidate a later one
@@ -967,8 +1033,10 @@ and "Workflows").
   when all agree), `scripts/tests/test-prerelease-local.sh` (against stand-ins for the
   binary and for the `gh` command: a wrong sum stops it before anything runs; a binary
   whose version line names another commit stops it; a store that is not empty stops it; a
-  failed call is written as failed and fails the leg; each model-loading command is run
-  under the three guards; the loop is asked with the check required; the receipt it
+  failed call is written as failed and fails the leg; a model test that fails, and a
+  `setup` that fails, are each written as failed from the report and the exit status and
+  fail the leg; each model-loading command is run under the three guards; the loop is asked
+  with the check required; the receipt it
   writes is valid by its schema and holds only its fields),
   `scripts/tests/test-tag-version.sh` (`v0.1.0-rc.2` and `v0.1.0` are both accepted for a
   binary that says `0.1.0`, and name the same version; `v0.1.1-rc.1` and `v0.1.1` are
@@ -1029,7 +1097,9 @@ of retry works is shown by L1's and L2's tests with fakes, not here.
      with `whizbang runs export` and writes aggregates only: how many runs; how the
      attempts ended (passed at first, passed after a retry, kept `unsure`, kept `fail`,
      unchecked, error); the attempts made; the retries by kind (wider, located) and the
-     endings by the table's row; the places cut and how many found nothing; the findings
+     endings by the table's row, **among them how often the loop stopped on an `unsure`
+     that a retry under rascal's rule would have followed** (a tentative violation of
+     `RQ1` with a place), and how often on findings that were not complete; the places cut and how many found nothing; the findings
      by obligation, disposition and confidence; the median time; what was reserved and
      settled.
 
@@ -1281,7 +1351,7 @@ R1 ──► R2 ───────────────────┘
 
 Each is phrased so the owner can answer yes or no. The recommended answer is the one the
 tasks above assume; a no changes the task named. Three of draft 1's questions are settled
-and are under "What the owner decided".
+under "What the owner decided", and one of draft 3's under "What the orchestrator decided".
 
 1. **The pre-release checks in two parts.** I need your yes to run the model tests and the
    live call to each provider on your Mac, by the orchestrator, against the candidate's own
@@ -1297,13 +1367,8 @@ and are under "What the owner decided".
    action, `remove_checked` (`whizbang rascal remove-checked`), over `remove_prompt` only,
    as rascal's was, and that `remove_prompt` stays one unchecked pass. No means
    `remove_prompt` itself checks and retries by default. Recommended: yes. (L1)
-4. **Rascal's retry rules, narrowed.** I need your yes to: at most three attempts, the
-   first included; a retry only when the judge says with confidence that the named thing
-   is still there, inside the places it named, or with a wider mask once when it named
-   none; and a stop, with the best attempt handed back, when the judge says something else
-   was damaged, or is not sure. Rascal also retried when its checker was unsure and named
-   a place; this plan does not, because an unsure answer does not say the thing remains.
-   Recommended: yes. (L1, L2)
+4. Settled: rascal's retry rules, narrowed so that no `unsure` enlarges a mask ("What the
+   orchestrator decided"). The number is kept so that the others keep theirs.
 5. **Unchecked rather than refused.** I need your yes that, by default, the loop runs once
    unchecked and says why when no judge is ready, with `--check required` for a caller who
    would sooner be refused. Recommended: yes. (L1)
@@ -1466,3 +1531,33 @@ into draft 3. One line each:
    in `check`, both before L1; nine pull requests.
 10. **Minor: `RQ1` beside `RQ3` read two ways.** Right. Taken: the one table; row 5 says a
     violation of `RQ3` forbids nothing, and both tasks have its test.
+
+### Review round 3
+
+On draft 3, at 8b8be872. Verdict: revise. Three findings, all major. Each was checked
+against the code; every one was found right, and all are taken into draft 4. One line each:
+
+1. **Major: the first 32 findings could leave out the one that must stop the loop.** Right:
+   the submission's schema sets no limit on its answers, and every answer enters the
+   verdict. Taken: findings cut short in any way say `complete: false` (K2, item 2), and
+   that is row 0 of the table, read first: such findings end the attempts and never
+   enlarge a mask (L1, item 4), with tests of an `RQ1` violation kept beside an `SF1`
+   violation cut off, and of the only confident violation cut off, on a cache hit and a
+   miss.
+2. **Major: `--details first` would have done nothing, and the default was not the control
+   arm.** Right on both: `door::check_call` leaves an override out when it equals what the
+   recipe used to say, and the recipes offer `view,align,resize` in `full` where arm C
+   offered `view,align` in `visual_only`. Taken: the default is arm C whole, in the
+   recipes, because it is the arm the gate measured; `check_call` states all four settings
+   on every call; tests of the command's opt-in, of arms F and C in evaluation, and of the
+   direct recipe's and the server's defaults with the tools offered (A1, items 1 to 4).
+3. **Major: two receipt entries had no run record to be read from.** Right: the model
+   tests are a test run, and `setup` prints a summary. Taken: the model tests' entry is
+   the exit status and a test report the `model-tier` profile is made to write, held to
+   the filter's own list of tests; `setup`'s is its exit status, its printed extra and
+   hello, and a probe that hears the worker again; rejection tests for a failed or
+   incomplete test run and a failed setup or hello; no run is named for either (R2, items
+   4 and 5).
+
+Also changed with draft 4: draft 3's open question 4 is settled by the orchestrator as the
+stricter rule, and E1 counts how often the loop stops on it.
