@@ -1,0 +1,47 @@
+name: release
+
+# A version release (plan m4, task R2, item 5; SPEC.md section 14). It runs on a version
+# tag, `v<version>`, and on nothing else. It builds nothing: the gate refuses unless the
+# tag's commit has a candidate that passed, on GitHub (`prerelease`) and on the owner's
+# Mac (the receipt of scripts/prerelease-local.sh), and then the candidate's own archives
+# and SHA256SUMS are published under the version tag, byte for byte, marked as a
+# pre-release. scripts/tests/test-release-workflows.sh holds this file.
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # One job. It may write, and the one thing it writes is the release: the candidate is a
+  # draft, which GitHub shows only to a token that may write, so the gate needs that leave
+  # to read it. It may read the runs of the workflows, to hold that `prerelease` passed.
+  release:
+    name: release
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      # Every tag, so that the gate sees every candidate of the version.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The gate, on the candidate of this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: scripts/release-gate.sh "$TAG" "$RUNNER_TEMP/candidate"
+      - name: The candidate's own archives and SHA256SUMS, under the version tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: scripts/release-publish.sh release "$TAG" "$RUNNER_TEMP/candidate"

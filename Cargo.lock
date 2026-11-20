@@ -1156,7 +1156,7 @@ dependencies = [
 
 [[package]]
 name = "whizbang"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "clap",
  "image",
@@ -1175,7 +1175,7 @@ dependencies = [
 
 [[package]]
 name = "whizbang-backends"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "image",
  "rustls",
@@ -1190,7 +1190,7 @@ dependencies = [
 
 [[package]]
 name = "whizbang-core"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "fdeflate",
  "image",
@@ -1209,7 +1209,7 @@ dependencies = [
 
 [[package]]
 name = "whizbang-eval"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1220,7 +1220,7 @@ dependencies = [
 
 [[package]]
 name = "whizbang-rascal"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "clap",
  "image",
@@ -1232,7 +1232,7 @@ dependencies = [
 
 [[package]]
 name = "whizbang-serve"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "serde_json",
  "whizbang-core",
@@ -1240,7 +1240,7 @@ dependencies = [
 
 [[package]]
 name = "whizbang-squint"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "image",
  "jsonschema",
@@ -1254,7 +1254,7 @@ dependencies = [
 
 [[package]]
 name = "whizbang-testkit"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "serde_json",
  "whizbang-core",

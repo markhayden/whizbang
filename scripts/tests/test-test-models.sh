@@ -14,6 +14,13 @@ expect_fail "no models directory named" "no models directory is named" env -u WH
 expect_fail "a part the tier has not" "names a part of the tier" env -u WHIZBANG_MODELS_DIR "$tm" everything
 expect_fail "two parts" "names a part of the tier" env -u WHIZBANG_MODELS_DIR "$tm" parity coverage
 expect_fail "an empty name" "no models directory is named" env WHIZBANG_MODELS_DIR= "$tm"
+expect_fail "a list of a part the tier has not" "names a part of the tier" env -u WHIZBANG_MODELS_DIR "$tm" --list everything
+# The list is the run's own filter and profile with the list option, and the run leaves a
+# report: the local leg of a release holds one to the other.
+grep -F 'cargo nextest list --profile model-tier -p whizbang --test it --run-ignored only' "$tm" >/dev/null &&
+  grep -F -e '--message-format oneline -E "$filter"' "$tm" >/dev/null || fail "--list lists the tests of the run's own filter"
+[ "$(grep -A1 -x -F '[profile.model-tier.junit]' .config/nextest.toml | tail -n 1)" = 'path = "junit.xml"' ] ||
+  fail "the profile model-tier writes a report (junit.xml), as the default profile does"
 expect_fail "a relative path" "must be an absolute path" env WHIZBANG_MODELS_DIR=models "$tm"
 mkdir -p "$tmp/models-only/models"
 expect_fail "a folder without the pack" "no models directory with a model and the pack" \
