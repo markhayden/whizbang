@@ -204,6 +204,7 @@ mod writes {
         rasterize => masks,
         shrink => masks,
         invert => masks,
+        carry => masks,
         inspect => masks,
         cut => frames,
         put => frames,

@@ -7,13 +7,19 @@
 //! image is the composite and the mask the one `fill` rebound onto it, so the second pass
 //! works on the composite and keeps the first edit.
 //!
+//! **A mask on a crop** (plan m4, task L2, item 1). When the first mask is on a crop of
+//! the image, the call gives the crop beside it, with the crop's corner on the image as
+//! `left` and `top`: the mask is carried onto the image first ([`crate::carry`], which
+//! compares the crop with the image there), and inverted on the image. So a mask that
+//! `segment` made inside a crop that `view` cut protects its place on the whole picture.
+//!
 //! Ported from rascal `crates/rascal-ops/src/invert.rs` at the commit
-//! `docs/sources.toml` pins, with one difference, on purpose: rascal's `to` carried the
-//! mask up its chain of frames (a cut canvas onto its panorama, a crop onto its image)
-//! before inverting. Here a mask is on one image, and the inversion is on that image;
-//! carrying a mask from a canvas or a window back onto its image is task O2's (the
-//! carry-over row on `invert` through a cut or a crop). A mask that reached every pixel,
-//! which rascal said did not apply, is refused.
+//! `docs/sources.toml` pins, with these differences, each on purpose. Rascal's `to` named
+//! a frame on the mask's chain, a cut canvas's panorama or a crop's image, and the mask
+//! was carried up to it before it was inverted. Here an image names no parent: the
+//! image to invert on is the one given, and a mask on a crop of it comes with the crop
+//! and its corner. A mask on a cut canvas is not carried (`docs/carry-over.md`). A mask
+//! that reached every pixel, which rascal said did not apply, is refused.
 
 use whizbang_core::artifact::{ArtifactError, ArtifactType, Mask, Origin, Step, UseCase};
 use whizbang_core::contract::{
@@ -32,8 +38,10 @@ pub const VERSION: &str = "1.0.0";
 /// What the command says the action does.
 pub const ABOUT: &str = "Make the mask for a second pass on an image: everything the first mask reached, its core, \
 its blend and its protect, is protected, and every other pixel is the core. The mask must \
-be on the image: after a fill, the composite and the mask fill rebound onto it. The new mask \
-is committed to the store, and its identity is printed.";
+be on the image: after a fill, the composite and the mask fill rebound onto it. A mask on a \
+crop of the image is given with the crop and the crop's corner on the image, left and top, \
+and is carried onto the image first. The new mask is committed to the store, and its \
+identity is printed.";
 
 /// Why a mask could not be inverted.
 #[derive(Debug)]
@@ -82,20 +90,31 @@ pub struct Invert {
 
 impl Invert {
     pub fn new() -> Invert {
+        let [left, top] = crate::carry::corner_arguments(false);
         let draft = ActionDescriptor::draft(
             NAME,
             VERSION,
             Kind::Primitive,
             "The mask for a second pass: what the first mask reached is protected, and every other pixel is the core.",
         )
-        .input(
-            InputPort::required("mask", ArtifactType::Mask, "The first pass's mask, on the image.")
-                .on("image"),
-        )
+        .argument(left)
+        .argument(top)
+        // On the image, or on the crop when one is given: held when the call runs,
+        // since a port belongs to one image.
+        .input(InputPort::required(
+            "mask",
+            ArtifactType::Mask,
+            "The first pass's mask, on the image, or on the crop when one is given.",
+        ))
         .input(InputPort::required(
             "image",
             ArtifactType::Image,
             "The image of the second pass: after a fill, its composite.",
+        ))
+        .input(InputPort::optional(
+            "crop",
+            ArtifactType::Image,
+            "The crop of the image the mask is on, when it is on one; with left and top.",
         ))
         .output(
             OutputPort::one(
@@ -134,6 +153,15 @@ pub struct Args {
     /// The image of the second pass, by its identity in the store.
     #[arg(long)]
     pub image: String,
+    /// The crop of the image the mask is on, when it is on one, by its identity.
+    #[arg(long, requires_all = ["left", "top"])]
+    pub crop: Option<String>,
+    /// The crop's left edge on the image, in whole pixels.
+    #[arg(long, requires = "crop")]
+    pub left: Option<u32>,
+    /// The crop's top edge on the image, in whole pixels.
+    #[arg(long, requires = "crop")]
+    pub top: Option<u32>,
 }
 
 impl operation::Asked for Args {
@@ -142,14 +170,23 @@ impl operation::Asked for Args {
     }
 
     fn arguments(&self) -> Vec<(&'static str, Value)> {
-        Vec::new()
+        let side =
+            |name, side: Option<u32>| side.map(|side| (name, Value::Integer(i64::from(side))));
+        [side("left", self.left), side("top", self.top)]
+            .into_iter()
+            .flatten()
+            .collect()
     }
 
     fn inputs(&self) -> Vec<(&'static str, &'static str, &str)> {
-        vec![
+        let mut inputs = vec![
             ("mask", "--mask", self.mask.as_str()),
             ("image", "--image", self.image.as_str()),
-        ]
+        ];
+        if let Some(crop) = &self.crop {
+            inputs.push(("crop", "--crop", crop.as_str()));
+        }
+        inputs
     }
 }
 
@@ -161,6 +198,23 @@ impl Action for Invert {
     fn run(&self, call: &PreparedCall, context: &Context) -> Result<Produced, Failure> {
         let image = operation::one(call, "image")?;
         let read = operation::mask(context, operation::one(call, "mask")?)?;
+        let corner = crate::carry::corner(call)?;
+        let read = match (operation::given(call, "crop").first(), corner) {
+            (Some(_), Some(at)) => (crate::carry::placed(call, context, at)?.carry(&read))
+                .map_err(crate::carry::failed)?,
+            (None, None) => {
+                // The image's digest and space, without its pixels decoded.
+                let on = operation::image(context, image)?;
+                (read.require_image(on.identity().pixels, on.space()))
+                    .map_err(|error| Failure::invalid(&error.without_paths()))?;
+                read
+            }
+            _ => {
+                return Err(Failure::invalid(
+                    "left and top are the corner of a crop, and are given with the crop",
+                ));
+            }
+        };
         let made = invert(&read, image.0).map_err(|error| match error {
             InvertError::Everything => Failure::invalid(
                 "the first mask reached every pixel of the image; nothing is left to edit",

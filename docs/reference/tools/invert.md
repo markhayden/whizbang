@@ -13,20 +13,26 @@ empty, and the mask is recorded as made to protect. The task `protect` runs it a
 
 - **Use it** after a fill, on the composite and the mask `fill` rebound onto it, to edit
   everything else while the first edit is kept.
-- **Do not use it** through a cut or a window: the mask and the image must be one, and
-  carrying a mask back up a cut or a crop is `put`'s and `unwindow`'s.
+- **A mask on a crop** of the image, such as one `segment` made inside a crop `view` cut,
+  is given with the crop and the crop's corner on the image: it is carried onto the image
+  first, as `carry` does it (`carry.md`), and inverted there.
+- **Do not use it** through a cut canvas or a window: carrying a canvas back is `put`'s and
+  `unwindow`'s, and a mask on one is not carried.
 - **Kind.** A pure pixel operation: rungs 1 and 2 apply. No model, no spend.
 
 The action `invert`, version 1.0.0:
 
 ```
-whizbang rascal invert --mask <identity> --image <identity> --store <dir>
+whizbang rascal invert --mask <identity> --image <identity>
+        [--crop <identity> --left <pixels> --top <pixels>] --store <dir>
 ```
 
 | Name | Meaning |
 |---|---|
-| `mask` (input) | The first pass's mask, on the image |
+| `mask` (input) | The first pass's mask, on the image, or on the crop when one is given |
 | `image` (input) | The image of the second pass: after a fill, its composite |
+| `crop` (input, optional) | The crop of the image the mask is on, when it is on one |
+| `left`, `top` | With a crop: its corner on the image, in whole pixels |
 
 **Output.** One mask at `mask`, on the image, its source the first mask's. A mask that
 reached every pixel is refused: nothing is left to edit.
@@ -52,6 +58,8 @@ Exact against reference results (`SPEC.md` section 8). Measured on 2026-11-19.
 (`crates/rascal-ops/tests/it/subtract_select_invert.rs` at the pinned commit) that stay on
 the mask's own image: protect counts the core, the blend and protect, every other pixel is
 the core, and a mask that reaches every pixel leaves nothing to edit. No pixel differs.
+`invert::invert_from_a_crop_mask_lands_protect_on_its_bbox` holds rascal's vector of a
+crop: a mask on a crop of 30 by 30 protects its place on the picture of 100 by 60.
 
 The examples in numbers, the same on every machine:
 
@@ -91,6 +99,7 @@ None tried: the rule is rascal's, ported unchanged but for the differences its m
 | Any weight at all protects: a feather's faintest edge is kept from the second pass | The first example: 644 blend pixels protected |
 | A mask that reached every pixel is refused | `the_records_of_rasterize_shrink_invert_and_inspect_are_what_they_give` |
 | The second pass's core has no feather: feather it before a fill | Both examples |
+| A crop that `view` scaled down, or that is not the image's pixels at the corner given, is refused | `carry.md`, "Limits" |
 
 ## Mark and history
 
@@ -106,4 +115,5 @@ this one does.
 **Gates.** None faced.
 
 **History.** Plan m3, task O1: ported from rascal's `invert.rs` at the pinned commit.
-Plan m3, task D2: this record.
+Plan m3, task D2: this record. Plan m4, task L2: a mask on a crop of the image, carried
+onto it first (rascal's `to`, for a crop).

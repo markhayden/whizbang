@@ -108,6 +108,7 @@ fn the_shipping_executor_describes_check_and_cannot_run_it_for_want_of_a_judge()
             "rasterize",
             "shrink",
             "invert",
+            "carry",
             "tighten",
             "inspect",
             "fan",
