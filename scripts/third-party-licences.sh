@@ -37,7 +37,8 @@
 # its sysroot; nothing is downloaded), and a toolchain without them fails the script. The
 # notices of what the standard library itself holds are the toolchain's
 # `COPYRIGHT-library.html`, an HTML page of 1.5 MB, which is named in the file and not
-# repeated in it: owed, plan m4, R1's section.
+# repeated in it: scripts/package.sh puts that page in the archive beside this file, as
+# it is (plan m4, "Owed after R1", item 3).
 #
 # The file is not committed: licence texts hold their authors' addresses, which no tracked
 # file here may (AGENTS.md, "Secrets and private data"). `just package` makes it for each
@@ -295,8 +296,8 @@ released=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | sed -n '1p')
   echo "The binary is linked with the standard library of \`$compiler\`, which is under MIT"
   echo "or Apache-2.0 at the choice of whoever uses it. Both texts follow, as the toolchain"
   echo "that built the binary carries them. The notices of the code the standard library"
-  echo "itself holds are in that toolchain's \`share/doc/rust/COPYRIGHT-library.html\`, which"
-  echo "is published with every Rust toolchain and is not repeated here."
+  echo "itself holds are that toolchain's \`share/doc/rust/COPYRIGHT-library.html\`, which"
+  echo "is the file \`COPYRIGHT-library.html\` beside this one, as the toolchain carries it."
   for text in MIT.txt Apache-2.0.txt; do
     echo
     echo "### The standard library's $text"

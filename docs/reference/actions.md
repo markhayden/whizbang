@@ -2,7 +2,7 @@
 
 # Actions
 
-What `whizbang` 0.0.1 can do, from its static description (version 10).
+What `whizbang` 0.1.0 can do, from its static description (version 10).
 The same as data: [description.json](description.json).
 
 ## `check`

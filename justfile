@@ -97,16 +97,18 @@ test-timeout:
 test-scripts-slow:
     WHIZBANG_SLOW_TESTS=1 scripts/tests/run.sh
 
-# A smoke of the release binary: build it, run `describe` in each form, and require success.
+# A smoke of the release binary: build it as a release is built (scripts/release-build.sh,
+# which `package` uses too), run `describe` in each form, and require success.
 smoke:
-    cargo build --release -p whizbang
+    scripts/release-build.sh
     target/release/whizbang describe
     target/release/whizbang describe --json > /dev/null
     target/release/whizbang describe --json --pretty > /dev/null
 
 # The release archive of this machine's target, and its line of SHA256SUMS, in
 # target/package: the binary built as `smoke` builds it, LICENSE, the licences of the
-# crates the binary is built from, and the install guide (scripts/package.sh). Heavy.
+# crates the binary is built from, the notices of what the standard library holds, and
+# the install guide (scripts/package.sh). Heavy.
 package:
     scripts/package.sh
 

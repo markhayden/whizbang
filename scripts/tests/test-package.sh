@@ -30,25 +30,32 @@ stand_in() {
 }
 stand_in "$tmp/whizbang" "whizbang $version (commit $commit)"
 
-# --- The archive holds one folder with exactly the four files.
+# --- The archive holds one folder with exactly the five files.
 expect_pass "the archive" "$script" --binary "$tmp/whizbang" --out "$tmp/a"
 [ "$(ls -A "$tmp/a" | tr '\n' ' ')" = "SHA256SUMS $name.tar.gz " ] || fail "the folder holds the archive and SHA256SUMS (found: $(ls -A "$tmp/a" | tr '\n' ' '))"
 listed=$(tar -tzf "$tmp/a/$name.tar.gz" | sed 's|/$||' | tr '\n' ' ')
-[ "$listed" = "$name $name/LICENSE $name/README.md $name/THIRD-PARTY-LICENSES.md $name/whizbang " ] ||
-  fail "the archive lists the folder and exactly the four files, in the order of their names (it lists: $listed)"
+[ "$listed" = "$name $name/COPYRIGHT-library.html $name/LICENSE $name/README.md $name/THIRD-PARTY-LICENSES.md $name/whizbang " ] ||
+  fail "the archive lists the folder and exactly the five files, in the order of their names (it lists: $listed)"
 mkdir "$tmp/unpacked"
 tar -xzf "$tmp/a/$name.tar.gz" -C "$tmp/unpacked"
-[ "$(cd "$tmp/unpacked" && find . | sort | tr '\n' ' ')" = ". ./$name ./$name/LICENSE ./$name/README.md ./$name/THIRD-PARTY-LICENSES.md ./$name/whizbang " ] ||
-  fail "the archive unpacks to the folder and the four files and nothing else"
+[ "$(cd "$tmp/unpacked" && find . | sort | tr '\n' ' ')" = ". ./$name ./$name/COPYRIGHT-library.html ./$name/LICENSE ./$name/README.md ./$name/THIRD-PARTY-LICENSES.md ./$name/whizbang " ] ||
+  fail "the archive unpacks to the folder and the five files and nothing else"
 cmp -s "$tmp/unpacked/$name/whizbang" "$tmp/whizbang" && [ -x "$tmp/unpacked/$name/whizbang" ] || fail "the archive's binary is the one packaged, and can be run"
 cmp -s "$tmp/unpacked/$name/LICENSE" LICENSE || fail "the archive's LICENSE is the repo's"
 cmp -s "$tmp/unpacked/$name/README.md" docs/guides/install.md || fail "the archive's README.md is the install guide"
 grep -x -F '# Third-party licences' "$tmp/unpacked/$name/THIRD-PARTY-LICENSES.md" >/dev/null &&
   grep -F "| clap | " "$tmp/unpacked/$name/THIRD-PARTY-LICENSES.md" >/dev/null ||
   fail "the archive's THIRD-PARTY-LICENSES.md holds the licences of the binary's crates"
+# The notices of what the standard library holds: the toolchain's own file, as it is, and
+# named by the file of licences beside it.
+notices=$(rustc --print sysroot)/share/doc/rust/COPYRIGHT-library.html
+[ -s "$notices" ] || fail "the pinned toolchain carries COPYRIGHT-library.html in share/doc/rust"
+cmp -s "$tmp/unpacked/$name/COPYRIGHT-library.html" "$notices" || fail "the archive's COPYRIGHT-library.html is the toolchain's, byte for byte"
+grep -F 'is the file `COPYRIGHT-library.html` beside this one' "$tmp/unpacked/$name/THIRD-PARTY-LICENSES.md" >/dev/null ||
+  fail "THIRD-PARTY-LICENSES.md names the notices beside it"
 # Fixed owners, a fixed time, and modes that are not this shell's.
 tar -tvzf "$tmp/a/$name.tar.gz" >"$tmp/long"
-[ "$(awk '{ print $1 }' "$tmp/long" | tr '\n' ' ')" = "drwxr-xr-x -rw-r--r-- -rw-r--r-- -rw-r--r-- -rwxr-xr-x " ] || { cat "$tmp/long" >&2; fail "the entries have fixed modes"; }
+[ "$(awk '{ print $1 }' "$tmp/long" | tr '\n' ' ')" = "drwxr-xr-x -rw-r--r-- -rw-r--r-- -rw-r--r-- -rw-r--r-- -rwxr-xr-x " ] || { cat "$tmp/long" >&2; fail "the entries have fixed modes"; }
 if awk '{ print $2 "/" $3 }' "$tmp/long" | sed 's|^\([^/]*\)/\([^/]*\).*|\1 \2|' | grep -v -x -E '0 0' >/dev/null; then
   cat "$tmp/long" >&2
   fail "every entry is owned by user 0 and group 0, with no names"
@@ -85,16 +92,18 @@ cmp -s "$tmp/a/$name.tar.gz" "$tmp/c/$name.tar.gz" || fail "GZIP and TAR_OPTIONS
 # a copy of the script and stand-ins for cargo and rustc: this checkout is not touched.
 repo="$tmp/repo"
 mkdir -p "$repo/scripts" "$repo/docs/guides" "$tmp/tools"
-cp "$script" "$repo/scripts/package.sh"
+cp "$script" scripts/release-build.sh "$repo/scripts/"
 cp Cargo.toml LICENSE "$repo/"
 cp docs/guides/install.md "$repo/docs/guides/install.md"
-printf '%s\n' '#!/bin/bash' "echo \"host: $target\"" >"$tmp/tools/rustc"
-printf '%s\n' '#!/bin/bash' "printf '%s\\n' \"\$*\" >>\"$tmp/cargo-ran\"" >"$tmp/tools/cargo"
+printf '%s\n' '#!/bin/bash' "case \"\$*\" in '--print sysroot') echo \"$(rustc --print sysroot)\" ;; *) echo \"host: $target\" ;; esac" >"$tmp/tools/rustc"
+printf '%s\n' '#!/bin/bash' "printf '%s\\n' \"\$*\" >>\"$tmp/cargo-ran\"" \
+  "printf '%s|RUSTFLAGS %s\\n' \"\$(printf '%s' \"\$CARGO_ENCODED_RUSTFLAGS\" | tr '\\037' '|')\" \"\${RUSTFLAGS-unset}\" >\"$tmp/cargo-flags\"" >"$tmp/tools/cargo"
+mkdir -p "$tmp/cargo-home"
 chmod +x "$tmp/tools/rustc" "$tmp/tools/cargo"
 git -C "$repo" init -q
 git -C "$repo" -c user.name=test -c user.email=test@example.invalid add -A
 git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -q -m "a tree"
-built() { (cd "$repo" && env PATH="$tmp/tools:$PATH" scripts/package.sh --out "$tmp/built"); }
+built() { (cd "$repo" && env PATH="$tmp/tools:$PATH" CARGO_HOME="$tmp/cargo-home" RUSTFLAGS=-Copt-level=0 scripts/package.sh --out "$tmp/built"); }
 echo "changed" >>"$repo/LICENSE"
 expect_fail "a tracked change, not staged" "the checkout has tracked changes" built
 git -C "$repo" add LICENSE
@@ -105,6 +114,37 @@ git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -q -m
 echo "not tracked" >"$repo/notes.txt"
 expect_fail "a clean checkout, with a stand-in cargo that builds nothing" "the binary is not a file that can be run" built
 [ "$(cat "$tmp/cargo-ran")" = "build --release -p whizbang --locked" ] || fail "a clean checkout is built with: cargo build --release -p whizbang --locked"
+# The compiler is told to write cargo's home and the checkout under fixed names, in the
+# one variable that takes a path with a space, and RUSTFLAGS of whoever builds is not read.
+[ "$(cat "$tmp/cargo-flags")" = "--remap-path-prefix=$(cd "$tmp/cargo-home" && pwd -P)=/cargo|--remap-path-prefix=$(cd "$repo" && pwd -P)=/whizbang|RUSTFLAGS unset" ] ||
+  fail "the release build remaps cargo's home and the checkout, and no more (it was given: $(cat "$tmp/cargo-flags"))"
+
+# --- A toolchain that does not carry the standard library's notices: no archive.
+mkdir -p "$tmp/bare/sysroot" "$tmp/bare/bin"
+printf '%s\n' '#!/bin/bash' "case \"\$*\" in -vV) echo \"host: $target\" ;; '--print sysroot') echo \"$tmp/bare/sysroot\" ;; *) exit 1 ;; esac" >"$tmp/bare/bin/rustc"
+chmod +x "$tmp/bare/bin/rustc"
+expect_fail "a toolchain without the notices" "the toolchain does not carry the standard library's notices" \
+  env PATH="$tmp/bare/bin:$PATH" "$script" --binary "$tmp/whizbang" --out "$tmp/refused"
+[ ! -e "$tmp/refused" ] || fail "a toolchain without the notices writes nothing"
+
+# --- Never an archive of a binary that holds a path of the machine it was built on: this
+# checkout's, cargo's home's, or one below the home folder. The stand-in holds it as a
+# real binary would, in a message.
+leaky() { # <name> <path> <expected text> [<variable>=<value>]
+  printf '%s\n' '#!/bin/bash' "[ \"\$*\" = --version ] && echo \"whizbang $version (commit $commit)\"" "# panicked at $2/src/lib.rs:1:1" >"$tmp/leaky"
+  chmod +x "$tmp/leaky"
+  expect_fail "$1" "$3" env ${4:+"$4"} "$script" --binary "$tmp/leaky" --out "$tmp/refused"
+  [ ! -e "$tmp/refused" ] || fail "$1: nothing is written"
+}
+leaky "a binary that holds the checkout's path" "$(pwd -P)/crates/whizbang" "the binary holds the path of this checkout"
+mkdir -p "$tmp/cargo-home/registry"
+leaky "a binary that holds the path of cargo's home" "$(cd "$tmp/cargo-home" && pwd -P)/registry/src/a-crate-1.0.0" "the binary holds the path of cargo's home" "CARGO_HOME=$tmp/cargo-home"
+mkdir -p "$tmp/a-home"
+leaky "a binary that holds a path below the home folder" "$(cd "$tmp/a-home" && pwd -P)/work" "the binary holds a path below the home folder" "HOME=$(cd "$tmp/a-home" && pwd -P)"
+# The same folders under their fixed names are what a release build writes, and pass.
+printf '%s\n' '#!/bin/bash' "[ \"\$*\" = --version ] && echo \"whizbang $version (commit $commit)\"" "# panicked at /cargo/registry/src/a-crate-1.0.0/src/lib.rs:1:1 and /whizbang/crates/whizbang/src/main.rs:1:1" >"$tmp/remapped"
+chmod +x "$tmp/remapped"
+expect_pass "a binary with the fixed names" "$script" --binary "$tmp/remapped" --out "$tmp/remapped-out"
 
 # --- Never an archive of a binary that is not this checkout's: another commit, another
 # version, no commit, or no answer. Nothing is written.
@@ -137,8 +177,13 @@ status=0
 
 # --- The real build is `just smoke`'s: the same command, with the lock file held, and no
 # feature named, so none of the tests' and no `baseline-replay`.
-grep -x -F '  cargo build --release -p whizbang --locked' "$script" >/dev/null || fail "the binary is built as just smoke builds it, with the lock file as it is"
-grep -x -F '    cargo build --release -p whizbang' justfile >/dev/null || fail "just smoke builds the release binary the same way"
-if grep -E '^[^#]*cargo build.*(--features|--all-features)' "$script" >/dev/null; then fail "the release build names no feature"; fi
+# One script builds for both, so the archive's binary is the one the smoke ran.
+grep -x -F '  scripts/release-build.sh' "$script" >/dev/null || fail "the binary is built by scripts/release-build.sh"
+grep -x -F '    scripts/release-build.sh' justfile >/dev/null || fail "just smoke builds the release binary the same way"
+[ "$(grep -c -E '^[^#]*cargo build' scripts/release-build.sh)" = 1 ] &&
+  grep -x -F 'env -u RUSTFLAGS CARGO_ENCODED_RUSTFLAGS="$flags" cargo build --release -p whizbang --locked' scripts/release-build.sh >/dev/null ||
+  fail "the release build is: cargo build --release -p whizbang --locked, with the lock file as it is"
+if grep -E '^[^#]*cargo build' "$script" justfile >/dev/null; then fail "nothing else builds a release binary"; fi
+if grep -E '^[^#]*cargo build.*(--features|--all-features)' scripts/release-build.sh >/dev/null; then fail "the release build names no feature"; fi
 
 finished
