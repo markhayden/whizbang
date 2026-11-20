@@ -347,19 +347,8 @@ fn the_use_cases_record_names_a_commit_of_this_tree_and_holds_no_secret() {
     the_two_new_judges_lines_are_of_this_tree(&page);
     // Plan m3, task Q1, item 7 (reworded with the task): each use case's recipe run live,
     // credited from the gate of details first run again, a block of the run and one a use
-    // case. Until its values are in, Q1's box stays open.
-    if page.contains("```toml recipes\n") {
-        the_recipes_lines_are_of_this_tree(&page);
-    } else {
-        let plan =
-            std::fs::read_to_string(repository().join("docs/plans/m3-milestone-3.md")).unwrap();
-        let q1 = plan.split("\n## Q1. ").nth(1).unwrap();
-        let q1 = q1.split("\n## ").next().unwrap();
-        assert!(
-            q1.contains("\n- [ ] Done when:"),
-            "Q1 is ticked without its lines"
-        );
-    }
+    // case.
+    the_recipes_lines_are_of_this_tree(&page);
     // No secret, no path and no reply: no key's form, no header, no absolute path, no
     // checklist item's name and no reason.
     for held in [
@@ -398,6 +387,7 @@ fn the_recipes_lines_are_of_this_tree(page: &str) {
     let commit = field(run, "commit");
     assert!(is_ancestor(commit), "{commit}");
     assert_eq!(field(run, "whizbang"), env!("CARGO_PKG_VERSION"));
+    assert_eq!(field(run, "action"), "check 1.6.0");
     assert_eq!(field(run, "gate"), "gates/details-first.toml");
     assert_eq!(
         field(run, "judges"),
@@ -447,8 +437,11 @@ fn the_recipes_lines_are_of_this_tree(page: &str) {
     assert_eq!(decisions, number(run, "decisions"));
     assert_eq!(completed, number(run, "completed"));
     assert_eq!(completed + number(run, "errors"), decisions);
+    let verdicts = ["pass", "fail", "unsure"].map(|n| number(run, n));
+    assert_eq!(verdicts.iter().sum::<u64>(), completed);
     // Within what the plan let G1's gate spend, 15.50 dollars.
-    assert!(number(run, "settled_micros") <= 15_500_000);
+    let spent: f64 = field(run, "settled_usd").parse().expect("settled_usd");
+    assert!((0.0..=15.5).contains(&spent), "{spent}");
 }
 
 /// The ten blocks of the Google and OpenAI judges' live calls (plan 3, task L0), in
@@ -1160,18 +1153,29 @@ fn the_baseline_record_holds_the_live_reruns_two_numbers() {
 
 #[test]
 fn the_gates_record_holds_the_details_first_receipt_and_only_aggregates() {
-    let root = repository();
-    let page = std::fs::read_to_string(root.join("docs/results/m3-gates.md"))
+    let page = std::fs::read_to_string(repository().join("docs/results/m3-gates.md"))
         .expect("the record of the gate of details first is committed");
-    let bytes = std::fs::read(root.join("docs/results/m3-gates/details-first-receipt.json"))
+    // The first run, and the run again after the judges' fixes (plan m3, the closing pull
+    // request), each its receipt and its table under its own part of the record.
+    let (first, again) = page
+        .split_once("\n## Run again")
+        .expect("a part on the run again");
+    a_gates_receipt_as_its_record_states_it(first, "details-first-receipt.json");
+    a_gates_receipt_as_its_record_states_it(again, "details-first-rerun-receipt.json");
+}
+
+/// A receipt of the gate of details first, committed under `docs/results/m3-gates/`: named
+/// by its digest in `part`, of the frozen gate, its matrix and the published labels of its
+/// sets, aggregates only, and each judge's outcome and gain as `part`'s table states them.
+fn a_gates_receipt_as_its_record_states_it(part: &str, name: &str) {
+    let root = repository();
+    let bytes = std::fs::read(root.join("docs/results/m3-gates").join(name))
         .expect("its receipt is committed");
-    // The record names the receipt by its digest, and the receipt is of the frozen gate,
-    // its matrix and the published labels of its sets.
-    assert!(page.contains(&Digest::of_bytes(&bytes).hex()));
+    assert!(part.contains(&Digest::of_bytes(&bytes).hex()), "{name}");
     let receipt: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let frozen = whizbang::gating::frozen(&root.join("gates/details-first.toml")).unwrap();
     assert_eq!(receipt["gate_sha256"], frozen.digest.as_str());
-    assert!(page.contains(&frozen.digest));
+    assert!(part.contains(frozen.digest.as_str()), "{name}");
     assert_eq!(
         receipt["matrix_identity"],
         frozen.matrix.identity().as_str()
@@ -1205,10 +1209,10 @@ fn the_gates_record_holds_the_details_first_receipt_and_only_aggregates() {
         let model = judge["model"].as_str().unwrap();
         let outcome = judge["outcome"].as_str().unwrap();
         let gain = judge["paired"]["gain"]["point"].as_f64().unwrap();
-        let row = page
+        let row = part
             .lines()
             .find(|line| line.starts_with(&format!("| `{model}` | {outcome} |")))
-            .unwrap_or_else(|| panic!("a row of {model}"));
+            .unwrap_or_else(|| panic!("{name}: a row of {model}"));
         assert!(row.contains(&format!("| {gain:.3} [")), "{row}");
         let keys: Vec<&String> = judge.as_object().unwrap().keys().collect();
         assert_eq!(keys, ["backend", "failed", "model", "outcome", "paired"]);

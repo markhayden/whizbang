@@ -6,9 +6,9 @@ Milestone 3, "Rascal and edit evaluation", ends in code with task B1 of
 with `main` at 1940c87 (the merge of #242). On 2026-11-19 the owner moved the blinded
 picking rounds to milestone E (below, "What the owner decided"), so the seam's and the
 edits' rounds stand as run and drawn, not picked, and no recipe's visual quality was
-confirmed by a person in milestone 3. Two lines are left, each marked **To be filled by the
-closing pull request**: the re-run of the gate of details first on the Google judge, and the
-milestone's final spend; Q1's box waits on the same re-run (its item 7, the recipes' lines).
+confirmed by a person in milestone 3. The closing pull request also records the gate of
+details first run again after the judges' fixes (#243), which credits Q1's item 7, and the
+final spend. With it every box of the plan is ticked: **milestone 3 is closed.**
 
 ## What whizbang can do at the end of milestone 3
 
@@ -45,7 +45,7 @@ run of `check` is written as a transcript the baseline's comparison reads.
 | #214, #228, #232, #233, #234, #238 | Upkeep | The store's growth, test time, the Mac runner, a folder's normal form, a fast encoder |
 | #237 | B1 | The edit set's program, its scoring program and the four labs' files |
 | #241, #242 | B1 | The edits' record, the five recipes' records, the stored transcript, the rows, this note |
-| The closing one | L3, Q1, B1 | The owner's amendment; `remove_prompt` against a reference arm in a lab round; the recipes' lines; the gate's re-run |
+| #244 | L3, Q1, B1 | The owner's amendment; `remove_prompt` against a reference arm in a lab round; the recipes' lines; the gate's re-run |
 
 ## The clauses of the spec's row, each with its evidence
 
@@ -92,11 +92,18 @@ against `thin-bria` (`fan-thin-v1`), ran on 2026-11-19 at 8957f1f on the owner's
 group (`sky` 13, `structured` 17) and not picked, so there is no decode to set beside
 rascal's `seam-03` (`fan-v1`) and `objects-02`.
 
-**The gate of details first, again on the Google judge.** To be filled by the closing pull
-request: the re-run's result after the judge's fix (#223), its errors by kind beside the other
-providers'. Before it (`docs/results/m3-gates.md`): rejected; `claude-haiku-5-5` 0.567 under
-arm C and 0.550 under F, `gemini-3.8-flash` 0.646 and 0.554 with 40 errors of 100 under F,
-`gpt-6.1-terra` 0.721 and 0.733, inconclusive.
+**The gate of details first, run again.** Rejected again (`docs/results/m3-gates.md`, "Run
+again"). The first run, at 3b6824c: rejected; `claude-haiku-5-5` 0.567 under arm C and 0.550
+under F, `gemini-3.8-flash` 0.646 and 0.554 with 40 errors of 100 under F, `gpt-6.1-terra`
+0.721 and 0.733, inconclusive. A second, at e8cead9, is invalid: 186 runs ended in error from
+two faults of that build, fixed by #243. The third, at af5392c4 with `check` 1.6.0, 4.27
+dollars: on the two judges that could be measured, details first did not help.
+`claude-haiku-5-5` did worse, 0.562 under C and 0.479 under F, a gain of -0.083 [-0.149,
+-0.020], part of it from 19 more runs ending in a submission that was not a verdict (31
+under F, 12 under C); `gpt-6.1-terra` did not change, 0.738 and 0.738, a gain of 0.000
+[-0.040, 0.044], inconclusive. `gemini-3.8-flash` is not a measurement: 195 of its runs ended
+in the provider's 402 `RESOURCE_EXHAUSTED`, a limit on the key; its arm is owed by milestone
+E. Details first is still `check`'s default, which milestone E takes up first.
 
 ## Spend, and what was downloaded
 
@@ -107,9 +114,10 @@ baseline's live rerun, 11.908215 together (`docs/results/m3-gates.md`,
 `docs/results/m2c-baseline.md`); U1's screen and strict look, 3.441386
 (`docs/results/m3-unsure.md`); the edits' rounds, 3.84 (`docs/results/m3-edits.md`); the
 seam's round, 3.76 and 0.04 unresolved; and the orchestrator's and the owner's other live
-runs and tries, which the stores counted and no record lists one by one. This pull request
-spent nothing, and neither did the closing one beyond the gate's re-run. **The final figure:
-to be filled by the closing pull request**, with the re-run of the gate above.
+runs and tries, which the stores counted and no record lists one by one; and the gate of
+details first run again twice, about 6.95 for the invalid second run and 4.27 for the third,
+with nothing held or unresolved. This pull request spent nothing, and the closing one
+nothing beyond the gate's re-run. **In all, about 44 US dollars of the 100.**
 
 ## What the owner decided
 
@@ -133,8 +141,10 @@ to be filled by the closing pull request**, with the re-run of the gate above.
   `unsure`** (`docs/results/m2c-evaluation.md`). The attack on `unsure` found the judge mostly
   hedging on clean pictures, and its screen ran on the dev sets it was built against, which
   admit nothing (`docs/results/m3-unsure.md`).
-- **Details first was not shown to help.** The gate rejected it for two judges and was
-  inconclusive for the third; the recipes still measure details first, as `check` did.
+- **Details first was not shown to help.** The gate rejected it twice. Run again after the
+  judges' fixes, it made `claude-haiku-5-5` worse and left `gpt-6.1-terra` unchanged, and
+  `gemini-3.8-flash` was not measured at all (its key's 402). The recipes still measure
+  details first by default, as `check` did.
 - **The second look is unsafe on reality-checks.** It took that use case's unsure rate from
   74% to 24%, and its false accepts from 0 of 33 to 6 of 33: of its 43 looks, 8 moved away
   from the label. The strict look did not mend it. It stays off by default
@@ -165,8 +175,11 @@ failed cell on resume, `fan`'s and `ramp`'s windows on small panoramas and `meas
 continuity (milestone E); two needs of one capability (when an action ships with them).
 Moved to milestone E by the owner, with a row of its own: the blinded picking rounds of
 `m3-seam` and of the edits' four labs. Closed by the closing pull request: L3's round as
-run, and the lab test of `remove_prompt` against a reference arm. Still owned by milestone 3,
-for the closing pull request: the Google judge's re-run, and Q1's item 7, credited from it.
+run, and the lab test of `remove_prompt` against a reference arm; Q1's item 7, credited from
+the gate's re-run; and the Google judge after its fix, its errors by kind reported. New rows
+owned by milestone E from that re-run: details first still `check`'s default though its gate
+rejected it (first thing); the Google arm, once the key answers; and Haiku's 31 refused
+submissions under F, by kind, as a lead. No row is owned by milestone 3.
 
 ## What milestone 4 and E start from
 

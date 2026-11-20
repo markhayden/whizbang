@@ -806,7 +806,7 @@ and gives the verdicts it gave before.
 7. **Evidence, by the orchestrator, once**: each use case's recipe once on Anthropic's judge
    on A1's pictures, the fields added to `docs/results/m2c-use-cases.md`.
 
-- [ ] Done when:
+- [x] Done when:
   `use_case::each_use_case_is_a_recipe_with_its_rules_details_and_tools`,
   `check::each_use_case_through_its_recipe_gives_the_verdict_it_gave_before`,
   `details::a_pair_that_does_not_register_is_judged_with_its_failure_and_no_comparison`,
@@ -881,6 +881,13 @@ at that commit, its decisions, and those that ended in a verdict, at least one).
 clause `evidence::the_use_cases_record_names_a_commit_of_this_tree_and_holds_no_secret` "on
 the record with the recipes' lines" holds them; while the blocks are absent it holds Q1's
 box open. The box waits for the re-run's values.
+
+**Ticked by the closing pull request.** The gate ran again on 2026-11-19 at main af5392c4,
+`check` 1.6.0: each of the five recipes 200 times on the three judges, 762 of the 1,000
+runs ending in a verdict (each use case 141 to 163) and 4.27 dollars charged. Its lines are
+in `docs/results/m2c-use-cases.md`, held by
+`evidence::the_use_cases_record_names_a_commit_of_this_tree_and_holds_no_secret` (no switch
+is left), and the carry-over row on Q1's third pull request is closed. Every clause is shown.
 
 ## O3. The seam (large)
 
@@ -1234,7 +1241,7 @@ and the milestone's note is written.
    with the tests that show it, the spend, what a reader should not assume, what moved to the
    carry-over list, and what milestone 4 and E start from.
 
-- [ ] Done when:
+- [x] Done when:
   `edits::preservation_outside_the_mask_is_counted_exactly`,
   `edits::the_synthetic_set_is_drawn_by_its_program_from_fixed_seeds`,
   `edits::task_success_is_the_masks_iou_and_the_fills_error_beside_a_blur_fill`,
@@ -1333,6 +1340,15 @@ counts of `scripts/tests/test-notes.sh`, and ticks the box once those are filled
 "each unverified once both are held" is unchanged: rung 2 is not wholly held, so none is
 marked unverified (`SPEC.md` section 8, "Marks"). No clause of "Done when" names the
 owner's round, so none is struck there.
+
+**Ticked by the closing pull request.** With the amendment, every clause is shown: the
+tests named in "Done when" pass; `scripts/tests/test-notes.sh` reads `m3-note.md` and
+counts its citations; and every carry-over row owned by milestone 3 is closed, re-owned or
+dropped with a line, the last three by this pull request (L3's round, Q1's item 7, and the
+Google judge after its fix, whose re-run at af5392c4 reported its errors by kind and left
+the Google arm owed by milestone E). The gate's re-run is recorded in
+`docs/results/m3-gates.md` ("Run again"), held by
+`evidence::the_gates_record_holds_the_details_first_receipt_and_only_aggregates`.
 
 **Keeping tests lean (B1).** The scoring program's tests on three pictures of 64 by 64; the
 set's fills and SAM 3's masks run by the orchestrator, their numbers held by the evidence
