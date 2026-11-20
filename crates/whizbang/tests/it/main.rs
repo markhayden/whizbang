@@ -32,6 +32,7 @@ mod prepare;
 mod rascal;
 mod recipe;
 mod record;
+mod release;
 mod runner;
 mod runs;
 mod segment;

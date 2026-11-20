@@ -124,6 +124,41 @@ pub(crate) fn segment_under(
     })
 }
 
+/// `whizbang --version` (plan m4, task R1, item 2): one line, the name, the version of
+/// the crate, and the commit the binary was built from, which is the commit checked out
+/// here now. A release's archive is held to the line (`scripts/package.sh`,
+/// `scripts/install-check.sh`).
+#[test]
+fn the_version_line_names_the_version_and_the_commit() {
+    let asked = whizbang_storeless(&["--version"]);
+    assert_eq!(asked.code, Some(0), "{}", asked.err);
+    assert_eq!(asked.err, "");
+    let head = std::process::Command::new("git")
+        .args(["rev-parse", "--verify", "HEAD^{commit}"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("git runs");
+    assert!(head.status.success(), "git names the commit checked out");
+    let head = String::from_utf8(head.stdout).expect("a commit's name is ASCII");
+    let head = head.trim();
+    assert!(
+        matches!(head.len(), 40 | 64) && head.bytes().all(|b| b.is_ascii_hexdigit()),
+        "{head}"
+    );
+    assert_eq!(
+        asked.out,
+        format!("whizbang {} (commit {head})\n", env!("CARGO_PKG_VERSION"))
+    );
+    // `-V` is the same line, and the description does not hold the commit: it is the
+    // same for every build of a version.
+    assert_eq!(whizbang_storeless(&["-V"]).out, asked.out);
+    let described = whizbang_storeless(&["describe", "--json"]);
+    assert!(
+        !described.out.contains(head),
+        "the description names no commit"
+    );
+}
+
 #[test]
 fn rascal_segment_prints_each_masks_identity_and_score_under_a_fake_segmenter() {
     let dir = Scratch::new("cli-segment");

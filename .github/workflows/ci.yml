@@ -128,7 +128,7 @@ jobs:
         run: just ci-scripts
 
   # The release build and what follows it on each runner, which `check` leaves out: a
-  # part of `just ci`. In `check` the release build took the macOS job past its
+  # part of `just ci`. What follows it ends with the release archive, made and installed. In `check` the release build took the macOS job past its
   # limit (13 to 15 minutes of 15). Set up as `check` is: the toolchain, the cache (its
   # own, under this job's name, with the release build's dependencies) and the same
   # pinned tools.
@@ -167,7 +167,13 @@ jobs:
         with:
           fallback: none
           tool: just@1.59.0,cargo-nextest@0.9.148,cargo-deny@0.20.2,uv@0.12.23
-      - name: Release smoke, the example that must not compile, and the secrets scan
+      # After the smoke, which builds the release binary: `just package` makes this
+      # runner's release archive and its line of SHA256SUMS, and `just install-check` puts
+      # the pinned uv (the one installed above) and the pinned Python (from GitHub's
+      # releases, as the job `check` fetches it) in a fresh folder and then installs the
+      # archive into an empty home with a cleared environment and runs it (plan m4, task
+      # R1). A change that breaks the archive fails its own pull request.
+      - name: Release smoke, the example that must not compile, the secrets scan, and the release archive made and installed
         run: just ci-release
 
   # The secrets scan and the attribution check over every commit, in a job of its own

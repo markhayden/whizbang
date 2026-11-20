@@ -7,7 +7,10 @@
 # F1, item 5). So each runner runs `just ci` as jobs side by side: `check (<runner>)`
 # runs `just ci-without-scripts` and `scripts (<runner>)` runs `just ci-scripts`. Later the
 # release build and what follows it took `check (macos-15)` to 13 to 15 minutes of its 15,
-# so `release (<runner>)` runs those: `just ci-release`. What is held here:
+# so `release (<runner>)` runs those: `just ci-release`. Since plan m4, task R1, that job
+# also makes the release archive and installs it: `just package`, then `just install-check`,
+# which is the bootstrap of what a user must have and the install check on what was built.
+# What is held here:
 #
 # - the three parts together are `just ci`, recipe for recipe, so a recipe added to `check`
 #   or to `ci` and not to the part that runs it on macOS fails `just check`;
@@ -72,8 +75,20 @@ check_justfile() { # <justfile>
   [ " $(deps "$file" ci-without-scripts) $(deps "$file" ci-release)" = "$want" ] ||
     { echo "justfile: ci-without-scripts and then ci-release must depend on exactly what ci runs, in its order, without test-scripts:$want"; return 1; }
   # The release build and what follows it, in the job `release`; nothing else is there.
-  [ "$(deps "$file" ci-release)" = "smoke compile-fail scan-secrets" ] ||
-    { echo "justfile: ci-release must depend on exactly: smoke compile-fail scan-secrets"; return 1; }
+  # The archive is made after the smoke, which built the binary, and installed after it
+  # is made.
+  [ "$(deps "$file" ci-release)" = "smoke compile-fail scan-secrets package install-check" ] ||
+    { echo "justfile: ci-release must depend on exactly: smoke compile-fail scan-secrets package install-check"; return 1; }
+  # `package` is the one script. `install-check` is the bootstrap into a fresh folder, with
+  # the uv that is on the path, and then the install check on what `package` made, with
+  # that folder and nothing else of the machine's.
+  [ "$(body "$file" package)" = "scripts/package.sh" ] ||
+    { echo "justfile: package must run exactly: scripts/package.sh"; return 1; }
+  [ "$(body "$file" install-check)" = 'rm -rf target/install-prereqs
+scripts/install-prereqs.sh "$(command -v uv)" target/install-prereqs
+scripts/install-check.sh target/package/whizbang-*.tar.gz target/package/SHA256SUMS target/install-prereqs
+rm -rf target/install-prereqs' ] ||
+    { echo "justfile: install-check must run exactly the bootstrap into a fresh target/install-prereqs and then the install check on the archive of target/package"; return 1; }
   # The other half. `deny` goes first, as in `check`: scripts/tests/test-deny.sh uses no
   # network and reads the workspace's crates from cargo's home, where `just deny` put them.
   [ "$(deps "$file" ci-scripts)" = "deny test-scripts" ] ||
@@ -230,12 +245,27 @@ changed check_justfile justfile 's/^check: fmt-check /check: fmt-check new-check
 changed check_justfile justfile 's/^ci: check-full deny-advisories /ci: check-full deny-advisories new-step /' "ci-without-scripts and then ci-release must depend on exactly"
 changed check_justfile justfile 's/^\(ci-without-scripts: .*\) timing /\1 /' "ci-without-scripts and then ci-release must depend on exactly"
 changed check_justfile justfile 's/^\(ci-without-scripts: .*\) docs-check /\1 /' "ci-without-scripts and then ci-release must depend on exactly"
-changed check_justfile justfile 's/^\(ci-release: .*\) scan-secrets$/\1/' "ci-without-scripts and then ci-release must depend on exactly"
+changed check_justfile justfile 's/^\(ci-release: .*\) scan-secrets /\1 /' "ci-without-scripts and then ci-release must depend on exactly"
 # The release build back in the first part, or another recipe moved into the third.
 changed check_justfile justfile 's/^ci-release: smoke /ci-release: /;s/^\(ci-without-scripts: .*\)$/\1 smoke/' "ci-release must depend on exactly"
 changed check_justfile justfile 's/^\(ci-without-scripts: .*\) deny-advisories$/\1/;s/^ci-release: /ci-release: deny-advisories /' "ci-release must depend on exactly"
-changed check_justfile justfile 's/^ci-release: smoke compile-fail scan-secrets$/&\
+changed check_justfile justfile 's/^ci-release: smoke compile-fail scan-secrets package install-check$/&\
     true/' "run nothing of their own"
+# The release job without the archive, without its install, or with them the other way
+# round; the archive made another way; the install check without the bootstrap, on a
+# folder that is not fresh, or with the machine's own uv and Python in place of the folder.
+changed check_justfile justfile 's/^\(ci: .*\) package install-check$/\1 install-check/;s/^\(ci-release: .*\) package install-check$/\1 install-check/' \
+  "ci-release must depend on exactly"
+changed check_justfile justfile 's/^\(ci: .*\) package install-check$/\1 package/;s/^\(ci-release: .*\) package install-check$/\1 package/' \
+  "ci-release must depend on exactly"
+changed check_justfile justfile 's/^\(ci: .*\) package install-check$/\1 install-check package/;s/^\(ci-release: .*\) package install-check$/\1 install-check package/' \
+  "ci-release must depend on exactly"
+changed check_justfile justfile 's/^    scripts\/package.sh$/    cargo build --release -p whizbang/' "package must run exactly"
+changed check_justfile justfile '/^    scripts\/install-prereqs.sh /d' "install-check must run exactly"
+awk '/^    rm -rf target\/install-prereqs$/ && !seen { seen = 1; next } { print }' justfile >"$tmp/not-fresh"
+expect_fail "the bootstrap into a folder that is not fresh" "install-check must run exactly" check_justfile "$tmp/not-fresh"
+changed check_justfile justfile '/^    scripts\/install-check.sh /d' "install-check must run exactly"
+changed check_justfile justfile 's/^\(    scripts\/install-check.sh .*\) target\/install-prereqs$/\1 "$HOME"/' "install-check must run exactly"
 changed check_justfile justfile 's/^ci-scripts: deny test-scripts$/ci-scripts: deny/' "ci-scripts must depend on exactly"
 changed check_justfile justfile 's/^ci-scripts: deny test-scripts$/ci-scripts: test-scripts/' "ci-scripts must depend on exactly"
 changed check_justfile justfile 's/^    scripts\/tests\/run.sh$/    true/' "test-scripts must run exactly"

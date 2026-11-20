@@ -912,6 +912,35 @@ on Linux is open question 2.
   bootstrap and the install check, and CI green with the install check passing on
   `macos-15` and on `ubuntu-22.04`.
 
+**Reworded with the task** (R1, 2026-11-19). Six things are as the task found them.
+
+1. Item 5 says "`whizbang describe --json` equals the committed
+   `docs/reference/description.json`". The committed file is `whizbang describe --json
+   --pretty` byte for byte (`scripts/docs.sh`), so that is the form the install check
+   compares.
+2. Item 3 says the licence texts are "generated from the lock file by a script" and that a
+   crate without its text "fails `just check`". The file is generated when an archive is
+   made and is not committed: licence texts hold their authors' addresses, which no tracked
+   file may (`AGENTS.md`, "Secrets and private data"). What fails `just check` is
+   `scripts/tests/test-third-party-licences.sh`, which generates the file from the
+   workspace's own lock file on every run and holds its crates to those `cargo deny` lists.
+   The Rust standard library, which is in the binary and not in the lock file, is named in
+   the file's opening and its notices are not repeated there.
+3. Item 5's last bullet gives the refusals "On Linux". `whizbang rascal remove-prompt` under
+   a config that names the local segmenter is held on both targets, each in its own words:
+   on Linux the model does not run on the platform, on a Mac it is not installed yet.
+   `whizbang setup --extra torch` is asked on Linux alone.
+4. Item 1 says the script writes "a line of `SHA256SUMS`". It writes the file `SHA256SUMS`
+   with that one line beside the archive, in `target/package`; R2 joins the two targets'
+   lines.
+5. Item 2's two tests read the binary cargo builds for the tests, not a release build: the
+   same toolchain, libraries and `.cargo/config.toml` link both. The Mac's minimum is set
+   there, for every build.
+6. The version line needed one more name in `scripts/check-binary-start.sh`: the binary's
+   `src/main.rs` reads the commit its own `build.rs` sets, and nothing else may. The
+   workspace's version is still `0.0.1`: it becomes `0.1.0` with R2, item 1, and nothing
+   here holds a number.
+
 **Keeping tests lean (R1).** The script tests of the check run on a tiny stand-in binary
 (a shell script named `whizbang`), not on a release build; the real check runs once on each
 runner in the `release` job, which has the binary already.

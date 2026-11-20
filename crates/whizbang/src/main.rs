@@ -24,10 +24,21 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use whizbang::{door, wiring};
 
+/// What `whizbang --version` prints after the name: the version, and the commit the
+/// binary was built from, which `build.rs` asks git for (`unknown` where it could not).
+/// A release is held to both (plan m4, tasks R1 and R2). The commit is in no run record
+/// and not in `whizbang describe`, which stays the same for every build of a version.
+const VERSION_AND_COMMIT: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (commit ",
+    env!("WHIZBANG_COMMIT"),
+    ")"
+);
+
 #[derive(Parser)]
 #[command(
     name = "whizbang",
-    version,
+    version = VERSION_AND_COMMIT,
     about = "One toolkit for working on images with models"
 )]
 struct Cli {
