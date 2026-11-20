@@ -12,7 +12,7 @@
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use super::record::{Facts, Handed, Paid, Refused, Setting, Went};
+use super::record::{Attempt, Facts, Handed, Paid, Refused, Setting, Started, Went};
 use super::{RefusalKind, Secrets, Value};
 use crate::egress::{Account, Classes, DataClass, Origin};
 
@@ -179,6 +179,33 @@ impl RunFacts {
             return false;
         };
         self.note(|facts| facts.setting(setting))
+    }
+
+    /// Notes where a recipe's run started and what it was given (`run/6`). False, and
+    /// nothing is noted: when one is noted already, when a record would not hold it,
+    /// and when the run's end has begun.
+    pub fn started(&self, started: Started) -> bool {
+        self.note(|facts| facts.started(started))
+    }
+
+    /// Notes a loop's next attempt (`run/6`): the reason it has no verdict, when it
+    /// has none, with the executor's secrets taken out. False, and nothing is noted:
+    /// when it is not the next by its number, when the attempts were said to have
+    /// ended, when a record would not hold it, and when the run's end has begun.
+    pub fn attempt(&self, mut attempt: Attempt) -> bool {
+        if let Some(why) = &mut attempt.unchecked {
+            *why = self.shared.secrets.redact(why);
+        }
+        self.note(|facts| facts.attempt(attempt))
+    }
+
+    /// Notes which of a loop's attempts was kept, by its number, and why the attempts
+    /// ended, in one line with the executor's secrets taken out (`run/6`). False, and
+    /// nothing is noted: when it was said already, when a record would not hold it,
+    /// and when the run's end has begun.
+    pub fn attempts_ended(&self, kept: Option<u32>, why: &str) -> bool {
+        let why = self.shared.secrets.redact(why);
+        self.note(|facts| facts.attempts_ended(kept, why))
     }
 
     /// Notes what one paid request of the run cost, in whatever order requests are

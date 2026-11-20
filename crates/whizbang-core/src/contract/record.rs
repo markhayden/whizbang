@@ -8,7 +8,12 @@
 //! request, and added `outcome.lost`: what the record of a run that a dead process
 //! left does not know. It reads `run/4`; `run/3`, whose device and cache are always
 //! null, as not known; and `run/2` as the tag `m1a` froze it (ADR 0005), in which
-//! those lists hold nothing.
+//! those lists hold nothing. A record that lists a step of a recipe is `run/5` (ADR
+//! 0033); one that holds a call's plan, where a recipe's run started, findings or a
+//! loop's attempts is `run/6` (ADR 0005, "run/6"; [`super::sixth`]), which is `run/5`
+//! with those four groups after it, each written only where the run has it. Every
+//! record is written in the oldest version that holds all of it, so a store written
+//! before `run/6` reads as it did, and nothing in one is migrated.
 //!
 //! A record is written one way: as JSON on one line, its fields in the order of the
 //! types below, followed by a newline. It is read strictly: a field that is not known, a
@@ -27,8 +32,8 @@ use crate::store::{self, Entry, Generation, Kind};
 
 use super::journal::{JournalLine, journal_bytes};
 use super::{
-    Capability, Outcome, PreparedCall, RequestId, RunId, Secrets, StoreFailure, Value, Verdict,
-    text,
+    Capability, Findings, Outcome, Plan, PreparedCall, RequestId, RunId, Secrets, StoreFailure,
+    Value, Verdict, text,
 };
 
 /// The record's kind, with the version this build writes for a record that lists no
@@ -38,6 +43,19 @@ pub const RUN_RECORD: &str = "run/4";
 
 /// The kind and version of a record that lists a step of a recipe (ADR 0033).
 pub const RUN_5: &str = "run/5";
+
+/// The kind and version of a record that holds a plan, where a recipe's run started,
+/// findings or a loop's attempts (ADR 0005, "run/6"): the newest this build writes,
+/// and only for a record that holds one of them.
+pub const RUN_6: &str = "run/6";
+
+/// The JSON Schema of a `run/6` record, as a document.
+pub const RUN_6_SCHEMA: &str = include_str!("../../schemas/run-6.json");
+
+pub use super::sixth::{
+    ATTEMPT_CROPS_LIMIT, ATTEMPT_RUNS_LIMIT, ATTEMPT_TEXT_LIMIT, ATTEMPTS_NOT_ENDED, Attempt,
+    Attempted, Changed, Crop, Found, GIVEN_LIMIT, Given, Started,
+};
 
 /// The JSON Schema of a `run/5` record, as a document.
 pub const RUN_5_SCHEMA: &str = include_str!("../../schemas/run-5.json");
@@ -87,6 +105,26 @@ where
     T: Deserialize<'de>,
 {
     Option::deserialize(deserializer)
+}
+
+/// The reader's sentence, with a list of the fields it expected cut to the first and
+/// how many more there are: a record has more fields than a reason has room for
+/// ([`REASON_LIMIT`]), and where in the bytes the reader stopped is said after the
+/// list.
+fn brief(error: serde_json::Error) -> String {
+    let said = error.to_string();
+    let listed = said.split_once(", expected one of ");
+    let Some((before, (names, after))) =
+        listed.and_then(|(before, rest)| Some((before, rest.split_once(" at line ")?)))
+    else {
+        return said;
+    };
+    let mut names = names.split(", ");
+    let (first, more) = (names.next().unwrap_or_default(), names.count());
+    match more {
+        0 => said,
+        more => format!("{before}, expected one of {first} or {more} more at line {after}"),
+    }
 }
 
 /// How many characters a refusal keeps of a name it quotes from stored bytes: a version,
@@ -1410,6 +1448,14 @@ struct RunRecordWire {
     judge: Vec<Judged>,
     #[serde(deserialize_with = "diagnostics_wire")]
     diagnostics: Vec<Diagnostic>,
+    #[serde(default)]
+    plan: Option<Plan>,
+    #[serde(default)]
+    started: Option<Started>,
+    #[serde(default)]
+    findings: Option<Found>,
+    #[serde(default)]
+    attempts: Option<Attempted>,
 }
 
 /// The record of one run. It is written as JSON, and read only by
@@ -1429,6 +1475,18 @@ pub struct RunRecord {
     steps: Vec<Step>,
     judge: Vec<Judged>,
     diagnostics: Vec<Diagnostic>,
+    /// The plan of the call, for an action that planned it (`run/6`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan: Option<Plan>,
+    /// Where a recipe's run started, when it ran from a step (`run/6`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    started: Option<Started>,
+    /// What the record keeps of the findings the run handed back (`run/6`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    findings: Option<Found>,
+    /// A loop's attempts (`run/6`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    attempts: Option<Attempted>,
 }
 
 /// A `run/2` record as it is stored, as the tag `m1a` froze it: what `run/3` added is
@@ -1530,6 +1588,10 @@ impl Frozen {
             steps: self.steps,
             judge: self.judge,
             diagnostics: self.diagnostics,
+            plan: None,
+            started: None,
+            findings: None,
+            attempts: None,
         }
     }
 }
@@ -1584,7 +1646,7 @@ impl std::fmt::Display for RecordError {
         match self {
             RecordError::OtherVersion { found } => write!(
                 f,
-                "a record of another version: {}, and this build reads {RUN_5}, \
+                "a record of another version: {}, and this build reads {RUN_6}, {RUN_5}, \
                  {RUN_RECORD}, {RUN_3} and {RUN_2}",
                 found.escape_debug()
             ),
@@ -1640,6 +1702,11 @@ pub struct Facts {
     settings: Vec<Setting>,
     paid: Vec<Paid>,
     went: Vec<Went>,
+    /// Where a recipe's run started, when it said so (`run/6`).
+    started: Option<Started>,
+    /// A loop's attempts, as it noted them, and how it said they ended (`run/6`).
+    attempts: Vec<Attempt>,
+    ended: Option<(Option<u32>, String)>,
 }
 
 impl Facts {
@@ -1696,6 +1763,46 @@ impl Facts {
         let before = self.paid.len();
         self.paid.retain(|paid| paid.request < sent as u64);
         before - self.paid.len()
+    }
+
+    /// Notes where a recipe's run started. False, and nothing is noted, when one is
+    /// noted already or a record would not hold this one.
+    pub fn started(&mut self, started: Started) -> bool {
+        let takes = self.started.is_none() && started.holds();
+        if takes {
+            self.started = Some(started);
+        }
+        takes
+    }
+
+    /// Notes a loop's next attempt. False, and nothing is noted, when it is not the
+    /// next by its number, the attempts were said to have ended, or a record would
+    /// not hold it.
+    pub fn attempt(&mut self, attempt: Attempt) -> bool {
+        let next = attempt.attempt as usize == self.attempts.len() + 1;
+        let room = self.attempts.len() < super::PLAN_ATTEMPTS_MAX as usize;
+        let takes = next && room && self.ended.is_none() && attempt.holds();
+        if takes {
+            self.attempts.push(attempt);
+        }
+        takes
+    }
+
+    /// Notes which attempt was kept, by its number, and why the attempts ended.
+    /// False, and nothing is noted, when it was said already or a record would not
+    /// hold it.
+    pub fn attempts_ended(&mut self, kept: Option<u32>, why: String) -> bool {
+        let said = Attempted {
+            list: std::mem::take(&mut self.attempts),
+            kept,
+            ended: why,
+        };
+        let takes = self.ended.is_none() && said.holds();
+        self.attempts = said.list;
+        if takes {
+            self.ended = Some((said.kept, said.ended));
+        }
+        takes
     }
 
     /// Notes where data went. An origin, account and outcome that is already listed
@@ -1786,6 +1893,8 @@ pub struct Inside {
     pub(super) timed: Vec<(usize, u64, u64)>,
     /// What the action concluded, when it handed back a verdict and completed.
     pub(super) verdict: Option<Verdict>,
+    /// The findings the action handed back, when it did and completed.
+    pub(super) findings: Option<Findings>,
 }
 
 impl RunRecord {
@@ -1931,14 +2040,48 @@ impl RunRecord {
             mut settings,
             mut paid,
             went,
+            started,
+            attempts,
+            ended,
         } = ran.facts;
         settings.sort_by(|a, b| a.name.cmp(&b.name));
         paid.retain(|paid| paid.request < models.len() as u64);
         // The oldest version that holds all of it (ADR 0033).
         let steps = &ran.inside.steps;
         let fifth = steps.iter().any(|step| step.recipe.is_some());
+        // What only `run/6` holds. The plan's reason has the secrets taken out, as
+        // every text has; a plan a record would not hold after that is left out.
+        let plan = prepared.plan().map(|plan| match plan.why() {
+            Some(why) => plan.clone().because(&super::engine::said(secrets, why)),
+            None => plan.clone(),
+        });
+        // A reason the redaction made longer than a record holds is cut; a plan is
+        // never left out for its reason alone.
+        let plan = plan.map(|plan| match plan.holds() {
+            true => plan,
+            false => plan.with_reason_cut(),
+        });
+        let plan = plan.filter(Plan::holds);
+        // Findings are of a run that completed, and of no other.
+        let findings = ran.inside.findings.as_ref();
+        let findings = findings.filter(|_| status == Status::Completed);
+        let findings = findings.map(Found::of).filter(Found::holds);
+        let attempts = (!attempts.is_empty() || ended.is_some()).then(|| {
+            let (kept, ended) = ended.unwrap_or((None, ATTEMPTS_NOT_ENDED.to_owned()));
+            Attempted {
+                list: attempts,
+                kept,
+                ended,
+            }
+        });
+        let sixth = plan.is_some() || started.is_some() || findings.is_some() || attempts.is_some();
+        let version = match (sixth, fifth) {
+            (true, _) => RUN_6,
+            (false, true) => RUN_5,
+            (false, false) => RUN_RECORD,
+        };
         RunRecord {
-            record: if fifth { RUN_5 } else { RUN_RECORD }.to_owned(),
+            record: version.to_owned(),
             identity: Identity {
                 run: ran.run.to_owned(),
                 request: ran.request.map(|id| id.as_str().to_owned()),
@@ -1977,6 +2120,10 @@ impl RunRecord {
             steps: ran.inside.steps,
             judge,
             diagnostics,
+            plan,
+            started,
+            findings,
+            attempts,
         }
     }
 
@@ -2037,6 +2184,10 @@ impl RunRecord {
             steps: Vec::new(),
             judge: Vec::new(),
             diagnostics: Vec::new(),
+            plan: None,
+            started: None,
+            findings: None,
+            attempts: None,
         };
         // What the admission said was read from a store. A record its own reader
         // would refuse is not made of it.
@@ -2093,7 +2244,7 @@ impl RunRecord {
         }
         let frozen = match serde_json::from_slice::<Version>(bytes) {
             Ok(Version { record })
-                if ![RUN_5, RUN_RECORD, RUN_3, RUN_2].contains(&record.as_str()) =>
+                if ![RUN_6, RUN_5, RUN_RECORD, RUN_3, RUN_2].contains(&record.as_str()) =>
             {
                 // What it says its version is can be anything: its first 64 characters
                 // are kept.
@@ -2104,7 +2255,7 @@ impl RunRecord {
             Ok(Version { record }) => record == RUN_2,
             Err(_) => false,
         };
-        let malformed = |error: serde_json::Error| RecordError::Malformed(error.to_string());
+        let malformed = |error: serde_json::Error| RecordError::Malformed(brief(error));
         let mut reader = serde_json::Deserializer::from_slice(bytes);
         let record = if frozen {
             Frozen::deserialize(&mut reader).map(Frozen::record)
@@ -2185,7 +2336,8 @@ impl RunRecord {
         // arguments than a recipe's step sets, and each text cut.
         let of_recipes = self.steps.iter().filter_map(|step| step.recipe.as_ref());
         if of_recipes.clone().count() > RECIPE_STEPS_LIMIT
-            || (self.record != RUN_5 && of_recipes.clone().next().is_some())
+            || (![RUN_5, RUN_6].contains(&self.record.as_str())
+                && of_recipes.clone().next().is_some())
         {
             return refuse(
                 "more steps of a recipe than a recipe has, or a step of a recipe in a record \
@@ -2434,6 +2586,38 @@ impl RunRecord {
         if !self.diagnostics.is_sorted_by(|a, b| a.name < b.name) {
             return refuse("the diagnostics are not in the order of their names, each once");
         }
+        // What `run/6` adds (ADR 0005, "run/6"): in a record of that version alone,
+        // which holds one of the four at least, each as a record holds it; findings
+        // only of a run that completed, and a plan's reason only without a secret's
+        // place, which is not looked for here.
+        let (plan, started) = (self.plan.as_ref(), self.started.as_ref());
+        let (findings, attempts) = (self.findings.as_ref(), self.attempts.as_ref());
+        let sixth = plan.is_some() || started.is_some() || findings.is_some() || attempts.is_some();
+        if sixth != (self.record == RUN_6) {
+            return refuse(
+                "a plan, a start, findings or attempts in a record of a version that has \
+                 none, or a record of run/6 that holds none of them",
+            );
+        }
+        if plan.is_some_and(|plan| !plan.holds()) {
+            return refuse("the plan is not one a call is prepared with");
+        }
+        if started.is_some_and(|started| !started.holds()) {
+            return refuse("where the run started is not a step and what it was given");
+        }
+        if findings.is_some_and(|found| !found.holds() || self.outcome.status != Status::Completed)
+        {
+            return refuse(
+                "the findings are not counts in their order and places within their \
+                 bounds, of a run that completed",
+            );
+        }
+        if attempts.is_some_and(|attempts| !attempts.holds()) {
+            return refuse(
+                "the attempts are not numbered from 1, each with a verdict or the reason \
+                 there is none, with the one that was kept among them",
+            );
+        }
         Ok(())
     }
 
@@ -2567,6 +2751,27 @@ impl RunRecord {
         }
     }
 
+    /// The plan of the call, when its action planned it (`run/6`).
+    pub fn plan(&self) -> Option<&Plan> {
+        self.plan.as_ref()
+    }
+
+    /// Where a recipe's run started and what it was given, when it ran from a step
+    /// (`run/6`).
+    pub fn started(&self) -> Option<&Started> {
+        self.started.as_ref()
+    }
+
+    /// What the record keeps of the findings the run handed back (`run/6`).
+    pub fn findings(&self) -> Option<&Found> {
+        self.findings.as_ref()
+    }
+
+    /// A loop's attempts (`run/6`).
+    pub fn attempts(&self) -> Option<&Attempted> {
+        self.attempts.as_ref()
+    }
+
     /// What was reserved for the run, and its paid requests.
     pub fn spend(&self) -> &Spend {
         &self.spend
@@ -2667,7 +2872,7 @@ mod stage_name {
 }
 
 /// An artifact type as a record spells it: its name.
-mod type_name {
+pub(super) mod type_name {
     use serde::{Deserialize, Deserializer, Serializer};
 
     use crate::artifact::ArtifactType;

@@ -25,7 +25,7 @@ fn indented_description() -> &'static str {
 /// `check`, the recipe.
 fn compact_start() -> String {
     format!(
-        "{{\"description_version\":9,\"name\":\"whizbang\",\"version\":\"{}\",\"actions\":[{{\"name\":\"check\",\"version\":\"1.6.0\",\"kind\":\"recipe\",\"purpose\":\"",
+        "{{\"description_version\":10,\"name\":\"whizbang\",\"version\":\"{}\",\"actions\":[{{\"name\":\"check\",\"version\":\"1.6.0\",\"kind\":\"recipe\",\"purpose\":\"",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -101,7 +101,7 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
     assert!(ok);
     let doc: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
     assert_eq!(doc["name"], "whizbang");
-    assert_eq!(doc["description_version"], 9);
+    assert_eq!(doc["description_version"], 10);
     assert_eq!(doc["version"], env!("CARGO_PKG_VERSION"));
     let names: Vec<&str> = doc["actions"]
         .as_array()
@@ -344,7 +344,7 @@ fn a_test_adds_echo_to_the_registry_the_binary_builds() {
 fn describe_json_pretty_starts_and_ends_with_these_bytes() {
     let (_, pretty) = whizbang(&["describe", "--json", "--pretty"]);
     let start = format!(
-        "{{\n  \"description_version\": 9,\n  \"name\": \"whizbang\",\n  \"version\": \"{}\",\n  \"actions\": [\n    {{\n      \"name\": \"check\",\n",
+        "{{\n  \"description_version\": 10,\n  \"name\": \"whizbang\",\n  \"version\": \"{}\",\n  \"actions\": [\n    {{\n      \"name\": \"check\",\n",
         env!("CARGO_PKG_VERSION")
     );
     let types = r#"    {
@@ -609,11 +609,19 @@ fn recipes_are_listed_before_primitives_with_purpose_and_use() {
     let arguments: Vec<&str> = (recipe["arguments"].as_array().unwrap().iter())
         .map(|a| a["name"].as_str().unwrap())
         .collect();
-    assert_eq!(arguments, ["backend", "filler", "prompt", "set", "until"]);
+    assert_eq!(
+        arguments,
+        ["backend", "filler", "prompt", "set", "from", "until"]
+    );
+    // Its own inputs, and then, for a run from a step, one for each output of each step
+    // before its last (plan m4, task K1, item 2; ADR 0033, "A run from a step").
     let inputs: Vec<&str> = (recipe["inputs"].as_array().unwrap().iter())
         .map(|a| a["name"].as_str().unwrap())
         .collect();
-    assert_eq!(inputs, ["image", "protect"]);
+    assert_eq!(inputs[..2], ["image", "protect"]);
+    assert!(inputs[2..].iter().all(|port| port.starts_with("from_")));
+    assert!(inputs.contains(&"from_feather_mask"), "{inputs:?}");
+    assert_eq!(recipe["plans"], true);
     assert_eq!(recipe["needs"][0]["capability"], "segment");
     assert_eq!(recipe["needs"][0]["chosen_by"], "backend");
     // Its last step fills, chosen by `filler`, and is needed only without `until`.
@@ -662,7 +670,7 @@ fn the_five_use_cases_are_listed_as_recipes_first() {
         let inputs: Vec<&str> = (action["inputs"].as_array().unwrap().iter())
             .map(|port| port["name"].as_str().unwrap())
             .collect();
-        assert_eq!(inputs, ["images"], "{name}");
+        assert_eq!(inputs, ["images", "from_details_images"], "{name}");
     }
     let details = &actions[at("details")];
     assert_eq!(details["kind"], "primitive");

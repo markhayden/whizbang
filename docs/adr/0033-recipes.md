@@ -2,6 +2,10 @@
 
 Status: accepted.
 Date: 2026-11-18
+Amended: 2026-11-19, with task K1 of plan m4. Added: "A run from a step": the runner's
+`from`, the artifacts given in place of the outputs of the steps before it, what is
+refused, and the plan that reserves for the stretch alone; and that a recipe hands back
+the findings of a last step that declares them (ADR 0035).
 Spec: section 3 ("Primitives, recipes and loops", "Nested calls", "What every run records"),
 sections 4 and 6; plan m3 (`docs/plans/m3-milestone-3.md`), task R1; ADR 0003, ADR 0005,
 ADR 0008, ADR 0009, ADR 0013, ADR 0016, ADR 0025, ADR 0032
@@ -131,6 +135,47 @@ recipe's output by the executor's check of what an action hands back, since a ru
 recipe called committed it (ADR 0008; plan m3, F1's second pull request: a stored
 artifact handed back is taken as it is only when the call gave it or a run it called
 made it; any other must be one the store holds as this action's).
+
+### A run from a step
+
+Added with plan m4 (`docs/plans/m4-the-loop-and-a-release.md`), task K1, item 2. The loop
+must see a mask before it pays for a fill, and a recipe hands back nothing before its
+end but through `until`. So the runner gains `from`, the mirror of `until`.
+
+- **The argument.** `from` names a step after the first. The recipe runs that step and
+  those after it; the steps before it do not run. With `until`, it runs the stretch from
+  the one to the other. A recipe of one step has neither.
+- **What is given.** For each output port of each step before the last, the recipe has
+  an input port `from_<step>_<port>`, of the port's type, taking as many artifacts as
+  the port hands back at most. What is given there stands in place of that output: a
+  later step, or an output of the recipe, bound to it takes what was given. The recipe's
+  own inputs are given as for any run of it, those only a skipped step takes among them:
+  what a port or an argument requires does not depend on another argument.
+- **What is refused, before any step runs.** A step the recipe does not have, and its
+  first step (the argument's choices); an artifact that is not of its port's type (the
+  input is refused when the call is prepared, as any input is): neither makes a run. And
+  the run is invalid, with no step run: when `from` comes after `until`; when something
+  is given for a step that runs, or with no `from`; when a step of the stretch, or an
+  output the recipe hands back, takes an output of a skipped step that was not given,
+  whether the port that takes it requires one or may be left unbound, since a whole run
+  binds what that step made (only an output that step may hand back none of may be
+  left out); when more than 64 artifacts are given, which is as many as the record
+  lists; and when a step of the stretch takes what a skipped step measured, which
+  nobody can give. A recipe's own input may not be named `from`, nor begin with
+  `from_`: those are the runner's names, and such a recipe is refused when read.
+- **Nothing is reserved for a step that does not run.** The recipe plans such a call (ADR
+  0004, "A call's plan"): its plan states, for each capability, the requests of the
+  steps of the stretch alone, so a capability only skipped steps need is not resolved,
+  is not missing where none is configured, and adds nothing to the estimate. The
+  features asked of a capability stay those of every step that names it. A call without
+  `from` plans nothing and is prepared as before, `until` included.
+- **The record** says where the run started and what it was given (`started`, `run/6`,
+  ADR 0005), and lists the steps that ran.
+
+Tests: `runner::a_run_from_a_step_runs_that_step_and_those_after_it_with_what_it_was_given`,
+`runner::a_run_from_one_step_until_another_runs_that_stretch_alone`,
+`runner::a_run_from_a_step_reserves_nothing_for_the_steps_before_it`,
+`runner::a_run_from_a_step_that_lacks_an_output_a_later_step_needs_is_refused_before_anything_runs`.
 
 ## Consequences
 
