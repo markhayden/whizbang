@@ -228,6 +228,8 @@ pub enum Command {
     Shrink(Op<whizbang_rascal::shrink::Args>),
     #[command(about = whizbang_rascal::invert::ABOUT, after_help = EXIT_CODES)]
     Invert(Op<whizbang_rascal::invert::Args>),
+    #[command(about = whizbang_rascal::carry::ABOUT, after_help = EXIT_CODES)]
+    Carry(Op<whizbang_rascal::carry::Args>),
     /// Remove the thing at a location from a picture and fill where it was: the recipe
     /// `remove`, whose steps are rasterize, grow, close, plug, subtract, feather and fill,
     /// each a run of its own under the recipe's. With --box, `rect` makes the location
@@ -752,6 +754,7 @@ fn run_at(
         Command::Rasterize(op) => op.run(recovery, platform),
         Command::Shrink(op) => op.run(recovery, platform),
         Command::Invert(op) => op.run(recovery, platform),
+        Command::Carry(op) => op.run(recovery, platform),
         Command::Remove {
             at,
             protect,

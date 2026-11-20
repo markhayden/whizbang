@@ -4103,17 +4103,40 @@
       "version": "1.0.0",
       "kind": "primitive",
       "purpose": "The mask for a second pass: what the first mask reached is protected, and every other pixel is the core.",
-      "arguments": [],
+      "arguments": [
+        {
+          "name": "left",
+          "purpose": "The crop's left edge on the picture, in whole pixels.",
+          "type": {
+            "type": "integer",
+            "min": 0,
+            "max": null
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "top",
+          "purpose": "The crop's top edge on the picture, in whole pixels.",
+          "type": {
+            "type": "integer",
+            "min": 0,
+            "max": null
+          },
+          "required": false,
+          "default": null
+        }
+      ],
       "inputs": [
         {
           "name": "mask",
           "artifact": "mask",
-          "purpose": "The first pass's mask, on the image.",
+          "purpose": "The first pass's mask, on the image, or on the crop when one is given.",
           "count": {
             "min": 1,
             "max": 1
           },
-          "belongs_to": "image"
+          "belongs_to": null
         },
         {
           "name": "image",
@@ -4121,6 +4144,16 @@
           "purpose": "The image of the second pass: after a fill, its composite.",
           "count": {
             "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "crop",
+          "artifact": "image",
+          "purpose": "The crop of the image the mask is on, when it is on one; with left and top.",
+          "count": {
+            "min": 0,
             "max": 1
           },
           "belongs_to": null
@@ -4134,6 +4167,87 @@
           "count": {
             "min": 1,
             "max": 1
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "image"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "carry",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Carries masks from a crop onto the picture it was cut from: the same pixels, where the crop sits.",
+      "arguments": [
+        {
+          "name": "left",
+          "purpose": "The crop's left edge on the picture, in whole pixels.",
+          "type": {
+            "type": "integer",
+            "min": 0,
+            "max": null
+          },
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "top",
+          "purpose": "The crop's top edge on the picture, in whole pixels.",
+          "type": {
+            "type": "integer",
+            "min": 0,
+            "max": null
+          },
+          "required": true,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The masks to carry, each on the crop.",
+          "count": {
+            "min": 1,
+            "max": 64
+          },
+          "belongs_to": "crop"
+        },
+        {
+          "name": "crop",
+          "artifact": "image",
+          "purpose": "The crop the masks are on: the picture's own pixels, not scaled.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The picture the crop was cut from.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "Each mask on the picture, in the order given, empty outside the crop.",
+          "count": {
+            "min": 1,
+            "max": 64
           },
           "when": "always",
           "belongs_to": {

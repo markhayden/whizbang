@@ -3,6 +3,7 @@
 
 mod apply;
 mod canvases;
+mod carry;
 mod close;
 mod composite;
 mod constants;

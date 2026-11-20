@@ -46,6 +46,7 @@ impl Shop {
             whizbang_rascal::rasterize::register,
             whizbang_rascal::shrink::register,
             whizbang_rascal::invert::register,
+            whizbang_rascal::carry::register,
             whizbang_rascal::segment::register,
             whizbang_rascal::grow::register,
             whizbang_rascal::close::register,

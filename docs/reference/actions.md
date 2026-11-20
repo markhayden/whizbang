@@ -169,6 +169,10 @@ Shrinks the core of a mask by a disc; a core against the border shrinks from it 
 
 The mask for a second pass: what the first mask reached is protected, and every other pixel is the core.
 
+## `carry`
+
+Carries masks from a crop onto the picture it was cut from: the same pixels, where the crop sits.
+
 ## `tighten`
 
 Tightens a stroke to the defect's edges: at each sample the two strongest opposite edges inside the stroke bound the core.

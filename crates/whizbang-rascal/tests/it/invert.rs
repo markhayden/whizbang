@@ -81,3 +81,74 @@ fn the_ported_vectors_give_rascals_masks() {
     );
     assert!(why.contains("nothing is left to edit"), "{why}");
 }
+
+/// Rascal's vector of a crop (`invert_from_a_crop_mask_lands_protect_on_its_bbox`, the
+/// same file at the pinned commit): a crop of 30 by 30 at 20, 10 of the picture, and a
+/// mask on it from 5 to 25 each way. Inverted onto the picture, protect is the mask
+/// where the crop sits, from 25, 15 to 45, 35, and every other pixel is the core. Where
+/// rascal's `to` named a frame of the mask's chain, the picture is the image given and
+/// the crop the mask is on is given beside it, with its corner.
+#[test]
+fn invert_from_a_crop_mask_lands_protect_on_its_bbox() {
+    use whizbang_core::contract::Value;
+    use whizbang_core::identity::{CanonicalPixels, DecodeLimits};
+
+    let shop = Shop::new("invert-crop", None);
+    let image = picture(W as u32, H as u32);
+    let pixels = image.pixels(&DecodeLimits::default()).unwrap();
+    let mut rgba = Vec::new();
+    for y in 10..40 {
+        rgba.extend_from_slice(&pixels.rgba()[(y * W + 20) * 4..(y * W + 50) * 4]);
+    }
+    let crop = super::paste::image_of(&CanonicalPixels::from_rgba(30, 30, rgba).unwrap(), "view");
+    let mask = Mask::from_core(
+        crop.binding(),
+        UseCase::Remove,
+        plane(30, 30, |x, y| (5..25).contains(&x) && (5..25).contains(&y)),
+        Source::default(),
+        made_by("fixture"),
+    )
+    .unwrap();
+    let image_id = shop.put(Artifact::Image(image.clone()));
+    let crop_id = shop.put(Artifact::Image(crop));
+    let mask_id = shop.put(mask.into());
+    let call = |left: i64| {
+        Call::new("invert")
+            .argument("left", Value::Integer(left))
+            .argument("top", Value::Integer(10))
+            .input("mask", mask_id)
+            .input("crop", crop_id)
+            .input("image", image_id)
+    };
+    let made = shop.mask(shop.one(&call(20)));
+    assert_eq!(*made.binding(), image.binding());
+    assert_eq!(made.use_case(), UseCase::Protect);
+    for at in 0..W * H {
+        let (x, y) = (at % W, at / W);
+        let expect = (25..45).contains(&x) && (15..35).contains(&y);
+        assert_eq!(made.protect()[at] != 0, expect, "protect at {x},{y}");
+        assert_eq!(made.core()[at] != 0, !expect, "core at {x},{y}");
+    }
+    assert_eq!(made.origin().steps().last().unwrap().action, NAME);
+    // A crop that is not of the picture where the call says is refused, and a mask on
+    // a crop is refused without the crop.
+    let why = shop.refused(&call(21));
+    assert!(why.contains("is not the picture's"), "{why}");
+    let why = shop.refused(
+        &Call::new("invert")
+            .input("mask", mask_id)
+            .input("image", image_id),
+    );
+    assert!(why.contains("belongs to the image"), "{why}");
+    // A corner without a crop says nothing.
+    let why = shop.refused(
+        &Call::new("invert")
+            .argument("left", Value::Integer(20))
+            .input("mask", mask_id)
+            .input("image", image_id),
+    );
+    assert!(
+        why.contains("left and top are the corner of a crop"),
+        "{why}"
+    );
+}

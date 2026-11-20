@@ -1,10 +1,11 @@
 //! The records of `rasterize`, `shrink`, `invert` and `inspect`,
-//! `docs/reference/tools/<tool>.md` (plan m3, task D2). Each example calls the operation's
+//! `docs/reference/tools/<tool>.md` (plan m3, task D2), and of `carry` (plan m4, task L2). Each example calls the operation's
 //! function directly, the function its action runs, so the test needs no store and no
 //! executor.
 
-use whizbang_core::artifact::{Location, Mask, Shape, Source, UseCase};
-use whizbang_core::identity::{Binding, CanonicalPixels, Digest, Point, Space};
+use whizbang_core::artifact::{Image, Location, Mask, Shape, Source, UseCase};
+use whizbang_core::identity::{Binding, CanonicalPixels, DecodeLimits, Digest, Point, Space};
+use whizbang_rascal::carry::Placed;
 use whizbang_rascal::feather::feather;
 use whizbang_rascal::inspect::{TINT, core_widths, overlay, report};
 use whizbang_rascal::invert::{InvertError, invert};
@@ -12,6 +13,7 @@ use whizbang_rascal::rasterize::{location_core, rasterize};
 use whizbang_rascal::shrink::shrink;
 
 use super::super::grow::{made_by, plane};
+use super::super::paste::image_of;
 use super::super::record::{picture, tiled, time};
 use super::{Page, SIZES, count, hold, image_picture, scene, timed_head, timed_row};
 
@@ -138,6 +140,55 @@ fn inspected() -> Vec<(&'static str, Mask, CanonicalPixels)> {
         .collect()
 }
 
+/// Where the crop of `carry`'s examples sits on the scene: left, top, right and bottom.
+const CROP: [usize; 4] = [30, 16, 70, 48];
+
+/// The pixels of a picture inside a box, as an image of their own: what `view` cuts.
+fn crop_of(pixels: &CanonicalPixels, [left, top, right, bottom]: [usize; 4]) -> Image {
+    let width = pixels.width() as usize;
+    let mut rgba = Vec::new();
+    for y in top..bottom {
+        rgba.extend_from_slice(&pixels.rgba()[(y * width + left) * 4..(y * width + right) * 4]);
+    }
+    let cut = CanonicalPixels::from_rgba((right - left) as u32, (bottom - top) as u32, rgba);
+    image_of(&cut.unwrap(), "view")
+}
+
+/// `carry`'s examples: a mask on the crop of the scene, and the same mask on the scene.
+/// A disc in the middle of the crop; and a block against the crop's left and top edges
+/// with a protected patch, feathered.
+fn carried() -> Vec<(&'static str, Mask, Mask)> {
+    let (w, h) = (CROP[2] - CROP[0], CROP[3] - CROP[1]);
+    let crop = crop_of(&scene(), CROP);
+    let on_crop = |core: Vec<u8>, protect: &[u8]| {
+        let mut mask = Mask::from_core(
+            crop.binding(),
+            UseCase::Remove,
+            core,
+            Source::default(),
+            made_by("fixture"),
+        )
+        .unwrap();
+        mask.protect_union(protect).unwrap();
+        mask
+    };
+    let disc = on_crop(plane(w, h, disc(20, 16, 9)), &vec![0; w * h]);
+    let mut edged = on_crop(
+        plane(w, h, |x, y| x < 14 && y < 10),
+        &plane(w, h, |x, y| (4..8).contains(&x) && (3..6).contains(&y)),
+    );
+    edged
+        .set_blend(plane(w, h, |x, y| (14..17).contains(&x) && y < 10))
+        .unwrap();
+    let image = image_of(&scene(), "import");
+    let at = [CROP[0] as u32, CROP[1] as u32];
+    let placed = Placed::checked(&crop, &image, at, &DecodeLimits::default()).unwrap();
+    [("disc", disc), ("edged", edged)]
+        .into_iter()
+        .map(|(name, mask)| (name, mask.clone(), placed.carry(&mask).unwrap()))
+        .collect()
+}
+
 fn planes(mask: &Mask) -> String {
     format!(
         "{}, {}, {}",
@@ -177,6 +228,22 @@ pub fn page(tool: &'static str) -> Page {
                     "| {name} | {} | {} |\n",
                     planes(&before),
                     planes(&after)
+                ));
+            }
+        }
+        "carry" => {
+            measured.push_str(
+                "\n| Example | Core, blend and protect on the crop | On the picture | Their box on the picture |\n\
+                 |---|---|---|---|\n",
+            );
+            for (name, before, after) in carried() {
+                files.push((format!("{name}.png"), picture(&before)));
+                files.push((format!("{name}-carry.png"), picture(&after)));
+                measured.push_str(&format!(
+                    "| {name} | {} | {} | {:?} |\n",
+                    planes(&before),
+                    planes(&after),
+                    after.statistics().support.unwrap_or_default()
                 ));
             }
         }
@@ -224,6 +291,7 @@ pub fn timed(tool: &str) -> String {
         ],
         "shrink" => &["`shrink`, `px` 3", "`shrink`, `px` 40"],
         "invert" => &["`invert`"],
+        "carry" => &["The crop compared with the picture", "One mask carried"],
         _ => &["The overlay", "The report and the widths"],
     };
     let mut out = timed_head(columns);
@@ -257,6 +325,31 @@ pub fn timed(tool: &str) -> String {
                 || (),
                 |()| invert(&mask, Digest::of_bytes(b"photo")),
             )],
+            "carry" => {
+                // A crop of half the picture each way, from its middle.
+                let rgba = (0..width * height)
+                    .flat_map(|at| [(at % width) as u8, (at / width) as u8, 90, 255])
+                    .collect();
+                let whole = CanonicalPixels::from_rgba(width as u32, height as u32, rgba).unwrap();
+                let cut = [width / 4, height / 4, width * 3 / 4, height * 3 / 4];
+                let crop = crop_of(&whole, cut);
+                let image = image_of(&whole, "import");
+                let on_crop = Mask::from_core(
+                    crop.binding(),
+                    UseCase::Remove,
+                    tiled(width / 2, height / 2).core().to_vec(),
+                    Source::default(),
+                    made_by("fixture"),
+                )
+                .unwrap();
+                let at = [cut[0] as u32, cut[1] as u32];
+                let limits = DecodeLimits::default();
+                let placed = Placed::checked(&crop, &image, at, &limits).unwrap();
+                vec![
+                    time(5, || (), |()| Placed::checked(&crop, &image, at, &limits)),
+                    time(5, || (), |()| placed.carry(&on_crop)),
+                ]
+            }
             _ => {
                 let grey = CanonicalPixels::from_rgba(
                     width as u32,
@@ -275,6 +368,22 @@ pub fn timed(tool: &str) -> String {
     }
     out.push('\n');
     out
+}
+
+#[test]
+fn the_record_of_carry_is_what_it_gives() {
+    hold(&page("carry"));
+    // Each plane keeps its count, and sits where the crop does: the disc's box on the
+    // picture is its box on the crop, moved by the crop's corner.
+    for (_, before, after) in carried() {
+        assert_eq!(planes(&before), planes(&after));
+        let (on_crop, on_picture) = (before.statistics().support, after.statistics().support);
+        let moved = on_crop.map(|[l, t, r, b]| {
+            let (x, y) = (CROP[0] as u32, CROP[1] as u32);
+            [l + x, t + y, r + x, b + y]
+        });
+        assert_eq!(on_picture, moved);
+    }
 }
 
 #[test]
