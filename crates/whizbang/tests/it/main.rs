@@ -51,6 +51,7 @@ mod stats;
 mod store;
 mod table;
 mod tool_file;
+mod tool_records;
 mod tool_worker;
 mod transcript;
 mod wired;

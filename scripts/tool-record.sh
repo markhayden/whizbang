@@ -20,6 +20,10 @@
 #   scripts/tool-record.sh carry: the same (plan m4, task L2)
 #   scripts/tool-record.sh remove, remove_prompt, repair, repair_area or seam: the same, each
 #                                    run under a scripted filler (plan m3, task B1)
+#   scripts/tool-record.sh remove_checked: the record of the loop and its folder, from
+#                                    scripted runs through the binary's wiring; nothing in
+#                                    it is timed, so it is not a release build (plan m4,
+#                                    task E1; crates/whizbang/tests/it/tool_records.rs)
 #   scripts/tool-record.sh source-fidelity, reference-consistency, product-fidelity,
 #                                    brief-compliance or reality-checks: the five records of
 #                                    the use cases' recipes and their folders, all five
@@ -65,12 +69,16 @@ case "${1:-}" in
     scripts/thread-guard.sh cargo test --release -p whizbang-rascal --test it -- \
       --ignored --exact "tool_records::writes::$1"
     ;;
+  remove_checked)
+    scripts/thread-guard.sh cargo test -p whizbang --test it -- \
+      --ignored --exact tool_records::writes::remove_checked
+    ;;
   source-fidelity | reference-consistency | product-fidelity | brief-compliance | reality-checks)
     scripts/thread-guard.sh cargo test --release -p whizbang-squint --test it -- \
       --ignored --exact use_case_records::write_the_records
     ;;
   *)
-    echo "tool-record: usage: scripts/tool-record.sh view|grow|align|resize|tiles|change_map|edge_similarity|close|subtract|line|rect|stroke|paste|fill|mask_rect|protect|segment|select|plug|feather|render|rasterize|shrink|invert|carry|inspect|cut|put|window|unwindow|tighten|fan|profile|ramp|apply|measure|remove|remove_prompt|repair|repair_area|seam|source-fidelity|reference-consistency|product-fidelity|brief-compliance|reality-checks" >&2
+    echo "tool-record: usage: scripts/tool-record.sh view|grow|align|resize|tiles|change_map|edge_similarity|close|subtract|line|rect|stroke|paste|fill|mask_rect|protect|segment|select|plug|feather|render|rasterize|shrink|invert|carry|inspect|cut|put|window|unwindow|tighten|fan|profile|ramp|apply|measure|remove|remove_prompt|repair|repair_area|seam|remove_checked|source-fidelity|reference-consistency|product-fidelity|brief-compliance|reality-checks" >&2
     exit 2
     ;;
 esac

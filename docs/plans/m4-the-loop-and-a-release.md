@@ -1636,6 +1636,52 @@ of retry works is shown by L1's and L2's tests with fakes, not here.
   `scripts/tests/test-tool-records.sh` passing with the new record, and every row of the
   table below closed or re-owned.
 
+**The box stays open** (E1, 2026-11-20, its first pull request). Everything that needs no
+paid call is built: the script and its tally with their test, the loop's tool record with
+its two tests and its shape check, and the rows. The live record is the orchestrator's runs
+and does not exist yet, so
+`evidence::the_loops_record_names_a_commit_of_this_tree_and_holds_only_aggregates` holds
+the evidence's config and the manifest's 24 entries now, and the two tallies, the page and
+the three cases from the moment `docs/results/m4-loop.md` is committed. The box is ticked
+by the pull request that brings the record in.
+
+**Decided with the task (E1).**
+
+- **A judge is named as the config names it,** and a backend's name holds no dot. The
+  judges are `claude-haiku-5-5` and `gpt-6-1-terra`, the second the model `gpt-6.1-terra`;
+  those names are in `--judge`, in the request ids and in the tallies' file names. The
+  config is committed, `labs/m4-loop/config.toml`, with the cap at 3.50 dollars and no
+  decision cache. A tally names the model each judge's requests were answered by, from
+  the records.
+- **More than the command above.** `--allowance <USD>` is what a store the script itself
+  makes is given, as the local leg of a candidate gives its store one; `--models-dir` is
+  handed to the binary; a case takes `--judge` and `--out` too. The page is put together
+  by the tally from the two tallies and the three cases' files
+  (`scripts/loop-evidence.py page`), which is no paid step and needs no lock.
+- **More refusals than the list above.** The binary must say a commit that is this
+  checkout's HEAD or an ancestor of it, in a checkout with no tracked change: that commit
+  is the one a tally names. And a call that leaves no run stops the script, since nothing
+  ran and the next would say the same; the same command then goes on from there.
+- **Under the heavy lock is checked, not assumed:** a process above the script must be
+  the one the lock names, and the guard's limit must be 200.
+- **An entry the store already holds a run for is not asked again;** one that was
+  interrupted is asked under its request id, which the store answers.
+- **The loop's record test is the binary's**
+  (`crates/whizbang/tests/it/tool_records.rs`), not `whizbang-rascal`'s where the other
+  recipes' are: only the binary holds rascal's loop and squint's check together. Its name
+  is the one above. Its pictures are held pixel for pixel, decoded, not byte for byte.
+- **"An `unsure` that a retry under rascal's rule would have followed" is counted as an
+  upper bound,** and the tally and the page say so: a run that stopped on an `unsure`
+  whose check held a tentative violation of `RQ1` and cited any place. A record keeps a
+  check's places apart from its findings.
+- **How the attempts ended is counted twice:** by the row of the table the last judged
+  attempt's findings are of, worked out from the counts the record keeps; and by the
+  sentence the loop wrote, as one of a closed set with `other`, so that no sentence
+  reaches a tally (the carry-over row on a closed set of reasons is milestone E's).
+- **The spec is not edited here.** The wording owed since K1 and L1 (section 3's Prepare
+  bullet, section 7's rows) is in a carry-over row, with N1 as its owner on the owner's
+  word.
+
 ### What the owner provides (E)
 
 - If the owner wishes: three to five pictures of their own, each with a phrase, where one

@@ -95,6 +95,20 @@ for recipe in remove remove_prompt repair repair_area seam; do
   printf '%s\n' "$history" | grep -E '^\| 2\. Scored alone \| (Shown|In part) \|' >/dev/null ||
     fail "the record of $recipe does not show rung 2"
 done
+# The record of the loop `remove_checked` (plan m4, task E1, item 4): rung 1 shown, by two
+# examples of which one is a case it handles badly, and rung 2 in part, said so. The fast
+# tests hold its examples (crates/whizbang/tests/it/tool_records.rs) and what it says of
+# rung 2 (`evidence::the_loops_tool_record_holds_rung_1_and_says_what_of_rung_2_is_shown`).
+record=docs/reference/tools/remove_checked.md
+[ -f "$record" ] || fail "the record of the loop remove_checked is missing"
+history=$(sed -n '/^## Mark and history$/,$p' "$record")
+printf '%s\n' "$history" | grep -E '^\| 1\. Single examples \| Shown \|' >/dev/null ||
+  fail "the record of remove_checked does not show rung 1"
+printf '%s\n' "$history" | grep -E '^\| 2\. Scored alone \| In part \|' >/dev/null ||
+  fail "the record of remove_checked does not say rung 2 is shown in part"
+printf '%s\n' "$history" | grep -E '^\*\*Mark\.\*\* Experimental' >/dev/null ||
+  fail "the record of remove_checked is not marked experimental"
+grep -F '**This is a case it handles badly.**' "$record" >/dev/null || fail "the record of remove_checked shows no case it handles badly"
 for record in docs/reference/tools/*.md; do
   wrong=$(shape "$record")
   [ -z "$wrong" ] || fail "$wrong"

@@ -202,9 +202,11 @@ later call can take one.
   it lands, a retry widens the whole mask, once. So a call that asks three attempts
   reserves for three and makes two at most; what the third would have cost is given back
   when the run ends.
-- The loop's tool record and its live evidence are written with milestone 4's evidence
-  (plan m4, task E1). Until then the loop is marked experimental, and its visual quality
-  has not been confirmed by a person.
+- The loop is marked experimental. Its tool record,
+  `docs/reference/tools/remove_checked.md`, shows it on two worked examples, one of them a
+  case it handles badly, and says what of its scoring is shown. What it did on real
+  models is reported, not scored, by `scripts/loop-evidence.sh` (plan m4, task E1), and
+  its visual quality has not been confirmed by a person.
 - Nothing may call the loop: calls nest four levels deep and the loop uses all four, so a
   recipe that names it as a step is refused when it is read.
 - On Linux no local segmenter runs, so the loop is not ready there until a remote
