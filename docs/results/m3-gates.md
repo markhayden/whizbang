@@ -1,5 +1,8 @@
 # The gate of details first
 
+**The run to read is the fourth** (below, "The fourth run"): the first complete one, every
+judge answering. The runs before it stay as recorded.
+
 Plan m3, task G1, item 3 (plan 2C, task E2, item 9): the gate frozen in
 `gates/details-first.toml` (SHA-256 `ddd2ca2e0caaf34da3456f1a03c8a549d706b4ef1559da2e289c9341f0059290`)
 over its matrix `gates/details-first-matrix.toml` (identity `5b463d736c8e9b13…`). Arm F, the
@@ -123,4 +126,55 @@ does not show holds here too: dev sets admit nothing, 25 families give wide inte
 40 of the 100 items have no pair for the details to measure.
 
 **Details first is still `check`'s default** although the gate rejected it twice; that is a
-row of the carry-over list owned by milestone E, first thing.
+row of the carry-over list, now owned by milestone 4, its first task.
+
+## The fourth run, the complete one
+
+**This is the run to read.** The orchestrator ran the same frozen gate (SHA-256
+`ddd2ca2e0caaf34da3456f1a03c8a549d706b4ef1559da2e289c9341f0059290`, matrix
+`gate-details-first`, identity `5b463d736c8e9b13…`) a fourth time on 2026-11-19, after the
+owner cleared the Google key's limit, with the third run's binary (main
+`af5392c4dbc9db0caf19dc184c82e7a5b0b4dc43`, `check` 1.6.0) on a fresh store: 1,000
+decisions, 100 items in 25 families, and every judge answering. Its receipt, aggregates and
+digests only, is `m3-gates/details-first-fourth-receipt.json` (SHA-256
+`ae3dba5ff2b343c5ca2ca6228acb185b9e6e9086ba343947c0dbeff7c452c997`). The store charged 7.00 US
+dollars for it, with nothing held and nothing unresolved. The third run stays as recorded
+above.
+
+**Rejected.** On no judge did details first help. `claude-haiku-5-5`'s gain is below zero
+but its corrected interval now spans zero; `gemini-3.8-flash` gave the same result under both
+arms in every family; `gpt-6.1-terra` shows no clear change. The gate rejects it.
+
+| Judge | Outcome | Balanced accuracy C | F | Gain [corrected interval] | False-reject increase | Families differing | Failed |
+|---|---|---|---|---|---|---|---|
+| `claude-haiku-5-5` | rejected | 0.529 | 0.483 | -0.046 [-0.123, 0.024] | 0.000 [-0.135, 0.163] | 14 of 25 | admission, false rejects, errors |
+| `gemini-3.8-flash` | rejected | 0.887 | 0.887 | 0.000 [0.000, 0.000] | 0.000 [0.000, 0.000] | 0 of 25 | admission |
+| `gpt-6.1-terra` | inconclusive | 0.725 | 0.738 | 0.013 [-0.060, 0.098] | 0.000 [-0.125, 0.116] | 7 of 25 | admission, false rejects |
+
+**Errors by kind.** Only `claude-haiku-5-5` had any: 7 items of 100 under each arm ended
+without a verdict, and over all its runs 22 under C and 21 under F ended in a submission
+that was not a verdict (`invalid_submission`). The third run's 12 under C against 31 under F
+did not repeat. `gemini-3.8-flash` and `gpt-6.1-terra` had none. Over the run, 957 of the
+1,000 `check` runs ended in a verdict (177 pass, 573 fail, 207 unsure): by use case, of 200
+each, source-fidelity 196, reference-consistency 179, reality-checks 197, brief-compliance
+193 and product-fidelity 192. The store counted 3,559 runs in all (1,000 `check`, 2,047
+`view`, 506 `align`, 6 `resize`): 3,510 completed, 43 ended in error (all of them Haiku's
+invalid submissions) and 6 were found invalid; 67 retries and 252 repairs.
+
+**Spread from run to run.** Between the third run and this one, on the same binary and the
+same items, `claude-haiku-5-5`'s balanced accuracy under C moved from 0.562 to 0.529 and under
+F from 0.479 to 0.483. A difference of a few points between two runs is within that spread.
+
+| Judge | Arm | Detected (of 60) | Passed (of 40) | False rejects | Unsure | Errors | Cost (USD) | Median wall (ms) |
+|---|---|---|---|---|---|---|---|---|
+| `claude-haiku-5-5` | C | 47 | 11 | 4 | 30 | 7 | 0.3496 | 13,708 |
+| `claude-haiku-5-5` | F | 46 | 8 | 4 | 33 | 7 | 0.3797 | 15,004 |
+| `gemini-3.8-flash` | C | 57 | 33 | 7 | 0 | 0 | 1.4043 | 22,764 |
+| `gemini-3.8-flash` | F | 57 | 33 | 7 | 0 | 0 | 1.4196 | 22,823 |
+| `gpt-6.1-terra` | C | 57 | 20 | 11 | 11 | 0 | 0.9571 | 17,569 |
+| `gpt-6.1-terra` | F | 57 | 21 | 11 | 10 | 0 | 0.9956 | 17,942 |
+
+Cost is what each arm's decisions of repetition 1 settled. Haiku's self-disagreement over
+its later repetitions: 0.200 under C and 0.210 under F. What the first run's record says it
+does not show holds here too: dev sets admit nothing, 25 families give wide intervals, and
+40 of the 100 items have no pair for the details to measure.
