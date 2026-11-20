@@ -1679,6 +1679,17 @@ exists, and a builder does not tag. R2 is held by tests of its scripts and of th
 files' shape; the orchestrator tags the first candidate after E1 and fixes what the real
 run finds, and N1 records it.
 
+**The first real run** (N1's pull request, 2026-11-20). Both workflows, the local leg and
+the gate ran for real on the first candidate and passed the first time, with nothing to
+fix: `prerelease` run 44779028704 on `v0.1.0-rc.1` at 3ee263a8 (`build` and `install` on
+both runners, then `candidate`); the local leg on the owner's Mac, its receipt attached;
+and `release` run 44780876409 on `v0.1.0`, whose gate passed and which published the
+candidate's own files (`docs/results/m4-release.md`;
+`evidence::the_release_record_names_a_candidate_whose_commit_is_of_this_tree`,
+`evidence::the_release_record_holds_every_required_check_of_the_receipt_as_passed`). R2's
+box was ticked by E1's pull request on its other clauses; this is the clause it left to
+N1.
+
 ## E1. The evidence before the candidate (medium; the orchestrator's runs)
 
 ### Goal
@@ -1880,6 +1891,12 @@ no longer returns early: it fails when the page is missing, and passes on the re
   bullet, section 7's rows) is in a carry-over row, with N1 as its owner on the owner's
   word.
 
+**The candidate at E1's merge** (N1's pull request, 2026-11-20). As "Which commit is
+which" under N1 says, the first candidate was tagged on `main` at E1's merge, 3ee263a8, and
+it passed: E1's merge is the commit of `v0.1.0`. The loop E1 measured is the loop
+released, and the local leg checked it once more on the candidate's own archive
+(`docs/results/m4-release.md`).
+
 ### What the owner provides (E)
 
 - If the owner wishes: three to five pictures of their own, each with a phrase, where one
@@ -1915,12 +1932,27 @@ is in no archive of `0.1.0`: it records C from outside. The tag `m4` is made on 
    pull request, as `AGENTS.md` asks of a box about something that happens after its own
    pull request.
 
-- [ ] Done when:
+- [x] Done when:
   `evidence::the_release_record_names_a_candidate_whose_commit_is_of_this_tree`,
   `evidence::the_release_record_holds_every_required_check_of_the_receipt_as_passed`,
   `scripts/tests/test-notes.sh` passing with the note, a `prerelease` run ended in success
   on C with a receipt the gate accepts (both named in the record), `v0.1.0` published from
   C's archives, and the note written.
+
+**Done, and the box ticked** (N1, 2026-11-20). C is 3ee263a8, the merge of E1, with one
+candidate, `v0.1.0-rc.1`. `docs/results/m4-release.md` records the candidate, CI and the
+scans before its tag, each job of `prerelease` run 44779028704, the archives' digests, the
+receipt whole as it was attached (its SHA-256 held by the test), and `release` run
+44780876409 with what its gate printed and what was published. The first test holds the
+record's commit to this tree and to the version `0.1.0` in its manifest, its candidate to
+the version and the archives to both targets; the second holds every required check of
+the receipt, once each, to the conditions of its kind (R2, item 4), its archives to the
+record's `SHA256SUMS`, and the leg's itemised spend to the record. `scripts/tests/test-notes.sh`
+passes with `docs/plans/m4-note.md` and holds it to at least 50 cited tests. Beside the
+box: the skill `release`, step 7, now says what a refusal of the gate after the version
+tag costs (the workflow can be re-run for the same tag; a new version is needed only when
+the cause is in the tagged commit), and the last row owned by milestone 4, the Google
+prices, is re-owned with its line.
 
 ## Carry-over rows owned by milestone 4, and who takes each
 
@@ -1936,7 +1968,7 @@ is in no archive of `0.1.0`: it records C from outside. The tag `m4` is made on 
 | `whizbang lab run` prints nothing while a round runs | Taken by A1 (item 7) |
 | `whizbang lab run`'s "started now" | Taken by A1 (item 8) |
 | The pairs page: a picture's size tells its arm; backspace | Taken by A1 (item 9) |
-| The Google rows of prices are introductory | Taken by E1 (item 5) for the row whose date has come by then; each other re-owned to the first live run on or after its date |
+| The Google rows of prices are introductory | Taken by E1 (item 5) for the row whose date has come by then; each other re-owned to the first live run on or after its date. **N1:** no date had come by the local leg (2026-11-20), so both rows are re-owned to the first live run on or after each date, milestone 5's or E's |
 | Details first is still `check`'s default (milestone 4's since #246, which re-owned it from E to this plan's first task) | Taken by A1 (items 1 to 6) |
 | Hosting the model's files for customers | Its first step, the reading of the licence, taken by E1 (item 6). The rest re-owned to milestone 6 by the owner's decision of 2026-11-19 |
 
@@ -2131,7 +2163,9 @@ under "What the owner decided", and one of draft 3's under "What the orchestrato
 
 | Item | Left for |
 |---|---|
+| The playground's screens, designed with the owner in a new Paper project before any is built (N1) | Milestone 5, first |
 | The loop in the playground, with its three cases by hand | Milestone 5 |
+| E's first slice, beside milestone 5, decided with the owner on 2026-11-20 (N1): the default judge chosen again, the submission format so that small models stop failing it, and the loop's retries on the owner's own pictures (`docs/plans/m4-note.md`) | Milestone E, beside milestone 5 |
 | The loop's rung 2 scored (whether a retry makes a result better), and rungs 3 and 4; its visual quality confirmed by a person; a threshold for the segmenter inside a crop, if E1's count of crops that found nothing calls for it | Milestone E |
 | A local model on Linux, and so `remove_prompt` and the loop there, through a remote segmenter | Milestone 6 |
 | Hosting the model's files for customers | Milestone 6 (the owner's decision of 2026-11-19) |
