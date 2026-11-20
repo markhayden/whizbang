@@ -1683,7 +1683,7 @@ fn conclude(
         .diagnostics()
         .write(use_case::REASONS, lines.as_bytes());
     kept.map_err(|why| failed("reasons", &why))?;
-    let kept = judging.keep(
+    let (kept, exact) = judging.keep(
         context,
         call,
         concluded.retries,
@@ -1700,7 +1700,18 @@ fn conclude(
         return Err(failed("findings", &why));
     }
     if let Some(key) = concluded.key {
-        keep_key(context, key, concluded.reported, concluded.edited);
+        let not_kept = if !concluded.reported {
+            Some("not kept: the judge did not report its identity")
+        } else if concluded.edited {
+            Some("not kept: a tool file it ran was edited after its key was made")
+        } else if !exact {
+            // A later run would read the document as it is stored, and a secret taken
+            // out of it as bytes may leave one that gives other findings or none.
+            Some("not kept: what the run decided holds a secret, and is kept without it")
+        } else {
+            None
+        };
+        keep_key(context, key, not_kept);
     }
     let produced = Produced::nothing().with_verdict(decided.verdict.clone());
     Ok(produced.with_findings(findings.to_json()))
@@ -1758,8 +1769,9 @@ fn judging(call: &PreparedCall, use_case: &str, job: Option<&Value>) -> Result<J
 }
 
 impl Judging {
-    /// Keeps what the run decided among its diagnostics ([`JUDGED`]): the document, as
-    /// it was written.
+    /// Keeps what the run decided among its diagnostics ([`JUDGED`]): the document, and
+    /// whether it is stored exactly as it is here. It is not when it holds a secret of
+    /// the run's: the document is then kept with the secret taken out, as any text is.
     fn keep(
         &self,
         context: &Context,
@@ -1767,7 +1779,7 @@ impl Judging {
         retries: &[Json],
         decided: &use_case::Decided,
         second: Option<&Json>,
-    ) -> Result<Vec<u8>, Failure> {
+    ) -> Result<(Vec<u8>, bool), Failure> {
         let given = (call.inputs().iter()).filter(|input| input.port() == "images");
         let images: Vec<Json> = (self.job.images.iter().zip(given))
             .map(|(image, input)| {
@@ -1788,9 +1800,12 @@ impl Judging {
             kept["second_look"] = second.clone();
         }
         let kept = kept.to_string().into_bytes();
-        let written = context.diagnostics().write(JUDGED, &kept);
-        written.map_err(|why| failed("judged", &why))?;
-        Ok(kept)
+        let exact = context.diagnostics().write_exact(JUDGED, &kept).is_ok();
+        if !exact {
+            let written = context.diagnostics().write(JUDGED, &kept);
+            written.map_err(|why| failed("judged", &why))?;
+        }
+        Ok((kept, exact))
     }
 }
 
@@ -1817,14 +1832,14 @@ fn answered_from(context: &Context, hit: &cache::Hit) -> Result<Produced, Failur
     Ok(produced.with_findings(hit.findings.to_json()))
 }
 
-/// Keeps a run's key for a later run to answer from, when every turn of its judge said
-/// which model answered; and notes in the record whether it was kept. A key that cannot
-/// be written is not kept, and the run's verdict stands.
-fn keep_key(context: &Context, key: &cache::Key, reported: bool, edited: bool) {
-    let said = if !reported {
-        "not kept: the judge did not report its identity"
-    } else if edited {
-        "not kept: a tool file it ran was edited after its key was made"
+/// Keeps a run's key for a later run to answer from, unless there is a reason not to
+/// (`not_kept`: a judge that did not say which model answered, a tool file edited, a
+/// document of what was decided that is not stored as it was made); and notes in the
+/// record whether it was kept. A key that cannot be written is not kept, and the run's
+/// verdict stands.
+fn keep_key(context: &Context, key: &cache::Key, not_kept: Option<&str>) {
+    let said = if let Some(why) = not_kept {
+        why
     } else if context
         .diagnostics()
         .write(&key.name(), key.material().as_bytes())

@@ -632,6 +632,27 @@ otherwise than it is worded.
   document: a box with no area, an obligation's id the kind does not take, and a list
   over 32 KiB.
 
+**After the review of the pull request (K2).** Fixed in it: the two other ways
+`cache::find` passes a run over have their tests (a document that gives no findings; one
+whose findings would not carry the recorded verdict); a run whose kept document held a
+secret keeps no key, so that no entry is left that a hit cannot read; an obligation's
+id is held to four digits where a job is resolved; a polygon that encloses no area is
+left out and counted, as a box with none is; and an answer that counts and is about no
+obligation is counted as a finding left out. Their tests are
+`cache::an_entry_whose_judged_document_gives_no_findings_is_not_answered_from`,
+`cache::an_entry_whose_findings_would_not_carry_its_verdict_is_not_answered_from`,
+`cache::a_check_whose_kept_document_held_a_secret_keeps_no_key`,
+`use_case::a_requirements_id_is_held_to_what_a_finding_may_cite`, and two more cases of
+`check::findings_cut_short_in_any_way_say_they_are_not_complete_and_count_what_was_left_out`.
+
+**Owed after K2** (a follow-up of that review, not built here):
+
+- The item of a reference image is handed back as one finding for each obligation, and
+  each of them carries the item's one location, so one location takes as many of the
+  eight places as the item has obligations. One place for the item, shared by its
+  findings, would leave the others for other answers. For the task that first reads
+  places under a use case with references; the loop's `source-fidelity` has no such item.
+
 **Decided with the task (K2).** ADR 0035, "What `check` hands back", has each.
 
 - **Made from `judged.json` alone,** by one function, on a check that was made (from

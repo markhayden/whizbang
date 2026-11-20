@@ -29,10 +29,11 @@
 //! is the whole image, or an absence, is no place. Whatever cannot be handed back is
 //! left out and counted, and the document then says `complete: false`: a finding past
 //! the limit, or one whose obligations `findings/1` does not take (more than
-//! [`FINDING_OBLIGATIONS_LIMIT`], or an id that is not letters and then digits); a
+//! [`FINDING_OBLIGATIONS_LIMIT`], none at all, or an id that is not letters and then
+//! digits); a
 //! place past the limit, on an image the run was not given, or that is no box or
-//! polygon of the kind once its numbers are held (a box with no area, a polygon of
-//! more than [`FINDING_POLYGON_LIMIT`] points); and, last, whatever is cut from the end
+//! polygon of the kind once its numbers are held (a box or a polygon that encloses no
+//! area, a polygon of more than [`FINDING_POLYGON_LIMIT`] points); and, last, whatever is cut from the end
 //! to fit [`FINDINGS_MAX_BYTES`], places before findings. No text of the judge's
 //! travels: the kind has no field for one.
 
@@ -61,6 +62,16 @@ enum Cited {
 fn inside(number: &Json) -> Option<f64> {
     let number = number.as_f64().filter(|number| number.is_finite())?;
     Some(number.clamp(0.0, 1.0))
+}
+
+/// Whether a polygon encloses any area: points on one line, or all held to one edge or
+/// corner of the picture, enclose none, as a box whose sides meet does.
+fn encloses(points: &[[f64; 2]]) -> bool {
+    let after = points.iter().cycle().skip(1);
+    let doubled: f64 = (points.iter().zip(after))
+        .map(|([x, y], [next_x, next_y])| x * next_y - next_x * y)
+        .sum();
+    doubled.abs() > f64::EPSILON
 }
 
 /// The place a kept location cites, on the images the run was given.
@@ -101,6 +112,7 @@ fn cited(location: Option<&Json>, images: &[(String, Digest)]) -> Cited {
         let read: Option<Vec<[f64; 2]>> =
             points.and_then(|points| points.iter().map(point).collect());
         read.filter(|points| (3..=FINDING_POLYGON_LIMIT).contains(&points.len()))
+            .filter(|points| encloses(points))
             .map(|points| FoundAt {
                 image: *image,
                 boxed: None,
@@ -178,6 +190,10 @@ pub fn of_judged(judged: &[u8]) -> Result<Findings, String> {
             }
             (None, None) => return Err("an answer cites no obligation".to_owned()),
         };
+        // An answer that counts and is about no obligation cannot be handed back.
+        if cites.is_empty() {
+            left_out.findings += 1;
+        }
         let place = cited(answer.get("location"), &images);
         for obligations in cites {
             let taken = (1..=FINDING_OBLIGATIONS_LIMIT).contains(&obligations.len())

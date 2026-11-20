@@ -553,6 +553,30 @@ mod check {
         let mut flat = kept();
         flat["answers"][2]["location"]["bbox"] = json!([1.0, 1.0, 1.0, 1.0]);
         assert_eq!(of(&flat).left_out(), count(0, 1));
+        // A polygon that encloses no area: its points on one line, or all held to one
+        // corner of the picture.
+        for points in [
+            json!([[0.25, 0.25], [0.5, 0.5], [0.75, 0.75]]),
+            json!([[1.5, 1.5], [2.0, 3.0], [4.0, 1.25]]),
+        ] {
+            let mut line = kept();
+            line["answers"][2]["location"] =
+                json!({"kind": "polygon", "frame": "raw:candidate", "polygon": points});
+            let findings = of(&line);
+            assert_eq!(findings.left_out(), count(0, 1), "{points}");
+            assert_eq!(findings.places().len(), 1, "{points}");
+        }
+        // An item that is about no obligation, and an observation that cites none, with
+        // a row that counts: each is a finding that cannot be handed back, and is
+        // counted, not dropped.
+        let mut about_nothing = kept();
+        about_nothing["answers"][2]["obligations"] = json!([]);
+        about_nothing["answers"][5]["obligation_ids"] = json!([]);
+        let findings = of(&about_nothing);
+        assert!(findings.items().is_empty());
+        assert!(!findings.is_complete());
+        assert_eq!(findings.left_out(), count(2, 0));
+        assert_eq!(findings.decision(), Decision::Fail);
         // An obligation whose id the kind does not take: the finding is left out.
         let mut named = kept();
         named["answers"][5]["obligation_ids"] = json!(["SF12345"]);
@@ -645,12 +669,13 @@ mod cache {
 
     use super::*;
 
-    /// `check` as it was before it kept what it decided: an action of its name and
-    /// descriptor that keeps a key for the decision cache and hands back a verdict, and
-    /// keeps no document of what it decided.
+    /// A run of `check` that findings cannot be made from: an action of its name and
+    /// descriptor that keeps a key for the decision cache and hands back the verdict
+    /// pass, and keeps of what it decided this document, or none.
     struct Earlier {
         check: Arc<dyn Action>,
         key: (String, Vec<u8>),
+        judged: Option<Vec<u8>>,
         ran: Arc<Mutex<u32>>,
     }
 
@@ -663,13 +688,20 @@ mod cache {
             *self.ran.lock().unwrap() += 1;
             let (name, material) = &self.key;
             context.diagnostics().write(name, material).unwrap();
+            if let Some(judged) = &self.judged {
+                context.diagnostics().write(JUDGED, judged).unwrap();
+            }
             let verdict = Verdict::new(Decision::Pass, "as an earlier build kept it");
             Ok(Produced::nothing().with_verdict(verdict))
         }
     }
 
-    #[test]
-    fn an_entry_that_kept_no_judged_document_is_not_answered_from() {
+    /// A store that holds a completed run of `check` under the key of the check these
+    /// tests make, with the verdict pass and this document of what it decided, or none:
+    /// that run is passed over. The check runs, its judge is asked, and its verdict and
+    /// findings are its own, not the entry's pass; and the new entry replaces it: the
+    /// same check again is answered by the run that was made, with that run's findings.
+    fn passed_over(judged: Option<&[u8]>) {
         let answers = submission(items(&[("RQ1", "violation", "confident")]), Vec::new());
         // The key of this check, from a world that made it: its name and its material.
         let elsewhere = caching();
@@ -678,9 +710,7 @@ mod cache {
             .find(|(name, _)| name.starts_with("diagnostics/cache-"))
             .map(|(name, (_, bytes))| (name["diagnostics/".len()..].to_owned(), bytes.clone()))
             .expect("the check kept its key");
-        // A second world of the same pictures, whose store holds a completed run of
-        // `check` under that very key, with a verdict and no document of what it
-        // decided.
+        // A second world of the same pictures, whose store holds the run.
         let world = caching();
         let ran = Arc::new(Mutex::new(0));
         let judge = Arc::new(FakeJudge::scripted(Vec::new()));
@@ -691,6 +721,7 @@ mod cache {
             Arc::new(Earlier {
                 check: action,
                 key: key.clone(),
+                judged: judged.map(<[u8]>::to_vec),
                 ran: ran.clone(),
             })
         });
@@ -700,16 +731,13 @@ mod cache {
         assert_eq!(old.outcome().name(), "completed");
         assert_eq!(*ran.lock().unwrap(), 1);
         let old_left = left(&world.root(), world.fs.clone(), old.run());
-        assert!(old_left.has(&key.0) && !old_left.has(JUDGED));
-        // The entry is not answered from: the check runs, its judge is asked, and its
-        // verdict and findings are its own, not the entry's pass.
+        assert!(old_left.has(&key.0));
+        assert_eq!(old_left.has(JUDGED), judged.is_some());
         let first = checked(&world, &answers);
         assert_eq!(first.requests, 1);
         assert!(first.cache().contains("\"kept\""), "{}", first.cache());
         assert_eq!(verdict(&first), Decision::Fail);
         assert_eq!(first.findings().items().len(), 1);
-        // And the new entry replaces it: the same check again is answered by the run
-        // that was made, with that run's findings.
         let second = checked(&world, &answers);
         assert_eq!(second.requests, 0);
         assert!(second.cache().contains("\"hit\""), "{}", second.cache());
@@ -722,10 +750,83 @@ mod cache {
         assert_eq!(second.findings(), first.findings());
         assert_eq!(verdict(&second), Decision::Fail);
     }
+
+    #[test]
+    fn an_entry_that_kept_no_judged_document_is_not_answered_from() {
+        passed_over(None);
+    }
+
+    #[test]
+    fn an_entry_whose_judged_document_gives_no_findings_is_not_answered_from() {
+        // A document that is not JSON, and one that holds no list of answers.
+        passed_over(Some(b"not a document"));
+        passed_over(Some(br#"{"images": []}"#));
+    }
+
+    #[test]
+    fn an_entry_whose_findings_would_not_carry_its_verdict_is_not_answered_from() {
+        // A well-formed document whose one answer makes the decision unsure, beside a
+        // recorded verdict of pass.
+        let unsure = json!({"images": [], "answers": [{"id": "chk:ob:SF1@candidate",
+            "obligations": ["SF1"], "disposition": "held", "confidence": "tentative",
+            "row": "unsure", "location": null, "clamped": false}]});
+        assert_eq!(
+            of_judged(unsure.to_string().as_bytes()).unwrap().decision(),
+            Decision::Unsure
+        );
+        passed_over(Some(unsure.to_string().as_bytes()));
+    }
+
+    #[test]
+    fn a_check_whose_kept_document_held_a_secret_keeps_no_key() {
+        // A secret of eight digits that a box's coordinate spells: taken out of the
+        // stored document as bytes, it would leave a document no hit could read, so the
+        // check would be paid again each time and each run would leave a dead entry.
+        // Such a run keeps its document redacted, hands back its findings, and keeps
+        // no key.
+        let world = caching();
+        let secret = "12345678";
+        let mut answered = items(&[("RQ1", "violation", "confident")]);
+        answered[2]["location"] = boxed([0.12345678, 0.25, 0.5, 0.75]);
+        let answers = submission(answered, Vec::new());
+        let run = |world: &World| {
+            let turns = read_script(submits(answers.clone()).as_bytes()).unwrap();
+            let turns = (turns.into_iter())
+                .map(|turn| turn.map(|turn| turn.reported_by(Some("fake-judge"))))
+                .collect();
+            let judge = Arc::new(FakeJudge::scripted(turns));
+            let secrets = Secrets::new([secret.to_owned()]).unwrap();
+            let executor = world.engine(judge.clone(), secrets);
+            let call = judged_call(&job(), &[world.other.id(), world.photo.id()]);
+            let finished = executor.submit(&call).unwrap();
+            drop(executor);
+            assert_eq!(finished.outcome().name(), "completed");
+            let left = left(&world.root(), world.fs.clone(), finished.run());
+            (finished, left, judge.requests())
+        };
+        let (finished, kept, requests) = run(&world);
+        assert_eq!(requests, 1);
+        assert_eq!(finished.findings().unwrap().items().len(), 1);
+        assert!(!String::from_utf8_lossy(kept.diagnostic(JUDGED)).contains(secret));
+        assert!(!kept.names.keys().any(|name| name.contains("cache-")));
+        let said = (kept.record().asked().settings.iter())
+            .find(|setting| setting.name() == whizbang_squint::cache::SETTING)
+            .map(|setting| format!("{:?}", setting.value()))
+            .unwrap();
+        assert!(
+            said.contains("not kept: what the run decided holds a secret"),
+            "{said}"
+        );
+        // The same check again is made again, and still leaves no entry.
+        let (_, again, requests) = run(&world);
+        assert_eq!(requests, 1);
+        assert!(!again.names.keys().any(|name| name.contains("cache-")));
+    }
 }
 
 mod use_case {
     use whizbang_core::artifact::ArtifactId;
+    use whizbang_core::contract::is_obligation_id;
 
     use super::*;
     use crate::check::checklist_of;
@@ -789,5 +890,25 @@ mod use_case {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn a_requirements_id_is_held_to_what_a_finding_may_cite() {
+        // A job's requirement is cited by findings, and `findings/1` takes an id of at
+        // most four digits: a requirement of more is refused where the job is resolved,
+        // in the job's own words, and not left out of the findings later.
+        let with = |id: &str| {
+            let mut job = job();
+            job.requirements
+                .push(requirement(id, "Something else holds."));
+            whizbang_squint::use_case::resolve(&job)
+        };
+        assert!(is_obligation_id("RQ9999") && with("RQ9999").is_ok());
+        assert!(!is_obligation_id("RQ12345"));
+        assert_eq!(
+            with("RQ12345").unwrap_err(),
+            "id \"RQ12345\" must be two capital letters and a number of at most four digits \
+             (SF1, RQ2)"
+        );
     }
 }

@@ -108,7 +108,8 @@ plan m4 a hit hands back the earlier run's findings as well, worked out again fr
 `check` hands back"): two identical checks give a caller identical findings whether or
 not the second was answered from the cache. A run that kept no `judged.json`, or one
 that does not give findings carrying its verdict's decision, is passed over as if it
-were not there: the check runs, and the newer run is the one found next time. An entry
+were not there: the check runs, and the newer run is the one found next time. A run
+whose `judged.json` held a secret, and so is stored with it taken out, keeps no key. An entry
 of an earlier `check` is never met, because the version of `check` is in the key.
 
 ## Consequences

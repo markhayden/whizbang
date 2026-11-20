@@ -169,12 +169,25 @@ submission, it hands back none.
   image, or an absence, is no place, and nothing is counted for it.
 - **What is left out is counted, and the document then says `complete: false`:** a
   finding past the 32nd, in the order of the submission; a finding whose obligations the
-  kind does not take (more than 16, or an id that is not one to eight letters and one to
-  four digits); a place past the eighth; a place on an image that is not among the
-  run's; a place that is no box or polygon of the kind once its numbers are held (a box
-  with no area, a polygon of more than 64 points); and, last, whatever is cut from the
+  kind does not take (more than 16, none at all, or an id that is not one to eight
+  letters and one to four digits); a place past the eighth; a place on an image that is
+  not among the run's; a place that is no box or polygon of the kind once its numbers
+  are held (a box or a polygon that encloses no area, a polygon of more than 64 points);
+  and, last, whatever is cut from the
   end to fit 32 KiB, places before findings. A place is counted only for a finding that
   was kept.
+- **An obligation's id** is two capital letters and at most four digits where a job is
+  resolved (`use_case::resolve`), which is what a finding may cite: a requirement with a
+  longer number is refused with its job, in the job's own words, and is never left out
+  of the findings for its id.
+- **A run whose kept document holds a secret keeps no key.** `judged.json` is first
+  written exactly as it was made (`Diagnostics::write_exact`), which is refused when the
+  bytes hold a secret of the run's; it is then written as any text is, with the secret
+  taken out, and the run notes `decision_cache = not kept: what the run decided holds a
+  secret, and is kept without it`. Taken out as bytes, a secret that a number spells
+  could leave a document that gives other findings or none; a key is kept only beside a
+  document a later run reads exactly as the run that made it did. The run's own
+  findings and verdict are as for any run.
 - **The decision cache** (ADR 0031). A hit hands back the findings worked out from the
   `judged.json` of the run that answered. A run that kept no such document, or one the
   findings cannot be made from, or whose findings would not carry its verdict's
@@ -198,6 +211,10 @@ Tests (squint's, in `findings::`): `check::a_checklist_item_and_a_separate_obser
 `check::findings_cut_short_in_any_way_say_they_are_not_complete_and_count_what_was_left_out`,
 `check::a_check_answered_from_the_cache_hands_back_the_findings_of_the_run_that_answered`,
 `cache::an_entry_that_kept_no_judged_document_is_not_answered_from`,
+`cache::an_entry_whose_judged_document_gives_no_findings_is_not_answered_from`,
+`cache::an_entry_whose_findings_would_not_carry_its_verdict_is_not_answered_from`,
+`cache::a_check_whose_kept_document_held_a_secret_keeps_no_key`,
+`use_case::a_requirements_id_is_held_to_what_a_finding_may_cite`,
 `use_case::a_use_case_recipe_hands_its_caller_the_findings_of_its_last_step`; and the
 binary's `cli::squint_check_prints_the_counts_of_its_findings`.
 
