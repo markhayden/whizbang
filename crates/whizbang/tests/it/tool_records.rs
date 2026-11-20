@@ -28,6 +28,7 @@ use whizbang_core::identity::DecodeLimits;
 use crate::checked::{
     Looped, PHRASE, Setup, asking, items, output, passes, pixels, remains, submission,
 };
+use crate::located::{PLACE, finding, remains_at};
 use crate::recipe::PAINT;
 
 const TOOL: &str = "remove_checked";
@@ -59,16 +60,27 @@ struct Case {
     name: &'static str,
     said: &'static str,
     answers: Vec<Json>,
+    /// The kit: whether its segmenter finds something inside a crop.
+    kit: fn(Vec<Json>) -> Setup,
 }
 
-/// The two examples: one the loop handles, a retry and then a pass; and one it handles
-/// badly, a finding about a protected subject, where it stops and hands back what failed.
+/// The three examples: two the loop handles, a retry aimed at the place a finding named
+/// and a retry with a wider mask, each then a pass; and one it handles badly, a finding
+/// about a protected subject, where it stops and hands back what failed.
 fn cases() -> Vec<Case> {
     vec![
+        Case {
+            name: "located",
+            said: "Attempt 1: `RQ1` violated, confident, at a box right of the first mask. \
+                   Attempt 2: every item held",
+            answers: vec![remains_at(PLACE), passes()],
+            kit: finding,
+        },
         Case {
             name: "retry",
             said: "Attempt 1: `RQ1` violated, confident, at no place. Attempt 2: every item held",
             answers: vec![remains(), passes()],
+            kit: Setup::answering,
         },
         Case {
             name: "protected",
@@ -81,6 +93,7 @@ fn cases() -> Vec<Case> {
                 ]),
                 Vec::new(),
             )],
+            kit: Setup::answering,
         },
     ]
 }
@@ -120,15 +133,12 @@ fn examples() -> Vec<Example> {
             // asked, under the same first answer, and its mask is the one kept there.
             let alone = Looped::new(
                 &format!("record-{}-first", case.name),
-                &Setup::answering(vec![case.answers[0].clone()]),
+                &(case.kit)(vec![case.answers[0].clone()]),
             );
             let only = alone.run(&asking(&alone, 1));
             assert_eq!(only.outcome().name(), "completed", "{}", case.name);
             let first = mask_of(&alone, output(&only, "mask"));
-            let world = Looped::new(
-                &format!("record-{}", case.name),
-                &Setup::answering(case.answers),
-            );
+            let world = Looped::new(&format!("record-{}", case.name), &(case.kit)(case.answers));
             let finished = world.run(&world.call());
             assert_eq!(finished.outcome().name(), "completed", "{}", case.name);
             let attempts = world.attempts(&finished);
@@ -243,8 +253,9 @@ fn page_of(examples: &[Example]) -> Page {
                     format!("{}, after a wider mask ({px} px)", word(*verdict))
                 }
                 Some(Changed::Located { crops }) => {
+                    let found = crops.iter().filter(|crop| crop.mask.is_some()).count();
                     format!(
-                        "{}, after looking in {} places",
+                        "{}, after looking into the place named ({} joined, something found in {found})",
                         word(*verdict),
                         crops.len()
                     )
@@ -309,11 +320,25 @@ mod recipes {
     fn the_record_of_remove_checked_is_what_it_gives() {
         let examples = examples();
         hold(&page_of(&examples));
-        let [retry, protected] = &examples[..] else {
-            panic!("two examples");
+        let [located, retry, protected] = &examples[..] else {
+            panic!("three examples");
         };
-        // The one it handles: a confident report that the thing remains, at no place,
-        // widens the mask once, and the second attempt passes and is kept.
+        // A confident report that the thing remains, at a place: the retry looks into
+        // the place, what it finds there joins the mask, and the second attempt passes.
+        assert_eq!(located.attempts[0], (Some(Decision::Fail), None));
+        assert!(matches!(
+            &located.attempts[1],
+            (Some(Decision::Pass), Some(Changed::Located { crops })) if crops.len() == 1
+        ));
+        assert_eq!(
+            (located.kept_number, located.verdict),
+            (2, Some(Decision::Pass))
+        );
+        // The segmenter was asked twice: about the picture, and inside the place.
+        assert_eq!(located.requests, (2, 2, 2));
+        assert!(count(located.kept.core()) > count(located.first.core()));
+        // The same report at no place widens the mask once, and the second attempt
+        // passes and is kept.
         assert_eq!(retry.attempts.len(), 2);
         assert_eq!(retry.attempts[0], (Some(Decision::Fail), None));
         assert!(matches!(

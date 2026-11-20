@@ -158,11 +158,16 @@ PASSES = found("pass", [count("RQ1", "held", "confident")])
 attempts = []
 
 
-def attempt(verdict, findings, changed=None, unchecked=None):
+def attempt(verdict, findings, changed=None, unchecked=None, views=0):
     number = len(attempts) + 1
     fill = "%s-a%d-fill" % (top, number)
     record(fill, "remove_prompt", top, **paid("fill", "fal", "bria-eraser", "1+fit1", 40000))
-    runs, settled = [fill], 40000
+    runs, settled = [], 40000
+    for view in range(views):
+        # A place a retry looked into: a cut of the picture.
+        runs.append("%s-a%d-view%d" % (top, number, view))
+        record(runs[-1], "view", top)
+    runs.append(fill)
     if findings is not None:
         check = "%s-a%d-check" % (top, number)
         # A judge's words are in the record of a check's own run, and in no tally.
@@ -187,7 +192,7 @@ elif way == 1:
 elif way == 2:
     attempt("fail", found("fail", [count("RQ1", "violation", "confident", 2)], places=[BOX, BOX]))
     crops = [{"crop": digest("1"), "mask": digest("2")}, {"crop": digest("3"), "mask": None}]
-    attempt("pass", PASSES, changed={"change": "located", "crops": crops})
+    attempt("pass", PASSES, changed={"change": "located", "crops": crops}, views=3)
     ended, kept = "attempt 2 passed", 2
 elif way == 3:
     attempt("unsure", found("unsure", [count("RQ1", "violation", "tentative")], places=[POLYGON]))
@@ -371,8 +376,9 @@ for line in 'schema = "loop-evidence/1"' "commit = \"$commit\"" 'whizbang = "0.1
   'pass = 9' 'fail = 12' 'unsure = 3' 'wider = 3' 'located = 3' \
   'passed = 9' 'row_0_cut_short = 3' 'row_1_damaged = 3' 'row_2_remains = 0' 'row_3_not_sure = 3' 'not_checked = 3' 'no_attempt = 3' \
   'findings_cut_short = 3' 'damaged_something_preserved = 3' 'nothing_says_it_remains = 3' 'one_unchecked_pass = 3' 'other = 0' \
-  'cut = 6' 'found_nothing = 3' 'masks_carried = 3' 'cited_by_checks = 9' 'cited_as_polygons = 3' \
-  'retries_wider_though_a_check_cited_a_place = 0'; do
+  'looked_into = 9' 'joined = 6' 'found_something = 3' 'found_nothing_joined_as_itself = 3' \
+  'found_nothing_left_out_over_a_tenth = 3' 'cited_by_checks = 9' 'cited_as_polygons = 3' \
+  'retries_wider_after_places_gave_nothing = 0' 'retries_wider_though_a_check_cited_a_place = 0'; do
   holds "$line"
 done
 # The findings, by obligation, disposition and confidence, over every check of every attempt.

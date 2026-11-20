@@ -316,6 +316,17 @@ def check_of(records, attempt):
     return None
 
 
+def looked_into(records, attempt):
+    """How many places an attempt's retry looked into: the cuts it made, each a run of
+    `view` among the runs the attempt lists. A located retry lists a crop for each place
+    that joined, whether something was found there or the place joined as itself; a place
+    that was looked into and has no crop is one where nothing was found and which covers
+    over a tenth of the picture, so it did not join (ADR 0039, "The located retry")."""
+    return sum(
+        1 for run in attempt.get("runs", []) if (records.get(run) or {}).get("asked", {}).get("action") == "view"
+    )
+
+
 def status_of(record):
     if record["outcome"].get("lost"):
         return "interrupted"
@@ -441,11 +452,14 @@ def tally(args):
     retries = {"wider": 0, "located": 0}
     places = dict.fromkeys(
         (
-            "cut",
-            "found_nothing",
-            "masks_carried",
+            "looked_into",
+            "joined",
+            "found_something",
+            "found_nothing_joined_as_itself",
+            "found_nothing_left_out_over_a_tenth",
             "cited_by_checks",
             "cited_as_polygons",
+            "retries_wider_after_places_gave_nothing",
             "retries_wider_though_a_check_cited_a_place",
         ),
         0,
@@ -483,16 +497,21 @@ def tally(args):
             by_attempts += int(attempt.get("settled_micros", 0))
             verdicts[attempt.get("verdict") or "unchecked"] += 1
             changed = attempt.get("changed") or {}
+            looked = looked_into(records, attempt)
+            crops = changed.get("crops", []) if changed.get("change") == "located" else []
+            places["looked_into"] += looked
+            places["joined"] += len(crops)
+            places["found_something"] += sum(1 for crop in crops if crop.get("mask") is not None)
+            places["found_nothing_joined_as_itself"] += sum(1 for crop in crops if crop.get("mask") is None)
+            places["found_nothing_left_out_over_a_tenth"] += max(0, looked - len(crops))
             if changed.get("change") == "wider":
                 retries["wider"] += 1
-                if before is not None and before.get("places"):
+                if looked:
+                    places["retries_wider_after_places_gave_nothing"] += 1
+                elif before is not None and before.get("places"):
                     places["retries_wider_though_a_check_cited_a_place"] += 1
             elif changed.get("change") == "located":
                 retries["located"] += 1
-                crops = changed.get("crops", [])
-                places["cut"] += len({crop.get("crop") for crop in crops})
-                places["found_nothing"] += sum(1 for crop in crops if crop.get("mask") is None)
-                places["masks_carried"] += sum(1 for crop in crops if crop.get("mask") is not None)
             check = check_of(records, attempt)
             found = (check or {}).get("findings")
             before = found
@@ -553,6 +572,13 @@ def tally(args):
         "# A record keeps a check's places apart from its findings, so the place may be another",
         "# finding's. `stopped_by_row` is the row of the loop's table the last judged attempt's",
         "# findings are of; `stopped_by_reason` is the sentence the loop wrote, as one of a closed set.",
+        "#",
+        "# `[places]`: `looked_into` is the cuts the retries made (runs of `view`); `joined` the places",
+        "# a located retry lists; a place looked into and not listed is one where nothing was found",
+        "# and which covers over a tenth of the picture. What a record does not hold, and no count",
+        "# here says: the places a finding cited that were never looked into (a cut over 1,024",
+        "# pixels or of the whole picture, a ninth place, one cited twice), since `cited_by_checks`",
+        "# counts the places of every finding and not only of those that allow a retry.",
     ]
     out += toml_lines(
         [
@@ -620,7 +646,7 @@ def sentence(text):
     if not isinstance(text, str) or not text:
         return "none"
     cut = text[:300]
-    if re.search(r"[\"\\\x00-\x1f]", cut) or re.search(r"(^|[\s:=(])[~/]|[A-Za-z]:\\|sha256:", cut):
+    if re.search(r"[\"\\\x00-\x1f]", cut) or re.search(r"(^|[\s:=(])[/~]|[A-Za-z]:\\|sha256:", cut):
         return "(not kept: it holds a path, an identity or a character a line cannot)"
     return cut
 
@@ -688,7 +714,8 @@ def case(args):
                 ("verdict", attempt.get("verdict") or "none"),
                 ("unchecked_why", sentence(attempt.get("unchecked"))),
                 ("changed", word(changed.get("change") or "nothing")),
-                ("places_cut", len({c.get("crop") for c in changed.get("crops", [])})),
+                ("places_looked_into", looked_into(records, attempt)),
+                ("places_joined", len(changed.get("crops", []))),
                 ("row", row_of(found_of) if found_of is not None else "none"),
                 ("runs", len(attempt.get("runs", []))),
                 ("settled_micros", int(attempt.get("settled_micros", 0))),

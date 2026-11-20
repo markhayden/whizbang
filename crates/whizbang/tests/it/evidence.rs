@@ -1661,14 +1661,14 @@ fn the_loops_tool_record_holds_rung_1_and_says_what_of_rung_2_is_shown() {
     ] {
         assert!(history.contains(held), "{held}");
     }
-    // Rung 1: two worked examples, one of them a case it handles badly, with their
-    // pictures; `tool_records::recipes::…` holds them to the loop.
+    // Rung 1: worked examples, one of each kind of retry and a case it handles badly,
+    // with their pictures; `tool_records::recipes::…` holds them to the loop.
     let examples = record
         .split("## Examples\n")
         .nth(1)
         .and_then(|rest| rest.split("\n## ").next())
         .expect("its examples");
-    assert_eq!(examples.matches("\n### ").count(), 2);
+    assert_eq!(examples.matches("\n### ").count(), 3);
     assert!(examples.contains("**This is a case it handles badly.**"));
     assert!(examples.contains("protected subject"));
     // Rung 2, in part, and said so: preservation by a test that is there; the mask and

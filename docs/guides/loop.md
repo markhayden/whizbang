@@ -241,7 +241,7 @@ later call can take one.
 - The segmenter is asked inside a crop as it is asked about the picture: with the same
   phrase and no lower threshold.
 - The loop is marked experimental. Its tool record,
-  `docs/reference/tools/remove_checked.md`, shows it on two worked examples, one of them a
+  `docs/reference/tools/remove_checked.md`, shows it on three worked examples, one of them a
   case it handles badly, and says what of its scoring is shown. What it did on real
   models is reported, not scored, by `scripts/loop-evidence.sh` (plan m4, task E1), and
   its visual quality has not been confirmed by a person.

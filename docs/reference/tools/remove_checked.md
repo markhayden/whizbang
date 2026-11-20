@@ -20,7 +20,13 @@ the loop was given, never an earlier attempt's result, and no fill is asked befo
 it would paint is in hand.
 
 It tries again only when the judge says, with confidence, that the named thing is still
-there, and reports nothing damaged; the retry paints more of the picture. It hands back one
+there, and reports nothing damaged; the retry paints more of the picture, in one of two
+ways. **Located**, when the finding names a place: the picture the loop was given is cut to
+the place (`view`), the segmenter is asked the same phrase inside the crop, each mask it
+finds is carried onto the picture (`carry`) and joined to the mask of the attempt before;
+a place where nothing is found joins as its own box when it covers at most a tenth of the
+picture. **Wider**, when no finding names a place it can use, or the places gave nothing:
+the same found mask is shaped again, grown twice as far, once in a run. It hands back one
 attempt's picture and mask: the first that passed, or failing that the best it made, with
 that attempt's verdict and findings, how many attempts were made, which was kept and why
 the attempts ended. When no check could be made it says so, and why.
@@ -58,12 +64,25 @@ made, which was kept and why the attempts ended.
 ## Examples
 
 Pictures of 64 by 64, three times their size; a mask's core white, its blend in blues. The
-phrase is "collar". The fake segmenter answers a small box for it, the scripted filler
+phrase is "collar". The fake segmenter answers a small box for it; the scripted filler
 paints red wherever the mask's support is, so the kept picture shows exactly where the fill
-landed, and the scripted judge says what each example's row states. Nothing here says how
+landed, inside a crop it answers a smaller box, and the scripted judge says what each example's
+row states. Nothing here says how
 a real judge answers: that is the live record, `docs/results/m4-loop.md`.
 
-### A retry, then a pass
+### A retry inside the place the judge named, then a pass
+
+| Picture | Mask of attempt 1 | Mask of the kept attempt | Picture handed back |
+|---|---|---|---|
+| ![The picture](remove_checked/located.png) | ![The first mask](remove_checked/located-first.png) | ![The kept mask, with what was found in the place](remove_checked/located-mask.png) | ![The kept picture](remove_checked/located-out.png) |
+
+The judge fails the first attempt and says, with confidence, that the thing is still there,
+in a box to the right of what was painted. The loop cuts the picture it was given to that
+box, a twentieth wider each way, asks the segmenter the same phrase inside the crop,
+carries the mask it finds onto the picture and joins it to the first mask. The second
+attempt paints both, the second check passes, and the second attempt is kept.
+
+### A retry with a wider mask, then a pass
 
 | Picture | Mask of attempt 1 | Mask of the kept attempt | Picture handed back |
 |---|---|---|---|
@@ -93,14 +112,16 @@ must not be touched.
 
 | Example | What the scripted judge said | Attempts | Kept | Verdict handed back | Why the attempts ended | Requests: segmenter, filler, judge | Core and blend of the first mask | Of the kept mask | Pixels changed | Pixels the kept mask weighs nothing, and the picture's |
 |---|---|---|---|---|---|---|---|---|---|---|
+| located | Attempt 1: `RQ1` violated, confident, at a box right of the first mask. Attempt 2: every item held | 2: fail; then pass, after looking into the place named (1 joined, something found in 1) | 2 | pass | attempt 2 passed | 2, 2, 2 | 472 and 1444 | 883 and 1925 | 2808 | 1288 of 1288 |
 | retry | Attempt 1: `RQ1` violated, confident, at no place. Attempt 2: every item held | 2: fail; then pass, after a wider mask (8 px) | 2 | pass | attempt 2 passed | 1, 2, 2 | 472 and 1444 | 844 and 1756 | 2600 | 1496 of 1496 |
 | protected | Attempt 1: `SF1` violated, confident (a protected subject changed), and `RQ1` violated, confident | 1: fail | 1 | fail | attempt 1 changed something that must be preserved, which painting more cannot mend | 1, 1, 1 | 472 and 1444 | 472 and 1444 | 1916 | 2180 of 2180 |
 
 <!-- measured: end -->
 
-What to look for: in the first example the kept mask is wider than the first and the
-filler was asked twice; in the second the kept mask is the first and the filler was asked
-once. In both, every pixel the kept mask weighs nothing is the picture's own.
+What to look for: in the first example the kept mask holds a second part, where the judge
+pointed, and the segmenter was asked twice; in the second the kept mask is the first,
+wider; in the third the kept mask is the first and the filler was asked once. In all
+three, every pixel the kept mask weighs nothing is the picture's own.
 
 ## Rung 2 results
 
@@ -108,7 +129,7 @@ Rung 2 is **shown in part**, and this part says which.
 
 - **Preservation is shown.** Every pixel outside the kept attempt's mask is the picture's
   own: `checked::every_pixel_outside_the_kept_mask_is_the_pictures_own`, on the loop's
-  fixture, and the two examples above.
+  fixture, and the three examples above.
 - **The mask and the fill of each attempt are `remove_prompt`'s own steps,** run in
   stretches with the recipe's settings, so their rung 2 is milestone 3's: task success and
   preservation of `remove_prompt` on the synthetic edit set, 24 pictures, with SAM 3 and
@@ -163,6 +184,8 @@ work between its calls is not timed here: a run's time is its models'.
 | Limit | Example |
 |---|---|
 | A finding that something to be preserved changed (a protected subject, the scene's geometry, anything else in the picture) ends the attempts, and the attempt that failed is handed back | "A protected subject, where it stops", above |
+| A located retry does not look into every place a finding names: not one whose cut would be over 1,024 pixels on a side or is the whole picture, not a ninth, and none on a picture that is not flat; a polygon is used by the box around it. And a place of over a tenth of the picture where the segmenter finds nothing does not join | `docs/guides/loop.md`, "When it tries again"; `docs/carry-over.md` |
+| The segmenter is asked inside a crop with the same phrase and no lower threshold, where rascal halved its threshold | `docs/guides/loop.md` |
 | A verdict of `unsure` never enlarges a mask, and neither does a tentative report that the thing remains: the loop stops there, where rascal's loop would have retried on an `unsure` that named a place | `docs/guides/loop.md`, "When it tries again" |
 | The loop completes whenever a fill completed, whatever the verdict: the exit code is 0 for a kept attempt that failed | `docs/guides/loop.md`, "Exit codes" |
 | Only what the segmenter finds by the phrase is removed; a phrase that names nothing in the picture makes no removal, and the loop ends as an error | `remove_prompt`'s record |
@@ -182,7 +205,7 @@ keep are reported and not scored, and its visual quality is owed by milestone E
 
 | Rung | Result | Evidence |
 |---|---|---|
-| 1. Single examples | Shown | The two examples above, run as tests under a fake segmenter, a scripted filler and a scripted judge; one is a case it handles badly |
+| 1. Single examples | Shown | The three examples above, run as tests under a fake segmenter, a scripted filler and a scripted judge: one of each kind of retry, and a case it handles badly |
 | 2. Scored alone | In part | Preservation, `checked::every_pixel_outside_the_kept_mask_is_the_pictures_own`; the mask and the fill, `docs/results/m3-edits.md`; what the loop adds, reported in `docs/results/m4-loop.md` and not scored; visual quality owed by milestone E |
 | 3 and 4 | Not yet | Milestone E |
 
@@ -190,4 +213,5 @@ keep are reported and not scored, and its visual quality is owed by milestone E
 
 **History.** Built by plan m4, task L1 (ADR 0039): the loop, its table of what may enlarge
 a mask, its one budget and its record; rascal's loop is its model, narrowed (no retry on an
-`unsure`). Plan m4, task E1: this record and the live record.
+`unsure`). Plan m4, task L2: the located retry, with `carry`. Plan m4, task E1: this record
+and the live record.

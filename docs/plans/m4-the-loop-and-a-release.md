@@ -961,6 +961,18 @@ met otherwise than they are worded.
   retry) and holds three attempts with every tool call a check may dispatch, 133 runs, to
   the limits by arithmetic on what it counted. L2 raises it with a run of three.
 
+**Reworded with the task** (E1, 2026-11-20, on the orchestrator's word). "one test for
+each row of the table, each run twice, on a check that was made and on the same check
+answered from the cache, with the same result" is met otherwise for two of the tests.
+`table::row_1_a_violation_of_a_protected_subject_of_the_geometry_or_of_rq2_ends_the_attempts`
+has twelve cases and `table::row_4_…` six through the loop: every case is still run on a
+check that was made, with its assertions, and the first case of each is run a second time
+answered from the cache; the others are not. The reason is test time: the hosted Mac read
+262.6 seconds of its 300 on the head of L2's second pull request, the second runs of these
+two tests were sixteen runs of the loop, and "Owed after L1" named them as the first to
+trim. That a check answered from the cache hands the loop the same findings is held for
+every other row's test, each run twice, and by K2's tests of the cache.
+
 **Decided with the task (L1).** ADR 0039 has each.
 
 - **The check is called as the recipe ships it:** its job, its two images and the judge's
