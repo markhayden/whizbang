@@ -177,6 +177,9 @@ status=0
 
 # --- The real build is `just smoke`'s: the same command, with the lock file held, and no
 # feature named, so none of the tests' and no `baseline-replay`.
+# After its own build, and only then, the lock file's crates are fetched before the
+# licence texts are read offline: a stand-in binary fetches nothing.
+grep -x -F '[ "$built" = 0 ] || cargo fetch --locked' "$script" >/dev/null || fail "a build of the script's own is followed by cargo fetch --locked, before the licences are read"
 # One script builds for both, so the archive's binary is the one the smoke ran.
 grep -x -F '  scripts/release-build.sh' "$script" >/dev/null || fail "the binary is built by scripts/release-build.sh"
 grep -x -F '    scripts/release-build.sh' justfile >/dev/null || fail "just smoke builds the release binary the same way"

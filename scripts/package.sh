@@ -171,6 +171,12 @@ cp "$binary" "$stage/whizbang"
 cp LICENSE "$stage/LICENSE"
 cp "$guide" "$stage/README.md"
 cp "$notices" "$stage/COPYRIGHT-library.html"
+# The licence texts are read offline from cargo's home, and cargo describes the lock
+# file whole to say which crates the binary holds: the crates of every platform, where
+# the build above fetched only this one's. After a build of this script's own they are
+# fetched first, from crates.io, where the build took the others; a machine whose cargo
+# home held them already (a cache, an earlier `just deny`) hid the need.
+[ "$built" = 0 ] || cargo fetch --locked
 scripts/third-party-licences.sh "$target" "$stage/THIRD-PARTY-LICENSES.md" >/dev/null
 [ -s "$stage/THIRD-PARTY-LICENSES.md" ] || die "the third-party licences were not written"
 
