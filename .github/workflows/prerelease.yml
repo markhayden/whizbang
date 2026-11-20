@@ -1,0 +1,123 @@
+name: prerelease
+
+# GitHub's part of the checks before a release (plan m4, task R2, item 2; SPEC.md section
+# 14). It runs on a candidate tag, `v<version>-rc.<n>`, and on nothing else: no branch, no
+# pull request, no other tag and no button. The other part, the model tests and a live call
+# to each provider, is the local leg, on the owner's Mac (scripts/prerelease-local.sh): no
+# provider's key and no model is given to a hosted runner.
+# scripts/tests/test-release-workflows.sh holds this file.
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+'
+
+# Every job may read the repository and no more; `candidate` alone is given leave to write.
+permissions:
+  contents: read
+
+concurrency:
+  group: prerelease-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # The archive of each target, built once: these bytes are what is installed below, what
+  # the local leg downloads, and what a release publishes. No build cache: a candidate is
+  # built from the tag's commit and the lock file, and from nothing an earlier run left.
+  build:
+    name: build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # The tag's base version is the workspace's, which `just package` holds the binary's
+      # to; the candidate number is the candidate's own and is in no binary.
+      - name: The tag is a candidate tag of the workspace's version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: scripts/tag-version.sh --candidate "$TAG" "$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | sed -n '1p')"
+      - name: Rust toolchain
+        run: rustup show
+      # Pinned to a commit (v2.90.5), as in ci.yml: from the tool's maker's GitHub releases,
+      # checked against the hash the action holds, with no fallback.
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519
+        with:
+          fallback: none
+          tool: just@1.59.0
+      - name: The release archive of this target and its line of SHA256SUMS
+        run: just package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archive-${{ matrix.os }}
+          path: |
+            target/package/whizbang-*.tar.gz
+            target/package/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
+
+  # A fresh job on the runner itself: the scripts are checked out and nothing built, no
+  # Rust toolchain is set up, and the archive is the one `build` made. The install check's
+  # own empty home, cleared environment and narrow path keep the runner's other software
+  # from standing in for something the archive or the guide forgot. Nothing is fetched
+  # from a place ci.yml does not fetch from: the pinned uv, and the pinned Python from
+  # GitHub's releases (scripts/install-prereqs.sh).
+  install:
+    name: install (${{ matrix.os }})
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519
+        with:
+          fallback: none
+          tool: uv@0.12.23
+      - uses: actions/download-artifact@v4
+        with:
+          name: archive-${{ matrix.os }}
+          path: ${{ runner.temp }}/candidate
+      - name: The bootstrap of what a user must have
+        run: scripts/install-prereqs.sh "$(command -v uv)" "$RUNNER_TEMP/prereqs"
+      - name: The install check on the archive that was built
+        run: scripts/install-check.sh "$RUNNER_TEMP"/candidate/whizbang-*.tar.gz "$RUNNER_TEMP/candidate/SHA256SUMS" "$RUNNER_TEMP/prereqs"
+
+  # When all four passed: the candidate, a draft pre-release for the tag, with both
+  # archives and one SHA256SUMS. The only job with leave to write, and the only thing it
+  # writes is that release (scripts/release-publish.sh).
+  candidate:
+    name: candidate
+    needs: [build, install]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: archive-macos-15
+          path: ${{ runner.temp }}/macos-15
+      - uses: actions/download-artifact@v4
+        with:
+          name: archive-ubuntu-22.04
+          path: ${{ runner.temp }}/ubuntu-22.04
+      - name: Both archives under one SHA256SUMS
+        run: scripts/release-publish.sh join "$RUNNER_TEMP/files" "$RUNNER_TEMP/macos-15" "$RUNNER_TEMP/ubuntu-22.04"
+      - name: The candidate, a draft pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: scripts/release-publish.sh candidate "$TAG" "$RUNNER_TEMP/files"

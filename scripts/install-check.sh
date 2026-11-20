@@ -27,7 +27,7 @@
 #  1. <sums> holds exactly one line for the archive, whole (64 lower-case hexadecimal
 #     digits, two spaces, its name), and the archive's SHA-256, taken here with the
 #     program the guide names, is that line's;
-#  2. the archive lists one folder and exactly the four files of item 1, each a regular
+#  2. the archive lists one folder and exactly the five files of item 1, each a regular
 #     file and none a link, and unpacks;
 #  3. `whizbang --version` gives the version the archive is named for, and a commit;
 #  4. `whizbang describe --json --pretty` is docs/reference/description.json byte for
@@ -47,6 +47,10 @@
 #     segmenter: on Linux because SAM 3 does not run there, on a Mac because no model is
 #     installed yet. On Linux `whizbang setup --extra torch` is refused before anything is
 #     downloaded.
+#     OWED (plan m4, task R1, item 5, last bullet): the same refusal of the loop's
+#     command, `whizbang rascal remove-checked`, belongs here, marked `HOOK remove-checked`
+#     below. The command is task L1's and is not built yet; whichever of L1 and R2 lands
+#     second adds the lines, with their case in scripts/tests/test-install-check.sh.
 #
 # WHIZBANG_INSTALL_CHECK_LIMIT: the seconds the server has for each answer and for ending,
 # a whole number from 1 to 30; 15 when not set (scripts/tests/test-install-check.sh
@@ -175,26 +179,26 @@ printf '%s\n' "$taken" | grep -x -E '[0-9a-f]{64}' >/dev/null || { shown; die "t
 ok "the archive's SHA-256 is the one SHA256SUMS names"
 
 # --- 2. What the archive holds, before and after it is unpacked.
-want=$(printf '%s\n' "$name/" "$name/LICENSE" "$name/README.md" "$name/THIRD-PARTY-LICENSES.md" "$name/whizbang")
+want=$(printf '%s\n' "$name/" "$name/COPYRIGHT-library.html" "$name/LICENSE" "$name/README.md" "$name/THIRD-PARTY-LICENSES.md" "$name/whizbang")
 listed=$(clean tar -tzf "$file" | sort)
 [ "$listed" = "$want" ] ||
-  { printf '%s\n' "$listed" | sed 's/^/    /' >&2; die "the archive holds something else than one folder with the four files (whizbang, LICENSE, THIRD-PARTY-LICENSES.md, README.md)"; }
-# One folder and then four regular files, and nothing that is a link of either kind:
+  { printf '%s\n' "$listed" | sed 's/^/    /' >&2; die "the archive holds something else than one folder with the five files (whizbang, LICENSE, THIRD-PARTY-LICENSES.md, COPYRIGHT-library.html, README.md)"; }
+# One folder and then five regular files, and nothing that is a link of either kind:
 # what a link in an archive points at is not the archive's to choose.
 clean tar -tvzf "$file" >"$work/out" 2>"$work/err" || { shown; die "the archive could not be listed"; }
-[ "$(cut -c 1 "$work/out" | tr -d '\n')" = "d----" ] && ! grep -e ' -> ' -e ' link to ' "$work/out" >/dev/null ||
-  { shown; die "the archive must hold one folder and then four regular files, and no link"; }
+[ "$(cut -c 1 "$work/out" | tr -d '\n')" = "d-----" ] && ! grep -e ' -> ' -e ' link to ' "$work/out" >/dev/null ||
+  { shown; die "the archive must hold one folder and then five regular files, and no link"; }
 clean tar -xzf "$file"
 unpacked=$(cd "$name" && find . | sort | tr '\n' ' ')
-[ "$unpacked" = ". ./LICENSE ./README.md ./THIRD-PARTY-LICENSES.md ./whizbang " ] ||
-  die "the unpacked folder holds something else than the four files: $unpacked"
-for held in LICENSE README.md THIRD-PARTY-LICENSES.md whizbang; do
+[ "$unpacked" = ". ./COPYRIGHT-library.html ./LICENSE ./README.md ./THIRD-PARTY-LICENSES.md ./whizbang " ] ||
+  die "the unpacked folder holds something else than the five files: $unpacked"
+for held in COPYRIGHT-library.html LICENSE README.md THIRD-PARTY-LICENSES.md whizbang; do
   [ -f "$name/$held" ] && [ ! -L "$name/$held" ] && [ -s "$name/$held" ] || die "$held of the archive is not a file with something in it"
 done
 [ -x "$name/whizbang" ] || die "the archive's binary cannot be run"
 # The guide's last step: the binary in a folder that is on the path.
 cp "$name/whizbang" "$work/bin/whizbang"
-ok "the archive holds the four files, and the binary is on the path"
+ok "the archive holds the five files, and the binary is on the path"
 
 # --- 3. The version line.
 clean whizbang --version >"$work/out" 2>"$work/err" || { shown; die "whizbang --version failed"; }
@@ -295,6 +299,10 @@ esac
   said "the segment backend default is local" && said "$why" ||
   { shown; die "remove-prompt with the local segmenter must be refused as not ready (exit 1), naming the segmenter and saying: $why"; }
 ok "remove-prompt on the local segmenter is not ready: $why"
+# HOOK remove-checked: once task L1 has built the loop, the same call with `rascal
+# remove-checked --image "$image" --prompt "the corner"` in the place of `remove-prompt
+# ... --until feather` goes here, held to exit 1, to `remove_checked cannot run now` and
+# to the same `$why`.
 if [ "$target" = x86_64-unknown-linux-gnu ]; then
   status=0
   clean whizbang setup --extra torch >"$work/out" 2>"$work/err" || status=$?

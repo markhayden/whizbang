@@ -19,6 +19,12 @@
 # the CPU, plan 1D, task V1) or `coverage` (the timings of plan 1D, task V1); with none, all
 # three run. Any other argument is refused before anything runs.
 #
+# `--list` as the first argument runs no test: it prints the names of the tests the filter
+# names, one a line, as `cargo nextest list` gives them, and needs no models directory.
+# The local leg of a release (scripts/prerelease-local.sh) lists them before the run and
+# holds the run's report to that list. The run writes its report, as the fast tests do:
+# `<target>/nextest/model-tier/junit.xml` (.config/nextest.toml).
+#
 # Then it builds the tests, and runs the model tier under scripts/memory-watch.sh (24 GiB of
 # resident memory for the whole tree, then a kill) and, inside it, scripts/thread-guard.sh at
 # the limit it is given (200 from the recipe), one test at a time, in the nextest
@@ -43,12 +49,24 @@ refuse() {
   exit 2
 }
 
+list=0
+if [ "${1-}" = --list ]; then
+  list=1
+  shift
+fi
 case "${1-}" in
   "") filter='test(/^(model_tier|parity|coverage)::/)' ;;
   model_tier | parity | coverage) filter="test(/^$1::/)" ;;
   *) refuse "the one argument names a part of the tier: model_tier, parity or coverage" ;;
 esac
 [ "$#" -le 1 ] || refuse "the one argument names a part of the tier: model_tier, parity or coverage"
+
+if [ "$list" = 1 ]; then
+  cd "$root"
+  scripts/thread-guard.sh cargo nextest list --profile model-tier -p whizbang --test it --run-ignored only \
+    --message-format oneline -E "$filter"
+  exit
+fi
 
 dir=${WHIZBANG_MODELS_DIR:-}
 [ -n "$dir" ] ||

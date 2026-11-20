@@ -1,9 +1,11 @@
 # Install: from a release archive
 
-Whizbang is released as one archive for each of its two platforms. An archive holds the
-`whizbang` binary, its licence, the licences of the code it is built from, and this page.
-Everything else whizbang needs is inside the binary: the Python pack, the recipes, the
-rules and the catalogue of models.
+Whizbang is released as one archive for each of its two platforms. An archive holds five
+files: the `whizbang` binary; `LICENSE`, its licence; `THIRD-PARTY-LICENSES.md`, the
+licences of the code it is built from; `COPYRIGHT-library.html`, the notices of the code
+the Rust standard library itself holds, as the Rust toolchain publishes them; and
+`README.md`, this page. Everything else whizbang needs is inside the binary: the Python
+pack, the recipes, the rules and the catalogue of models.
 
 | Platform | Archive |
 |---|---|

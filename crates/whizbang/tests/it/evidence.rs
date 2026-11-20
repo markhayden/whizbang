@@ -11,6 +11,13 @@ use whizbang_core::identity::{DecodeLimits, Digest, identify};
 
 use crate::model_tier::FIXTURE;
 
+/// The version every record here was measured by. A record keeps the version of the
+/// binary that made it: these were all made before the first release, when the
+/// workspace's version was 0.0.1, and the version became 0.1.0 with plan m4, task R2. A
+/// record made after that says its own version, and its test holds it to that one. That
+/// a record is of this tree is held by its commit, which each test checks apart.
+const MEASURED_BY: &str = "0.0.1";
+
 fn repository() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -194,7 +201,7 @@ fn the_first_verdict_record_names_a_commit_of_this_tree_and_holds_no_secret() {
                 .bytes()
                 .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
     );
-    assert_eq!(field(&fields, "whizbang"), env!("CARGO_PKG_VERSION"));
+    assert_eq!(field(&fields, "whizbang"), MEASURED_BY);
     // The action as it was then: plan 2C, task A1, took `check` to 1.2.0 after it, and
     // its own record is `docs/results/m2c-use-cases.md`.
     assert_eq!(field(&fields, "action"), "check 1.1.0");
@@ -270,7 +277,7 @@ fn the_use_cases_record_names_a_commit_of_this_tree_and_holds_no_secret() {
                     .bytes()
                     .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
         );
-        assert_eq!(field(fields, "whizbang"), env!("CARGO_PKG_VERSION"));
+        assert_eq!(field(fields, "whizbang"), MEASURED_BY);
         // The action as it ran: plan 2C, task A2, took `check` to 1.3.0 after it.
         assert_eq!(field(fields, "action"), "check 1.2.0");
         assert_eq!(field(fields, "backend"), anthropic::ADAPTER);
@@ -386,7 +393,7 @@ fn the_recipes_lines_are_of_this_tree(page: &str) {
     let (run, cases) = blocks.split_first().expect("a block of the run");
     let commit = field(run, "commit");
     assert!(is_ancestor(commit), "{commit}");
-    assert_eq!(field(run, "whizbang"), env!("CARGO_PKG_VERSION"));
+    assert_eq!(field(run, "whizbang"), MEASURED_BY);
     assert_eq!(field(run, "action"), "check 1.6.0");
     assert_eq!(field(run, "gate"), "gates/details-first.toml");
     assert_eq!(
@@ -514,7 +521,7 @@ fn the_two_new_judges_lines_are_of_this_tree(page: &str) {
         };
         let prices = prices.expect("a priced model");
         assert_eq!(field(fields, "commit"), commit);
-        assert_eq!(field(fields, "whizbang"), env!("CARGO_PKG_VERSION"));
+        assert_eq!(field(fields, "whizbang"), MEASURED_BY);
         // The action as it ran.
         assert_eq!(field(fields, "action"), "check 1.4.0");
         assert_eq!(field(fields, "adapter_version"), version);
@@ -668,7 +675,7 @@ fn the_evaluation_record_names_a_commit_of_this_tree_and_holds_only_aggregates()
                 .bytes()
                 .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
     );
-    assert_eq!(field(run, "whizbang"), env!("CARGO_PKG_VERSION"));
+    assert_eq!(field(run, "whizbang"), MEASURED_BY);
     assert_eq!(field(run, "matrix"), "e1-evidence");
     assert_eq!(field(run, "model"), "claude-haiku-5-5");
     assert_eq!(field(run, "arm"), "F");
@@ -791,7 +798,7 @@ fn the_per_subject_record_names_a_commit_of_this_tree_and_its_rung_2_numbers() {
                     .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')),
             "{tool}: {commit}"
         );
-        assert_eq!(field(&fields, "whizbang"), env!("CARGO_PKG_VERSION"));
+        assert_eq!(field(&fields, "whizbang"), MEASURED_BY);
         assert_eq!(field(&fields, "tool"), tool);
         assert_eq!(field(&fields, "sets"), sets);
         // The items are the sets' as this tree has them: each scored or an error.
@@ -914,7 +921,7 @@ fn a_fills_block(fields: &Fields, action: &str) {
                 .bytes()
                 .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
     );
-    assert_eq!(field(fields, "whizbang"), env!("CARGO_PKG_VERSION"));
+    assert_eq!(field(fields, "whizbang"), MEASURED_BY);
     assert_eq!(field(fields, "action"), action);
     assert_eq!(field(fields, "backend"), fal::ADAPTER);
     assert_eq!(field(fields, "adapter_version"), fal::VERSION);
@@ -1314,7 +1321,7 @@ fn the_encoding_record_names_a_commit_of_this_tree() {
         "{}",
         field(&fields, "commit")
     );
-    assert_eq!(field(&fields, "whizbang"), env!("CARGO_PKG_VERSION"));
+    assert_eq!(field(&fields, "whizbang"), MEASURED_BY);
     // The record keeps the setting it measured against, the one the core had then; the
     // core has had the chosen one since the owner's yes of 2026-11-19.
     assert_eq!(field(&fields, "current"), "default_adaptive");
@@ -1422,7 +1429,7 @@ fn the_edits_record_names_a_commit_of_this_tree_and_holds_only_aggregates() {
         "{}",
         field(run, "commit")
     );
-    assert_eq!(field(run, "whizbang"), env!("CARGO_PKG_VERSION"));
+    assert_eq!(field(run, "whizbang"), MEASURED_BY);
     // The set the round ran is the committed one.
     let set_text = std::fs::read_to_string(repository().join("labs/m3-edits/edits.toml")).unwrap();
     let set = whizbang::edits::EditSet::parse(&set_text).unwrap();

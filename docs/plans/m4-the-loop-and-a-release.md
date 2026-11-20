@@ -997,7 +997,11 @@ checks hold no surprise (`SPEC.md` section 7, "Release archives for both targets
 1. **The archive.** `just package` (a script, `scripts/package.sh`) builds the release
    binary as `just smoke` does, with no feature of the tests and without `baseline-replay`
    (ADR 0034), and writes `whizbang-<version>-<target>.tar.gz` holding one folder with
-   exactly: the `whizbang` binary; `LICENSE`; `THIRD-PARTY-LICENSES.md` (item 3); and
+   exactly: the `whizbang` binary; `LICENSE`; `THIRD-PARTY-LICENSES.md` (item 3);
+   `COPYRIGHT-library.html`, the notices of the code the Rust standard library itself
+   holds, as the toolchain that builds the binary carries them (a fifth file, by the
+   orchestrator's decision of 2026-11-19: ship what the licences of the linked code ask
+   for; made with R2, and the script fails on a toolchain without it); and
    `README.md`, the install guide of item 6. Nothing else: the pack, the recipes, the
    rules, the constant sets and the catalogue are inside the binary already. Beside it the
    script writes a line of `SHA256SUMS`, the archive's SHA-256 and its name. The same
@@ -1136,6 +1140,16 @@ first two R2's, since R2 makes the candidate's binary:
    (`COPYRIGHT-library.html` of the toolchain) are named in `THIRD-PARTY-LICENSES.md` and
    not carried in the archive. Whether they go in as a fifth file is a decision that
    changes item 1's four files, so it is asked and not made here.
+
+**Taken with R2** (2026-11-19). All three. 1: `scripts/release-build.sh` builds the
+release binary for `just smoke` and for the archive alike, with cargo's home written as
+`/cargo` and the checkout as `/whizbang`, and `scripts/package.sh` reads the binary's
+bytes and refuses one that holds the checkout's path, cargo's home's or one below the
+home folder (`scripts/tests/test-package.sh`). 2: `scripts/package.sh` runs
+`scripts/linux-needs.sh` on the binary it archives on the Linux target
+(`scripts/tests/test-linux-needs.sh`). 3: decided by the orchestrator: the file goes in,
+as item 1 now says; the Done-when's "exactly the four files" is five since then, and
+`scripts/tests/test-package.sh` and `scripts/tests/test-install-check.sh` hold five.
 
 **Keeping tests lean (R1).** The script tests of the check run on a tiny stand-in binary
 (a shell script named `whizbang`), not on a release build; the real check runs once on each
@@ -1306,6 +1320,63 @@ and "Workflows").
   `scripts/tests/test-skills.sh` and `scripts/tests/test-rules.sh` passing with
   the fifth skill listed in `AGENTS.md`, and the spec's table edited. The first real run of
   `prerelease` is N1's box, not this one.
+
+**Split at its seam** (R2, 2026-11-19). The task passed 2,500 changed lines before the
+skill, so it is two pull requests, as "Seams" allows. The first holds items 1 to 5 and
+what R1 owed; the second holds item 6, the skill `release` with its row in `AGENTS.md`
+and the two tests that hold it. The box is ticked by the second, not by the first.
+Item 7, the spec's table, waits for the owner's yes to open question 1 and is in
+neither until that is recorded.
+
+**Reworded with the task** (R2, 2026-11-19). Eight things are as the task found them.
+
+1. Item 2 says `candidate` is "the only job with leave to write". That is so of
+   `prerelease`. The one job of `release` has the same leave, and leave to read the runs:
+   it writes the release, and GitHub shows a draft candidate only to a token that may
+   write. Neither workflow names a secret but the run's own token.
+2. Item 2's jobs take no build cache, and `install` installs `uv` by the pinned install
+   action ci.yml uses; the artifacts pass between jobs by GitHub's own upload and
+   download actions. A workflow has no trigger but its tag, so neither can be run before
+   it is on `main` and a tag is pushed: nothing of either has run.
+3. Item 3 says the acceptance runs "with that binary alone and the owner's env file".
+   The script never opens the env file: it is named in `WHIZBANG_ENV_FILE` and handed to
+   the binary as `--env-file`. The binary is given `HOME`, `PATH` and `TMPDIR` of whoever
+   runs the leg, so that `setup` finds `uv` and the Python, and the models directory is
+   the one `WHIZBANG_MODELS_DIR` names, which holds SAM 3 already: the leg downloads no
+   model. A new store refuses every paid call, so the leg gives it an allowance of 5 US
+   dollars first. `setup` with the extra runs before the checkout's model tests, not
+   after: it replaces the pack in that models directory with the one the candidate
+   carries, and the model tests would otherwise load a model with whichever pack was
+   there (from the review of #251). The gate holds the tree the receipt names for the
+   model tests' checkout to the tree of the tag's commit, and a candidate that holds a
+   receipt already stops the leg before anything is spent.
+4. Item 3 says "with the decision cache off". No command has a switch for it: the cache
+   is on only under a config with a `[cache]` table, so the leg writes its own config
+   without one, and the receipt's `cache` is read back from the records: `on` when any
+   of them names the decision cache at all.
+5. Item 3 guards "every command that loads a model". The leg guards every command that
+   starts the pack: `setup`, the probe, the mask and the loop.
+6. Item 4's "request recorded as dispatched to that provider's recipient and settled
+   with an answer" is read from three places of a run's record, which has no field of
+   that name: a request of that backend that ended `answered`, its line of `spend` at the
+   stage `answered`, and the provider's origin among the places data was sent. For a
+   check these are in the record of the recipe's `check` step.
+7. Item 4's tests run by name are the test's name alone (`model_tier::...`), as the
+   report and `cargo nextest list` both give it; `scripts/test-models.sh --list` is the
+   list option. The leg is refused unless its own file and the four it reads a tag, a
+   folder of files and a receipt with are the new checkout's copies, byte for byte.
+8. The loop's command is L1's and is not built. The leg asks it, the receipt requires
+   its entry, and until L1 lands every leg fails on it. How the kept attempt's check is
+   found in the loop's record (the run of that attempt whose action is
+   `source-fidelity`) is marked `L1` in the script for that task to confirm. The install
+   check's refusal of `remove-checked` (R1, item 5) is marked `HOOK remove-checked` in
+   `scripts/install-check.sh` and is added by whichever of L1 and R2's second pull
+   request lands later.
+
+Beside the tests the Done-when names: `scripts/tests/test-release-publish.sh` (the
+candidate's and the release's files and the one command that publishes each, against a
+stand-in `gh`), `scripts/tests/test-linux-needs.sh`, and the list option in
+`scripts/tests/test-test-models.sh`.
 
 **Why the first real run is N1's.** A workflow that runs on a tag cannot run before a tag
 exists, and a builder does not tag. R2 is held by tests of its scripts and of the workflow
