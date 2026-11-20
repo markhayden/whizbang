@@ -1,13 +1,15 @@
 # Plan: milestone 4, the loop and a release
 
-Draft 4, 2026-11-19, from `main` at 0c75eedd (the merge of #244, which closed milestone 3;
-its note is `docs/plans/m3-note.md`), after three outside review rounds ("Review rounds",
-at the end). Milestone 4 is `SPEC.md` section 16, row 4, "The loop and a release": "Remove
+Draft 5, 2026-11-19, written from `main` at 0c75eedd (the merge of #244, which closed
+milestone 3; its note is `docs/plans/m3-note.md`) and brought to `main` at 0a04cc3c (the
+merge of #246, the record of the gate's fourth run), after four outside review rounds
+("Review rounds", at the end). Approved: see the last line. Milestone 4 is `SPEC.md` section 16, row 4, "The loop and a release": "Remove
 with a check and bounded retries runs as nested calls on one budget; the `prerelease`
 workflow passes and a release archive installs and runs on both targets". Beside the row it
 takes every carry-over row that names milestone 4 (the table "Carry-over rows owned by
-milestone 4, and who takes each", below) and one row that milestone E owns and the loop
-cannot wait for: details first as `check`'s default. It ends with the note of milestone 4.
+milestone 4, and who takes each", below), among them the one that was milestone E's until
+#246 and that the loop cannot wait for: details first as `check`'s default. It ends with
+the note of milestone 4.
 
 **Words this plan uses.**
 
@@ -160,7 +162,7 @@ a large pull request); generated reference is counted apart, as in milestone 3.
 
 | Pull request | What | Builds on | Size |
 |---|---|---|---|
-| A1 | Details first is no longer `check`'s default; and the rows left: the lab's progress and counts, the pairs page | `main` | Large: about 2,000 (the default 700, the rows 1,300) |
+| A1 | Details first is no longer `check`'s default; and the rows left: the lab's progress and counts, the pairs page. Wave 1's one owner of `docs/carry-over.md` | `main` | Large: about 2,000 (the default 700, the rows 1,300) |
 | K1 | What the loop stands on, in the core: a call's plan settled at preparation; a recipe run from a named step; findings as a kind of result; the record's new version; an executor built with a digest alone | `main` | Large: about 2,450 (the plan of a call 750, the runner 450, the kind 150, the record 350, the executor 250, tests 500) |
 | K2 | What the loop stands on, in `check`: its findings, in both forms the judge answers in, the same on a cache hit | K1 | Medium: about 1,100 (findings 450, the cache 200, tests 450) |
 | L1 | The loop: `remove_checked`, its attempts, its one reservation, which findings may enlarge a mask, cancellation, and what it hands back | A1, K1, K2 | Large: about 2,500 (the action 900, the command and the server 300, the guide 150, `runs stats` 150, tests 1,000) |
@@ -189,10 +191,16 @@ the release's strand (R1, R2) share no source file but the binary's command list
 side by side from start to end. Inside the loop's strand the order is fixed: everything L1
 reads (the plan of a call, a run from a named step, findings, the record's version) is K1's
 and K2's and lands first, so no later task changes a contract another is building on. A1
-runs beside K1 because they share no file: A1 is in squint's recipe files, the commands and
-the lab; K1 is in the core.
+runs beside K1 because they share no source file: A1 is in squint's recipe files, the
+commands and the lab; K1 is in the core. The two documents every task would otherwise
+touch have one owner in a wave too (next paragraph).
 
-**Shared files, each with one owner in a wave.** The run record
+**Shared files, each with one owner in a wave.** `docs/carry-over.md`: in wave 1, A1
+alone. K1 and R1 do not edit it: R1 closes no row, and the row K1's work answers (an
+executor built with a digest alone) is closed in wave 2 by K2, which builds on K1 and is
+that wave's one owner of the file (R2 closes no row). L1, L2, E1 and N1 are each alone in
+their wave. This plan's own file: a task changes only the lines of its own section, its
+box among them. The run record
 (`crates/whizbang-core/src/contract/record.rs` and its schema) and the kinds of result
 (`contract/descriptor.rs`, `ResultKind`; the description's version): K1 alone. K1 writes the
 whole of `run/6`, the fields K2, L1 and L2 fill among them, so the version changes once.
@@ -254,12 +262,14 @@ spent nothing. The live runs come to about 22 dollars, itemised under "Spend".
 
 "Details first" means that before the judge's first turn, `check` runs `align` (and any
 other tool named with `--detail`) on each pair of images the use case relates, and opens the
-conversation with what they measured (ADR 0029). Its gate rejected it twice on 2026-11-19
-(`docs/results/m3-gates.md`): one judge did worse with it and one did not change. It is
-still the default of `whizbang squint check` and of the five use case recipes. The
-carry-over row gives it to milestone E, "first thing"; this plan takes it now, because L1's
-loop calls squint's checking recipe on every attempt and would otherwise pay for, and be
-judged under, a setting its own gate refused. Nothing about details first is removed: it
+conversation with what they measured (ADR 0029). Its gate rejected it in every run of
+2026-11-19, and the run to read is the fourth, the first complete one, every judge
+answering: it rejected details first again, helping on none of the three judges
+(`docs/results/m3-gates.md`, "The fourth run"). It is still the default of `whizbang squint
+check` and of the five use case recipes. The carry-over row was milestone E's, "first
+thing", and is milestone 4's since #246, which re-owned it to this task; the reason is
+that L1's loop calls squint's checking recipe on every attempt and would otherwise pay
+for, and be judged under, a setting its own gate refused. Nothing about details first is removed: it
 stays one flag away. With it, in the same pull request, go the carry-over rows that name
 milestone 4 and belong to neither strand.
 
@@ -388,7 +398,8 @@ of preparation each change once, in one place.
    schema and by fake actions that fill them; K2, L1 and L2 add no field.
 5. **An executor built with a digest alone** (`Engine::over`, in the file this task owns;
    the carry-over row that names milestone 4) is compiled for tests alone, as
-   `OneWorker::starting` is, or backed by one walk of the config, as the row allows.
+   `OneWorker::starting` is, or backed by one walk of the config, as the row allows. K1
+   builds it and does not edit the row: K2 closes it (below).
 
 - [ ] Done when:
   `prepare::an_action_that_plans_is_prepared_with_the_needs_and_the_estimate_of_its_plan`,
@@ -413,8 +424,9 @@ of preparation each change once, in one place.
   `record::run_6_reads_a_record_of_run_5`,
   `asked::an_executor_built_with_a_digest_alone_is_a_tests_alone` (or the test of the one
   walk, as the builder chose), `scripts/tests/test-features.sh` and
-  `scripts/tests/test-crate-graph.sh` passing with the new feature, `just docs`
-  regenerated, and the carry-over row on that executor closed.
+  `scripts/tests/test-crate-graph.sh` passing with the new feature, and `just docs`
+  regenerated. The carry-over row on that executor is closed by K2, in the next wave,
+  with a line naming this pull request: A1 alone edits `docs/carry-over.md` in wave 1.
 
 **Keeping tests lean (K1).** Planning is tested on a fake action with fake backends whose
 bounds a test states; findings on a fake action that hands back a document a test writes;
@@ -436,8 +448,12 @@ would have been lost before the loop classed anything.
    verdict `fail` or `unsure`: the checklist's items, and the separate observations. Each
    keeps every obligation it cites, its disposition and its confidence, as the submission
    was read. They are made from what `check` already keeps in `judged.json`, by the same
-   code, so the two cannot differ, and the verdict worked out from the findings alone is
-   the verdict `check` gave: a test holds that.
+   code, so the two cannot differ. **The document also carries the decision of the whole
+   submission**, the verdict as `check` gave it, worked out from every answer before
+   anything is cut: so nothing after `check` works a verdict out from a list that may be
+   short. Where the findings are complete, the verdict worked out from them alone is that
+   decision, and a test holds it; where they are not, only the carried decision is right,
+   and a test holds that too.
 2. **A finding is data from a model, and a short list says it is short.** A submission may
    hold any number of answers, and every one enters the verdict. At most 32 findings are
    handed back, in the order of the submission; among them at most eight places; a place
@@ -446,7 +462,10 @@ would have been lost before the loop classed anything.
    a place, or a part cut to fit the 32 KiB, the document says **`complete: false`** and
    counts what was left out; otherwise it says `complete: true`. A caller that would act
    on the findings must read that word first, because the finding that was dropped may be
-   the one that matters: the loop's table makes it its first row (L1, item 4).
+   the one that matters: the loop's table makes it its first row (L1, item 4). The carried
+   decision is never cut.
+5. **The row K1 answered.** This pull request closes the carry-over row on an executor
+   built with a digest alone, with a line naming K1's pull request and its test.
 3. **The same on a cache hit.** A run of `check` answered from the decision cache hands
    back the findings the earlier run handed back. They are worked out again from the
    `judged.json` the hit holds, by the same code, and held by the same rules. An entry
@@ -459,7 +478,11 @@ would have been lost before the loop classed anything.
 - [ ] Done when:
   `check::a_checklist_item_and_a_separate_observation_are_each_handed_back_as_a_finding`,
   `check::a_finding_keeps_every_obligation_it_cites_its_disposition_and_its_confidence`,
-  `check::the_verdict_worked_out_from_the_findings_is_the_verdict_given`,
+  `check::the_verdict_worked_out_from_complete_findings_is_the_decision_they_carry`,
+  `check::findings_carry_the_decision_of_the_whole_submission_whatever_was_cut`
+  (32 tentative violations kept and the only confident one cut: the decision carried is
+  `fail`, where the kept list alone would give `unsure`; on a check that was made and on
+  the same check answered from the cache),
   `check::an_answer_whose_row_is_recorded_is_no_finding`,
   `check::a_place_on_an_image_the_run_was_not_given_is_left_out_and_counted`,
   `check::no_more_than_32_findings_and_eight_places_are_handed_back_and_no_text_of_the_judges`,
@@ -471,7 +494,8 @@ would have been lost before the loop classed anything.
   observation that cites two),
   `cache::an_entry_that_kept_no_judged_document_is_not_answered_from`,
   `use_case::a_use_case_recipe_hands_its_caller_the_findings_of_its_last_step`,
-  `cli::squint_check_prints_the_counts_of_its_findings`, and `just docs` regenerated.
+  `cli::squint_check_prints_the_counts_of_its_findings`, `just docs` regenerated, and the
+  carry-over row on an executor built with a digest alone closed.
 
 **Keeping tests lean (K2).** Findings are read from scripted submissions on the pictures the
 use cases' tests already draw.
@@ -548,7 +572,9 @@ for both.
    | 5 | `RQ3` or `SF4` alone | `violation` | Enlarges nothing, and forbids nothing: beside a finding of row 2 the retry goes on |
 
    **What the loop does with a verdict's findings.** If the findings are not complete (row
-   0), the attempts end. If any finding is of row 1, the attempts end. Otherwise, if at
+   0), the attempts end; the verdict the loop hands back and ranks its attempts by is
+   always the decision the findings carry, never one worked out from the list. If any
+   finding is of row 1, the attempts end. Otherwise, if at
    least one is of row 2 and the plan has an attempt left,
    one retry is made, from the places of the row 2 findings alone. Otherwise the attempts
    end. So a `fail` retries only on a confident report that the thing remains, and an
@@ -931,8 +957,14 @@ and "Workflows").
      thing it may write is a release.
 3. **The local leg**, `scripts/prerelease-local.sh <tag>`, the orchestrator's, on the
    owner's Mac, never run by CI. It keeps two things apart that draft 1 ran together.
-   - **The checkout's model tests.** `just test-models`, at the tag's commit checked out.
-     They build and test the checkout, not the archive; the receipt names them so.
+   - **The checkout's model tests.** `just test-models` builds and tests a checkout, not
+     the archive, and the receipt names them so. They, and the list of tests their filter
+     names, are run from a checkout the script makes itself, new, of the candidate's
+     commit, in a temporary folder, never from the folder the script was started in.
+     Before anything is built the script holds that checkout to be clean: its `HEAD` is
+     the tag's commit, no tracked file differs from it, and no untracked file is there
+     that git does not ignore. A checkout that is not clean stops the leg, whatever its
+     `HEAD` says, because a changed or added file is a build input the tag does not hold.
    - **The archive's acceptance.** The Mac's archive is downloaded from the candidate and
      held to `SHA256SUMS`; it is installed into a temporary folder; the installed binary's
      own digest is taken, and its `--version` must name the tag's base version and the
@@ -957,7 +989,8 @@ and "Workflows").
    shows the work was done. Two of the checks are not runs and have no run record, so
    each has evidence of its own kind:
    - **for the checkout's model tests:** `scripts/test-models.sh` is a test run, and what
-     it leaves is a test report. The profile `model-tier` (`.config/nextest.toml`) gains
+     it leaves is a test report. The entry says first that the checkout was made new by
+     the script and found clean, with its commit and the digest of its tree. The profile `model-tier` (`.config/nextest.toml`) gains
      the report the default profile already writes (`junit`), and the entry holds: the
      commit of the checkout, which must be the tag's; the script's exit status, which must
      be 0; from the report, the names of the tests run, which must be exactly the tests
@@ -992,7 +1025,8 @@ and "Workflows").
    taken; the candidate holds a receipt that is read whole by its schema; the receipt
    names this candidate and this commit; **every required check is there exactly once and
    meets item 4's conditions for its kind**: for the model tests, exit 0 and a report that
-   names every expected test and no failure; for `setup`, exit 0, the extra `torch`, and
+   names every expected test and no failure, from a checkout recorded as new and clean at
+   the tag's commit; for `setup`, exit 0, the extra `torch`, and
    the hello heard twice; for a run, completed, not from a cache, a dispatch and a settled
    answer where one is required, the loop checked with its child check completed;
    and the digests the receipt names are those of the archives the candidate holds, which
@@ -1022,7 +1056,8 @@ and "Workflows").
   `scripts/tests/test-release-gate.sh` (the release is refused when no `prerelease` run
   succeeded on the commit; when the receipt is missing; when it is malformed or holds a
   field its schema does not; when a required check is missing, is there twice, or did not
-  complete; when the model tests' exit status is not 0, when their report holds a failed
+  complete; when the model tests' entry does not say its checkout was new and clean, or
+  names another commit or tree; when the model tests' exit status is not 0, when their report holds a failed
   or a timed-out test, when it lacks a test the filter names, or when there is no report;
   when `setup` exited with a failure, installed another extra, or printed no hello, or the
   probe heard none; **when a provider's check was answered from a cache, or names no dispatched and
@@ -1032,7 +1067,9 @@ and "Workflows").
   superseded; when a digest it names is not that of the archive's bytes; and it passes
   when all agree), `scripts/tests/test-prerelease-local.sh` (against stand-ins for the
   binary and for the `gh` command: a wrong sum stops it before anything runs; a binary
-  whose version line names another commit stops it; a store that is not empty stops it; a
+  whose version line names another commit stops it; a checkout whose `HEAD` is the tag's
+  commit and which holds a changed tracked file, or an untracked file git does not
+  ignore, stops it before anything is built; a store that is not empty stops it; a
   failed call is written as failed and fails the leg; a model test that fails, and a
   `setup` that fails, are each written as failed from the report and the exit status and
   fail the leg; each model-loading command is run under the three guards; the loop is asked
@@ -1166,8 +1203,9 @@ of retry works is shown by L1's and L2's tests with fakes, not here.
   pass leaves something behind (rascal's case was a dog's collar whose buckle stayed), in a
   folder on the Mac. Without them the three cases by hand run on synthetic pictures.
 
-Nothing else. The Google key answers again (the orchestrator, 2026-11-19: a fourth run of
-the gate is completing with it), so a live call to each provider can pass.
+Nothing else. The Google key answers: the gate's fourth run measured the Google judge
+whole, with no error (`docs/results/m3-gates.md`, "The fourth run"), so a live call to each
+provider can pass.
 
 ## N1. After the candidate: the release's record and the note (small)
 
@@ -1216,14 +1254,16 @@ is in no archive of `0.1.0`: it records C from outside. The tag `m4` is made on 
 | `whizbang lab run`'s "started now" | Taken by A1 (item 8) |
 | The pairs page: a picture's size tells its arm; backspace | Taken by A1 (item 9) |
 | The Google rows of prices are introductory | Taken by E1 (item 5) for the row whose date has come by then; each other re-owned to the first live run on or after its date |
+| Details first is still `check`'s default (milestone 4's since #246, which re-owned it from E to this plan's first task) | Taken by A1 (items 1 to 6) |
 | Hosting the model's files for customers | Its first step, the reading of the licence, taken by E1 (item 6). The rest re-owned to milestone 6 by the owner's decision of 2026-11-19 |
 
-**Rows milestone E owns that milestone 4 leans on.** They stay E's, but for the first.
+**Rows milestone E owns that milestone 4 leans on.** They stay E's. Two that earlier drafts
+listed here are gone: details first as the default is milestone 4's now (above), with the
+gating of a fixed details first on fresh data still E's; and the row on the Google arm of
+the gate is closed, the fourth run having measured it whole.
 
 | Row | How milestone 4 leans on it |
 |---|---|
-| Details first is still `check`'s default | Taken from E by A1, because the loop calls `check` on every attempt. Gating a fixed details first on fresh data stays E's |
-| The Google arm of the gate, once the key answers | The key answers again; the same key answers the candidate's live call to Google |
 | The blinded picking rounds of milestone 3 | The loop's record says of its visual quality what the five fill recipes' say: not yet confirmed by a person. A1's fix to the pairs page should land before the owner picks |
 | The model-based recipes up rungs 3 and 4; a fresh confirmation set | The loop joins them: milestone 4 gives it rung 1, rung 2 in part, and the mark experimental |
 | `check`'s `tiles` and second look | The loop's check uses neither; both stay off |
@@ -1400,8 +1440,8 @@ under "What the owner decided", and one of draft 3's under "What the orchestrato
 ## What the owner is told, not asked
 
 - **Nine pull requests**, six of them large; three run side by side in the first wave.
-- **Details first is turned off as the default now**, ahead of milestone E, because the loop
-  calls `check`; it stays selectable with `--details first`.
+- **Details first is turned off as the default now**, because its gate rejected it on all
+  three judges and the loop calls `check`; it stays selectable with `--details first`.
 - **The tag `m3`**, on 0c75eedd, is made by the orchestrator before the first wave.
 
 ### What milestone 5, E and later owe after 4
@@ -1561,3 +1601,33 @@ against the code; every one was found right, and all are taken into draft 4. One
 
 Also changed with draft 4: draft 3's open question 4 is settled by the orchestrator as the
 stricter rule, and E1 counts how often the loop stops on it.
+
+### Review round 4
+
+On draft 4, at a25e2245. Three findings, all major, each a small change. Each was checked
+against the code; every one was found right, and all are taken into draft 5. One line each:
+
+1. **Major: a verdict worked out from a cut list can be wrong.** Right: every answer enters
+   the verdict, so 32 tentative violations kept with the one confident violation cut would
+   read as `unsure` where the verdict is `fail`. Taken: the findings carry the decision of
+   the whole submission, never cut; working the verdict out from the findings is held only
+   where they are complete; the loop takes its verdict from the carried decision; a test
+   of that very case, on a cache hit and a miss (K2, items 1 and 2; L1, item 4).
+2. **Major: the model tests could run from a checkout that is not the candidate.** Right:
+   `scripts/test-models.sh` builds whatever its folder holds. Taken: the local leg makes a
+   new checkout of the candidate's commit and holds it clean (no differing tracked file,
+   no untracked file git does not ignore) before it builds or lists a test; the receipt
+   records it; a dirty checkout whose `HEAD` is the tag's is refused, with its test (R2,
+   items 3 to 5).
+3. **Major: two tasks of wave 1 edited `docs/carry-over.md`.** Right. Taken: A1 alone
+   edits it in wave 1; the row K1's work answers is closed by K2 in wave 2; the claim that
+   A1 and K1 share no file is put right ("Shared files, each with one owner in a wave").
+
+Also changed with draft 5: `main` moved to 0a04cc3c with #246, the record of the gate's
+fourth run, the first complete one, which rejected details first on all three judges with
+the Google judge answering; the branch holds that merge. The lines that cited the earlier
+runs as the latest, or said the Google arm was still owed, say what the fourth run found;
+and the row on details first as the default is milestone 4's by that pull request.
+
+**Approved by the orchestrator after four outside review rounds, under the plan-approval
+rule (`SPEC.md` section 14, "Review before building"), on 2026-11-19.**
