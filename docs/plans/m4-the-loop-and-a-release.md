@@ -981,8 +981,12 @@ on Linux is open question 2.
    file may (`AGENTS.md`, "Secrets and private data"). What fails `just check` is
    `scripts/tests/test-third-party-licences.sh`, which generates the file from the
    workspace's own lock file on every run and holds its crates to those `cargo deny` lists.
-   The Rust standard library, which is in the binary and not in the lock file, is named in
-   the file's opening and its notices are not repeated there.
+   The Rust standard library, which is in the binary and not in the lock file, has its
+   two licence texts in the file, taken from the toolchain that builds the binary
+   (`share/doc/rust/licenses`). The pinned toolchain carries no `COPYRIGHT`, `LICENSE-MIT`
+   or `LICENSE-APACHE` as plain files: the notices of what the standard library itself
+   holds are its `COPYRIGHT-library.html`, an HTML page of 1.5 MB, which the file names
+   and does not repeat. That is the one gap left, and it is owed below.
 3. Item 5's last bullet gives the refusals "On Linux". `whizbang rascal remove-prompt` under
    a config that names the local segmenter is held on both targets, each in its own words:
    on Linux the model does not run on the platform, on a Mac it is not installed yet.
@@ -992,11 +996,27 @@ on Linux is open question 2.
    lines.
 5. Item 2's two tests read the binary cargo builds for the tests, not a release build: the
    same toolchain, libraries and `.cargo/config.toml` link both. The Mac's minimum is set
-   there, for every build.
+   there, for every build. A commit costs 2 to 3 seconds of rebuild for the binary's crate
+   (measured), so the commit is not kept in a crate of its own.
 6. The version line needed one more name in `scripts/check-binary-start.sh`: the binary's
    `src/main.rs` reads the commit its own `build.rs` sets, and nothing else may. The
    workspace's version is still `0.0.1`: it becomes `0.1.0` with R2, item 1, and nothing
    here holds a number.
+
+**Owed after R1** (from the review of #248, 2026-11-19). Three things R1 does not do, the
+first two R2's, since R2 makes the candidate's binary:
+
+1. The release binary holds the paths of the machine that built it (cargo's home, the
+   checkout's folder) in its panic messages and debug records. R2 builds it with
+   `--remap-path-prefix`, so that no archive carries a builder's paths and two machines
+   give the same bytes for them.
+2. `release::the_linux_binary_needs_only_the_c_library_of_ubuntu_22_04` reads the binary
+   built for the tests. R2 runs the same read on the packaged release binary, where the
+   candidate is built.
+3. The notices of the code the Rust standard library itself holds
+   (`COPYRIGHT-library.html` of the toolchain) are named in `THIRD-PARTY-LICENSES.md` and
+   not carried in the archive. Whether they go in as a fifth file is a decision that
+   changes item 1's four files, so it is asked and not made here.
 
 **Keeping tests lean (R1).** The script tests of the check run on a tiny stand-in binary
 (a shell script named `whizbang`), not on a release build; the real check runs once on each

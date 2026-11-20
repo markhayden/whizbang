@@ -69,6 +69,22 @@ done <"$tmp/list-$host"
 # A licence everybody knows is in it, whole.
 grep -F 'Permission is hereby granted, free of charge, to any person obtaining a copy' "$tmp/made.md" >/dev/null || fail "an MIT text is printed"
 grep -F 'TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION' "$tmp/made.md" >/dev/null || fail "an Apache text is printed"
+# The standard library, which is in the binary and in no lock file: its two licence texts,
+# from the toolchain's own folder.
+std=$(rustc --print sysroot)/share/doc/rust/licenses
+grep -x -F '## The Rust standard library' "$tmp/made.md" >/dev/null || fail "the file names the standard library"
+grep -F "$(rustc -V)" "$tmp/made.md" >/dev/null || fail "the file names the compiler whose standard library it is"
+for text in MIT.txt Apache-2.0.txt; do
+  [ -s "$std/$text" ] || fail "the pinned toolchain carries $text in share/doc/rust/licenses"
+  grep -x -F "### The standard library's $text" "$tmp/made.md" >/dev/null || fail "the standard library's $text is printed"
+  tail -n 1 "$std/$text" >"$tmp/last"
+  grep -x -F -f "$tmp/last" "$tmp/made.md" >/dev/null || fail "the standard library's $text is printed to its end"
+done
+# The crates under more than one licence at once, as the lock file has them now: each has
+# a text for each, one of them in a subfolder.
+grep -F '| ring | ' "$tmp/made.md" | grep -F 'Apache-2.0 AND ISC' | grep -F '/LICENSE' >/dev/null ||
+  fail "ring, under two licences at once, has its texts, those in its subfolders among them"
+
 # The same lock file gives the same bytes.
 expect_pass "the file a second time" "$script" "$host" "$tmp/again.md"
 cmp -s "$tmp/made.md" "$tmp/again.md" || fail "two runs give the same file"
@@ -84,11 +100,11 @@ crate() { # <name> <file> <text>: a crate's folder with one file
   printf '%s\n' "$3" >"$tmp/crates/$1/$2"
 }
 line() { printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$tmp/crates/$1" "${4:-}"; }
-crate first LICENSE-MIT "The licence of first and second."
-crate second LICENCE.txt "The licence of first and second."
-crate third COPYING "The licence of third."
+crate first LICENSE-MIT "Permission is hereby granted, free of charge, to use first and second."
+crate second LICENCE.txt "Permission is hereby granted, free of charge, to use first and second."
+crate third COPYING "Permission to use, copy, modify, and/or distribute third is hereby granted."
 crate third src/lib.rs "// not a licence"
-crate elsewhere docs/terms.txt "The licence of elsewhere, where its manifest says."
+crate elsewhere docs/terms.txt "This software is provided 'as-is': elsewhere, where its manifest says."
 crate bare src/lib.rs "// a crate that carries no licence text"
 {
   line first 1.0.0 MIT
@@ -98,13 +114,41 @@ crate bare src/lib.rs "// a crate that carries no licence text"
 } >"$tmp/good.tsv"
 expect_pass "a list whose crates each carry a text" "$script" --render "$tmp/good.tsv" "$host" "$tmp/planted.md"
 # A text two crates carry byte for byte is printed once and names both.
-[ "$(grep -c -x -F 'The licence of first and second.' "$tmp/planted.md")" = 1 ] || fail "a text two crates carry is printed once"
+[ "$(grep -c -x -F 'Permission is hereby granted, free of charge, to use first and second.' "$tmp/planted.md")" = 1 ] || fail "a text two crates carry is printed once"
 grep -x -F 'Carried by: first 1.0.0, second 2.0.0.' "$tmp/planted.md" >/dev/null || fail "a shared text names each crate that carries it"
-grep -x -F 'The licence of third.' "$tmp/planted.md" >/dev/null || fail "a file named COPYING is a licence text"
-grep -x -F 'The licence of elsewhere, where its manifest says.' "$tmp/planted.md" >/dev/null ||
+grep -x -F 'Permission to use, copy, modify, and/or distribute third is hereby granted.' "$tmp/planted.md" >/dev/null || fail "a file named COPYING is a licence text"
+grep -x -F "This software is provided 'as-is': elsewhere, where its manifest says." "$tmp/planted.md" >/dev/null ||
   fail "the file a manifest names as its licence is a licence text"
 grep -F 'not a licence' "$tmp/planted.md" >/dev/null && fail "a source file is not a licence text"
 [ "$(grep -c '^### text-' "$tmp/planted.md")" = 3 ] || fail "three texts are printed for four crates"
+
+# A crate that carries other people's code keeps their notices in subfolders: a text at
+# any depth is taken. And a crate under two licences at once has a text for each: the
+# words every text of a licence holds are looked for, however its lines are broken.
+crate vendoring LICENSE "Permission to use, copy, modify, and/or distribute vendoring is hereby granted."
+crate vendoring third_party/inner/NOTICE.txt "A notice of the code vendoring carries."
+crate vendoring third_party/inner/LICENSE-APACHE "$(printf '%s\n' 'Apache' 'License, Version 2.0, of the code vendoring carries.')"
+line vendoring 6.0.0 "Apache-2.0 AND ISC" >"$tmp/and.tsv"
+expect_pass "a crate under two licences, one text in a subfolder" "$script" --render "$tmp/and.tsv" "$host" "$tmp/and.md"
+grep -x -F 'A notice of the code vendoring carries.' "$tmp/and.md" >/dev/null || fail "a notice in a subfolder is printed"
+grep -F '`third_party/inner/LICENSE-APACHE`' "$tmp/and.md" >/dev/null || fail "a text in a subfolder is named by its path in the crate"
+rm "$tmp/crates/vendoring/third_party/inner/LICENSE-APACHE"
+expect_fail "a crate under two licences with the text of one" "vendoring 6.0.0 (Apache-2.0 AND ISC): no text of Apache-2.0 among its files" \
+  "$script" --render "$tmp/and.tsv" "$host" "$tmp/x.md"
+# A choice of licences needs the text of one of them; a part that is a choice, likewise.
+line vendoring 6.0.0 "(MIT OR Apache-2.0) AND ISC" >"$tmp/and.tsv"
+expect_fail "a part that is a choice, with a text of neither" "no text of MIT or Apache-2.0 among its files" "$script" --render "$tmp/and.tsv" "$host" "$tmp/x.md"
+line vendoring 6.0.0 "MIT OR ISC" >"$tmp/and.tsv"
+expect_pass "a choice of licences with the text of one" "$script" --render "$tmp/and.tsv" "$host" "$tmp/or.md"
+line vendoring 6.0.0 "Apache-2.0 WITH LLVM-exception OR ISC" >"$tmp/and.tsv"
+expect_pass "an exception is not a licence to find" "$script" --render "$tmp/and.tsv" "$host" "$tmp/or.md"
+# A licence the script knows no words of, and expressions it cannot read.
+line vendoring 6.0.0 "Made-Up-1.0" >"$tmp/and.tsv"
+expect_fail "a licence it knows no words of" "no text of Made-Up-1.0 among its files" "$script" --render "$tmp/and.tsv" "$host" "$tmp/x.md"
+for unread in "MIT OR Apache-2.0 AND ISC" "MIT OR (Apache-2.0 AND ISC)" "(MIT AND ISC" "MIT AND"; do
+  line vendoring 6.0.0 "$unread" >"$tmp/and.tsv"
+  expect_fail "the expression '$unread'" "is not an expression this script can read" "$script" --render "$tmp/and.tsv" "$host" "$tmp/x.md"
+done
 
 # A crate in the binary without its text fails, by name, and nothing is written.
 {

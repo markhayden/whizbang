@@ -23,11 +23,21 @@
 # carries a licence `just deny` allows; the test holds this list to the one `cargo deny`
 # checks.
 #
-# Which texts. Every file at the top of the crate's folder, as crates.io published it,
+# Which texts. Every file of the crate's folder, at any depth, as crates.io published it,
 # whose name starts with LICENSE, LICENCE, COPYING, UNLICENSE, NOTICE or COPYRIGHT, in any
-# letter case, and the file its manifest names as its licence. A text that several crates
-# carry byte for byte is written once and named by each. **A crate with no such file fails
-# the script**, and no archive is made: its text is then added by a decision, not left out.
+# letter case (a crate that carries other people's code keeps their notices in subfolders),
+# and the file its manifest names as its licence. A text that several crates carry byte for
+# byte is written once and named by each. **A crate with no such file fails the script**,
+# and so does a crate under several licences at once (`A AND B`) with no text for one of
+# them, told by words every text of that licence holds: no archive is made, and the text is
+# then added by a decision, not left out.
+#
+# The Rust standard library is in the binary too, and in no lock file. Its two licence
+# texts are taken from the toolchain that builds the binary (`share/doc/rust/licenses` of
+# its sysroot; nothing is downloaded), and a toolchain without them fails the script. The
+# notices of what the standard library itself holds are the toolchain's
+# `COPYRIGHT-library.html`, an HTML page of 1.5 MB, which is named in the file and not
+# repeated in it: owed, plan m4, R1's section.
 #
 # The file is not committed: licence texts hold their authors' addresses, which no tracked
 # file here may (AGENTS.md, "Secrets and private data"). `just package` makes it for each
@@ -139,6 +149,51 @@ fi
 # for one, and a field that is empty would be lost.
 tr '\t' '\037' <"$list" >"$tmp/fields"
 
+# conjuncts <expression>: the parts a licence expression joins with AND, one a line, each
+# the licences it offers a choice of, apart by spaces; an exception after WITH is left
+# out. It fails on an expression it cannot read so: an AND inside brackets, or an AND
+# beside an OR with no brackets to say which binds.
+conjuncts() {
+  printf '%s\n' "$1" | awk '{
+    gsub(/\(/, " ( "); gsub(/\)/, " ) ")
+    n = split($0, word, " "); depth = 0; part = ""; ands = 0; ors = 0
+    for (i = 1; i <= n; i++) {
+      if (word[i] == "(") depth++
+      else if (word[i] == ")") depth--
+      else if (word[i] == "AND") { if (depth > 0) exit 3; ands++; print part; part = "" }
+      else if (word[i] == "OR") { if (depth == 0) ors++ }
+      else if (word[i] == "WITH") i++
+      else part = part " " word[i]
+    }
+    if (depth != 0 || (ands > 0 && ors > 0) || part == "") exit 3
+    print part
+  }'
+}
+# marker <licence>: words the text of that licence holds; fails for one it does not know.
+marker() {
+  case "$1" in
+    Apache-2.0) echo 'Apache License' ;;
+    MIT | MIT-0) echo 'Permission is hereby granted, free of charge' ;;
+    ISC | 0BSD) echo 'Permission to use, copy, modify, and' ;;
+    BSD-2-Clause | BSD-3-Clause) echo 'Redistribution and use in source and binary forms' ;;
+    Zlib) echo "This software is provided 'as-is'" ;;
+    Unlicense) echo 'This is free and unencumbered software' ;;
+    Unicode-3.0) echo 'UNICODE LICENSE V3' ;;
+    CDLA-Permissive-2.0) echo 'Community Data License Agreement' ;;
+    MPL-2.0) echo 'Mozilla Public License' ;;
+    *) return 1 ;;
+  esac
+}
+# has_phrase <words>: one of the crate's files ($tmp/files.sorted) holds the words, in any
+# letter case and however its lines are broken.
+has_phrase() {
+  local file
+  while IFS= read -r file; do
+    if tr -s '[:space:]' ' ' <"$file" | grep -i -F -e "$1" >/dev/null; then return 0; fi
+  done <"$tmp/files.sorted"
+  return 1
+}
+
 # The texts of each crate: one line for each, its SHA-256, the crate, the file's name and
 # where it is. A crate with none is kept for the complaint.
 : >"$tmp/texts"
@@ -147,13 +202,9 @@ while IFS=$'\037' read -r name version licence folder named; do
   [ -n "$name" ] && [ -n "$version" ] || die "a line of the list names no crate and version"
   [ -n "$licence" ] || die "$name $version states no licence"
   [ -d "$folder" ] || die "the folder of $name $version is not there: $folder (a build, or just deny, puts it in cargo's home)"
-  : >"$tmp/files"
-  for file in "$folder"/*; do
-    [ -f "$file" ] || continue
-    case "$(basename "$file" | tr '[:lower:]' '[:upper:]')" in
-      LICENSE* | LICENCE* | COPYING* | UNLICENSE* | UNLICENCE* | NOTICE* | COPYRIGHT*) printf '%s\n' "$file" >>"$tmp/files" ;;
-    esac
-  done
+  # At any depth: a crate that carries other people's code keeps their notices beside it.
+  find "$folder" -type f \( -iname 'LICENSE*' -o -iname 'LICENCE*' -o -iname 'COPYING*' -o -iname 'UNLICENSE*' \
+    -o -iname 'UNLICENCE*' -o -iname 'NOTICE*' -o -iname 'COPYRIGHT*' \) >"$tmp/files"
   if [ -n "$named" ] && [ -f "$folder/$named" ]; then
     printf '%s\n' "$folder/$named" >>"$tmp/files"
   fi
@@ -162,16 +213,38 @@ while IFS=$'\037' read -r name version licence folder named; do
     continue
   fi
   sort -u "$tmp/files" >"$tmp/files.sorted"
+  # Every licence the crate is under at once has its text: each part of `A AND B`.
+  conjuncts "$licence" >"$tmp/conjuncts" ||
+    die "the licence of $name $version is not an expression this script can read: $licence (it reads AND between parts that are one licence or a choice of several)"
+  while IFS= read -r part; do
+    found=0
+    for id in $part; do
+      if phrase=$(marker "$id") && has_phrase "$phrase"; then
+        found=1
+        break
+      fi
+    done
+    [ "$found" = 1 ] || printf '%s %s (%s): no text of %s among its files\n' "$name" "$version" "$licence" "$(echo $part | sed 's/ / or /g')" >>"$tmp/without"
+  done <"$tmp/conjuncts"
   while IFS= read -r file; do
     [ -s "$file" ] || die "$file of $name $version is empty"
     printf '%s\t%s %s\t%s\t%s\n' "$(sha256 "$file")" "$name" "$version" "${file#"$folder"/}" "$file" >>"$tmp/texts"
   done <"$tmp/files.sorted"
 done <"$tmp/fields"
 if [ -s "$tmp/without" ]; then
-  echo "third-party licences: these crates of the binary carry no licence text, so no archive can carry it:" >&2
+  echo "third-party licences: these crates of the binary carry no licence text, or not one for each licence they are under, so no archive can carry it:" >&2
   sed 's/^/    /' "$tmp/without" >&2
   exit 1
 fi
+
+# The standard library's own two licence texts, from the toolchain that builds the binary:
+# nothing is downloaded. A toolchain without them fails the script.
+compiler=$(rustc -V) || die "rustc did not say its version"
+std=$(rustc --print sysroot)/share/doc/rust/licenses
+for text in MIT.txt Apache-2.0.txt; do
+  [ -s "$std/$text" ] || die "the toolchain does not carry the standard library's licence text $text (looked in its share/doc/rust/licenses)"
+  if grep -e '^~~~~' "$std/$text" >/dev/null; then die "$std/$text holds a line that starts with ~~~~"; fi
+done
 
 # A text is named by the first twelve digits of its SHA-256.
 label() { printf 'text-%s' "$(printf '%s' "$1" | cut -c 1-12)"; }
@@ -186,9 +259,8 @@ released=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | sed -n '1p')
   echo "licence is the file \`LICENSE\` beside this one. A text that several crates carry, byte"
   echo "for byte, is printed once, under the name the table gives it."
   echo
-  echo "The binary also holds the Rust standard library, which is under MIT or Apache-2.0 at"
-  echo "the choice of whoever uses it; its notices are published with the Rust toolchain and"
-  echo "are not repeated here. No model is in the archive, and so no model's licence."
+  echo "The binary also holds the Rust standard library; its two licences are at the end. No"
+  echo "model is in the archive, and so no model's licence."
   echo
   echo "## Crates"
   echo
@@ -217,6 +289,22 @@ released=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | sed -n '1p')
     tr -d '\r' <"$file" | sed -e '$a\'
     echo "$fence"
   done <"$tmp/sums"
+  echo
+  echo "## The Rust standard library"
+  echo
+  echo "The binary is linked with the standard library of \`$compiler\`, which is under MIT"
+  echo "or Apache-2.0 at the choice of whoever uses it. Both texts follow, as the toolchain"
+  echo "that built the binary carries them. The notices of the code the standard library"
+  echo "itself holds are in that toolchain's \`share/doc/rust/COPYRIGHT-library.html\`, which"
+  echo "is published with every Rust toolchain and is not repeated here."
+  for text in MIT.txt Apache-2.0.txt; do
+    echo
+    echo "### The standard library's $text"
+    echo
+    echo "$fence"
+    tr -d '\r' <"$std/$text" | sed -e '$a\'
+    echo "$fence"
+  done
 } >"$tmp/out"
 mkdir -p "$(dirname "$out")"
 cp "$tmp/out" "$out"

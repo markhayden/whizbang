@@ -31,7 +31,7 @@ mkdir "$tmp/record"
 
 # stand_in <file> <kind> [<version>]: the stand-in binary. The kinds: `good`; `stays`,
 # whose server does not end when its input does; `silent`, whose server answers nothing;
-# `undocumented`, whose description is not the committed one; `unrefused`, which runs
+# `dies`, whose server ends at once; `undocumented`, whose description is not the committed one; `unrefused`, which runs
 # what needs a local model; `no-steps`, whose run lists no step.
 stand_in() {
   local kind=$2 says=${3:-$version}
@@ -72,6 +72,7 @@ case "\$*" in
     ;;
   'serve --store store')
     echo "\$\$" >"\$record/server"
+    [ "\$kind" != dies ] || exit 0
     while IFS= read -r line; do
       [ "\$kind" != silent ] || continue
       case "\$line" in
@@ -127,8 +128,13 @@ printf '%s\n' '#!/bin/bash' 'echo "uv stand-in"' >"$prereqs/uv"
 printf '%s\n' '#!/bin/bash' 'echo "3.12.15"' >"$prereqs/python/cpython-3.12.15-stand-in/bin/python3"
 chmod +x "$prereqs/uv" "$prereqs/python/cpython-3.12.15-stand-in/bin/python3"
 
-# check <folder>: the check on that folder's archive, with one second for the server.
-check() { WHIZBANG_INSTALL_CHECK_LIMIT=1 "$script" "$1/$stem.tar.gz" "$1/SHA256SUMS" "${2:-$prereqs}"; }
+# check <folder>: the check on that folder's archive, with one second for the server. The
+# check itself is given 30 seconds and then ended by a signal, so that a check that waits
+# on a server it did not kill fails this test and does not hang it (a good one takes two).
+check() {
+  WHIZBANG_INSTALL_CHECK_LIMIT=1 perl -e 'alarm shift; exec @ARGV or die "cannot start $ARGV[0]\n"' 30 \
+    "$script" "$1/$stem.tar.gz" "$1/SHA256SUMS" "${2:-$prereqs}"
+}
 # gone <pid>: the process is no longer there.
 gone() { ! kill -0 "$1" 2>/dev/null; }
 
@@ -183,11 +189,38 @@ printf '%s  %s\n' "$(printf '0%.0s' $(seq 1 64))" "$stem.tar.gz" >"$tmp/wrong-su
 rm -rf "$tmp/record" && mkdir "$tmp/record"
 expect_fail "a wrong sum" "the archive's SHA-256 is not the one SHA256SUMS names" check "$tmp/wrong-sum"
 [ ! -e "$tmp/record/commands" ] || fail "an archive whose sum is wrong is not run"
-echo "no line of it" >"$tmp/wrong-sum/SHA256SUMS"
-expect_fail "sums that do not name the archive" "SHA256SUMS names no $stem.tar.gz" check "$tmp/wrong-sum"
+# A line that is not, whole, 64 lower-case hexadecimal digits, two spaces and the archive's
+# name is no line of the archive's, whatever a checking program would make of it (Apple's
+# sha256sum passes an empty input and a line it cannot read): a hash that is short, of
+# another length or in capitals; the name alone; the name inside another name; one space;
+# no line at all. And two lines for the archive are one too many, though both are right.
+right=$(sha256 "$tmp/good/$stem.tar.gz")
+no_line() { # <name> <line...>
+  local case_name=$1
+  shift
+  printf '%s\n' "$@" >"$tmp/wrong-sum/SHA256SUMS"
+  rm -rf "$tmp/record" && mkdir "$tmp/record"
+  expect_fail "$case_name" "SHA256SUMS holds no line for $stem.tar.gz" check "$tmp/wrong-sum"
+  [ ! -e "$tmp/record/commands" ] || fail "$case_name: the archive is not run"
+}
+no_line "a short hash" "deadbeef  $stem.tar.gz"
+no_line "a hash of 40 digits" "$(printf '%s' "$right" | cut -c 1-40)  $stem.tar.gz"
+no_line "a hash in capitals" "$(printf '%s' "$right" | tr 'a-f' 'A-F' | sed 's/^./F/')  $stem.tar.gz"
+no_line "the name alone" "$stem.tar.gz"
+no_line "the name inside another name" "$right  $stem.tar.gz.sig" "$right  old-$stem.tar.gz"
+no_line "one space" "$right $stem.tar.gz"
+no_line "a line of something else" "no line of it"
+: >"$tmp/wrong-sum/SHA256SUMS"
+expect_fail "an empty SHA256SUMS" "SHA256SUMS holds no line for $stem.tar.gz" check "$tmp/wrong-sum"
+printf '%s\n' "$right  $stem.tar.gz" "$right  $stem.tar.gz" >"$tmp/wrong-sum/SHA256SUMS"
+expect_fail "two lines for the archive" "SHA256SUMS holds 2 lines for $stem.tar.gz, and must hold one" check "$tmp/wrong-sum"
+# The right line among lines for other files is taken.
+printf '%s\n' "$right  other.tar.gz" "$right  $stem.tar.gz" "$right  $stem.tar.gz.sig" >"$tmp/wrong-sum/SHA256SUMS"
+expect_pass "the archive's line among others" check "$tmp/wrong-sum"
 
 # --- A file too many, or one too few: nothing of it is run.
 archive "$tmp/extra" good "$version" notes.txt
+rm -rf "$tmp/record" && mkdir "$tmp/record"
 expect_fail "a file too many" "the archive holds something else than one folder with the four files" check "$tmp/extra"
 [ ! -e "$tmp/record/commands" ] || fail "an archive with a file too many is not run"
 rm -rf "$tmp/stage" "$tmp/fewer" && mkdir -p "$tmp/stage/$stem" "$tmp/fewer"
@@ -197,6 +230,24 @@ echo "the install guide" >"$tmp/stage/$stem/README.md"
 (cd "$tmp/stage" && tar -czf "$tmp/fewer/$stem.tar.gz" "$stem")
 printf '%s  %s\n' "$(sha256 "$tmp/fewer/$stem.tar.gz")" "$stem.tar.gz" >"$tmp/fewer/SHA256SUMS"
 expect_fail "a file too few" "the archive holds something else than one folder with the four files" check "$tmp/fewer"
+
+# --- A link in the archive, of either kind, in the place of a file: nothing is unpacked.
+for kind in symbolic hard; do
+  rm -rf "$tmp/stage" "$tmp/linked" && mkdir -p "$tmp/stage/$stem" "$tmp/linked"
+  stand_in "$tmp/stage/$stem/whizbang" good
+  echo "the licence" >"$tmp/stage/$stem/LICENSE"
+  echo "the install guide" >"$tmp/stage/$stem/README.md"
+  if [ "$kind" = symbolic ]; then
+    ln -s LICENSE "$tmp/stage/$stem/THIRD-PARTY-LICENSES.md"
+  else
+    ln "$tmp/stage/$stem/LICENSE" "$tmp/stage/$stem/THIRD-PARTY-LICENSES.md"
+  fi
+  (cd "$tmp/stage" && tar -czf "$tmp/linked/$stem.tar.gz" "$stem")
+  printf '%s  %s\n' "$(sha256 "$tmp/linked/$stem.tar.gz")" "$stem.tar.gz" >"$tmp/linked/SHA256SUMS"
+  rm -rf "$tmp/record" && mkdir "$tmp/record"
+  expect_fail "a $kind link in the archive" "the archive must hold one folder and then four regular files, and no link" check "$tmp/linked"
+  [ ! -e "$tmp/record/commands" ] || fail "an archive with a $kind link is not run"
+done
 
 # --- A binary of another version than the archive is named for.
 archive "$tmp/other-version" good 1.2.4
@@ -216,6 +267,15 @@ archive "$tmp/silent" silent
 rm -rf "$tmp/record" && mkdir "$tmp/record"
 expect_fail "a server that never answers" "the server gave no answer to initialize within 1 seconds" check "$tmp/silent"
 gone "$(cat "$tmp/record/server")" || fail "a server that never answers is killed"
+# The script never waits on its server without a bound: each wait counts to the limit.
+[ "$(grep -c -x -F '  wait "$server" 2>/dev/null || true' "$script")" = 1 ] && [ "$(grep -c -F 'wait "$server"' "$script")" = 2 ] &&
+  [ "$(grep -c -F 'if [ "$waited" -ge $((limit * 10)) ]; then' "$script")" = 2 ] ||
+  fail "the check waits for its server in two places, each after a loop that counts to the limit"
+
+# A server that ends before it is asked anything is reported in words, not by a signal.
+archive "$tmp/dies" dies
+expect_fail "a server that ends at once" "the server gave no answer to initialize" check "$tmp/dies"
+grep -F "install-check: failed:" "$tmp/out" >/dev/null || { cat "$tmp/out" >&2; fail "a server that ends at once is reported by the check itself"; }
 
 # --- A binary that is not the one documented; a run that lists no step; a binary that
 # runs what needs a local model.

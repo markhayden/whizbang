@@ -6,8 +6,14 @@
 //! gives it in this crate's folder: 40 hexadecimal digits, or 64 in a repository of
 //! SHA-256. It says nothing of files changed since that commit; whoever packages a
 //! release holds the checkout to be clean (`scripts/package.sh` does not, and says so).
-//! Built where there is no repository or no `git`, the binary says `unknown`, and
-//! `scripts/package.sh` refuses to make an archive of it.
+//! Built where there is no repository or no `git`, or inside a repository that does not
+//! track this crate's manifest (a copy unpacked in somebody else's), the binary says
+//! `unknown`, and `scripts/package.sh` refuses to make an archive of it.
+//!
+//! What a commit costs: this crate's targets are compiled again, which took 2 to 3
+//! seconds for the binary, the library and the tests together when it was measured
+//! (2026-11-19, a development build, which is incremental), so the commit is not kept in
+//! a crate of its own.
 //!
 //! It is run again when the checked-out commit moves: when `HEAD` names another branch
 //! or commit, when its log gains a line (every commit, checkout, merge and reset writes
@@ -39,8 +45,12 @@ fn is_commit(text: &str) -> bool {
 }
 
 fn main() {
+    // The repository git finds from here must be this crate's own, which holds this
+    // crate's manifest as a tracked file: built from an unpacked copy inside somebody
+    // else's repository, the commit found would be theirs.
+    let own = git(&["ls-files", "--error-unmatch", "Cargo.toml"]).is_some();
     let commit = git(&["rev-parse", "--verify", "HEAD^{commit}"])
-        .filter(|text| is_commit(text))
+        .filter(|text| own && is_commit(text))
         .unwrap_or_else(|| "unknown".to_owned());
     println!("cargo:rustc-env=WHIZBANG_COMMIT={commit}");
     println!("cargo:rerun-if-changed=build.rs");

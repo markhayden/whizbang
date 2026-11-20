@@ -44,7 +44,8 @@ it on both platforms; any other folder on it does as well, and one of your own n
 
 ```sh
 tar -xzf whizbang-<version>-<target>.tar.gz
-sudo cp whizbang-<version>-<target>/whizbang /usr/local/bin/whizbang
+sudo mkdir -p /usr/local/bin
+sudo install -m 755 whizbang-<version>-<target>/whizbang /usr/local/bin/whizbang
 whizbang --version
 ```
 
@@ -67,8 +68,21 @@ is installed by `whizbang setup`, which downloads no Python and needs two things
 there first:
 
 1. **`uv`, at version 0.12.23.** Take it from its maker's releases on GitHub, at
-   `https://github.com/astral-sh/uv/releases/tag/0.12.23`, and put the `uv` binary on your
-   `PATH`. `whizbang setup` refuses another version; `--uv` names one by an absolute path.
+   `https://github.com/astral-sh/uv/releases/tag/0.12.23`, check it against the SHA-256
+   published beside it there, and put the `uv` binary on your `PATH`:
+
+   ```sh
+   curl -fLO https://github.com/astral-sh/uv/releases/download/0.12.23/uv-<target>.tar.gz
+   curl -fLO https://github.com/astral-sh/uv/releases/download/0.12.23/uv-<target>.tar.gz.sha256
+   shasum -a 256 -c uv-<target>.tar.gz.sha256
+   tar -xzf uv-<target>.tar.gz
+   sudo install -m 755 uv-<target>/uv /usr/local/bin/uv
+   uv --version
+   ```
+
+   On Linux the check is `sha256sum -c uv-<target>.tar.gz.sha256`. Either prints the
+   archive's name and `OK`. `whizbang setup` refuses another version of `uv`; `--uv` names
+   one by an absolute path.
 2. **Python 3.12.15, installed by that `uv`,** from GitHub's releases and from nowhere
    else:
 

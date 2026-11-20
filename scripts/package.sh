@@ -33,8 +33,10 @@
 # Before anything is archived the binary is asked for its version line, with no variable
 # of this shell's, and it must be `whizbang <version> (commit <the commit checked out>)`:
 # an archive is never named for another version than its binary's, and never holds a
-# binary of another commit. Files changed since that commit are not looked for: whoever
-# packages a release holds the checkout to be clean.
+# binary of another commit. When this script builds the binary itself it first refuses a
+# checkout whose tracked files differ from that commit, so the binary is the commit's;
+# a file git does not track is not looked for, and a binary given with `--binary` is
+# taken as it is.
 #
 # The same sources give the same archive on the same machine: the entries are written in a
 # fixed order, each with the time 2000-01-01 00:00 UTC, the owner and group 0 with no
@@ -91,6 +93,11 @@ guide=docs/guides/install.md
 [ -f "$guide" ] || die "there is no install guide to package ($guide)"
 
 if [ -z "$binary" ]; then
+  # A binary built here is the commit's and nothing else's: a tracked file that differs
+  # from the commit, staged or not, is a build input the commit does not hold, and the
+  # binary would name the commit all the same.
+  git diff --quiet HEAD -- ||
+    die "the checkout has tracked changes, and a binary built from it would name commit $commit without being of it; commit them or take them out (git status --short lists them)"
   # As `just smoke` builds it: no feature is named, so none of the tests' and no
   # `baseline-replay`.
   cargo build --release -p whizbang --locked
@@ -127,16 +134,17 @@ chmod 644 "$stage/LICENSE" "$stage/README.md" "$stage/THIRD-PARTY-LICENSES.md"
 
 # GNU tar and the tar of a Mac say the same things in different words.
 if tar --version 2>/dev/null | grep -F 'GNU tar' >/dev/null; then
-  archive() { tar --format=ustar --owner=0 --group=0 --numeric-owner --no-recursion -cf - "$@"; }
+  archive() { env -u GZIP -u TAR_OPTIONS tar --format=ustar --owner=0 --group=0 --numeric-owner --no-recursion -cf - "$@"; }
 else
   archive() {
-    COPYFILE_DISABLE=1 tar --format ustar --uid 0 --gid 0 --uname '' --gname '' \
+    env -u GZIP -u TAR_OPTIONS COPYFILE_DISABLE=1 tar --format ustar --uid 0 --gid 0 --uname '' --gname '' \
       --no-mac-metadata --no-xattrs --no-acls --no-fflags -n -cf - "$@"
   }
 fi
-(cd "$tmp" && archive "${entries[@]}") | gzip -n -9 >"$tmp/$name.tar.gz"
+# Neither program is given options from outside: both read some from the environment.
+(cd "$tmp" && archive "${entries[@]}") | env -u GZIP -u TAR_OPTIONS gzip -n -9 >"$tmp/$name.tar.gz"
 # What was written is what was meant: the five entries, in their order.
-listed=$(tar -tzf "$tmp/$name.tar.gz" | sed 's|/$||')
+listed=$(env -u GZIP -u TAR_OPTIONS tar -tzf "$tmp/$name.tar.gz" | sed 's|/$||')
 [ "$listed" = "$(printf '%s\n' "${entries[@]}")" ] ||
   die "the archive does not list the folder and its four files in their order"
 

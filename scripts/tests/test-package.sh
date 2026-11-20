@@ -76,6 +76,36 @@ cmp -s "$tmp/long" "$tmp/long-b" || fail "two builds of one tree give the same l
 cmp -s "$tmp/a/$name.tar.gz" "$tmp/b/$name.tar.gz" || fail "two builds of one tree give the same archive"
 [ "$(ls -A "$tmp/b" | tr '\n' ' ')" = "SHA256SUMS $name.tar.gz " ] || fail "an older archive in the folder is replaced, so the folder holds one"
 
+# Options for tar and gzip in the environment change nothing: both programs read some there.
+(export GZIP=-1 TAR_OPTIONS=--owner=12345 && "$script" --binary "$tmp/whizbang" --out "$tmp/c") >"$tmp/out" 2>&1 || { cat "$tmp/out" >&2; fail "the archive under GZIP and TAR_OPTIONS"; }
+cmp -s "$tmp/a/$name.tar.gz" "$tmp/c/$name.tar.gz" || fail "GZIP and TAR_OPTIONS of whoever packages change nothing in the archive"
+
+# --- When the script builds the binary itself, a checkout with a tracked change is
+# refused before anything is built. Shown in a throwaway repository of this test's, with
+# a copy of the script and stand-ins for cargo and rustc: this checkout is not touched.
+repo="$tmp/repo"
+mkdir -p "$repo/scripts" "$repo/docs/guides" "$tmp/tools"
+cp "$script" "$repo/scripts/package.sh"
+cp Cargo.toml LICENSE "$repo/"
+cp docs/guides/install.md "$repo/docs/guides/install.md"
+printf '%s\n' '#!/bin/bash' "echo \"host: $target\"" >"$tmp/tools/rustc"
+printf '%s\n' '#!/bin/bash' "printf '%s\\n' \"\$*\" >>\"$tmp/cargo-ran\"" >"$tmp/tools/cargo"
+chmod +x "$tmp/tools/rustc" "$tmp/tools/cargo"
+git -C "$repo" init -q
+git -C "$repo" -c user.name=test -c user.email=test@example.invalid add -A
+git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -q -m "a tree"
+built() { (cd "$repo" && env PATH="$tmp/tools:$PATH" scripts/package.sh --out "$tmp/built"); }
+echo "changed" >>"$repo/LICENSE"
+expect_fail "a tracked change, not staged" "the checkout has tracked changes" built
+git -C "$repo" add LICENSE
+expect_fail "a tracked change, staged" "the checkout has tracked changes" built
+[ ! -e "$tmp/cargo-ran" ] && [ ! -e "$tmp/built" ] || fail "nothing is built or written from a checkout with a tracked change"
+# Clean again, it goes on to the build: the stand-in cargo is asked, and builds nothing.
+git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -q -m "the change"
+echo "not tracked" >"$repo/notes.txt"
+expect_fail "a clean checkout, with a stand-in cargo that builds nothing" "the binary is not a file that can be run" built
+[ "$(cat "$tmp/cargo-ran")" = "build --release -p whizbang --locked" ] || fail "a clean checkout is built with: cargo build --release -p whizbang --locked"
+
 # --- Never an archive of a binary that is not this checkout's: another commit, another
 # version, no commit, or no answer. Nothing is written.
 refused() { # <name> <version line>

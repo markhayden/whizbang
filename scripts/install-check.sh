@@ -24,8 +24,11 @@
 #
 # What it holds, in order, stopping at the first that fails:
 #
-#  1. the archive's SHA-256 is the one its line of <sums> names, by the guide's command;
-#  2. the archive lists one folder and exactly the four files of item 1, and unpacks;
+#  1. <sums> holds exactly one line for the archive, whole (64 lower-case hexadecimal
+#     digits, two spaces, its name), and the archive's SHA-256, taken here with the
+#     program the guide names, is that line's;
+#  2. the archive lists one folder and exactly the four files of item 1, each a regular
+#     file and none a link, and unpacks;
 #  3. `whizbang --version` gives the version the archive is named for, and a commit;
 #  4. `whizbang describe --json --pretty` is docs/reference/description.json byte for
 #     byte: the binary installed is the binary documented;
@@ -35,7 +38,7 @@
 #  6. the server: `whizbang serve` answers `initialize`, lists its tools, answers one call
 #     of `mask_rect`, and ends when its input closes. One that does not end within the
 #     limit is killed and waited for, and the check fails; it is killed and waited for on
-#     every other way out of this script too;
+#     every other way out of this script too, and no wait for it is without a bound;
 #  7. the pack: `whizbang setup` installs the pack's core, offline, and its worker says
 #     hello;
 #  8. `whizbang backends status` answers;
@@ -106,10 +109,24 @@ done
 work=$(mktemp -d)
 work=$(cd "$work" && pwd -P)
 server=
-# stop_server: kills the server, if one was started and has not been waited for, and waits.
+# stop_server: ends the server, if one was started and has not been waited for. Its input
+# and output are closed first, so that one that only waits for its input ends by itself;
+# then it is killed, and waited for, for the limit and no longer: this script never waits
+# without a bound on a process it started, whatever that process does.
 stop_server() {
   [ -n "$server" ] || return 0
+  exec 3>&- 4<&-
   kill -9 "$server" 2>/dev/null || true
+  local waited=0
+  while kill -0 "$server" 2>/dev/null; do
+    if [ "$waited" -ge $((limit * 10)) ]; then
+      echo "install-check: the server (process $server) is still there $limit seconds after it was killed; it is left" >&2
+      server=
+      return 0
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
   wait "$server" 2>/dev/null || true
   server=
 }
@@ -133,18 +150,28 @@ said() { grep -F -e "$1" "$work/out" >/dev/null; }
 # shown: the last command's output and complaint, for a failure's message.
 shown() { cat "$work/out" "$work/err" 2>/dev/null | sed 's/^/    /' >&2; }
 
-# --- 1. The SHA-256, by the guide's own command.
+# --- 1. The SHA-256. Nothing is left to a checking program's reading of the line: Apple's
+# sha256sum passes an empty input and a line it cannot read. So the line is held to its
+# form here, the archive's digest is taken here, and the two are compared as texts.
+# SHA256SUMS must hold exactly one line that is, whole: 64 lower-case hexadecimal digits,
+# two spaces, and the archive's name; a line that only has the name inside it is no line
+# of the archive's.
 cp "$archive" "$work/folder/$file"
 cp "$sums" "$work/folder/SHA256SUMS"
-grep -F -e "$file" SHA256SUMS >"$work/line" || die "SHA256SUMS names no $file"
-[ "$(wc -l <"$work/line" | tr -d ' ')" = 1 ] || die "SHA256SUMS names $file more than once"
-if clean /bin/sh -c 'command -v sha256sum' >/dev/null 2>&1; then
-  checker=(sha256sum -c -)
-else
-  checker=(shasum -a 256 -c -)
-fi
-clean "${checker[@]}" <"$work/line" >"$work/out" 2>"$work/err" ||
-  { shown; die "the archive's SHA-256 is not the one SHA256SUMS names"; }
+awk -v file="$file" 'length($0) == 66 + length(file) && substr($0, 1, 64) ~ /^[0-9a-f]+$/ && substr($0, 65, 2) == "  " && substr($0, 67) == file' \
+  SHA256SUMS >"$work/line"
+lines=$(wc -l <"$work/line" | tr -d ' ')
+[ "$lines" != 0 ] || die "SHA256SUMS holds no line for $file (a line is 64 lower-case hexadecimal digits, two spaces and the archive's name)"
+[ "$lines" = 1 ] || die "SHA256SUMS holds $lines lines for $file, and must hold one"
+named=$(cut -c 1-64 "$work/line")
+# The program the guide names for this platform.
+case "$target" in
+  aarch64-apple-darwin) clean shasum -a 256 "$file" >"$work/out" 2>"$work/err" || { shown; die "the archive's SHA-256 could not be taken"; } ;;
+  *) clean sha256sum "$file" >"$work/out" 2>"$work/err" || { shown; die "the archive's SHA-256 could not be taken"; } ;;
+esac
+taken=$(cut -d' ' -f1 "$work/out")
+printf '%s\n' "$taken" | grep -x -E '[0-9a-f]{64}' >/dev/null || { shown; die "the archive's SHA-256 could not be taken"; }
+[ "$taken" = "$named" ] || die "the archive's SHA-256 is not the one SHA256SUMS names"
 ok "the archive's SHA-256 is the one SHA256SUMS names"
 
 # --- 2. What the archive holds, before and after it is unpacked.
@@ -152,6 +179,11 @@ want=$(printf '%s\n' "$name/" "$name/LICENSE" "$name/README.md" "$name/THIRD-PAR
 listed=$(clean tar -tzf "$file" | sort)
 [ "$listed" = "$want" ] ||
   { printf '%s\n' "$listed" | sed 's/^/    /' >&2; die "the archive holds something else than one folder with the four files (whizbang, LICENSE, THIRD-PARTY-LICENSES.md, README.md)"; }
+# One folder and then four regular files, and nothing that is a link of either kind:
+# what a link in an archive points at is not the archive's to choose.
+clean tar -tvzf "$file" >"$work/out" 2>"$work/err" || { shown; die "the archive could not be listed"; }
+[ "$(cut -c 1 "$work/out" | tr -d '\n')" = "d----" ] && ! grep -e ' -> ' -e ' link to ' "$work/out" >/dev/null ||
+  { shown; die "the archive must hold one folder and then four regular files, and no link"; }
 clean tar -xzf "$file"
 unpacked=$(cd "$name" && find . | sort | tr '\n' ' ')
 [ "$unpacked" = ". ./LICENSE ./README.md ./THIRD-PARTY-LICENSES.md ./whizbang " ] ||
@@ -198,9 +230,13 @@ mkfifo "$work/to-server" "$work/from-server"
 env -i "${cleared[@]}" whizbang serve --store store <"$work/to-server" >"$work/from-server" 2>"$work/err" &
 server=$!
 exec 3>"$work/to-server" 4<"$work/from-server"
+# A server that has ended is written to all the same: the write then fails and is
+# reported here, where a signal would end this script with no word. Set after the server
+# was started, so that it is not the server's setting too.
+trap '' PIPE
 # asked <what> <request>: sends one request and keeps the one line of its answer.
 asked() {
-  printf '%s\n' "$2" >&3
+  printf '%s\n' "$2" >&3 2>/dev/null || { sed 's/^/    /' "$work/err" >&2; die "the server gave no answer to $1: it had ended"; }
   answer=
   IFS= read -r -t "$limit" answer <&4 || { sed 's/^/    /' "$work/err" >&2; die "the server gave no answer to $1 within $limit seconds"; }
   printf '%s\n' "$answer" >"$work/out"
@@ -208,7 +244,7 @@ asked() {
 asked initialize '{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"install-check","version":"1"}}}'
 said '"id":0' && said '"protocolVersion":"2025-06-18"' && said '"serverInfo":{"name":"whizbang","version":"'"$version"'"}' ||
   { shown; die "the server's answer to initialize does not name whizbang $version"; }
-printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}' >&3
+printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}' >&3 2>/dev/null || die "the server ended after it answered initialize"
 asked tools/list '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 said '"id":1' && said '"name":"mask_rect"' && said '"name":"check"' ||
   { cut -c 1-400 "$work/out" >&2; die "the server's tools do not hold mask_rect and check"; }
@@ -230,6 +266,7 @@ status=0
 wait "$server" || status=$?
 server=
 exec 4<&-
+trap - PIPE
 [ "$status" -eq 0 ] || { sed 's/^/    /' "$work/err" >&2; die "the server ended with status $status"; }
 ok "whizbang serve answered initialize, listed its tools, ran mask_rect, and ended with its input"
 
