@@ -398,24 +398,30 @@ requirements with their ids, and its images with their roles and labels. Each pi
 brought into the store from the file the job names, relative to the job file's folder,
 and refused when its SHA-256 is not the one the job pins (ADR 0028).
 
-Before the judge looks, `align` registers the candidate onto the source, and the aligned
-picture, what `align` found and every measurement open the conversation, each labelled
-with the tool and its mark (`--details first`, the default; ADR 0029). The judge may still
-call `view`, `align` and `resize`. `--details none --projection visual_only` gives squint's
-baseline arm C instead: nothing measured first, and a call of `align` answered with its
-picture and a fixed sentence.
+Nothing is measured before the judge looks, unless the run asks: the judge is offered `view`
+and `align` and calls them, and a call of `align` is answered with its pictures and a fixed
+sentence (`--details none`, the default, with `--projection visual_only`). This is the
+control arm of the gate of details first, squint's baseline arm C, whole; the gate rejected
+details first (`docs/results/m3-gates.md`, "The fourth run, the complete one"), so it is off
+by default since plan m4, task A1. `--details first` turns it on, whole, as the gate's arm F
+was: `align` registers the candidate onto the source, and the aligned picture, what `align`
+found and every measurement open the conversation, each labelled with the tool and its mark
+(ADR 0029); the judge may call `resize` beside `view` and `align`; and a call of `align` is
+answered in `full`. `--projection` states the projection apart from either. `--detail`,
+which names the tools measured first, is taken only with `--details first`, and refused
+without it.
 
 Two experimental options attack the verdicts that come back `unsure` (plan m3, task U1;
-`docs/results/m3-unsure.md` measures them). `--detail tiles`, for a job with one image
-(`reality-checks`; `brief-compliance` with no reference), opens the conversation with the
-candidate cut into four overlapping tiles at full resolution, each labelled with its place
-(`docs/reference/tools/tiles.md`); a job with a pair is refused, naming its use case.
-`--second-look on` gives the judge one more turn when its submission leaves a mandatory item
-tentative, so that the verdict would be unsure: crops of what it cited for those items (or
-the candidate in four tiles when it cited none), and the question to settle them alone. It
-is inside the run's 16 turns and what the run reserved, and the verdict is still worked out
-from the dispositions. `runs stats --unsure-by rule` counts what made the unsure verdicts of
-a store unsure, by rule.
+`docs/results/m3-unsure.md` measures them). `--details first --detail tiles`, for a job with
+one image (`reality-checks`; `brief-compliance` with no reference), opens the conversation
+with the candidate cut into four overlapping tiles at full resolution, each labelled with
+its place (`docs/reference/tools/tiles.md`); a job with a pair is refused, naming its use
+case. `--second-look on` gives the judge one more turn when its submission leaves a
+mandatory item tentative, so that the verdict would be unsure: crops of what it cited for
+those items (or the candidate in four tiles when it cited none), and the question to settle
+them alone. It is inside the run's 16 turns and what the run reserved, and the verdict is
+still worked out from the dispositions. `runs stats --unsure-by rule` counts what made the
+unsure verdicts of a store unsure, by rule.
 
 **What one request may cost** is fixed by three settings of the backend, each held
 before a byte is sent: `max_input_tokens` (40,000 when none is given),

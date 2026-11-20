@@ -58,7 +58,7 @@ fn a_turn_cut_off_at_the_output_ceiling_is_not_retried_with_the_same_limit() {
 // --- a whole exchange of `align` under squint's arm C (plan m2c, task A2, item 4) -----------
 
 /// An answer of 200 whose turn calls one tool.
-fn calling(id: &str, name: &str, arguments: Json) -> Vec<u8> {
+pub fn calling(id: &str, name: &str, arguments: Json) -> Vec<u8> {
     let body = serde_json::json!({
         "id": "msg_c", "type": "message", "role": "assistant", "model": "claude-haiku-5-5",
         "content": [{ "type": "tool_use", "id": id, "name": name, "input": arguments }],

@@ -318,7 +318,7 @@ milestone 4 and belong to neither strand.
    tell its arm, and a backspace takes back the last pick. Milestone E's picking rounds are
    drawn again from the kept stores after this lands.
 
-- [ ] Done when:
+- [x] Done when:
   `use_case::each_shipped_recipe_called_with_nothing_set_is_the_control_arm`
   (no details, `view,align` offered and no `resize`, `visual_only`),
   `cli::squint_check_with_nothing_set_is_the_control_arm`,
@@ -337,6 +337,33 @@ milestone 4 and belong to neither strand.
 
 **Keeping tests lean (A1).** No new picture; each test of the default is a scripted judge on
 the pictures the use cases' tests already draw.
+
+**Reworded with the task** (A1, 2026-11-19). Four things the items leave open, as built.
+
+- Item 5 says "`check`'s record". `check` has no record under `docs/reference/tools/`; the
+  record read as its own is `docs/results/m2c-use-cases.md`, the record of its use cases'
+  live calls, which gains a part, "Details first is off by default".
+  `evidence::the_record_of_check_says_details_first_is_off_and_names_its_gate` holds that
+  part, the guide to the command (`docs/guides/config.md`) and the five use cases' records
+  to the same words. The use cases' table of worked examples gains a column, the tools
+  offered to the judge, since under the new default the calls of `details` are none in
+  every row.
+- Item 3: the two tests named `cli::` go through `door::Measuring::stated`, which the
+  command hands `--details` and `--projection` as they were typed or not at all; no test
+  can put a scripted judge behind the real binary. And `--detail`, which names the tools
+  measured first, is refused without `--details first`
+  (`door::DETAIL_WITHOUT_FIRST`; `cli::squint_check_detail_tiles_on_a_pair_is_refused_naming_the_use_case`):
+  with nothing measured first by default it would otherwise measure nothing and say
+  nothing.
+- Item 8: a cell whose request an earlier run answered is counted by how that run ended,
+  not as never run. Why the `m3-seam` leg did not recognise its earlier attempts is not
+  found; the test stands a recogniser that forgets the leg before in its place.
+- Item 9: "a backspace takes back the last pick" is shown by running the page's own script
+  under `node` with only what it touches of a page, where a `node` is installed (both
+  hosted runners, the owner's Mac); no JavaScript engine is among the pinned tools, so
+  elsewhere the test holds the page to its text. The carry-over list has the row. Each
+  picture is brought to its pair's size by one chunk of padding in the PNG, not by another
+  encoder.
 
 ## K1. What the loop stands on, in the core (large)
 

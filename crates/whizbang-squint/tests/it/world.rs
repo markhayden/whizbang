@@ -235,6 +235,21 @@ impl World {
         call
     }
 
+    /// A use case's recipe with details first, whole, as the gate's arm F was (plan m4,
+    /// task A1: no recipe measures first as shipped, so a test of what is measured first
+    /// states it): the details first, `resize` offered beside `view` and `align`, and a
+    /// call of `align` answered in full; then these overrides, one a line.
+    pub fn recipe_first(job: &whizbang_squint::job::Job, images: &[ArtifactId], set: &str) -> Call {
+        let mut all = String::from(
+            "details.details=first\njudge.tools=view,align,resize\njudge.projection=full",
+        );
+        if !set.is_empty() {
+            all.push('\n');
+            all.push_str(set);
+        }
+        World::recipe(job, images).argument("set", whizbang_core::contract::Value::text(&all))
+    }
+
     /// `check` on the photograph.
     pub fn check(&self) -> Call {
         Call::new("check").input("images", self.photo.id())

@@ -6,7 +6,7 @@ use serde_json::Value as Json;
 use whizbang_core::artifact::ArtifactId;
 use whizbang_core::capability::Part;
 use whizbang_core::contract::record::{ArgumentValue, Status};
-use whizbang_core::contract::{Executor, Finished, Outcome, Secrets, Value};
+use whizbang_core::contract::{Executor, Finished, Outcome, Secrets};
 use whizbang_squint::check::MEASURED_IMAGES;
 use whizbang_squint::job::Job;
 
@@ -54,8 +54,8 @@ pub fn given(left: &Left, port: &str) -> Vec<ArtifactId> {
         .collect()
 }
 
-/// The source-fidelity recipe on the pair that registers, under a judge that submits at
-/// once, with these overrides.
+/// The source-fidelity recipe on the pair that registers, with details first
+/// ([`World::recipe_first`]), under a judge that submits at once, with these overrides.
 pub fn fidelity_recipe(
     world: &World,
     candidate: ArtifactId,
@@ -66,10 +66,7 @@ pub fn fidelity_recipe(
     std::sync::Arc<whizbang_testkit::capabilities::FakeJudge>,
 ) {
     let job = Job::shorthand("source-fidelity", true, 0, None);
-    let mut call = World::recipe(&job, &[candidate, source]);
-    if !set.is_empty() {
-        call = call.argument("set", Value::text(set));
-    }
+    let call = World::recipe_first(&job, &[candidate, source], set);
     let judge = judge(&submitting(&[]), &[]);
     let executor = world.engine(judge.clone(), Secrets::none());
     let finished = executor.submit(&call).unwrap();
@@ -144,8 +141,7 @@ fn the_aligned_frames_and_tiles_of_details_reach_the_judge_step() {
     // Tiles of a job with one image, cut by `details` and shown by the judge's step.
     let world = World::new();
     let job = super::use_case::fitting("reality-checks", None);
-    let call = World::recipe(&job, &[world.photo.id()])
-        .argument("set", Value::text("details.detail=tiles"));
+    let call = World::recipe_first(&job, &[world.photo.id()], "details.detail=tiles");
     let checklist = super::check::checklist_of(&job);
     let last = checklist.ids().last().unwrap().to_owned();
     let items = super::use_case::answers(&checklist, &last, "held", "confident");

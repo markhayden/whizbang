@@ -67,14 +67,16 @@ pub enum Command {
         at: Where,
         #[command(flatten)]
         under: Under,
-        /// What is measured before the judge looks. `first`: align registers the
-        /// candidate onto the source, and the aligned picture, what it found and every
-        /// measurement open the conversation, each labelled with the tool and its mark;
-        /// the judge may still call view, align and resize. `none`: nothing is measured
-        /// first, and the judge is told of view and align and calls them, as squint's
-        /// baseline arm C was (with `--projection visual_only`).
-        #[arg(long, value_name = "WHEN", default_value = "first", value_parser = ["first", "none"])]
-        details: String,
+        /// What is measured before the judge looks. `none` (the default): nothing is
+        /// measured first, the judge is told of view and align and calls them, and a call
+        /// of align is answered with its pictures alone; this is the control arm of the
+        /// gate of details first, which rejected details first. `first`: align registers
+        /// the candidate onto the source, and the aligned picture, what it found and every
+        /// measurement open the conversation, each labelled with the tool and its mark; the
+        /// judge may still call view, align and resize, and a call of align is answered in
+        /// full.
+        #[arg(long, value_name = "WHEN", value_parser = door::Details::NAMES)]
+        details: Option<String>,
         /// The tools whose details are measured first, by name, separated by commas:
         /// align, and the unverified change_map and edge_similarity, which compare the
         /// source with the frame align returned (align is then run first, named or not):
@@ -82,12 +84,15 @@ pub enum Command {
         /// Or `tiles`, for a job with one image (reality-checks; brief-compliance with no
         /// reference): the experimental candidate cut by view into four overlapping tiles
         /// at full resolution, each labelled with its place. Without it, align alone.
+        /// Taken only with `--details first`: nothing is measured first otherwise.
         #[arg(long, value_name = "TOOLS")]
         detail: Option<String>,
         /// How a call of align by the judge is answered: `full`, everything it found,
-        /// or `visual_only`, its pictures and a fixed sentence, as squint's baseline arm C.
-        #[arg(long, value_name = "WHICH", default_value = "full", value_parser = ["full", "visual_only"])]
-        projection: String,
+        /// or `visual_only`, its pictures and a fixed sentence. Without it, `visual_only`
+        /// under `--details none` and `full` under `--details first`, as each arm of the
+        /// gate was measured.
+        #[arg(long, value_name = "WHICH", value_parser = ["full", "visual_only"])]
+        projection: Option<String>,
         /// `on`: when the judge's submission leaves a mandatory item tentative, so that the
         /// verdict would be unsure, it is given one more turn, inside the run's turns and
         /// spend, with crops at full resolution of what it cited for those items, to settle
@@ -138,6 +143,14 @@ fn run_at(
             request_id,
         } => {
             let root = at.root().to_path_buf();
+            // What is measured first, by its name or the door's default; the projection
+            // stated, or the arm's own.
+            let measuring = door::Measuring {
+                tools,
+                second_look: second_look.as_str(),
+                ..door::Measuring::stated(details.as_deref(), projection.as_deref())?
+                    .measuring(detail.as_deref())?
+            };
             // What the command line states is checked, and a job file read and its
             // pictures brought in, before anything runs.
             let (job, images) = match job {
@@ -152,9 +165,9 @@ fn run_at(
                         judge: judge.as_deref(),
                         brief: brief.as_deref(),
                         request_id: request_id.as_deref(),
-                        details: door::Details::First,
+                        details: measuring.details,
                         detail: None,
-                        projection: "full",
+                        projection: measuring.projection,
                     })?
                 }
             };
@@ -169,17 +182,6 @@ fn run_at(
             }
             let uses = Uses::One(Capability::Judge, judge.as_deref());
             let (executor, _) = executor_caching(at, under, recovery, platform, uses)?;
-            let measuring = door::Measuring {
-                details: if details == "none" {
-                    door::Details::None
-                } else {
-                    door::Details::First
-                },
-                detail: detail.as_deref(),
-                projection,
-                tools,
-                second_look: second_look.as_str(),
-            };
             let read = |run: &_| door::verdict(&root, run);
             door::check_job(
                 &executor,

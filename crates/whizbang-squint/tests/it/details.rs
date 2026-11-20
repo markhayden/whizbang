@@ -162,7 +162,7 @@ fn three_references_are_each_aligned_in_the_order_given() {
     let references = [scene.id(), unrelated.id(), world.photo.id()];
     let mut images: Vec<ArtifactId> = vec![candidate.id()];
     images.extend(references);
-    let call = World::recipe(&job, &images);
+    let call = World::recipe_first(&job, &images, "");
     let checklist = super::check::checklist_of(&job);
     let last = checklist.ids().last().unwrap().to_owned();
     let items = super::use_case::answers(&checklist, &last, "held", "confident");
@@ -192,4 +192,53 @@ fn three_references_are_each_aligned_in_the_order_given() {
         .map(|rest| rest.split(':').next().unwrap())
         .collect();
     assert_eq!(order, ["reference-1", "reference-2", "reference-3"]);
+}
+
+#[test]
+fn a_detail_named_where_nothing_is_measured_first_is_refused_by_the_step_and_its_default_is_none() {
+    // The review of plan m4's task A1: a recipe called by its own name with
+    // `details.detail=tiles` and nothing else measured nothing and said nothing, since the
+    // recipes measure nothing first now. The step refuses it, in the door's sentence, and
+    // nothing reaches the judge.
+    let world = World::new();
+    let job = super::use_case::fitting("reality-checks", None);
+    let judge = super::world::judge(&super::check::submitting(&[]), &[]);
+    let executor = world.engine(judge.clone(), Secrets::none());
+    for set in ["details.detail=tiles", "details.detail=align,change_map"] {
+        let call = World::recipe(&job, &[world.photo.id()]).argument("set", Value::text(set));
+        let finished = executor.submit(&call).unwrap();
+        assert_ne!(finished.outcome().name(), "completed", "{set}");
+        let recipe = super::world::left(&world.root(), world.fs.clone(), finished.run());
+        let step = whizbang_core::contract::RunId::parse(recipe.record().steps()[0].run()).unwrap();
+        let details = super::world::left(&world.root(), world.fs.clone(), &step);
+        assert_eq!(
+            details.record().outcome().invalid.as_deref(),
+            Some(whizbang_squint::details::DETAIL_WITHOUT_FIRST),
+            "{set}"
+        );
+    }
+    assert_eq!(judge.requests(), 0);
+    // The step called by itself with no `details` measures nothing: its own default is
+    // `none`, as the recipes' is, and a detail named beside that default is refused too.
+    let alone = |detail: Option<&str>| {
+        let mut call = whizbang_core::contract::Call::new(whizbang_squint::measured::NAME)
+            .argument("use_case", Value::text("reality-checks"))
+            .argument("job", Value::text(&job.to_json()))
+            .input("images", world.photo.id());
+        if let Some(detail) = detail {
+            call = call.argument("detail", Value::text(detail));
+        }
+        executor.submit(&call).unwrap()
+    };
+    let finished = alone(None);
+    assert_eq!(finished.outcome().name(), "completed");
+    let kept = super::world::left(&world.root(), world.fs.clone(), finished.run());
+    assert!(kept.record().steps().is_empty());
+    assert!(kept.record().outputs().is_empty());
+    match alone(Some("tiles")).outcome() {
+        Outcome::Invalid { why } => {
+            assert_eq!(why, whizbang_squint::details::DETAIL_WITHOUT_FIRST)
+        }
+        other => panic!("{other:?}"),
+    }
 }

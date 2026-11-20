@@ -21,7 +21,7 @@ resolution, each labelled with its place (`top-left`, `top-right`, `bottom-left`
 - **Kind.** A detail measured first, made of four calls of `view`, each a step of the run and
   kept as its evidence.
 
-Named by `squint check --detail tiles`, by `check`'s argument `detail = tiles` with
+Named by `squint check --details first --detail tiles`, by `check`'s argument `detail = tiles` with
 `details = first`, and by a matrix arm's setting
 `details = [{ detail = "tiles", use_cases = ["reality-checks"] }]`.
 

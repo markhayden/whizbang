@@ -926,6 +926,11 @@ impl ThreeImages {
         self.calls.load(Ordering::SeqCst)
     }
 
+    /// Everything `whizbang runs list` prints of the round's store.
+    pub fn runs_listed(&self) -> String {
+        whizbang(&["runs", "list"], &self.root).out
+    }
+
     pub fn runs(&self) -> String {
         whizbang(&["runs", "list"], &self.root)
             .out
@@ -992,6 +997,220 @@ fn an_interrupted_round_resumes_and_a_failed_cell_is_kept() {
          failed: 1\ninterrupted: 0\nnot run: 0\nfirst failed: filled on b: step: the step fill \
          (fill) ended as an error of the type fill: The scripted filler refused it.\n"
     );
+}
+
+// --- what `lab run` says while a round runs, and what it counts (plan m4, task A1) --------------
+
+impl ThreeImages {
+    /// The round's executor and what it runs under, given to `with` as `whizbang lab run`
+    /// builds them.
+    fn with_running<T>(
+        &self,
+        over: &Over,
+        with: impl FnOnce(&laboratory::Prepared, &Running<'_>) -> T,
+    ) -> T {
+        let asked = laboratory::Asked {
+            matrix: &self.matrix,
+            corpus: &self.corpus,
+            root: &self.root,
+            over,
+            recovery: wiring::recovery(),
+        };
+        let prepared = laboratory::prepare(&asked).unwrap();
+        let store = Arc::new(Store::open(&self.root, Arc::new(RealFs)).unwrap());
+        let registry = wiring::registry_over(over, false).unwrap();
+        let executor = wiring::runner(registry, store, over).unwrap();
+        let running = Running {
+            executor: &executor,
+            root: &self.root,
+            left_micros: 1_000_000,
+            stop: &never,
+        };
+        with(&prepared, &running)
+    }
+}
+
+#[test]
+fn each_cell_is_said_as_it_starts_and_as_it_ends() {
+    // Plan m4, task A1, item 7: a round is not silent until its counts. Each cell that
+    // runs is said as it starts and as it ends, in the round's order, one at a time; the
+    // second fill fails here, and its line says so.
+    let lab = ThreeImages::new("lab-said", FILLED_WITH_AND_SOURCE);
+    let over = lab.over(2);
+    // Each line with the fills the filler had been asked for when the line was said.
+    let said: std::sync::Mutex<Vec<(String, u64)>> = std::sync::Mutex::new(Vec::new());
+    let mut say = |line: &str| said.lock().unwrap().push((line.to_owned(), lab.calls()));
+    let report = lab.with_running(&over, |prepared, running| {
+        laboratory::round_saying(prepared, running, harness::Resume::KeepFailed, &mut say)
+    });
+    let report = report.unwrap();
+    assert_eq!(counts(&report), (3, 2, 1, 0, 0));
+    let said = said.into_inner().unwrap();
+    let lines: Vec<&str> = said.iter().map(|(line, _)| line.as_str()).collect();
+    // A line when a cell starts, naming its place among the cells this leg runs, its arm,
+    // its image, its attempt and its run; a line when it ends, saying how. A reference
+    // arm's cell runs nothing and is not said.
+    let shape = [
+        ("cell 1 of 3: filled on a: started, attempt 1, run ", ""),
+        ("cell 1 of 3: filled on a: completed", "completed"),
+        ("cell 2 of 3: filled on b: started, attempt 1, run ", ""),
+        ("cell 2 of 3: filled on b: failed", "failed"),
+        ("cell 3 of 3: filled on c: started, attempt 1, run ", ""),
+        ("cell 3 of 3: filled on c: completed", "completed"),
+    ];
+    assert_eq!(lines.len(), shape.len(), "{lines:?}");
+    for (line, (starts, ends)) in lines.iter().zip(shape) {
+        assert!(line.starts_with(starts), "{line}");
+        assert!(line.ends_with(ends), "{line}");
+        assert!(!line.contains('\n'), "{line:?}");
+    }
+    // The run a start names is a run of the store.
+    let run = lines[0].rsplit(' ').next().unwrap();
+    assert!(lab.runs_listed().contains(run), "{run}");
+    // Each was said when it happened, not at the round's end: when a cell's end was said
+    // its own fill had been asked for and the next cell's had not, and when a cell's start
+    // was said the fills of the cells after it had not.
+    let calls: Vec<u64> = said.iter().map(|(_, calls)| *calls).collect();
+    assert_eq!([calls[1], calls[3], calls[5]], [1, 2, 3], "{calls:?}");
+    assert!(calls[0] <= 1 && calls[2] <= 2, "{calls:?}");
+    // Run again: nothing is left to run, and nothing is said.
+    let mut none = Vec::new();
+    let mut say = |line: &str| none.push(line.to_owned());
+    let again = lab.with_running(&over, |prepared, running| {
+        laboratory::round_saying(prepared, running, harness::Resume::KeepFailed, &mut say)
+    });
+    assert_eq!(counts(&again.unwrap()), (0, 2, 1, 0, 0));
+    assert_eq!(none, [] as [String; 0]);
+}
+
+#[test]
+fn a_resumed_round_counts_only_what_it_started_and_prints_repeats_apart() {
+    // Plan m4, task A1, item 8: "started now" counted every request the round sent, and
+    // one the store had already answered was counted though it started nothing. A round
+    // stopped after its first cell is resumed here by a leg that does not recognise that
+    // cell's earlier attempt as its own (as when its admission cannot be read): its
+    // request is sent again, the executor answers it with the run it made then, and only
+    // the two cells the leg really started are counted as started.
+    let lab = ThreeImages::new("lab-repeats", FILLED_WITH_AND_SOURCE);
+    let over = lab.over(0);
+    let asked = std::sync::Mutex::new(0);
+    let stop = || {
+        let mut asked = asked.lock().unwrap();
+        *asked += 1;
+        *asked > 1
+    };
+    let report = lab.run(&over, None, &stop).unwrap();
+    assert_eq!(counts(&report), (1, 1, 0, 0, 2));
+    assert_eq!((report.answered_before, lab.calls()), (0, 1));
+    // The requests the first leg's runs were made under: one.
+    let mut before = Vec::new();
+    harness::each_run(&lab.root, &mut |record, _, _| {
+        before.extend(record.identity().request.clone());
+    })
+    .unwrap();
+    assert_eq!(before.len(), 1);
+    let mut said = Vec::new();
+    let mut say = |line: &str| said.push(line.to_owned());
+    let report = lab.with_running(&over, |prepared, running| {
+        // The lab's own recogniser, but for the runs of the leg before.
+        let labs: Vec<LabCell<'_>> = (prepared.cells.iter())
+            .map(|cell| LabCell {
+                cell,
+                scope: &prepared.scope,
+                pictures: &prepared.pictures,
+            })
+            .collect();
+        let work: Vec<&dyn harness::Work> = labs.iter().map(|c| c as &dyn harness::Work).collect();
+        let own = harness::by_request(&prepared.scope, &work);
+        let forgetful =
+            |record: &whizbang_core::contract::record::RunRecord,
+             admission: Option<&whizbang_core::contract::Admission>| {
+                let earlier =
+                    (record.identity().request.as_ref()).is_some_and(|id| before.contains(id));
+                if earlier {
+                    None
+                } else {
+                    own(record, admission)
+                }
+            };
+        let how = laboratory::Round {
+            resume: harness::Resume::KeepFailed,
+            recognise: Some(&forgetful),
+        };
+        laboratory::round_as(prepared, running, &how, &mut say)
+    });
+    let report = report.unwrap();
+    // Two cells were started and one was answered by the run of the leg before; no fill
+    // was asked for twice.
+    assert_eq!((report.started, report.answered_before), (2, 1));
+    assert_eq!(lab.calls(), 3);
+    // The cell answered is counted by how its earlier run ended, not as never run.
+    assert_eq!(
+        (
+            report.completed,
+            report.failed,
+            report.interrupted,
+            report.not_run
+        ),
+        (3, 0, 0, 0)
+    );
+    assert_eq!(
+        report.text(),
+        "cells: 6\nhanded back by a reference arm: 3\nstarted now: 2\n\
+         answered by an earlier run, nothing started: 1\ncompleted: 3\nfailed: 0\n\
+         interrupted: 0\nnot run: 0\n"
+    );
+    // And it is said apart as the round goes, with the run that answered.
+    assert_eq!(said.len(), 5, "{said:?}");
+    assert!(
+        said[0].starts_with("cell 1 of 3: filled on a: answered by an earlier run, ")
+            && said[0].ends_with(", which completed; nothing started"),
+        "{}",
+        said[0]
+    );
+    assert!(said[1].starts_with("cell 2 of 3: filled on b: started, attempt 1, run "));
+    assert_eq!(said[2], "cell 2 of 3: filled on b: completed");
+    assert_eq!(said[4], "cell 3 of 3: filled on c: completed");
+    // A leg that recognises its attempts, as every leg did before, prints no such line.
+    let plain = lab.run(&over, None, &never).unwrap();
+    assert_eq!((plain.started, plain.answered_before), (0, 0));
+    assert!(!plain.text().contains("answered by"), "{}", plain.text());
+}
+
+#[test]
+fn a_cell_answered_by_an_earlier_failed_run_is_said_as_the_first_failed_with_that_runs_words() {
+    // The review of plan m4's task A1: a cell whose request an earlier run answered, and
+    // that run failed, was counted as failed with no word of why. The round's first fill
+    // fails and the round stops; the leg after it does not recognise that run.
+    let lab = ThreeImages::new("lab-repeat-failed", FILLED_WITH_AND_SOURCE);
+    let over = lab.over(1);
+    let asked = std::sync::Mutex::new(0);
+    let stop = || {
+        let mut asked = asked.lock().unwrap();
+        *asked += 1;
+        *asked > 1
+    };
+    let report = lab.run(&over, None, &stop).unwrap();
+    assert_eq!(counts(&report), (1, 0, 1, 0, 2));
+    let why = report
+        .first_failed
+        .clone()
+        .expect("the failed cell is said");
+    let report = lab.with_running(&over, |prepared, running| {
+        let unrecognised =
+            |_: &whizbang_core::contract::record::RunRecord,
+             _: Option<&whizbang_core::contract::Admission>| None;
+        let how = laboratory::Round {
+            resume: harness::Resume::KeepFailed,
+            recognise: Some(&unrecognised),
+        };
+        laboratory::round_as(prepared, running, &how, &mut |_| {})
+    });
+    let report = report.unwrap();
+    assert_eq!((report.answered_before, report.failed), (1, 1));
+    assert_eq!(report.first_failed.as_deref(), Some(why.as_str()));
+    assert!(why.starts_with("filled on a: "), "{why}");
+    assert!(report.failure().is_some());
 }
 
 /// Each cell's attempts in the store, as the round recognises them: how each ended.
@@ -1961,10 +2180,21 @@ fn a_cells_own_run_not_recognised_is_answered_and_not_passed_over() {
     };
     let unrecognised = |_: &whizbang_core::contract::record::RunRecord,
                         _: Option<&whizbang_core::contract::Admission>| None;
-    assert_eq!(
-        harness::run(&[&cell], &unrecognised, &running, 1, "round"),
-        Ok(1)
+    // It starts nothing (plan m4, task A1, item 8): the answer is counted apart.
+    let how = harness::Resume::KeepFailed;
+    let mut said = Vec::new();
+    let again = harness::run_saying(
+        &[&cell],
+        &unrecognised,
+        &running,
+        1,
+        "round",
+        how,
+        &mut |s| said.push(matches!(s, harness::Said::Repeat { .. })),
     );
+    let again = again.unwrap();
+    assert_eq!((again.started, again.repeats), (0, 1));
+    assert_eq!(said, [true]);
     drop(executor);
     let mut ids = Vec::new();
     harness::each_run(&round.root, &mut |record, _, _| {
