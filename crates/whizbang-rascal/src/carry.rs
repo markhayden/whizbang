@@ -21,9 +21,12 @@
 //!    0001), so the call says where the crop sits and the pixels are held to it.
 //! 2. **A crop that reaches outside the picture is refused,** where rascal dropped the
 //!    pixels that fell outside.
-//! 3. **A crop that `view` scaled down is not carried.** Its pixels are averages, not
-//!    the picture's, so the comparison refuses it: `view` scales a cut whose longer side
-//!    is over 1,024 pixels, and rascal's crops were never scaled.
+//! 3. **A crop that `view` scaled down is not to be carried.** `view` scales a cut
+//!    whose longer side is over 1,024 pixels, and rascal's crops were never scaled. Its
+//!    pixels are averages, so the comparison refuses it wherever they differ from the
+//!    picture's; a scaled crop of a region of one flat colour compares equal, and a
+//!    mask on it would land at the wrong scale. The crop must be cut pixel for pixel:
+//!    the loop looks into no place whose cut is longer than that.
 //! 4. **The arm of a cut canvas is not here.** No shipped recipe inverts or carries a
 //!    mask on a cut (`docs/carry-over.md`).
 //!

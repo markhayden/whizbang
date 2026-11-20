@@ -15,8 +15,8 @@ use whizbang_rascal::checked::table::{Reading, Row, read, row};
 use whizbang_testkit::threads;
 
 use crate::checked::{
-    Answered, Came, Looped, Setup, argument, boxed, came, items, observation, passes, remains,
-    run_of, submission,
+    Answered, Came, Looped, Setup, argument, came, items, observation, passes, remains, run_of,
+    submission,
 };
 
 const CUT: &str =
@@ -233,15 +233,8 @@ fn row_2_a_confident_violation_of_rq1_with_no_place_widens_once_and_is_checked_a
         second.started().unwrap().given
     );
     assert_ne!(first.outputs()[0].artifact, second.outputs()[0].artifact);
-    // Until the located retry lands, a row 2 finding that cites a place is treated as
-    // one that cites none: the mask is widened the same.
-    let mut placed = items(&[("RQ1", "violation", "confident")]);
-    placed[2]["location"] = boxed([0.25, 0.25, 0.5, 0.5]);
-    let (_, placed) = twice(
-        "row2-placed",
-        vec![submission(placed, Vec::new()), passes()],
-    );
-    assert_eq!(placed, came);
+    // A row 2 finding that cites a place gives the located retry (plan m4, task L2):
+    // `located::a_confident_violation_of_rq1_with_a_place_…`.
 }
 
 #[test]

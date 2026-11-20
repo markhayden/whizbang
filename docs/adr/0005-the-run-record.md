@@ -622,7 +622,9 @@ written only where the run has it, and one of them at least. Its schema is
   Then `kept`, the number of the attempt kept, or null, and `ended`, why the attempts
   ended, in one line. An action notes them as it goes (`RunFacts::attempt`,
   `RunFacts::attempts_ended`), so they are in the record whatever the run's outcome; a
-  note that a record would not hold is answered no and not taken.
+  note that a record would not hold is answered no and not taken. One thing depends on
+  the outcome: `kept` is null in the record of a run that did not complete, whatever the
+  run noted, because such a run committed nothing (plan m4, task L2).
 
 A plan's reason has the executor's secrets taken out as every text has; one that the
 redaction made longer than a reason may be is cut, and the plan is kept. The reader's
