@@ -2,6 +2,10 @@
 
 Status: accepted.
 Date: 2026-11-19
+Amended: 2026-11-19, with task K1 of plan m4. Added: "Findings": a third kind of result,
+one JSON document of the kind `findings/1` with a fixed schema and no text of a judge's,
+refused from an action that does not declare it, handed to the caller, and counted in
+the record.
 Spec: section 3 ("Primitives, recipes and loops", "What a judge model may call"), section 7
 ("Use cases expressed as recipes on the shared mechanism"); plan m3
 (`docs/plans/m3-milestone-3.md`), task Q1, items 1 and 2; ADR 0003, ADR 0009, ADR 0029,
@@ -93,6 +97,46 @@ digest through `recipe_digest`: a changed recipe misses and an unchanged one hit
 (`cache::a_changed_use_case_recipe_misses_and_an_unchanged_one_hits`). The reasons and what
 the judge decided are the judge's step's diagnostics; a door reads them from that step's run
 (`door::judged_run`).
+
+### Findings
+
+Added with plan m4 (`docs/plans/m4-the-loop-and-a-release.md`), task K1, item 3: a third
+kind of result, `findings`, beside the verdict and measurements (description version 10).
+A verdict handed to a caller is a decision and a reason; the places a judge cited were
+only in a diagnostic, which can never be used as an output. A loop that retries where a
+judge pointed needs them as a result.
+
+- **The document.** One JSON document of the kind `findings/1`, at most 32 KiB, whose
+  shape is fixed by `crates/whizbang-core/schemas/findings-1.json` and read strictly by
+  the core (`Findings::read`). It holds the `decision` of the whole of what was judged,
+  never cut; `complete`, with `left_out` counting the findings and the places left out,
+  true exactly when nothing was; and `items`, at most 32 findings. Task K2 makes its
+  contents; this fixes its shape.
+- **A finding** holds which form of answer it is (`item`, of the checklist, about one
+  obligation; `observation`, which cites one or more); every obligation it cites, by id
+  (upper-case letters, then digits), each once, 16 at most; its disposition
+  (`violation`, `held`, `allowed_change`, `hidden`, `cant_tell`, `observed`); its
+  confidence (`confident`, `tentative`; null for `observed` and for nothing else); and
+  its place or null (both fields are always written; a finding that leaves one out is
+  refused): the image it is on, by identity, and one box (left, top, right,
+  bottom) or one polygon (3 to 64 points) in fractions of that image. At most eight
+  places in a document.
+- **No text of a judge's is in it.** The shape has no field that holds one, and a
+  document with a field the shape does not know is refused. Findings are data from a
+  model, never an instruction.
+- **Declared, like the others.** An action hands findings back only when its descriptor
+  declares the kind; findings from one that does not, and a document that is not of the
+  schema, end the run as an error of the type `output`, whose message quotes nothing of
+  the document. A run that did not complete hands back none.
+- **To the caller.** A completed run's findings are given with its outcome
+  (`Finished::findings`), as they were read. A recipe whose last step declares findings
+  declares them itself and hands its caller that step's, with the verdict.
+- **In the record**, counts and places, not the document (`run/6`, ADR 0005).
+
+Tests: `executor::findings_from_an_action_that_does_not_declare_them_end_the_run_as_an_error`,
+`executor::findings_that_are_not_of_their_schema_end_the_run_as_an_error`,
+`runner::a_recipe_hands_its_caller_the_findings_of_its_last_step`,
+`describe::the_description_lists_findings_among_an_actions_results_and_which_actions_plan`.
 
 ## Consequences
 

@@ -56,7 +56,7 @@ use std::collections::BTreeMap;
 use crate::artifact::ArtifactType;
 use crate::contract::{ActionDescriptor, Registry, ResultKind, Value, ValueType, text};
 
-pub use runner::{RecipeAction, SET, UNTIL, until_port};
+pub use runner::{FROM, RecipeAction, SET, UNTIL, from_port, until_port};
 
 /// The version of the format this build reads: rascal's `version = 1`.
 pub const FORMAT: i64 = 1;
@@ -388,10 +388,21 @@ impl Recipe {
         }
         for name in self.inputs.keys() {
             text::field_name(name).map_err(|why| refuse("inputs", why))?;
-            if [SET, UNTIL].contains(&name.as_str()) {
+            if [SET, UNTIL, FROM].contains(&name.as_str()) {
                 return Err(refuse(
                     "inputs",
                     format!("{name} is the name of the runner's own argument"),
+                ));
+            }
+            // What a run from a step is given goes in at ports of the runner's own,
+            // `from_<step>_<port>`: no input is named as one of them could be.
+            if name.starts_with(&format!("{FROM}_")) {
+                return Err(refuse(
+                    "inputs",
+                    format!(
+                        "{name} begins as the runner's own inputs do, which are named \
+                         {FROM}_<step>_<port>"
+                    ),
                 ));
             }
         }
@@ -594,6 +605,10 @@ impl Recipe {
         let verdict = (checked.last())
             .and_then(|last| registry.get(&last.action))
             .is_some_and(|last| last.descriptor().answers_with(ResultKind::Verdict));
+        // And one whose last step declares findings hands those back with it.
+        let findings = (checked.last())
+            .and_then(|last| registry.get(&last.action))
+            .is_some_and(|last| last.descriptor().answers_with(ResultKind::Findings));
         if outputs.is_empty() && !verdict {
             return Err(refuse(
                 "outputs",
@@ -608,6 +623,7 @@ impl Recipe {
             steps: checked,
             outputs,
             verdict,
+            findings,
         })
     }
 
@@ -840,6 +856,8 @@ pub struct Checked {
     pub outputs: Vec<Output>,
     /// Whether its last step answers with a verdict, which the recipe hands back.
     pub verdict: bool,
+    /// Whether its last step declares findings, which the recipe hands back too.
+    pub findings: bool,
 }
 
 impl Checked {

@@ -3147,3 +3147,80 @@ fn lab_run_pairs_and_decode_a_three_image_round_under_a_scripted_filler() {
     );
     assert!(pairs_page::checked_out(&inside, &lab.root, true).is_ok());
 }
+
+#[test]
+fn a_planned_call_prints_its_plan_before_it_runs() {
+    // Plan m4, task K1, item 1: on a fake action that plans, through the door every
+    // command of an operation goes through.
+    let (_dir, executor, _door, events) = crate::serve::planning("cli-plan");
+    let asked = door::OperationAsked {
+        action: "plans",
+        arguments: vec![("attempts", whizbang_core::contract::Value::Integer(3))],
+        inputs: Vec::new(),
+        request_id: None,
+    };
+    let said = events.clone();
+    let mut say = |line: &str| said.lock().unwrap().push(format!("said {line}"));
+    let printed = door::operation_saying(executor.as_ref(), &asked, None, &mut say).unwrap();
+    assert!(
+        printed.starts_with("run ") && printed.ends_with(" completed\n"),
+        "{printed}"
+    );
+    // The plan was said first, and the run was handed that plan.
+    let plan = "plan: 2 of 3 attempts asked, unchecked; a test's plan";
+    assert_eq!(
+        *events.lock().unwrap(),
+        [format!("said {plan}"), format!("ran under Some({plan:?})")]
+    );
+    // A call the action plans nothing for says nothing before it runs.
+    events.lock().unwrap().clear();
+    let plain = door::OperationAsked {
+        arguments: vec![("plain", whizbang_core::contract::Value::Boolean(true))],
+        ..asked
+    };
+    let mut say = |line: &str| said.lock().unwrap().push(format!("said {line}"));
+    door::operation_saying(executor.as_ref(), &plain, None, &mut say).unwrap();
+    assert_eq!(*events.lock().unwrap(), ["ran under None"]);
+}
+
+#[test]
+fn a_repeated_request_id_is_told_the_plan_of_its_first_run() {
+    // The review of plan m4, task K1: the plan said for a request that was sent before
+    // is the one its run had, from that run's record, not the one its call has now.
+    use std::sync::atomic::Ordering;
+    let (dir, executor, _door, events) = crate::serve::planning("cli-plan-repeat");
+    let root = dir.path().join("store");
+    let asked = door::OperationAsked {
+        action: "plans",
+        arguments: vec![("attempts", whizbang_core::contract::Value::Integer(3))],
+        inputs: Vec::new(),
+        request_id: Some("order-1"),
+    };
+    let said = events.clone();
+    let mut say = |line: &str| said.lock().unwrap().push(format!("said {line}"));
+    door::operation_saying(executor.as_ref(), &asked, Some(&root), &mut say).unwrap();
+    // What would be planned changes, as when a cap of one call does.
+    crate::serve::ALLOWS.store(1, Ordering::SeqCst);
+    events.lock().unwrap().clear();
+    let mut say = |line: &str| said.lock().unwrap().push(format!("said {line}"));
+    let again = door::operation_saying(executor.as_ref(), &asked, Some(&root), &mut say).unwrap();
+    assert!(again.contains("the request was sent before"), "{again}");
+    // The first run's plan, once; nothing of the plan as it would be now, and no run.
+    assert_eq!(
+        *events.lock().unwrap(),
+        ["said plan: 2 of 3 attempts asked, unchecked; a test's plan"]
+    );
+    // A new request is told the plan as it is now, before it runs.
+    events.lock().unwrap().clear();
+    let fresh = door::OperationAsked {
+        request_id: Some("order-2"),
+        ..asked
+    };
+    let mut say = |line: &str| said.lock().unwrap().push(format!("said {line}"));
+    door::operation_saying(executor.as_ref(), &fresh, Some(&root), &mut say).unwrap();
+    let plan = "plan: 1 of 3 attempts asked, unchecked; a test's plan";
+    assert_eq!(
+        *events.lock().unwrap(),
+        [format!("said {plan}"), format!("ran under Some({plan:?})")]
+    );
+}

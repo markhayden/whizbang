@@ -186,7 +186,7 @@ fn a_record_of_another_version_is_another_version_not_damage() {
     ));
     let said = RunRecord::from_bytes(other).unwrap_err().to_string();
     assert!(
-        said.contains("run/9") && said.contains("this build reads run/5, run/4"),
+        said.contains("run/9") && said.contains("this build reads run/6, run/5, run/4"),
         "{said}"
     );
 }
@@ -642,7 +642,12 @@ fn what_a_refusal_quotes_of_stored_bytes_is_escaped_and_cut() {
     let said = RunRecord::from_bytes(&changed(|d| d["extra"] = json!(1)))
         .unwrap_err()
         .to_string();
-    assert!(said.contains("unknown field `extra`"), "{said}");
+    // The fields it expected are the first and how many more: a record has more
+    // fields than a reason has room for.
+    assert!(
+        said.contains("unknown field `extra`, expected one of `record` or 16 more at line 1"),
+        "{said}"
+    );
     assert!(said.contains(" at line 1 column "), "{said}");
     assert!(!said.ends_with("..."), "{said}");
     assert_eq!((record::QUOTED_LIMIT, record::REASON_LIMIT), (64, 200));
@@ -2029,12 +2034,413 @@ fn the_new_record_version_reads_a_record_of_the_version_before() {
         RunRecord::from_bytes(long.as_bytes()),
         Err(RecordError::Inconsistent(_))
     ));
-    // The refusal of another version names the four this build reads.
-    let other = fifth.replacen("\"run/5\"", "\"run/6\"", 1);
+    // The refusal of another version names the five this build reads.
+    let other = fifth.replacen("\"run/5\"", "\"run/7\"", 1);
     assert_eq!(
         RunRecord::from_bytes(other.as_bytes())
             .unwrap_err()
             .to_string(),
-        "a record of another version: run/6, and this build reads run/5, run/4, run/3 and run/2"
+        "a record of another version: run/7, and this build reads run/6, run/5, run/4, run/3 \
+         and run/2"
     );
+}
+
+// --- run/6: a plan, a start, findings and a loop's attempts (plan m4, task K1, item 4) ---------
+
+fn schema_6() -> Json {
+    serde_json::from_str(whizbang_core::contract::RUN_6_SCHEMA).unwrap()
+}
+
+const ONES: &str = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+const TWOS: &str = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+
+/// The four groups of `run/6`, as a record writes them after its diagnostics: the fixed
+/// vector of each.
+fn groups_of_run_6() -> [(&'static str, String); 4] {
+    let image = Digest::of_bytes(b"a candidate");
+    [
+        (
+            "plan",
+            r#"{"sends":[],"attempts":{"asked":3,"allowed":3,"checks":true},"why":"three attempts fit the call cap"}"#.to_owned(),
+        ),
+        (
+            "started",
+            format!(r#"{{"from":"grow","given":[{{"step":"select","port":"mask","type":"mask","artifact":"{ONES}"}}]}}"#),
+        ),
+        (
+            "findings",
+            [
+                r#"{"decision":"fail","complete":false,"left_out":{"findings":2,"places":1},"counts":["#,
+                r#"{"obligation":"RQ1","disposition":"violation","confidence":"confident","count":1},"#,
+                r#"{"obligation":"RQ1","disposition":"violation","confidence":"tentative","count":1},"#,
+                r#"{"obligation":"SF1","disposition":"violation","confidence":"tentative","count":1},"#,
+                r#"{"obligation":"SF4","disposition":"observed","confidence":null,"count":1}],"#,
+                &format!(r#""places":[{{"image":"{image}","box":[0.25,0.25,0.5,0.75]}},"#),
+                &format!(r#"{{"image":"{image}","polygon":[[0.0,0.0],[1.0,0.0],[0.5,1.0]]}}]}}"#),
+            ]
+            .concat(),
+        ),
+        (
+            "attempts",
+            [
+                r#"{"list":[{"attempt":1,"runs":["1001-1","1002-1"],"verdict":"fail","unchecked":null,"changed":null,"settled_micros":1200},"#,
+                r#"{"attempt":2,"runs":[],"verdict":"unsure","unchecked":null,"changed":{"change":"wider","px":16.0},"settled_micros":900},"#,
+                r#"{"attempt":3,"runs":[],"verdict":null,"unchecked":"the check ended in an error","#,
+                &format!(r#""changed":{{"change":"located","crops":[{{"crop":"{ONES}","mask":"{TWOS}"}},{{"crop":"{ONES}","mask":null}}]}},"settled_micros":0}}],"#),
+                r#""kept":2,"ended":"the last attempt the plan allows"}"#,
+            ]
+            .concat(),
+        ),
+    ]
+}
+
+/// The fixed vector of `run/6`: the vector of `run/5`, a recipe's run, with the four
+/// groups after its diagnostics.
+fn of_run_6() -> String {
+    let fifth = of_a_recipe().replacen("\"run/5\"", "\"run/6\"", 1);
+    let mut vector = fifth.trim_end_matches("}\n").to_owned();
+    for (name, group) in groups_of_run_6() {
+        vector.push_str(&format!(",\"{name}\":{group}"));
+    }
+    vector + "}\n"
+}
+
+#[test]
+fn run_6_holds_a_plan_a_start_findings_and_a_loops_attempts() {
+    use whizbang_core::contract::record::{Attempt, Changed, Crop, Decision, Given, Started};
+    use whizbang_core::contract::{Context, Failure, Plan, Planning, Produced, ResultKind};
+    // A fake action that fills every group: it plans, says where it started, notes three
+    // attempts and how they ended, and hands back findings.
+    struct Fills(ActionDescriptor);
+    impl Action for Fills {
+        fn descriptor(&self) -> &ActionDescriptor {
+            &self.0
+        }
+        fn plan(&self, _: &Planning<'_>) -> Option<Plan> {
+            let plan = Plan::new().attempts(3, 3, true);
+            Some(plan.because("three attempts fit the call cap"))
+        }
+        fn run(&self, _: &PreparedCall, context: &Context) -> Result<Produced, Failure> {
+            let (ones, twos): (Digest, Digest) = (ONES.parse().unwrap(), TWOS.parse().unwrap());
+            let facts = context.facts();
+            let started = || Started {
+                from: "grow".to_owned(),
+                given: vec![Given {
+                    step: "select".to_owned(),
+                    port: "mask".to_owned(),
+                    artifact_type: ArtifactType::Mask,
+                    artifact: ones,
+                }],
+            };
+            assert!(facts.started(started()));
+            assert!(!facts.started(started()), "a second start");
+            let run = |id: &str| RunId::parse(id).unwrap();
+            let first = Attempt::judged(1, Decision::Fail).settled(1200);
+            let first = first.ran(&run("1001-1")).ran(&run("1002-1"));
+            // An attempt that is not the next, or that a record would not hold, is not
+            // noted: the third before the second, a first that says a retry made it.
+            assert!(!facts.attempt(Attempt::judged(3, Decision::Pass)));
+            let wider = Changed::Wider { px: 16.0 };
+            assert!(!facts.attempt(first.clone().changed(wider.clone())));
+            assert!(facts.attempt(first));
+            let second = Attempt::judged(2, Decision::Unsure).settled(900);
+            assert!(facts.attempt(second.changed(wider)));
+            let crop = |mask| Crop { crop: ones, mask };
+            let crops = vec![crop(Some(twos)), crop(None)];
+            let third = Attempt::unchecked(3, "the check ended in an error");
+            assert!(facts.attempt(third.changed(Changed::Located { crops })));
+            // The attempt kept is one of them; the end is said once, and ends the list.
+            assert!(!facts.attempts_ended(Some(4), "the last attempt the plan allows"));
+            assert!(facts.attempts_ended(Some(2), "the last attempt the plan allows"));
+            assert!(!facts.attempts_ended(Some(1), "again"));
+            assert!(!facts.attempt(Attempt::judged(4, Decision::Pass)));
+            Ok(Produced::nothing().with_findings(super::findings::document()))
+        }
+    }
+    let dir = Scratch::new("run-6");
+    let root = dir.path().join("store");
+    let store = Arc::new(Store::open(&root, Arc::new(RealFs)).unwrap());
+    let draft = ActionDescriptor::draft("fills", "1.0.0", Kind::Loop, "A test action.");
+    let draft = draft.plans().results(ResultKind::Findings);
+    let mut registry = Registry::new();
+    registry
+        .register(Arc::new(Fills(draft.build().unwrap())))
+        .unwrap();
+    let engine = Engine::over(
+        registry,
+        Arc::new(NoBackends),
+        store.clone(),
+        Digest::of_bytes(b""),
+    );
+    let finished = engine.submit(&Call::new("fills")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    let generation = store.snapshot().unwrap();
+    let id = finished.run().as_str();
+    let stored = record::stored(&generation, id, |entry| store.read(entry));
+    let stored = stored.unwrap().unwrap();
+    assert_eq!(stored.version(), "run/6");
+    let bytes = stored.to_bytes();
+    let document: Json = serde_json::from_slice(&bytes).unwrap();
+    validate(&schema_6(), &document).unwrap();
+    // Each group is written as its fixed vector, in this order, after the diagnostics.
+    let text = String::from_utf8(bytes).unwrap();
+    let mut after = text.find("\"diagnostics\":").unwrap();
+    for (name, group) in groups_of_run_6() {
+        let written = format!(",\"{name}\":{group}");
+        let at = text
+            .find(&written)
+            .unwrap_or_else(|| panic!("{name}: {text}"));
+        assert!(at > after, "{name} is out of its order");
+        after = at;
+    }
+    assert!(text.ends_with("\"ended\":\"the last attempt the plan allows\"}}\n"));
+    assert_eq!(stored.attempts().unwrap().kept, Some(2));
+    assert_eq!(stored.started().unwrap().from, "grow");
+    assert_eq!(stored.findings().unwrap().decision, Decision::Fail);
+    assert_eq!(stored.plan().unwrap().stated().unwrap().allowed, 3);
+
+    // The fixed vector reads, is written back as it was, and is of the schema.
+    let vector = of_run_6();
+    let read = RunRecord::from_bytes(vector.as_bytes()).unwrap();
+    assert_eq!(read.to_bytes(), vector.as_bytes());
+    validate(&schema_6(), &as_json(&vector)).unwrap();
+    assert_eq!(read.steps().len(), 3);
+    assert_eq!(read.attempts().unwrap().list.len(), 3);
+
+    // What a record of `run/6` may not say: (what is changed, to what, and whether the
+    // schema can say so too).
+    let inconsistent: [(&str, &str, &str, bool); 10] = [
+        (
+            "none of the four",
+            &vector[vector.find(",\"plan\"").unwrap()..],
+            "}\n",
+            true,
+        ),
+        (
+            "more attempts allowed than asked",
+            r#""asked":3,"allowed":3"#,
+            r#""asked":2,"allowed":3"#,
+            false,
+        ),
+        (
+            "a reason of two lines",
+            "three attempts fit the call cap",
+            "three\\nattempts",
+            false,
+        ),
+        (
+            "a start from no step",
+            r#""from":"grow""#,
+            r#""from":"Grow!""#,
+            false,
+        ),
+        (
+            "counts out of their order",
+            r#""obligation":"SF1""#,
+            r#""obligation":"AB1""#,
+            false,
+        ),
+        (
+            "complete, with something left out",
+            r#""complete":false"#,
+            r#""complete":true"#,
+            false,
+        ),
+        (
+            "attempts not numbered from 1",
+            r#"{"attempt":1,"#,
+            r#"{"attempt":2,"#,
+            false,
+        ),
+        (
+            "a verdict and the reason there is none",
+            r#""verdict":null,"unchecked":"the check ended in an error""#,
+            r#""verdict":"pass","unchecked":"the check ended in an error""#,
+            false,
+        ),
+        (
+            "neither",
+            r#""verdict":"fail","unchecked":null"#,
+            r#""verdict":null,"unchecked":null"#,
+            false,
+        ),
+        (
+            "an attempt kept that was not made",
+            r#""kept":2"#,
+            r#""kept":4"#,
+            false,
+        ),
+    ];
+    for (what, from, to, by_schema) in inconsistent {
+        assert!(vector.contains(from), "{what}");
+        let changed = vector.replacen(from, to, 1);
+        assert!(
+            matches!(
+                RunRecord::from_bytes(changed.as_bytes()),
+                Err(RecordError::Inconsistent(_))
+            ),
+            "{what}: {:?}",
+            RunRecord::from_bytes(changed.as_bytes())
+        );
+        assert_eq!(
+            validate(&schema_6(), &as_json(&changed)).is_err(),
+            by_schema,
+            "{what}"
+        );
+    }
+    // Findings are of a run that completed.
+    let failed = vector.replacen(
+        r#""status":"completed","error":null"#,
+        r#""status":"error","error":{"kind":"x","message":"y"}"#,
+        1,
+    );
+    assert!(matches!(
+        RunRecord::from_bytes(failed.as_bytes()),
+        Err(RecordError::Inconsistent(_))
+    ));
+    // What the shape refuses, and the schema with it: a text of a judge's in a finding's
+    // place, a field that is not known, a change that is none.
+    let malformed = [
+        (
+            r#""complete":false"#,
+            r#""complete":false,"why":"it is there""#,
+        ),
+        (r#""kept":2"#, r#""kept":2,"note":"x""#),
+        (r#""change":"wider""#, r#""change":"narrower""#),
+        (r#""checks":true"#, r#""checks":"yes""#),
+    ];
+    for (from, to) in malformed {
+        let changed = vector.replacen(from, to, 1);
+        assert!(
+            matches!(
+                RunRecord::from_bytes(changed.as_bytes()),
+                Err(RecordError::Malformed(_))
+            ),
+            "{to}"
+        );
+        assert!(validate(&schema_6(), &as_json(&changed)).is_err(), "{to}");
+    }
+    // A group written as null is not how a record without it is written.
+    let null = vector.replacen("}\n", ",\"extra\":null}\n", 1);
+    assert!(RunRecord::from_bytes(null.as_bytes()).is_err());
+    let fifth_with_null = of_a_recipe().replacen("}\n", ",\"plan\":null}\n", 1);
+    assert_eq!(
+        RunRecord::from_bytes(fifth_with_null.as_bytes()),
+        Err(RecordError::NotCanonical)
+    );
+}
+
+#[test]
+fn run_6_reads_a_record_of_run_5() {
+    // The records of the versions before read as they did, byte for byte, and are
+    // written back as they were: nothing in a store is migrated.
+    for (before, version) in [
+        (of_a_recipe(), "run/5"),
+        (served(), "run/4"),
+        (completed(), "run/4"),
+    ] {
+        let read = RunRecord::from_bytes(before.as_bytes()).unwrap();
+        assert_eq!(read.version(), version);
+        assert_eq!(read.to_bytes(), before.as_bytes());
+        assert_eq!((read.plan(), read.started()), (None, None));
+        assert!(read.findings().is_none() && read.attempts().is_none());
+    }
+    // A record of `run/5` holds none of what `run/6` adds: each group in one is refused.
+    let fifth = of_a_recipe();
+    for (name, group) in groups_of_run_6() {
+        let with = fifth.replacen("}\n", &format!(",\"{name}\":{group}}}\n"), 1);
+        assert!(
+            matches!(
+                RunRecord::from_bytes(with.as_bytes()),
+                Err(RecordError::Inconsistent(_))
+            ),
+            "{name}"
+        );
+        // And the same bytes as `run/6` are a record.
+        let sixth = with.replacen("\"run/5\"", "\"run/6\"", 1);
+        let read = RunRecord::from_bytes(sixth.as_bytes()).unwrap();
+        assert_eq!(read.to_bytes(), sixth.as_bytes());
+        validate(&schema_6(), &as_json(&sixth)).unwrap();
+        validate(&schema_5(), &as_json(&sixth)).unwrap_err();
+    }
+    // A run that has none of them is still written as the version before.
+    assert_eq!(whizbang_core::contract::RUN_6, "run/6");
+    assert_eq!(RUN_RECORD, "run/4");
+}
+
+#[test]
+fn run_6_holds_each_list_to_its_bound() {
+    use whizbang_core::contract::record::{
+        ATTEMPT_CROPS_LIMIT, ATTEMPT_RUNS_LIMIT, Attempt, Changed, Crop, Decision, Facts,
+        GIVEN_LIMIT, Given, Started,
+    };
+    let ones: Digest = ONES.parse().unwrap();
+    assert_eq!(
+        (GIVEN_LIMIT, ATTEMPT_RUNS_LIMIT, ATTEMPT_CROPS_LIMIT),
+        (64, 64, 8)
+    );
+    // What a run from a step was given: 64 at most.
+    let started = |given: usize| Started {
+        from: "grow".to_owned(),
+        given: vec![
+            Given {
+                step: "select".to_owned(),
+                port: "mask".to_owned(),
+                artifact_type: ArtifactType::Mask,
+                artifact: ones,
+            };
+            given
+        ],
+    };
+    assert!(!Facts::none().started(started(65)));
+    assert!(Facts::none().started(started(64)));
+    // The runs of one attempt: 64 at most.
+    let ran = |runs: usize| {
+        let run = RunId::parse("1001-1").unwrap();
+        (0..runs).fold(Attempt::judged(1, Decision::Pass), |a, _| a.ran(&run))
+    };
+    assert!(!Facts::none().attempt(ran(65)));
+    assert!(Facts::none().attempt(ran(64)));
+    // Sixteen attempts, and no seventeenth.
+    let mut facts = Facts::none();
+    for at in 1..=16 {
+        assert!(facts.attempt(Attempt::judged(at, Decision::Fail)), "{at}");
+    }
+    assert!(!facts.attempt(Attempt::judged(17, Decision::Fail)));
+    // A wider grow of a number of pixels that is one; one to eight crops.
+    let second = |changed: Changed| {
+        let mut facts = Facts::none();
+        assert!(facts.attempt(Attempt::judged(1, Decision::Fail)));
+        facts.attempt(Attempt::judged(2, Decision::Fail).changed(changed))
+    };
+    for (px, held) in [
+        (-1.0, false),
+        (f64::NAN, false),
+        (f64::INFINITY, false),
+        (0.0, true),
+    ] {
+        assert_eq!(second(Changed::Wider { px }), held, "{px}");
+    }
+    let crop = Crop {
+        crop: ones,
+        mask: None,
+    };
+    for (crops, held) in [(0, false), (1, true), (8, true), (9, false)] {
+        let crops = vec![crop.clone(); crops];
+        assert_eq!(
+            second(Changed::Located {
+                crops: crops.clone()
+            }),
+            held,
+            "{}",
+            crops.len()
+        );
+    }
+    // And the reader holds a stored record to the same: a negative width is refused.
+    let negative = of_run_6().replacen(r#""px":16.0"#, r#""px":-1.0"#, 1);
+    assert!(matches!(
+        RunRecord::from_bytes(negative.as_bytes()),
+        Err(RecordError::Inconsistent(_))
+    ));
+    assert!(validate(&schema_6(), &as_json(&negative)).is_err());
 }

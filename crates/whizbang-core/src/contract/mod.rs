@@ -34,6 +34,7 @@ mod context;
 mod descriptor;
 mod engine;
 mod facts;
+mod findings;
 mod interrupted;
 mod journal;
 pub mod ledger;
@@ -41,6 +42,7 @@ mod live;
 mod nested;
 mod outputs;
 mod part;
+mod plan;
 mod prepare;
 pub mod record;
 mod recover;
@@ -48,6 +50,7 @@ mod redact;
 mod registry;
 pub mod request;
 mod run;
+mod sixth;
 mod snapshot;
 pub mod text;
 
@@ -69,6 +72,11 @@ pub use engine::{
     Spawn, WHIZBANG_VERSION,
 };
 pub use facts::RunFacts;
+pub use findings::{
+    Confidence, Disposition, FINDING_OBLIGATIONS_LIMIT, FINDING_PLACES_LIMIT,
+    FINDING_POLYGON_LIMIT, FINDINGS, FINDINGS_LIMIT, FINDINGS_MAX_BYTES, FINDINGS_SCHEMA, Finding,
+    FindingCount, Findings, Form, FoundAt, LeftOut, is_obligation_id,
+};
 pub use interrupted::Interrupted;
 pub use journal::{Clock, EXCHANGE_PREFIX, JournalLine, SystemClock, journal_bytes, read_journal};
 pub use ledger::{
@@ -82,6 +90,7 @@ pub use part::{
     AdmissionPart, Asking, PART_RECORD_MAX_BYTES, PART_RECORDS_LIMIT, PART_RECORDS_PREFIX,
     PartDeclined, PartRefusal, PartStep, part_record_name,
 };
+pub use plan::{Able, Attempts, PLAN_ATTEMPTS_MAX, PLAN_WHY_LIMIT, Plan, Planning, Sends};
 pub use prepare::{
     ARGUMENTS_TEXT_MAX_BYTES, Backends, CallError, Estimate, INPUTS_LIMIT, InputFault, Missing,
     ModelIdentity, Need, NoBackends, NotJudged, PreparedCall, Readiness, Refusal, ResolvedInput,
@@ -90,8 +99,8 @@ pub use prepare::{
 pub use record::{
     DIAGNOSTIC_NAME_LIMIT, DIAGNOSTICS_LIMIT, RECIPE_ARGUMENTS_LIMIT, RECIPE_STEPS_LIMIT,
     RECIPE_TEXT_LIMIT, RECORD_MAX_BYTES, REFUSAL_WHY_LIMIT, REFUSALS_LIMIT, RUN_2, RUN_2_SCHEMA,
-    RUN_3, RUN_3_SCHEMA, RUN_5, RUN_5_SCHEMA, RUN_RECORD, RUN_RECORD_SCHEMA, RecordError,
-    RefusalKind, RunRecord, STEPS_LIMIT, is_diagnostic_name,
+    RUN_3, RUN_3_SCHEMA, RUN_5, RUN_5_SCHEMA, RUN_6, RUN_6_SCHEMA, RUN_RECORD, RUN_RECORD_SCHEMA,
+    RecordError, RefusalKind, RunRecord, STEPS_LIMIT, is_diagnostic_name,
 };
 pub use recover::{
     NoWriter, Opening, RECOVERY_WHY_LIMIT, Recovering, Recovery, RecoveryFailed, RecoveryPart,

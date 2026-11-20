@@ -492,6 +492,7 @@ impl Nest {
                 .filter_map(|(at, child)| child.times.map(|(start, end)| (at, start, end)))
                 .collect(),
             verdict: None,
+            findings: None,
             parent,
             steps: calls
                 .children

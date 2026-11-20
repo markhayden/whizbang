@@ -65,6 +65,10 @@ from ordinary runs"
 Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
 that said something was still to come; no decision changed.
 
+Amended: 2026-11-19, with task K1 of plan m4. Added: "run/6": the plan of a call, where a
+recipe's run started, what is kept of findings, and a loop's attempts, each a group after
+the diagnostics, written only where the run has it.
+
 ## Context
 
 `SPEC.md` section 3 says every run, whatever its outcome, writes one record with a fixed,
@@ -586,6 +590,51 @@ does not; the run record alone holds them.
 
 What the origin keeps is what ADR 0002 gave it: each step's action, version, arguments and
 inputs. "Every artifact records what produced it" (the spec's invariant) holds by that.
+
+### run/6
+
+Added with plan m4 (`docs/plans/m4-the-loop-and-a-release.md`), task K1, item 4, written
+whole so that the version changes once: the tasks after it (K2, L1, L2) fill these groups
+and add no field. `run/6` is `run/5` (ADR 0033) with four groups after `diagnostics`, each
+written only where the run has it, and one of them at least. Its schema is
+`crates/whizbang-core/schemas/run-6.json`.
+
+- `plan`: the plan of the call, for an action that planned it (ADR 0004, "A call's
+  plan"): `sends`, each a capability and its requests; `attempts`, the attempts asked and
+  allowed and whether each is checked, or null; `why`, or null.
+- `started`: where a recipe's run started (ADR 0033, "A run from a step"): `from`, the
+  step, and `given`, each artifact given in place of an output of a step that did not
+  run: the step, the port, the type and the identity.
+- `findings`: what is kept of the findings the run handed back (ADR 0035, "Findings"):
+  the `decision` they carry, whether they were `complete` and what was `left_out`;
+  `counts`, how many findings cite each obligation with each disposition and confidence,
+  in the order of those three, a finding that cites two obligations counted under each;
+  and `places`. Only of a run that completed. The findings themselves are handed to the
+  caller and are not in the record.
+- `attempts`: a loop's attempts. `list`: for each its number, from 1 and in order; the
+  `runs` it made, in order; its `verdict`, or in `unchecked` the reason there is none,
+  one of the two and never both; `changed`, what the retry changed to make it (`wider`
+  with the pixels of the wider `grow`, or `located` with the crops cut and the mask each
+  gave or null), null for the first; and `settled_micros`, what its requests settled.
+  Then `kept`, the number of the attempt kept, or null, and `ended`, why the attempts
+  ended, in one line. An action notes them as it goes (`RunFacts::attempt`,
+  `RunFacts::attempts_ended`), so they are in the record whatever the run's outcome; a
+  note that a record would not hold is answered no and not taken.
+
+A plan's reason has the executor's secrets taken out as every text has; one that the
+redaction made longer than a reason may be is cut, and the plan is kept. The reader's
+sentence for a field it does not know names the first field it expected and how many
+more there are, so that it stays within what a refusal quotes.
+
+**The oldest version that holds all of it**, as since `run/5`: a record that has none of
+the four is written as `run/5` or `run/4` as before, byte for byte. So this build reads
+`run/6`, `run/5`, `run/4`, `run/3` and `run/2`; a store written before it reads as it
+did, nothing in one is migrated, and the store's own format does not change. A build
+before this one refuses a `run/6` record as another version, and reads every other run of
+the same store.
+
+Tests: `record::run_6_holds_a_plan_a_start_findings_and_a_loops_attempts`,
+`record::run_6_reads_a_record_of_run_5`.
 
 ## Consequences
 
