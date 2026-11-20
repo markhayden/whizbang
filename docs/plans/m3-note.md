@@ -93,7 +93,7 @@ group (`sky` 13, `structured` 17) and not picked, so there is no decode to set b
 rascal's `seam-03` (`fan-v1`) and `objects-02`.
 
 **The gate of details first, run again.** Rejected again (`docs/results/m3-gates.md`, "Run
-again"). The first run, at 3b6824c: rejected; `claude-haiku-5-5` 0.567 under arm C and 0.550
+again" and "The fourth run", the one to read). The first run, at 3b6824c: rejected; `claude-haiku-5-5` 0.567 under arm C and 0.550
 under F, `gemini-3.8-flash` 0.646 and 0.554 with 40 errors of 100 under F, `gpt-6.1-terra`
 0.721 and 0.733, inconclusive. A second, at e8cead9, is invalid: 186 runs ended in error from
 two faults of that build, fixed by #243. The third, at af5392c4 with `check` 1.6.0, 4.27
@@ -103,7 +103,15 @@ dollars: on the two judges that could be measured, details first did not help.
 under F, 12 under C); `gpt-6.1-terra` did not change, 0.738 and 0.738, a gain of 0.000
 [-0.040, 0.044], inconclusive. `gemini-3.8-flash` is not a measurement: 195 of its runs ended
 in the provider's 402 `RESOURCE_EXHAUSTED`, a limit on the key; its arm is owed by milestone
-E. Details first is still `check`'s default, which milestone E takes up first.
+E. The fourth, the complete one and the one to read, on the same binary after the owner
+cleared the key, 7.00 dollars: rejected, and on no judge did details first help.
+`claude-haiku-5-5` 0.529 under C and 0.483 under F, a gain of -0.046 [-0.123, 0.024], its
+interval now spanning zero, with 22 and 21 invalid submissions (the third run's 12 against 31
+did not repeat); `gemini-3.8-flash` 0.887 under both arms, the same in every family;
+`gpt-6.1-terra` 0.725 and 0.738, a gain of 0.013 [-0.060, 0.098], inconclusive. Haiku's
+control moved from 0.562 to 0.529 between the third and fourth runs, a measure of the spread
+from one run to the next. Details first is still `check`'s default, which milestone 4's plan
+takes as its first task.
 
 ## Spend, and what was downloaded
 
@@ -115,9 +123,10 @@ baseline's live rerun, 11.908215 together (`docs/results/m3-gates.md`,
 (`docs/results/m3-unsure.md`); the edits' rounds, 3.84 (`docs/results/m3-edits.md`); the
 seam's round, 3.76 and 0.04 unresolved; and the orchestrator's and the owner's other live
 runs and tries, which the stores counted and no record lists one by one; and the gate of
-details first run again twice, about 6.95 for the invalid second run and 4.27 for the third,
-with nothing held or unresolved. This pull request spent nothing, and the closing one
-nothing beyond the gate's re-run. **In all, about 44 US dollars of the 100.**
+details first run again three times, about 6.95 for the invalid second run, 4.27 for the
+third and 7.00 for the fourth, with nothing held or unresolved. This pull request spent
+nothing, and the closing one nothing beyond the gate's re-runs. **In all, about 51 US
+dollars of the 100.**
 
 ## What the owner decided
 
@@ -141,10 +150,10 @@ nothing beyond the gate's re-run. **In all, about 44 US dollars of the 100.**
   `unsure`** (`docs/results/m2c-evaluation.md`). The attack on `unsure` found the judge mostly
   hedging on clean pictures, and its screen ran on the dev sets it was built against, which
   admit nothing (`docs/results/m3-unsure.md`).
-- **Details first was not shown to help.** The gate rejected it twice. Run again after the
-  judges' fixes, it made `claude-haiku-5-5` worse and left `gpt-6.1-terra` unchanged, and
-  `gemini-3.8-flash` was not measured at all (its key's 402). The recipes still measure
-  details first by default, as `check` did.
+- **Details first was not shown to help.** The gate rejected it every time. In its complete
+  run, the fourth, it helped on no judge: Haiku's interval spans zero, Flash gave the same
+  result under both arms, Terra no clear change. The recipes still measure details first by
+  default, as `check` did.
 - **The second look is unsafe on reality-checks.** It took that use case's unsure rate from
   74% to 24%, and its false accepts from 0 of 33 to 6 of 33: of its 43 looks, 8 moved away
   from the label. The strict look did not mend it. It stays off by default
@@ -176,10 +185,11 @@ continuity (milestone E); two needs of one capability (when an action ships with
 Moved to milestone E by the owner, with a row of its own: the blinded picking rounds of
 `m3-seam` and of the edits' four labs. Closed by the closing pull request: L3's round as
 run, and the lab test of `remove_prompt` against a reference arm; Q1's item 7, credited from
-the gate's re-run; and the Google judge after its fix, its errors by kind reported. New rows
-owned by milestone E from that re-run: details first still `check`'s default though its gate
-rejected it (first thing); the Google arm, once the key answers; and Haiku's 31 refused
-submissions under F, by kind, as a lead. No row is owned by milestone 3.
+the gate's re-run; and the Google judge after its fix, its errors by kind reported. From the
+re-runs: details first still `check`'s default though its gate rejected it (milestone 4, its
+first task); the Google arm, closed by the fourth run; and Haiku's invalid submissions, as a
+lead for milestone E, narrowed by the fourth run to both arms alike. No row is owned by
+milestone 3.
 
 ## What milestone 4 and E start from
 

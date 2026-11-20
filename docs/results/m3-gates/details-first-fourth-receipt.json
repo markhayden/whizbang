@@ -1,0 +1,599 @@
+{
+  "receipt_version": 1,
+  "gate_sha256": "ddd2ca2e0caaf34da3456f1a03c8a549d706b4ef1559da2e289c9341f0059290",
+  "matrix": "gate-details-first",
+  "matrix_identity": "5b463d736c8e9b13e34304025530feba73de93f047ae9fe705d3fbdaf4e47af6",
+  "sets": [
+    "source-fidelity/scenes-v1",
+    "reference-consistency/pets-v1",
+    "reality-checks/people-v1",
+    "brief-compliance/stills-v1",
+    "product-fidelity/packshots-v1"
+  ],
+  "labels_sha256": {
+    "brief-compliance/stills-v1": "d4a76379ef896f6ab63b622f4efc9e62fa1ed92b5736ef3c3dafcfe7b6829da6",
+    "product-fidelity/packshots-v1": "64c249014e6021f469962f7d6b63e13b4413df76b7e53145d5e46c3e4770d3e7",
+    "reality-checks/people-v1": "627a5a47ab4735fa1e574451d71a016b46cfe53c8fb9876ede4623922f66feae",
+    "reference-consistency/pets-v1": "b0e1f317578f425126702d208c2fb5663fc5c0787ba61e15026d42d7d7cd4818",
+    "source-fidelity/scenes-v1": "4c197eca6d6037242f7b657c7f824610dd0c09ebed73f64cd98e5a9354438050"
+  },
+  "cells": 1000,
+  "control": "C",
+  "treatment": "F",
+  "outcome": "rejected",
+  "judges": [
+    {
+      "backend": "haiku",
+      "model": "claude-haiku-5-5",
+      "outcome": "rejected",
+      "failed": [
+        "admission",
+        "false_rejects",
+        "errors"
+      ],
+      "paired": {
+        "control": {
+          "counts": {
+            "items": 100,
+            "expected_fail": 60,
+            "expected_pass": 40,
+            "detected": 47,
+            "passed": 11,
+            "false_rejects": 4,
+            "false_accepts": 1,
+            "unsure": 30,
+            "errors": 7
+          },
+          "confusion": [
+            [
+              1,
+              47,
+              6,
+              6
+            ],
+            [
+              11,
+              4,
+              24,
+              1
+            ]
+          ],
+          "balanced_accuracy": 0.5291666666666667,
+          "detected": {
+            "count": 47,
+            "total": 60,
+            "value": 0.7833333333333333,
+            "low": 0.6637997242680521,
+            "high": 0.868769559518097
+          },
+          "false_rejects": {
+            "count": 4,
+            "total": 40,
+            "value": 0.1,
+            "low": 0.03957952868260638,
+            "high": 0.23051775227522298
+          },
+          "false_accepts": {
+            "count": 1,
+            "total": 60,
+            "value": 0.016666666666666666,
+            "low": 0.0029481597947862495,
+            "high": 0.08855129727590061
+          },
+          "unsure": {
+            "count": 30,
+            "total": 100,
+            "value": 0.3,
+            "low": 0.2189488529493276,
+            "high": 0.3958485463334666
+          },
+          "errors": {
+            "count": 7,
+            "total": 100,
+            "value": 0.07,
+            "low": 0.03431926106727268,
+            "high": 0.137495147390735
+          },
+          "cost_total_usd": 0.34956799999999993,
+          "cost_median_usd": 0.003209,
+          "wall_total_ms": 1524178,
+          "wall_median_ms": 13708,
+          "repetitions": 3,
+          "self_disagreement": 0.2
+        },
+        "treatment": {
+          "counts": {
+            "items": 100,
+            "expected_fail": 60,
+            "expected_pass": 40,
+            "detected": 46,
+            "passed": 8,
+            "false_rejects": 4,
+            "false_accepts": 2,
+            "unsure": 33,
+            "errors": 7
+          },
+          "confusion": [
+            [
+              2,
+              46,
+              7,
+              5
+            ],
+            [
+              8,
+              4,
+              26,
+              2
+            ]
+          ],
+          "balanced_accuracy": 0.4833333333333334,
+          "detected": {
+            "count": 46,
+            "total": 60,
+            "value": 0.7666666666666667,
+            "low": 0.6456372962239805,
+            "high": 0.8556043826335717
+          },
+          "false_rejects": {
+            "count": 4,
+            "total": 40,
+            "value": 0.1,
+            "low": 0.03957952868260638,
+            "high": 0.23051775227522298
+          },
+          "false_accepts": {
+            "count": 2,
+            "total": 60,
+            "value": 0.03333333333333333,
+            "low": 0.009189319256197877,
+            "high": 0.113637742743086
+          },
+          "unsure": {
+            "count": 33,
+            "total": 100,
+            "value": 0.33,
+            "low": 0.24563122734128034,
+            "high": 0.4269465620490947
+          },
+          "errors": {
+            "count": 7,
+            "total": 100,
+            "value": 0.07,
+            "low": 0.03431926106727268,
+            "high": 0.137495147390735
+          },
+          "cost_total_usd": 0.3796880000000001,
+          "cost_median_usd": 0.0035245,
+          "wall_total_ms": 1630148,
+          "wall_median_ms": 15004,
+          "repetitions": 3,
+          "self_disagreement": 0.21
+        },
+        "items": 100,
+        "families": 25,
+        "differing_families": 14,
+        "gain": {
+          "seed": 20261118,
+          "resamples": 10000,
+          "hypotheses": 3,
+          "families": 25,
+          "differing_families": 14,
+          "point": -0.04583333333333328,
+          "lower_percentile": 0.00833333333333334,
+          "upper_percentile": 0.9916666666666667,
+          "lower": -0.12314309383274898,
+          "upper": 0.02419354838709683,
+          "insufficient_tail": false
+        },
+        "false_reject_increase": {
+          "seed": 20261118,
+          "resamples": 10000,
+          "hypotheses": 3,
+          "families": 25,
+          "differing_families": 14,
+          "point": 0.0,
+          "lower_percentile": 0.00833333333333334,
+          "upper_percentile": 0.9916666666666667,
+          "lower": -0.13513513513513514,
+          "upper": 0.16279069767441862,
+          "insufficient_tail": false
+        },
+        "false_accept_increase": {
+          "seed": 20261118,
+          "resamples": 10000,
+          "hypotheses": 3,
+          "families": 25,
+          "differing_families": 14,
+          "point": 0.016666666666666666,
+          "lower_percentile": 0.00833333333333334,
+          "upper_percentile": 0.9916666666666667,
+          "lower": 0.0,
+          "upper": 0.06896551724137931,
+          "insufficient_tail": false
+        }
+      }
+    },
+    {
+      "backend": "flash",
+      "model": "gemini-3.8-flash",
+      "outcome": "rejected",
+      "failed": [
+        "admission"
+      ],
+      "paired": {
+        "control": {
+          "counts": {
+            "items": 100,
+            "expected_fail": 60,
+            "expected_pass": 40,
+            "detected": 57,
+            "passed": 33,
+            "false_rejects": 7,
+            "false_accepts": 3,
+            "unsure": 0,
+            "errors": 0
+          },
+          "confusion": [
+            [
+              3,
+              57,
+              0,
+              0
+            ],
+            [
+              33,
+              7,
+              0,
+              0
+            ]
+          ],
+          "balanced_accuracy": 0.8875,
+          "detected": {
+            "count": 57,
+            "total": 60,
+            "value": 0.95,
+            "low": 0.8629948352365147,
+            "high": 0.9828504978356043
+          },
+          "false_rejects": {
+            "count": 7,
+            "total": 40,
+            "value": 0.175,
+            "low": 0.0874541374603592,
+            "high": 0.31949990331787714
+          },
+          "false_accepts": {
+            "count": 3,
+            "total": 60,
+            "value": 0.05,
+            "low": 0.01714950216439568,
+            "high": 0.1370051647634852
+          },
+          "unsure": {
+            "count": 0,
+            "total": 100,
+            "value": 0.0,
+            "low": 3.469446951953614e-18,
+            "high": 0.03699349820698568
+          },
+          "errors": {
+            "count": 0,
+            "total": 100,
+            "value": 0.0,
+            "low": 3.469446951953614e-18,
+            "high": 0.03699349820698568
+          },
+          "cost_total_usd": 1.4042860000000001,
+          "cost_median_usd": 0.0135475,
+          "wall_total_ms": 2502688,
+          "wall_median_ms": 22764,
+          "repetitions": 1,
+          "self_disagreement": null
+        },
+        "treatment": {
+          "counts": {
+            "items": 100,
+            "expected_fail": 60,
+            "expected_pass": 40,
+            "detected": 57,
+            "passed": 33,
+            "false_rejects": 7,
+            "false_accepts": 3,
+            "unsure": 0,
+            "errors": 0
+          },
+          "confusion": [
+            [
+              3,
+              57,
+              0,
+              0
+            ],
+            [
+              33,
+              7,
+              0,
+              0
+            ]
+          ],
+          "balanced_accuracy": 0.8875,
+          "detected": {
+            "count": 57,
+            "total": 60,
+            "value": 0.95,
+            "low": 0.8629948352365147,
+            "high": 0.9828504978356043
+          },
+          "false_rejects": {
+            "count": 7,
+            "total": 40,
+            "value": 0.175,
+            "low": 0.0874541374603592,
+            "high": 0.31949990331787714
+          },
+          "false_accepts": {
+            "count": 3,
+            "total": 60,
+            "value": 0.05,
+            "low": 0.01714950216439568,
+            "high": 0.1370051647634852
+          },
+          "unsure": {
+            "count": 0,
+            "total": 100,
+            "value": 0.0,
+            "low": 3.469446951953614e-18,
+            "high": 0.03699349820698568
+          },
+          "errors": {
+            "count": 0,
+            "total": 100,
+            "value": 0.0,
+            "low": 3.469446951953614e-18,
+            "high": 0.03699349820698568
+          },
+          "cost_total_usd": 1.4195829999999998,
+          "cost_median_usd": 0.0123225,
+          "wall_total_ms": 2467496,
+          "wall_median_ms": 22823,
+          "repetitions": 1,
+          "self_disagreement": null
+        },
+        "items": 100,
+        "families": 25,
+        "differing_families": 0,
+        "gain": {
+          "seed": 20261118,
+          "resamples": 10000,
+          "hypotheses": 3,
+          "families": 25,
+          "differing_families": 0,
+          "point": 0.0,
+          "lower_percentile": 0.00833333333333334,
+          "upper_percentile": 0.9916666666666667,
+          "lower": 0.0,
+          "upper": 0.0,
+          "insufficient_tail": false
+        },
+        "false_reject_increase": {
+          "seed": 20261118,
+          "resamples": 10000,
+          "hypotheses": 3,
+          "families": 25,
+          "differing_families": 0,
+          "point": 0.0,
+          "lower_percentile": 0.00833333333333334,
+          "upper_percentile": 0.9916666666666667,
+          "lower": 0.0,
+          "upper": 0.0,
+          "insufficient_tail": false
+        },
+        "false_accept_increase": {
+          "seed": 20261118,
+          "resamples": 10000,
+          "hypotheses": 3,
+          "families": 25,
+          "differing_families": 0,
+          "point": 0.0,
+          "lower_percentile": 0.00833333333333334,
+          "upper_percentile": 0.9916666666666667,
+          "lower": 0.0,
+          "upper": 0.0,
+          "insufficient_tail": false
+        }
+      }
+    },
+    {
+      "backend": "terra",
+      "model": "gpt-6.1-terra",
+      "outcome": "inconclusive",
+      "failed": [
+        "admission",
+        "false_rejects"
+      ],
+      "paired": {
+        "control": {
+          "counts": {
+            "items": 100,
+            "expected_fail": 60,
+            "expected_pass": 40,
+            "detected": 57,
+            "passed": 20,
+            "false_rejects": 11,
+            "false_accepts": 1,
+            "unsure": 11,
+            "errors": 0
+          },
+          "confusion": [
+            [
+              1,
+              57,
+              2,
+              0
+            ],
+            [
+              20,
+              11,
+              9,
+              0
+            ]
+          ],
+          "balanced_accuracy": 0.725,
+          "detected": {
+            "count": 57,
+            "total": 60,
+            "value": 0.95,
+            "low": 0.8629948352365147,
+            "high": 0.9828504978356043
+          },
+          "false_rejects": {
+            "count": 11,
+            "total": 40,
+            "value": 0.275,
+            "low": 0.16108016247667337,
+            "high": 0.42834955806210573
+          },
+          "false_accepts": {
+            "count": 1,
+            "total": 60,
+            "value": 0.016666666666666666,
+            "low": 0.0029481597947862495,
+            "high": 0.08855129727590061
+          },
+          "unsure": {
+            "count": 11,
+            "total": 100,
+            "value": 0.11,
+            "low": 0.06254196357064568,
+            "high": 0.18631296503080313
+          },
+          "errors": {
+            "count": 0,
+            "total": 100,
+            "value": 0.0,
+            "low": 3.469446951953614e-18,
+            "high": 0.03699349820698568
+          },
+          "cost_total_usd": 0.9570949999999998,
+          "cost_median_usd": 0.009292,
+          "wall_total_ms": 1834471,
+          "wall_median_ms": 17569,
+          "repetitions": 1,
+          "self_disagreement": null
+        },
+        "treatment": {
+          "counts": {
+            "items": 100,
+            "expected_fail": 60,
+            "expected_pass": 40,
+            "detected": 57,
+            "passed": 21,
+            "false_rejects": 11,
+            "false_accepts": 1,
+            "unsure": 10,
+            "errors": 0
+          },
+          "confusion": [
+            [
+              1,
+              57,
+              2,
+              0
+            ],
+            [
+              21,
+              11,
+              8,
+              0
+            ]
+          ],
+          "balanced_accuracy": 0.7375,
+          "detected": {
+            "count": 57,
+            "total": 60,
+            "value": 0.95,
+            "low": 0.8629948352365147,
+            "high": 0.9828504978356043
+          },
+          "false_rejects": {
+            "count": 11,
+            "total": 40,
+            "value": 0.275,
+            "low": 0.16108016247667337,
+            "high": 0.42834955806210573
+          },
+          "false_accepts": {
+            "count": 1,
+            "total": 60,
+            "value": 0.016666666666666666,
+            "low": 0.0029481597947862495,
+            "high": 0.08855129727590061
+          },
+          "unsure": {
+            "count": 10,
+            "total": 100,
+            "value": 0.1,
+            "low": 0.0552291370606751,
+            "high": 0.17436566150491345
+          },
+          "errors": {
+            "count": 0,
+            "total": 100,
+            "value": 0.0,
+            "low": 3.469446951953614e-18,
+            "high": 0.03699349820698568
+          },
+          "cost_total_usd": 0.9956090000000002,
+          "cost_median_usd": 0.009863,
+          "wall_total_ms": 1869159,
+          "wall_median_ms": 17942,
+          "repetitions": 1,
+          "self_disagreement": null
+        },
+        "items": 100,
+        "families": 25,
+        "differing_families": 7,
+        "gain": {
+          "seed": 20261118,
+          "resamples": 10000,
+          "hypotheses": 3,
+          "families": 25,
+          "differing_families": 7,
+          "point": 0.012500000000000067,
+          "lower_percentile": 0.00833333333333334,
+          "upper_percentile": 0.9916666666666667,
+          "lower": -0.059523809523809534,
+          "upper": 0.09773992576882322,
+          "insufficient_tail": false
+        },
+        "false_reject_increase": {
+          "seed": 20261118,
+          "resamples": 10000,
+          "hypotheses": 3,
+          "families": 25,
+          "differing_families": 7,
+          "point": 0.0,
+          "lower_percentile": 0.00833333333333334,
+          "upper_percentile": 0.9916666666666667,
+          "lower": -0.12500000000000003,
+          "upper": 0.11627906976744187,
+          "insufficient_tail": false
+        },
+        "false_accept_increase": {
+          "seed": 20261118,
+          "resamples": 10000,
+          "hypotheses": 3,
+          "families": 25,
+          "differing_families": 7,
+          "point": 0.0,
+          "lower_percentile": 0.00833333333333334,
+          "upper_percentile": 0.9916666666666667,
+          "lower": 0.0,
+          "upper": 0.0,
+          "insufficient_tail": false
+        }
+      }
+    }
+  ]
+}
