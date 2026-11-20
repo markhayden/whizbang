@@ -913,6 +913,113 @@ fn remove_checked_makes_its_mask_with_sam3_under_a_scripted_judge() {
     );
 }
 
+#[test]
+#[ignore = "the model tier: just test-models, on a machine with the model installed"]
+fn a_located_retry_finds_the_phrase_inside_a_crop_with_sam3() {
+    use crate::checked::{Setup, backend, kit_of, passes};
+    use crate::located::remains_at;
+    use whizbang_core::artifact::{self, Artifact, Image, ImageRole, Origin, Step};
+    use whizbang_core::identity::{Projection, Topology};
+    use whizbang_core::spend::Amount;
+    // Plan m4, task L2: a located retry whose crop is asked of SAM 3, on the Mac's GPU,
+    // through the binary's wiring. The filler and the judge are the test's own: the
+    // judge fails the first attempt and names the loose box about the disc, as
+    // fractions of the picture of 640 by 480, and passes whatever comes next.
+    let place = [
+        LOOSE_BOX[0] / 640.0,
+        LOOSE_BOX[1] / 480.0,
+        LOOSE_BOX[2] / 640.0,
+        LOOSE_BOX[3] / 480.0,
+    ];
+    let more = format!("\n{}{}", backend("fill"), backend("judge"));
+    let tier = Tier::with("model-tier-located", SAM3, &more);
+    let (kit, kind) = kit_of(&Setup::answering(vec![remains_at(place), passes()]));
+    let mut kinds = wiring::kinds(&tier.worker);
+    kinds.register(kind).unwrap();
+    let over = Over::nothing()
+        .config(Some(&tier.config))
+        .kinds(kinds)
+        .pack(tier.worker.clone())
+        .installed(Models::shipped().unwrap().flag(Some(&models_dir())))
+        .expect("the models directory is opened");
+    let origin = Origin::new(Step::new("fixture", "1")).unwrap();
+    let image = Image::new(
+        FIXTURE.to_vec(),
+        Projection::Flat,
+        Topology::Bounded,
+        ImageRole::Picture,
+        origin,
+        &DecodeLimits::default(),
+    )
+    .unwrap();
+    let store = Store::open(&tier.root, Arc::new(RealFs)).unwrap();
+    let mut publication = store.begin().unwrap();
+    let id = artifact::put(&mut publication, &Artifact::from(image)).unwrap();
+    publication.publish().unwrap();
+    whizbang_core::spend::reset(&store, Amount::new(1_000_000).unwrap(), 1).unwrap();
+    drop(store);
+    let executor = tier.runner(&over);
+    let started = Instant::now();
+    let asked = Call::new("remove_checked")
+        .argument("prompt", whizbang_core::contract::Value::text(PHRASE))
+        .input("image", id);
+    let finished = executor.submit(&asked).unwrap();
+    let took = started.elapsed();
+    assert_eq!(
+        finished.outcome().name(),
+        "completed",
+        "{:?}",
+        finished.outcome()
+    );
+    let run = finished.run().as_str().to_owned();
+    drop(executor);
+    // The retry cut one crop, and SAM 3 found the phrase inside it: the crop gave a
+    // mask, which was carried onto the picture.
+    let looped = tier.record(&run);
+    let second = &looped["attempts"]["list"][1];
+    assert_eq!(second["changed"]["change"], "located", "{second}");
+    let crops = second["changed"]["crops"].as_array().unwrap();
+    assert_eq!(crops.len(), 1);
+    assert!(
+        crops[0]["mask"].is_string(),
+        "nothing was found in the crop"
+    );
+    // The crop is the loose box, a twentieth wider each way: 264 pixels each way, cut
+    // from the picture pixel for pixel, and asked of the model on the GPU.
+    let runs = second["runs"].as_array().unwrap();
+    let asked_of = |at: usize| tier.record(runs[at].as_str().unwrap());
+    let (view, segment, carry) = (asked_of(0), asked_of(1), asked_of(2));
+    assert_eq!(view["asked"]["action"], "view");
+    assert_eq!(segment["asked"]["action"], "segment");
+    assert_eq!(carry["asked"]["action"], "carry");
+    let (device, _) = device_and_installation(&segment);
+    assert_eq!(device, "mps");
+    // The disc was in the first attempt's mask already. When what the model finds in
+    // the crop adds no pixel to it, the retry's mask is the one before and is not
+    // filled a second time; when it adds any, the retry is filled and checked, and the
+    // judge's second answer passes it.
+    let (_, fills, checks) = kit.requests();
+    match second["verdict"].as_str() {
+        Some(verdict) => {
+            assert_eq!((verdict, fills, checks), ("pass", 2, 2));
+            assert_eq!(looped["attempts"]["kept"], 2);
+        }
+        None => {
+            assert_eq!(
+                second["unchecked"],
+                "its shaped mask is the one before it, and nothing was filled"
+            );
+            assert_eq!((fills, checks), (1, 1));
+            assert_eq!(looped["attempts"]["kept"], 1);
+        }
+    }
+    eprintln!(
+        "remove_checked, located: run {run}, attempt 2 {}, {} s",
+        second["verdict"].as_str().unwrap_or("not filled"),
+        seconds(took)
+    );
+}
+
 /// The scene of `segment`'s record (`docs/reference/tools/segment.md`, plan m3, task D1):
 /// 192 by 128, a grey ground, two red discs (radius 24 at (56, 64), radius 14 at
 /// (150, 32)) and a blue square from (104, 72) to (152, 112), drawn by a program. The

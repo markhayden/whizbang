@@ -2068,6 +2068,9 @@ impl RunRecord {
         let findings = findings.map(Found::of).filter(Found::holds);
         let attempts = (!attempts.is_empty() || ended.is_some()).then(|| {
             let (kept, ended) = ended.unwrap_or((None, ATTEMPTS_NOT_ENDED.to_owned()));
+            // A run that did not complete committed nothing: whatever it said before
+            // it ended, no attempt of its was kept.
+            let kept = kept.filter(|_| status == Status::Completed);
             Attempted {
                 list: attempts,
                 kept,

@@ -2,6 +2,9 @@
 
 Status: accepted.
 Date: 2026-11-20
+Amended: 2026-11-20, with plan m4's task L2: the located retry and what it calls ("What it
+calls", "An attempt", "The located retry", "The plan", "One budget", "The record",
+"Cancellation"), the action `carry`, and one more alternative.
 Spec: section 3 ("Primitives, recipes and loops", "Nested calls", "Cancellation", "What a
 run publishes"), section 6 ("Spend"), section 7 ("Bounded check and retry: Kept, as nested
 calls"), section 16 row 4; plan m4 (`docs/plans/m4-the-loop-and-a-release.md`), task L1,
@@ -17,8 +20,10 @@ removal, what is handed back when every attempt fails, or what happens when no j
 ready. Rascal decided each (its ADR 0023, and `crates/rascal-mask/src/heal.rs`, `retry.rs`
 and `checker/` at the commit `docs/sources.toml` pins); the old repos are reference, never
 authority, so the plan put each to the owner or to its review rounds, and this record
-states what was built. Nothing is ported: the loop is new code over what whizbang already
-has, and rascal's rules are kept where the plan kept them.
+states what was built. The loop is new code over what whizbang already has, and rascal's
+rules are kept where the plan kept them. Two things are ported, with the located retry:
+the rule of a place and its padded cut (`retry.rs`, `padded`), and the carry of a mask
+from a crop onto its picture (`crates/rascal-ops/src/invert.rs`, `map_plane_to_parent`).
 
 Three things the build already had decide the shape. A recipe file is a straight sequence
 (ADR 0033), so a loop is code. The recipe `remove_prompt` fills before it hands anything
@@ -40,16 +45,20 @@ and states as its needs what one attempt of theirs needs: `remove_prompt`'s segm
 filler, and `source-fidelity`'s judge with the sixteen requests one check may send. Its
 plan states the rest.
 
-**What it calls.** Two actions, frozen when it starts (`Context::freeze_steps`): the
-shipped recipe `remove_prompt`, and squint's recipe `source-fidelity`. Nothing else, and
-nothing under either: the check is given its job, its two images and the judge's name, and
-no override of a step, so the tools the judge is offered and its settings are the
-recipe's own. What a check needs reaches it as the arguments of a nested call.
+**What it calls.** Six actions, frozen when it starts (`Context::freeze_steps`). Two make
+and judge every attempt: the shipped recipe `remove_prompt`, and squint's recipe
+`source-fidelity`. Four more make the found mask of a located retry: `view`, `segment`,
+`carry` and the shipped recipe `mask_rect`. Nothing else, and nothing under any: the check
+is given its job, its two images and the judge's name, and no override of a step, so the
+tools the judge is offered and its settings are the recipe's own. What a check needs
+reaches it as the arguments of a nested call. The loop refuses to be built over a
+registry that lacks one of the six.
 
 **An attempt** is one removal with the check of its result, in at most four calls:
 
 - *Find*, in the first attempt alone: `remove_prompt` until its step `select`. One mask
-  comes back, the found mask.
+  comes back, the found mask. A located retry makes its own found mask, from the one
+  before ("The located retry"); a wider one keeps it.
 - *Shape*: `remove_prompt` from `grow` until `feather`, given the found mask. The shaped
   mask comes back, the one a fill would paint.
 - *Compare*: a retry whose shaped mask has the identity of the attempt's before it is not
@@ -59,8 +68,11 @@ recipe's own. What a check needs reaches it as the arguments of a nested call.
   was given as the source.
 
 Every stretch is given the picture the loop was given, so no retry paints over a fill.
-Each call is labelled in the record with its attempt and its stretch (`a1_find`,
-`a1_shape`, `a1_fill`, `a1_check`, `a2_shape`, …).
+Each stretch is labelled in the record with its attempt (`a1_find`, `a1_shape`, `a1_fill`,
+`a1_check`, `a2_select`, `a2_shape`, …). The calls that look into a place have no label: a
+record holds at most 32 labelled steps, and two located retries of eight places make 48
+such calls. They are steps of the loop's record by their action, in order, and are listed
+among their attempt's runs.
 
 **The job** is written from the phrase by a fixed template, `JOB_TEMPLATE`, whose digest
 every run notes as the setting `job.template` (`job/1`, ADR 0028). Its brief says what was
@@ -89,11 +101,54 @@ the list. So a `fail` retries only on a confident report that the named thing re
 an `unsure` never enlarges a mask: narrower than rascal, which retried on an `unsure` that
 named a place (the plan, "What the orchestrator decided").
 
-**A retry, here,** is the wider mask: the shape stretch run again from the same found mask
-with its step `grow` given twice the `px` the recipe file states (the runner's override,
-`set`), once in a run. A row 2 finding that cites a place is treated as one that cites
-none until the located retry lands (plan m4, task L2), which changes how the next
-attempt's found mask is made and nothing else here.
+**A retry** is one of two kinds, chosen by the places of the row 2 findings and by nothing
+else. When at least one cites a usable place, the retry is located. When none does, it is
+the wider mask: the shape stretch run again from the same found mask with its step `grow`
+given twice the `px` the recipe file states (the runner's override, `set`), once in a
+run. When some cite places and some do not, the retry is located, from those that do.
+Either kind may follow the other; the wider mask widens the found mask of the attempt
+before it, whichever kind made that.
+
+**The located retry** (plan m4, task L2) changes how the attempt's found mask is made and
+nothing else: the shape, the comparison, the fill and the check are the same stretches of
+the same recipe, with no setting of a step changed.
+
+- *Which places.* Those of the row 2 findings alone, in the findings' order, each once,
+  and the first eight. A finding of any other row never gives a place: a verdict with a
+  row 1 finding has ended the attempts already, and the place of a row 3, 4 or 5 finding
+  beside a row 2 finding is not read. A place is usable when it is on the candidate the
+  check was shown (that attempt's fill), covers the centre of at least one pixel, and its
+  cut is at most 1,024 pixels on a side. A polygon is used by the box around it. A place
+  that is not usable is no place, and the finding that cites it is one that cites none.
+- *The cut.* The place's own pixels are those whose centres are inside its box. The cut is
+  that box widened by a twentieth of its size on each side (rascal's crop pad), snapped
+  outward to whole pixels, held inside the picture, and widened to eight pixels where it
+  is less, which is the least `view` cuts. It is whole numbers of pixels, worked out by
+  the loop; `view` is asked for it in fractions that lie half a pixel inside each edge,
+  so that its outward snapping cuts exactly these pixels on every machine.
+- *For each place, three calls.* `view` cuts the picture the loop was given, never the
+  fill the place was seen on; they are the same size. `segment` is asked the same phrase
+  inside the crop, with the segmenter the call chose, for at most four instances. Then
+  `carry` puts each mask found onto the picture, from the cut's corner; or, when nothing
+  was found, the recipe `mask_rect` makes the place's own pixels a mask: the place joins
+  as itself, because the judge said with confidence that the named thing is there and the
+  table has held that it said so of nothing that must be preserved.
+- *The join.* `remove_prompt` from `select` until `select`, given the found mask of the
+  attempt before and the new masks in place of what its step `segment` would have found:
+  at most 1 + 8 × 4 = 33 of the 64 `select` takes. What comes back is the one found mask
+  of this attempt. So the loop holds one found mask, never a list, and the third attempt
+  starts from the second's in the same way.
+
+**`carry`** is a new primitive of rascal's, the form in which the carry of a mask from a
+crop to its picture is offered to the loop and to anyone else: masks on a crop, the crop,
+the picture, and the crop's corner on the picture in whole pixels; the same masks on the
+picture, empty outside the crop. It is the "explicit, checked rebind" of the spec's
+section 3: it looks at both pictures and refuses a crop whose pixels are not the
+picture's there, so the corner a caller gives cannot place a mask where the crop was not
+cut. `invert` takes a mask on a crop of its image the same way, which is where rascal
+offered the carry (its `to`). A crop that `view` scaled down is refused by the comparison,
+which is why a place with a cut over 1,024 pixels is not looked into. Its record is
+`docs/reference/tools/carry.md`.
 
 **What ends the attempts:** a verdict of `pass`; the last attempt the plan allows; a
 verdict the table allows no retry on; a wider mask already used once; a check that could
@@ -102,7 +157,10 @@ made or filled, which leaves the attempts before it as they stand.
 
 **The plan** (ADR 0004, "A call's plan") is how many attempts the call may make and
 whether it checks, with the reason. For each attempt the bound holds one request of the
-filler and every request one check may send its judge; the segmenter is asked once.
+filler and every request one check may send its judge. The segmenter is asked once to
+find, and once for each place a retry may look into: the plan states its requests as
+1 + 8 × (the attempts allowed − 1), and the bound holds them, which costs nothing with a
+local segmenter and will with one that has a price.
 
 - With a judge ready, the plan is the most attempts, up to the number asked, whose whole
   bound is within the config's cap of one call; when that is fewer than asked, the reason
@@ -125,8 +183,10 @@ when the attempt ended. A request charged over its bound puts the loop in debt (
 0016), and its next call is then refused for want of allowance: the loop starts no
 further call, keeps the attempts that completed, and ends with the reason "the budget ran
 out after attempt N"; before the first fill has completed it ends as an error of the type
-`budget`, with the refusal's own sentence. Three attempts at their largest, each check
-dispatching all 32 tool calls a check may, are 133 runs of the 1,024 a tree may hold.
+`budget`, with the refusal's own sentence. Three attempts at their largest, two of them
+located retries of eight places and four masks each, are 60 calls of the loop's own, of
+the 256 one run may make, and 89 runs; with each check dispatching all 32 tool calls a
+check may, 185 runs of the 1,024 a tree may hold. A test makes that run and counts it.
 
 **What is handed back.** The loop completes whenever a fill completed, and commits one
 attempt's picture and mask as its own. The attempt kept is the first that passed; failing
@@ -148,12 +208,20 @@ why not.
 made in order, its verdict or the reason it has none, what its retry changed and what its
 requests settled; which was kept; and why the attempts ended. An attempt that was begun
 is listed, one that made no fill among them: its reason says so, and it is never the one
-kept.
+kept. What a located retry changed is its crops, at most eight, as `run/6` holds them:
+each crop by its identity, with one mask or none. The mask is the first the crop gave,
+as it was carried onto the picture; none means the place joined as itself. Where a crop
+sits on the picture is in the record of the `view` run that cut it, and every mask a crop
+gave is an output of the `carry` run after it, both among the attempt's runs. A retry
+whose found mask could not be made lists the runs it made and no crops.
 
 **Cancellation.** The loop looks at its signal before each call and starts no other once
 it is set; its running child is under its signal. A cancelled loop commits nothing. The
 attempts that completed are in its record, and their pictures are names of the loop's own
-tree, which no later call can take (ADR 0008).
+tree, which no later call can take (ADR 0008). The loop takes no last look at its signal
+before it says which attempt it kept: the record of a run that did not complete says that
+none was kept, whatever the run said, and that is held where every record is made (ADR
+0005), for this loop and any other.
 
 **Levels.** The loop, squint's recipe, its step `check` and a tool the judge calls are
 four, which is every level there is. So a recipe that names a loop as a step is refused
@@ -171,8 +239,8 @@ those of `whizbang squint check`: a verdict does not change one.
   judge never blocks a removal unless the caller asks that it should.
 - Whatever a retry is allowed to do is decided in one function over data, which the next
   task extends without touching the rule.
-- The loop is tied to the shipped recipe's step names (`select`, `grow`, `feather`,
-  `fill`) and to the `px` its step `grow` states. It refuses to be built over a recipe
+- The loop is tied to the shipped recipe's step names (`segment`, `select`, `grow`,
+  `feather`, `fill`) and to the `px` its step `grow` states. It refuses to be built over a recipe
   that lacks them, so a change to the recipe file is caught when the registry is built.
 - The check runs as the recipe ships it. A change to what `source-fidelity` measures first
   or offers its judge changes what the loop's check does, with no change here.
@@ -191,6 +259,16 @@ those of `whizbang squint check`: a verdict does not change one.
   paid for before its mask was seen, and an unchanged retry mask would be filled twice.
 - **Retry on an `unsure` that names a place,** as rascal did. Turned down by the plan's
   reviews: an `unsure` does not say the named thing is there.
+- **Give `select` the masks on their crops, or have the loop place them itself.** Turned
+  down: an image names no parent (ADR 0001), so something must say where a crop sits and
+  be held to it, and a run can hand a nested call only an artifact that a call of its own
+  committed. One action that compares the two pictures does both.
+- **Record every mask a crop gave.** Not done: `run/6` holds one mask for a crop, and the
+  record's version changes once (plan m4, task K1). The others are outputs of the
+  `carry` run the attempt lists.
+- **Compare the found masks, and end the attempts when a located retry added no pixel.**
+  Not done here: the comparison of the shaped masks catches it one stretch later, and the
+  plan keeps that comparison as it was (`docs/carry-over.md`).
 - **Refuse when the cap covers fewer attempts than asked.** Turned down: the spec's spend
   control "errs toward letting work run", and the plan says what it allows before it
   starts.

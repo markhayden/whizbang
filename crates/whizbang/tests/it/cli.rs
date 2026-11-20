@@ -3556,7 +3556,7 @@ fn rascal_remove_checked_prints_its_plan_each_attempt_and_whether_the_result_was
     assert_eq!(
         said,
         [
-            "plan: 1 of 1 attempts asked, checked; fill 1; judge 16",
+            "plan: 1 of 1 attempts asked, checked; segment 1; fill 1; judge 16",
             "remove_checked: attempt 1 of 1 starts",
             "remove_checked: attempt 1 ended: fail",
         ]
@@ -3665,4 +3665,68 @@ fn rascal_remove_checked_prints_its_plan_each_attempt_and_whether_the_result_was
     assert_eq!(required.code, Some(1), "{}", required.out);
     assert!(required.err.contains("--env-file"), "{}", required.err);
     assert!(!required.err.contains("plan:"), "{}", required.err);
+}
+
+#[test]
+fn rascal_remove_checked_retries_inside_a_named_place_under_a_scripted_judge() {
+    use crate::checked::{Looped, passes};
+    use crate::located::{PLACE, finding, remains_at};
+    // Plan m4, task L2: the loop through the door its command goes through, in a store
+    // on the real disk, under a judge that fails the first attempt and names where the
+    // thing still is, and passes the second.
+    let setup = finding(vec![remains_at(PLACE), passes()]).on_disk();
+    let world = Looped::new("cli-loop-located", &setup);
+    let asked = door::RemoveCheckedAsked {
+        image: &world.image,
+        prompt: crate::checked::PHRASE,
+        protect: None,
+        backend: None,
+        filler: None,
+        judge: None,
+        attempts: None,
+        check: None,
+        request_id: None,
+    };
+    let mut said = Vec::new();
+    let mut say = |line: &str| said.push(line.to_owned());
+    let engine = world.engine();
+    let printed = door::remove_checked(&engine, &asked, &world.root, &mut say).unwrap();
+    drop(engine);
+    // The plan states what a retry may ask the segmenter: once to find, and once for
+    // each of the eight places each of the two retries may look into.
+    assert_eq!(
+        said,
+        [
+            "plan: 3 of 3 attempts asked, checked; segment 17; fill 3; judge 48",
+            "remove_checked: attempt 1 of 3 starts",
+            "remove_checked: attempt 1 ended: fail",
+            "remove_checked: attempt 2 of 3 starts",
+            "remove_checked: attempt 2 ended: pass",
+        ]
+    );
+    let lines: Vec<&str> = printed.lines().collect();
+    assert_eq!(
+        lines[1..5],
+        [
+            "attempts: 2 made, attempt 2 kept",
+            "ended: attempt 2 passed",
+            "checked: yes",
+            "verdict: pass",
+        ]
+    );
+    // One crop was cut, the segmenter was asked inside it, and nothing more was sent
+    // than the two fills and the two checks.
+    assert_eq!(world.kit.crops(), [(18, 18)]);
+    assert_eq!(world.kit.requests(), (2, 2, 2));
+    // `runs show` says what the retry did: the real binary, reading the store.
+    let run = lines[0].split(' ').nth(1).unwrap();
+    let shown = whizbang(&["runs", "show", run], &world.root);
+    assert_eq!(shown.code, Some(0), "{}", shown.err);
+    assert!(
+        shown
+            .out
+            .contains("  attempt 2\tpass\t1 crops looked into\t7 runs\t"),
+        "{}",
+        shown.out
+    );
 }

@@ -3,12 +3,13 @@
 //! what a phrase names from a picture, has squint check the result, and tries again a
 //! bounded number of times, every call a nested call on the one reservation of its run.
 //!
-//! **An attempt** is one removal with the check of its result, made of calls of two
-//! actions and no other: the shipped recipe `remove_prompt`, run in stretches (ADR 0033,
-//! "A run from a step"), and squint's checking recipe `source-fidelity`.
+//! **An attempt** is one removal with the check of its result, made of calls of the
+//! shipped recipe `remove_prompt`, run in stretches (ADR 0033, "A run from a step"), and
+//! of squint's checking recipe `source-fidelity`; a located retry also calls `view`,
+//! `segment`, `carry` and the recipe `mask_rect`, to make its found mask.
 //!
 //! - *Find* (the first attempt only): `remove_prompt` until its step `select`. The loop
-//!   is handed one mask, the found mask.
+//!   is handed one mask, the found mask. A located retry makes its own ([`located`]).
 //! - *Shape*: `remove_prompt` from `grow` until `feather`, given the found mask. The loop
 //!   is handed the shaped mask, the one a fill would paint.
 //! - *Compare*: a retry whose shaped mask has the identity of the attempt's before it
@@ -24,10 +25,15 @@
 //! 0004, "A call's plan"): how many attempts it may make, the first included, and
 //! whether it checks, with the reason. The run reads it and never works it out again.
 //!
-//! **What may enlarge a mask** is one table, [`table`]. **A retry**, here, is the wider
-//! mask: the shape stretch run again from the same found mask with twice the `px` of its
-//! step `grow`, once in a run. The retry aimed at the place a finding named is the next
-//! task's (plan m4, task L2); until then a finding's place is not used.
+//! **What may enlarge a mask** is one table, [`table`]. **A retry** is one of two kinds
+//! (plan m4, task L2). *Located*, when a finding the table allows a retry on names a
+//! place on the attempt's picture: the picture the loop was given is cut to each place
+//! with `view`, `segment` is asked the same phrase inside the crop, each mask it gives is
+//! carried onto the picture with `carry`, a place where nothing is found joins as itself
+//! (`mask_rect`), and `remove_prompt` from `select` until `select` joins them to the
+//! found mask of the attempt before: the found mask of this attempt ([`located`]).
+//! *Wider*, when no such finding names a usable place: the shape stretch run again from
+//! the same found mask with twice the `px` of its step `grow`, once in a run.
 //!
 //! **What is handed back.** The loop completes whenever a fill completed, and commits one
 //! attempt's picture and mask as its own ([`kept`]), with that attempt's verdict and
@@ -37,7 +43,7 @@
 use serde_json::{Value as Json, json};
 use whizbang_core::artifact::{self, ArtifactId, ArtifactType};
 use whizbang_core::capability::PHRASE_LIMIT;
-use whizbang_core::contract::record::{ATTEMPT_TEXT_LIMIT, Attempt, Changed, Decision};
+use whizbang_core::contract::record::{ATTEMPT_TEXT_LIMIT, Attempt, Changed, Crop, Decision};
 use whizbang_core::contract::{
     Action, ActionDescriptor, Argument, Call, CallError, Capability, Context, Failure, Findings,
     Finished, InputPort, Kind, Outcome, OutputPort, PLAN_WHY_LIMIT, Plan, Planning, PreparedCall,
@@ -46,7 +52,7 @@ use whizbang_core::contract::{
 use whizbang_core::identity::{DecodeLimits, Digest};
 use whizbang_core::recipe::{FROM, Recipe, SET, UNTIL, Written, from_port, until_port};
 
-use crate::operation;
+use crate::{carry, operation, segment};
 
 /// The action's name.
 pub const NAME: &str = "remove_checked";
@@ -64,7 +70,12 @@ pub const CHECK: &str = "source-fidelity";
 /// says nothing: rascal's limit, kept.
 pub const ATTEMPTS_MAX: u32 = 3;
 
+/// What a located retry looks into a place with, and what joins a place as itself.
+pub const VIEW: &str = "view";
+pub const ITSELF: &str = "mask_rect";
+
 /// The steps of [`REMOVE`] the stretches are named by.
+const SEGMENT: &str = "segment";
 const SELECT: &str = "select";
 const GROW: &str = "grow";
 const FEATHER: &str = "feather";
@@ -204,6 +215,154 @@ pub mod table {
     }
 }
 
+/// From the places findings named to what a located retry cuts (plan m4, task L2, items
+/// 2 and 3; ADR 0039, "The located retry"): whole numbers of pixels of the picture the
+/// loop was given, which is the size of the picture a place is on.
+///
+/// The rule of a place is rascal's (`crates/rascal-mask/src/retry.rs`, `padded` and the
+/// crop of a place, at the commit `docs/sources.toml` pins): the place's own pixels, and
+/// a cut around them widened by [`PAD`] of its size on each side. Two things are added,
+/// because the cut is made by `view`: a cut is at least [`CUT_MIN`] pixels each way, and
+/// a place whose cut would be over [`CUT_MAX`] on a side is not used, since `view` would
+/// scale it down and a mask on a scaled crop has no exact place on the picture.
+pub mod located {
+    use whizbang_core::contract::FoundAt;
+    use whizbang_core::identity::Digest;
+
+    /// The most places one retry looks into: rascal's bound, and the most a findings
+    /// document holds.
+    pub const PLACES_MAX: usize = 8;
+
+    /// The most instances `segment` is asked for inside one place.
+    pub const INSTANCES_MAX: u32 = 4;
+
+    /// How far a cut reaches past its place on each side, as a share of the place's
+    /// size that way: rascal's crop pad.
+    pub const PAD: f64 = 0.05;
+
+    /// The least `view` cuts on a side, in pixels.
+    pub const CUT_MIN: u32 = 8;
+
+    /// The most `view` shows pixel for pixel on a side: a longer cut is scaled down.
+    pub const CUT_MAX: u32 = 1024;
+
+    /// One place a located retry uses: left, top, right and bottom, in whole pixels,
+    /// the right and the bottom one past the last.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct Place {
+        /// The place's own pixels: those whose centres are inside what was cited.
+        pub own: [u32; 4],
+        /// What is cut from the picture to look for the named thing in.
+        pub cut: [u32; 4],
+    }
+
+    impl Place {
+        /// The cut as `view` is asked for it, in fractions of the picture: each edge
+        /// half a pixel inside the cut, so that `view`, which snaps outward to whole
+        /// pixels, cuts these pixels on every machine.
+        pub fn fractions(&self, width: u32, height: u32) -> [f64; 4] {
+            let [left, top, right, bottom] = self.cut.map(f64::from);
+            let (width, height) = (f64::from(width), f64::from(height));
+            [
+                (left + 0.5) / width,
+                (top + 0.5) / height,
+                (right - 0.5) / width,
+                (bottom - 0.5) / height,
+            ]
+        }
+    }
+
+    /// The pixels, from `low` to one past `high`, whose centres are at or past the
+    /// fraction `from` of `size` and before the fraction `to`.
+    fn centres(from: f64, to: f64, size: u32) -> (u32, u32) {
+        let edge = |fraction: f64| {
+            let at = (fraction * f64::from(size) - 0.5).ceil();
+            at.clamp(0.0, f64::from(size)) as u32
+        };
+        (edge(from), edge(to))
+    }
+
+    /// One side of a cut: the place's side widened by [`PAD`] of it each way, snapped
+    /// outward, held inside the picture, and then to at least [`CUT_MIN`] pixels.
+    fn side(low: u32, high: u32, size: u32) -> Option<(u32, u32)> {
+        let reach = PAD * f64::from(high - low);
+        let near = (f64::from(low) - reach).floor().max(0.0) as u32;
+        let far = ((f64::from(high) + reach).ceil() as u32).min(size);
+        if far - near >= CUT_MIN {
+            return Some((near, far));
+        }
+        if size < CUT_MIN {
+            return None;
+        }
+        let near = near.saturating_sub((CUT_MIN - (far - near)) / 2);
+        let far = (near + CUT_MIN).min(size);
+        Some((far - CUT_MIN, far))
+    }
+
+    /// The box a place cites, in fractions: its own, or the box around its polygon.
+    fn boxed(place: &FoundAt) -> Option<[f64; 4]> {
+        if let Some(sides) = place.boxed {
+            return Some(sides);
+        }
+        let points = place.polygon.as_ref()?;
+        let over = |axis: usize, least: bool| {
+            let each = points.iter().map(|point| point[axis]);
+            match least {
+                true => each.fold(f64::INFINITY, f64::min),
+                false => each.fold(f64::NEG_INFINITY, f64::max),
+            }
+        };
+        Some([over(0, true), over(1, true), over(0, false), over(1, false)])
+    }
+
+    /// The places a located retry uses, of those the findings the table allows a retry
+    /// on cited, in their order: each on `candidate`, the picture the check was shown;
+    /// each once; each covering a pixel of a picture `width` by `height`, with a cut
+    /// `view` shows pixel for pixel; and the first [`PLACES_MAX`] of them. A polygon is
+    /// used by the box around it. A place that is none of this is no place: a finding
+    /// that cites only such is one that cites none.
+    pub fn usable(
+        places: &[Option<FoundAt>],
+        candidate: Digest,
+        width: u32,
+        height: u32,
+    ) -> Vec<Place> {
+        let mut used: Vec<Place> = Vec::new();
+        for place in places.iter().flatten() {
+            if place.image != candidate {
+                continue;
+            }
+            let Some([left, top, right, bottom]) = boxed(place) else {
+                continue;
+            };
+            if ![left, top, right, bottom]
+                .iter()
+                .all(|side| side.is_finite())
+            {
+                continue;
+            }
+            let ((x0, x1), (y0, y1)) = (centres(left, right, width), centres(top, bottom, height));
+            if x0 >= x1 || y0 >= y1 {
+                continue;
+            }
+            let (Some(across), Some(down)) = (side(x0, x1, width), side(y0, y1, height)) else {
+                continue;
+            };
+            if across.1 - across.0 > CUT_MAX || down.1 - down.0 > CUT_MAX {
+                continue;
+            }
+            let place = Place {
+                own: [x0, y0, x1, y1],
+                cut: [across.0, down.0, across.1, down.1],
+            };
+            if !used.contains(&place) && used.len() < PLACES_MAX {
+                used.push(place);
+            }
+        }
+        used
+    }
+}
+
 /// One line of at most `limit` characters, with no control character and no space at
 /// either end: what a plan's reason and an attempt's reason may be.
 fn line(text: &str, limit: usize) -> String {
@@ -243,35 +402,58 @@ fn unbuilt(why: &str) -> Unbuilt {
 
 impl RemoveChecked {
     /// The loop over the actions of `registry`, which must hold the recipes it calls:
-    /// [`REMOVE`], with the steps the stretches are named by, and [`CHECK`]. What the
-    /// loop needs is what one attempt of theirs needs; its plan states the rest.
-    pub fn new(registry: &Registry) -> Result<RemoveChecked, Unbuilt> {
-        RemoveChecked::over(registry, crate::recipes::REMOVE_PROMPT)
+    /// [`REMOVE`], with the steps the stretches are named by, [`CHECK`], and [`ITSELF`];
+    /// and over `primitives`, which must hold what a located retry calls beside them:
+    /// `view`, `segment` and `carry`. What the loop needs is what one attempt of the
+    /// two recipes needs; its plan states the rest.
+    pub fn new(registry: &Registry, primitives: &Registry) -> Result<RemoveChecked, Unbuilt> {
+        RemoveChecked::over(registry, primitives, crate::recipes::REMOVE_PROMPT)
     }
 
     /// The same, over this text of the recipe `remove_prompt`: what [`RemoveChecked::new`]
     /// is given the shipped text for, and a test an edited one.
-    pub fn over(registry: &Registry, text: &str) -> Result<RemoveChecked, Unbuilt> {
+    pub fn over(
+        registry: &Registry,
+        primitives: &Registry,
+        text: &str,
+    ) -> Result<RemoveChecked, Unbuilt> {
         let (Some(remove), Some(check)) = (registry.get(REMOVE), registry.get(CHECK)) else {
             return Err(unbuilt(
                 "the recipes remove_prompt and source-fidelity are not both actions of this build",
             ));
         };
+        // What a located retry calls beside them.
+        if [VIEW, segment::NAME, carry::NAME]
+            .iter()
+            .any(|action| primitives.get(action).is_none())
+            || registry.get(ITSELF).is_none()
+        {
+            return Err(unbuilt(
+                "view, segment, carry and mask_rect are not all actions of this build",
+            ));
+        }
         // The stretches are named by steps of the recipe as it is shipped, and the
         // wider mask is twice what its step `grow` is given.
         let recipe = Recipe::read(text).map_err(|error| unbuilt(&error.to_string()))?;
         let steps: Vec<&str> = recipe.steps.iter().map(|step| step.id.as_str()).collect();
-        if [SELECT, GROW, FEATHER, FILL]
+        if [SEGMENT, SELECT, GROW, FEATHER, FILL]
             .iter()
             .any(|step| !steps.contains(step))
         {
             return Err(unbuilt(
-                "remove_prompt has not the steps select, grow, feather and fill",
+                "remove_prompt has not the steps segment, select, grow, feather and fill",
             ));
         }
         // The stretches are run as neighbours: a step between two of them would be run
         // by neither, or by both.
         let at = |id: &str| steps.iter().position(|step| *step == id);
+        // A located retry joins its masks by running `select` alone, given them as
+        // what `segment` found.
+        if at(SEGMENT) != Some(0) || at(SELECT) != Some(1) {
+            return Err(unbuilt(
+                "the steps segment and select of remove_prompt are not its first two",
+            ));
+        }
         if at(GROW) != at(SELECT).map(|select| select + 1) {
             return Err(unbuilt(
                 "the step grow of remove_prompt does not come directly after select",
@@ -416,8 +598,10 @@ impl Action for RemoveChecked {
 
     /// The plan: the most attempts, up to the number asked, whose whole bound is within
     /// the cap of one call, each one request of the filler and one run of the check,
-    /// with the segmenter asked once; or one attempt, unchecked, with the reason, when
-    /// no judge is ready or the cap covers no check, unless the check is required.
+    /// with the segmenter asked once in the first attempt and once for each place a
+    /// retry may look into ([`located::PLACES_MAX`]); or one attempt, unchecked, with
+    /// the reason, when no judge is ready or the cap covers no check, unless the check
+    /// is required.
     fn plan(&self, planning: &Planning<'_>) -> Option<Plan> {
         let asked = asked_attempts(planning);
         let mode = match planning.argument("check") {
@@ -456,10 +640,20 @@ impl Action for RemoveChecked {
         {
             return Some(unchecked(&format!("no judge is ready: {why}")));
         }
-        // How many checked attempts the cap of one call covers.
+        // What the attempts send the segmenter together: what the first sends to find,
+        // and each retry once for each place it may look into.
+        let finds = (planning.capability(Capability::Segment)).map_or(1, |able| able.requests());
+        let segments = |attempts: u32| {
+            let retries = u64::from(attempts.saturating_sub(1));
+            finds.saturating_add(retries.saturating_mul(located::PLACES_MAX as u64))
+        };
+        // How many checked attempts the cap of one call covers. `segment` is the bound
+        // of what the first attempt sends, so one request's is that over `finds`.
         let whole = |attempts: u32| {
             let each = fill.saturating_add(check);
-            segment.saturating_add(each.saturating_mul(u64::from(attempts)))
+            let one = segment / finds.max(1);
+            (one.saturating_mul(segments(attempts)))
+                .saturating_add(each.saturating_mul(u64::from(attempts)))
         };
         let covered = match planning.cap() {
             None => asked,
@@ -475,6 +669,7 @@ impl Action for RemoveChecked {
         // and refused as any call over its cap is.
         let allowed = covered.max(1);
         let plan = Plan::new()
+            .sending(Capability::Segment, segments(allowed))
             .sending(Capability::Fill, fills.saturating_mul(u64::from(allowed)))
             .sending(Capability::Judge, checks.saturating_mul(u64::from(allowed)))
             .attempts(asked, allowed, true);
@@ -566,6 +761,36 @@ impl Stopped {
     }
 }
 
+/// What the next attempt's retry changes.
+enum Retry {
+    /// The shape stretch's `grow` is given this `px`.
+    Wider(f64),
+    /// The found mask gains what is found in these places.
+    Located(Vec<located::Place>),
+}
+
+/// The identity committed at a port of a call that completed, the first when there
+/// are several.
+fn one(finished: &Finished, port: &str) -> Option<ArtifactId> {
+    at(finished, port).first().copied()
+}
+
+/// Every identity committed at a port of a call that completed, in order.
+fn at(finished: &Finished, port: &str) -> Vec<ArtifactId> {
+    let outputs = finished.outcome().outputs().iter();
+    (outputs.filter(|output| output.port() == port))
+        .map(|output| output.id())
+        .collect()
+}
+
+/// A call that completed and handed back nothing at a port it was to.
+fn missing(action: &str, port: &str) -> Stopped {
+    Stopped::Call {
+        kind: "output".to_owned(),
+        message: format!("a call of {action} handed back no {port}"),
+    }
+}
+
 /// One run of the loop.
 struct Looping<'a> {
     action: &'a RemoveChecked,
@@ -647,8 +872,16 @@ impl<'a> Looping<'a> {
     }
 
     /// Makes one nested call, having looked at the run's signal first, and labels it
-    /// in the run's record. What comes back is the call's run when it completed.
-    fn made(&self, label: &str, call: &Call, runs: &mut Vec<RunId>) -> Result<Finished, Stopped> {
+    /// in the run's record when it is a stretch of an attempt. A call that looks into
+    /// a place has no label: a record holds at most 32, and two located retries of
+    /// eight places make 48 such calls. What comes back is the call's run when it
+    /// completed.
+    fn made(
+        &self,
+        label: Option<&str>,
+        call: &Call,
+        runs: &mut Vec<RunId>,
+    ) -> Result<Finished, Stopped> {
         let context = self.context;
         if context.cancellation().is_cancelled() {
             return Err(Stopped::Loop(self.cancelled()));
@@ -670,7 +903,9 @@ impl<'a> Looping<'a> {
             }
         })?;
         runs.push(finished.run().clone());
-        context.label_step(finished.run(), label, &[], None);
+        if let Some(label) = label {
+            context.label_step(finished.run(), label, &[], None);
+        }
         // A call that did not complete under a loop that was cancelled, or whose
         // deadline has passed, stopped for that, whatever its own end says.
         let completed = matches!(finished.outcome(), Outcome::Completed { .. });
@@ -708,33 +943,127 @@ impl<'a> Looping<'a> {
             .progress(&format!("{NAME}: {message}"));
     }
 
+    /// The found mask of a located retry (plan m4, task L2, items 3 and 4): for each
+    /// place, the picture the loop was given cut to it, the phrase asked inside the
+    /// crop, and each mask found carried onto the picture, or the place itself when
+    /// nothing is found; then all of them joined to the found mask of the attempt
+    /// before by the recipe's own `select`. With it, what the record lists of each crop.
+    fn located(
+        &self,
+        number: u32,
+        before: ArtifactId,
+        places: &[located::Place],
+        size: (u32, u32),
+        runs: &mut Vec<RunId>,
+    ) -> Result<(ArtifactId, Vec<Crop>), Stopped> {
+        let mut joined = vec![before];
+        let mut crops = Vec::new();
+        for place in places {
+            // The loop's own picture, never the fill the place was seen on.
+            let mut call = Call::new(VIEW).input("image", self.image);
+            let sides = place.fractions(size.0, size.1);
+            for (name, side) in ["left", "top", "right", "bottom"].iter().zip(sides) {
+                call = call.argument(name, Value::Number(side));
+            }
+            let finished = self.made(None, &call, runs)?;
+            let crop = one(&finished, "crops").ok_or_else(|| missing(VIEW, "crop"))?;
+
+            let mut call = Call::new(segment::NAME)
+                .argument("query", Value::text(self.prompt))
+                .argument(
+                    "max_instances",
+                    Value::Integer(i64::from(located::INSTANCES_MAX)),
+                )
+                .input("image", crop);
+            if let Some(backend) = operation::text(self.call, "backend") {
+                call = call.argument("backend", Value::text(backend));
+            }
+            let finished = self.made(None, &call, runs)?;
+            // An instance has a pixel (`capability::Instance`), so a mask is something
+            // found, and no mask is nothing found.
+            let found = at(&finished, "mask");
+            if found.is_empty() {
+                // The judge said with confidence that the named thing is there, and the
+                // table has held that it said so of nothing that must be preserved.
+                let [left, top, right, bottom] = place.own;
+                let call = Call::new(ITSELF)
+                    .argument(
+                        "box",
+                        Value::text(&format!("{left} {top} {right} {bottom}")),
+                    )
+                    .input("image", self.image);
+                let finished = self.made(None, &call, runs)?;
+                joined.push(one(&finished, "mask").ok_or_else(|| missing(ITSELF, "mask"))?);
+                crops.push(Crop {
+                    crop: crop.0,
+                    mask: None,
+                });
+                continue;
+            }
+            let mut call = Call::new(carry::NAME)
+                .argument("left", Value::Integer(i64::from(place.cut[0])))
+                .argument("top", Value::Integer(i64::from(place.cut[1])))
+                .input("crop", crop)
+                .input("image", self.image);
+            for id in found {
+                call = call.input("mask", id);
+            }
+            let finished = self.made(None, &call, runs)?;
+            let carried = at(&finished, "mask");
+            let Some(first) = carried.first() else {
+                return Err(missing(carry::NAME, "mask"));
+            };
+            crops.push(Crop {
+                crop: crop.0,
+                mask: Some(first.0),
+            });
+            joined.extend(carried);
+        }
+        let mut call = self
+            .remove()
+            .argument(FROM, Value::text(SELECT))
+            .argument(UNTIL, Value::text(SELECT));
+        for id in joined {
+            call = call.input(&from_port(SEGMENT, "mask"), id);
+        }
+        let finished = self.made(Some(&format!("a{number}_select")), &call, runs)?;
+        let mask = one(&finished, &until_port(SELECT, "mask"));
+        Ok((mask.ok_or_else(|| missing(REMOVE, "mask"))?, crops))
+    }
+
+    /// The size of the picture the loop was given, which is the size of every fill of
+    /// it: read when a finding first names a place.
+    fn size(&self) -> Option<(u32, u32)> {
+        let space = operation::image(self.context, self.image).ok()?.space();
+        Some((space.width(), space.height()))
+    }
+
     fn run(&self) -> Result<Produced, Failure> {
         let context = self.context;
-        context.freeze_steps([REMOVE, CHECK]);
+        context.freeze_steps([REMOVE, CHECK, VIEW, segment::NAME, carry::NAME, ITSELF]);
         context
             .facts()
             .setting(JOB_SETTING, &Value::Text(job_template_digest().to_string()));
-        let one = |finished: &Finished, port: &str| -> Option<ArtifactId> {
-            let mut outputs = finished.outcome().outputs().iter();
-            outputs.find_map(|output| (output.port() == port).then(|| output.id()))
-        };
-        let missing = |port: &str| Stopped::Call {
-            kind: "output".to_owned(),
-            message: format!("a call of {REMOVE} handed back no {port}"),
-        };
 
         let mut filled: Vec<Filled> = Vec::new();
         let mut found: Option<ArtifactId> = None;
         let mut shaped_before: Option<ArtifactId> = None;
-        // What the next attempt's retry changes: a wider mask, used once in a run.
-        let mut wider: Option<f64> = None;
+        // What the next attempt's retry changes; a wider mask is used once in a run.
+        let mut next: Option<Retry> = None;
         let mut widened = false;
+        let mut size: Option<(u32, u32)> = None;
         let mut ended = String::new();
         let mut begun = 0;
 
         for number in 1..=self.allowed {
             begun = number;
-            let changed = wider;
+            let retry = next.take();
+            // What the retry changed, as the record says it: a located retry's once
+            // its crops are cut.
+            let changed = std::cell::RefCell::new(match &retry {
+                Some(Retry::Wider(px)) => Some(Changed::Wider { px: *px }),
+                _ => None,
+            });
             let before = spent(context);
             let mut runs: Vec<RunId> = Vec::new();
             let label = |stretch: &str| format!("a{number}_{stretch}");
@@ -743,8 +1072,8 @@ impl<'a> Looping<'a> {
             let note = |attempt: Attempt, runs: &[RunId]| {
                 let settled = (spent(context) - before).clamp(0, i128::from(u64::MAX)) as u64;
                 let mut attempt = attempt.settled(settled);
-                if let Some(px) = changed {
-                    attempt = attempt.changed(Changed::Wider { px });
+                if let Some(changed) = changed.borrow().clone() {
+                    attempt = attempt.changed(changed);
                 }
                 let attempt = runs.iter().fold(attempt, |attempt, run| attempt.ran(run));
                 // Said as it ends, for a door that tells its caller while the loop runs.
@@ -779,16 +1108,31 @@ impl<'a> Looping<'a> {
                 })
             };
 
-            // Find, in the first attempt alone.
-            let mask = match found {
-                Some(mask) => mask,
-                None => {
+            // Find, in the first attempt alone; a located retry makes its own found
+            // mask from the one before, and a wider one keeps it.
+            let mask = match (found, &retry) {
+                (Some(before), Some(Retry::Located(places))) => {
+                    let made =
+                        self.located(number, before, places, size.unwrap_or_default(), &mut runs);
+                    match made {
+                        Ok((mask, crops)) => {
+                            *changed.borrow_mut() = Some(Changed::Located { crops });
+                            mask
+                        }
+                        Err(stopped) => {
+                            ended = no_fill(stopped, "could not make its mask", &runs)?;
+                            break;
+                        }
+                    }
+                }
+                (Some(mask), _) => mask,
+                (None, _) => {
                     let call = self.remove().argument(UNTIL, Value::text(SELECT));
                     let finished =
-                        self.made(&label("find"), &call, &mut runs)
+                        self.made(Some(&label("find")), &call, &mut runs)
                             .and_then(|finished| {
                                 one(&finished, &until_port(SELECT, "mask"))
-                                    .ok_or_else(|| missing("mask"))
+                                    .ok_or_else(|| missing(REMOVE, "mask"))
                             });
                     match finished {
                         Ok(mask) => mask,
@@ -807,13 +1151,14 @@ impl<'a> Looping<'a> {
                 .argument(FROM, Value::text(GROW))
                 .argument(UNTIL, Value::text(FEATHER))
                 .input(&from_port(SELECT, "mask"), mask);
-            if let Some(px) = changed {
+            if let Some(Retry::Wider(px)) = &retry {
                 call = call.argument(SET, Value::text(&format!("{GROW}.px={px}")));
             }
             let shaped = self
-                .made(&label("shape"), &call, &mut runs)
+                .made(Some(&label("shape")), &call, &mut runs)
                 .and_then(|finished| {
-                    one(&finished, &until_port(FEATHER, "mask")).ok_or_else(|| missing("mask"))
+                    one(&finished, &until_port(FEATHER, "mask"))
+                        .ok_or_else(|| missing(REMOVE, "mask"))
                 });
             let shaped = match shaped {
                 Ok(shaped) => shaped,
@@ -840,10 +1185,10 @@ impl<'a> Looping<'a> {
                 .argument(FROM, Value::text(FILL))
                 .input(&from_port(FEATHER, "mask"), shaped);
             let made = self
-                .made(&label("fill"), &call, &mut runs)
+                .made(Some(&label("fill")), &call, &mut runs)
                 .and_then(|finished| {
-                    let image = one(&finished, "image").ok_or_else(|| missing("image"))?;
-                    let mask = one(&finished, "mask").ok_or_else(|| missing("mask"))?;
+                    let image = one(&finished, "image").ok_or_else(|| missing(REMOVE, "image"))?;
+                    let mask = one(&finished, "mask").ok_or_else(|| missing(REMOVE, "mask"))?;
                     Ok((image, mask))
                 });
             let (image, mask) = match made {
@@ -883,7 +1228,7 @@ impl<'a> Looping<'a> {
             if let Some(judge) = operation::text(self.call, "judge") {
                 call = call.argument("judge", Value::text(judge));
             }
-            let checked = self.made(&label("check"), &call, &mut runs);
+            let checked = self.made(Some(&label("check")), &call, &mut runs);
             let finished = match checked {
                 Ok(finished) => finished,
                 Err(Stopped::Loop(failure)) => {
@@ -950,18 +1295,32 @@ impl<'a> Looping<'a> {
                 table::Reading::Nothing => format!(
                     "no finding of attempt {number} says with confidence that the named thing is still there"
                 ),
-                // Until the located retry lands, a place is not used: the mask is
-                // widened whether the findings cite one or not.
                 table::Reading::Remains(_) if number == self.allowed => {
                     "the last attempt the plan allows".to_owned()
                 }
-                table::Reading::Remains(_) if widened => {
-                    "a wider mask was already used once".to_owned()
-                }
-                table::Reading::Remains(_) => {
-                    widened = true;
-                    wider = Some(self.action.grow_px * 2.0);
-                    String::new()
+                // The places of the findings that allow the retry, and of no other:
+                // on this attempt's picture, which is the size of the loop's own.
+                table::Reading::Remains(places) => {
+                    let named = places.iter().any(Option::is_some);
+                    if named && size.is_none() {
+                        size = self.size();
+                    }
+                    let usable = match (named, size) {
+                        (true, Some((width, height))) => {
+                            located::usable(&places, image.0, width, height)
+                        }
+                        _ => Vec::new(),
+                    };
+                    if !usable.is_empty() {
+                        next = Some(Retry::Located(usable));
+                        String::new()
+                    } else if widened {
+                        "a wider mask was already used once".to_owned()
+                    } else {
+                        widened = true;
+                        next = Some(Retry::Wider(self.action.grow_px * 2.0));
+                        String::new()
+                    }
                 }
             };
             if !ended.is_empty() {
@@ -976,10 +1335,9 @@ impl<'a> Looping<'a> {
             // Every way out of the first attempt without a fill has returned already.
             return Err(Failure::error("loop", "no attempt made a fill"));
         };
-        // A run cancelled by now commits nothing: its record does not say one was kept.
-        if context.cancellation().is_cancelled() {
-            return Err(self.cancelled());
-        }
+        // A run cancelled by now commits nothing, and its record then says that no
+        // attempt was kept, whatever is said here: the record holds that of every run
+        // that does not complete.
         context
             .facts()
             .attempts_ended(Some(best.number), &line(&ended, ATTEMPT_TEXT_LIMIT));

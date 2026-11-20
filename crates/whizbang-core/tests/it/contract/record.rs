@@ -2105,6 +2105,64 @@ fn of_run_6() -> String {
     vector + "}\n"
 }
 
+/// A loop that said which attempt it kept and then did not complete (it failed, or
+/// was cancelled once its last call had come back) committed nothing of that attempt:
+/// its record lists the attempts and why they ended, and says none was kept.
+#[test]
+fn a_run_that_did_not_complete_never_says_an_attempt_was_kept() {
+    use whizbang_core::contract::record::{Attempt, Decision};
+    use whizbang_core::contract::{Context, Failure, Produced};
+    struct Ends(ActionDescriptor, bool);
+    impl Action for Ends {
+        fn descriptor(&self) -> &ActionDescriptor {
+            &self.0
+        }
+        fn run(&self, _: &PreparedCall, context: &Context) -> Result<Produced, Failure> {
+            let facts = context.facts();
+            assert!(facts.attempt(Attempt::judged(1, Decision::Fail)));
+            assert!(facts.attempts_ended(Some(1), "the last attempt the plan allows"));
+            match self.1 {
+                true => Ok(Produced::nothing()),
+                false => Err(Failure::error(
+                    "output",
+                    "the kept attempt could not be read",
+                )),
+            }
+        }
+    }
+    let dir = Scratch::new("run-6-kept");
+    let store = Arc::new(Store::open(&dir.path().join("store"), Arc::new(RealFs)).unwrap());
+    let mut registry = Registry::new();
+    for (name, completes) in [("completes", true), ("fails", false)] {
+        let draft = ActionDescriptor::draft(name, "1.0.0", Kind::Loop, "A test action.");
+        let action = Ends(draft.build().unwrap(), completes);
+        registry.register(Arc::new(action)).unwrap();
+    }
+    let engine = Engine::over(
+        registry,
+        Arc::new(NoBackends),
+        store.clone(),
+        Digest::of_bytes(b""),
+    );
+    for (name, outcome, kept) in [
+        ("completes", "completed", Some(1)),
+        ("fails", "error", None),
+    ] {
+        let finished = engine.submit(&Call::new(name)).unwrap();
+        assert_eq!(finished.outcome().name(), outcome);
+        let generation = store.snapshot().unwrap();
+        let id = finished.run().as_str();
+        let stored = record::stored(&generation, id, |entry| store.read(entry));
+        let stored = stored.unwrap().unwrap();
+        let attempts = stored.attempts().unwrap();
+        assert_eq!(attempts.list.len(), 1, "{name}");
+        assert_eq!(attempts.kept, kept, "{name}");
+        assert_eq!(attempts.ended, "the last attempt the plan allows", "{name}");
+        let document: Json = serde_json::from_slice(&stored.to_bytes()).unwrap();
+        validate(&schema_6(), &document).unwrap();
+    }
+}
+
 #[test]
 fn run_6_holds_a_plan_a_start_findings_and_a_loops_attempts() {
     use whizbang_core::contract::record::{Attempt, Changed, Crop, Decision, Given, Started};

@@ -158,7 +158,8 @@ fn registry_of(
     // The loop (plan m4, task L1): built over the shipped recipes it calls. A user's
     // recipe is checked against it too, so that one naming it as a step is refused in
     // words when it is read.
-    let looped = whizbang_rascal::checked::RemoveChecked::new(&registry).map_err(|e| said(&e))?;
+    let looped = whizbang_rascal::checked::RemoveChecked::new(&registry, &primitives)
+        .map_err(|e| said(&e))?;
     let looped: Arc<dyn Action> = Arc::new(looped);
     against.register(looped.clone()).map_err(|e| said(&e))?;
     for text in recipes {

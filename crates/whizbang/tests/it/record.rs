@@ -438,3 +438,72 @@ fn a_loops_record_lists_each_attempt_its_runs_its_verdict_and_what_the_retry_cha
     assert!(record.findings().unwrap().complete);
     // `runs show` prints them: `stats::runs_stats_counts_a_loops_attempts_and_retries`.
 }
+
+#[test]
+fn a_located_retry_lists_its_crops_the_masks_they_gave_and_the_places_that_joined_as_themselves() {
+    use crate::checked::{looped, passes, run_of, submission};
+    use crate::located::{PLACE, citing, finding, looked, seen_at};
+    use whizbang_core::contract::record::{RUN_6, RUN_6_SCHEMA};
+    // Plan m4, task L2, item 7: the judge fails the first attempt and names two places
+    // where the thing remains. The segmenter finds it inside the cut of the first, a
+    // quarter of the picture, and finds nothing inside the cut of the second, 18
+    // pixels each way.
+    let large = [0.0, 0.5, 0.5, 1.0];
+    let answers = submission(
+        citing(&[("RQ1", "violation", "confident")], &[("RQ1", large)]),
+        vec![seen_at(&["RQ1"], "violation", "confident", PLACE)],
+    );
+    let mut setup = finding(vec![answers, passes()]);
+    setup.inside_least = 20;
+    let (world, finished) = looped("loop-record-located", &setup);
+    assert_eq!(world.kit.crops(), [(34, 34), (18, 18)]);
+    let record = world.record(finished.run().as_str());
+    let stored: serde_json::Value = serde_json::from_slice(&record.to_bytes()).unwrap();
+    assert_eq!(stored["record"], RUN_6);
+    let schema: serde_json::Value = serde_json::from_str(RUN_6_SCHEMA).unwrap();
+    whizbang_testkit::schema::validate(&schema, &stored).unwrap();
+    // What the retry changed: each crop it cut, by the crop's identity, with the first
+    // mask it gave, carried onto the picture; and null for the place that joined as
+    // itself because nothing was found there.
+    let looked = looked(&world, &finished, 2);
+    let actions: Vec<&str> = looked.iter().map(|(action, _)| action.as_str()).collect();
+    assert_eq!(
+        actions,
+        ["view", "segment", "carry", "view", "segment", "mask_rect"]
+    );
+    let made = |at: usize| looked[at].1.outputs()[0].artifact.to_string();
+    let second = &stored["attempts"]["list"][1];
+    assert_eq!(
+        second["changed"],
+        serde_json::json!({"change": "located", "crops": [
+            {"crop": made(0), "mask": made(2)},
+            {"crop": made(3), "mask": null},
+        ]})
+    );
+    // Its runs, in order: the calls that looked into the two places, the join, and
+    // the recipe's shape, fill and check. Where a crop sits on the picture is in the
+    // record of the run that cut it; what joined as itself, in that of `mask_rect`.
+    let mut runs: Vec<serde_json::Value> = (looked.iter())
+        .map(|(_, run)| serde_json::Value::from(run.identity().run.clone()))
+        .collect();
+    for label in ["a2_select", "a2_shape", "a2_fill", "a2_check"] {
+        runs.push(serde_json::Value::from(run_of(&record, label)));
+    }
+    assert_eq!(second["runs"], serde_json::Value::from(runs));
+    assert_eq!(
+        (
+            second["verdict"].as_str(),
+            stored["attempts"]["kept"].as_u64()
+        ),
+        (Some("pass"), Some(2))
+    );
+    let text = |run: &whizbang_core::contract::RunRecord, name: &str| {
+        crate::checked::argument(run, name).unwrap_or_default()
+    };
+    assert_eq!(text(&looked[5].1, "box"), "40 16 56 32");
+    // The plan the run was admitted under states the segmenter's requests.
+    assert_eq!(
+        stored["plan"]["sends"][0],
+        serde_json::json!({"capability": "segment", "requests": 17})
+    );
+}
