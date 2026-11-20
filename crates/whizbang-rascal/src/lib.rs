@@ -11,6 +11,8 @@
 
 pub mod apply;
 pub(crate) mod canvas;
+// The loop: remove, check, retry (plan m4, task L1).
+pub mod checked;
 pub mod close;
 pub mod composite;
 pub mod constants;

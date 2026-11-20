@@ -380,3 +380,60 @@ fn a_fill_run_holds_no_byte_of_its_key() {
         .collect();
     assert_eq!(classes, FILL_CLASSES);
 }
+
+#[test]
+fn a_loops_record_lists_each_attempt_its_runs_its_verdict_and_what_the_retry_changed() {
+    use crate::checked::{Setup, calls, looped, passes, remains, run_of};
+    use whizbang_core::contract::record::{RUN_6, RUN_6_SCHEMA};
+    // Plan m4, task L1, item 8: a first attempt the judge fails, saying the thing
+    // remains, and a second, with a wider mask, that passes. The record as it is stored.
+    let setup = Setup::answering(vec![remains(), passes()]);
+    let (world, finished) = looped("loop-record", &setup);
+    let record = world.record(finished.run().as_str());
+    let stored: serde_json::Value = serde_json::from_slice(&record.to_bytes()).unwrap();
+    assert_eq!(stored["record"], RUN_6);
+    let schema: serde_json::Value = serde_json::from_str(RUN_6_SCHEMA).unwrap();
+    whizbang_testkit::schema::validate(&schema, &stored).unwrap();
+    // Each attempt: its number, its runs in order, its verdict, what the retry changed
+    // to make it, and what its requests settled.
+    let run = |label: &str| serde_json::Value::from(run_of(&record, label));
+    let attempts = &stored["attempts"];
+    assert_eq!(
+        attempts["list"][0],
+        serde_json::json!({
+            "attempt": 1,
+            "runs": [run("a1_find"), run("a1_shape"), run("a1_fill"), run("a1_check")],
+            "verdict": "fail", "unchecked": null, "changed": null,
+            "settled_micros": attempts["list"][0]["settled_micros"],
+        })
+    );
+    assert_eq!(
+        attempts["list"][1],
+        serde_json::json!({
+            "attempt": 2,
+            "runs": [run("a2_shape"), run("a2_fill"), run("a2_check")],
+            "verdict": "pass", "unchecked": null,
+            "changed": {"change": "wider", "px": 8.0},
+            "settled_micros": attempts["list"][1]["settled_micros"],
+        })
+    );
+    assert!(attempts["list"][0]["settled_micros"].as_u64().unwrap() > 0);
+    // Which was kept, and why the attempts ended.
+    assert_eq!(attempts["kept"], 2);
+    assert_eq!(attempts["ended"], "attempt 2 passed");
+    assert_eq!(attempts["list"].as_array().unwrap().len(), 2);
+    // Every run an attempt lists is a call of the loop's own, and each of those is
+    // listed by one attempt.
+    assert_eq!(calls(&record).len(), 7);
+    // Beside them: the plan the run was admitted under, and the kept attempt's verdict
+    // and findings.
+    assert_eq!(
+        stored["plan"]["attempts"],
+        serde_json::json!({"asked": 3, "allowed": 3, "checks": true})
+    );
+    assert_eq!(
+        record.verdict().unwrap().0,
+        whizbang_core::contract::record::Decision::Pass
+    );
+    assert!(record.findings().unwrap().complete);
+}

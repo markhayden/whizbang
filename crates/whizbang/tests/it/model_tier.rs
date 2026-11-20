@@ -819,6 +819,96 @@ fn remove_prompt_makes_a_mask_with_sam3_on_the_mac() {
     );
 }
 
+#[test]
+#[ignore = "the model tier: just test-models, on a machine with the model installed"]
+fn remove_checked_makes_its_mask_with_sam3_under_a_scripted_judge() {
+    use crate::checked::{Setup, backend, kit_of, passes};
+    use whizbang_core::artifact::{self, Artifact, ArtifactType, Image, ImageRole, Origin, Step};
+    use whizbang_core::contract::record::Decision;
+    use whizbang_core::identity::{Projection, Topology};
+    use whizbang_core::spend::Amount;
+    // Plan m4, task L1: the loop whose find is SAM 3's, on the Mac's GPU, through the
+    // binary's wiring; its filler and its judge are the test's own, and the judge
+    // passes the first attempt.
+    let more = format!("\n{}{}", backend("fill"), backend("judge"));
+    let tier = Tier::with("model-tier-remove-checked", SAM3, &more);
+    let (kit, kind) = kit_of(&Setup::answering(vec![passes()]));
+    let mut kinds = wiring::kinds(&tier.worker);
+    kinds.register(kind).unwrap();
+    let over = Over::nothing()
+        .config(Some(&tier.config))
+        .kinds(kinds)
+        .pack(tier.worker.clone())
+        .installed(Models::shipped().unwrap().flag(Some(&models_dir())))
+        .expect("the models directory is opened");
+    let origin = Origin::new(Step::new("fixture", "1")).unwrap();
+    let limits = DecodeLimits::default();
+    let image = Image::new(
+        FIXTURE.to_vec(),
+        Projection::Flat,
+        Topology::Bounded,
+        ImageRole::Picture,
+        origin,
+        &limits,
+    )
+    .unwrap();
+    let store = Store::open(&tier.root, Arc::new(RealFs)).unwrap();
+    let mut publication = store.begin().unwrap();
+    let id = artifact::put(&mut publication, &Artifact::from(image)).unwrap();
+    publication.publish().unwrap();
+    whizbang_core::spend::reset(&store, Amount::new(1_000_000).unwrap(), 1).unwrap();
+    drop(store);
+    let executor = tier.runner(&over);
+    let started = Instant::now();
+    let asked = Call::new("remove_checked")
+        .argument("prompt", whizbang_core::contract::Value::text(PHRASE))
+        .input("image", id);
+    let finished = executor.submit(&asked).unwrap();
+    let took = started.elapsed();
+    assert_eq!(
+        finished.outcome().name(),
+        "completed",
+        "{:?}",
+        finished.outcome()
+    );
+    assert_eq!(finished.verdict().unwrap().decision(), Decision::Pass);
+    let outputs = finished.outcome().outputs().to_vec();
+    let run = finished.run().as_str().to_owned();
+    drop(executor);
+    // One request of the filler and one of the judge; the segmenter was the real one.
+    assert_eq!(kit.requests(), (0, 1, 1));
+    // The kept mask holds the disc: it weighs on the centre of the box drawn by hand.
+    let mask = outputs
+        .iter()
+        .find(|output| output.port() == "mask")
+        .unwrap();
+    let store = Store::open(&tier.root, Arc::new(RealFs)).unwrap();
+    let read = artifact::get(&store, ArtifactType::Mask, mask.id(), &limits);
+    let mask = read.unwrap().into_mask().unwrap();
+    let (x, y) = (
+        (LOOSE_BOX[0] + LOOSE_BOX[2]) / 2.0,
+        (LOOSE_BOX[1] + LOOSE_BOX[3]) / 2.0,
+    );
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let weight = mask.weight(x as u32, y as u32).unwrap();
+    assert!(weight > 0.0, "the mask weighs nothing at the disc's centre");
+    // The find's step `segment` names the GPU in its record.
+    let looped = tier.record(&run);
+    assert_eq!(looped["attempts"]["kept"], 1);
+    let find = looped["steps"][0]["run"].as_str().unwrap().to_owned();
+    let segment = tier.record(&find)["steps"][0]["run"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (device, _) = device_and_installation(&tier.record(&segment));
+    assert_eq!(device, "mps");
+    // What it took, for whoever reads the test's output.
+    eprintln!(
+        "remove_checked: run {run}, one attempt, {} s",
+        seconds(took)
+    );
+}
+
 /// The scene of `segment`'s record (`docs/reference/tools/segment.md`, plan m3, task D1):
 /// 192 by 128, a grey ground, two red discs (radius 24 at (56, 64), radius 14 at
 /// (150, 32)) and a blue square from (104, 72) to (152, 112), drawn by a program. The

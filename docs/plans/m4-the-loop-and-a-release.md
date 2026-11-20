@@ -905,6 +905,107 @@ filler and a scripted judge whose verdicts and findings a test lists in order; p
 64 by 64; no test waits on a clock. **Every kind of retry and every way the attempts end is
 shown here, with fakes, and nowhere else:** the live step (E1) only reports what happened.
 
+**Split at the seam, with the task** (L1, 2026-11-20). The task passes the size for a
+split: about 4,800 changed lines of source, tests and documents, the generated reference
+apart, where the estimate was 2,500. The tests are 2,900 of them and were estimated at
+1,000: the "Done when" names 45, and a run of the loop takes a fixture of its own. So it
+stops at the seam this plan names ("Seams"). **The first pull request** is the loop and
+its record: items 1 to 8, the plan and the unchecked pass of item 9, and items 12 and 13,
+with the loop listed by `describe` (item 10). It is still about 3,800 lines, 2,500 of them
+tests. **The second,** of L1's own and stacked on the first, is the doors: the command and
+what it prints (items 9 and 10), the server's answer (item 10), `runs stats` and `runs
+show` (item 11), and the guide with its figures (item 7). Its clauses of the "Done when"
+are `serve::the_loop_is_offered_as_a_tool_…`, `cli::rascal_remove_checked_prints_…`,
+`stats::runs_stats_counts_a_loops_attempts_and_retries` and
+`guides::the_loops_guide_states_the_bound_of_an_attempt_…`, and two of the four carry-over
+rows ("Say on the terminal when a run was not checked"; "The documented per-call cap for
+a check is one cent"). Every other clause is shown by its test in the first.
+
+**Where the tests are (L1).** All are the binary's (`crates/whizbang/tests/it/`), because
+only the binary holds rascal's loop and squint's check together: `checked::`, `table::`,
+`budget::`, `nested::` and `guides::` are modules of their own, and `record::`, `recipe::`,
+`describe::`, `serve::`, `cli::`, `stats::` and `model_tier::` are in the files of those
+names. The fixture is `checked::Looped`: the binary's registry and runner, the real ledger
+and meter, a config the test writes, and a kind of the test's own for the three backends.
+Its store is in memory (`checked::Memory`), made in the test's process. On the real disk
+a run of the loop is some four hundred small writes, renames and new folders, and many
+tests doing that at once wait on each other in the system: the loop's tests took 88
+seconds of processor time together there, and take 12 in memory.
+
+**The box stays open** (L1, 2026-11-20) until the second pull request, and then for one
+clause more. `model_tier::remove_checked_makes_its_mask_with_sam3_under_a_scripted_judge`
+is written, is `#[ignore]`d and is in the model tier's filter, and has not been run: a
+builder loads no real model. The box is ticked when `just test-models model_tier` has run
+it on the Mac. `just docs` is regenerated with the first pull request.
+
+**Reworded with the task** (L1, 2026-11-20). Three clauses of the "Done when" above are
+met otherwise than they are worded.
+
+- "`table::row_4_held_allowed_change_hidden_cant_tell_and_observed_each_enlarge_nothing`
+  (each disposition, at each confidence it takes, about `RQ1`)". `held`, `hidden` and
+  `cant_tell` are shown so, through the loop, made and answered from the cache. A
+  submission cannot say `allowed_change` or `observed` of `RQ1`: an allowed change names
+  an exemption that waives the obligation, and no rule waives a job's requirement; and
+  `observed` is refused of an item that must hold (`use_case/submission.rs`). Those two
+  are shown on the findings document a check hands back, read by the loop's own table
+  (`checked::table::read`), as K2 showed a place on another image.
+- "`table::row_2_a_confident_violation_of_rq1_with_no_place_widens_once_and_is_checked_again`".
+  A submission's violation always has a location, so "no place" is a violation that
+  cites the whole image, which `check` hands back with no place (ADR 0035). The same test
+  shows the finding that cites a box, treated as one that cites none until L2.
+- "`budget::three_attempts_at_their_largest_stay_inside_a_trees_runs_and_a_runs_calls`".
+  The loop of this task makes two attempts at most, since a wider mask is used once: the
+  test counts the runs of that run (26: the loop, 14 for the first attempt, 11 for a
+  retry) and holds three attempts with every tool call a check may dispatch, 133 runs, to
+  the limits by arithmetic on what it counted. L2 raises it with a run of three.
+
+**Decided with the task (L1).** ADR 0039 has each.
+
+- **The check is called as the recipe ships it:** its job, its two images and the judge's
+  name, and no override of a step. A door states all four settings of the judge's arm on
+  every call (A1, item 3); the loop is no door, and "does not choose squint's tools"
+  (`SPEC.md` section 3). What the recipe ships is the control arm.
+- **The short result is the run's measurements** (`remove_checked/1`), and the doors read
+  the same from the run's record, so the loop's descriptor declares a verdict, findings
+  and measurements.
+- **An attempt that was begun is listed,** one that made no fill among them (a retry whose
+  mask was the one before, or could not be made or filled): its reason says so, its runs
+  are listed, and it is never the one kept. "Attempts made" counts those.
+- **Each call of the loop's is labelled in the record** by its attempt and its stretch
+  (`a1_find`, `a1_shape`, `a1_fill`, `a1_check`, `a2_shape`, …).
+- **Under `--check required` a check the cap does not cover** is planned as one checked
+  attempt and refused as over the cap; under `auto` it is one unchecked pass.
+
+**Notes for L2.**
+
+- The seam is one place: in `checked.rs`, `Looping::run` decides what the next attempt
+  changes where it reads `table::Reading::Remains(places)`. The places are already there,
+  each in the findings' order, `None` for a finding that cites none; L1 ignores them.
+  `Changed::Located` and `Attempt::changed` are K1's and ready.
+- The found mask of an attempt is one identity (`found`); a located retry replaces it
+  with what `remove_prompt` from `select` until `select` hands back. The loop freezes its
+  calls to `remove_prompt` and `source-fidelity`: `view` and `segment` must join that
+  list, and the descriptor's needs must then count the segmenter's requests of a retry
+  in the plan (`Plan::sending(Capability::Segment, …)`).
+- A place's `image` is the candidate's identity, which is that attempt's fill; the box is
+  in fractions of it, and the picture to cut is the loop's own input, of the same size.
+- `budget::three_attempts_at_their_largest…` is to be raised to a run of three.
+- The fixture's judge plays one submission for each check, and a turn that is a tool call
+  when the entry is one (`{"tool_call": …}`); `checked::boxed` writes a box on the
+  candidate.
+
+**Owed after L1.**
+
+- The install check's refusal of `whizbang rascal remove-checked` (R1, item 5, last
+  bullet) is not added here: R2's branch changes `scripts/install-check.sh` and leaves a
+  marked hook for it, and whichever of the two lands second fills it.
+- `SPEC.md` section 3 still says nothing of a plan in its Prepare bullet (owed since K1),
+  and section 7's row "Bounded check and retry" names no action: wording for the task
+  that next touches the spec.
+- The loop's tests add about a hundred runs of the loop to the fast tier, in memory. If
+  the hosted Mac's test time needs it, the first to trim are the second, cached run of
+  each case of `table::row_1_…` and `table::row_4_…`.
+
 ### Origins (L)
 
 None new. The loop sends what `remove_prompt` and `check` already send, to the recipients

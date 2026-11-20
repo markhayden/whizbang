@@ -288,3 +288,49 @@ fn rascal_run_refuses_a_link_and_a_file_over_the_limit_before_reading_it() {
         ran.err
     );
 }
+
+#[test]
+fn a_recipe_that_names_a_loop_as_a_step_is_refused_when_read() {
+    // Plan m4, task L1, item 13: a user's recipe whose step is the loop. It is refused
+    // when the config is read, in words, before any store is opened or anything is paid.
+    let looping = r#"version = 1
+name = "twice_checked"
+purpose = "Removes what a phrase names, checked."
+use = "In a test of a recipe that names a loop."
+
+[inputs]
+image = { type = "Image" }
+prompt = { type = "Text" }
+
+[[step]]
+id = "removed"
+op = "remove_checked"
+inputs = { image = "inputs.image" }
+prompt = "inputs.prompt"
+
+[outputs]
+image = "removed.image"
+"#;
+    let dir = Scratch::new("recipe-names-a-loop");
+    let file = dir.path().join("twice_checked.toml");
+    std::fs::write(&file, looping).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    let listed = format!("{CONFIG}\n[recipes]\npaths = [\"{}\"]\n", file.display());
+    let refused = over_text_refused(&dir, &listed);
+    assert_eq!(
+        refused,
+        "the config cannot be used: a recipe file is not one this build runs: the recipe \
+         twice_checked, step removed: remove_checked is a loop, and a recipe may not name a \
+         loop as a step: calls nest four levels, a loop's own calls use them all, and nothing \
+         calls a loop"
+    );
+    // The same from `rascal run`, which reads a recipe file against the same actions.
+    let registry = wiring::registry().unwrap();
+    let read = whizbang_core::recipe::Recipe::read(looping).unwrap();
+    let error = read.check(&registry).err().unwrap();
+    assert!(error.why.starts_with("remove_checked is a loop"), "{error}");
+}
