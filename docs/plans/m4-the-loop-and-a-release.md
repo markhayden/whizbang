@@ -576,7 +576,7 @@ would have been lost before the loop classed anything.
 4. **The use cases.** Each of the five recipes hands its caller the findings of its step
    `check`; `whizbang squint check` prints their counts; the server's answer carries them.
 
-- [ ] Done when:
+- [x] Done when:
   `check::a_checklist_item_and_a_separate_observation_are_each_handed_back_as_a_finding`,
   `check::a_finding_keeps_every_obligation_it_cites_its_disposition_and_its_confidence`,
   `check::the_verdict_worked_out_from_complete_findings_is_the_decision_they_carry`,
