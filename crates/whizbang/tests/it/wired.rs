@@ -460,12 +460,16 @@ pub fn whizbang(args: &[&str], root: &Path) -> Ran {
     whizbang_storeless(&all)
 }
 
+/// The command that starts the real binary, with no argument yet, as the test kit makes
+/// it: for a test that needs the command itself, such as one that reads the file it
+/// names (`release`).
+pub fn binary() -> whizbang_testkit::binary::Binary {
+    whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
+}
+
 /// The real binary, with these arguments and no store: for a command that takes none.
 pub fn whizbang_storeless(args: &[&str]) -> Ran {
-    let out = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
-        .args(args)
-        .output()
-        .expect("the binary runs");
+    let out = binary().args(args).output().expect("the binary runs");
     Ran {
         code: out.status.code(),
         out: String::from_utf8(out.stdout).expect("output is UTF-8"),

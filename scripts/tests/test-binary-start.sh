@@ -114,6 +114,21 @@ refused "a variable of whoever builds the test" "env! or option_env! of somethin
   'const REAL: &str = env!("HOME");'
 refused "a variable of whoever builds the test, if it is there" "env! or option_env! of something other" \
   'const TOKEN: Option<&str> = option_env!("HF_TOKEN");'
+# The commit the binary's build script sets (crates/whizbang/build.rs): the binary's
+# main.rs reads it, and it is refused anywhere else, where it would be whoever builds'.
+refused "the build's commit in a test" "env! or option_env! of something other" \
+  'const COMMIT: &str = env!("WHIZBANG_COMMIT");'
+printf '%s\n' "fn w() { $call; }" >"$planted"
+cp "$repo/crates/whizbang/src/main.rs" "$tmp/main.rs"
+printf '%s\n' 'const COMMIT: &str = env!("WHIZBANG_COMMIT");' >>"$repo/crates/whizbang/src/main.rs"
+expect_pass "the build's commit in the binary's main.rs" "$check" "$repo"
+printf '%s\n' 'const OTHER: &str = env!("WHIZBANG_OTHER");' >>"$repo/crates/whizbang/src/main.rs"
+expect_fail "another variable in the binary's main.rs" "crates/whizbang/src/main.rs" "$check" "$repo"
+cp "$tmp/main.rs" "$repo/crates/whizbang/src/main.rs"
+mkdir -p "$repo/crates/whizbang/src/bin"
+printf '%s\n' 'const COMMIT: &str = env!("WHIZBANG_COMMIT");' >"$repo/crates/whizbang/src/bin/main.rs"
+expect_fail "the build's commit in another file of the binary's" "crates/whizbang/src/bin/main.rs" "$check" "$repo"
+rm -r "$repo/crates/whizbang/src/bin"
 
 # In every crate, not only the binary's.
 printf '%s\n' 'const BIN: &str = env!("CARGO_BIN_EXE_whizbang");' >"$repo/crates/other/tests/it.rs"

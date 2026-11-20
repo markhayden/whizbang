@@ -1,0 +1,9 @@
+# The oldest macOS a build of whizbang runs on: macOS 15, the Mac target of SPEC.md
+# section 5 (plan m4, task R1, item 2). rustc writes it into the binary as its minimum
+# system, and a C compiler started by a build script is given the same; without it rustc
+# says macOS 11, which nothing here is tested on. It is set for every build, not only a
+# release's, so that the binary the fast tests read
+# (`release::the_mac_binary_states_macos_15_as_its_minimum`) is built as the released one
+# is; `force` keeps a value of whoever builds from changing it. It means nothing on Linux.
+[env]
+MACOSX_DEPLOYMENT_TARGET = { value = "15.0", force = true }

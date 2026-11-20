@@ -863,11 +863,16 @@ just scan-range-secrets <base> <head>
                         # of the scan
 just ci                 # what a pull request runs: check, advisories, a smoke of the
                         # release binary, the example that must not compile, the
-                        # secrets scan
+                        # secrets scan, and the release archive made and installed
+just package            # the release archive of this machine's target and its line of
+                        # SHA256SUMS, in target/package
+just install-check      # that archive installed into an empty home with a cleared
+                        # environment, and run: first the pinned uv and Python into a
+                        # fresh folder, then the check, which contacts nothing
 ```
 
 `just setup`, `check`, `test-pack`, `test-scripts-slow`, `docs`, `scan`, `scan-range`,
-`scan-range-secrets` and `ci` exist; the others arrive with the milestone that needs them.
+`scan-range-secrets`, `ci`, `package` and `install-check` exist; the others arrive with the milestone that needs them.
 `just check` is made of recipes that also run alone: `fmt-check`, `clippy`, `graph`, `deny`,
 `test-scripts`, `docs-check`, `timing`, `test-pack`. CI also runs `just test-timeout` on one runner: a test
 that sleeps 31 seconds must fail by timeout.

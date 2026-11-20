@@ -1050,7 +1050,7 @@ the paths to fal and to the judges are the same code the fast tier runs on Linux
 recorded exchanges, and no key is given to a hosted runner. That this is enough for "runs"
 on Linux is open question 2.
 
-- [ ] Done when: `scripts/tests/test-package.sh` (the archive holds exactly the four files;
+- [x] Done when: `scripts/tests/test-package.sh` (the archive holds exactly the four files;
   two builds of one tree give the same list and the same sums line; the sums line matches
   the archive), `scripts/tests/test-install-prereqs.sh` (against a stand-in `uv`: one of
   another version is refused; only the two things are put in the folder; the Python is
@@ -1066,6 +1066,55 @@ on Linux is open question 2.
   `scripts/tests/test-ci-jobs.sh` holding the `release` job to `just package`, the
   bootstrap and the install check, and CI green with the install check passing on
   `macos-15` and on `ubuntu-22.04`.
+
+**Reworded with the task** (R1, 2026-11-19). Six things are as the task found them.
+
+1. Item 5 says "`whizbang describe --json` equals the committed
+   `docs/reference/description.json`". The committed file is `whizbang describe --json
+   --pretty` byte for byte (`scripts/docs.sh`), so that is the form the install check
+   compares.
+2. Item 3 says the licence texts are "generated from the lock file by a script" and that a
+   crate without its text "fails `just check`". The file is generated when an archive is
+   made and is not committed: licence texts hold their authors' addresses, which no tracked
+   file may (`AGENTS.md`, "Secrets and private data"). What fails `just check` is
+   `scripts/tests/test-third-party-licences.sh`, which generates the file from the
+   workspace's own lock file on every run and holds its crates to those `cargo deny` lists.
+   The Rust standard library, which is in the binary and not in the lock file, has its
+   two licence texts in the file, taken from the toolchain that builds the binary
+   (`share/doc/rust/licenses`). The pinned toolchain carries no `COPYRIGHT`, `LICENSE-MIT`
+   or `LICENSE-APACHE` as plain files: the notices of what the standard library itself
+   holds are its `COPYRIGHT-library.html`, an HTML page of 1.5 MB, which the file names
+   and does not repeat. That is the one gap left, and it is owed below.
+3. Item 5's last bullet gives the refusals "On Linux". `whizbang rascal remove-prompt` under
+   a config that names the local segmenter is held on both targets, each in its own words:
+   on Linux the model does not run on the platform, on a Mac it is not installed yet.
+   `whizbang setup --extra torch` is asked on Linux alone.
+4. Item 1 says the script writes "a line of `SHA256SUMS`". It writes the file `SHA256SUMS`
+   with that one line beside the archive, in `target/package`; R2 joins the two targets'
+   lines.
+5. Item 2's two tests read the binary cargo builds for the tests, not a release build: the
+   same toolchain, libraries and `.cargo/config.toml` link both. The Mac's minimum is set
+   there, for every build. A commit costs 2 to 3 seconds of rebuild for the binary's crate
+   (measured), so the commit is not kept in a crate of its own.
+6. The version line needed one more name in `scripts/check-binary-start.sh`: the binary's
+   `src/main.rs` reads the commit its own `build.rs` sets, and nothing else may. The
+   workspace's version is still `0.0.1`: it becomes `0.1.0` with R2, item 1, and nothing
+   here holds a number.
+
+**Owed after R1** (from the review of #248, 2026-11-19). Three things R1 does not do, the
+first two R2's, since R2 makes the candidate's binary:
+
+1. The release binary holds the paths of the machine that built it (cargo's home, the
+   checkout's folder) in its panic messages and debug records. R2 builds it with
+   `--remap-path-prefix`, so that no archive carries a builder's paths and two machines
+   give the same bytes for them.
+2. `release::the_linux_binary_needs_only_the_c_library_of_ubuntu_22_04` reads the binary
+   built for the tests. R2 runs the same read on the packaged release binary, where the
+   candidate is built.
+3. The notices of the code the Rust standard library itself holds
+   (`COPYRIGHT-library.html` of the toolchain) are named in `THIRD-PARTY-LICENSES.md` and
+   not carried in the archive. Whether they go in as a fifth file is a decision that
+   changes item 1's four files, so it is asked and not made here.
 
 **Keeping tests lean (R1).** The script tests of the check run on a tiny stand-in binary
 (a shell script named `whizbang`), not on a release build; the real check runs once on each

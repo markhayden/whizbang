@@ -104,6 +104,24 @@ smoke:
     target/release/whizbang describe --json > /dev/null
     target/release/whizbang describe --json --pretty > /dev/null
 
+# The release archive of this machine's target, and its line of SHA256SUMS, in
+# target/package: the binary built as `smoke` builds it, LICENSE, the licences of the
+# crates the binary is built from, and the install guide (scripts/package.sh). Heavy.
+package:
+    scripts/package.sh
+
+# The archive `package` made, installed as the install guide says and shown to run: first
+# the bootstrap of what a user must have, the pinned `uv` (the first on PATH) and the
+# pinned Python, into a fresh folder, which downloads the Python from GitHub's releases
+# (scripts/install-prereqs.sh); then the install check, which contacts nothing and runs
+# the installed binary in an empty home with a cleared environment
+# (scripts/install-check.sh). The folder is removed again when the check has passed.
+install-check:
+    rm -rf target/install-prereqs
+    scripts/install-prereqs.sh "$(command -v uv)" target/install-prereqs
+    scripts/install-check.sh target/package/whizbang-*.tar.gz target/package/SHA256SUMS target/install-prereqs
+    rm -rf target/install-prereqs
+
 # The example on `Ledger` that must not compile (ADR 0016): it fails with the one error it
 # is there for and with no other, and compiles without the line that causes it
 # (scripts/compile-fail.sh). It builds the core and runs no test.
@@ -137,19 +155,22 @@ scan-range base head:
 scan-range-secrets base head:
     scripts/scan.sh --secrets-only --range "$1" "$2"
 
-# What a pull request runs: `check` with every script test (check-full), and more.
-ci: check-full deny-advisories smoke compile-fail scan-secrets
+# What a pull request runs: `check` with every script test (check-full), and more: the
+# advisories, the smoke of the release binary, the example that must not compile, the
+# secrets scan, and the release archive made and installed.
+ci: check-full deny-advisories smoke compile-fail scan-secrets package install-check
 
 # `ci` in three parts, for CI, where the script tests alone take a runner three to five
 # minutes and the rest took the macOS runner past its limit: it runs each part in a job of
 # its own, side by side, on each runner (.github/workflows/ci.yml). The first is `ci`
 # without the script tests and without the release build and what follows it; the second
 # is those (the smoke of the release binary, the example that must not compile, the
-# secrets scan); the third is the script tests, after `deny` as in `check`: one of them
+# secrets scan, and then the release archive made and installed: `package` and
+# `install-check`, plan m4, task R1); the third is the script tests, after `deny` as in `check`: one of them
 # reads the workspace's crates from cargo's home, where `deny` puts them.
 # scripts/tests/test-ci-jobs.sh holds the three to `check-full` and `ci`.
 ci-without-scripts: fmt-check clippy graph deny docs-check timing test-pack deny-advisories
 
-ci-release: smoke compile-fail scan-secrets
+ci-release: smoke compile-fail scan-secrets package install-check
 
 ci-scripts: deny test-scripts

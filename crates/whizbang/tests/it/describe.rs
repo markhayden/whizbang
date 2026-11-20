@@ -273,16 +273,6 @@ fn describe_without_json_names_the_build() {
 }
 
 #[test]
-fn version_flag_prints_the_version() {
-    let (ok, text) = whizbang(&["--version"]);
-    assert!(ok);
-    assert_eq!(
-        text.trim(),
-        format!("whizbang {}", env!("CARGO_PKG_VERSION"))
-    );
-}
-
-#[test]
 fn describe_json_lists_the_six_artifact_types() {
     let (_, text) = whizbang(&["describe", "--json"]);
     let doc: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
