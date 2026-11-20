@@ -1907,6 +1907,111 @@ fn a_repair_of_an_invalid_submission_is_recorded_in_the_run() {
     );
 }
 
+// --- what a submission cites: the ids the judge is shown (the gate of 2026-11-19) -------------
+
+/// A call of `view` of the candidate's middle, by the judge, under this provider's id.
+fn viewing(id: &str) -> Json {
+    json!({"tool_call": {"id": id, "name": "view", "arguments":
+        {"image": "candidate", "bbox": [0.25, 0.25, 0.75, 0.75]}}})
+}
+
+/// The text of the first tool result the judge was sent in its request of this number.
+fn rejection(judge: &FakeJudge, request: usize) -> String {
+    let received = judge.received();
+    match &received[request].messages().last().unwrap().parts()[0] {
+        Part::ToolResult(result) => result.text().to_owned(),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// The two items of source-fidelity, held, each citing what is given.
+fn citing(first: Json, second: Json) -> Json {
+    let mut one = item("chk:ob:SF1@candidate", "held", "confident");
+    one["evidence"] = first;
+    let mut two = item("chk:ob:SF2@candidate", "held", "confident");
+    two["evidence"] = second;
+    submission(json!([one, two]))
+}
+
+#[test]
+fn a_judge_cites_a_call_by_the_id_its_result_gives_or_by_the_providers_own() {
+    let world = World::new();
+    let script = turns(&[
+        (json!([viewing("v1")]), "tool_use"),
+        (
+            json!([citing(json!(["call:0"]), json!(["v1"]))]),
+            "tool_use",
+        ),
+    ]);
+    let (finished, judge) = finished_with(&world, &script);
+    assert!(
+        matches!(finished.outcome(), Outcome::Completed { .. }),
+        "{:?}",
+        finished.outcome()
+    );
+    assert_eq!(judge.requests(), 2);
+    // The result of `view` gives the judge the id to cite, as every other tool's does.
+    let answered = results(&judge, 1);
+    assert!(
+        answered[0].text().starts_with("call:0: image "),
+        "{}",
+        answered[0].text()
+    );
+}
+
+#[test]
+fn a_citation_refused_is_repaired_with_the_ids_the_judge_may_cite() {
+    let world = World::new();
+    let wrong = citing(json!(["view"]), json!([]));
+    let script = turns(&[
+        (json!([viewing("v1")]), "tool_use"),
+        (json!([wrong.clone()]), "tool_use"),
+        (json!([wrong]), "tool_use"),
+    ]);
+    let (finished, judge) = finished_with(&world, &script);
+    assert_eq!(
+        finished.outcome().name(),
+        "error",
+        "{:?}",
+        finished.outcome()
+    );
+    assert_eq!(
+        rejection(&judge, 2),
+        "Submission rejected: chk:ob:SF1@candidate: evidence cites a tool call that is not a \
+         completed call of this run; cite only call:0, or none"
+    );
+}
+
+#[test]
+fn a_detail_measured_first_is_cited_by_the_id_of_the_run_that_measured_it() {
+    let (world, source, candidate, _) = paired();
+    let wrong = citing(json!(["align"]), json!([]));
+    let script = turns(&[
+        (json!([wrong.clone()]), "tool_use"),
+        (json!([wrong]), "tool_use"),
+    ]);
+    let judge = judge(&script, &[]);
+    let executor = world.engine(judge.clone(), Secrets::none());
+    let call = of_pair(&source, &candidate, &[("details", "first")]);
+    let finished = executor.submit(&call).unwrap();
+    drop(executor);
+    assert_eq!(
+        finished.outcome().name(),
+        "error",
+        "{:?}",
+        finished.outcome()
+    );
+    // The opening gives the detail an id to cite it by, and a citation of anything else
+    // is answered with that id.
+    let said = texts(judge.received()[0].messages()[0].parts());
+    assert!(said[3].ends_with(" Cite it as detail:0."), "{}", said[3]);
+    let refused = rejection(&judge, 1);
+    assert!(
+        refused.ends_with("; cite only detail:0, or none"),
+        "{refused}"
+    );
+}
+
 // --- the details first, and squint's arm C (plan m2c, task A2) ---------------------------------
 
 /// A plane of squint's vectors, as an image (`fixtures/align/`).

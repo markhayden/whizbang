@@ -53,7 +53,11 @@ fn tiles_hands_the_judge_four_overlapping_tiles_at_full_resolution_before_the_fi
             )),
             "{said}"
         );
-        assert!(said.ends_with(&format!("named {}.", tile.id())), "{said}");
+        // Each tile is named, and given the id a submission cites it by.
+        assert!(
+            said.ends_with(&format!("named {}. Cite it as detail:{at}.", tile.id())),
+            "{said}"
+        );
         let Part::Image(picture) = &opening[4 + 2 * at] else {
             panic!("{:?}", opening[4 + 2 * at]);
         };
