@@ -1845,3 +1845,276 @@ fn the_loops_record_names_a_commit_of_this_tree_and_holds_only_aggregates() {
         }
     }
 }
+
+/// The version of the first release, which the release's record names (plan m4, task N1).
+/// A record of a later release names its own, in a test of its own.
+const RELEASED: &str = "0.1.0";
+
+/// The two targets of `SPEC.md` section 5, each with an archive in a release.
+const TARGETS: [&str; 2] = ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu"];
+
+/// Every check the local leg must pass, by the name its receipt gives it (plan m4, task R2,
+/// item 4), and the provider each paid check's requests must reach.
+const REQUIRED_CHECKS: [(&str, Option<&str>); 8] = [
+    ("model-tests", None),
+    ("setup", None),
+    ("mask", None),
+    ("fill", Some("fal")),
+    ("check-anthropic", Some("anthropic")),
+    ("check-google", Some("google")),
+    ("check-openai", Some("openai")),
+    ("loop", Some("anthropic")),
+];
+
+/// The release's record, `docs/results/m4-release.md`, whole.
+fn release_record() -> String {
+    std::fs::read_to_string(repository().join("docs/results/m4-release.md"))
+        .expect("the release's record is committed")
+}
+
+/// The text of the record's one fenced block of the language `language`, without its fences.
+fn fenced(page: &str, language: &str) -> String {
+    let opening = format!("```{language}\n");
+    let blocks: Vec<&str> = page.split(opening.as_str()).skip(1).collect();
+    assert_eq!(blocks.len(), 1, "one block of {language}");
+    let (body, _) = blocks[0]
+        .split_once("\n```")
+        .unwrap_or_else(|| panic!("the block of {language} is closed"));
+    body.to_owned()
+}
+
+/// The record's fields of the release, and its `SHA256SUMS` as each archive's name and
+/// digest.
+fn release_fields(page: &str) -> (toml::Table, Vec<(String, String)>) {
+    let fields: toml::Table = fenced(page, "toml").parse().expect("the fields are TOML");
+    let sums = fenced(page, "text")
+        .lines()
+        .map(|line| {
+            let (digest, name) = line
+                .split_once("  ")
+                .expect("a line is a digest and a name");
+            (name.to_owned(), digest.to_owned())
+        })
+        .collect();
+    (fields, sums)
+}
+
+fn is_sha256(text: &str) -> bool {
+    text.len() == 64 && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+#[test]
+fn the_release_record_names_a_candidate_whose_commit_is_of_this_tree() {
+    // Plan m4, task N1, item 1.
+    let page = release_record();
+    let (fields, sums) = release_fields(&page);
+    let text = |name: &str| -> &str {
+        fields[name]
+            .as_str()
+            .unwrap_or_else(|| panic!("the record has no {name}"))
+    };
+    let names: Vec<&str> = fields.keys().map(String::as_str).collect();
+    let mut expected = vec![
+        "candidate",
+        "candidates",
+        "ci_run",
+        "commit",
+        "prerelease_run",
+        "published",
+        "receipt_sha256",
+        "release_run",
+        "version",
+        "version_tag",
+    ];
+    expected.sort_unstable();
+    assert_eq!(names, expected);
+    // The version, its tag and the candidate's, all of one version, the one the
+    // workspace's manifest named at the commit.
+    assert_eq!(text("version"), RELEASED);
+    assert_eq!(text("version_tag"), format!("v{RELEASED}"));
+    let candidate = text("candidate");
+    let number = candidate
+        .strip_prefix(&format!("v{RELEASED}-rc."))
+        .expect("a candidate of the version");
+    assert!(number.parse::<u32>().is_ok_and(|n| n >= 1), "{candidate}");
+    let commit = text("commit");
+    assert!(is_ancestor(commit), "the commit {commit} is of this tree");
+    let manifest = std::process::Command::new("git")
+        .args(["show", &format!("{commit}:Cargo.toml")])
+        .current_dir(repository())
+        .output()
+        .expect("git runs");
+    assert!(manifest.status.success());
+    let manifest = String::from_utf8(manifest.stdout).unwrap();
+    assert!(
+        manifest.contains(&format!("\nversion = \"{RELEASED}\"\n")),
+        "the workspace's version at {commit} is {RELEASED}"
+    );
+    // Each run by its number; the receipt by its digest; published as a pre-release.
+    for run in ["ci_run", "prerelease_run", "release_run"] {
+        assert!(text(run).parse::<u64>().is_ok(), "{run}");
+    }
+    assert!(is_sha256(text("receipt_sha256")));
+    assert_eq!(text("published"), "pre-release");
+    // Every candidate tagged is in the table, each with its commit and how it ended; the
+    // one that passed is the record's, and it is the last.
+    let candidates = fields["candidates"].as_integer().expect("a count");
+    let rows: Vec<&str> = (page.lines())
+        .filter(|line| line.starts_with(&format!("| `v{RELEASED}-rc.")))
+        .collect();
+    assert_eq!(rows.len() as i64, candidates);
+    let last = rows.last().expect("a candidate was tagged");
+    assert!(last.starts_with(&format!("| `{candidate}` | `{commit}` | passed")));
+    // The archives the release holds: one for each target, of the version, by digest.
+    let named: Vec<String> = (TARGETS.iter())
+        .map(|target| format!("whizbang-{RELEASED}-{target}.tar.gz"))
+        .collect();
+    let given: Vec<String> = sums.iter().map(|(name, _)| name.clone()).collect();
+    assert_eq!(given, named);
+    assert!(sums.iter().all(|(_, digest)| is_sha256(digest)));
+    // What the gate said, and what was held after publication.
+    for held in [
+        "release-gate: passed",
+        "byte for byte",
+        "scripts/release-publish.sh check",
+    ] {
+        assert!(page.contains(held), "{held}");
+    }
+}
+
+#[test]
+fn the_release_record_holds_every_required_check_of_the_receipt_as_passed() {
+    // Plan m4, task N1, item 1: the receipt the release gate accepted, as it was attached
+    // to the candidate, byte for byte.
+    let page = release_record();
+    let (fields, sums) = release_fields(&page);
+    let text = |name: &str| fields[name].as_str().unwrap().to_owned();
+    let bytes = format!("{}\n", fenced(&page, "json"));
+    assert_eq!(
+        Digest::of_bytes(bytes.as_bytes()).to_string(),
+        format!("sha256:{}", text("receipt_sha256")),
+        "the receipt is held as it was attached"
+    );
+    let receipt: serde_json::Value = serde_json::from_str(&bytes).expect("the receipt is JSON");
+    let at = |value: &serde_json::Value, name: &str| -> serde_json::Value {
+        value
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| panic!("no {name}"))
+    };
+    let string = |value: &serde_json::Value, name: &str| -> String {
+        at(value, name)
+            .as_str()
+            .unwrap_or_else(|| panic!("{name} is a string"))
+            .to_owned()
+    };
+    // Of this candidate, this commit and this version, with the archives the release holds.
+    assert_eq!(string(&receipt, "schema"), "prerelease-receipt/1");
+    assert_eq!(string(&receipt, "tag"), text("candidate"));
+    assert_eq!(string(&receipt, "version"), RELEASED);
+    assert_eq!(string(&receipt, "commit"), text("commit"));
+    let number = text("candidate").rsplit('.').next().unwrap().to_owned();
+    assert_eq!(receipt["candidate"].as_u64(), number.parse::<u64>().ok());
+    for (target, (name, digest)) in TARGETS.iter().zip(&sums) {
+        assert!(name.contains(target));
+        assert_eq!(&string(&receipt["archives"], target), digest, "{target}");
+    }
+    assert_eq!(
+        receipt["archives"].as_object().unwrap().len(),
+        TARGETS.len()
+    );
+    assert!(is_sha256(&string(&receipt["binary"], "sha256")));
+    assert_eq!(
+        string(&receipt["binary"], "version_line"),
+        format!("whizbang {RELEASED} (commit {})", text("commit"))
+    );
+    assert_eq!(receipt["store"]["new"], serde_json::Value::Bool(true));
+    assert_eq!(string(&receipt["store"], "cache"), "off");
+
+    // Every required check, exactly once, and passed by the conditions of its kind.
+    let checks = receipt["checks"].as_array().expect("a list of checks");
+    let given: Vec<String> = checks.iter().map(|check| string(check, "name")).collect();
+    let required: Vec<&str> = REQUIRED_CHECKS.iter().map(|(name, _)| *name).collect();
+    assert_eq!(given, required);
+    let answered = |check: &serde_json::Value, provider: &str| {
+        let requests = check["requests"].as_array().expect("its requests");
+        assert!(
+            requests.iter().any(|request| request["backend"] == provider
+                && request["ended"] == "answered"
+                && request["stage"] == "answered"),
+            "a request to {provider} dispatched and settled with an answer"
+        );
+        assert_eq!(check["cache_hit"], serde_json::Value::Bool(false));
+        assert!(!check["sent_to"].as_array().unwrap().is_empty());
+    };
+    let mut settled = 0;
+    for (check, (name, provider)) in checks.iter().zip(REQUIRED_CHECKS) {
+        assert_eq!(check["exit"].as_i64(), Some(0), "{name}");
+        match name {
+            "model-tests" => {
+                let checkout = &check["checkout"];
+                assert_eq!(checkout["new"], serde_json::Value::Bool(true));
+                assert_eq!(checkout["clean"], serde_json::Value::Bool(true));
+                assert_eq!(string(checkout, "commit"), text("commit"));
+                assert!(!check["expected"].as_array().unwrap().is_empty());
+                assert_eq!(check["ran"], check["expected"]);
+                for none in ["failed", "timed_out"] {
+                    assert!(check[none].as_array().unwrap().is_empty(), "{none}");
+                }
+                assert!(is_sha256(&string(check, "report_sha256")));
+            }
+            "setup" => {
+                assert_eq!(string(check, "extra"), "torch");
+                assert!(check["hello"].is_object());
+                assert_eq!(check["probe_hello"], serde_json::Value::Bool(true));
+            }
+            "mask" => {
+                assert_eq!(string(check, "status"), "completed");
+                assert_eq!(string(check, "model"), "sam3");
+            }
+            "loop" => {
+                assert_eq!(string(check, "status"), "completed");
+                assert_eq!(check["plan_checks"], serde_json::Value::Bool(true));
+                assert!(
+                    check["kept"]["unchecked"].is_null(),
+                    "the kept attempt is checked"
+                );
+                let child = &check["check"];
+                assert_eq!(string(child, "status"), "completed");
+                assert!(["pass", "fail", "unsure"].contains(&string(child, "verdict").as_str()));
+                answered(child, provider.unwrap());
+                let requests = child["requests"].as_array().unwrap().iter();
+                settled += requests
+                    .map(|request| request["settled_micros"].as_i64().unwrap())
+                    .sum::<i64>();
+            }
+            _ => {
+                assert_eq!(string(check, "status"), "completed");
+                assert_eq!(string(check, "backend"), provider.unwrap());
+                answered(check, provider.unwrap());
+                if name.starts_with("check-") {
+                    let verdict = string(check, "verdict");
+                    assert!(["pass", "fail", "unsure"].contains(&verdict.as_str()));
+                }
+                settled += check["settled_micros"].as_i64().unwrap();
+            }
+        }
+    }
+    // What the receipt itemises (the fill, the three checks and the requests of the loop's
+    // check) is what the record says the leg spent; the rest is said to be an estimate.
+    let dollars = format!("{}.{:06}", settled / 1_000_000, settled % 1_000_000);
+    assert!(page.contains(&dollars), "the record states {dollars}");
+    assert!(page.contains("estimate"));
+    // No path and no key anywhere in the record.
+    for held in [
+        "/Users/",
+        "/home/",
+        "/private/",
+        "/tmp/",
+        "FAL_KEY",
+        "API_KEY",
+        "_KEY=",
+    ] {
+        assert!(!page.contains(held), "{held}");
+    }
+}

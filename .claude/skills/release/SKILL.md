@@ -65,7 +65,23 @@ If the version or the commit is in doubt, ask the owner. Do not guess.
 - [ ] 7. The version tag, `v<version>`, on the same commit as the candidate that passed,
       pushed by its name. The `release` workflow runs the gate and then publishes. If the
       gate refuses, read its reason: the release is not made, and the version tag stays
-      where it is; the next version tag is a new version.
+      where it is. A refusal alone does not cost the version: fix the cause, then run the
+      gate again on the same tag by re-running that run, `gh run rerun <run>`. The
+      workflow starts only on the push of a version tag and has no `workflow_dispatch`
+      (`.github/workflows/release.yml`), so `gh workflow run` cannot start it; a re-run
+      is of the tag's own commit, its workflow file and its scripts, with every tag
+      fetched again, and GitHub allows one for 30 days after the run. Where the cause is
+      decides the fix:
+      - Outside the commit and the candidate (a `prerelease` run not yet ended, a
+        receipt not yet attached, GitHub failing for a while): wait for it or put it
+        right, then re-run.
+      - In the candidate itself (a receipt or a file of it the gate refuses), with the
+        commit sound: a new candidate number on the same commit, from step 1, and then
+        the re-run, since the gate takes the highest number.
+      - In the commit (the gate, `scripts/release-publish.sh`, the workflow, or a fault
+        in what was built): the fix is a pull request, which no re-run can reach, since
+        a re-run is of the tag's commit. Then a new candidate on the fixed commit is
+        needed, and a new version, since the version tag is never moved.
 - [ ] 8. Check what was published: download the release's files into a new folder, hold
       them to their `SHA256SUMS`, and compare that `SHA256SUMS` with the candidate's, byte
       for byte. The release is marked as a pre-release and holds the two archives and
@@ -110,6 +126,7 @@ git tag -a v<version> <commit> -m "whizbang <version>"
 git push origin refs/tags/v<version>
 gh run list --workflow release.yml --commit <commit> --json databaseId,headBranch,status,conclusion
 gh run watch <run>
+gh run rerun <run>                                     # only after a refusal whose cause is put right (step 7)
 
 # 8: two new folders
 files=$(mktemp -d)
