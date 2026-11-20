@@ -1160,8 +1160,13 @@ fn the_gates_record_holds_the_details_first_receipt_and_only_aggregates() {
     let (first, again) = page
         .split_once("\n## Run again")
         .expect("a part on the run again");
+    // The fourth run, the first complete one (the Google key answering), its own part.
+    let (again, fourth) = again
+        .split_once("\n## The fourth run")
+        .expect("a part on the fourth run");
     a_gates_receipt_as_its_record_states_it(first, "details-first-receipt.json");
     a_gates_receipt_as_its_record_states_it(again, "details-first-rerun-receipt.json");
+    a_gates_receipt_as_its_record_states_it(fourth, "details-first-fourth-receipt.json");
 }
 
 /// A receipt of the gate of details first, committed under `docs/results/m3-gates/`: named
