@@ -64,6 +64,11 @@ Amended: 2026-11-18, with task Q1 of checkpoint 1D. Added, in step 6 and in "Con
 on a value are not added": the features a need asks of its backend may include one that
 the value of an argument names (ADR 0003, "A feature a call chooses"), worked out here and
 so again at admission. Which capabilities a call needs still follows from names alone.
+Amended: 2026-11-19, with task K1 of plan m4. Added: "A call's plan": an action that
+plans states, while its call is prepared, the requests of each capability, a loop's
+attempts and whether it checks; the plan decides the needs and the estimate, is in the
+fingerprint (`prepared/2`), and is held at admission (`Stale::Plan`). A call whose action
+plans nothing is prepared as before.
 
 ## Context
 
@@ -372,6 +377,63 @@ capabilities are needed is still decided from the names of the arguments given. 
 the same capabilities whatever its arguments' values. Rascal's `remove_prompt` is the
 known case that does not, and it goes with rascal's recipes to milestone 3
 (`docs/carry-over.md`).
+
+### A call's plan
+
+Added with plan m4 (`docs/plans/m4-the-loop-and-a-release.md`), task K1, item 1. A loop
+needs what fixed needs cannot give: fewer attempts when the cap of one call covers fewer,
+and to go on without a judge when none is ready. So an action may **plan**.
+
+- **Who plans.** An action whose descriptor says so (`Draft::plans`; the description lists
+  it as `plans: true`, version 10). Such a descriptor names no capability in two needs.
+- **What it is shown** (`Planning`), while its call is prepared, after the arguments and
+  inputs are checked and every need that applies by the arguments given is resolved: the
+  call's arguments; each of those capabilities with whether a model answers it, the bound
+  of one request to that model, and the requests the descriptor states; and the cap of one
+  call of the config's snapshot (`spend.call_cap_usd`), when it sets one. It is given
+  nothing to send with, to reserve with or to read the store with.
+- **What it states** (`Plan`): for each capability it names, how many requests this call
+  may send it, in place of what the descriptor states, none leaving the capability out;
+  for a loop, how many attempts were asked, how many the plan allows and whether each is
+  checked; and a reason, in one line of at most 200 characters. A capability it does not
+  name stands as the descriptor states it. An action may also plan nothing for a call
+  (`None`).
+- **What the plan decides.** The needs and the estimate. A capability the plan leaves out
+  is no need of the call: it is not among the needs, it is not missing when nothing
+  answers it, and nothing is reserved for it. The bound of a need is the bound of one
+  request times the plan's requests. A capability the plan keeps that nothing answers
+  leaves the call not ready, as ever: that is how a caller who requires a check is told
+  what is missing.
+- **It is settled once.** The plan is part of the prepared call (`PreparedCall::plan`) and
+  of its fingerprint. A call with a plan has a fingerprint of the kind `prepared/2`:
+  everything of `prepared/1`, then the count of capabilities the plan names and each as
+  its name and its requests; then 1 and the attempts asked, the attempts allowed and
+  whether it checks, or 0; then 1 and the reason, or 0. A call with no plan is of
+  `prepared/1`, byte for byte as before.
+- **Admission holds it.** Admission prepares the call again, which asks the action again,
+  and a preparation whose plan is not the one made now is refused as stale, with the
+  reason `Stale::Plan`: a judge's key that has appeared or gone, a cap that changed. It
+  is looked at after the call itself and before the needs, the inputs and the config,
+  since the plan decides the needs. No plan is fitted at admission.
+- **The run reads it.** The action is handed the prepared call, its plan in it, and does
+  not work it out again. The run's record keeps it (`run/6`, ADR 0005).
+- **A repeated request id** is answered before anything is prepared (ADR 0007), with the
+  run its first admission made, whose record holds the plan that run had.
+- **A plan that is none** (a capability that is no need of the call, or named twice; no
+  attempt allowed, more allowed than asked, or more than 16; a reason that is not one
+  line) refuses the call as invalid, naming the fault: it is the action's mistake, and
+  nothing runs on it.
+- **An action that plans nothing** is prepared exactly as before: the same needs,
+  estimate, fingerprint and record.
+
+Tests: `prepare::an_action_that_plans_is_prepared_with_the_needs_and_the_estimate_of_its_plan`,
+`prepare::a_plan_fitted_to_the_call_cap_says_what_was_asked_and_what_it_allows`,
+`prepare::a_capability_the_plan_leaves_out_is_not_resolved_and_nothing_is_reserved_for_it`,
+`prepare::the_plan_is_in_the_fingerprint_of_the_prepared_call`,
+`prepare::an_action_that_plans_nothing_is_prepared_as_before`,
+`admit::a_preparation_whose_plan_would_now_differ_is_refused_as_stale`,
+`admit::a_repeated_request_id_answers_with_the_run_and_the_plan_of_its_first_admission`,
+`executor::an_action_is_handed_the_plan_it_was_prepared_with`.
 
 ## Consequences
 

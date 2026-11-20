@@ -56,7 +56,7 @@ use std::collections::BTreeMap;
 use crate::artifact::ArtifactType;
 use crate::contract::{ActionDescriptor, Registry, ResultKind, Value, ValueType, text};
 
-pub use runner::{RecipeAction, SET, UNTIL, until_port};
+pub use runner::{FROM, RecipeAction, SET, UNTIL, from_port, until_port};
 
 /// The version of the format this build reads: rascal's `version = 1`.
 pub const FORMAT: i64 = 1;
@@ -594,6 +594,10 @@ impl Recipe {
         let verdict = (checked.last())
             .and_then(|last| registry.get(&last.action))
             .is_some_and(|last| last.descriptor().answers_with(ResultKind::Verdict));
+        // And one whose last step declares findings hands those back with it.
+        let findings = (checked.last())
+            .and_then(|last| registry.get(&last.action))
+            .is_some_and(|last| last.descriptor().answers_with(ResultKind::Findings));
         if outputs.is_empty() && !verdict {
             return Err(refuse(
                 "outputs",
@@ -608,6 +612,7 @@ impl Recipe {
             steps: checked,
             outputs,
             verdict,
+            findings,
         })
     }
 
@@ -840,6 +845,8 @@ pub struct Checked {
     pub outputs: Vec<Output>,
     /// Whether its last step answers with a verdict, which the recipe hands back.
     pub verdict: bool,
+    /// Whether its last step declares findings, which the recipe hands back too.
+    pub findings: bool,
 }
 
 impl Checked {

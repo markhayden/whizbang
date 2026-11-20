@@ -420,3 +420,322 @@ fn a_run_until_a_step_hands_back_its_outputs_which_a_later_call_takes_until_the_
 fn recipe_text() -> String {
     recipe(TWO_MARKS, "second.mask")
 }
+
+// --- a run from a step (plan m4, task K1, item 2; ADR 0033, "A run from a step") ---------------
+
+/// Four steps, the first and the last of which may cost 100 each.
+const STRETCH: &str = r#"
+[[step]]
+id = "one"
+op = "paid"
+inputs = { mask = "inputs.seed" }
+
+[[step]]
+id = "two"
+op = "mark"
+inputs = { mask = "one.mask" }
+x = 1
+
+[[step]]
+id = "three"
+op = "mark"
+inputs = { mask = "two.mask" }
+x = 2
+
+[[step]]
+id = "four"
+op = "paid"
+inputs = { mask = "three.mask" }
+"#;
+
+fn stretch() -> String {
+    recipe(STRETCH, "four.mask")
+}
+
+/// A call of the recipe from `from`, given `mask` in place of the output of `step`, and
+/// as its seed: the recipe's own inputs are given as for any run of it.
+fn from(step: &str, from: &str, mask: ArtifactId) -> Call {
+    call(mask)
+        .argument("from", Value::text(from))
+        .input(&whizbang_core::recipe::from_port(step, "mask"), mask)
+}
+
+fn step_ids(record: &RunRecord) -> Vec<String> {
+    let ids = record.steps().iter().filter_map(|step| step.recipe());
+    ids.map(|step| step.id.clone()).collect()
+}
+
+fn invalid(outcome: &Outcome) -> &str {
+    match outcome {
+        Outcome::Invalid { why } => why,
+        other => panic!("not invalid: {other:?}"),
+    }
+}
+
+#[test]
+fn a_run_from_a_step_runs_that_step_and_those_after_it_with_what_it_was_given() {
+    let world = World::new("recipe-from");
+    let given = world.put(rect_mask(on("photo")));
+    let seed = world.put(rect_mask(on("another photo")));
+    let executor = engine(&world, &stretch(), Vec::new());
+    // The seed is given, as every run of the recipe gives it, and the step that takes
+    // it does not run.
+    let asked = Call::new("marks")
+        .input("seed", seed)
+        .argument("from", Value::text("two"))
+        .input(&whizbang_core::recipe::from_port("one", "mask"), given);
+    let finished = executor.submit(&asked).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    let record = world.record(finished.run().as_str());
+    assert_eq!(step_ids(&record), ["two", "three", "four"]);
+    // The step after the start took what was given in place of the output before it.
+    let second = world.record(record.steps()[0].run());
+    assert_eq!(ids(&second, "mask"), [given]);
+    // What came out is the given mask with what the steps of the stretch did to it.
+    let out = outputs(finished.outcome());
+    assert_eq!(out.len(), 1);
+    let (made, was) = (world.mask(out[0].1), world.mask(given));
+    assert_eq!((made.core()[1], made.core()[2]), (255, 255));
+    assert_eq!((was.core()[1], was.core()[2]), (0, 0));
+    // The record says where the run started and what it was given.
+    assert_eq!(record.version(), "run/6");
+    let started = serde_json::to_value(record.started().unwrap()).unwrap();
+    assert_eq!(
+        started,
+        serde_json::json!({"from": "two", "given": [
+            {"step": "one", "port": "mask", "type": "mask", "artifact": given.0.to_string()}
+        ]})
+    );
+    // A run of the whole recipe says nothing of a start, and is of the version before.
+    let whole = executor.submit(&call(given)).unwrap();
+    let record = world.record(whole.run().as_str());
+    assert_eq!(step_ids(&record), ["one", "two", "three", "four"]);
+    assert_eq!((record.version(), record.started()), ("run/5", None));
+    assert_eq!(record.plan(), None);
+}
+
+#[test]
+fn a_run_from_one_step_until_another_runs_that_stretch_alone() {
+    let world = World::new("recipe-from-until");
+    let given = world.put(rect_mask(on("photo")));
+    let executor = engine(&world, &stretch(), Vec::new());
+    let asked = from("one", "two", given).argument("until", Value::text("three"));
+    let finished = executor.submit(&asked).unwrap();
+    let record = world.record(finished.run().as_str());
+    assert_eq!(step_ids(&record), ["two", "three"]);
+    // It hands back the outputs of the step it stopped at, as `until` does.
+    let out = outputs(finished.outcome());
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].0, whizbang_core::recipe::until_port("three", "mask"));
+    let made = world.mask(out[0].1);
+    assert_eq!((made.core()[1], made.core()[2]), (255, 255));
+    // One step alone is a stretch too.
+    let asked = from("one", "two", given).argument("until", Value::text("two"));
+    let finished = executor.submit(&asked).unwrap();
+    assert_eq!(step_ids(&world.record(finished.run().as_str())), ["two"]);
+}
+
+/// The backends of the runner's tests, without a filler.
+struct NoFiller;
+
+impl Backends for NoFiller {
+    fn resolve(
+        &self,
+        _: Capability,
+        _: Option<&str>,
+        _: &[String],
+    ) -> Result<ModelIdentity, Unavailable> {
+        Err(Unavailable::new("no filler is configured"))
+    }
+}
+
+#[test]
+fn a_run_from_a_step_reserves_nothing_for_the_steps_before_it() {
+    let world = World::new("recipe-from-reserves");
+    let given = world.put(rect_mask(on("photo")));
+    let ledger = Arc::new(FakeLedger::with_allowance(1000));
+    let executor = engine(&world, &stretch(), Vec::new()).with_ledger(ledger.clone());
+    // The whole recipe may cost 200: its first step and its last.
+    assert_eq!(
+        executor.prepare(&call(given)).unwrap().estimate().micros(),
+        200
+    );
+    // From the second step, the first is not paid for.
+    let asked = from("one", "two", given);
+    let prepared = executor.prepare(&asked).unwrap();
+    assert_eq!(prepared.estimate().micros(), 100);
+    assert_eq!(prepared.plan().unwrap().requests(Capability::Fill), Some(1));
+    let finished = executor.submit(&asked).unwrap();
+    let reserved = ledger.reservations(world.store.as_ref()).unwrap();
+    assert_eq!(reserved.len(), 1);
+    assert_eq!(
+        (reserved[0].run(), reserved[0].micros()),
+        (finished.run(), 100)
+    );
+    let record = world.record(finished.run().as_str());
+    assert_eq!(record.spend().reserved_micros, Some(100));
+    assert_eq!(record.plan(), prepared.plan());
+    // A stretch that no paid step is in needs no filler at all: none is resolved, so
+    // the call is ready where none is configured, and nothing is reserved.
+    let asked = asked.argument("until", Value::text("three"));
+    let prepared = executor.prepare(&asked).unwrap();
+    assert!(prepared.needs().is_empty());
+    assert_eq!(prepared.estimate().micros(), 0);
+    let mut registry = fakes(Vec::new());
+    let recipe = action_of(&stretch(), &registry).unwrap();
+    registry.register(Arc::new(recipe)).unwrap();
+    let without = Engine::over(
+        registry,
+        Arc::new(NoFiller),
+        world.store.clone(),
+        Digest::of_bytes(b""),
+    );
+    let finished = without.submit(&asked).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    assert_eq!(
+        world
+            .record(finished.run().as_str())
+            .spend()
+            .reserved_micros,
+        None
+    );
+    // The whole recipe is not ready there.
+    assert!(without.submit(&call(given)).is_err());
+}
+
+#[test]
+fn a_run_from_a_step_that_lacks_an_output_a_later_step_needs_is_refused_before_anything_runs() {
+    let world = World::new("recipe-from-refused");
+    let given = world.put(rect_mask(on("photo")));
+    let executor = engine(&world, &stretch(), Vec::new());
+    let from_three = || call(given).argument("from", Value::text("three"));
+    let port = |step: &str| whizbang_core::recipe::from_port(step, "mask");
+    let refused = |asked: &Call, said: &str| {
+        let finished = executor.submit(asked).unwrap();
+        let why = invalid(finished.outcome()).to_owned();
+        assert!(why.contains(said), "{why}");
+        // Before anything ran: the recipe's run made no step.
+        let record = world.record(finished.run().as_str());
+        assert!(record.steps().is_empty(), "{why}");
+        assert_eq!(record.started(), None);
+    };
+    // Nothing given in place of the output the first step of the stretch takes.
+    refused(
+        &from_three(),
+        "the step three takes the output mask of the step two, which does not run, and \
+         nothing was given in its place: give it at from_two_mask",
+    );
+    // Given for another step than the one whose output is taken.
+    refused(
+        &from_three().input(&port("one"), given),
+        "the step three takes the output mask of the step two",
+    );
+    // `from` after `until`.
+    let backwards = from("two", "three", given).argument("until", Value::text("two"));
+    refused(
+        &backwards,
+        "from names three, which comes after the step the run stops at",
+    );
+    // Something given for a step that runs, or with no `from` at all.
+    let twice = from("two", "three", given).input(&port("three"), given);
+    refused(
+        &twice,
+        "the step three, which is not before the step the run starts from",
+    );
+    let no_from = call(given).input(&port("one"), given);
+    refused(&no_from, "from names no step to run from");
+    // A step that is no step of the recipe, and the first step, are no `from`; an
+    // artifact that is not of the port's type is refused as any input is. None of
+    // them makes a run.
+    let runs = world.store.snapshot().unwrap().runs().len();
+    for step in ["five", "one"] {
+        let asked = from("one", step, given);
+        assert!(executor.submit(&asked).is_err(), "{step}");
+    }
+    let picture = {
+        use crate::artifact::support::{image_of, photo};
+        let image = Artifact::from(image_of(photo(), artifact::ImageRole::Picture));
+        let mut publication = world.store.begin().unwrap();
+        let id = artifact::put(&mut publication, &image).unwrap();
+        publication.publish().unwrap();
+        id
+    };
+    let wrong = call(given)
+        .argument("from", Value::text("two"))
+        .input(&port("one"), picture);
+    let refusal = executor.submit(&wrong).unwrap_err();
+    assert!(
+        refusal
+            .to_string()
+            .contains("the input from_one_mask: a mask is required"),
+        "{refusal}"
+    );
+    assert_eq!(world.store.snapshot().unwrap().runs().len(), runs);
+}
+
+#[test]
+fn a_recipe_hands_its_caller_the_findings_of_its_last_step() {
+    use whizbang_core::contract::record::Decision;
+    use whizbang_core::contract::{ResultKind, Verdict};
+    let judges = |name: &str| -> Arc<dyn Action> {
+        let descriptor = ActionDescriptor::draft(name, "1.0.0", Kind::Primitive, "Judges.")
+            .input(InputPort::required("mask", ArtifactType::Mask, "The mask."))
+            .results(ResultKind::Verdict)
+            .results(ResultKind::Findings)
+            .concurrent(true)
+            .build()
+            .unwrap();
+        Arc::new(Fake(
+            descriptor,
+            Box::new(|_, _| {
+                Ok(Produced::nothing()
+                    .with_verdict(Verdict::new(Decision::Fail, "it is still there"))
+                    .with_findings(crate::contract::findings::document()))
+            }),
+        ))
+    };
+    let steps = r#"
+[[step]]
+id = "first"
+op = "mark"
+inputs = { mask = "inputs.seed" }
+x = 0
+
+[[step]]
+id = "judged"
+op = "judges"
+inputs = { mask = "first.mask" }
+"#;
+    let world = World::new("recipe-findings");
+    let seed = world.put(rect_mask(on("photo")));
+    let text = recipe(steps, "first.mask");
+    let executor = engine(&world, &text, vec![judges("judges")]);
+    let declared = executor.registry().get("marks").unwrap().descriptor();
+    assert!(declared.answers_with(ResultKind::Findings));
+    let finished = executor.submit(&call(seed)).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    // With the verdict, the findings of the last step, as that step handed them back.
+    assert_eq!(
+        finished.verdict().map(|v| v.decision()),
+        Some(Decision::Fail)
+    );
+    let handed = finished.findings().unwrap();
+    assert_eq!(handed.to_json(), crate::contract::findings::document());
+    let record = world.record(finished.run().as_str());
+    assert_eq!(record.findings().unwrap().counts.len(), 4);
+    // A step that declares findings and is not the last hands the recipe's caller none.
+    let middle = format!(
+        "{steps}\n[[step]]\nid = \"last\"\nop = \"mark\"\ninputs = {{ mask = \"first.mask\" }}\nx = 3\n"
+    );
+    let world = World::new("recipe-findings-middle");
+    let seed = world.put(rect_mask(on("photo")));
+    let executor = engine(
+        &world,
+        &recipe(&middle, "last.mask"),
+        vec![judges("judges")],
+    );
+    let declared = executor.registry().get("marks").unwrap().descriptor();
+    assert!(!declared.answers_with(ResultKind::Findings));
+    let finished = executor.submit(&call(seed)).unwrap();
+    assert_eq!(finished.findings(), None);
+}

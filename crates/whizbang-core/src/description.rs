@@ -23,8 +23,12 @@ use crate::contract::{ActionDescriptor, Kind, Registry};
 /// item 7; ADR 0033); an action that says nothing of it has no `use`. Version 9 adds
 /// `results` to an action that hands back a result beside its artifacts, `verdict` or
 /// `measurements` (plan m3, task Q1, item 2; ADR 0035); an action that hands back none has
-/// no `results`.
-pub const DESCRIPTION_VERSION: u32 = 9;
+/// no `results`. Version 10 adds `findings` to what `results` may list, and `plans`,
+/// true, to an action that plans its calls (plan m4, task K1, items 1 and 3; ADR 0004, "A
+/// call's plan"); an action that plans nothing has no `plans`. With it every recipe of
+/// two steps or more gains the argument `from` and an input for each output of each step
+/// before its last (ADR 0033, "A run from a step").
+pub const DESCRIPTION_VERSION: u32 = 10;
 
 /// Everything a door can offer, as one document.
 #[derive(Debug, Clone, PartialEq, Serialize)]

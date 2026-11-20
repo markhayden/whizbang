@@ -432,6 +432,40 @@ of preparation each change once, in one place.
 bounds a test states; findings on a fake action that hands back a document a test writes;
 the runner's tests use the fake segmenter.
 
+**Split at the seam, with the task.** K1's first pull request builds items 1 to 4 and
+passes the size for a split (about 3,700 changed lines of source, tests, schemas and
+documents, the generated reference apart: the record's schema and its fixed vectors, and
+the tests of a plan through the executor, the command and the server, came to more than
+the estimate). So it stops at the seam this plan names ("Seams"): item 5, the executor
+built with a digest alone, is a second pull request of K1's own, which lands before K2
+closes the carry-over row. The box above stays open until that pull request: its clauses
+`asked::an_executor_built_with_a_digest_alone_is_a_tests_alone` (or the test of the one
+walk), and `scripts/tests/test-features.sh` and `scripts/tests/test-crate-graph.sh` with
+the new feature, are the second pull request's. Every other clause is shown by its test
+in the first. Where the tests are: those named `prepare::`, `admit::` and
+`executor::an_action_is_handed_the_plan_it_was_prepared_with` are in the core's
+`contract::plan`, a module for each; the two of `executor::findings_` in the core's
+`contract::findings::executor`; `runner::`, `describe::` and `record::` in the core's
+modules of those names; `cli::` and `serve::` in the binary's.
+
+**Decided with the task (K1).**
+
+- A plan is more than a loop's attempts: it states the requests of each capability, and
+  a loop's attempts beside them, so that a recipe run from a step can plan too (item 2:
+  "nothing is reserved for them" cannot be said by needs that apply by an argument's
+  presence alone). Every recipe of two steps or more is therefore listed as an action
+  that plans; it plans only a call that gives `from`.
+- A call with a plan has a fingerprint of the kind `prepared/2`; one without is of
+  `prepared/1` as before (ADR 0004, "A call's plan").
+- A record is written as `run/6` only when it holds one of the four new groups, as
+  `run/5` is written only for a recipe's steps (ADR 0033): every other record is
+  `run/4` or `run/5`, byte for byte as before. So "reading `run/5`" needs no
+  conversion, no store is migrated, and the store's own format does not move.
+- A run from a step still gives the recipe's own required inputs, those only a skipped
+  step takes among them (ADR 0033, "A run from a step").
+- The findings' schema carries the decision of the whole submission, `complete` and the
+  counts of what was left out (K2, items 1 and 2), since K2 adds no field.
+
 ## K2. What the loop stands on, in `check` (medium)
 
 ### Goal

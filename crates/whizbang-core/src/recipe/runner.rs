@@ -34,6 +34,27 @@
 //! nothing for a step it never reaches (plan m3, task F1, item 6). A recipe of one step
 //! has no `until`.
 //!
+//! **A run from a step** (ADR 0033, "A run from a step"). [`FROM`] is the mirror of
+//! `until`: the id of a step after the first. The recipe runs that step and those after
+//! it; the steps before it do not run. In place of their outputs the call gives
+//! artifacts, at the input ports [`from_port`] names, one port for each output port of
+//! each step before the last; a later step, and an output of the recipe, bound to an
+//! output of a step that did not run takes what was given there. `from` and `until` may
+//! be given together, so a caller runs one stretch of a recipe. The run is invalid, before
+//! any step runs, when `from` comes after `until`, when something is given at a `from`
+//! port without `from` or for a step that runs, and when a step of the stretch, or an
+//! output the recipe hands back, needs an output of a step before it that was not given,
+//! or what such a step measured, which nobody can give. A given artifact that is not of
+//! its port's type is refused when the call is prepared, as any input is. The recipe
+//! plans such a call (ADR 0004, "A call's plan"): its plan states, for each capability,
+//! the requests of the steps of the stretch alone, so nothing is reserved for a step that
+//! does not run and a capability only such steps need is not resolved. The features asked
+//! of a capability stay those of every step that names it. The run's record says where it
+//! started and what it was given (`run/6`). The recipe's own inputs are given as for any
+//! run of it, those only a step before `from` takes among them: what a descriptor's port
+//! or argument requires does not depend on another argument. A recipe of one step has no
+//! `from`.
+//!
 //! **Its file.** The digest of the recipe's text is a setting of every run of it,
 //! [`DIGEST_SETTING`]: a run says which file it ran. A step whose action takes the
 //! argument [`DIGEST_ARGUMENT`] is given it too, so what the step keeps of its call (a
@@ -42,15 +63,16 @@
 //! **What is not an artifact** (ADR 0035). A step's argument bound to an earlier step's
 //! measurements is given them as one JSON text, as that step's run handed them back; and
 //! the verdict of a last step that answers with one is the recipe's, handed back with its
-//! outcome.
+//! outcome, and so are the findings of a last step that declares them.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::artifact::{self, ArtifactId};
+use crate::contract::record::{Given, Started};
 use crate::contract::{
     Action, ActionDescriptor, Argument, Call, CallError, Capability, Context, Count, Failure,
-    InputPort, Kind, Outcome, OutputPort, PreparedCall, Produced, Registry, Requirement,
-    ResultKind, Value, ValueType, Verdict, When,
+    Findings, InputPort, Kind, Outcome, OutputPort, Plan, Planning, PreparedCall, Produced,
+    Registry, Requirement, ResultKind, Value, ValueType, Verdict, When,
 };
 use crate::identity::{DecodeLimits, Digest};
 
@@ -66,6 +88,16 @@ pub const UNTIL: &str = "until";
 /// `step`: `until_<step>_<port>`.
 pub fn until_port(step: &str, port: &str) -> String {
     format!("{UNTIL}_{step}_{port}")
+}
+
+/// The runner's argument that names the first step to run.
+pub const FROM: &str = "from";
+
+/// The port at which a recipe run with [`FROM`] is given, in place of the output `port`
+/// of its step `step`, which does not run, the artifacts a later step takes from it:
+/// `from_<step>_<port>`.
+pub fn from_port(step: &str, port: &str) -> String {
+    format!("{FROM}_{step}_{port}")
 }
 
 /// The version of every recipe's descriptor: the runner's. What a recipe file says is
@@ -85,6 +117,9 @@ pub struct RecipeAction {
     digest: Digest,
     /// The descriptor of each step's action, in the order of the steps.
     steps: Vec<ActionDescriptor>,
+    /// What each step sends each capability, in the order of the steps: what the plan
+    /// of a run from a step is counted from.
+    sends: Vec<Vec<(Capability, u64)>>,
 }
 
 impl RecipeAction {
@@ -145,6 +180,32 @@ impl RecipeAction {
             ValueType::Text,
         ));
         if until {
+            draft = draft.argument(Argument::optional(
+                FROM,
+                "Runs the recipe from this step, after its first, given artifacts in place of the outputs of the steps before it.",
+                ValueType::choice(&ids[1..]),
+            ));
+            // With `from`, what stands in place of each output of a step that does not
+            // run: any step before the last may be one.
+            for (step, descriptor) in recipe.steps.iter().zip(&steps).take(before_last.len()) {
+                for port in descriptor.outputs() {
+                    let most = (port.count().max()).ok_or_else(|| {
+                        refuse(format!("{} of {} has no bound", port.name(), step.id))
+                    })?;
+                    let purpose = format!(
+                        "With from, what is given in place of the output {} of the step {}.",
+                        port.name(),
+                        step.id
+                    );
+                    draft = draft.input(InputPort::variadic(
+                        &from_port(&step.id, port.name()),
+                        port.artifact(),
+                        &purpose,
+                        Count::between(0, most),
+                    ));
+                }
+            }
+            draft = draft.plans();
             draft = draft.argument(Argument::optional(
                 UNTIL,
                 "Runs the recipe up to and including this step, before its last, and hands back that step's outputs as its own.",
@@ -209,10 +270,12 @@ impl RecipeAction {
         // stops before it (plan m3, task F1, item 6: `--until feather` asks no filler).
         let mut merged: Vec<(Requirement, Option<String>)> = Vec::new();
         let mut before: BTreeSet<Capability> = BTreeSet::new();
+        let mut sends = Vec::new();
         let last = recipe.steps.len().saturating_sub(1);
         for (at, (step, descriptor)) in recipe.steps.iter().zip(&steps).enumerate() {
+            let needs = needs_of(&recipe, step, descriptor);
+            sends.push((needs.iter().map(|(n, _)| (n.capability(), n.sends()))).collect());
             if at < last {
-                let needs = needs_of(&recipe, step, descriptor);
                 before.extend(needs.iter().map(|(need, _)| need.capability()));
             }
             for (need, chooser) in needs_of(&recipe, step, descriptor) {
@@ -253,6 +316,9 @@ impl RecipeAction {
         if recipe.verdict {
             draft = draft.results(ResultKind::Verdict);
         }
+        if recipe.findings {
+            draft = draft.results(ResultKind::Findings);
+        }
         let descriptor = draft
             .concurrent(true)
             .build()
@@ -262,6 +328,7 @@ impl RecipeAction {
             recipe,
             digest: Digest::of_bytes(text.as_bytes()),
             steps,
+            sends,
         })
     }
 
@@ -408,9 +475,109 @@ fn stopped(context: &Context, name: &str) -> Failure {
     }
 }
 
+impl RecipeAction {
+    /// The place of the step an argument of the call names, when it names one.
+    fn place(&self, named: Option<&Value>) -> Option<usize> {
+        let Some(Value::Text(id)) = named else {
+            return None;
+        };
+        self.recipe.steps.iter().position(|step| step.id == *id)
+    }
+
+    /// What is wrong with a run from the step at `first` to the one at `last`, given
+    /// these artifacts at the `from` ports, by step and port: none when every step of
+    /// the stretch, and every output the recipe then hands back, has what it takes.
+    fn start_fault(
+        &self,
+        first: usize,
+        last: usize,
+        given: &BTreeMap<&str, BTreeMap<String, Vec<ArtifactId>>>,
+    ) -> Option<String> {
+        let steps = &self.recipe.steps;
+        let before = |id: &str| steps[..first].iter().any(|step| step.id == id);
+        if let Some(step) = given.keys().find(|step| !before(step)) {
+            return Some(format!(
+                "an artifact is given in place of an output of the step {step}, which is \
+                 not before the step the run starts from"
+            ));
+        }
+        let has = |step: &str, port: &str| {
+            let at = given.get(step).and_then(|by| by.get(port));
+            at.is_some_and(|ids| !ids.is_empty())
+        };
+        for (step, descriptor) in steps.iter().zip(&self.steps).take(last + 1).skip(first) {
+            for (port, binding) in &step.inputs {
+                let Binding::Step {
+                    step: of,
+                    port: out,
+                } = binding
+                else {
+                    continue;
+                };
+                let needed = descriptor.input(port).is_some_and(|p| p.count().min() > 0);
+                if before(of) && needed && !has(of, out) {
+                    return Some(format!(
+                        "the step {} takes the output {out} of the step {of}, which does \
+                         not run, and nothing was given in its place: give it at {}",
+                        step.id,
+                        from_port(of, out)
+                    ));
+                }
+            }
+            let measured = step.arguments.iter().find_map(|(_, param)| match param {
+                Param::Measured(of) if before(of) => Some(of),
+                _ => None,
+            });
+            if let Some(of) = measured {
+                return Some(format!(
+                    "the step {} takes what the step {of} measured, and that step does \
+                     not run",
+                    step.id
+                ));
+            }
+        }
+        if last + 1 < steps.len() {
+            return None;
+        }
+        (self.recipe.outputs.iter()).find_map(|output| match &output.binding {
+            Binding::Step { step, port } if before(step) && !output.many && !has(step, port) => {
+                Some(format!(
+                    "the recipe hands back {} from the output {port} of the step {step}, \
+                     which does not run, and nothing was given in its place: give it at {}",
+                    output.name,
+                    from_port(step, port)
+                ))
+            }
+            _ => None,
+        })
+    }
+}
+
 impl Action for RecipeAction {
     fn descriptor(&self) -> &ActionDescriptor {
         &self.descriptor
+    }
+
+    /// The plan of a run from a step: for each capability the call could need, the
+    /// requests of the steps of the stretch alone. A call without `from` plans
+    /// nothing, and is prepared as the descriptor states.
+    fn plan(&self, planning: &Planning<'_>) -> Option<Plan> {
+        let first = self.place(planning.argument(FROM))?;
+        let last = match planning.argument(UNTIL) {
+            Some(until) => self.place(Some(until))?,
+            None => self.recipe.steps.len() - 1,
+        };
+        // A stretch that ends before it starts runs nothing: the run says so.
+        let stretch = self.sends.get(first..=last)?;
+        let mut plan = Plan::new();
+        for able in planning.capabilities() {
+            let of = |(capability, sends): &(Capability, u64)| {
+                (*capability == able.capability()).then_some(*sends)
+            };
+            let sends = stretch.iter().flatten().filter_map(of);
+            plan = plan.sending(able.capability(), sends.fold(0, u64::saturating_add));
+        }
+        Some(plan)
     }
 
     fn run(&self, call: &PreparedCall, context: &Context) -> Result<Produced, Failure> {
@@ -445,6 +612,57 @@ impl Action for RecipeAction {
         for input in call.inputs() {
             given.entry(input.port()).or_default().push(input.id());
         }
+        // A run from a step (`from`): what was given in place of the outputs of the
+        // steps before it, by step and port, and held to what the stretch takes
+        // before any step runs.
+        let mut made: BTreeMap<&str, BTreeMap<String, Vec<ArtifactId>>> = BTreeMap::new();
+        let mut handed = Vec::new();
+        for (step, descriptor) in self.recipe.steps.iter().zip(&self.steps) {
+            for port in descriptor.outputs() {
+                let at = from_port(&step.id, port.name());
+                let Some(ids) = given.get(at.as_str()) else {
+                    continue;
+                };
+                handed.extend(ids.iter().map(|id| Given {
+                    step: step.id.clone(),
+                    port: port.name().to_owned(),
+                    artifact_type: port.artifact(),
+                    artifact: id.0,
+                }));
+                let by_port = made.entry(step.id.as_str()).or_default();
+                by_port.insert(port.name().to_owned(), ids.clone());
+            }
+        }
+        let first = match text_of(call, FROM) {
+            Some(from) => {
+                let at = self.place(Some(&Value::text(from))).ok_or_else(|| {
+                    Failure::invalid(&format!("the recipe {name} has no step {from}"))
+                })?;
+                if at > last {
+                    return Err(Failure::invalid(&format!(
+                        "from names {from}, which comes after the step the run stops at, \
+                         in the recipe {name}"
+                    )));
+                }
+                if let Some(fault) = self.start_fault(at, last, &made) {
+                    return Err(Failure::invalid(&format!(
+                        "the recipe {name} cannot run from the step {from}: {fault}"
+                    )));
+                }
+                context.facts().started(Started {
+                    from: from.to_owned(),
+                    given: handed,
+                });
+                at
+            }
+            None if !handed.is_empty() => {
+                return Err(Failure::invalid(&format!(
+                    "the recipe {name} was given an artifact in place of a step's output, \
+                     and from names no step to run from"
+                )));
+            }
+            None => 0,
+        };
         let ids = |binding: &Binding, made: &BTreeMap<&str, BTreeMap<String, Vec<ArtifactId>>>| {
             match binding {
                 Binding::Input(input) => given.get(input.as_str()).cloned().unwrap_or_default(),
@@ -456,10 +674,11 @@ impl Action for RecipeAction {
             }
         };
 
-        let mut made: BTreeMap<&str, BTreeMap<String, Vec<ArtifactId>>> = BTreeMap::new();
         let mut measured: BTreeMap<&str, String> = BTreeMap::new();
         let mut verdict: Option<Verdict> = None;
-        for (at, step) in self.recipe.steps[..=last].iter().enumerate() {
+        let mut findings: Option<Findings> = None;
+        let stretch = self.recipe.steps.iter().enumerate();
+        for (at, step) in stretch.take(last + 1).skip(first) {
             if context.cancellation().is_cancelled() || context.deadline_passed() {
                 return Err(stopped(context, name));
             }
@@ -540,6 +759,7 @@ impl Action for RecipeAction {
                         measured.insert(step.id.as_str(), measurements.to_string());
                     }
                     verdict = finished.verdict().cloned();
+                    findings = finished.findings().cloned();
                 }
                 Outcome::Cancelled => return Err(stopped(context, name)),
                 Outcome::Error { kind, message } => {
@@ -586,6 +806,11 @@ impl Action for RecipeAction {
             && let Some(verdict) = verdict
         {
             produced = produced.with_verdict(verdict);
+        }
+        if self.recipe.findings
+            && let Some(findings) = findings
+        {
+            produced = produced.with_findings(findings.to_json());
         }
         for output in &self.recipe.outputs {
             for id in ids(&output.binding, &made) {

@@ -13,8 +13,8 @@ use std::time::Duration;
 use serde_json::{Value as Json, json};
 use whizbang::serving::Actions;
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Context, Engine, Executor, Failure, Kind, Outcome, PreparedCall,
-    Produced, Registry, RunId, RunState,
+    Action, ActionDescriptor, Argument, Context, Engine, Executor, Failure, Kind, Outcome, Plan,
+    Planning, PreparedCall, Produced, Registry, RunId, RunState, Value, ValueType,
 };
 use whizbang_core::store::Store;
 use whizbang_core::store::fs::RealFs;
@@ -814,4 +814,101 @@ fn a_request_id_reserved_for_a_labs_cells_is_refused_and_nothing_runs() {
     assert!(text.contains("reserved for the cells of a lab"), "{text}");
     assert!(notes.is_empty(), "{notes:?}");
     drop(client.close());
+}
+
+// --- a planned call (plan m4, task K1, item 1; ADR 0004, "A call's plan") -----------------------
+
+/// What `plans` did, in order: each plan it stated and each run it made.
+pub type Events = Arc<std::sync::Mutex<Vec<String>>>;
+
+/// `plans`: a fake action that plans. Asked for `attempts`, its plan allows two of them
+/// at most, unchecked; with `plain` it plans nothing. Its run notes that it ran.
+struct Plans(ActionDescriptor, Events);
+
+impl Action for Plans {
+    fn descriptor(&self) -> &ActionDescriptor {
+        &self.0
+    }
+
+    fn plan(&self, planning: &Planning<'_>) -> Option<Plan> {
+        if planning.argument("plain") == Some(&Value::Boolean(true)) {
+            return None;
+        }
+        let Some(Value::Integer(asked)) = planning.argument("attempts") else {
+            return None;
+        };
+        let asked = *asked as u32;
+        let plan = Plan::new().attempts(asked, asked.min(2), false);
+        Some(plan.because("a test's plan"))
+    }
+
+    fn run(&self, call: &PreparedCall, _: &Context) -> Result<Produced, Failure> {
+        let handed = call.plan().map(Plan::line);
+        self.1.lock().unwrap().push(format!("ran under {handed:?}"));
+        Ok(Produced::nothing())
+    }
+}
+
+/// A store, the binary's runner over it with `plans` beside the build's actions, the
+/// door over the same actions, and what `plans` did.
+pub fn planning(label: &str) -> (Scratch, Arc<Engine>, Arc<Actions>, Events) {
+    let dir = Scratch::new(label);
+    let root = dir.path().join("store");
+    let store = Arc::new(Store::open(&root, Arc::new(RealFs)).unwrap());
+    let events = Events::default();
+    let draft = ActionDescriptor::draft("plans", "1.0.0", Kind::Loop, "A test action that plans.")
+        .argument(Argument::with_default(
+            "attempts",
+            "How many attempts, at most.",
+            ValueType::integer(Some(1), Some(3)),
+            Value::Integer(3),
+        ))
+        .argument(Argument::optional(
+            "plain",
+            "Plans nothing.",
+            ValueType::Boolean,
+        ))
+        .plans();
+    let mut registry: Registry = whizbang::wiring::registry().unwrap();
+    let plans = Plans(draft.build().unwrap(), events.clone());
+    registry.register(Arc::new(plans)).unwrap();
+    let descriptors = registry.descriptors().cloned().collect();
+    let engine = crate::runner(registry, store);
+    let door = Arc::new(Actions::new(descriptors, root, None));
+    (dir, Arc::new(engine), door, events)
+}
+
+#[test]
+fn a_planned_call_answers_with_its_plan() {
+    let (_dir, executor, door, events) = planning("serve-plan");
+    let mut client = Client::new(executor, door, Limits::default());
+    client.initialized();
+    let mut notes = Vec::new();
+    client.call(1, "plans", json!({"attempts": 3}), None);
+    let (text, error) = result_text(&client.answer(1, &mut notes));
+    assert!(!error, "{text}");
+    // The plan the run was admitted under, then the run.
+    let mut lines = text.lines();
+    assert_eq!(
+        lines.next(),
+        Some("plan: 2 of 3 attempts asked, unchecked; a test's plan")
+    );
+    let run = lines.next().unwrap();
+    assert!(
+        run.starts_with("run ") && run.ends_with(" completed"),
+        "{text}"
+    );
+    // And it is the plan the action was handed.
+    assert_eq!(
+        *events.lock().unwrap(),
+        ["ran under Some(\"plan: 2 of 3 attempts asked, unchecked; a test's plan\")"]
+    );
+    // A call the action plans nothing for answers with no plan.
+    client.call(2, "plans", json!({"plain": true}), None);
+    let (text, error) = result_text(&client.answer(2, &mut notes));
+    assert!(
+        !error && text.starts_with("run ") && !text.contains("plan:"),
+        "{text}"
+    );
+    client.close();
 }

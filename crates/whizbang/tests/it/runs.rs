@@ -578,12 +578,14 @@ fn a_refusal_is_printed_as_the_core_says_it_once_escaped_and_whole() {
                 "broken",
                 "record",
                 Kind::Diagnostic,
-                b"{\"record\":\"run/3\",\"\\u001b[2J\":1}\n",
+                b"{\"record\":\"run/3\",\"identity\":{\"\\u001b[2J\":1}}\n",
             )
             .unwrap();
         publication.publish().unwrap();
     }
-    let expected = "not a run record: unknown field `\\u{1b}[2J`, expected one of `record`";
+    // The field is in the record's identity, whose fields are few: the reason is under
+    // the 200 characters a refusal quotes, and so is whole.
+    let expected = "not a run record: unknown field `\\u{1b}[2J`, expected one of `run`";
     let listed = whizbang(&["list"], &root);
     let line = listed
         .text()
@@ -615,9 +617,9 @@ fn a_refusal_is_printed_as_the_core_says_it_once_escaped_and_whole() {
     let shown = whizbang(&["show", "older"], &root);
     assert_eq!(shown.code, Some(1));
     assert!(
-        shown
-            .err
-            .contains("a record of another version: run/1, and this build reads run/5, run/4"),
+        shown.err.contains(
+            "a record of another version: run/1, and this build reads run/6, run/5, run/4"
+        ),
         "{}",
         shown.err
     );
@@ -625,7 +627,7 @@ fn a_refusal_is_printed_as_the_core_says_it_once_escaped_and_whole() {
     let listed = whizbang(&["list"], &root);
     assert_eq!(listed.code, Some(0), "{}", listed.err);
     let expected = "older\trecord not read: a record of another version: run/1, and this build \
-                    reads run/5, run/4, run/3 and run/2";
+                    reads run/6, run/5, run/4, run/3 and run/2";
     assert!(
         listed.text().lines().any(|line| line == expected),
         "{}",

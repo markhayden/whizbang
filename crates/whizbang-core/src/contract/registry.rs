@@ -9,7 +9,7 @@ use crate::artifact::Artifact;
 use crate::capability::Shown;
 
 use super::record::Decision;
-use super::{ActionDescriptor, Context, PreparedCall};
+use super::{ActionDescriptor, Context, Plan, Planning, PreparedCall};
 
 /// What an action hands back when it finished: the artifacts it made, each at the
 /// output port it is returned at.
@@ -25,6 +25,7 @@ pub struct Produced {
     outputs: Vec<(String, Artifact)>,
     verdict: Option<Verdict>,
     measurements: Option<serde_json::Value>,
+    findings: Option<serde_json::Value>,
 }
 
 /// The most bytes an action's measurements take, written as JSON (ADR 0035): what a
@@ -108,6 +109,19 @@ impl Produced {
         self.measurements.as_ref()
     }
 
+    /// The same, with these findings (ADR 0035, "Findings"): one JSON document of the
+    /// kind `findings/1` ([`Findings`](super::Findings)), which the executor reads
+    /// strictly. A second replaces the first.
+    pub fn with_findings(mut self, findings: serde_json::Value) -> Produced {
+        self.findings = Some(findings);
+        self
+    }
+
+    /// The findings handed back, when there are any, as the action wrote them.
+    pub fn findings(&self) -> Option<&serde_json::Value> {
+        self.findings.as_ref()
+    }
+
     /// What was handed back, to be committed.
     pub(super) fn into_outputs(self) -> Vec<(String, Artifact)> {
         self.outputs
@@ -137,6 +151,9 @@ impl std::fmt::Debug for Produced {
         }
         if self.measurements.is_some() {
             list.entry(&format_args!("measurements"));
+        }
+        if self.findings.is_some() {
+            list.entry(&format_args!("findings"));
         }
         list.finish()
     }
@@ -171,11 +188,25 @@ pub trait Action: Send + Sync {
     /// What the action is, takes, returns and needs. The same value on every call.
     fn descriptor(&self) -> &ActionDescriptor;
 
+    /// The plan of one call (ADR 0004, "A call's plan"): asked while the call is
+    /// prepared, of an action whose descriptor says it plans
+    /// ([`Draft::plans`](super::Draft::plans)), and of no other. None plans nothing
+    /// for this call: it is prepared as its descriptor states. It is asked again
+    /// whenever the call is prepared again, at admission too, and must answer the
+    /// same for the same things shown: it reads nothing else.
+    fn plan(&self, planning: &Planning<'_>) -> Option<Plan> {
+        let _ = planning;
+        None
+    }
+
     /// Runs the action on a call that was prepared and found ready, with what the
     /// executor hands it. It returns when the action is over.
     ///
     /// An action that only describes itself, as a fixture does, has nothing to run, and
     /// fails saying so.
+    ///
+    /// It is handed the plan of the call with it ([`PreparedCall::plan`]), when it
+    /// plans, and does not work it out again.
     fn run(&self, call: &PreparedCall, context: &Context) -> Result<Produced, Failure> {
         let _ = context;
         Err(Failure::error(
@@ -185,7 +216,8 @@ pub trait Action: Send + Sync {
     }
 }
 
-/// Why an action was not registered.
+/// Why an action was not registered. (An action that plans is asked for its plan by
+/// [`Action::plan`].)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegistrationError {
     /// An action of this name is registered already.

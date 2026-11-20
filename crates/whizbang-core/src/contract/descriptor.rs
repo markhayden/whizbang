@@ -40,6 +40,9 @@ pub enum ResultKind {
     /// What an evidence tool measured: one JSON document, which a recipe binds to a text
     /// argument of a later step (`<step>.measurements`).
     Measurements,
+    /// What counted against a pass, as data: one JSON document of the kind
+    /// `findings/1` ([`Findings`](super::Findings)), which holds no text of a judge's.
+    Findings,
 }
 
 impl ResultKind {
@@ -48,6 +51,7 @@ impl ResultKind {
         match self {
             ResultKind::Verdict => "verdict",
             ResultKind::Measurements => "measurements",
+            ResultKind::Findings => "findings",
         }
     }
 }
@@ -743,6 +747,10 @@ pub struct ActionDescriptor {
     results: Vec<ResultKind>,
     needs: Vec<Requirement>,
     concurrent: bool,
+    /// Whether preparation asks the action for the plan of each call (description
+    /// version 10; ADR 0004, "A call's plan"). Written only where it does.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    plans: bool,
 }
 
 /// Why a draft is not a descriptor.
@@ -818,6 +826,15 @@ impl Draft {
         self
     }
 
+    /// The action plans: preparation asks it for the plan of each call
+    /// ([`Action::plan`](super::Action::plan); ADR 0004, "A call's plan"). Such a
+    /// descriptor names no capability in two needs: a plan states the requests of a
+    /// capability, and that must be the requests of one need.
+    pub fn plans(mut self) -> Draft {
+        self.0.plans = true;
+        self
+    }
+
     /// The descriptor, if the draft keeps every rule; otherwise the first rule it breaks.
     pub fn build(self) -> Result<ActionDescriptor, DescriptorError> {
         match self.0.check() {
@@ -845,6 +862,7 @@ impl ActionDescriptor {
             results: Vec::new(),
             needs: Vec::new(),
             concurrent: false,
+            plans: false,
         })
     }
 
@@ -910,6 +928,11 @@ impl ActionDescriptor {
     /// Every capability the action can need, whatever the call.
     pub fn needs(&self) -> &[Requirement] {
         &self.needs
+    }
+
+    /// Whether preparation asks the action for the plan of each call.
+    pub fn plans(&self) -> bool {
+        self.plans
     }
 
     /// Whether two runs of the action may execute at the same time.
@@ -1112,6 +1135,14 @@ impl ActionDescriptor {
             if requirement.requests == 0 {
                 return Err(format!(
                     "the need for {capability} is for no request: a need is for one at least"
+                ));
+            }
+            // A plan states the requests of a capability, which must be one need's.
+            let same = |other: &&Requirement| other.capability == requirement.capability;
+            if self.plans && self.needs.iter().filter(same).count() > 1 {
+                return Err(format!(
+                    "the action plans, and two of its needs are for {capability}: a plan \
+                     states the requests of a capability, of one need"
                 ));
             }
             let mut features = BTreeSet::new();

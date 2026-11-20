@@ -140,6 +140,25 @@ pub struct OperationAsked<'a> {
 /// [`grow`] does: what comes back is what to print when the run completed, each output
 /// by its port and identity, or the complaint, escaped already.
 pub fn operation(executor: &dyn Executor, asked: &OperationAsked<'_>) -> Result<String, String> {
+    operation_saying(executor, asked, &mut on_the_error_stream)
+}
+
+/// What a door is told while a call is on its way: the plan of a planned call, before
+/// the call runs.
+pub type Say<'a> = &'a mut dyn FnMut(&str);
+
+/// Says a line on the error stream, as the binary does while a call is on its way.
+pub fn on_the_error_stream(line: &str) {
+    eprintln!("{}", printable(line));
+}
+
+/// [`operation`], telling `say` the plan of a planned call before the call runs (ADR
+/// 0004, "A call's plan").
+pub fn operation_saying(
+    executor: &dyn Executor,
+    asked: &OperationAsked<'_>,
+    say: Say<'_>,
+) -> Result<String, String> {
     let mut call = Call::new(asked.action);
     for (name, value) in &asked.arguments {
         call = call.argument(name, value.clone());
@@ -153,7 +172,7 @@ pub fn operation(executor: &dyn Executor, asked: &OperationAsked<'_>) -> Result<
         };
         call = call.input(port, ArtifactId(id));
     }
-    let (_, mut text, outputs) = completed(executor, call, asked.request_id)?;
+    let (_, mut text, outputs) = completed_saying(executor, call, asked.request_id, say)?;
     for output in outputs {
         let port = printable(output.port());
         text.push_str(&format!("{port} {}\n", output.id().0));
@@ -382,7 +401,30 @@ fn completed(
     call: Call,
     request_id: Option<&str>,
 ) -> Result<(RunId, String, Vec<Committed>), String> {
+    completed_saying(executor, call, request_id, &mut on_the_error_stream)
+}
+
+/// [`completed`], telling `say` the plan of a planned call before the call runs: the
+/// call is prepared first, and when its action planned it the plan is said in one line
+/// and the request comes with that preparation, so that what runs is the plan that
+/// was said, or nothing (a preparation whose plan would differ at admission is
+/// refused as stale). A call that plans nothing is sent as it always was. A request
+/// that was sent before is answered with its first run, whose own plan is in that
+/// run's record: the line said here is of the call as it prepares now.
+fn completed_saying(
+    executor: &dyn Executor,
+    call: Call,
+    request_id: Option<&str>,
+    say: Say<'_>,
+) -> Result<(RunId, String, Vec<Committed>), String> {
+    // A call that does not prepare is judged by the request, which also answers a
+    // request that was sent before, whatever its call would be now.
+    let planned = executor.prepare(&call).ok().filter(|p| p.plan().is_some());
     let mut request = Request::new(call);
+    if let Some(prepared) = &planned {
+        say(&prepared.plan().map(|plan| plan.line()).unwrap_or_default());
+        request = request.expecting(prepared);
+    }
     if let Some(text) = request_id {
         request = request.with_id(executor.request_id(text).map_err(|e| refused(&e))?);
     }
@@ -787,4 +829,15 @@ pub fn verdict(root: &Path, run: &RunId) -> Option<Stated> {
         why: why.to_owned(),
         items,
     })
+}
+
+/// The plan a run was admitted under, in one line, when its action planned its call
+/// (`run/6`): read from the run's record.
+pub fn plan_of(root: &Path, run: &RunId) -> Option<String> {
+    let reader = Reader::open(root, Arc::new(RealFs)).ok()?;
+    let generation = reader.snapshot().ok()?;
+    let read = |entry: &_| reader.read(entry);
+    let stored = whizbang_core::contract::record::stored(&generation, run.as_str(), read);
+    let record = stored?.ok()?;
+    record.plan().map(|plan| plan.line())
 }
