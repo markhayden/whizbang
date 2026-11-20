@@ -89,11 +89,12 @@ unresolved_micros = "40000"
   construction (`put`), held on every example above and by
   `task::seam_fills_the_wrap_edge_and_keeps_every_other_pixel`.
 - **Task success and visual quality.** The round's decode against the fixed-width band, by
-  `seam-03`'s groups and rules: round pending: the owner's picks
+  `seam-03`'s groups and rules. A page of 30 pairs was drawn (`sky` 13, `structured` 17) and
+  nobody picked it: not yet confirmed by a person; owed by milestone E (the owner's decision
+  of 2026-11-19)
 - **Earlier evidence, not this recipe's.** Rascal's `seam-03` (`fan-v1`, its default when it
   ran) and `objects-02` (`fan-v3` against `fan-v1`) were rounds of rascal's own recipe on the
-  sets they ran; they are cited beside the decode in `docs/results/m3-lab.md`, never as the
-  shipped recipe's.
+  sets they ran; they are to be cited beside E's decode, never as the shipped recipe's.
 
 ## Speed and cost
 
@@ -130,13 +131,14 @@ Measured on Apple M4 Max (macos, aarch64), in a release build; each time is the 
 
 ## Mark and history
 
-**Mark.** Experimental: rung 1 is shown, and rung 2 is shown in part, its decode waiting on
-the owner's picks (`SPEC.md` section 8, "Marks").
+**Mark.** Experimental: rung 1 is shown, and rung 2 is shown in part: its decode is owed by
+milestone E, by the owner's decision of 2026-11-19 (`docs/carry-over.md`, the row on the
+blinded rounds of milestone 3; `SPEC.md` section 8, "Marks").
 
 | Rung | Result | Evidence |
 |---|---|---|
 | 1. Single examples | Shown | The two examples above, run as tests under a scripted filler |
-| 2. Scored alone | In part | The round of `m3-seam`, its decode pending |
+| 2. Scored alone | In part | The round of `m3-seam`, run; its decode owed by milestone E |
 | 3 and 4 | Not yet | Milestone E |
 
 **Gates.** None faced.

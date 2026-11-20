@@ -482,3 +482,68 @@ egress_classes = "source_images, prompts, evidence"
 egress_outcome = "sent"
 seconds = "13.1"
 ```
+
+## The five use cases as recipes (plan m3, task Q1, item 7)
+
+Q1's item 7, reworded with the task: the orchestrator's live run of each use case's recipe
+is credited from the gate of details first run again on 2026-11-19, with a binary built at
+main `af5392c4dbc9db0caf19dc184c82e7a5b0b4dc43`, after the judges' fixes (#243). Its 1,000
+`check` runs are the five recipes on `claude-haiku-5-5` (three repetitions),
+`gemini-3.8-flash` and `gpt-6.1-terra`, arms C and F, on the five published dev sets. The
+first block is the run, its receipt named by its digest; one block a use case follows, with
+its recipe's digest at that commit, its decisions and those that ended in a verdict. Errors
+are runs that did not: on `gemini-3.8-flash` nearly every run, which the provider refused
+with 402 `RESOURCE_EXHAUSTED` (`docs/results/m3-gates.md`, "Run again"). Spend is what the
+store charged, to the cent.
+
+```toml recipes
+commit = "af5392c4dbc9db0caf19dc184c82e7a5b0b4dc43"
+whizbang = "0.0.1"
+action = "check 1.6.0"
+gate = "gates/details-first.toml"
+receipt = "docs/results/m3-gates/details-first-rerun-receipt.json"
+receipt_sha256 = "d5d34a241d3a43a58430f0fee16e9b739caecf64efba6c42e8f8409acea94865"
+judges = "claude-haiku-5-5, gemini-3.8-flash, gpt-6.1-terra"
+decisions = "1000"
+completed = "762"
+errors = "238"
+pass = "117"
+fail = "442"
+unsure = "203"
+settled_usd = "4.27"
+```
+
+```toml recipes
+use_case = "source-fidelity"
+recipe_digest = "sha256:abf035388252488b0058896669f3d3d6437f97584151c3004a02241a16c8426d"
+decisions = "200"
+completed = "163"
+```
+
+```toml recipes
+use_case = "reference-consistency"
+recipe_digest = "sha256:a1f1651296bd18d80dd537fc5e89417e7d0db679e51757d30170c381b83d8035"
+decisions = "200"
+completed = "141"
+```
+
+```toml recipes
+use_case = "reality-checks"
+recipe_digest = "sha256:068fd280b0716c895602d86c95e1e90b5d25c22102f17cba70e8faa39c52e172"
+decisions = "200"
+completed = "154"
+```
+
+```toml recipes
+use_case = "brief-compliance"
+recipe_digest = "sha256:b2e00ff1ef0418c3d11462fbf4860882d495384b9b82bde58163b89db1375d8a"
+decisions = "200"
+completed = "159"
+```
+
+```toml recipes
+use_case = "product-fidelity"
+recipe_digest = "sha256:07e0d82abdde420b7291c192fa4fa8e6508c263a8022efcb3c10ee61050c353d"
+decisions = "200"
+completed = "145"
+```

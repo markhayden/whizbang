@@ -345,6 +345,10 @@ fn the_use_cases_record_names_a_commit_of_this_tree_and_holds_no_secret() {
     // Plan 3, task L0 (plan 2C, task P1, item 7): each of the five use cases asked once of
     // each new judge, a block of its own.
     the_two_new_judges_lines_are_of_this_tree(&page);
+    // Plan m3, task Q1, item 7 (reworded with the task): each use case's recipe run live,
+    // credited from the gate of details first run again, a block of the run and one a use
+    // case.
+    the_recipes_lines_are_of_this_tree(&page);
     // No secret, no path and no reply: no key's form, no header, no absolute path, no
     // checklist item's name and no reason.
     for held in [
@@ -361,6 +365,83 @@ fn the_use_cases_record_names_a_commit_of_this_tree_and_holds_no_secret() {
     ] {
         assert!(!page.contains(held), "the page holds {held}");
     }
+}
+
+/// The lines of the five use cases run as recipes (plan m3, task Q1, item 7, reworded
+/// with the task): the blocks `toml recipes` of `docs/results/m2c-use-cases.md`, the first
+/// of the run, the gate of details first run again on the three judges, and one a use case
+/// with the digest of its recipe as it ran; each use case completed at least once, and the
+/// counts are the gate's receipt's.
+fn the_recipes_lines_are_of_this_tree(page: &str) {
+    let blocks: Vec<Fields> = (page.split("```toml recipes\n").skip(1))
+        .map(|rest| {
+            let block = rest.split("```").next().unwrap();
+            let line = |line: &str| {
+                let (name, value) = line.split_once(" = ").expect("a line is name = value");
+                (name.to_owned(), value.trim_matches('"').to_owned())
+            };
+            block.lines().map(line).collect()
+        })
+        .collect();
+    let (run, cases) = blocks.split_first().expect("a block of the run");
+    let commit = field(run, "commit");
+    assert!(is_ancestor(commit), "{commit}");
+    assert_eq!(field(run, "whizbang"), env!("CARGO_PKG_VERSION"));
+    assert_eq!(field(run, "action"), "check 1.6.0");
+    assert_eq!(field(run, "gate"), "gates/details-first.toml");
+    assert_eq!(
+        field(run, "judges"),
+        "claude-haiku-5-5, gemini-3.8-flash, gpt-6.1-terra"
+    );
+    let number = |fields: &Fields, name: &str| field(fields, name).parse::<u64>().expect(name);
+    // The receipt the run wrote, committed beside the first.
+    let receipt = repository().join(field(run, "receipt"));
+    let bytes = std::fs::read(&receipt).expect("the re-run's receipt is committed");
+    assert_eq!(field(run, "receipt_sha256"), Digest::of_bytes(&bytes).hex());
+    let read: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(read["cells"].as_u64(), Some(number(run, "decisions")));
+    // One block a use case, each its recipe as the commit had it, completed at least once.
+    let named: Vec<&str> = cases.iter().map(|b| field(b, "use_case")).collect();
+    assert_eq!(
+        named,
+        [
+            "source-fidelity",
+            "reference-consistency",
+            "reality-checks",
+            "brief-compliance",
+            "product-fidelity"
+        ]
+    );
+    let (mut decisions, mut completed) = (0, 0);
+    for case in cases {
+        let use_case = field(case, "use_case");
+        let shown = std::process::Command::new("git")
+            .args([
+                "show",
+                &format!("{commit}:crates/whizbang-squint/recipes/{use_case}.toml"),
+            ])
+            .current_dir(repository())
+            .output()
+            .expect("git runs");
+        assert!(shown.status.success(), "{use_case} at {commit}");
+        assert_eq!(
+            field(case, "recipe_digest"),
+            whizbang_eval::lab::digest_of(&shown.stdout),
+            "{use_case}"
+        );
+        let done = number(case, "completed");
+        assert!(done >= 1 && done <= number(case, "decisions"), "{use_case}");
+        decisions += number(case, "decisions");
+        completed += done;
+    }
+    assert_eq!(decisions, number(run, "decisions"));
+    assert_eq!(completed, number(run, "completed"));
+    assert_eq!(completed + number(run, "errors"), decisions);
+    let verdicts = ["pass", "fail", "unsure"].map(|n| number(run, n));
+    assert_eq!(verdicts.iter().sum::<u64>(), completed);
+    // Within what the plan let G1's gate spend, 15.50 dollars.
+    let spent: f64 = field(run, "settled_usd").parse().expect("settled_usd");
+    assert!((0.0..=15.5).contains(&spent), "{spent}");
 }
 
 /// The ten blocks of the Google and OpenAI judges' live calls (plan 3, task L0), in
@@ -1072,18 +1153,29 @@ fn the_baseline_record_holds_the_live_reruns_two_numbers() {
 
 #[test]
 fn the_gates_record_holds_the_details_first_receipt_and_only_aggregates() {
-    let root = repository();
-    let page = std::fs::read_to_string(root.join("docs/results/m3-gates.md"))
+    let page = std::fs::read_to_string(repository().join("docs/results/m3-gates.md"))
         .expect("the record of the gate of details first is committed");
-    let bytes = std::fs::read(root.join("docs/results/m3-gates/details-first-receipt.json"))
+    // The first run, and the run again after the judges' fixes (plan m3, the closing pull
+    // request), each its receipt and its table under its own part of the record.
+    let (first, again) = page
+        .split_once("\n## Run again")
+        .expect("a part on the run again");
+    a_gates_receipt_as_its_record_states_it(first, "details-first-receipt.json");
+    a_gates_receipt_as_its_record_states_it(again, "details-first-rerun-receipt.json");
+}
+
+/// A receipt of the gate of details first, committed under `docs/results/m3-gates/`: named
+/// by its digest in `part`, of the frozen gate, its matrix and the published labels of its
+/// sets, aggregates only, and each judge's outcome and gain as `part`'s table states them.
+fn a_gates_receipt_as_its_record_states_it(part: &str, name: &str) {
+    let root = repository();
+    let bytes = std::fs::read(root.join("docs/results/m3-gates").join(name))
         .expect("its receipt is committed");
-    // The record names the receipt by its digest, and the receipt is of the frozen gate,
-    // its matrix and the published labels of its sets.
-    assert!(page.contains(&Digest::of_bytes(&bytes).hex()));
+    assert!(part.contains(&Digest::of_bytes(&bytes).hex()), "{name}");
     let receipt: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let frozen = whizbang::gating::frozen(&root.join("gates/details-first.toml")).unwrap();
     assert_eq!(receipt["gate_sha256"], frozen.digest.as_str());
-    assert!(page.contains(&frozen.digest));
+    assert!(part.contains(frozen.digest.as_str()), "{name}");
     assert_eq!(
         receipt["matrix_identity"],
         frozen.matrix.identity().as_str()
@@ -1117,10 +1209,10 @@ fn the_gates_record_holds_the_details_first_receipt_and_only_aggregates() {
         let model = judge["model"].as_str().unwrap();
         let outcome = judge["outcome"].as_str().unwrap();
         let gain = judge["paired"]["gain"]["point"].as_f64().unwrap();
-        let row = page
+        let row = part
             .lines()
             .find(|line| line.starts_with(&format!("| `{model}` | {outcome} |")))
-            .unwrap_or_else(|| panic!("a row of {model}"));
+            .unwrap_or_else(|| panic!("{name}: a row of {model}"));
         assert!(row.contains(&format!("| {gain:.3} [")), "{row}");
         let keys: Vec<&String> = judge.as_object().unwrap().keys().collect();
         assert_eq!(keys, ["backend", "failed", "model", "outcome", "paired"]);
@@ -1171,14 +1263,13 @@ fn the_encoding_record_names_a_commit_of_this_tree() {
 // --- The edits' rung 2 and the records of the five recipes that end in a fill (plan m3,
 // task B1, items 1 and 2).
 
-/// Whether the two rounds' decodes are in (B1's last pull request): the edits' four labs
-/// and the seam's. While false, each record's visual quality reads exactly
-/// [`PENDING`], its rung 2 is "In part" and its mark experimental, and the edits' record
-/// has no part on visual quality. The pull request that adds the decodes sets this true,
-/// and then each must hold a decode and none may say pending.
-const EDITS_DECODED: bool = false;
-/// What a record's visual quality says until the owner's picks are decoded.
-const PENDING: &str = "round pending: the owner's picks";
+/// What each record's visual quality says (plan m3, tasks L3 and B1, "Amended by the
+/// owner", 2026-11-19): the blinded picking rounds moved to milestone E, so no recipe's
+/// visual quality was confirmed by a person in milestone 3. Rung 2 stays "In part", the
+/// mark experimental, and the edits' record has no part on visual quality, until E's
+/// decodes replace this line (`docs/carry-over.md`, the row on the blinded rounds).
+const OWED: &str = "not yet confirmed by a person; owed by milestone E (the owner's decision of \
+                    2026-11-19)";
 /// The four recipes of the edit set, and the fifth, whose rung 2 is the lab's round.
 const EDIT_RECIPES: [&str; 4] = ["remove", "remove_prompt", "repair", "repair_area"];
 const FILL_RECIPES: [&str; 5] = ["remove", "remove_prompt", "repair", "repair_area", "seam"];
@@ -1336,8 +1427,8 @@ fn the_edits_record_names_a_commit_of_this_tree_and_holds_only_aggregates() {
             }
         }
     }
-    // The part on visual quality is added with the owner's picks, and only then.
-    assert_eq!(page.contains("## Visual quality"), EDITS_DECODED);
+    // No part on visual quality: no person picked in milestone 3.
+    assert!(!page.contains("## Visual quality"));
     // Aggregates only: no item of the set, no picture's name, no path.
     for item in &set.item {
         for held in [&item.id, &item.picture, &item.truth] {
@@ -1363,29 +1454,18 @@ fn each_model_based_recipes_record_holds_rungs_1_and_2() {
             history.contains("\n| 1. Single examples | Shown |"),
             "{recipe}"
         );
-        let (rung, mark) = if EDITS_DECODED {
-            ("\n| 2. Scored alone | Shown |", "**Unverified**")
-        } else {
-            ("\n| 2. Scored alone | In part |", "**Mark.** Experimental")
-        };
-        assert!(history.contains(rung), "{recipe}: {rung}");
-        assert!(history.contains(mark), "{recipe}: {mark}");
-        // Its visual quality: pending, said so in the one way, or decoded.
+        // Rung 2 in part: its visual quality is owed by milestone E, said in the one way.
+        for held in ["\n| 2. Scored alone | In part |", "**Mark.** Experimental"] {
+            assert!(history.contains(held), "{recipe}: {held}");
+        }
         let line = (rung_2.lines())
             .find(|line| line.contains("visual quality.**") || line.contains("Visual quality.**"))
             .unwrap_or_else(|| panic!("{recipe}: no line on visual quality"));
         let said = (rung_2.split(line).nth(1).unwrap().lines().skip(1))
             .take_while(|l| !l.trim().is_empty() && !l.starts_with("- **"))
             .fold(line.to_owned(), |all, l| format!("{all} {}", l.trim()));
-        if EDITS_DECODED {
-            assert!(!said.contains("pending"), "{recipe}: {said}");
-            assert!(
-                said.contains("not_worse") || said.contains("worse"),
-                "{recipe}: {said}"
-            );
-        } else {
-            assert!(said.ends_with(PENDING), "{recipe}: {said}");
-        }
+        assert!(said.ends_with(OWED), "{recipe}: {said}");
+        assert!(!record.contains("pending"), "{recipe}");
         if recipe == "seam" {
             // The seam's round: the lab of task L3, on the shipped recipe.
             let block = &blocks_of(&rung_2)[0];
@@ -1434,4 +1514,40 @@ fn each_recipes_rung_2_names_the_shipped_recipes_and_constant_sets_digests() {
             .collect();
         assert_eq!(written, sets, "{recipe}");
     }
+}
+
+#[test]
+fn the_blinded_rounds_of_milestone_3_are_owed_by_e_with_their_protocols_digests() {
+    // The owner's decision of 2026-11-19 (plan m3, tasks L3 and B1, "Amended by the
+    // owner"): one row of the carry-over list, owned by milestone E, names both rounds by
+    // their labs and the digests of their frozen protocols, and says both ways to finish
+    // them; every record's visual quality points at it ([`OWED`]).
+    let list = std::fs::read_to_string(repository().join("docs/carry-over.md")).unwrap();
+    let mut protocols = vec!["labs/m3-seam/protocol.toml".to_owned()];
+    protocols.extend(EDIT_RECIPES.map(|recipe| format!("labs/m3-edits/{recipe}-protocol.toml")));
+    let digests: Vec<String> = (protocols.iter())
+        .map(|path| whizbang_eval::lab::digest_of(&std::fs::read(repository().join(path)).unwrap()))
+        .collect();
+    let rows: Vec<&str> = (list.lines())
+        .filter(|line| digests.iter().all(|digest| line.contains(digest.as_str())))
+        .collect();
+    let [row] = rows[..] else {
+        panic!("{} rows name every protocol's digest", rows.len());
+    };
+    let cells: Vec<&str> = row.trim_matches('|').split(" | ").collect();
+    assert_eq!(cells.len(), 4, "{row}");
+    assert!(cells[2].starts_with("E"), "owned by {}", cells[2]);
+    for held in [
+        "`m3-seam`",
+        "`m3-edits-<recipe>`",
+        "not yet confirmed by a person",
+        "2026-11-19",
+    ] {
+        assert!(cells[1].contains(held), "{held}");
+    }
+    // Both ways: the pages drawn again, or the kept stores decoded.
+    for held in ["drawn again", "kept stores", "decoded"] {
+        assert!(cells[3].contains(held), "{held}");
+    }
+    assert!(OWED.contains("milestone E"));
 }

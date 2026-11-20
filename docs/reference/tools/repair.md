@@ -101,7 +101,8 @@ unresolved_micros = "0"
 - **Fill error.** Inside the drawn defect the fill is 18.9 levels from the clean picture
   on average, per channel of 0 to 255, against 23.6 for a plain blur of the same mask; the fill
   was nearer than the blur on 15 of the 24 items.
-- **Visual quality.** round pending: the owner's picks
+- **Visual quality.** Its lab's round was run and its pairs drawn, and nobody picked them:
+  not yet confirmed by a person; owed by milestone E (the owner's decision of 2026-11-19)
 
 ## Speed and cost
 
@@ -139,13 +140,14 @@ Measured on Apple M4 Max (macos, aarch64), in a release build; each time is the 
 
 ## Mark and history
 
-**Mark.** Experimental: rung 1 is shown, and rung 2 is shown in part, its visual quality
-waiting on the owner's picks (`SPEC.md` section 8, "Marks").
+**Mark.** Experimental: rung 1 is shown, and rung 2 is shown in part: its visual quality is
+owed by milestone E, by the owner's decision of 2026-11-19 (`docs/carry-over.md`, the row on
+the blinded rounds of milestone 3; `SPEC.md` section 8, "Marks").
 
 | Rung | Result | Evidence |
 |---|---|---|
 | 1. Single examples | Shown | The two examples above, run as tests under a scripted filler |
-| 2. Scored alone | In part | Task success and preservation, `docs/results/m3-edits.md`; visual quality pending |
+| 2. Scored alone | In part | Task success and preservation, `docs/results/m3-edits.md`; visual quality owed by milestone E |
 | 3 and 4 | Not yet | Milestone E |
 
 **Gates.** None faced.

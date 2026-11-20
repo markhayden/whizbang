@@ -806,7 +806,7 @@ and gives the verdicts it gave before.
 7. **Evidence, by the orchestrator, once**: each use case's recipe once on Anthropic's judge
    on A1's pictures, the fields added to `docs/results/m2c-use-cases.md`.
 
-- [ ] Done when:
+- [x] Done when:
   `use_case::each_use_case_is_a_recipe_with_its_rules_details_and_tools`,
   `check::each_use_case_through_its_recipe_gives_the_verdict_it_gave_before`,
   `details::a_pair_that_does_not_register_is_judged_with_its_failure_and_no_comparison`,
@@ -867,6 +867,27 @@ recipes' lines" (the carry-over row on Q1's third pull request, narrowed to it).
 run's cache of decoded pixels with a line (the carry-over row on `view` decoding the whole
 image on every call), as item 4 lets it, so no such test is written; that clause is now "or
 the row on `view`'s decoding dropped with a line", which it is.
+
+**Reworded with the task** (the closing pull request, 2026-11-19). Item 7 read "each use
+case's recipe once on Anthropic's judge on A1's pictures, the fields added to
+`docs/results/m2c-use-cases.md`". The orchestrator's live runs of the recipes since are the
+gate of details first, run again after the judges' fixes: its `check` runs are the five
+use cases' recipes on three judges, Anthropic's among them, on the five dev sets, a larger
+run than item 7 asked. Item 7 is credited from that re-run rather than run again on A1's
+pictures: the fields added to `docs/results/m2c-use-cases.md` are the blocks `toml recipes`,
+one of the run (its commit, the receipt by its digest, the judges, the decisions, those
+that ended in a verdict, the errors and the spend) and one a use case (its recipe's digest
+at that commit, its decisions, and those that ended in a verdict, at least one). The
+clause `evidence::the_use_cases_record_names_a_commit_of_this_tree_and_holds_no_secret` "on
+the record with the recipes' lines" holds them; while the blocks are absent it holds Q1's
+box open. The box waits for the re-run's values.
+
+**Ticked by the closing pull request.** The gate ran again on 2026-11-19 at main af5392c4,
+`check` 1.6.0: each of the five recipes 200 times on the three judges, 762 of the 1,000
+runs ending in a verdict (each use case 141 to 163) and 4.27 dollars charged. Its lines are
+in `docs/results/m2c-use-cases.md`, held by
+`evidence::the_use_cases_record_names_a_commit_of_this_tree_and_holds_no_secret` (no switch
+is left), and the carry-over row on Q1's third pull request is closed. Every clause is shown.
 
 ## O3. The seam (large)
 
@@ -1074,9 +1095,10 @@ about 300.
    since rascal's `seam-03` ran `fan-v1`, the default when it ran. Interrupted once and
    resumed; the owner picks the pairs; the decode's counts by group in
    `docs/results/m3-lab.md`, beside rascal's `seam-03` (`fan-v1`) and `objects-02` (`fan-v3`
-   against `fan-v1`), each named with its constant set.
+   against `fan-v1`), each named with its constant set. (The picks and the decode: amended
+   by the owner, 2026-11-19, below; owed by milestone E.)
 
-- [ ] Done when:
+- [x] Done when:
   `lab::the_pairs_are_blinded_in_the_order_and_sides_the_seed_draws`,
   `lab::the_pairs_page_loads_nothing_from_the_network`,
   `lab::picks_for_a_pair_not_in_the_frozen_assignment_are_refused`,
@@ -1084,7 +1106,8 @@ about 300.
   `lab::the_committed_m3_seam_matrix_is_valid_against_its_protocol`,
   `cli::lab_run_pairs_and_decode_remove_prompt_against_a_reference_arm_under_a_scripted_filler`,
   `cli::lab_run_pairs_and_decode_a_three_image_round_under_a_scripted_filler`,
-  `evidence::the_lab_record_names_a_commit_of_this_tree_and_holds_only_counts`.
+  ~~`evidence::the_lab_record_names_a_commit_of_this_tree_and_holds_only_counts`~~ (struck:
+  amended by the owner, 2026-11-19, below; the record of the decode is milestone E's).
 
 **Keeping tests lean (L3).** Rounds of three images of 64 by 64; picks files made in the test.
 
@@ -1104,11 +1127,36 @@ and `cli::lab_run_pairs_and_decode_remove_prompt_against_a_reference_arm_under_a
 which waits on the step `fill` at the end of `remove_prompt` (its own row): until then the
 recipe hands back a mask, and a pair compares two pictures.
 
+**Amended by the owner** (2026-11-19). The blinded picking rounds move to milestone E, and
+milestone 3 closes without them. The orchestrator offered to "close and tag the milestone with those recipes' visual quality
+recorded as 'not yet confirmed by a person', and fold the picking into milestone E"; the
+owner answered: "yah i think that makes more sense. dont know that it makes sense to hammer
+on things when we are going to hammer on them in E right?"
+So item 4's round stands as run: on the owner's pictures of `seam-03`, at commit 8957f1f,
+interrupted once on purpose and resumed, 94 of 94 cells, 3.76 dollars settled and 0.04
+unresolved from the fill the interruption cut off, and a page of 30 pairs drawn by group
+(`sky` 13, `structured` 17). Its words "the owner picks the pairs; the decode's counts by
+group in `docs/results/m3-lab.md`, beside rascal's `seam-03` (`fan-v1`) and `objects-02`"
+and the clause `evidence::the_lab_record_names_a_commit_of_this_tree_and_holds_only_counts`
+are owed by milestone E (`docs/carry-over.md`, the row on the blinded rounds of milestone 3,
+which names the protocol's digest and both ways to finish: the page drawn again from the
+kept store, or the kept store decoded from picks on the page drawn). The seam's record
+says its visual quality is not yet confirmed by a person.
+
+**Status (the closing pull request).** Built:
+`cli::lab_run_pairs_and_decode_remove_prompt_against_a_reference_arm_under_a_scripted_filler`,
+the edits labs' shape (the shipped `remove_prompt`, its phrase by a text binding, against
+the reference arm `clean`), under the fake segmenter and a scripted filler, with picks made
+in the test and the real binary's decode. With the amendment, every clause left is shown,
+and the box is ticked.
+
 ### What the owner provides (L)
 
 The pictures of rascal's `seam-03` corpus in a folder on the Mac (checked by hash against its
 manifest, never committed, read only by the run), and the picks of the round's pairs (about
-45), on the page item 3 writes (fourth item under "What the owner must answer").
+45), on the page item 3 writes (fourth item under "What the owner must answer"). The
+pictures were provided and the round run; the picks move to milestone E (L3, "Amended by
+the owner", 2026-11-19).
 
 ## D1 and D2. The records of the operations (large, two)
 
@@ -1193,7 +1241,7 @@ and the milestone's note is written.
    with the tests that show it, the spend, what a reader should not assume, what moved to the
    carry-over list, and what milestone 4 and E start from.
 
-- [ ] Done when:
+- [x] Done when:
   `edits::preservation_outside_the_mask_is_counted_exactly`,
   `edits::the_synthetic_set_is_drawn_by_its_program_from_fixed_seeds`,
   `edits::task_success_is_the_masks_iou_and_the_fills_error_beside_a_blur_fill`,
@@ -1216,8 +1264,9 @@ and the milestone's note is written.
   `edits::the_committed_lab_files_are_the_programs_and_valid_against_their_protocols`. The
   set has 25 distinct pictures (five families' sources and twenty items), so the program
   takes 24 of them by its seed. The second pull request holds the rest: the round of the
-  four labs, run by the orchestrator, and its scoring committed as the record; the
-  owner's picks of the four labs' pairs and their decode added to it; the three
+  four labs, run by the orchestrator, and its scoring committed as the record; ~~the
+  owner's picks of the four labs' pairs and their decode added to it~~ (struck: amended by
+  the owner, below); the three
   `evidence::` tests, the transcript test, items 2 to 5, and the box.
   **Split again with the task** (B1, 2026-11-19): the second part holds everything of the
   rest that needs no pick of the owner's, in two pull requests since it came to about 2,800
@@ -1226,10 +1275,10 @@ and the milestone's note is written.
   (`docs/results/m3-edits.md` and `.toml`), the three `evidence::` tests, the transcript
   test, items 2 to 5, with each record's visual quality reading "round pending: the owner's
   picks" while `EDITS_DECODED` in `crates/whizbang/tests/it/evidence.rs` is false, and the
-  note with four lines marked "To be filled by B1's last pull request". The third adds only
+  note with four lines marked "To be filled by B1's last pull request". ~~The third adds only
   the two rounds' decodes (the edits' four labs and `m3-seam`), sets `EDITS_DECODED`, fills
-  the four lines, adds the note to the citation counts of `scripts/tests/test-notes.sh`,
-  and ticks the box.
+  the four lines~~ (struck: amended by the owner, below), adds the note to the citation
+  counts of `scripts/tests/test-notes.sh`, and ticks the box.
   **Clarified with the task** (B1, 2026-11-19, item 1, no change of rule): task success
   keeps the IoU as item 1 names it, and the record gives beside it the drawn defect's
   coverage (the share of its mask inside the recipe's, at weight 0.5 or more) and the
@@ -1264,6 +1313,43 @@ and the milestone's note is written.
      labs/m3-edits/<r>-protocol.toml --assignment <E>/pairs/<r>-vs-clean/assignment.json
      --picks <picks>`.
 
+**Amended by the owner** (2026-11-19). The blinded picking rounds move to milestone E, and
+milestone 3 closes without them. The orchestrator offered to "close and tag the milestone with those recipes' visual quality
+recorded as 'not yet confirmed by a person', and fold the picking into milestone E"; the
+owner answered: "yah i think that makes more sense. dont know that it makes sense to hammer
+on things when we are going to hammer on them in E right?"
+So item 1's visual quality ("a lab round whose arms are the recipe and a reference arm
+holding the clean picture ..., the owner picking the better, decoded `not_worse` or not")
+and the seam's rung 2 by L3's round's decode (its task success and blinded quality) are
+owed by milestone E, for all five recipes that end in a fill. The rounds stand as run: the
+edits' four labs at e8cead9, 96 of 96 cells, 3.84 dollars settled, four pages of 24 pairs
+drawn and not picked; `m3-seam` at 8957f1f, 94 of 94 cells, 3.76 dollars settled and 0.04
+unresolved, a page of 30 pairs drawn and not picked. One carry-over row owned by E names
+both rounds, their protocols' digests and both ways to finish them (the pages drawn again
+from the kept stores, or the kept stores decoded from picks on the pages drawn). Each
+record's visual quality reads "not yet confirmed by a person; owed by milestone E (the
+owner's decision of 2026-11-19)", its rung 2 stays "In part" and its mark experimental,
+held by `evidence::each_model_based_recipes_record_holds_rungs_1_and_2` and
+`evidence::the_blinded_rounds_of_milestone_3_are_owed_by_e_with_their_protocols_digests`
+(the switch `EDITS_DECODED` is gone). In the split above, the words "The third adds only
+the two rounds' decodes (the edits' four labs and `m3-seam`), sets `EDITS_DECODED`, fills
+the four lines" and "the owner's picks of the four labs' pairs and their decode added to
+it" are struck: the closing pull request fills the note's seam and edits lines with the
+amendment, its gate line and spend from the gate's re-run, adds the note to the citation
+counts of `scripts/tests/test-notes.sh`, and ticks the box once those are filled. Item 2's
+"each unverified once both are held" is unchanged: rung 2 is not wholly held, so none is
+marked unverified (`SPEC.md` section 8, "Marks"). No clause of "Done when" names the
+owner's round, so none is struck there.
+
+**Ticked by the closing pull request.** With the amendment, every clause is shown: the
+tests named in "Done when" pass; `scripts/tests/test-notes.sh` reads `m3-note.md` and
+counts its citations; and every carry-over row owned by milestone 3 is closed, re-owned or
+dropped with a line, the last three by this pull request (L3's round, Q1's item 7, and the
+Google judge after its fix, whose re-run at af5392c4 reported its errors by kind and left
+the Google arm owed by milestone E). The gate's re-run is recorded in
+`docs/results/m3-gates.md` ("Run again"), held by
+`evidence::the_gates_record_holds_the_details_first_receipt_and_only_aggregates`.
+
 **Keeping tests lean (B1).** The scoring program's tests on three pictures of 64 by 64; the
 set's fills and SAM 3's masks run by the orchestrator, their numbers held by the evidence
 test.
@@ -1271,7 +1357,8 @@ test.
 ### What the owner provides (B)
 
 The picks of the visual-quality pairs: 24 pictures for each of four recipes, about 96 (fourth
-item under "What the owner must answer").
+item under "What the owner must answer"). Moved to milestone E (B1, "Amended by the owner",
+2026-11-19).
 
 ## Carry-over rows owned by milestone 3, and who takes each
 
@@ -1307,6 +1394,9 @@ item under "What the owner must answer").
 4. I need you to place the pictures of rascal's `seam-03` corpus in a folder on your Mac, and
    to pick the blinded pairs of two rounds on the pages `whizbang lab pairs` writes (about 45
    for `seam-03`, about 96 for the edits' visual quality): yes/no.
+
+   **Amended by the owner on 2026-11-19:** the pictures were placed and both rounds run; the
+   picking moves to milestone E (L3 and B1, "Amended by the owner").
 
 ## Spend
 
@@ -1359,6 +1449,7 @@ counted at twice that and the second look at three times; Bria Eraser is 0.04 do
 |---|---|
 | Remove with a check and bounded retries, as nested calls on one budget | Milestone 4 |
 | `tiles` and the second look, if they help, admitted on fresh data; the model-based recipes up rungs 3 and 4 | Milestone E |
+| The blinded picking rounds of `m3-seam` and the edits' four labs, and with them the five fill recipes' visual quality (the owner's decision of 2026-11-19) | Milestone E (its carry-over row) |
 | Report viewer and export | Milestone 5 |
 | Local fill | Milestone 8 |
 | The runtime on Linux, on an external GPU host | Its carry-over row (the owner's decision of 2026-11-18) |
