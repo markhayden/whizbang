@@ -1344,7 +1344,12 @@ neither until that is recorded.
    runs the leg, so that `setup` finds `uv` and the Python, and the models directory is
    the one `WHIZBANG_MODELS_DIR` names, which holds SAM 3 already: the leg downloads no
    model. A new store refuses every paid call, so the leg gives it an allowance of 5 US
-   dollars first.
+   dollars first. `setup` with the extra runs before the checkout's model tests, not
+   after: it replaces the pack in that models directory with the one the candidate
+   carries, and the model tests would otherwise load a model with whichever pack was
+   there (from the review of #251). The gate holds the tree the receipt names for the
+   model tests' checkout to the tree of the tag's commit, and a candidate that holds a
+   receipt already stops the leg before anything is spent.
 4. Item 3 says "with the decision cache off". No command has a switch for it: the cache
    is on only under a config with a `[cache]` table, so the leg writes its own config
    without one, and the receipt's `cache` is read back from the records: `on` when any

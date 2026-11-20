@@ -30,7 +30,10 @@
 #    version and the tag's commit, or nothing more runs. Then, with that binary alone, in
 #    a store made new for this leg and under a config written here that has no `[cache]`
 #    table, so that nothing is answered from earlier work: `whizbang setup --extra torch`
-#    and a probe of the pack's worker; `whizbang rascal remove-prompt --until feather` on
+#    and a probe of the pack's worker, first of all, **which replaces the pack in the
+#    models directory `WHIZBANG_MODELS_DIR` names with the one the candidate carries**
+#    (and says so), so that the model tests of 1 and every check after load a model with
+#    the candidate's pack and not with whichever was installed before; `whizbang rascal remove-prompt --until feather` on
 #    SAM 3; one fill through fal; `whizbang squint check` by a judge of each of the three
 #    providers; and `whizbang rascal remove-checked --check required`. Every command that
 #    starts the pack runs under the heavy lock, the thread guard at 200 and the watch on
@@ -44,7 +47,9 @@
 # machine wrote: a run's record, a test report, an exit status, a line the binary printed.
 # A check that failed is written as it failed, the receipt is still a receipt, and the leg
 # fails. Only a receipt that the release gate's reader passes (scripts/receipt-check.sh)
-# is attached to the candidate (`gh release upload`); `--no-attach` attaches nothing.
+# is attached to the candidate (`gh release upload`); `--no-attach` attaches nothing. A
+# candidate that holds a receipt already stops the leg before anything is spent, unless
+# `--no-attach` is given: a candidate is checked once, and the next is a new number.
 #
 # The loop's command, `remove-checked`, is plan m4's task L1. Until it is built the
 # installed binary refuses the command, the entry `loop` records that, and the leg fails:
@@ -90,6 +95,9 @@ case "$models" in /*) ;; *) stop "WHIZBANG_MODELS_DIR must name the models direc
 mkdir -p "$out"
 out=$(cd "$out" && pwd -P)
 rm -f "$out/prerelease-receipt.json"
+# Everything from here is asked from this repository, wherever the leg was started: `gh`
+# acts on the repository of the folder it is run in.
+cd "$root"
 
 work=$(mktemp -d)
 work=$(cd "$work" && pwd -P)
@@ -116,6 +124,15 @@ done
 scripts=$checkout/scripts
 say "a new checkout of $tag at $commit is clean"
 
+# A candidate that holds a receipt already cannot be given another: attaching replaces
+# nothing. Seen now, before anything is spent, and not at the end.
+if [ "$attach" = 1 ]; then
+  there=$(gh release view "$tag" --json assets --jq '.assets[].name') || stop "the candidate $tag could not be read on GitHub"
+  if printf '%s\n' "$there" | grep -x -F 'prerelease-receipt.json' >/dev/null; then
+    stop "the candidate $tag holds a receipt already; nothing was run. A candidate is checked once: tag the next number, or pass --no-attach to run the leg and attach nothing"
+  fi
+fi
+
 # --- The candidate's archives, held to their sums; the Mac's installed; the binary held
 # to the tag before anything runs.
 gh release download "$tag" --dir "$work/candidate" --pattern "whizbang-$version-*.tar.gz" --pattern SHA256SUMS ||
@@ -137,37 +154,6 @@ version_line=$(env -i "${cleared[@]}" "$binary" --version 2>/dev/null) || stop "
 [ "$version_line" = "whizbang $version (commit $commit)" ] ||
   stop "the installed binary says '$version_line', and the candidate is whizbang $version (commit $commit); nothing more was run"
 say "the installed binary is $version_line"
-
-# --- The checkout's model tests: listed, run, and read from the run's report.
-expected='[]' ran='[]' failed='[]' timed_out='[]' report_sum=null tests_exit=null
-if (cd "$checkout" && env -u CARGO_TARGET_DIR scripts/test-models.sh --list) >"$work/listed" 2>"$work/list.err"; then
-  expected=$(awk 'NF == 2 { print $2 }' "$work/listed" | jq -R -s -c 'split("\n") | map(select(. != "")) | sort')
-  report=$checkout/target/nextest/model-tier/junit.xml
-  rm -f "$report"
-  tests_exit=0
-  (cd "$checkout" && env -u CARGO_TARGET_DIR WHIZBANG_THREAD_LIMIT=200 scripts/heavy.sh test-models scripts/test-models.sh) >&2 || tests_exit=$?
-  if [ -s "$report" ]; then
-    report_sum=\"$(sha256 "$report")\"
-    # One line for each test the report holds: ran, failed or timed_out, and its name.
-    awk '
-      function named(line) { return match(line, / name="[^"]*"/) ? substr(line, RSTART + 7, RLENGTH - 8) : "" }
-      /<testcase / { test = named($0); if (test != "") print "ran " test }
-      test != "" && (/<failure/ || /<error/) { print ((tolower($0) ~ /time(d)?[ -]?out/) ? "timed_out " : "failed ") test }
-      /<\/testcase>/ { test = "" }' "$report" >"$work/report-lines"
-    listed_as() { { grep "^$1 " "$work/report-lines" || true; } | cut -d' ' -f2- | jq -R -s -c 'split("\n") | map(select(. != "")) | unique'; }
-    ran=$({ grep '^ran ' "$work/report-lines" || true; } | cut -d' ' -f2- | jq -R -s -c 'split("\n") | map(select(. != "")) | sort')
-    failed=$(listed_as failed)
-    timed_out=$(listed_as timed_out)
-  fi
-else
-  sed 's/^/    /' "$work/list.err" >&2
-  say "the model tests could not be listed"
-fi
-jq -n -c --argjson exit "$tests_exit" --arg commit "$commit" --arg tree "$tree" --argjson expected "$expected" --argjson ran "$ran" \
-  --argjson failed "$failed" --argjson timed_out "$timed_out" --argjson report "$report_sum" \
-  '{name: "model-tests", exit: $exit, checkout: {new: true, clean: true, commit: $commit, tree: $tree},
-    expected: $expected, ran: $ran, failed: $failed, timed_out: $timed_out, report_sha256: $report}' >"$work/entry-model-tests"
-say "the model tests ended with status $tests_exit"
 
 # --- The archive's acceptance. The config: SAM 3 on the pack, fal, a judge of each
 # provider, and no `[cache]` table, so the decision cache is off.
@@ -283,7 +269,10 @@ called allowance plain spend reset --store "$store" --allowance 5.00
 [ "$status" -eq 0 ] || stop "the new store was given no allowance"
 say "a new store holds the picture and no run"
 
-# setup with the extra, and the probe that hears the installed pack's worker again.
+# setup with the extra, and the probe that hears the installed pack's worker again. It
+# comes before every check that starts the pack, the checkout's model tests among them:
+# it replaces the pack of the models directory with the one the installed binary carries.
+say "the pack in the models directory is being replaced by the one the candidate carries (whizbang setup --extra torch)"
 called setup guarded setup --extra torch --models-dir "$models"
 setup_exit=$status
 extra=$(sed -n 's/^extra: \([a-z0-9_-]*\)$/\1/p' "$work/out" | sed -n '1p')
@@ -293,6 +282,39 @@ probe=false
 if [ "$status" -eq 0 ] && grep -E "^probe segment [a-z0-9_-]+: the pack.s worker said hello: " "$work/out" >/dev/null; then probe=true; fi
 jq -n -c --argjson exit "$setup_exit" --arg extra "$extra" --argjson hello "${hello:-null}" --argjson probe "$probe" \
   '{name: "setup", exit: $exit, extra: (if $extra == "" then null else $extra end), hello: $hello, probe_hello: $probe}' >"$work/entry-setup"
+
+# --- The checkout's model tests: listed, run, and read from the run's report. They come
+# after `setup`, so that the pack they load a model with is the one the candidate carries.
+expected='[]' ran='[]' failed='[]' timed_out='[]' report_sum=null tests_exit=null
+# The list builds the tests, so it is a heavy command too.
+if (cd "$checkout" && env -u CARGO_TARGET_DIR WHIZBANG_THREAD_LIMIT=200 scripts/heavy.sh test-models-list scripts/test-models.sh --list) >"$work/listed" 2>"$work/list.err"; then
+  expected=$(awk 'NF == 2 { print $2 }' "$work/listed" | jq -R -s -c 'split("\n") | map(select(. != "")) | sort')
+  report=$checkout/target/nextest/model-tier/junit.xml
+  rm -f "$report"
+  tests_exit=0
+  (cd "$checkout" && env -u CARGO_TARGET_DIR WHIZBANG_THREAD_LIMIT=200 scripts/heavy.sh test-models scripts/test-models.sh) >&2 || tests_exit=$?
+  if [ -s "$report" ]; then
+    report_sum=\"$(sha256 "$report")\"
+    # One line for each test the report holds: ran, failed or timed_out, and its name.
+    awk '
+      function named(line) { return match(line, / name="[^"]*"/) ? substr(line, RSTART + 7, RLENGTH - 8) : "" }
+      /<testcase / { test = named($0); if (test != "") print "ran " test }
+      test != "" && (/<failure/ || /<error/) { print ((tolower($0) ~ /time(d)?[ -]?out/) ? "timed_out " : "failed ") test }
+      /<\/testcase>/ { test = "" }' "$report" >"$work/report-lines"
+    listed_as() { { grep "^$1 " "$work/report-lines" || true; } | cut -d' ' -f2- | jq -R -s -c 'split("\n") | map(select(. != "")) | unique'; }
+    ran=$({ grep '^ran ' "$work/report-lines" || true; } | cut -d' ' -f2- | jq -R -s -c 'split("\n") | map(select(. != "")) | sort')
+    failed=$(listed_as failed)
+    timed_out=$(listed_as timed_out)
+  fi
+else
+  sed 's/^/    /' "$work/list.err" >&2
+  say "the model tests could not be listed"
+fi
+jq -n -c --argjson exit "$tests_exit" --arg commit "$commit" --arg tree "$tree" --argjson expected "$expected" --argjson ran "$ran" \
+  --argjson failed "$failed" --argjson timed_out "$timed_out" --argjson report "$report_sum" \
+  '{name: "model-tests", exit: $exit, checkout: {new: true, clean: true, commit: $commit, tree: $tree},
+    expected: $expected, ran: $ran, failed: $failed, timed_out: $timed_out, report_sha256: $report}' >"$work/entry-model-tests"
+say "the model tests ended with status $tests_exit"
 
 # The mask, on SAM 3: the recipe to its last mask step, and the record of its segment step.
 called mask guarded rascal remove-prompt --image "$image" --prompt "the red disc" --until feather --store "$store" "${under[@]}"
@@ -394,7 +416,7 @@ jq -n --arg tag "$tag" --arg version "$version" --argjson candidate "$number" --
   stop "the receipt this leg wrote is not of its schema; nothing was written (a fault of this script or of a record it read)"
 cp "$work/receipt.json" "$out/prerelease-receipt.json"
 say "wrote $out/prerelease-receipt.json"
-if ! "$scripts/receipt-check.sh" "$out/prerelease-receipt.json" "tag=$tag" "commit=$commit" "mac=$mac_sum" "linux=$linux_sum" "installed=$binary_sum"; then
+if ! "$scripts/receipt-check.sh" "$out/prerelease-receipt.json" "tag=$tag" "commit=$commit" "tree=$tree" "mac=$mac_sum" "linux=$linux_sum" "installed=$binary_sum"; then
   echo "prerelease-local: failed: the receipt records what a release is refused for (above); it was not attached to $tag" >&2
   exit 1
 fi

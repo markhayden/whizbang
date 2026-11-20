@@ -8,8 +8,9 @@
 # It passes when the file is a receipt and every required check is there exactly once and
 # meets the conditions of its kind. With `--shape` it passes on any file that is a
 # receipt, whatever it records: a leg that failed still writes one. The values a receipt
-# is held to, each optional: tag=, commit=, mac=, linux= and installed= (the digests of
-# the two archives and of the installed binary, taken again from the candidate's bytes).
+# is held to, each optional: tag=, commit=, tree= (the tree of that commit, which the
+# model tests' checkout must be of), mac=, linux= and installed= (the digests of the two
+# archives and of the installed binary, taken again from the candidate's bytes).
 #
 # Every thing that is wrong is printed, one a line, and the exit status is 1; a file that
 # is not JSON is one such thing. Exit status 2 is a usage error. Needs jq.
@@ -24,7 +25,7 @@ export LC_ALL=C
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 
 usage() {
-  echo "usage: scripts/receipt-check.sh [--shape] <receipt> [tag=<tag>] [commit=<commit>] [mac=<sha-256>] [linux=<sha-256>] [installed=<sha-256>]" >&2
+  echo "usage: scripts/receipt-check.sh [--shape] <receipt> [tag=<tag>] [commit=<commit>] [tree=<tree>] [mac=<sha-256>] [linux=<sha-256>] [installed=<sha-256>]" >&2
   exit 2
 }
 shape=0
@@ -35,11 +36,12 @@ fi
 [ $# -ge 1 ] || usage
 receipt=$1
 shift
-tag='' commit='' mac='' linux='' installed=''
+tag='' commit='' tree='' mac='' linux='' installed=''
 for held in "$@"; do
   case "$held" in
     tag=?*) tag=${held#tag=} ;;
     commit=?*) commit=${held#commit=} ;;
+    tree=?*) tree=${held#tree=} ;;
     mac=?*) mac=${held#mac=} ;;
     linux=?*) linux=${held#linux=} ;;
     installed=?*) installed=${held#installed=} ;;
@@ -52,7 +54,7 @@ command -v jq >/dev/null || { echo "receipt-check: jq is not installed" >&2; exi
 [ "$(wc -c <"$receipt" | tr -d ' ')" -le 1048576 ] || { echo "receipt-check: shape: the file is larger than a receipt can be" >&2; exit 1; }
 
 # One value and nothing after it: `jq -s` reads every value of the file into one list.
-wrong=$(jq -r -s --arg tag "$tag" --arg commit "$commit" --arg mac "$mac" --arg linux "$linux" --arg installed "$installed" \
+wrong=$(jq -r -s --arg tag "$tag" --arg commit "$commit" --arg tree "$tree" --arg mac "$mac" --arg linux "$linux" --arg installed "$installed" \
   --argjson shape_only "$shape" -f "$root/scripts/prerelease-receipt.jq" "$receipt" 2>/dev/null) || { echo "receipt-check: shape: the file is not JSON, or could not be read by its schema" >&2; exit 1; }
 if [ -n "$wrong" ]; then
   printf '%s\n' "$wrong" | sed 's/^/receipt-check: /' >&2

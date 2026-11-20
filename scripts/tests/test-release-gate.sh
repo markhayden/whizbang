@@ -48,7 +48,8 @@ paid() { # <name> <backend> <origin> <more fields, as JSON>
       requests: [{backend: $backend, ended: "answered", stage: "answered", settled_micros: 1200}], sent_to: [$origin],
       tokens: {input: 900, output: 80}, settled_micros: 1200} + $more'
 }
-jq -n --arg commit "$commit" --arg mac "$(sha256 "$files/$mac")" --arg linux "$(sha256 "$files/$linux")" --arg installed "$installed" \
+tree=$(git -C "$repo" rev-parse "$commit^{tree}")
+jq -n --arg commit "$commit" --arg tree "$tree" --arg mac "$(sha256 "$files/$mac")" --arg linux "$(sha256 "$files/$linux")" --arg installed "$installed" \
   --argjson fill "$(paid fill fal https://fal.run '{"tokens": null}')" \
   --argjson anthropic "$(paid check-anthropic anthropic https://api.anthropic.com '{"verdict": "pass"}')" \
   --argjson google "$(paid check-google google https://generativelanguage.googleapis.com '{"verdict": "unsure"}')" \
@@ -58,7 +59,7 @@ jq -n --arg commit "$commit" --arg mac "$(sha256 "$files/$mac")" --arg linux "$(
     binary: {sha256: $installed, version_line: "whizbang 0.1.0 (commit \($commit))"},
     store: {new: true, cache: "off"},
     checks: [
-      {name: "model-tests", exit: 0, checkout: {new: true, clean: true, commit: $commit, tree: "89abcdef0123456789abcdef0123456789abcdef"},
+      {name: "model-tests", exit: 0, checkout: {new: true, clean: true, commit: $commit, tree: $tree},
        expected: ["model_tier::a_phrase", "parity::gpu_and_cpu"], ran: ["parity::gpu_and_cpu", "model_tier::a_phrase"], failed: [], timed_out: [],
        report_sha256: ("d" * 64)},
       {name: "setup", exit: 0, extra: "torch", hello: {device: "cpu", threads: 3}, probe_hello: true},
@@ -77,7 +78,7 @@ cat >"$tmp/bin/gh" <<SH
 #!/bin/bash
 printf '%s\n' "\$*" >>"$tmp/gh-asked"
 case "\$1 \$2" in
-  'run list') cat "$tmp/github/runs.json" ;;
+  'run list') [ ! -e "$tmp/github/runs-fail" ] || exit 1; cat "$tmp/github/runs.json" ;;
   'release download')
     [ "\$4" = --dir ] && [ -d "$tmp/github/release/\$3" ] || { echo "release not found" >&2; exit 1; }
     mkdir -p "\$5" && cp "$tmp/github/release/\$3"/* "\$5/"
@@ -115,7 +116,7 @@ gate_receipt() {
 # the receipt to, with the values the gate holds it to. The gate refuses whatever that
 # reader refuses, which the cases through `gate_receipt` show for each kind; the many
 # cases of one kind are asked here, where each costs one jq and no archive.
-held=("tag=v0.1.0-rc.2" "commit=$commit" "mac=$(sha256 "$files/$mac")" "linux=$(sha256 "$files/$linux")" "installed=$installed")
+held=("tag=v0.1.0-rc.2" "commit=$commit" "tree=$tree" "mac=$(sha256 "$files/$mac")" "linux=$(sha256 "$files/$linux")" "installed=$installed")
 expect_pass "the reader on the good receipt" "$root/scripts/receipt-check.sh" "$tmp/good.json" "${held[@]}"
 receipt() {
   jq "$3" "$tmp/good.json" >"$tmp/changed.json"
@@ -132,6 +133,16 @@ with_runs() { # <name> <runs, as JSON>
   cp "$tmp/runs.kept" "$tmp/github/runs.json"
 }
 with_runs "no run" '[]'
+# A list that is empty, is no JSON, or could not be asked for, is no run that passed.
+cp "$tmp/github/runs.json" "$tmp/runs.first"
+: >"$tmp/github/runs.json"
+refused "an empty answer for the runs" "the list of the prerelease workflow's runs could not be read"
+echo 'not json' >"$tmp/github/runs.json"
+refused "an answer for the runs that is no JSON" "the list of the prerelease workflow's runs could not be read"
+cp "$tmp/runs.first" "$tmp/github/runs.json"
+: >"$tmp/github/runs-fail"
+refused "gh failing to list the runs" "the runs of the prerelease workflow could not be listed"
+rm "$tmp/github/runs-fail"
 with_runs "a failed run" '[{"conclusion":"failure","event":"push","headBranch":"v0.1.0-rc.2","headSha":"'"$commit"'","status":"completed"}]'
 with_runs "a run still going" '[{"conclusion":null,"event":"push","headBranch":"v0.1.0-rc.2","headSha":"'"$commit"'","status":"in_progress"}]'
 with_runs "a run of another commit" '[{"conclusion":"success","event":"push","headBranch":"v0.1.0-rc.2","headSha":"'"$earlier"'","status":"completed"}]'
@@ -174,6 +185,7 @@ m=$(entry model-tests)
 receipt "a checkout not made new" "check: model-tests: its checkout is not recorded as made new by the leg and found clean" "$m.checkout.new = false"
 gate_receipt "a checkout not clean" "check: model-tests: its checkout is not recorded as made new by the leg and found clean" "$m.checkout.clean = false"
 receipt "a checkout of another commit" "check: model-tests: its checkout is of another commit" "$m.checkout.commit = \"$earlier\""
+gate_receipt "a checkout of another tree" "check: model-tests: its checkout is of another tree than the tag's commit" "$m.checkout.tree = (\"0\" * 40)"
 receipt "a checkout of no tree" "check: model-tests: its checkout names no tree" "$m.checkout.tree = null"
 receipt "the model tests failed" "check: model-tests: the test run's exit status is not 0" "$m.exit = 100"
 gate_receipt "a failed test" "check: model-tests: the report holds a failed test" "$m.failed = [\"parity::gpu_and_cpu\"]"

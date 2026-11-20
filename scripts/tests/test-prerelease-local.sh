@@ -34,11 +34,13 @@ cat >"$origin/scripts/test-models.sh" <<SH
 #!/bin/bash
 # The stand-in for the model tests: a list, or a run that leaves the report of the case.
 if [ "\${1:-}" = --list ]; then
-  echo "list in \$PWD" >>"$fix/tests-ran"
+  echo "list in \$PWD under \${GUARDS:-none} at \${WHIZBANG_THREAD_LIMIT:-none}" >>"$fix/tests-ran"
+  echo "test-models list" >>"$fix/order"
   printf '%s\n' 'whizbang::it model_tier::a_phrase' 'whizbang::it parity::gpu_and_cpu'
   exit 0
 fi
 echo "run in \$PWD under \${GUARDS:-none} at \${WHIZBANG_THREAD_LIMIT:-none}" >>"$fix/tests-ran"
+echo "test-models run" >>"$fix/order"
 mkdir -p target/nextest/model-tier
 [ ! -f "$fix/junit.xml" ] || cp "$fix/junit.xml" target/nextest/model-tier/junit.xml
 exit "\$(cat "$fix/tests-exit")"
@@ -121,6 +123,7 @@ cat >"$stage/whizbang" <<SH
 kind=\$(cat "$fix/kind")
 [ "\$*" = --version ] && { cat "$fix/version-line"; exit 0; }
 printf '%s|%s|%s\n' "\${GUARDS:-}" "\${WHIZBANG_THREAD_LIMIT:-}" "\$*" >>"$fix/commands"
+printf '%s %s\n' "\$1" "\$2" >>"$fix/order"
 env | sed 's/=.*//' | sort | tr '\n' ' ' >>"$fix/env"
 echo >>"$fix/env"
 # The leg's own folder, from the store or the config it names.
@@ -175,7 +178,9 @@ real_git=$(command -v git)
 cat >"$tmp/bin/gh" <<SH
 #!/bin/bash
 printf '%s\n' "\$*" >>"$fix/gh-asked"
+pwd -P >>"$fix/gh-pwd"
 case "\$1 \$2" in
+  'release view') [ "\$3" = "$tag" ] && [ "\$4 \$5 \$6 \$7" = '--json assets --jq .assets[].name' ] || exit 64; cat "$fix/assets" ;;
   'release download') [ "\$3" = "$tag" ] && [ "\$4" = --dir ] || exit 1; mkdir -p "\$5" && cp "$fix/candidate"/* "\$5/" ;;
   'release upload') [ "\$3" = "$tag" ] && cp "\$4" "$fix/uploaded.json" ;;
   *) exit 64 ;;
@@ -199,7 +204,8 @@ chmod +x "$tmp/bin/gh" "$tmp/bin/uname" "$tmp/bin/git"
 
 # leg [--no-attach]: the leg on the candidate, with everything good unless a case changed it.
 reset() {
-  rm -f "$fix/commands" "$fix/env" "$fix/gh-asked" "$fix/uploaded.json" "$fix/tests-ran" "$fix/heavy"
+  rm -f "$fix/commands" "$fix/env" "$fix/gh-asked" "$fix/uploaded.json" "$fix/tests-ran" "$fix/heavy" "$fix/order" "$fix/gh-pwd"
+  printf '%s\n' "$mac" "$linux" SHA256SUMS >"$fix/assets"
   rm -rf "$tmp/receipt"
   echo good >"$fix/kind"
   echo none >"$fix/dirty"
@@ -209,7 +215,8 @@ reset() {
   junit passed
   records
 }
-leg() { env PATH="$tmp/bin:$PATH" WHIZBANG_ENV_FILE="$tmp/keys.env" WHIZBANG_MODELS_DIR="$tmp/models" "$leg_script" "$@" "$tag" "$tmp/receipt"; }
+# It is started in a folder that is no repository: what it asks of `gh` is asked from its own.
+leg() { (cd "$tmp/models" && env PATH="$tmp/bin:$PATH" WHIZBANG_ENV_FILE="$tmp/keys.env" WHIZBANG_MODELS_DIR="$tmp/models" "$leg_script" "$@" "$tag" "$tmp/receipt"); }
 receipt="$tmp/receipt/prerelease-receipt.json"
 # of <name> <jq filter>: a value of one entry of the receipt.
 of() { jq -c "(.checks[] | select(.name == \"$1\")) | $2" "$receipt"; }
@@ -218,6 +225,7 @@ of() { jq -c "(.checks[] | select(.name == \"$1\")) | $2" "$receipt"; }
 # attached to the candidate.
 reset
 expect_pass "a leg that passes" leg
+cp "$tmp/out" "$tmp/passed-out"
 grep -F "prerelease-local: passed: the receipt is attached to the candidate $tag" "$tmp/out" >/dev/null || { cat "$tmp/out" >&2; fail "it says it passed"; }
 expect_pass "the receipt by its schema" scripts/receipt-check.sh "$receipt" "tag=$tag" "commit=$commit" \
   "mac=$(sha256 "$fix/candidate/$mac")" "linux=$(sha256 "$fix/candidate/$linux")" "installed=$(sha256 "$stage/whizbang")"
@@ -241,13 +249,19 @@ cmp -s "$receipt" "$fix/uploaded.json" && grep -E "^release upload $tag /.*/rece
 if grep -E 'a reason that is in no receipt|made-up-key|/tmp/|/var/|/private/|/Users/|/home/' "$receipt" >/dev/null; then fail "the receipt holds a reply's text, a path or a key"; fi
 if grep -r -F 'made-up-key' "$tmp/out" "$fix/commands" >/dev/null; then fail "the key reached an output or a command"; fi
 # The model tests ran from the leg's own new checkout, under the heavy lock at 200.
-[ "$(sed 's/ in .*checkout/ in checkout/' "$fix/tests-ran" | tr '\n' ';')" = "list in checkout;run in checkout under heavy, at 200;" ] || { cat "$fix/tests-ran" >&2; fail "the model tests are listed and then run from the new checkout, under the heavy lock"; }
+[ "$(sed 's/ in .*checkout/ in checkout/' "$fix/tests-ran" | tr '\n' ';')" = "list in checkout under heavy, at 200;run in checkout under heavy, at 200;" ] || { cat "$fix/tests-ran" >&2; fail "the model tests are listed and then run from the new checkout, each under the heavy lock at 200: the list builds them"; }
+# The candidate's pack is installed, and heard, before the model tests run on it; and the
+# leg says that the pack of the models directory is replaced.
+[ "$(sed -n '/^setup /,$p' "$fix/order" | sed -n '1,4p' | tr '\n' ';')" = "setup --extra;backends status;test-models list;test-models run;" ] ||
+  { cat "$fix/order" >&2; fail "setup with the extra and its probe come before the model tests, which test the pack the candidate carries"; }
+grep -F "the pack in the models directory is being replaced by the one the candidate carries" "$tmp/passed-out" >/dev/null || { cat "$tmp/passed-out" >&2; fail "the leg says that it replaces the pack"; }
+[ "$(sort -u "$fix/gh-pwd")" = "$(cd "$tmp/main" && pwd -P)" ] || fail "gh is asked from the leg's own repository, wherever the leg was started"
 grep -F "$tmp/main" "$fix/tests-ran" >/dev/null && fail "the model tests never run from the folder the leg was started in"
 # Every command that starts the pack ran under the three guards at 200, and no other did.
 [ "$(grep -c '^heavy,memory-watch,thread-guard,|200|' "$fix/commands")" = 4 ] &&
   [ "$(grep '^heavy,' "$fix/commands" | cut -d'|' -f3 | cut -d' ' -f1-2 | tr '\n' ';')" = "setup --extra;backends status;rascal remove-prompt;rascal remove-checked;" ] ||
   { cat "$fix/commands" >&2; fail "setup, the probe, the mask and the loop run under the heavy lock, the watch on memory and the thread guard at 200"; }
-[ "$(tr '\n' ';' <"$fix/heavy")" = "heavy test-models;heavy prerelease-setup;heavy prerelease-probe;heavy prerelease-mask;heavy prerelease-loop;" ] || fail "each is one heavy command"
+[ "$(tr '\n' ';' <"$fix/heavy")" = "heavy prerelease-setup;heavy prerelease-probe;heavy test-models-list;heavy test-models;heavy prerelease-mask;heavy prerelease-loop;" ] || fail "each is one heavy command"
 grep -F -e '|rascal remove-checked ' "$fix/commands" | grep -F -e ' --check required ' >/dev/null || fail "the loop is asked with the check required"
 # The binary is given three variables of whoever runs the leg, and the guards' own.
 for held in $(sort -u "$fix/env" | tr ' ' '\n' | sort -u); do
@@ -266,6 +280,14 @@ stopped() {
   expect_fail "$1" "$2" leg
   [ ! -e "$receipt" ] && [ ! -e "$fix/uploaded.json" ] || fail "$1: a leg that stopped writes no receipt"
 }
+# --- A candidate that holds a receipt already: the leg stops before it spends, since the
+# attaching would be refused at the end. With --no-attach it runs.
+reset
+echo prerelease-receipt.json >>"$fix/assets"
+stopped "a candidate with a receipt" "the candidate $tag holds a receipt already"
+[ ! -e "$fix/commands" ] && [ ! -e "$fix/tests-ran" ] || fail "a candidate with a receipt: nothing was run"
+echo prerelease-receipt.json >>"$fix/assets"
+expect_pass "a candidate with a receipt, with nothing to attach" leg --no-attach
 # --- A wrong sum stops it before anything runs.
 reset
 printf '%s  %s\n' "$(printf '0%.0s' $(seq 1 64))" "$mac" "$(sha256 "$fix/candidate/$linux")" "$linux" >"$fix/candidate/SHA256SUMS"

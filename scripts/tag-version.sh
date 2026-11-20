@@ -13,7 +13,9 @@
 #   v<major>.<minor>.<patch>            a version tag: a release
 #   v<major>.<minor>.<patch>-rc.<n>     a candidate tag: candidate <n> of that version
 #
-# Each number is written without a sign and without a leading zero, and <n> is 1 or more.
+# Each number is written without a sign and without a leading zero, and <n> is 1 or more
+# and has nine digits at most, so that whatever compares candidate numbers can count
+# with it.
 # A candidate tag has two parts that are kept apart: its base version, which is what a
 # binary says of itself, and its candidate number, which is the candidate's own identity
 # and is in no binary. So the binary of `v0.1.0-rc.2` says `0.1.0`, as the binary of
@@ -59,7 +61,7 @@ if printf '%s\n' "$tag" | grep -x -E "v$number\.$number\.$number" >/dev/null; th
   kind=release
   version=${tag#v}
   candidate=none
-elif printf '%s\n' "$tag" | grep -x -E "v$number\.$number\.$number-rc\.[1-9][0-9]*" >/dev/null; then
+elif printf '%s\n' "$tag" | grep -x -E "v$number\.$number\.$number-rc\.[1-9][0-9]{0,8}" >/dev/null; then
   kind=candidate
   version=${tag#v}
   version=${version%-rc.*}

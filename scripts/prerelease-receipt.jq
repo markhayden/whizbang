@@ -36,7 +36,7 @@
 # an origin or one of a closed set of words.
 #
 # Given with --arg, each held when it is not empty: `tag` and `commit`, which the receipt
-# must name; `mac`, `linux` and `installed`, the digests taken again from the candidate's
+# must name; `tree`, the tree of that commit, which the model tests' checkout must be of; `mac`, `linux` and `installed`, the digests taken again from the candidate's
 # bytes. `shape_only`, given with --argjson: 1 reports the shape and nothing else.
 
 def sha: type == "string" and test("^[0-9a-f]{64}$");
@@ -120,6 +120,7 @@ def passed($receipt):
       (if .checkout.new and .checkout.clean then empty else "check: model-tests: its checkout is not recorded as made new by the leg and found clean" end),
       (if .checkout.commit == $receipt.commit then empty else "check: model-tests: its checkout is of another commit than the candidate's" end),
       (if .checkout.tree == null then "check: model-tests: its checkout names no tree" else empty end),
+      (if $tree != "" and .checkout.tree != $tree then "check: model-tests: its checkout is of another tree than the tag's commit" else empty end),
       (if .exit == 0 then empty else "check: model-tests: the test run's exit status is not 0" end),
       (if .report_sha256 == null then "check: model-tests: there is no test report" else empty end),
       (if (.expected | length) == 0 then "check: model-tests: the filter named no test" else empty end),

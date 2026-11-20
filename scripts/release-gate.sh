@@ -20,7 +20,9 @@
 #  5. the candidate, downloaded here, holds exactly the two archives, SHA256SUMS and the
 #     receipt, `prerelease-receipt.json`; and each archive is its line of SHA256SUMS
 #     (scripts/release-publish.sh check);
-#  6. the receipt is read whole by its schema, names this candidate and this commit, holds
+#  6. the receipt is read whole by its schema, names this candidate and this commit, says
+#     its model tests ran from a checkout of this commit's tree, taken here from the
+#     repository, holds
 #     every required check exactly once, each meeting the conditions of its kind, and
 #     names the digests of the two archives and of the binary inside the Mac's archive,
 #     all three taken here again from the candidate's bytes (scripts/receipt-check.sh).
@@ -84,6 +86,10 @@ gh run list --workflow prerelease.yml --commit "$commit" --limit 100 --json conc
 passed=$(jq --arg commit "$commit" --arg candidate "$candidate" \
   '[.[] | select(.headSha == $commit and .headBranch == $candidate and .event == "push" and .status == "completed" and .conclusion == "success")] | length' \
   "$tmp/runs" 2>/dev/null) || refuse "the list of the prerelease workflow's runs could not be read"
+# A count and nothing else: an answer that was empty gives none, and is no run that passed.
+case "$passed" in
+  '' | *[!0-9]*) refuse "the list of the prerelease workflow's runs could not be read" ;;
+esac
 [ "$passed" -ge 1 ] || refuse "no run of the prerelease workflow for $candidate ended in success on commit $commit"
 
 # --- 5. The candidate's own files.
@@ -99,7 +105,8 @@ linux=$(sha256 "$folder/whizbang-$version-x86_64-unknown-linux-gnu.tar.gz")
 tar -xzOf "$folder/whizbang-$version-aarch64-apple-darwin.tar.gz" "whizbang-$version-aarch64-apple-darwin/whizbang" >"$tmp/binary" 2>/dev/null && [ -s "$tmp/binary" ] ||
   refuse "the Mac's archive of $candidate holds no binary"
 installed=$(sha256 "$tmp/binary")
-"$root/scripts/receipt-check.sh" "$folder/prerelease-receipt.json" "tag=$candidate" "commit=$commit" "mac=$mac" "linux=$linux" "installed=$installed" ||
+tree=$(git rev-parse --verify --quiet "$commit^{tree}") || refuse "the commit of $tag names no tree"
+"$root/scripts/receipt-check.sh" "$folder/prerelease-receipt.json" "tag=$candidate" "commit=$commit" "tree=$tree" "mac=$mac" "linux=$linux" "installed=$installed" ||
   refuse "the receipt of $candidate does not allow a release (above)"
 
 echo "release-gate: passed: $tag is of commit $commit, whose candidate $candidate passed the prerelease workflow and the local leg; $folder holds its files"

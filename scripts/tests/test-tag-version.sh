@@ -26,6 +26,13 @@ expect_fail "a binary that names the candidate number" "is not a version of thre
 [ "$("$script" v0.1.0-rc.2 | sed -n 's/^candidate: //p')" = 2 ] && [ "$("$script" v0.1.0-rc.11 | sed -n 's/^candidate: //p')" = 11 ] ||
   fail "the candidate number is a line of its own"
 
+# A candidate number has nine digits at most: one that a shell cannot count with is no
+# candidate, so nothing that compares numbers is handed one.
+[ "$(read_as v0.1.0-rc.999999999)" = "kind: candidate;version: 0.1.0;candidate: 999999999;" ] || fail "a candidate number of nine digits is read"
+for tag in v0.1.0-rc.1000000000 v0.1.0-rc.99999999999999999999999999; do
+  expect_fail "the candidate number of $tag" "is neither a version tag" "$script" "$tag"
+done
+
 # --- Another base version than the binary's is refused, in both forms.
 expect_fail "a candidate of another version" "is not the binary's version" "$script" v0.1.1-rc.1 0.1.0
 expect_fail "a release of another version" "is not the binary's version" "$script" v0.1.1 0.1.0
@@ -34,6 +41,7 @@ expect_fail "a release of another version" "is not the binary's version" "$scrip
 
 # --- A tag of another form is refused.
 for tag in 0.1.0 v0.1 v0.1.0.0 v0.1.0-rc v0.1.0-rc. v0.1.0-rc.0 v0.1.0-rc.02 v0.1.0-rc.2a v0.1.0-RC.2 v0.1.0-beta.1 \
+  v0.1.0+x v0.1.0-rc.1.2 v0.1.0-rc.1+x $'v0.1.0\n' $'v0.1.0-rc.2\n' $'v0.1.0\r' $'v0.1.0-rc.2\r' \
   v0.1.0rc.2 v0.1.0-rc2 v01.1.0 v0.01.0 v0.1.00 V0.1.0 'v0.1.0 ' ' v0.1.0' v0.1.0-rc.2-rc.3 vx.y.z refs/tags/v0.1.0 m3 '' \
   'v0.1.0
 v0.1.0'; do
