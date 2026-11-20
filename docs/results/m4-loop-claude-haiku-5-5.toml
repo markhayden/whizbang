@@ -1,0 +1,132 @@
+# What the loop `remove_checked` did on the 24 entries of `remove_prompt` of the edit
+# set, under one judge (plan m4, task E1, item 1). Written by scripts/loop-evidence.sh;
+# never edited by hand. Aggregates only: no item, no picture, no path, no word of a judge.
+#
+# `unsure_a_retry_under_rascals_rule_would_have_followed` is an upper bound: the runs that
+# stopped on an `unsure` whose check held a tentative violation of RQ1 and cited any place.
+# A record keeps a check's places apart from its findings, so the place may be another
+# finding's. `stopped_by_row` is the row of the loop's table the last judged attempt's
+# findings are of; `stopped_by_reason` is the sentence the loop wrote, as one of a closed set.
+#
+# `[places]`: `looked_into` is the cuts the retries made (runs of `view`); `joined` the places
+# a located retry lists; a place looked into and not listed is one where nothing was found
+# and which covers over a tenth of the picture. What a record does not hold, and no count
+# here says: the places a finding cited that were never looked into (a cut over 1,024
+# pixels or of the whole picture, a ninth place, one cited twice), since `cited_by_checks`
+# counts the places of every finding and not only of those that allow a retry.
+schema = "loop-evidence/1"
+commit = "48c9251e4a29bcf4e224e579fd75b09934d02ed4"
+whizbang = "0.1.0"
+judge = "claude-haiku-5-5"
+judge_model = "anthropic claude-haiku-5-5 1+fit1-jpeg90-2576"
+filler = "fal bria-eraser 1+fit1-png-binary1-2048"
+finder = "pack sam3 sha256:4c1428553b40dcc493f53221fb1134c487432e43f3a39b5a8a5ab5c60f3ed652"
+action = "remove_checked 1.0.0"
+job_template = "sha256:ec762228fe769d09e6dadebd716e865c643cc095d395fac2f64d4da452d06c40"
+config = "sha256:3037828ae7c73a18e08e8db56f842ec9a0dfe58aed020fb3a71bf06134f7eb6d"
+manifest_sha256 = "sha256:d1047bd9bf9e8641b528ff2ed2a8e4595fbea9caa79fee76bee16aa9b414faf5"
+entries = 24
+runs = 24
+not_run = 0
+attempts_made = 24
+unsure_a_retry_under_rascals_rule_would_have_followed = 0
+stopped_on_findings_not_complete = 0
+median_ms = 41055
+least_ms = 31620
+most_ms = 50152
+reserved_micros = 10999296
+settled_micros = 1045275
+settled_by_attempts_micros = 1045275
+unresolved_micros = 0
+
+[outcomes]
+cancelled = 0
+completed = 24
+error = 0
+interrupted = 0
+invalid = 0
+other = 0
+
+[errors_by_type]
+
+[ended]
+passed_at_first = 1
+passed_after_retry = 0
+kept_unsure = 23
+kept_fail = 0
+unchecked = 0
+error = 0
+
+[plans]
+checked = 24
+unchecked = 0
+none = 0
+allowed_1 = 0
+allowed_2 = 0
+allowed_3 = 24
+
+[runs_by_attempts_made]
+made_1 = 24
+made_2 = 0
+made_3 = 0
+
+[attempt_verdicts]
+pass = 1
+fail = 0
+unsure = 23
+unchecked = 0
+
+[retries]
+wider = 0
+located = 0
+
+[stopped_by_row]
+row_0_cut_short = 0
+row_1_damaged = 0
+row_2_remains = 0
+row_3_not_sure = 0
+row_4_no_violation = 23
+row_5_other_violation = 0
+passed = 1
+not_checked = 0
+no_attempt = 0
+
+[stopped_by_reason]
+passed = 1
+findings_cut_short = 0
+damaged_something_preserved = 0
+nothing_says_it_remains = 23
+last_attempt_of_the_plan = 0
+wider_mask_already_used = 0
+mask_is_the_one_before = 0
+one_unchecked_pass = 0
+check_could_not_run = 0
+budget_ran_out = 0
+deadline_passed = 0
+retry_could_not_be_made = 0
+never_said = 0
+other = 0
+no_attempt = 0
+
+[places]
+looked_into = 0
+joined = 0
+found_something = 0
+found_nothing_joined_as_itself = 0
+found_nothing_left_out_over_a_tenth = 0
+cited_by_checks = 21
+cited_as_polygons = 0
+retries_wider_after_places_gave_nothing = 0
+retries_wider_though_a_check_cited_a_place = 0
+
+[[finding]]
+obligation = "RQ2"
+disposition = "held"
+confidence = "tentative"
+count = 12
+
+[[finding]]
+obligation = "RQ3"
+disposition = "held"
+confidence = "tentative"
+count = 21

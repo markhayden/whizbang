@@ -1725,12 +1725,10 @@ fn the_loops_record_names_a_commit_of_this_tree_and_holds_only_aggregates() {
     let entries = (set.item.iter()).filter(|item| item.recipe == "remove_prompt");
     assert_eq!(entries.count(), 24);
 
-    // The live record is the orchestrator's runs, made after this test was written: it
-    // is held from the moment its page is committed, and not before.
+    // The live record: the orchestrator's runs, committed.
     let results = repository().join("docs/results");
-    let Ok(page) = std::fs::read_to_string(results.join("m4-loop.md")) else {
-        return;
-    };
+    let page = std::fs::read_to_string(results.join("m4-loop.md"))
+        .expect("the loop's live record is committed");
     let body = |text: &str| -> String {
         let lines: Vec<&str> = text.lines().filter(|line| !line.starts_with('#')).collect();
         lines.join("\n").trim_matches('\n').to_owned()
@@ -1808,7 +1806,14 @@ fn the_loops_record_names_a_commit_of_this_tree_and_holds_only_aggregates() {
         match case {
             // A phrase that names nothing was not passed; a missing key leaves the
             // run unchecked, and says why.
-            "vague" => assert!(!ended_as.starts_with("passed"), "{ended_as}"),
+            // Its sentence is the one measured; the page says it was changed after, by
+            // a test that is there.
+            "vague" => {
+                assert!(!ended_as.starts_with("passed"), "{ended_as}");
+                let test = "a_phrase_that_finds_nothing_ends_remove_prompt_and_the_loop_with_a_sentence_of_its_own";
+                assert!(include_str!("checked.rs").contains(&format!("fn {test}()")));
+                assert!(page.contains(&format!("`checked::{test}`")), "{test}");
+            }
             "no-key" => {
                 assert_eq!(ended_as, "unchecked");
                 assert_eq!(fields["checked"].as_bool(), Some(false));

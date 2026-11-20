@@ -1429,6 +1429,41 @@ fn a_first_fill_that_fails_is_the_loops_error_with_the_calls_own_cause() {
     assert_eq!(world.kit.requests(), (1, 0, 0));
 }
 
+/// What a recipe says when a step found nothing that a later step needs: the sentence
+/// `remove_prompt`, and so the loop, ends with when the phrase finds nothing (plan m4,
+/// task E1: the live case `vague` ended with the step `select`'s refusal of 0 masks).
+const FOUND_NOTHING: &str =
+    "the step segment (segment) found nothing, so the step select (select) had no mask to take";
+
+#[test]
+fn a_phrase_that_finds_nothing_ends_remove_prompt_and_the_loop_with_a_sentence_of_its_own() {
+    let world = Looped::new("found-nothing", &Setup::answering(vec![passes()]));
+    let nowhere = Value::text("a thing that is not there");
+    // The recipe on its own, as `whizbang rascal remove-prompt` calls it: invalid, in a
+    // sentence of its own and not as the next step's refusal of a count.
+    let call = Call::new(REMOVE)
+        .argument("prompt", nowhere.clone())
+        .input("image", world.image_id());
+    let finished = world.run(&call);
+    assert_eq!(
+        finished.outcome(),
+        &Outcome::Invalid {
+            why: FOUND_NOTHING.to_owned()
+        }
+    );
+    // The loop: its error, of the type and with the message of the call that failed.
+    let finished = world.run(&world.call().argument("prompt", nowhere));
+    assert_eq!(
+        finished.outcome(),
+        &Outcome::Error {
+            kind: "invalid".to_owned(),
+            message: FOUND_NOTHING.to_owned()
+        }
+    );
+    // The segmenter was asked once each time, and nothing else was.
+    assert_eq!(world.kit.requests(), (2, 0, 0));
+}
+
 #[test]
 fn a_check_that_ends_in_error_leaves_its_attempt_unchecked_with_the_checks_own_error() {
     // The judge has nothing to say: its one request is answered with a fault.

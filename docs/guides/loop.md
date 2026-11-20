@@ -191,7 +191,9 @@ check's own error type and message as the reason; the picture is still handed ba
 
 **It is an error only when no removal was made:** the segmenter found nothing, the first
 fill failed, or the budget ran out before the first fill. The complaint is the type and
-the message of the step that failed.
+the message of the step that failed. When the segmenter found nothing, that is `invalid`,
+and says so: `the step segment (segment) found nothing, so the step select (select) had
+no mask to take`.
 
 ## Exit codes
 
