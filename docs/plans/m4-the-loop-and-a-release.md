@@ -895,7 +895,7 @@ the paths to fal and to the judges are the same code the fast tier runs on Linux
 recorded exchanges, and no key is given to a hosted runner. That this is enough for "runs"
 on Linux is open question 2.
 
-- [ ] Done when: `scripts/tests/test-package.sh` (the archive holds exactly the four files;
+- [x] Done when: `scripts/tests/test-package.sh` (the archive holds exactly the four files;
   two builds of one tree give the same list and the same sums line; the sums line matches
   the archive), `scripts/tests/test-install-prereqs.sh` (against a stand-in `uv`: one of
   another version is refused; only the two things are put in the folder; the Python is
