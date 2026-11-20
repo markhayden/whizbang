@@ -732,3 +732,222 @@ fn no_more_than_eight_places_are_used_and_the_plans_bound_covers_them() {
     assert!(came.ended.contains("were cut short"), "{}", came.ended);
     assert!(world.kit.crops().is_empty());
 }
+
+/// A place of whole pixels of the picture of 64 by 64, as a finding cites it.
+fn pixels(left: u32, top: u32, right: u32, bottom: u32) -> [f64; 4] {
+    [left, top, right, bottom].map(|side| f64::from(side) / 64.0)
+}
+
+/// What each attempt of a run came to: its verdict and what its retry changed, a
+/// located retry by how many of its crops gave a mask and how many joined as themselves.
+fn attempts_of(world: &Looped, finished: &Finished) -> Vec<(Option<Decision>, String)> {
+    let attempts = world.attempts(finished);
+    let changed = |changed: &Option<Changed>| match changed {
+        None => "nothing".to_owned(),
+        Some(Changed::Wider { px }) => format!("wider {px}"),
+        Some(Changed::Located { crops }) => {
+            let gave = crops.iter().filter(|crop| crop.mask.is_some()).count();
+            format!("located {gave} {}", crops.len() - gave)
+        }
+    };
+    (attempts.list.iter())
+        .map(|attempt| (attempt.verdict, changed(&attempt.changed)))
+        .collect()
+}
+
+#[test]
+fn a_place_whose_cut_is_the_whole_picture_is_no_place() {
+    // A crop that is the picture itself cannot be carried from: such a place is no
+    // place, whether it is the whole picture or its padded cut comes to it.
+    let candidate = Digest::of_bytes(b"candidate");
+    for sides in [[0.0, 0.0, 1.0, 1.0], pixels(1, 1, 63, 63)] {
+        let at = Some(FoundAt {
+            image: candidate,
+            boxed: Some(sides),
+            polygon: None,
+        });
+        assert!(usable(&[at], candidate, 64, 64).is_empty(), "{sides:?}");
+    }
+    // Through the loop: nothing is cut, the segmenter is not asked again, and the
+    // retry is the wider mask.
+    let answers = vec![remains_at(pixels(1, 1, 63, 63)), passes()];
+    let (world, finished) = crate::checked::looped("located-whole", &finding(answers));
+    assert_eq!(
+        attempts_of(&world, &finished),
+        [
+            (Some(Decision::Fail), "nothing".to_owned()),
+            (Some(Decision::Pass), "wider 8".to_owned())
+        ]
+    );
+    assert!(world.kit.crops().is_empty());
+    assert_eq!(world.kit.requests(), (1, 2, 2));
+}
+
+#[test]
+fn on_a_panorama_no_place_is_looked_into_and_the_mask_is_widened() {
+    // `view` cuts flat pictures only: on a panorama a place is no place, and a finding
+    // that names one widens the mask, as it did before places were looked into.
+    let mut setup = finding(vec![remains_at(PLACE), passes()]);
+    setup.panorama = true;
+    let (world, finished) = crate::checked::looped("located-panorama", &setup);
+    assert_eq!(
+        finished.outcome().name(),
+        "completed",
+        "{:?}",
+        finished.outcome()
+    );
+    assert_eq!(
+        attempts_of(&world, &finished),
+        [
+            (Some(Decision::Fail), "nothing".to_owned()),
+            (Some(Decision::Pass), "wider 8".to_owned())
+        ]
+    );
+    assert!(world.kit.crops().is_empty());
+    assert_eq!(looks(&world, &finished, 2), Vec::<String>::new());
+}
+
+#[test]
+fn a_located_retry_whose_mask_is_the_one_before_uses_the_widening_then() {
+    // The judge names a place about what was found already, and the segmenter finds
+    // there only pixels the mask has: from 21 to 25 each way, inside 20, 20 to 30, 28.
+    let around = pixels(20, 20, 30, 28);
+    let mut setup = finding(vec![remains_at(around), passes()]);
+    setup.inside = vec![[2, 2, 6, 6]];
+    let (world, finished) = crate::checked::looped("located-same", &setup);
+    // The located retry's mask is the one before it: it is not filled. The one
+    // widening has not been used, so the next attempt widens the same found mask.
+    assert_eq!(
+        attempts_of(&world, &finished),
+        [
+            (Some(Decision::Fail), "nothing".to_owned()),
+            (None, "located 1 0".to_owned()),
+            (Some(Decision::Pass), "wider 8".to_owned())
+        ]
+    );
+    let attempts = world.attempts(&finished);
+    assert_eq!(
+        attempts.list[1].unchecked.as_deref(),
+        Some("its shaped mask is the one before it, and nothing was filled")
+    );
+    assert_eq!((attempts.kept, world.kit.requests()), (Some(3), (2, 2, 2)));
+    let record = world.record(finished.run().as_str());
+    let (join, shape) = (
+        world.record(&run_of(&record, "a2_select")),
+        world.record(&run_of(&record, "a3_shape")),
+    );
+    assert_eq!(argument(&shape, "set").as_deref(), Some("grow.px=8"));
+    assert_eq!(
+        shape.started().unwrap().given[0].artifact,
+        join.outputs()[0].artifact
+    );
+    // When the widened mask is the same one too, the attempts end: the segmenter
+    // finds the whole picture, and nothing can be added to that.
+    let mut setup = finding(vec![remains_at(PLACE), passes()]);
+    setup.found = [0, 0, 64, 64];
+    let (world, finished) = crate::checked::looped("located-same-twice", &setup);
+    assert_eq!(
+        attempts_of(&world, &finished),
+        [
+            (Some(Decision::Fail), "nothing".to_owned()),
+            (None, "located 1 0".to_owned()),
+            (None, "wider 8".to_owned())
+        ]
+    );
+    let attempts = world.attempts(&finished);
+    assert_eq!(
+        attempts.ended,
+        "the mask of attempt 3 is the one before it, and an attempt is not made twice"
+    );
+    assert_eq!((attempts.kept, world.kit.requests().1), (Some(1), 1));
+    // With two attempts allowed there is none left to widen in.
+    let mut setup = finding(vec![remains_at(PLACE), passes()]);
+    setup.found = [0, 0, 64, 64];
+    let world = Looped::new("located-same-last", &setup);
+    let finished = world.run(&crate::checked::asking(&world, 2));
+    let attempts = world.attempts(&finished);
+    assert_eq!(attempts.list.len(), 2);
+    assert_eq!(
+        attempts.ended,
+        "the mask of attempt 2 is the one before it, and an attempt is not made twice"
+    );
+}
+
+#[test]
+fn a_place_that_joins_as_itself_inside_the_mask_before_is_not_filled_again() {
+    // Nothing is found in the crop, and the place is wholly inside what the first
+    // attempt found: joined as itself it adds no pixel. The mask it makes has another
+    // identity than the one before, since it names the place it came from, and the
+    // same pixels: it is compared by its pixels, and neither filled nor checked.
+    let inside = pixels(21, 21, 29, 27);
+    let setup = Setup::answering(vec![remains_at(inside), passes()]);
+    let (world, finished) = crate::checked::looped("located-itself-inside", &setup);
+    assert_eq!(
+        attempts_of(&world, &finished),
+        [
+            (Some(Decision::Fail), "nothing".to_owned()),
+            (None, "located 0 1".to_owned()),
+            (Some(Decision::Pass), "wider 8".to_owned())
+        ]
+    );
+    let attempts = world.attempts(&finished);
+    assert_eq!(
+        attempts.list[1].unchecked.as_deref(),
+        Some("its shaped mask is the one before it, and nothing was filled")
+    );
+    // Two fills and two checks: the first attempt's and the widened one's.
+    assert_eq!(world.kit.requests(), (2, 2, 2));
+    let record = world.record(finished.run().as_str());
+    let made = |label: &str| world.record(&run_of(&record, label)).outputs()[0].artifact;
+    assert_ne!(made("a1_shape"), made("a2_shape"));
+}
+
+#[test]
+fn a_place_over_a_tenth_of_the_picture_does_not_join_as_itself() {
+    use whizbang_rascal::checked::located::ITSELF_PART;
+    assert_eq!(ITSELF_PART, 10);
+    // Nothing is found in either crop. A place of 400 of the picture's 4,096 pixels
+    // joins as itself; one of 420, over a tenth, does not, and is no place for that:
+    // no other place gave a mask, so the retry is the wider mask.
+    let (under, over) = (pixels(32, 40, 52, 60), pixels(32, 40, 53, 60));
+    let answers = |place| vec![remains_at(place), passes()];
+    let (world, finished) =
+        crate::checked::looped("located-tenth-under", &Setup::answering(answers(under)));
+    assert_eq!(
+        attempts_of(&world, &finished)[1],
+        (Some(Decision::Pass), "located 0 1".to_owned())
+    );
+    assert_eq!(looks(&world, &finished, 2), [VIEW, "segment", ITSELF]);
+    let (world, finished) =
+        crate::checked::looped("located-tenth-over", &Setup::answering(answers(over)));
+    assert_eq!(
+        attempts_of(&world, &finished)[1],
+        (Some(Decision::Pass), "wider 8".to_owned())
+    );
+    // The place was cut and asked about, and nothing of it was painted for that.
+    assert_eq!(looks(&world, &finished, 2), [VIEW, "segment"]);
+    assert_eq!(world.kit.crops().len(), 1);
+    let painted = weights(&world, output(&finished, "mask"));
+    assert!(weight(&painted, 50, 58) == 0.0);
+    // Beside a place that gave a mask it is left out, and the retry is located.
+    let both = submission(
+        citing(&[("RQ1", "violation", "confident")], &[("RQ1", over)]),
+        vec![seen_at(
+            &["RQ1"],
+            "violation",
+            "confident",
+            pixels(0, 0, 24, 24),
+        )],
+    );
+    let mut setup = finding(vec![both, passes()]);
+    setup.inside_least = 26;
+    let (world, finished) = crate::checked::looped("located-tenth-beside", &setup);
+    assert_eq!(
+        attempts_of(&world, &finished)[1],
+        (Some(Decision::Pass), "located 1 0".to_owned())
+    );
+    assert_eq!(
+        looks(&world, &finished, 2),
+        [VIEW, "segment", VIEW, "segment", "carry"]
+    );
+}

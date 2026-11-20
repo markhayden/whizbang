@@ -141,6 +141,8 @@ pub struct Setup {
     /// What it finds for [`PHRASE`] inside a crop, each in the crop's own pixels:
     /// nothing, unless a test says.
     pub inside: Vec<[u32; 4]>,
+    /// Whether the picture is a panorama, of the same 64 by 64, and not a flat picture.
+    pub panorama: bool,
     /// The least side of a crop it finds that in: in a smaller crop, nothing.
     pub inside_least: u32,
     /// Whether it fails every request about a crop.
@@ -188,6 +190,7 @@ impl Setup {
         Setup {
             found: FOUND,
             inside: Vec::new(),
+            panorama: false,
             inside_least: 0,
             inside_fails: false,
             inside_charges: None,
@@ -815,7 +818,16 @@ impl Fs for Memory {
 /// and an allowance of this many millionths of a US dollar: made here, in the test's
 /// process, on the file system given, since a command for each took most of a test's
 /// time. What comes back is the store's path and the picture's identity.
-fn with_picture(dir: &Scratch, allowance: u64, fs: Arc<dyn Fs>) -> (PathBuf, String) {
+fn with_picture(
+    dir: &Scratch,
+    allowance: u64,
+    fs: Arc<dyn Fs>,
+    panorama: bool,
+) -> (PathBuf, String) {
+    let (projection, topology) = match panorama {
+        true => (Projection::Equirectangular, Topology::Wrap),
+        false => (Projection::Flat, Topology::Bounded),
+    };
     let mut rgba = Vec::new();
     for y in 0..64_u32 {
         for x in 0..64_u32 {
@@ -829,8 +841,8 @@ fn with_picture(dir: &Scratch, allowance: u64, fs: Arc<dyn Fs>) -> (PathBuf, Str
     let origin = artifact::Origin::new(artifact::Step::new("fixture", "1")).unwrap();
     let picture = artifact::Image::new(
         png,
-        Projection::Flat,
-        Topology::Bounded,
+        projection,
+        topology,
         artifact::ImageRole::Picture,
         origin,
         &DecodeLimits::default(),
@@ -872,7 +884,7 @@ impl Looped {
             None => Arc::new(Unsynced),
             Some(memory) => Arc::new(memory.clone()),
         };
-        let (root, image) = with_picture(&dir, setup.allowance, fs.clone());
+        let (root, image) = with_picture(&dir, setup.allowance, fs.clone(), setup.panorama);
         let mut config = backend("segment");
         if setup.dear {
             // Each capability's default, and a second backend beside it, by name.

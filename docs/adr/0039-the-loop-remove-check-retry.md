@@ -4,7 +4,9 @@ Status: accepted.
 Date: 2026-11-20
 Amended: 2026-11-20, with plan m4's task L2: the located retry and what it calls ("What it
 calls", "An attempt", "The located retry", "The plan", "One budget", "The record",
-"Cancellation"), the action `carry`, and one more alternative.
+"Cancellation"), the action `carry`, and more alternatives; and, after the review of
+that task, the comparison by pixels, the widening after a located retry that added
+nothing, and the bound on a place that joins as itself.
 Spec: section 3 ("Primitives, recipes and loops", "Nested calls", "Cancellation", "What a
 run publishes"), section 6 ("Spend"), section 7 ("Bounded check and retry: Kept, as nested
 calls"), section 16 row 4; plan m4 (`docs/plans/m4-the-loop-and-a-release.md`), task L1,
@@ -61,8 +63,10 @@ registry that lacks one of the six.
   before ("The located retry"); a wider one keeps it.
 - *Shape*: `remove_prompt` from `grow` until `feather`, given the found mask. The shaped
   mask comes back, the one a fill would paint.
-- *Compare*: a retry whose shaped mask has the identity of the attempt's before it is not
-  filled, and the attempts end.
+- *Compare*: a retry whose shaped mask has the pixels of the attempt's before it is not
+  filled. The two are compared by a digest of the three planes a fill reads, not by
+  identity: a mask made from a place names the place, and so has another identity for
+  the same pixels. The attempts then end, but for one case ("A retry").
 - *Fill*: `remove_prompt` from `fill`, given the shaped mask.
 - *Check*: `source-fidelity`, the filled picture as the candidate and the picture the loop
   was given as the source.
@@ -109,6 +113,15 @@ run. When some cite places and some do not, the retry is located, from those tha
 Either kind may follow the other; the wider mask widens the found mask of the attempt
 before it, whichever kind made that.
 
+One thing departs from the plan's item 5, by the orchestrator's decision after the review
+of task L2. A located retry whose shaped mask is the one before it added no pixel. It is
+not filled, and where the plan would end the attempts, the one widening is used then, if
+it has not been used and the plan has an attempt left: the next attempt shapes the same
+found mask with the wider `grow`. Only when that mask is the same one too do the attempts
+end. The located attempt is listed, with no fill and its reason. And a located retry
+that joined nothing (below) is the wider mask in the same attempt, or ends the attempts
+when the widening was used.
+
 **The located retry** (plan m4, task L2) changes how the attempt's found mask is made and
 nothing else: the shape, the comparison, the fill and the check are the same stretches of
 the same recipe, with no setting of a step changed.
@@ -118,8 +131,10 @@ the same recipe, with no setting of a step changed.
   row 1 finding has ended the attempts already, and the place of a row 3, 4 or 5 finding
   beside a row 2 finding is not read. A place is usable when it is on the candidate the
   check was shown (that attempt's fill), covers the centre of at least one pixel, and its
-  cut is at most 1,024 pixels on a side. A polygon is used by the box around it. A place
-  that is not usable is no place, and the finding that cites it is one that cites none.
+  cut is at most 1,024 pixels on a side and is not the whole picture, which is no crop of
+  itself. On a picture that is not flat no place is usable: `view` cuts flat pictures
+  only. A polygon is used by the box around it. A place that is not usable is no place,
+  and the finding that cites it is one that cites none.
 - *The cut.* The place's own pixels are those whose centres are inside its box. The cut is
   that box widened by a twentieth of its size on each side (rascal's crop pad), snapped
   outward to whole pixels, held inside the picture, and widened to eight pixels where it
@@ -132,7 +147,14 @@ the same recipe, with no setting of a step changed.
   `carry` puts each mask found onto the picture, from the cut's corner; or, when nothing
   was found, the recipe `mask_rect` makes the place's own pixels a mask: the place joins
   as itself, because the judge said with confidence that the named thing is there and the
-  table has held that it said so of nothing that must be preserved.
+  table has held that it said so of nothing that must be preserved. A place joins as
+  itself only when it covers at most a tenth of the picture's pixels
+  (`located::ITSELF_PART`, the orchestrator's decision after the review): a larger one
+  that nothing is found in is not joined, and is no place for that purpose, so one
+  finding cannot have a large part of a picture painted on the judge's word alone. The
+  tenth is a first number, to be looked at again with the live evidence (plan m4, task
+  E1). When no place gave a mask and none joined, nothing is joined and the retry is the
+  wider mask.
 - *The join.* `remove_prompt` from `select` until `select`, given the found mask of the
   attempt before and the new masks in place of what its step `segment` would have found:
   at most 1 + 8 × 4 = 33 of the 64 `select` takes. What comes back is the one found mask
@@ -146,8 +168,11 @@ picture, empty outside the crop. It is the "explicit, checked rebind" of the spe
 section 3: it looks at both pictures and refuses a crop whose pixels are not the
 picture's there, so the corner a caller gives cannot place a mask where the crop was not
 cut. `invert` takes a mask on a crop of its image the same way, which is where rascal
-offered the carry (its `to`). A crop that `view` scaled down is refused by the comparison,
-which is why a place with a cut over 1,024 pixels is not looked into. Its record is
+offered the carry (its `to`), and is version 1.1.0 for it. The crop must be cut pixel for
+pixel: a crop that `view` scaled down is refused by the comparison wherever its pixels
+differ from the picture's, and would land at the wrong scale where they do not (a region
+of one flat colour), which is why a place with a cut over 1,024 pixels is not looked
+into. Its record is
 `docs/reference/tools/carry.md`.
 
 **What ends the attempts:** a verdict of `pass`; the last attempt the plan allows; a
@@ -212,8 +237,11 @@ kept. What a located retry changed is its crops, at most eight, as `run/6` holds
 each crop by its identity, with one mask or none. The mask is the first the crop gave,
 as it was carried onto the picture; none means the place joined as itself. Where a crop
 sits on the picture is in the record of the `view` run that cut it, and every mask a crop
-gave is an output of the `carry` run after it, both among the attempt's runs. A retry
-whose found mask could not be made lists the runs it made and no crops.
+gave is an output of the `carry` run after it, both among the attempt's runs. A place
+that was looked into and not joined has its two runs there and no crop. A retry whose
+found mask could not be made lists the runs it made and no crops. An attempt the record
+would not take is the loop's own error, of the type `loop`: the loop does not go on with
+a record that lists other attempts than it made.
 
 **Cancellation.** The loop looks at its signal before each call and starts no other once
 it is set; its running child is under its signal. A cancelled loop commits nothing. The
@@ -266,9 +294,13 @@ those of `whizbang squint check`: a verdict does not change one.
 - **Record every mask a crop gave.** Not done: `run/6` holds one mask for a crop, and the
   record's version changes once (plan m4, task K1). The others are outputs of the
   `carry` run the attempt lists.
-- **Compare the found masks, and end the attempts when a located retry added no pixel.**
-  Not done here: the comparison of the shaped masks catches it one stretch later, and the
-  plan keeps that comparison as it was (`docs/carry-over.md`).
+- **Compare the found masks, and stop before the shape stretch when a located retry added
+  no pixel.** Not done: the comparison of the shaped masks, by their pixels, catches it
+  one stretch later, at no cost in requests, and one comparison serves both kinds of
+  retry.
+- **End the attempts when a located retry's mask is the one before it,** as the plan's
+  item 5 had it. Changed after the review: the judge said with confidence that the thing
+  remains, and the widening is the one thing left to try.
 - **Refuse when the cap covers fewer attempts than asked.** Turned down: the spec's spend
   control "errs toward letting work run", and the plan says what it allows before it
   starts.

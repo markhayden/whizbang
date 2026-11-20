@@ -46,7 +46,9 @@ judge said where.
   the segmenter is asked the same phrase inside the crop, for at most four instances; and
   each mask it finds is carried onto the picture and joined to the mask of the attempt
   before. A place where the segmenter finds nothing joins as it is, the whole box: the
-  judge said with confidence that the thing is there. Then the mask is shaped, filled and
+  judge said with confidence that the thing is there. That holds only for a place of at
+  most a tenth of the picture's pixels: a larger one that nothing is found in is not
+  joined, so that one finding cannot have a large part of the picture painted. Then the mask is shaped, filled and
   checked as in the first attempt. At most eight places are looked into in one retry, and
   only the places of the findings that say the named thing remains: a place the judge
   named for anything else is never cut, asked about or painted.
@@ -54,9 +56,16 @@ judge said where.
   in a run.
 
 When some findings name places and some do not, the retry looks into the places. A place
-counts as none when it is on another picture than the fill the judge was shown, when it
-covers no pixel, or when its cut would be over 1,024 pixels on a side, which `view` would
-scale down. A polygon is used by the box around it.
+counts as none when it is on another picture than the fill the judge was shown; when it
+covers no pixel; when its cut would be over 1,024 pixels on a side, which `view` would
+scale down, and a mask on a scaled crop is not carried; when its cut would be the whole
+picture; and always when the picture is a panorama, since `view` cuts flat pictures only.
+A polygon is used by the box around it. When the places were looked into and nothing
+joined, the retry is the wider mask.
+
+A retry whose mask covers the same pixels as the one before it is not filled or checked
+again. When that retry looked into places, the wider mask is tried next, if it has not
+been used and the plan has an attempt left; otherwise the attempts end.
 
 It does not try again when the verdict is `unsure`;
 when the judge reports that the removal changed a protected subject, the scene's geometry

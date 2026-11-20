@@ -12,8 +12,9 @@
 //!   is handed one mask, the found mask. A located retry makes its own ([`located`]).
 //! - *Shape*: `remove_prompt` from `grow` until `feather`, given the found mask. The loop
 //!   is handed the shaped mask, the one a fill would paint.
-//! - *Compare*: a retry whose shaped mask has the identity of the attempt's before it
-//!   would repeat that attempt. It is not filled, and the attempts end.
+//! - *Compare*: a retry whose shaped mask has the pixels of the attempt's before it
+//!   would repeat that attempt. It is not filled, and the attempts end; but after a
+//!   located retry that added nothing, the one widening is tried first.
 //! - *Fill*: `remove_prompt` from `fill`, given the shaped mask.
 //! - *Check*: `source-fidelity`, with the filled picture as the candidate and the
 //!   picture the loop was given as the source, under the job [`job`] writes.
@@ -49,7 +50,7 @@ use whizbang_core::contract::{
     Finished, InputPort, Kind, Outcome, OutputPort, PLAN_WHY_LIMIT, Plan, Planning, PreparedCall,
     Produced, RefusalKind, Registry, Requirement, ResultKind, RunId, Value, ValueType, Verdict,
 };
-use whizbang_core::identity::{DecodeLimits, Digest};
+use whizbang_core::identity::{DecodeLimits, Digest, Projection};
 use whizbang_core::recipe::{FROM, Recipe, SET, UNTIL, Written, from_port, until_port};
 
 use crate::{carry, operation, segment};
@@ -240,6 +241,12 @@ pub mod located {
     /// size that way: rascal's crop pad.
     pub const PAD: f64 = 0.05;
 
+    /// A place where nothing is found joins as itself only when it covers at most
+    /// one part in this many of the picture's pixels: a tenth. A larger one is not
+    /// joined, and is no place for that purpose. The number is to be looked at again
+    /// with the loop's live evidence (plan m4, task E1).
+    pub const ITSELF_PART: u64 = 10;
+
     /// The least `view` cuts on a side, in pixels.
     pub const CUT_MIN: u32 = 8;
 
@@ -254,6 +261,14 @@ pub mod located {
         pub own: [u32; 4],
         /// What is cut from the picture to look for the named thing in.
         pub cut: [u32; 4],
+    }
+
+    /// Whether a place that nothing was found in may join as itself, in a picture of
+    /// this size: when it covers at most one part in [`ITSELF_PART`] of its pixels.
+    pub fn joins_as_itself(place: &Place, width: u32, height: u32) -> bool {
+        let [left, top, right, bottom] = place.own.map(u64::from);
+        let covers = (right - left) * (bottom - top);
+        covers * ITSELF_PART <= u64::from(width) * u64::from(height)
     }
 
     impl Place {
@@ -318,8 +333,8 @@ pub mod located {
     /// The places a located retry uses, of those the findings the table allows a retry
     /// on cited, in their order: each on `candidate`, the picture the check was shown;
     /// each once; each covering a pixel of a picture `width` by `height`, with a cut
-    /// `view` shows pixel for pixel; and the first [`PLACES_MAX`] of them. A polygon is
-    /// used by the box around it. A place that is none of this is no place: a finding
+    /// `view` shows pixel for pixel, which is not the whole picture; and the first
+    /// [`PLACES_MAX`] of them. A polygon is used by the box around it. A place that is none of this is no place: a finding
     /// that cites only such is one that cites none.
     pub fn usable(
         places: &[Option<FoundAt>],
@@ -349,6 +364,12 @@ pub mod located {
                 continue;
             };
             if across.1 - across.0 > CUT_MAX || down.1 - down.0 > CUT_MAX {
+                continue;
+            }
+            // A cut that is the whole picture is no crop of it: nothing can be
+            // carried from the picture onto itself, and the picture was asked about
+            // whole by the first attempt.
+            if (across, down) == ((0, width), (0, height)) {
                 continue;
             }
             let place = Place {
@@ -948,6 +969,8 @@ impl<'a> Looping<'a> {
     /// crop, and each mask found carried onto the picture, or the place itself when
     /// nothing is found; then all of them joined to the found mask of the attempt
     /// before by the recipe's own `select`. With it, what the record lists of each crop.
+    /// None when nothing joined: nothing was found in any place, and every place was
+    /// too large to join as itself ([`located::joins_as_itself`]).
     fn located(
         &self,
         number: u32,
@@ -955,7 +978,7 @@ impl<'a> Looping<'a> {
         places: &[located::Place],
         size: (u32, u32),
         runs: &mut Vec<RunId>,
-    ) -> Result<(ArtifactId, Vec<Crop>), Stopped> {
+    ) -> Result<Option<(ArtifactId, Vec<Crop>)>, Stopped> {
         let mut joined = vec![before];
         let mut crops = Vec::new();
         for place in places {
@@ -982,6 +1005,9 @@ impl<'a> Looping<'a> {
             // An instance has a pixel (`capability::Instance`), so a mask is something
             // found, and no mask is nothing found.
             let found = at(&finished, "mask");
+            if found.is_empty() && !located::joins_as_itself(place, size.0, size.1) {
+                continue;
+            }
             if found.is_empty() {
                 // The judge said with confidence that the named thing is there, and the
                 // table has held that it said so of nothing that must be preserved.
@@ -1019,6 +1045,9 @@ impl<'a> Looping<'a> {
             });
             joined.extend(carried);
         }
+        if crops.is_empty() {
+            return Ok(None);
+        }
         let mut call = self
             .remove()
             .argument(FROM, Value::text(SELECT))
@@ -1028,14 +1057,29 @@ impl<'a> Looping<'a> {
         }
         let finished = self.made(Some(&format!("a{number}_select")), &call, runs)?;
         let mask = one(&finished, &until_port(SELECT, "mask"));
-        Ok((mask.ok_or_else(|| missing(REMOVE, "mask"))?, crops))
+        Ok(Some((mask.ok_or_else(|| missing(REMOVE, "mask"))?, crops)))
     }
 
     /// The size of the picture the loop was given, which is the size of every fill of
-    /// it: read when a finding first names a place.
+    /// it: read when a finding first names a place. None for a picture that is not
+    /// flat: `view` cuts flat pictures only, so no place of a panorama is looked into.
     fn size(&self) -> Option<(u32, u32)> {
         let space = operation::image(self.context, self.image).ok()?.space();
-        Some((space.width(), space.height()))
+        (space.projection() == Projection::Flat).then(|| (space.width(), space.height()))
+    }
+
+    /// What two shaped masks are compared by: the digest of the three planes a fill
+    /// reads, whatever the mask says of where it came from. A mask that names a place
+    /// it was made from has another identity than one of the same pixels that names
+    /// none. A mask that cannot be read is compared by its identity.
+    fn painted(&self, shaped: ArtifactId) -> Digest {
+        match operation::mask(self.context, shaped) {
+            Ok(mask) => {
+                let planes = [mask.core(), mask.blend(), mask.protect()].concat();
+                Digest::of_bytes(&planes)
+            }
+            Err(_) => shaped.0,
+        }
     }
 
     fn run(&self) -> Result<Produced, Failure> {
@@ -1047,7 +1091,9 @@ impl<'a> Looping<'a> {
 
         let mut filled: Vec<Filled> = Vec::new();
         let mut found: Option<ArtifactId> = None;
-        let mut shaped_before: Option<ArtifactId> = None;
+        let mut shaped_before: Option<Digest> = None;
+        // Whether an attempt was noted that a record would not hold.
+        let unheld = std::cell::Cell::new(false);
         // What the next attempt's retry changes; a wider mask is used once in a run.
         let mut next: Option<Retry> = None;
         let mut widened = false;
@@ -1064,6 +1110,12 @@ impl<'a> Looping<'a> {
                 Some(Retry::Wider(px)) => Some(Changed::Wider { px: *px }),
                 _ => None,
             });
+            // The `px` the shape stretch's `grow` is given, when the retry is a wider
+            // mask: also one that set out to look into places and joined nothing.
+            let mut wider = match &retry {
+                Some(Retry::Wider(px)) => Some(*px),
+                _ => None,
+            };
             let before = spent(context);
             let mut runs: Vec<RunId> = Vec::new();
             let label = |stretch: &str| format!("a{number}_{stretch}");
@@ -1084,7 +1136,9 @@ impl<'a> Looping<'a> {
                     (None, why) => format!("not checked: {}", why.as_deref().unwrap_or("-")),
                 };
                 self.say(&format!("attempt {number} ended: {word}"));
-                context.facts().attempt(attempt);
+                if !context.facts().attempt(attempt) {
+                    unheld.set(true);
+                }
             };
             // An attempt that made no fill: the first is the loop's error, with the
             // call's own cause; a retry leaves the attempt before it kept.
@@ -1115,9 +1169,25 @@ impl<'a> Looping<'a> {
                     let made =
                         self.located(number, before, places, size.unwrap_or_default(), &mut runs);
                     match made {
-                        Ok((mask, crops)) => {
+                        Ok(Some((mask, crops))) => {
                             *changed.borrow_mut() = Some(Changed::Located { crops });
                             mask
+                        }
+                        // Nothing joined: the places were looked into and none gave
+                        // a mask or may join as itself. The retry is the wider mask,
+                        // if that has not been used.
+                        Ok(None) if widened => {
+                            let said = "nothing was found in the places named, and none may join as itself";
+                            note(Attempt::unchecked(number, said), &runs);
+                            ended = "a wider mask was already used once".to_owned();
+                            break;
+                        }
+                        Ok(None) => {
+                            widened = true;
+                            let px = self.action.grow_px * 2.0;
+                            wider = Some(px);
+                            *changed.borrow_mut() = Some(Changed::Wider { px });
+                            before
                         }
                         Err(stopped) => {
                             ended = no_fill(stopped, "could not make its mask", &runs)?;
@@ -1151,7 +1221,7 @@ impl<'a> Looping<'a> {
                 .argument(FROM, Value::text(GROW))
                 .argument(UNTIL, Value::text(FEATHER))
                 .input(&from_port(SELECT, "mask"), mask);
-            if let Some(Retry::Wider(px)) = &retry {
+            if let Some(px) = wider {
                 call = call.argument(SET, Value::text(&format!("{GROW}.px={px}")));
             }
             let shaped = self
@@ -1168,16 +1238,26 @@ impl<'a> Looping<'a> {
                 }
             };
 
-            // Compare: a retry that would paint what the attempt before it painted.
-            if shaped_before == Some(shaped) {
+            // Compare: a retry that would paint what the attempt before it painted, by
+            // the pixels a fill reads.
+            let painted = self.painted(shaped);
+            if shaped_before == Some(painted) {
                 let said = "its shaped mask is the one before it, and nothing was filled";
                 note(Attempt::unchecked(number, said), &runs);
+                // A located retry that added no pixel leaves the one widening to
+                // try, on the same found mask, while the plan has an attempt left.
+                let located = matches!(&retry, Some(Retry::Located(_))) && wider.is_none();
+                if located && !widened && number < self.allowed {
+                    widened = true;
+                    next = Some(Retry::Wider(self.action.grow_px * 2.0));
+                    continue;
+                }
                 ended = format!(
                     "the mask of attempt {number} is the one before it, and an attempt is not made twice"
                 );
                 break;
             }
-            shaped_before = Some(shaped);
+            shaped_before = Some(painted);
 
             // Fill: paid for only now, with the mask in hand.
             let call = self
@@ -1331,6 +1411,14 @@ impl<'a> Looping<'a> {
             ended = "the last attempt the plan allows".to_owned();
         }
 
+        // An attempt the record would not hold is the loop's own fault, and is said:
+        // the record would list other attempts than were made.
+        if unheld.get() {
+            return Err(Failure::error(
+                "loop",
+                "an attempt was noted that a run's record does not hold",
+            ));
+        }
         let Some(best) = kept(&filled) else {
             // Every way out of the first attempt without a fill has returned already.
             return Err(Failure::error("loop", "no attempt made a fill"));

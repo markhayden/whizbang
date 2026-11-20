@@ -2112,7 +2112,7 @@ fn of_run_6() -> String {
 fn a_run_that_did_not_complete_never_says_an_attempt_was_kept() {
     use whizbang_core::contract::record::{Attempt, Decision};
     use whizbang_core::contract::{Context, Failure, Produced};
-    struct Ends(ActionDescriptor, bool);
+    struct Ends(ActionDescriptor, &'static str);
     impl Action for Ends {
         fn descriptor(&self) -> &ActionDescriptor {
             &self.0
@@ -2122,20 +2122,26 @@ fn a_run_that_did_not_complete_never_says_an_attempt_was_kept() {
             assert!(facts.attempt(Attempt::judged(1, Decision::Fail)));
             assert!(facts.attempts_ended(Some(1), "the last attempt the plan allows"));
             match self.1 {
-                true => Ok(Produced::nothing()),
-                false => Err(Failure::error(
+                "completes" => Ok(Produced::nothing()),
+                "fails" => Err(Failure::error(
                     "output",
                     "the kept attempt could not be read",
                 )),
+                // Cancelled once its last call had come back: the run hands back what
+                // it made all the same, and the executor ends it as cancelled.
+                _ => {
+                    context.cancellation().cancel();
+                    Ok(Produced::nothing())
+                }
             }
         }
     }
     let dir = Scratch::new("run-6-kept");
     let store = Arc::new(Store::open(&dir.path().join("store"), Arc::new(RealFs)).unwrap());
     let mut registry = Registry::new();
-    for (name, completes) in [("completes", true), ("fails", false)] {
+    for name in ["completes", "fails", "cancelled"] {
         let draft = ActionDescriptor::draft(name, "1.0.0", Kind::Loop, "A test action.");
-        let action = Ends(draft.build().unwrap(), completes);
+        let action = Ends(draft.build().unwrap(), name);
         registry.register(Arc::new(action)).unwrap();
     }
     let engine = Engine::over(
@@ -2147,6 +2153,7 @@ fn a_run_that_did_not_complete_never_says_an_attempt_was_kept() {
     for (name, outcome, kept) in [
         ("completes", "completed", Some(1)),
         ("fails", "error", None),
+        ("cancelled", "cancelled", None),
     ] {
         let finished = engine.submit(&Call::new(name)).unwrap();
         assert_eq!(finished.outcome().name(), outcome);
