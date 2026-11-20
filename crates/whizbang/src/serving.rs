@@ -81,8 +81,8 @@ pub fn check_tool() -> Tool {
                            "description": "The pictures, in order, each with its role."},
                 "brief": {"type": "string", "description": "The job's requirements in words. brief-compliance needs one."},
                 "judge": {"type": "string", "description": "The judge, by its name in the config; without it the default."},
-                "details": {"type": "string", "enum": ["first", "none"], "default": "first",
-                            "description": "first: align registers the candidate onto the source and each reference before the judge looks; none: nothing is measured first."},
+                "details": {"type": "string", "enum": Details::NAMES, "default": "none",
+                            "description": "none: nothing is measured first, and the judge may call view and align; first: align registers the candidate onto the source and each reference before the judge looks, and the judge may call resize too."},
                 REQUEST_ID: tools::request_id_schema(),
             },
             "required": ["use_case", "images"],
@@ -188,18 +188,10 @@ pub fn check_call(arguments: &Map<String, Json>) -> Result<(Call, Option<String>
     if use_case == "brief-compliance" && !briefed {
         return Err("brief-compliance holds the picture to a brief: give it as brief".to_owned());
     }
-    let details = match text(arguments, "details")? {
-        None | Some("first") => Details::First,
-        Some("none") => Details::None,
-        Some(_) => return Err("details is first or none".to_owned()),
-    };
-    let measuring = Measuring {
-        details,
-        detail: None,
-        projection: "full",
-        tools: &[],
-        second_look: "off",
-    };
+    // With nothing stated the call is the control arm, whole, as every door's is: no
+    // details, `view` and `align` offered, a call of `align` answered with its pictures
+    // alone. `first` is arm F, whole.
+    let measuring = Measuring::stated(text(arguments, "details")?, None)?;
     let call = door::check_call(&job, &ids, text(arguments, "judge")?, &measuring);
     let request_id = text(arguments, REQUEST_ID)?.map(str::to_owned);
     Ok((call, request_id))

@@ -155,6 +155,6 @@ alone is still the default of `--details first`.
 
 - 2026-11-18, plan m2c task X1: ported from squint (`crates/squint-tools/src/builtin/
   compare.rs`, `manifests/change_map.toml`) at the pinned commit; measured first by `check`
-  under `--detail change_map`, and offered to a judge when a run names it.
+  under `--details first --detail change_map`, and offered to a judge when a run names it.
 - 2026-11-19, plan m2c task F1: rung 2 on `source-fidelity/scenes-v1` (above); marked
   unverified.

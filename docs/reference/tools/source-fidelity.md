@@ -12,11 +12,13 @@ Checks whether an edit kept what mattered in its source, with squint's rules for
 case (`crates/whizbang-squint/rules/source-fidelity.toml`). Two steps, each a run of its own
 under the recipe's run:
 
-1. `details`: measures what can be measured before the judge looks. Here that is `align` on
-   the candidate and each other image, in the order given; a pair that registers hands its
+1. `details`: measures what can be measured before the judge looks. As shipped that is
+   nothing: details first is off by default ("Details first is off by default", below), so
+   the step starts no tool and hands on nothing. With `--details first` it is `align` on the
+   candidate and each other image, in the order given; a pair that registers hands its
    aligned frame on to the judge, one that does not hands back its failure and no frame.
-2. `check`: the judge's loop under the use case's rules, told what `details` measured and
-   handed its images, offered `view`, `align` and `resize`, with the second look off. It
+2. `check`: the judge's loop under the use case's rules, offered `view` and `align`, a call
+   of `align` answered with its pictures alone (`visual_only`), with the second look off. It
    answers with a verdict, `pass`, `fail` or `unsure`, which the recipe hands back with its
    outcome (ADR 0035).
 
@@ -39,46 +41,73 @@ whizbang squint check source-fidelity --candidate <id> --source <id> \
 | `judge` | Optional. The judge to ask, by its name in the config |
 
 The command's flags make the job (`docs/guides/config.md`, "Checking an edit with a judge");
-a flag the recipe does not set by itself becomes an override of a step (`--second-look on`
-sets `judge.second_look`).
+what is measured first, the tools offered, the projection and the second look are stated
+as overrides of the steps on every call (`--second-look on` sets `judge.second_look`), so
+the command does not lean on what the recipe's file says.
 
 The images a recipe's steps make (the aligned frames, the judge's crops) are names of the
 recipe's run: its own calls read them, and a run of another call cannot take them as inputs
 (plan m3, task Q1, item 3).
 
+**Details first is off by default.** Since plan m4, task A1, the recipe as shipped,
+`whizbang squint check` with nothing set and the server's `check` are the control arm of the
+gate of details first, whole (arm `C`): nothing is measured before the judge's first turn,
+the judge is offered `view` and `align`, and a call of `align` is answered with its pictures
+and a fixed sentence (`visual_only`). The gate of details first (`gates/details-first.toml`)
+rejected details first in every run of 2026-11-19; the run to read is the fourth, the first
+complete one, where it helped on none of the three judges (`docs/results/m3-gates.md`, "The
+fourth run, the complete one").
+
+Nothing of details first is removed. To turn it on, whole, as the gate's arm `F` was:
+
+```
+whizbang squint check source-fidelity --details first ...
+```
+
+That measures the details first, offers `resize` beside `view` and `align`, and answers a
+call of `align` in `full`. Over the server, `check` takes `"details": "first"`. A call of
+the recipe itself sets the three together: `details.details=first`,
+`judge.tools=view,align,resize` and `judge.projection=full`.
+
 ## Examples
 
 Two worked examples on synthetic drawings made for the tests of `align` (`fixtures/align/`),
-under a scripted judge: the verdict is what the use case's rules make of the judge's
-answers, not a model's opinion. The judge answers every item of the checklist held,
-confidently, but for the last, which it answers as the table says.
+through the recipe as shipped, with nothing set, under a scripted judge: the verdict is what
+the use case's rules make of the judge's answers, not a model's opinion. The judge answers
+every item of the checklist held, confidently, but for the last, which it answers as the
+table says.
 
 | Candidate, first example | Candidate, second example | Source or reference |
 |---|---|---|
 | ![The drawn scene, registered on another canvas](source-fidelity/registered.png) | ![An unrelated drawing](source-fidelity/unrelated.png) | ![The drawn scene](source-fidelity/scene.png) |
 
 <!-- measured: begin -->
-| Example | Candidate | Images | Calls of `details` | Images handed to the judge | The judge's answer | Verdict |
-|---|---|---|---|---|---|---|
-| held | registered | 2 | `align` completed | 1 | `chk:ob:SF2@candidate` held | pass |
-| breached | unrelated | 2 | `align` completed | 0 | `chk:ob:SF2@candidate` violation | fail |
+| Example | Candidate | Images | Calls of `details` | Images handed to the judge | Tools offered to the judge | The judge's answer | Verdict |
+|---|---|---|---|---|---|---|---|
+| held | registered | 2 | none | 0 | `view`, `align` | `chk:ob:SF2@candidate` held | pass |
+| breached | unrelated | 2 | none | 0 | `view`, `align` | `chk:ob:SF2@candidate` violation | fail |
 <!-- measured: end -->
 
 What to look for:
 
-- In the first example the candidate registers against the scene: `align` completes and its
-  aligned frame is handed to the judge's step. The judge holds every item: `pass`.
-- In the second the drawing does not register: `align` completes with its failure as its
-  measurements and hands on no frame, so no comparison runs and the judge is told the pair
-  did not register. The judge finds the last item breached: `fail`.
+- In both examples `details` makes no call and hands on nothing, whether the candidate
+  would register against the scene (the first) or not (the second): nothing is measured
+  first. The judge is offered `view` and `align`, and not `resize`.
+- The judge holds every item in the first: `pass`. It finds the last item breached,
+  confidently, in the second: `fail`.
+- What `--details first` adds on these two pairs (`align` completing, its aligned frame
+  handed on for the pair that registers, its failure for the one that does not) is held by
+  `runner::the_judge_step_is_handed_aligns_measurements_and_align_runs_once_a_pair` and
+  `details::a_pair_that_does_not_register_is_judged_with_its_failure_and_no_comparison`.
 
 ## Rung 2 results
 
-Credited, not measured anew. The recipe runs the steps `check` ran in milestone 2, and gives
-the verdict `check` gave for every answer of the judge
+Credited, not measured anew. With details first set, the recipe runs the steps `check` ran
+in milestone 2, and gives the verdict `check` gave for every answer of the judge
 (`check::each_use_case_through_its_recipe_gives_the_verdict_it_gave_before`); that test is
-what the credit rests on. Every figure below is of `check` before the recipe existed, on published
-sets (dev and adversarial), which admit nothing.
+what the credit rests on. The figures of milestone 2 below are of arm `F`, which is no
+longer the default; the gate's figures are of both arms. Every figure below is of `check`
+before the recipe existed, on published sets (dev and adversarial), which admit nothing.
 
 **Milestone 2's evaluation** (`docs/results/m2c-evaluation.md`): arm `F`, details first,
 `claude-haiku-5-5`, two repetitions, on the published sets, run once at commit
@@ -95,7 +124,10 @@ budget. Counts are runs; `agreeing` is a completed run whose verdict is the item
 against arm `C`, squint's control, over the five dev sets together, 100 items. Rejected: for
 `claude-haiku-5-5` balanced accuracy 0.567 under `C` and 0.550 under `F`; no judge's gain
 reached the 3 points the gate asks. The receipt does not break the figures down by use case.
-The recipe measures details first all the same, as `check` did.
+Run a fourth time, complete, every judge answering, it was rejected again: balanced accuracy
+0.529 under `C` and 0.483 under `F` for `claude-haiku-5-5`, 0.887 under both for
+`gemini-3.8-flash`, 0.725 and 0.738 for `gpt-6.1-terra`. So the recipe no longer measures
+details first unless a run asks for it ("Details first is off by default").
 
 ## Speed and cost
 
@@ -107,11 +139,13 @@ decisions settled 0.809051 dollars, about 0.0037 dollars each, on `claude-haiku-
 
 ## Alternatives
 
-- **`check` called with `use_case = source-fidelity`**: the same verdict from the same
-  requests (`check::each_use_case_through_its_recipe_gives_the_verdict_it_gave_before`); it
-  measures the same details inside one run, not in steps of their own.
-- **Arm `C`, without details first**: squint's control; the gate above found no gain from
-  the details on the dev sets.
+- **`check` called with `use_case = source-fidelity`**: under the same settings, the same
+  verdict from the same requests
+  (`check::each_use_case_through_its_recipe_gives_the_verdict_it_gave_before`); with details
+  first it measures them inside one run, not in a step of their own. A call of `check`
+  states its own settings: the recipe's defaults are not `check`'s.
+- **Arm `F`, details first** (`--details first`): what the recipe did until plan m4, task
+  A1; the gate above found no gain from the details on the dev sets.
 - **The second look on**: `--second-look on` (plan m3, task U1).
 
 ## Limits
@@ -142,3 +176,5 @@ cases together.
 - Milestone 2 (`docs/plans/m2a-first-slices.md`): the first use case of `check`, ported from
   squint; its first live verdict is `docs/results/m2a-first-verdict.md`.
 - Plan m3, task Q1: a recipe of two steps (#210); this record (its third pull request).
+- Plan m4, task A1: details first is off by default; the recipe as shipped is the gate's
+  control arm, whole, and the examples above were made again under it.

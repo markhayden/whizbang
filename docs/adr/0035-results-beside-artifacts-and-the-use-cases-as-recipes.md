@@ -87,7 +87,10 @@ raised false accepts); a run sets it with `--set judge.second_look=on`.
 
 `whizbang squint check` and `whizbang serve`'s `check` run the use case's recipe; what a
 command line changes from the recipe's own steps (`--details none`, `--detail`,
-`--projection`, `--second-look`, `--tool`) is the run's overrides (`set`). An evaluation's
+`--projection`, `--second-look`, `--tool`) is the run's overrides (`set`). (Amended
+2026-11-19, by plan m4, task A1: a door states what is measured first, the tools offered,
+the projection and the second look on every call, whatever the recipe says, and the recipes
+as shipped measure nothing first: ADR 0029's amendment of the same day.) An evaluation's
 cell is still a call of `check` itself. The decision cache's key (ADR 0031) holds the recipe's
 digest through `recipe_digest`: a changed recipe misses and an unchanged one hits
 (`cache::a_changed_use_case_recipe_misses_and_an_unchanged_one_hits`). The reasons and what

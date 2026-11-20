@@ -2727,9 +2727,11 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
     refused in turn, and the crash straight after, under the same losses and tails.
     Under the loss of every name and of none, the install is also asked again
     before the crash: its answer is given only for what the crash then leaves
-    (`crashes::a_crash_at_any_event_after_a_refused_step_of_a_first_install_leaves_it_not_installed_or_whole_part_1_of_8`
-    to `…part_8_of_8`, in eight parts since the exit check of checkpoint 1B, where
-    its first two of four had come near the limit on one test's time,
+    (`crashes::a_crash_at_any_event_after_a_refused_step_of_a_first_install_leaves_it_not_installed_or_whole_part_01_of_96`
+    to `…part_96_of_96`: in eight parts since the exit check of checkpoint 1B, where
+    its first two of four had come near the limit on one test's time, and in 96, about
+    one event under one tail each, since plan m4's task A1, where a part of eight was
+    ended at that limit inside a full check,
     `crashes::a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_1_of_4`
     to `…part_4_of_4`,
     `crashes::a_crash_at_any_event_after_a_refused_step_of_a_repair_leaves_it_as_it_was_not_installed_or_whole_part_1_of_4`

@@ -53,7 +53,7 @@ fn run(
 
 /// The tool results the judge was sent in its request of this number, from 0: the
 /// parts of the last message.
-fn results(judge: &FakeJudge, request: usize) -> Vec<ToolResult> {
+pub fn results(judge: &FakeJudge, request: usize) -> Vec<ToolResult> {
     let received = judge.received();
     let parts = received[request]
         .messages()
@@ -3132,7 +3132,8 @@ fn each_use_case_through_its_recipe_gives_the_verdict_it_gave_before() {
             let script = submits(answers);
             let (before, kept_before, asked_before) =
                 judged(&world, &as_check_was_called(&job, &images), &script);
-            let (after, _, asked_after) = judged(&world, &World::recipe(&job, &images), &script);
+            let (after, _, asked_after) =
+                judged(&world, &World::recipe_first(&job, &images, ""), &script);
             assert_eq!(
                 after.outcome().name(),
                 "completed",
@@ -3164,7 +3165,7 @@ fn the_judge_crops_an_aligned_frame_handed_on_by_details() {
     let look = json!({"tool_call": {"id": "v1", "name": "view", "arguments":
         {"image": frame.id().to_string(), "bbox": [0.25, 0.25, 0.75, 0.75]}}});
     let job = Job::shorthand("source-fidelity", true, 0, None);
-    let call = World::recipe(&job, &[candidate.id(), source.id()]);
+    let call = World::recipe_first(&job, &[candidate.id(), source.id()], "");
     let (finished, _, judge) = judged(&world, &call, &submitting(&[look]));
     assert_eq!(
         finished.outcome().name(),

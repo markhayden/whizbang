@@ -24,7 +24,7 @@ use std::path::Path;
 use whizbang_core::artifact::{ArtifactId, ArtifactType};
 use whizbang_core::capability::Installed;
 use whizbang_core::config::Setting;
-use whizbang_core::contract::{Call, Capability, Recovery, Registry, Request, Value};
+use whizbang_core::contract::{Call, Capability, Recovery, Registry, Request, RunState, Value};
 use whizbang_core::identity::Projection;
 use whizbang_core::recipe::{Declared, RecipeAction, SET};
 use whizbang_eval::lab::cell::{self, Backend, Cell, Work};
@@ -411,8 +411,13 @@ pub struct Report {
     pub cells: usize,
     /// Cells of a reference arm, which run nothing.
     pub handed_back: usize,
-    /// Attempts started by this run of the round.
+    /// Attempts started by this run of the round: runs it made. A request the store had
+    /// already answered is not among them (plan m4, task A1, item 8).
     pub started: usize,
+    /// Requests of this run of the round that the store had already answered with the run
+    /// an earlier one made under the same id: nothing was started for them. Printed apart,
+    /// and only when there are any.
+    pub answered_before: usize,
     /// Of those, the cells retried after a failed attempt: none unless the run was asked
     /// to (`--retry-failed`), when it is said.
     pub retried: Option<usize>,
@@ -432,9 +437,13 @@ pub struct Report {
 
 impl Report {
     pub fn text(&self) -> String {
+        let answered = match self.answered_before {
+            0 => String::new(),
+            answered => format!("answered by an earlier run, nothing started: {answered}\n"),
+        };
         let mut text = format!(
-            "cells: {}\nhanded back by a reference arm: {}\nstarted now: {}\ncompleted: {}\n\
-             failed: {}\ninterrupted: {}\nnot run: {}\n",
+            "cells: {}\nhanded back by a reference arm: {}\nstarted now: {}\n{answered}\
+             completed: {}\nfailed: {}\ninterrupted: {}\nnot run: {}\n",
             self.cells,
             self.handed_back,
             self.started,
@@ -485,6 +494,61 @@ pub fn round_resuming(
     running: &Running<'_>,
     resume: Resume,
 ) -> Result<Report, String> {
+    round_saying(prepared, running, resume, &mut |_| {})
+}
+
+/// [`round_resuming`], saying what the round is doing while it runs (plan m4, task A1,
+/// item 7): a line to `say` as each cell starts and as it ends, and one for a cell whose
+/// request the store had already answered. `whizbang lab run` writes them to the error
+/// stream, so a round of a hundred fills is not silent until its counts. Each line is
+/// `cell <n> of <m>: <arm> on <image>: ...`, where `m` is the cells this run of the round
+/// sends a request for; a reference arm's cell runs nothing and is not said.
+pub fn round_saying(
+    prepared: &Prepared,
+    running: &Running<'_>,
+    resume: Resume,
+    say: &mut dyn FnMut(&str),
+) -> Result<Report, String> {
+    let how = Round {
+        resume,
+        recognise: None,
+    };
+    round_as(prepared, running, &how, say)
+}
+
+/// How a round is run beside its cells.
+pub struct Round<'a> {
+    /// What is done with a failed cell.
+    pub resume: Resume,
+    /// What takes a run of the store for a cell's attempt: with none, the lab's own
+    /// ([`harness::by_request`] under the round's scope), which `whizbang lab run` always
+    /// uses. A test gives another to stand for a store whose earlier attempts are not
+    /// recognised, as when their admissions cannot be read.
+    pub recognise: Option<harness::Recognise<'a>>,
+}
+
+/// How a run's state reads in a line of [`round_saying`], and as an attempt's end.
+fn ended_of(state: &RunState) -> (&'static str, Option<Ended>) {
+    match state {
+        RunState::Ended(outcome) => match outcome.name() {
+            "completed" => ("completed", Some(Ended::Completed)),
+            "cancelled" => ("cancelled", Some(Ended::Interrupted)),
+            _ => ("failed", Some(Ended::Failed)),
+        },
+        RunState::NotEnded { .. } | RunState::Abandoned { .. } => {
+            ("not ended", Some(Ended::Interrupted))
+        }
+        RunState::Removed { .. } => ("no longer in the store", None),
+    }
+}
+
+/// [`round_saying`], run as `how` says.
+pub fn round_as(
+    prepared: &Prepared,
+    running: &Running<'_>,
+    how: &Round<'_>,
+    say: &mut dyn FnMut(&str),
+) -> Result<Report, String> {
     let labs: Vec<LabCell<'_>> = (prepared.cells.iter())
         .map(|cell| LabCell {
             cell,
@@ -493,13 +557,69 @@ pub fn round_resuming(
         })
         .collect();
     let work: Vec<&dyn harness::Work> = labs.iter().map(|c| c as &dyn harness::Work).collect();
-    let recognise = harness::by_request(&prepared.scope, &work);
-    let started = harness::run_resuming(&work, &recognise, running, 1, "round", resume)?;
-    let now = harness::attempts(running.root, &recognise)?;
+    let own = harness::by_request(&prepared.scope, &work);
+    let recognise: harness::Recognise<'_> = how.recognise.unwrap_or(&own);
+    let named: BTreeMap<&str, &Cell> = (prepared.cells.iter())
+        .map(|cell| (cell.identity.as_str(), cell))
+        .collect();
+    // A cell's arm and image, escaped: what a line names it by.
+    let name = |identity: &str| match named.get(identity) {
+        Some(cell) => format!("{} on {}", cell.arm, cell.image)
+            .escape_debug()
+            .to_string(),
+        None => "a cell".to_owned(),
+    };
+    // A cell whose request an earlier run answered, with how that run ended.
+    let mut answered: BTreeMap<String, Option<Ended>> = BTreeMap::new();
+    let mut said = |event: harness::Said<'_>| match event {
+        harness::Said::Started {
+            at,
+            of,
+            identity,
+            attempt,
+            run,
+        } => say(&format!(
+            "cell {at} of {of}: {}: started, attempt {attempt}, run {run}",
+            name(identity)
+        )),
+        harness::Said::Ended {
+            at,
+            of,
+            identity,
+            state,
+        } => say(&format!(
+            "cell {at} of {of}: {}: {}",
+            name(identity),
+            ended_of(state).0
+        )),
+        harness::Said::Repeat {
+            at,
+            of,
+            identity,
+            earlier,
+        } => {
+            let (how, ended) = ended_of(earlier.state());
+            let which = match how {
+                "not ended" => "which has not ended".to_owned(),
+                "no longer in the store" => "which is no longer in the store".to_owned(),
+                how => format!("which {how}"),
+            };
+            answered.insert(identity.to_owned(), ended);
+            say(&format!(
+                "cell {at} of {of}: {}: answered by an earlier run, {}, {which}; nothing started",
+                name(identity),
+                earlier.run()
+            ));
+        }
+    };
+    let started =
+        harness::run_saying(&work, recognise, running, 1, "round", how.resume, &mut said)?;
+    let now = harness::attempts(running.root, recognise)?;
     let mut report = Report {
         cells: prepared.cells.len(),
         started: started.started,
-        retried: (resume == Resume::RetryFailed).then_some(started.retried),
+        answered_before: started.repeats,
+        retried: (how.resume == Resume::RetryFailed).then_some(started.retried),
         ..Report::default()
     };
     for cell in &prepared.cells {
@@ -518,6 +638,19 @@ pub fn round_resuming(
         report.failed_before += (before.iter())
             .filter(|(_, _, ended)| *ended == Ended::Failed)
             .count();
+        // A cell with no attempt the round recognises, whose request an earlier run
+        // answered, is counted by how that run ended: it ran, though not in this leg.
+        let last = match (last, answered.get(&cell.identity)) {
+            (None, Some(Some(ended))) => {
+                match ended {
+                    Ended::Completed => report.completed += 1,
+                    Ended::Failed => report.failed += 1,
+                    Ended::Interrupted => report.interrupted += 1,
+                }
+                continue;
+            }
+            (last, _) => last,
+        };
         match last {
             None => report.not_run += 1,
             Some((_, _, Ended::Completed)) => report.completed += 1,

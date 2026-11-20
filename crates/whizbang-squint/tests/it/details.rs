@@ -162,7 +162,7 @@ fn three_references_are_each_aligned_in_the_order_given() {
     let references = [scene.id(), unrelated.id(), world.photo.id()];
     let mut images: Vec<ArtifactId> = vec![candidate.id()];
     images.extend(references);
-    let call = World::recipe(&job, &images);
+    let call = World::recipe_first(&job, &images, "");
     let checklist = super::check::checklist_of(&job);
     let last = checklist.ids().last().unwrap().to_owned();
     let items = super::use_case::answers(&checklist, &last, "held", "confident");

@@ -470,22 +470,55 @@ pub struct CheckAsked<'a> {
     pub projection: &'a str,
 }
 
-/// What `squint check` measures before the judge's first turn.
+/// What `squint check` measures before the judge's first turn. Each choice is one arm of
+/// the gate of details first, whole (`crates/whizbang-eval/src/matrix.rs`;
+/// `docs/results/m3-gates.md`): what is measured first, the tools the judge is offered and
+/// how a call of `align` is answered go together, because the gate measured them together.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Details {
-    /// The details of each pair the use case relates, in the opening message; the judge
-    /// may call `view`, `align` and `resize`.
+    /// Arm F: the details of each pair the use case relates, in the opening message; the
+    /// judge may call `view`, `align` and `resize`, and a call of `align` is answered in
+    /// `full`.
     First,
-    /// Nothing: the judge is told of `view` and `align` and calls them, as squint's arm C.
+    /// Arm C, the gate's control and what a door asks when nothing is stated (plan m4,
+    /// task A1): nothing is measured first; the judge is told of `view` and `align` and
+    /// calls them; a call of `align` is answered with its pictures alone (`visual_only`).
     None,
 }
 
 impl Details {
+    /// What a door measures first when its caller states nothing: nothing, the arm the
+    /// gate of details first kept.
+    pub const DEFAULT: Details = Details::None;
+
+    /// The names a door takes for it, the default first.
+    pub const NAMES: [&'static str; 2] = ["none", "first"];
+
+    /// The choice a door was given by name, [`Details::DEFAULT`] when it was given none;
+    /// or None for a name that is neither.
+    pub fn stated(name: Option<&str>) -> Option<Details> {
+        match name {
+            None => Some(Details::DEFAULT),
+            Some("none") => Some(Details::None),
+            Some("first") => Some(Details::First),
+            Some(_) => None,
+        }
+    }
+
     /// The tools the judge is offered, and the name `check` takes.
     fn tools_and_name(self) -> (&'static str, &'static str) {
         match self {
             Details::First => ("view,align,resize", "first"),
             Details::None => ("view,align", "none"),
+        }
+    }
+
+    /// How a call of `align` by the judge is answered in this choice's arm, when the
+    /// caller states no projection.
+    pub fn projection(self) -> &'static str {
+        match self {
+            Details::First => "full",
+            Details::None => "visual_only",
         }
     }
 }
@@ -631,6 +664,9 @@ pub fn check(
     )
 }
 
+/// Why `--detail` is refused without `--details first`.
+pub const DETAIL_WITHOUT_FIRST: &str = "--detail names what is measured before the judge looks, and nothing is measured first unless the run asks: give --details first with it";
+
 /// What `check` measures before the judge's first turn, and how a call of `align` by the
 /// judge is answered (ADR 0029).
 #[derive(Debug, Clone, Copy)]
@@ -644,6 +680,45 @@ pub struct Measuring<'a> {
     /// Whether a submission that leaves a mandatory item tentative gets one more turn:
     /// `off`, `on` or `strict` (plan m3, task U1, item 4).
     pub second_look: &'a str,
+}
+
+impl<'a> Measuring<'a> {
+    /// What a door asks of an arm, whole: what is measured first, the tools that go with
+    /// it, and the projection the caller stated or, with none stated, the arm's own
+    /// ([`Details::projection`]). No tool is named to be measured, no tool file is
+    /// offered, and the second look is off.
+    /// What a door asks from what its caller stated, each by name or not at all: with
+    /// nothing stated, the control arm, whole ([`Details::DEFAULT`]). `whizbang squint
+    /// check` gives its `--details` and `--projection` here as they were typed, and the
+    /// server its `details`. Refused when `details` is no name of [`Details::NAMES`].
+    pub fn stated(
+        details: Option<&str>,
+        projection: Option<&'a str>,
+    ) -> Result<Measuring<'a>, String> {
+        let details = Details::stated(details).ok_or("details is first or none")?;
+        Ok(Measuring::arm(details, projection))
+    }
+
+    /// With the tools to measure first named, as `--detail` names them. Refused when the
+    /// run measures nothing first: `--detail` says what `--details first` measures, and
+    /// since nothing is measured first by default (plan m4, task A1) a run that named a
+    /// tool and not `--details first` would otherwise measure nothing and say nothing.
+    pub fn measuring(self, detail: Option<&'a str>) -> Result<Measuring<'a>, String> {
+        if detail.is_some() && self.details == Details::None {
+            return Err(DETAIL_WITHOUT_FIRST.to_owned());
+        }
+        Ok(Measuring { detail, ..self })
+    }
+
+    pub fn arm(details: Details, projection: Option<&'a str>) -> Measuring<'a> {
+        Measuring {
+            details,
+            detail: None,
+            projection: projection.unwrap_or(details.projection()),
+            tools: &[],
+            second_look: "off",
+        }
+    }
 }
 
 /// Runs `check` through the executor under a job and its images, in its order, and
@@ -667,9 +742,10 @@ pub fn check_job(
 /// makes it (plan m3, task Q1): the recipe of the job's use case
 /// (`whizbang_squint::recipes`), whose step `details` measures first and whose step `judge`
 /// is `check` with the output limit of [`CHECK_OUTPUT_TOKENS`]; the job in the contract
-/// `job/1`; the judge when one is named; and what differs from the recipe's own steps as
-/// its overrides (`set`): what is measured first, the tools offered, the projection and the
-/// second look.
+/// `job/1`; the judge when one is named; and, as its overrides (`set`), all four settings
+/// of the judge's arm, stated on every call whatever the recipe's own steps say: what is
+/// measured first, the tools offered, the projection and the second look (plan m4, task A1,
+/// item 3). The tools measured first are stated when they are named.
 pub fn check_call(
     job: &Job,
     images: &[ArtifactId],
@@ -690,28 +766,20 @@ pub fn check_call(
         offered.push(',');
         offered.push_str(tool);
     }
-    let mut set: Vec<String> = Vec::new();
-    if details != "first" {
-        set.push(format!("{DETAILS_STEP}.details={details}"));
-    }
+    // All four settings, on every call: no door leans on what a recipe file says, so a
+    // change to a recipe's own steps never changes what a door asked for (plan m4, task
+    // A1, item 3).
+    let mut set: Vec<String> = vec![format!("{DETAILS_STEP}.details={details}")];
     if let Some(detail) = measuring.detail {
         set.push(format!("{DETAILS_STEP}.detail={detail}"));
     }
-    if offered != Details::First.tools_and_name().0 {
-        set.push(format!("{JUDGE_STEP}.tools={offered}"));
-    }
-    if measuring.projection != "full" {
-        set.push(format!("{JUDGE_STEP}.projection={}", measuring.projection));
-    }
-    if measuring.second_look != "off" {
-        set.push(format!(
-            "{JUDGE_STEP}.second_look={}",
-            measuring.second_look
-        ));
-    }
-    if !set.is_empty() {
-        call = call.argument(whizbang_core::recipe::SET, Value::text(&set.join("\n")));
-    }
+    set.push(format!("{JUDGE_STEP}.tools={offered}"));
+    set.push(format!("{JUDGE_STEP}.projection={}", measuring.projection));
+    set.push(format!(
+        "{JUDGE_STEP}.second_look={}",
+        measuring.second_look
+    ));
+    call = call.argument(whizbang_core::recipe::SET, Value::text(&set.join("\n")));
     call
 }
 

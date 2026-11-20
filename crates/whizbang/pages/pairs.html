@@ -56,7 +56,7 @@ label.load input { display: none; }
 <div class="strip" id="strip"></div>
 <div class="tools">
   <button type="button" id="view">whole <kbd>v</kbd></button>
-  <span class="note"><kbd>&larr;</kbd> left better &middot; <kbd>&rarr;</kbd> right better &middot; <kbd>&uarr;</kbd> same &middot; <kbd>&darr;</kbd> neither &middot; <kbd>space</kbd> skip &middot; <kbd>backspace</kbd> back &middot; hold <kbd>f</kbd> to swap the sides in place, <kbd>s</kbd> to see the source</span>
+  <span class="note"><kbd>&larr;</kbd> left better &middot; <kbd>&rarr;</kbd> right better &middot; <kbd>&uarr;</kbd> same &middot; <kbd>&darr;</kbd> neither &middot; <kbd>space</kbd> skip &middot; <kbd>backspace</kbd> take back the last pick &middot; hold <kbd>f</kbd> to swap the sides in place, <kbd>s</kbd> to see the source</span>
 </div>
 <p class="note" id="note"></p>
 <div class="sides focus" id="sides">
@@ -77,6 +77,9 @@ label.load input { display: none; }
 const data = JSON.parse(document.getElementById("data").textContent);
 const pairs = data.pairs;
 const picks = {};
+// The picks made on this page since it opened, in order: the pair's place, and the pick it
+// had before. Picks loaded from a saved file are not among them.
+const made = [];
 const by = (id) => document.getElementById(id);
 let at = 0, view = null, saved = true, swapped = false, sourced = false, centred = -1;
 const file = (pair, side, kind) => "pictures/" + pair.file + "-" + side + (kind === "focus" ? "-focus" : "") + ".png";
@@ -124,10 +127,24 @@ function offer() {
   save.href = URL.createObjectURL(new Blob([written()], { type: "application/json" }));
 }
 function pick(what) {
-  picks[pairs[at].id] = what;
+  const id = pairs[at].id;
+  made.push({ n: at, before: picks[id] });
+  picks[id] = what;
   saved = false;
   offer();
   go(nextOpen());
+}
+// Backspace: the last pick made on this page is taken back, the pick that was there before
+// it (if any) put back, and the page returns to its pair. With none left to take back, it
+// goes to the pair before.
+function takeBack() {
+  const last = made.pop();
+  if (!last) { go(at - 1); return; }
+  const id = pairs[last.n].id;
+  if (last.before) { picks[id] = last.before; } else { delete picks[id]; }
+  saved = false;
+  offer();
+  go(last.n);
 }
 for (const b of document.querySelectorAll(".picks button")) { b.addEventListener("click", () => pick(b.dataset.pick)); }
 pairs.forEach((pair, n) => {
@@ -169,7 +186,7 @@ document.addEventListener("keydown", (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) { return; }
   if (keys[e.key]) { e.preventDefault(); if (!e.repeat) { pick(keys[e.key]); } return; }
   if (e.key === " ") { e.preventDefault(); go(at + 1); return; }
-  if (e.key === "Backspace") { e.preventDefault(); go(at - 1); return; }
+  if (e.key === "Backspace") { e.preventDefault(); takeBack(); return; }
   if (e.repeat) { return; }
   if (e.key === "v") { by("view").click(); }
   if (e.key === "f") { swapped = true; show(); }
