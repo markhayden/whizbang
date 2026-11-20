@@ -11,6 +11,7 @@ cat >"$tmp/skills" <<'LIST'
 add-adapter Builder
 kickoff Builder
 port-module Builder
+release Orchestrator
 review-merge Orchestrator
 LIST
 
@@ -583,7 +584,7 @@ changed check_review_merge "$f" 's/^- Read: /- /' "must say: Read:"
 # that uses one of them needs a change here, made on purpose. What this cannot see: a
 # sentence on these subjects that uses none of the words, and every other subject. That
 # is why the reviewer and the orchestrator read every change to these files in full.
-governed="AGENTS.md .claude/agents/builder.md .claude/agents/reviewer.md .claude/skills/kickoff/SKILL.md .claude/skills/port-module/SKILL.md .claude/skills/review-merge/SKILL.md"
+governed="AGENTS.md .claude/agents/builder.md .claude/agents/reviewer.md .claude/skills/kickoff/SKILL.md .claude/skills/port-module/SKILL.md .claude/skills/release/SKILL.md .claude/skills/review-merge/SKILL.md"
 # The words and command forms, in any letter case.
 #   a forced push: force, forced, forces and forcing as words of their own (so --force
 #     too, and not "enforce"), a push with f in a bundle of short flags, a push of a +
@@ -662,6 +663,7 @@ AGENTS.md: repository's hooks folder, a hook of your own included, and says so.
 .claude/skills/kickoff/SKILL.md: name, from inside the worktree: a push made from another folder runs the hook of
 .claude/skills/kickoff/SKILL.md: Never retry around the hook, and never use `--no-verify`.
 .claude/skills/kickoff/SKILL.md: Tell the orchestrator in the hand-back: which scan refused, the commit, path and
+.claude/skills/release/SKILL.md: private list's variable set as `kickoff` says, where `<base>` is the last version
 .claude/skills/review-merge/SKILL.md: - [ ] 6. With `WHIZBANG_WORDLIST` set, `just scan-range <base> <head>` passes: secrets,
 AGENTS.md: - **Orchestrator:** the session the owner is talking to. Only the orchestrator merges. It
 AGENTS.md: - Each acts in its role above: only the orchestrator merges, tags, releases and

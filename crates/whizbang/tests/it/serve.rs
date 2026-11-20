@@ -1140,20 +1140,6 @@ fn the_loop_is_offered_as_a_tool_and_answers_with_its_plan_its_verdict_and_wheth
         text.contains("\nimage sha256:") && text.contains("\nmask sha256:"),
         "{text}"
     );
-    // Unchecked, it says so, and why.
-    client.call(
-        2,
-        "remove_checked",
-        json!({"image": world.image, "prompt": PHRASE, "check": "off"}),
-        None,
-    );
-    let (text, error) = result_text(&client.answer(2, &mut notes));
-    assert!(!error, "{text}");
-    assert!(
-        text.starts_with("plan: 1 of 3 attempts asked, unchecked;"),
-        "{text}"
-    );
-    assert!(text.contains("\nchecked: no: the check is off\n"), "{text}");
-    assert!(!text.contains("verdict:"), "{text}");
+    // An unchecked pass is said by the same lines: `cli::rascal_remove_checked_prints_…`.
     client.close();
 }
