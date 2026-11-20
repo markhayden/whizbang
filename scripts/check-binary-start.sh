@@ -19,7 +19,10 @@
 #    time, in any crate.
 # 2. `env!` or `option_env!` of anything but one text that starts `CARGO_`, in any crate:
 #    the name of the binary's variable cannot be put together from pieces, and no test is
-#    built with a variable of whoever built it.
+#    built with a variable of whoever built it. One more is taken, in one file: the
+#    binary's `src/main.rs` may read `env!("WHIZBANG_COMMIT")`, the commit its own
+#    `build.rs` asks git for and sets for that crate alone (`whizbang --version`; plan m4,
+#    task R1). Anywhere else the name would be read from whoever builds, and is refused.
 # 3. A module, or another name brought in, called `whizbang_testkit`: the function's name
 #    would then mean another function.
 # 4. In a crate that starts the binary, in every `.rs` file outside its `src/`: reading
@@ -112,6 +115,11 @@ while IFS= read -r file; do
 
   macros=$(printf '%s\n' "$text" | count 'env!(')
   cargos=$(printf '%s\n' "$text" | count_re '(^|[^A-Za-z0-9_])(option_)?env!\("CARGO_[A-Za-z0-9_]*"\)')
+  # The commit the binary's build script sets, in the binary's main.rs and nowhere else.
+  if [ "$file" = "$dir/crates/whizbang/src/main.rs" ]; then
+    commits=$(printf '%s\n' "$text" | count_re '(^|[^A-Za-z0-9_])env!\("WHIZBANG_COMMIT"\)')
+    cargos=$((cargos + commits))
+  fi
   if [ "$macros" -ne "$cargos" ]; then
     refuse "$file" "it has env! or option_env! of something other than one text that starts CARGO_ ($macros in all, $cargos of that form); a test is built with no variable of whoever builds it"
   fi

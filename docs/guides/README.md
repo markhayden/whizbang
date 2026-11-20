@@ -13,6 +13,7 @@ then. Milestones are those of `SPEC.md` section 16.
 | [Backends](backends.md) | `whizbang backends status`: whether each backend the config offers is ready, and `--probe` | Checkpoint 1C |
 | [Setup](setup.md) | `whizbang setup`: installing the Python pack and its runtime from the lock file, where it goes, and every place it contacts | Checkpoint 1C |
 | [The MCP server over stdio](serve.md) | `whizbang serve` for a local agent: the tools, progress, cancellation, the stated time of a run and the end of the input | 2 |
+| [Install](install.md) | Installing from a release archive: download, the SHA-256 check, what the Python pack needs first, what each platform can do, and why a Mac downloads with `curl`. The archive carries this page as its `README.md` | 4 |
 
 ## Doors
 
