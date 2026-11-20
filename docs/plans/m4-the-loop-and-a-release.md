@@ -401,7 +401,7 @@ of preparation each change once, in one place.
    `OneWorker::starting` is, or backed by one walk of the config, as the row allows. K1
    builds it and does not edit the row: K2 closes it (below).
 
-- [ ] Done when:
+- [x] Done when:
   `prepare::an_action_that_plans_is_prepared_with_the_needs_and_the_estimate_of_its_plan`,
   `prepare::a_plan_fitted_to_the_call_cap_says_what_was_asked_and_what_it_allows`,
   `prepare::a_capability_the_plan_leaves_out_is_not_resolved_and_nothing_is_reserved_for_it`,
@@ -460,6 +460,23 @@ the tests of every crate that builds an executor (a feature on their manifests a
 crate graph's checks, or a held backend for every roster a test gives), which is more
 than a few hundred lines and reaches scripts and tests other tasks of this wave own. It
 goes to wave 2, before K2 closes the row.
+
+**Item 5, built in wave 2 with K2's pull request, as its own commit.** The executor
+given its backends apart (`Engine::new`, `Engine::over`, `Engine::with_capabilities`) is
+compiled for tests alone, behind a feature of the core, `fakes`; every build has
+`Engine::reading` and `Engine::writing`, over a source of the config and nothing beside
+it, which is how the binary's wiring builds its two executors now (ADR 0015, "One
+snapshot of the config"). The feature is turned on in one manifest, the test kit's,
+not five: the test kit is a development dependency alone, so every crate's tests build
+the core with it and the binary's build never does. So the crate graph has no new edge
+and `scripts/tests/test-crate-graph.sh` is unchanged; `scripts/check-features.sh` holds
+the binary's build to the core without the feature, and
+`scripts/tests/test-features.sh` plants it there and sees the check fail. The test is
+`asked::an_executor_built_with_a_digest_alone_is_a_tests_alone` (the core's
+`contract::asked`), which also holds that an executor every build has resolves nothing
+it does not hold. The one walk at admission, the other way the row allowed, was tried
+first: it refused 153 of the core's tests, whose rosters price or resolve a call that
+asks no backend for anything.
 
 **Owed after K1** (follow-ups of that review, not built here):
 

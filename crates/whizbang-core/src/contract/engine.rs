@@ -210,21 +210,60 @@ fn spawn_thread(name: String, work: Box<dyn FnOnce() + Send + 'static>) -> std::
 pub const WHIZBANG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 impl Engine {
+    /// An executor over these actions that reads this store, under this config, which
+    /// is asked for a snapshot each time a call is prepared, at admission too (ADR 0015,
+    /// "One snapshot of the config"). Its backends are those of each snapshot, made by
+    /// the walk of the config that also resolves a call's models, so a model a call
+    /// resolved is held or the call is refused at admission; it is given none apart
+    /// from them. Images are decoded within the default limits. It runs nothing: it was
+    /// given no way to write.
+    pub fn reading(
+        registry: Registry,
+        contents: Arc<dyn Contents + Send + Sync>,
+        config: Arc<dyn ConfigSource>,
+    ) -> Engine {
+        Engine::built(registry, Arc::new(super::NoBackends), contents, config)
+    }
+
+    /// The same executor, which runs actions: it reads this store and writes its runs
+    /// to it. The store is open to write, so this process is its one writer for as
+    /// long as the executor lives.
+    pub fn writing(registry: Registry, store: Arc<Store>, config: Arc<dyn ConfigSource>) -> Engine {
+        let mut engine = Engine::reading(registry, store.clone(), config);
+        engine.store = Some(store);
+        engine
+    }
+
     /// An executor over these actions and backends, reading this store, under the config
-    /// with this digest. Images are decoded within the default limits. It runs nothing:
-    /// it was given no way to write.
+    /// with this digest. It runs nothing: it was given no way to write.
+    ///
+    /// **A test's alone** (the feature `fakes`; plan m4, task K1, item 5): the backends
+    /// that resolve a call are given here, apart from those the executor holds
+    /// ([`Engine::with_capabilities`]), and nothing holds one to the other, so a call
+    /// that resolved a model no held backend declares is admitted and its action finds
+    /// no handle. The binary's executor cannot be built so ([`Engine::reading`]).
+    #[cfg(feature = "fakes")]
     pub fn new(
         registry: Registry,
         backends: Arc<dyn Backends>,
         contents: Arc<dyn Contents + Send + Sync>,
         config: Digest,
     ) -> Engine {
+        Engine::built(registry, backends, contents, Arc::new(config))
+    }
+
+    fn built(
+        registry: Registry,
+        backends: Arc<dyn Backends>,
+        contents: Arc<dyn Contents + Send + Sync>,
+        config: Arc<dyn ConfigSource>,
+    ) -> Engine {
         Engine {
             registry,
             backends,
             contents,
             store: None,
-            config: Arc::new(config),
+            config,
             limits: DecodeLimits::default(),
             clock: Arc::new(SystemClock),
             secrets: Known::default(),
@@ -245,7 +284,8 @@ impl Engine {
 
     /// An executor that runs actions: it reads this store and writes its runs to it. The
     /// store is open to write, so this process is its one writer for as long as the
-    /// executor lives.
+    /// executor lives. A test's alone, as [`Engine::new`] is.
+    #[cfg(feature = "fakes")]
     pub fn over(
         registry: Registry,
         backends: Arc<dyn Backends>,
@@ -262,7 +302,7 @@ impl Engine {
     /// 0015, "One snapshot of the config"). A run is admitted under one snapshot and
     /// executes under it, with every run it calls. A snapshot that holds backends, a
     /// policy or credentials is used in place of what the executor was built with
-    /// ([`Engine::over`], [`Engine::with_capabilities`], [`Engine::with_ways`]); the
+    /// (in a test, `Engine::over` and `Engine::with_capabilities`; [`Engine::with_ways`]); the
     /// secrets of every snapshot are kept beside those it was built with.
     pub fn with_config(mut self, config: Arc<dyn ConfigSource>) -> Engine {
         self.config = config;
@@ -300,7 +340,10 @@ impl Engine {
     }
 
     /// The same executor, handing each run's action a handle on each of these
-    /// backends, bound to that run's cancellation and deadline.
+    /// backends, bound to that run's cancellation and deadline. A test's alone, as
+    /// [`Engine::new`] is: the binary's executor is handed its backends by the snapshot
+    /// a run is admitted under.
+    #[cfg(feature = "fakes")]
     pub fn with_capabilities(mut self, capabilities: Capabilities) -> Engine {
         self.capabilities = capabilities;
         self

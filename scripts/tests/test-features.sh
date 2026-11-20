@@ -78,6 +78,18 @@ expect_fail "the binary's own build turns the tests' feature fakes on" \
   "is built with the feature fakes" \
   bash -c 'cd "$1" && scripts/check-features.sh' _ "$copy"
 
+# The same for the core's `fakes` (an executor built with a digest alone: plan m4, task K1,
+# item 5): the copy's whizbang is put back, and the binary's dependency on whizbang-core
+# turns it on.
+cp crates/whizbang/Cargo.toml "$copy/crates/whizbang/Cargo.toml"
+sed 's/^whizbang-core.workspace = true$/whizbang-core = { workspace = true, features = ["fakes"] }/' \
+  crates/whizbang/Cargo.toml >"$copy/crates/whizbang/Cargo.toml"
+grep -F -e 'whizbang-core = { workspace = true, features = ["fakes"] }' "$copy/crates/whizbang/Cargo.toml" >/dev/null \
+  || fail "the copy's whizbang has no whizbang-core line to plant the feature in"
+expect_fail "the binary's own build turns the core's feature fakes on" \
+  "is built with the feature fakes" \
+  bash -c 'cd "$1" && scripts/check-features.sh' _ "$copy"
+
 # The baseline replay in the binary's own build: the copy's whizbang is put back, then its
 # dependency on whizbang-squint turns `baseline-replay` on, which brings jsonschema.
 cp crates/whizbang/Cargo.toml "$copy/crates/whizbang/Cargo.toml"

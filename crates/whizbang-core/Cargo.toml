@@ -44,6 +44,16 @@ toml.workspace = true
 # on 2026-11-19 ("yes thats fine"; ADR 0019, "The normal form of a folder").
 unicode-normalization = { version = "=0.1.25", default-features = false }
 
+[features]
+# What only a test may build: an executor given its backends apart from what it holds
+# (`Engine::new`, `Engine::over`, `Engine::with_capabilities`), where nothing holds a
+# model a call resolved to a backend that is held (plan m4, task K1, item 5; ADR 0015).
+# Only the tests' builds turn it on, by the test kit, which every crate has as a
+# development dependency alone; the binary `just smoke` builds (`-p whizbang`, no
+# development dependency) is built without it, and `scripts/check-features.sh` holds
+# it to that.
+fakes = []
+
 [dev-dependencies]
 # A second lossless container, for the tests only: the same pixels in PNG and in BMP.
 image = { version = "=0.25.10", default-features = false, features = ["bmp"] }
