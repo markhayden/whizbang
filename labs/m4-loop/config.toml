@@ -1,0 +1,43 @@
+# The config of the loop's live evidence (plan m4, task E1, items 1 and 2;
+# scripts/loop-evidence.sh): SAM 3 on the Mac through the pack, Bria Eraser through fal as
+# milestone 3 used it, and the two judges the evidence asks, each under the name
+# `--judge` takes. A backend's name holds no dot, so the judge of the model
+# `gpt-6.1-terra` is named `gpt-6-1-terra`. The cap of one call is 3.50 dollars, which
+# covers three attempts with either judge (docs/guides/loop.md, "What it costs"). There is
+# no `[cache]` table: no check is answered from an earlier one. The keys are in the env
+# file the command names, never here.
+[backends.segment]
+kind = "pack"
+model = "sam3"
+
+[backends.fill]
+kind = "service"
+provider = "fal"
+model = "bria-eraser"
+key_env = "FAL_KEY"
+
+[backends.judge]
+default = "claude-haiku-5-5"
+[backends.judge.claude-haiku-5-5]
+kind = "service"
+provider = "anthropic"
+model = "claude-haiku-5-5"
+key_env = "ANTHROPIC_API_KEY"
+[backends.judge.gpt-6-1-terra]
+kind = "service"
+provider = "openai"
+model = "gpt-6.1-terra"
+key_env = "OPENAI_API_KEY"
+
+[spend]
+call_cap_usd = 3.50
+
+[egress.recipients.fal]
+origin = "https://fal.run"
+classes = ["source_images", "derived_images"]
+[egress.recipients.anthropic]
+origin = "https://api.anthropic.com"
+classes = ["source_images", "derived_images", "prompts", "evidence"]
+[egress.recipients.openai]
+origin = "https://api.openai.com"
+classes = ["source_images", "derived_images", "prompts", "evidence"]

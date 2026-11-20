@@ -141,6 +141,22 @@ answered "1, 2, 3 good". They are settled, and the tasks below build on them.
    developer identity, the guide gives a download command that sets no mark on the file,
    and notarisation gets a carry-over row.
 
+On 2026-11-20 the orchestrator put three more to the owner, who answered "yes on all but
+lets push the optional to the phase E where we beat up each tool individually".
+
+4. **The pre-release checks in two parts** (open question 1): yes. The model tests and
+   the live call to each provider are the local leg, on the owner's Mac; GitHub builds and
+   installs on both targets. `SPEC.md` section 14's table is edited to say so (R2, item 7,
+   made with E1's pull request).
+5. **The spec's wording owed since K1 and L1:** yes, as proposed. `SPEC.md` section 3's
+   Prepare bullet states a call's plan, and section 7's table of rascal names the loop
+   `remove_checked` and the action `carry` (made with E1's pull request; the carry-over
+   row on it is closed).
+6. **The owner's own pictures move to milestone E.** E1, item 2's optional three to five
+   pictures of the owner's, where one pass leaves something behind, are milestone E's,
+   where each tool is tested hard on its own. None of E1's 48 runs retried, so the loop's
+   retries have no live evidence yet; a carry-over row owned by E says so.
+
 ## What the orchestrator decided
 
 Under the rule that review rounds replace the owner's approval of a plan (`SPEC.md` section
@@ -961,6 +977,18 @@ met otherwise than they are worded.
   retry) and holds three attempts with every tool call a check may dispatch, 133 runs, to
   the limits by arithmetic on what it counted. L2 raises it with a run of three.
 
+**Reworded with the task** (E1, 2026-11-20, on the orchestrator's word). "one test for
+each row of the table, each run twice, on a check that was made and on the same check
+answered from the cache, with the same result" is met otherwise for two of the tests.
+`table::row_1_a_violation_of_a_protected_subject_of_the_geometry_or_of_rq2_ends_the_attempts`
+has twelve cases and `table::row_4_…` six through the loop: every case is still run on a
+check that was made, with its assertions, and the first case of each is run a second time
+answered from the cache; the others are not. The reason is test time: the hosted Mac read
+262.6 seconds of its 300 on the head of L2's second pull request, the second runs of these
+two tests were sixteen runs of the loop, and "Owed after L1" named them as the first to
+trim. That a check answered from the cache hands the loop the same findings is held for
+every other row's test, each run twice, and by K2's tests of the cache.
+
 **Decided with the task (L1).** ADR 0039 has each.
 
 - **The check is called as the recipe ships it:** its job, its two images and the judge's
@@ -1546,7 +1574,7 @@ and "Workflows").
    a workflow holds, so it is reviewed with this plan's review rounds and made only after
    the owner's yes to open question 1.
 
-- [ ] Done when: `scripts/tests/test-release-workflows.sh` (each workflow runs only on its
+- [x] Done when: `scripts/tests/test-release-workflows.sh` (each workflow runs only on its
   kind of tag; `prerelease`'s jobs call `just package`, the bootstrap and the install check
   and nothing else builds; no job runs in a container or adds a package; only `candidate`
   may write; `release` builds nothing),
@@ -1587,6 +1615,14 @@ review of the first (the orchestrator lifted "R2 closes no row" for those three)
 the spec's table, waits for the owner's yes to open question 1 and is in neither: **the
 box stays unticked after both**, its last clause, "the spec's table edited", being the
 one not met, and is ticked by the pull request that makes that edit.
+
+**Item 7 made, and the box ticked** (E1's pull request, #257, 2026-11-20). The owner said
+yes to open question 1 on 2026-11-20 ("What the owner decided", 4). `SPEC.md` section
+14's row for `prerelease` now says GitHub builds the archive and installs it on both
+targets, and that the model tier and the live calls are the local leg on the owner's Mac,
+whose receipt the release gate reads; the row for `release` says it publishes the
+candidate's two archives, the pack inside the binary, and their `SHA256SUMS`, building
+nothing. The other clauses were met by R2's two pull requests (#251, #254).
 
 **Reworded with the task** (R2, 2026-11-19). Eight things are as the task found them.
 
@@ -1739,7 +1775,7 @@ of retry works is shown by L1's and L2's tests with fakes, not here.
 7. **The rows.** Every row of the table below closed, narrowed or re-owned with its line,
    and a new row for notarisation (the owner's decision 3).
 
-- [ ] Done when: `scripts/tests/test-loop-evidence.sh` (against a stand-in binary: each
+- [x] Done when: `scripts/tests/test-loop-evidence.sh` (against a stand-in binary: each
   of the 24 is run once under its request id; a second run of the script starts nothing
   again; the file written holds aggregates and no item; a set with a picture missing, with
   one changed, with a 25th entry, or with an entry that names a truth mask is refused
@@ -1752,6 +1788,97 @@ of retry works is shown by L1's and L2's tests with fakes, not here.
   `tool_records::recipes::the_record_of_remove_checked_is_what_it_gives`,
   `scripts/tests/test-tool-records.sh` passing with the new record, and every row of the
   table below closed or re-owned.
+
+**The box stays open** (E1, 2026-11-20, its first pull request). Everything that needs no
+paid call is built: the script and its tally with their test, the loop's tool record with
+its two tests and its shape check, and the rows. The live record is the orchestrator's runs
+and does not exist yet, so
+`evidence::the_loops_record_names_a_commit_of_this_tree_and_holds_only_aggregates` holds
+the evidence's config and the manifest's 24 entries now, and the two tallies, the page and
+the three cases from the moment `docs/results/m4-loop.md` is committed. The box is ticked
+by the pull request that brings the record in.
+
+**The live record, and the box ticked** (E1, the same pull request, #257, 2026-11-20).
+The orchestrator ran the 24 entries under each judge and the three cases on 2026-11-20 at
+48c9251e, with the binary `whizbang 0.1.0` of that commit. The two tallies and the page
+are committed (`docs/results/m4-loop-claude-haiku-5-5.toml`,
+`docs/results/m4-loop-gpt-6-1-terra.toml`, `docs/results/m4-loop.md`); the three cases'
+files are not, since the page holds each whole and the test reads them there. The test
+no longer returns early: it fails when the page is missing, and passes on the record.
+
+- **What happened.** All 48 runs completed in one attempt each, and none retried, of
+  either kind. Under Haiku 1 passed and 23 kept an `unsure` on row 4; under Terra 18
+  passed and 6 kept a `fail` on row 1. No check found a confident violation of `RQ1`.
+- **The spend.** 2.281578 dollars settled: 1.045275 under Haiku, 1.153401 under Terra,
+  0.042902 for `pass`, 0 for `vague`, 0.04 for `no-key`; against 3.20, 4.10 and 1.50
+  estimated ("Spend").
+- **The case `pass` did not pass.** It kept an `unsure` in its one attempt: neither "a
+  clean pass" nor "a retry then a pass" happened. The page says so, and the case is
+  recorded as it ran.
+- **The case `vague` ended with another step's refusal.** It ended as the loop's error,
+  `invalid`, with nothing spent, saying "the step select (select) was refused: not a call
+  of select: the input mask takes 1 to 64, and was given 0". Fixed here, in the recipe
+  runner (`crates/whizbang-core/src/recipe/runner.rs`): a step's port that takes at
+  least one artifact, bound to an output where an earlier step of the same run committed
+  none, ends the run as invalid before the step is called, with "the step segment
+  (segment) found nothing, so the step select (select) had no mask to take". One change
+  serves `whizbang rascal remove-prompt` and the loop, which hands back the call's own
+  type and message (L1, item 8)
+  (`checked::a_phrase_that_finds_nothing_ends_remove_prompt_and_the_loop_with_a_sentence_of_its_own`,
+  red on the old sentence first). The committed case keeps the sentence measured, with a
+  line under it naming the test. Nothing paid was run again.
+- **The tenth, and the places** (L2's notes for E1). No located retry occurred in 48 live
+  runs; nothing to revisit yet. `located::ITSELF_PART` stays a tenth, and the rows on it,
+  on the places a located retry leaves out, and on a carried mask reaching a fill are
+  re-owned to milestone E with that line.
+- **The owner's pictures move to milestone E** ("What the owner decided", 6): item 2's
+  optional part. The loop's retries have no live evidence, and a carry-over row owned by
+  E says so.
+- **The spec is edited after all,** on the owner's yes ("What the owner decided", 4 and
+  5): section 3's Prepare bullet and section 7's rows, as the carry-over row proposed,
+  and section 14's two rows of workflows (R2, item 7). The decision above, "The spec is
+  not edited here", stood until then.
+- **Every clause of the box is shown:** the script's test, the two evidence tests (the
+  record test now on both tallies and the three cases), the record test of
+  `remove_checked`, `scripts/tests/test-tool-records.sh`, and every row of the table
+  below closed or re-owned.
+
+**Decided with the task (E1).**
+
+- **A judge is named as the config names it,** and a backend's name holds no dot. The
+  judges are `claude-haiku-5-5` and `gpt-6-1-terra`, the second the model `gpt-6.1-terra`;
+  those names are in `--judge`, in the request ids and in the tallies' file names. The
+  config is committed, `labs/m4-loop/config.toml`, with the cap at 3.50 dollars and no
+  decision cache. A tally names the model each judge's requests were answered by, from
+  the records.
+- **More than the command above.** `--allowance <USD>` is what a store the script itself
+  makes is given, as the local leg of a candidate gives its store one; `--models-dir` is
+  handed to the binary; a case takes `--judge` and `--out` too. The page is put together
+  by the tally from the two tallies and the three cases' files
+  (`scripts/loop-evidence.py page`), which is no paid step and needs no lock.
+- **More refusals than the list above.** The binary must say a commit that is this
+  checkout's HEAD or an ancestor of it, in a checkout with no tracked change: that commit
+  is the one a tally names. And a call that leaves no run stops the script, since nothing
+  ran and the next would say the same; the same command then goes on from there.
+- **Under the heavy lock is checked, not assumed:** a process above the script must be
+  the one the lock names, and the guard's limit must be 200.
+- **An entry the store already holds a run for is not asked again;** one that was
+  interrupted is asked under its request id, which the store answers.
+- **The loop's record test is the binary's**
+  (`crates/whizbang/tests/it/tool_records.rs`), not `whizbang-rascal`'s where the other
+  recipes' are: only the binary holds rascal's loop and squint's check together. Its name
+  is the one above. Its pictures are held pixel for pixel, decoded, not byte for byte.
+- **"An `unsure` that a retry under rascal's rule would have followed" is counted as an
+  upper bound,** and the tally and the page say so: a run that stopped on an `unsure`
+  whose check held a tentative violation of `RQ1` and cited any place. A record keeps a
+  check's places apart from its findings.
+- **How the attempts ended is counted twice:** by the row of the table the last judged
+  attempt's findings are of, worked out from the counts the record keeps; and by the
+  sentence the loop wrote, as one of a closed set with `other`, so that no sentence
+  reaches a tally (the carry-over row on a closed set of reasons is milestone E's).
+- **The spec is not edited here.** The wording owed since K1 and L1 (section 3's Prepare
+  bullet, section 7's rows) is in a carry-over row, with N1 as its owner on the owner's
+  word.
 
 ### What the owner provides (E)
 
@@ -1949,7 +2076,7 @@ Each is phrased so the owner can answer yes or no. The recommended answer is the
 tasks above assume; a no changes the task named. Three of draft 1's questions are settled
 under "What the owner decided", and one of draft 3's under "What the orchestrator decided".
 
-1. **The pre-release checks in two parts.** I need your yes to run the model tests and the
+1. **Answered yes, 2026-11-20 ("What the owner decided", 4). The pre-release checks in two parts.** I need your yes to run the model tests and the
    live call to each provider on your Mac, by the orchestrator, against the candidate's own
    archive (the local leg), and to keep GitHub's part to building and installing on both
    targets, with the spec's table edited to say so. No means provider keys and a model are

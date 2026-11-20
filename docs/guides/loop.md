@@ -191,7 +191,9 @@ check's own error type and message as the reason; the picture is still handed ba
 
 **It is an error only when no removal was made:** the segmenter found nothing, the first
 fill failed, or the budget ran out before the first fill. The complaint is the type and
-the message of the step that failed.
+the message of the step that failed. When the segmenter found nothing, that is `invalid`,
+and says so: `the step segment (segment) found nothing, so the step select (select) had
+no mask to take`.
 
 ## Exit codes
 
@@ -240,9 +242,11 @@ later call can take one.
   polygon is used by the box around it (`docs/carry-over.md`).
 - The segmenter is asked inside a crop as it is asked about the picture: with the same
   phrase and no lower threshold.
-- The loop's tool record and its live evidence are written with milestone 4's evidence
-  (plan m4, task E1). Until then the loop is marked experimental, and its visual quality
-  has not been confirmed by a person.
+- The loop is marked experimental. Its tool record,
+  `docs/reference/tools/remove_checked.md`, shows it on three worked examples, one of them a
+  case it handles badly, and says what of its scoring is shown. What it did on real
+  models is reported, not scored, by `scripts/loop-evidence.sh` (plan m4, task E1), and
+  its visual quality has not been confirmed by a person.
 - Nothing may call the loop: calls nest four levels deep and the loop uses all four, so a
   recipe that names it as a step is refused when it is read.
 - On Linux no local segmenter runs, so the loop is not ready there until a remote

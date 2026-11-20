@@ -135,7 +135,7 @@ Measured on Apple M4 Max (macos, aarch64), in a release build; each time is the 
 
 | Limit | Example |
 |---|---|
-| Only what the segmenter finds by the phrase is removed; a phrase it does not know finds nothing | `segment`'s record |
+| Only what the segmenter finds by the phrase is removed; a phrase it does not know finds nothing, and the call ends as `invalid`, saying that the step `segment` found nothing | `segment`'s record |
 | The mask is grown on purpose: what is near the thing is repainted too | The examples |
 | Each run spends one fill; SAM 3 runs on the Mac and spends nothing | `docs/results/m3-edits.md` |
 | Rung 2 is one synthetic set: 24 pictures of one published set, one kind of defect each | `labs/m3-edits/edits.toml` |

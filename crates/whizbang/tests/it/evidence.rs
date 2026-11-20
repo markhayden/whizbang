@@ -1633,3 +1633,215 @@ fn the_blinded_rounds_of_milestone_3_are_owed_by_e_with_their_protocols_digests(
     }
     assert!(OWED.contains("milestone E"));
 }
+
+/// The version the loop's live record was measured by: it was made after the first
+/// release's version was set (plan m4, task R2), so it is not [`MEASURED_BY`].
+const LOOP_MEASURED_BY: &str = "0.1.0";
+
+/// The judges of the loop's live evidence, each by its name in the evidence's config and
+/// the model it names, with the most its 24 runs may settle: twice the plan's estimate
+/// (plan m4, "Spend": a line that passes twice its estimate stops).
+const LOOP_JUDGES: [(&str, &str, i64); 2] = [
+    ("claude-haiku-5-5", "claude-haiku-5-5", 6_400_000),
+    ("gpt-6-1-terra", "gpt-6.1-terra", 8_200_000),
+];
+
+#[test]
+fn the_loops_tool_record_holds_rung_1_and_says_what_of_rung_2_is_shown() {
+    // Plan m4, task E1, item 4.
+    let (record, rung_2) = recipe_record("remove_checked");
+    let history = record
+        .split("## Mark and history\n")
+        .nth(1)
+        .expect("its history");
+    for held in [
+        "\n| 1. Single examples | Shown |",
+        "\n| 2. Scored alone | In part |",
+        "**Mark.** Experimental",
+    ] {
+        assert!(history.contains(held), "{held}");
+    }
+    // Rung 1: worked examples, one of each kind of retry and a case it handles badly,
+    // with their pictures; `tool_records::recipes::…` holds them to the loop.
+    let examples = record
+        .split("## Examples\n")
+        .nth(1)
+        .and_then(|rest| rest.split("\n## ").next())
+        .expect("its examples");
+    assert_eq!(examples.matches("\n### ").count(), 3);
+    assert!(examples.contains("**This is a case it handles badly.**"));
+    assert!(examples.contains("protected subject"));
+    // Rung 2, in part, and said so: preservation by a test that is there; the mask and
+    // the fill credited to milestone 3's record; what the loop adds reported, not scored.
+    let said = rung_2.split_whitespace().collect::<Vec<_>>().join(" ");
+    let test = "every_pixel_outside_the_kept_mask_is_the_pictures_own";
+    assert!(include_str!("checked.rs").contains(&format!("fn {test}()")));
+    for held in [
+        "**shown in part**",
+        &format!("`checked::{test}`"),
+        "`docs/results/m3-edits.md`",
+        "reported, not scored",
+        "`docs/results/m4-loop.md`",
+        "whether a retry makes a result better is not known",
+    ] {
+        assert!(said.contains(held), "{held}");
+    }
+    assert!(said.ends_with(OWED), "{said}");
+    assert!(!record.contains("pending"));
+    // Its cost for each judge is the guide's table, row for row, which
+    // `guides::the_loops_guide_states_the_bound_of_an_attempt_…` holds to the catalogue.
+    let guide = std::fs::read_to_string(repository().join("docs/guides/loop.md")).unwrap();
+    let rows: Vec<&str> = (guide.lines())
+        .filter(|line| line.starts_with("| `") && line.matches(" | ").count() == 4)
+        .collect();
+    assert!(rows.len() >= 5, "{rows:?}");
+    for row in rows {
+        assert!(
+            record.contains(row),
+            "the record lacks the guide's row {row}"
+        );
+    }
+}
+
+#[test]
+fn the_loops_record_names_a_commit_of_this_tree_and_holds_only_aggregates() {
+    // Plan m4, task E1, items 1 and 2. What the evidence is run with is held always:
+    // the committed config and the manifest's 24 entries.
+    let config = std::fs::read(repository().join("labs/m4-loop/config.toml")).unwrap();
+    let config =
+        whizbang_core::config::Config::parse(&config, &whizbang_core::contract::Secrets::none())
+            .expect("the evidence's config is one");
+    let judge = whizbang_core::contract::Capability::Judge;
+    assert_eq!(config.call_cap_micros(), Some(3_500_000));
+    let judges: Vec<(&str, Option<&str>)> = (config.backends(judge))
+        .map(|(name, backend)| (name, backend.model()))
+        .collect();
+    let named: Vec<(&str, Option<&str>)> = (LOOP_JUDGES.iter())
+        .map(|(name, model, _)| (*name, Some(*model)))
+        .collect();
+    assert_eq!(judges, named);
+    let set_text = std::fs::read_to_string(repository().join("labs/m3-edits/edits.toml")).unwrap();
+    let set = whizbang::edits::EditSet::parse(&set_text).unwrap();
+    let entries = (set.item.iter()).filter(|item| item.recipe == "remove_prompt");
+    assert_eq!(entries.count(), 24);
+
+    // The live record: the orchestrator's runs, committed.
+    let results = repository().join("docs/results");
+    let page = std::fs::read_to_string(results.join("m4-loop.md"))
+        .expect("the loop's live record is committed");
+    let body = |text: &str| -> String {
+        let lines: Vec<&str> = text.lines().filter(|line| !line.starts_with('#')).collect();
+        lines.join("\n").trim_matches('\n').to_owned()
+    };
+    let whole = |table: &toml::Table, name: &str| -> i64 {
+        table[name].as_integer().unwrap_or_else(|| panic!("{name}"))
+    };
+    let sum = |table: &toml::Table, name: &str| -> i64 {
+        let fields = table[name].as_table().unwrap_or_else(|| panic!("{name}"));
+        fields.values().filter_map(toml::Value::as_integer).sum()
+    };
+    let mut texts = vec![page.clone()];
+    for (name, model, most) in LOOP_JUDGES {
+        let text = std::fs::read_to_string(results.join(format!("m4-loop-{name}.toml")))
+            .expect("the tally of each judge is committed");
+        let tally: toml::Table = text.parse().expect("a tally is TOML");
+        assert_eq!(tally["schema"].as_str(), Some("loop-evidence/1"));
+        assert!(is_ancestor(tally["commit"].as_str().unwrap()), "{name}");
+        assert_eq!(tally["whizbang"].as_str(), Some(LOOP_MEASURED_BY));
+        assert_eq!(tally["judge"].as_str(), Some(name));
+        assert!(tally["judge_model"].as_str().unwrap().contains(model));
+        assert!(
+            tally["filler"]
+                .as_str()
+                .unwrap()
+                .starts_with("fal bria-eraser ")
+        );
+        assert!(
+            tally["finder"]
+                .as_str()
+                .unwrap()
+                .starts_with("pack sam3 sha256:")
+        );
+        assert_eq!(
+            tally["manifest_sha256"].as_str(),
+            Some(digest_of("labs/m3-edits/edits.toml").as_str())
+        );
+        // Every entry is accounted for, and each count of the runs adds up to them.
+        let runs = whole(&tally, "runs");
+        assert_eq!(whole(&tally, "entries"), 24);
+        assert_eq!(runs + whole(&tally, "not_run"), 24);
+        for counted in ["outcomes", "ended", "stopped_by_row", "stopped_by_reason"] {
+            assert_eq!(sum(&tally, counted), runs, "{name}: {counted}");
+        }
+        assert_eq!(
+            sum(&tally, "attempt_verdicts"),
+            whole(&tally, "attempts_made")
+        );
+        assert!(sum(&tally, "retries") <= whole(&tally, "attempts_made"));
+        assert!(whole(&tally, "settled_micros") <= most, "{name}");
+        // The page holds the tally as it was written.
+        assert!(
+            page.contains(&body(&text)),
+            "the page lacks the tally of {name}"
+        );
+        texts.push(text);
+    }
+    // The three cases by hand, each with its fields.
+    for case in ["pass", "vague", "no-key"] {
+        let part = page
+            .split(&format!("### `{case}`\n\n```toml\n"))
+            .nth(1)
+            .and_then(|rest| rest.split("\n```").next())
+            .unwrap_or_else(|| panic!("the page has no case {case}"));
+        let fields: toml::Table = part.parse().expect("a case is TOML");
+        assert!(is_ancestor(fields["commit"].as_str().unwrap()), "{case}");
+        assert_eq!(fields["whizbang"].as_str(), Some(LOOP_MEASURED_BY));
+        for name in ["outcome", "verdict", "ended", "ended_as"] {
+            assert!(fields[name].is_str(), "{case}: {name}");
+        }
+        for name in ["attempts", "kept", "settled_micros", "reserved_micros"] {
+            assert!(fields[name].is_integer(), "{case}: {name}");
+        }
+        let ended_as = fields["ended_as"].as_str().unwrap();
+        match case {
+            // A phrase that names nothing was not passed; a missing key leaves the
+            // run unchecked, and says why.
+            // Its sentence is the one measured; the page says it was changed after, by
+            // a test that is there.
+            "vague" => {
+                assert!(!ended_as.starts_with("passed"), "{ended_as}");
+                let test = "a_phrase_that_finds_nothing_ends_remove_prompt_and_the_loop_with_a_sentence_of_its_own";
+                assert!(include_str!("checked.rs").contains(&format!("fn {test}()")));
+                assert!(page.contains(&format!("`checked::{test}`")), "{test}");
+            }
+            "no-key" => {
+                assert_eq!(ended_as, "unchecked");
+                assert_eq!(fields["checked"].as_bool(), Some(false));
+                assert_ne!(fields["unchecked_why"].as_str(), Some("none"));
+            }
+            _ => {}
+        }
+    }
+    // What it is not, said on the page; and aggregates only: no item of the set, no
+    // picture's name, no path, no key.
+    for held in ["It scores nothing", "not yet confirmed by a person"] {
+        assert!(page.contains(held), "{held}");
+    }
+    for text in &texts {
+        for item in &set.item {
+            for held in [&item.id, &item.picture, &item.truth] {
+                assert!(!text.contains(held.as_str()), "{held}");
+            }
+        }
+        for held in [
+            "/Users/",
+            "/home/",
+            "/private/",
+            "FAL_KEY",
+            "API_KEY",
+            ".png",
+        ] {
+            assert!(!text.contains(held), "{held}");
+        }
+    }
+}

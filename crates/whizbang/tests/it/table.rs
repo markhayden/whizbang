@@ -66,20 +66,41 @@ fn twice_keeping(label: &str, answers: Vec<Json>) -> (Looped, Came, Finished) {
     (world, first, made)
 }
 
-/// Each case, by its label, in the order given: what it came to. Three run beside
-/// each other at a time, on threads of the test kit's: every run of the loop is many
-/// small writes to its store, which more threads at once only make wait for each other.
-fn each(cases: Vec<(String, Vec<Json>)>) -> Vec<(String, Came)> {
+/// The loop run once, under the same world as [`twice`]: what it came to, on checks
+/// that were made.
+fn once(label: &str, answers: Vec<Json>) -> (Looped, Came) {
+    let mut setup = Setup::answering(answers);
+    setup.cached = true;
+    let world = Looped::new(&format!("table-{label}"), &setup);
+    let made = world.run(&world.call());
+    let came = came(&world, &made);
+    (world, came)
+}
+
+/// Each case, by its label, in the order given: what it came to. With `all_twice`,
+/// each is run twice, made and then answered from the cache ([`twice`]). Without, the
+/// first is and the others are run once, on checks that were made: the two tests of
+/// many cases ran the loop sixteen times more for it, and that a check answered from
+/// the cache gives the loop the same findings does not depend on which case of a row
+/// they are of (plan m4, task L1, "Reworded with the task"). Three run beside each other at a time, on threads of the test
+/// kit's: every run of the loop is many small writes to its store, which more threads
+/// at once only make wait for each other.
+fn each(cases: Vec<(String, Vec<Json>)>, all_twice: bool) -> Vec<(String, Came)> {
     assert!(cases.len() <= 12);
     let mut came = Vec::new();
+    let first = cases.first().map(|(label, _)| label.clone());
     let mut cases = cases.into_iter().peekable();
     while cases.peek().is_some() {
         let three: Vec<_> = cases.by_ref().take(3).collect();
         came.extend(threads::scope(|scope| {
             let running: Vec<_> = (three.into_iter())
                 .map(|(label, answers)| {
+                    let again = all_twice || first.as_deref() == Some(label.as_str());
                     scope.spawn(move || {
-                        let (_, came) = twice(&label, answers);
+                        let (_, came) = match again {
+                            true => twice(&label, answers),
+                            false => once(&label, answers),
+                        };
                         (label, came)
                     })
                 })
@@ -167,7 +188,7 @@ fn row_1_a_violation_of_a_protected_subject_of_the_geometry_or_of_rq2_ends_the_a
             ));
         }
     }
-    let came = each(cases);
+    let came = each(cases, false);
     assert_eq!(came.len(), 12);
     for (label, came) in came {
         one_attempt(&came, Decision::Fail, DAMAGED, &label);
@@ -192,7 +213,7 @@ fn row_1_a_finding_that_cites_rq1_and_sf1_together_ends_the_attempts() {
         let answers = vec![submission(items(&[]), observed), passes()];
         (format!("row1-together-{label}"), answers)
     });
-    for (label, came) in each(cases.into()) {
+    for (label, came) in each(cases.into(), true) {
         one_attempt(&came, Decision::Fail, DAMAGED, &label);
     }
 }
@@ -291,7 +312,7 @@ fn row_4_held_allowed_change_hidden_cant_tell_and_observed_each_enlarge_nothing(
             ));
         }
     }
-    for (label, came) in each(cases) {
+    for (label, came) in each(cases, false) {
         if label == "row4-held-confident" {
             assert_eq!(came.attempts, [(Some(Decision::Pass), None)], "{label}");
             assert_eq!(came.ended, "attempt 1 passed", "{label}");
@@ -370,7 +391,7 @@ fn a_finding_is_read_by_its_obligations_disposition_and_confidence_in_either_for
             observed("tentative"),
         ),
     ];
-    let came = each(cases);
+    let came = each(cases, true);
     // What `row_2_…widens_once…` holds of the same answer as an item.
     let retried = &came[0].1;
     assert_eq!(

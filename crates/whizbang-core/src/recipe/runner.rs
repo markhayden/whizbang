@@ -60,6 +60,12 @@
 //! argument [`DIGEST_ARGUMENT`] is given it too, so what the step keeps of its call (a
 //! key of the decision cache, ADR 0031) changes with the file.
 //!
+//! **A step that found nothing.** A step's port that takes at least one artifact, bound
+//! to an output where an earlier step of the same run committed none, ends the run as
+//! invalid before the step is called, saying which step found nothing (plan m4, task
+//! E1): `remove_prompt` given a phrase that names nothing in the picture says that its
+//! step `segment` found nothing, not that `select` was given 0 masks.
+//!
 //! **What is not an artifact** (ADR 0035). A step's argument bound to an earlier step's
 //! measurements is given them as one JSON text, as that step's run handed them back; and
 //! the verdict of a last step that answers with one is the recipe's, handed back with its
@@ -484,6 +490,36 @@ impl RecipeAction {
         self.recipe.steps.iter().position(|step| step.id == *id)
     }
 
+    /// Whether a step of this run, earlier than the one at `at`, found nothing that the
+    /// step at `at` needs: an input port that takes at least one artifact, bound to an
+    /// output of a step that ran in this run (at `first` or after) and committed none
+    /// there. Said in a sentence of its own, naming the step that found nothing, rather
+    /// than as the next step's refusal of a count (plan m4, task E1: a phrase that names
+    /// nothing in the picture, in `remove_prompt`).
+    fn found_nothing(
+        &self,
+        at: usize,
+        first: usize,
+        ids: impl Fn(&Binding) -> Vec<ArtifactId>,
+    ) -> Option<String> {
+        let steps = &self.recipe.steps;
+        let step = &steps[at];
+        step.inputs.iter().find_map(|(port, binding)| {
+            let Binding::Step { step: of, .. } = binding else {
+                return None;
+            };
+            let ran = (steps.iter().position(|s| s.id == *of))
+                .filter(|&earlier| earlier >= first && earlier < at)?;
+            let needed = self.steps[at].input(port)?.count().min() > 0;
+            (needed && ids(binding).is_empty()).then(|| {
+                format!(
+                    "the step {of} ({}) found nothing, so the step {} ({}) had no {port} to take",
+                    steps[ran].action, step.id, step.action
+                )
+            })
+        })
+    }
+
     /// What is wrong with a run from the step at `first` to the one at `last`, given
     /// these artifacts at the `from` ports, by step and port: none when every step of
     /// the stretch, and every output the recipe then hands back, has what it takes.
@@ -727,6 +763,9 @@ impl Action for RecipeAction {
                     DIGEST_ARGUMENT.to_owned(),
                     Value::text(&self.digest.to_string()),
                 ));
+            }
+            if let Some(fault) = self.found_nothing(at, first, |binding| ids(binding, &made)) {
+                return Err(Failure::invalid(&fault));
             }
             let mut asked = Call::new(&step.action);
             for (argument, value) in &arguments {

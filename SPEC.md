@@ -135,7 +135,11 @@ capabilities, with a judge held where its calls are dispatched, in ADR 0009
   features the action needs, and whether it may run concurrently.
 - **Prepare.** Resolves a call's artifact bindings and returns readiness for these exact
   arguments and a bounded estimate. It has no side effects and never spends. Its result is
-  bound to the digests of the inputs, the config and the model identities it saw.
+  bound to the digests of the inputs, the config and the model identities it saw. An action
+  that plans states its plan here: the requests it will send each capability and, for a
+  loop, how many attempts it may make and whether it checks. The plan decides the estimate,
+  the call runs under it or not at all, and it is in the run's record (ADR 0004, "A call's
+  plan").
 - **Admit.** Revalidates a prepared call against those digests, reserves its spend, and assigns
   a run. A stale preparation is refused. A refusal happens before any run exists and is not an
   outcome.
@@ -524,7 +528,8 @@ This is the full promise. Each kept item has an acceptance case in its milestone
 | Recipes: the format and runner move to the core; rascal's tasks are its recipes | Kept | Milestone 3 |
 | Mask export and import | Kept | Milestone 3 |
 | The lab: recipe and filler matrices, resumable cells, blinded pair review | Kept, on the shared harness | Milestone 3 |
-| Bounded check and retry | Kept, as nested calls | Milestone 4 |
+| Bounded check and retry | Kept, as nested calls: the loop `remove_checked` (ADR 0039) | Milestone 4 |
+| `carry`: a mask on a crop carried onto the picture the crop was cut from, which rascal's `invert` did through its `to` | Kept, as an action of its own | Milestone 4 |
 | Replay from a journal; invocation bundles | Deferred | Milestone 7 |
 | Segmenters other than SAM 3 and Tiny; local fill | Deferred | Milestone 8 |
 | Compatibility export of schemas | Dropped | |
@@ -1008,8 +1013,8 @@ spends.
 | Workflow | Runs | Contains |
 |---|---|---|
 | `ci` | Every pull request | Fast tier on both targets; Chrome end to end, from milestone 5, when the playground exists; reference check; secrets scan; the secrets scan and attribution check over every commit |
-| `prerelease` | On a release candidate tag | Model tier; a live call to each provider; install from the built archive on both targets. A release is refused unless this passed on the same commit |
-| `release` | On a version tag | Binaries for both targets and the pack |
+| `prerelease` | On a release candidate tag | The archive built, and installed from it, on both targets. The model tier and a live call to each provider are not GitHub's: they are the local leg, run on the owner's Mac against the candidate's own archive, whose receipt is attached to the candidate. A release is refused unless both passed on the same commit |
+| `release` | On a version tag | The candidate's two archives, one for each target, the pack inside the binary, and their `SHA256SUMS`, published as they are; nothing is built again |
 
 **Process.** One short plan per milestone in `docs/plans/`. A note and a timing report at each
 checkpoint; a tag where the result is an installable state worth returning to. ADRs only for
