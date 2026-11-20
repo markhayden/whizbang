@@ -23,7 +23,8 @@ The same call over the MCP server is the tool `remove_checked`, with the argumen
 An attempt is one removal with the check of its result.
 
 1. **Find.** The segmenter finds what the phrase names, and the instances are joined into
-   one mask. This is asked once, in the first attempt.
+   one mask. The whole picture is asked about once, in the first attempt; a retry may ask
+   again inside the places the judge named (below).
 2. **Shape.** The mask is grown, closed, plugged, kept off `--protect` and feathered, by
    the steps of the recipe `remove_prompt` and with its settings.
 3. **Fill.** The filler paints what the mask covers. Nothing is sent to the filler until
@@ -37,8 +38,36 @@ An attempt is one removal with the check of its result.
 Every attempt fills the picture the loop was given, never an earlier attempt's result.
 
 **When it tries again.** Only when the judge says, with confidence, that the named thing
-is still there, and reports nothing damaged. The retry shapes the same found mask again,
-grown twice as far, once in a run. It does not try again when the verdict is `unsure`;
+is still there, and reports nothing damaged. What the retry does depends on whether the
+judge said where.
+
+- **It named a place.** The retry looks for the thing again inside that place. The picture
+  the loop was given, not the fill, is cut to the place, a twentieth wider on each side;
+  the segmenter is asked the same phrase inside the crop, for at most four instances; and
+  each mask it finds is carried onto the picture and joined to the mask of the attempt
+  before. A place where the segmenter finds nothing joins as it is, the whole box: the
+  judge said with confidence that the thing is there. That holds only for a place of at
+  most a tenth of the picture's pixels: a larger one that nothing is found in is not
+  joined, so that one finding cannot have a large part of the picture painted. Then the mask is shaped, filled and
+  checked as in the first attempt. At most eight places are looked into in one retry, and
+  only the places of the findings that say the named thing remains: a place the judge
+  named for anything else is never cut, asked about or painted.
+- **It named none.** The retry shapes the same found mask again, grown twice as far, once
+  in a run.
+
+When some findings name places and some do not, the retry looks into the places. A place
+counts as none when it is on another picture than the fill the judge was shown; when it
+covers no pixel; when its cut would be over 1,024 pixels on a side, which `view` would
+scale down, and a mask on a scaled crop is not carried; when its cut would be the whole
+picture; and always when the picture is a panorama, since `view` cuts flat pictures only.
+A polygon is used by the box around it. When the places were looked into and nothing
+joined, the retry is the wider mask.
+
+A retry whose mask covers the same pixels as the one before it is not filled or checked
+again. When that retry looked into places, the wider mask is tried next, if it has not
+been used and the plan has an attempt left; otherwise the attempts end.
+
+It does not try again when the verdict is `unsure`;
 when the judge reports that the removal changed a protected subject, the scene's geometry
 or anything else in the picture, because painting more cannot mend that; when the judge's
 findings were cut short; or when the last attempt of the plan has been made.
@@ -49,11 +78,13 @@ How many attempts the call may make, and whether it checks, is settled when the 
 prepared, and printed on the error stream before anything runs:
 
 ```
-plan: 3 of 3 attempts asked, checked; fill 3; judge 48
+plan: 3 of 3 attempts asked, checked; segment 17; fill 3; judge 48
 ```
 
-That is: three attempts allowed of the three asked, each checked; at most three requests
-of the filler; at most 48 of the judge, sixteen turns for each check. What the call
+That is: three attempts allowed of the three asked, each checked; at most 17 requests of
+the segmenter, one to find and eight for each of the two retries, one for each place a
+retry may look into; at most three requests of the filler; at most 48 of the judge,
+sixteen turns for each check. What the call
 reserves is the bound of all of it, once, and every step draws on that one reservation.
 The call then runs under that plan or not at all: a config or a key that changes between
 the plan and the run refuses the call as stale.
@@ -75,7 +106,9 @@ check is the bound of one request of the judge at the backend's ceilings (40,000
 tokens and 4,096 output tokens when the config gives none), times the sixteen turns a
 check may take ([The config file](config.md), "What one request may cost"). A fill is one
 request of the filler: with the shipped filler, Bria Eraser on fal, a fill reserves 0.04
-dollars. The segmenter on the Mac costs nothing. So, in US dollars:
+dollars. The segmenter on the Mac costs nothing, so the eight requests each retry may send
+it add nothing here; a segmenter with a price adds eight times its bound for each attempt
+after the first. So, in US dollars:
 
 | Judge | One check | One attempt | Two attempts | Three attempts |
 |---|---|---|---|---|
@@ -98,7 +131,7 @@ plan. When three attempts would reserve more than the cap, the plan is the most 
 the cap covers, and it says so:
 
 ```
-plan: 2 of 3 attempts asked, checked; fill 2; judge 32; the call cap covers 2 of the 3 attempts asked
+plan: 2 of 3 attempts asked, checked; segment 9; fill 2; judge 32; the call cap covers 2 of the 3 attempts asked
 ```
 
 With `gpt-6.1-terra` and a cap of 2.50, that is two attempts (2.01536) and not three
@@ -113,7 +146,7 @@ On the error stream, while it runs: the plan, then each attempt as it starts and
 ends.
 
 ```
-plan: 3 of 3 attempts asked, checked; fill 3; judge 48
+plan: 3 of 3 attempts asked, checked; segment 17; fill 3; judge 48
 remove_checked: attempt 1 of 3 starts
 remove_checked: attempt 1 ended: fail
 remove_checked: attempt 2 of 3 starts
@@ -175,9 +208,14 @@ They are those of `whizbang squint check`: a verdict does not change the exit co
 ## The record
 
 `whizbang runs show <run>` prints the loop's attempts after its calls: each attempt's
-verdict, or the reason it has none; what its retry changed; how many runs it made; and
-what its requests settled; then which was kept and why the attempts ended. Every call an
-attempt made is a run of its own under the loop's, shown by its own id. The record also
+verdict, or the reason it has none; what its retry changed (a wider mask, or how many crops
+it looked into); how many runs it made; and what its requests settled; then which was kept
+and why the attempts ended. Every call an attempt made is a run of its own under the
+loop's, shown by its own id. For a retry that looked into places the record lists each
+crop it cut, by the crop's identity, with the first mask found in it as it was carried
+onto the picture, or nothing where the place joined as itself; where the crop sits is in
+the record of the `view` run that cut it, and every mask found is an output of the `carry`
+run after it. The record also
 holds the plan the run was admitted under, the digest of the template the job was written
 from, and the kept attempt's verdict and the counts of its findings. No text of a judge's
 is in what the loop reads or records of its attempts.
@@ -198,10 +236,10 @@ later call can take one.
 
 ## What it does not do yet
 
-- A retry aimed at the place the judge named is the next task of the plan (m4, L2). Until
-  it lands, a retry widens the whole mask, once. So a call that asks three attempts
-  reserves for three and makes two at most; what the third would have cost is given back
-  when the run ends.
+- A place whose cut would be over 1,024 pixels on a side is not looked into, and a
+  polygon is used by the box around it (`docs/carry-over.md`).
+- The segmenter is asked inside a crop as it is asked about the picture: with the same
+  phrase and no lower threshold.
 - The loop is marked experimental. Its tool record,
   `docs/reference/tools/remove_checked.md`, shows it on two worked examples, one of them a
   case it handles badly, and says what of its scoring is shown. What it did on real

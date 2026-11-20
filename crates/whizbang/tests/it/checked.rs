@@ -22,7 +22,8 @@ use whizbang::wiring::{self, Over};
 use whizbang_core::artifact::{self, ArtifactId, ArtifactType};
 use whizbang_core::capability::written::read_script;
 use whizbang_core::capability::{
-    Bounds, Declaration, Fault, FillRequest, Filler, Painted, Price, feature,
+    Bounds, Declaration, Fault, FillRequest, Filler, Judge, JudgeRequest, Painted, Price,
+    SegmentRequest, SegmentResponse, Segmenter, Turn, feature,
 };
 use whizbang_core::config::{Kind, KindRefused, Table};
 use whizbang_core::contract::record::{
@@ -66,9 +67,10 @@ pub const JUDGE_BOUND: u64 = 1_000;
 /// The bound of one check: every turn the judge's loop may take.
 pub const CHECK_BOUND: u64 = JUDGE_BOUND * whizbang_squint::check::TURNS_LIMIT as u64;
 
-/// The bound of this many checked attempts.
+/// The bound of this many checked attempts: the segmenter once to find and eight
+/// times for each retry, the places it may look into; a fill and a check for each.
 pub fn bound_of(attempts: u64) -> u64 {
-    SEGMENT_BOUND + attempts * (FILL_BOUND + CHECK_BOUND)
+    SEGMENT_BOUND * (1 + 8 * (attempts - 1)) + attempts * (FILL_BOUND + CHECK_BOUND)
 }
 
 /// The checklist of the job the loop writes: one item for each rule that must hold and
@@ -136,6 +138,17 @@ pub fn remains() -> Json {
 pub struct Setup {
     /// What the segmenter finds for [`PHRASE`], as left, top, right and bottom.
     pub found: [u32; 4],
+    /// What it finds for [`PHRASE`] inside a crop, each in the crop's own pixels:
+    /// nothing, unless a test says.
+    pub inside: Vec<[u32; 4]>,
+    /// Whether the picture is a panorama, of the same 64 by 64, and not a flat picture.
+    pub panorama: bool,
+    /// The least side of a crop it finds that in: in a smaller crop, nothing.
+    pub inside_least: u32,
+    /// Whether it fails every request about a crop.
+    pub inside_fails: bool,
+    /// What it reports it charged for a request about a crop, when not its bound.
+    pub inside_charges: Option<u64>,
     /// The submissions the judge plays, one for each check that is made. One that is
     /// a tool call (`{"tool_call": …}`) is a turn that calls that tool instead.
     pub answers: Vec<Json>,
@@ -176,6 +189,11 @@ impl Setup {
     pub fn answering(answers: Vec<Json>) -> Setup {
         Setup {
             found: FOUND,
+            inside: Vec::new(),
+            panorama: false,
+            inside_least: 0,
+            inside_fails: false,
+            inside_charges: None,
             answers,
             judge: true,
             cached: false,
@@ -189,6 +207,64 @@ impl Setup {
             allowance: 1_000_000,
             on_disk: false,
         }
+    }
+}
+
+/// The kit's segmenter: the fake that finds [`Setup::found`] in the picture, and a
+/// second that is asked about anything of another size, a crop, and finds
+/// [`Setup::inside`] there.
+struct Segments {
+    whole: FakeSegmenter,
+    inside: FakeSegmenter,
+    /// What is asked about a crop smaller than `least` on a side, and finds nothing.
+    nothing: FakeSegmenter,
+    least: u32,
+    /// The size of each crop it was asked about, in the order asked.
+    crops: Mutex<Vec<(u32, u32)>>,
+}
+
+impl Segmenter for Segments {
+    fn declaration(&self) -> &Declaration {
+        self.whole.declaration()
+    }
+
+    fn segment(&self, request: &SegmentRequest, bounds: &Bounds) -> Result<SegmentResponse, Fault> {
+        let size = (request.image().width(), request.image().height());
+        if size == (64, 64) {
+            return self.whole.segment(request, bounds);
+        }
+        let mut crops = self.crops.lock().unwrap_or_else(PoisonError::into_inner);
+        crops.push(size);
+        drop(crops);
+        match size.0.min(size.1) < self.least {
+            true => self.nothing.segment(request, bounds),
+            false => self.inside.segment(request, bounds),
+        }
+    }
+}
+
+/// What a test has the kit do once, just after the judge has answered and before its
+/// answer is handed on: empty until a test says ([`Kit::after_judge`]).
+type Hook = Arc<Mutex<Option<Box<dyn FnOnce() + Send>>>>;
+
+/// The kit's judge: the scripted fake, and the hook.
+struct Judges {
+    plays: Arc<FakeJudge>,
+    after: Hook,
+}
+
+impl Judge for Judges {
+    fn declaration(&self) -> &Declaration {
+        self.plays.declaration()
+    }
+
+    fn send(&self, request: &JudgeRequest, bounds: &Bounds) -> Result<Turn, Fault> {
+        let turn = self.plays.send(request, bounds);
+        let hook = (self.after.lock().unwrap_or_else(PoisonError::into_inner)).take();
+        if let Some(hook) = hook {
+            hook();
+        }
+        turn
     }
 }
 
@@ -230,7 +306,7 @@ impl Filler for Fills {
 /// The kind `loopkit`: the three backends of one test, each made once and handed out
 /// again whenever the config is read.
 pub struct Kit {
-    segmenter: Arc<FakeSegmenter>,
+    segmenter: Arc<Segments>,
     filler: Arc<Fills>,
     judge: Arc<FakeJudge>,
     /// A second filler and a second judge, each at twice the first's bound, handed out
@@ -239,6 +315,7 @@ pub struct Kit {
     dear_judge: Arc<FakeJudge>,
     /// Whether the judge is ready: a test turns it off as a key that has gone.
     pub judge_ready: AtomicBool,
+    after_judge: Hook,
 }
 
 impl Kit {
@@ -264,6 +341,24 @@ impl Kit {
         if let Some(micros) = setup.segment_charges {
             segmenter = segmenter.charging(micros);
         }
+        let mut inside =
+            FakeSegmenter::new().declared_as(priced("segment", &features, SEGMENT_BOUND));
+        for found in &setup.inside {
+            inside = inside.finding(PHRASE, *found);
+        }
+        if let Some(micros) = setup.inside_charges.or(setup.segment_charges) {
+            inside = inside.charging(micros);
+        }
+        if setup.inside_fails {
+            inside = inside.failing_at(whizbang_core::capability::Stage::NotSent);
+        }
+        let segmenter = Segments {
+            whole: segmenter,
+            inside,
+            nothing: FakeSegmenter::new().declared_as(priced("segment", &features, SEGMENT_BOUND)),
+            least: setup.inside_least,
+            crops: Mutex::new(Vec::new()),
+        };
         let filler_of = |paint: Paint, called: &str, bound: u64| {
             let mut fake = FakeFiller::new(paint).declared_as(named("fill", called, &[], bound));
             if let Some(micros) = setup.fill_charges {
@@ -312,7 +407,15 @@ impl Kit {
             dear_filler: Arc::new(fills(DEAR, 2 * FILL_BOUND)),
             dear_judge: Arc::new(judge_of(DEAR, 2 * JUDGE_BOUND)),
             judge_ready: AtomicBool::new(true),
+            after_judge: Hook::default(),
         }
+    }
+
+    /// Has the kit do this once, just after the judge has next answered and before
+    /// its answer is handed on.
+    pub fn after_judge(&self, hook: impl FnOnce() + Send + 'static) {
+        let hook: Box<dyn FnOnce() + Send> = Box::new(hook);
+        *(self.after_judge.lock()).unwrap_or_else(PoisonError::into_inner) = Some(hook);
     }
 
     /// How many requests the second filler and the second judge were sent.
@@ -323,10 +426,19 @@ impl Kit {
         )
     }
 
-    /// How many requests each backend was sent: the segmenter, the filler, the judge.
+    /// The size of each crop the segmenter was asked about, in the order asked.
+    pub fn crops(&self) -> Vec<(u32, u32)> {
+        let crops = self.segmenter.crops.lock();
+        crops.unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    /// How many requests each backend was sent: the segmenter, about the picture and
+    /// about crops together, the filler, the judge.
     pub fn requests(&self) -> (u64, u64, u64) {
         (
-            self.segmenter.requests(),
+            self.segmenter.whole.requests()
+                + self.segmenter.inside.requests()
+                + self.segmenter.nothing.requests(),
             self.filler.asked.load(Ordering::SeqCst),
             self.judge.requests(),
         )
@@ -385,7 +497,10 @@ impl Kind for Handing {
                         "the judge's key is not in the environment",
                     ));
                 }
-                Made::Judge(self.0.judge.clone())
+                Made::Judge(Arc::new(Judges {
+                    plays: self.0.judge.clone(),
+                    after: self.0.after_judge.clone(),
+                }))
             }
         })
     }
@@ -703,7 +818,16 @@ impl Fs for Memory {
 /// and an allowance of this many millionths of a US dollar: made here, in the test's
 /// process, on the file system given, since a command for each took most of a test's
 /// time. What comes back is the store's path and the picture's identity.
-fn with_picture(dir: &Scratch, allowance: u64, fs: Arc<dyn Fs>) -> (PathBuf, String) {
+fn with_picture(
+    dir: &Scratch,
+    allowance: u64,
+    fs: Arc<dyn Fs>,
+    panorama: bool,
+) -> (PathBuf, String) {
+    let (projection, topology) = match panorama {
+        true => (Projection::Equirectangular, Topology::Wrap),
+        false => (Projection::Flat, Topology::Bounded),
+    };
     let mut rgba = Vec::new();
     for y in 0..64_u32 {
         for x in 0..64_u32 {
@@ -717,8 +841,8 @@ fn with_picture(dir: &Scratch, allowance: u64, fs: Arc<dyn Fs>) -> (PathBuf, Str
     let origin = artifact::Origin::new(artifact::Step::new("fixture", "1")).unwrap();
     let picture = artifact::Image::new(
         png,
-        Projection::Flat,
-        Topology::Bounded,
+        projection,
+        topology,
         artifact::ImageRole::Picture,
         origin,
         &DecodeLimits::default(),
@@ -760,7 +884,7 @@ impl Looped {
             None => Arc::new(Unsynced),
             Some(memory) => Arc::new(memory.clone()),
         };
-        let (root, image) = with_picture(&dir, setup.allowance, fs.clone());
+        let (root, image) = with_picture(&dir, setup.allowance, fs.clone(), setup.panorama);
         let mut config = backend("segment");
         if setup.dear {
             // Each capability's default, and a second backend beside it, by name.
@@ -808,10 +932,12 @@ impl Looped {
 
     /// The binary's runner over the store, as a command builds it.
     pub fn engine(&self) -> Engine {
-        // The store is on the real disk, written without the syncs, which are slow
-        // and which these tests do not test.
+        self.engine_of(wiring::registry_over(&self.over, self.cached).unwrap())
+    }
+
+    /// The same runner over these actions, for a test that changes one of the build's.
+    pub fn engine_of(&self, registry: whizbang_core::contract::Registry) -> Engine {
         let store = Arc::new(Store::open(&self.root, self.fs.clone()).unwrap());
-        let registry = wiring::registry_over(&self.over, self.cached).unwrap();
         wiring::runner(registry, store, &self.over).unwrap()
     }
 
@@ -1689,7 +1815,7 @@ fn a_filler_and_a_judge_the_call_names_are_the_ones_asked_and_reserved_for() {
     let prepared = engine.prepare(&call).unwrap();
     assert_eq!(
         prepared.estimate().micros(),
-        SEGMENT_BOUND + 3 * 2 * (FILL_BOUND + CHECK_BOUND)
+        17 * SEGMENT_BOUND + 3 * 2 * (FILL_BOUND + CHECK_BOUND)
     );
     let finished = engine.submit(&call).unwrap();
     drop(engine);
@@ -1776,7 +1902,7 @@ fn the_loop_is_built_only_over_a_recipe_whose_stretches_are_where_it_runs_them()
     use whizbang_rascal::checked::RemoveChecked;
     use whizbang_rascal::recipes::REMOVE_PROMPT;
     let registry = wiring::registry().unwrap();
-    assert!(RemoveChecked::over(&registry, REMOVE_PROMPT).is_ok());
+    assert!(RemoveChecked::over(&registry, &registry, REMOVE_PROMPT).is_ok());
     let step = |id: &str| {
         let at = REMOVE_PROMPT
             .find(&format!("[[step]]\nid = \"{id}\""))
@@ -1812,7 +1938,7 @@ fn the_loop_is_built_only_over_a_recipe_whose_stretches_are_where_it_runs_them()
     let cases = [
         (
             renamed,
-            "remove_prompt has not the steps select, grow, feather and fill",
+            "remove_prompt has not the steps segment, select, grow, feather and fill",
         ),
         (
             between,
@@ -1825,7 +1951,7 @@ fn the_loop_is_built_only_over_a_recipe_whose_stretches_are_where_it_runs_them()
         (no_px, "the step grow of remove_prompt states no px"),
     ];
     for (text, why) in cases {
-        let refused = RemoveChecked::over(&registry, &text).err();
+        let refused = RemoveChecked::over(&registry, &registry, &text).err();
         let said = refused.map(|refused| refused.to_string());
         let wanted = format!("the loop remove_checked cannot be built: {why}");
         assert_eq!(said.as_deref(), Some(wanted.as_str()));

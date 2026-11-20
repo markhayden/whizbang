@@ -1121,7 +1121,7 @@ fn the_loop_is_offered_as_a_tool_and_answers_with_its_plan_its_verdict_and_wheth
     // Its plan, its run, the short result, and the kept attempt's verdict.
     assert_eq!(
         lines[0],
-        "plan: 1 of 1 attempts asked, checked; fill 1; judge 16"
+        "plan: 1 of 1 attempts asked, checked; segment 1; fill 1; judge 16"
     );
     assert!(
         lines[1].starts_with("run ") && lines[1].ends_with(" completed"),

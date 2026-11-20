@@ -32,8 +32,10 @@ use crate::operation;
 /// The action's name.
 pub const NAME: &str = "invert";
 
-/// The action's version, which a mask it made records in its origin.
-pub const VERSION: &str = "1.0.0";
+/// The action's version, which a mask it made records in its origin. 1.1.0 takes a
+/// mask on a crop of the image, with the crop and its corner; what it gives for a mask
+/// on the image itself is what 1.0.0 gave.
+pub const VERSION: &str = "1.1.0";
 
 /// What the command says the action does.
 pub const ABOUT: &str = "Make the mask for a second pass on an image: everything the first mask reached, its core, \

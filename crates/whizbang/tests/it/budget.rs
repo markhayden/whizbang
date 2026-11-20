@@ -132,7 +132,7 @@ fn the_plan_is_the_most_attempts_the_call_cap_covers_and_says_asked_and_allowed(
     );
     assert_eq!(
         plan.line(),
-        "plan: 2 of 3 attempts asked, checked; fill 2; judge 32; the call cap covers 2 of \
+        "plan: 2 of 3 attempts asked, checked; segment 9; fill 2; judge 32; the call cap covers 2 of \
          the 3 attempts asked"
     );
     assert_eq!(prepared.estimate().micros(), bound_of(2));
@@ -292,33 +292,53 @@ fn a_child_refused_for_want_of_allowance_ends_the_attempts_and_keeps_what_comple
 #[test]
 fn three_attempts_at_their_largest_stay_inside_a_trees_runs_and_a_runs_calls() {
     use whizbang_squint::check::CALLS_LIMIT;
-    // The most this loop makes is two attempts: a wider mask is used once. Counted.
-    let (world, finished) = looped(
-        "budget-count",
-        &Setup::answering(vec![remains(), remains()]),
-    );
+    // Three attempts, made: the judge names eight places after the first and eight
+    // others after the second, the segmenter finds four things inside each, and the
+    // third attempt fails too. No loop makes more calls than this one.
+    let mut setup = Setup::answering(vec![
+        crate::located::eight(0),
+        crate::located::eight(2),
+        remains(),
+    ]);
+    setup.inside = vec![[2, 2, 5, 5], [6, 2, 9, 5], [2, 6, 5, 9], [6, 6, 9, 9]];
+    let (world, finished) = looped("budget-count", &setup);
+    let attempts = world.attempts(&finished);
+    assert_eq!(attempts.list.len(), 3);
+    assert_eq!(attempts.ended, "the last attempt the plan allows");
+    // The third attempt's fill and check were asked, on what was reserved for them:
+    // every request the plan states of the segmenter and the filler was sent.
+    assert_eq!(world.kit.requests(), (17, 3, 3));
     let record = world.record(finished.run().as_str());
+    assert_eq!(record.spend().reserved_micros, Some(bound_of(3)));
+    assert!(settled(&world) <= bound_of(3));
     let own = calls(&record);
-    assert_eq!(own.len(), 7);
+    // The first attempt is four calls of the loop's own; a located retry of eight
+    // places is three for each place, the join, the shape, the fill and the check.
+    let located = 8 * 3 + 1 + 3;
+    assert_eq!(own.len(), 4 + 2 * located);
     let all = records(&world);
     // The first attempt: the find and its two steps, the shape and its five, the fill
-    // and its one, the check and its two. A retry is all of that but the find.
-    let (first, retry) = (3 + 6 + 2 + 3, 6 + 2 + 3);
-    assert_eq!(all.len(), 1 + first + retry);
-    // Three attempts, each check dispatching every tool call a check may: under 200
-    // runs, of the 1,024 a tree may hold; and no run makes more calls than the check
-    // that dispatches them all, of the 256 one run may make.
-    let largest = 1 + first + 2 * retry + 3 * CALLS_LIMIT;
-    assert_eq!(largest, 133);
+    // and its one, the check and its two. A located retry: a run for each call that
+    // looks into a place, the join and its one step, and the rest as the first's.
+    let (first, retry) = (3 + 6 + 2 + 3, 8 * 3 + 2 + 6 + 2 + 3);
+    assert_eq!(all.len(), 1 + first + 2 * retry);
+    // With each check dispatching every tool call a check may: under 200 runs, of the
+    // 1,024 a tree may hold.
+    let largest = all.len() + 3 * CALLS_LIMIT;
+    assert_eq!(largest, 185);
     let limits = [200, DESCENDANTS_LIMIT];
     assert!(limits.iter().all(|limit| largest < *limit), "{largest}");
-    // Here the run that makes the most calls is the loop itself, with its seven; with
-    // three attempts it makes ten, and a check at most as many as it may dispatch.
+    // The run that makes the most calls is the loop itself, with its sixty, of the
+    // 256 one run may make; a check makes at most as many as it may dispatch.
     let most_calls = (all.iter())
         .map(|(_, record)| record.steps().len())
         .max()
         .unwrap();
     assert_eq!(most_calls, own.len());
-    let calls_of_one_run = [4 + 3 + 3, CALLS_LIMIT];
+    let calls_of_one_run = [own.len(), CALLS_LIMIT];
     assert!(calls_of_one_run.iter().all(|calls| *calls <= 256));
+    // And an attempt lists its runs within what a record holds of one.
+    let listed = attempts.list.iter().map(|attempt| attempt.runs.len());
+    assert_eq!(listed.max(), Some(located));
+    assert!(located <= whizbang_core::contract::record::ATTEMPT_RUNS_LIMIT);
 }

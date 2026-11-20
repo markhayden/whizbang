@@ -20,7 +20,7 @@ empty, and the mask is recorded as made to protect. The task `protect` runs it a
   `unwindow`'s, and a mask on one is not carried.
 - **Kind.** A pure pixel operation: rungs 1 and 2 apply. No model, no spend.
 
-The action `invert`, version 1.0.0:
+The action `invert`, version 1.1.0:
 
 ```
 whizbang rascal invert --mask <identity> --image <identity>
@@ -116,4 +116,4 @@ this one does.
 
 **History.** Plan m3, task O1: ported from rascal's `invert.rs` at the pinned commit.
 Plan m3, task D2: this record. Plan m4, task L2: a mask on a crop of the image, carried
-onto it first (rascal's `to`, for a crop).
+onto it first (rascal's `to`, for a crop), as version 1.1.0.

@@ -32,7 +32,7 @@ whizbang rascal carry --mask <identity>... --crop <identity> --image <identity>
 | Name | Meaning |
 |---|---|
 | `mask` (input, 1 to 64) | The masks to carry, each on the crop |
-| `crop` (input) | The crop the masks are on: the picture's own pixels, not scaled |
+| `crop` (input) | The crop the masks are on: the picture's own pixels, cut pixel for pixel and not scaled (a cut of at most 1,024 pixels on its longer side) |
 | `image` (input) | The picture the crop was cut from |
 | `left`, `top` | The crop's corner on the picture, in whole pixels: what `view` prints as the left and top of the crop's binding |
 
@@ -103,7 +103,7 @@ is compared with the picture, where rascal's frame named its parent and was beli
 
 | Limit | Example |
 |---|---|
-| A crop that `view` scaled down is refused: its pixels are averages, not the picture's. `view` scales a cut whose longer side is over 1,024 pixels | `carry::a_mask_on_a_crop_of_another_picture_is_refused` (any crop whose pixels are not the picture's there) |
+| The crop must not be scaled: `view` scales down a cut whose longer side is over 1,024 pixels, and a mask on such a crop is at another scale than the picture. The comparison refuses a scaled crop only where its pixels differ from the picture's: a scaled crop of a region of one flat colour compares equal, and its mask would land at the wrong scale. Give `carry` only a crop cut pixel for pixel | `carry::a_mask_on_a_crop_of_another_picture_is_refused` (any crop whose pixels are not the picture's there) |
 | The corner is the call's to give: the crop names no parent, and `view` reports the corner in its measurements, not on the crop | `whizbang squint view` prints the crop's binding |
 | A picture that holds the crop's pixels at two corners takes the mask at either | A flat colour: every corner compares equal |
 | A mask with a feather's profile or a prescription is refused: carry it before it is feathered | `carry.rs`, `Placed::carry` |

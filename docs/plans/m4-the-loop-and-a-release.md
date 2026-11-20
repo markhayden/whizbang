@@ -845,7 +845,7 @@ for both.
     recipe that names a loop as a step is refused when it is read, with a sentence saying
     why, instead of failing deep inside a paid run (open question 8).
 
-- [ ] Done when:
+- [x] Done when:
   `checked::a_first_attempt_that_passes_is_one_find_one_shape_one_fill_and_one_check`,
   `checked::no_fill_is_asked_before_its_shaped_mask_is_in_hand`,
   `checked::a_retry_whose_shaped_mask_is_the_one_before_is_not_filled`, and one test for
@@ -937,7 +937,8 @@ seconds of processor time together there, and take 12 in memory.
 is `#[ignore]`d and is in the model tier's filter, and has not been run: a builder loads
 no real model. The box is ticked when `just test-models model_tier` has run it on the
 Mac. Every other clause is shown by its test, `just docs` is regenerated, and the four
-carry-over rows are closed.
+carry-over rows are closed. **Ticked with task L2** (2026-11-20): the orchestrator ran the
+model tier on the Mac at 3b92a258, and all 8 `model_tier` tests passed, that one among them.
 
 **Reworded with the task** (L1, 2026-11-20). Three clauses of the "Done when" above are
 met otherwise than they are worded.
@@ -1100,7 +1101,7 @@ again inside that place, adds what it finds to the mask, and fills again.
    the picture, the masks they gave, by identity, and the places that joined as themselves
    because nothing was found there: the fields K1 wrote for it.
 
-- [ ] Done when:
+- [x] Done when:
   `carry::a_mask_on_a_crop_lands_on_its_picture_and_is_empty_outside_the_crop`,
   `carry::a_mask_on_a_crop_of_another_picture_is_refused`,
   `invert::invert_from_a_crop_mask_lands_protect_on_its_bbox` (rascal's vector),
@@ -1125,6 +1126,122 @@ again inside that place, adds what it finds to the mask, and fills again.
 **Keeping tests lean (L2).** L1's fixture, with a scripted judge that names boxes and, for
 each, its obligations, disposition and confidence; the carry is exact arithmetic on masks
 of 32 by 32.
+
+**The box stays open for one clause** (L2, 2026-11-20).
+`model_tier::a_located_retry_finds_the_phrase_inside_a_crop_with_sam3` is written, is
+`#[ignore]`d and is in the model tier's filter, and has not been run: a builder loads no
+real model. The box is ticked when `just test-models model_tier` has run it on the Mac.
+Every other clause is shown by its test, `just docs` is regenerated, and the row on
+`invert`'s `to` is narrowed to its half about a cut canvas. **Ticked after the review**
+(2026-11-20): the orchestrator ran the model tier on the Mac at 1adf52f9, and all 9
+`model_tier` tests passed, that one among them.
+
+**Where the tests are (L2).** `carry::` and `invert::` are `whizbang-rascal`'s
+(`crates/whizbang-rascal/tests/it/`), on a picture of 32 by 32 and on rascal's of 100 by
+60. `located::` is a module of the binary's tests on L1's fixture, whose segmenter now
+finds what a test says inside a crop, nothing in a crop under a size a test gives, or
+fails there; `record::`, `cli::` and `model_tier::` are in the files of those names. The
+loop's ways out that L1 left untested are `stopped::`, and the largest run is
+`budget::three_attempts_at_their_largest_…`, now made and counted.
+
+**Reworded with the task** (L2, 2026-11-20). These are met otherwise than they are worded.
+
+- Item 1, "offered where rascal offered it, as `invert`'s `to`". Rascal's `to` named a
+  frame on the mask's chain. An image here names no parent, so `invert` is given the crop
+  the mask is on, beside the image, and the crop's corner as `left` and `top`. "Refused
+  when the crop is not of that picture" is held by comparing the two pictures: the crop's
+  pixels are the picture's at that corner, or the call is refused. So a crop `view`
+  scaled down (a cut over 1,024 pixels on a side) is not carried.
+- Item 3, "for each place". A place whose cut would be over 1,024 pixels on a side is not
+  looked into, for that reason: a finding that cites only such a place counts as one that
+  cites none. A polygon is used by the box around it. A cut is widened to eight pixels
+  where it is less, the least `view` cuts. Each has its line in `docs/carry-over.md`.
+- Item 7, "lists the crops it cut, as boxes on the picture, the masks they gave". The
+  fields K1 wrote hold, for each crop, the crop's identity and one mask or none, and at
+  most eight crops. So the record lists each crop by its identity, with the first mask it
+  gave, as carried onto the picture, or none where the place joined as itself. The box is
+  in the record of the `view` run that cut the crop, and every mask a crop gave is an
+  output of its `carry` run; both are among the attempt's runs.
+- "`located::a_confident_violation_of_rq1_with_a_place_segments_inside_it_and_the_mask_grows_there`".
+  A mask that is no output of the loop is not kept in the store once the run is over, so
+  the found mask of a retry cannot be read back. The test holds what `select` was given
+  (the found mask of the first attempt and the carried mask), where the cut was made and
+  asked, and that the kept mask weighs where the thing was found inside the place and the
+  mask of a first attempt that passes, made in a store of its own, does not.
+- "`located::a_place_of_a_tentative_violation_or_of_any_other_disposition_is_never_cut_segmented_or_painted`".
+  Shown for a tentative violation, `hidden` and `cant_tell`, each with a place, and for a
+  tentative violation beside a confident one. A submission cannot say `allowed_change` or
+  `observed` of `RQ1` (L1's rewording), and a `held` item cites no place.
+- "`located::no_more_than_eight_places_are_used_and_the_plans_bound_covers_them`". A
+  ninth place cannot reach the loop through a check: findings hold eight places, and a
+  check that cites more hands back findings that are not complete, which end the attempts
+  by row 0. The test shows that, and the bound of eight on the loop's own function
+  (`checked::located::usable`), given nine.
+- Item 5, "row 2 findings that cite places give the located retry", and item 4, "the
+  comparison … [is] L1's, unchanged". Changed by the orchestrator's decision after the
+  review of the task. The comparison is by the pixels a fill reads, not by identity: a
+  place that joins as itself names its place in its mask, and had another identity for
+  the same pixels, so a fill and a check were paid for a mask already tried
+  (`located::a_place_that_joins_as_itself_inside_the_mask_before_is_not_filled_again`).
+  And a located retry whose shaped mask is the one before it no longer ends the
+  attempts while the one widening is unused and the plan has an attempt left: the next
+  attempt widens the same found mask
+  (`located::a_located_retry_whose_mask_is_the_one_before_uses_the_widening_then`).
+- Item 3, "a place where the segmenter finds nothing joins as itself". Bounded by the
+  orchestrator's decision after the review: only a place of at most a tenth of the
+  picture's pixels (`located::ITSELF_PART`); a larger one is not joined, and when nothing
+  joined the retry is the wider mask
+  (`located::a_place_over_a_tenth_of_the_picture_does_not_join_as_itself`). The number
+  is to be looked at again with E1's evidence, and has a carry-over row.
+- Item 3 again: two more places are no place. One whose cut is the whole picture, which
+  `carry` cannot carry from (`located::a_place_whose_cut_is_the_whole_picture_is_no_place`);
+  and any place on a picture that is not flat, which `view` does not cut
+  (`located::on_a_panorama_no_place_is_looked_into_and_the_mask_is_widened`).
+- `table::row_2_a_confident_violation_of_rq1_with_no_place_widens_once_and_is_checked_again`
+  (L1's) no longer ends with a finding that cites a box treated as one that cites none:
+  that case is the located retry now.
+
+**Decided with the task (L2).** ADR 0039, amended, has each.
+
+- **The form the carry takes for the loop is an action, `carry`,** a primitive of rascal's
+  with its command and its tool record: a run can hand a nested call only an artifact a
+  call of its own committed, so the carried masks are a call's outputs.
+- **The loop calls six actions** and freezes them: the two recipes, and `view`,
+  `segment`, `carry` and the recipe `mask_rect`, which makes a place a mask in one call.
+  So a place is three calls, as item 6 counts.
+- **A checked plan always states the segmenter's requests,** `segment 1` for one attempt
+  and 17 for three; an unchecked plan states none, as before, and its printed line is
+  unchanged (the install check holds one).
+- **The calls that look into a place are not labelled in the record.** A record holds 32
+  labelled steps, and the largest run makes 48 such calls: with labels its record could
+  not be read back. The stretches are labelled as L1's are, `a2_select` among them.
+- **A wider mask may follow a located retry, and the other way round;** the wider mask is
+  still used once in a run. A located retry whose mask cannot be made (a cut refused, a
+  segmenter that fails, a carry refused) leaves the attempts before it as they stand.
+- **Three attempts at their largest are 185 runs,** made and counted by the test, where
+  item 7 of L1 said "under 200": 89 runs, and 96 tool calls three checks may dispatch.
+- **The last look at the loop's signal is removed, and the rule it held is the record's:**
+  a run that did not complete never says an attempt was kept
+  (`crates/whizbang-core/src/contract/record.rs`; ADR 0005). The carry-over row asked for
+  a test of each untested branch or its removal; a cancellation between the last call's
+  return and that look is a race no test can place.
+- **`invert` is version 1.1.0,** since it gained a port and two arguments (after the
+  review; it kept 1.0.0 in the first push). What it gives for a mask on its own image is
+  unchanged; its mask is now held to the image when the call runs, not when it is
+  prepared, because a port belongs to one image and the mask may be on the crop.
+- **An attempt the record would not take is the loop's error,** of the type `loop`
+  (after the review). No test reaches it: the loop notes at most three attempts, each
+  with a reason of its own writing, cut to what a record holds.
+
+**Notes for E1.**
+
+- A record says of each located retry which crops gave a mask and which places joined
+  as themselves (`changed.crops`, a null mask). It does not say how many places were
+  named and not usable, or looked into and left out for their size: the evidence script
+  can count the places in the findings of the attempt before, and the `view` runs of the
+  attempt, against the crops. The tenth (`located::ITSELF_PART`) is E1's to confirm.
+- `SPEC.md` section 7 names neither the loop nor `carry` (owed since L1, for the task
+  that next touches the spec).
 
 ## R1. The archive, its checksums and the install check (large)
 
