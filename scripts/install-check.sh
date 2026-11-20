@@ -47,10 +47,8 @@
 #     segmenter: on Linux because SAM 3 does not run there, on a Mac because no model is
 #     installed yet. On Linux `whizbang setup --extra torch` is refused before anything is
 #     downloaded.
-#     OWED (plan m4, task R1, item 5, last bullet): the same refusal of the loop's
-#     command, `whizbang rascal remove-checked`, belongs here, marked `HOOK remove-checked`
-#     below. The command is task L1's and is not built yet; whichever of L1 and R2 lands
-#     second adds the lines, with their case in scripts/tests/test-install-check.sh.
+#     The loop's command, `whizbang rascal remove-checked`, is refused the same way,
+#     for the same reason (plan m4, task R1, item 5, last bullet; built with task L1).
 #
 # WHIZBANG_INSTALL_CHECK_LIMIT: the seconds the server has for each answer and for ending,
 # a whole number from 1 to 30; 15 when not set (scripts/tests/test-install-check.sh
@@ -299,10 +297,15 @@ esac
   said "the segment backend default is local" && said "$why" ||
   { shown; die "remove-prompt with the local segmenter must be refused as not ready (exit 1), naming the segmenter and saying: $why"; }
 ok "remove-prompt on the local segmenter is not ready: $why"
-# HOOK remove-checked: once task L1 has built the loop, the same call with `rascal
-# remove-checked --image "$image" --prompt "the corner"` in the place of `remove-prompt
-# ... --until feather` goes here, held to exit 1, to `remove_checked cannot run now` and
-# to the same `$why`.
+# The loop's command: the same refusal, in the loop's own words, for the same reason.
+status=0
+clean whizbang rascal remove-checked --image "$image" --prompt "the corner" --store store --config config.toml \
+  >"$work/out" 2>"$work/err" || status=$?
+cat "$work/err" >>"$work/out"
+[ "$status" -eq 1 ] && said "remove_checked cannot run now: it needs segment with phrase" &&
+  said "the segment backend default is local" && said "$why" ||
+  { shown; die "remove-checked with the local segmenter must be refused as not ready (exit 1), naming the segmenter and saying: $why"; }
+ok "remove-checked on the local segmenter is not ready: $why"
 if [ "$target" = x86_64-unknown-linux-gnu ]; then
   status=0
   clean whizbang setup --extra torch >"$work/out" 2>"$work/err" || status=$?

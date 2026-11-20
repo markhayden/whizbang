@@ -96,6 +96,13 @@ case "\$*" in
     echo "whizbang: remove_prompt cannot run now: it needs segment with phrase, and the segment backend default is local, and its model is not ready: $unready" >&2
     exit 1
     ;;
+  "rascal remove-checked --image $image --prompt the corner --store store --config config.toml")
+    grep -x -F 'model = "sam3"' config.toml >/dev/null || exit 3
+    [ "\$kind" != unchecked-unrefused ] || { echo 'run 100-6 completed'; exit 0; }
+    echo 'plan: 1 of 3 attempts asked, unchecked; fill 1; judge 0; no judge is ready: no default backend is configured for judge, and the call chose none' >&2
+    echo "whizbang: remove_checked cannot run now: it needs segment with phrase, and the segment backend default is local, and its model is not ready: $unready; it needs fill, and no default backend is configured for fill, and the call chose none" >&2
+    exit 1
+    ;;
   'setup --extra torch')
     echo 'whizbang: the extra torch is locked for macOS on Apple silicon only in this build, and this is linux on x86_64; nothing was downloaded and nothing was changed (with no extra, setup installs the pack'"'"'s core, which needs no package)' >&2
     exit 1
@@ -295,6 +302,8 @@ archive "$tmp/no-steps" no-steps
 expect_fail "a run that lists no step" "the run's record must show mask_rect completed, with its two steps completed" check "$tmp/no-steps"
 archive "$tmp/unrefused" unrefused
 expect_fail "what needs a local model is not refused" "remove-prompt with the local segmenter must be refused as not ready" check "$tmp/unrefused"
+archive "$tmp/unchecked-unrefused" unchecked-unrefused
+expect_fail "the loop is not refused where it needs a local model" "remove-checked with the local segmenter must be refused as not ready" check "$tmp/unchecked-unrefused"
 
 # --- The limit, and the arguments.
 for bad in 0 31 1.5 x; do

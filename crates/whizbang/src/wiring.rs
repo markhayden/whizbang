@@ -148,19 +148,25 @@ fn registry_of(
                 .iter()
                 .map(|(_, text)| (*text, false)),
         );
-    let users = recipes.iter().map(|text| (text.as_str(), true));
     let mut registry = Registry::new();
     registry.register(check).map_err(|e| said(&e))?;
-    for (text, users) in shipped.chain(users) {
+    for (text, _) in shipped {
+        let action = whizbang_rascal::recipes::action_of(text, &against).map_err(|e| said(&e))?;
+        registry.register(Arc::new(action)).map_err(|e| said(&e))?;
+    }
+    // The loop (plan m4, task L1): built over the shipped recipes it calls. A user's
+    // recipe is checked against it too, so that one naming it as a step is refused in
+    // words when it is read.
+    let looped = whizbang_rascal::checked::RemoveChecked::new(&registry).map_err(|e| said(&e))?;
+    let looped: Arc<dyn Action> = Arc::new(looped);
+    against.register(looped.clone()).map_err(|e| said(&e))?;
+    for text in recipes {
         let action = whizbang_rascal::recipes::action_of(text, &against).map_err(|e| {
-            if users {
-                format!("the config cannot be used: a recipe file is not one this build runs: {e}")
-            } else {
-                said(&e)
-            }
+            format!("the config cannot be used: a recipe file is not one this build runs: {e}")
         })?;
         registry.register(Arc::new(action)).map_err(|e| said(&e))?;
     }
+    registry.register(looped).map_err(|e| said(&e))?;
     for descriptor in primitives.descriptors() {
         if let Some(action) = primitives.get(descriptor.name()) {
             registry.register(action.clone()).map_err(|e| said(&e))?;

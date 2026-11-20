@@ -663,6 +663,40 @@ fn text_of(record: &RunRecord) -> String {
             step.status().map_or("not ended", |status| status.name())
         ));
     }
+    // A loop's attempts (plan m4, task L1): each with its verdict or the reason it has
+    // none, what its retry changed, how many runs it made and what its requests
+    // settled; then which was kept, and why the attempts ended. Only a loop has them.
+    if let Some(attempts) = record.attempts() {
+        line(format!("attempts: {}", attempts.list.len()));
+        for attempt in &attempts.list {
+            let word = |value: serde_json::Value| value.as_str().unwrap_or("none").to_owned();
+            let verdict = match (&attempt.verdict, &attempt.unchecked) {
+                (Some(decision), _) => word(serde_json::to_value(decision).unwrap_or_default()),
+                (None, Some(why)) => format!("not checked ({})", shown(why)),
+                (None, None) => "not checked".to_owned(),
+            };
+            let changed = match &attempt.changed {
+                None => "nothing changed".to_owned(),
+                Some(record::Changed::Wider { px }) => format!("a wider mask, grow px {px}"),
+                Some(record::Changed::Located { crops }) => {
+                    format!("{} crops looked into", crops.len())
+                }
+            };
+            line(format!(
+                "  attempt {}\t{verdict}\t{changed}\t{} runs\tsettled {}",
+                attempt.attempt,
+                attempt.runs.len(),
+                crate::spend::usd(u128::from(attempt.settled_micros))
+            ));
+        }
+        line(format!(
+            "  kept: {}",
+            attempts
+                .kept
+                .map_or_else(|| "none".to_owned(), |kept| format!("attempt {kept}"))
+        ));
+        line(format!("  ended: {}", shown(&attempts.ended)));
+    }
     // The judge's turns, and the verdict when the run concluded one. The whole of
     // each exchange is the diagnostic the turn names.
     line(format!(

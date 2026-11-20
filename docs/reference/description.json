@@ -2276,6 +2276,164 @@
       "plans": true
     },
     {
+      "name": "remove_checked",
+      "version": "1.0.0",
+      "kind": "loop",
+      "purpose": "Removes what a phrase names, has the result checked against its source, and tries again a bounded number of times.",
+      "use": "To remove a thing you can name in words and know whether the result was checked; it hands back its best attempt with the verdict, and says when it was not checked.",
+      "arguments": [
+        {
+          "name": "prompt",
+          "purpose": "What to remove, in words.",
+          "type": {
+            "type": "text"
+          },
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "backend",
+          "purpose": "The segmenter, by its name in the config; the default when not given.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "filler",
+          "purpose": "The filler, by its name in the config; the default when not given.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "judge",
+          "purpose": "The judge, by its name in the config; the default when not given.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "attempts",
+          "purpose": "The most attempts, the first included; fewer are made when the cap of one call covers fewer.",
+          "type": {
+            "type": "integer",
+            "min": 1,
+            "max": 3
+          },
+          "required": false,
+          "default": 3
+        },
+        {
+          "name": "check",
+          "purpose": "auto checks when a judge is ready and the cap covers a check, and says when it did not; required refuses instead; off makes one unchecked pass.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "auto",
+              "required",
+              "off"
+            ]
+          },
+          "required": false,
+          "default": "auto"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The picture to remove it from.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "protect",
+          "artifact": "mask",
+          "purpose": "A mask on the picture whose pixels no attempt paints.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": "image"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The kept attempt's picture.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        },
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The kept attempt's mask, rebound onto its picture.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "results": [
+        "verdict",
+        "measurements",
+        "findings"
+      ],
+      "needs": [
+        {
+          "capability": "segment",
+          "features": [
+            "phrase"
+          ],
+          "when": "always",
+          "chosen_by": "backend",
+          "feature_from": null,
+          "requests": 1
+        },
+        {
+          "capability": "fill",
+          "features": [],
+          "when": "always",
+          "chosen_by": "filler",
+          "feature_from": null,
+          "requests": 1
+        },
+        {
+          "capability": "judge",
+          "features": [
+            "image",
+            "tool"
+          ],
+          "when": "always",
+          "chosen_by": "judge",
+          "feature_from": null,
+          "requests": 16
+        }
+      ],
+      "concurrent": true,
+      "plans": true
+    },
+    {
       "name": "align",
       "version": "1.0.0",
       "kind": "primitive",

@@ -22,6 +22,14 @@ const EXIT_CODES: &str = "Exit codes:
   3  what was to be printed could not be written
   101  the command itself failed (a panic outside an action): one fixed line is printed";
 
+/// The exit codes of the loop's command: those of `whizbang squint check` for a verdict.
+const LOOP_EXIT_CODES: &str = "Exit codes:
+  0  the loop completed: the kept attempt's verdict, pass, fail or unsure, is printed, or that it was not checked and why
+  1  nothing ran, or no removal was made: the complaint says which, and names the run
+  2  the command line was not understood
+  3  what was to be printed could not be written
+  101  the command itself failed (a panic outside an action): one fixed line is printed";
+
 /// The config a command runs under, and the env file its credentials are in (ADR
 /// 0011, "Where the file is"). Neither has a default place: no file in the working
 /// folder, none in a user's folder, and no variable names one.
@@ -329,6 +337,50 @@ pub enum Command {
         filler: Option<String>,
         #[command(flatten)]
         steps: Steps,
+        #[command(flatten)]
+        common: Common,
+    },
+    /// Remove what a phrase names, have the result checked against the picture it was
+    /// made from, and try again a bounded number of times: the loop remove_checked. Its
+    /// plan is printed before anything runs: how many attempts it may make, and whether
+    /// it checks. Each attempt is said as it starts and as it ends. It prints which
+    /// attempt it kept, whether that one was checked (and why not, when it was not),
+    /// the verdict, and the kept picture and its mask, committed to the store. When
+    /// every attempt fails it still completes, with its best attempt and the verdict.
+    #[command(after_help = LOOP_EXIT_CODES)]
+    RemoveChecked {
+        /// The picture, by its identity in the store: sha256: and 64 hex digits, as
+        /// `whizbang store import` prints it.
+        #[arg(long)]
+        image: String,
+        /// What to remove, in words.
+        #[arg(long)]
+        prompt: String,
+        /// The most attempts, the first included. Fewer are made when the config's cap
+        /// of one call covers fewer, and the plan says so. Three when not given.
+        #[arg(long, value_name = "1..3", value_parser = clap::value_parser!(u8).range(1..=3))]
+        attempts: Option<u8>,
+        /// auto: check when a judge is ready and the cap of one call covers a check,
+        /// and otherwise make one unchecked pass and say why. required: refuse instead.
+        /// off: one unchecked pass. auto when not given.
+        #[arg(long, value_name = "auto|required|off", value_parser = ["auto", "required", "off"])]
+        check: Option<String>,
+        /// A mask on the same picture whose pixels no attempt paints, by its identity
+        /// in the store.
+        #[arg(long)]
+        protect: Option<String>,
+        /// The segmenter, by its name in the config's `[backends.segment]` tables. With
+        /// none, the config's default for segment answers.
+        #[arg(long, value_name = "NAME")]
+        backend: Option<String>,
+        /// The filler, by its name in the config's `[backends.fill]` tables. With none,
+        /// the config's default for fill answers.
+        #[arg(long, value_name = "NAME")]
+        filler: Option<String>,
+        /// The judge, by its name in the config's `[backends.judge]` tables. With none,
+        /// the config's default for judge answers.
+        #[arg(long, value_name = "NAME")]
+        judge: Option<String>,
         #[command(flatten)]
         common: Common,
     },
@@ -806,6 +858,45 @@ fn run_at(
                 request_id: common.request_id.as_deref(),
             };
             door::recipe(&executor, &asked, common.at.root())
+        }
+        Command::RemoveChecked {
+            image,
+            prompt,
+            attempts,
+            check,
+            protect,
+            backend,
+            filler,
+            judge,
+            common,
+        } => {
+            let uses = Uses::One(Capability::Segment, backend.as_deref());
+            let over = common.under.over(platform, uses)?;
+            wiring::env_file_asked(&over, Uses::One(Capability::Fill, filler.as_deref()))?;
+            // A judge that names a credential is asked for its env file only where the
+            // check is required. Under `auto` a judge that is not ready, for want of
+            // its key among other reasons, is one unchecked pass, said in the plan;
+            // with the check off no judge is used.
+            if check.as_deref() == Some("required") {
+                wiring::env_file_asked(&over, Uses::One(Capability::Judge, judge.as_deref()))?;
+            }
+            // The decision cache of `check`, where the config turns it on, as `squint
+            // check` runs under it.
+            let cached = over.decisions_cached()?;
+            let executor = built(&common.at, &over, recovery, cached)?;
+            let asked = door::RemoveCheckedAsked {
+                image,
+                prompt,
+                protect: protect.as_deref(),
+                backend: backend.as_deref(),
+                filler: filler.as_deref(),
+                judge: judge.as_deref(),
+                attempts: *attempts,
+                check: check.as_deref(),
+                request_id: common.request_id.as_deref(),
+            };
+            let say: door::Say<'_> = &mut door::on_the_error_stream;
+            door::remove_checked(&executor, &asked, common.at.root(), say)
         }
         Command::Run {
             recipe,

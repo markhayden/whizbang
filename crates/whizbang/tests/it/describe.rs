@@ -126,6 +126,7 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
             "reality-checks",
             "brief-compliance",
             "product-fidelity",
+            "remove_checked",
             "align",
             "change_map",
             "edge_similarity",
@@ -169,8 +170,10 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
         .collect();
     // `check`, rascal's seven recipes and the five use cases' (plan m3, task Q1).
     assert_eq!(kinds[..13], ["recipe"; 13]);
+    // Then the one loop (plan m4, task L1), and the primitives.
+    assert_eq!(kinds[13], "loop");
     assert!(
-        kinds[13..].iter().all(|kind| *kind == "primitive"),
+        kinds[14..].iter().all(|kind| *kind == "primitive"),
         "{kinds:?}"
     );
     // `check` says what it needs: a judge. Whether one is there is no part of a
@@ -234,6 +237,7 @@ fn describe_without_json_names_the_build() {
             "reality-checks",
             "brief-compliance",
             "product-fidelity",
+            "remove_checked",
             "align",
             "change_map",
             "edge_similarity",
@@ -577,10 +581,11 @@ fn recipes_are_listed_before_primitives_with_purpose_and_use() {
         .iter()
         .position(|action| action["kind"] == "primitive")
         .expect("a primitive");
+    // Before the primitives: the recipes, and after them the one loop.
     assert!(
         actions[..first_primitive]
             .iter()
-            .all(|a| a["kind"] == "recipe")
+            .all(|a| a["kind"] == "recipe" || a["kind"] == "loop")
     );
     assert!(
         actions[first_primitive..]
@@ -733,4 +738,55 @@ fn each_of_rascals_25_operations_is_an_action() {
     assert!(missing.is_empty(), "not actions: {missing:?}");
     let distinct: std::collections::BTreeSet<&str> = RASCAL.into_iter().collect();
     assert_eq!(distinct.len(), 25);
+}
+
+#[test]
+fn the_loop_is_listed_after_the_recipes_and_before_the_primitives() {
+    // Plan m4, task L1, item 10.
+    let (ok, text) = whizbang(&["describe", "--json"]);
+    assert!(ok);
+    let doc: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+    let actions = doc["actions"].as_array().expect("a list");
+    let at = actions
+        .iter()
+        .position(|action| action["name"] == "remove_checked")
+        .expect("the loop is listed");
+    assert!(
+        actions[..at]
+            .iter()
+            .all(|action| action["kind"] == "recipe")
+    );
+    assert!(
+        actions[at + 1..]
+            .iter()
+            .all(|action| action["kind"] == "primitive")
+    );
+    let looped = &actions[at];
+    assert_eq!(looped["kind"], "loop");
+    // It is the one loop, it plans its calls, and it says what it hands back.
+    assert_eq!(
+        actions
+            .iter()
+            .filter(|action| action["kind"] == "loop")
+            .count(),
+        1
+    );
+    assert_eq!(looped["plans"], true);
+    assert_eq!(
+        looped["results"],
+        serde_json::json!(["verdict", "measurements", "findings"])
+    );
+    let arguments: Vec<&str> = (looped["arguments"].as_array().unwrap().iter())
+        .map(|argument| argument["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        arguments,
+        ["prompt", "backend", "filler", "judge", "attempts", "check"]
+    );
+    let needs: Vec<&str> = (looped["needs"].as_array().unwrap().iter())
+        .map(|need| need["capability"].as_str().unwrap())
+        .collect();
+    assert_eq!(needs, ["segment", "fill", "judge"]);
+    // And the words say when to reach for it.
+    assert!(text.contains("To remove a thing you can name in words and know whether"));
 }

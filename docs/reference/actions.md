@@ -57,6 +57,10 @@ Checks whether a picture holds what its brief asked for and nothing it forbade: 
 
 Checks whether a product shot keeps the exact product of its references: the judge looks, and calls view and align as it needs.
 
+## `remove_checked`
+
+Removes what a phrase names, has the result checked against its source, and tries again a bounded number of times.
+
 ## `align`
 
 Registers one flat image onto another of the same scene and viewpoint, and returns it warped into the other's frame.

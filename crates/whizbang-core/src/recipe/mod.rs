@@ -54,7 +54,7 @@ pub mod runner;
 use std::collections::BTreeMap;
 
 use crate::artifact::ArtifactType;
-use crate::contract::{ActionDescriptor, Registry, ResultKind, Value, ValueType, text};
+use crate::contract::{ActionDescriptor, Kind, Registry, ResultKind, Value, ValueType, text};
 
 pub use runner::{FROM, RecipeAction, SET, UNTIL, from_port, until_port};
 
@@ -431,6 +431,15 @@ impl Recipe {
                 .ok_or_else(|| refuse(format!("{} is no action of this build", step.op)))?;
             let descriptor = action.descriptor();
             let op = &step.op;
+            // A loop fills every level calls nest (plan m4, task L1, item 13): under a
+            // recipe its deepest call would be at a fifth. Said here, when the recipe is
+            // read, and not deep inside a paid run.
+            if descriptor.kind() == Kind::Loop {
+                return Err(refuse(format!(
+                    "{op} is a loop, and a recipe may not name a loop as a step: calls nest \
+                     four levels, a loop's own calls use them all, and nothing calls a loop"
+                )));
+            }
 
             let mut inputs = Vec::new();
             for (port, written) in &step.inputs {
