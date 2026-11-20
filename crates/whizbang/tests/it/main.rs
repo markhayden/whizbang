@@ -24,6 +24,7 @@ mod fal;
 mod fetch;
 mod gate;
 mod google;
+mod guides;
 mod import;
 mod lab;
 mod matrix;

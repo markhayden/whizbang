@@ -3466,3 +3466,133 @@ fn a_repeated_request_id_is_told_the_plan_of_its_first_run() {
         [format!("said {plan}"), format!("ran under Some({plan:?})")]
     );
 }
+
+#[test]
+fn rascal_remove_checked_prints_its_plan_each_attempt_and_whether_the_result_was_checked() {
+    use crate::checked::{Looped, Setup, passes};
+    // Plan m4, task L1, items 9 and 10: the loop through the door its command goes
+    // through, in a store on the real disk, which the door reads, under a judge that
+    // passes the first attempt. (More attempts than one are told the same way: the
+    // server's test and `table::…` run them.)
+    let setup = Setup::answering(vec![passes()]).on_disk();
+    let world = Looped::new("cli-loop", &setup);
+    let asked = |check: Option<&'static str>| door::RemoveCheckedAsked {
+        image: &world.image,
+        prompt: crate::checked::PHRASE,
+        protect: None,
+        backend: None,
+        filler: None,
+        judge: None,
+        attempts: None,
+        check,
+        request_id: None,
+    };
+    let mut said = Vec::new();
+    let mut say = |line: &str| said.push(line.to_owned());
+    let engine = world.engine();
+    let printed = door::remove_checked(&engine, &asked(None), &world.root, &mut say).unwrap();
+    // On the error stream: the plan, before anything ran, then each attempt as it
+    // started and as it ended.
+    assert_eq!(
+        said,
+        [
+            "plan: 3 of 3 attempts asked, checked; fill 3; judge 48",
+            "remove_checked: attempt 1 of 3 starts",
+            "remove_checked: attempt 1 ended: pass",
+        ]
+    );
+    // What is printed: the run, the attempts, that the result was checked, its
+    // verdict, and the kept picture and mask.
+    let lines: Vec<&str> = printed.lines().collect();
+    assert!(
+        lines[0].starts_with("run ") && lines[0].ends_with(" completed"),
+        "{printed}"
+    );
+    assert_eq!(
+        lines[1..5],
+        [
+            "attempts: 1 made, attempt 1 kept",
+            "ended: attempt 1 passed",
+            "checked: yes",
+            "verdict: pass",
+        ]
+    );
+    assert!(lines[5].starts_with("reason: "), "{printed}");
+    let outputs = &lines[lines.len() - 2..];
+    assert!(outputs[0].starts_with("image sha256:") && outputs[1].starts_with("mask sha256:"));
+    // With the check off: one pass, and the last lines say it was not checked, and why.
+    let mut said = Vec::new();
+    let mut say = |line: &str| said.push(line.to_owned());
+    let printed = door::remove_checked(&engine, &asked(Some("off")), &world.root, &mut say);
+    let printed = printed.unwrap();
+    assert_eq!(
+        said,
+        [
+            "plan: 1 of 3 attempts asked, unchecked; fill 1; judge 0; the check is off",
+            "remove_checked: attempt 1 of 1 starts",
+            "remove_checked: attempt 1 ended: not checked: the check is off",
+        ]
+    );
+    let lines: Vec<&str> = printed.lines().collect();
+    assert_eq!(
+        lines[1..4],
+        [
+            "attempts: 1 made, attempt 1 kept",
+            "ended: one unchecked pass: the check is off",
+            "checked: no: the check is off",
+        ]
+    );
+    assert!(!printed.contains("verdict:"), "{printed}");
+    assert_eq!(lines.len(), 6, "{printed}");
+    drop(engine);
+    // The command itself: its flags are held by the command line, and a store that is
+    // not there is the complaint of any command.
+    let refused = whizbang(
+        &[
+            "rascal",
+            "remove-checked",
+            "--image",
+            &world.image,
+            "--prompt",
+            "collar",
+            "--attempts",
+            "4",
+        ],
+        &world.root,
+    );
+    assert_eq!(refused.code, Some(2), "{}", refused.err);
+    let help = whizbang(&["rascal", "remove-checked", "--help"], &world.root);
+    assert!(
+        help.out.contains("--check <auto|required|off>"),
+        "{}",
+        help.out
+    );
+    assert!(help.out.contains("0  the loop completed"), "{}", help.out);
+    // Under no config nothing is ready: the plan is said, and the call is refused.
+    let unready = whizbang(
+        &[
+            "rascal",
+            "remove-checked",
+            "--image",
+            &world.image,
+            "--prompt",
+            "collar",
+        ],
+        &world.root,
+    );
+    assert_eq!(unready.code, Some(1), "{}", unready.out);
+    assert!(
+        unready
+            .err
+            .contains("plan: 1 of 3 attempts asked, unchecked;"),
+        "{}",
+        unready.err
+    );
+    assert!(
+        unready
+            .err
+            .contains("remove_checked cannot run now: it needs segment"),
+        "{}",
+        unready.err
+    );
+}

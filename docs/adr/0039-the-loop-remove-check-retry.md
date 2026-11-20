@@ -159,7 +159,7 @@ tree, which no later call can take (ADR 0008).
 four, which is every level there is. So a recipe that names a loop as a step is refused
 when it is read (`Recipe::check`), in words, and nothing calls a loop.
 
-**The doors** (built by the task's second pull request). `whizbang rascal remove-checked`; the tool `remove_checked` over
+**The doors.** `whizbang rascal remove-checked`; the tool `remove_checked` over
 `whizbang serve`, whose answer carries the plan, the short result and the verdict;
 `whizbang runs show`, which prints a loop's attempts; and `whizbang runs stats`, which
 counts loops, their attempts and retries, and why their attempts ended. Exit codes are

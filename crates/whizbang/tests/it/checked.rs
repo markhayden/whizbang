@@ -34,7 +34,7 @@ use whizbang_core::contract::{
 use whizbang_core::egress::{Origin, Recipient};
 use whizbang_core::identity::{DecodeLimits, Digest, Projection, Topology};
 use whizbang_core::spend::Amount;
-use whizbang_core::store::fs::{Fs, Held, LockFile};
+use whizbang_core::store::fs::{Fs, Held, LockFile, NewFile, OpenFile, RealFs};
 use whizbang_core::store::{Reader, Store};
 use whizbang_rascal::checked::{CHECK, NAME, REMOVE};
 use whizbang_testkit::barrier::Barriers;
@@ -146,9 +146,18 @@ pub struct Setup {
     pub holds: Option<Barriers>,
     /// The store's allowance, in millionths of a US dollar.
     pub allowance: u64,
+    /// Whether the store is on the real disk, for a test that reads it through the
+    /// binary's own readers (a door, or the real binary). In memory otherwise.
+    pub on_disk: bool,
 }
 
 impl Setup {
+    /// The same, in a store on the real disk.
+    pub fn on_disk(mut self) -> Setup {
+        self.on_disk = true;
+        self
+    }
+
     /// A kit whose judge plays these submissions.
     pub fn answering(answers: Vec<Json>) -> Setup {
         Setup {
@@ -162,6 +171,7 @@ impl Setup {
             segment_charges: None,
             holds: None,
             allowance: 1_000_000,
+            on_disk: false,
         }
     }
 }
@@ -325,6 +335,68 @@ impl Kind for Handing {
                 Made::Judge(self.0.judge.clone())
             }
         })
+    }
+}
+
+/// The real disk without the syncs: a file's content and a directory's names are
+/// written and never made durable, which is slow and which these tests do not test.
+/// Everything else is the real file system's own.
+struct Unsynced;
+
+impl Fs for Unsynced {
+    fn create_dir(&self, path: &Path) -> std::io::Result<()> {
+        RealFs.create_dir(path)
+    }
+    fn write_new(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
+        file.write_all(bytes)
+    }
+    fn sync_dir(&self, _: &Path) -> std::io::Result<()> {
+        Ok(())
+    }
+    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+        RealFs.rename(from, to)
+    }
+    fn remove_all(&self, path: &Path) -> std::io::Result<()> {
+        RealFs.remove_all(path)
+    }
+    fn read_at_most(&self, path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
+        RealFs.read_at_most(path, limit)
+    }
+    fn list(&self, path: &Path) -> std::io::Result<Vec<PathBuf>> {
+        RealFs.list(path)
+    }
+    fn exists(&self, path: &Path) -> std::io::Result<bool> {
+        RealFs.exists(path)
+    }
+    fn hold_lock_file(
+        &self,
+        path: &Path,
+        create: bool,
+    ) -> std::io::Result<Option<Box<dyn LockFile>>> {
+        RealFs.hold_lock_file(path, create)
+    }
+    fn share(&self, path: &Path) -> std::io::Result<Box<dyn Held>> {
+        RealFs.share(path)
+    }
+    fn try_alone(&self, path: &Path) -> std::io::Result<Option<Box<dyn Held>>> {
+        RealFs.try_alone(path)
+    }
+    fn begin_new(&self, path: &Path, most: u64) -> std::io::Result<Box<dyn NewFile>> {
+        RealFs.begin_new(path, most)
+    }
+    fn open_file(&self, path: &Path) -> std::io::Result<Box<dyn OpenFile>> {
+        RealFs.open_file(path)
+    }
+    fn try_share(&self, path: &Path) -> std::io::Result<Option<Box<dyn Held>>> {
+        RealFs.try_share(path)
+    }
+    fn is_link(&self, path: &Path) -> std::io::Result<bool> {
+        RealFs.is_link(path)
     }
 }
 
@@ -620,14 +692,18 @@ pub struct Looped {
     pub kit: Arc<Kit>,
     pub over: Over,
     cached: bool,
-    /// What the store is on: a memory.
+    /// What the store is on: a memory, or the real disk without the syncs.
     fs: Arc<dyn Fs>,
 }
 
 impl Looped {
     pub fn new(label: &str, setup: &Setup) -> Looped {
         let dir = Scratch::new(label);
-        let fs: Arc<dyn Fs> = Arc::new(Memory::under(dir.path()));
+        // In memory, unless the test reads its store through the binary's own readers.
+        let fs: Arc<dyn Fs> = match setup.on_disk {
+            true => Arc::new(Unsynced),
+            false => Arc::new(Memory::under(dir.path())),
+        };
         let (root, image) = with_picture(&dir, setup.allowance, fs.clone());
         let mut config = backend("segment");
         config.push_str(&backend("fill"));

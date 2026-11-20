@@ -96,3 +96,55 @@ fn unsure_by_rule_prints_aggregates_and_no_item() {
         assert!(!stats.out.contains(&run), "{run}");
     }
 }
+
+#[test]
+fn runs_stats_counts_a_loops_attempts_and_retries() {
+    use crate::checked::{Looped, Setup, passes, remains};
+    use whizbang_core::contract::Value;
+    // Plan m4, task L1, item 11. Two runs of the loop in one store, on the real disk,
+    // which the binary reads: a fail, a retry with a wider mask, and a pass; and one
+    // unchecked.
+    let setup = Setup::answering(vec![remains(), passes()]).on_disk();
+    let world = Looped::new("stats-loop", &setup);
+    let retried = world.run(&world.call());
+    world.run(&world.call().argument("check", Value::text("off")));
+    let stats = whizbang(
+        &["runs", "stats", "--action", "remove_checked"],
+        &world.root,
+    );
+    assert_eq!(stats.code, Some(0), "{}", stats.err);
+    assert!(stats.out.starts_with("runs: 2\n"), "{}", stats.out);
+    assert!(
+        stats
+            .out
+            .contains("verdicts: 1 (pass 1, fail 0, unsure 0); unsure rate 0.0%\n"),
+        "{}",
+        stats.out
+    );
+    let (_, loops) = stats.out.split_once("loops: ").unwrap();
+    let loops: Vec<&str> = loops.lines().take(3).collect();
+    assert_eq!(
+        loops,
+        [
+            "2 runs, 3 attempts, 1 retries; kept an attempt that was checked 1, not checked 1, \
+             none 0",
+            "  attempts ended\t1\tattempt N passed",
+            "  attempts ended\t1\tone unchecked pass: the check is off",
+        ]
+    );
+    // `runs show` prints a loop's attempts, after the run's calls.
+    let shown = crate::wired::shown(&world.root, retried.run().as_str());
+    let (_, said) = shown
+        .split_once("attempts: 2\n")
+        .expect("the attempts are shown");
+    let lines: Vec<&str> = said.lines().take(4).collect();
+    assert!(lines[0].starts_with("  attempt 1\tfail\tnothing changed\t4 runs\tsettled $"));
+    assert!(lines[1].starts_with("  attempt 2\tpass\ta wider mask, grow px 8\t3 runs\tsettled $"));
+    assert_eq!(
+        lines[2..],
+        ["  kept: attempt 2", "  ended: attempt 2 passed"]
+    );
+    // Runs that are no loop's say nothing of loops.
+    let other = whizbang(&["runs", "stats", "--action", "grow"], &world.root);
+    assert!(!other.out.contains("loops:"), "{}", other.out);
+}

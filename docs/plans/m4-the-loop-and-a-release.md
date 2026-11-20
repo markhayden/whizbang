@@ -932,11 +932,12 @@ a run of the loop is some four hundred small writes, renames and new folders, an
 tests doing that at once wait on each other in the system: the loop's tests took 88
 seconds of processor time together there, and take 12 in memory.
 
-**The box stays open** (L1, 2026-11-20) until the second pull request, and then for one
-clause more. `model_tier::remove_checked_makes_its_mask_with_sam3_under_a_scripted_judge`
-is written, is `#[ignore]`d and is in the model tier's filter, and has not been run: a
-builder loads no real model. The box is ticked when `just test-models model_tier` has run
-it on the Mac. `just docs` is regenerated with the first pull request.
+**The box stays open for one clause** (L1, 2026-11-20), after both pull requests.
+`model_tier::remove_checked_makes_its_mask_with_sam3_under_a_scripted_judge` is written,
+is `#[ignore]`d and is in the model tier's filter, and has not been run: a builder loads
+no real model. The box is ticked when `just test-models model_tier` has run it on the
+Mac. Every other clause is shown by its test, `just docs` is regenerated, and the four
+carry-over rows are closed.
 
 **Reworded with the task** (L1, 2026-11-20). Three clauses of the "Done when" above are
 met otherwise than they are worded.
@@ -975,6 +976,16 @@ met otherwise than they are worded.
   (`a1_find`, `a1_shape`, `a1_fill`, `a1_check`, `a2_shape`, …).
 - **Under `--check required` a check the cap does not cover** is planned as one checked
   attempt and refused as over the cap; under `auto` it is one unchecked pass.
+- **`whizbang runs show` prints a loop's attempts,** which the plan did not ask and the
+  record's reader needs.
+- **The command reads the decision cache** where the config turns it on, as `squint check`
+  does; the server already did.
+- **Live telling.** The command starts the run and looks at what it has said every 50
+  milliseconds, since the executor has no way to wait for an event; once the run is over
+  it reads the rest from the run's journal, so every attempt is told, in order.
+- **The doors' tests keep their stores on the real disk,** written without the syncs,
+  because a door reads the store through the binary's own readers: three tests, eight
+  runs of the loop between them.
 
 **Notes for L2.**
 
@@ -989,7 +1000,9 @@ met otherwise than they are worded.
   in the plan (`Plan::sending(Capability::Segment, …)`).
 - A place's `image` is the candidate's identity, which is that attempt's fill; the box is
   in fractions of it, and the picture to cut is the loop's own input, of the same size.
-- `budget::three_attempts_at_their_largest…` is to be raised to a run of three.
+- `budget::three_attempts_at_their_largest…` is to be raised to a run of three, and the
+  guide's section "What it does not do yet" edited; `runs show` already prints a located
+  retry's crops as a count.
 - The fixture's judge plays one submission for each check, and a turn that is a tool call
   when the entry is one (`{"tool_call": …}`); `checked::boxed` writes a box on the
   candidate.

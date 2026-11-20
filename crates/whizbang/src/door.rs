@@ -977,3 +977,222 @@ pub fn plan_of(root: &Path, run: &RunId) -> Option<String> {
     let record = stored?.ok()?;
     record.plan().map(|plan| plan.line())
 }
+
+/// What `whizbang rascal remove-checked` was asked, as it was typed (plan m4, task L1).
+#[derive(Debug, Clone, Copy)]
+pub struct RemoveCheckedAsked<'a> {
+    /// The picture, by its identity.
+    pub image: &'a str,
+    pub prompt: &'a str,
+    /// A mask no attempt paints, by its identity.
+    pub protect: Option<&'a str>,
+    pub backend: Option<&'a str>,
+    pub filler: Option<&'a str>,
+    pub judge: Option<&'a str>,
+    /// The most attempts, the first included; the loop's own default when not given.
+    pub attempts: Option<u8>,
+    /// `auto`, `required` or `off`; the loop's own default when not given.
+    pub check: Option<&'a str>,
+    /// The caller's id for the request, when it gave one.
+    pub request_id: Option<&'a str>,
+}
+
+/// How long the door waits between two looks at a loop that is running, for what it
+/// has said since.
+const LOOP_LOOK: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// The call of the loop `remove_checked` these make, or the complaint.
+pub fn remove_checked_call(asked: &RemoveCheckedAsked<'_>) -> Result<Call, String> {
+    let mut call = Call::new(whizbang_rascal::checked::NAME)
+        .argument("prompt", Value::text(asked.prompt))
+        .input("image", identity("--image", asked.image)?);
+    if let Some(protect) = asked.protect {
+        call = call.input("protect", identity("--protect", protect)?);
+    }
+    let texts = [
+        ("backend", asked.backend),
+        ("filler", asked.filler),
+        ("judge", asked.judge),
+        ("check", asked.check),
+    ];
+    for (name, text) in texts {
+        if let Some(text) = text {
+            call = call.argument(name, Value::text(text));
+        }
+    }
+    if let Some(attempts) = asked.attempts {
+        call = call.argument("attempts", Value::Integer(i64::from(attempts)));
+    }
+    Ok(call)
+}
+
+/// The events a run has kept in its journal, as the store holds them.
+fn journal_of(root: &Path, run: &RunId) -> Vec<whizbang_core::contract::JournalLine> {
+    let read = || {
+        let reader = Reader::open(root, Arc::new(RealFs)).ok()?;
+        let generation = reader.snapshot().ok()?;
+        let name = whizbang_core::contract::record::JOURNAL_NAME;
+        let entry = generation.run(run.as_str())?.get(name)?;
+        whizbang_core::contract::read_journal(&reader.read(entry).ok()?).ok()
+    };
+    read().unwrap_or_default()
+}
+
+/// Runs the loop `remove_checked` through the executor, and waits for it (plan m4, task
+/// L1, items 9 and 10). `say` is told, while the call is on its way: the plan of the
+/// call, before anything runs; and each attempt as it starts and as it ends, in the
+/// loop's own words. What comes back when the run completed is what to print: the run's
+/// line, how many attempts were made, which was kept and why they ended, whether the
+/// result was checked and why not when it was not, the verdict with its reason and the
+/// counts of its findings, and the two outputs. A loop whose every attempt failed
+/// completes, and its verdict says so; any other end is the complaint, escaped already.
+///
+/// A request that was sent before is answered with its first run, told the plan that
+/// run had, and nothing runs again.
+pub fn remove_checked(
+    executor: &dyn Executor,
+    asked: &RemoveCheckedAsked<'_>,
+    root: &Path,
+    say: Say<'_>,
+) -> Result<String, String> {
+    let call = remove_checked_call(asked)?;
+    let id = match asked.request_id {
+        Some(text) => Some(executor.request_id(text).map_err(|e| refused(&e))?),
+        None => None,
+    };
+    let sent_before = id.as_ref().is_some_and(|id| {
+        let reader = Reader::open(root, Arc::new(RealFs)).ok();
+        let generation = reader.and_then(|reader| reader.snapshot().ok());
+        generation.is_some_and(|held| held.get(&id.admission_name()).is_some())
+    });
+    // The plan is said before anything runs, and the request comes with the
+    // preparation it was said from: what runs is that plan, or nothing.
+    let planned = match sent_before {
+        true => None,
+        false => executor.prepare(&call).ok().filter(|p| p.plan().is_some()),
+    };
+    let mut request = Request::new(call);
+    if let Some(prepared) = &planned {
+        say(&prepared.plan().map(|plan| plan.line()).unwrap_or_default());
+        request = request.expecting(prepared);
+    }
+    if let Some(id) = id {
+        request = request.with_id(id);
+    }
+    let (run, before) = match executor.start(&request).map_err(|e| refused(&e))? {
+        Answer::Started(run) => (run, ""),
+        Answer::Ran(finished) => (finished.run().clone(), ""),
+        Answer::Repeat(earlier) => {
+            if let Some(plan) = plan_of(root, earlier.run()) {
+                say(&plan);
+            }
+            let before = " (the request was sent before, and nothing ran again)";
+            (earlier.run().clone(), before)
+        }
+    };
+    // While it runs, what it has said of its attempts so far; and once it is over,
+    // the rest, from the journal its run kept.
+    let attempt = format!("{}: attempt ", whizbang_rascal::checked::NAME);
+    let mut told = 0;
+    let mut tell = |lines: &[whizbang_core::contract::JournalLine], say: Say<'_>| {
+        for line in lines.iter().filter(|line| line.seq() >= told) {
+            if line.message().starts_with(&attempt) {
+                say(line.message());
+            }
+        }
+        told = lines.last().map_or(told, |last| last.seq() + 1).max(told);
+    };
+    let state = loop {
+        let watched = executor.status(&run).map_err(|e| refused(&e))?;
+        tell(watched.events(), say);
+        match watched.state() {
+            RunState::NotEnded { here: true } => std::thread::sleep(LOOP_LOOK),
+            _ => {
+                break executor
+                    .wait(&run)
+                    .map_err(|e| refused(&e))?
+                    .state()
+                    .clone();
+            }
+        }
+    };
+    if before.is_empty() {
+        tell(&journal_of(root, &run), say);
+    }
+    let line = format!("run {}{before}", printable(run.as_str()));
+    let outcome = match state {
+        RunState::Ended(outcome) => outcome,
+        RunState::NotEnded { .. } => return Err(format!("{line} was admitted and has not ended")),
+        RunState::Abandoned { failure } => {
+            return Err(format!(
+                "{line} was admitted and will not end here{}",
+                failure.map_or(String::new(), |failure| format!(
+                    ": the store failed: {}",
+                    printable(&failure.to_string())
+                ))
+            ));
+        }
+        RunState::Removed { ended } => {
+            return Err(format!(
+                "{line} is no longer in the store: it was deleted{}",
+                ended.map_or(String::new(), |status| format!(
+                    " after it ended as {}",
+                    status.name()
+                ))
+            ));
+        }
+    };
+    let (mut text, outputs) = ended(&line, outcome)?;
+    said_loop(&mut text, root, &run);
+    for output in outputs {
+        let port = printable(output.port());
+        text.push_str(&format!("{port} {}\n", output.id().0));
+    }
+    Ok(text)
+}
+
+/// What a door says of a run of the loop `remove_checked` that completed, after its
+/// line and before its outputs, read from the run's record (plan m4, task L1, items 8
+/// to 10): how many attempts were made and which was kept; why the attempts ended;
+/// whether the kept attempt was checked, and the reason when it was not; and, when it
+/// was, its verdict as [`said_verdict`] prints one. The command prints it and the
+/// server's answer carries it. Nothing is added for a run whose record lists no
+/// attempts.
+pub fn said_loop(text: &mut String, root: &Path, run: &RunId) {
+    let read = || {
+        let reader = Reader::open(root, Arc::new(RealFs)).ok()?;
+        let generation = reader.snapshot().ok()?;
+        let read = |entry: &_| reader.read(entry);
+        whizbang_core::contract::record::stored(&generation, run.as_str(), read)?.ok()
+    };
+    let Some(record) = read() else {
+        return;
+    };
+    let Some(attempts) = record.attempts() else {
+        return;
+    };
+    let kept = attempts.kept.and_then(|kept| {
+        let mut list = attempts.list.iter();
+        list.find(|attempt| attempt.attempt == kept)
+    });
+    text.push_str(&format!(
+        "attempts: {} made, {}\n",
+        attempts.list.len(),
+        kept.map_or_else(
+            || "none kept".to_owned(),
+            |kept| format!("attempt {} kept", kept.attempt)
+        )
+    ));
+    text.push_str(&format!("ended: {}\n", printable(&attempts.ended)));
+    match kept.map(|kept| (&kept.verdict, &kept.unchecked)) {
+        Some((Some(_), _)) => {
+            text.push_str("checked: yes\n");
+            said_verdict(text, verdict(root, run));
+        }
+        Some((None, why)) => {
+            let why = why.as_deref().unwrap_or("no reason was recorded");
+            text.push_str(&format!("checked: no: {}\n", printable(why)));
+        }
+        None => {}
+    }
+}

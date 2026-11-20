@@ -436,4 +436,5 @@ fn a_loops_record_lists_each_attempt_its_runs_its_verdict_and_what_the_retry_cha
         whizbang_core::contract::record::Decision::Pass
     );
     assert!(record.findings().unwrap().complete);
+    // `runs show` prints them: `stats::runs_stats_counts_a_loops_attempts_and_retries`.
 }

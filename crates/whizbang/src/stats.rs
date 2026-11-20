@@ -234,6 +234,7 @@ pub fn stats(root: &Path, filter: &Filter) -> Result<String, String> {
         }
     }
     text.push_str(&format!("retries: {retries}\nrepairs: {repairs}\n"));
+    text.push_str(&loops(&found));
     let mut times: Vec<u64> = (found.iter())
         .filter_map(|(_, r)| {
             r.time()
@@ -263,6 +264,61 @@ pub fn stats(root: &Path, filter: &Filter) -> Result<String, String> {
     ));
     text.push_str("cache hits: not recorded (the decision cache is not built yet)\n");
     Ok(text)
+}
+
+/// What `runs stats` says of the loops among these runs (plan m4, task L1, item 11;
+/// `SPEC.md` section 3, "retries and repairs"): how many runs listed attempts; the
+/// attempts they made, and how many of those were retries, each attempt after a run's
+/// first; how many kept an attempt that was checked, and how many one that was not;
+/// and the runs by why their attempts ended, in the record's own words with each
+/// attempt's number left out, most first. Nothing is said where no run is a loop's.
+fn loops(found: &[(String, RunRecord)]) -> String {
+    let looped: Vec<&record::Attempted> = (found.iter())
+        .filter_map(|(_, record)| record.attempts())
+        .collect();
+    if looped.is_empty() {
+        return String::new();
+    }
+    let attempts: usize = looped.iter().map(|attempts| attempts.list.len()).sum();
+    let retries: usize = (looped.iter())
+        .map(|attempts| attempts.list.len().saturating_sub(1))
+        .sum();
+    // Whether the attempt a run kept was checked: none where it kept no attempt.
+    let kept = |attempts: &record::Attempted| -> Option<bool> {
+        let mut list = attempts.list.iter();
+        let kept = list.find(|attempt| Some(attempt.attempt) == attempts.kept);
+        kept.map(|kept| kept.verdict.is_some())
+    };
+    let checked = looped.iter().filter(|a| kept(a) == Some(true)).count();
+    let unchecked = looped.iter().filter(|a| kept(a) == Some(false)).count();
+    let mut text = format!(
+        "loops: {} runs, {attempts} attempts, {retries} retries; kept an attempt that was \
+         checked {checked}, not checked {unchecked}, none {}\n",
+        looped.len(),
+        looped.len() - checked - unchecked
+    );
+    // Why the attempts ended, with the number of the attempt taken out so that runs
+    // that ended the same way count together.
+    let mut ended: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for attempts in &looped {
+        let words = attempts.ended.split(' ');
+        let plain: Vec<&str> = words
+            .map(|word| match word.parse::<u32>() {
+                Ok(_) => "N",
+                Err(_) => word,
+            })
+            .collect();
+        *ended.entry(plain.join(" ")).or_default() += 1;
+    }
+    let mut ended: Vec<(String, usize)> = ended.into_iter().collect();
+    ended.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    for (why, count) in ended {
+        text.push_str(&format!(
+            "  attempts ended\t{count}\t{}\n",
+            whizbang::door::printable(&why)
+        ));
+    }
+    text
 }
 
 /// The rule an answer of a kept checklist bears on, as `--unsure-by rule` counts it: the

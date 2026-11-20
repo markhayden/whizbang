@@ -1083,3 +1083,77 @@ fn check_over_stdio_answers_with_the_counts_of_its_findings() {
     assert!(client.close().is_empty());
     assert_eq!(listener.finish(), 1);
 }
+
+#[test]
+fn the_loop_is_offered_as_a_tool_and_answers_with_its_plan_its_verdict_and_whether_it_was_checked()
+{
+    use crate::checked::{Looped, PHRASE, Setup, passes, remains};
+    // Plan m4, task L1, item 10: the loop over stdio, under a judge that fails the
+    // first attempt, saying the thing remains, and passes the second.
+    let setup = Setup::answering(vec![remains(), passes()]).on_disk();
+    let world = Looped::new("serve-loop", &setup);
+    let engine = world.engine();
+    let registry = whizbang::wiring::registry_over(&world.over, false).unwrap();
+    let descriptors: Vec<_> = registry.descriptors().cloned().collect();
+    let door = Arc::new(Actions::new(descriptors, world.root.clone(), None));
+    // It is offered after the recipes and before the primitives, as a loop.
+    let offered: Vec<String> = (whizbang_serve::Door::tools(door.as_ref()).iter())
+        .map(|tool| tool.name.clone())
+        .collect();
+    let at = offered
+        .iter()
+        .position(|name| name == "remove_checked")
+        .unwrap();
+    assert_eq!(offered[at - 1], "product-fidelity");
+    assert_eq!(offered[at + 1], "align");
+    let mut client = Client::new(Arc::new(engine), door, Limits::default());
+    client.initialized();
+    let mut notes = Vec::new();
+    client.call(
+        1,
+        "remove_checked",
+        json!({"image": world.image, "prompt": PHRASE}),
+        None,
+    );
+    let (text, error) = result_text(&client.answer(1, &mut notes));
+    assert!(!error, "{text}");
+    let lines: Vec<&str> = text.lines().collect();
+    // Its plan, its run, the short result, and the kept attempt's verdict.
+    assert_eq!(
+        lines[0],
+        "plan: 3 of 3 attempts asked, checked; fill 3; judge 48"
+    );
+    assert!(
+        lines[1].starts_with("run ") && lines[1].ends_with(" completed"),
+        "{text}"
+    );
+    assert_eq!(
+        lines[2..6],
+        [
+            "attempts: 2 made, attempt 2 kept",
+            "ended: attempt 2 passed",
+            "checked: yes",
+            "verdict: pass",
+        ]
+    );
+    assert!(
+        text.contains("\nimage sha256:") && text.contains("\nmask sha256:"),
+        "{text}"
+    );
+    // Unchecked, it says so, and why.
+    client.call(
+        2,
+        "remove_checked",
+        json!({"image": world.image, "prompt": PHRASE, "check": "off"}),
+        None,
+    );
+    let (text, error) = result_text(&client.answer(2, &mut notes));
+    assert!(!error, "{text}");
+    assert!(
+        text.starts_with("plan: 1 of 3 attempts asked, unchecked;"),
+        "{text}"
+    );
+    assert!(text.contains("\nchecked: no: the check is off\n"), "{text}");
+    assert!(!text.contains("verdict:"), "{text}");
+    client.close();
+}

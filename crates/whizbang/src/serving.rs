@@ -244,6 +244,11 @@ impl Door for Actions {
                 if name == CHECK {
                     door::said_verdict(&mut text, door::verdict(&self.root, run));
                 }
+                // The loop's short result and the kept attempt's verdict (plan m4,
+                // task L1, item 10); its plan is said above, as any planned call's is.
+                if name == whizbang_rascal::checked::NAME {
+                    door::said_loop(&mut text, &self.root, run);
+                }
                 for output in outputs {
                     let port = printable(output.port());
                     text.push_str(&format!("{port} {}\n", output.id().0));
