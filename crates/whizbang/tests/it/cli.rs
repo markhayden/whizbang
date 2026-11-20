@@ -319,7 +319,7 @@ fn rascal_segment_with_no_segmenter_configured_exits_1_and_commits_nothing() {
 // --- the operations, and the PNG out (plan 2A, task R2) ----------------------------------------
 
 /// The chunk types of a PNG file, in order.
-fn chunks(png: &[u8]) -> Vec<String> {
+pub fn chunks(png: &[u8]) -> Vec<String> {
     assert_eq!(png[..8], *b"\x89PNG\r\n\x1a\n");
     let mut at = 8;
     let mut found = Vec::new();
@@ -333,7 +333,7 @@ fn chunks(png: &[u8]) -> Vec<String> {
 }
 
 /// The pixels of a PNG or JPEG file, as the core reads them.
-fn pixels_of(file: &[u8]) -> CanonicalPixels {
+pub fn pixels_of(file: &[u8]) -> CanonicalPixels {
     identify(file, &DecodeLimits::default()).unwrap().pixels
 }
 
@@ -637,36 +637,129 @@ fn squint_check_prints_the_verdict_and_the_run_under_a_recorded_fake() {
     assert_eq!(sent["max_tokens"], 2_048);
 }
 
+/// What the judge's requests of a check held, read off the wire: each request's body.
+fn sent_of(log: &crate::anthropic::Log) -> Vec<serde_json::Value> {
+    (log.lock().unwrap().iter())
+        .map(|(_, body)| serde_json::from_slice(body).unwrap())
+        .collect()
+}
+
+/// The tools a request offered, by name, in order.
+fn offered_in(sent: &serde_json::Value) -> Vec<&str> {
+    (sent["tools"].as_array().unwrap().iter())
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect()
+}
+
+/// What a call of `align` by the judge was answered with, in the request after it: the
+/// result's text, read as JSON, and the pictures beside it.
+fn align_answered(sent: &serde_json::Value) -> (serde_json::Value, usize) {
+    let answered = &sent["messages"].as_array().unwrap().last().unwrap()["content"][0];
+    assert_eq!(answered["type"], "tool_result");
+    let content = answered["content"].as_array().unwrap();
+    let pictures = content.iter().filter(|p| p["type"] == "image").count();
+    let text = content[0]["text"].as_str().unwrap();
+    (serde_json::from_str(text).unwrap(), pictures)
+}
+
 #[test]
-fn squint_check_details_first_prints_the_verdict_under_a_recorded_fake() {
-    use crate::anthropic::{Judged, checked_as, submission};
-    let judged = Judged::new("cli-squint-details");
-    let (printed, log) = checked_as(
-        &judged,
-        vec![submission("held", "Nothing protected moved.")],
-        None,
-        whizbang::door::Details::First,
-        "full",
+fn squint_check_with_nothing_set_is_the_control_arm() {
+    // Plan m4, task A1, item 3: `whizbang squint check` with neither `--details` nor
+    // `--projection` is the control arm of the gate of details first, whole: nothing
+    // measured first, `view` and `align` offered and no `resize`, and a call of `align`
+    // answered with its pictures alone.
+    use crate::anthropic::{Judged, checked_stated, submission};
+    use crate::matrix::{argument, runs_of, steps_of};
+    let judged = Judged::new("cli-squint-nothing-set");
+    let align = serde_json::json!({"image": "candidate", "against": "source"});
+    let answers = vec![
+        crate::check::calling("toolu_a", "align", align),
+        submission("held", "Nothing protected moved."),
+    ];
+    let (printed, log) = checked_stated(&judged, answers, None, None);
+    let printed = printed.unwrap();
+    assert_eq!(printed.lines().nth(1), Some("verdict: pass"), "{printed}");
+    let sent = sent_of(&log);
+    assert_eq!(sent.len(), 2);
+    // The opening: the two pictures and the checklist, and nothing measured.
+    assert_eq!(offered_in(&sent[0]), ["view", "align", "submit_verdict"]);
+    let opening = sent[0]["messages"][0]["content"].as_array().unwrap();
+    assert!(
+        !opening.iter().any(|part| {
+            let text = part["text"].as_str().unwrap_or_default();
+            text == whizbang_squint::details::DETAILS_INTRO || text.starts_with("align (")
+        }),
+        "{opening:?}"
     );
+    assert_eq!(opening.iter().filter(|p| p["type"] == "image").count(), 2);
+    // The judge's call of `align` under `visual_only`: the fixed sentence, no measurement,
+    // and the aligned picture.
+    let (said, pictures) = align_answered(&sent[1]);
+    assert_eq!(said["status"], "ok", "{said}");
+    assert_eq!(
+        said["summary"],
+        "Result computed; its measurements are withheld."
+    );
+    assert_eq!(said["measurements"], serde_json::json!([]));
+    assert_eq!(pictures, 1);
+    // What ran: the recipe, whose step `details` measured nothing and started no tool, and
+    // whose judge's step ran under the control arm's three settings.
+    let root = &judged.world.root;
+    let details = runs_of(root, "details");
+    assert_eq!(details.len(), 1);
+    assert_eq!(argument(&details[0].1, "details").as_deref(), Some("none"));
+    assert_eq!(steps_of(&details[0].1), [] as [&str; 0]);
+    let checks = runs_of(root, "check");
+    assert_eq!(checks.len(), 1);
+    let check = &checks[0].1;
+    assert_eq!(argument(check, "tools").as_deref(), Some("view,align"));
+    assert_eq!(
+        argument(check, "projection").as_deref(),
+        Some("visual_only")
+    );
+    assert_eq!(argument(check, "second_look").as_deref(), Some("off"));
+    // `--details none` typed is the same call, and `--projection` is stated apart: `full`
+    // with nothing measured first is what the run asked for, not the arm's.
+    let none = whizbang::door::Measuring::stated(Some("none"), None).unwrap();
+    assert_eq!(
+        (none.details, none.projection),
+        (whizbang::door::Details::None, "visual_only")
+    );
+    let full = whizbang::door::Measuring::stated(None, Some("full")).unwrap();
+    assert_eq!(
+        (full.details, full.projection),
+        (whizbang::door::Details::None, "full")
+    );
+    assert!(whizbang::door::Measuring::stated(Some("sometimes"), None).is_err());
+}
+
+#[test]
+fn squint_check_details_first_measures_first_offers_resize_and_answers_in_full() {
+    // `--details first` brings the gate's arm F back, whole: the details first, `resize`
+    // offered beside `view` and `align`, and a call of `align` answered in full.
+    use crate::anthropic::{Judged, checked_stated, submission};
+    use crate::matrix::{argument, runs_of, steps_of};
+    let judged = Judged::new("cli-squint-details");
+    let align = serde_json::json!({"image": "candidate", "against": "source"});
+    let answers = vec![
+        crate::check::calling("toolu_a", "align", align),
+        submission("held", "Nothing protected moved."),
+    ];
+    let (printed, log) = checked_stated(&judged, answers, Some("first"), None);
     let printed = printed.unwrap();
     let lines: Vec<&str> = printed.lines().collect();
     assert!(lines[0].starts_with("run ") && lines[0].ends_with(" completed"));
     assert_eq!(lines[1], "verdict: pass");
-    // One request reached the judge. It may call view, align and resize; and before it
-    // looked, align registered the candidate onto the source: what it found and every
-    // measurement are in the opening, labelled with the tool and its mark, and the
-    // aligned picture beside them.
-    let log = log.lock().unwrap();
-    assert_eq!(log.len(), 1);
-    let sent: serde_json::Value = serde_json::from_slice(&log[0].1).unwrap();
-    let tools: Vec<&str> = sent["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|tool| tool["name"].as_str().unwrap())
-        .collect();
-    assert_eq!(tools, ["view", "align", "resize", "submit_verdict"]);
-    let opening = sent["messages"][0]["content"].as_array().unwrap();
+    // Before the judge looked, align registered the candidate onto the source: what it
+    // found and every measurement are in the opening, labelled with the tool and its
+    // mark, and the aligned picture beside them. It may call view, align and resize.
+    let sent = sent_of(&log);
+    assert_eq!(sent.len(), 2);
+    assert_eq!(
+        offered_in(&sent[0]),
+        ["view", "align", "resize", "submit_verdict"]
+    );
+    let opening = sent[0]["messages"][0]["content"].as_array().unwrap();
     let texts: Vec<&str> = opening
         .iter()
         .filter_map(|part| part["text"].as_str())
@@ -692,6 +785,29 @@ fn squint_check_details_first_prints_the_verdict_under_a_recorded_fake() {
         .filter(|part| part["type"] == "image")
         .count();
     assert_eq!(pictures, 3);
+    // The judge's own call of `align` is answered in full: what it measured is said.
+    let (said, _) = align_answered(&sent[1]);
+    assert_eq!(said["status"], "ok", "{said}");
+    assert_ne!(
+        said["summary"],
+        "Result computed; its measurements are withheld."
+    );
+    assert!(
+        !said["measurements"].as_array().unwrap().is_empty(),
+        "{said}"
+    );
+    // What ran: `details` measured first, by `align`, and the judge's step ran under arm
+    // F's settings.
+    let root = &judged.world.root;
+    let details = runs_of(root, "details");
+    assert_eq!(argument(&details[0].1, "details").as_deref(), Some("first"));
+    assert_eq!(steps_of(&details[0].1), ["align"]);
+    let check = &runs_of(root, "check")[0].1;
+    assert_eq!(
+        argument(check, "tools").as_deref(),
+        Some("view,align,resize")
+    );
+    assert_eq!(argument(check, "projection").as_deref(), Some("full"));
 }
 
 #[test]
@@ -1448,6 +1564,8 @@ fn squint_check_detail_tiles_on_a_pair_is_refused_naming_the_use_case() {
                 &id,
                 "--brief",
                 "Keep it.",
+                "--details",
+                "first",
                 "--detail",
                 "tiles",
             ],
@@ -1474,12 +1592,32 @@ fn squint_check_detail_tiles_on_a_pair_is_refused_naming_the_use_case() {
             "reality-checks",
             "--candidate",
             &id,
+            "--details",
+            "first",
             "--detail",
             "tiles",
         ],
         &root,
     );
     assert!(!ran.err.contains("the detail tiles"), "{}", ran.err);
+    assert!(!ran.err.contains("--details first"), "{}", ran.err);
+    // Nothing is measured first unless the run asks (plan m4, task A1): a detail named
+    // without `--details first`, or with `--details none`, is refused at once, since it
+    // would measure nothing.
+    for none in [&[][..], &["--details", "none"][..]] {
+        let mut args = vec!["squint", "check", "reality-checks", "--candidate", &id];
+        args.extend(none);
+        args.extend(["--detail", "tiles"]);
+        let ran = whizbang(&args, &root);
+        assert_eq!(ran.code, Some(1), "{}", ran.err);
+        assert!(
+            ran.err.contains(whizbang::door::DETAIL_WITHOUT_FIRST),
+            "{}",
+            ran.err
+        );
+        assert!(ran.out.is_empty());
+        assert!(!root.exists());
+    }
 }
 
 #[test]

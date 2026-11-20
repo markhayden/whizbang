@@ -35,7 +35,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use whizbang_core::contract::record::{RunRecord, Status};
-use whizbang_core::contract::{Admission, Answer, Executor, Request, RequestId, RunId};
+use whizbang_core::contract::{
+    Admission, Answer, Earlier, Executor, Request, RequestId, RunId, RunState,
+};
 use whizbang_core::identity::Digest;
 use whizbang_core::store::Reader;
 use whizbang_core::store::fs::RealFs;
@@ -84,11 +86,48 @@ pub enum Resume {
 }
 
 /// What a run of the work started: attempts in all, and of them those that retried a
-/// failed cell.
+/// failed cell; and, apart, the requests the store had already answered, which started
+/// nothing (plan m4, task A1, item 8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Started {
+    /// Runs this run of the work made: a request answered with a run an earlier one made
+    /// is not among them.
     pub started: usize,
     pub retried: usize,
+    /// Requests the executor answered with the run an earlier request made under the same
+    /// id (`Repeat`): nothing ran and nothing was paid for again.
+    pub repeats: usize,
+}
+
+/// What the harness says of a cell while the work runs (plan m4, task A1, item 7), so
+/// that long work is not silent until its counts. `at` is the cell's place, from 1, among
+/// the `of` cells this run of the work sends a request for.
+#[derive(Debug, Clone, Copy)]
+pub enum Said<'a> {
+    /// An attempt of the cell was started: a new run.
+    Started {
+        at: usize,
+        of: usize,
+        identity: &'a str,
+        attempt: u32,
+        run: &'a RunId,
+    },
+    /// A run this run of the work started is over, or nothing here will end it: its state
+    /// when it was waited for.
+    Ended {
+        at: usize,
+        of: usize,
+        identity: &'a str,
+        state: &'a RunState,
+    },
+    /// The store had already answered the cell's request: the run an earlier request made
+    /// under its id, and that run's state. Nothing was started.
+    Repeat {
+        at: usize,
+        of: usize,
+        identity: &'a str,
+        earlier: &'a Earlier,
+    },
 }
 
 /// What the harness is given beside the cells.
@@ -249,6 +288,28 @@ pub fn run_resuming(
     what: &str,
     resume: Resume,
 ) -> Result<Started, String> {
+    run_saying(
+        cells,
+        recognise,
+        running,
+        at_once,
+        what,
+        resume,
+        &mut |_| {},
+    )
+}
+
+/// [`run_resuming`], with each cell said to `say` as its attempt starts, as the run it
+/// started ends, and when its request was answered by a run an earlier request made.
+pub fn run_saying(
+    cells: &[&dyn Work],
+    recognise: Recognise<'_>,
+    running: &Running<'_>,
+    at_once: usize,
+    what: &str,
+    resume: Resume,
+    say: &mut dyn FnMut(Said<'_>),
+) -> Result<Started, String> {
     let earlier = attempts(running.root, recognise)?;
     let taken = taken_ids(running.root)?;
     let mut todo = Vec::new();
@@ -266,13 +327,13 @@ pub fn run_resuming(
             match cell.request(attempt)? {
                 Some(request) if held_by_another(&taken, &request) => {}
                 other => {
-                    found = Some(other);
+                    found = Some(other.map(|request| (request, attempt)));
                     break;
                 }
             }
         }
         match found {
-            Some(Some(request)) => todo.push((*cell, request, retry)),
+            Some(Some((request, attempt))) => todo.push((*cell, request, retry, attempt)),
             Some(None) => {}
             None => {
                 return Err(format!(
@@ -283,7 +344,7 @@ pub fn run_resuming(
         }
     }
     let mut forecast: u64 = 0;
-    for (cell, _, _) in &todo {
+    for (cell, _, _, _) in &todo {
         forecast = forecast.saturating_add(cell.forecast()?);
     }
     if forecast > running.left_micros {
@@ -295,31 +356,83 @@ pub fn run_resuming(
         ));
     }
     let mut prepared = BTreeSet::new();
-    for (cell, request, _) in &todo {
+    for (cell, request, _, _) in &todo {
         if prepared.insert(cell.group()) {
             (running.executor.prepare(request.call()))
                 .map_err(|why| format!("the {what} cannot run, nothing was run: {why}"))?;
         }
     }
     let mut started = Started::default();
-    let mut open: VecDeque<RunId> = VecDeque::new();
+    // The runs started and not yet waited for, each with its cell's place and identity.
+    let mut open: VecDeque<(RunId, usize, String)> = VecDeque::new();
     let mut failure = None;
-    for (_, request, retry) in todo {
+    let of = todo.len();
+    let waited = |open: &mut VecDeque<(RunId, usize, String)>,
+                  say: &mut dyn FnMut(Said<'_>)|
+     -> Result<(), String> {
+        if let Some((run, at, identity)) = open.pop_front() {
+            let watched = running.executor.wait(&run).map_err(|e| e.to_string())?;
+            say(Said::Ended {
+                at,
+                of,
+                identity: &identity,
+                state: watched.state(),
+            });
+        }
+        Ok(())
+    };
+    for (place, (cell, request, retry, attempt)) in todo.into_iter().enumerate() {
         if (running.stop)() {
             break;
         }
         while open.len() >= at_once.max(1) {
-            if let Some(run) = open.pop_front() {
-                running.executor.wait(&run).map_err(|e| e.to_string())?;
-            }
+            waited(&mut open, say)?;
         }
+        let (at, identity) = (place + 1, cell.identity());
         match running.executor.start(&request) {
-            Ok(answer) => {
-                if let Answer::Started(run) = answer {
-                    open.push_back(run);
-                }
+            // A new run: this run of the work started it.
+            Ok(Answer::Started(run)) => {
+                say(Said::Started {
+                    at,
+                    of,
+                    identity: &identity,
+                    attempt,
+                    run: &run,
+                });
+                open.push_back((run, at, identity));
                 started.started += 1;
                 started.retried += usize::from(retry);
+            }
+            // `start` waits for nothing, but an executor that answers with a run that has
+            // ended made that run for this request all the same.
+            Ok(Answer::Ran(finished)) => {
+                say(Said::Started {
+                    at,
+                    of,
+                    identity: &identity,
+                    attempt,
+                    run: finished.run(),
+                });
+                let state = RunState::Ended(finished.outcome().clone());
+                say(Said::Ended {
+                    at,
+                    of,
+                    identity: &identity,
+                    state: &state,
+                });
+                started.started += 1;
+                started.retried += usize::from(retry);
+            }
+            // The store had already answered this request: nothing starts, and it is not
+            // counted as started.
+            Ok(Answer::Repeat(earlier)) => {
+                say(Said::Repeat {
+                    at,
+                    of,
+                    identity: &identity,
+                    earlier: &earlier,
+                });
+                started.repeats += 1;
             }
             Err(why) => {
                 failure = Some(why.to_string());
@@ -327,8 +440,8 @@ pub fn run_resuming(
             }
         }
     }
-    while let Some(run) = open.pop_front() {
-        running.executor.wait(&run).map_err(|e| e.to_string())?;
+    while !open.is_empty() {
+        waited(&mut open, say)?;
     }
     match failure {
         Some(why) => Err(format!(

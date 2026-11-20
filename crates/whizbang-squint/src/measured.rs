@@ -38,7 +38,7 @@ fn artifact_of(text: &str) -> Option<ArtifactId> {
 /// The action's name: the first step of a use case's recipe.
 pub const NAME: &str = "details";
 /// The action's version.
-pub const VERSION: &str = "1.0.0";
+pub const VERSION: &str = "1.1.0";
 /// The diagnostic in which a run of `details` keeps the measurements it handed back whole.
 pub const KEPT: &str = "measured.json";
 
@@ -364,9 +364,9 @@ impl DetailsStep {
         ))
         .argument(Argument::with_default(
             "details",
-            "none, which measures nothing, or first.",
+            "none, which measures nothing and is the default, or first.",
             ValueType::choice(&Details::NAMES),
-            Value::text("first"),
+            Value::text("none"),
         ))
         .argument(Argument::with_default(
             "detail",
@@ -415,7 +415,16 @@ impl Action for DetailsStep {
             )));
         }
         let detail = match text("details") {
-            Some("none") => Vec::new(),
+            // Nothing is measured, which is the step's default (plan m4, task A1: the
+            // gate of details first rejected it). A detail named beside it, other than
+            // the one a call that names none has, would be measured by nothing and said
+            // by nothing: refused, in the door's sentence.
+            Some("none") | None => {
+                if text("detail").is_some_and(|named| named != align::NAME) {
+                    return Err(Failure::invalid(details::DETAIL_WITHOUT_FIRST));
+                }
+                Vec::new()
+            }
             _ => {
                 let offered: Vec<String> = [view::NAME, align::NAME]
                     .into_iter()

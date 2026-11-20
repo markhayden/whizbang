@@ -1152,6 +1152,76 @@ fn the_baseline_record_holds_the_live_reruns_two_numbers() {
 }
 
 #[test]
+fn the_record_of_check_says_details_first_is_off_and_names_its_gate() {
+    // Plan m4, task A1, item 5: `check`'s record (`docs/results/m2c-use-cases.md`, the
+    // record of its use cases' live calls), the guide to the command, and the five use
+    // cases' records each say that details first is off by default, name the gate that
+    // rejected it and where its run is recorded, and say how to turn it on.
+    let read = |path: &str| {
+        std::fs::read_to_string(repository().join(path)).unwrap_or_else(|e| panic!("{path}: {e}"))
+    };
+    // What the records say is what the door does.
+    assert_eq!(
+        whizbang::door::Details::DEFAULT,
+        whizbang::door::Details::None
+    );
+    let stated = whizbang::door::Measuring::stated(None, None).unwrap();
+    assert_eq!(stated.projection, "visual_only");
+    // The gate they name is the committed one, and its record's fourth run rejected.
+    const GATE: &str = "gates/details-first.toml";
+    assert!(repository().join(GATE).is_file());
+    let gates = read("docs/results/m3-gates.md");
+    let (_, fourth) = gates
+        .split_once("\n## The fourth run, the complete one")
+        .expect("the fourth run's part");
+    assert!(fourth.contains("**Rejected.**"));
+    let mut pages = vec![
+        "docs/results/m2c-use-cases.md".to_owned(),
+        "docs/guides/config.md".to_owned(),
+    ];
+    pages.extend(
+        whizbang_squint::use_case::NAMES
+            .iter()
+            .map(|name| format!("docs/reference/tools/{name}.md")),
+    );
+    for path in &pages {
+        let page = read(path);
+        // One line of running words, so a phrase broken over two lines is still found.
+        let page = page.split_whitespace().collect::<Vec<_>>().join(" ");
+        for said in [
+            // Off by default, and what the default is.
+            "off by default",
+            "visual_only",
+            // The gate that rejected it, and the run to read.
+            "docs/results/m3-gates.md",
+            "The fourth run, the complete one",
+            // How to turn it on.
+            "--details first",
+        ] {
+            assert!(page.contains(said), "{path} does not say {said:?}");
+        }
+        if path != "docs/guides/config.md" {
+            assert!(page.contains(GATE), "{path} does not name {GATE}");
+            // A part of its own: a heading in `check`'s record, and a paragraph under
+            // "What it does" in a tool's record, whose headings are the seven of
+            // `SPEC.md` section 8 and no other.
+            assert!(
+                page.contains("## Details first is off by default")
+                    || page.contains("**Details first is off by default.**"),
+                "{path}: its part on the default"
+            );
+        }
+        // No record still calls details first the default.
+        for stale in [
+            "`--details first`, the default",
+            "measures details first all the same",
+        ] {
+            assert!(!page.contains(stale), "{path} still says {stale:?}");
+        }
+    }
+}
+
+#[test]
 fn the_gates_record_holds_the_details_first_receipt_and_only_aggregates() {
     let page = std::fs::read_to_string(repository().join("docs/results/m3-gates.md"))
         .expect("the record of the gate of details first is committed");

@@ -16,7 +16,11 @@
 //!   own travels), and the same three with `-focus` when the results changed anything: the
 //!   region both changed, with context, at full size, through the edge of a picture that
 //!   wraps (`whizbang_eval::lab::focus`). Names say the pair's place on the page and the
-//!   side, never an arm; each pair's left is written before its right.
+//!   side, never an arm; each pair's left is written before its right. The three whole
+//!   pictures of a pair are one size on disk, and so are its three of the focus (plan m4,
+//!   task A1, item 9): each holds, beside its pixels, one chunk of padding that a reader
+//!   of a PNG passes over ([`same_size`]). Without it a reference arm's picture, written
+//!   by the same encoder from the source's own pixels, had the source's size to the byte.
 //! - `index.html`: the page. A Content-Security-Policy in its head lets nothing load but
 //!   pictures from the page's own place or a local file (`img-src 'self' file:`, since a
 //!   browser may not count a file's own folder as `'self'`), no script run but its own and
@@ -28,8 +32,13 @@
 //!   resume.
 //!
 //! What an inspecting picker could still find: the pair ids (corpus ids) and the pictures'
-//! files, which name places and sides only; the size of each file, which can differ between
-//! two arms' results; and `assignment.json` beside the page, which names every arm.
+//! files, which name places and sides only; a side whose pixels are the source's own, when
+//! an arm hands the source back, which the page shows as well (hold `s`); and
+//! `assignment.json` beside the page, which names every arm. A file's size no longer says
+//! anything of its side; but the length of its chunk of padding does to one who lists a
+//! PNG's chunks, since it is what the file lacked of the longest, so the size the encoder
+//! gave it can be worked out again (the carry-over list has the row: pictures whose size
+//! follows from their dimensions alone).
 //!
 //! The folder: by default `pairs/<a>-vs-<b>` under the corpus's folder, which the owner
 //! names and which is outside any repository. Refused inside the store, and inside a git
@@ -347,6 +356,51 @@ fn png(pixels: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
     png_of(pixels, width, height, Channels::Rgba)
 }
 
+/// The type of the chunk of padding in a pair's pictures: ancillary, private and safe to
+/// copy, as the PNG format reads its letters' cases, so every reader passes over it.
+pub const PADDING_CHUNK: [u8; 4] = *b"paDd";
+
+/// The CRC a PNG chunk ends with (ISO 3309, as the format's own text gives it), over the
+/// chunk's type and data.
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = u32::MAX;
+    for byte in bytes {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            crc = if crc & 1 == 1 {
+                (crc >> 1) ^ 0xEDB8_8320
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    !crc
+}
+
+/// PNG files brought to one size on disk: each is given one chunk of zeros
+/// ([`PADDING_CHUNK`]) before its last chunk, as long as it takes to reach the longest of
+/// them with its own, empty, chunk. Every file gets the chunk, so none is told apart by
+/// having it; no pixel changes. So a file's size says nothing of which arm made it.
+pub fn same_size(files: &mut [Vec<u8>]) -> Result<(), String> {
+    /// A chunk with no data: its length, its type and its CRC.
+    const EMPTY: usize = 12;
+    let longest = files.iter().map(Vec::len).max().unwrap_or(0);
+    for file in files.iter_mut() {
+        // The last chunk of a PNG is `IEND`, which has no data.
+        let end = (file.len().checked_sub(EMPTY))
+            .filter(|end| file[end + 4..end + 8] == *b"IEND")
+            .ok_or("a picture of a pair was not written as a PNG; no page was finished")?;
+        let data = vec![0; longest - file.len()];
+        let mut chunk = (data.len() as u32).to_be_bytes().to_vec();
+        let mut covered = PADDING_CHUNK.to_vec();
+        covered.extend(&data);
+        chunk.extend(&covered);
+        chunk.extend(crc32(&covered).to_be_bytes());
+        file.splice(end..end, chunk);
+    }
+    Ok(())
+}
+
 /// Writes the page of a prepared round's pairs (the module's description says what).
 pub fn pairs(prepared: &Prepared, asked: &Asked<'_>) -> Result<Written, String> {
     let validated = &prepared.validated;
@@ -482,13 +536,27 @@ pub fn pairs(prepared: &Prepared, asked: &Asked<'_>) -> Result<Written, String> 
             out.join("pictures")
                 .join(format!("{file}-{side}{kind}.png"))
         };
-        for (side, pixels) in [("left", &left), ("right", &right), ("source", &source)] {
-            let whole = png(pixels.rgba(), pixels.width(), pixels.height())?;
-            bytes += write_new(&named(side, ""), &whole)?;
+        // The pair's pictures are encoded first and brought to one size on disk, the whole
+        // ones together and those of the focus together, and then written, left first.
+        let sides = [("left", &left), ("right", &right), ("source", &source)];
+        let mut wholes = Vec::new();
+        let mut crops = Vec::new();
+        for (side, pixels) in sides {
+            wholes.push(png(pixels.rgba(), pixels.width(), pixels.height())?);
             if let Some(f) = focus.filter(|_| (pixels.width(), pixels.height()) == (width, height))
             {
                 let crop = png(&f.crop(width, pixels.rgba()), f.width, f.height)?;
-                bytes += write_new(&named(side, "-focus"), &crop)?;
+                crops.push((side, crop));
+            }
+        }
+        same_size(&mut wholes)?;
+        let (crop_sides, mut crop_files): (Vec<&str>, Vec<Vec<u8>>) = crops.into_iter().unzip();
+        same_size(&mut crop_files)?;
+        for ((side, _), whole) in sides.iter().zip(&wholes) {
+            bytes += write_new(&named(side, ""), whole)?;
+            let crop = crop_sides.iter().position(|of| of == side);
+            if let Some(crop) = crop.and_then(|at| crop_files.get(at)) {
+                bytes += write_new(&named(side, "-focus"), crop)?;
             }
         }
         on_page.push(OnPage {

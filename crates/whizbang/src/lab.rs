@@ -27,8 +27,10 @@ pub enum Command {
     /// again, and one that was interrupted is; with --retry-failed, a failed one is too.
     /// Refused before its first cell when its
     /// forecast passes what the store's allowance has left, and when the store holds runs
-    /// of the lab under another protocol. Prints counts, and the first failed cell with
-    /// its run's words.
+    /// of the lab under another protocol. While it runs, each cell is said on the error
+    /// stream as it starts and as it ends. Prints counts, and the first failed cell with
+    /// its run's words: `started now` counts the runs this run of the round made, and a
+    /// request the store had already answered is counted apart.
     Run {
         /// The matrix file; the corpus manifest and the protocol it names are beside it.
         #[arg(long, value_name = "FILE")]
@@ -155,7 +157,10 @@ pub fn run(command: &Command, platform: Platform) -> Result<(String, Option<Stri
             } else {
                 Resume::KeepFailed
             };
-            let report = laboratory::round_resuming(&prepared, &running, resume)?;
+            // Each cell is said on the error stream as it starts and as it ends, so a
+            // long round is not silent until its counts, which go to the output alone.
+            let mut say = |line: &str| eprintln!("whizbang: {}", whizbang::door::printable(line));
+            let report = laboratory::round_saying(&prepared, &running, resume, &mut say)?;
             Ok((report.text(), report.failure()))
         }
         Command::Pairs {

@@ -1174,6 +1174,11 @@ fn first_waiting(worker: &OneWorker) -> Vec<(String, u64)> {
 /// supervisor's sentence).
 const REMOVED_ELSEWHERE: &str = "a removal of the model began after the request's hold was given";
 
+/// What it is told instead when the supervisor's look found the count of removals as it
+/// was and the model marked by a live remover (the supervisor's other sentence,
+/// `whizbang_backends::pack::queue`).
+const REMOVED_MARKED: &str = "the model is being removed; the request was ended while it waited";
+
 #[test]
 fn after_a_reinstall_between_two_requests_of_a_run_the_first_is_answered_from_the_old_installations_files_and_the_second_is_refused_at_the_lease()
  {
@@ -1511,9 +1516,20 @@ fn through_the_wiring_a_removal_from_a_second_process_cancels_a_queued_request_a
         assert_eq!(Elsewhere::removes(&local.models_dir()), "Err(Held)");
         let finished = queued.join().unwrap();
         assert_eq!(finished.outcome().name(), "error");
+        // Which of two sentences it is told is the remover's timing, not this test's. A
+        // remover sets its mark and then raises the count, two steps under the
+        // directory's lock; the supervisor looks every quarter of a second of the real
+        // clock and holds no lock. A look that lands after both finds the count moved;
+        // one that lands between them finds the count as it was and the model marked by
+        // a live remover. Each ends the request, refused and never sent, which is what
+        // is held here. (The test once failed inside a full check for holding it to the
+        // first sentence alone; the tests of the queue hold each sentence to its case
+        // on a clock that stands still, `pack::removal` of `whizbang-backends`.)
         let came = local.came();
+        let by_the_removal =
+            |why: &str| why.starts_with(REMOVED_ELSEWHERE) || why.starts_with(REMOVED_MARKED);
         assert!(
-            matches!(&came[..], [Err((FaultKind::Rejected, why))] if why.starts_with(REMOVED_ELSEWHERE)),
+            matches!(&came[..], [Err((FaultKind::Rejected, why))] if by_the_removal(why)),
             "{came:?}"
         );
         held.let_go();

@@ -438,6 +438,119 @@ fn check_over_stdio_returns_the_verdict_of_each_use_case_under_a_scripted_judge(
 }
 
 #[test]
+fn a_use_case_called_with_nothing_set_is_the_control_arm_and_offers_no_resize() {
+    // Plan m4, task A1, item 4: over MCP a use case called by a client that sets nothing
+    // is the control arm of the gate of details first, whole, by either of its tools:
+    // `check` in the shape a caller of a judge asks in, and the use case's recipe by its
+    // own name.
+    use crate::anthropic::{CHECK_CLASSES, Judged, import_picture, serving, submission};
+    use crate::matrix::{argument, runs_of, steps_of};
+    let judged = Judged::new("serve-control-arm");
+    let scratch = judged.world.beside("pictures");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let root = &judged.world.root;
+    let source = import_picture(root, &scratch, "source", 10);
+    let candidate = import_picture(root, &scratch, "candidate", 200);
+    // To `check`, the judge calls `align` and then answers; to the recipe, it answers.
+    let align = json!({"image": "candidate", "against": "source"});
+    let answers = vec![
+        crate::check::calling("toolu_a", "align", align),
+        submission("held", "Looked at."),
+        submission("held", "Looked at."),
+    ];
+    let (listener, log) = serving(&judged.pki, answers);
+    let origin = format!("https://127.0.0.1:{}", listener.port());
+    let over = judged.over_with(
+        &judged.address(listener.port()),
+        Some(&origin),
+        &CHECK_CLASSES,
+        "",
+    );
+    let executor = Arc::new(judged.runner(&over));
+    let registry = whizbang::wiring::registry().unwrap();
+    let descriptors = registry.descriptors().cloned().collect();
+    let door = Arc::new(Actions::new(descriptors, root.clone(), None));
+    // The schema says what a call with no `details` is.
+    let check = (door.tools().into_iter())
+        .find(|tool| tool.name == "check")
+        .unwrap();
+    let details = &check.schema["properties"]["details"];
+    assert_eq!(details["default"], "none");
+    assert_eq!(details["enum"], json!(["none", "first"]));
+    let mut client = Client::new(executor, door, Limits::default());
+    client.initialized();
+    // `check`, with its use case and its images and nothing else.
+    let images = json!([{"id": candidate, "role": "candidate"}, {"id": source, "role": "source"}]);
+    let arguments = json!({"use_case": "source-fidelity", "images": images});
+    client.call(1, "check", arguments, None);
+    let (text, error) = result_text(&client.answer(1, &mut Vec::new()));
+    assert!(!error, "{text}");
+    assert_eq!(text.lines().nth(1), Some("verdict: pass"), "{text}");
+    // The recipe by its own name, with its job and its images and no override.
+    let job = whizbang_squint::job::Job::shorthand("source-fidelity", true, 0, None);
+    let arguments = json!({"job": job.to_json(), "images": [candidate, source]});
+    client.call(2, "source-fidelity", arguments, None);
+    let (text, error) = result_text(&client.answer(2, &mut Vec::new()));
+    assert!(!error, "{text}");
+    assert!(client.close().is_empty());
+    assert_eq!(listener.finish(), 3);
+    // On the wire: every request offered `view` and `align` and no `resize`, no opening
+    // held a detail measured first, and the judge's call of `align` was answered with
+    // the fixed sentence and its picture, nothing measured.
+    let sent: Vec<Json> = (log.lock().unwrap().iter())
+        .map(|(_, body)| serde_json::from_slice(body).unwrap())
+        .collect();
+    assert_eq!(sent.len(), 3);
+    for sent in &sent {
+        let offered: Vec<&str> = (sent["tools"].as_array().unwrap().iter())
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(offered, ["view", "align", "submit_verdict"]);
+        let opening = sent["messages"][0]["content"].as_array().unwrap();
+        assert!(
+            !opening.iter().any(|part| {
+                let text = part["text"].as_str().unwrap_or_default();
+                text == whizbang_squint::details::DETAILS_INTRO || text.starts_with("align (")
+            }),
+            "{opening:?}"
+        );
+    }
+    let answered = &sent[1]["messages"].as_array().unwrap().last().unwrap()["content"][0];
+    let content = answered["content"].as_array().unwrap();
+    let said: Json = serde_json::from_str(content[0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        said["summary"],
+        "Result computed; its measurements are withheld."
+    );
+    assert_eq!(said["measurements"], json!([]));
+    assert_eq!(content.iter().filter(|p| p["type"] == "image").count(), 1);
+    // In the store: both calls ran the recipe, whose step `details` measured nothing and
+    // started no tool, and whose judge's step ran under the control arm's settings. The
+    // door's call states them; the recipe's own call leaves them to the recipe.
+    let recipes = runs_of(root, "source-fidelity");
+    assert_eq!(recipes.len(), 2);
+    let stated: Vec<bool> = (recipes.iter())
+        .map(|(_, record)| argument(record, "set").is_some())
+        .collect();
+    assert_eq!(stated.iter().filter(|stated| **stated).count(), 1);
+    let details = runs_of(root, "details");
+    assert_eq!(details.len(), 2);
+    for (_, record) in &details {
+        assert_eq!(argument(record, "details").as_deref(), Some("none"));
+        assert_eq!(steps_of(record), [] as [&str; 0]);
+    }
+    let checks = runs_of(root, "check");
+    assert_eq!(checks.len(), 2);
+    for (_, record) in &checks {
+        assert_eq!(argument(record, "tools").as_deref(), Some("view,align"));
+        assert_eq!(
+            argument(record, "projection").as_deref(),
+            Some("visual_only")
+        );
+    }
+}
+
+#[test]
 fn nothing_but_the_protocol_is_written_to_stdout() {
     let (_dir, executor, door) = waiting("serve-protocol");
     let mut client = Client::new(executor, door, Limits::default());
