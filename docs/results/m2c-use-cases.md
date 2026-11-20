@@ -547,3 +547,33 @@ recipe_digest = "sha256:07e0d82abdde420b7291c192fa4fa8e6508c263a8022efcb3c10ee61
 decisions = "200"
 completed = "145"
 ```
+
+## Details first is off by default (plan m4, task A1)
+
+Every call above that ran through `whizbang squint check` or a use case's recipe ran with
+details first, which was the default until plan m4's task A1: the details of each pair
+measured before the judge's first turn (ADR 0029), arm `F` of the gate of details first.
+That gate (`gates/details-first.toml`) rejected details first in every run of 2026-11-19;
+the run to read is the fourth, the first complete one, where it helped on none of the three
+judges (`docs/results/m3-gates.md`, "The fourth run, the complete one").
+
+So `check` as a door calls it now is the gate's control arm, whole (arm `C`), the one arm
+with evidence behind it: nothing is measured first (`details = none`), the judge is offered
+`view` and `align` and no `resize`, and a call of `align` is answered with its pictures and
+a fixed sentence (`projection = visual_only`). That is what `whizbang squint check` with
+nothing set asks, what the server's `check` asks with no `details`, and what each of the
+five recipes says in its own file. Every door states all four settings (the details, the
+tools, the projection and the second look) on every call, so none leans on a recipe's file.
+
+Nothing of details first is removed. To turn it on, whole, as arm `F` was measured:
+
+```
+whizbang squint check <use case> --details first ...
+```
+
+which measures first, offers `resize` too and answers a call of `align` in `full`; over the
+server, `"details": "first"`. An evaluation's cell states its arm on `check` itself and is
+unchanged, so every committed matrix and gate means what it meant. The recipes' digests
+changed with their defaults, so the decision cache misses once for each job. No call of this
+record was made again: fixing details first and gating it on fresh data is milestone E's
+(`docs/carry-over.md`, the row on `tiles` and the second look).

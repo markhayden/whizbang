@@ -1,6 +1,7 @@
 //! The records of the five use cases' recipes (plan m3, task Q1, item 5;
 //! `docs/reference/tools/<use case>.md`): rung 1, two worked examples of each, run here
-//! through the recipe on synthetic pictures under a scripted judge. The pictures beside
+//! through the recipe as shipped, with nothing set (plan m4, task A1: the control arm of
+//! the gate of details first), on synthetic pictures under a scripted judge. The pictures beside
 //! each record are held byte for byte, and its table of what each example gave is held to
 //! what the recipe gives. `write_the_records`, which `scripts/tool-record.sh` runs for any
 //! of the five, writes both.
@@ -62,10 +63,8 @@ fn row(world: &World, name: &str, example: &Example, scene: &Image) -> String {
     let checklist = checklist_of(&job);
     let last = checklist.ids().last().unwrap().to_owned();
     let answers = super::use_case::answers(&checklist, &last, example.disposition, "confident");
-    let executor = world.engine(
-        judge(&submits(answers), &[]),
-        whizbang_core::contract::Secrets::none(),
-    );
+    let judge = judge(&submits(answers), &[]);
+    let executor = world.engine(judge.clone(), whizbang_core::contract::Secrets::none());
     let finished = executor.submit(&World::recipe(&job, &images)).unwrap();
     drop(executor);
     assert_eq!(
@@ -98,8 +97,15 @@ fn row(world: &World, name: &str, example: &Example, scene: &Image) -> String {
         called.join(", ")
     };
     let handed = details.record().outputs().len();
+    // The tools the judge was offered beside the one it answers with.
+    let received = judge.received();
+    let offered: Vec<String> = (received[0].tools().iter())
+        .filter(|tool| tool.name() != "submit_verdict")
+        .map(|tool| format!("`{}`", tool.name()))
+        .collect();
+    let offered = offered.join(", ");
     format!(
-        "| {} | {} | {} | {called} | {handed} | `{last}` {} | {} |\n",
+        "| {} | {} | {} | {called} | {handed} | {offered} | `{last}` {} | {} |\n",
         example.name,
         example.candidate,
         images.len(),
@@ -112,7 +118,8 @@ fn row(world: &World, name: &str, example: &Example, scene: &Image) -> String {
 fn table(name: &str) -> String {
     let mut text = String::from(
         "| Example | Candidate | Images | Calls of `details` | Images handed to the judge | \
-         The judge's answer | Verdict |\n|---|---|---|---|---|---|---|\n",
+         Tools offered to the judge | The judge's answer | Verdict |\n\
+         |---|---|---|---|---|---|---|---|\n",
     );
     for example in &EXAMPLES {
         let world = World::new();

@@ -1679,7 +1679,7 @@
       "name": "source-fidelity",
       "version": "1.0.0",
       "kind": "recipe",
-      "purpose": "Checks whether an edit kept what mattered in its source: details measured first, then the judge.",
+      "purpose": "Checks whether an edit kept what mattered in its source: the judge looks, and calls view and align as it needs.",
       "use": "To hold an edited picture to the picture it was edited from.",
       "arguments": [
         {
@@ -1799,7 +1799,7 @@
       "name": "reference-consistency",
       "version": "1.0.0",
       "kind": "recipe",
-      "purpose": "Checks whether a subject of the references appears faithfully: details measured first, then the judge.",
+      "purpose": "Checks whether a subject of the references appears faithfully: the judge looks, and calls view and align as it needs.",
       "use": "To hold a picture to one to eight references of the same subject.",
       "arguments": [
         {
@@ -1919,7 +1919,7 @@
       "name": "reality-checks",
       "version": "1.0.0",
       "kind": "recipe",
-      "purpose": "Checks a picture for mistakes no real photograph would make: details measured first, then the judge.",
+      "purpose": "Checks a picture for mistakes no real photograph would make: the judge looks, and calls view to look closer as it needs.",
       "use": "To look for the marks of a made or edited picture with no other picture to hold it to.",
       "arguments": [
         {
@@ -2039,7 +2039,7 @@
       "name": "brief-compliance",
       "version": "1.0.0",
       "kind": "recipe",
-      "purpose": "Checks whether a picture holds what its brief asked for and nothing it forbade: details first, then the judge.",
+      "purpose": "Checks whether a picture holds what its brief asked for and nothing it forbade: the judge looks, and calls view and align as it needs.",
       "use": "To hold a picture to a brief in words, with or without references.",
       "arguments": [
         {
@@ -2159,7 +2159,7 @@
       "name": "product-fidelity",
       "version": "1.0.0",
       "kind": "recipe",
-      "purpose": "Checks whether a product shot keeps the exact product of its references: details first, then the judge.",
+      "purpose": "Checks whether a product shot keeps the exact product of its references: the judge looks, and calls view and align as it needs.",
       "use": "To hold a product shot to references of the product.",
       "arguments": [
         {
@@ -2410,7 +2410,7 @@
     },
     {
       "name": "details",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "kind": "primitive",
       "purpose": "Measures the details of a use case's images before its judge looks, and hands on what each tool found.",
       "arguments": [
@@ -2441,7 +2441,7 @@
         },
         {
           "name": "details",
-          "purpose": "none, which measures nothing, or first.",
+          "purpose": "none, which measures nothing and is the default, or first.",
           "type": {
             "type": "choice",
             "choices": [
@@ -2450,7 +2450,7 @@
             ]
           },
           "required": false,
-          "default": "first"
+          "default": "none"
         },
         {
           "name": "detail",

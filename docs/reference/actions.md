@@ -39,23 +39,23 @@ Heals the wrap edge of a panorama: the band along the seam measured, its tone st
 
 ## `source-fidelity`
 
-Checks whether an edit kept what mattered in its source: details measured first, then the judge.
+Checks whether an edit kept what mattered in its source: the judge looks, and calls view and align as it needs.
 
 ## `reference-consistency`
 
-Checks whether a subject of the references appears faithfully: details measured first, then the judge.
+Checks whether a subject of the references appears faithfully: the judge looks, and calls view and align as it needs.
 
 ## `reality-checks`
 
-Checks a picture for mistakes no real photograph would make: details measured first, then the judge.
+Checks a picture for mistakes no real photograph would make: the judge looks, and calls view to look closer as it needs.
 
 ## `brief-compliance`
 
-Checks whether a picture holds what its brief asked for and nothing it forbade: details first, then the judge.
+Checks whether a picture holds what its brief asked for and nothing it forbade: the judge looks, and calls view and align as it needs.
 
 ## `product-fidelity`
 
-Checks whether a product shot keeps the exact product of its references: details first, then the judge.
+Checks whether a product shot keeps the exact product of its references: the judge looks, and calls view and align as it needs.
 
 ## `align`
 

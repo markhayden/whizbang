@@ -327,8 +327,10 @@ fn each_use_case_is_a_recipe_with_its_rules_details_and_tools() {
             assert_eq!(step.params["use_case"], text(name), "{name}");
             assert_eq!(step.params["job"], text("inputs.job"), "{name}");
         }
-        // The tools that run before the judge, and what they hand the judge's step.
-        assert_eq!(details.params["details"], text("first"), "{name}");
+        // Nothing runs before the judge as shipped (plan m4, task A1: the control arm of
+        // the gate of details first); the tool a run that sets `first` measures with,
+        // and what the step hands the judge's.
+        assert_eq!(details.params["details"], text("none"), "{name}");
         assert_eq!(details.params["detail"], text("align"), "{name}");
         assert_eq!(details.inputs["images"], "inputs.images");
         assert_eq!(judge.params["measured"], text("details.measurements"));
@@ -337,8 +339,8 @@ fn each_use_case_is_a_recipe_with_its_rules_details_and_tools() {
         // The tools the judge may call, its output limit (the door's), and the second
         // look, off in every recipe: on reality-checks it raised false accepts (plan m3,
         // task U1), and elsewhere a run sets it.
-        assert_eq!(judge.params["tools"], text("view,align,resize"), "{name}");
-        assert_eq!(judge.params["projection"], text("full"), "{name}");
+        assert_eq!(judge.params["tools"], text("view,align"), "{name}");
+        assert_eq!(judge.params["projection"], text("visual_only"), "{name}");
         assert_eq!(judge.params["second_look"], text("off"), "{name}");
         assert_eq!(judge.params["max_output_tokens"], Written::Integer(2048));
         assert_eq!(judge.params["judge"], text("inputs.judge"));
@@ -379,5 +381,86 @@ fn each_use_case_is_a_recipe_with_its_rules_details_and_tools() {
         assert!(descriptor.answers_with(ResultKind::Verdict), "{name}");
         assert!(descriptor.input("images").is_some(), "{name}");
         assert!(recipe.recipe().outputs.is_empty(), "{name}");
+    }
+}
+
+#[test]
+fn each_shipped_recipe_called_with_nothing_set_is_the_control_arm() {
+    // Plan m4, task A1, items 1 and 2: a recipe called by a caller that sets nothing is
+    // the control arm of the gate of details first, whole (arm C,
+    // `crates/whizbang-eval/src/matrix.rs`): nothing measured first, `view` and `align`
+    // offered and no `resize`, and a call of `align` answered with its pictures alone.
+    use super::check::{checklist_of, paired, results, texts, turns};
+    use super::runner::{argument, calls, steps_of};
+    use whizbang_core::artifact::ArtifactId;
+    use whizbang_core::contract::{Executor, Secrets};
+    for (name, _) in whizbang_squint::recipes::SHIPPED {
+        let (world, scene, candidate, _) = paired();
+        let job = fitting(
+            name,
+            (name == "brief-compliance").then_some("A scene, kept."),
+        );
+        let images: Vec<ArtifactId> = [candidate.id(), scene.id()]
+            .into_iter()
+            .take(job.images.len())
+            .collect();
+        // The judge of a use case that relates a pair calls `align` on it, then answers.
+        let pair = job.images.get(1).map(|other| other.id.clone());
+        let checklist = checklist_of(&job);
+        let submit = json!({"tool_call": {"id": "s1", "name": "submit_verdict",
+            "arguments": answers(&checklist, "", "held", "confident")}});
+        let mut script = Vec::new();
+        if let Some(other) = &pair {
+            let align = json!({"tool_call": {"id": "a1", "name": "align",
+                "arguments": {"image": "candidate", "against": other}}});
+            script.push((json!([align]), "tool_use"));
+        }
+        script.push((json!([submit]), "tool_use"));
+        let judge = super::world::judge(&turns(&script), &[]);
+        let executor = world.engine(judge.clone(), Secrets::none());
+        // Nothing is set: the job, the images, and no override.
+        let finished = executor
+            .submit(&super::world::World::recipe(&job, &images))
+            .unwrap();
+        drop(executor);
+        assert_eq!(finished.outcome().name(), "completed", "{name}");
+        let steps = steps_of(&world, &finished);
+        let (details, judged) = (&steps[0].1, &steps[1].1);
+        // No details: the step ran as `none`, started no tool and handed on nothing.
+        assert_eq!(argument(details, "details").as_deref(), Some("none"));
+        assert_eq!(calls(details), [], "{name}");
+        assert!(details.record().outputs().is_empty(), "{name}");
+        let received = judge.received();
+        let opening = texts(received[0].messages()[0].parts());
+        assert!(
+            !opening
+                .iter()
+                .any(|said| said == whizbang_squint::details::DETAILS_INTRO
+                    || said.starts_with("align (unverified)")),
+            "{name}: {opening:?}"
+        );
+        // `view` and `align` are offered, and no `resize`.
+        assert_eq!(argument(judged, "tools").as_deref(), Some("view,align"));
+        let offered: Vec<&str> = received[0].tools().iter().map(|tool| tool.name()).collect();
+        assert_eq!(offered, ["view", "align", "submit_verdict"], "{name}");
+        // `visual_only`: what the judge's step ran under, and, where the use case relates
+        // a pair, what a call of `align` was answered with: the fixed sentence, nothing
+        // measured, and the aligned picture.
+        assert_eq!(
+            argument(judged, "projection").as_deref(),
+            Some("visual_only"),
+            "{name}"
+        );
+        if pair.is_some() {
+            let result = results(&judge, 1).remove(0);
+            let said: Json = serde_json::from_str(result.text()).unwrap();
+            assert_eq!(said["status"], "ok", "{name}");
+            assert_eq!(
+                said["summary"], "Result computed; its measurements are withheld.",
+                "{name}"
+            );
+            assert_eq!(said["measurements"], json!([]), "{name}");
+            assert_eq!(result.images().len(), 1, "{name}");
+        }
     }
 }

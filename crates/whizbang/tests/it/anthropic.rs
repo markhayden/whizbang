@@ -549,6 +549,48 @@ pub fn checked_measuring(
     (printed, log)
 }
 
+/// As `checked`, with `--details` and `--projection` as the command line gave them, each
+/// typed or not at all: through `door::Measuring::stated`, which `whizbang squint check`
+/// hands them to as clap read them (plan m4, task A1, item 3).
+pub fn checked_stated(
+    judged: &Judged,
+    answers: Vec<Vec<u8>>,
+    details: Option<&str>,
+    projection: Option<&str>,
+) -> (Result<String, String>, Log) {
+    let (source, candidate) = pair(judged);
+    let measuring = whizbang::door::Measuring::stated(details, projection).unwrap();
+    let asked = whizbang::door::CheckAsked {
+        use_case: "source-fidelity",
+        source: Some(&source),
+        candidate: &candidate,
+        references: &[],
+        judge: None,
+        brief: None,
+        request_id: None,
+        details: measuring.details,
+        detail: None,
+        projection: measuring.projection,
+    };
+    let (job, images) = whizbang::door::shorthand(&asked).unwrap();
+    let (listener, log) = serving(&judged.pki, answers);
+    let origin = format!("https://127.0.0.1:{}", listener.port());
+    let over = judged.over_with(
+        &judged.address(listener.port()),
+        Some(&origin),
+        &CHECK_CLASSES,
+        "",
+    );
+    let executor = judged.runner(&over);
+    let root = judged.world.root.clone();
+    let read = |run: &_| whizbang::door::verdict(&root, run);
+    let printed =
+        whizbang::door::check_job(&executor, &job, &images, None, None, &measuring, &read);
+    drop(executor);
+    listener.finish();
+    (printed, log)
+}
+
 /// `whizbang squint check` of a job and its images, in its order, through the binary's
 /// door, under a judge at a server on loopback that gives these answers: what the door
 /// prints or its complaint, and what the server saw.

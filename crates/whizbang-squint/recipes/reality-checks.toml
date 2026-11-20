@@ -4,6 +4,14 @@
 # the loop under the use case's rules (`rules/reality-checks.toml`, squint's), told what was
 # measured first and offered the tools it may call.
 #
+# As shipped the recipe is the control arm of the gate of details first, whole (plan m4, task
+# A1; docs/results/m3-gates.md, which rejected details first): nothing is measured first, so
+# `details` starts no tool and hands on nothing; the judge is offered `view` and `align`; and
+# a call of `align` is answered with its pictures alone. A run brings details first back
+# whole, as the gate's arm F was, with --set details.details=first, --set
+# judge.tools=view,align,resize and --set judge.projection=full, which is what
+# `whizbang squint check --details first` states.
+#
 # Ported from squint's run of a use case (`crates/squint-core/src/run.rs` and
 # `crates/squint-core/rules/reality-checks.toml` at the commit `docs/sources.toml` pins), with the
 # details `check` measured first since plan 2C's task A2 (ADR 0029) as a step of their own.
@@ -11,7 +19,7 @@
 # task U1, docs/results/m3-unsure.md); a run sets it with --set judge.second_look=on.
 version = 1
 name = "reality-checks"
-purpose = "Checks a picture for mistakes no real photograph would make: details measured first, then the judge."
+purpose = "Checks a picture for mistakes no real photograph would make: the judge looks, and calls view to look closer as it needs."
 use = "To look for the marks of a made or edited picture with no other picture to hold it to."
 use_case = "reality-checks"
 
@@ -26,7 +34,7 @@ op = "details"
 inputs = { images = "inputs.images" }
 use_case = "reality-checks"
 job = "inputs.job"
-details = "first"
+details = "none"
 detail = "align"
 
 [[step]]
@@ -37,7 +45,7 @@ use_case = "reality-checks"
 job = "inputs.job"
 judge = "inputs.judge"
 measured = "details.measurements"
-tools = "view,align,resize"
-projection = "full"
+tools = "view,align"
+projection = "visual_only"
 second_look = "off"
 max_output_tokens = 2048

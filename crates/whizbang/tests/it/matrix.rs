@@ -343,12 +343,17 @@ pub const SF2: &str = "chk:ob:SF2@candidate";
 
 /// Each run of `check` in the store: its id and its record, in the order of the runs.
 pub fn checks(root: &Path) -> Vec<(String, serde_json::Value)> {
+    runs_of(root, "check")
+}
+
+/// Each run of this action in the store: its id and its record, in the order of the runs.
+pub fn runs_of(root: &Path, action: &str) -> Vec<(String, serde_json::Value)> {
     let listed = crate::wired::whizbang(&["runs", "list"], root);
     let mut found = Vec::new();
     for line in listed.out.lines().skip(1) {
         let run = line.split('\t').next().unwrap().to_owned();
         let record = record_of(root, &run);
-        if record["asked"]["action"] == "check" {
+        if record["asked"]["action"] == action {
             found.push((run, record));
         }
     }
@@ -356,13 +361,13 @@ pub fn checks(root: &Path) -> Vec<(String, serde_json::Value)> {
 }
 
 /// The text of a run's argument of this name, if it has one.
-fn argument(record: &serde_json::Value, name: &str) -> Option<String> {
+pub fn argument(record: &serde_json::Value, name: &str) -> Option<String> {
     let arguments = record["asked"]["arguments"].as_array().unwrap();
     let found = arguments.iter().find(|a| a["name"] == name)?;
     Some(found["value"]["text"].as_str().unwrap().to_owned())
 }
 
-fn steps_of(record: &serde_json::Value) -> Vec<String> {
+pub fn steps_of(record: &serde_json::Value) -> Vec<String> {
     (record["steps"].as_array().unwrap().iter())
         .map(|step| step["action"].as_str().unwrap().to_owned())
         .collect()

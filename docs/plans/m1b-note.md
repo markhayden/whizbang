@@ -294,9 +294,9 @@ parts 1 and 2 of 4 of the sweep after a refused step of a first install, and
 `nested::a_run_calls_as_many_actions_as_its_record_lists_and_one_more_is_refused`.
 In the runs measured for this note none came that near: the slowest single test of three local runs was 16.7 seconds, and of the two runners
 on `main` 7.9 seconds on macOS and 5.5 on Linux. The exit check split the
-sweep into eight parts,
-`crashes::a_crash_at_any_event_after_a_refused_step_of_a_first_install_leaves_it_not_installed_or_whole_part_1_of_8`
-to part 8, a change to its tests alone: inside a full check on the owner's Mac its two slowest parts took 14.1 and 16.7 seconds
+sweep into eight parts (in 96 since plan m4's task A1, which cut it again:
+`crashes::a_crash_at_any_event_after_a_refused_step_of_a_first_install_leaves_it_not_installed_or_whole_part_01_of_96`
+to part 96), a change to its tests alone: inside a full check on the owner's Mac its two slowest parts took 14.1 and 16.7 seconds
 before, as parts 1 and 2 of 4, and 12.3 and 12.7, then 11.7 and 12.6, after, as parts 1
 and 2 of 8. That is less than the halving the split was for. Alone, each part takes under a second. What makes two of
 them slow is that they are the first sweeps to start, when every core is busy with the

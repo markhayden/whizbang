@@ -47,9 +47,18 @@ tools that compare content.
 judge is answered with: squint's presentation of the envelope, whole or projected.
 `--details none --projection visual_only` with the tools `view` and `align` is arm C.
 
+**Amended 2026-11-19, by plan m4, task A1.** Details first is no longer the default. Its
+gate rejected it in every run of 2026-11-19 (`docs/results/m3-gates.md`, "The fourth run, the
+complete one": it helped on none of three judges), so `--details` defaults to `none`, and
+with it the tools `view` and `align` and `--projection visual_only`: the gate's control arm,
+whole. `--details first` gives arm F, whole: the details first, `resize` offered too, and
+`full`. The five use cases' recipes say the control arm themselves, and every door states
+all four settings on every call (`door::check_call`). Nothing of this decision is removed;
+the paragraph below describes a run that asks for details first.
+
 ## Consequences
 
-Every default `squint check` runs `align` once per pair before it asks the judge: about a
+Every `squint check --details first` runs `align` once per pair before it asks the judge: about a
 tenth of a second at 128 by 96 pixels in a release build, nothing spent. The judge's first
 request carries one more picture. The record of the run lists the `align` step. Squint's
 prompt now has its Tools section whenever evidence tools are offered. Reversing is a change

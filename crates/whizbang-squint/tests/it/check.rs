@@ -53,7 +53,7 @@ fn run(
 
 /// The tool results the judge was sent in its request of this number, from 0: the
 /// parts of the last message.
-fn results(judge: &FakeJudge, request: usize) -> Vec<ToolResult> {
+pub fn results(judge: &FakeJudge, request: usize) -> Vec<ToolResult> {
     let received = judge.received();
     let parts = received[request]
         .messages()
@@ -3132,7 +3132,8 @@ fn each_use_case_through_its_recipe_gives_the_verdict_it_gave_before() {
             let script = submits(answers);
             let (before, kept_before, asked_before) =
                 judged(&world, &as_check_was_called(&job, &images), &script);
-            let (after, _, asked_after) = judged(&world, &World::recipe(&job, &images), &script);
+            let (after, _, asked_after) =
+                judged(&world, &World::recipe_first(&job, &images, ""), &script);
             assert_eq!(
                 after.outcome().name(),
                 "completed",
@@ -3164,7 +3165,7 @@ fn the_judge_crops_an_aligned_frame_handed_on_by_details() {
     let look = json!({"tool_call": {"id": "v1", "name": "view", "arguments":
         {"image": frame.id().to_string(), "bbox": [0.25, 0.25, 0.75, 0.75]}}});
     let job = Job::shorthand("source-fidelity", true, 0, None);
-    let call = World::recipe(&job, &[candidate.id(), source.id()]);
+    let call = World::recipe_first(&job, &[candidate.id(), source.id()], "");
     let (finished, _, judge) = judged(&world, &call, &submitting(&[look]));
     assert_eq!(
         finished.outcome().name(),
@@ -3416,7 +3417,8 @@ fn a_details_step_of_another_job_and_images_is_refused() {
          fake = { type = \"Image\", many = true }\njob = { type = \"Text\" }\n\
          job1 = { type = \"Text\" }\n\
          [[step]]\nid = \"details\"\nop = \"details\"\ninputs = { images = \"inputs.fake\" }\n\
-         use_case = \"reality-checks\"\njob = \"inputs.job1\"\ndetail = \"tiles\"\n\
+         use_case = \"reality-checks\"\njob = \"inputs.job1\"\ndetails = \"first\"\n\
+         detail = \"tiles\"\n\
          [[step]]\nid = \"judge\"\nop = \"check\"\n\
          inputs = { images = \"inputs.images\", measured_images = \"details.images\" }\n\
          use_case = \"reality-checks\"\njob = \"inputs.job\"\nmeasured = \"details.measurements\"\n"
@@ -3467,7 +3469,7 @@ fn changed_run(how: &str, detail: &str, job: &Job, images: &[ArtifactId]) -> Fin
     world.recipes.push(format!(
         "version = 1\nname = \"changed\"\npurpose = \"A test.\"\nuse = \"Never.\"\n\
          [inputs]\nimages = {{ type = \"Image\", many = true }}\njob = {{ type = \"Text\" }}\n\
-         [[step]]\nid = \"details\"\nop = \"details\"\ninputs = {{ images = \"inputs.images\" }}\n\
+         [[step]]\nid = \"details\"\nop = \"details\"\ndetails = \"first\"\ninputs = {{ images = \"inputs.images\" }}\n\
          use_case = \"{use_case}\"\njob = \"inputs.job\"\ndetail = \"{detail}\"\n\
          [[step]]\nid = \"dropper\"\nop = \"dropper\"\nfrom = \"details.measurements\"\n\
          how = \"{how}\"\n\
@@ -3545,7 +3547,7 @@ fn an_align_handed_on_from_another_pair_than_its_entry_names_is_refused() {
     let (mut world, source, candidate, _) = paired();
     world.recipes.push(users_recipe(
         "swapped",
-        "[[step]]\nid = \"details\"\nop = \"details\"\ninputs = { images = \"inputs.fake\" }\n\
+        "[[step]]\nid = \"details\"\nop = \"details\"\ndetails = \"first\"\ninputs = { images = \"inputs.fake\" }\n\
          use_case = \"source-fidelity\"\njob = \"inputs.job\"\n\
          [[step]]\nid = \"judge\"\nop = \"check\"\n\
          inputs = { images = \"inputs.images\", measured_images = \"details.images\" }\n\
@@ -3572,7 +3574,7 @@ fn measurements_that_leave_out_a_call_the_step_of_details_made_are_refused() {
     with_dropper(&mut world);
     world.recipes.push(users_recipe(
         "dropped",
-        "[[step]]\nid = \"details\"\nop = \"details\"\ninputs = { images = \"inputs.images\" }\n\
+        "[[step]]\nid = \"details\"\nop = \"details\"\ndetails = \"first\"\ninputs = { images = \"inputs.images\" }\n\
          use_case = \"source-fidelity\"\njob = \"inputs.job\"\ndetail = \"align,change_map\"\n\
          [[step]]\nid = \"dropper\"\nop = \"dropper\"\nfrom = \"details.measurements\"\n\
          [[step]]\nid = \"judge\"\nop = \"check\"\n\
