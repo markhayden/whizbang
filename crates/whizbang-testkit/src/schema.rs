@@ -111,7 +111,8 @@ fn well_formed(root: &Value, schema: &Value, at: &str) -> Result<(), String> {
                     return wrong("true or false: a schema there is not supported");
                 }
             }
-            "minProperties" | "maxProperties" | "maxItems" | "minLength" | "maxLength" => {
+            "minProperties" | "maxProperties" | "minItems" | "maxItems" | "minLength"
+            | "maxLength" => {
                 if !value.is_u64() {
                     return wrong("a whole number that is not negative");
                 }
@@ -206,7 +207,9 @@ fn check(
         return Err(format!("{at}: {value} is over {maximum}"));
     }
     if let Value::Array(items) = value {
-        if limit("maxItems").is_some_and(|max| items.len() as u64 > max) {
+        if limit("maxItems").is_some_and(|max| items.len() as u64 > max)
+            || limit("minItems").is_some_and(|min| (items.len() as u64) < min)
+        {
             return Err(format!("{at}: {} items", items.len()));
         }
         if let Some(each) = schema.get("items") {

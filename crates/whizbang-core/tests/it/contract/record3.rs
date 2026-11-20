@@ -213,7 +213,7 @@ fn a_run_2_record_holds_nothing_that_run_3_added() {
 
 #[test]
 fn a_record_of_a_version_this_build_does_not_read_is_another_version() {
-    for version in ["run/1", "run/6", "run/30"] {
+    for version in ["run/1", "run/7", "run/30"] {
         let bytes = ordinary().replace("run/3", version);
         let refused = RunRecord::from_bytes(bytes.as_bytes()).unwrap_err();
         assert_eq!(

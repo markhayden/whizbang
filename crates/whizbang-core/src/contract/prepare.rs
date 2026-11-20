@@ -17,8 +17,9 @@ use crate::identity::{Binding, BindingId, DecodeLimits, Digest, Encoder, Fields}
 
 use crate::store;
 
+use super::plan::{Able, Plan, Planning};
 use super::record::RefusalKind;
-use super::{ActionDescriptor, Call, Capability, Count, InputPort, RequestId, RunId, Value};
+use super::{Action, Call, Capability, Count, InputPort, RequestId, RunId, Value};
 
 /// Which model answers a capability: the backend, the model, and the model's version or
 /// reported identity.
@@ -154,6 +155,10 @@ pub enum Stale {
     Model { capability: Capability },
     /// The same models under the same config state another bound.
     Estimate,
+    /// The action would plan the call otherwise now: a capability is ready that was
+    /// not, or is not that was, or the cap of one call is another (ADR 0004, "A
+    /// call's plan"). No plan is fitted at admission.
+    Plan,
     /// The call is no longer one that prepares: what refuses it now.
     Refused(Box<Refusal>),
 }
@@ -170,6 +175,7 @@ impl std::fmt::Display for Stale {
                 capability.name()
             ),
             Stale::Estimate => f.write_str("what it may cost at most changed since"),
+            Stale::Plan => f.write_str("the plan of the call would be another now"),
             Stale::Refused(refusal) => write!(f, "the call is refused now: {refusal}"),
         }
     }
@@ -311,6 +317,8 @@ pub struct PreparedCall {
     readiness: Readiness,
     config: Digest,
     estimate: Estimate,
+    /// The plan of the call, for an action that plans (ADR 0004, "A call's plan").
+    plan: Option<Plan>,
     fingerprint: Digest,
     /// When it was made, by the clock of the executor that made it. It is beside the
     /// fingerprint and not in it, and is not compared when a preparation is held
@@ -332,6 +340,7 @@ impl PartialEq for PreparedCall {
             readiness,
             config,
             estimate,
+            plan,
             fingerprint,
             made_ms: _,
         } = self;
@@ -344,6 +353,7 @@ impl PartialEq for PreparedCall {
             && *readiness == other.readiness
             && *config == other.config
             && *estimate == other.estimate
+            && *plan == other.plan
             && *fingerprint == other.fingerprint
     }
 }
@@ -370,6 +380,13 @@ impl PreparedCall {
         self.estimate
     }
 
+    /// The plan of the call, when its action plans: what the action stated while the
+    /// call was prepared. The action is handed it here, with the prepared call, and
+    /// never works it out again, so what runs is what was reserved for.
+    pub fn plan(&self) -> Option<&Plan> {
+        self.plan.as_ref()
+    }
+
     /// What differs between this preparation and `now`, the same call prepared again:
     /// the first thing found, or none when they saw the same.
     pub(super) fn stale_against(&self, now: &PreparedCall) -> Option<Stale> {
@@ -385,7 +402,15 @@ impl PreparedCall {
                     && then.features == now.features
                     && then.choice == now.choice
             });
-        if !same_call || !same_needs {
+        if !same_call {
+            return Some(Stale::Call);
+        }
+        // The plan decides the needs, so it is looked at before them: a judge whose
+        // key has gone changes the plan, and is said as that.
+        if self.plan != now.plan {
+            return Some(Stale::Plan);
+        }
+        if !same_needs {
             return Some(Stale::Call);
         }
         if self.inputs != now.inputs {
@@ -452,7 +477,8 @@ impl PreparedCall {
 
     /// The digest of everything this preparation saw: the action and its version, every
     /// argument's value, every input's identity, the config, and for each capability
-    /// needed the model that would answer or that none would. Two preparations with one
+    /// needed the model that would answer or that none would, and the plan of the
+    /// call when its action plans. Two preparations with one
     /// fingerprint saw the same things; a preparation whose fingerprint is no longer what
     /// preparing the call again gives is stale.
     pub fn fingerprint(&self) -> Digest {
@@ -1153,15 +1179,19 @@ fn takes(count: Count) -> String {
     }
 }
 
-/// Prepares `call` against `descriptor`: the whole of prepare once the action is found.
+/// Prepares `call` against the descriptor of `planner`, its action: the whole of
+/// prepare once the action is found. `cap` is the cap of one call under the config,
+/// which only an action that plans is shown.
 pub(super) fn prepare(
-    descriptor: &ActionDescriptor,
+    planner: &dyn Action,
     call: &Call,
     contents: &(dyn Contents + Send + Sync),
     backends: &dyn Backends,
     config: Digest,
+    cap: Option<Estimate>,
     limits: &DecodeLimits,
 ) -> Result<PreparedCall, CallError> {
+    let descriptor = planner.descriptor();
     let action = descriptor.name();
     let invalid = |why: String| {
         CallError::Refused(Refusal::Invalid {
@@ -1344,17 +1374,14 @@ pub(super) fn prepare(
         }
     }
 
-    // What this call needs, and which model would answer each need.
-    let mut needs = Vec::new();
-    let mut missing = Vec::new();
-    let mut estimate = Estimate::default();
+    // What this call could need, and which model would answer each: the features
+    // stated, and the one the call's value names where the need takes one from an
+    // argument, asked of the backend here, and again at admission, where the call is
+    // prepared again.
+    let mut resolved = Vec::new();
     for requirement in descriptor.needs_for(&given) {
-        // The features stated, and the one the call's value names where the need takes
-        // one from an argument: asked of the backend here, and again at admission, where
-        // the call is prepared again.
         let capability = requirement.capability();
         let features = requirement.features_for(&arguments);
-        let features = features.as_slice();
         // The call's choice of backend: the text it gave for the argument the need
         // names. An argument that chooses has no default, so a value is the call's own.
         let choice = requirement.chooser().and_then(|chooser| {
@@ -1363,21 +1390,75 @@ pub(super) fn prepare(
                 _ => None,
             })
         });
-        let model = match backends.resolve(capability, choice.as_deref(), features) {
+        let model = backends.resolve(capability, choice.as_deref(), &features);
+        // The bound of one request, as the backends answer it (ADR 0010).
+        let one = (model.as_ref().ok()).map(|model| backends.bound(capability, model));
+        resolved.push((requirement, features, choice, model, one));
+    }
+
+    // The plan of the call, for an action that plans (ADR 0004, "A call's plan"):
+    // asked once, here, with what was just resolved.
+    let plan = match descriptor.plans() {
+        false => None,
+        true => {
+            let able = resolved.iter().map(|(need, _, _, model, one)| Able {
+                capability: need.capability(),
+                requests: need.sends(),
+                bound: match (model, one) {
+                    (Ok(_), Some(one)) => Ok(*one),
+                    (Err(unavailable), _) => Err(unavailable.why.clone()),
+                    (Ok(_), None) => Ok(Estimate::default()),
+                },
+            });
+            let planning = Planning {
+                arguments: &arguments,
+                able: able.collect(),
+                cap,
+            };
+            // The action's own code, run here and not in a run: a panic in it is
+            // the action's fault and refuses the call, and nothing else is undone,
+            // since preparing has changed nothing.
+            let asked = std::panic::AssertUnwindSafe(|| planner.plan(&planning));
+            std::panic::catch_unwind(asked)
+                .map_err(|_| invalid("its action panicked while it planned the call".to_owned()))?
+        }
+    };
+    if let Some(plan) = &plan {
+        let named: Vec<Capability> = resolved.iter().map(|r| r.0.capability()).collect();
+        if let Some(fault) = plan.fault(&named) {
+            return Err(invalid(format!(
+                "its action planned what is no plan: {fault}"
+            )));
+        }
+    }
+
+    // What the call needs under its plan: a capability the plan leaves out is no need
+    // of the call, is not resolved for it, is not missing, and adds nothing to what
+    // is reserved. The bound of a need is the bound of one request times the requests
+    // the plan, or else the need, says one call may send (ADR 0010). A product or a
+    // sum past the largest amount is the largest amount, which is no bound, and never
+    // a small one.
+    let mut needs = Vec::new();
+    let mut missing = Vec::new();
+    let mut estimate = Estimate::default();
+    for (requirement, features, choice, model, one) in resolved {
+        let capability = requirement.capability();
+        let planned = plan.as_ref().and_then(|plan| plan.requests(capability));
+        let sends = planned.unwrap_or(requirement.sends());
+        if sends == 0 {
+            continue;
+        }
+        let model = match model {
             Ok(model) => {
-                // The bound of a need is the bound of one request, as the backends
-                // answer it, times the requests the need says one call may send (ADR
-                // 0010). A product or a sum past the largest amount is the largest
-                // amount, which is no bound, and never a small one.
-                let one = backends.bound(capability, &model);
-                let bound = one.micros.saturating_mul(requirement.sends());
+                let one = one.unwrap_or_default();
+                let bound = one.micros.saturating_mul(sends);
                 estimate.micros = estimate.micros.saturating_add(bound);
                 Some(model)
             }
             Err(unavailable) => {
                 missing.push(Missing {
                     capability,
-                    features: features.to_vec(),
+                    features: features.clone(),
                     why: unavailable.why,
                 });
                 None
@@ -1385,7 +1466,7 @@ pub(super) fn prepare(
         };
         needs.push(Need {
             capability,
-            features: features.to_vec(),
+            features,
             choice,
             model,
         });
@@ -1411,6 +1492,7 @@ pub(super) fn prepare(
         readiness,
         config,
         estimate,
+        plan,
         fingerprint: config,
         made_ms: 0,
     };
@@ -1425,8 +1507,18 @@ pub(super) fn prepare(
 /// feature, then 1 and the backend, the model and the version of the model that would
 /// answer, or 0 where none would. A value is its kind (0 a number, 1 a whole number, 2 a
 /// boolean, 3 a text) and then itself.
+///
+/// A call with a plan is of the kind `prepared/2`: everything above, and then the
+/// plan: the count of capabilities it names, and each as its name and its requests;
+/// then 1 and the attempts asked, the attempts allowed and whether it checks, or 0
+/// where it states none; then 1 and its reason, or 0 where it gives none. A call
+/// whose action plans nothing is of `prepared/1`, as it was.
 fn fingerprint(prepared: &PreparedCall) -> Digest {
-    let mut fields = Encoder::new("prepared/1");
+    let kind = match prepared.plan {
+        Some(_) => "prepared/2",
+        None => "prepared/1",
+    };
+    let mut fields = Encoder::new(kind);
     fields.bytes(prepared.action.as_bytes());
     fields.bytes(prepared.version.as_bytes());
     fields.unsigned(prepared.arguments.len() as u64);
@@ -1470,6 +1562,29 @@ fn fingerprint(prepared: &PreparedCall) -> Digest {
                 fields.bytes(model.backend.as_bytes());
                 fields.bytes(model.model.as_bytes());
                 fields.bytes(model.version.as_bytes());
+            }
+            None => fields.unsigned(0),
+        }
+    }
+    if let Some(plan) = &prepared.plan {
+        fields.unsigned(plan.sends().len() as u64);
+        for sends in plan.sends() {
+            fields.bytes(sends.capability.name().as_bytes());
+            fields.unsigned(sends.requests);
+        }
+        match plan.stated() {
+            Some(attempts) => {
+                fields.unsigned(1);
+                fields.unsigned(u64::from(attempts.asked));
+                fields.unsigned(u64::from(attempts.allowed));
+                fields.unsigned(u64::from(attempts.checks));
+            }
+            None => fields.unsigned(0),
+        }
+        match plan.why() {
+            Some(why) => {
+                fields.unsigned(1);
+                fields.bytes(why.as_bytes());
             }
             None => fields.unsigned(0),
         }

@@ -231,8 +231,16 @@ impl Door for Actions {
 
     fn said(&self, name: &str, run: &RunId, outcome: &Outcome) -> Said {
         let line = format!("run {}", printable(run.as_str()));
+        // The plan the run was admitted under, for a call its action planned (ADR
+        // 0004, "A call's plan"): said with every answer, whatever the outcome.
+        let plan = door::plan_of(&self.root, run).map(|plan| printable(&plan));
+        let planned = |text: String| match &plan {
+            Some(plan) => format!("{plan}\n{text}"),
+            None => text,
+        };
         match door::ended(&line, outcome.clone()) {
-            Ok((mut text, outputs)) => {
+            Ok((text, outputs)) => {
+                let mut text = planned(text);
                 if name == CHECK {
                     door::said_verdict(&mut text, door::verdict(&self.root, run));
                 }
@@ -242,7 +250,10 @@ impl Door for Actions {
                 }
                 Said { text, error: false }
             }
-            Err(text) => Said { text, error: true },
+            Err(text) => Said {
+                text: planned(text),
+                error: true,
+            },
         }
     }
 

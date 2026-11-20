@@ -1,5 +1,5 @@
 {
-  "description_version": 9,
+  "description_version": 10,
   "name": "whizbang",
   "version": "0.0.1",
   "actions": [
@@ -219,6 +219,24 @@
           "default": null
         },
         {
+          "name": "from",
+          "purpose": "Runs the recipe from this step, after its first, given artifacts in place of the outputs of the steps before it.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "select",
+              "grow",
+              "close",
+              "plug",
+              "subtract",
+              "feather",
+              "fill"
+            ]
+          },
+          "required": false,
+          "default": null
+        },
+        {
           "name": "until",
           "purpose": "Runs the recipe up to and including this step, before its last, and hands back that step's outputs as its own.",
           "type": {
@@ -252,6 +270,76 @@
           "name": "protect",
           "artifact": "mask",
           "purpose": "The input protect of the recipe.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_segment_mask",
+          "artifact": "mask",
+          "purpose": "With from, what is given in place of the output mask of the step segment.",
+          "count": {
+            "min": 0,
+            "max": 64
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_select_mask",
+          "artifact": "mask",
+          "purpose": "With from, what is given in place of the output mask of the step select.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_grow_mask",
+          "artifact": "mask",
+          "purpose": "With from, what is given in place of the output mask of the step grow.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_close_mask",
+          "artifact": "mask",
+          "purpose": "With from, what is given in place of the output mask of the step close.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_plug_mask",
+          "artifact": "mask",
+          "purpose": "With from, what is given in place of the output mask of the step plug.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_subtract_mask",
+          "artifact": "mask",
+          "purpose": "With from, what is given in place of the output mask of the step subtract.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_feather_mask",
+          "artifact": "mask",
+          "purpose": "With from, what is given in place of the output mask of the step feather.",
           "count": {
             "min": 0,
             "max": 1
@@ -418,7 +506,8 @@
           "requests": 1
         }
       ],
-      "concurrent": true
+      "concurrent": true,
+      "plans": true
     },
     {
       "name": "remove",
@@ -441,6 +530,23 @@
           "purpose": "Overrides for this run, one to a line: a step, a dot, an argument, an equals sign and a value.",
           "type": {
             "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "from",
+          "purpose": "Runs the recipe from this step, after its first, given artifacts in place of the outputs of the steps before it.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "grow",
+              "close",
+              "plug",
+              "subtract",
+              "feather",
+              "fill"
+            ]
           },
           "required": false,
           "default": null
@@ -488,6 +594,66 @@
           "name": "protect",
           "artifact": "mask",
           "purpose": "The input protect of the recipe.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_rasterize_mask",
+          "artifact": "mask",
+          "purpose": "With from, what is given in place of the output mask of the step rasterize.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_grow_mask",
+          "artifact": "mask",
+          "purpose": "With from, what is given in place of the output mask of the step grow.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_close_mask",
+          "artifact": "mask",
+          "purpose": "With from, what is given in place of the output mask of the step close.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_plug_mask",
+          "artifact": "mask",
+          "purpose": "With from, what is given in place of the output mask of the step plug.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_subtract_mask",
+          "artifact": "mask",
+          "purpose": "With from, what is given in place of the output mask of the step subtract.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_feather_mask",
+          "artifact": "mask",
+          "purpose": "With from, what is given in place of the output mask of the step feather.",
           "count": {
             "min": 0,
             "max": 1
@@ -629,7 +795,8 @@
           "requests": 1
         }
       ],
-      "concurrent": true
+      "concurrent": true,
+      "plans": true
     },
     {
       "name": "repair_area",
@@ -652,6 +819,19 @@
           "purpose": "Overrides for this run, one to a line: a step, a dot, an argument, an equals sign and a value.",
           "type": {
             "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "from",
+          "purpose": "Runs the recipe from this step, after its first, given artifacts in place of the outputs of the steps before it.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "feather",
+              "fill"
+            ]
           },
           "required": false,
           "default": null
@@ -687,6 +867,26 @@
           "purpose": "The input location of the recipe.",
           "count": {
             "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_rasterize_mask",
+          "artifact": "mask",
+          "purpose": "With from, what is given in place of the output mask of the step rasterize.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_feather_mask",
+          "artifact": "mask",
+          "purpose": "With from, what is given in place of the output mask of the step feather.",
+          "count": {
+            "min": 0,
             "max": 1
           },
           "belongs_to": null
@@ -766,7 +966,8 @@
           "requests": 1
         }
       ],
-      "concurrent": true
+      "concurrent": true,
+      "plans": true
     },
     {
       "name": "mask_rect",
@@ -794,6 +995,18 @@
           "default": null
         },
         {
+          "name": "from",
+          "purpose": "Runs the recipe from this step, after its first, given artifacts in place of the outputs of the steps before it.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "rasterize"
+            ]
+          },
+          "required": false,
+          "default": null
+        },
+        {
           "name": "until",
           "purpose": "Runs the recipe up to and including this step, before its last, and hands back that step's outputs as its own.",
           "type": {
@@ -813,6 +1026,16 @@
           "purpose": "The input image of the recipe.",
           "count": {
             "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_rect_location",
+          "artifact": "location",
+          "purpose": "With from, what is given in place of the output location of the step rect.",
+          "count": {
+            "min": 0,
             "max": 1
           },
           "belongs_to": null
@@ -851,7 +1074,8 @@
         }
       ],
       "needs": [],
-      "concurrent": true
+      "concurrent": true,
+      "plans": true
     },
     {
       "name": "protect",
@@ -936,6 +1160,19 @@
           "default": null
         },
         {
+          "name": "from",
+          "purpose": "Runs the recipe from this step, after its first, given artifacts in place of the outputs of the steps before it.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "feather",
+              "fill"
+            ]
+          },
+          "required": false,
+          "default": null
+        },
+        {
           "name": "until",
           "purpose": "Runs the recipe up to and including this step, before its last, and hands back that step's outputs as its own.",
           "type": {
@@ -966,6 +1203,26 @@
           "purpose": "The input stroke of the recipe.",
           "count": {
             "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_tighten_mask",
+          "artifact": "mask",
+          "purpose": "With from, what is given in place of the output mask of the step tighten.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_feather_mask",
+          "artifact": "mask",
+          "purpose": "With from, what is given in place of the output mask of the step feather.",
+          "count": {
+            "min": 0,
             "max": 1
           },
           "belongs_to": null
@@ -1045,7 +1302,8 @@
           "requests": 1
         }
       ],
-      "concurrent": true
+      "concurrent": true,
+      "plans": true
     },
     {
       "name": "seam",
@@ -1068,6 +1326,24 @@
           "purpose": "Overrides for this run, one to a line: a step, a dot, an argument, an equals sign and a value.",
           "type": {
             "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "from",
+          "purpose": "Runs the recipe from this step, after its first, given artifacts in place of the outputs of the steps before it.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "line",
+              "fan",
+              "band",
+              "ramp",
+              "apply",
+              "fill",
+              "put"
+            ]
           },
           "required": false,
           "default": null
@@ -1098,6 +1374,106 @@
           "purpose": "The input image of the recipe.",
           "count": {
             "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_cut_image",
+          "artifact": "image",
+          "purpose": "With from, what is given in place of the output image of the step cut.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_cut_plan",
+          "artifact": "plan",
+          "purpose": "With from, what is given in place of the output plan of the step cut.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_line_location",
+          "artifact": "location",
+          "purpose": "With from, what is given in place of the output location of the step line.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_fan_band",
+          "artifact": "band_profile",
+          "purpose": "With from, what is given in place of the output band of the step fan.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_band_mask",
+          "artifact": "mask",
+          "purpose": "With from, what is given in place of the output mask of the step band.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_ramp_mask",
+          "artifact": "mask",
+          "purpose": "With from, what is given in place of the output mask of the step ramp.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_apply_image",
+          "artifact": "image",
+          "purpose": "With from, what is given in place of the output image of the step apply.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_apply_mask",
+          "artifact": "mask",
+          "purpose": "With from, what is given in place of the output mask of the step apply.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_fill_image",
+          "artifact": "image",
+          "purpose": "With from, what is given in place of the output image of the step fill.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_fill_mask",
+          "artifact": "mask",
+          "purpose": "With from, what is given in place of the output mask of the step fill.",
+          "count": {
+            "min": 0,
             "max": 1
           },
           "belongs_to": null
@@ -1295,7 +1671,8 @@
           "requests": 1
         }
       ],
-      "concurrent": true
+      "concurrent": true,
+      "plans": true
     },
     {
       "name": "source-fidelity",
@@ -1332,6 +1709,18 @@
           "default": null
         },
         {
+          "name": "from",
+          "purpose": "Runs the recipe from this step, after its first, given artifacts in place of the outputs of the steps before it.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "judge"
+            ]
+          },
+          "required": false,
+          "default": null
+        },
+        {
           "name": "until",
           "purpose": "Runs the recipe up to and including this step, before its last, and hands back that step's outputs as its own.",
           "type": {
@@ -1352,6 +1741,16 @@
           "count": {
             "min": 1,
             "max": null
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_details_images",
+          "artifact": "image",
+          "purpose": "With from, what is given in place of the output images of the step details.",
+          "count": {
+            "min": 0,
+            "max": 32
           },
           "belongs_to": null
         }
@@ -1391,7 +1790,8 @@
           "requests": 16
         }
       ],
-      "concurrent": true
+      "concurrent": true,
+      "plans": true
     },
     {
       "name": "reference-consistency",
@@ -1428,6 +1828,18 @@
           "default": null
         },
         {
+          "name": "from",
+          "purpose": "Runs the recipe from this step, after its first, given artifacts in place of the outputs of the steps before it.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "judge"
+            ]
+          },
+          "required": false,
+          "default": null
+        },
+        {
           "name": "until",
           "purpose": "Runs the recipe up to and including this step, before its last, and hands back that step's outputs as its own.",
           "type": {
@@ -1448,6 +1860,16 @@
           "count": {
             "min": 1,
             "max": null
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_details_images",
+          "artifact": "image",
+          "purpose": "With from, what is given in place of the output images of the step details.",
+          "count": {
+            "min": 0,
+            "max": 32
           },
           "belongs_to": null
         }
@@ -1487,7 +1909,8 @@
           "requests": 16
         }
       ],
-      "concurrent": true
+      "concurrent": true,
+      "plans": true
     },
     {
       "name": "reality-checks",
@@ -1524,6 +1947,18 @@
           "default": null
         },
         {
+          "name": "from",
+          "purpose": "Runs the recipe from this step, after its first, given artifacts in place of the outputs of the steps before it.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "judge"
+            ]
+          },
+          "required": false,
+          "default": null
+        },
+        {
           "name": "until",
           "purpose": "Runs the recipe up to and including this step, before its last, and hands back that step's outputs as its own.",
           "type": {
@@ -1544,6 +1979,16 @@
           "count": {
             "min": 1,
             "max": null
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_details_images",
+          "artifact": "image",
+          "purpose": "With from, what is given in place of the output images of the step details.",
+          "count": {
+            "min": 0,
+            "max": 32
           },
           "belongs_to": null
         }
@@ -1583,7 +2028,8 @@
           "requests": 16
         }
       ],
-      "concurrent": true
+      "concurrent": true,
+      "plans": true
     },
     {
       "name": "brief-compliance",
@@ -1620,6 +2066,18 @@
           "default": null
         },
         {
+          "name": "from",
+          "purpose": "Runs the recipe from this step, after its first, given artifacts in place of the outputs of the steps before it.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "judge"
+            ]
+          },
+          "required": false,
+          "default": null
+        },
+        {
           "name": "until",
           "purpose": "Runs the recipe up to and including this step, before its last, and hands back that step's outputs as its own.",
           "type": {
@@ -1640,6 +2098,16 @@
           "count": {
             "min": 1,
             "max": null
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_details_images",
+          "artifact": "image",
+          "purpose": "With from, what is given in place of the output images of the step details.",
+          "count": {
+            "min": 0,
+            "max": 32
           },
           "belongs_to": null
         }
@@ -1679,7 +2147,8 @@
           "requests": 16
         }
       ],
-      "concurrent": true
+      "concurrent": true,
+      "plans": true
     },
     {
       "name": "product-fidelity",
@@ -1716,6 +2185,18 @@
           "default": null
         },
         {
+          "name": "from",
+          "purpose": "Runs the recipe from this step, after its first, given artifacts in place of the outputs of the steps before it.",
+          "type": {
+            "type": "choice",
+            "choices": [
+              "judge"
+            ]
+          },
+          "required": false,
+          "default": null
+        },
+        {
           "name": "until",
           "purpose": "Runs the recipe up to and including this step, before its last, and hands back that step's outputs as its own.",
           "type": {
@@ -1736,6 +2217,16 @@
           "count": {
             "min": 1,
             "max": null
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "from_details_images",
+          "artifact": "image",
+          "purpose": "With from, what is given in place of the output images of the step details.",
+          "count": {
+            "min": 0,
+            "max": 32
           },
           "belongs_to": null
         }
@@ -1775,7 +2266,8 @@
           "requests": 16
         }
       ],
-      "concurrent": true
+      "concurrent": true,
+      "plans": true
     },
     {
       "name": "align",

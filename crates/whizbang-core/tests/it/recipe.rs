@@ -643,9 +643,15 @@ fn a_checked_recipe_gives_each_value_its_arguments_type_and_states_what_its_step
     assert_eq!(descriptor.needs().len(), 1);
     assert_eq!(descriptor.needs()[0].capability(), Capability::Fill);
     let names: Vec<&str> = descriptor.arguments().iter().map(Argument::name).collect();
-    assert_eq!(names, ["note", "set", "until"]);
+    assert_eq!(names, ["note", "set", "from", "until"]);
+    // With `from`, an input for each output of each step before the last, which may be
+    // given in its place (plan m4, task K1, item 2); and the recipe plans such a call.
     let ports: Vec<&str> = descriptor.inputs().iter().map(InputPort::name).collect();
-    assert_eq!(ports, ["protect", "seed"]);
+    assert_eq!(
+        ports,
+        ["protect", "seed", "from_first_mask", "from_second_mask"]
+    );
+    assert!(descriptor.plans());
     // `until` names a step before the last, and what only the last step needs is needed
     // only without it (plan m3, task F1, item 6).
     let until = descriptor.argument("until").unwrap().value_type();
@@ -668,4 +674,31 @@ fn a_checked_recipe_gives_each_value_its_arguments_type_and_states_what_its_step
     let action = action_of(&one, &registry).unwrap();
     assert!(action.descriptor().argument("until").is_none());
     assert_eq!(*action.descriptor().needs()[0].applies(), When::Always);
+}
+
+#[test]
+fn an_input_named_as_the_runners_from_or_one_of_its_ports_is_refused_when_read() {
+    // Plan m4, task K1: `from` is the runner's own argument, and what a run from a step
+    // is given goes in at `from_<step>_<port>`.
+    for name in ["from", "from_first_mask", "from_anything"] {
+        let text = recipe(TWO_MARKS, "second.mask")
+            .replacen("note = {", &format!("{name} = {{"), 1)
+            .replacen(
+                "note = \"inputs.note\"",
+                &format!("note = \"inputs.{name}\""),
+                1,
+            );
+        let error = refused(&text);
+        assert_eq!(error.step, "inputs", "{name}");
+        let said = match name {
+            "from" => "from is the name of the runner's own argument".to_owned(),
+            _ => format!("{name} begins as the runner's own inputs do"),
+        };
+        assert!(error.why.contains(&said), "{name}: {}", error.why);
+    }
+    // A name that only starts with the same letters is an input like any other.
+    let text = recipe(TWO_MARKS, "second.mask")
+        .replacen("note = {", "fromage = {", 1)
+        .replacen("inputs.note", "inputs.fromage", 1);
+    action_of(&text, &fakes(Vec::new())).unwrap();
 }

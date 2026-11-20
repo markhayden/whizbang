@@ -4,7 +4,8 @@
 //! running an action (ADR 0005). And request ids and the admission of a run (ADR 0007). And the commit step, in
 //! which a run's outputs and its completed status are published, a run's status
 //! while it executes, cancelling one, and nested calls (ADR 0008). And what a run asks
-//! of its capabilities, and the calls a run froze (ADR 0009).
+//! of its capabilities, and the calls a run froze (ADR 0009). And a call's plan (ADR 0004)
+//! and findings (ADR 0035), of plan m4, task K1.
 
 mod admit;
 mod around;
@@ -16,12 +17,14 @@ mod describe;
 mod descriptor;
 mod execute;
 mod facts;
+pub mod findings;
 mod fixtures;
 mod interrupted;
 mod inventory;
 mod ledger;
 mod nested;
 mod part;
+mod plan;
 mod prepare;
 mod record;
 mod record3;

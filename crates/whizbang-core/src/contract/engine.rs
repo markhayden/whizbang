@@ -32,9 +32,9 @@ use super::snapshot::Known;
 use super::{
     ADMITTED_NAME, Action, ActionDescriptor, Admission, AdmissionPart, Allowance, Answer, Backends,
     Call, CallError, Cancel, Cancellation, Capabilities, Clock, Committed, ConfigSource, Context,
-    Ending, Estimate, Failure, Finished, Ledger, MESSAGE_LIMIT, Outcome, PreparedCall, Produced,
-    Readiness, Refusal, Registry, Request, RequestId, ResultKind, RunFacts, RunId, RunState,
-    Secrets, Snapshot, Stale, StoreFailure, SystemClock, Value, Verdict, Watched,
+    Ending, Estimate, Failure, Findings, Finished, Ledger, MESSAGE_LIMIT, Outcome, PreparedCall,
+    Produced, Readiness, Refusal, Registry, Request, RequestId, ResultKind, RunFacts, RunId,
+    RunState, Secrets, Snapshot, Stale, StoreFailure, SystemClock, Value, Verdict, Watched,
     request_fingerprint,
 };
 
@@ -1514,11 +1514,12 @@ impl Engine {
             }));
         };
         prepare(
-            action.descriptor(),
+            action.as_ref(),
             call,
             contents,
             snapshot.backends().unwrap_or(self.backends.as_ref()),
             snapshot.digest(),
+            snapshot.cap(),
             &self.limits,
         )
     }
@@ -1747,14 +1748,16 @@ impl Engine {
         let mut outputs = Vec::new();
         let mut verdict = None;
         let mut measurements = None;
+        let mut findings = None;
         let mut outcome = match handed {
             None => Outcome::Cancelled,
             Some(Ok(Ok(produced))) => {
                 verdict = produced.verdict().cloned();
                 measurements = produced.measurements().cloned();
                 // What is handed back beside the artifacts is held to the kinds the
-                // descriptor declares (ADR 0035).
+                // descriptor declares (ADR 0035), and findings to their schema.
                 let undeclared = held_to_results(action.descriptor(), &produced);
+                let undeclared = undeclared.map(|read| findings = read);
                 let held = undeclared
                     .and_then(|()| held_to_ports(&prepared, action.descriptor(), produced, secrets))
                     .and_then(|held| {
@@ -1812,6 +1815,8 @@ impl Engine {
         // The caller is given the verdict with the outcome, as the record keeps it.
         let handed_verdict = (verdict.as_ref()).map(|v| Verdict::new(v.decision(), &said(v.why())));
         inside.verdict = verdict;
+        // Findings are data and hold no text: they are kept as they were read.
+        inside.findings = findings.clone();
         // A record lists what a request cost only for a request it lists. What was
         // noted for a request the run did not send cannot be written, and leaving it
         // out in silence would be a record that says less was spent than was noted:
@@ -2006,14 +2011,19 @@ impl Engine {
                 .nest()
                 .ended(&run, status, outcome.outputs(), times, &store);
         }
-        Ok(Finished::new(run, outcome).with_results(handed_verdict, measurements))
+        Ok(Finished::new(run, outcome).with_results(handed_verdict, measurements, findings))
     }
 }
 
 /// What an action handed back beside its artifacts, held to the kinds of result its
 /// descriptor declares (ADR 0035): a verdict only from an action that answers with one,
-/// and measurements only from one that measures, at most [`MEASUREMENTS_MAX_BYTES`].
-fn held_to_results(descriptor: &ActionDescriptor, produced: &Produced) -> Result<(), String> {
+/// measurements only from one that measures, at most [`MEASUREMENTS_MAX_BYTES`], and
+/// findings only from one that declares them, read strictly as `findings/1`: what
+/// comes back is the findings as they were read, when there are any.
+fn held_to_results(
+    descriptor: &ActionDescriptor,
+    produced: &Produced,
+) -> Result<Option<Findings>, String> {
     if produced.verdict().is_some() && !descriptor.answers_with(ResultKind::Verdict) {
         return Err(
             "the action handed back a verdict, and its descriptor declares none".to_owned(),
@@ -2031,7 +2041,15 @@ fn held_to_results(descriptor: &ActionDescriptor, produced: &Produced) -> Result
             ));
         }
     }
-    Ok(())
+    let Some(found) = produced.findings() else {
+        return Ok(None);
+    };
+    if !descriptor.answers_with(ResultKind::Findings) {
+        return Err("the action handed back findings, and its descriptor declares none".to_owned());
+    }
+    let read = Findings::read(found);
+    read.map(Some)
+        .map_err(|why| format!("the action's findings are not findings/1: {why}"))
 }
 
 /// What an action handed back, held to the output ports its call returns (ADR 0008):

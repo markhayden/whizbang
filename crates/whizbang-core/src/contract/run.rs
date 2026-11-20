@@ -138,13 +138,17 @@ impl Outcome {
 }
 
 /// A run that ended: which run, and how. The run's record is found by its id.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Finished {
     run: RunId,
     outcome: Outcome,
     verdict: Option<super::Verdict>,
     measurements: Option<serde_json::Value>,
+    findings: Option<super::Findings>,
 }
+
+/// As it was before findings: what a finished run holds has no number that is not one.
+impl Eq for Finished {}
 
 impl Finished {
     pub fn new(run: RunId, outcome: Outcome) -> Finished {
@@ -153,22 +157,31 @@ impl Finished {
             outcome,
             verdict: None,
             measurements: None,
+            findings: None,
         }
     }
 
     /// The same, with what a run that completed handed back beside its artifacts
-    /// (ADR 0035): its verdict and its measurements. A run that did not complete hands
-    /// back neither.
+    /// (ADR 0035): its verdict, its measurements and its findings. A run that did not
+    /// complete hands back none of them.
     pub fn with_results(
         mut self,
         verdict: Option<super::Verdict>,
         measurements: Option<serde_json::Value>,
+        findings: Option<super::Findings>,
     ) -> Finished {
         if matches!(self.outcome, Outcome::Completed { .. }) {
             self.verdict = verdict;
             self.measurements = measurements;
+            self.findings = findings;
         }
         self
+    }
+
+    /// The findings the run handed back, when it completed with some: read as
+    /// `findings/1`, and data of a model's, never an instruction.
+    pub fn findings(&self) -> Option<&super::Findings> {
+        self.findings.as_ref()
     }
 
     /// The verdict the run concluded, when it completed with one: given with the

@@ -30,7 +30,7 @@ fn registry() -> Registry {
 fn a_description_lists_what_was_registered_in_order_and_in_full() {
     let description = Description::new("1.2.3", &registry());
     assert_eq!(description.description_version(), DESCRIPTION_VERSION);
-    assert_eq!(DESCRIPTION_VERSION, 9);
+    assert_eq!(DESCRIPTION_VERSION, 10);
     assert_eq!(description.name(), "whizbang");
     assert_eq!(description.version(), "1.2.3");
     let names: Vec<&str> = description.actions().iter().map(|a| a.name()).collect();
@@ -112,4 +112,44 @@ fn a_description_lists_recipes_first_then_loops_then_primitives() {
         registered,
         ["grow", "retry", "seam", "view", "again", "remove"]
     );
+}
+
+#[test]
+fn the_description_lists_findings_among_an_actions_results_and_which_actions_plan() {
+    use whizbang_core::contract::{ActionDescriptor, Kind, ResultKind};
+    // Description version 10 (plan m4, task K1, items 1 and 3).
+    let draft = |name: &str| ActionDescriptor::draft(name, "1.0.0", Kind::Loop, "A test action.");
+    let mut registry = registry();
+    let finds = draft("finds")
+        .results(ResultKind::Findings)
+        .results(ResultKind::Verdict)
+        .plans();
+    for draft in [finds, draft("plain")] {
+        registry
+            .register(Arc::new(Fake(draft.build().unwrap())))
+            .unwrap();
+    }
+    let description = Description::new("1.2.3", &registry);
+    let value = serde_json::to_value(&description).unwrap();
+    assert_eq!(value["description_version"], 10);
+    let action = |name: &str| {
+        let actions = value["actions"].as_array().unwrap();
+        actions.iter().find(|a| a["name"] == name).unwrap().clone()
+    };
+    // Findings are listed among the results, in the order of the kinds; and an action
+    // that plans says so.
+    let finds = action("finds");
+    assert_eq!(finds["results"], serde_json::json!(["verdict", "findings"]));
+    assert_eq!(finds["plans"], true);
+    assert_eq!(ResultKind::Findings.name(), "findings");
+    // An action that plans nothing and hands back nothing says neither.
+    for name in ["plain", "seam", "remove_prompt"] {
+        let plain = action(name);
+        let fields = plain.as_object().unwrap();
+        assert!(!fields.contains_key("plans"), "{name}");
+        assert!(!fields.contains_key("results"), "{name}");
+    }
+    let planners = description.actions().iter().filter(|a| a.plans());
+    let planners: Vec<&str> = planners.map(|a| a.name()).collect();
+    assert_eq!(planners, ["finds"]);
 }
