@@ -33,8 +33,9 @@ They are merged because keeping them apart cost more than it gave:
 
 There is no public Rust library. Only the `whizbang` binary is released.
 
-**Top-level tools.** `rascal` and `squint` are the first two. Adding another must not require
-changes to existing tools or to the doors. Pixel, an image generation agent that uses both to
+**Kits.** `rascal` and `squint` are the first two kits: families of work, each with its tasks
+and tools (ADR 0040 gives the words). Adding another must not require changes to existing
+kits or to the doors. Pixel, an image generation agent that uses both to
 create, verify and edit images, is the known next one and is out of scope here.
 
 ### User stories the design must serve
@@ -189,6 +190,9 @@ the middle one is the front door.
 | Primitive | `grow`, `view`, `segment` | Recipes; a person experimenting |
 | Recipe | `remove_prompt`; a source-fidelity check | Agents, apps, other tools |
 | Loop across tools | remove, check, retry | Agents and apps |
+
+In the playground and the guides these are tools, tasks, and tasks that use another kit (ADR
+0040).
 
 - **A recipe is a named, typed sequence of steps** over primitives and other recipes, with
   the settings that make it work. Rascal's tasks are recipes. A squint use case is one too:
@@ -1050,7 +1054,7 @@ request; any other change gets the two rounds first.
 - Approve spend beyond that, a new recipient for data, or a reset of the spend allowance.
 
 **Ask first**
-- Adding a platform, a door or a top-level tool.
+- Adding a platform, a door or a kit.
 - Using a held-out evaluation set.
 
 **Never**
@@ -1142,7 +1146,7 @@ The conclusions of the 2026-11-11 study are provisional until that write-up exis
    checkpoint 1D, from the local worker and from a remote one.
 4. Adding a segmenter requires no edit to any existing tool's logic, shown by adding Tiny after
    SAM 3.
-5. Adding a top-level tool requires no change to existing tool implementations or to the
+5. Adding a kit requires no change to existing kits or to the
    doors, shown when squint is added after rascal's first action exists.
 6. The timing reports show the fast tier and pull-request CI inside their budgets.
 7. A new tool file is tried, scored, edited and re-run without a rebuild or reinstall.

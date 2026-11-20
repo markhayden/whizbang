@@ -213,7 +213,7 @@ These are the boundaries of `SPEC.md` section 15, with these additions, each mar
 - Approves spend beyond that, a new recipient for data, or a reset of the spend allowance.
 
 **Ask the owner first**
-- Adding a platform, a door or a top-level tool.
+- Adding a platform, a door or a kit.
 - Using a held-out evaluation set.
 
 **Never**
