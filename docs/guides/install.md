@@ -38,12 +38,13 @@ grep -F "whizbang-<version>-<target>.tar.gz" SHA256SUMS | sha256sum -c -
 
 Either prints the archive's name and `OK`. If it does not, do not use the archive.
 
-Unpack it, and put the binary in a folder that is on your `PATH`:
+Unpack it, and put the binary in a folder that is on your `PATH`. `/usr/local/bin` is on
+it on both platforms; any other folder on it does as well, and one of your own needs no
+`sudo`:
 
 ```sh
 tar -xzf whizbang-<version>-<target>.tar.gz
-mkdir -p "$HOME/.local/bin"
-cp whizbang-<version>-<target>/whizbang "$HOME/.local/bin/whizbang"
+sudo cp whizbang-<version>-<target>/whizbang /usr/local/bin/whizbang
 whizbang --version
 ```
 
