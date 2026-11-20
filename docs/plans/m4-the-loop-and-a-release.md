@@ -574,6 +574,60 @@ would have been lost before the loop classed anything.
 **Keeping tests lean (K2).** Findings are read from scripted submissions on the pictures the
 use cases' tests already draw.
 
+**Where the tests are (K2).** Those named `check::`, `cache::` and `use_case::` are in
+squint's tests, in a module of their own, `findings` (`findings::check::…`,
+`findings::cache::…`, `findings::use_case::…`,
+`crates/whizbang-squint/tests/it/findings.rs`): the files the names would put them in
+are being changed by A1 in the same wave. `cli::squint_check_prints_the_counts_of_its_findings`
+is the binary's; beside it `serve::check_over_stdio_answers_with_the_counts_of_its_findings`
+shows the server's answer of item 4. Each of the decision table's inputs (L1, item 4) is
+run on a check that was made and on the same check answered from the cache: a confident
+`RQ1` violation alone (in `…the_verdict_worked_out_from_complete_findings…`), beside a
+separate `SF1` violation (`…a_checklist_item_and_a_separate_observation…`), 32 tentative
+kept with the only confident one cut (`…findings_carry_the_decision…`), and an
+observation that cites several obligations (`…a_finding_keeps_every_obligation…`,
+`…a_check_answered_from_the_cache…`). The job of those tests is the one a loop gives a
+check: `source-fidelity` with `RQ1` to `RQ3`.
+
+**Reworded with the task** (K2, 2026-11-19). One clause of the "Done when" above is met
+otherwise than it is worded.
+
+- "`check::findings_cut_short_in_any_way_say_they_are_not_complete_and_count_what_was_left_out`
+  (a 33rd finding, a ninth place, a place on another image), on a check that was made
+  and on the same check answered from the cache". The 33rd finding and the ninth place
+  are shown so. A place on another image cannot come from a check that was made: a
+  submission whose location names a frame outside its job is refused before anything is
+  kept (`use_case/submission.rs`, `place`), and the job's images are the call's. It is
+  shown, there and in `check::a_place_on_an_image_the_run_was_not_given_is_left_out_and_counted`,
+  on the document a run keeps of what it decided, changed by the test, which is what
+  the findings are made from on a check that was made and on a hit alike
+  (`findings::of_judged`). The same test shows the other ways a list is short on that
+  document: a box with no area, an obligation's id the kind does not take, and a list
+  over 32 KiB.
+
+**Decided with the task (K2).** ADR 0035, "What `check` hands back", has each.
+
+- **Made from `judged.json` alone,** by one function, on a check that was made (from
+  the document it has just written) and on a hit (from the document of the run that
+  answered). For that, what is kept of a checklist item names the obligations the item
+  is about. `check` is 1.7.0.
+- **An old cache entry is never met, and there is no shim.** The version of `check` is
+  in the cache's key, so a check of 1.7.0 finds no run of 1.6.0. A run of the same key
+  that kept no `judged.json`, or one the findings cannot be made from, or whose findings
+  would not carry its verdict's decision, is passed over: the check runs, and the newer
+  run is the one found next.
+- **The item of a reference image** (`chk:ref:<image>`) is about several obligations,
+  and an item of `findings/1` cites one: it is handed back as one finding of the form
+  `item` for each obligation, in the rules' order, so none is dropped and no field is
+  added. The loop's use case, `source-fidelity`, has no such item.
+- **A place is a box or a polygon.** A location that is the whole image, or an absence,
+  is no place and is not counted as one left out: nothing can be aimed at it.
+- **Under `general`,** where the judge answers with a word and no submission, `check`
+  hands back no findings.
+- **The doors print nothing for a check with no finding and nothing left out,** so a
+  pass reads as it did; otherwise one line says whether the list is complete, with
+  what was left out, and one line follows for each count the record keeps.
+
 ## L1. The loop: remove, check, retry (large)
 
 ### Goal

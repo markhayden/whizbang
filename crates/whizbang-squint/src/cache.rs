@@ -6,8 +6,14 @@
 //! pictures by their hashes), the resolved rules, checklist and prompt, the revisions of
 //! the tools it may call, the judge's identity, the digest of the config, the limits and
 //! the harness's version ([`Material`]). A run that finds a run of the same key that
-//! completed answers with that run's verdict, sends nothing, and records that it did,
-//! naming the run ([`ANSWERED_BY`]). A run that concludes keeps its key among its
+//! completed answers with that run's verdict and its findings, sends nothing, and
+//! records that it did, naming the run ([`ANSWERED_BY`]). The findings are worked out
+//! again from what the earlier run kept of what it decided ([`check::JUDGED`]), by the
+//! code that made them the first time (`crate::findings`; plan m4, task K2, item 3). A
+//! run that kept no such document, or one the findings cannot be made from, is not
+//! answered from: the check runs, and the newer run is the one a later check finds.
+//! No run of an earlier version of `check` is ever found at all, since the version is
+//! in the key. A run that concludes keeps its key among its
 //! diagnostics, so that a later run can find it, only when every turn of its judge
 //! said which model answered (a backend that cannot report its identity is not
 //! cached).
@@ -21,7 +27,7 @@
 use serde_json::{Value as Json, json};
 use whizbang_core::artifact::{ArtifactId, Contents};
 use whizbang_core::contract::record::{self, DIAGNOSTICS_PREFIX, Status};
-use whizbang_core::contract::{ModelIdentity, Value};
+use whizbang_core::contract::{Findings, ModelIdentity, Value};
 use whizbang_core::identity::{BindingId, Digest};
 
 use crate::check::{self, TURN_TEXT_LIMIT, TURNS_LIMIT};
@@ -180,20 +186,23 @@ pub fn prompt_of(job: &Job, tools: &[&str]) -> Result<(String, String, u32), Str
     Ok((system, checklist.render(&resolved), resolved.version))
 }
 
-/// What a hit answers with: the run, its verdict, and what it kept of its reasons and
-/// of what it decided, when it kept them.
+/// What a hit answers with: the run, its verdict, what it kept of its reasons, when it
+/// kept them, what it kept of what it decided, and the findings that gives.
 #[derive(Debug, Clone)]
 pub struct Hit {
     pub run: String,
     pub decision: record::Decision,
     pub why: String,
     pub reasons: Option<Vec<u8>>,
-    pub judged: Option<Vec<u8>>,
+    pub judged: Vec<u8>,
+    pub findings: Findings,
 }
 
 /// The newest run in the store whose key is this one, whole, and that completed with a
-/// verdict of `check`. A run whose kept material differs in any byte, whose record
-/// cannot be read, or that did not complete, is passed over.
+/// verdict of `check` and kept what it decided. A run whose kept material differs in any
+/// byte, whose record cannot be read, that did not complete, that kept no document of
+/// what it decided, or whose document does not give findings that carry its verdict's
+/// decision, is passed over.
 pub fn find(store: &dyn Contents, key: &Key) -> Option<Hit> {
     let generation = store.snapshot().ok()?;
     let name = format!("{DIAGNOSTICS_PREFIX}{}", key.name());
@@ -219,12 +228,22 @@ pub fn find(store: &dyn Contents, key: &Key) -> Option<Hit> {
             let entry = run.get(&format!("{DIAGNOSTICS_PREFIX}{name}"))?;
             store.read_record(entry).ok()
         };
+        let Some(judged) = kept(check::JUDGED) else {
+            continue;
+        };
+        let Ok(findings) = crate::findings::of_judged(&judged) else {
+            continue;
+        };
+        if findings.decision() != decision {
+            continue;
+        }
         return Some(Hit {
             run: id.clone(),
             decision,
             why: why.to_owned(),
             reasons: kept(REASONS),
-            judged: kept(check::JUDGED),
+            judged,
+            findings,
         });
     }
     None

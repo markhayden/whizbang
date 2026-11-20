@@ -315,8 +315,11 @@ pub fn left(root: &Path, fs: Arc<dyn Fs>, run: &RunId) -> Left {
     }
     let record = names.get("record").map(|(_, bytes)| {
         let written: Json = serde_json::from_slice(bytes).unwrap();
-        // A recipe's run, which lists its steps, is written as run/5 (ADR 0033).
+        // A recipe's run, which lists its steps, is written as run/5 (ADR 0033); a run
+        // that handed back findings, as `check` under a use case does, as run/6 (ADR
+        // 0005, "run/6").
         let schema = match written["record"].as_str() {
+            Some("run/6") => whizbang_core::contract::RUN_6_SCHEMA,
             Some("run/5") => whizbang_core::contract::RUN_5_SCHEMA,
             _ => RUN_RECORD_SCHEMA,
         };

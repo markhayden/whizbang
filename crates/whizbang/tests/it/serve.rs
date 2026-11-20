@@ -917,3 +917,56 @@ fn a_planned_call_answers_with_its_plan() {
     );
     client.close();
 }
+
+#[test]
+fn check_over_stdio_answers_with_the_counts_of_its_findings() {
+    use crate::anthropic::{
+        CHECK_CLASSES, Judged, checklist_of, import_picture, serving, submission_of,
+    };
+    // Plan m4, task K2, item 4: the server's answer for `check` carries what the run's
+    // record keeps of its findings, after the verdict and its reasons, as the command
+    // prints them.
+    let judged = Judged::new("serve-findings");
+    let scratch = judged.world.beside("pictures");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let root = &judged.world.root;
+    let candidate = import_picture(root, &scratch, "candidate", 200);
+    let source = import_picture(root, &scratch, "other", 10);
+    let job = whizbang_squint::job::Job::shorthand("source-fidelity", true, 0, None);
+    let ids = checklist_of(&job);
+    let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+    let answers = vec![submission_of(&ids, "violation", "Looked at.")];
+    let (listener, _) = serving(&judged.pki, answers);
+    let origin = format!("https://127.0.0.1:{}", listener.port());
+    let over = judged.over_with(
+        &judged.address(listener.port()),
+        Some(&origin),
+        &CHECK_CLASSES,
+        "",
+    );
+    let executor = Arc::new(judged.runner(&over));
+    let registry = whizbang::wiring::registry().unwrap();
+    let descriptors = registry.descriptors().cloned().collect();
+    let door = Arc::new(Actions::new(descriptors, root.clone(), None));
+    let mut client = Client::new(executor, door, Limits::default());
+    client.initialized();
+    let images = json!([{"id": candidate, "role": "candidate"}, {"id": source, "role": "source"}]);
+    let arguments = json!({"use_case": "source-fidelity", "images": images, "details": "none"});
+    client.call(1, "check", arguments, None);
+    let answer = client.answer(1, &mut Vec::new());
+    let (text, error) = result_text(&answer);
+    assert!(!error, "{text}");
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[1], "verdict: fail", "{text}");
+    assert_eq!(
+        lines[lines.len() - 3..],
+        [
+            "findings: complete",
+            "finding: SF1 violation confident: 1",
+            "finding: SF2 violation confident: 1"
+        ],
+        "{text}"
+    );
+    assert!(client.close().is_empty());
+    assert_eq!(listener.finish(), 1);
+}

@@ -25,7 +25,7 @@ fn indented_description() -> &'static str {
 /// `check`, the recipe.
 fn compact_start() -> String {
     format!(
-        "{{\"description_version\":10,\"name\":\"whizbang\",\"version\":\"{}\",\"actions\":[{{\"name\":\"check\",\"version\":\"1.6.0\",\"kind\":\"recipe\",\"purpose\":\"",
+        "{{\"description_version\":10,\"name\":\"whizbang\",\"version\":\"{}\",\"actions\":[{{\"name\":\"check\",\"version\":\"1.7.0\",\"kind\":\"recipe\",\"purpose\":\"",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -676,7 +676,10 @@ fn the_five_use_cases_are_listed_as_recipes_first() {
             action["use"].as_str().is_some_and(|u| !u.is_empty()),
             "{name}"
         );
-        assert_eq!(action["results"], serde_json::json!(["verdict"]), "{name}");
+        // Each hands its caller the verdict and the findings of its step `check` (plan
+        // m4, task K2, item 4).
+        let results = serde_json::json!(["verdict", "findings"]);
+        assert_eq!(action["results"], results, "{name}");
         let inputs: Vec<&str> = (action["inputs"].as_array().unwrap().iter())
             .map(|port| port["name"].as_str().unwrap())
             .collect();

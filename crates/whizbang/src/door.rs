@@ -29,11 +29,12 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
+use serde_json::Value as Json;
 use whizbang_core::artifact::ArtifactId;
-use whizbang_core::contract::record::DIAGNOSTICS_PREFIX;
+use whizbang_core::contract::record::{DIAGNOSTICS_PREFIX, Found};
 use whizbang_core::contract::{
-    Answer, Call, CallError, Committed, Executor, Outcome, Recovery, Request, RunId, RunState,
-    Value,
+    Answer, Call, CallError, Committed, Executor, LeftOut, Outcome, Recovery, Request, RunId,
+    RunState, Value,
 };
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::RealFs;
@@ -659,12 +660,15 @@ pub fn job_file(
 pub const CHECK_OUTPUT_TOKENS: i64 = 2048;
 
 /// A run's verdict as it was stored: its decision's word, its reason, and the items
-/// of the reason whole, from the run's diagnostic of them, when it keeps one.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// of the reason whole, from the run's diagnostic of them, when it keeps one; and
+/// what the run's record keeps of the findings it handed back, when it handed some
+/// (plan m4, task K2, item 4).
+#[derive(Debug, Clone, PartialEq)]
 pub struct Stated {
     pub word: String,
     pub why: String,
     pub items: Vec<String>,
+    pub findings: Option<Found>,
 }
 
 /// What reads a run's verdict back ([`Stated`]).
@@ -797,8 +801,42 @@ pub fn said_verdict(text: &mut String, stated: Option<Stated>) {
             for item in &stated.items {
                 text.push_str(&format!("reason: {}\n", printable(item)));
             }
+            if let Some(found) = &stated.findings {
+                said_findings(text, found);
+            }
         }
         None => text.push_str("verdict: none was recorded\n"),
+    }
+}
+
+/// The counts of a run's findings, as `squint check` prints them after its verdict and
+/// the server's answer carries them (plan m4, task K2, item 4): nothing for a run with
+/// no finding and nothing left out; otherwise one line that says whether the list is
+/// complete, and what was left out when it is not, then one line for each obligation
+/// cited with each disposition and confidence, with how many findings cite it so. A
+/// finding that cites two obligations is counted under each. The words are the
+/// record's own, which holds no text of a judge's; they are escaped all the same.
+pub fn said_findings(text: &mut String, found: &Found) {
+    if found.complete && found.counts.is_empty() {
+        return;
+    }
+    let word = |value: Json| printable(value.as_str().unwrap_or("-"));
+    if found.complete {
+        text.push_str("findings: complete\n");
+    } else {
+        let LeftOut { findings, places } = found.left_out;
+        text.push_str(&format!(
+            "findings: not complete, {findings} findings and {places} places left out\n"
+        ));
+    }
+    for count in &found.counts {
+        let disposition = word(serde_json::to_value(count.disposition).unwrap_or_default());
+        let confidence = word(serde_json::to_value(count.confidence).unwrap_or_default());
+        text.push_str(&format!(
+            "finding: {} {disposition} {confidence}: {}\n",
+            printable(&count.obligation),
+            count.count
+        ));
     }
 }
 
@@ -856,6 +894,7 @@ pub fn verdict(root: &Path, run: &RunId) -> Option<Stated> {
         word: word.as_str()?.to_owned(),
         why: why.to_owned(),
         items,
+        findings: record.findings().cloned(),
     })
 }
 

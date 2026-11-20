@@ -9,7 +9,9 @@
 //! rules and the job's requirements, and the checklist made of them; it answers with the
 //! tool `submit_verdict`, and the verdict is worked out from its dispositions. A
 //! submission that is not a verdict is answered with why, and asked for once more. What
-//! the run decided is kept beside its record ([`JUDGED`]).
+//! the run decided is kept beside its record ([`JUDGED`]), and from it the run hands
+//! its caller its findings with the verdict: every answer that counts against a pass,
+//! as data ([`crate::findings`]; plan m4, task K2).
 //!
 //! **Retrying** (squint's `retry.rs`, at the commit `docs/sources.toml` pins). A request
 //! the judge's backend could not answer now (a fault `unavailable`, as a 429 or a 5xx
@@ -77,7 +79,7 @@ pub const NAME: &str = "check";
 /// The action a tool file's capability is asked through (`whizbang_rascal::segment`).
 const SEGMENT: &str = "segment";
 /// The action's version.
-pub const VERSION: &str = "1.6.0";
+pub const VERSION: &str = "1.7.0";
 /// The most requests one run sends its judge, the retry of a cut-off turn included.
 pub const TURNS_LIMIT: usize = 16;
 /// The most tool calls one run dispatches. It is far under what the executor lets one
@@ -98,7 +100,8 @@ pub const RETRIES_LIMIT: u32 = 3;
 pub const RETRY_WAIT_LIMIT_MS: u64 = 30_000;
 /// The name of the run's diagnostic that holds what a run under a use case decided: the
 /// job's images with their roles, labels and identities; the checklist; each repair and
-/// each retry; and each answer's disposition, confidence, row and location.
+/// each retry; and each answer's obligations, disposition, confidence, row and location.
+/// The findings the run hands back are made from it ([`crate::findings::of_judged`]).
 pub const JUDGED: &str = "judged.json";
 
 /// The input that takes the images an earlier step measured first and handed on.
@@ -288,7 +291,10 @@ impl Check {
                 // What a call reserves covers every turn of the loop.
                 .requests(TURNS_LIMIT as u64),
         )
-        .results(ResultKind::Verdict);
+        .results(ResultKind::Verdict)
+        // Under a use case of the table it hands back its findings too (plan m4, task
+        // K2; `crate::findings`).
+        .results(ResultKind::Findings);
         Ok(Check {
             descriptor: draft.build()?,
             toolbox,
@@ -1677,17 +1683,27 @@ fn conclude(
         .diagnostics()
         .write(use_case::REASONS, lines.as_bytes());
     kept.map_err(|why| failed("reasons", &why))?;
-    judging.keep(
+    let kept = judging.keep(
         context,
         call,
         concluded.retries,
         decided,
         concluded.second.as_ref(),
     )?;
+    // The findings are made from the document just kept, by the code a later run
+    // answered from the cache makes them with (plan m4, task K2, items 1 and 3). The
+    // decision they carry is worked out from every answer the document holds, and is
+    // the verdict's.
+    let findings = crate::findings::of_judged(&kept).map_err(|why| failed("findings", &why))?;
+    if findings.decision() != decided.verdict.decision() {
+        let why = "the decision of the answers that were kept is not the verdict's";
+        return Err(failed("findings", &why));
+    }
     if let Some(key) = concluded.key {
         keep_key(context, key, concluded.reported, concluded.edited);
     }
-    Ok(Produced::nothing().with_verdict(decided.verdict.clone()))
+    let produced = Produced::nothing().with_verdict(decided.verdict.clone());
+    Ok(produced.with_findings(findings.to_json()))
 }
 
 /// A run under a use case of the table: its job, what resolution made of it, its
@@ -1742,7 +1758,8 @@ fn judging(call: &PreparedCall, use_case: &str, job: Option<&Value>) -> Result<J
 }
 
 impl Judging {
-    /// Keeps what the run decided among its diagnostics ([`JUDGED`]).
+    /// Keeps what the run decided among its diagnostics ([`JUDGED`]): the document, as
+    /// it was written.
     fn keep(
         &self,
         context: &Context,
@@ -1750,7 +1767,7 @@ impl Judging {
         retries: &[Json],
         decided: &use_case::Decided,
         second: Option<&Json>,
-    ) -> Result<(), Failure> {
+    ) -> Result<Vec<u8>, Failure> {
         let given = (call.inputs().iter()).filter(|input| input.port() == "images");
         let images: Vec<Json> = (self.job.images.iter().zip(given))
             .map(|(image, input)| {
@@ -1770,21 +1787,22 @@ impl Judging {
         if let Some(second) = second {
             kept["second_look"] = second.clone();
         }
-        let written = context
-            .diagnostics()
-            .write(JUDGED, kept.to_string().as_bytes());
-        written.map_err(|why| failed("judged", &why))
+        let kept = kept.to_string().into_bytes();
+        let written = context.diagnostics().write(JUDGED, &kept);
+        written.map_err(|why| failed("judged", &why))?;
+        Ok(kept)
     }
 }
 
-/// A run answered from the decision cache: the earlier run's verdict, with what it kept
-/// of its reasons and of what it decided, and the earlier run named in this run's
-/// record. Nothing is sent.
+/// A run answered from the decision cache: the earlier run's verdict and its findings,
+/// with what it kept of its reasons and of what it decided, and the earlier run named
+/// in this run's record. Nothing is sent.
 fn answered_from(context: &Context, hit: &cache::Hit) -> Result<Produced, Failure> {
     let facts = context.facts();
     facts.setting(cache::SETTING, &Value::text("hit"));
     facts.setting(cache::ANSWERED_BY, &Value::text(&hit.run));
-    for (name, bytes) in [(use_case::REASONS, &hit.reasons), (JUDGED, &hit.judged)] {
+    let judged = Some(hit.judged.clone());
+    for (name, bytes) in [(use_case::REASONS, &hit.reasons), (JUDGED, &judged)] {
         if let Some(bytes) = bytes {
             let written = context.diagnostics().write(name, bytes);
             written.map_err(|why| failed("cache", &why))?;
@@ -1795,7 +1813,8 @@ fn answered_from(context: &Context, hit: &cache::Hit) -> Result<Produced, Failur
         hit.run
     );
     context.events().progress(&said);
-    Ok(Produced::nothing().with_verdict(Verdict::new(hit.decision, &hit.why)))
+    let produced = Produced::nothing().with_verdict(Verdict::new(hit.decision, &hit.why));
+    Ok(produced.with_findings(hit.findings.to_json()))
 }
 
 /// Keeps a run's key for a later run to answer from, when every turn of its judge said

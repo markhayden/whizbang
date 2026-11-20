@@ -159,8 +159,10 @@ fn place(location: &Location, job: &Job) -> Result<Placed, String> {
 }
 
 /// What a submission decided: the verdict, whose reason is the summary; each item of
-/// that reason whole; and what the run keeps of each answer (its id or obligations, its
-/// disposition, its confidence, its row and its location).
+/// that reason whole; and what the run keeps of each answer (its id and the obligations
+/// it is about, for an item, or the obligations it cites, for a separate observation;
+/// its disposition, its confidence, its row and its location). The findings a check
+/// hands its caller are made from what is kept here (`crate::findings`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Decided {
     pub verdict: Verdict,
@@ -382,13 +384,23 @@ pub fn decided_of(
             .filter(|i| entry.instances.contains(&i.id()))
             .map(|i| row(i, answer.disposition, answer.confidence));
         let row = rows.max().unwrap_or(Row::Recorded);
+        // The obligations the item is about, each once, in the order of the rules: one,
+        // but for the item of a reference image.
+        let mut about: Vec<&str> = Vec::new();
+        for instance in &resolved.instances {
+            let id = instance.obligation_id.as_str();
+            if entry.instances.contains(&instance.id()) && !about.contains(&id) {
+                about.push(id);
+            }
+        }
         said.push(Said {
             named: id.clone(),
             disposition: answer.disposition,
             confidence: answer.confidence,
             reason: answer.reason.trim().to_owned(),
             row,
-            kept: json!({"id": id, "location": placed.as_ref().map(|p| &p.kept),
+            kept: json!({"id": id, "obligations": about,
+                         "location": placed.as_ref().map(|p| &p.kept),
                          "clamped": placed.is_some_and(|p| p.clamped)}),
         });
     }

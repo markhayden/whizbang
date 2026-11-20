@@ -1034,6 +1034,75 @@ fn reason_items_over_4096_characters_in_all_are_each_printed_whole_from_the_stor
 }
 
 #[test]
+fn squint_check_prints_the_counts_of_its_findings() {
+    use crate::anthropic::{Judged, checked, submission};
+    use whizbang_core::contract::record::{Decision, Found};
+    use whizbang_core::contract::{Confidence, Disposition, FindingCount, LeftOut};
+    // Plan m4, task K2, item 4. A judge that reports each item of source-fidelity's
+    // checklist as a confident violation: after the verdict and its reasons, the door
+    // prints that the findings are complete, and a count for each obligation cited.
+    let judged = Judged::new("cli-findings");
+    let said = "The collar is still there.";
+    let (printed, _) = checked(&judged, vec![submission("violation", said)]);
+    let printed = printed.unwrap();
+    assert_eq!(
+        after_the_run(&printed),
+        [
+            "verdict: fail".to_owned(),
+            format!("reason: chk:ob:SF1@candidate: violation (confident): {said}"),
+            format!("reason: chk:ob:SF2@candidate: violation (confident): {said}"),
+            "findings: complete".to_owned(),
+            "finding: SF1 violation confident: 1".to_owned(),
+            "finding: SF2 violation confident: 1".to_owned(),
+        ]
+    );
+    // They are the record's: read again from the stored run by a reader of its own.
+    let run = printed.lines().next().unwrap().split(' ').nth(1).unwrap();
+    let run = whizbang_core::contract::RunId::parse(run).unwrap();
+    let stated = whizbang::door::verdict(&judged.world.root, &run).unwrap();
+    let found = stated.findings.unwrap();
+    assert_eq!(found.decision, Decision::Fail);
+    assert!(found.complete);
+    assert_eq!(found.counts.len(), 2);
+    // A check with no finding prints no line of them: the pass of
+    // `squint_check_prints_the_verdict_and_the_run_under_a_recorded_fake` is four lines.
+    // A list that was cut short says so, with what was left out, and a disposition
+    // that takes no confidence is printed with a dash.
+    let count = |obligation: &str, disposition, confidence, count| FindingCount {
+        obligation: obligation.to_owned(),
+        disposition,
+        confidence,
+        count,
+    };
+    let short = Found {
+        decision: Decision::Fail,
+        complete: false,
+        left_out: LeftOut {
+            findings: 1,
+            places: 24,
+        },
+        counts: vec![
+            count(
+                "RQ1",
+                Disposition::Violation,
+                Some(Confidence::Tentative),
+                30,
+            ),
+            count("SF4", Disposition::Observed, None, 2),
+        ],
+        places: Vec::new(),
+    };
+    let mut text = String::new();
+    whizbang::door::said_findings(&mut text, &short);
+    assert_eq!(
+        text,
+        "findings: not complete, 1 findings and 24 places left out\n\
+         finding: RQ1 violation tentative: 30\n\
+         finding: SF4 observed -: 2\n"
+    );
+}
+
+#[test]
 fn a_reason_item_over_the_print_limit_is_cut_there_and_escaped() {
     use crate::anthropic::{Judged, checked, submission};
     // A reason of 6,000 characters and more, with a line break and an escape near its
