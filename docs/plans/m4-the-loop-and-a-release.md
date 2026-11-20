@@ -976,6 +976,26 @@ met otherwise than they are worded.
 - **Under `--check required` a check the cap does not cover** is planned as one checked
   attempt and refused as over the cap; under `auto` it is one unchecked pass.
 
+**After the review of the pull requests (L1).** Fixed in them: a deadline that passes
+after a fill completed ends the attempts with "the deadline passed after attempt N" and
+keeps the best, and a child that ends cancelled without the loop's own signal is a call
+that stopped, not a deadline; a cancelled run's record never says an attempt was kept; a
+phrase over the segmenter's 512 bytes is refused before any call is made (at the start of
+the run: a descriptor states no length of a text, so preparation cannot hold one); the
+loop is built only over a recipe whose `grow` comes directly after `select` and whose
+`fill` comes directly after `feather`, and last; the plan states the filler's requests as
+what one attempt sends times the attempts; and `protect`, a named filler and a named
+judge each go through the loop under a test. Their tests are
+`checked::a_deadline_that_passes_after_a_fill_completed_ends_the_attempts_and_keeps_the_best`,
+`checked::a_phrase_over_the_segmenters_limit_is_refused_before_any_call_is_made`,
+`checked::the_loop_is_built_only_over_a_recipe_whose_stretches_are_where_it_runs_them`,
+`checked::a_mask_to_protect_is_kept_off_the_mask_of_every_attempt`,
+`checked::a_filler_and_a_judge_the_call_names_are_the_ones_asked_and_reserved_for` and
+`checked::an_unchecked_pass_is_told_as_it_starts_and_ends_with_its_reason`. The model
+tier's `remove_prompt_makes_a_mask_with_sam3_on_the_mac` had failed since the recipe
+gained its fill (plan m3, task F1): it ran the recipe whole under a config with no
+filler. It now stops after `feather`.
+
 **Notes for L2.**
 
 - The seam is one place: in `checked.rs`, `Looping::run` decides what the next attempt

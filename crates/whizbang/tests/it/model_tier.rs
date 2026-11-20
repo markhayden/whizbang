@@ -786,13 +786,17 @@ fn remove_prompt_makes_a_mask_with_sam3_on_the_mac() {
     drop(store);
     let executor = tier.runner(&over);
     let started = Instant::now();
+    // The mask alone: the recipe ends in a fill since plan m3's task F1, and this
+    // tier's config names no filler, so the run stops after `feather`, which asks none.
     let asked = Call::new("remove_prompt")
         .argument("prompt", whizbang_core::contract::Value::text(PHRASE))
+        .argument("until", whizbang_core::contract::Value::text("feather"))
         .input("image", id);
     let finished = executor.submit(&asked).unwrap();
     let took = started.elapsed();
     let outputs = finished.outcome().outputs().to_vec();
     assert_eq!(outputs.len(), 1, "{:?}", finished.outcome());
+    assert_eq!(outputs[0].port(), "until_feather_mask");
     let run = finished.run().as_str().to_owned();
     drop(executor);
     // The mask holds the disc: its core reaches inside the box drawn by hand.
