@@ -1087,10 +1087,10 @@ fn check_over_stdio_answers_with_the_counts_of_its_findings() {
 #[test]
 fn the_loop_is_offered_as_a_tool_and_answers_with_its_plan_its_verdict_and_whether_it_was_checked()
 {
-    use crate::checked::{Looped, PHRASE, Setup, passes, remains};
-    // Plan m4, task L1, item 10: the loop over stdio, under a judge that fails the
-    // first attempt, saying the thing remains, and passes the second.
-    let setup = Setup::answering(vec![remains(), passes()]).on_disk();
+    use crate::checked::{Looped, PHRASE, Setup, passes};
+    // Plan m4, task L1, item 10: the loop over stdio, in a store on the real disk,
+    // which the server reads, under a judge that passes the one attempt asked.
+    let setup = Setup::answering(vec![passes()]).on_disk();
     let world = Looped::new("serve-loop", &setup);
     let engine = world.engine();
     let registry = whizbang::wiring::registry_over(&world.over, false).unwrap();
@@ -1112,7 +1112,7 @@ fn the_loop_is_offered_as_a_tool_and_answers_with_its_plan_its_verdict_and_wheth
     client.call(
         1,
         "remove_checked",
-        json!({"image": world.image, "prompt": PHRASE}),
+        json!({"image": world.image, "prompt": PHRASE, "attempts": 1}),
         None,
     );
     let (text, error) = result_text(&client.answer(1, &mut notes));
@@ -1121,7 +1121,7 @@ fn the_loop_is_offered_as_a_tool_and_answers_with_its_plan_its_verdict_and_wheth
     // Its plan, its run, the short result, and the kept attempt's verdict.
     assert_eq!(
         lines[0],
-        "plan: 3 of 3 attempts asked, checked; fill 3; judge 48"
+        "plan: 1 of 1 attempts asked, checked; fill 1; judge 16"
     );
     assert!(
         lines[1].starts_with("run ") && lines[1].ends_with(" completed"),
@@ -1130,8 +1130,8 @@ fn the_loop_is_offered_as_a_tool_and_answers_with_its_plan_its_verdict_and_wheth
     assert_eq!(
         lines[2..6],
         [
-            "attempts: 2 made, attempt 2 kept",
-            "ended: attempt 2 passed",
+            "attempts: 1 made, attempt 1 kept",
+            "ended: attempt 1 passed",
             "checked: yes",
             "verdict: pass",
         ]

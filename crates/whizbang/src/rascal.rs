@@ -874,8 +874,10 @@ fn run_at(
             let over = common.under.over(platform, uses)?;
             wiring::env_file_asked(&over, Uses::One(Capability::Fill, filler.as_deref()))?;
             // A judge that names a credential is asked for its env file only where the
-            // call will use it: not with the check off.
-            if check.as_deref() != Some("off") {
+            // check is required. Under `auto` a judge that is not ready, for want of
+            // its key among other reasons, is one unchecked pass, said in the plan;
+            // with the check off no judge is used.
+            if check.as_deref() == Some("required") {
                 wiring::env_file_asked(&over, Uses::One(Capability::Judge, judge.as_deref()))?;
             }
             // The decision cache of `check`, where the config turns it on, as `squint

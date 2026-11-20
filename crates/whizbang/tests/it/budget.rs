@@ -230,10 +230,7 @@ fn a_judges_key_that_goes_between_prepare_and_admit_is_a_stale_preparation() {
     let CallError::Refused(Refusal::Stale { why, .. }) = &refused else {
         panic!("{refused:?}");
     };
-    assert!(
-        matches!(why, Stale::Plan | Stale::Model { .. } | Stale::Config),
-        "{why:?}"
-    );
+    assert_eq!(*why, Stale::Plan, "{why:?}");
     assert_eq!(world.kit.requests(), (0, 0, 0));
     // And the other way: a judge that appears after an unchecked plan was prepared.
     world.kit.judge_ready.store(true, Ordering::SeqCst);

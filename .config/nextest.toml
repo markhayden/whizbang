@@ -55,6 +55,12 @@ test-group = 'pack-workers'
 [profile.model-tier]
 slow-timeout = { period = "300s", terminate-after = 1 }
 
+# One result file per run, as the default profile writes: the local leg of a release
+# (scripts/prerelease-local.sh; plan m4, task R2, item 4) reads from it which tests ran,
+# and that none failed or timed out.
+[profile.model-tier.junit]
+path = "junit.xml"
+
 # The parity test (plan 1D, task V1) asks three pictures three times on the GPU and three on
 # the CPU, of SAM 3 and of Tiny: 36 requests and four loads, SAM 3's CPU ones 5 to 10
 # seconds each. It is ended at 10 minutes.

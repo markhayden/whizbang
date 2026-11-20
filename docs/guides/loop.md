@@ -199,7 +199,9 @@ later call can take one.
 ## What it does not do yet
 
 - A retry aimed at the place the judge named is the next task of the plan (m4, L2). Until
-  it lands, a retry widens the whole mask, once.
+  it lands, a retry widens the whole mask, once. So a call that asks three attempts
+  reserves for three and makes two at most; what the third would have cost is given back
+  when the run ends.
 - The loop's tool record and its live evidence are written with milestone 4's evidence
   (plan m4, task E1). Until then the loop is marked experimental, and its visual quality
   has not been confirmed by a person.

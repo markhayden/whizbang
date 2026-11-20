@@ -999,7 +999,7 @@ pub struct RemoveCheckedAsked<'a> {
 
 /// How long the door waits between two looks at a loop that is running, for what it
 /// has said since.
-const LOOP_LOOK: std::time::Duration = std::time::Duration::from_millis(50);
+const LOOP_LOOK: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// The call of the loop `remove_checked` these make, or the complaint.
 pub fn remove_checked_call(asked: &RemoveCheckedAsked<'_>) -> Result<Call, String> {
@@ -1103,7 +1103,15 @@ pub fn remove_checked(
         told = lines.last().map_or(told, |last| last.seq() + 1).max(told);
     };
     let state = loop {
-        let watched = executor.status(&run).map_err(|e| refused(&e))?;
+        // A look that fails is no reason to leave a run that was admitted, and may
+        // have been paid for, unwaited: the door goes on to wait for its end.
+        let Ok(watched) = executor.status(&run) else {
+            break executor
+                .wait(&run)
+                .map_err(|e| refused(&e))?
+                .state()
+                .clone();
+        };
         tell(watched.events(), say);
         match watched.state() {
             RunState::NotEnded { here: true } => std::thread::sleep(LOOP_LOOK),

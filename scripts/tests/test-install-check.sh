@@ -96,6 +96,13 @@ case "\$*" in
     echo "whizbang: remove_prompt cannot run now: it needs segment with phrase, and the segment backend default is local, and its model is not ready: $unready" >&2
     exit 1
     ;;
+  "rascal remove-checked --image $image --prompt the corner --store store --config config.toml")
+    grep -x -F 'model = "sam3"' config.toml >/dev/null || exit 3
+    [ "\$kind" != unchecked-unrefused ] || { echo 'run 100-6 completed'; exit 0; }
+    echo 'plan: 1 of 3 attempts asked, unchecked; fill 1; judge 0; no judge is ready: no default backend is configured for judge, and the call chose none' >&2
+    echo "whizbang: remove_checked cannot run now: it needs segment with phrase, and the segment backend default is local, and its model is not ready: $unready; it needs fill, and no default backend is configured for fill, and the call chose none" >&2
+    exit 1
+    ;;
   'setup --extra torch')
     echo 'whizbang: the extra torch is locked for macOS on Apple silicon only in this build, and this is linux on x86_64; nothing was downloaded and nothing was changed (with no extra, setup installs the pack'"'"'s core, which needs no package)' >&2
     exit 1
@@ -116,6 +123,7 @@ archive() {
   echo "the licence" >"$stage/$stem/LICENSE"
   echo "the install guide" >"$stage/$stem/README.md"
   echo "the licences of others" >"$stage/$stem/THIRD-PARTY-LICENSES.md"
+  echo "the notices of the standard library" >"$stage/$stem/COPYRIGHT-library.html"
   [ -z "${4:-}" ] || echo "one file too many" >"$stage/$stem/$4"
   (cd "$stage" && tar -czf "$to/$stem.tar.gz" "$stem")
   printf '%s  %s\n' "$(sha256 "$to/$stem.tar.gz")" "$stem.tar.gz" >"$to/SHA256SUMS"
@@ -221,7 +229,7 @@ expect_pass "the archive's line among others" check "$tmp/wrong-sum"
 # --- A file too many, or one too few: nothing of it is run.
 archive "$tmp/extra" good "$version" notes.txt
 rm -rf "$tmp/record" && mkdir "$tmp/record"
-expect_fail "a file too many" "the archive holds something else than one folder with the four files" check "$tmp/extra"
+expect_fail "a file too many" "the archive holds something else than one folder with the five files" check "$tmp/extra"
 [ ! -e "$tmp/record/commands" ] || fail "an archive with a file too many is not run"
 rm -rf "$tmp/stage" "$tmp/fewer" && mkdir -p "$tmp/stage/$stem" "$tmp/fewer"
 stand_in "$tmp/stage/$stem/whizbang" good
@@ -229,7 +237,15 @@ echo "the licence" >"$tmp/stage/$stem/LICENSE"
 echo "the install guide" >"$tmp/stage/$stem/README.md"
 (cd "$tmp/stage" && tar -czf "$tmp/fewer/$stem.tar.gz" "$stem")
 printf '%s  %s\n' "$(sha256 "$tmp/fewer/$stem.tar.gz")" "$stem.tar.gz" >"$tmp/fewer/SHA256SUMS"
-expect_fail "a file too few" "the archive holds something else than one folder with the four files" check "$tmp/fewer"
+expect_fail "a file too few" "the archive holds something else than one folder with the five files" check "$tmp/fewer"
+# The four files an archive held before the standard library's notices were carried.
+echo "the licences of others" >"$tmp/stage/$stem/THIRD-PARTY-LICENSES.md"
+rm "$tmp/fewer/$stem.tar.gz"
+(cd "$tmp/stage" && tar -czf "$tmp/fewer/$stem.tar.gz" "$stem")
+printf '%s  %s\n' "$(sha256 "$tmp/fewer/$stem.tar.gz")" "$stem.tar.gz" >"$tmp/fewer/SHA256SUMS"
+rm -rf "$tmp/record" && mkdir "$tmp/record"
+expect_fail "an archive without the standard library's notices" "the archive holds something else than one folder with the five files" check "$tmp/fewer"
+[ ! -e "$tmp/record/commands" ] || fail "an archive without the notices is not run"
 
 # --- A link in the archive, of either kind, in the place of a file: nothing is unpacked.
 for kind in symbolic hard; do
@@ -237,6 +253,7 @@ for kind in symbolic hard; do
   stand_in "$tmp/stage/$stem/whizbang" good
   echo "the licence" >"$tmp/stage/$stem/LICENSE"
   echo "the install guide" >"$tmp/stage/$stem/README.md"
+  echo "the notices of the standard library" >"$tmp/stage/$stem/COPYRIGHT-library.html"
   if [ "$kind" = symbolic ]; then
     ln -s LICENSE "$tmp/stage/$stem/THIRD-PARTY-LICENSES.md"
   else
@@ -245,7 +262,7 @@ for kind in symbolic hard; do
   (cd "$tmp/stage" && tar -czf "$tmp/linked/$stem.tar.gz" "$stem")
   printf '%s  %s\n' "$(sha256 "$tmp/linked/$stem.tar.gz")" "$stem.tar.gz" >"$tmp/linked/SHA256SUMS"
   rm -rf "$tmp/record" && mkdir "$tmp/record"
-  expect_fail "a $kind link in the archive" "the archive must hold one folder and then four regular files, and no link" check "$tmp/linked"
+  expect_fail "a $kind link in the archive" "the archive must hold one folder and then five regular files, and no link" check "$tmp/linked"
   [ ! -e "$tmp/record/commands" ] || fail "an archive with a $kind link is not run"
 done
 
@@ -285,6 +302,8 @@ archive "$tmp/no-steps" no-steps
 expect_fail "a run that lists no step" "the run's record must show mask_rect completed, with its two steps completed" check "$tmp/no-steps"
 archive "$tmp/unrefused" unrefused
 expect_fail "what needs a local model is not refused" "remove-prompt with the local segmenter must be refused as not ready" check "$tmp/unrefused"
+archive "$tmp/unchecked-unrefused" unchecked-unrefused
+expect_fail "the loop is not refused where it needs a local model" "remove-checked with the local segmenter must be refused as not ready" check "$tmp/unchecked-unrefused"
 
 # --- The limit, and the arguments.
 for bad in 0 31 1.5 x; do

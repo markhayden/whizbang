@@ -101,13 +101,24 @@ fn unsure_by_rule_prints_aggregates_and_no_item() {
 fn runs_stats_counts_a_loops_attempts_and_retries() {
     use crate::checked::{Looped, Setup, passes, remains};
     use whizbang_core::contract::Value;
-    // Plan m4, task L1, item 11. Two runs of the loop in one store, on the real disk,
-    // which the binary reads: a fail, a retry with a wider mask, and a pass; and one
-    // unchecked.
-    let setup = Setup::answering(vec![remains(), passes()]).on_disk();
+    // Plan m4, task L1, item 11. Two runs of the loop in one store: a fail, a retry
+    // with a wider mask, and a pass; and one unchecked. They run in memory, and the
+    // store's files are written to the disk once, for the binary to read.
+    let setup = Setup::answering(vec![remains(), passes()]);
     let world = Looped::new("stats-loop", &setup);
     let retried = world.run(&world.call());
     world.run(&world.call().argument("check", Value::text("off")));
+    world.spill();
+    // What a door says of the run that retried, from its record.
+    let mut said = String::new();
+    whizbang::door::said_loop(&mut said, &world.root, retried.run());
+    assert!(
+        said.starts_with(
+            "attempts: 2 made, attempt 2 kept\nended: attempt 2 passed\nchecked: yes\n\
+             verdict: pass\n"
+        ),
+        "{said}"
+    );
     let stats = whizbang(
         &["runs", "stats", "--action", "remove_checked"],
         &world.root,

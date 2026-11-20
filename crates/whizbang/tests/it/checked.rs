@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant};
 
 use image::codecs::png::PngEncoder;
 use image::{ExtendedColorType, ImageEncoder};
@@ -45,6 +46,14 @@ use crate::recipe::PAINT;
 
 /// What the fake finds for the phrase of these tests: a small box in the picture.
 pub const FOUND: [u32; 4] = [20, 20, 30, 28];
+
+/// A second phrase the fake finds, and where: half of what it finds for [`PHRASE`]. A
+/// test makes a mask to protect of it.
+pub const TAG: &str = "tag";
+pub const TAGGED: [u32; 4] = [20, 20, 25, 28];
+
+/// The name, and the model, of the second filler and the second judge of the kit.
+pub const DEAR: &str = "dear";
 
 /// The phrase of these tests.
 pub const PHRASE: &str = "collar";
@@ -140,6 +149,11 @@ pub struct Setup {
     pub fill_fails_from: Option<u64>,
     /// What the filler reports it charged, when not its bound.
     pub fill_charges: Option<u64>,
+    /// The request of the filler, counted from 1, answered only after the run's deadline.
+    pub fill_waits_at: Option<u64>,
+    /// Whether the config names a second filler and a second judge, [`DEAR`], beside
+    /// the defaults.
+    pub dear: bool,
     /// What the segmenter reports it charged, when not its bound.
     pub segment_charges: Option<u64>,
     /// The barrier the filler holds every request at, when it holds them.
@@ -169,6 +183,8 @@ impl Setup {
             fill_fails_from: None,
             fill_charges: None,
             segment_charges: None,
+            fill_waits_at: None,
+            dear: false,
             holds: None,
             allowance: 1_000_000,
             on_disk: false,
@@ -182,6 +198,8 @@ struct Fills {
     paints: FakeFiller,
     fails: FakeFiller,
     fails_from: Option<u64>,
+    /// The request, counted from 1, that is answered only once its deadline has passed.
+    waits_at: Option<u64>,
     asked: AtomicU64,
 }
 
@@ -192,6 +210,16 @@ impl Filler for Fills {
 
     fn fill(&self, request: &FillRequest, bounds: &Bounds) -> Result<Painted, Fault> {
         let number = self.asked.fetch_add(1, Ordering::SeqCst) + 1;
+        if self.waits_at == Some(number)
+            && let Some(deadline) = bounds.deadline()
+        {
+            // The one wait on a clock in these tests: until the run's own deadline,
+            // which the test set a second ahead.
+            let most = Instant::now() + Duration::from_secs(20);
+            while Instant::now() <= deadline && Instant::now() < most {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
         match self.fails_from {
             Some(from) if number >= from => self.fails.fill(request, bounds),
             _ => self.paints.fill(request, bounds),
@@ -205,6 +233,10 @@ pub struct Kit {
     segmenter: Arc<FakeSegmenter>,
     filler: Arc<Fills>,
     judge: Arc<FakeJudge>,
+    /// A second filler and a second judge, each at twice the first's bound, handed out
+    /// for a backend whose table names the model [`DEAR`].
+    dear_filler: Arc<Fills>,
+    dear_judge: Arc<FakeJudge>,
     /// Whether the judge is ready: a test turns it off as a key that has gone.
     pub judge_ready: AtomicBool,
 }
@@ -212,25 +244,28 @@ pub struct Kit {
 impl Kit {
     fn new(setup: &Setup) -> Kit {
         let model = |name: &str| ModelIdentity::new("loopkit", name, "1");
-        let priced = |name: &str, features: &[&str], micros: u64| {
+        let named = |name: &str, called: &str, features: &[&str], micros: u64| {
             #[allow(clippy::cast_precision_loss)]
             let price = Price::at_most(micros as f64).unwrap();
             let origin = format!("https://{name}.example.org");
             let origin = Origin::of(&origin, &Secrets::none()).unwrap();
-            Declaration::new(model(name), features)
+            Declaration::new(model(called), features)
                 .unwrap()
                 .priced(price)
                 .sending_to(Recipient::new(origin))
         };
+        let priced =
+            |name: &str, features: &[&str], micros: u64| named(name, name, features, micros);
         let features = [feature::PHRASE, feature::POINT, feature::BOX];
         let mut segmenter = FakeSegmenter::new()
+            .finding(TAG, TAGGED)
             .declared_as(priced("segment", &features, SEGMENT_BOUND))
             .finding(PHRASE, setup.found);
         if let Some(micros) = setup.segment_charges {
             segmenter = segmenter.charging(micros);
         }
-        let filler = |paint: Paint| {
-            let mut fake = FakeFiller::new(paint).declared_as(priced("fill", &[], FILL_BOUND));
+        let filler_of = |paint: Paint, called: &str, bound: u64| {
+            let mut fake = FakeFiller::new(paint).declared_as(named("fill", called, &[], bound));
             if let Some(micros) = setup.fill_charges {
                 fake = fake.charging(micros);
             }
@@ -238,6 +273,14 @@ impl Kit {
                 fake = fake.stopping_at(barriers, "fill");
             }
             fake
+        };
+        let fills = |called: &str, bound: u64| Fills {
+            paints: filler_of(Paint::Support(PAINT), called, bound),
+            fails: filler_of(Paint::Support(PAINT), called, bound)
+                .failing_at(whizbang_core::capability::Stage::NotSent),
+            fails_from: setup.fill_fails_from,
+            waits_at: setup.fill_waits_at,
+            asked: AtomicU64::new(0),
         };
         let entries: Vec<Json> = (setup.answers.iter())
             .map(|answers| {
@@ -253,27 +296,31 @@ impl Kit {
             })
             .collect();
         let script = json!({"script": "judge-script/1", "entries": entries}).to_string();
-        let turns = read_script(script.as_bytes()).unwrap();
-        let turns = (turns.into_iter())
-            .map(|turn| turn.map(|turn| turn.reported_by(Some("judges"))))
-            .collect();
-        let judge = FakeJudge::scripted(turns).declared_as(priced(
-            "judge",
-            &[feature::IMAGE, feature::TOOL],
-            JUDGE_BOUND,
-        ));
+        let judge_of = |called: &str, bound: u64| {
+            let turns = read_script(script.as_bytes()).unwrap();
+            let turns = (turns.into_iter())
+                .map(|turn| turn.map(|turn| turn.reported_by(Some("judges"))))
+                .collect();
+            let features = [feature::IMAGE, feature::TOOL];
+            FakeJudge::scripted(turns).declared_as(named("judge", called, &features, bound))
+        };
+        let judge = judge_of("judge", JUDGE_BOUND);
         Kit {
             segmenter: Arc::new(segmenter),
-            filler: Arc::new(Fills {
-                paints: filler(Paint::Support(PAINT)),
-                fails: filler(Paint::Support(PAINT))
-                    .failing_at(whizbang_core::capability::Stage::NotSent),
-                fails_from: setup.fill_fails_from,
-                asked: AtomicU64::new(0),
-            }),
+            filler: Arc::new(fills("fill", FILL_BOUND)),
             judge: Arc::new(judge),
+            dear_filler: Arc::new(fills(DEAR, 2 * FILL_BOUND)),
+            dear_judge: Arc::new(judge_of(DEAR, 2 * JUDGE_BOUND)),
             judge_ready: AtomicBool::new(true),
         }
+    }
+
+    /// How many requests the second filler and the second judge were sent.
+    pub fn dear_requests(&self) -> (u64, u64) {
+        (
+            self.dear_filler.asked.load(Ordering::SeqCst),
+            self.dear_judge.requests(),
+        )
     }
 
     /// How many requests each backend was sent: the segmenter, the filler, the judge.
@@ -325,6 +372,12 @@ impl Kind for Handing {
     fn make(&self, table: &Table<'_>) -> Result<Made, KindRefused> {
         Ok(match table.capability() {
             Capability::Segment => Made::Segment(self.0.segmenter.clone()),
+            Capability::Fill if table.backend().model() == Some(DEAR) => {
+                Made::Fill(self.0.dear_filler.clone())
+            }
+            Capability::Judge if table.backend().model() == Some(DEAR) => {
+                Made::Judge(self.0.dear_judge.clone())
+            }
             Capability::Fill => Made::Fill(self.0.filler.clone()),
             Capability::Judge => {
                 if !self.0.judge_ready.load(Ordering::SeqCst) {
@@ -694,21 +747,40 @@ pub struct Looped {
     cached: bool,
     /// What the store is on: a memory, or the real disk without the syncs.
     fs: Arc<dyn Fs>,
+    /// The memory, when the store is in one.
+    memory: Option<Memory>,
 }
 
 impl Looped {
     pub fn new(label: &str, setup: &Setup) -> Looped {
         let dir = Scratch::new(label);
         // In memory, unless the test reads its store through the binary's own readers.
-        let fs: Arc<dyn Fs> = match setup.on_disk {
-            true => Arc::new(Unsynced),
-            false => Arc::new(Memory::under(dir.path())),
+        let memory = (!setup.on_disk).then(|| Memory::under(dir.path()));
+        let fs: Arc<dyn Fs> = match &memory {
+            None => Arc::new(Unsynced),
+            Some(memory) => Arc::new(memory.clone()),
         };
         let (root, image) = with_picture(&dir, setup.allowance, fs.clone());
         let mut config = backend("segment");
-        config.push_str(&backend("fill"));
-        if setup.judge {
-            config.push_str(&backend("judge"));
+        if setup.dear {
+            // Each capability's default, and a second backend beside it, by name.
+            for capability in ["fill", "judge"] {
+                let plain = backend(capability).replacen(
+                    &format!("[backends.{capability}]"),
+                    &format!("[backends.{capability}]\ndefault = \"plain\"\n\n[backends.{capability}.plain]"),
+                    1,
+                );
+                config.push_str(&plain);
+                config.push_str(&format!(
+                    "[backends.{capability}.{DEAR}]\nkind = \"loopkit\"\nmodel = \"{DEAR}\"\n\
+                     url = \"https://{capability}.example.org/v2\"\n\n"
+                ));
+            }
+        } else {
+            config.push_str(&backend("fill"));
+            if setup.judge {
+                config.push_str(&backend("judge"));
+            }
         }
         if let Some(cap) = &setup.cap {
             config.push_str(&format!("\n[spend]\ncall_cap_usd = {cap}\n"));
@@ -730,6 +802,7 @@ impl Looped {
             over,
             cached: setup.cached,
             fs,
+            memory,
         }
     }
 
@@ -759,6 +832,22 @@ impl Looped {
         let finished = engine.submit(call).unwrap();
         drop(engine);
         finished
+    }
+
+    /// Writes every file of a store that is in memory to the real disk, at the same
+    /// paths, once the runs a test makes are over: so the real binary, and a door's
+    /// own readers, read what was made without the runs having paid for the disk.
+    pub fn spill(&self) {
+        let Some(memory) = &self.memory else {
+            return;
+        };
+        let held = memory.held();
+        for folder in held.folders.iter().filter(|f| f.starts_with(&self.root)) {
+            std::fs::create_dir_all(folder).unwrap();
+        }
+        for (file, bytes) in held.files.iter().filter(|(f, _)| f.starts_with(&self.root)) {
+            std::fs::write(file, bytes.as_slice()).unwrap();
+        }
     }
 
     /// A reader of the world's store, on what the store is on.
@@ -1542,4 +1631,226 @@ fn attempts_completed_before_a_cancellation_are_in_the_record() {
     assert_eq!(fill.outcome().status, Status::Completed);
     assert!(fill.outputs().iter().any(|output| output.port == "image"));
     assert_eq!(world.kit.unplayed(), 1);
+}
+
+#[test]
+fn a_mask_to_protect_is_kept_off_the_mask_of_every_attempt() {
+    // A mask of half of what the phrase names, made by the recipe's own find.
+    let answers = vec![remains(), remains(), passes()];
+    let world = Looped::new("loop-protect", &Setup::answering(answers));
+    let find = Call::new(REMOVE)
+        .argument("prompt", Value::text(TAG))
+        .argument("until", Value::text("select"))
+        .input("image", world.image_id());
+    let protect = output(&world.run(&find), "until_select_mask");
+    let before = pixels(&world, world.image_id());
+    // One run keeps its first attempt, the next its widened second: on each, the kept
+    // mask weighs nothing where the protected mask is, and the picture there is the
+    // source's.
+    for (asked, kept) in [(1, 1), (3, 2)] {
+        let call = asking(&world, asked).input("protect", protect);
+        let finished = world.run(&call);
+        assert_eq!(world.attempts(&finished).kept, Some(kept));
+        let weights = weights(&world, output(&finished, "mask"));
+        let after = pixels(&world, output(&finished, "image"));
+        for y in TAGGED[1]..TAGGED[3] {
+            for x in TAGGED[0]..TAGGED[2] {
+                let at = (y * 64 + x) as usize;
+                assert_eq!(weights[at], 0.0, "attempt {kept}, pixel {x},{y}");
+                assert_eq!(after[at * 4..at * 4 + 4], before[at * 4..at * 4 + 4]);
+            }
+        }
+        let painted = weights.iter().filter(|weight| **weight == 1.0).count();
+        assert!(
+            painted > 0,
+            "attempt {kept} paints the rest of what was found"
+        );
+        // Every stretch of every attempt was given the mask to protect.
+        let record = world.record(finished.run().as_str());
+        for (label, action) in calls(&record) {
+            let stretch = world.record(&run_of(&record, &label));
+            let given = stretch.inputs().iter().any(|input| input.port == "protect");
+            assert_eq!(given, action == REMOVE, "{label}");
+        }
+    }
+}
+
+#[test]
+fn a_filler_and_a_judge_the_call_names_are_the_ones_asked_and_reserved_for() {
+    let mut setup = Setup::answering(vec![remains(), passes()]);
+    setup.dear = true;
+    let world = Looped::new("loop-named", &setup);
+    let call = (world.call())
+        .argument("filler", Value::text(DEAR))
+        .argument("judge", Value::text(DEAR))
+        .argument("backend", Value::text("default"));
+    let engine = world.engine();
+    // The plan's bound is of the backends named: each at twice the default's.
+    let prepared = engine.prepare(&call).unwrap();
+    assert_eq!(
+        prepared.estimate().micros(),
+        SEGMENT_BOUND + 3 * 2 * (FILL_BOUND + CHECK_BOUND)
+    );
+    let finished = engine.submit(&call).unwrap();
+    drop(engine);
+    assert_eq!(
+        finished.outcome().name(),
+        "completed",
+        "{:?}",
+        finished.outcome()
+    );
+    // They were asked, and the defaults were not.
+    assert_eq!(world.kit.dear_requests(), (2, 2));
+    assert_eq!(world.kit.requests(), (1, 0, 0));
+    let record = world.record(finished.run().as_str());
+    for attempt in [1, 2] {
+        let fill = world.record(&run_of(&record, &format!("a{attempt}_fill")));
+        assert_eq!(argument(&fill, "filler").as_deref(), Some(DEAR));
+        let step = world.record(fill.steps()[0].run());
+        assert!(step.models().iter().any(|model| model.model == DEAR));
+        assert_eq!(fill.spend().reserved_micros, Some(2 * FILL_BOUND));
+        let check = world.record(&run_of(&record, &format!("a{attempt}_check")));
+        assert_eq!(argument(&check, "judge").as_deref(), Some(DEAR));
+        let step = world.record(check.steps().last().unwrap().run());
+        assert!(step.models().iter().any(|model| model.model == DEAR));
+        assert_eq!(check.spend().reserved_micros, Some(2 * CHECK_BOUND));
+    }
+    let find = world.record(&run_of(&record, "a1_find"));
+    assert_eq!(argument(&find, "backend").as_deref(), Some("default"));
+}
+
+#[test]
+fn a_deadline_that_passes_after_a_fill_completed_ends_the_attempts_and_keeps_the_best() {
+    // The second fill is answered only once the run's deadline has passed.
+    let mut setup = Setup::answering(vec![remains(), passes()]);
+    setup.fill_waits_at = Some(2);
+    let world = Looped::new("loop-deadline", &setup);
+    let engine = world.engine();
+    let request = Request::new(world.call()).until(Instant::now() + Duration::from_secs(1));
+    let Ok(Answer::Ran(finished)) = engine.request(&request) else {
+        panic!("the loop did not run");
+    };
+    drop(engine);
+    // The loop completes with the attempt that completed, and says why it stopped.
+    assert_eq!(
+        finished.outcome().name(),
+        "completed",
+        "{:?}",
+        finished.outcome()
+    );
+    assert_eq!(finished.verdict().unwrap().decision(), Decision::Fail);
+    let attempts = world.attempts(&finished);
+    assert_eq!(attempts.kept, Some(1));
+    assert!(
+        attempts
+            .ended
+            .starts_with("the deadline passed after attempt "),
+        "{}",
+        attempts.ended
+    );
+    assert_eq!(attempts.list.len(), 2);
+    assert_eq!(attempts.list[1].verdict, None);
+    assert_eq!(world.kit.unplayed(), 1);
+}
+
+#[test]
+fn a_phrase_over_the_segmenters_limit_is_refused_before_any_call_is_made() {
+    let world = Looped::new("loop-long-phrase", &Setup::answering(vec![passes()]));
+    let long = "collar ".repeat(80);
+    assert!(long.len() > whizbang_core::capability::PHRASE_LIMIT);
+    let finished = world.run(&world.call().argument("prompt", Value::text(&long)));
+    let Outcome::Invalid { why } = finished.outcome() else {
+        panic!("{:?}", finished.outcome());
+    };
+    assert_eq!(
+        why,
+        "the prompt holds 560 bytes, and a segmenter takes a phrase of 512 at most"
+    );
+    let record = world.record(finished.run().as_str());
+    assert!(record.steps().is_empty());
+    assert_eq!(world.kit.requests(), (0, 0, 0));
+}
+
+#[test]
+fn the_loop_is_built_only_over_a_recipe_whose_stretches_are_where_it_runs_them() {
+    use whizbang_rascal::checked::RemoveChecked;
+    use whizbang_rascal::recipes::REMOVE_PROMPT;
+    let registry = wiring::registry().unwrap();
+    assert!(RemoveChecked::over(&registry, REMOVE_PROMPT).is_ok());
+    let step = |id: &str| {
+        let at = REMOVE_PROMPT
+            .find(&format!("[[step]]\nid = \"{id}\""))
+            .unwrap();
+        let end = REMOVE_PROMPT[at + 1..]
+            .find("\n[")
+            .map_or(REMOVE_PROMPT.len(), |e| at + 1 + e);
+        (at, end + 1)
+    };
+    // A step renamed; a step put between two the loop runs as neighbours; `fill` no
+    // longer last; `grow` with no px.
+    let renamed = REMOVE_PROMPT.replace("id = \"feather\"", "id = \"soften\"");
+    let (close_at, close_end) = step("close");
+    let close = &REMOVE_PROMPT[close_at..close_end];
+    let (grow_at, _) = step("grow");
+    let mut between = REMOVE_PROMPT.replace(close, "");
+    between.insert_str(grow_at, &close.replace("grow.mask", "select.mask"));
+    let between = between
+        .replace(
+            "mask = \"select.mask\" }\npx",
+            "mask = \"close.mask\" }\npx",
+        )
+        .replace(
+            "mask = \"close.mask\" }\nmax_share",
+            "mask = \"grow.mask\" }\nmax_share",
+        );
+    let (fill_at, fill_end) = step("fill");
+    let fill = &REMOVE_PROMPT[fill_at..fill_end];
+    let (feather_at, _) = step("feather");
+    let mut early = REMOVE_PROMPT.replace(fill, "");
+    early.insert_str(feather_at, &fill.replace("feather.mask", "subtract.mask"));
+    let no_px = REMOVE_PROMPT.replace("\npx = 4.0\n", "\n");
+    let cases = [
+        (
+            renamed,
+            "remove_prompt has not the steps select, grow, feather and fill",
+        ),
+        (
+            between,
+            "the step grow of remove_prompt does not come directly after select",
+        ),
+        (
+            early,
+            "the step fill of remove_prompt does not come directly after feather, and last",
+        ),
+        (no_px, "the step grow of remove_prompt states no px"),
+    ];
+    for (text, why) in cases {
+        let refused = RemoveChecked::over(&registry, &text).err();
+        let said = refused.map(|refused| refused.to_string());
+        let wanted = format!("the loop remove_checked cannot be built: {why}");
+        assert_eq!(said.as_deref(), Some(wanted.as_str()));
+    }
+}
+
+#[test]
+fn an_unchecked_pass_is_told_as_it_starts_and_ends_with_its_reason() {
+    let world = Looped::new("loop-told", &Setup::answering(Vec::new()));
+    let finished = world.run(&world.call().argument("check", Value::text("off")));
+    let reader = world.reader();
+    let generation = reader.snapshot().unwrap();
+    let run = generation.run(finished.run().as_str()).unwrap();
+    let entry = run
+        .get(whizbang_core::contract::record::JOURNAL_NAME)
+        .unwrap();
+    let journal = whizbang_core::contract::read_journal(&reader.read(entry).unwrap()).unwrap();
+    let told: Vec<&str> = (journal.iter().map(|line| line.message()))
+        .filter(|message| message.starts_with("remove_checked: attempt "))
+        .collect();
+    assert_eq!(
+        told,
+        [
+            "remove_checked: attempt 1 of 1 starts",
+            "remove_checked: attempt 1 ended: not checked: the check is off",
+        ]
+    );
 }

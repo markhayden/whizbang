@@ -34,10 +34,9 @@
 //! findings when it has them and a short result ([`RESULT`]). It ends as an error only
 //! when no fill completed, with the type and the message of the call that failed.
 
-use std::sync::Arc;
-
 use serde_json::{Value as Json, json};
 use whizbang_core::artifact::{self, ArtifactId, ArtifactType};
+use whizbang_core::capability::PHRASE_LIMIT;
 use whizbang_core::contract::record::{ATTEMPT_TEXT_LIMIT, Attempt, Changed, Decision};
 use whizbang_core::contract::{
     Action, ActionDescriptor, Argument, Call, CallError, Capability, Context, Failure, Findings,
@@ -111,7 +110,8 @@ pub fn job(phrase: &str) -> String {
             _ => {}
         }
     }
-    // The template is written above, in full, and a test of this crate reads it.
+    // The template is written above, in full, and a test of the binary's reads what
+    // this makes of it with squint's own reader (`checked::the_job_the_loop_writes_…`).
     let mut job: Json = serde_json::from_str(JOB_TEMPLATE).unwrap_or(Json::Null);
     filled(&mut job, phrase);
     job.to_string()
@@ -246,6 +246,12 @@ impl RemoveChecked {
     /// [`REMOVE`], with the steps the stretches are named by, and [`CHECK`]. What the
     /// loop needs is what one attempt of theirs needs; its plan states the rest.
     pub fn new(registry: &Registry) -> Result<RemoveChecked, Unbuilt> {
+        RemoveChecked::over(registry, crate::recipes::REMOVE_PROMPT)
+    }
+
+    /// The same, over this text of the recipe `remove_prompt`: what [`RemoveChecked::new`]
+    /// is given the shipped text for, and a test an edited one.
+    pub fn over(registry: &Registry, text: &str) -> Result<RemoveChecked, Unbuilt> {
         let (Some(remove), Some(check)) = (registry.get(REMOVE), registry.get(CHECK)) else {
             return Err(unbuilt(
                 "the recipes remove_prompt and source-fidelity are not both actions of this build",
@@ -253,8 +259,7 @@ impl RemoveChecked {
         };
         // The stretches are named by steps of the recipe as it is shipped, and the
         // wider mask is twice what its step `grow` is given.
-        let recipe = Recipe::read(crate::recipes::REMOVE_PROMPT)
-            .map_err(|error| unbuilt(&error.to_string()))?;
+        let recipe = Recipe::read(text).map_err(|error| unbuilt(&error.to_string()))?;
         let steps: Vec<&str> = recipe.steps.iter().map(|step| step.id.as_str()).collect();
         if [SELECT, GROW, FEATHER, FILL]
             .iter()
@@ -262,6 +267,19 @@ impl RemoveChecked {
         {
             return Err(unbuilt(
                 "remove_prompt has not the steps select, grow, feather and fill",
+            ));
+        }
+        // The stretches are run as neighbours: a step between two of them would be run
+        // by neither, or by both.
+        let at = |id: &str| steps.iter().position(|step| *step == id);
+        if at(GROW) != at(SELECT).map(|select| select + 1) {
+            return Err(unbuilt(
+                "the step grow of remove_prompt does not come directly after select",
+            ));
+        }
+        if at(FILL) != at(FEATHER).map(|feather| feather + 1) || at(FILL) != Some(steps.len() - 1) {
+            return Err(unbuilt(
+                "the step fill of remove_prompt does not come directly after feather, and last",
             ));
         }
         let grow = recipe.steps.iter().find(|step| step.id == GROW);
@@ -381,13 +399,6 @@ impl RemoveChecked {
     }
 }
 
-/// Registers `remove_checked` over the actions `registry` holds already.
-pub fn register(registry: &mut Registry) -> Result<(), Unbuilt> {
-    let made = RemoveChecked::new(registry)?;
-    let registered = registry.register(Arc::new(made));
-    registered.map_err(|error| unbuilt(&error.to_string()))
-}
-
 /// The whole number of an argument of a planned call.
 fn asked_attempts(planning: &Planning<'_>) -> u32 {
     match planning.argument("attempts") {
@@ -428,9 +439,11 @@ impl Action for RemoveChecked {
             bound(Capability::Judge),
         );
         let checks = judge.map_or(0, |able| able.requests());
+        // What one attempt sends the filler: what its bound above was counted from.
+        let fills = (planning.capability(Capability::Fill)).map_or(1, |able| able.requests());
         let unchecked = |why: &str| {
             Plan::new()
-                .sending(Capability::Fill, 1)
+                .sending(Capability::Fill, fills)
                 .sending(Capability::Judge, 0)
                 .attempts(asked, 1, false)
                 .because(&line(why, PLAN_WHY_LIMIT))
@@ -462,7 +475,7 @@ impl Action for RemoveChecked {
         // and refused as any call over its cap is.
         let allowed = covered.max(1);
         let plan = Plan::new()
-            .sending(Capability::Fill, u64::from(allowed))
+            .sending(Capability::Fill, fills.saturating_mul(u64::from(allowed)))
             .sending(Capability::Judge, checks.saturating_mul(u64::from(allowed)))
             .attempts(asked, allowed, true);
         Some(match allowed < asked {
@@ -516,8 +529,10 @@ fn kept(filled: &[Filled]) -> Option<&Filled> {
 
 /// How a nested call of the loop's came back, when it did not complete.
 enum Stopped {
-    /// The loop's run was cancelled, or its deadline passed.
+    /// The loop's run was cancelled.
     Loop(Failure),
+    /// The loop's deadline passed, before the call or while it ran.
+    Deadline,
     /// The call was refused for want of allowance: the refusal's own sentence.
     Budget(String),
     /// The call ended otherwise: the type and the message of its own end.
@@ -530,6 +545,9 @@ impl Stopped {
     fn failure(self) -> Failure {
         match self {
             Stopped::Loop(failure) => failure,
+            Stopped::Deadline => {
+                Failure::error("deadline", "the loop stopped: its deadline passed")
+            }
             Stopped::Budget(sentence) => Failure::error("budget", &sentence),
             Stopped::Call { kind, message } => Failure::error(&kind, &message),
         }
@@ -539,6 +557,7 @@ impl Stopped {
     fn said(&self) -> String {
         match self {
             Stopped::Loop(_) => "the run was stopped".to_owned(),
+            Stopped::Deadline => "the deadline passed".to_owned(),
             Stopped::Budget(sentence) => sentence.clone(),
             Stopped::Call { kind, message } => {
                 format!("an error of the type {kind}: {message}")
@@ -590,6 +609,14 @@ impl<'a> Looping<'a> {
         if prompt.trim().is_empty() {
             return Err(Failure::invalid("the prompt names nothing to remove"));
         }
+        // Held here, before any call is made, and not by the find after it was
+        // admitted: a descriptor states no length of a text, so preparation cannot.
+        if prompt.len() > PHRASE_LIMIT {
+            return Err(Failure::invalid(&format!(
+                "the prompt holds {} bytes, and a segmenter takes a phrase of {PHRASE_LIMIT} at most",
+                prompt.len()
+            )));
+        }
         Ok(Looping {
             action,
             call,
@@ -623,8 +650,11 @@ impl<'a> Looping<'a> {
     /// in the run's record. What comes back is the call's run when it completed.
     fn made(&self, label: &str, call: &Call, runs: &mut Vec<RunId>) -> Result<Finished, Stopped> {
         let context = self.context;
-        if context.cancellation().is_cancelled() || context.deadline_passed() {
-            return Err(Stopped::Loop(self.stopped()));
+        if context.cancellation().is_cancelled() {
+            return Err(Stopped::Loop(self.cancelled()));
+        }
+        if context.deadline_passed() {
+            return Err(Stopped::Deadline);
         }
         let finished = context.executor().submit(call).map_err(|error| {
             let budget = match &error {
@@ -641,9 +671,22 @@ impl<'a> Looping<'a> {
         })?;
         runs.push(finished.run().clone());
         context.label_step(finished.run(), label, &[], None);
+        // A call that did not complete under a loop that was cancelled, or whose
+        // deadline has passed, stopped for that, whatever its own end says.
+        let completed = matches!(finished.outcome(), Outcome::Completed { .. });
+        if !completed && context.cancellation().is_cancelled() {
+            return Err(Stopped::Loop(self.cancelled()));
+        }
+        if !completed && context.deadline_passed() {
+            return Err(Stopped::Deadline);
+        }
         match finished.outcome() {
             Outcome::Completed { .. } => Ok(finished),
-            Outcome::Cancelled => Err(Stopped::Loop(self.stopped())),
+            // Cancelled, and not by the loop's own signal or deadline: the call's own.
+            Outcome::Cancelled => Err(Stopped::Call {
+                kind: "cancelled".to_owned(),
+                message: format!("the call of {} was cancelled", call.action()),
+            }),
             Outcome::Error { kind, message } => Err(Stopped::Call {
                 kind: kind.clone(),
                 message: message.clone(),
@@ -655,11 +698,8 @@ impl<'a> Looping<'a> {
         }
     }
 
-    fn stopped(&self) -> Failure {
-        match self.context.cancellation().is_cancelled() {
-            true => Failure::error("cancelled", "the loop stopped: its run was cancelled"),
-            false => Failure::error("deadline", "the loop stopped: its deadline passed"),
-        }
+    fn cancelled(&self) -> Failure {
+        Failure::error("cancelled", "the loop stopped: its run was cancelled")
     }
 
     fn say(&self, message: &str) {
@@ -731,6 +771,9 @@ impl<'a> Looping<'a> {
                 Ok(match stopped {
                     Stopped::Budget(_) => {
                         format!("the budget ran out after attempt {}", number - 1)
+                    }
+                    Stopped::Deadline => {
+                        format!("the deadline passed after attempt {}", number - 1)
                     }
                     _ => format!("the retry {what}, and the attempts before it stand"),
                 })
@@ -854,6 +897,9 @@ impl<'a> Looping<'a> {
                 Err(stopped) => {
                     let said = match &stopped {
                         Stopped::Budget(sentence) => format!("the budget ran out: {sentence}"),
+                        Stopped::Deadline => {
+                            "the deadline passed before its check ended".to_owned()
+                        }
                         other => format!("the check ended in {}", other.said()),
                     };
                     let said = line(&said, ATTEMPT_TEXT_LIMIT);
@@ -862,6 +908,7 @@ impl<'a> Looping<'a> {
                     filled.push(attempt);
                     ended = match stopped {
                         Stopped::Budget(_) => format!("the budget ran out after attempt {number}"),
+                        Stopped::Deadline => format!("the deadline passed after attempt {number}"),
                         _ => format!("the check of attempt {number} could not run"),
                     };
                     break;
@@ -929,6 +976,10 @@ impl<'a> Looping<'a> {
             // Every way out of the first attempt without a fill has returned already.
             return Err(Failure::error("loop", "no attempt made a fill"));
         };
+        // A run cancelled by now commits nothing: its record does not say one was kept.
+        if context.cancellation().is_cancelled() {
+            return Err(self.cancelled());
+        }
         context
             .facts()
             .attempts_ended(Some(best.number), &line(&ended, ATTEMPT_TEXT_LIMIT));

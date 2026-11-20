@@ -3467,14 +3467,72 @@ fn a_repeated_request_id_is_told_the_plan_of_its_first_run() {
     );
 }
 
+/// The binary's executor, whose every look at a run fails: what a store that cannot be
+/// read for a moment is to a door that watches a run.
+struct LooksFail(whizbang_core::contract::Engine);
+
+impl whizbang_core::contract::Executor for LooksFail {
+    fn prepare(
+        &self,
+        call: &whizbang_core::contract::Call,
+    ) -> Result<whizbang_core::contract::PreparedCall, whizbang_core::contract::CallError> {
+        self.0.prepare(call)
+    }
+    fn submit(
+        &self,
+        call: &whizbang_core::contract::Call,
+    ) -> Result<whizbang_core::contract::Finished, whizbang_core::contract::CallError> {
+        self.0.submit(call)
+    }
+    fn request(
+        &self,
+        request: &whizbang_core::contract::Request,
+    ) -> Result<whizbang_core::contract::Answer, whizbang_core::contract::CallError> {
+        self.0.request(request)
+    }
+    fn start(
+        &self,
+        request: &whizbang_core::contract::Request,
+    ) -> Result<whizbang_core::contract::Answer, whizbang_core::contract::CallError> {
+        self.0.start(request)
+    }
+    fn status(
+        &self,
+        _: &whizbang_core::contract::RunId,
+    ) -> Result<whizbang_core::contract::Watched, whizbang_core::contract::CallError> {
+        // The refusal of a run the store does not hold, whatever run was asked after.
+        let none = whizbang_core::contract::RunId::parse("1-1").unwrap();
+        self.0.status(&none)
+    }
+    fn wait(
+        &self,
+        run: &whizbang_core::contract::RunId,
+    ) -> Result<whizbang_core::contract::Watched, whizbang_core::contract::CallError> {
+        self.0.wait(run)
+    }
+    fn cancel(
+        &self,
+        run: &whizbang_core::contract::RunId,
+    ) -> Result<whizbang_core::contract::Cancel, whizbang_core::contract::CallError> {
+        self.0.cancel(run)
+    }
+    fn request_id(
+        &self,
+        text: &str,
+    ) -> Result<whizbang_core::contract::RequestId, whizbang_core::contract::CallError> {
+        self.0.request_id(text)
+    }
+}
+
 #[test]
 fn rascal_remove_checked_prints_its_plan_each_attempt_and_whether_the_result_was_checked() {
-    use crate::checked::{Looped, Setup, passes};
+    use crate::checked::{Looped, Setup, remains};
+    use whizbang_core::contract::Executor;
     // Plan m4, task L1, items 9 and 10: the loop through the door its command goes
     // through, in a store on the real disk, which the door reads, under a judge that
-    // passes the first attempt. (More attempts than one are told the same way: the
-    // server's test and `table::…` run them.)
-    let setup = Setup::answering(vec![passes()]).on_disk();
+    // fails the one attempt asked. (More attempts and an unchecked pass are told the
+    // same way: `checked::an_unchecked_pass_is_told_…`, `stats::…` and `serve::…`.)
+    let setup = Setup::answering(vec![remains()]).on_disk();
     let world = Looped::new("cli-loop", &setup);
     let asked = |check: Option<&'static str>| door::RemoveCheckedAsked {
         image: &world.image,
@@ -3483,22 +3541,24 @@ fn rascal_remove_checked_prints_its_plan_each_attempt_and_whether_the_result_was
         backend: None,
         filler: None,
         judge: None,
-        attempts: None,
+        attempts: Some(1),
         check,
         request_id: None,
     };
     let mut said = Vec::new();
     let mut say = |line: &str| said.push(line.to_owned());
     let engine = world.engine();
+    // The door answers with what to print, which the command prints with exit 0: a
+    // verdict of fail is no failure of the command.
     let printed = door::remove_checked(&engine, &asked(None), &world.root, &mut say).unwrap();
-    // On the error stream: the plan, before anything ran, then each attempt as it
+    // On the error stream: the plan, before anything ran, then the attempt as it
     // started and as it ended.
     assert_eq!(
         said,
         [
-            "plan: 3 of 3 attempts asked, checked; fill 3; judge 48",
-            "remove_checked: attempt 1 of 3 starts",
-            "remove_checked: attempt 1 ended: pass",
+            "plan: 1 of 1 attempts asked, checked; fill 1; judge 16",
+            "remove_checked: attempt 1 of 1 starts",
+            "remove_checked: attempt 1 ended: fail",
         ]
     );
     // What is printed: the run, the attempts, that the result was checked, its
@@ -3512,23 +3572,30 @@ fn rascal_remove_checked_prints_its_plan_each_attempt_and_whether_the_result_was
         lines[1..5],
         [
             "attempts: 1 made, attempt 1 kept",
-            "ended: attempt 1 passed",
+            "ended: the last attempt the plan allows",
             "checked: yes",
-            "verdict: pass",
+            "verdict: fail",
         ]
     );
     assert!(lines[5].starts_with("reason: "), "{printed}");
     let outputs = &lines[lines.len() - 2..];
     assert!(outputs[0].starts_with("image sha256:") && outputs[1].starts_with("mask sha256:"));
-    // With the check off: one pass, and the last lines say it was not checked, and why.
+    // A look at the running loop that fails does not end the command: it waits for
+    // the run all the same, tells its attempts from the run's journal, and prints it.
+    let failing = LooksFail(engine);
+    assert!(
+        failing
+            .status(&whizbang_core::contract::RunId::parse("1-1").unwrap())
+            .is_err()
+    );
     let mut said = Vec::new();
     let mut say = |line: &str| said.push(line.to_owned());
-    let printed = door::remove_checked(&engine, &asked(Some("off")), &world.root, &mut say);
+    let printed = door::remove_checked(&failing, &asked(Some("off")), &world.root, &mut say);
     let printed = printed.unwrap();
     assert_eq!(
         said,
         [
-            "plan: 1 of 3 attempts asked, unchecked; fill 1; judge 0; the check is off",
+            "plan: 1 of 1 attempts asked, unchecked; fill 1; judge 0; the check is off",
             "remove_checked: attempt 1 of 1 starts",
             "remove_checked: attempt 1 ended: not checked: the check is off",
         ]
@@ -3543,23 +3610,21 @@ fn rascal_remove_checked_prints_its_plan_each_attempt_and_whether_the_result_was
         ]
     );
     assert!(!printed.contains("verdict:"), "{printed}");
-    assert_eq!(lines.len(), 6, "{printed}");
-    drop(engine);
-    // The command itself: its flags are held by the command line, and a store that is
-    // not there is the complaint of any command.
-    let refused = whizbang(
-        &[
+    drop(failing);
+    // The command itself. Its flags are held by the command line.
+    let loop_of = |more: &[&str]| {
+        let mut args = vec![
             "rascal",
             "remove-checked",
             "--image",
             &world.image,
             "--prompt",
             "collar",
-            "--attempts",
-            "4",
-        ],
-        &world.root,
-    );
+        ];
+        args.extend(more);
+        whizbang(&args, &world.root)
+    };
+    let refused = loop_of(&["--attempts", "4"]);
     assert_eq!(refused.code, Some(2), "{}", refused.err);
     let help = whizbang(&["rascal", "remove-checked", "--help"], &world.root);
     assert!(
@@ -3568,31 +3633,36 @@ fn rascal_remove_checked_prints_its_plan_each_attempt_and_whether_the_result_was
         help.out
     );
     assert!(help.out.contains("0  the loop completed"), "{}", help.out);
-    // Under no config nothing is ready: the plan is said, and the call is refused.
-    let unready = whizbang(
-        &[
-            "rascal",
-            "remove-checked",
-            "--image",
-            &world.image,
-            "--prompt",
-            "collar",
-        ],
-        &world.root,
-    );
-    assert_eq!(unready.code, Some(1), "{}", unready.out);
+    // A judge that names a credential, and no env file. Under `auto` that is no
+    // refusal before anything runs: the plan is one unchecked pass, with the reason,
+    // and the call goes on to what it needs next (here a segmenter, which this config
+    // does not give). Only with the check required is the env file asked for.
+    let config = world.root.parent().unwrap().join("keyed.toml");
+    std::fs::write(
+        &config,
+        "[backends.judge]\nkind = \"service\"\nprovider = \"anthropic\"\n\
+         model = \"claude-haiku-5-5\"\nkey_env = \"TEST_SERVICE_KEY\"\n",
+    )
+    .unwrap();
+    let config = config.to_str().unwrap();
+    let auto = loop_of(&["--config", config]);
+    assert_eq!(auto.code, Some(1), "{}", auto.out);
     assert!(
-        unready
-            .err
-            .contains("plan: 1 of 3 attempts asked, unchecked;"),
+        auto.err.contains(
+            "plan: 1 of 3 attempts asked, unchecked; fill 1; judge 0; no judge is ready: "
+        ),
         "{}",
-        unready.err
+        auto.err
     );
     assert!(
-        unready
-            .err
+        auto.err
             .contains("remove_checked cannot run now: it needs segment"),
         "{}",
-        unready.err
+        auto.err
     );
+    assert!(!auto.err.contains("--env-file"), "{}", auto.err);
+    let required = loop_of(&["--config", config, "--check", "required"]);
+    assert_eq!(required.code, Some(1), "{}", required.out);
+    assert!(required.err.contains("--env-file"), "{}", required.err);
+    assert!(!required.err.contains("plan:"), "{}", required.err);
 }
