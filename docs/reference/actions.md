@@ -47,7 +47,7 @@ Checks whether a subject of the references appears faithfully: the judge looks, 
 
 ## `reality-checks`
 
-Checks a picture for mistakes no real photograph would make: the judge looks, and calls view and align as it needs.
+Checks a picture for mistakes no real photograph would make: the judge looks, and calls view to look closer as it needs.
 
 ## `brief-compliance`
 

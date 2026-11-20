@@ -1177,6 +1177,42 @@ fn a_resumed_round_counts_only_what_it_started_and_prints_repeats_apart() {
     assert!(!plain.text().contains("answered by"), "{}", plain.text());
 }
 
+#[test]
+fn a_cell_answered_by_an_earlier_failed_run_is_said_as_the_first_failed_with_that_runs_words() {
+    // The review of plan m4's task A1: a cell whose request an earlier run answered, and
+    // that run failed, was counted as failed with no word of why. The round's first fill
+    // fails and the round stops; the leg after it does not recognise that run.
+    let lab = ThreeImages::new("lab-repeat-failed", FILLED_WITH_AND_SOURCE);
+    let over = lab.over(1);
+    let asked = std::sync::Mutex::new(0);
+    let stop = || {
+        let mut asked = asked.lock().unwrap();
+        *asked += 1;
+        *asked > 1
+    };
+    let report = lab.run(&over, None, &stop).unwrap();
+    assert_eq!(counts(&report), (1, 0, 1, 0, 2));
+    let why = report
+        .first_failed
+        .clone()
+        .expect("the failed cell is said");
+    let report = lab.with_running(&over, |prepared, running| {
+        let unrecognised =
+            |_: &whizbang_core::contract::record::RunRecord,
+             _: Option<&whizbang_core::contract::Admission>| None;
+        let how = laboratory::Round {
+            resume: harness::Resume::KeepFailed,
+            recognise: Some(&unrecognised),
+        };
+        laboratory::round_as(prepared, running, &how, &mut |_| {})
+    });
+    let report = report.unwrap();
+    assert_eq!((report.answered_before, report.failed), (1, 1));
+    assert_eq!(report.first_failed.as_deref(), Some(why.as_str()));
+    assert!(why.starts_with("filled on a: "), "{why}");
+    assert!(report.failure().is_some());
+}
+
 /// Each cell's attempts in the store, as the round recognises them: how each ended.
 fn attempts_of(lab: &ThreeImages, over: &Over) -> Vec<Vec<harness::Ended>> {
     let asked = laboratory::Asked {

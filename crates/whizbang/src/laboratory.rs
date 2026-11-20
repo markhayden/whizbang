@@ -570,7 +570,7 @@ pub fn round_as(
         None => "a cell".to_owned(),
     };
     // A cell whose request an earlier run answered, with how that run ended.
-    let mut answered: BTreeMap<String, Option<Ended>> = BTreeMap::new();
+    let mut answered: BTreeMap<String, (Option<Ended>, String)> = BTreeMap::new();
     let mut said = |event: harness::Said<'_>| match event {
         harness::Said::Started {
             at,
@@ -604,7 +604,7 @@ pub fn round_as(
                 "no longer in the store" => "which is no longer in the store".to_owned(),
                 how => format!("which {how}"),
             };
-            answered.insert(identity.to_owned(), ended);
+            answered.insert(identity.to_owned(), (ended, earlier.run().to_string()));
             say(&format!(
                 "cell {at} of {of}: {}: answered by an earlier run, {}, {which}; nothing started",
                 name(identity),
@@ -641,10 +641,19 @@ pub fn round_as(
         // A cell with no attempt the round recognises, whose request an earlier run
         // answered, is counted by how that run ended: it ran, though not in this leg.
         let last = match (last, answered.get(&cell.identity)) {
-            (None, Some(Some(ended))) => {
+            (None, Some((Some(ended), run))) => {
                 match ended {
                     Ended::Completed => report.completed += 1,
-                    Ended::Failed => report.failed += 1,
+                    Ended::Failed => {
+                        report.failed += 1;
+                        // The first failed cell is said with its run's words, whichever
+                        // leg's run it was.
+                        if report.first_failed.is_none() {
+                            let why = why_failed(running.root, run)?;
+                            report.first_failed =
+                                Some(format!("{} on {}: {why}", cell.arm, cell.image));
+                        }
+                    }
                     Ended::Interrupted => report.interrupted += 1,
                 }
                 continue;

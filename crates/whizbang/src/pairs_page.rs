@@ -35,7 +35,10 @@
 //! files, which name places and sides only; a side whose pixels are the source's own, when
 //! an arm hands the source back, which the page shows as well (hold `s`); and
 //! `assignment.json` beside the page, which names every arm. A file's size no longer says
-//! anything of its side.
+//! anything of its side; but the length of its chunk of padding does to one who lists a
+//! PNG's chunks, since it is what the file lacked of the longest, so the size the encoder
+//! gave it can be worked out again (the carry-over list has the row: pictures whose size
+//! follows from their dimensions alone).
 //!
 //! The folder: by default `pairs/<a>-vs-<b>` under the corpus's folder, which the owner
 //! names and which is outside any repository. Refused inside the store, and inside a git

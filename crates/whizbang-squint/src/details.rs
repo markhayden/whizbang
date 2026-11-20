@@ -675,6 +675,11 @@ pub fn takes(detail: &str, use_case: &str) -> bool {
     }
 }
 
+/// Why a detail named to be measured first is refused when nothing is measured first:
+/// `--detail` on the command line, `detail` of the step `details` (plan m4, task A1).
+/// Without the refusal the run would measure nothing and say nothing.
+pub const DETAIL_WITHOUT_FIRST: &str = "--detail names what is measured before the judge looks, and nothing is measured first unless the run asks: give --details first with it";
+
 /// The words of the refusal of `tiles` for a job that relates a pair.
 pub fn tiles_refused(use_case: &str) -> String {
     format!(

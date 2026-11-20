@@ -531,8 +531,8 @@ pub struct CheckAsked<'a> {
     pub brief: Option<&'a str>,
     /// The caller's id for the request, when it gave one.
     pub request_id: Option<&'a str>,
-    /// What is measured before the judge's first turn: `first` (the command's default)
-    /// or `none` (ADR 0029).
+    /// What is measured before the judge's first turn: `none` (the command's default
+    /// since plan m4, task A1) or `first` (ADR 0029).
     pub details: Details,
     /// The tools whose details are measured first, by name, when the caller names them.
     pub detail: Option<&'a str>,
@@ -734,8 +734,9 @@ pub fn check(
     )
 }
 
-/// Why `--detail` is refused without `--details first`.
-pub const DETAIL_WITHOUT_FIRST: &str = "--detail names what is measured before the judge looks, and nothing is measured first unless the run asks: give --details first with it";
+/// Why `--detail` is refused without `--details first`: the sentence of the step
+/// `details` itself, which refuses the same.
+pub const DETAIL_WITHOUT_FIRST: &str = whizbang_squint::details::DETAIL_WITHOUT_FIRST;
 
 /// What `check` measures before the judge's first turn, and how a call of `align` by the
 /// judge is answered (ADR 0029).
@@ -753,10 +754,6 @@ pub struct Measuring<'a> {
 }
 
 impl<'a> Measuring<'a> {
-    /// What a door asks of an arm, whole: what is measured first, the tools that go with
-    /// it, and the projection the caller stated or, with none stated, the arm's own
-    /// ([`Details::projection`]). No tool is named to be measured, no tool file is
-    /// offered, and the second look is off.
     /// What a door asks from what its caller stated, each by name or not at all: with
     /// nothing stated, the control arm, whole ([`Details::DEFAULT`]). `whizbang squint
     /// check` gives its `--details` and `--projection` here as they were typed, and the
@@ -780,6 +777,10 @@ impl<'a> Measuring<'a> {
         Ok(Measuring { detail, ..self })
     }
 
+    /// What a door asks of an arm, whole: what is measured first, the tools that go with
+    /// it, and the projection the caller stated or, with none stated, the arm's own
+    /// ([`Details::projection`]). No tool is named to be measured, no tool file is
+    /// offered, and the second look is off.
     pub fn arm(details: Details, projection: Option<&'a str>) -> Measuring<'a> {
         Measuring {
             details,

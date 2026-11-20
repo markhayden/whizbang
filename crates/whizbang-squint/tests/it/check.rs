@@ -3417,7 +3417,8 @@ fn a_details_step_of_another_job_and_images_is_refused() {
          fake = { type = \"Image\", many = true }\njob = { type = \"Text\" }\n\
          job1 = { type = \"Text\" }\n\
          [[step]]\nid = \"details\"\nop = \"details\"\ninputs = { images = \"inputs.fake\" }\n\
-         use_case = \"reality-checks\"\njob = \"inputs.job1\"\ndetail = \"tiles\"\n\
+         use_case = \"reality-checks\"\njob = \"inputs.job1\"\ndetails = \"first\"\n\
+         detail = \"tiles\"\n\
          [[step]]\nid = \"judge\"\nop = \"check\"\n\
          inputs = { images = \"inputs.images\", measured_images = \"details.images\" }\n\
          use_case = \"reality-checks\"\njob = \"inputs.job\"\nmeasured = \"details.measurements\"\n"
@@ -3468,7 +3469,7 @@ fn changed_run(how: &str, detail: &str, job: &Job, images: &[ArtifactId]) -> Fin
     world.recipes.push(format!(
         "version = 1\nname = \"changed\"\npurpose = \"A test.\"\nuse = \"Never.\"\n\
          [inputs]\nimages = {{ type = \"Image\", many = true }}\njob = {{ type = \"Text\" }}\n\
-         [[step]]\nid = \"details\"\nop = \"details\"\ninputs = {{ images = \"inputs.images\" }}\n\
+         [[step]]\nid = \"details\"\nop = \"details\"\ndetails = \"first\"\ninputs = {{ images = \"inputs.images\" }}\n\
          use_case = \"{use_case}\"\njob = \"inputs.job\"\ndetail = \"{detail}\"\n\
          [[step]]\nid = \"dropper\"\nop = \"dropper\"\nfrom = \"details.measurements\"\n\
          how = \"{how}\"\n\
@@ -3546,7 +3547,7 @@ fn an_align_handed_on_from_another_pair_than_its_entry_names_is_refused() {
     let (mut world, source, candidate, _) = paired();
     world.recipes.push(users_recipe(
         "swapped",
-        "[[step]]\nid = \"details\"\nop = \"details\"\ninputs = { images = \"inputs.fake\" }\n\
+        "[[step]]\nid = \"details\"\nop = \"details\"\ndetails = \"first\"\ninputs = { images = \"inputs.fake\" }\n\
          use_case = \"source-fidelity\"\njob = \"inputs.job\"\n\
          [[step]]\nid = \"judge\"\nop = \"check\"\n\
          inputs = { images = \"inputs.images\", measured_images = \"details.images\" }\n\
@@ -3573,7 +3574,7 @@ fn measurements_that_leave_out_a_call_the_step_of_details_made_are_refused() {
     with_dropper(&mut world);
     world.recipes.push(users_recipe(
         "dropped",
-        "[[step]]\nid = \"details\"\nop = \"details\"\ninputs = { images = \"inputs.images\" }\n\
+        "[[step]]\nid = \"details\"\nop = \"details\"\ndetails = \"first\"\ninputs = { images = \"inputs.images\" }\n\
          use_case = \"source-fidelity\"\njob = \"inputs.job\"\ndetail = \"align,change_map\"\n\
          [[step]]\nid = \"dropper\"\nop = \"dropper\"\nfrom = \"details.measurements\"\n\
          [[step]]\nid = \"judge\"\nop = \"check\"\n\

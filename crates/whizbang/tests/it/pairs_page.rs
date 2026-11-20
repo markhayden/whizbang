@@ -116,7 +116,8 @@ function element() {
     style: {}, dataset: {}, files: [], firstChild: { textContent: "" }, children: [],
     scrollLeft: 0, scrollTop: 0, scrollWidth: 0, scrollHeight: 0, clientWidth: 0, clientHeight: 0,
     classList: { toggle(name, on) { if (on) { classes.add(name); } else { classes.delete(name); } } },
-    addEventListener() {}, click() {},
+    addEventListener(type, handler) { this.handlers = this.handlers || {}; this.handlers[type] = handler; },
+    click() {},
     appendChild(child) { this.children.push(child); },
     querySelectorAll() { return this.children; },
   };
@@ -136,7 +137,7 @@ global.window = { addEventListener() {} };
 global.Blob = class { constructor(parts) { this.text = parts.join(""); } };
 global.URL = { createObjectURL(blob) { lastBlob = blob.text; return "blob:x"; }, revokeObjectURL() {} };
 global.Image = class {};
-global.FileReader = class {};
+global.FileReader = class { readAsText(file) { this.result = file.text; this.onload(); } };
 (0, eval)(code);
 function state(step) {
   const saved = JSON.parse(lastBlob);
@@ -145,9 +146,16 @@ function state(step) {
   console.log(JSON.stringify({ step, where: elements.where.textContent, picks }));
 }
 state("opened");
-for (const key of process.argv.slice(4)) {
-  handlers.keydown({ key: key === "Space" ? " " : key, preventDefault() {}, repeat: false });
-  state(key);
+for (const step of process.argv.slice(4)) {
+  if (step === "Load") {
+    // A saved picks file of this page, opened on it: b was picked right.
+    const text = JSON.stringify({ picks_version: 1, assignment_digest: "sha256:abc", pick: [{ pair: "b", pick: "right" }] });
+    elements.load.handlers.change({ target: { files: [{ text }] } });
+  } else {
+    const [key, held] = step.split("+");
+    handlers.keydown({ key: key === "Space" ? " " : key, preventDefault() {}, repeat: held === "held" });
+  }
+  state(step);
 }
 "#;
 
@@ -162,7 +170,7 @@ fn a_backspace_takes_back_the_last_pick() {
         "the keys the page lists"
     );
     assert!(
-        code.contains(r#"if (e.key === "Backspace") { e.preventDefault(); takeBack(); return; }"#),
+        code.contains(r#"if (e.key === "Backspace") { e.preventDefault(); if (!e.repeat) { takeBack(); } return; }"#),
         "{code}"
     );
     // And what the script does, run as it is under `node` with only what it touches of a
@@ -190,6 +198,12 @@ fn a_backspace_takes_back_the_last_pick() {
         "Space",
         "Space",
         "ArrowDown",
+        "Backspace",
+        // A key held down repeats: the repeats take nothing back.
+        "Backspace+held",
+        // A saved picks file is opened: its picks, and those it leaves, are no longer
+        // this page's to take back, so the key goes to the pair before and removes none.
+        "Load",
         "Backspace",
     ];
     let ran = std::process::Command::new("node")
@@ -231,6 +245,9 @@ fn a_backspace_takes_back_the_last_pick() {
         ("Space", "Pair 3 of 3: c", r#"{"c":"same"}"#),
         ("ArrowDown", "Pair 1 of 3: a", r#"{"c":"neither"}"#),
         ("Backspace", "Pair 3 of 3: c", r#"{"c":"same"}"#),
+        ("Backspace+held", "Pair 3 of 3: c", r#"{"c":"same"}"#),
+        ("Load", "Pair 1 of 3: a", r#"{"b":"right","c":"same"}"#),
+        ("Backspace", "Pair 3 of 3: c", r#"{"b":"right","c":"same"}"#),
     ];
     assert_eq!(steps.len(), want.len(), "{steps:?}");
     for (step, (key, where_, picks)) in steps.iter().zip(want) {

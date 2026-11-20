@@ -1916,7 +1916,7 @@
       "name": "reality-checks",
       "version": "1.0.0",
       "kind": "recipe",
-      "purpose": "Checks a picture for mistakes no real photograph would make: the judge looks, and calls view and align as it needs.",
+      "purpose": "Checks a picture for mistakes no real photograph would make: the judge looks, and calls view to look closer as it needs.",
       "use": "To look for the marks of a made or edited picture with no other picture to hold it to.",
       "arguments": [
         {
@@ -2404,7 +2404,7 @@
     },
     {
       "name": "details",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "kind": "primitive",
       "purpose": "Measures the details of a use case's images before its judge looks, and hands on what each tool found.",
       "arguments": [
@@ -2435,7 +2435,7 @@
         },
         {
           "name": "details",
-          "purpose": "none, which measures nothing, or first.",
+          "purpose": "none, which measures nothing and is the default, or first.",
           "type": {
             "type": "choice",
             "choices": [
@@ -2444,7 +2444,7 @@
             ]
           },
           "required": false,
-          "default": "first"
+          "default": "none"
         },
         {
           "name": "detail",

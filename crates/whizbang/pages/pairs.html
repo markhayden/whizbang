@@ -96,9 +96,9 @@ function show() {
   by("note").textContent = pair.note;
   by("where").textContent = "Pair " + (at + 1) + " of " + pairs.length + ": " + pair.id;
   for (const b of document.querySelectorAll(".picks button")) { b.classList.toggle("chosen", picks[pair.id] === b.dataset.pick); }
-  const made = pairs.filter((p) => picks[p.id]).length;
-  by("count").textContent = made + " of " + pairs.length + " picked" + (made === pairs.length ? ": all picked, save picks.json" : "");
-  by("share").style.width = (100 * made / pairs.length) + "%";
+  const picked = pairs.filter((p) => picks[p.id]).length;
+  by("count").textContent = picked + " of " + pairs.length + " picked" + (picked === pairs.length ? ": all picked, save picks.json" : "");
+  by("share").style.width = (100 * picked / pairs.length) + "%";
   by("strip").querySelectorAll("button").forEach((b, n) => { b.classList.toggle("picked", !!picks[pairs[n].id]); b.classList.toggle("here", n === at); });
   const next = pairs[(at + 1) % pairs.length];
   for (const side of ["left", "right"]) { new Image().src = file(next, side, kindOf(next)); }
@@ -173,6 +173,8 @@ by("load").addEventListener("change", (e) => {
     for (const p of read.pick) {
       if (p && known.has(p.pair) && ["left", "right", "same", "neither"].includes(p.pick)) { picks[p.pair] = p.pick; loaded++; }
     }
+    // The picks are the file's now: none of them is one this page can take back.
+    made.length = 0;
     by("status").textContent = "resumed: " + loaded + " picks loaded";
     saved = true;
     offer();
@@ -186,7 +188,7 @@ document.addEventListener("keydown", (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) { return; }
   if (keys[e.key]) { e.preventDefault(); if (!e.repeat) { pick(keys[e.key]); } return; }
   if (e.key === " ") { e.preventDefault(); go(at + 1); return; }
-  if (e.key === "Backspace") { e.preventDefault(); takeBack(); return; }
+  if (e.key === "Backspace") { e.preventDefault(); if (!e.repeat) { takeBack(); } return; }
   if (e.repeat) { return; }
   if (e.key === "v") { by("view").click(); }
   if (e.key === "f") { swapped = true; show(); }

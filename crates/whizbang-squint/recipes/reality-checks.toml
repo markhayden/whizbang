@@ -19,7 +19,7 @@
 # task U1, docs/results/m3-unsure.md); a run sets it with --set judge.second_look=on.
 version = 1
 name = "reality-checks"
-purpose = "Checks a picture for mistakes no real photograph would make: the judge looks, and calls view and align as it needs."
+purpose = "Checks a picture for mistakes no real photograph would make: the judge looks, and calls view to look closer as it needs."
 use = "To look for the marks of a made or edited picture with no other picture to hold it to."
 use_case = "reality-checks"
 
