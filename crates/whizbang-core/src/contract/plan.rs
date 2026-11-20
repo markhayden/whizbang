@@ -249,6 +249,18 @@ impl Plan {
         )
     }
 
+    /// The same plan, its reason cut to what a plan's reason may be, or left out
+    /// when what is left is no reason.
+    pub(super) fn with_reason_cut(mut self) -> Plan {
+        let cut: Option<String> = self.why.take().map(|why| {
+            let line: String = why.chars().filter(|c| !c.is_control()).collect();
+            let kept: String = line.trim().chars().take(PLAN_WHY_LIMIT).collect();
+            kept.trim().to_owned()
+        });
+        self.why = cut.filter(|why| !why.is_empty());
+        self
+    }
+
     /// Whether a record may hold it: what [`Plan::fault`] holds that does not depend
     /// on the call.
     pub(super) fn holds(&self) -> bool {

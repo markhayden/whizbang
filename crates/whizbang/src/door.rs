@@ -140,7 +140,7 @@ pub struct OperationAsked<'a> {
 /// [`grow`] does: what comes back is what to print when the run completed, each output
 /// by its port and identity, or the complaint, escaped already.
 pub fn operation(executor: &dyn Executor, asked: &OperationAsked<'_>) -> Result<String, String> {
-    operation_saying(executor, asked, &mut on_the_error_stream)
+    operation_saying(executor, asked, None, &mut on_the_error_stream)
 }
 
 /// What a door is told while a call is on its way: the plan of a planned call, before
@@ -154,9 +154,14 @@ pub fn on_the_error_stream(line: &str) {
 
 /// [`operation`], telling `say` the plan of a planned call before the call runs (ADR
 /// 0004, "A call's plan").
+///
+/// `root` is the store's, when the door knows it: with it, a request whose id was
+/// admitted before is told the plan of the run that id made, read from that run's
+/// record, and not the plan its call would have now.
 pub fn operation_saying(
     executor: &dyn Executor,
     asked: &OperationAsked<'_>,
+    root: Option<&Path>,
     say: Say<'_>,
 ) -> Result<String, String> {
     let mut call = Call::new(asked.action);
@@ -172,7 +177,7 @@ pub fn operation_saying(
         };
         call = call.input(port, ArtifactId(id));
     }
-    let (_, mut text, outputs) = completed_saying(executor, call, asked.request_id, say)?;
+    let (_, mut text, outputs) = completed_saying(executor, call, asked.request_id, root, say)?;
     for output in outputs {
         let port = printable(output.port());
         text.push_str(&format!("{port} {}\n", output.id().0));
@@ -204,7 +209,9 @@ pub fn recipe(
         };
         call = call.input(port, ArtifactId(id));
     }
-    let (run, mut text, mut outputs) = completed(executor, call, asked.request_id)?;
+    let say: Say<'_> = &mut on_the_error_stream;
+    let (run, mut text, mut outputs) =
+        completed_saying(executor, call, asked.request_id, Some(root), say)?;
     let read = |run: &str| -> Result<whizbang_core::contract::RunRecord, String> {
         let reader = Reader::open(root, Arc::new(RealFs)).map_err(|e| e.to_string())?;
         let generation = reader.snapshot().map_err(|e| e.to_string())?;
@@ -401,34 +408,55 @@ fn completed(
     call: Call,
     request_id: Option<&str>,
 ) -> Result<(RunId, String, Vec<Committed>), String> {
-    completed_saying(executor, call, request_id, &mut on_the_error_stream)
+    completed_saying(executor, call, request_id, None, &mut on_the_error_stream)
 }
 
 /// [`completed`], telling `say` the plan of a planned call before the call runs: the
 /// call is prepared first, and when its action planned it the plan is said in one line
 /// and the request comes with that preparation, so that what runs is the plan that
 /// was said, or nothing (a preparation whose plan would differ at admission is
-/// refused as stale). A call that plans nothing is sent as it always was. A request
-/// that was sent before is answered with its first run, whose own plan is in that
-/// run's record: the line said here is of the call as it prepares now.
+/// refused as stale). A call that plans nothing is sent as it always was.
+///
+/// A request that was sent before is answered with its first run, and nothing is
+/// prepared for it: with the store's `root`, an id the store already holds is not
+/// told a plan beforehand, and the plan said is the one in its run's record. Without
+/// a root the door cannot know, and says the plan of the call as it prepares now.
 fn completed_saying(
     executor: &dyn Executor,
     call: Call,
     request_id: Option<&str>,
+    root: Option<&Path>,
     say: Say<'_>,
 ) -> Result<(RunId, String, Vec<Committed>), String> {
-    // A call that does not prepare is judged by the request, which also answers a
-    // request that was sent before, whatever its call would be now.
-    let planned = executor.prepare(&call).ok().filter(|p| p.plan().is_some());
+    let id = match request_id {
+        Some(text) => Some(executor.request_id(text).map_err(|e| refused(&e))?),
+        None => None,
+    };
+    let sent_before = root.zip(id.as_ref()).is_some_and(|(root, id)| {
+        let reader = Reader::open(root, Arc::new(RealFs)).ok();
+        let generation = reader.and_then(|reader| reader.snapshot().ok());
+        generation.is_some_and(|held| held.get(&id.admission_name()).is_some())
+    });
+    // A call that does not prepare is judged by the request.
+    let planned = match sent_before {
+        true => None,
+        false => executor.prepare(&call).ok().filter(|p| p.plan().is_some()),
+    };
     let mut request = Request::new(call);
     if let Some(prepared) = &planned {
         say(&prepared.plan().map(|plan| plan.line()).unwrap_or_default());
         request = request.expecting(prepared);
     }
-    if let Some(text) = request_id {
-        request = request.with_id(executor.request_id(text).map_err(|e| refused(&e))?);
+    if let Some(id) = id {
+        request = request.with_id(id);
     }
-    let (id, state, before) = match executor.request(&request).map_err(|e| refused(&e))? {
+    let answer = executor.request(&request).map_err(|e| refused(&e))?;
+    if let (Answer::Repeat(earlier), Some(root)) = (&answer, root)
+        && let Some(plan) = plan_of(root, earlier.run())
+    {
+        say(&plan);
+    }
+    let (id, state, before) = match answer {
         Answer::Ran(finished) => (
             finished.run().clone(),
             RunState::Ended(finished.outcome().clone()),

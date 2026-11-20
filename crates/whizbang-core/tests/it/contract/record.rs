@@ -639,10 +639,15 @@ fn what_a_refusal_quotes_of_stored_bytes_is_escaped_and_cut() {
     let said = read_journal(long.as_bytes()).unwrap_err();
     assert!(said.len() < 240 && said.ends_with("..."), "{said}");
     // A reason of ordinary length is whole, with where in the bytes it was met.
-    let said = RunRecord::from_bytes(&changed(|d| d["inputs"] = json!(1)))
+    let said = RunRecord::from_bytes(&changed(|d| d["extra"] = json!(1)))
         .unwrap_err()
         .to_string();
-    assert!(said.contains("invalid type: integer `1`"), "{said}");
+    // The fields it expected are the first and how many more: a record has more
+    // fields than a reason has room for.
+    assert!(
+        said.contains("unknown field `extra`, expected one of `record` or 16 more at line 1"),
+        "{said}"
+    );
     assert!(said.contains(" at line 1 column "), "{said}");
     assert!(!said.ends_with("..."), "{said}");
     assert_eq!((record::QUOTED_LIMIT, record::REASON_LIMIT), (64, 200));
@@ -2361,4 +2366,81 @@ fn run_6_reads_a_record_of_run_5() {
     // A run that has none of them is still written as the version before.
     assert_eq!(whizbang_core::contract::RUN_6, "run/6");
     assert_eq!(RUN_RECORD, "run/4");
+}
+
+#[test]
+fn run_6_holds_each_list_to_its_bound() {
+    use whizbang_core::contract::record::{
+        ATTEMPT_CROPS_LIMIT, ATTEMPT_RUNS_LIMIT, Attempt, Changed, Crop, Decision, Facts,
+        GIVEN_LIMIT, Given, Started,
+    };
+    let ones: Digest = ONES.parse().unwrap();
+    assert_eq!(
+        (GIVEN_LIMIT, ATTEMPT_RUNS_LIMIT, ATTEMPT_CROPS_LIMIT),
+        (64, 64, 8)
+    );
+    // What a run from a step was given: 64 at most.
+    let started = |given: usize| Started {
+        from: "grow".to_owned(),
+        given: vec![
+            Given {
+                step: "select".to_owned(),
+                port: "mask".to_owned(),
+                artifact_type: ArtifactType::Mask,
+                artifact: ones,
+            };
+            given
+        ],
+    };
+    assert!(!Facts::none().started(started(65)));
+    assert!(Facts::none().started(started(64)));
+    // The runs of one attempt: 64 at most.
+    let ran = |runs: usize| {
+        let run = RunId::parse("1001-1").unwrap();
+        (0..runs).fold(Attempt::judged(1, Decision::Pass), |a, _| a.ran(&run))
+    };
+    assert!(!Facts::none().attempt(ran(65)));
+    assert!(Facts::none().attempt(ran(64)));
+    // Sixteen attempts, and no seventeenth.
+    let mut facts = Facts::none();
+    for at in 1..=16 {
+        assert!(facts.attempt(Attempt::judged(at, Decision::Fail)), "{at}");
+    }
+    assert!(!facts.attempt(Attempt::judged(17, Decision::Fail)));
+    // A wider grow of a number of pixels that is one; one to eight crops.
+    let second = |changed: Changed| {
+        let mut facts = Facts::none();
+        assert!(facts.attempt(Attempt::judged(1, Decision::Fail)));
+        facts.attempt(Attempt::judged(2, Decision::Fail).changed(changed))
+    };
+    for (px, held) in [
+        (-1.0, false),
+        (f64::NAN, false),
+        (f64::INFINITY, false),
+        (0.0, true),
+    ] {
+        assert_eq!(second(Changed::Wider { px }), held, "{px}");
+    }
+    let crop = Crop {
+        crop: ones,
+        mask: None,
+    };
+    for (crops, held) in [(0, false), (1, true), (8, true), (9, false)] {
+        let crops = vec![crop.clone(); crops];
+        assert_eq!(
+            second(Changed::Located {
+                crops: crops.clone()
+            }),
+            held,
+            "{}",
+            crops.len()
+        );
+    }
+    // And the reader holds a stored record to the same: a negative width is refused.
+    let negative = of_run_6().replacen(r#""px":16.0"#, r#""px":-1.0"#, 1);
+    assert!(matches!(
+        RunRecord::from_bytes(negative.as_bytes()),
+        Err(RecordError::Inconsistent(_))
+    ));
+    assert!(validate(&schema_6(), &as_json(&negative)).is_err());
 }

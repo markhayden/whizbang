@@ -1415,7 +1415,12 @@ pub(super) fn prepare(
                 able: able.collect(),
                 cap,
             };
-            planner.plan(&planning)
+            // The action's own code, run here and not in a run: a panic in it is
+            // the action's fault and refuses the call, and nothing else is undone,
+            // since preparing has changed nothing.
+            let asked = std::panic::AssertUnwindSafe(|| planner.plan(&planning));
+            std::panic::catch_unwind(asked)
+                .map_err(|_| invalid("its action panicked while it planned the call".to_owned()))?
         }
     };
     if let Some(plan) = &plan {

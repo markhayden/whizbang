@@ -107,6 +107,26 @@ where
     Option::deserialize(deserializer)
 }
 
+/// The reader's sentence, with a list of the fields it expected cut to the first and
+/// how many more there are: a record has more fields than a reason has room for
+/// ([`REASON_LIMIT`]), and where in the bytes the reader stopped is said after the
+/// list.
+fn brief(error: serde_json::Error) -> String {
+    let said = error.to_string();
+    let listed = said.split_once(", expected one of ");
+    let Some((before, (names, after))) =
+        listed.and_then(|(before, rest)| Some((before, rest.split_once(" at line ")?)))
+    else {
+        return said;
+    };
+    let mut names = names.split(", ");
+    let (first, more) = (names.next().unwrap_or_default(), names.count());
+    match more {
+        0 => said,
+        more => format!("{before}, expected one of {first} or {more} more at line {after}"),
+    }
+}
+
 /// How many characters a refusal keeps of a name it quotes from stored bytes: a version,
 /// the id of another run.
 pub const QUOTED_LIMIT: usize = 64;
@@ -2035,6 +2055,12 @@ impl RunRecord {
             Some(why) => plan.clone().because(&super::engine::said(secrets, why)),
             None => plan.clone(),
         });
+        // A reason the redaction made longer than a record holds is cut; a plan is
+        // never left out for its reason alone.
+        let plan = plan.map(|plan| match plan.holds() {
+            true => plan,
+            false => plan.with_reason_cut(),
+        });
         let plan = plan.filter(Plan::holds);
         // Findings are of a run that completed, and of no other.
         let findings = ran.inside.findings.as_ref();
@@ -2229,7 +2255,7 @@ impl RunRecord {
             Ok(Version { record }) => record == RUN_2,
             Err(_) => false,
         };
-        let malformed = |error: serde_json::Error| RecordError::Malformed(error.to_string());
+        let malformed = |error: serde_json::Error| RecordError::Malformed(brief(error));
         let mut reader = serde_json::Deserializer::from_slice(bytes);
         let record = if frozen {
             Frozen::deserialize(&mut reader).map(Frozen::record)

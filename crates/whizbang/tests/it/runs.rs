@@ -578,14 +578,12 @@ fn a_refusal_is_printed_as_the_core_says_it_once_escaped_and_whole() {
                 "broken",
                 "record",
                 Kind::Diagnostic,
-                b"{\"record\":\"run/3\",\"identity\":{\"\\u001b[2J\":1}}\n",
+                b"{\"record\":\"run/3\",\"\\u001b[2J\":1}\n",
             )
             .unwrap();
         publication.publish().unwrap();
     }
-    // The field is in the record's identity, whose fields are few: the reason is under
-    // the 200 characters a refusal quotes, and so is whole.
-    let expected = "not a run record: unknown field `\\u{1b}[2J`, expected one of `run`";
+    let expected = "not a run record: unknown field `\\u{1b}[2J`, expected one of `record`";
     let listed = whizbang(&["list"], &root);
     let line = listed
         .text()

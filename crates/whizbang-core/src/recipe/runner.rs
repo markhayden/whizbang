@@ -68,7 +68,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::artifact::{self, ArtifactId};
-use crate::contract::record::{Given, Started};
+use crate::contract::record::{GIVEN_LIMIT, Given, Started};
 use crate::contract::{
     Action, ActionDescriptor, Argument, Call, CallError, Capability, Context, Count, Failure,
     Findings, InputPort, Kind, Outcome, OutputPort, Plan, Planning, PreparedCall, Produced,
@@ -514,8 +514,14 @@ impl RecipeAction {
                 else {
                     continue;
                 };
+                // Whether the port takes it or may be left unbound, a whole run binds
+                // what the step before made: a run from a step leaves it unbound only
+                // where that step could have made nothing there.
+                let made = steps.iter().zip(&self.steps).find(|(s, _)| s.id == *of);
+                let made = made.and_then(|(_, d)| d.output(out));
+                let may_be_none = made.is_some_and(|p| p.count().min() == 0);
                 let needed = descriptor.input(port).is_some_and(|p| p.count().min() > 0);
-                if before(of) && needed && !has(of, out) {
+                if before(of) && (needed || !may_be_none) && !has(of, out) {
                     return Some(format!(
                         "the step {} takes the output {out} of the step {of}, which does \
                          not run, and nothing was given in its place: give it at {}",
@@ -644,15 +650,26 @@ impl Action for RecipeAction {
                          in the recipe {name}"
                     )));
                 }
+                // The record says what the run was given, and lists so many.
+                if handed.len() > GIVEN_LIMIT {
+                    return Err(Failure::invalid(&format!(
+                        "the recipe {name} cannot run from the step {from}: {} artifacts \
+                         are given in place of steps' outputs, and a run from a step is \
+                         given {GIVEN_LIMIT} at most",
+                        handed.len()
+                    )));
+                }
                 if let Some(fault) = self.start_fault(at, last, &made) {
                     return Err(Failure::invalid(&format!(
                         "the recipe {name} cannot run from the step {from}: {fault}"
                     )));
                 }
-                context.facts().started(Started {
+                let noted = context.facts().started(Started {
                     from: from.to_owned(),
                     given: handed,
                 });
+                // A context no executor made keeps no facts; a run's always takes it.
+                let _ = noted;
                 at
             }
             None if !handed.is_empty() => {

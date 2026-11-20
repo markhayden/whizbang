@@ -621,6 +621,11 @@ written only where the run has it, and one of them at least. Its schema is
   `RunFacts::attempts_ended`), so they are in the record whatever the run's outcome; a
   note that a record would not hold is answered no and not taken.
 
+A plan's reason has the executor's secrets taken out as every text has; one that the
+redaction made longer than a reason may be is cut, and the plan is kept. The reader's
+sentence for a field it does not know names the first field it expected and how many
+more there are, so that it stays within what a refusal quotes.
+
 **The oldest version that holds all of it**, as since `run/5`: a record that has none of
 the four is written as `run/5` or `run/4` as before, byte for byte. So this build reads
 `run/6`, `run/5`, `run/4`, `run/3` and `run/2`; a store written before it reads as it

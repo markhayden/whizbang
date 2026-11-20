@@ -117,7 +117,8 @@ judge pointed needs them as a result.
   (upper-case letters, then digits), each once, 16 at most; its disposition
   (`violation`, `held`, `allowed_change`, `hidden`, `cant_tell`, `observed`); its
   confidence (`confident`, `tentative`; null for `observed` and for nothing else); and
-  its place or null: the image it is on, by identity, and one box (left, top, right,
+  its place or null (both fields are always written; a finding that leaves one out is
+  refused): the image it is on, by identity, and one box (left, top, right,
   bottom) or one polygon (3 to 64 points) in fractions of that image. At most eight
   places in a document.
 - **No text of a judge's is in it.** The shape has no field that holds one, and a

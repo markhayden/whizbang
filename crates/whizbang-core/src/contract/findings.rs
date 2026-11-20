@@ -84,10 +84,38 @@ pub enum Confidence {
 #[serde(deny_unknown_fields)]
 pub struct FoundAt {
     pub image: Digest,
-    #[serde(rename = "box", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "box",
+        default,
+        deserialize_with = "not_null",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub boxed: Option<[f64; 4]>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "not_null",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub polygon: Option<Vec<[f64; 2]>>,
+}
+
+/// A field that must be there, and may be null: left out, it is refused, as the
+/// schema refuses it.
+fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::deserialize(deserializer)
+}
+
+/// A field that may be left out, and is never null where it is there.
+fn not_null<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
 }
 
 /// One finding. `confidence` is null for a disposition that takes none.
@@ -97,7 +125,9 @@ pub struct Finding {
     pub form: Form,
     pub obligations: Vec<String>,
     pub disposition: Disposition,
+    #[serde(deserialize_with = "present")]
     pub confidence: Option<Confidence>,
+    #[serde(deserialize_with = "present")]
     pub place: Option<FoundAt>,
 }
 
@@ -128,6 +158,7 @@ pub struct Findings {
 pub struct FindingCount {
     pub obligation: String,
     pub disposition: Disposition,
+    #[serde(deserialize_with = "present")]
     pub confidence: Option<Confidence>,
     pub count: u64,
 }

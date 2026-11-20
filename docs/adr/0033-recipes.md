@@ -156,9 +156,13 @@ end but through `until`. So the runner gains `from`, the mirror of `until`.
   input is refused when the call is prepared, as any input is): neither makes a run. And
   the run is invalid, with no step run: when `from` comes after `until`; when something
   is given for a step that runs, or with no `from`; when a step of the stretch, or an
-  output the recipe hands back, takes an output of a skipped step that was not given
-  (for a port that requires one); and when a step of the stretch takes what a skipped
-  step measured, which nobody can give.
+  output the recipe hands back, takes an output of a skipped step that was not given,
+  whether the port that takes it requires one or may be left unbound, since a whole run
+  binds what that step made (only an output that step may hand back none of may be
+  left out); when more than 64 artifacts are given, which is as many as the record
+  lists; and when a step of the stretch takes what a skipped step measured, which
+  nobody can give. A recipe's own input may not be named `from`, nor begin with
+  `from_`: those are the runner's names, and such a recipe is refused when read.
 - **Nothing is reserved for a step that does not run.** The recipe plans such a call (ADR
   0004, "A call's plan"): its plan states, for each capability, the requests of the
   steps of the stretch alone, so a capability only skipped steps need is not resolved,

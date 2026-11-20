@@ -11,15 +11,17 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use whizbang_core::capability::Declaration;
 use whizbang_core::contract::record::RunRecord;
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Argument, Attempts, Backends, Call, CallError, Capability, Clock,
-    ConfigSource, Context, Engine, Estimate, Executor, Failure, Kind, ModelIdentity, Plan,
-    Planning, PreparedCall, Produced, Readiness, Refusal, Registry, Request, Requirement, RunId,
-    Snapshot, SourceRefused, Stale, Unavailable, Value, ValueType,
+    Action, ActionDescriptor, Argument, Attempts, Backends, Call, CallError, Capabilities,
+    Capability, Clock, ConfigSource, Context, Engine, Estimate, Executor, Failure, Kind,
+    ModelIdentity, Plan, Planning, PreparedCall, Produced, Readiness, Refusal, Registry, Request,
+    Requirement, RunId, Snapshot, SourceRefused, Stale, Unavailable, Value, ValueType,
 };
 use whizbang_core::identity::Digest;
 use whizbang_core::store::Store;
+use whizbang_testkit::capabilities::{FakeFiller, FakeJudge, Paint};
 use whizbang_testkit::fs_shim::ShimFs;
 use whizbang_testkit::scratch::Scratch;
 
@@ -85,6 +87,8 @@ struct Tries {
     descriptor: ActionDescriptor,
     plans: bool,
     handed: Arc<Mutex<Vec<Option<Plan>>>>,
+    /// Whether each run was handed a filler and a judge.
+    handles: Arc<Mutex<Vec<(bool, bool)>>>,
 }
 
 fn draft() -> whizbang_core::contract::Draft {
@@ -148,7 +152,10 @@ impl Action for Tries {
         Some(plan)
     }
 
-    fn run(&self, call: &PreparedCall, _: &Context) -> Result<Produced, Failure> {
+    fn run(&self, call: &PreparedCall, context: &Context) -> Result<Produced, Failure> {
+        let handles = context.capabilities();
+        let held = (handles.fill().is_some(), handles.judge().is_some());
+        self.handles.lock().unwrap().push(held);
         self.handed.lock().unwrap().push(call.plan().cloned());
         Ok(Produced::nothing())
     }
@@ -160,6 +167,7 @@ struct World {
     bench: Arc<Bench>,
     cap: Arc<Capped>,
     handed: Arc<Mutex<Vec<Option<Plan>>>>,
+    handles: Arc<Mutex<Vec<(bool, bool)>>>,
     engine: Engine,
 }
 
@@ -174,12 +182,14 @@ fn world_of(declared: bool, plans: bool) -> World {
     });
     let cap = Arc::new(Capped(Mutex::new(None)));
     let handed = Arc::new(Mutex::new(Vec::new()));
+    let handles = Arc::new(Mutex::new(Vec::new()));
     let draft = if declared { draft().plans() } else { draft() };
     let mut registry = Registry::new();
     let tries = Tries {
         descriptor: draft.build().unwrap(),
         plans,
         handed: handed.clone(),
+        handles: handles.clone(),
     };
     registry.register(Arc::new(tries)).unwrap();
     let engine = Engine::over(
@@ -190,6 +200,7 @@ fn world_of(declared: bool, plans: bool) -> World {
     )
     .with_config(cap.clone())
     .with_clock(Arc::new(Stopped))
+    .with_capabilities(held())
     .with_ledger(real::Counted::new());
     World {
         _dir: dir,
@@ -197,8 +208,21 @@ fn world_of(declared: bool, plans: bool) -> World {
         bench,
         cap,
         handed,
+        handles,
         engine,
     }
+}
+
+/// A filler and a judge the executor holds, declaring the models the bench resolves.
+fn held() -> Capabilities {
+    let declared = |capability: Capability| {
+        Declaration::new(ModelIdentity::new("fake", capability.name(), "1"), &[]).unwrap()
+    };
+    let filler = FakeFiller::new(Paint::Inverse).declared_as(declared(Capability::Fill));
+    let judge = FakeJudge::scripted(Vec::new()).declared_as(declared(Capability::Judge));
+    Capabilities::none()
+        .with_fill(Arc::new(filler))
+        .with_judge(Arc::new(judge))
 }
 
 fn world() -> World {
@@ -305,8 +329,10 @@ mod prepare {
         assert_eq!(capabilities(&prepared), [Capability::Fill]);
         assert_eq!(*prepared.readiness(), Readiness::Ready);
         assert_eq!(prepared.estimate().micros(), FILL);
-        // And the run reserves for the filler alone.
+        // And the run reserves for the filler alone, and is handed no judge: the
+        // executor holds one, and the call did not resolve it.
         let finished = world.engine.submit(&tries()).unwrap();
+        assert_eq!(*world.handles.lock().unwrap(), [(true, false)]);
         let record = world.record(finished.run());
         assert_eq!(record.spend().reserved_micros, Some(FILL));
         // Asked off, the judge is left out though it is ready.
@@ -345,6 +371,25 @@ mod prepare {
         let unplanned = plain.engine.prepare(&tries()).unwrap();
         assert_eq!(unplanned.needs(), whole.needs());
         assert_ne!(unplanned.fingerprint(), whole.fingerprint());
+    }
+
+    #[test]
+    fn a_fingerprint_with_a_plan_is_this_digest() {
+        // A fixed vector of `prepared/2`, as ADR 0004 says it is hashed: a change to
+        // what is hashed of a plan, or to its order, shows here. The call is `tries`
+        // with its defaults under the config `config`, a filler and a judge of the
+        // models `fake`, `fill` and `judge`, version 1, and the plan of three
+        // attempts, checked, with no reason.
+        let world = world();
+        let prepared = world.engine.prepare(&tries()).unwrap();
+        assert_eq!(
+            prepared.plan().unwrap().line(),
+            "plan: 3 of 3 attempts asked, checked; fill 3; judge 3"
+        );
+        assert_eq!(
+            prepared.fingerprint().to_string(),
+            "sha256:68ce9bd37b1a9f2d1fefd4e4ebad8e5a5b8fa72a85ea08f06dc09f6e4dc4e8d3"
+        );
     }
 
     #[test]
@@ -424,6 +469,37 @@ mod prepare {
                 "{plan:?}: {refused:?}"
             );
         }
+        // An action that panics while it plans refuses the call, and no more.
+        struct Panics(ActionDescriptor);
+        impl Action for Panics {
+            fn descriptor(&self) -> &ActionDescriptor {
+                &self.0
+            }
+            fn plan(&self, _: &Planning<'_>) -> Option<Plan> {
+                panic!("a test's panic while planning")
+            }
+        }
+        let mut registry = Registry::new();
+        let panics = Panics(draft().plans().build().unwrap());
+        registry.register(Arc::new(panics)).unwrap();
+        let world = world();
+        let engine = Engine::over(
+            registry,
+            world.bench.clone(),
+            world.store.clone(),
+            Digest::of_bytes(b""),
+        );
+        for refused in [
+            engine.prepare(&tries()).unwrap_err(),
+            engine.submit(&tries()).unwrap_err(),
+        ] {
+            assert!(
+                matches!(&refused, CallError::Refused(Refusal::Invalid { why, .. })
+                    if why == "its action panicked while it planned the call"),
+                "{refused:?}"
+            );
+        }
+        assert_eq!(world.runs(), 0);
         // A descriptor that plans names no capability in two needs.
         let twice = draft().needs(Requirement::new(Capability::Fill)).plans();
         assert!(twice.build().unwrap_err().why.contains("the action plans"));
@@ -505,12 +581,58 @@ mod executor {
     use super::*;
 
     #[test]
+    fn a_plans_reason_that_redaction_made_too_long_is_cut_and_the_plan_is_kept() {
+        // A secret of eight bytes is written as ten: a reason of 200 characters that
+        // holds one is 202 in the record, which holds 200. The plan stays, its reason
+        // cut, and the secret is not in it.
+        struct Reasons(ActionDescriptor, String);
+        impl Action for Reasons {
+            fn descriptor(&self) -> &ActionDescriptor {
+                &self.0
+            }
+            fn plan(&self, _: &Planning<'_>) -> Option<Plan> {
+                Some(Plan::new().attempts(2, 1, false).because(&self.1))
+            }
+            fn run(&self, _: &PreparedCall, _: &Context) -> Result<Produced, Failure> {
+                Ok(Produced::nothing())
+            }
+        }
+        let secret = "k3y-ABCD";
+        let reason = format!("{secret} {}", "w".repeat(191));
+        assert_eq!(reason.chars().count(), 200);
+        let world = world();
+        let mut registry = Registry::new();
+        let reasons = Reasons(draft().plans().build().unwrap(), reason);
+        registry.register(Arc::new(reasons)).unwrap();
+        let secrets = whizbang_core::contract::Secrets::new([secret.to_owned()]).unwrap();
+        let engine = Engine::over(
+            registry,
+            world.bench.clone(),
+            world.store.clone(),
+            Digest::of_bytes(b""),
+        )
+        .with_secrets(secrets);
+        let finished = engine.submit(&tries()).unwrap();
+        let record = world.record(finished.run());
+        let plan = record.plan().expect("the plan is kept");
+        assert_eq!(plan.stated().map(|a| (a.asked, a.allowed)), Some((2, 1)));
+        let why = plan.why().unwrap();
+        assert_eq!(why.chars().count(), 200);
+        assert!(
+            why.starts_with("[redacted] www") && !why.contains(secret),
+            "{why}"
+        );
+    }
+
+    #[test]
     fn an_action_is_handed_the_plan_it_was_prepared_with() {
         let world = world();
         world.cap(Some(300_000));
         let prepared = world.engine.prepare(&tries()).unwrap();
         let finished = world.engine.submit(&tries()).unwrap();
         assert_eq!(finished.outcome().name(), "completed");
+        // A plan that checks is handed the judge it resolved.
+        assert_eq!(*world.handles.lock().unwrap(), [(true, true)]);
         // What ran is what was prepared, and what was reserved for.
         let handed = world.handed.lock().unwrap().clone();
         assert_eq!(handed, [prepared.plan().cloned()]);

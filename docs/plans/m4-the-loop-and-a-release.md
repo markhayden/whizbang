@@ -448,6 +448,29 @@ in the first. Where the tests are: those named `prepare::`, `admit::` and
 `contract::findings::executor`; `runner::`, `describe::` and `record::` in the core's
 modules of those names; `cli::` and `serve::` in the binary's.
 
+**After the review of the first pull request (K1).** Fixed in it: the findings' reader
+refuses what the schema refuses (a finding without its `confidence` or `place`, a null
+`box` or `polygon`); a run from a step given more than a record lists is refused; a
+repeated request id is told the plan of its first run; a recipe's input may not take
+the runner's `from` names; a run from a step may not leave unbound what a whole run
+binds; a plan is kept when only its reason is too long after redaction; a panic while
+planning refuses the call; and the reader's sentence for an unknown field is whole again.
+Item 5 was looked at again and does not fit beside it: either way of building it changes
+the tests of every crate that builds an executor (a feature on their manifests and the
+crate graph's checks, or a held backend for every roster a test gives), which is more
+than a few hundred lines and reaches scripts and tests other tasks of this wave own. It
+goes to wave 2, before K2 closes the row.
+
+**Owed after K1** (follow-ups of that review, not built here):
+
+- Squint's five use case recipes now offer a `from` (their step `check`) that can never
+  run: `check` takes what `details` measured, and a run from a step refuses that. The
+  runner should not offer `from` for a step no stretch can start at.
+- The command's door prepares a planned call twice, once to say its plan and once at
+  admission; a call that plans nothing is prepared once more than before too.
+- `SPEC.md` section 3, "The execution contract", says nothing of a plan in its Prepare
+  bullet: an edit of wording for the task that next touches the spec, with ADR 0004.
+
 **Decided with the task (K1).**
 
 - A plan is more than a loop's attempts: it states the requests of each capability, and

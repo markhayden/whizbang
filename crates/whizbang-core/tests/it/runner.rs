@@ -739,3 +739,88 @@ inputs = { mask = "first.mask" }
     let finished = executor.submit(&call(seed)).unwrap();
     assert_eq!(finished.findings(), None);
 }
+
+#[test]
+fn a_run_from_a_step_given_more_than_its_record_lists_is_refused_before_anything_runs() {
+    // Sixteen steps that hand back up to four masks each, a join between each two, and
+    // a last step: 32 steps, and 65 artifacts given where a record lists 64.
+    let mut steps = String::new();
+    let mut last = "inputs.seed".to_owned();
+    for at in 1..=16 {
+        steps.push_str(&format!(
+            "[[step]]\nid = \"s{at}\"\nop = \"split\"\ninputs = {{ mask = \"{last}\" }}\n\n"
+        ));
+        let id = if at == 16 {
+            "end".to_owned()
+        } else {
+            format!("j{at}")
+        };
+        steps.push_str(&format!(
+            "[[step]]\nid = \"{id}\"\nop = \"join\"\ninputs = {{ mask = \"s{at}.mask\" }}\n\n"
+        ));
+        last = format!("{id}.mask");
+    }
+    let world = World::new("recipe-from-many");
+    let given = world.put(rect_mask(on("photo")));
+    let executor = engine(&world, &recipe(&steps, "end.mask"), Vec::new());
+    let port = |step: &str| whizbang_core::recipe::from_port(step, "mask");
+    let asked = |extra: bool| {
+        let mut asked = call(given).argument("from", Value::text("end"));
+        for at in 1..=16 {
+            for _ in 0..4 {
+                asked = asked.input(&port(&format!("s{at}")), given);
+            }
+        }
+        if extra {
+            asked = asked.input(&port("j1"), given);
+        }
+        asked
+    };
+    let finished = executor.submit(&asked(true)).unwrap();
+    let why = invalid(finished.outcome());
+    assert!(
+        why.contains("65 artifacts are given in place of steps' outputs")
+            && why.contains("64 at most"),
+        "{why}"
+    );
+    assert!(world.record(finished.run().as_str()).steps().is_empty());
+    // As many as a record lists run, and the record lists them all.
+    let finished = executor.submit(&asked(false)).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    let record = world.record(finished.run().as_str());
+    assert_eq!(record.started().unwrap().given.len(), 64);
+    assert_eq!(step_ids(&record), ["end"]);
+}
+
+#[test]
+fn a_run_from_a_step_does_not_leave_unbound_what_a_whole_run_would_bind() {
+    // The second step's optional input takes the first step's output, which every whole
+    // run binds: a run from the second step is refused when nothing is given there.
+    let steps = r#"
+[[step]]
+id = "one"
+op = "mark"
+inputs = { mask = "inputs.seed" }
+x = 0
+
+[[step]]
+id = "two"
+op = "mark"
+inputs = { mask = "inputs.seed", other = "one.mask" }
+x = 1
+"#;
+    let world = World::new("recipe-from-optional");
+    let seed = world.put(rect_mask(on("photo")));
+    let executor = engine(&world, &recipe(steps, "two.mask"), Vec::new());
+    let bare = call(seed).argument("from", Value::text("two"));
+    let finished = executor.submit(&bare).unwrap();
+    let why = invalid(finished.outcome());
+    assert!(
+        why.contains("the step two takes the output mask of the step one, which does not run"),
+        "{why}"
+    );
+    assert!(world.record(finished.run().as_str()).steps().is_empty());
+    // Given, it runs.
+    let finished = executor.submit(&from("one", "two", seed)).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+}

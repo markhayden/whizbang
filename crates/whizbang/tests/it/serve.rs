@@ -821,6 +821,10 @@ fn a_request_id_reserved_for_a_labs_cells_is_refused_and_nothing_runs() {
 /// What `plans` did, in order: each plan it stated and each run it made.
 pub type Events = Arc<std::sync::Mutex<Vec<String>>>;
 
+/// How many attempts the plan of `plans` allows at most: what a test changes where a
+/// config's cap would change, between two preparations of one call.
+pub static ALLOWS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(2);
+
 /// `plans`: a fake action that plans. Asked for `attempts`, its plan allows two of them
 /// at most, unchecked; with `plain` it plans nothing. Its run notes that it ran.
 struct Plans(ActionDescriptor, Events);
@@ -838,7 +842,8 @@ impl Action for Plans {
             return None;
         };
         let asked = *asked as u32;
-        let plan = Plan::new().attempts(asked, asked.min(2), false);
+        let most = ALLOWS.load(std::sync::atomic::Ordering::SeqCst);
+        let plan = Plan::new().attempts(asked, asked.min(most), false);
         Some(plan.because("a test's plan"))
     }
 

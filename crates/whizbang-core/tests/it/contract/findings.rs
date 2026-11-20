@@ -170,6 +170,26 @@ mod executor {
         let by_schema: Vec<(&str, Json)> = vec![
             ("not an object", json!([1, 2])),
             (
+                "an item with no place",
+                with(&|d| drop(d["items"][0].as_object_mut().unwrap().remove("place"))),
+            ),
+            (
+                "an observation with no confidence and no place",
+                with(&|d| {
+                    let item = d["items"][2].as_object_mut().unwrap();
+                    item.remove("confidence");
+                    item.remove("place");
+                }),
+            ),
+            (
+                "a place whose box is null",
+                with(&|d| d["items"][1]["place"]["box"] = Json::Null),
+            ),
+            (
+                "a place whose polygon is null",
+                with(&|d| d["items"][0]["place"]["polygon"] = Json::Null),
+            ),
+            (
                 "another kind",
                 with(&|d| d["findings"] = json!("findings/2")),
             ),

@@ -388,10 +388,21 @@ impl Recipe {
         }
         for name in self.inputs.keys() {
             text::field_name(name).map_err(|why| refuse("inputs", why))?;
-            if [SET, UNTIL].contains(&name.as_str()) {
+            if [SET, UNTIL, FROM].contains(&name.as_str()) {
                 return Err(refuse(
                     "inputs",
                     format!("{name} is the name of the runner's own argument"),
+                ));
+            }
+            // What a run from a step is given goes in at ports of the runner's own,
+            // `from_<step>_<port>`: no input is named as one of them could be.
+            if name.starts_with(&format!("{FROM}_")) {
+                return Err(refuse(
+                    "inputs",
+                    format!(
+                        "{name} begins as the runner's own inputs do, which are named \
+                         {FROM}_<step>_<port>"
+                    ),
                 ));
             }
         }

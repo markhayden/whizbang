@@ -423,6 +423,12 @@ and to go on without a judge when none is ready. So an action may **plan**.
   attempt allowed, more allowed than asked, or more than 16; a reason that is not one
   line) refuses the call as invalid, naming the fault: it is the action's mistake, and
   nothing runs on it.
+- **A panic while planning** is the action's fault too: it is caught where the action is
+  asked, the call is refused as invalid, and nothing is undone, since preparing changes
+  nothing.
+- **The command's door** says a planned call's plan before the call runs, and sends the
+  request with that preparation. A request whose id the store already holds is not told
+  a plan beforehand: it is told the plan in its first run's record.
 - **An action that plans nothing** is prepared exactly as before: the same needs,
   estimate, fingerprint and record.
 
