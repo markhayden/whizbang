@@ -4,7 +4,8 @@
 // refused before it is decoded.
 import { crc32, deflateSync } from "node:zlib";
 
-function chunk(type: string, data: Buffer): Buffer {
+/** One chunk of a PNG: its length, its type, its data and its checksum. */
+export function crcChunk(type: string, data: Buffer): Buffer {
   const length = Buffer.alloc(4);
   length.writeUInt32BE(data.length);
   const body = Buffer.concat([Buffer.from(type, "latin1"), data]);
@@ -21,5 +22,5 @@ export function largePng(width = 10_000, height = 10_000): Buffer {
   header[9] = 0; // grey
   const row = 1 + Math.ceil(width / 8); // a filter byte, then the row's bits
   const pixels = deflateSync(Buffer.alloc(row * height), { level: 9 });
-  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", header), chunk("IDAT", pixels), chunk("IEND", Buffer.alloc(0))]);
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), crcChunk("IHDR", header), crcChunk("IDAT", pixels), crcChunk("IEND", Buffer.alloc(0))]);
 }
