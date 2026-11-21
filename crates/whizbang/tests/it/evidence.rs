@@ -2118,3 +2118,239 @@ fn the_release_record_holds_every_required_check_of_the_receipt_as_passed() {
         assert!(!page.contains(held), "{held}");
     }
 }
+
+/// The page of the format round (plan e1, task F2, item 3) and the `judges/1` it is
+/// written from.
+const SUBMISSION_PAGE: &str = "docs/results/e-submission.md";
+const SUBMISSION_SCORES: &str = "docs/results/e-submission.toml";
+
+/// A rate or a share as the format round's page writes it: three places, or `n/a`.
+fn share(value: Option<&toml::Value>) -> String {
+    value
+        .and_then(toml::Value::as_float)
+        .map_or_else(|| "n/a".to_owned(), |v| format!("{v:.3}"))
+}
+
+/// A count and its rate, as `3 (0.014)`.
+fn counted(count: &toml::Value, rate: Option<&toml::Value>) -> String {
+    format!("{} ({})", count.as_integer().unwrap(), share(rate))
+}
+
+/// The headings of the format round's three tables, in the page's order.
+const SUBMISSION_TABLES: [&str; 3] = [
+    "## Per judge, before and after",
+    "## Rejections, causes and recoveries",
+    "## The clauses of each judge",
+];
+
+/// The rows of the format round's three tables, each written from the scores' scope `all`
+/// and the rule's clauses: one group a table, in the order of [`SUBMISSION_TABLES`].
+fn submission_rows(scores: &toml::Table) -> [Vec<String>; 3] {
+    let scopes = scores["scopes"].as_array().expect("scopes");
+    let all = (scopes.iter())
+        .find(|s| s["name"].as_str() == Some("all"))
+        .expect("the scope all");
+    let mut measures = Vec::new();
+    let mut counts = Vec::new();
+    for m in all["measures"].as_array().unwrap() {
+        let s = &m["submissions"];
+        let (model, arm) = (m["model"].as_str().unwrap(), m["arm"].as_str().unwrap());
+        let interval = m.get("balanced_accuracy").map_or_else(
+            || "n/a".to_owned(),
+            |b| format!("{} to {}", share(b.get("lower")), share(b.get("upper"))),
+        );
+        measures.push(format!(
+            "| {model} | {arm} | {} | {} | {} | {} | {} | {interval} | {:.6} | {} |",
+            s["decisions"].as_integer().unwrap(),
+            counted(&s["failures"], s.get("failure_rate")),
+            counted(&s["first_rejections"], s.get("first_rejection_rate")),
+            s["unknown"].as_integer().unwrap(),
+            share(m.get("balanced_accuracy").and_then(|b| b.get("point"))),
+            m["cost_per_decision_usd"].as_float().unwrap(),
+            share(m.get("self_agreement")),
+        ));
+        for (counted_as, field) in [
+            ("class", "rejections_by_class"),
+            ("also", "also_by_class"),
+            ("cause", "causes"),
+            ("recovery", "recoveries_by_kind"),
+        ] {
+            for (name, count) in s
+                .get(field)
+                .and_then(toml::Value::as_table)
+                .into_iter()
+                .flatten()
+            {
+                counts.push(format!(
+                    "| {model} | {arm} | {counted_as} | {name} | {} |",
+                    count.as_integer().unwrap()
+                ));
+            }
+        }
+    }
+    let change = |c: &toml::Value, name: &str| -> String {
+        c.get(name)
+            .and_then(toml::Value::as_float)
+            .map_or_else(|| "n/a".to_owned(), |v| format!("{v:+.3}"))
+    };
+    let clauses = (scores["format"]["judges"].as_array().unwrap().iter()).map(|c| {
+        format!(
+            "| {} | {} | {} | {} | {} | {} | {} | {} |",
+            c["model"].as_str().unwrap(),
+            c["control_failures"].as_integer().unwrap(),
+            c["treatment_failures"].as_integer().unwrap(),
+            if c["no_new_failures"].as_bool().unwrap() {
+                "yes"
+            } else {
+                "no"
+            },
+            change(c, "balanced_accuracy_change"),
+            change(c, "false_reject_rate_change"),
+            change(c, "false_accept_rate_change"),
+            if c["accuracy_kept"].as_bool().unwrap() {
+                "yes"
+            } else {
+                "no"
+            },
+        )
+    });
+    [measures, counts, clauses.collect()]
+}
+
+#[test]
+fn the_submission_record_holds_only_aggregates() {
+    // Plan e1, task F2, item 3. Held always: the page names the matrix as committed, its
+    // rule, and what it is not, and holds no item, family, path or key.
+    let page = std::fs::read_to_string(repository().join(SUBMISSION_PAGE))
+        .expect("the format round's page is committed");
+    let text = std::fs::read_to_string(repository().join("matrices/e-submission.toml")).unwrap();
+    let matrix = whizbang_eval::matrix::Matrix::parse(&text).unwrap();
+    let block = page
+        .split("## The round\n")
+        .nth(1)
+        .and_then(|rest| rest.split("```toml\n").nth(1))
+        .and_then(|rest| rest.split("\n```").next())
+        .expect("the page's block of the round");
+    let round: toml::Table = block.parse().expect("the round's block is TOML");
+    assert_eq!(round["matrix"].as_str(), Some("e-submission"));
+    assert_eq!(
+        round["matrix_identity"].as_str(),
+        Some(&matrix.identity()[..16])
+    );
+    assert_eq!(round["rule"].as_str(), Some("submission/1"));
+    for held in ["admits nothing", "descriptive"] {
+        assert!(page.contains(held), "{held}");
+    }
+    let scores_path = repository().join(SUBMISSION_SCORES);
+    let outcome = round["outcome"].as_str().expect("an outcome");
+    let mut texts = vec![page.clone()];
+    if outcome == "pending" {
+        // Before the round: no scores beside the page, and no row in its tables.
+        assert!(
+            !scores_path.exists(),
+            "the scores are committed: write the round's outcome on the page"
+        );
+        assert_eq!(page.matches("| Pending |").count(), 3);
+    } else {
+        // After it: the scores are the round's, and the page is written from them.
+        let scores_text = std::fs::read_to_string(&scores_path)
+            .expect("the scores the page is written from are committed");
+        let scores: toml::Table = scores_text.parse().expect("the scores are TOML");
+        assert_eq!(scores["schema"].as_str(), Some("judges/1"));
+        assert_eq!(scores["mode"].as_str(), Some("arms"));
+        assert_eq!(scores["rule"].as_str(), Some("submission/1"));
+        assert_eq!(scores["arm"].as_str(), Some("C;submission=v1"));
+        assert_eq!(scores["treatment"].as_str(), Some("C;submission=v2"));
+        assert_eq!(scores["cells"].as_integer(), Some(1_320));
+        let commit = scores["commit"].as_str().unwrap();
+        assert!(is_ancestor(commit), "{commit}");
+        assert_eq!(round["commit"].as_str(), Some(commit));
+        let runs_commit = round["runs_commit"].as_str().expect("runs_commit");
+        assert!(is_ancestor(runs_commit), "{runs_commit}");
+        let named = scores["matrices"].as_array().unwrap();
+        assert_eq!(named.len(), 1);
+        assert_eq!(named[0]["name"].as_str(), Some("e-submission"));
+        assert_eq!(
+            named[0]["identity"].as_str(),
+            Some(matrix.identity().as_str())
+        );
+        let format = scores["format"].as_table().expect("the rule's outcome");
+        for name in ["outcome", "settled_by", "format"] {
+            assert_eq!(round[name].as_str(), format[name].as_str(), "{name}");
+        }
+        for name in ["started", "ended"] {
+            assert!(round[name].is_str() || round[name].is_datetime(), "{name}");
+        }
+        let all = (scores["scopes"].as_array().unwrap().iter())
+            .find(|s| s["name"].as_str() == Some("all"))
+            .unwrap();
+        let settled: f64 = (all["measures"].as_array().unwrap().iter())
+            .map(|m| m["settled_usd"].as_float().unwrap())
+            .sum();
+        let stated = round["settled_usd"].as_float().expect("settled_usd");
+        assert!((stated - settled).abs() < 0.005, "{stated} {settled}");
+        // The decision on the page names its clause.
+        let decision = page
+            .split("## The decision\n")
+            .nth(1)
+            .and_then(|rest| rest.split("\n## ").next())
+            .unwrap();
+        assert!(decision.contains(format["settled_by"].as_str().unwrap()));
+        assert!(!page.contains("| Pending |"));
+        // Each table holds exactly the rows the scores give it, under its own heading, each
+        // row with as many columns as its header.
+        for (heading, rows) in SUBMISSION_TABLES.iter().zip(submission_rows(&scores)) {
+            let section = page
+                .split(&format!("{heading}\n"))
+                .nth(1)
+                .and_then(|rest| rest.split("\n## ").next())
+                .unwrap_or_else(|| panic!("the page has no {heading}"));
+            let table: Vec<&str> = section.lines().filter(|l| l.starts_with('|')).collect();
+            assert!(table.len() >= 2, "{heading}: no table");
+            let columns = table[0].matches('|').count();
+            for line in &table {
+                assert_eq!(line.matches('|').count(), columns, "{heading}: {line}");
+            }
+            let wanted: Vec<&str> = rows.iter().map(String::as_str).collect();
+            assert!(
+                table[2..] == wanted[..],
+                "{heading}: the table is not the rows the scores give:\n{}",
+                rows.join("\n")
+            );
+        }
+        texts.push(scores_text);
+    }
+    // No item, no family, no path, no key: in the page, and in the scores once there.
+    for dir in whizbang_eval::sets::discover(&repository().join("evalsets")).unwrap() {
+        let set = whizbang_eval::sets::Set::load(&dir).unwrap();
+        let families = set.families_by_item();
+        for text in &texts {
+            for (item, _) in &set.jobs {
+                assert!(!text.contains(item.as_str()), "{item}");
+            }
+            for family in families.values() {
+                assert!(
+                    !text.contains(&format!("`{family}`"))
+                        && !text.contains(&format!("\"{family}\"")),
+                    "{family}"
+                );
+            }
+        }
+    }
+    for text in &texts {
+        for held in [
+            "/Users/",
+            "/home/",
+            "/private/",
+            "/tmp/",
+            "~/",
+            "API_KEY",
+            "_KEY=",
+            "sk-ant",
+            "chk:",
+            "reason",
+        ] {
+            assert!(!text.contains(held), "{held}");
+        }
+    }
+}

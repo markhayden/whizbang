@@ -634,6 +634,73 @@ mod submission_rule {
         assert!(!haiku.accuracy_kept);
         assert!(haiku.false_accept_rate_change.unwrap() > 0.02);
     }
+
+    #[test]
+    fn clause_b_names_every_judge_that_broke_it_with_its_failures_under_each_arm() {
+        // Twenty failures under v1, all of `haiku`'s; under v2 two of `flash` and three of
+        // `terra`, which had none: fewer in all, but new for two judges.
+        let mut decisions = formats(&["haiku", "flash", "terra"], 20, (20, 0));
+        for (model, count) in [("flash", 2), ("terra", 3)] {
+            for d in decisions
+                .iter_mut()
+                .filter(|d| d.arm == "C;submission=v2" && d.model == model)
+                .take(count)
+            {
+                d.computed = Computed::Error;
+                d.submissions = Some(Submissions {
+                    classes: vec!["missing_item".to_owned(), "missing_item".to_owned()],
+                    cause: "invalid_submission".to_owned(),
+                    recoveries: Vec::new(),
+                    also: Vec::new(),
+                    submission: "v2".to_owned(),
+                });
+            }
+        }
+        let format = armed(&complete(decisions)).format.unwrap();
+        assert!(format.fewer_failures);
+        assert_eq!(
+            (format.outcome.as_str(), format.settled_by.as_str()),
+            ("not_adopted", "b")
+        );
+        assert_eq!(
+            format.why,
+            "under the treatment these judges have more submission failures than under the \
+             control: flash (2 against 0); terra (3 against 0); the control is kept"
+        );
+    }
+
+    #[test]
+    fn clause_c_names_every_judge_that_broke_it_and_each_measure_it_broke() {
+        // Failures halve. Under v2, `haiku` passes three expected fails v1 caught; `terra`
+        // fails three expected passes v1 passed; `flash` is unchanged.
+        let mut decisions = formats(&["haiku", "flash", "terra"], 20, (12, 0));
+        for d in decisions.iter_mut().filter(|d| {
+            d.arm == "C;submission=v2" && d.repetition == 1 && d.computed != Computed::Error
+        }) {
+            let fails = ["f15", "f16", "f17"].contains(&d.item.as_str());
+            let passes = ["p15", "p16", "p17"].contains(&d.item.as_str());
+            if d.model == "haiku" && fails {
+                d.computed = Computed::Pass;
+            }
+            if d.model == "terra" && passes {
+                d.computed = Computed::Fail;
+            }
+        }
+        let format = armed(&complete(decisions)).format.unwrap();
+        assert_eq!(
+            (format.outcome.as_str(), format.settled_by.as_str()),
+            ("not_adopted", "c")
+        );
+        // Every judge that broke the clause, each with the measures it broke: `haiku`'s
+        // balanced accuracy is held (its control had the failures), its false-accept rate
+        // is not; `flash` broke nothing and is not named.
+        assert_eq!(
+            format.why,
+            "under the treatment these judges move by more than 2 points: haiku (false-accept \
+             rate +15.00 points); terra (balanced accuracy -7.50 points, false-reject rate \
+             +15.00 points); the control is kept"
+        );
+    }
 }
 
 // --- reading the store ------------------------------------------------------------------------
