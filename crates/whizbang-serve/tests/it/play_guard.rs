@@ -57,7 +57,7 @@ fn an_api_call_without_the_token_is_refused_401_and_names_nothing() {
         assert!(!said.contains(&store), "{said}");
         assert!(!said.contains(env!("CARGO_PKG_VERSION")), "{said}");
         assert!(
-            answer.json()["refused"]
+            answer.json()["error"]
                 .as_str()
                 .unwrap()
                 .contains("whizbang play")

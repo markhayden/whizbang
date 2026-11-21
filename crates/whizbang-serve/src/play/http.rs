@@ -308,9 +308,9 @@ impl Response {
         }
     }
 
-    /// A refusal: `{"refused": why}`, in fixed words that hold nothing the request held.
+    /// A refusal: `{"error": why}`, as the page reads a refusal (`ui/src/api.ts`),, in fixed words that hold nothing the request held.
     pub fn refused(status: u16, why: &str) -> Response {
-        Response::json(status, &serde_json::json!({ "refused": why }))
+        Response::json(status, &serde_json::json!({ "error": why }))
     }
 
     /// Bytes of a type.

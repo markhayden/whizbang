@@ -230,7 +230,7 @@ fn call_refused(error: &CallError) -> Response {
             };
             Response::json(
                 status,
-                &json!({"refused": escaped(&refusal.to_string()), "kind": kind_word(refusal)}),
+                &json!({"error": escaped(&refusal.to_string()), "kind": kind_word(refusal)}),
             )
         }
         _ => Response::refused(500, "the store could not answer"),
@@ -313,7 +313,7 @@ fn start(shared: &Shared, guarded: &Guarded<'_>) -> Response {
         if !same {
             return Response::json(
                 409,
-                &json!({"refused": "another call was started under this request id",
+                &json!({"error": "another call was started under this request id",
                         "kind": "conflict"}),
             );
         }

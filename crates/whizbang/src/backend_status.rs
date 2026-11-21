@@ -150,7 +150,7 @@ pub fn readiness(over: &Over) -> Result<Vec<serde_json::Value>, String> {
                 "default": config.default_of(capability) == Some(name),
                 "ready": kind.is_none(),
                 "missing": kind.map(MissingKind::word),
-                "said": state,
+                "why": state,
             }));
         }
     }
