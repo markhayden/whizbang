@@ -12,7 +12,10 @@
 # one changed, with a 25th entry, or with an entry that names a truth mask is refused
 # before anything is imported or run; every command that loads a model, the three cases
 # among them, runs under the watch on memory and the thread guard at 200; and without the
-# heavy lock nothing starts.
+# heavy lock nothing starts. For a manifest of the kind segment-01 (plan e1, task L1): its
+# 20 entries are run, each under a request id that holds the repetition; one that names a
+# truth mask is refused; and a call whose plan is fewer than three checked attempts stops
+# the script before any run.
 source "$(dirname "$0")/lib.sh"
 
 command -v python3 >/dev/null || fail "python3 is required (3.9 or later, standard library only)"
@@ -89,6 +92,12 @@ request, judge, prompt, image = flag("--request-id"), flag("--judge"), flag("--p
 path = os.path.join(store, "records.jsonl")
 held = [json.loads(line) for line in open(path)] if os.path.exists(path) else []
 loops = [r for r in held if r["asked"]["action"] == "remove_checked"]
+if "--plan-only" in args:
+    # The plan of the call, prepared and not run: the line the file `plan` holds.
+    open(os.path.join(fix, "planned"), "a").write("%s|%s\n" % (judge, prompt))
+    plan_file = os.path.join(fix, "plan")
+    print(open(plan_file).read().strip() if os.path.exists(plan_file) else "plan: 3 of 3 attempts asked, checked; segment 17; fill 3; judge 48")
+    sys.exit(0)
 for loop in loops:
     if loop["identity"]["request"] == request:
         open(os.path.join(fix, "repeats"), "a").write(request + "\n")
@@ -468,6 +477,119 @@ expect_fail "a page of one tally" "two tallies and three cases" python3 -B scrip
 others=$(grep -h -E '^ *(import|from) +[A-Za-z0-9_]+( |$)' scripts/loop-evidence.py |
   sed -E 's/^ *(import|from) +([A-Za-z0-9_]+).*/\2/' | sort -u | grep -v -x -E 'argparse|hashlib|json|os|re|sys|tomllib' || true)
 [ -z "$others" ] || fail "scripts/loop-evidence.py imports outside the standard library: $others"
+
+# --- segment-01: a manifest of 20 entries in four groups, a picture and a truth mask
+# each, laid out as the repository is.
+seg="$tmp/segment"
+seg_manifest="$tmp/segment-01.toml"
+write_segment() { # <how many entries> [<the id whose picture is its truth mask>]
+  python3 -B - "$seg" "$seg_manifest" "$1" "${2:-}" <<'PY2'
+import hashlib, os, sys
+
+folder, manifest, entries, truthy = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+groups = [("whole", 5), ("parts", 6), ("thin", 5), ("keep-the-hole", 4)]
+names = [(g, "%s-%02d" % (g.split("-")[0], i)) for g, n in groups for i in range(1, n + 1)]
+while len(names) < entries:
+    names.append(("whole", "whole-%02d" % (len(names) + 1)))
+out = ['kind = "segment-01"', 'set = "segmentation/segment-01"',
+       'images_repo = "github.com/example/pictures"', 'images_rev = "%s"' % ("a" * 40)]
+
+
+def written(path, text):
+    full = os.path.join(folder, "segmentation/segment-01", path)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, "w") as f:
+        f.write(text)
+    return "sha256:" + hashlib.sha256(text.encode()).hexdigest()
+
+
+for group, name in names[:entries]:
+    image = written("items/%s/image.png" % name, "picture of %s\n" % name)
+    truth = written("items/%s/truth.png" % name, "truth of %s\n" % name)
+    picture = "items/%s/image.png" % name
+    if name == truthy:
+        picture, image = "items/%s/truth.png" % name, truth
+    out += ['', '[[item]]', 'id = "%s"' % name, 'group = "%s"' % group, 'phrase = "a thing in %s"' % name,
+            'image = "%s"' % picture, 'image_sha256 = "%s"' % image,
+            'truth = "items/%s/truth.png"' % name, 'truth_sha256 = "%s"' % truth]
+with open(manifest, "w") as f:
+    f.write("\n".join(out) + "\n")
+PY2
+}
+store="$tmp/e-loop"
+out="$tmp/e-loop-terra-1.toml"
+segment=(--set "$seg" --manifest "$seg_manifest" --judge terra --out "$out" --allowance 25.00)
+: >"$fix/commands"
+rm -f "$fix/started" "$fix/repeats" "$fix/planned"
+none_started() { [ ! -e "$fix/started" ] && [ ! -e "$out" ] || fail "$1: a run was started or a tally written"; }
+# An entry that names a truth mask, by path and by pin, is refused before anything is
+# imported or run; so is a manifest of segment-01 without a repetition.
+write_segment 20 thin-03
+expect_fail "segment-01: an entry that names a truth mask" "the entry thin-03 names a truth mask" evidence "${segment[@]}" --repetition 1
+[ ! -e "$store" ] && [ ! -s "$fix/commands" ] || fail "segment-01: something was imported for a manifest that names a truth mask"
+write_segment 20
+expect_fail "segment-01 without a repetition" "needs --repetition, 1 to 9" evidence "${segment[@]}"
+[ ! -e "$store" ] || fail "segment-01: something was imported without a repetition"
+# A cap that plans fewer than three attempts, or none checked, stops before any run.
+for plan in "plan: 2 of 3 attempts asked, checked; segment 9; fill 2; judge 32; the call cap covers 2 of the 3 attempts asked" \
+  "plan: 1 of 3 attempts asked, unchecked; fill 1; judge 0; the call cap does not cover a check"; do
+  printf '%s\n' "$plan" >"$fix/plan"
+  expect_fail "segment-01: a plan of fewer than three checked attempts" "the plan is not three checked attempts of three" evidence "${segment[@]}" --repetition 1
+  none_started "segment-01: a plan of fewer than three checked attempts"
+done
+[ "$(wc -l <"$fix/planned" | tr -d ' ')" = 2 ] || fail "segment-01: each refused run prepared one call"
+grep -F -- "--plan-only --image sha256:" "$fix/commands" | grep -F -- "--judge terra" >/dev/null ||
+  fail "segment-01: the call prepared names the judge"
+[ "$(grep -c '^memory-watch,thread-guard,|200|rascal remove-checked --plan-only ' "$fix/commands" || true)" = 2 ] ||
+  fail "segment-01: the call prepared was not under the guards"
+rm "$fix/plan"
+# With three checked attempts planned, the 20 are run, each once, under its request id
+# with the repetition in it.
+rm -f "$fix/planned"
+expect_pass "segment-01, repetition 1" evidence "${segment[@]}" --repetition 1
+grep -F "started 20 runs of 20" "$tmp/out" >/dev/null || fail "segment-01: the 20 were not run: $(cat "$tmp/out")"
+[ "$(wc -l <"$fix/planned" | tr -d ' ')" = 1 ] || fail "segment-01: one call was prepared before the runs"
+expected=$(python3 -B - "$seg_manifest" <<'PY2'
+import re, sys
+for name in re.findall(r'^id = "([^"]+)"$', open(sys.argv[1]).read(), re.M):
+    print("e-loop-terra-1-%s" % name)
+PY2
+)
+[ "$(cat "$fix/started")" = "$expected" ] || fail "segment-01: each of the 20 is run once, in the manifest's order, under e-loop-<judge>-<repetition>-<id>"
+grep -F 'segmentation/segment-01/items/whole-01/image.png' "$fix/commands" >/dev/null || fail "segment-01: the picture imported is the entry's image.png"
+! grep -F 'truth.png' "$fix/commands" >/dev/null || fail "segment-01: a truth mask was handed to the binary"
+for line in 'kind = "segment-01"' 'repetition = 1' 'entries = 20' 'runs = 20' 'not_run = 0' 'judge = "terra"'; do
+  holds "$line"
+done
+by_group=$(awk '/^\[group\./ { g = $0 } g && /^runs = / { print g " " $0 }' "$out")
+[ "$by_group" = '[group.keep-the-hole] runs = 4
+[group.parts] runs = 6
+[group.thin] runs = 5
+[group.whole] runs = 5' ] || fail "segment-01: the runs are not tallied by group: $by_group"
+bad=$(awk '
+  /^#/ || /^$/ { next }
+  /^\[[a-z_]+\]$/ || /^\[group\.[a-z0-9-]+\]$/ || /^\[\[finding\]\]$/ { next }
+  /^[a-z0-9_]+ = [0-9]+$/ { next }
+  /^(schema|commit|whizbang|judge|kind|judge_model|filler|finder|action|job_template|config|manifest_sha256) = "[A-Za-z0-9 ._:,+\/-]+"$/ { next }
+  /^(obligation|disposition|confidence) = "[A-Za-z0-9_]+"$/ { next }
+  { print }' "$out")
+[ -z "$bad" ] || fail "segment-01: the tally holds a line that is not a count, a version, a model or a digest: $bad"
+for held in whole-0 parts-0 thin-0 hole-0 "a thing in" image.png truth.png "$tmp" MARMALADE made-up-key; do
+  ! grep -F -e "$held" "$out" >/dev/null || fail "segment-01: the tally holds $held"
+done
+# The second repetition is a run of its own under each entry, and a run of the script again
+# starts nothing and prepares nothing.
+out="$tmp/e-loop-terra-2.toml"
+segment=(--set "$seg" --manifest "$seg_manifest" --judge terra --out "$out")
+expect_pass "segment-01, repetition 2" evidence "${segment[@]}" --repetition 2
+grep -F "started 20 runs of 20" "$tmp/out" >/dev/null || fail "segment-01: repetition 2 did not run its 20"
+[ "$(grep -c '^e-loop-terra-2-' "$fix/started")" = 20 ] || fail "segment-01: repetition 2 has its own request ids"
+expect_pass "segment-01, repetition 2 again" evidence "${segment[@]}" --repetition 2
+grep -F "started 0 runs of 20" "$tmp/out" >/dev/null || fail "segment-01: a second run started something"
+[ "$(wc -l <"$fix/planned" | tr -d ' ')" = 2 ] || fail "segment-01: a run with nothing left to do prepared a call"
+[ ! -e "$fix/repeats" ] || fail "segment-01: an entry the store held was asked again"
+# A repetition given for the edit set is refused.
+expect_fail "a repetition for the edit set" "--repetition is for a manifest of the kind segment-01" evidence --set "$set_dir" --manifest "$manifest" --judge terra --out "$tmp/x.toml" --repetition 1
 
 # --- Once through the real lock and the real guards: the command that loads a model has
 # the watch on memory and the thread guard above it, and the guard's limit is 200.

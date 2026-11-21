@@ -17,6 +17,17 @@
 #       --config <file> --env-file <file> --out docs/results/m4-loop-<judge>.toml \
 #       [--allowance <USD>] [--models-dir <dir>]
 #
+# Or, for the loop on segment-01 (plan e1, task L1, item 4), once for each judge and
+# repetition, in a store made new for the round:
+#
+#   WHIZBANG_THREAD_LIMIT=200 scripts/heavy.sh e-loop scripts/loop-evidence.sh \
+#       --binary <whizbang> --store <store> --set <folder> \
+#       --manifest labs/e-loop/segment-01.toml --judge <judge> --repetition <1..9> \
+#       --config <file> --env-file <file> --out docs/results/e-loop-<judge>-<n>.toml
+#
+# where the folder holds the set's pictures laid out as their repository is
+# (`<folder>/segmentation/segment-01/items/<id>/image.png`), outside the work tree.
+#
 # And a case by hand, under the same first line:
 #
 #   ... scripts/loop-evidence.sh --case <name> --image <picture> --prompt <phrase> \
@@ -34,12 +45,20 @@
 # - **Which pictures.** The folder also holds clean pictures, two other kinds of defect
 #   and the truth masks, so nothing is taken by looking in it. The committed manifest's
 #   entries of `remove_prompt` are taken: exactly 24, each picture there under the SHA-256
-#   the manifest pins, none a truth mask. On any difference it stops, naming the entry,
+#   the manifest pins, none a truth mask. Of a manifest of the kind `segment-01`, every
+#   entry, as many as it holds, and only its `image.png`: an entry that names a truth
+#   mask, by path or by pin, is refused. On any difference it stops, naming the entry,
 #   having imported and run nothing.
+# - **Three checked attempts, or nothing paid** (segment-01). Before the first run that
+#   is still to be made, it imports the first entry's picture and prepares that call
+#   with `--plan-only`, which sends and reserves nothing; unless the plan says three
+#   attempts of the three asked, checked, it stops, having run nothing. The config's
+#   call cap must cover three attempts with the judge named (docs/guides/loop.md, "What
+#   it costs").
 # - **The binary is of this tree.** Its `--version` names a commit, which must be HEAD or
 #   an ancestor of it, in a checkout with no tracked change: the commit the tally names.
 # - **Nothing is paid for twice.** An entry's request id is `m4-loop-<judge>-<item id>`
-#   (a case's, `m4-loop-case-<name>`). An entry whose run the store already holds is not
+#   (a case's, `m4-loop-case-<name>`; segment-01's, `e-loop-<judge>-<repetition>-<item id>`). An entry whose run the store already holds is not
 #   started again; one that was interrupted is asked again under its id, which the store
 #   answers with the run it made (ADR 0007). So a run of this script that stopped is run
 #   again as it was typed.
@@ -69,7 +88,7 @@ stop() {
   exit 1
 }
 usage() {
-  echo "usage: scripts/loop-evidence.sh --binary <whizbang> --store <dir> --set <folder> --manifest <file> --judge <judge> --config <file> --env-file <file> --out <file> [--allowance <USD>] [--models-dir <dir>]" >&2
+  echo "usage: scripts/loop-evidence.sh --binary <whizbang> --store <dir> --set <folder> --manifest <file> --judge <judge> [--repetition <1..9>] --config <file> --env-file <file> --out <file> [--allowance <USD>] [--models-dir <dir>]" >&2
   echo "       scripts/loop-evidence.sh --case <name> --image <picture> --prompt <phrase> --binary <whizbang> --store <dir> --config <file> --env-file <file> [--judge <judge>] [--out <file>] [--allowance <USD>] [--models-dir <dir>]" >&2
   exit 2
 }
@@ -99,7 +118,7 @@ fi
   exit 2
 }
 
-binary= store= set= manifest= judge= config= env_file= out= allowance= models= name= image= prompt=
+binary= store= set= manifest= judge= config= env_file= out= allowance= models= name= image= prompt= repetition=
 while [ $# -gt 0 ]; do
   [ $# -ge 2 ] || usage
   case "$1" in
@@ -116,13 +135,14 @@ while [ $# -gt 0 ]; do
     --case) name=$2 ;;
     --image) image=$2 ;;
     --prompt) prompt=$2 ;;
+    --repetition) repetition=$2 ;;
     *) usage ;;
   esac
   shift 2
 done
 [ -n "$binary" ] && [ -n "$store" ] && [ -n "$config" ] && [ -n "$env_file" ] || usage
 if [ -n "$name" ]; then
-  [ -n "$image" ] && [ -n "$prompt" ] && [ -z "$set" ] && [ -z "$manifest" ] || usage
+  [ -n "$image" ] && [ -n "$prompt" ] && [ -z "$set" ] && [ -z "$manifest" ] && [ -z "$repetition" ] || usage
   printf '%s\n' "$name" | grep -E '^[a-z][a-z0-9-]{0,31}$' >/dev/null || stop "a case's name is lower-case letters, digits and -"
 else
   [ -n "$set" ] && [ -n "$manifest" ] && [ -n "$judge" ] && [ -n "$out" ] && [ -z "$image" ] && [ -z "$prompt" ] || usage
@@ -167,9 +187,22 @@ if [ -z "$name" ]; then
   [ -f "$manifest" ] || stop "--manifest names no file"
   [ -d "$set" ] || stop "--set names no folder"
   set=$(cd "$set" && pwd -P)
+  tally kind --manifest "$manifest" >"$work/kind" || stop "the manifest cannot be read; nothing was imported or run"
+  kind=$(sed -n 1p "$work/kind")
+  count=$(sed -n 2p "$work/kind")
+  if [ "$kind" = segment-01 ]; then
+    printf '%s\n' "$repetition" | grep -E '^[1-9]$' >/dev/null || stop "a manifest of the kind segment-01 needs --repetition, 1 to 9; nothing was imported or run"
+  else
+    [ -z "$repetition" ] || stop "--repetition is for a manifest of the kind segment-01; nothing was imported or run"
+    count=24
+  fi
   tally entries --manifest "$manifest" --set "$set" >"$work/entries" || stop "the set is not the manifest's; nothing was imported or run"
-  [ "$(wc -l <"$work/entries" | tr -d ' ')" = 24 ] || stop "the entries are not 24; nothing was imported or run"
-  say "the 24 entries of remove_prompt are in the folder, each under the SHA-256 the manifest pins"
+  [ "$(wc -l <"$work/entries" | tr -d ' ')" = "$count" ] || stop "the entries are not $count; nothing was imported or run"
+  if [ "$kind" = segment-01 ]; then
+    say "the $count entries of segment-01 are in the folder, each under the SHA-256 the manifest pins"
+  else
+    say "the 24 entries of remove_prompt are in the folder, each under the SHA-256 the manifest pins"
+  fi
 else
   [ -f "$image" ] || stop "--image names no file"
 fi
@@ -228,6 +261,33 @@ looped() {
   ran=$((ran + 1))
 }
 
+# request_of <item id>: the request id of an entry's run.
+request_of() {
+  if [ "${kind:-}" = segment-01 ]; then
+    printf 'e-loop-%s-%s-%s\n' "$judge" "$repetition" "$1"
+  else
+    printf 'm4-loop-%s-%s\n' "$judge" "$1"
+  fi
+}
+# planned: before the first run still to be made, the plan of the first entry's call,
+# prepared and not run; three checked attempts of three, or the script stops.
+planned() {
+  local first id phrase picture plan
+  first=$(sed -n 1p "$work/entries")
+  picture=$(printf '%s\n' "$first" | cut -f2)
+  phrase=$(printf '%s\n' "$first" | cut -f3)
+  id=$(imported "$set/$picture") || stop "a picture could not be imported"
+  [ -n "$id" ] || stop "an import printed no image"
+  plan=$(guarded rascal remove-checked --plan-only --image "$id" --prompt "$phrase" --judge "$judge" \
+    --store "$store" "${under_config[@]}" 2>"$work/err") || {
+    sed 's/^/    /' "$work/err" >&2
+    stop "the call could not be prepared; nothing was run"
+  }
+  printf '%s\n' "$plan" | sed 's/^/    /'
+  printf '%s\n' "$plan" | grep -E '^plan: 3 of 3 attempts asked, checked;' >/dev/null ||
+    stop "the plan is not three checked attempts of three: the config's call cap must cover three attempts with the judge $judge (docs/guides/loop.md, \"What it costs\"); nothing was run"
+}
+
 exported
 ran=0
 if [ -n "$name" ]; then
@@ -237,14 +297,23 @@ if [ -n "$name" ]; then
   tally case --records "$work/records" --request "$request" --name "$name" --commit "$commit" --whizbang "$version" --out "${out:--}"
   say "the case $name: started $ran run"
 else
+  if [ "$kind" = segment-01 ]; then
+    left=0
+    while IFS=$'\t' read -r id picture phrase; do
+      held "$(request_of "$id")" || left=$((left + 1))
+    done <"$work/entries"
+    [ "$left" = 0 ] || planned
+  fi
   at=0
   while IFS=$'\t' read -r id picture phrase; do
     at=$((at + 1))
-    say "entry $at of 24"
-    looped "m4-loop-$judge-$id" "$set/$picture" "$phrase" </dev/null
+    say "entry $at of $count"
+    looped "$(request_of "$id")" "$set/$picture" "$phrase" </dev/null
   done <"$work/entries"
-  tally tally --records "$work/records" --manifest "$manifest" --judge "$judge" --commit "$commit" --whizbang "$version" --out "$out"
-  say "started $ran runs of 24; wrote $out"
+  tallied=(--records "$work/records" --manifest "$manifest" --judge "$judge" --commit "$commit" --whizbang "$version" --out "$out")
+  [ -z "$repetition" ] || tallied+=(--repetition "$repetition")
+  tally tally "${tallied[@]}"
+  say "started $ran runs of $count; wrote $out"
 fi
 done_ok=1
 exit 0
