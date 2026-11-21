@@ -195,7 +195,12 @@ fn main() {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&models, std::fs::Permissions::from_mode(0o700));
     }
-    let shipped = wiring::Models::shipped().unwrap_or_else(|why| fail(&why));
+    // The catalogue's models as on the Mac, whose platform `sam3` names, on every runner:
+    // so it is shown not installed, with its size, and never not for this platform.
+    // Nothing is installed or run.
+    let shipped = wiring::Models::shipped()
+        .unwrap_or_else(|why| fail(&why))
+        .runs_on(Some(whizbang_backends::models::Platform::MacosArm64));
     let over = Over::nothing()
         .config(Some(&config))
         .kinds(kinds)
