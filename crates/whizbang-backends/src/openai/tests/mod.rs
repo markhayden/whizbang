@@ -48,3 +48,27 @@ fn a_fault_holds_nothing_of_the_body_the_headers_or_the_address() {
         wire::NOT_A_RESPONSE,
     );
 }
+
+#[test]
+fn a_key_written_twice_in_a_calls_arguments_is_kept_beside_the_call() {
+    // Plan e1, task F1: the arguments arrive as text, and a key written twice is lost
+    // once they are parsed; where it was is kept beside the call.
+    let arguments =
+        r#"{"items": {"chk_ob_SF1_candidate": {"a": 1}, "chk_ob_SF1_candidate": {"a": 2}}}"#;
+    let body = serde_json::json!({
+        "id": "resp_1", "status": "completed",
+        "output": [{ "type": "function_call", "id": "fc_1", "call_id": "call_1",
+                     "name": "submit_verdict", "arguments": arguments, "status": "completed" }],
+        "usage": { "input_tokens": 10, "output_tokens": 5 }
+    });
+    let turn = wire::turn(body.to_string().as_bytes()).unwrap();
+    let call = turn.tool_calls().next().unwrap();
+    assert_eq!(call.repeated_keys(), ["/items/chk_ob_SF1_candidate"]);
+    assert_eq!(call.arguments()["items"]["chk_ob_SF1_candidate"]["a"], 2);
+    // Arguments with no key written twice keep none.
+    let once = body
+        .to_string()
+        .replace(r#", \"chk_ob_SF1_candidate\": {\"a\": 2}"#, "");
+    let turn = wire::turn(once.as_bytes()).unwrap();
+    assert!(turn.tool_calls().next().unwrap().repeated_keys().is_empty());
+}

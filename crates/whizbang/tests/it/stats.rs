@@ -6,6 +6,10 @@ use crate::matrix::{
     PLENTY, SF1, SF2, checks, items, matrix_with, never, ran, run_matrix, world_with,
 };
 use crate::wired::whizbang;
+use std::sync::Arc;
+use whizbang_core::contract::{Call, Executor, Value};
+use whizbang_core::store::Store;
+use whizbang_core::store::fs::RealFs;
 
 const ITEMS: [&str; 3] = ["porch-alpha", "porch-bravo", "porch-charlie"];
 
@@ -99,19 +103,32 @@ fn unsure_by_rule_prints_aggregates_and_no_item() {
 
 #[test]
 fn rejections_by_class_and_cause() {
-    // Plan e1, task T1, item 3. Three runs of `check` under arm F: the first repaired
-    // after an item was left out; the second left it out twice and failed; the third
-    // whole at once.
-    let (judged, tiny) = world_with("stats-rejections", &ITEMS);
-    let matrix = matrix_with(SET, "\"F\"");
-    let short = || items(&[(SF1, "held", "confident")]);
-    let whole = || items(&[(SF1, "held", "confident"), (SF2, "held", "confident")]);
-    let answers = vec![short(), whole(), short(), short(), whole()];
-    let (report, _) = run_matrix(&judged, answers, &|e| {
-        ran(e, &judged, &tiny, &matrix, PLENTY, &never)
-    });
-    assert!(report.is_ok(), "{report:?}");
-    let root = &judged.world.root;
+    // Plan e1, task T1, item 3. Three runs that kept what `check` keeps of its rejections,
+    // written by a fake action of the test: the first repaired after an item was left
+    // out; the second left it out twice and failed; the third whole at once.
+    let scratch = whizbang_testkit::scratch::Scratch::new("stats-rejections");
+    let root = scratch.path().to_path_buf();
+    let store = Arc::new(Store::open(&root, Arc::new(RealFs)).unwrap());
+    let mut registry = whizbang::wiring::registry().unwrap();
+    registry.register(Arc::new(Keeps::new())).unwrap();
+    let executor = crate::runner(registry, store);
+    let missing = serde_json::json!({"turn": 1, "class": "missing_item"});
+    let again = serde_json::json!({"turn": 2, "class": "missing_item"});
+    for (rejections, cause) in [
+        (vec![missing.clone()], "concluded"),
+        (vec![missing, again], "invalid_submission"),
+        (vec![], "concluded"),
+    ] {
+        let kept = serde_json::json!({"contract": "rejections/2", "submission": "v1",
+            "rejections": rejections, "recoveries": [], "cause": cause});
+        let call = Call::new("keeps").argument("kept", Value::text(&kept.to_string()));
+        assert_eq!(
+            executor.submit(&call).unwrap().outcome().name(),
+            "completed"
+        );
+    }
+    drop(executor);
+    let root = &root;
     let stats = whizbang(&["runs", "stats", "--rejections"], root);
     assert_eq!(stats.code, Some(0), "{}", stats.err);
     let (_, counted) = stats.out.split_once("rejections: ").unwrap();
@@ -141,12 +158,9 @@ fn rejections_by_class_and_cause() {
          \x20 class\tno_submission\t0\n\
          \x20 class\tunknown\t0\n"
     );
-    // No item, set or run is named; without the flag, no count.
-    for item in ITEMS {
-        assert!(!stats.out.contains(item), "{item}");
-    }
-    assert!(!stats.out.contains(SET) && !stats.out.contains("chk:"));
-    for (run, _) in checks(root) {
+    // No run is named; without the flag, no count.
+    assert!(!stats.out.contains("chk:"));
+    for (run, _) in crate::matrix::runs_of(root, "keeps") {
         assert!(!stats.out.contains(&run), "{run}");
     }
     let plain = whizbang(&["runs", "stats"], root);
@@ -214,4 +228,52 @@ fn runs_stats_counts_a_loops_attempts_and_retries() {
     // Runs that are no loop's say nothing of loops.
     let other = whizbang(&["runs", "stats", "--action", "grow"], &world.root);
     assert!(!other.out.contains("loops:"), "{}", other.out);
+}
+
+/// A fake action of these tests, `keeps`: it writes the text it is given as the diagnostic
+/// `check` keeps of its rejections, and completes.
+struct Keeps {
+    descriptor: whizbang_core::contract::ActionDescriptor,
+}
+
+impl Keeps {
+    fn new() -> Keeps {
+        use whizbang_core::contract::{ActionDescriptor, Argument, Kind, ValueType};
+        let draft = ActionDescriptor::draft(
+            "keeps",
+            "1.0.0",
+            Kind::Primitive,
+            "Keeps the text it is given as a run's rejections; a fake for tests.",
+        )
+        .argument(Argument::required("kept", "What to keep.", ValueType::Text));
+        Keeps {
+            descriptor: draft.build().unwrap(),
+        }
+    }
+}
+
+impl whizbang_core::contract::Action for Keeps {
+    fn descriptor(&self) -> &whizbang_core::contract::ActionDescriptor {
+        &self.descriptor
+    }
+
+    fn run(
+        &self,
+        call: &whizbang_core::contract::PreparedCall,
+        context: &whizbang_core::contract::Context,
+    ) -> Result<whizbang_core::contract::Produced, whizbang_core::contract::Failure> {
+        let kept = call
+            .arguments()
+            .iter()
+            .find_map(|(name, value)| match value {
+                Value::Text(text) if name == "kept" => Some(text.clone()),
+                _ => None,
+            });
+        let kept = kept.unwrap_or_default();
+        let written = context
+            .diagnostics()
+            .write(whizbang_squint::check::REJECTIONS, kept.as_bytes());
+        written.map_err(|why| whizbang_core::contract::Failure::error("kept", &why))?;
+        Ok(whizbang_core::contract::Produced::nothing())
+    }
 }

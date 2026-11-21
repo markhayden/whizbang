@@ -82,13 +82,23 @@ impl Judge {
 /// A matrix file may write an arm as that name, or as a table:
 /// `{ arm = "F", details = [{ detail = "tiles", use_cases = ["reality-checks"] }], second_look = "on" }`,
 /// or with `second_look = [{ look = "strict", use_cases = ["reality-checks"] }]`.
+///
+/// Either arm may name the form the judge answers in, `submission`, `v1` or `v2` (plan
+/// e1, task F1): `C;submission=v2`, or `submission = "v2"` in a table. It is in the arm's
+/// name only when given, so every matrix written before it keeps its identity, and an arm
+/// that names none runs the default of the binary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Arm {
     pub first: bool,
     pub tools: Vec<String>,
     pub details: Vec<Detail>,
     pub second_look: Vec<Look>,
+    pub submission: Option<String>,
 }
+
+/// The values an arm's `submission` takes. The binary's tests hold this to
+/// `whizbang_squint::check::SUBMISSIONS`.
+pub const SUBMISSIONS: [&str; 2] = ["v1", "v2"];
 
 /// A second look an arm gives, and the use cases it gives it for: every one when none is
 /// named.
@@ -217,6 +227,11 @@ impl Arm {
                  control"
             ));
         }
+        if let Some(submission) = &self.submission
+            && !SUBMISSIONS.contains(&submission.as_str())
+        {
+            return Err(format!("arm {self}: submission is v1 or v2"));
+        }
         if self.details.len() > ARM_DETAILS_LIMIT {
             return Err(format!("arm {self}: at most {ARM_DETAILS_LIMIT} details"));
         }
@@ -292,6 +307,9 @@ impl std::fmt::Display for Arm {
                 .collect();
             write!(f, ";second_look={}", named.join("|"))?;
         }
+        if let Some(submission) = &self.submission {
+            write!(f, ";submission={submission}")?;
+        }
         Ok(())
     }
 }
@@ -327,6 +345,7 @@ impl std::str::FromStr for Arm {
             tools,
             details: Vec::new(),
             second_look: Vec::new(),
+            submission: None,
         };
         let mut said = BTreeSet::new();
         for setting in settings {
@@ -373,9 +392,13 @@ impl std::str::FromStr for Arm {
                         });
                     }
                 }
+                "submission" if plain(value) => arm.submission = Some(value.to_owned()),
+                "submission" => {
+                    return Err(format!("arm {text:?}: submission is v1 or v2"));
+                }
                 _ => {
                     return Err(format!(
-                        "arm {text:?}: its settings are details and second_look"
+                        "arm {text:?}: its settings are details, second_look and submission"
                     ));
                 }
             }
@@ -407,6 +430,8 @@ struct Table {
     details: Vec<Detail>,
     #[serde(default)]
     second_look: Option<Looks>,
+    #[serde(default)]
+    submission: Option<String>,
 }
 
 /// A table's second look: `on`, `strict` or `off` for every use case, or a list of looks.
@@ -439,6 +464,7 @@ impl<'de> Deserialize<'de> for Arm {
                     }],
                     Some(Looks::List(looks)) => looks,
                 };
+                arm.submission = table.submission;
                 arm.validate().map_err(serde::de::Error::custom)?;
                 // What the cell will be named must read back as this arm.
                 read(&arm.to_string())

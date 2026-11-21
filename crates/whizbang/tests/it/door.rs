@@ -68,6 +68,7 @@ fn the_call_of_a_check_states_all_four_settings_whatever_the_recipe_says() {
         projection: "full",
         tools: &tools,
         second_look: "strict",
+        submission: Some("v2"),
     };
     assert_eq!(
         set_of(&asked, "source-fidelity"),
@@ -76,7 +77,8 @@ fn the_call_of_a_check_states_all_four_settings_whatever_the_recipe_says() {
             "details.detail=align,change_map",
             "judge.tools=view,align,mine",
             "judge.projection=full",
-            "judge.second_look=strict"
+            "judge.second_look=strict",
+            "judge.submission=v2"
         ]
     );
     // The names a door takes, the default first.
