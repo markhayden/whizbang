@@ -628,7 +628,8 @@ fn keep(shared: &Shared, address: SocketAddr) {
                 state.left = state.runs.len();
                 state.done = true;
                 drop(state);
-                finish(shared, address);
+                // A second quit waits for nobody.
+                finish(shared, address, if hurried { Instant::now() } else { end });
                 return;
             }
         }
@@ -647,12 +648,21 @@ fn keep(shared: &Shared, address: SocketAddr) {
 
 /// The end: the executor let go, the door told, everyone waiting woken, and the acceptor
 /// woken by a connection of its own so that it sees the end and closes the listener.
-fn finish(shared: &Shared, address: SocketAddr) {
+///
+/// A handler or the canceller may still hold a clone of the executor for a moment (a
+/// start answered as the quit came, say): the end waits, until the grace's end at most,
+/// for this to be the last, so that dropping it lets the store's writer go.
+fn finish(shared: &Shared, address: SocketAddr, until: Instant) {
     let executor = shared
         .executor
         .write()
         .unwrap_or_else(|e| e.into_inner())
         .take();
+    if let Some(executor) = &executor {
+        while Arc::strong_count(executor) > 1 && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
     drop(executor);
     shared.play.closing();
     shared.notify();
