@@ -9,7 +9,7 @@
 //! marked as clamped: where the judge points is evidence, and a slip in its numbers
 //! does not throw away what it saw.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
 use whizbang_core::capability::ToolDefinition;
 use whizbang_core::contract::Verdict;
@@ -55,6 +55,99 @@ pub fn submit_definition() -> Option<Json> {
         "description": tool.get("description")?,
         "input_schema": schema,
     }))
+}
+
+/// What kind of rejection a submission met (plan e1, task T1): recorded beside each
+/// rejection, so that the failure rate of a model is counted by kind. The words the judge
+/// is sent are the [`Rejection`]'s message, and no class changes them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Class {
+    /// The submission is no object of lists: `items` or `findings` not a list, or a
+    /// string.
+    NotAList,
+    /// An item that is not on the checklist.
+    UnknownItem,
+    /// An item of the checklist with no disposition.
+    MissingItem,
+    /// An item of the checklist with more than one disposition.
+    DuplicateItem,
+    /// An enum or a type not of the schema, or an empty reason.
+    BadField,
+    /// A location missing, of a frame of no image of the job, or not of the schema.
+    Location,
+    /// An `allowed_by` missing, naming no exemption that applies, or given where none is.
+    AllowedBy,
+    /// A finding that cites no rule, the wrong kind of rule, or a rule not of its image.
+    FindingCites,
+    /// Evidence that is not a list, or cites a call that did not complete.
+    Evidence,
+    /// `submit_verdict` called with other calls, or more than once in a turn.
+    NotAlone,
+    /// A turn of the judge that ended without calling `submit_verdict`.
+    NoSubmission,
+}
+
+impl Class {
+    /// Every class, in the order of the plan.
+    pub const ALL: [Class; 11] = [
+        Class::NotAList,
+        Class::UnknownItem,
+        Class::MissingItem,
+        Class::DuplicateItem,
+        Class::BadField,
+        Class::Location,
+        Class::AllowedBy,
+        Class::FindingCites,
+        Class::Evidence,
+        Class::NotAlone,
+        Class::NoSubmission,
+    ];
+
+    /// The class as it is recorded: `not_a_list`, `unknown_item`, ...
+    pub fn name(self) -> &'static str {
+        match self {
+            Class::NotAList => "not_a_list",
+            Class::UnknownItem => "unknown_item",
+            Class::MissingItem => "missing_item",
+            Class::DuplicateItem => "duplicate_item",
+            Class::BadField => "bad_field",
+            Class::Location => "location",
+            Class::AllowedBy => "allowed_by",
+            Class::FindingCites => "finding_cites",
+            Class::Evidence => "evidence",
+            Class::NotAlone => "not_alone",
+            Class::NoSubmission => "no_submission",
+        }
+    }
+}
+
+/// Why a submission is not a verdict: its class, and the words the judge is sent, which
+/// quote nothing the judge wrote but the ids it was given.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rejection {
+    pub class: Class,
+    pub message: String,
+}
+
+impl Rejection {
+    pub fn new(class: Class, message: impl Into<String>) -> Rejection {
+        Rejection {
+            class,
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for Rejection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+/// A rejection of this class, with these words.
+fn refused<T>(class: Class, message: impl Into<String>) -> Result<T, Rejection> {
+    Err(Rejection::new(class, message))
 }
 
 #[derive(Deserialize)]
@@ -266,7 +359,11 @@ fn citable(resolved: &Resolved) -> String {
 /// id of the call (`also`); or why not, naming the item or the finding and the ids it may
 /// cite, quoting nothing it says. The provider's ids are accepted and never listed: no
 /// judge is shown them as text, and some providers make them up for the adapter.
-pub fn cited_calls_held(arguments: &Json, shown: &[String], also: &[String]) -> Result<(), String> {
+pub fn cited_calls_held(
+    arguments: &Json,
+    shown: &[String],
+    also: &[String],
+) -> Result<(), Rejection> {
     let lists = |key: &str| arguments.get(key).and_then(Json::as_array).cloned();
     let items = (lists("items").unwrap_or_default().into_iter()).map(|item| {
         let named = item.get("id").and_then(Json::as_str).unwrap_or("an item");
@@ -280,7 +377,10 @@ pub fn cited_calls_held(arguments: &Json, shown: &[String], also: &[String]) -> 
             continue;
         };
         let Some(cited) = cited.as_array() else {
-            return Err(format!("{who}: evidence is a list of tool call ids"));
+            return refused(
+                Class::Evidence,
+                format!("{who}: evidence is a list of tool call ids"),
+            );
         };
         for id in cited {
             let completed_here = id
@@ -295,10 +395,13 @@ pub fn cited_calls_held(arguments: &Json, shown: &[String], also: &[String]) -> 
                         listed(shown.iter().map(String::as_str))
                     )
                 };
-                return Err(format!(
-                    "{who}: evidence cites a tool call that is not a completed call of this \
-                     run; {may}"
-                ));
+                return refused(
+                    Class::Evidence,
+                    format!(
+                        "{who}: evidence cites a tool call that is not a completed call of \
+                         this run; {may}"
+                    ),
+                );
             }
         }
     }
@@ -306,75 +409,99 @@ pub fn cited_calls_held(arguments: &Json, shown: &[String], also: &[String]) -> 
 }
 
 /// An answer read, or why not, in words that quote nothing of it.
-fn read(value: &Json, who: &str) -> Result<Answer, String> {
+fn read(value: &Json, who: &str) -> Result<Answer, Rejection> {
     serde_json::from_value(value.clone()).map_err(|_| {
-        format!(
-            "{who}: its disposition, confidence, reason, allowed_by or location is not of \
-             the schema"
+        Rejection::new(
+            Class::BadField,
+            format!(
+                "{who}: its disposition, confidence, reason, allowed_by or location is not of \
+                 the schema"
+            ),
         )
     })
 }
 
+/// A location's rejection, under the name of what it is of.
+fn misplaced(who: &str) -> impl Fn(String) -> Rejection + '_ {
+    move |why| Rejection::new(Class::Location, format!("{who}: {why}"))
+}
+
+/// An exemption's rejection.
+fn unexempt(why: String) -> Rejection {
+    Rejection::new(Class::AllowedBy, why)
+}
+
 /// The verdict a submission states, or why it states none, in words that quote nothing
-/// the judge wrote but the ids it was given.
+/// the judge wrote but the ids it was given, with the class of the rejection.
 pub fn decided_of(
     arguments: &Json,
     job: &Job,
     resolved: &Resolved,
     checklist: &Checklist,
-) -> Result<Decided, String> {
+) -> Result<Decided, Rejection> {
     let submission: Submission = serde_json::from_value(arguments.clone()).map_err(|_| {
         let text = ["items", "findings"]
             .into_iter()
             .filter(|key| arguments.get(*key).is_some_and(Json::is_string))
             .collect::<Vec<_>>();
-        match text.as_slice() {
+        let said = match text.as_slice() {
             [] => "the submission is not an object of items and findings".to_owned(),
             keys => format!(
                 "the submission is not an object of items and findings: {} is text; each \
                  is a list of objects, not a string that holds one",
                 keys.join(" and ")
             ),
-        }
+        };
+        Rejection::new(Class::NotAList, said)
     })?;
-    let items = submission.items.ok_or("items is not a list")?;
+    let Some(items) = submission.items else {
+        return refused(Class::NotAList, "items is not a list");
+    };
     let mut said = Vec::new();
     let mut counted = Vec::new();
     for value in &items {
         let named = value.get("id").and_then(Json::as_str).unwrap_or_default();
         let Some(entry) = checklist.get(named) else {
-            return Err("an item is not on the checklist".to_owned());
+            return refused(Class::UnknownItem, "an item is not on the checklist");
         };
         let id = entry.id.clone();
         let answer = read(value, &id)?;
         counted.push(id.clone());
         if answer.reason.trim().is_empty() {
-            return Err(format!("{id}: the reason is empty"));
+            return refused(Class::BadField, format!("{id}: the reason is empty"));
         }
         let placed = match &answer.location {
-            Some(location) => Some(place(location, job).map_err(|e| format!("{id}: {e}"))?),
+            Some(location) => Some(place(location, job).map_err(misplaced(&id))?),
             None => None,
         };
         match answer.disposition {
             Disposition::Violation if placed.is_none() => {
-                return Err(format!("{id}: a violation has a location"));
+                return refused(Class::Location, format!("{id}: a violation has a location"));
             }
             Disposition::Observed => {
-                return Err(format!(
-                    "{id}: the disposition is not one of violation, held, allowed_change, \
-                     hidden, cant_tell"
-                ));
+                return refused(
+                    Class::BadField,
+                    format!(
+                        "{id}: the disposition is not one of violation, held, allowed_change, \
+                         hidden, cant_tell"
+                    ),
+                );
             }
             Disposition::AllowedChange => {
                 let by = answer.allowed_by.as_deref();
-                let by =
-                    by.ok_or_else(|| format!("{id}: an allowed change names its allowed_by"))?;
-                applies(by, &entry.instances, resolved, &id)?;
+                let Some(by) = by else {
+                    return refused(
+                        Class::AllowedBy,
+                        format!("{id}: an allowed change names its allowed_by"),
+                    );
+                };
+                applies(by, &entry.instances, resolved, &id).map_err(unexempt)?;
             }
             _ if answer.allowed_by.is_some() => {
-                return Err(format!(
-                    "{id}: allowed_by is only valid with disposition allowed_change"
-                ));
+                return refused(
+                    Class::AllowedBy,
+                    format!("{id}: allowed_by is only valid with disposition allowed_change"),
+                );
             }
             _ => {}
         }
@@ -407,10 +534,13 @@ pub fn decided_of(
     for id in checklist.ids() {
         let n = counted.iter().filter(|c| *c == id).count();
         if n == 0 {
-            return Err(format!("{id} has no disposition"));
+            return refused(Class::MissingItem, format!("{id} has no disposition"));
         }
         if n > 1 {
-            return Err(format!("{id} has more than one disposition"));
+            return refused(
+                Class::DuplicateItem,
+                format!("{id} has more than one disposition"),
+            );
         }
     }
     let findings = submission.findings.unwrap_or_default();
@@ -418,21 +548,23 @@ pub fn decided_of(
         let tag = format!("finding {at}");
         let answer = read(value, &tag)?;
         if answer.reason.trim().is_empty() {
-            return Err(format!("{tag}: the reason is empty"));
+            return refused(Class::BadField, format!("{tag}: the reason is empty"));
         }
         let ids = answer.obligation_ids.clone().unwrap_or_default();
         if ids.is_empty() {
-            return Err(format!(
-                "{tag}: cites no obligation: obligation_ids lists the rules it bears on, of \
-                 {}",
-                citable(resolved)
-            ));
+            return refused(
+                Class::FindingCites,
+                format!(
+                    "{tag}: cites no obligation: obligation_ids lists the rules it bears on, \
+                     of {}",
+                    citable(resolved)
+                ),
+            );
         }
-        let location = answer
-            .location
-            .as_ref()
-            .ok_or(format!("{tag}: has no location"))?;
-        let placed = place(location, job).map_err(|e| format!("{tag}: {e}"))?;
+        let Some(location) = answer.location.as_ref() else {
+            return refused(Class::Location, format!("{tag}: has no location"));
+        };
+        let placed = place(location, job).map_err(misplaced(&tag))?;
         let mut mandatory = Vec::new();
         let mut observed = 0;
         for id in &ids {
@@ -442,18 +574,22 @@ pub fn decided_of(
                 match on.iter().find(|i| i.target == placed.image) {
                     Some(inst) => mandatory.push(inst.id()),
                     None => {
-                        return Err(format!(
-                            "{tag}: {id} does not judge image {:?} where the finding is located",
-                            placed.image
-                        ));
+                        return refused(
+                            Class::FindingCites,
+                            format!(
+                                "{tag}: {id} does not judge image {:?} where the finding is \
+                                 located",
+                                placed.image
+                            ),
+                        );
                     }
                 }
             } else if let Some(ob) = resolved.observations.iter().find(|o| &o.id == id) {
                 if !ob.targets.contains(&placed.image) {
-                    return Err(format!(
-                        "{tag}: observation {id} is not on image {}",
-                        placed.image
-                    ));
+                    return refused(
+                        Class::FindingCites,
+                        format!("{tag}: observation {id} is not on image {}", placed.image),
+                    );
                 }
                 observed += 1;
             } else if let Some(ex) = resolved.exemptions.iter().find(|e| &e.id == id) {
@@ -465,43 +601,61 @@ pub fn decided_of(
                         ex.waives.join(", ")
                     )
                 };
-                return Err(format!(
-                    "{tag}: {id} is an exemption; cite the obligation the change bears \
-                     on{then}"
-                ));
+                return refused(
+                    Class::FindingCites,
+                    format!(
+                        "{tag}: {id} is an exemption; cite the obligation the change bears \
+                         on{then}"
+                    ),
+                );
             } else {
-                return Err(format!(
-                    "{tag}: its obligation_ids are not rules of the list"
-                ));
+                return refused(
+                    Class::FindingCites,
+                    format!("{tag}: its obligation_ids are not rules of the list"),
+                );
             }
         }
         match answer.disposition {
             Disposition::Observed if !mandatory.is_empty() || observed == 0 => {
-                return Err(format!(
-                    "{tag}: observed findings cite observe rules only ({}); a finding on an \
-                     obligation is a violation, cant_tell or allowed_change",
-                    listed(resolved.observations.iter().map(|o| o.id.as_str()))
-                ));
+                return refused(
+                    Class::FindingCites,
+                    format!(
+                        "{tag}: observed findings cite observe rules only ({}); a finding on \
+                         an obligation is a violation, cant_tell or allowed_change",
+                        listed(resolved.observations.iter().map(|o| o.id.as_str()))
+                    ),
+                );
             }
             Disposition::Violation | Disposition::CantTell if mandatory.is_empty() => {
-                return Err(format!("{tag}: it must cite a mandatory obligation"));
+                return refused(
+                    Class::FindingCites,
+                    format!("{tag}: it must cite a mandatory obligation"),
+                );
             }
             Disposition::AllowedChange => {
                 let by = answer.allowed_by.as_deref();
-                let by =
-                    by.ok_or_else(|| format!("{tag}: an allowed change names its allowed_by"))?;
-                applies(by, &mandatory, resolved, &tag)?;
+                let Some(by) = by else {
+                    return refused(
+                        Class::AllowedBy,
+                        format!("{tag}: an allowed change names its allowed_by"),
+                    );
+                };
+                applies(by, &mandatory, resolved, &tag).map_err(unexempt)?;
             }
             Disposition::Held | Disposition::Hidden => {
-                return Err(format!(
-                    "{tag}: the disposition is not one of violation, allowed_change, cant_tell, \
-                     observed"
-                ));
+                return refused(
+                    Class::BadField,
+                    format!(
+                        "{tag}: the disposition is not one of violation, allowed_change, \
+                         cant_tell, observed"
+                    ),
+                );
             }
             _ if answer.allowed_by.is_some() => {
-                return Err(format!(
-                    "{tag}: allowed_by is only valid with allowed_change"
-                ));
+                return refused(
+                    Class::AllowedBy,
+                    format!("{tag}: allowed_by is only valid with allowed_change"),
+                );
             }
             _ => {}
         }

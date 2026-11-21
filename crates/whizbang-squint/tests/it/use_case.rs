@@ -263,7 +263,9 @@ fn a_rejection_names_the_frames_and_rules_the_judge_may_use() {
     let rejected = |finding: Json| {
         let mut submitted = answers(&checklist, "", "held", "confident");
         submitted["findings"] = json!([finding]);
-        use_case::decided_of(&submitted, &job, &resolved, &checklist).unwrap_err()
+        use_case::decided_of(&submitted, &job, &resolved, &checklist)
+            .unwrap_err()
+            .message
     };
     let finding = |ids: Json, disposition: &str, frame: &str| {
         json!({"obligation_ids": ids, "disposition": disposition, "confidence": "confident",
@@ -294,7 +296,9 @@ fn a_rejection_names_the_frames_and_rules_the_judge_may_use() {
     );
     let mut text = answers(&checklist, "", "held", "confident");
     text["items"] = Json::String(text["items"].to_string());
-    let said = use_case::decided_of(&text, &job, &resolved, &checklist).unwrap_err();
+    let said = use_case::decided_of(&text, &job, &resolved, &checklist)
+        .unwrap_err()
+        .message;
     assert!(said.contains(": items is text;"), "{said}");
 }
 
