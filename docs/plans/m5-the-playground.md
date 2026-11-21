@@ -1,7 +1,7 @@
 # Plan: milestone 5, the playground
 
 Draft 5, 2026-11-20, written from `main` at 722083fc (the merge of #259, ADR 0040, the words
-the playground uses). Milestone 4 is closed (`docs/plans/m4-note.md`). Milestone 5 is
+the playground uses), after five outside review rounds ("Review rounds", at the end). Milestone 4 is closed (`docs/plans/m4-note.md`). Milestone 5 is
 `SPEC.md` section 16, row 5, "Playground": "Every kept playground item in section 7 passes
 its acceptance case in Chrome; the playground API's negative tests pass; old repos
 archived". Beside the row it takes squint's row "Report viewer and export" (section 7, kept,
@@ -129,7 +129,7 @@ column says which. None changes the agreed design's structure.
 | Models: "SAM3 · Get" when the model needs its maker's sign-in | `models get sam3` fetches with the user's own sign-in, from the env file (`docs/guides/models.md`) | Get works when the env file names the sign-in; otherwise the row says what is missing and links the guide, and nothing is asked for in the page (M1, item 2) |
 | Home: the "Pixel · Make pictures · coming" card; the kit switcher's "Pixel · coming" | No third kit; adding one is the owner's ("Ask first", section 15) | Not shown: the kits listed are the description's (W1, item 2) |
 | Kit cards: "6 tasks · 40 tools", a kit's colour, icon and tagline ("edit pictures") | The description names each action's kind but no kit, no title a person reads and no tagline | The description gains a kit and a title for each action and a short line for each kit (W1, item 2), so a new kit needs no change to the interface |
-| Result: "Recorded `~/whizbang/runs/r-8c21/` result.png · mask.png · report.json" | The store is content-addressed; a run has no folder of named files | Shown as the run's id with "Export", which writes the files `whizbang runs export` and the artifact export already write, as a download (W3, item 5) |
+| Result: "Recorded", a folder of the run under the store with `result.png · mask.png · report.json` | The store is content-addressed; a run has no folder of named files | Shown as the run's id with "Export", which writes the files `whizbang runs export` and the artifact export already write, as a download (W3, item 5) |
 | Run ids such as `r-8c21` | Run ids are longer (`RunId::minted`) | Shown whole in the mono face, cut in the middle where space is short, never shortened in what is copied |
 | Running: a progress bar inside the step "fill" | A capability request reports no fraction done; a run's events are messages | The running step shows elapsed time and an indeterminate bar (U1, the step list component) |
 | Kit workspace: "FAL flux-fill" in the plan | The fill backend is Bria's eraser through fal, named by the config | The plan block prints the backend and model the preparation resolved, never a fixed label (W1, item 5) |
@@ -1275,3 +1275,127 @@ Each can be answered yes or no. The recommended answer is the one the tasks assu
 - **Chrome is needed** on the machine that runs `whizbang play`, and the Chrome tier runs in
   its own CI job on both runners, outside the fast tier's 300 seconds.
 - **The tags `m5-host`, `m5-run` and `m5`** are made by the orchestrator as above.
+
+## Review rounds
+
+### Review round 1
+
+On draft 1. Verdict: revise. Seventeen findings: 1 blocker, 15 majors, 1 minor. Each was
+checked against the code; fifteen taken in full, one in part, one answered by re-owning.
+
+1. **Blocker: unauthenticated clients can hold every connection worker.** Right: no
+   deadline bounded how long a connection holds a worker. Taken: deadlines on headers, body
+   and answer, with tests of trickling and silent clients.
+2. **Major: control requests can be blocked by the work they control.** Right: the call
+   limit sat in the guard, and installs ran on the connection pool. Taken: the limit applies
+   to starting a run alone; installs run one at a time on a thread of their own and are
+   cancelled by a quit.
+3. **Major: the claimed per-run memory bound does not exist.** Right
+   (`contract/journal.rs`). Taken: K1, item 4, bounds a run's journal; the parent's wait is
+   settled in round 2.
+4. **Major: signals through `libc` need unsafe code, which the workspace forbids.** Right.
+   Taken: `signal-hook`'s safe iterator, two new crates, asked of the owner (open
+   question 1).
+5. **Major: building as `serve` does stops a no-key start.** Right (`Uses::Every`). Taken:
+   the host asks for no backend at start; a missing key is a not-ready kind.
+6. **Major: `play_import` cannot take uploaded bytes through a port.** Right: inputs must be
+   in the store at preparation. Taken: the host imports through `import.rs` with its own
+   writer, the name beside it in one publication, and a route for drawn locations.
+7. **Major: preparation and status do not hand out per-step bounds or live steps.** Right.
+   Taken: new task K1 (readiness kinds, each need's bound, typed events); the plan block
+   shows needs, not recipe steps.
+8. **Major: inputs and Send to assume roles the descriptors lack.** Right (a use case takes
+   `images` and `job`). Taken: squint's form builds `job/1` as `Job::from_shorthand`; Send to
+   by type when one port fits, by the loop's job from a removal; a picker for every artifact
+   type; a case for each of the five use cases.
+9. **Major: a preparation is not a wire type, and a stale rule can refuse a retry.** Right.
+   Taken: the host keeps preparations under handles; a repeated request id is looked up
+   first.
+10. **Major: Copy command does not reproduce saved settings.** Right. Taken: defaults written
+    as explicit flags, the env file named by path, a changed config said, the host stopped
+    before the copied command runs.
+11. **Major: `read_exchange` cannot read every stored exchange.** Right. Taken in draft 2 by a
+    report reader, then replaced in round 2 by a display reader (round 2, finding 4); the
+    size measurement assigned to W3.
+12. **Major: stats coverage is incomplete and cache hits are not counted.** Right
+    (`stats.rs`). Taken: every filter of `stats::Filter`, repairs, unsure by rule, and cache
+    hits counted for the command and the page.
+13. **Major: the playground never shows the tool records.** Right (`SPEC.md` section 8).
+    Taken: W3, item 7, records embedded and shown in place, with a Chrome case.
+14. **Major: the real prober is mapped but not planned.** Right (`NoProber`). Answered by
+    re-owning, not building: readiness needs no probe, and milestone 6's GPU host is the
+    first backend that needs one; "Probe" leaves the Models screen.
+15. **Major: `ui-check` in `check` does not put it in CI, and the time budget is not
+    combined.** Right (`ci-without-scripts`). Taken: `ui-check` in every check recipe and
+    job, its seconds counted under the one 300-second limit, and a test that a type error or
+    a stale bundle fails.
+16. **Major: the store's openings check modes and not the owner.** Right. Taken: a store
+    owned by another user is refused to a reader and a writer.
+17. **Minor: a light theme nobody can reach.** Taken in part: no light screen and no light
+    switch; the light tokens stay, and their contrast test, because the owner asked that the
+    light set be kept so light can return.
+
+### Review round 2
+
+On draft 2. Verdict: revise. Nine findings: 1 blocker, 6 majors, 2 minors. All nine were
+checked against the code and taken.
+
+1. **Blocker: a missing preparation still lets a call run.** Right: without an expected
+   preparation the executor prepares and admits (`contract/engine.rs`). Taken: K1, item 5, a
+   request marked as needing a preparation is refused stale after the repeat and conflict
+   lookup, before anything is reserved; other doors unchanged.
+2. **Major: cancellation does not bound a parent's wait.** Right (`contract/live.rs`). Taken
+   by saying so: a run that ignores its cancellation keeps its place until Quit; the
+   carry-over row is narrowed to that, with a test.
+3. **Major: reserved workers cannot be reserved before a request is read, and Chrome opens
+   six connections to a host.** Right. Taken: sixteen workers, an acceptor that never reads,
+   at most two uploads at once on the host and in the page.
+4. **Major: `read_exchange` stops at the first withheld part.** Right
+   (`capability/written.rs`). Taken: `written::for_display`, which keeps text, withheld
+   parts and missing pictures in one list.
+5. **Major: Copy command cannot say a whole job.** Right: shorthand makes no requirements,
+   and a fingerprint tells an omitted default from a written one. Taken: `squint check
+   --job-json` with `--image` by identity, and a same-call comparison.
+6. **Major: record images cannot load in an isolated frame, and `srcdoc` inherits the
+   page's policy.** Right. Taken: images fetched with the token and inlined as `data:`;
+   the page's policy allows inline styles, not scripts.
+7. **Major: the journal bound drops kept evidence.** Right (`SPEC.md` section 3). Taken: a
+   run keeps its first events and counts the rest, never drops what it kept, and N1 writes
+   the change into the spec.
+8. **Minor: the import does not keep metadata.** Right (`import.rs`). Taken: the plan says
+   so; the file name is the one thing kept beside a picture.
+9. **Minor: `stats::stats` returns text.** Right. Taken: a typed aggregation,
+   `stats::Figures`, that the command prints and the API answers.
+
+### Review round 3
+
+On draft 3. Verdict: revise, with no blocker. Four findings, all majors, all checked against
+the code and taken.
+
+1. **Major: shutdown can block in `Executor::cancel` before the grace starts.** Right
+   (`LiveRun::cancel` waits in a final publication). Taken: the grace starts first, held
+   cancellations are tripped without waiting, and the executor's cancel and waits run off
+   the grace's thread, with a test.
+2. **Major: a shared 256 MiB diagnostics budget competes with reserved exchange storage.**
+   Right (`capability/mod.rs`). Taken: no new shared budget; only progress events get the
+   keep-first bound.
+3. **Major: the copied-command test has no fakes once the fixture host stops.** Right. Taken:
+   a command-line mode of the fixture over the same fakes, and a shipped-binary case for
+   `mask_rect`.
+4. **Major: H1 and K1 both change `contract/engine.rs`.** Right. Taken: the unconfirmed
+   admission is K1's, item 6.
+
+### Review round 4
+
+On draft 4. Verdict: revise, with no blocker. Two findings, both majors, both taken.
+
+1. **Major: Stop through `Executor::cancel` can hold a connection worker.** Right. Taken: the
+   route trips the held cancellation and answers "stopping"; one canceller thread calls the
+   executor once a run, with a test of Stop pressed often during a final publication.
+2. **Major: U1 and H1 both change `crates/whizbang/src/main.rs`.** Right. Taken: the fixture's
+   command-line mode moves to W2, after H1 has added `play`.
+
+### Review round 5
+
+On draft 5. Verdict: approve. No blocker and no major; both fixes of round 4 checked against
+the code.
