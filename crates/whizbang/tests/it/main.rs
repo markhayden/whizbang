@@ -26,6 +26,7 @@ mod gate;
 mod google;
 mod guides;
 mod import;
+mod judges;
 mod lab;
 mod labs;
 mod located;

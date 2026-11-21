@@ -10,6 +10,7 @@ pub mod evaluation;
 pub mod gating;
 pub mod harness;
 pub mod import;
+pub mod judges;
 pub mod laboratory;
 pub mod loop_score;
 pub mod loop_sheet;

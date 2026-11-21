@@ -132,3 +132,41 @@ fn the_ported_vectors_of_squint_give_squints_numbers() {
         )
     );
 }
+
+#[test]
+fn paired_gives_the_decided_correctly_difference() {
+    use Computed::{Fail, Pass, Unsure};
+    use Expected::{Fail as F, Pass as P};
+    // Four items, each its own family. The control decides two of four correctly (a catch
+    // and a pass); the treatment decides all four, turning an unsure fail into a catch and
+    // a false reject into a pass.
+    let control = [
+        row("a", "fa", 1, F, Fail),
+        row("b", "fb", 1, F, Unsure),
+        row("c", "fc", 1, P, Pass),
+        row("d", "fd", 1, P, Fail),
+    ];
+    let mut treatment = control.clone();
+    treatment[1].computed = Fail;
+    treatment[3].computed = Pass;
+    let how = metrics::Resampling {
+        seed: 7,
+        resamples: 200,
+        hypotheses: 1,
+        alpha: 0.05,
+    };
+    let paired = metrics::paired(&control, &treatment, how).unwrap();
+    let difference = paired.decided_correctly_difference.unwrap();
+    assert!((difference.point - 0.5).abs() < 1e-12, "{difference:?}");
+    assert!(difference.lower <= difference.point && difference.point <= difference.upper);
+    // The share itself: catches and passes over every item, unsure and errors neither.
+    let counts = metrics::Counts::of(&control);
+    assert_eq!(counts.decided_correctly(), Some(0.5));
+    assert_eq!(
+        metrics::Counts::of(&Vec::<Row>::new()).decided_correctly(),
+        None
+    );
+    // The same arms give no difference.
+    let same = metrics::paired(&control, &control, how).unwrap();
+    assert_eq!(same.decided_correctly_difference.unwrap().point, 0.0);
+}

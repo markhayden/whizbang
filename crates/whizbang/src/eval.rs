@@ -90,6 +90,40 @@ pub enum Command {
         #[command(flatten)]
         under: Under,
     },
+    /// Score judges against each other (--mode judges, under one --arm), or one arm against
+    /// another within each judge (--mode arms), from the runs the matrices made: per judge,
+    /// arm and scope, accuracy with intervals resampled by family, cost, time and the
+    /// submissions' rejections; and the rule asked for, judge-pick/1 or submission/1. Reads
+    /// the store only, and writes judges/1 to --out, aggregates only.
+    Judges {
+        /// A matrix whose runs are scored; give it again for more.
+        #[arg(long = "matrix", value_name = "FILE", required = true)]
+        matrices: Vec<PathBuf>,
+        /// The folder a blind set's labels are read from, laid out as the sets are
+        /// (`<folder>/<set id>/labels.toml`), outside the sets' folder; a set that publishes
+        /// its labels is scored by its own labels file.
+        #[arg(long, value_name = "DIR")]
+        labels: PathBuf,
+        /// judges: each judge against the best under --arm; arms: within each judge, the
+        /// other arm against the control.
+        #[arg(long, value_name = "MODE", value_parser = ["judges", "arms"])]
+        mode: String,
+        /// In judges mode, the one arm every judge is scored under; in arms mode, the
+        /// control (the first arm of the first matrix when not given).
+        #[arg(long, value_name = "ARM")]
+        arm: Option<String>,
+        /// The decision rule: judge-pick/1 (judges mode) or submission/1 (arms mode).
+        #[arg(long, value_name = "RULE", value_parser = ["judge-pick/1", "submission/1"])]
+        rule: Option<String>,
+        /// Where the record is written: not under the sets' or the labels' folder.
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
+        /// The folder of the evaluation sets: `<use-case>/<set>/set.toml` under it.
+        #[arg(long, value_name = "DIR", default_value = "evalsets")]
+        root: PathBuf,
+        #[command(flatten)]
+        at: Where,
+    },
     /// The synthetic edit set of the edits' rung 2 (plan m3, task B1): drawing it from a
     /// set's pictures, and scoring a lab round of its recipes from the store.
     Edits {
@@ -338,6 +372,34 @@ pub fn run(command: &Command) -> Result<String, String> {
             at,
             under,
         } => run_matrix(matrix, root, at, under, recovery),
+        Command::Judges {
+            matrices,
+            labels,
+            mode,
+            arm,
+            rule,
+            out,
+            root,
+            at,
+        } => {
+            use whizbang::judges::{self, Mode, Reading, Rule};
+            let reading = Reading {
+                matrices,
+                store: at.root(),
+                sets_root: root,
+                labels_root: labels,
+                out,
+                mode: if mode == "arms" {
+                    Mode::Arms
+                } else {
+                    Mode::Judges
+                },
+                arm: arm.as_deref(),
+                rule: rule.as_deref().map(Rule::named).transpose()?,
+                commit: crate::COMMIT,
+            };
+            judges::run(&reading).map(|written| judges::text(&written))
+        }
         Command::Edits {
             command:
                 EditsCommand::Draw {
