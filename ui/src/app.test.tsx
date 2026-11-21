@@ -10,6 +10,7 @@ function clientAnswering(hello: Promise<Hello>): Client {
     hello: () => hello,
     request: vi.fn(),
     upload: vi.fn(),
+    start: vi.fn(),
     poll: vi.fn(),
   } as unknown as Client;
 }

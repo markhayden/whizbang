@@ -1,6 +1,6 @@
 // The shell's pieces that are not components: the token, the routes, the keys, the client.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, createClient, Limiter, POLL_MS, sentenceFor, UPLOADS_AT_ONCE } from "./api";
+import { ApiError, createClient, Limiter, newRequestId, POLL_MS, sentenceFor, START_TRIES, UPLOADS_AT_ONCE } from "./api";
 import { actionOf } from "./keyboard";
 import { hrefOf, parseRoute } from "./routes";
 import { takeToken, TOKEN_KEY } from "./token";
@@ -124,7 +124,55 @@ describe("the client", () => {
     await expect(client.hello()).rejects.toEqual(new ApiError(0, sentenceFor(0)));
   });
   it("has a sentence for each refusal", () => {
-    for (const status of [0, 401, 403, 413, 415, 429, 503, 500]) expect(sentenceFor(status).length).toBeGreaterThan(10);
+    for (const status of [0, 401, 403, 409, 413, 415, 429, 503, 500]) expect(sentenceFor(status).length).toBeGreaterThan(10);
+  });
+});
+
+describe("a run's start", () => {
+  const call = { action: "remove_checked", arguments: { prompt: "the hose" }, handle: "h-1" };
+  const bodies = (fetch: ReturnType<typeof vi.fn>) =>
+    fetch.mock.calls.map((args) => JSON.parse(String((args as unknown as [string, RequestInit])[1].body)) as Record<string, unknown>);
+
+  it("sends the call, its handle and a request id the page made", async () => {
+    const fetch = vi.fn(async () => answer(201, { run: "r-1" }));
+    const client = createClient({ token: TOKEN, fetch: fetch as unknown as typeof globalThis.fetch });
+    const started = await client.start(call);
+    expect(started.run).toBe("r-1");
+    const [body] = bodies(fetch);
+    expect(body).toEqual({ ...call, request_id: started.requestId });
+    expect(started.requestId).toMatch(/^play-.+/);
+    expect((fetch.mock.calls[0] as unknown as [string])[0]).toBe("/api/runs");
+  });
+
+  it("makes a new id for each start", () => {
+    let n = 0;
+    expect(newRequestId(() => String((n += 1)))).toBe("play-1");
+    expect(newRequestId()).not.toBe(newRequestId());
+  });
+
+  it("sends the same id again when the answer was lost, so the host answers the run it started", async () => {
+    let calls = 0;
+    const fetch = vi.fn(async () => {
+      calls += 1;
+      if (calls < 3) throw new TypeError("the connection dropped");
+      return answer(201, { run: "r-1" });
+    });
+    const client = createClient({ token: TOKEN, fetch: fetch as unknown as typeof globalThis.fetch });
+    const started = await client.start(call, "play-given");
+    expect(started).toEqual({ run: "r-1", requestId: "play-given" });
+    expect(bodies(fetch).map((body) => body.request_id)).toEqual(["play-given", "play-given", "play-given"]);
+  });
+
+  it("gives up after its tries, and never retries a refusal", async () => {
+    const dropped = vi.fn(async () => Promise.reject(new TypeError("dropped")));
+    const client = createClient({ token: TOKEN, fetch: dropped as unknown as typeof globalThis.fetch });
+    await expect(client.start(call)).rejects.toMatchObject({ status: 0 });
+    expect(dropped).toHaveBeenCalledTimes(START_TRIES);
+    for (const status of [409, 429]) {
+      const refused = vi.fn(async () => answer(status, { error: "stale" }));
+      await expect(createClient({ token: TOKEN, fetch: refused as unknown as typeof globalThis.fetch }).start(call)).rejects.toMatchObject({ status });
+      expect(refused).toHaveBeenCalledTimes(1);
+    }
   });
 });
 

@@ -46,6 +46,8 @@ export function sentenceFor(status: number): string {
       return "This page's key is not the host's: it is from an earlier launch, or missing. Run whizbang play again, which opens the page with a new one.";
     case 403:
       return "The host refused a request from this page.";
+    case 409:
+      return "What this would run has changed since it was prepared, or another run holds its id. Prepare it again and run it.";
     case 413:
       return "That is too large for the host.";
     case 415:
@@ -87,6 +89,31 @@ export class Limiter {
   }
 }
 
+/** What `POST /api/runs` is given: the call, the handle of its preparation, its request id. */
+export interface RunStart {
+  action: string;
+  arguments: Record<string, unknown>;
+  /** The handle `POST /api/prepare` answered for exactly these arguments. */
+  handle: string;
+}
+
+/** What `POST /api/runs` answers: the run it started, or the one its request id started. */
+export interface Started {
+  run: string;
+}
+
+/**
+ * A new request id: the page makes one for each Run pressed and sends it again on every
+ * retry of that start, so the host answers the run it started rather than a second one
+ * (ADR 0007; plan m5, task W1, item 1).
+ */
+export function newRequestId(random: () => string = () => globalThis.crypto.randomUUID()): string {
+  return `play-${random()}`;
+}
+
+/** How often a start whose answer was lost is sent again, with the same request id. */
+export const START_TRIES = 3;
+
 /** The most uploads the page sends at once (plan m5, "Who may call"). */
 export const UPLOADS_AT_ONCE = 2;
 /** How often a run open on screen is asked for (plan m5, "Live progress is polled"). */
@@ -103,6 +130,13 @@ export interface Client {
   request<T>(method: string, path: string, body?: unknown): Promise<T>;
   hello(): Promise<Hello>;
   upload<T>(path: string, file: Blob): Promise<T>;
+  /**
+   * Start a run under one request id, made here unless given, and sent again with the same
+   * id when the answer was lost on the way (no status). A refusal is not retried: 409 says
+   * the preparation is stale (prepare again, then start with a new id) or that the id
+   * names another call; 429 says four runs are going.
+   */
+  start(call: RunStart, requestId?: string): Promise<Started & { requestId: string }>;
   poll<T>(path: (after: number) => string, next: (answer: T) => { after: number; done: boolean }, onError?: (error: ApiError) => void): () => void;
 }
 
@@ -144,6 +178,16 @@ export function createClient(options: ClientOptions): Client {
     request: <T>(method: string, path: string, body?: unknown) =>
       send<T>(method, path, body === undefined ? undefined : JSON.stringify(body), body === undefined ? undefined : "application/json"),
     hello: () => client.request<Hello>("GET", "/api/hello"),
+    start: async (call: RunStart, requestId: string = newRequestId()) => {
+      for (let attempt = 1; ; attempt += 1) {
+        try {
+          const started = await client.request<Started>("POST", "/api/runs", { ...call, request_id: requestId });
+          return { ...started, requestId };
+        } catch (error) {
+          if (!(error instanceof ApiError) || error.status !== 0 || attempt >= START_TRIES) throw error;
+        }
+      }
+    },
     upload: <T>(path: string, file: Blob) => uploads.run(() => send<T>("POST", path, file, file.type || "application/octet-stream")),
     poll: <T>(path: (after: number) => string, next: (answer: T) => { after: number; done: boolean }, onError?: (error: ApiError) => void) => {
       let after = 0;
