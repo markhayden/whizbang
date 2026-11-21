@@ -160,10 +160,10 @@ registered in `play/routes.rs` by one line.
 | `GET /api/runs/{id}?after=<n>` | The run's state and its events after the `n`th, every text escaped (from its journal once it has ended), what was asked, what it spent of what it reserved, its outputs and its verdict | H1, W1 |
 | `POST /api/runs/{id}/cancel` | Stop a run | H1 |
 | `GET /api/runs?open=1` | The runs the host started that are still going | H1, then W3 adds history |
-| `POST /api/pictures?name=` | A picture's bytes, decoded within `DecodeLimits` by the route (the guard reads only its header's size) and kept as `store import --picture` keeps one, through the host's writer, with its name beside it under `play/pictures/` in the same publication | W1 |
+| `POST /api/pictures?name=` | A picture's bytes, decoded once, decoded within `DecodeLimits` by the route (the guard reads only its header's size) and kept as `store import --picture` keeps one, through the host's writer, with its name beside it under `play/pictures/` in the same publication | W1 |
 | `GET /api/pictures?after=&limit=` | The pictures the playground kept, newest first, with their names | W1 |
 | `POST /api/locations` | A box, a polygon (at most 64 points), a stroke or a line drawn on a picture, committed as a location bound to it | W1 |
-| `GET /api/artifacts/{id}` and `…/thumb?edge=` | An artifact for display: a picture as its PNG, a mask as a grey picture, a location as JSON; a thumbnail made on request | W1 |
+| `GET /api/artifacts/{id}` and `…/thumb?edge=` | An artifact for display: a picture as its PNG, a mask as a grey picture, a location as JSON; a thumbnail made on request, at most two at once (a third is answered 429, as an upload is), the newest 64 kept in memory | W1 |
 | the rest of the plan's table | Records, reports, models, backends, stats, spend | W2, W3, M1 |
 
 No route takes a file path.

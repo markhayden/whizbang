@@ -881,7 +881,13 @@ test kit's `playkit` (`whizbang_testkit::playkit`), steered by `x-fixture-script
 `release`, `pass`, `fail`, `reset`), which the real host refuses. A poll after a run's end
 reads its events from the run's journal, since the executor's status of an ended run
 holds none. A choice whose preparation is not ready for a reason the backend states of
-itself (a model not installed) shows that reason's kind. Left to W2's record route: a
+itself (a model not installed) shows that reason's kind. From the review of #271: a
+thumbnail is made at most two at a time by the host and fetched at most two at a time by
+the page, so four of Chrome's six connections stay free for polls, Stop and Quit
+(`connections.spec.ts`); a forgotten request id the store holds is answered by the
+executor before a place is taken; a poll reads only its run's reservation, and the
+allowance is folded once a generation; the same picture sent again keeps its newest name.
+Left to W2's record route: a
 check's findings drawn as places on the canvas while a loop runs (item 6); the running
 screen shows the verdict once the run has ended.
 
