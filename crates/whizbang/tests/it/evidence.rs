@@ -1883,9 +1883,43 @@ fn yes(value: &toml::Value) -> &'static str {
     }
 }
 
-/// The rows of the judge round's four tables, each written from the scores, in the order
-/// the page gives them.
-fn judges_rows(scores: &toml::Table) -> Vec<String> {
+/// The four sections of the judge round's page that hold a table, in order.
+const JUDGES_TABLES: [&str; 4] = [
+    "The five judges",
+    "By scope",
+    "Rejections and causes",
+    "The clauses of each judge",
+];
+
+/// The text of the page's section `## <title>`, up to the next section.
+fn section<'a>(page: &'a str, title: &str) -> &'a str {
+    page.split(&format!("\n## {title}\n"))
+        .nth(1)
+        .and_then(|rest| rest.split("\n## ").next())
+        .unwrap_or_else(|| panic!("the page has the section {title}"))
+}
+
+/// The header of the one table in a section, and its cells' count of `|`.
+fn table_header(section: &str) -> (&str, usize) {
+    let header = (section.lines())
+        .find(|line| line.starts_with('|'))
+        .expect("the section has a table");
+    (header, header.matches('|').count())
+}
+
+/// A whole word of the text, bounded by anything but a letter, a digit, `-` or `_`.
+fn holds_word(text: &str, word: &str) -> bool {
+    let inside = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
+    text.match_indices(word).any(|(at, _)| {
+        let before = text[..at].chars().next_back();
+        let after = text[at + word.len()..].chars().next();
+        !before.is_some_and(inside) && !after.is_some_and(inside)
+    })
+}
+
+/// The rows of the judge round's four tables, each written from the scores, grouped by the
+/// section that holds it ([`JUDGES_TABLES`], in order).
+fn judges_rows(scores: &toml::Table) -> [Vec<String>; 4] {
     let int = |v: &toml::Value| v.as_integer().unwrap();
     let mut judges = Vec::new();
     let mut by_scope = Vec::new();
@@ -1959,11 +1993,7 @@ fn judges_rows(scores: &toml::Table) -> Vec<String> {
             ));
         }
     }
-    (judges.into_iter())
-        .chain(by_scope)
-        .chain(counts)
-        .chain(clauses)
-        .collect()
+    [judges, by_scope, counts, clauses]
 }
 
 #[test]
@@ -2006,6 +2036,39 @@ fn the_judges_record_holds_only_aggregates() {
     assert_eq!(round["rule"].as_str(), Some("judge-pick/1"));
     for held in ["admits nothing", "descriptive", "exposed"] {
         assert!(page.contains(held), "{held}");
+    }
+    // The binaries that made the cells scored: the format round's and this round's. Each is
+    // a commit of this tree once the round is written (the format round's is on `main` with
+    // its record).
+    let made_by: Vec<&str> = (round["runs_commits"]
+        .as_array()
+        .expect("runs_commits")
+        .iter())
+    .map(|v| v.as_str().unwrap())
+    .collect();
+    assert_eq!(made_by.len(), 2);
+    for commit in &made_by {
+        assert!(
+            commit.len() == 40
+                && commit
+                    .bytes()
+                    .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')),
+            "{commit}"
+        );
+        if outcome != "pending" {
+            assert!(is_ancestor(commit), "{commit}");
+        }
+    }
+    // Each table under its own section, its header first, every row as wide as its header.
+    for title in JUDGES_TABLES {
+        let (header, bars) = table_header(section(&page, title));
+        for line in section(&page, title).lines().filter(|l| l.starts_with('|')) {
+            assert_eq!(
+                line.matches('|').count(),
+                bars,
+                "{title}: {line} against {header}"
+            );
+        }
     }
     let scores_path = repository().join(JUDGES_SCORES);
     let mut texts = vec![page.clone()];
@@ -2081,16 +2144,29 @@ fn the_judges_record_holds_only_aggregates() {
         assert!(round["round_settled_usd"].as_float().is_some());
         assert!(!page.contains("| Pending |"));
         assert!(!page.contains("Pending:"));
-        let rows = judges_rows(&scores);
-        let missing: Vec<&String> = rows
-            .iter()
-            .filter(|row| !page.contains(row.as_str()))
-            .collect();
-        assert!(
-            missing.is_empty(),
-            "the page lacks the rows the scores give:\n{}",
-            rows.join("\n")
-        );
+        for (title, rows) in JUDGES_TABLES.iter().zip(judges_rows(&scores)) {
+            let held = section(&page, title);
+            let (header, bars) = table_header(held);
+            for row in &rows {
+                assert_eq!(
+                    row.matches('|').count(),
+                    bars,
+                    "{title}: {row} against {header}"
+                );
+            }
+            let missing: Vec<&String> = rows
+                .iter()
+                .filter(|row| !held.contains(row.as_str()))
+                .collect();
+            assert!(
+                missing.is_empty(),
+                "the section {title} lacks the rows the scores give:\n{}",
+                rows.join("\n")
+            );
+            // Nothing else in the table: as many rows as the scores give.
+            let lines = held.lines().filter(|l| l.starts_with('|')).count();
+            assert_eq!(lines, rows.len() + 2, "{title}");
+        }
         texts.push(scores_text);
     }
     // No item, no family, no path, no key: in the page, and in the scores once there.
@@ -2107,6 +2183,11 @@ fn the_judges_record_holds_only_aggregates() {
                         && !text.contains(&format!("\"{family}\"")),
                     "{family}"
                 );
+                // A family's name in prose too, as a whole word, when it is long enough to
+                // be told from an ordinary word.
+                if family.len() >= 5 {
+                    assert!(!holds_word(text, family), "{family}");
+                }
             }
         }
     }

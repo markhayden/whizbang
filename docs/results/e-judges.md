@@ -27,9 +27,19 @@ the TOML, and replace the `Pending` rows.
 matrices = ["e-submission", "e-judges-dev", "e-judges-blind"]
 matrix_identities = ["c386cd97d9b2d6c5", "b25787b119301f0c", "331ab9bc364b209c"]
 arm = "C;submission=v1"
+runs_commits = [
+  "ac3a49a7b21d0a20e86c48c718eae2bc9e5f833f",
+  "edb46f94f11679a20de5bd25a1de6525123bff1b",
+]
 rule = "judge-pick/1"
 outcome = "pending"
 ```
+
+`runs_commits` are the commits of the binaries that made the scored cells: the format
+round's, which made the three small judges' dev cells, and this round's, which made the
+rest. Nothing in `whizbang-squint` or `whizbang-backends`, where `check` and the judges'
+adapters are, changed between the two, nor `eval matrix` or `eval judges`: what changed is
+the playground's host (`whizbang play`), what it needs of the store, and `backends status`.
 
 Once run, the block also gives `commit` (the commit the binary was built from, as the TOML
 names it), `pick_all` and `pick_source_fidelity` (the model each scope's outcome names: the
@@ -157,7 +167,10 @@ the best's; within the margin.
 ## The trade-off
 
 Pending: what the cheaper choice gives up, in points, and what the dearer one costs, in
-dollars per 1,000 checks.
+dollars per 1,000 checks. Pending, to be confirmed from the TOML and said plainly:
+`claude-haiku-5-5` is ineligible from the format round's cells alone, its 6 errors on the
+dev sets being more than 2% of its 253 decisions; so if an outcome is "no pick", the
+default it keeps is a judge the rule found ineligible.
 
 ## What this is not
 
