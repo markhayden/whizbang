@@ -502,18 +502,28 @@ fn a_third_upload_is_answered_429_after_its_headers() {
         settings.deadlines.body_grace = Duration::from_secs(20);
     });
     // Two uploads that send their headers and no body hold their places.
-    let mut stalled = Vec::new();
-    for _ in 0..2 {
+    let stall = || {
         let mut stream = TcpStream::connect(running.address).unwrap();
         stream
             .write_all(&upload_head(&running, 1000, "image/png"))
             .unwrap();
-        stalled.push(stream);
-    }
+        stream.set_nonblocking(true).unwrap();
+        stream
+    };
+    let mut stalled = vec![stall(), stall()];
     // A third, whole, until the two are counted: then it is answered 429 from its
-    // headers. Before they are, it is taken, and its bytes are refused as no picture.
+    // headers. Before they are, it is taken, and its bytes are refused as no picture;
+    // and a stalled one whose headers came while a third held a place was itself
+    // answered 429, and is sent again.
     let limit = Instant::now() + Duration::from_secs(10);
     loop {
+        for stream in &mut stalled {
+            let mut byte = [0u8; 1];
+            let answered = !matches!(stream.read(&mut byte), Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock);
+            if answered {
+                *stream = stall();
+            }
+        }
         let mut bytes = upload_head(&running, 5, "image/png");
         bytes.extend_from_slice(b"hello");
         let answer = send(running.address, &bytes);
