@@ -653,19 +653,22 @@ fn a_poll_across_events_not_kept_is_answered_with_the_count_skipped() {
     // The run says four more messages than it keeps, then a typed event, which is
     // kept: a poll from before the gap is answered with what was kept and how many
     // places in it were not.
-    use whizbang_core::contract::MESSAGES_KEPT_LIMIT;
+    use whizbang_core::contract::{EVENTS_KEPT_LIMIT, MESSAGES_KEPT_MAX_BYTES};
+    // Held to eight messages in place of the real bound, so a few make the gap.
+    let kept = 8;
     let dir = Scratch::new("watch-skipped");
     let store = Arc::new(Store::open(&dir.path().join("store"), Arc::new(ShimFs::new())).unwrap());
     let barriers = Barriers::new();
-    let executor = engine(
-        store,
-        vec![saying(&barriers, MESSAGES_KEPT_LIMIT + 4, true)],
+    let executor = engine(store, vec![saying(&barriers, kept + 4, true)]).with_journal_bounds(
+        kept,
+        MESSAGES_KEPT_MAX_BYTES,
+        EVENTS_KEPT_LIMIT,
     );
     let Ok(Answer::Started(run)) = executor.start(&asked("order-skipped")) else {
         panic!("the request was not started");
     };
     barriers.arrived("said", 1);
-    let limit = MESSAGES_KEPT_LIMIT as u64;
+    let limit = kept as u64;
     let polled = executor.status_after(&run, limit - 2).unwrap();
     let places: Vec<u64> = polled.events().iter().map(|line| line.seq()).collect();
     assert_eq!(places, [limit - 2, limit - 1, limit + 4]);

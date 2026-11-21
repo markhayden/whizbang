@@ -76,6 +76,7 @@ impl Clock for SystemClock {
 pub(super) struct Kept {
     clock: Arc<dyn Clock>,
     secrets: Secrets,
+    bounds: JournalBounds,
     lines: Mutex<Lines>,
     /// By the name the action gave: the diagnostic and the bytes to store under it.
     diagnostics: Mutex<BTreeMap<String, (Diagnostic, Vec<u8>)>>,
@@ -86,6 +87,7 @@ impl Kept {
         Kept {
             clock,
             secrets,
+            bounds: JournalBounds::default(),
             lines: Mutex::new(Lines::default()),
             diagnostics: Mutex::new(BTreeMap::new()),
         }
@@ -109,6 +111,12 @@ impl Kept {
         (journal, diagnostics.into_values().collect())
     }
 
+    /// The same, keeping no more than these bounds.
+    pub(super) fn bounded(mut self, bounds: JournalBounds) -> Kept {
+        self.bounds = bounds;
+        self
+    }
+
     fn held(&self) -> std::sync::MutexGuard<'_, Lines> {
         self.lines.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -126,6 +134,36 @@ impl Kept {
             skipped: asked - events.len() as u64,
             next: lines.next,
             events,
+        }
+    }
+}
+
+/// What a run's journal keeps: the real bounds, or smaller ones a test sets
+/// ([`super::Engine::with_journal_bounds`]).
+#[derive(Debug, Clone, Copy)]
+pub(super) struct JournalBounds {
+    messages: usize,
+    message_bytes: usize,
+    events: usize,
+}
+
+impl Default for JournalBounds {
+    fn default() -> JournalBounds {
+        JournalBounds {
+            messages: MESSAGES_KEPT_LIMIT,
+            message_bytes: MESSAGES_KEPT_MAX_BYTES,
+            events: EVENTS_KEPT_LIMIT,
+        }
+    }
+}
+
+impl JournalBounds {
+    /// These bounds, each never past the real one.
+    pub(super) fn at_most(messages: usize, message_bytes: usize, events: usize) -> JournalBounds {
+        JournalBounds {
+            messages: messages.min(MESSAGES_KEPT_LIMIT),
+            message_bytes: message_bytes.min(MESSAGES_KEPT_MAX_BYTES),
+            events: events.min(EVENTS_KEPT_LIMIT),
         }
     }
 }
@@ -165,8 +203,8 @@ impl Events for Kept {
         let line = JournalLine::new(seq, at_ms, message, &self.secrets);
         let bytes = line.message.len();
         let fits = !lines.messages_full
-            && lines.messages < MESSAGES_KEPT_LIMIT
-            && lines.message_bytes + bytes <= MESSAGES_KEPT_MAX_BYTES;
+            && lines.messages < self.bounds.messages
+            && lines.message_bytes + bytes <= self.bounds.message_bytes;
         if !fits {
             lines.messages_full = true;
             lines.not_kept.messages += 1;
@@ -183,7 +221,7 @@ impl Events for Kept {
         let mut lines = self.held();
         let seq = lines.next;
         lines.next += 1;
-        if lines.events >= EVENTS_KEPT_LIMIT {
+        if lines.events >= self.bounds.events {
             lines.not_kept.events += 1;
             return;
         }

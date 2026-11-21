@@ -16,7 +16,7 @@ use crate::egress::Ways;
 use crate::identity::{DecodeLimits, Digest};
 use crate::store::{self, Store};
 
-use super::journal::{Heard, Kept};
+use super::journal::{Heard, JournalBounds, Kept};
 use super::ledger::{Closing, Declined, Reread, Reservation, Settled, Step};
 use super::live::{self, LiveRun, Told};
 use super::nested::{Added, DESCENDANTS_LIMIT, Family, HeldOpen, Nested, Offer, Under};
@@ -158,6 +158,8 @@ pub struct Engine {
     requests: usize,
     /// How many bytes of exchanges with a judge one run may store.
     exchanges: u64,
+    /// What a run's journal keeps (plan m5, task K1, item 4).
+    journal: JournalBounds,
     /// How many bytes a run's record may be before it is written again without what
     /// the executor can leave out.
     record_max: u64,
@@ -283,6 +285,7 @@ impl Engine {
             descendants: DESCENDANTS_LIMIT,
             requests: REQUESTS_LIMIT,
             exchanges: EXCHANGES_MAX_BYTES,
+            journal: JournalBounds::default(),
             record_max: RECORD_MAX_BYTES,
             before_watch: None,
             started_bound: STARTED_RUNS_DEFAULT,
@@ -449,6 +452,18 @@ impl Engine {
     #[doc(hidden)]
     pub fn with_exchanges_budget(mut self, bytes: u64) -> Engine {
         self.exchanges = bytes.min(EXCHANGES_MAX_BYTES);
+        self
+    }
+
+    /// For tests: the same executor, whose runs each keep in their journals at most
+    /// these many progress messages, these many bytes of their text and these many
+    /// typed events, in place of [`super::MESSAGES_KEPT_LIMIT`],
+    /// [`super::MESSAGES_KEPT_MAX_BYTES`] and [`super::EVENTS_KEPT_LIMIT`]. Each is
+    /// never more than that: so a test shows what a run does past its bound without
+    /// sending thousands of events.
+    #[doc(hidden)]
+    pub fn with_journal_bounds(mut self, messages: usize, bytes: usize, events: usize) -> Engine {
+        self.journal = JournalBounds::at_most(messages, bytes, events);
         self
     }
 
@@ -1219,7 +1234,7 @@ impl Engine {
         // What the run keeps while it executes is made before the run is, and attached
         // to it in the store's table of open runs by the publication that makes it: so
         // whoever sees the run in a snapshot finds it there (ADR 0008, "Status").
-        let kept = Arc::new(Kept::new(self.clock.clone(), secrets.clone()));
+        let kept = Arc::new(Kept::new(self.clock.clone(), secrets.clone()).bounded(self.journal));
         let live = Arc::new(LiveRun::new(kept.clone(), bounded.signal.clone(), added));
         let mut over = Over {
             place: None,

@@ -16,6 +16,13 @@ use whizbang_testkit::scratch::Scratch;
 
 use super::watch::{asked, engine, work};
 
+/// The bounds the tests below hold runs to, in place of the real ones, so that a test
+/// meets them with a few events (`Engine::with_journal_bounds`): eight messages,
+/// 12,000 bytes of their text, and eight typed events.
+const MESSAGES: usize = 8;
+const BYTES: usize = 12_000;
+const EVENTS: usize = 8;
+
 /// Runs `work` with this body to its end, and reads the journal its run stored.
 fn stored(
     label: &str,
@@ -30,7 +37,8 @@ fn stored(
             body(context.events());
             Ok(Produced::nothing())
         })],
-    );
+    )
+    .with_journal_bounds(MESSAGES, BYTES, EVENTS);
     let Ok(Answer::Ran(finished)) = executor.request(&asked("order-journal")) else {
         panic!("the request did not run");
     };
@@ -110,20 +118,27 @@ fn typed_line_text(line: &JournalLine) -> String {
 
 #[test]
 fn past_its_bound_a_run_keeps_its_first_messages_and_counts_the_rest() {
+    // The real bounds are the plan's; a run here is held to smaller ones.
+    assert_eq!(
+        (
+            MESSAGES_KEPT_LIMIT,
+            MESSAGES_KEPT_MAX_BYTES,
+            EVENTS_KEPT_LIMIT,
+            EVENT_MAX_BYTES
+        ),
+        (4096, 1 << 20, 16_384, 512)
+    );
     // Four more messages than a run keeps: the first are kept, the rest counted, and
     // the journal's last line says how many.
     let (journal, bytes) = stored("journal-count", |events| {
-        for n in 0..MESSAGES_KEPT_LIMIT + 4 {
+        for n in 0..MESSAGES + 4 {
             events.progress(&format!("message {n}"));
         }
     });
-    assert_eq!(journal.lines().len(), MESSAGES_KEPT_LIMIT);
+    assert_eq!(journal.lines().len(), MESSAGES);
     assert_eq!(journal.lines()[0].message(), "message 0");
     let last = journal.lines().last().unwrap();
-    assert_eq!(
-        last.message(),
-        format!("message {}", MESSAGES_KEPT_LIMIT - 1)
-    );
+    assert_eq!(last.message(), format!("message {}", MESSAGES - 1));
     assert_eq!(
         (journal.not_kept().messages(), journal.not_kept().events()),
         (4, 0)
@@ -138,14 +153,13 @@ fn past_its_bound_a_run_keeps_its_first_messages_and_counts_the_rest() {
     // after it, a short one among them.
     let long = "x".repeat(4000);
     let (journal, _) = stored("journal-bytes", move |events| {
-        for _ in 0..300 {
+        for _ in 0..5 {
             events.progress(&long);
         }
         events.progress("short");
     });
-    let kept = MESSAGES_KEPT_MAX_BYTES / 4000;
-    assert_eq!(journal.lines().len(), kept);
-    assert_eq!(journal.not_kept().messages(), (301 - kept) as u64);
+    assert_eq!(journal.lines().len(), BYTES / 4000);
+    assert_eq!(journal.not_kept().messages(), (6 - BYTES / 4000) as u64);
 }
 
 #[test]
@@ -154,7 +168,7 @@ fn typed_events_past_their_bound_are_counted_and_the_journal_says_so() {
     // long what it says; progress messages are counted on their own.
     let (journal, _) = stored("journal-typed", |events| {
         events.progress("began");
-        for n in 0..=EVENTS_KEPT_LIMIT {
+        for n in 0..=EVENTS {
             events.event(&Event::StepStarted {
                 step: format!("s{n}"),
                 action: "a".repeat(2000),
@@ -163,16 +177,13 @@ fn typed_events_past_their_bound_are_counted_and_the_journal_says_so() {
         }
         events.progress("ended");
     });
-    assert_eq!(journal.lines().len(), EVENTS_KEPT_LIMIT + 2);
+    assert_eq!(journal.lines().len(), EVENTS + 2);
     assert_eq!(
         (journal.not_kept().messages(), journal.not_kept().events()),
         (0, 1)
     );
     let last = journal.lines().last().unwrap();
-    assert_eq!(
-        (last.message(), last.seq()),
-        ("ended", EVENTS_KEPT_LIMIT as u64 + 2)
-    );
+    assert_eq!((last.message(), last.seq()), ("ended", EVENTS as u64 + 2));
     let line = &journal.lines()[1];
     let Some(Event::StepStarted { step, action, .. }) = line.event() else {
         panic!("{line:?}");
