@@ -39,6 +39,11 @@
 #     of `mask_rect`, and ends when its input closes. One that does not end within the
 #     limit is killed and waited for, and the check fails; it is killed and waited for on
 #     every other way out of this script too, and no wait for it is without a bound;
+#  6b. the playground: `whizbang play --no-open --stdin-quit --port 0` prints its address
+#     with its token, serves the page with its content security policy and `/api/hello`
+#     to the token over loopback (asked with the system's `curl`), and ends with its
+#     input, leaving no `play.json`. One that does not end within the limit is killed and
+#     waited for, as the server is (plan m5, tasks U1 and H1);
 #  7. the pack: `whizbang setup` installs the pack's core, offline, and its worker says
 #     hello;
 #  8. `whizbang backends status` answers;
@@ -116,6 +121,7 @@ server=
 # then it is killed, and waited for, for the limit and no longer: this script never waits
 # without a bound on a process it started, whatever that process does.
 stop_server() {
+  stop_player
   [ -n "$server" ] || return 0
   exec 3>&- 4<&-
   kill -9 "$server" 2>/dev/null || true
@@ -131,6 +137,25 @@ stop_server() {
   done
   wait "$server" 2>/dev/null || true
   server=
+}
+player=
+# stop_player: the same for the playground, if one was started and has not been waited for.
+stop_player() {
+  [ -n "$player" ] || return 0
+  exec 5>&- 6<&-
+  kill -9 "$player" 2>/dev/null || true
+  local waited=0
+  while kill -0 "$player" 2>/dev/null; do
+    if [ "$waited" -ge $((limit * 10)) ]; then
+      echo "install-check: the playground (process $player) is still there $limit seconds after it was killed; it is left" >&2
+      player=
+      return 0
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  wait "$player" 2>/dev/null || true
+  player=
 }
 # An exit of 0 that is not one meant to succeed becomes 70: see the top of scripts/scan.sh.
 done_ok=0
@@ -271,6 +296,47 @@ exec 4<&-
 trap - PIPE
 [ "$status" -eq 0 ] || { sed 's/^/    /' "$work/err" >&2; die "the server ended with status $status"; }
 ok "whizbang serve answered initialize, listed its tools, ran mask_rect, and ended with its input"
+
+# --- 6b. The playground, over loopback, asked with the system's curl.
+mkfifo "$work/to-play" "$work/from-play"
+env -i "${cleared[@]}" whizbang play --store store --no-open --stdin-quit --port 0 <"$work/to-play" >"$work/from-play" 2>"$work/err" &
+player=$!
+exec 5>"$work/to-play" 6<"$work/from-play"
+opened=
+IFS= read -r -t "$limit" opened <&6 || { sed 's/^/    /' "$work/err" >&2; die "the playground printed no address within $limit seconds"; }
+[[ "$opened" =~ ^http://127\.0\.0\.1:([0-9]+)/#k=([0-9a-f]{64})$ ]] ||
+  die "the playground's first line is not its address with its token"
+port=${BASH_REMATCH[1]}
+token=${BASH_REMATCH[2]}
+asked_play() { # <path> [<header>]: one request; the answer's head in $work/head, its body in $work/out
+  /usr/bin/curl --silent --noproxy '*' --max-time "$limit" --dump-header "$work/head" --output "$work/out" \
+    ${2:+--header "$2"} "http://127.0.0.1:$port$1" || die "the playground did not answer $1 within $limit seconds"
+}
+asked_play /
+head -n 1 "$work/head" | grep -E '^HTTP/1\.1 200 ' >/dev/null && grep -i '^content-security-policy: default-src' "$work/head" >/dev/null ||
+  die "the playground's page was not served with its policy"
+asked_play /api/hello
+head -n 1 "$work/head" | grep -E '^HTTP/1\.1 401 ' >/dev/null || die "the playground answered /api/hello without its token"
+asked_play /api/hello "Authorization: Bearer $token"
+head -n 1 "$work/head" | grep -E '^HTTP/1\.1 200 ' >/dev/null && said '"version":"'"$version"'"' ||
+  { shown; die "the playground's /api/hello did not answer the token with whizbang $version"; }
+exec 5>&-
+waited=0
+while kill -0 "$player" 2>/dev/null; do
+  if [ "$waited" -ge $((limit * 10)) ]; then
+    stop_player
+    die "the playground did not end within $limit seconds of the end of its input; it was killed and waited for"
+  fi
+  sleep 0.1
+  waited=$((waited + 1))
+done
+status=0
+wait "$player" || status=$?
+player=
+exec 6<&-
+[ "$status" -eq 0 ] || { sed 's/^/    /' "$work/err" >&2; die "the playground ended with status $status"; }
+[ ! -e store/play.json ] || die "the playground left its play.json behind"
+ok "whizbang play served its page and /api/hello to its token over loopback, and ended with its input"
 
 # --- 7. The pack's core, offline, with the uv and the Python of the prerequisites' folder.
 clean whizbang setup >"$work/out" 2>"$work/err" || { shown; die "whizbang setup did not install the pack's core"; }

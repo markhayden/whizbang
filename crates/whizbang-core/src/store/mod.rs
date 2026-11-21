@@ -528,6 +528,37 @@ impl Files {
         }
     }
 
+    /// Whose the store's folder is, asked before anything in it is read or locked (plan
+    /// m5, task H1; as a models directory is, ADR 0017): a folder that is another
+    /// user's ([`Error::NotOwn`]), or that its group or anyone may write
+    /// ([`Error::OthersMayWrite`]), is refused, and nothing in it is read, locked or
+    /// changed. A folder that is not there is not refused here: a writer makes it, for
+    /// its owner only, and a reader is told it is missing. A file system that cannot
+    /// say whose a folder is (the tests' in-memory ones; a system with no owners and
+    /// modes) is not asked. A look, when the store is opened: a mode or an owner changed
+    /// afterwards is not seen, and the folders above it are not looked at.
+    fn whose(&self) -> Result<()> {
+        let root = &self.layout.root;
+        match self.fs.who_may_write(root) {
+            Ok(writers) if !writers.owner_is_this_user => Err(Error::NotOwn { root: root.clone() }),
+            Ok(writers) if writers.group || writers.anyone => {
+                Err(Error::OthersMayWrite { root: root.clone() })
+            }
+            Ok(_) => Ok(()),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound
+                        | io::ErrorKind::NotADirectory
+                        | io::ErrorKind::Unsupported
+                ) =>
+            {
+                Ok(())
+            }
+            Err(error) => Err(Error::io("look at", root)(error)),
+        }
+    }
+
     /// What is at the root, for a writer: the number of the current generation of the
     /// store there, or, when a store may be made (`make`), 0 where one may be made:
     /// where there is nothing (and, for [`Make::RootOnly`], a directory to hold the
@@ -683,6 +714,7 @@ impl Reader {
                 root: root.to_path_buf(),
             },
         };
+        files.whose()?;
         if !files.exists(root)? {
             return Err(Error::Missing {
                 root: root.to_path_buf(),
@@ -949,6 +981,11 @@ impl Store {
             .map(|_| Place(self.started.clone()))
     }
 
+    /// How many places among the started runs are taken now ([`Store::start_place`]).
+    pub fn started_places(&self) -> usize {
+        self.started.load(Ordering::SeqCst)
+    }
+
     /// What the maker of the run `run` attached to it ([`Publication::attach`]), when
     /// this writer made the run and has it open: exactly when [`Store::made_here`] says
     /// so, since the two are one table. A run that was made with nothing attached has
@@ -991,6 +1028,7 @@ impl Store {
                 root: root.to_path_buf(),
             },
         };
+        files.whose()?;
         let fs = files.fs.as_ref();
         let layout = &files.layout;
         let lock_path = layout.lock();
@@ -1000,8 +1038,11 @@ impl Store {
         let lock = match files.place(make) {
             Ok(_) => {
                 // The lock file is in the root, so the root comes first. It is made only
-                // where there was nothing.
+                // where there was nothing. A folder another process made at the name
+                // since the look is asked whose it is again before anything is made in
+                // it.
                 create_durably(fs, root, make == Make::WithParents)?;
+                files.whose()?;
                 fs.hold_lock_file(&lock_path, true)
                     .map_err(Error::io("lock", &lock_path))?
             }
@@ -1025,6 +1066,7 @@ impl Store {
         // store as it is, and recovery goes by this and not by the look before the lock:
         // since that look another writer may have published. Until here nothing was
         // changed.
+        files.whose()?;
         let current = files.place(make)?;
         lock.record(holder().as_bytes())
             .map_err(Error::io("write", &lock_path))?;
@@ -1623,6 +1665,20 @@ impl Publication<'_> {
         let files = self.files;
         let fs = files.fs.as_ref();
         let layout = &files.layout;
+
+        // The writer's lock is still the file at `LOCK`: one that was removed or
+        // replaced while it was held may have let another writer in beside this one,
+        // and nothing is published over what that one may publish (plan m5, task H1).
+        let lock_path = layout.lock();
+        match self.store.lock.still_at(&lock_path) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(Error::LockReplaced {
+                    root: layout.root.clone(),
+                });
+            }
+            Err(error) => return Err(Error::io("look at", &lock_path)(error)),
+        }
 
         // The payloads, whose content `put` synced: their names, then the directory that
         // holds the names. The directory is synced for content that was already there

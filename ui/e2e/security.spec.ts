@@ -18,14 +18,24 @@ async function answersFrom(page: Page, origin: string): Promise<Array<{ url: str
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Network.enable");
   const urls = new Map<string, string>();
+  // Chrome may say what arrived before it says what was sent (a preflight's answer, from a
+  // fast host): such an answer waits here for its request's address.
+  const early = new Map<string, Array<{ status: number; headers: Record<string, string> }>>();
   const seen: Array<{ url: string; status: number; headers: Record<string, string> }> = [];
-  cdp.on("Network.requestWillBeSent", (event) => urls.set(event.requestId, event.request.url));
+  const keep = (url: string, answer: { status: number; headers: Record<string, string> }) => {
+    if (url.startsWith(origin)) seen.push({ url, ...answer });
+  };
+  cdp.on("Network.requestWillBeSent", (event) => {
+    urls.set(event.requestId, event.request.url);
+    for (const answer of early.get(event.requestId) ?? []) keep(event.request.url, answer);
+    early.delete(event.requestId);
+  });
   cdp.on("Network.responseReceivedExtraInfo", (event) => {
-    const url = urls.get(event.requestId) ?? "";
-    if (url.startsWith(origin)) {
-      const headers = Object.fromEntries(Object.entries(event.headers).map(([k, v]) => [k.toLowerCase(), String(v)]));
-      seen.push({ url, status: event.statusCode, headers });
-    }
+    const headers = Object.fromEntries(Object.entries(event.headers).map(([k, v]) => [k.toLowerCase(), String(v)]));
+    const answer = { status: event.statusCode, headers };
+    const url = urls.get(event.requestId);
+    if (url === undefined) early.set(event.requestId, [...(early.get(event.requestId) ?? []), answer]);
+    else keep(url, answer);
   });
   return seen;
 }

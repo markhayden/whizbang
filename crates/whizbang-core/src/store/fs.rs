@@ -231,6 +231,14 @@ pub trait LockFile: Send + Sync {
     /// Makes `holder` the whole content of the file, for whoever is refused to read.
     /// Nothing depends on it, and it is not made durable.
     fn record(&self, holder: &[u8]) -> io::Result<()>;
+    /// Whether the file held is still the one `path` names: false when the name was
+    /// removed, or now names another file, so another writer may hold a lock on that
+    /// one (plan m5, task H1). A lock file that cannot tell says it is, as the test
+    /// kit's in-memory ones do.
+    fn still_at(&self, path: &Path) -> io::Result<bool> {
+        let _ = path;
+        Ok(true)
+    }
 }
 
 /// What the store needs from a file system.
@@ -459,6 +467,10 @@ impl LockFile for LockedFile {
         file.set_len(0)?;
         file.seek(io::SeekFrom::Start(0))?;
         file.write_all(holder)
+    }
+
+    fn still_at(&self, path: &Path) -> io::Result<bool> {
+        is_at(&self.0, path)
     }
 }
 

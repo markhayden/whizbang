@@ -40,6 +40,7 @@ mod openai;
 mod pack;
 mod pairs_page;
 mod parity;
+mod play;
 mod prepare;
 mod rascal;
 mod recipe;

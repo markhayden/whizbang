@@ -5,6 +5,7 @@ mod eval;
 mod export;
 mod lab;
 mod models;
+mod play;
 mod rascal;
 #[cfg(test)]
 mod recovering;
@@ -123,6 +124,11 @@ enum Command {
     /// call runs through admission, spend and the egress gate as the command line's
     /// do. It ends when its input does.
     Serve(serve::Args),
+    /// Play: the playground, a page in Chrome served by this process on 127.0.0.1. A
+    /// run started there runs through admission, spend and the egress gate as the
+    /// command line's do, and goes on when the tab is closed. It holds the store until
+    /// the page's Quit or Ctrl-C, which cancel and account for the runs going.
+    Play(play::Args),
 }
 
 fn describe(json: bool, pretty: bool) -> Result<String, String> {
@@ -158,7 +164,9 @@ fn emit(bytes: &[u8]) -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("whizbang: could not write: {error}");
+            // The error output may be gone too: what cannot be said is not said, and
+            // the exit code says it.
+            let _ = writeln!(std::io::stderr(), "whizbang: could not write: {error}");
             ExitCode::from(3)
         }
     }
@@ -319,6 +327,10 @@ fn main() -> ExitCode {
                 Err(complaint) => complain_in_lines(&complaint),
             }
         }
+        Command::Play(args) => match play::run(&args, std::sync::Arc::new(platforms_models_dir)) {
+            Ok(text) => emit(text.as_bytes()),
+            Err(complaint) => complain_in_lines(&complaint),
+        },
         Command::Setup(args) => match setup::run(
             &args,
             std::sync::Arc::new(platforms_models_dir),

@@ -162,11 +162,12 @@ tr '\t' '\037' <"$list" >"$tmp/fields"
 
 # conjuncts <expression>: the parts a licence expression joins with AND, one a line, each
 # the licences it offers a choice of, apart by spaces; an exception after WITH is left
-# out. It fails on an expression it cannot read so: an AND inside brackets, or an AND
+# out. A `/` is read as OR, the older form crates.io still shows for some crates
+# (`signal-hook`'s `Apache-2.0/MIT`), as `cargo deny` reads it. It fails on an expression it cannot read so: an AND inside brackets, or an AND
 # beside an OR with no brackets to say which binds.
 conjuncts() {
   printf '%s\n' "$1" | awk '{
-    gsub(/\(/, " ( "); gsub(/\)/, " ) ")
+    gsub(/\//, " OR "); gsub(/\(/, " ( "); gsub(/\)/, " ) ")
     n = split($0, word, " "); depth = 0; part = ""; ands = 0; ors = 0
     for (i = 1; i <= n; i++) {
       if (word[i] == "(") depth++

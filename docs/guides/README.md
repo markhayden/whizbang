@@ -15,13 +15,13 @@ then. Milestones are those of `SPEC.md` section 16.
 | [The MCP server over stdio](serve.md) | `whizbang serve` for a local agent: the tools, progress, cancellation, the stated time of a run and the end of the input | 2 |
 | [Install](install.md) | Installing from a release archive: download, the SHA-256 check, what the Python pack needs first, what each platform can do, and why a Mac downloads with `curl`. The archive carries this page as its `README.md` | 4 |
 | [The loop: remove, check, retry](loop.md) | `whizbang rascal remove-checked`: what an attempt is, when it tries again, the plan said before anything runs, what three attempts reserve with each judge, what it prints and hands back when every attempt fails, and its exit codes | 4 |
+| [The playground](playground.md) | `whizbang play`: starting it, the address and its token, reopening the page, stopping, a run's stated time, and what it holds while it runs. The screens are added as they land | 5 |
 
 ## Doors
 
 | Guide | Covers | Milestone |
 |---|---|---|
 | The command line | `whizbang` for a person and for scripts | Checkpoint 1A |
-| The playground | `whizbang play`: trying tools in a browser | 5 |
 | The MCP server over HTTP, and remote hosting | `whizbang serve --http` as the engine of a hosted app; a model on a GPU host | 6 |
 
 ## How to add

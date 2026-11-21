@@ -1,6 +1,6 @@
 [package]
 name = "whizbang-serve"
-description = "The MCP server over stdio: each action as a tool, run through the executor it is given"
+description = "The MCP server over stdio and the playground host over loopback HTTP, each running actions through the executor it is given"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,7 +12,16 @@ publish.workspace = true
 # No feature of its own: one turned on here would reach every crate of the workspace
 # (ADR 0023). The frames of the protocol are JSON, one to a line (ADR 0031).
 serde_json = { workspace = true }
+# The bodies of the playground's API, read into types that refuse a field they do not
+# name (plan m5, task H1; ADR 0041).
+serde = { workspace = true }
+# The playground's launch token, from the system's randomness (ADR 0041, "The token"):
+# the version `ring` already brings into the shipped binary, so no crate is added to it.
+getrandom = "=0.2.17"
 whizbang-core = { workspace = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+whizbang-testkit = { workspace = true }

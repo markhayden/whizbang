@@ -34,7 +34,8 @@ use whizbang_backends::pack::Said;
 use whizbang_backends::pack::proto::VERSION;
 use whizbang_core::capability::{Fault, FaultKind, Installed};
 use whizbang_core::config::Backend;
-use whizbang_core::contract::{Cancellation, Capability};
+use whizbang_core::config::NotReady;
+use whizbang_core::contract::{Cancellation, Capability, MissingKind};
 use whizbang_core::egress::{
     CheckedProber, DispatchPolicy, ProbeRequest, Probed, Prober, Recipient,
 };
@@ -122,6 +123,60 @@ pub fn status(over: &Over, asked: Asked, prober: Arc<dyn Prober>) -> Result<Stri
         out.push_str(&probes(&configured, &listed, prober));
     }
     Ok(out)
+}
+
+/// Each backend the config offers, as the playground's `/api/hello` says it (plan m5,
+/// task H1): its capability, its name, its kind and its model, whether it is the
+/// capability's default, and whether it is ready; when it is not, the kind of the reason
+/// ([`whizbang_core::contract::MissingKind`]: `no_key` for a credential the env file does
+/// not set) and the reason in words. Without a probe: it contacts nothing and starts
+/// nothing, as `whizbang backends status` without `--probe`. Every text from the config
+/// is escaped; nothing of a credential is said. None, under no config.
+pub fn readiness(over: &Over) -> Result<Vec<serde_json::Value>, String> {
+    let Some(configured) = over.configured()? else {
+        return Ok(Vec::new());
+    };
+    let config = configured.loaded.config();
+    let mut listed = Vec::new();
+    for capability in CAPABILITIES {
+        for (name, backend) in config.backends(capability) {
+            let (state, _) = state_of(&configured, capability, name);
+            let kind = kind_of(&configured, capability, name);
+            listed.push(serde_json::json!({
+                "capability": capability.name(),
+                "name": name.escape_debug().to_string(),
+                "kind": backend.kind().escape_debug().to_string(),
+                "model": backend.model().map(|model| model.escape_debug().to_string()),
+                "default": config.default_of(capability) == Some(name),
+                "ready": kind.is_none(),
+                "missing": kind.map(MissingKind::word),
+                "why": state,
+            }));
+        }
+    }
+    Ok(listed)
+}
+
+/// Why one backend is not ready, as a kind; none when it is.
+fn kind_of(configured: &Configured, capability: Capability, name: &str) -> Option<MissingKind> {
+    let offers = &configured.offers;
+    if let Some(why) = offers.not_ready(capability, name) {
+        return Some(match why {
+            NotReady::Missing { .. } => MissingKind::NoKey,
+            _ => MissingKind::Other,
+        });
+    }
+    let Ok(resolved) = offers.roster().resolve(capability, Some(name), &[]) else {
+        return Some(MissingKind::Other);
+    };
+    let declaration = resolved.declaration();
+    if declaration.recipient().is_some() {
+        return None;
+    }
+    match configured.inventory.look(declaration.model().model()) {
+        Installed::Ready(_) => None,
+        Installed::NotReady(why) => Some(why.kind()),
+    }
 }
 
 /// Whether one backend is ready, in words, and the recipient it declares when it is
