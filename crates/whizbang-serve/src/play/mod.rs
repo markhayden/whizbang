@@ -71,8 +71,9 @@ const QUEUED_LIMIT: usize = 64;
 pub const REQUESTS_REMEMBERED: usize = 4096;
 
 /// What the binary hands the host beside the executor: how the page's call becomes a
-/// call of an action, what `/api/hello` says beside the version and the store, and what
-/// the host's end stops. It holds no HTTP type; the host holds the protocol.
+/// call of an action, what `/api/hello` says beside the version and the store, what the
+/// store holds of the playground's own (its pictures and drawn locations), and what the
+/// host's end stops. It holds no HTTP type; the host holds the protocol.
 pub trait Play: Send + Sync {
     /// A call of the action `action` with these arguments, as the page sends them: the
     /// call, and the page's id for the request when it gave one in the arguments; or
@@ -86,14 +87,71 @@ pub trait Play: Send + Sync {
     fn hello(&self) -> Map<String, Json> {
         Map::new()
     }
-    /// A picture the page sent, which decoded inside the core's limits, and the name it
-    /// came with: what was made of it, or why not.
-    fn picture(&self, _bytes: &[u8], _name: &str) -> Result<Json, String> {
-        Err("this build takes no picture from the page yet".to_owned())
+    /// Each argument of the action `action`, as the page names it, that chooses a backend,
+    /// with the backends it may name, each as `/api/hello` lists it (`name`, and its own
+    /// readiness, `missing`, and `size`): what a preparation is made once for, each (plan
+    /// m5, task W1, item 4).
+    fn choosers(&self, _action: &str) -> Vec<(String, Vec<Json>)> {
+        Vec::new()
+    }
+    /// A picture the page sent, and the name it came with: decoded within the core's
+    /// limits and kept in the store with its name beside it; what was made of it, or why
+    /// not.
+    fn picture(&self, _bytes: &[u8], _name: &str) -> Result<Json, Refused> {
+        Err(Refused::new(
+            501,
+            "this build takes no picture from the page yet",
+        ))
+    }
+    /// The pictures the playground kept, newest first: at most `limit`, after the one
+    /// `after` names when it names one.
+    fn pictures(&self, _after: Option<&str>, _limit: usize) -> Result<Json, Refused> {
+        Ok(serde_json::json!({ "pictures": [] }))
+    }
+    /// An artifact of the store, for display: its type of content and its bytes; a
+    /// thumbnail at most `edge` pixels on its long side when one is asked for.
+    fn artifact(&self, _id: &str, _edge: Option<u32>) -> Result<(&'static str, Vec<u8>), Refused> {
+        Err(Refused::new(404, "no artifact has that identity"))
+    }
+    /// A shape drawn on a picture, committed as a location bound to it: what was made.
+    fn location(&self, _drawn: &Json) -> Result<Json, Refused> {
+        Err(Refused::new(501, "this build takes no drawn location yet"))
+    }
+    /// What the store says of a run beside its state: what it spent of what it reserved,
+    /// and, once it has ended, its verdict.
+    fn facts(&self, _run: &RunId, _ended: bool) -> Map<String, Json> {
+        Map::new()
+    }
+    /// The journal of a run that has ended, as its store keeps it: each line as JSON
+    /// (`seq`, `at_ms`, `message`, `event`), in order. The executor's status of an ended
+    /// run holds no events, so a poll that comes after the end reads the rest here.
+    fn journal(&self, _run: &RunId) -> Option<Vec<Json>> {
+        None
+    }
+    /// A script of the fixture host's (`x-fixture-script`), which the real host refuses:
+    /// `Err` with fixed words (plan m5, task U1, item 5).
+    fn script(&self, _words: &str) -> Result<(), String> {
+        Err("this host takes no script".to_owned())
     }
     /// The host has stopped and let its executor go: stop what the door holds (the
-    /// pack's worker).
+    /// pack's worker), and let the store go.
     fn closing(&self) {}
+}
+
+/// Why a [`Play`] did not do what the page asked: the status and fixed or escaped words.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refused {
+    pub status: u16,
+    pub why: String,
+}
+
+impl Refused {
+    pub fn new(status: u16, why: &str) -> Refused {
+        Refused {
+            status,
+            why: why.to_owned(),
+        }
+    }
 }
 
 /// What the host is started with.
@@ -146,6 +204,8 @@ pub(crate) struct Held {
     /// The run, once its start was answered; none while it is being admitted.
     pub run: Option<RunId>,
     pub action: String,
+    /// The arguments as the page sent them, which a page that opens the run again shows.
+    pub arguments: Json,
     pub signal: Cancellation,
     pub until: Instant,
     pub started_ms: u64,
@@ -168,6 +228,8 @@ pub(crate) struct Asked {
     pub run: RunId,
     pub action: String,
     pub arguments: Digest,
+    /// The arguments as sent, which a page that opens the run again shows.
+    pub sent: Json,
 }
 
 /// The digest of a call's arguments as the page sent them: their JSON, whose object
@@ -338,12 +400,13 @@ impl Shared {
         self.changed.notify_all();
     }
 
-    /// Takes a place for a start of `action`, when fewer than [`Settings::calls`] are
+    /// Takes a place for a start of `action` with these arguments, when fewer than [`Settings::calls`] are
     /// taken and the host is not quitting; first giving back the places of runs that
     /// have ended. None when every place is taken.
     pub fn admit(
         &self,
         action: &str,
+        arguments: &Map<String, Json>,
         signal: &Cancellation,
         until: Instant,
         started_ms: u64,
@@ -359,6 +422,7 @@ impl Shared {
             place,
             run: None,
             action: action.to_owned(),
+            arguments: Json::Object(arguments.clone()),
             signal: signal.clone(),
             until,
             started_ms,

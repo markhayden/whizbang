@@ -40,6 +40,33 @@ pub const SHIPPED: [&str; 7] = [
     SEAM,
 ];
 
+/// The kit the shipped recipes belong to (ADR 0040).
+pub const KIT: &str = "rascal";
+
+/// Each shipped recipe's title, as a person reads it, by its name (plan m5, task W1,
+/// item 2). The files say neither kit nor title: their text is left as it is, since what
+/// was measured of a recipe names it by the digest of its text.
+pub const TITLES: [(&str, &str); 7] = [
+    ("remove_prompt", "Remove what you name"),
+    ("remove", "Remove at a place"),
+    ("repair_area", "Repair a spot"),
+    ("mask_rect", "Mask a rectangle"),
+    ("protect", "Protect a first edit"),
+    ("repair", "Repair a scratch"),
+    ("seam", "Heal a panorama seam"),
+];
+
+/// A shipped recipe's text as its action, with its kit and its title: [`action_of`], then
+/// titled from [`TITLES`]. A text that is not a shipped recipe's is given no title.
+pub fn shipped_action(text: &str, registry: &Registry) -> Result<RecipeAction, RecipeError> {
+    let action = action_of(text, registry)?;
+    let name = action.recipe().name.clone();
+    match TITLES.iter().find(|(named, _)| *named == name) {
+        Some((_, title)) => action.titled(KIT, title),
+        None => Ok(action),
+    }
+}
+
 /// A recipe's text, read and checked against the actions of `registry`, as an action.
 pub fn action_of(text: &str, registry: &Registry) -> Result<RecipeAction, RecipeError> {
     let checked = Recipe::read(text)?.check(registry)?;
@@ -50,6 +77,6 @@ pub fn action_of(text: &str, registry: &Registry) -> Result<RecipeAction, Recipe
 pub fn shipped(registry: &Registry) -> Result<Vec<RecipeAction>, RecipeError> {
     SHIPPED
         .iter()
-        .map(|text| action_of(text, registry))
+        .map(|text| shipped_action(text, registry))
         .collect()
 }

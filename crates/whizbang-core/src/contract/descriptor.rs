@@ -738,6 +738,16 @@ pub struct ActionDescriptor {
     /// When to use it, where it says: a recipe does (ADR 0033).
     #[serde(rename = "use", skip_serializing_if = "Option::is_none")]
     when: Option<String>,
+    /// The kit it belongs to, where it says: every task (a recipe or a loop) does
+    /// (description version 11; ADR 0040; plan m5, task W1, item 2).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kit: Option<String>,
+    /// Its title, as a person reads it ("Remove what you name"), where it has one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+    /// The other kit a task uses, for a loop whose steps call one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    uses: Option<String>,
     arguments: Vec<Argument>,
     inputs: Vec<InputPort>,
     outputs: Vec<OutputPort>,
@@ -819,6 +829,26 @@ impl Draft {
         self
     }
 
+    /// The kit the action belongs to, by its name (`rascal`, `squint`): a name held to
+    /// the rule of an action's name.
+    pub fn kit(mut self, kit: &str) -> Draft {
+        self.0.kit = Some(kit.to_owned());
+        self
+    }
+
+    /// The action's title, as a person reads it: one line of at most
+    /// [`text::TITLE_LIMIT`] characters, held to the rule of a purpose.
+    pub fn title(mut self, title: &str) -> Draft {
+        self.0.title = Some(title.to_owned());
+        self
+    }
+
+    /// The other kit the action uses: a loop whose steps call another kit's tasks.
+    pub fn uses(mut self, kit: &str) -> Draft {
+        self.0.uses = Some(kit.to_owned());
+        self
+    }
+
     /// Whether two runs of the action may execute at the same time. Unless it says so,
     /// they may not.
     pub fn concurrent(mut self, concurrent: bool) -> Draft {
@@ -849,6 +879,37 @@ impl Draft {
 
 impl ActionDescriptor {
     /// Starts a descriptor: the action's name, its version, its level and what it is for.
+    /// The same descriptor, naming the kit it belongs to and its title (plan m5, task W1,
+    /// item 2), held to their rules as a draft's are: what a build says of an action
+    /// whose descriptor is made elsewhere, such as a shipped recipe, whose file is left
+    /// as it is so that what was measured of it still names it.
+    pub fn titled(mut self, kit: &str, title: &str) -> Result<ActionDescriptor, DescriptorError> {
+        self.kit = Some(kit.to_owned());
+        self.title = Some(title.to_owned());
+        match self.check() {
+            Ok(()) => Ok(self),
+            Err(why) => Err(DescriptorError {
+                action: self.name,
+                why,
+            }),
+        }
+    }
+
+    /// The kit it belongs to, where it says.
+    pub fn kit(&self) -> Option<&str> {
+        self.kit.as_deref()
+    }
+
+    /// Its title, where it has one.
+    pub fn title(&self) -> Option<&str> {
+        self.title.as_deref()
+    }
+
+    /// The other kit it uses, where it says.
+    pub fn uses(&self) -> Option<&str> {
+        self.uses.as_deref()
+    }
+
     pub fn draft(name: &str, version: &str, kind: Kind, purpose: &str) -> Draft {
         Draft(ActionDescriptor {
             name: name.to_owned(),
@@ -856,6 +917,9 @@ impl ActionDescriptor {
             kind,
             purpose: purpose.to_owned(),
             when: None,
+            kit: None,
+            title: None,
+            uses: None,
             arguments: Vec::new(),
             inputs: Vec::new(),
             outputs: Vec::new(),
@@ -965,6 +1029,14 @@ impl ActionDescriptor {
         text::purpose(&self.purpose)?;
         if let Some(when) = &self.when {
             text::plain_line("use", when)?;
+        }
+        for (what, kit) in [("kit", &self.kit), ("uses", &self.uses)] {
+            if let Some(kit) = kit {
+                text::action_name(kit).map_err(|why| format!("its {what}: {why}"))?;
+            }
+        }
+        if let Some(title) = &self.title {
+            text::title(title)?;
         }
 
         // What a call gives, arguments and input ports, is given under one set of names.

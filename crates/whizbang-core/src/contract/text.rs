@@ -12,6 +12,9 @@ pub const NAME_LIMIT: usize = 64;
 /// The longest purpose, in characters.
 pub const PURPOSE_LIMIT: usize = 200;
 
+/// The longest title, in characters.
+pub const TITLE_LIMIT: usize = 48;
+
 /// The marks a purpose may hold beside ASCII letters, digits and spaces.
 const PURPOSE_MARKS: &str = ".,;:'\"()/%+-";
 
@@ -53,6 +56,18 @@ fn slug(name: &str, dash: bool) -> Result<(), String> {
 /// and holds neither `://` nor `www.` in any case.
 pub fn purpose(purpose: &str) -> Result<(), String> {
     plain_line("purpose", purpose)
+}
+
+/// A title, as a person reads it ("Remove what you name"): the rule of a purpose, at
+/// most [`TITLE_LIMIT`] characters (plan m5, task W1, item 2).
+pub fn title(title: &str) -> Result<(), String> {
+    plain_line("title", title)?;
+    if title.len() > TITLE_LIMIT {
+        return Err(format!(
+            "the title {title:?} is longer than {TITLE_LIMIT} characters"
+        ));
+    }
+    Ok(())
 }
 
 /// The purpose rule, for any text a description prints as it is: `what` says which text

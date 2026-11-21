@@ -8,44 +8,112 @@
 //! The fixture host of the playground's Chrome tier (task U1) builds the same
 //! [`Playground`] over the test kit's fakes.
 
+use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as Json, json};
-use whizbang_core::contract::{ActionDescriptor, Call};
+use whizbang_core::contract::{ActionDescriptor, Call, RunId};
+use whizbang_core::description::Kit;
+use whizbang_core::store::Store;
 use whizbang_core::store::fs::{Fs, RealFs};
-use whizbang_serve::play::{Play, Token};
+use whizbang_serve::play::{Play, Refused, Token};
 use whizbang_serve::tools;
 
 use crate::backend_status;
 use crate::pack::OneWorker;
-use crate::wiring::Over;
+use crate::wiring::{self, Over};
 
 /// The name of the file a running host keeps in its store's folder.
 pub const PLAY_FILE: &str = "play.json";
 
 /// The actions of a registry, offered to the page, over what the executor was built
-/// over.
+/// over; and the store's writer the executor holds, through which the page's pictures
+/// and drawn locations are kept (plan m5, task W1, item 3), let go when the host stops.
 pub struct Playground {
     descriptors: Vec<ActionDescriptor>,
     over: Arc<Over>,
     worker: Option<Arc<OneWorker>>,
+    kits: Vec<Kit>,
+    /// The actions each task's steps call, by the task's name.
+    steps: BTreeMap<String, Vec<String>>,
+    store: Mutex<Option<Arc<Store>>>,
+    root: Option<PathBuf>,
+}
+
+/// The actions a recipe's steps call, from its text, in its order, each once.
+fn steps_of(text: &str) -> Option<(String, Vec<String>)> {
+    let recipe = whizbang_core::recipe::Recipe::read(text).ok()?;
+    let mut called: Vec<String> = Vec::new();
+    for step in recipe.steps {
+        if !called.contains(&step.op) {
+            called.push(step.op);
+        }
+    }
+    Some((recipe.name, called))
 }
 
 impl Playground {
     /// The actions these descriptors describe, the backends `over` offers, and the
-    /// pack's one worker of the process, stopped when the host ends.
+    /// pack's one worker of the process, stopped when the host ends. The kits are the
+    /// build's ([`wiring::kits`]).
     pub fn new(descriptors: Vec<ActionDescriptor>, over: Arc<Over>) -> Playground {
         let worker = over.worker().cloned();
+        let mut texts: Vec<String> = whizbang_rascal::recipes::SHIPPED
+            .iter()
+            .map(|text| (*text).to_owned())
+            .chain(
+                whizbang_squint::recipes::SHIPPED
+                    .iter()
+                    .map(|(_, text)| (*text).to_owned()),
+            )
+            .collect();
+        texts.extend(over.recipe_files().unwrap_or_default());
+        let mut steps: BTreeMap<String, Vec<String>> =
+            texts.iter().filter_map(|text| steps_of(text)).collect();
+        // The loop calls a removal and a check (plan m4, task L1).
+        steps.insert(
+            whizbang_rascal::checked::NAME.to_owned(),
+            vec!["remove_prompt".to_owned(), "check".to_owned()],
+        );
         Playground {
             descriptors,
             over,
             worker,
+            kits: wiring::kits(),
+            steps,
+            store: Mutex::new(None),
+            root: None,
         }
+    }
+
+    /// The same, with the store the executor writes, open to write, at `root`.
+    pub fn with_store(mut self, store: Arc<Store>, root: &Path) -> Playground {
+        self.store = Mutex::new(Some(store));
+        self.root = Some(root.to_path_buf());
+        self
+    }
+
+    /// The same, listing these kits, in this order, in place of the build's.
+    pub fn with_kits(mut self, kits: Vec<Kit>) -> Playground {
+        self.kits = kits;
+        self
+    }
+
+    fn store(&self) -> Result<Arc<Store>, Refused> {
+        self.store
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .ok_or_else(|| Refused::new(503, "the playground is stopping"))
+    }
+
+    fn descriptor(&self, action: &str) -> Option<&ActionDescriptor> {
+        self.descriptors.iter().find(|d| d.name() == action)
     }
 }
 
@@ -55,27 +123,108 @@ impl Play for Playground {
         action: &str,
         arguments: &Map<String, Json>,
     ) -> Result<(Call, Option<String>), String> {
-        let Some(descriptor) = self.descriptors.iter().find(|d| d.name() == action) else {
+        let Some(descriptor) = self.descriptor(action) else {
             return Err("this build has no action of that name".to_owned());
         };
+        if crate::play_form::is_use_case(descriptor.name()) {
+            return crate::play_form::use_case_call(descriptor.name(), arguments)
+                .map(|call| (call, None));
+        }
         tools::call_of(descriptor, arguments)
     }
 
     fn hello(&self) -> Map<String, Json> {
         let mut said = Map::new();
-        let backends = match backend_status::readiness(&self.over) {
-            Ok(listed) => json!(listed),
-            Err(why) => json!({"refused": crate::door::printable(&why)}),
-        };
-        said.insert("backends".to_owned(), backends);
+        let (kits, tools) = crate::play_form::kits_json(&self.kits, &self.descriptors, &self.steps);
+        said.insert("kits".to_owned(), kits);
+        said.insert("tools".to_owned(), tools);
+        // `backends` is always a list; a readiness that cannot be read is said beside it.
+        match backend_status::readiness(&self.over) {
+            Ok(listed) => {
+                let sized: Vec<Json> = listed.into_iter().map(with_size).collect();
+                said.insert("backends".to_owned(), Json::Array(sized));
+            }
+            Err(why) => {
+                said.insert("backends".to_owned(), json!([]));
+                said.insert(
+                    "backends_error".to_owned(),
+                    json!(crate::door::printable(&why)),
+                );
+            }
+        }
+        if let Some(allowance) = self.root.as_deref().and_then(crate::play_kept::allowance) {
+            said.insert("allowance".to_owned(), allowance);
+        }
         said
     }
 
+    fn choosers(&self, action: &str) -> Vec<(String, Vec<Json>)> {
+        let Some(descriptor) = self.descriptor(action) else {
+            return Vec::new();
+        };
+        let listed = backend_status::readiness(&self.over).unwrap_or_default();
+        crate::play_form::choosers_of(descriptor)
+            .into_iter()
+            .map(|(field, capability)| {
+                let rows = listed
+                    .iter()
+                    .filter(|row| row["capability"] == capability.as_str())
+                    .cloned()
+                    .map(with_size)
+                    .collect();
+                (field, rows)
+            })
+            .collect()
+    }
+
+    fn picture(&self, bytes: &[u8], name: &str) -> Result<Json, Refused> {
+        crate::play_kept::picture(self.store()?.as_ref(), bytes, name)
+    }
+
+    fn pictures(&self, after: Option<&str>, limit: usize) -> Result<Json, Refused> {
+        crate::play_kept::pictures(self.store()?.as_ref(), after, limit)
+    }
+
+    fn artifact(&self, id: &str, edge: Option<u32>) -> Result<(&'static str, Vec<u8>), Refused> {
+        crate::play_kept::artifact(self.store()?.as_ref(), id, edge)
+    }
+
+    fn location(&self, drawn: &Json) -> Result<Json, Refused> {
+        crate::play_kept::location(self.store()?.as_ref(), drawn)
+    }
+
+    fn facts(&self, run: &RunId, ended: bool) -> Map<String, Json> {
+        match &self.root {
+            Some(root) => crate::play_kept::facts(root, run, ended),
+            None => Map::new(),
+        }
+    }
+
+    fn journal(&self, run: &RunId) -> Option<Vec<Json>> {
+        crate::play_kept::journal(self.store().ok()?.as_ref(), run)
+    }
+
     fn closing(&self) {
+        // The store's writer goes with the executor's: the host has let that go.
+        self.store
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
         if let Some(worker) = &self.worker {
             worker.kill();
         }
     }
+}
+
+/// A backend's row with the size of the catalogue's model it would fetch, for a local
+/// model that is not installed: what Get would download (plan m5, task W1, item 4).
+fn with_size(mut row: Json) -> Json {
+    let size = row["model"].as_str().and_then(|model| {
+        let catalogue = wiring::catalogue().ok()?;
+        catalogue.entry(model).map(|entry| entry.bytes())
+    });
+    row["size"] = json!(size);
+    row
 }
 
 /// What a running host keeps in its store's folder: its port, its process and its

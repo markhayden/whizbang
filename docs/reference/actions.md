@@ -2,62 +2,92 @@
 
 # Actions
 
-What `whizbang` 0.1.0 can do, from its static description (version 10).
+What `whizbang` 0.1.0 can do, from its static description (version 11).
 The same as data: [description.json](description.json).
 
+Kits: `rascal`, Rascal: edit pictures; `squint`, Squint: check pictures.
+
 ## `check`
+
+Check by a job: a task of the kit `squint`.
 
 Has a judge look at images through evidence tools and conclude: pass, fail or unsure.
 
 ## `remove_prompt`
 
+Remove what you name: a task of the kit `rascal`.
+
 Removes what a phrase names: its mask found, grown, closed, plugged, kept off protect and feathered, then filled.
 
 ## `remove`
+
+Remove at a place: a task of the kit `rascal`.
 
 Removes the thing at a location: the mask grown, closed, plugged, kept off protect and feathered, then filled.
 
 ## `repair_area`
 
+Repair a spot: a task of the kit `rascal`.
+
 Repairs a stain or a spot at a location: the box or polygon as drawn, feathered, then filled.
 
 ## `mask_rect`
+
+Mask a rectangle: a task of the kit `rascal`.
 
 Makes a rectangle on an image a mask: the box's pixels the core, no blend and nothing protected.
 
 ## `protect`
 
+Protect a first edit: a task of the kit `rascal`.
+
 Makes the mask for a second pass: what the first mask reached is protected, the rest of the image the core.
 
 ## `repair`
+
+Repair a scratch: a task of the kit `rascal`.
 
 Repairs a scratch or a tear along a stroke: the stroke tightened to the defect's edges, feathered, then filled.
 
 ## `seam`
 
+Heal a panorama seam: a task of the kit `rascal`.
+
 Heals the wrap edge of a panorama: the band along the seam measured, its tone step ramped, then filled and put back.
 
 ## `source-fidelity`
+
+Check an edit: a task of the kit `squint`.
 
 Checks whether an edit kept what mattered in its source: the judge looks, and calls view and align as it needs.
 
 ## `reference-consistency`
 
+Check against references: a task of the kit `squint`.
+
 Checks whether a subject of the references appears faithfully: the judge looks, and calls view and align as it needs.
 
 ## `reality-checks`
+
+Reality check: a task of the kit `squint`.
 
 Checks a picture for mistakes no real photograph would make: the judge looks, and calls view to look closer as it needs.
 
 ## `brief-compliance`
 
+Check against a brief: a task of the kit `squint`.
+
 Checks whether a picture holds what its brief asked for and nothing it forbade: the judge looks, and calls view and align as it needs.
 
 ## `product-fidelity`
 
+Check a product shot: a task of the kit `squint`.
+
 Checks whether a product shot keeps the exact product of its references: the judge looks, and calls view and align as it needs.
 
 ## `remove_checked`
+
+Remove, checked: a task of the kit `rascal`, which uses the kit `squint`.
 
 Removes what a phrase names, has the result checked against its source, and tries again a bounded number of times.
 

@@ -27,8 +27,8 @@ export interface OtherOrigin {
 /** The fixture host's binary: `scripts/e2e.sh` builds it and names it here. */
 const BINARY = process.env.WHIZBANG_PLAY_FIXTURE ?? "../target/debug/examples/play_fixture";
 
-async function startHost(store: string): Promise<{ host: Host; child: ChildProcess }> {
-  const child = spawn(BINARY, ["--store", store, "--stdin-quit"], { stdio: ["pipe", "pipe", "inherit"] });
+async function startHost(store: string, more: string[] = []): Promise<{ host: Host; child: ChildProcess }> {
+  const child = spawn(BINARY, ["--store", store, "--stdin-quit", ...more], { stdio: ["pipe", "pipe", "inherit"] });
   const line = await new Promise<string>((resolve, reject) => {
     const lines = createInterface({ input: child.stdout! });
     lines.once("line", (first) => {
@@ -55,6 +55,21 @@ async function stopHost(child: ChildProcess): Promise<void> {
   const timer = setTimeout(() => child.kill("SIGKILL"), 5_000);
   await exited;
   clearTimeout(timer);
+}
+
+/**
+ * A second fixture host of the case's own, started with these options (`--third-kit`) in a
+ * new store, and stopped when `use` is done.
+ */
+export async function withHost<T>(more: string[], use: (host: Host) => Promise<T>): Promise<T> {
+  const store = mkdtempSync(join(tmpdir(), "whizbang-e2e-"));
+  const { host, child } = await startHost(store, more);
+  try {
+    return await use(host);
+  } finally {
+    await stopHost(child);
+    rmSync(store, { recursive: true, force: true });
+  }
 }
 
 export const test = base.extend<object, { host: Host; otherOrigin: OtherOrigin }>({

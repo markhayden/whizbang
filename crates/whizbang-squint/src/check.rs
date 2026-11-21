@@ -325,6 +325,9 @@ impl Check {
             Kind::Recipe,
             "Has a judge look at images through evidence tools and conclude: pass, fail or unsure.",
         )
+        // Squint's general check, under a job of the caller's (plan m5, task W1, item 2).
+        .kit(crate::recipes::KIT)
+        .title("Check by a job")
         .input(InputPort::variadic(
             "images",
             ArtifactType::Image,

@@ -15,6 +15,14 @@ function clientAnswering(hello: Promise<Hello>): Client {
     upload: vi.fn(),
     start: vi.fn(),
     poll: vi.fn(),
+    prepare: vi.fn(() => new Promise(() => undefined)),
+    pollRun: vi.fn(() => () => undefined),
+    cancelRun: vi.fn(),
+    openRuns: vi.fn(() => Promise.resolve([])),
+    uploadPicture: vi.fn(),
+    listPictures: vi.fn(() => Promise.resolve([])),
+    commitLocation: vi.fn(),
+    blobUrl: vi.fn(() => new Promise(() => undefined)),
   } as unknown as Client;
   return lastClient;
 }
@@ -65,8 +73,9 @@ describe("the shell", () => {
     expect(empty.view.text()).toContain("Nothing is running and there are no drafts.");
     expect(empty.view.text()).toContain("No pictures yet.");
     for (const [hash, words] of [
-      ["#/k/rascal/remove_prompt", "cannot be run from the playground in this build yet"],
-      ["#/run/r-1", "cannot show a run"],
+      ["#/k/rascal/remove_prompt", "This build has no task of that name."],
+      ["#/k/rascal", "This build has no kit of that name."],
+      ["#/run/r-1", "Waiting for the first step."],
       ["#/history", "No runs yet."],
       ["#/models", "does not list models"],
       ["#/nowhere", "no page at this address"],
@@ -100,10 +109,13 @@ describe("the shell", () => {
       const { view } = mount(hash, Promise.resolve(HELLO));
       await settle();
       expect(lastClient.hello, hash).toHaveBeenCalledTimes(1);
+      // Screens read (the runs still going, the pictures, a run's state): nothing else.
       expect(lastClient.request, hash).not.toHaveBeenCalled();
       expect(lastClient.upload, hash).not.toHaveBeenCalled();
+      expect(lastClient.uploadPicture, hash).not.toHaveBeenCalled();
       expect(lastClient.start, hash).not.toHaveBeenCalled();
-      expect(lastClient.poll, hash).not.toHaveBeenCalled();
+      expect(lastClient.cancelRun, hash).not.toHaveBeenCalled();
+      expect(lastClient.commitLocation, hash).not.toHaveBeenCalled();
       view.unmount();
     }
   });

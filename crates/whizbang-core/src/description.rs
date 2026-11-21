@@ -27,8 +27,12 @@ use crate::contract::{ActionDescriptor, Kind, Registry};
 /// true, to an action that plans its calls (plan m4, task K1, items 1 and 3; ADR 0004, "A
 /// call's plan"); an action that plans nothing has no `plans`. With it every recipe of
 /// two steps or more gains the argument `from` and an input for each output of each step
-/// before its last (ADR 0033, "A run from a step").
-pub const DESCRIPTION_VERSION: u32 = 10;
+/// before its last (ADR 0033, "A run from a step"). Version 11 adds `kits`, each kit of the
+/// build with its title and its line, in the order a door lists them; and, to an action
+/// that says them, `kit`, the kit it belongs to, `title`, its title as a person reads it,
+/// and `uses`, the other kit a loop uses (plan m5, task W1, item 2; ADR 0040): every
+/// recipe and loop this build ships says its kit and its title.
+pub const DESCRIPTION_VERSION: u32 = 11;
 
 /// Everything a door can offer, as one document.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -36,9 +40,46 @@ pub struct Description {
     description_version: u32,
     name: String,
     version: String,
+    kits: Vec<Kit>,
     actions: Vec<ActionDescriptor>,
     marks: Vec<MarkSummary>,
     artifact_types: Vec<ArtifactTypeSummary>,
+}
+
+/// A kit (ADR 0040): a family of work with one job, by its name (`rascal`), its title as
+/// a person reads it (`Rascal`) and its short line (`edit pictures`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Kit {
+    name: String,
+    title: String,
+    line: String,
+}
+
+impl Kit {
+    /// A kit, when its name keeps the rule of an action's name, its title the rule of a
+    /// title, and its line the rule of a purpose.
+    pub fn new(name: &str, title: &str, line: &str) -> Result<Kit, String> {
+        crate::contract::text::action_name(name)?;
+        crate::contract::text::title(title)?;
+        crate::contract::text::plain_line("line", line)?;
+        Ok(Kit {
+            name: name.to_owned(),
+            title: title.to_owned(),
+            line: line.to_owned(),
+        })
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    pub fn line(&self) -> &str {
+        &self.line
+    }
 }
 
 /// A tool's mark (`SPEC.md` section 8, "Marks"): `experimental`, `unverified` or `admitted`,
@@ -136,6 +177,7 @@ impl Description {
             description_version: DESCRIPTION_VERSION,
             name: "whizbang".to_owned(),
             version: version.to_owned(),
+            kits: Vec::new(),
             actions,
             marks: Vec::new(),
             artifact_types: ArtifactType::ALL
@@ -159,6 +201,24 @@ impl Description {
             .collect();
         self.marks = marks;
         self
+    }
+
+    /// The same description, with these kits, in this order: a kit named twice is kept
+    /// once, at its first place.
+    pub fn with_kits(mut self, kits: &[Kit]) -> Self {
+        let mut listed: Vec<Kit> = Vec::new();
+        for kit in kits {
+            if !listed.iter().any(|one| one.name == kit.name) {
+                listed.push(kit.clone());
+            }
+        }
+        self.kits = listed;
+        self
+    }
+
+    /// The kits, in the order a door lists them.
+    pub fn kits(&self) -> &[Kit] {
+        &self.kits
     }
 
     /// Each tool the upper rungs apply to, with its mark.

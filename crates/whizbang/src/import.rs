@@ -685,6 +685,25 @@ fn commit(
     // The writer, once the store is recovered. A store that was made here and could
     // not be recovered is still said to have been made.
     let store = opening.writer().map_err(|why| format!("{printed}{why}"))?;
+    match commit_to(&store, artifact, from_file, &[])? {
+        true => printed.push_str(&format!("already there: {kind} {id}\n")),
+        false => printed.push_str(&format!("imported {kind} {id}\n")),
+    }
+    Ok(printed)
+}
+
+/// Commits an artifact that has been read and checked into a store open to write, as
+/// `store import` does: marked as imported, with a picture's name of where it came from,
+/// and with these names beside it in the same publication, so that all are there or
+/// none is (plan m5, task W1, item 3: the playground's own writer, and the name a person
+/// gave a picture). Whether the store held the artifact already.
+pub fn commit_to(
+    store: &whizbang_core::store::Store,
+    artifact: &Artifact,
+    from_file: Option<(&str, Digest)>,
+    beside: &[(String, Vec<u8>)],
+) -> Result<bool, String> {
+    let (kind, id) = (artifact.artifact_type(), artifact.id());
     let generation = store.snapshot().map_err(|error| error.to_string())?;
     // A picture's name of where it came from: the file's digest, holding the image's
     // identity. One file and one projection make one picture, so a name is never given another.
@@ -696,9 +715,8 @@ fn commit(
     // deleting a run removes").
     let marked = format!("{IMPORTED_PREFIX}{}", artifact::name(kind, id));
     let marked = generation.get(&marked).is_some();
-    if held && marked && unnamed.is_none() {
-        printed.push_str(&format!("already there: {kind} {id}\n"));
-        return Ok(printed);
+    if held && marked && unnamed.is_none() && beside.is_empty() {
+        return Ok(true);
     }
     let mut publication = store.begin().map_err(|error| error.to_string())?;
     artifact::import(&mut publication, artifact, held).map_err(|error| error.to_string())?;
@@ -707,13 +725,13 @@ fn commit(
             .put(name, id.to_string().as_bytes())
             .map_err(|error| error.to_string())?;
     }
-    publication.publish().map_err(|error| error.to_string())?;
-    if held {
-        printed.push_str(&format!("already there: {kind} {id}\n"));
-        return Ok(printed);
+    for (name, bytes) in beside {
+        publication
+            .put(name, bytes)
+            .map_err(|error| error.to_string())?;
     }
-    printed.push_str(&format!("imported {kind} {id}\n"));
-    Ok(printed)
+    publication.publish().map_err(|error| error.to_string())?;
+    Ok(held)
 }
 
 #[cfg(test)]

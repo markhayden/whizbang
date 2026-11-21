@@ -30,7 +30,7 @@ fn registry() -> Registry {
 fn a_description_lists_what_was_registered_in_order_and_in_full() {
     let description = Description::new("1.2.3", &registry());
     assert_eq!(description.description_version(), DESCRIPTION_VERSION);
-    assert_eq!(DESCRIPTION_VERSION, 10);
+    assert_eq!(DESCRIPTION_VERSION, 11);
     assert_eq!(description.name(), "whizbang");
     assert_eq!(description.version(), "1.2.3");
     let names: Vec<&str> = description.actions().iter().map(|a| a.name()).collect();
@@ -131,7 +131,7 @@ fn the_description_lists_findings_among_an_actions_results_and_which_actions_pla
     }
     let description = Description::new("1.2.3", &registry);
     let value = serde_json::to_value(&description).unwrap();
-    assert_eq!(value["description_version"], 10);
+    assert_eq!(value["description_version"], 11);
     let action = |name: &str| {
         let actions = value["actions"].as_array().unwrap();
         actions.iter().find(|a| a["name"] == name).unwrap().clone()
