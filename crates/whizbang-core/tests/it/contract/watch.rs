@@ -642,8 +642,10 @@ fn status_after_a_sequence_hands_back_only_the_newer_events() {
         assert!(none.events().is_empty());
         assert_eq!((none.skipped(), none.next()), (0, 3));
     }
-    // The answer of the trait's own form is the same.
+    // The answer of the trait's own form is the same, and an answer cut at a place
+    // is never widened back past it.
     assert_eq!(whole.clone().after(2), newer);
+    assert_eq!(newer.clone().after(0), newer);
     barriers.release("said");
     executor.wait(&run).unwrap();
 }

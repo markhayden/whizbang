@@ -133,6 +133,7 @@ impl Kept {
         Heard {
             skipped: asked - events.len() as u64,
             next: lines.next,
+            from: seen,
             events,
         }
     }
@@ -192,6 +193,8 @@ pub(super) struct Heard {
     pub(super) events: Vec<JournalLine>,
     pub(super) skipped: u64,
     pub(super) next: u64,
+    /// The place asked from: no event before it is here.
+    pub(super) from: u64,
 }
 
 impl Events for Kept {
@@ -200,12 +203,16 @@ impl Events for Kept {
         let mut lines = self.held();
         let seq = lines.next;
         lines.next += 1;
+        // Once a message was left out, or as many as are kept are, nothing more is
+        // made of one: it is counted.
+        if lines.messages_full || lines.messages >= self.bounds.messages {
+            lines.messages_full = true;
+            lines.not_kept.messages += 1;
+            return;
+        }
         let line = JournalLine::new(seq, at_ms, message, &self.secrets);
         let bytes = line.message.len();
-        let fits = !lines.messages_full
-            && lines.messages < self.bounds.messages
-            && lines.message_bytes + bytes <= self.bounds.message_bytes;
-        if !fits {
+        if lines.message_bytes + bytes > self.bounds.message_bytes {
             lines.messages_full = true;
             lines.not_kept.messages += 1;
             return;
@@ -217,16 +224,17 @@ impl Events for Kept {
 
     fn event(&self, event: &Event) {
         let at_ms = self.clock.now_ms();
-        let line = JournalLine::typed(0, at_ms, event, &self.secrets);
         let mut lines = self.held();
         let seq = lines.next;
         lines.next += 1;
+        // Past the bound nothing is made of the event: it is counted.
         if lines.events >= self.bounds.events {
             lines.not_kept.events += 1;
             return;
         }
         lines.events += 1;
-        lines.kept.push(JournalLine { seq, ..line });
+        let line = JournalLine::typed(seq, at_ms, event, &self.secrets);
+        lines.kept.push(line);
     }
 }
 
@@ -406,17 +414,21 @@ impl std::fmt::Display for Event {
 }
 
 impl Event {
-    /// The same event, each text in it taken out of secrets and cut at `limit`
-    /// characters.
+    /// The same event, each text in it taken out of secrets, and each that may be
+    /// long cut at `limit` characters: an action's and a backend's name, a model's,
+    /// what a retry changed and how a request ended. The name of a step and a run's
+    /// id are never cut: they are what a caller finds the step and the run by, and
+    /// each is bounded where it is made (a recipe's step id, [`super::RUN_ID_LIMIT`]).
     fn cut(&self, secrets: &Secrets, limit: usize) -> Event {
         let cut = |text: &String| super::engine::cut_to(secrets, text, limit, "...");
+        let whole = |text: &String| secrets.redact(text);
         match self {
             Event::StepStarted {
                 step,
                 action,
                 attempt,
             } => Event::StepStarted {
-                step: cut(step),
+                step: whole(step),
                 action: cut(action),
                 attempt: *attempt,
             },
@@ -426,9 +438,9 @@ impl Event {
                 run,
                 attempt,
             } => Event::StepEnded {
-                step: cut(step),
+                step: whole(step),
                 outcome: cut(outcome),
-                run: cut(run),
+                run: whole(run),
                 attempt: *attempt,
             },
             Event::AttemptStarted { number, changed } => Event::AttemptStarted {
@@ -442,7 +454,7 @@ impl Event {
                 ms,
                 ended,
             } => Event::Answered {
-                capability: cut(capability),
+                capability: whole(capability),
                 backend: cut(backend),
                 model: cut(model),
                 ms: *ms,
@@ -484,7 +496,10 @@ impl JournalLine {
 
     /// A typed line at this place and time: the event, with the secrets taken out of
     /// each text in it, and its message, the event in words; the two cut until,
-    /// written as JSON together, they take at most [`EVENT_MAX_BYTES`].
+    /// written as JSON together, they take at most [`EVENT_MAX_BYTES`]. What is cut
+    /// is the message and the texts that may be long, never a step's name or a run's
+    /// id ([`Event`]); those are bounded where they are made, so the line is held to
+    /// its bound by what is cut.
     pub fn typed(seq: u64, at_ms: u64, event: &Event, secrets: &Secrets) -> JournalLine {
         let mut limit = 96;
         loop {

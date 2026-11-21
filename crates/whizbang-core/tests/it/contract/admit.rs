@@ -1906,9 +1906,26 @@ fn an_unconfirmed_admission_is_ended_as_an_error_by_the_executor_that_made_it() 
     // executor that made the run ends it at once, as an error (plan m5, task K1, item
     // 6): the same request again is answered with that run, ended, and another request
     // under the id is a conflict.
+    // The call may cost something, and a ledger reserves for it.
+    struct Priced;
+    impl Backends for Priced {
+        fn resolve(
+            &self,
+            _: Capability,
+            _: Option<&str>,
+            _: &[String],
+        ) -> Result<ModelIdentity, Unavailable> {
+            Ok(ModelIdentity::new("fake", "fake-filler", "1"))
+        }
+        fn bound(&self, _: Capability, _: &ModelIdentity) -> Estimate {
+            Estimate::of_micros(250)
+        }
+    }
     let world = World::new();
     let store = world.store();
-    let engine = world.engine(store);
+    let ledger = Arc::new(whizbang_testkit::ledger::FakeLedger::new());
+    let engine =
+        engine_with(store.clone(), &world.runs, Arc::new(Priced)).with_ledger(ledger.clone());
     let root = world.root();
     world.fs.refuse_matching(
         0,
@@ -1926,6 +1943,28 @@ fn an_unconfirmed_admission_is_ended_as_an_error_by_the_executor_that_made_it() 
     };
     assert_eq!(kind, NOT_CONFIRMED_KIND);
     assert!(message.contains("not confirmed durable"), "{message}");
+    // Its reservation was made with its hold, and is closed by the end, released
+    // whole: no request was dispatched or settled under it, and the ledger was asked
+    // to close it once and to confirm nothing.
+    let run = earlier.run().as_str();
+    let generation = store.snapshot().unwrap();
+    let names: Vec<&String> = (generation.entries().keys())
+        .filter(|name| name.starts_with("spend/") && name.contains(run))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            &format!("spend/closed/{run}/released"),
+            &format!("spend/held/0/{run}/250"),
+            &format!("spend/place/{run}/1"),
+            &format!("spend/reservations/{run}"),
+        ],
+        "{names:?}"
+    );
+    assert_eq!(
+        (ledger.asked(), ledger.confirmed(), ledger.settled()),
+        (1, 0, 1)
+    );
     assert!(matches!(
         engine.request(&asked("goodbye", "order-17")),
         Err(CallError::Refused(Refusal::Conflict { .. }))

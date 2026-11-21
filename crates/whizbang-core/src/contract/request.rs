@@ -776,6 +776,8 @@ pub struct Watched {
     events: Vec<JournalLine>,
     skipped: u64,
     next: u64,
+    /// The place its events were asked from: none before it is held.
+    from: u64,
 }
 
 impl Watched {
@@ -786,16 +788,20 @@ impl Watched {
             events: heard.events,
             skipped: heard.skipped,
             next: heard.next,
+            from: heard.from,
         }
     }
 
     /// The same answer, with only the events from the place `seen` on: what a caller
     /// that has seen the first `seen` places of the run's events has not, with how
-    /// many of those places were not kept.
+    /// many of those places were not kept. It only narrows: an answer cut at a later
+    /// place holds nothing before it, and is answered from that place.
     pub fn after(mut self, seen: u64) -> Watched {
-        let from = self.events.partition_point(|line| line.seq() < seen);
-        self.events.drain(..from);
+        let seen = seen.max(self.from);
+        let cut = self.events.partition_point(|line| line.seq() < seen);
+        self.events.drain(..cut);
         self.skipped = self.next.saturating_sub(seen) - self.events.len() as u64;
+        self.from = seen;
         self
     }
 

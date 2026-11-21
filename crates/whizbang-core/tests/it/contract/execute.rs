@@ -11,8 +11,8 @@ use whizbang_core::contract::record::{self, RunRecord, Status};
 use whizbang_core::contract::{
     ADMITTED_NAME, Action, ActionDescriptor, Call, CallError, Clock, Context, Count,
     DIAGNOSTICS_LIMIT, Engine, Executor, Failure, Finished, INPUTS_LIMIT, InputPort, Kind,
-    NoBackends, Outcome, OutputPort, PreparedCall, Produced, Refusal, Registry, RunId, Secrets,
-    Value, WHIZBANG_VERSION, is_diagnostic_name, read_journal,
+    NOT_CONFIRMED_KIND, NoBackends, Outcome, OutputPort, PreparedCall, Produced, Refusal, Registry,
+    RunId, Secrets, Value, WHIZBANG_VERSION, is_diagnostic_name, read_journal,
 };
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::{Fs, RealFs};
@@ -618,6 +618,7 @@ fn a_run_whose_publication_fails_is_the_stores_failure_and_is_never_half_ended()
     };
     assert!(steps.len() > 10, "{steps:?}");
     let mut seen = std::collections::BTreeSet::new();
+    let mut admitted_unconfirmed = false;
     for (step, event) in steps.iter().enumerate() {
         let world = World::new();
         let engine = world.engine();
@@ -654,7 +655,20 @@ fn a_run_whose_publication_fails_is_the_stores_failure_and_is_never_half_ended()
             2 => {
                 assert!(unconfirmed, "step {step}: {said}");
                 assert_eq!(names.len(), 1, "step {step}");
-                assert!([3, 4].contains(&names[0].len()), "step {step}: {names:?}");
+                // Three names for the admission that was not confirmed, which ran
+                // nothing and ended as `not_confirmed`; four for any other end.
+                let run = generation.runs().keys().next().unwrap();
+                let ended = record::stored(&generation, run, |e| reader.read(e))
+                    .unwrap()
+                    .unwrap();
+                let kind = ended.outcome().error.as_ref().map(|e| e.kind.as_str());
+                match kind {
+                    Some(NOT_CONFIRMED_KIND) => {
+                        assert_eq!(names[0].len(), 3, "step {step}: {names:?}");
+                        admitted_unconfirmed = true;
+                    }
+                    _ => assert_eq!(names[0].len(), 4, "step {step}: {names:?}"),
+                }
             }
             other => panic!("step {step}: generation {other}"),
         }
@@ -666,6 +680,7 @@ fn a_run_whose_publication_fails_is_the_stores_failure_and_is_never_half_ended()
         seen.into_iter().collect::<Vec<_>>(),
         [(0, false), (1, false), (2, true)]
     );
+    assert!(admitted_unconfirmed, "no admission was left unconfirmed");
 }
 
 #[test]

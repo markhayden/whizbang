@@ -1143,3 +1143,140 @@ fn the_loop_is_offered_as_a_tool_and_answers_with_its_plan_its_verdict_and_wheth
     // An unchecked pass is said by the same lines: `cli::rascal_remove_checked_prints_…`.
     client.close();
 }
+
+// --- typed events are not sent to a client (plan m5, task K1) --------------------------------
+
+/// `typed`: says `m1`, a typed event, `m2`, and then, when `wait` is set, waits as
+/// `waits` does; otherwise it ends. With `hold`, it stops at the barrier `half` between
+/// the typed event and `m2`.
+struct Typed {
+    descriptor: ActionDescriptor,
+    wait: bool,
+    hold: Option<whizbang_testkit::barrier::Barriers>,
+}
+
+impl Action for Typed {
+    fn descriptor(&self) -> &ActionDescriptor {
+        &self.descriptor
+    }
+
+    fn run(&self, _: &PreparedCall, context: &Context) -> Result<Produced, Failure> {
+        context.events().progress("m1");
+        context
+            .events()
+            .event(&whizbang_core::contract::Event::StepStarted {
+                step: "one".to_owned(),
+                action: "typed".to_owned(),
+                attempt: None,
+            });
+        if let Some(barriers) = &self.hold {
+            barriers.stop_at("half");
+        }
+        context.events().progress("m2");
+        for _ in 0..3000 {
+            if !self.wait {
+                break;
+            }
+            if context.cancellation().is_cancelled() || context.deadline_passed() {
+                return Err(Failure::error("stopped", "the run was told to stop"));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Ok(Produced::nothing())
+    }
+}
+
+fn typed_world(
+    label: &str,
+    wait: bool,
+    hold: Option<whizbang_testkit::barrier::Barriers>,
+) -> (Scratch, Arc<Engine>, Arc<Actions>) {
+    let dir = Scratch::new(label);
+    let root = dir.path().join("store");
+    let store = Arc::new(Store::open(&root, Arc::new(RealFs)).unwrap());
+    let mut registry = Registry::new();
+    let draft = ActionDescriptor::draft("typed", "1.0.0", Kind::Primitive, "A test action.");
+    registry
+        .register(Arc::new(Typed {
+            descriptor: draft.build().unwrap(),
+            wait,
+            hold,
+        }))
+        .unwrap();
+    let descriptors = registry.descriptors().cloned().collect();
+    let engine = crate::runner(registry, store);
+    (
+        dir,
+        Arc::new(engine),
+        Arc::new(Actions::new(descriptors, root, None)),
+    )
+}
+
+/// The messages and the progress numbers of these notifications.
+fn told(notes: &[Json]) -> (Vec<String>, Vec<i64>) {
+    let said = notes
+        .iter()
+        .map(|n| n["params"]["message"].as_str().unwrap().to_owned());
+    let numbers = notes
+        .iter()
+        .map(|n| n["params"]["progress"].as_i64().unwrap());
+    (said.collect(), numbers.collect())
+}
+
+#[test]
+fn a_typed_event_sends_no_notification_while_the_run_goes() {
+    // The client is sent what it was sent before typed events: the run started and its
+    // two messages, numbered 1, 2 and 3.
+    let (_dir, executor, door) = typed_world("serve-typed-going", true, None);
+    let mut client = Client::new(executor.clone(), door, Limits::default());
+    client.initialized();
+    client.call(1, "typed", json!({}), Some("tok"));
+    let mut notes = Vec::new();
+    until_said(&mut client, "m2", &mut notes);
+    let run = started(&notes);
+    let (said, numbers) = told(&notes);
+    assert_eq!(
+        said,
+        [
+            format!("run {} started", run.as_str()),
+            "m1".into(),
+            "m2".into()
+        ]
+    );
+    assert_eq!(numbers, [1, 2, 3]);
+    // The run had said its typed event, which the client was not sent.
+    let typed = executor.status(&run).unwrap();
+    assert!(typed.events().iter().any(|line| line.event().is_some()));
+    assert!(client.close().is_empty());
+    assert_eq!(ended(&executor, &run), Outcome::Cancelled);
+}
+
+#[test]
+fn a_run_that_ends_between_looks_is_told_from_its_journal_once_and_without_typed_lines() {
+    // The client is sent `m1` while the run goes; then the run says its typed event and
+    // `m2` and ends before the server looks again, so the rest comes from its journal:
+    // `m1` is not sent twice, and the typed line is not sent at all.
+    let barriers = whizbang_testkit::barrier::Barriers::new();
+    let (_dir, executor, door) = typed_world("serve-typed-ended", false, Some(barriers.clone()));
+    let mut client = Client::new(executor.clone(), door, Limits::default());
+    client.initialized();
+    client.call(1, "typed", json!({}), Some("tok"));
+    let mut notes = Vec::new();
+    until_said(&mut client, "m1", &mut notes);
+    barriers.arrived("half", 1);
+    barriers.release("half");
+    let answer = client.answer(1, &mut notes);
+    let run = started(&notes);
+    assert!(!result_text(&answer).1, "{answer}");
+    let (said, numbers) = told(&notes);
+    assert_eq!(
+        said,
+        [
+            format!("run {} started", run.as_str()),
+            "m1".into(),
+            "m2".into()
+        ]
+    );
+    assert_eq!(numbers, [1, 2, 3]);
+    assert!(client.close().is_empty());
+}

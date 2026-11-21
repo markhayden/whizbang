@@ -432,7 +432,8 @@ impl<W: Write> Serving<'_, W> {
         let now = Instant::now();
         let mut left = Vec::new();
         for mut running in std::mem::take(&mut self.running) {
-            let state = match self.executor.status(&running.run) {
+            // Only the events after those already looked at are copied.
+            let state = match self.executor.status_after(&running.run, running.seen) {
                 Ok(watched) => {
                     self.events(&mut running, watched.events())?;
                     watched.state().clone()

@@ -293,7 +293,8 @@ pub(crate) trait Recorder: Send + Sync {
     fn exchange(&self, place: usize, written: &[u8], room: &dyn Fn(u64) -> bool) -> Option<String>;
 
     /// A request of the run is over: what is said of it as it goes (plan m5, task K1,
-    /// item 3). It is told after the tally's lock is let go.
+    /// item 3). It is told under the tally's lock, before the request is accounted
+    /// for, and takes no lock but its own.
     fn answered(&self, event: &crate::contract::Event) {
         let _ = event;
     }
@@ -649,14 +650,14 @@ impl Drop for Sent {
                 HowEnded::Unwound => "unwound".to_owned(),
             },
         };
-        let recorder = counts.recorder.clone();
-        counts.accounted += 1;
-        self.tally.changed.notify_all();
-        drop(counts);
-        // Said once the request is accounted for, holding no lock of the tally's.
-        if let Some(recorder) = recorder {
+        // Said before the request is accounted for, so that whoever waits for every
+        // request of the run, and then ends it, finds the event in its journal. The
+        // journal's lock is taken under the tally's and takes no other.
+        if let Some(recorder) = &counts.recorder {
             recorder.answered(&event);
         }
+        counts.accounted += 1;
+        self.tally.changed.notify_all();
     }
 }
 
