@@ -749,6 +749,13 @@ both runners.
   from the archive on both runners; `THIRD-PARTY-LICENSES.md` holds Preact's, marked's and the fonts'
   licences, held by `scripts/tests/test-third-party-licences.sh`; ADR 0042 merged.
 
+**As built (U1).** The record is ADR 0043, "The playground's interface": 0042 was taken by
+milestone E's "Submission v2" first. In wave 1 the fixture host is the stand-in this task
+names (item 5 and "Waves"): the interface the binary embeds, behind the guard's checks in
+their order, with `GET /api/hello`, `POST /api/quit` and the upload's size and pixel checks;
+it becomes H1's host, with the fakes, when the second of the two lands. The install check's
+step (item 6) needs H1's `whizbang play`, and is added by whichever of the two lands second.
+
 **Keeping tests lean (U1).** Component tests render to `happy-dom` and compare text and
 attributes, never pixels. The Chrome cases use 64-by-64 pictures and scripted models; no case
 waits on a fixed time, only on what the page shows.
