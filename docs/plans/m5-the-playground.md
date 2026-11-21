@@ -654,7 +654,7 @@ W1 builds on them; none changes what a run of any other door does.
    the executor that admitted it, so its request id answers a run that ended. In K1 because
    admission is in `contract/engine.rs`, which K1 alone changes in wave 1.
 
-- [ ] Done when: `admit::a_call_needing_a_preparation_without_one_is_refused_stale_and_reserves_nothing`,
+- [x] Done when: `admit::a_call_needing_a_preparation_without_one_is_refused_stale_and_reserves_nothing`,
   `admit::a_repeat_needing_a_preparation_is_answered_with_its_run_before_the_check`,
   `admit::an_unmarked_call_without_a_preparation_is_prepared_and_admitted_as_before`,
   `prepare::a_missing_capability_says_its_kind_beside_its_words`,
