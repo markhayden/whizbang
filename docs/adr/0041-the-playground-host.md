@@ -66,13 +66,21 @@ that makes threads (`clippy.toml`), which refuses the 43rd live thread it would 
 process: two hosts' nineteen each, and room for the binary's readers of its signals and its
 input and the waiter of a Chrome started on Linux. At most two
 uploads hold a worker at once: a third is answered 429 as soon as its headers are read. Every
-other request is a short read and a short answer, so polls, Stop and Quit find a free worker.
+other request is a short read and a short answer, so polls, Stop and Quit find a free worker. A
+worker that panics loses its connection, not itself. The workers are not joined when the
+host stops: once the acceptor has ended, each ends after the connection it holds, which its
+deadlines bound, and none holds the executor by then. The answer's deadline holds for the
+whole answer, written in pieces, not for each write. A picture's size is read from its
+header by the guard; it is decoded only by the route that keeps it.
 
 **The token.** 32 bytes as 64 hex digits, made when the host starts, held in a type whose
 `Debug` and `Display` print nothing, and never written to a log, an event, a record or an
-error. `whizbang play` opens `http://127.0.0.1:<port>/#k=<token>` in Chrome and prints the
-address without the token; with `--no-open` it prints the address with the token, which the
-person opens. The page keeps the token in its own storage for its origin and takes it out of
+error, and never on a command line, which other users of the machine can read: `whizbang
+play` writes an owner-only page in the store's folder, `play-open.html`, that sends a browser
+on to `http://127.0.0.1:<port>/#k=<token>`, opens that page in Chrome (in a process group of
+its own, so a Ctrl-C meant for whizbang does not reach the browser), removes it when it
+stops, and prints the address without the token. With `--no-open` it prints the address
+with the token, which the person opens. The page keeps the token in its own storage for its origin and takes it out of
 the address bar. A token of an earlier launch is refused, 401.
 
 **Runs belong to the host.** A run the API starts is started by `Executor::start` with a
@@ -80,10 +88,16 @@ the address bar. A token of an earlier launch is refused, 401.
 cancel and the list of runs still going reach it there, so a page that closed holds nothing a
 run needs, and a page that opens again finds it (`GET /api/runs?open=1`). One process, the
 host, owns every run it starts, as ADR 0031 has it for the stdio server. At most four runs the
-host started are going at once (the stdio server's `CALLS_LIMIT`); a fifth start is answered
-429 with `Retry-After`, and no other route is held to that limit. A start is marked as needing
-a preparation (`Request::needing_preparation`) and sent with the preparation the page's handle
-names, when the host still holds it (at most 64, each for an hour).
+host started are going at once (the stdio server's `CALLS_LIMIT`), a start being admitted
+among them; a fifth start is answered 429 with `Retry-After`, and no other route is held to
+that limit. A place is given back once its run is seen to have ended, by the keeper or by the
+route that counts or lists the places, whichever looks first. A start names a request id of
+the page's making, and a repeated id is answered with its run (or, for another call, as a
+conflict) before anything else is looked at; then the start is marked as needing a
+preparation (`Request::needing_preparation`) and sent with the preparation the page's handle
+names, when the host still holds it (at most 64, each for an hour). A quit that comes while a
+start is being admitted trips its cancellation too, and a run that admission then makes is
+cancelled and waited for as the others are.
 
 **A run's stated time.** Each run the host starts has a stated time, one hour unless
 `--run-limit-s` says otherwise, at which the keeper trips its cancellation and hands it to the

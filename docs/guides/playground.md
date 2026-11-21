@@ -28,8 +28,10 @@ whizbang play --store <dir> [--config <file> [--env-file <file>]] [--models-dir 
 ## The address and its token
 
 When it starts, the playground makes a token: 32 random bytes, new at every launch. Chrome is
-opened at the address with the token after `#k=`; the page keeps it for that address and
-takes it out of the address bar at once. Every call the page makes carries it. A call
+given a small page in the store's folder, `play-open.html`, readable by you only, which sends
+it on to the address with the token after `#k=`, so the token is never on a command line; the
+page keeps it for that address and takes it out of the address bar at once. The small page is
+removed when the playground stops. Every call the page makes carries it. A call
 without it, or with the token of an earlier launch, is refused, and the page says to run
 `whizbang play` again.
 
@@ -74,8 +76,11 @@ Quit is the way out.
 - **The store, to write.** While `whizbang play` runs, other commands that write the store
   are refused until it exits; commands that only read it work as always.
 - **`play.json`** in the store's folder: its port, its process and its token, readable by
-  you only. It is removed when the playground stops; one left by a playground that was
+  you only. A second `whizbang play` trusts it only while the folder and the file are yours
+  alone. It is removed when the playground stops; one left by a playground that was
   killed is replaced at the next launch.
+- **Threads.** The host makes 19 threads; one process holds at most 42 made by playground
+  hosts.
 - **Nothing on another machine.** The playground sends nothing off the machine itself; the
   runs it starts go only where your config already approves, as from the command line.
 
