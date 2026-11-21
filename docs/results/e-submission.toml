@@ -1,0 +1,3149 @@
+arm = "C;submission=v1"
+cells = 1320
+class_counting = "rejections_by_class counts each rejection's first class (its class); also_by_class counts the further classes a rejection named (its also)"
+commit = "4357da1b981401b8baf3ccc0126cf0beb5b1aa0a"
+decisions = 1320
+mode = "arms"
+open = 0
+resamples = 2000
+rule = "submission/1"
+schema = "judges/1"
+seed = 20261120
+treatment = "C;submission=v2"
+unlabelled = 0
+
+[format]
+control = "C;submission=v1"
+control_failures = 14
+control_first_rejections = 87
+fewer_failures = true
+fewer_failures_by = "failures"
+format = "C;submission=v1"
+mismatched = 0
+outcome = "not_adopted"
+settled_by = "c"
+treatment = "C;submission=v2"
+treatment_failures = 4
+treatment_first_rejections = 101
+unknown = 0
+why = "under the treatment these judges move by more than 2 points: claude-haiku-5-5 (false-reject rate +2.2 points); gemini-3.8-flash (balanced accuracy -5.2 points); gpt-6.1-terra (balanced accuracy -3.3 points, false-reject rate +11.1 points); the control is kept"
+
+[[format.judges]]
+accuracy_kept = false
+backend = "claude-haiku-5-5"
+balanced_accuracy_change = 0.023076923076923106
+control_failures = 14
+false_accept_rate_change = -0.015384615384615385
+false_reject_rate_change = 0.022222222222222213
+model = "claude-haiku-5-5"
+no_new_failures = true
+treatment_failures = 4
+
+[[format.judges]]
+accuracy_kept = false
+backend = "gemini-3-8-flash"
+balanced_accuracy_change = -0.052136752136752174
+control_failures = 0
+false_accept_rate_change = 0.0
+false_reject_rate_change = 0.0
+model = "gemini-3.8-flash"
+no_new_failures = true
+treatment_failures = 0
+
+[[format.judges]]
+accuracy_kept = false
+backend = "gpt-6-1-terra"
+balanced_accuracy_change = -0.033333333333333326
+control_failures = 0
+false_accept_rate_change = 0.0
+false_reject_rate_change = 0.1111111111111111
+model = "gpt-6.1-terra"
+no_new_failures = true
+treatment_failures = 0
+
+[[judges]]
+backend = "claude-haiku-5-5"
+model = "claude-haiku-5-5"
+versions = ["1+fit1-jpeg90-2576"]
+
+[[judges]]
+backend = "gemini-3-8-flash"
+model = "gemini-3.8-flash"
+versions = ["1+fit1-jpeg90-1536"]
+
+[[judges]]
+backend = "gpt-6-1-terra"
+model = "gpt-6.1-terra"
+versions = ["1+fit1-jpeg90-2048"]
+
+[[matrices]]
+cells = 1320
+identity = "c386cd97d9b2d6c505eca215084a1a34109814090de039378e0cb2511a3e02ef"
+name = "e-submission"
+
+[[scopes]]
+name = "all"
+
+[[scopes.comparisons]]
+against_arm = "C;submission=v1"
+against_backend = "claude-haiku-5-5"
+against_model = "claude-haiku-5-5"
+arm = "C;submission=v2"
+backend = "claude-haiku-5-5"
+differing_families = 13
+families = 30
+items = 110
+model = "claude-haiku-5-5"
+
+[scopes.comparisons.balanced_accuracy]
+lower = -0.03145253526496372
+point = 0.023076923076923106
+upper = 0.08593489956958386
+
+[scopes.comparisons.decided_correctly]
+lower = -0.02941176470588236
+point = 0.027272727272727337
+upper = 0.09259259259259256
+
+[scopes.comparisons.false_accept_rate]
+lower = -0.05
+point = -0.015384615384615385
+upper = 0.0
+
+[scopes.comparisons.false_reject_rate]
+lower = -0.049999999999999996
+point = 0.022222222222222213
+upper = 0.09999999999999999
+
+[[scopes.comparisons]]
+against_arm = "C;submission=v1"
+against_backend = "gemini-3-8-flash"
+against_model = "gemini-3.8-flash"
+arm = "C;submission=v2"
+backend = "gemini-3-8-flash"
+differing_families = 7
+families = 30
+items = 110
+model = "gemini-3.8-flash"
+
+[scopes.comparisons.balanced_accuracy]
+lower = -0.10049115493270092
+point = -0.052136752136752174
+upper = -0.007682421227197374
+
+[scopes.comparisons.decided_correctly]
+lower = -0.0892857142857143
+point = -0.045454545454545414
+upper = 0.0
+
+[scopes.comparisons.false_accept_rate]
+lower = -0.045454545454545456
+point = 0.0
+upper = 0.04477611940298508
+
+[scopes.comparisons.false_reject_rate]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[[scopes.comparisons]]
+against_arm = "C;submission=v1"
+against_backend = "gpt-6-1-terra"
+against_model = "gpt-6.1-terra"
+arm = "C;submission=v2"
+backend = "gpt-6-1-terra"
+differing_families = 6
+families = 30
+items = 110
+model = "gpt-6.1-terra"
+
+[scopes.comparisons.balanced_accuracy]
+lower = -0.0714285714285714
+point = -0.033333333333333326
+upper = 0.0
+
+[scopes.comparisons.decided_correctly]
+lower = -0.05660377358490565
+point = -0.027272727272727226
+upper = 0.0
+
+[scopes.comparisons.false_accept_rate]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[scopes.comparisons.false_reject_rate]
+lower = 0.023255813953488413
+point = 0.1111111111111111
+upper = 0.20833333333333331
+
+[[scopes.measures]]
+arm = "C;submission=v1"
+backend = "claude-haiku-5-5"
+catch_rate = 0.8
+caught = 52
+cost_per_decision_usd = 0.003294418181818181
+decisions = 110
+error_rate = 0.05454545454545454
+errors = 6
+expected_fail = 65
+expected_pass = 45
+false_accept_rate = 0.03076923076923077
+false_accepts = 2
+false_reject_rate = 0.08888888888888889
+false_rejects = 4
+median_ms = 13763
+model = "claude-haiku-5-5"
+passed = 12
+repeated_items = 110
+self_agreement = 0.8090909090909091
+settled_usd = 0.7414389999999994
+unsure = 34
+unsure_rate = 0.3090909090909091
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.43713862469806763
+point = 0.5333333333333333
+upper = 0.6328373476317267
+
+[scopes.measures.decided_correctly]
+lower = 0.49056150217706823
+point = 0.5818181818181818
+upper = 0.6731359649122804
+
+[scopes.measures.submissions]
+decisions = 220
+failure_rate = 0.06363636363636363
+failures = 14
+first_rejection_rate = 0.36818181818181817
+first_rejections = 81
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 206
+invalid_submission = 14
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+bad_field = 3
+evidence = 45
+finding_cites = 32
+location = 3
+missing_item = 10
+not_a_list = 2
+
+[[scopes.measures]]
+arm = "C;submission=v1"
+backend = "gemini-3-8-flash"
+catch_rate = 0.9384615384615385
+caught = 61
+cost_per_decision_usd = 0.013444272727272723
+decisions = 110
+error_rate = 0.0
+errors = 0
+expected_fail = 65
+expected_pass = 45
+false_accept_rate = 0.06153846153846154
+false_accepts = 4
+false_reject_rate = 0.17777777777777778
+false_rejects = 8
+median_ms = 21969
+model = "gemini-3.8-flash"
+passed = 37
+repeated_items = 110
+self_agreement = 0.9545454545454546
+settled_usd = 2.899659
+unsure = 0
+unsure_rate = 0.0
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.8095718748829246
+point = 0.8803418803418803
+upper = 0.9462547992321229
+
+[scopes.measures.decided_correctly]
+lower = 0.8234768907563025
+point = 0.8909090909090909
+upper = 0.9528301886792453
+
+[scopes.measures.submissions]
+decisions = 220
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.02727272727272727
+first_rejections = 6
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 219
+fault = 1
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+bad_field = 1
+location = 5
+
+[[scopes.measures]]
+arm = "C;submission=v1"
+backend = "gpt-6-1-terra"
+catch_rate = 0.9538461538461539
+caught = 62
+cost_per_decision_usd = 0.009323590909090913
+decisions = 110
+error_rate = 0.0
+errors = 0
+expected_fail = 65
+expected_pass = 45
+false_accept_rate = 0.03076923076923077
+false_accepts = 2
+false_reject_rate = 0.2222222222222222
+false_rejects = 10
+median_ms = 16500
+model = "gpt-6.1-terra"
+passed = 25
+repeated_items = 110
+self_agreement = 0.9454545454545454
+settled_usd = 1.7375939999999999
+unsure = 11
+unsure_rate = 0.1
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.653123746657754
+point = 0.7547008547008547
+upper = 0.8488372093023255
+
+[scopes.measures.decided_correctly]
+lower = 0.6963789682539683
+point = 0.7909090909090909
+upper = 0.875
+
+[scopes.measures.submissions]
+decisions = 220
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.0
+first_rejections = 0
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 220
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+
+[[scopes.measures]]
+arm = "C;submission=v2"
+backend = "claude-haiku-5-5"
+catch_rate = 0.8461538461538461
+caught = 55
+cost_per_decision_usd = 0.004349554545454544
+decisions = 110
+error_rate = 0.03636363636363636
+errors = 4
+expected_fail = 65
+expected_pass = 45
+false_accept_rate = 0.015384615384615385
+false_accepts = 1
+false_reject_rate = 0.1111111111111111
+false_rejects = 5
+median_ms = 15022
+model = "claude-haiku-5-5"
+passed = 12
+repeated_items = 110
+self_agreement = 0.8727272727272727
+settled_usd = 0.9224009999999998
+unsure = 33
+unsure_rate = 0.3
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.47185399756493507
+point = 0.5564102564102564
+upper = 0.6420477718437412
+
+[scopes.measures.decided_correctly]
+lower = 0.5192216981132076
+point = 0.6090909090909091
+upper = 0.6909090909090909
+
+[scopes.measures.submissions]
+decisions = 220
+failure_rate = 0.01818181818181818
+failures = 4
+first_rejection_rate = 0.42272727272727273
+first_rejections = 93
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+finding_cites = 6
+location = 6
+
+[scopes.measures.submissions.causes]
+concluded = 215
+fault = 1
+invalid_submission = 4
+
+[scopes.measures.submissions.recoveries_by_kind]
+evidence_dropped = 238
+
+[scopes.measures.submissions.rejections_by_class]
+bad_field = 1
+finding_cites = 77
+location = 14
+not_a_list = 5
+
+[[scopes.measures]]
+arm = "C;submission=v2"
+backend = "gemini-3-8-flash"
+catch_rate = 0.9230769230769231
+caught = 60
+cost_per_decision_usd = 0.017072936363636364
+decisions = 110
+error_rate = 0.045454545454545456
+errors = 5
+expected_fail = 65
+expected_pass = 45
+false_accept_rate = 0.06153846153846154
+false_accepts = 4
+false_reject_rate = 0.17777777777777778
+false_rejects = 8
+median_ms = 22724
+model = "gemini-3.8-flash"
+passed = 33
+repeated_items = 110
+self_agreement = 0.8909090909090909
+settled_usd = 3.5916669999999957
+unsure = 0
+unsure_rate = 0.0
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.7496066631780918
+point = 0.8282051282051281
+upper = 0.8995703204666751
+
+[scopes.measures.decided_correctly]
+lower = 0.7758282623394185
+point = 0.8454545454545455
+upper = 0.9091136363636362
+
+[scopes.measures.submissions]
+decisions = 220
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.03636363636363636
+first_rejections = 8
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+bad_field = 10
+
+[scopes.measures.submissions.causes]
+concluded = 206
+fault = 14
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+bad_field = 5
+location = 3
+
+[[scopes.measures]]
+arm = "C;submission=v2"
+backend = "gpt-6-1-terra"
+catch_rate = 0.9538461538461539
+caught = 62
+cost_per_decision_usd = 0.010552663636363641
+decisions = 110
+error_rate = 0.0
+errors = 0
+expected_fail = 65
+expected_pass = 45
+false_accept_rate = 0.03076923076923077
+false_accepts = 2
+false_reject_rate = 0.3333333333333333
+false_rejects = 15
+median_ms = 17444
+model = "gpt-6.1-terra"
+passed = 22
+repeated_items = 110
+self_agreement = 0.9363636363636364
+settled_usd = 1.878840000000001
+unsure = 9
+unsure_rate = 0.08181818181818182
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.619305977710233
+point = 0.7213675213675214
+upper = 0.818183325795266
+
+[scopes.measures.decided_correctly]
+lower = 0.6698071091644204
+point = 0.7636363636363637
+upper = 0.8482142857142857
+
+[scopes.measures.submissions]
+decisions = 220
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.0
+first_rejections = 0
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 220
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+
+[[scopes]]
+name = "dev"
+
+[[scopes.comparisons]]
+against_arm = "C;submission=v1"
+against_backend = "claude-haiku-5-5"
+against_model = "claude-haiku-5-5"
+arm = "C;submission=v2"
+backend = "claude-haiku-5-5"
+differing_families = 13
+families = 30
+items = 110
+model = "claude-haiku-5-5"
+
+[scopes.comparisons.balanced_accuracy]
+lower = -0.03145253526496372
+point = 0.023076923076923106
+upper = 0.08593489956958386
+
+[scopes.comparisons.decided_correctly]
+lower = -0.02941176470588236
+point = 0.027272727272727337
+upper = 0.09259259259259256
+
+[scopes.comparisons.false_accept_rate]
+lower = -0.05
+point = -0.015384615384615385
+upper = 0.0
+
+[scopes.comparisons.false_reject_rate]
+lower = -0.049999999999999996
+point = 0.022222222222222213
+upper = 0.09999999999999999
+
+[[scopes.comparisons]]
+against_arm = "C;submission=v1"
+against_backend = "gemini-3-8-flash"
+against_model = "gemini-3.8-flash"
+arm = "C;submission=v2"
+backend = "gemini-3-8-flash"
+differing_families = 7
+families = 30
+items = 110
+model = "gemini-3.8-flash"
+
+[scopes.comparisons.balanced_accuracy]
+lower = -0.10049115493270092
+point = -0.052136752136752174
+upper = -0.007682421227197374
+
+[scopes.comparisons.decided_correctly]
+lower = -0.0892857142857143
+point = -0.045454545454545414
+upper = 0.0
+
+[scopes.comparisons.false_accept_rate]
+lower = -0.045454545454545456
+point = 0.0
+upper = 0.04477611940298508
+
+[scopes.comparisons.false_reject_rate]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[[scopes.comparisons]]
+against_arm = "C;submission=v1"
+against_backend = "gpt-6-1-terra"
+against_model = "gpt-6.1-terra"
+arm = "C;submission=v2"
+backend = "gpt-6-1-terra"
+differing_families = 6
+families = 30
+items = 110
+model = "gpt-6.1-terra"
+
+[scopes.comparisons.balanced_accuracy]
+lower = -0.0714285714285714
+point = -0.033333333333333326
+upper = 0.0
+
+[scopes.comparisons.decided_correctly]
+lower = -0.05660377358490565
+point = -0.027272727272727226
+upper = 0.0
+
+[scopes.comparisons.false_accept_rate]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[scopes.comparisons.false_reject_rate]
+lower = 0.023255813953488413
+point = 0.1111111111111111
+upper = 0.20833333333333331
+
+[[scopes.measures]]
+arm = "C;submission=v1"
+backend = "claude-haiku-5-5"
+catch_rate = 0.8
+caught = 52
+cost_per_decision_usd = 0.003294418181818181
+decisions = 110
+error_rate = 0.05454545454545454
+errors = 6
+expected_fail = 65
+expected_pass = 45
+false_accept_rate = 0.03076923076923077
+false_accepts = 2
+false_reject_rate = 0.08888888888888889
+false_rejects = 4
+median_ms = 13763
+model = "claude-haiku-5-5"
+passed = 12
+repeated_items = 110
+self_agreement = 0.8090909090909091
+settled_usd = 0.7414389999999994
+unsure = 34
+unsure_rate = 0.3090909090909091
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.43713862469806763
+point = 0.5333333333333333
+upper = 0.6328373476317267
+
+[scopes.measures.decided_correctly]
+lower = 0.49056150217706823
+point = 0.5818181818181818
+upper = 0.6731359649122804
+
+[scopes.measures.submissions]
+decisions = 220
+failure_rate = 0.06363636363636363
+failures = 14
+first_rejection_rate = 0.36818181818181817
+first_rejections = 81
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 206
+invalid_submission = 14
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+bad_field = 3
+evidence = 45
+finding_cites = 32
+location = 3
+missing_item = 10
+not_a_list = 2
+
+[[scopes.measures]]
+arm = "C;submission=v1"
+backend = "gemini-3-8-flash"
+catch_rate = 0.9384615384615385
+caught = 61
+cost_per_decision_usd = 0.013444272727272723
+decisions = 110
+error_rate = 0.0
+errors = 0
+expected_fail = 65
+expected_pass = 45
+false_accept_rate = 0.06153846153846154
+false_accepts = 4
+false_reject_rate = 0.17777777777777778
+false_rejects = 8
+median_ms = 21969
+model = "gemini-3.8-flash"
+passed = 37
+repeated_items = 110
+self_agreement = 0.9545454545454546
+settled_usd = 2.899659
+unsure = 0
+unsure_rate = 0.0
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.8095718748829246
+point = 0.8803418803418803
+upper = 0.9462547992321229
+
+[scopes.measures.decided_correctly]
+lower = 0.8234768907563025
+point = 0.8909090909090909
+upper = 0.9528301886792453
+
+[scopes.measures.submissions]
+decisions = 220
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.02727272727272727
+first_rejections = 6
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 219
+fault = 1
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+bad_field = 1
+location = 5
+
+[[scopes.measures]]
+arm = "C;submission=v1"
+backend = "gpt-6-1-terra"
+catch_rate = 0.9538461538461539
+caught = 62
+cost_per_decision_usd = 0.009323590909090913
+decisions = 110
+error_rate = 0.0
+errors = 0
+expected_fail = 65
+expected_pass = 45
+false_accept_rate = 0.03076923076923077
+false_accepts = 2
+false_reject_rate = 0.2222222222222222
+false_rejects = 10
+median_ms = 16500
+model = "gpt-6.1-terra"
+passed = 25
+repeated_items = 110
+self_agreement = 0.9454545454545454
+settled_usd = 1.7375939999999999
+unsure = 11
+unsure_rate = 0.1
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.653123746657754
+point = 0.7547008547008547
+upper = 0.8488372093023255
+
+[scopes.measures.decided_correctly]
+lower = 0.6963789682539683
+point = 0.7909090909090909
+upper = 0.875
+
+[scopes.measures.submissions]
+decisions = 220
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.0
+first_rejections = 0
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 220
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+
+[[scopes.measures]]
+arm = "C;submission=v2"
+backend = "claude-haiku-5-5"
+catch_rate = 0.8461538461538461
+caught = 55
+cost_per_decision_usd = 0.004349554545454544
+decisions = 110
+error_rate = 0.03636363636363636
+errors = 4
+expected_fail = 65
+expected_pass = 45
+false_accept_rate = 0.015384615384615385
+false_accepts = 1
+false_reject_rate = 0.1111111111111111
+false_rejects = 5
+median_ms = 15022
+model = "claude-haiku-5-5"
+passed = 12
+repeated_items = 110
+self_agreement = 0.8727272727272727
+settled_usd = 0.9224009999999998
+unsure = 33
+unsure_rate = 0.3
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.47185399756493507
+point = 0.5564102564102564
+upper = 0.6420477718437412
+
+[scopes.measures.decided_correctly]
+lower = 0.5192216981132076
+point = 0.6090909090909091
+upper = 0.6909090909090909
+
+[scopes.measures.submissions]
+decisions = 220
+failure_rate = 0.01818181818181818
+failures = 4
+first_rejection_rate = 0.42272727272727273
+first_rejections = 93
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+finding_cites = 6
+location = 6
+
+[scopes.measures.submissions.causes]
+concluded = 215
+fault = 1
+invalid_submission = 4
+
+[scopes.measures.submissions.recoveries_by_kind]
+evidence_dropped = 238
+
+[scopes.measures.submissions.rejections_by_class]
+bad_field = 1
+finding_cites = 77
+location = 14
+not_a_list = 5
+
+[[scopes.measures]]
+arm = "C;submission=v2"
+backend = "gemini-3-8-flash"
+catch_rate = 0.9230769230769231
+caught = 60
+cost_per_decision_usd = 0.017072936363636364
+decisions = 110
+error_rate = 0.045454545454545456
+errors = 5
+expected_fail = 65
+expected_pass = 45
+false_accept_rate = 0.06153846153846154
+false_accepts = 4
+false_reject_rate = 0.17777777777777778
+false_rejects = 8
+median_ms = 22724
+model = "gemini-3.8-flash"
+passed = 33
+repeated_items = 110
+self_agreement = 0.8909090909090909
+settled_usd = 3.5916669999999957
+unsure = 0
+unsure_rate = 0.0
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.7496066631780918
+point = 0.8282051282051281
+upper = 0.8995703204666751
+
+[scopes.measures.decided_correctly]
+lower = 0.7758282623394185
+point = 0.8454545454545455
+upper = 0.9091136363636362
+
+[scopes.measures.submissions]
+decisions = 220
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.03636363636363636
+first_rejections = 8
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+bad_field = 10
+
+[scopes.measures.submissions.causes]
+concluded = 206
+fault = 14
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+bad_field = 5
+location = 3
+
+[[scopes.measures]]
+arm = "C;submission=v2"
+backend = "gpt-6-1-terra"
+catch_rate = 0.9538461538461539
+caught = 62
+cost_per_decision_usd = 0.010552663636363641
+decisions = 110
+error_rate = 0.0
+errors = 0
+expected_fail = 65
+expected_pass = 45
+false_accept_rate = 0.03076923076923077
+false_accepts = 2
+false_reject_rate = 0.3333333333333333
+false_rejects = 15
+median_ms = 17444
+model = "gpt-6.1-terra"
+passed = 22
+repeated_items = 110
+self_agreement = 0.9363636363636364
+settled_usd = 1.878840000000001
+unsure = 9
+unsure_rate = 0.08181818181818182
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.619305977710233
+point = 0.7213675213675214
+upper = 0.818183325795266
+
+[scopes.measures.decided_correctly]
+lower = 0.6698071091644204
+point = 0.7636363636363637
+upper = 0.8482142857142857
+
+[scopes.measures.submissions]
+decisions = 220
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.0
+first_rejections = 0
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 220
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+
+[[scopes]]
+name = "brief-compliance"
+
+[[scopes.comparisons]]
+against_arm = "C;submission=v1"
+against_backend = "claude-haiku-5-5"
+against_model = "claude-haiku-5-5"
+arm = "C;submission=v2"
+backend = "claude-haiku-5-5"
+differing_families = 2
+families = 6
+items = 22
+model = "claude-haiku-5-5"
+
+[scopes.comparisons.balanced_accuracy]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[scopes.comparisons.decided_correctly]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[scopes.comparisons.false_accept_rate]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[scopes.comparisons.false_reject_rate]
+lower = 0.0
+point = 0.16666666666666669
+upper = 0.5
+
+[[scopes.comparisons]]
+against_arm = "C;submission=v1"
+against_backend = "gemini-3-8-flash"
+against_model = "gemini-3.8-flash"
+arm = "C;submission=v2"
+backend = "gemini-3-8-flash"
+differing_families = 0
+families = 6
+items = 22
+model = "gemini-3.8-flash"
+
+[scopes.comparisons.balanced_accuracy]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[scopes.comparisons.decided_correctly]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[scopes.comparisons.false_accept_rate]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[scopes.comparisons.false_reject_rate]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[[scopes.comparisons]]
+against_arm = "C;submission=v1"
+against_backend = "gpt-6-1-terra"
+against_model = "gpt-6.1-terra"
+arm = "C;submission=v2"
+backend = "gpt-6-1-terra"
+differing_families = 0
+families = 6
+items = 22
+model = "gpt-6.1-terra"
+
+[scopes.comparisons.balanced_accuracy]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[scopes.comparisons.decided_correctly]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[scopes.comparisons.false_accept_rate]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[scopes.comparisons.false_reject_rate]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[[scopes.measures]]
+arm = "C;submission=v1"
+backend = "claude-haiku-5-5"
+catch_rate = 0.875
+caught = 14
+cost_per_decision_usd = 0.0028638636363636366
+decisions = 22
+error_rate = 0.09090909090909091
+errors = 2
+expected_fail = 16
+expected_pass = 6
+false_accept_rate = 0.0
+false_accepts = 0
+false_reject_rate = 0.3333333333333333
+false_rejects = 2
+median_ms = 13317
+model = "claude-haiku-5-5"
+passed = 2
+repeated_items = 22
+self_agreement = 0.8181818181818182
+settled_usd = 0.125192
+unsure = 2
+unsure_rate = 0.09090909090909091
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.42857142857142855
+point = 0.6041666666666666
+upper = 0.8020833333333333
+
+[scopes.measures.decided_correctly]
+lower = 0.5909090909090909
+point = 0.7272727272727273
+upper = 0.8636363636363636
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.06818181818181818
+failures = 3
+first_rejection_rate = 0.4318181818181818
+first_rejections = 19
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 41
+invalid_submission = 3
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+bad_field = 1
+evidence = 12
+finding_cites = 8
+location = 1
+
+[[scopes.measures]]
+arm = "C;submission=v1"
+backend = "gemini-3-8-flash"
+catch_rate = 1.0
+caught = 16
+cost_per_decision_usd = 0.010374863636363637
+decisions = 22
+error_rate = 0.0
+errors = 0
+expected_fail = 16
+expected_pass = 6
+false_accept_rate = 0.0
+false_accepts = 0
+false_reject_rate = 0.3333333333333333
+false_rejects = 2
+median_ms = 20426
+model = "gemini-3.8-flash"
+passed = 4
+repeated_items = 22
+self_agreement = 1.0
+settled_usd = 0.4466450000000001
+unsure = 0
+unsure_rate = 0.0
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.6666666666666666
+point = 0.8333333333333333
+upper = 1.0
+
+[scopes.measures.decided_correctly]
+lower = 0.8181818181818182
+point = 0.9090909090909091
+upper = 1.0
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.0
+first_rejections = 0
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 44
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+
+[[scopes.measures]]
+arm = "C;submission=v1"
+backend = "gpt-6-1-terra"
+catch_rate = 1.0
+caught = 16
+cost_per_decision_usd = 0.007215454545454547
+decisions = 22
+error_rate = 0.0
+errors = 0
+expected_fail = 16
+expected_pass = 6
+false_accept_rate = 0.0
+false_accepts = 0
+false_reject_rate = 0.8333333333333334
+false_rejects = 5
+median_ms = 14912
+model = "gpt-6.1-terra"
+passed = 1
+repeated_items = 22
+self_agreement = 1.0
+settled_usd = 0.27486499999999997
+unsure = 0
+unsure_rate = 0.0
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.5
+point = 0.5833333333333334
+upper = 0.75
+
+[scopes.measures.decided_correctly]
+lower = 0.6666666666666666
+point = 0.7727272727272727
+upper = 0.875
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.0
+first_rejections = 0
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 44
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+
+[[scopes.measures]]
+arm = "C;submission=v2"
+backend = "claude-haiku-5-5"
+catch_rate = 0.875
+caught = 14
+cost_per_decision_usd = 0.0038016363636363642
+decisions = 22
+error_rate = 0.045454545454545456
+errors = 1
+expected_fail = 16
+expected_pass = 6
+false_accept_rate = 0.0
+false_accepts = 0
+false_reject_rate = 0.5
+false_rejects = 3
+median_ms = 13079
+model = "claude-haiku-5-5"
+passed = 2
+repeated_items = 22
+self_agreement = 0.8636363636363636
+settled_usd = 0.15709100000000004
+unsure = 2
+unsure_rate = 0.09090909090909091
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.42857142857142855
+point = 0.6041666666666666
+upper = 0.8020833333333333
+
+[scopes.measures.decided_correctly]
+lower = 0.5909090909090909
+point = 0.7272727272727273
+upper = 0.8636363636363636
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.045454545454545456
+failures = 2
+first_rejection_rate = 0.38636363636363635
+first_rejections = 17
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+finding_cites = 1
+
+[scopes.measures.submissions.causes]
+concluded = 42
+invalid_submission = 2
+
+[scopes.measures.submissions.recoveries_by_kind]
+evidence_dropped = 79
+
+[scopes.measures.submissions.rejections_by_class]
+bad_field = 1
+finding_cites = 14
+location = 2
+not_a_list = 2
+
+[[scopes.measures]]
+arm = "C;submission=v2"
+backend = "gemini-3-8-flash"
+catch_rate = 1.0
+caught = 16
+cost_per_decision_usd = 0.015443590909090914
+decisions = 22
+error_rate = 0.0
+errors = 0
+expected_fail = 16
+expected_pass = 6
+false_accept_rate = 0.0
+false_accepts = 0
+false_reject_rate = 0.3333333333333333
+false_rejects = 2
+median_ms = 20816
+model = "gemini-3.8-flash"
+passed = 4
+repeated_items = 22
+self_agreement = 0.9090909090909091
+settled_usd = 0.6305350000000001
+unsure = 0
+unsure_rate = 0.0
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.6666666666666666
+point = 0.8333333333333333
+upper = 1.0
+
+[scopes.measures.decided_correctly]
+lower = 0.8181818181818182
+point = 0.9090909090909091
+upper = 1.0
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.0
+first_rejections = 0
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 42
+fault = 2
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+
+[[scopes.measures]]
+arm = "C;submission=v2"
+backend = "gpt-6-1-terra"
+catch_rate = 1.0
+caught = 16
+cost_per_decision_usd = 0.008278545454545455
+decisions = 22
+error_rate = 0.0
+errors = 0
+expected_fail = 16
+expected_pass = 6
+false_accept_rate = 0.0
+false_accepts = 0
+false_reject_rate = 0.8333333333333334
+false_rejects = 5
+median_ms = 15632
+model = "gpt-6.1-terra"
+passed = 1
+repeated_items = 22
+self_agreement = 1.0
+settled_usd = 0.30696300000000004
+unsure = 0
+unsure_rate = 0.0
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.5
+point = 0.5833333333333334
+upper = 0.75
+
+[scopes.measures.decided_correctly]
+lower = 0.6666666666666666
+point = 0.7727272727272727
+upper = 0.875
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.0
+first_rejections = 0
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 44
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+
+[[scopes]]
+name = "product-fidelity"
+
+[[scopes.comparisons]]
+against_arm = "C;submission=v1"
+against_backend = "claude-haiku-5-5"
+against_model = "claude-haiku-5-5"
+arm = "C;submission=v2"
+backend = "claude-haiku-5-5"
+differing_families = 4
+families = 6
+items = 22
+model = "claude-haiku-5-5"
+
+[scopes.comparisons.balanced_accuracy]
+lower = -0.055555555555555525
+point = 0.14583333333333337
+upper = 0.3888888888888888
+
+[scopes.comparisons.decided_correctly]
+lower = -0.08333333333333337
+point = 0.13636363636363635
+upper = 0.33333333333333337
+
+[scopes.comparisons.false_accept_rate]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[scopes.comparisons.false_reject_rate]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[[scopes.comparisons]]
+against_arm = "C;submission=v1"
+against_backend = "gemini-3-8-flash"
+against_model = "gemini-3.8-flash"
+arm = "C;submission=v2"
+backend = "gemini-3-8-flash"
+differing_families = 3
+families = 6
+items = 22
+model = "gemini-3.8-flash"
+
+[scopes.comparisons.balanced_accuracy]
+lower = -0.36458333333333337
+point = -0.19791666666666674
+upper = -0.03125
+
+[scopes.comparisons.decided_correctly]
+lower = -0.2272727272727273
+point = -0.13636363636363635
+upper = -0.045454545454545414
+
+[scopes.comparisons.false_accept_rate]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[scopes.comparisons.false_reject_rate]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[[scopes.comparisons]]
+against_arm = "C;submission=v1"
+against_backend = "gpt-6-1-terra"
+against_model = "gpt-6.1-terra"
+arm = "C;submission=v2"
+backend = "gpt-6-1-terra"
+differing_families = 2
+families = 6
+items = 22
+model = "gpt-6.1-terra"
+
+[scopes.comparisons.balanced_accuracy]
+lower = -0.2500000000000001
+point = -0.08333333333333326
+upper = 0.0
+
+[scopes.comparisons.decided_correctly]
+lower = -0.13636363636363635
+point = -0.045454545454545414
+upper = 0.0
+
+[scopes.comparisons.false_accept_rate]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[scopes.comparisons.false_reject_rate]
+lower = 0.0
+point = 0.33333333333333337
+upper = 0.6666666666666667
+
+[[scopes.measures]]
+arm = "C;submission=v1"
+backend = "claude-haiku-5-5"
+catch_rate = 0.8125
+caught = 13
+cost_per_decision_usd = 0.0036475000000000006
+decisions = 22
+error_rate = 0.18181818181818182
+errors = 4
+expected_fail = 16
+expected_pass = 6
+false_accept_rate = 0.0
+false_accepts = 0
+false_reject_rate = 0.0
+false_rejects = 0
+median_ms = 16118
+model = "claude-haiku-5-5"
+passed = 0
+repeated_items = 22
+self_agreement = 0.7272727272727273
+settled_usd = 0.16519
+unsure = 5
+unsure_rate = 0.22727272727272727
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.34375
+point = 0.40625
+upper = 0.4722222222222222
+
+[scopes.measures.decided_correctly]
+lower = 0.5
+point = 0.5909090909090909
+upper = 0.7
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.18181818181818182
+failures = 8
+first_rejection_rate = 0.5227272727272727
+first_rejections = 23
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 36
+invalid_submission = 8
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+evidence = 12
+finding_cites = 6
+location = 2
+missing_item = 10
+not_a_list = 1
+
+[[scopes.measures]]
+arm = "C;submission=v1"
+backend = "gemini-3-8-flash"
+catch_rate = 1.0
+caught = 16
+cost_per_decision_usd = 0.012361727272727272
+decisions = 22
+error_rate = 0.0
+errors = 0
+expected_fail = 16
+expected_pass = 6
+false_accept_rate = 0.0
+false_accepts = 0
+false_reject_rate = 0.0
+false_rejects = 0
+median_ms = 18209
+model = "gemini-3.8-flash"
+passed = 6
+repeated_items = 22
+self_agreement = 1.0
+settled_usd = 0.5152269999999998
+unsure = 0
+unsure_rate = 0.0
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 1.0
+point = 1.0
+upper = 1.0
+
+[scopes.measures.decided_correctly]
+lower = 1.0
+point = 1.0
+upper = 1.0
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.0
+first_rejections = 0
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 44
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+
+[[scopes.measures]]
+arm = "C;submission=v1"
+backend = "gpt-6-1-terra"
+catch_rate = 0.9375
+caught = 15
+cost_per_decision_usd = 0.011030272727272729
+decisions = 22
+error_rate = 0.0
+errors = 0
+expected_fail = 16
+expected_pass = 6
+false_accept_rate = 0.0625
+false_accepts = 1
+false_reject_rate = 0.16666666666666666
+false_rejects = 1
+median_ms = 18389
+model = "gpt-6.1-terra"
+passed = 4
+repeated_items = 22
+self_agreement = 0.9090909090909091
+settled_usd = 0.39967999999999987
+unsure = 1
+unsure_rate = 0.045454545454545456
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.625
+point = 0.8020833333333333
+upper = 0.9722222222222222
+
+[scopes.measures.decided_correctly]
+lower = 0.7222222222222222
+point = 0.8636363636363636
+upper = 0.9583333333333334
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.0
+first_rejections = 0
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 44
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+
+[[scopes.measures]]
+arm = "C;submission=v2"
+backend = "claude-haiku-5-5"
+catch_rate = 0.9375
+caught = 15
+cost_per_decision_usd = 0.004188954545454545
+decisions = 22
+error_rate = 0.045454545454545456
+errors = 1
+expected_fail = 16
+expected_pass = 6
+false_accept_rate = 0.0
+false_accepts = 0
+false_reject_rate = 0.0
+false_rejects = 0
+median_ms = 14850
+model = "claude-haiku-5-5"
+passed = 1
+repeated_items = 22
+self_agreement = 0.9090909090909091
+settled_usd = 0.20023200000000002
+unsure = 5
+unsure_rate = 0.22727272727272727
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.4166666666666667
+point = 0.5520833333333334
+upper = 0.75
+
+[scopes.measures.decided_correctly]
+lower = 0.5909090909090909
+point = 0.7272727272727273
+upper = 0.8636363636363636
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.022727272727272728
+failures = 1
+first_rejection_rate = 0.36363636363636365
+first_rejections = 16
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+finding_cites = 1
+
+[scopes.measures.submissions.causes]
+concluded = 43
+invalid_submission = 1
+
+[scopes.measures.submissions.recoveries_by_kind]
+evidence_dropped = 100
+
+[scopes.measures.submissions.rejections_by_class]
+finding_cites = 11
+location = 5
+not_a_list = 1
+
+[[scopes.measures]]
+arm = "C;submission=v2"
+backend = "gemini-3-8-flash"
+catch_rate = 0.9375
+caught = 15
+cost_per_decision_usd = 0.016910454545454544
+decisions = 22
+error_rate = 0.13636363636363635
+errors = 3
+expected_fail = 16
+expected_pass = 6
+false_accept_rate = 0.0
+false_accepts = 0
+false_reject_rate = 0.0
+false_rejects = 0
+median_ms = 22604
+model = "gemini-3.8-flash"
+passed = 4
+repeated_items = 22
+self_agreement = 0.8636363636363636
+settled_usd = 0.7120280000000003
+unsure = 0
+unsure_rate = 0.0
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.6354166666666666
+point = 0.8020833333333333
+upper = 0.96875
+
+[scopes.measures.decided_correctly]
+lower = 0.7727272727272727
+point = 0.8636363636363636
+upper = 0.9545454545454546
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.06818181818181818
+first_rejections = 3
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+bad_field = 10
+
+[scopes.measures.submissions.causes]
+concluded = 39
+fault = 5
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+bad_field = 3
+
+[[scopes.measures]]
+arm = "C;submission=v2"
+backend = "gpt-6-1-terra"
+catch_rate = 0.9375
+caught = 15
+cost_per_decision_usd = 0.01220090909090909
+decisions = 22
+error_rate = 0.0
+errors = 0
+expected_fail = 16
+expected_pass = 6
+false_accept_rate = 0.0625
+false_accepts = 1
+false_reject_rate = 0.5
+false_rejects = 3
+median_ms = 17780
+model = "gpt-6.1-terra"
+passed = 3
+repeated_items = 22
+self_agreement = 0.9090909090909091
+settled_usd = 0.42747100000000016
+unsure = 0
+unsure_rate = 0.0
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.5476190476190477
+point = 0.71875
+upper = 0.9166666666666667
+
+[scopes.measures.decided_correctly]
+lower = 0.7
+point = 0.8181818181818182
+upper = 0.9166666666666666
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.0
+first_rejections = 0
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 44
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+
+[[scopes]]
+name = "reality-checks"
+
+[[scopes.comparisons]]
+against_arm = "C;submission=v1"
+against_backend = "claude-haiku-5-5"
+against_model = "claude-haiku-5-5"
+arm = "C;submission=v2"
+backend = "claude-haiku-5-5"
+differing_families = 2
+families = 6
+items = 22
+model = "claude-haiku-5-5"
+
+[scopes.comparisons.balanced_accuracy]
+lower = -0.125
+point = 0.04545454545454544
+upper = 0.25
+
+[scopes.comparisons.decided_correctly]
+lower = -0.125
+point = 0.04545454545454544
+upper = 0.25
+
+[scopes.comparisons.false_accept_rate]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[scopes.comparisons.false_reject_rate]
+lower = 0.0
+point = 0.09090909090909091
+upper = 0.2727272727272727
+
+[[scopes.comparisons]]
+against_arm = "C;submission=v1"
+against_backend = "gemini-3-8-flash"
+against_model = "gemini-3.8-flash"
+arm = "C;submission=v2"
+backend = "gemini-3-8-flash"
+differing_families = 1
+families = 6
+items = 22
+model = "gemini-3.8-flash"
+
+[scopes.comparisons.balanced_accuracy]
+lower = 0.0
+point = 0.045454545454545414
+upper = 0.13636363636363635
+
+[scopes.comparisons.decided_correctly]
+lower = 0.0
+point = 0.045454545454545414
+upper = 0.13636363636363635
+
+[scopes.comparisons.false_accept_rate]
+lower = -0.2727272727272727
+point = -0.09090909090909088
+upper = 0.0
+
+[scopes.comparisons.false_reject_rate]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[[scopes.comparisons]]
+against_arm = "C;submission=v1"
+against_backend = "gpt-6-1-terra"
+against_model = "gpt-6.1-terra"
+arm = "C;submission=v2"
+backend = "gpt-6-1-terra"
+differing_families = 2
+families = 6
+items = 22
+model = "gpt-6.1-terra"
+
+[scopes.comparisons.balanced_accuracy]
+lower = -0.13636363636363635
+point = -0.045454545454545525
+upper = 0.0
+
+[scopes.comparisons.decided_correctly]
+lower = -0.13636363636363635
+point = -0.045454545454545525
+upper = 0.0
+
+[scopes.comparisons.false_accept_rate]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[scopes.comparisons.false_reject_rate]
+lower = 0.0
+point = 0.09090909090909094
+upper = 0.2727272727272727
+
+[[scopes.measures]]
+arm = "C;submission=v1"
+backend = "claude-haiku-5-5"
+catch_rate = 0.45454545454545453
+caught = 5
+cost_per_decision_usd = 0.0027712727272727273
+decisions = 22
+error_rate = 0.0
+errors = 0
+expected_fail = 11
+expected_pass = 11
+false_accept_rate = 0.0
+false_accepts = 0
+false_reject_rate = 0.09090909090909091
+false_rejects = 1
+median_ms = 12581
+model = "claude-haiku-5-5"
+passed = 0
+repeated_items = 22
+self_agreement = 0.7272727272727273
+settled_usd = 0.13285700000000003
+unsure = 16
+unsure_rate = 0.7272727272727273
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.045454545454545456
+point = 0.22727272727272727
+upper = 0.4090909090909091
+
+[scopes.measures.decided_correctly]
+lower = 0.045454545454545456
+point = 0.22727272727272727
+upper = 0.4090909090909091
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.045454545454545456
+failures = 2
+first_rejection_rate = 0.4772727272727273
+first_rejections = 21
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 42
+invalid_submission = 2
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+evidence = 9
+finding_cites = 13
+not_a_list = 1
+
+[[scopes.measures]]
+arm = "C;submission=v1"
+backend = "gemini-3-8-flash"
+catch_rate = 0.7272727272727273
+caught = 8
+cost_per_decision_usd = 0.012805454545454547
+decisions = 22
+error_rate = 0.0
+errors = 0
+expected_fail = 11
+expected_pass = 11
+false_accept_rate = 0.2727272727272727
+false_accepts = 3
+false_reject_rate = 0.2727272727272727
+false_rejects = 3
+median_ms = 21625
+model = "gemini-3.8-flash"
+passed = 8
+repeated_items = 22
+self_agreement = 0.8636363636363636
+settled_usd = 0.577595
+unsure = 0
+unsure_rate = 0.0
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.5454545454545454
+point = 0.7272727272727273
+upper = 0.9090909090909092
+
+[scopes.measures.decided_correctly]
+lower = 0.5454545454545454
+point = 0.7272727272727273
+upper = 0.9090909090909091
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.022727272727272728
+first_rejections = 1
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 43
+fault = 1
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+bad_field = 1
+
+[[scopes.measures]]
+arm = "C;submission=v1"
+backend = "gpt-6-1-terra"
+catch_rate = 0.8181818181818182
+caught = 9
+cost_per_decision_usd = 0.006941954545454545
+decisions = 22
+error_rate = 0.0
+errors = 0
+expected_fail = 11
+expected_pass = 11
+false_accept_rate = 0.09090909090909091
+false_accepts = 1
+false_reject_rate = 0.2727272727272727
+false_rejects = 3
+median_ms = 14098
+model = "gpt-6.1-terra"
+passed = 4
+repeated_items = 22
+self_agreement = 0.8636363636363636
+settled_usd = 0.266064
+unsure = 5
+unsure_rate = 0.22727272727272727
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.2916666666666667
+point = 0.5909090909090909
+upper = 0.85
+
+[scopes.measures.decided_correctly]
+lower = 0.2916666666666667
+point = 0.5909090909090909
+upper = 0.85
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.0
+first_rejections = 0
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 44
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+
+[[scopes.measures]]
+arm = "C;submission=v2"
+backend = "claude-haiku-5-5"
+catch_rate = 0.5454545454545454
+caught = 6
+cost_per_decision_usd = 0.0033254545454545455
+decisions = 22
+error_rate = 0.0
+errors = 0
+expected_fail = 11
+expected_pass = 11
+false_accept_rate = 0.0
+false_accepts = 0
+false_reject_rate = 0.18181818181818182
+false_rejects = 2
+median_ms = 13866
+model = "claude-haiku-5-5"
+passed = 0
+repeated_items = 22
+self_agreement = 0.8636363636363636
+settled_usd = 0.145432
+unsure = 14
+unsure_rate = 0.6363636363636364
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.1
+point = 0.2727272727272727
+upper = 0.4166666666666667
+
+[scopes.measures.decided_correctly]
+lower = 0.1
+point = 0.2727272727272727
+upper = 0.4166666666666667
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.5227272727272727
+first_rejections = 23
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+finding_cites = 1
+
+[scopes.measures.submissions.causes]
+concluded = 44
+
+[scopes.measures.submissions.recoveries_by_kind]
+evidence_dropped = 7
+
+[scopes.measures.submissions.rejections_by_class]
+finding_cites = 23
+
+[[scopes.measures]]
+arm = "C;submission=v2"
+backend = "gemini-3-8-flash"
+catch_rate = 0.8181818181818182
+caught = 9
+cost_per_decision_usd = 0.015858363636363632
+decisions = 22
+error_rate = 0.0
+errors = 0
+expected_fail = 11
+expected_pass = 11
+false_accept_rate = 0.18181818181818182
+false_accepts = 2
+false_reject_rate = 0.2727272727272727
+false_rejects = 3
+median_ms = 23588
+model = "gemini-3.8-flash"
+passed = 8
+repeated_items = 22
+self_agreement = 0.9545454545454546
+settled_usd = 0.6909240000000002
+unsure = 0
+unsure_rate = 0.0
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.5909090909090908
+point = 0.7727272727272727
+upper = 0.9545454545454546
+
+[scopes.measures.decided_correctly]
+lower = 0.5909090909090909
+point = 0.7727272727272727
+upper = 0.9545454545454546
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.045454545454545456
+first_rejections = 2
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 44
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+bad_field = 2
+
+[[scopes.measures]]
+arm = "C;submission=v2"
+backend = "gpt-6-1-terra"
+catch_rate = 0.8181818181818182
+caught = 9
+cost_per_decision_usd = 0.0076715
+decisions = 22
+error_rate = 0.0
+errors = 0
+expected_fail = 11
+expected_pass = 11
+false_accept_rate = 0.09090909090909091
+false_accepts = 1
+false_reject_rate = 0.36363636363636365
+false_rejects = 4
+median_ms = 15012
+model = "gpt-6.1-terra"
+passed = 3
+repeated_items = 22
+self_agreement = 0.8636363636363636
+settled_usd = 0.28013999999999994
+unsure = 5
+unsure_rate = 0.22727272727272727
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.2727272727272727
+point = 0.5454545454545454
+upper = 0.8181818181818181
+
+[scopes.measures.decided_correctly]
+lower = 0.2727272727272727
+point = 0.5454545454545454
+upper = 0.8181818181818182
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.0
+first_rejections = 0
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 44
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+
+[[scopes]]
+name = "reference-consistency"
+
+[[scopes.comparisons]]
+against_arm = "C;submission=v1"
+against_backend = "claude-haiku-5-5"
+against_model = "claude-haiku-5-5"
+arm = "C;submission=v2"
+backend = "claude-haiku-5-5"
+differing_families = 2
+families = 6
+items = 22
+model = "claude-haiku-5-5"
+
+[scopes.comparisons.balanced_accuracy]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[scopes.comparisons.decided_correctly]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[scopes.comparisons.false_accept_rate]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[scopes.comparisons.false_reject_rate]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[[scopes.comparisons]]
+against_arm = "C;submission=v1"
+against_backend = "gemini-3-8-flash"
+against_model = "gemini-3.8-flash"
+arm = "C;submission=v2"
+backend = "gemini-3-8-flash"
+differing_families = 2
+families = 6
+items = 22
+model = "gemini-3.8-flash"
+
+[scopes.comparisons.balanced_accuracy]
+lower = -0.18181818181818188
+point = -0.09090909090909094
+upper = 0.0
+
+[scopes.comparisons.decided_correctly]
+lower = -0.18181818181818188
+point = -0.09090909090909094
+upper = 0.0
+
+[scopes.comparisons.false_accept_rate]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[scopes.comparisons.false_reject_rate]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[[scopes.comparisons]]
+against_arm = "C;submission=v1"
+against_backend = "gpt-6-1-terra"
+against_model = "gpt-6.1-terra"
+arm = "C;submission=v2"
+backend = "gpt-6-1-terra"
+differing_families = 1
+families = 6
+items = 22
+model = "gpt-6.1-terra"
+
+[scopes.comparisons.balanced_accuracy]
+lower = -0.13636363636363635
+point = -0.045454545454545414
+upper = 0.0
+
+[scopes.comparisons.decided_correctly]
+lower = -0.13636363636363635
+point = -0.045454545454545414
+upper = 0.0
+
+[scopes.comparisons.false_accept_rate]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[scopes.comparisons.false_reject_rate]
+lower = 0.0
+point = 0.09090909090909091
+upper = 0.2727272727272727
+
+[[scopes.measures]]
+arm = "C;submission=v1"
+backend = "claude-haiku-5-5"
+catch_rate = 1.0
+caught = 11
+cost_per_decision_usd = 0.004393000000000001
+decisions = 22
+error_rate = 0.0
+errors = 0
+expected_fail = 11
+expected_pass = 11
+false_accept_rate = 0.0
+false_accepts = 0
+false_reject_rate = 0.0
+false_rejects = 0
+median_ms = 15392
+model = "claude-haiku-5-5"
+passed = 1
+repeated_items = 22
+self_agreement = 0.8636363636363636
+settled_usd = 0.19465200000000002
+unsure = 10
+unsure_rate = 0.45454545454545453
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.5
+point = 0.5454545454545454
+upper = 0.6363636363636364
+
+[scopes.measures.decided_correctly]
+lower = 0.5
+point = 0.5454545454545454
+upper = 0.6363636363636364
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.022727272727272728
+failures = 1
+first_rejection_rate = 0.2727272727272727
+first_rejections = 12
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 43
+invalid_submission = 1
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+bad_field = 2
+evidence = 7
+finding_cites = 4
+
+[[scopes.measures]]
+arm = "C;submission=v1"
+backend = "gemini-3-8-flash"
+catch_rate = 1.0
+caught = 11
+cost_per_decision_usd = 0.01707718181818182
+decisions = 22
+error_rate = 0.0
+errors = 0
+expected_fail = 11
+expected_pass = 11
+false_accept_rate = 0.0
+false_accepts = 0
+false_reject_rate = 0.09090909090909091
+false_rejects = 1
+median_ms = 25675
+model = "gemini-3.8-flash"
+passed = 10
+repeated_items = 22
+self_agreement = 1.0
+settled_usd = 0.7385300000000001
+unsure = 0
+unsure_rate = 0.0
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.8636363636363636
+point = 0.9545454545454546
+upper = 1.0
+
+[scopes.measures.decided_correctly]
+lower = 0.8636363636363636
+point = 0.9545454545454546
+upper = 1.0
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.0
+first_rejections = 0
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 44
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+
+[[scopes.measures]]
+arm = "C;submission=v1"
+backend = "gpt-6-1-terra"
+catch_rate = 1.0
+caught = 11
+cost_per_decision_usd = 0.012550954545454547
+decisions = 22
+error_rate = 0.0
+errors = 0
+expected_fail = 11
+expected_pass = 11
+false_accept_rate = 0.0
+false_accepts = 0
+false_reject_rate = 0.09090909090909091
+false_rejects = 1
+median_ms = 19768
+model = "gpt-6.1-terra"
+passed = 6
+repeated_items = 22
+self_agreement = 0.9545454545454546
+settled_usd = 0.4493569999999999
+unsure = 4
+unsure_rate = 0.18181818181818182
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.5833333333333334
+point = 0.7727272727272727
+upper = 0.9545454545454546
+
+[scopes.measures.decided_correctly]
+lower = 0.5833333333333334
+point = 0.7727272727272727
+upper = 0.9545454545454546
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.0
+first_rejections = 0
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 44
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+
+[[scopes.measures]]
+arm = "C;submission=v2"
+backend = "claude-haiku-5-5"
+catch_rate = 1.0
+caught = 11
+cost_per_decision_usd = 0.006743954545454545
+decisions = 22
+error_rate = 0.09090909090909091
+errors = 2
+expected_fail = 11
+expected_pass = 11
+false_accept_rate = 0.0
+false_accepts = 0
+false_reject_rate = 0.0
+false_rejects = 0
+median_ms = 21665
+model = "claude-haiku-5-5"
+passed = 1
+repeated_items = 22
+self_agreement = 0.8181818181818182
+settled_usd = 0.25863300000000006
+unsure = 8
+unsure_rate = 0.36363636363636365
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.5
+point = 0.5454545454545454
+upper = 0.6363636363636364
+
+[scopes.measures.decided_correctly]
+lower = 0.5
+point = 0.5454545454545454
+upper = 0.6363636363636364
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.022727272727272728
+failures = 1
+first_rejection_rate = 0.5454545454545454
+first_rejections = 24
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+finding_cites = 2
+location = 5
+
+[scopes.measures.submissions.causes]
+concluded = 42
+fault = 1
+invalid_submission = 1
+
+[scopes.measures.submissions.recoveries_by_kind]
+evidence_dropped = 40
+
+[scopes.measures.submissions.rejections_by_class]
+finding_cites = 19
+location = 5
+not_a_list = 1
+
+[[scopes.measures]]
+arm = "C;submission=v2"
+backend = "gemini-3-8-flash"
+catch_rate = 1.0
+caught = 11
+cost_per_decision_usd = 0.01873159090909091
+decisions = 22
+error_rate = 0.09090909090909091
+errors = 2
+expected_fail = 11
+expected_pass = 11
+false_accept_rate = 0.0
+false_accepts = 0
+false_reject_rate = 0.09090909090909091
+false_rejects = 1
+median_ms = 24594
+model = "gemini-3.8-flash"
+passed = 8
+repeated_items = 22
+self_agreement = 0.8181818181818182
+settled_usd = 0.774585
+unsure = 0
+unsure_rate = 0.0
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.7
+point = 0.8636363636363636
+upper = 1.0
+
+[scopes.measures.decided_correctly]
+lower = 0.7
+point = 0.8636363636363636
+upper = 1.0
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.0
+first_rejections = 0
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 38
+fault = 6
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+
+[[scopes.measures]]
+arm = "C;submission=v2"
+backend = "gpt-6-1-terra"
+catch_rate = 1.0
+caught = 11
+cost_per_decision_usd = 0.015052999999999999
+decisions = 22
+error_rate = 0.0
+errors = 0
+expected_fail = 11
+expected_pass = 11
+false_accept_rate = 0.0
+false_accepts = 0
+false_reject_rate = 0.18181818181818182
+false_rejects = 2
+median_ms = 20015
+model = "gpt-6.1-terra"
+passed = 5
+repeated_items = 22
+self_agreement = 0.9090909090909091
+settled_usd = 0.522438
+unsure = 4
+unsure_rate = 0.18181818181818182
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.5454545454545454
+point = 0.7272727272727273
+upper = 0.9090909090909092
+
+[scopes.measures.decided_correctly]
+lower = 0.5454545454545454
+point = 0.7272727272727273
+upper = 0.9090909090909091
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.0
+first_rejections = 0
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 44
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+
+[[scopes]]
+name = "source-fidelity"
+
+[[scopes.comparisons]]
+against_arm = "C;submission=v1"
+against_backend = "claude-haiku-5-5"
+against_model = "claude-haiku-5-5"
+arm = "C;submission=v2"
+backend = "claude-haiku-5-5"
+differing_families = 3
+families = 6
+items = 22
+model = "claude-haiku-5-5"
+
+[scopes.comparisons.balanced_accuracy]
+lower = -0.13636363636363635
+point = -0.045454545454545525
+upper = 0.0
+
+[scopes.comparisons.decided_correctly]
+lower = -0.13636363636363635
+point = -0.045454545454545525
+upper = 0.0
+
+[scopes.comparisons.false_accept_rate]
+lower = -0.2727272727272727
+point = -0.09090909090909091
+upper = 0.0
+
+[scopes.comparisons.false_reject_rate]
+lower = -0.3333333333333333
+point = -0.09090909090909091
+upper = 0.0
+
+[[scopes.comparisons]]
+against_arm = "C;submission=v1"
+against_backend = "gemini-3-8-flash"
+against_model = "gemini-3.8-flash"
+arm = "C;submission=v2"
+backend = "gemini-3-8-flash"
+differing_families = 1
+families = 6
+items = 22
+model = "gemini-3.8-flash"
+
+[scopes.comparisons.balanced_accuracy]
+lower = -0.13636363636363635
+point = -0.045454545454545414
+upper = 0.0
+
+[scopes.comparisons.decided_correctly]
+lower = -0.13636363636363635
+point = -0.045454545454545414
+upper = 0.0
+
+[scopes.comparisons.false_accept_rate]
+lower = 0.0
+point = 0.09090909090909091
+upper = 0.2727272727272727
+
+[scopes.comparisons.false_reject_rate]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[[scopes.comparisons]]
+against_arm = "C;submission=v1"
+against_backend = "gpt-6-1-terra"
+against_model = "gpt-6.1-terra"
+arm = "C;submission=v2"
+backend = "gpt-6-1-terra"
+differing_families = 1
+families = 6
+items = 22
+model = "gpt-6.1-terra"
+
+[scopes.comparisons.balanced_accuracy]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[scopes.comparisons.decided_correctly]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[scopes.comparisons.false_accept_rate]
+lower = 0.0
+point = 0.0
+upper = 0.0
+
+[scopes.comparisons.false_reject_rate]
+lower = 0.0
+point = 0.09090909090909091
+upper = 0.2727272727272727
+
+[[scopes.measures]]
+arm = "C;submission=v1"
+backend = "claude-haiku-5-5"
+catch_rate = 0.8181818181818182
+caught = 9
+cost_per_decision_usd = 0.002796454545454545
+decisions = 22
+error_rate = 0.0
+errors = 0
+expected_fail = 11
+expected_pass = 11
+false_accept_rate = 0.18181818181818182
+false_accepts = 2
+false_reject_rate = 0.09090909090909091
+false_rejects = 1
+median_ms = 11391
+model = "claude-haiku-5-5"
+passed = 9
+repeated_items = 22
+self_agreement = 0.9090909090909091
+settled_usd = 0.12354800000000002
+unsure = 1
+unsure_rate = 0.045454545454545456
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.7
+point = 0.8181818181818182
+upper = 0.9166666666666667
+
+[scopes.measures.decided_correctly]
+lower = 0.7
+point = 0.8181818181818182
+upper = 0.9166666666666666
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.13636363636363635
+first_rejections = 6
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 44
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+evidence = 5
+finding_cites = 1
+
+[[scopes.measures]]
+arm = "C;submission=v1"
+backend = "gemini-3-8-flash"
+catch_rate = 0.9090909090909091
+caught = 10
+cost_per_decision_usd = 0.01460213636363636
+decisions = 22
+error_rate = 0.0
+errors = 0
+expected_fail = 11
+expected_pass = 11
+false_accept_rate = 0.09090909090909091
+false_accepts = 1
+false_reject_rate = 0.18181818181818182
+false_rejects = 2
+median_ms = 29090
+model = "gemini-3.8-flash"
+passed = 9
+repeated_items = 22
+self_agreement = 0.9090909090909091
+settled_usd = 0.6216620000000002
+unsure = 0
+unsure_rate = 0.0
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.7222222222222222
+point = 0.8636363636363636
+upper = 0.9583333333333333
+
+[scopes.measures.decided_correctly]
+lower = 0.7222222222222222
+point = 0.8636363636363636
+upper = 0.9583333333333334
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.11363636363636363
+first_rejections = 5
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 44
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+location = 5
+
+[[scopes.measures]]
+arm = "C;submission=v1"
+backend = "gpt-6-1-terra"
+catch_rate = 1.0
+caught = 11
+cost_per_decision_usd = 0.008879318181818181
+decisions = 22
+error_rate = 0.0
+errors = 0
+expected_fail = 11
+expected_pass = 11
+false_accept_rate = 0.0
+false_accepts = 0
+false_reject_rate = 0.0
+false_rejects = 0
+median_ms = 14878
+model = "gpt-6.1-terra"
+passed = 10
+repeated_items = 22
+self_agreement = 1.0
+settled_usd = 0.347628
+unsure = 1
+unsure_rate = 0.045454545454545456
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.8636363636363636
+point = 0.9545454545454546
+upper = 1.0
+
+[scopes.measures.decided_correctly]
+lower = 0.8636363636363636
+point = 0.9545454545454546
+upper = 1.0
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.0
+first_rejections = 0
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 44
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+
+[[scopes.measures]]
+arm = "C;submission=v2"
+backend = "claude-haiku-5-5"
+catch_rate = 0.8181818181818182
+caught = 9
+cost_per_decision_usd = 0.0036877727272727275
+decisions = 22
+error_rate = 0.0
+errors = 0
+expected_fail = 11
+expected_pass = 11
+false_accept_rate = 0.09090909090909091
+false_accepts = 1
+false_reject_rate = 0.0
+false_rejects = 0
+median_ms = 12399
+model = "claude-haiku-5-5"
+passed = 8
+repeated_items = 22
+self_agreement = 0.9090909090909091
+settled_usd = 0.16101299999999993
+unsure = 4
+unsure_rate = 0.18181818181818182
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.6666666666666666
+point = 0.7727272727272727
+upper = 0.875
+
+[scopes.measures.decided_correctly]
+lower = 0.6666666666666666
+point = 0.7727272727272727
+upper = 0.875
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.29545454545454547
+first_rejections = 13
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+finding_cites = 1
+location = 1
+
+[scopes.measures.submissions.causes]
+concluded = 44
+
+[scopes.measures.submissions.recoveries_by_kind]
+evidence_dropped = 12
+
+[scopes.measures.submissions.rejections_by_class]
+finding_cites = 10
+location = 2
+not_a_list = 1
+
+[[scopes.measures]]
+arm = "C;submission=v2"
+backend = "gemini-3-8-flash"
+catch_rate = 0.8181818181818182
+caught = 9
+cost_per_decision_usd = 0.018420681818181815
+decisions = 22
+error_rate = 0.0
+errors = 0
+expected_fail = 11
+expected_pass = 11
+false_accept_rate = 0.18181818181818182
+false_accepts = 2
+false_reject_rate = 0.18181818181818182
+false_rejects = 2
+median_ms = 26465
+model = "gemini-3.8-flash"
+passed = 9
+repeated_items = 22
+self_agreement = 0.9090909090909091
+settled_usd = 0.783595
+unsure = 0
+unsure_rate = 0.0
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.6360795454545455
+point = 0.8181818181818182
+upper = 0.9583333333333333
+
+[scopes.measures.decided_correctly]
+lower = 0.6360795454545455
+point = 0.8181818181818182
+upper = 0.9583333333333334
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.06818181818181818
+first_rejections = 3
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 43
+fault = 1
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+location = 3
+
+[[scopes.measures]]
+arm = "C;submission=v2"
+backend = "gpt-6-1-terra"
+catch_rate = 1.0
+caught = 11
+cost_per_decision_usd = 0.009559363636363637
+decisions = 22
+error_rate = 0.0
+errors = 0
+expected_fail = 11
+expected_pass = 11
+false_accept_rate = 0.0
+false_accepts = 0
+false_reject_rate = 0.09090909090909091
+false_rejects = 1
+median_ms = 15601
+model = "gpt-6.1-terra"
+passed = 10
+repeated_items = 22
+self_agreement = 1.0
+settled_usd = 0.34182799999999997
+unsure = 0
+unsure_rate = 0.0
+unworked_resamples = 0
+
+[scopes.measures.balanced_accuracy]
+lower = 0.8636363636363636
+point = 0.9545454545454546
+upper = 1.0
+
+[scopes.measures.decided_correctly]
+lower = 0.8636363636363636
+point = 0.9545454545454546
+upper = 1.0
+
+[scopes.measures.submissions]
+decisions = 44
+failure_rate = 0.0
+failures = 0
+first_rejection_rate = 0.0
+first_rejections = 0
+mismatched = 0
+unknown = 0
+
+[scopes.measures.submissions.also_by_class]
+
+[scopes.measures.submissions.causes]
+concluded = 44
+
+[scopes.measures.submissions.recoveries_by_kind]
+
+[scopes.measures.submissions.rejections_by_class]
+
+[[sets]]
+corrections_sha256 = "07e23c55c16e3dee26626c8d2b82273da0adf99c833a3979383547e70dbf34b1"
+id = "source-fidelity/scenes-v1"
+labels_sha256 = "4c197eca6d6037242f7b657c7f824610dd0c09ebed73f64cd98e5a9354438050"
+seal_sha256 = "05cebbf4bd5b285829a8786ee6fe6807ef5c1522bbe4777c8e79b0e57a8dbacb"
+split = "dev"
+
+[[sets]]
+id = "reference-consistency/pets-v1"
+labels_sha256 = "b0e1f317578f425126702d208c2fb5663fc5c0787ba61e15026d42d7d7cd4818"
+seal_sha256 = "8cd26c2ae4fc2ee611e7cb024f6715f298b86b694b088642c6ee1fed64ae9823"
+split = "dev"
+
+[[sets]]
+id = "reality-checks/people-v1"
+labels_sha256 = "627a5a47ab4735fa1e574451d71a016b46cfe53c8fb9876ede4623922f66feae"
+seal_sha256 = "76582a6601d0468b637a8204e1d3ff46f9fd7d57de17abe4df9bfca540ea4f57"
+split = "dev"
+
+[[sets]]
+id = "brief-compliance/stills-v1"
+labels_sha256 = "d4a76379ef896f6ab63b622f4efc9e62fa1ed92b5736ef3c3dafcfe7b6829da6"
+seal_sha256 = "dce1d8f66e40c0ad25652a1c304a0583d6ce5b78a1d488875b6356581c114f97"
+split = "dev"
+
+[[sets]]
+id = "product-fidelity/packshots-v1"
+labels_sha256 = "64c249014e6021f469962f7d6b63e13b4413df76b7e53145d5e46c3e4770d3e7"
+seal_sha256 = "9f44e99c2d833fa1ced14a5fe95f7ec35c6339dcef2214e7940188f2dd2728b1"
+split = "dev"
+
+[[sets]]
+id = "source-fidelity/adversarial-v1"
+labels_sha256 = "321c1f287e9261c749065bf73fb8859ecc07e3d03052e464f4dcd60fd3c57c01"
+seal_sha256 = "3dd22cfda2ed8a77b83399f6997a889467f228d77d774d0b2b6417b556de7675"
+split = "dev"
+
+[[sets]]
+id = "reference-consistency/adversarial-v1"
+labels_sha256 = "12f7d827903168907d9d43a3d7ba9e91c818333510e15f66d2bf7d53a9b20a8f"
+seal_sha256 = "531d086bab074128c562982f3a8ffbfd80ea60833217c1df635673402da1da8a"
+split = "dev"
+
+[[sets]]
+id = "reality-checks/adversarial-v1"
+labels_sha256 = "12ad8797836057bead075e3ff5018c77450cf625f24f7c39d13de5f586647f3a"
+seal_sha256 = "3352c712db18a6f2e87ae26934cde397c586dbe6bb126a95c9c57ec1ad193c17"
+split = "dev"
+
+[[sets]]
+id = "brief-compliance/adversarial-v1"
+labels_sha256 = "e721382257efbdfa022e9ad4f556c6a764bae094992c858e6994d84796ab8e0e"
+seal_sha256 = "3f3d3ba4e8040ceb7b65a1d4720bd7a44f08d7cdf96c1dc6cdf0f2d6cc3ecf76"
+split = "dev"
+
+[[sets]]
+id = "product-fidelity/adversarial-v1"
+labels_sha256 = "34785fea20285d15a6a91e8869ad3f6e2af6504a195e63f39c3459aad50c99f6"
+seal_sha256 = "e254a38e5353c17a007809990cf3954818f2ce235b07720427b410a9fa9fc3c2"
+split = "dev"

@@ -5,6 +5,8 @@ Date: 2026-11-21
 Spec: section 3 ("What every run records"), section 7 (the use cases), section 8 ("Marks"),
 section 16 (row E), section 17 (the submission "ported as is, then redesigned through the
 ladder"); plan `docs/plans/e1-judge-format-loop.md`, task F1
+Amended: 2026-11-21, with task F2 of the same plan: the format round did not adopt v2, by
+clause (c) of `submission/1`; v1 stays the default. Added: "The format round".
 
 ## Context
 
@@ -90,6 +92,38 @@ counted.
 8. **What a rejection names.** A rejection of evidence names an item by its id only when
    that is an id of the checklist, and otherwise "an item", under v1 and v2 alike: nothing
    the judge wrote is said back to it.
+
+## The format round
+
+**The probe.** Before the round, one live check under v2 for each small judge
+(`claude-haiku-5-5`, `gemini-3.8-flash`, `gpt-6.1-terra`), from a build at 377a9e7f: all three
+providers accepted v2's keyed tool, its keys of the provider-safe form (item 3), and each check
+passed. Every judge answered confidently, so none asked for the second look, and the swap of
+the tool between turns (item 6) was not exercised on the wire. The round did not exercise it
+either: its two arms are arm C, whose second look is off, so no cell ran one. The swap stays
+shown by the fake judge only.
+
+**The round** (`matrices/e-submission.toml`; `docs/results/e-submission.md` and `.toml`): v1
+against v2 under arm C, on the ten dev sets, under the three small judges, twice: 1,320 cells,
+1,286 completed and 34 failed, every decision with its diagnostic, 11.77 dollars settled. The
+rule `submission/1` did **not adopt** v2, settled by **clause (c)**:
+
+- (a) held: submission failures fell from 14 under v1 to 4 under v2 (660 decisions an arm),
+  all of them `claude-haiku-5-5`'s; first rejections rose from 87 to 101.
+- (b) held: no judge had more failures under v2.
+- (c) failed for every judge, each moving by more than 2 points (repetition 1, point
+  estimates): `claude-haiku-5-5`'s false-reject rate +2.2 points, though its balanced accuracy
+  rose 2.3; `gemini-3.8-flash`'s balanced accuracy -5.2 points, its rates unchanged and its
+  faults up from 1 to 14; `gpt-6.1-terra`'s balanced accuracy -3.3 points and false-reject rate
+  +11.1 points.
+
+Of the recoveries, only `evidence_dropped` was used (238 times, all Haiku's). The evidence is
+descriptive, on dev sets, and admits nothing either way.
+
+So item 7 stands as written: v2 is a setting no default uses, `check`'s default and the five
+recipes stay `v1`, and judge round J1 runs under `C;submission=v1`. v2 stays one setting away
+for a later slice, which may narrow it (the bundle's parts were measured together) or gate it
+on fresh data.
 
 ## Consequences
 

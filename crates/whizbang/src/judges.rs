@@ -1133,19 +1133,35 @@ pub fn submission_rule(
         settle(&mut out, "not_adopted", "a", why);
         return out;
     }
-    if let Some(j) = out.judges.iter().find(|j| !j.no_new_failures) {
+    let more: Vec<String> = (out.judges.iter())
+        .filter(|j| !j.no_new_failures)
+        .map(|j| {
+            format!(
+                "{} ({} against {})",
+                printable(&j.model),
+                j.treatment_failures,
+                j.control_failures
+            )
+        })
+        .collect();
+    if !more.is_empty() {
         let why = format!(
-            "under the treatment {} has more submission failures than under the control; the \
-             control is kept",
-            printable(&j.model)
+            "under the treatment these judges have more submission failures than under the \
+             control: {}; the control is kept",
+            more.join("; ")
         );
         settle(&mut out, "not_adopted", "b", why);
         return out;
     }
-    if let Some(j) = out.judges.iter().find(|j| !j.accuracy_kept) {
+    let lost: Vec<String> = (out.judges.iter())
+        .filter(|j| !j.accuracy_kept)
+        .map(|j| format!("{} ({})", printable(&j.model), breaches(j).join(", ")))
+        .collect();
+    if !lost.is_empty() {
         let why = format!(
-            "under the treatment {} loses more than 2 points of accuracy; the control is kept",
-            printable(&j.model)
+            "under the treatment these judges move by more than 2 points: {}; the control is \
+             kept",
+            lost.join("; ")
         );
         settle(&mut out, "not_adopted", "c", why);
         return out;
@@ -1157,6 +1173,30 @@ pub fn submission_rule(
         "a, b and c",
         "fewer failures, no new failures for any judge, and accuracy kept".to_owned(),
     );
+    out
+}
+
+/// The measures by which a judge broke clause (c) of `submission/1`, each with its change in
+/// points: balanced accuracy lower, or the false-reject or false-accept rate higher, by more
+/// than [`ACCURACY_GIVEN`]; or balanced accuracy that cannot be worked out.
+fn breaches(j: &FormatClauses) -> Vec<String> {
+    let points = |v: f64| format!("{:+.1} points", v * 100.0);
+    let mut out = Vec::new();
+    match j.balanced_accuracy_change {
+        None => out.push("balanced accuracy cannot be worked out".to_owned()),
+        Some(v) if v + TOLERANCE < -ACCURACY_GIVEN => {
+            out.push(format!("balanced accuracy {}", points(v)));
+        }
+        Some(_) => {}
+    }
+    for (name, change) in [
+        ("false-reject rate", j.false_reject_rate_change),
+        ("false-accept rate", j.false_accept_rate_change),
+    ] {
+        if let Some(v) = change.filter(|v| *v > ACCURACY_GIVEN + TOLERANCE) {
+            out.push(format!("{name} {}", points(v)));
+        }
+    }
     out
 }
 

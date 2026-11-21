@@ -634,6 +634,39 @@ mod submission_rule {
         assert!(!haiku.accuracy_kept);
         assert!(haiku.false_accept_rate_change.unwrap() > 0.02);
     }
+
+    #[test]
+    fn clause_c_names_every_judge_that_broke_it_and_each_measure_it_broke() {
+        // Failures halve. Under v2, `haiku` passes three expected fails v1 caught; `terra`
+        // fails three expected passes v1 passed; `flash` is unchanged.
+        let mut decisions = formats(&["haiku", "flash", "terra"], 20, (12, 0));
+        for d in decisions.iter_mut().filter(|d| {
+            d.arm == "C;submission=v2" && d.repetition == 1 && d.computed != Computed::Error
+        }) {
+            let fails = ["f15", "f16", "f17"].contains(&d.item.as_str());
+            let passes = ["p15", "p16", "p17"].contains(&d.item.as_str());
+            if d.model == "haiku" && fails {
+                d.computed = Computed::Pass;
+            }
+            if d.model == "terra" && passes {
+                d.computed = Computed::Fail;
+            }
+        }
+        let format = armed(&complete(decisions)).format.unwrap();
+        assert_eq!(
+            (format.outcome.as_str(), format.settled_by.as_str()),
+            ("not_adopted", "c")
+        );
+        // Every judge that broke the clause, each with the measures it broke: `haiku`'s
+        // balanced accuracy is held (its control had the failures), its false-accept rate
+        // is not; `flash` broke nothing and is not named.
+        assert_eq!(
+            format.why,
+            "under the treatment these judges move by more than 2 points: haiku (false-accept \
+             rate +15.0 points); terra (balanced accuracy -7.5 points, false-reject rate +15.0 \
+             points); the control is kept"
+        );
+    }
 }
 
 // --- reading the store ------------------------------------------------------------------------
