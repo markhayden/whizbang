@@ -65,6 +65,11 @@ pub enum Command {
         /// no item is named.
         #[arg(long, value_name = "BY", value_parser = ["rule"])]
         unsure_by: Option<String>,
+        /// Count the rejected submissions of the runs of `check` under a use case, by
+        /// class, and the runs by why each ended, read from what each run kept of them.
+        /// Aggregates only: no run and no item is named, and nothing the judge wrote.
+        #[arg(long)]
+        rejections: bool,
     },
     /// Write the record of each run a filter admits, as it is stored: one JSON object a
     /// line, for analysis outside whizbang. A record holds no label of an evaluation set.
@@ -90,10 +95,14 @@ pub fn run(command: &Command) -> Result<Vec<u8>, String> {
             filter,
             at,
             unsure_by,
+            rejections,
         } => {
             let mut text = crate::stats::stats(at.root(), filter)?;
             if unsure_by.is_some() {
                 text.push_str(&crate::stats::unsure_by_rule(at.root(), filter)?);
+            }
+            if *rejections {
+                text.push_str(&crate::stats::rejections(at.root(), filter)?);
             }
             Ok(text.into_bytes())
         }

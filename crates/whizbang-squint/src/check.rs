@@ -104,6 +104,105 @@ pub const RETRY_WAIT_LIMIT_MS: u64 = 30_000;
 /// The findings the run hands back are made from it ([`crate::findings::of_judged`]).
 pub const JUDGED: &str = "judged.json";
 
+/// The name of the run's diagnostic that holds, for a run under a use case of the table,
+/// each rejection of a submission in order, by the request it answered and its class, and
+/// why the run ended (plan e1, task T1). It is written on every way the loop ends,
+/// completed or failed, and holds classes and causes only: no word of the judge.
+pub const REJECTIONS: &str = "rejections.json";
+
+/// The contract of [`REJECTIONS`].
+pub const REJECTIONS_CONTRACT: &str = "rejections/1";
+
+/// Why a run of the loop ended, as [`REJECTIONS`] records it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cause {
+    /// It reached a verdict.
+    Concluded,
+    /// Its submission was rejected after the one repair.
+    InvalidSubmission,
+    /// A turn ended without a submission after the one repair.
+    NoSubmissionAfterRepair,
+    /// A turn was cut off again after its limit was raised.
+    CutOff,
+    /// A turn was cut off at its backend's output ceiling.
+    Ceiling,
+    /// The judge declined.
+    Refused,
+    /// The requests of the run were spent without a verdict.
+    Turns,
+    /// The judge's backend failed, and the request was not, or no longer, sent again.
+    Fault,
+    /// Anything else: a turn the loop cannot read, a tool or the store failing, a
+    /// cancellation.
+    Other,
+}
+
+impl Cause {
+    /// Every cause, in the order of the plan.
+    pub const ALL: [Cause; 9] = [
+        Cause::Concluded,
+        Cause::InvalidSubmission,
+        Cause::NoSubmissionAfterRepair,
+        Cause::CutOff,
+        Cause::Ceiling,
+        Cause::Refused,
+        Cause::Turns,
+        Cause::Fault,
+        Cause::Other,
+    ];
+
+    /// The cause as it is recorded.
+    pub fn name(self) -> &'static str {
+        match self {
+            Cause::Concluded => "concluded",
+            Cause::InvalidSubmission => "invalid_submission",
+            Cause::NoSubmissionAfterRepair => "no_submission_after_repair",
+            Cause::CutOff => "cut_off",
+            Cause::Ceiling => "ceiling",
+            Cause::Refused => "refused",
+            Cause::Turns => "turns",
+            Cause::Fault => "fault",
+            Cause::Other => "other",
+        }
+    }
+
+    /// The cause of a run's end that named none itself, from what it ended as.
+    fn of(ended: &Result<Produced, Failure>) -> Cause {
+        match ended {
+            Ok(_) => Cause::Concluded,
+            Err(Failure::Error { kind, .. }) => match kind.as_str() {
+                "invalid_submission" => Cause::InvalidSubmission,
+                "judge_output_ceiling" => Cause::Ceiling,
+                "judge_refused" => Cause::Refused,
+                "judge_loop" => Cause::Turns,
+                "judge_fault" => Cause::Fault,
+                _ => Cause::Other,
+            },
+            Err(_) => Cause::Other,
+        }
+    }
+}
+
+/// What a run under a use case keeps of its rejections as the loop goes: each one, by the
+/// number of the request it answered (from 1) and its class; and the cause of its end
+/// where a failure's kind does not tell it (`judge_output` is more than one cause).
+#[derive(Default)]
+struct Tally {
+    rejections: Vec<(usize, use_case::Class)>,
+    cause: Option<Cause>,
+}
+
+impl Tally {
+    /// The diagnostic, for a run that ended so.
+    fn document(&self, ended: &Result<Produced, Failure>) -> Json {
+        let rejections: Vec<Json> = (self.rejections.iter())
+            .map(|(turn, class)| json!({"turn": turn, "class": class.name()}))
+            .collect();
+        let cause = self.cause.unwrap_or_else(|| Cause::of(ended));
+        json!({"contract": REJECTIONS_CONTRACT, "rejections": rejections, "cause": cause.name()})
+    }
+}
+
 /// The input that takes the images an earlier step measured first and handed on.
 pub const MEASURED_IMAGES: &str = "measured_images";
 
@@ -1189,288 +1288,320 @@ impl Action for Check {
         {
             return answered_from(context, &hit);
         }
-        // Whether every turn said which model answered it: only then is the run's
-        // verdict kept for a later run to answer from.
-        let mut reported = true;
-        let mut run = Run {
-            context,
-            judge,
-            tools,
-            answered: BTreeSet::new(),
-            completed: Vec::new(),
-            shown: Vec::new(),
-            details_cited: 0,
-            dispatched: 0,
-            crops: 0,
-            names: Names::default(),
-            projection,
-            files: named_files,
-            file_tools: self.toolbox.files.clone(),
-            revisions,
-            edited: false,
-        };
-        // The images open the conversation, each with the name a tool call gives.
-        let mut opening = Vec::new();
-        let system = if let Some(judging) = &judging {
-            for (image, input) in judging.job.images.iter().zip(images.iter()) {
-                run.names.role(&image.id, input.id());
-                let (_, shown) = shown(context, input.id())?;
-                let (width, height) = (shown.picture.width(), shown.picture.height());
-                let view_name = shown.id.to_string();
-                let said = use_case::opening(image, width, height, &view_name);
-                opening.push(Part::Text(said));
-                opening.push(Part::Image(shown.picture));
-            }
-            // The pairs the use case relates: the candidate registered onto the source,
-            // and onto each reference, in the job's order; measured here, unless an
-            // earlier step measured them and handed them on.
-            let entries = match &handed_on {
-                Some((_, entries)) => entries.clone(),
-                None => {
-                    let ids: Vec<ArtifactId> = images.iter().map(|input| input.id()).collect();
-                    let (pairs, candidates) = measured::pairs_of(&judging.job, &ids);
-                    measured::measure(context, &pairs, &detail, &candidates)?
-                }
+        // Every rejection, and why the run ended, kept on every way the loop below ends
+        // under a use case of the table (plan e1, task T1).
+        let under_use_case = judging.is_some();
+        let mut tally = Tally::default();
+        let ended = (|| -> Result<Produced, Failure> {
+            // Whether every turn said which model answered it: only then is the run's
+            // verdict kept for a later run to answer from.
+            let mut reported = true;
+            let mut run = Run {
+                context,
+                judge,
+                tools,
+                answered: BTreeSet::new(),
+                completed: Vec::new(),
+                shown: Vec::new(),
+                details_cited: 0,
+                dispatched: 0,
+                crops: 0,
+                names: Names::default(),
+                projection,
+                files: named_files,
+                file_tools: self.toolbox.files.clone(),
+                revisions,
+                edited: false,
             };
-            opening.extend(run.said_details(&entries)?);
-            opening.push(Part::Text(judging.checklist.render(&judging.resolved)));
-            opening.push(Part::Text(use_case::INSTRUCTION.to_owned()));
-            run_tools_submit(&mut run.tools)?;
-            let tools = details::tools_section(&named);
-            use_case::system_with(&judging.resolved, &judging.job, &tools)
-        } else {
-            for input in &images {
-                let (_, image) = shown(context, input.id())?;
-                opening.push(Part::Text(label(&image)));
-                opening.push(Part::Image(image.picture));
-            }
-            SYSTEM.to_owned()
-        };
-        let unfit = |why: whizbang_core::capability::Unfit| failed("judge_request", &why);
-        let mut messages = vec![Message::new(Role::User, opening).map_err(unfit)?];
-        // The limit each turn is sent with: the call's, until a turn is cut off; then
-        // the raised limit, for that turn's retry and every turn after it, since a judge
-        // that wrote past the limit once is likely to again (plan 2C, task F1: E1's run
-        // ended 20 of 220 decisions at a cut-off turn whose retry was refused).
-        let mut limit = tokens;
-        let mut allowed = tokens;
-        let mut retried = false;
-        // Each request sent again after the judge could not answer it: its fault's kind
-        // and the wait.
-        let mut retries: Vec<Json> = Vec::new();
-        // A submission that is not a verdict, or a turn that ends without one, is
-        // answered with why and asked for once more: one repair, as squint allowed.
-        let mut repaired = false;
-        // The second look, once asked: what the first submission decided, and what was
-        // asked of it (plan m3, task U1, item 4).
-        let mut looking: Option<Looking> = None;
-        for sent_turns in 0..TURNS_LIMIT {
-            let sent = allowed;
-            let controls = Controls::new(allowed).map_err(unfit)?;
-            let request = JudgeRequest::new(&system, messages.clone(), run.tools.clone(), controls);
-            let answered = run.judge.send(&request.map_err(unfit)?);
-            // The turn of the second look settles its items or leaves the first verdict
-            // standing; nothing it does fails the run.
-            if let Some(looking) = looking.take() {
-                let judging = judging
-                    .as_ref()
-                    .ok_or_else(|| failed("judged", &"no job"))?;
-                let (decided, look) = second_settled(answered, &looking, judging, run.judge);
-                let concluded = Concluded {
-                    retries: &retries,
-                    second: Some(look),
-                    key: key.as_ref(),
-                    reported,
-                    edited: run.edited,
+            // The images open the conversation, each with the name a tool call gives.
+            let mut opening = Vec::new();
+            let system = if let Some(judging) = &judging {
+                for (image, input) in judging.job.images.iter().zip(images.iter()) {
+                    run.names.role(&image.id, input.id());
+                    let (_, shown) = shown(context, input.id())?;
+                    let (width, height) = (shown.picture.width(), shown.picture.height());
+                    let view_name = shown.id.to_string();
+                    let said = use_case::opening(image, width, height, &view_name);
+                    opening.push(Part::Text(said));
+                    opening.push(Part::Image(shown.picture));
+                }
+                // The pairs the use case relates: the candidate registered onto the source,
+                // and onto each reference, in the job's order; measured here, unless an
+                // earlier step measured them and handed them on.
+                let entries = match &handed_on {
+                    Some((_, entries)) => entries.clone(),
+                    None => {
+                        let ids: Vec<ArtifactId> = images.iter().map(|input| input.id()).collect();
+                        let (pairs, candidates) = measured::pairs_of(&judging.job, &ids);
+                        measured::measure(context, &pairs, &detail, &candidates)?
+                    }
                 };
-                return conclude(context, call, judging, &decided, &concluded);
-            }
-            let turn = match answered {
-                Ok(turn) => turn,
-                Err(fault) => {
-                    let again =
-                        matches!(fault.kind(), FaultKind::Unavailable | FaultKind::TimedOut);
-                    let count = u32::try_from(retries.len()).unwrap_or(u32::MAX);
-                    if !again || count >= RETRIES_LIMIT {
-                        return Err(failed("judge_fault", &fault));
-                    }
-                    let backoff = 1000u64 << count.min(5);
-                    let wait = fault.wait_ms().unwrap_or(backoff).min(RETRY_WAIT_LIMIT_MS);
-                    retries.push(json!({"kind": fault.kind().name(), "wait_ms": wait}));
-                    context
-                        .events()
-                        .progress("the judge could not answer now: the request is sent again");
-                    wait_for(context, wait)?;
-                    continue;
+                opening.extend(run.said_details(&entries)?);
+                opening.push(Part::Text(judging.checklist.render(&judging.resolved)));
+                opening.push(Part::Text(use_case::INSTRUCTION.to_owned()));
+                run_tools_submit(&mut run.tools)?;
+                let tools = details::tools_section(&named);
+                use_case::system_with(&judging.resolved, &judging.job, &tools)
+            } else {
+                for input in &images {
+                    let (_, image) = shown(context, input.id())?;
+                    opening.push(Part::Text(label(&image)));
+                    opening.push(Part::Image(image.picture));
                 }
+                SYSTEM.to_owned()
             };
-            allowed = limit;
-            reported &= turn.reported_model().is_some();
-            match turn.stop() {
-                // Cut off: the turn is left out of the conversation, whatever it
-                // holds, and asked for once more with a larger limit, which the turns
-                // after it keep.
-                // A turn whose backend sends no more than its output ceiling, and was
-                // sent with it already, is not asked for again: the retry would be
-                // sent with the same limit. The fault names the setting to raise.
-                StopReason::MaxTokens => {
-                    run.judge.exclude_last(Excluded::Truncated);
-                    if retried {
-                        let why = "the judge was cut off again after its limit was raised";
-                        return Err(failed("judge_output", &why));
-                    }
-                    let raised = tokens.saturating_mul(RETRY_FACTOR);
-                    if let Some(ceiling) = turn.output_ceiling()
-                        && raised.min(ceiling) <= sent.min(ceiling)
-                    {
-                        let why = format!(
-                            "the judge was cut off at its backend's output ceiling of \
-                             {ceiling} tokens, and a retry would be sent with no more: raise \
-                             max_output_tokens in the judge's table of the config"
-                        );
-                        return Err(failed("judge_output_ceiling", &why));
-                    }
-                    retried = true;
-                    limit = raised;
-                    allowed = raised;
-                }
-                StopReason::Refusal => {
-                    run.judge.exclude_last(Excluded::Refusal);
-                    return Err(failed("judge_refused", &"the judge declined"));
-                }
-                StopReason::ToolUse => {
-                    let said = turn.message();
-                    let Some(said) = said else {
-                        return Err(failed("judge_output", &"a turn that calls tools is empty"));
+            let unfit = |why: whizbang_core::capability::Unfit| failed("judge_request", &why);
+            let mut messages = vec![Message::new(Role::User, opening).map_err(unfit)?];
+            // The limit each turn is sent with: the call's, until a turn is cut off; then
+            // the raised limit, for that turn's retry and every turn after it, since a judge
+            // that wrote past the limit once is likely to again (plan 2C, task F1: E1's run
+            // ended 20 of 220 decisions at a cut-off turn whose retry was refused).
+            let mut limit = tokens;
+            let mut allowed = tokens;
+            let mut retried = false;
+            // Each request sent again after the judge could not answer it: its fault's kind
+            // and the wait.
+            let mut retries: Vec<Json> = Vec::new();
+            // A submission that is not a verdict, or a turn that ends without one, is
+            // answered with why and asked for once more: one repair, as squint allowed.
+            let mut repaired = false;
+            // The second look, once asked: what the first submission decided, and what was
+            // asked of it (plan m3, task U1, item 4).
+            let mut looking: Option<Looking> = None;
+            for sent_turns in 0..TURNS_LIMIT {
+                let sent = allowed;
+                let controls = Controls::new(allowed).map_err(unfit)?;
+                let request =
+                    JudgeRequest::new(&system, messages.clone(), run.tools.clone(), controls);
+                let answered = run.judge.send(&request.map_err(unfit)?);
+                // The turn of the second look settles its items or leaves the first verdict
+                // standing; nothing it does fails the run.
+                if let Some(looking) = looking.take() {
+                    let judging = judging
+                        .as_ref()
+                        .ok_or_else(|| failed("judged", &"no job"))?;
+                    let (decided, look) = second_settled(answered, &looking, judging, run.judge);
+                    let concluded = Concluded {
+                        retries: &retries,
+                        second: Some(look),
+                        key: key.as_ref(),
+                        reported,
+                        edited: run.edited,
                     };
-                    let submitted: Vec<&ToolCall> = turn
-                        .tool_calls()
-                        .filter(|call| call.name() == use_case::SUBMIT)
-                        .collect();
-                    if let Some(judging) = &mut judging
-                        && !submitted.is_empty()
-                    {
-                        let calls = turn.tool_calls().count();
-                        let arguments = submitted.first().map(|submit| submit.arguments().clone());
-                        let read = match submitted.as_slice() {
-                            [submit] if calls == 1 => use_case::cited_calls_held(
-                                submit.arguments(),
-                                &run.shown,
-                                &run.completed,
-                            )
-                            .and_then(|()| {
-                                use_case::decided_of(
-                                    submit.arguments(),
-                                    &judging.job,
-                                    &judging.resolved,
-                                    &judging.checklist,
-                                )
-                            }),
-                            _ => Err("submit_verdict is called once, alone".to_owned()),
-                        };
-                        let why = match read {
-                            Ok(decided) => {
-                                let tentative = tentative_items(&decided);
-                                // A turn is left for the second look, or none is asked.
-                                let room = sent_turns + 1 < TURNS_LIMIT;
-                                if second_look
-                                    && room
-                                    && decided.verdict.decision() == Decision::Unsure
-                                    && !tentative.is_empty()
-                                {
-                                    let submit_id = submitted
-                                        .first()
-                                        .map(|submit| submit.id().to_owned())
-                                        .unwrap_or_default();
-                                    let (asked, crops) = run.second_look(
-                                        &submit_id,
-                                        &tentative,
-                                        &decided,
-                                        &judging.job,
-                                        strict,
-                                    )?;
-                                    messages.push(said);
-                                    messages.push(Message::new(Role::User, asked).map_err(unfit)?);
-                                    looking = Some(Looking {
-                                        first: decided,
-                                        arguments: arguments.unwrap_or(Json::Null),
-                                        items: tentative,
-                                        crops,
-                                        strict,
-                                    });
-                                    continue;
-                                }
-                                let concluded = Concluded {
-                                    retries: &retries,
-                                    second: None,
-                                    key: key.as_ref(),
-                                    reported,
-                                    edited: run.edited,
-                                };
-                                return conclude(context, call, judging, &decided, &concluded);
-                            }
-                            Err(why) => why,
-                        };
-                        if repaired {
-                            return Err(failed(
-                                "invalid_submission",
-                                &format!("the judge's submission is not a verdict: {why}"),
-                            ));
+                    return conclude(context, call, judging, &decided, &concluded);
+                }
+                let turn = match answered {
+                    Ok(turn) => turn,
+                    Err(fault) => {
+                        let again =
+                            matches!(fault.kind(), FaultKind::Unavailable | FaultKind::TimedOut);
+                        let count = u32::try_from(retries.len()).unwrap_or(u32::MAX);
+                        if !again || count >= RETRIES_LIMIT {
+                            return Err(failed("judge_fault", &fault));
                         }
-                        repaired = true;
-                        let mut results = Vec::new();
-                        for call in turn.tool_calls() {
-                            let said = format!("Submission rejected: {why}");
-                            let result = ToolResult::new(call.id(), &said, true, Vec::new());
-                            results.push(Part::ToolResult(
-                                result.map_err(|why| failed("tool_result", &why))?,
-                            ));
-                        }
-                        judging.repairs.push(why);
-                        results.push(Part::Text(use_case::REPAIR.to_owned()));
-                        messages.push(said);
-                        messages.push(Message::new(Role::User, results).map_err(unfit)?);
+                        let backoff = 1000u64 << count.min(5);
+                        let wait = fault.wait_ms().unwrap_or(backoff).min(RETRY_WAIT_LIMIT_MS);
+                        retries.push(json!({"kind": fault.kind().name(), "wait_ms": wait}));
+                        context
+                            .events()
+                            .progress("the judge could not answer now: the request is sent again");
+                        wait_for(context, wait)?;
                         continue;
                     }
-                    let results = run.answer(&turn)?;
-                    messages.push(said);
-                    messages.push(results);
-                }
-                StopReason::EndTurn if judging.is_some() && turn.tool_calls().next().is_none() => {
-                    let why = "the judge ended its turn without calling submit_verdict";
-                    if repaired {
-                        return Err(failed("judge_output", &why));
+                };
+                allowed = limit;
+                reported &= turn.reported_model().is_some();
+                match turn.stop() {
+                    // Cut off: the turn is left out of the conversation, whatever it
+                    // holds, and asked for once more with a larger limit, which the turns
+                    // after it keep.
+                    // A turn whose backend sends no more than its output ceiling, and was
+                    // sent with it already, is not asked for again: the retry would be
+                    // sent with the same limit. The fault names the setting to raise.
+                    StopReason::MaxTokens => {
+                        run.judge.exclude_last(Excluded::Truncated);
+                        if retried {
+                            let why = "the judge was cut off again after its limit was raised";
+                            tally.cause = Some(Cause::CutOff);
+                            return Err(failed("judge_output", &why));
+                        }
+                        let raised = tokens.saturating_mul(RETRY_FACTOR);
+                        if let Some(ceiling) = turn.output_ceiling()
+                            && raised.min(ceiling) <= sent.min(ceiling)
+                        {
+                            let why = format!(
+                                "the judge was cut off at its backend's output ceiling of \
+                                 {ceiling} tokens, and a retry would be sent with no more: raise \
+                                 max_output_tokens in the judge's table of the config"
+                            );
+                            return Err(failed("judge_output_ceiling", &why));
+                        }
+                        retried = true;
+                        limit = raised;
+                        allowed = raised;
                     }
-                    repaired = true;
-                    if let Some(judging) = &mut judging {
-                        judging.repairs.push(why.to_owned());
+                    StopReason::Refusal => {
+                        run.judge.exclude_last(Excluded::Refusal);
+                        return Err(failed("judge_refused", &"the judge declined"));
                     }
-                    if let Some(said) = turn.message() {
+                    StopReason::ToolUse => {
+                        let said = turn.message();
+                        let Some(said) = said else {
+                            return Err(failed(
+                                "judge_output",
+                                &"a turn that calls tools is empty",
+                            ));
+                        };
+                        let submitted: Vec<&ToolCall> = turn
+                            .tool_calls()
+                            .filter(|call| call.name() == use_case::SUBMIT)
+                            .collect();
+                        if let Some(judging) = &mut judging
+                            && !submitted.is_empty()
+                        {
+                            let calls = turn.tool_calls().count();
+                            let arguments =
+                                submitted.first().map(|submit| submit.arguments().clone());
+                            let read = match submitted.as_slice() {
+                                [submit] if calls == 1 => use_case::cited_calls_held(
+                                    submit.arguments(),
+                                    &run.shown,
+                                    &run.completed,
+                                )
+                                .and_then(|()| {
+                                    use_case::decided_of(
+                                        submit.arguments(),
+                                        &judging.job,
+                                        &judging.resolved,
+                                        &judging.checklist,
+                                    )
+                                }),
+                                _ => Err(use_case::Rejection::new(
+                                    use_case::Class::NotAlone,
+                                    "submit_verdict is called once, alone",
+                                )),
+                            };
+                            let why = match read {
+                                Ok(decided) => {
+                                    let tentative = tentative_items(&decided);
+                                    // A turn is left for the second look, or none is asked.
+                                    let room = sent_turns + 1 < TURNS_LIMIT;
+                                    if second_look
+                                        && room
+                                        && decided.verdict.decision() == Decision::Unsure
+                                        && !tentative.is_empty()
+                                    {
+                                        let submit_id = submitted
+                                            .first()
+                                            .map(|submit| submit.id().to_owned())
+                                            .unwrap_or_default();
+                                        let (asked, crops) = run.second_look(
+                                            &submit_id,
+                                            &tentative,
+                                            &decided,
+                                            &judging.job,
+                                            strict,
+                                        )?;
+                                        messages.push(said);
+                                        messages
+                                            .push(Message::new(Role::User, asked).map_err(unfit)?);
+                                        looking = Some(Looking {
+                                            first: decided,
+                                            arguments: arguments.unwrap_or(Json::Null),
+                                            items: tentative,
+                                            crops,
+                                            strict,
+                                        });
+                                        continue;
+                                    }
+                                    let concluded = Concluded {
+                                        retries: &retries,
+                                        second: None,
+                                        key: key.as_ref(),
+                                        reported,
+                                        edited: run.edited,
+                                    };
+                                    return conclude(context, call, judging, &decided, &concluded);
+                                }
+                                Err(rejection) => {
+                                    tally.rejections.push((sent_turns + 1, rejection.class));
+                                    rejection.message
+                                }
+                            };
+                            if repaired {
+                                return Err(failed(
+                                    "invalid_submission",
+                                    &format!("the judge's submission is not a verdict: {why}"),
+                                ));
+                            }
+                            repaired = true;
+                            let mut results = Vec::new();
+                            for call in turn.tool_calls() {
+                                let said = format!("Submission rejected: {why}");
+                                let result = ToolResult::new(call.id(), &said, true, Vec::new());
+                                results.push(Part::ToolResult(
+                                    result.map_err(|why| failed("tool_result", &why))?,
+                                ));
+                            }
+                            judging.repairs.push(why);
+                            results.push(Part::Text(use_case::REPAIR.to_owned()));
+                            messages.push(said);
+                            messages.push(Message::new(Role::User, results).map_err(unfit)?);
+                            continue;
+                        }
+                        let results = run.answer(&turn)?;
                         messages.push(said);
+                        messages.push(results);
                     }
-                    let repair = Part::Text(use_case::REPAIR.to_owned());
-                    messages.push(Message::new(Role::User, vec![repair]).map_err(unfit)?);
-                }
-                StopReason::EndTurn if turn.tool_calls().next().is_none() => {
-                    let Some(verdict) = verdict_of(&turn) else {
-                        run.judge.exclude_last(Excluded::NoCall);
-                        let why = "the judge ended its turn without pass, fail or unsure";
+                    StopReason::EndTurn
+                        if judging.is_some() && turn.tool_calls().next().is_none() =>
+                    {
+                        let why = "the judge ended its turn without calling submit_verdict";
+                        let class = use_case::Class::NoSubmission;
+                        tally.rejections.push((sent_turns + 1, class));
+                        if repaired {
+                            tally.cause = Some(Cause::NoSubmissionAfterRepair);
+                            return Err(failed("judge_output", &why));
+                        }
+                        repaired = true;
+                        if let Some(judging) = &mut judging {
+                            judging.repairs.push(why.to_owned());
+                        }
+                        if let Some(said) = turn.message() {
+                            messages.push(said);
+                        }
+                        let repair = Part::Text(use_case::REPAIR.to_owned());
+                        messages.push(Message::new(Role::User, vec![repair]).map_err(unfit)?);
+                    }
+                    StopReason::EndTurn if turn.tool_calls().next().is_none() => {
+                        let Some(verdict) = verdict_of(&turn) else {
+                            run.judge.exclude_last(Excluded::NoCall);
+                            let why = "the judge ended its turn without pass, fail or unsure";
+                            return Err(failed("judge_output", &why));
+                        };
+                        return Ok(Produced::nothing().with_verdict(verdict));
+                    }
+                    StopReason::EndTurn => {
+                        let why = "the judge ended its turn with tool calls unanswered";
                         return Err(failed("judge_output", &why));
-                    };
-                    return Ok(Produced::nothing().with_verdict(verdict));
-                }
-                StopReason::EndTurn => {
-                    let why = "the judge ended its turn with tool calls unanswered";
-                    return Err(failed("judge_output", &why));
-                }
-                _ => {
-                    let why = "the judge stopped for a reason this loop does not know";
-                    return Err(failed("judge_output", &why));
+                    }
+                    _ => {
+                        let why = "the judge stopped for a reason this loop does not know";
+                        return Err(failed("judge_output", &why));
+                    }
                 }
             }
+            let why = format!("the judge did not conclude within {TURNS_LIMIT} requests");
+            Err(failed("judge_loop", &why))
+        })();
+        if under_use_case {
+            let kept = tally.document(&ended).to_string();
+            let written = context.diagnostics().write(REJECTIONS, kept.as_bytes());
+            if let (Err(why), Ok(_)) = (written, &ended) {
+                return Err(failed("rejections", &why));
+            }
         }
-        let why = format!("the judge did not conclude within {TURNS_LIMIT} requests");
-        Err(failed("judge_loop", &why))
+        ended
     }
 }
 
@@ -1570,6 +1701,7 @@ fn second_settled(
                         &judging.resolved,
                         &judging.checklist,
                     )
+                    .map_err(|rejection| rejection.message)
                 }),
                 _ => kept("the turn did not call submit_verdict once, alone"),
             }

@@ -298,6 +298,9 @@ labels and is separate from evaluation (section 8), which scores tools against k
   how one tool behaved across its last 100 runs. With `--unsure-by rule`, it also counts the
   unsure verdicts by the rule, disposition and confidence of each answer that made one
   unsure, from the checklist each run of `check` kept: aggregates only, no item.
+  With `--rejections`, it counts the rejected submissions of `check` by class and the runs
+  by why each ended, from what each run under a use case kept on every exit, completed or
+  failed (`rejections.json`): aggregates only, classes and causes, no word of the judge.
 - `whizbang runs export` writes the matching records as one JSON object per line, so analysis
   and dashboards can live outside whizbang.
 - The playground shows the same figures in milestone 5.

@@ -439,3 +439,60 @@ pub fn unsure_by_rule(root: &Path, filter: &Filter) -> Result<String, String> {
     }
     Ok(text)
 }
+
+/// `runs stats --rejections` (plan e1, task T1, item 3): of the runs the filter admits that
+/// kept their rejections (a run of `check` under a use case of the table, which answered
+/// its judge), the rejections counted by class and the runs by why each ended, every class
+/// and cause in their fixed order, and how many runs of `check` under a use case kept none
+/// (answered from the decision cache, or ended before the judge was asked). A name the build does not
+/// know is counted as `unknown`: nothing read from the store is printed. Aggregates only.
+pub fn rejections(root: &Path, filter: &Filter) -> Result<String, String> {
+    use whizbang_squint::check::{Cause, REJECTIONS};
+    use whizbang_squint::use_case::Class;
+    let (found, _) = matching(root, filter)?;
+    let classes: Vec<&str> = Class::ALL.iter().map(|c| c.name()).collect();
+    let causes: Vec<&str> = Cause::ALL.iter().map(|c| c.name()).collect();
+    let mut by_class = vec![0usize; classes.len() + 1];
+    let mut by_cause = vec![0usize; causes.len() + 1];
+    let (mut kept, mut rejected, mut unkept) = (0usize, 0usize, 0usize);
+    // The place of a name in its list, or the last place, `unknown`.
+    let place = |names: &[&str], name: Option<&str>| {
+        let at = name.and_then(|name| names.iter().position(|known| *known == name));
+        at.unwrap_or(names.len())
+    };
+    for (id, record) in &found {
+        // A run of `check` under a use case of the table, which keeps them.
+        let judged = record.asked().action.as_deref() == Some(whizbang_squint::check::NAME)
+            && text_argument(record, "use_case").is_some_and(|u| u != "general");
+        let run = whizbang_core::contract::RunId::parse(id).ok();
+        let read = run.and_then(|run| whizbang::door::diagnostic(root, &run, REJECTIONS).ok());
+        let Some(json) = read.and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        else {
+            unkept += usize::from(judged);
+            continue;
+        };
+        kept += 1;
+        by_cause[place(&causes, json["cause"].as_str())] += 1;
+        let listed = json["rejections"].as_array().map(Vec::as_slice);
+        let listed = listed.unwrap_or_default();
+        if !listed.is_empty() {
+            rejected += 1;
+        }
+        for rejection in listed {
+            by_class[place(&classes, rejection["class"].as_str())] += 1;
+        }
+    }
+    let total: usize = by_class.iter().sum();
+    let mut text = format!(
+        "rejections: {total} in {rejected} of {kept} runs that kept them; {unkept} runs of \
+         check under a use case kept none\n"
+    );
+    let unknown = ["unknown"];
+    for (name, count) in causes.iter().chain(&unknown).zip(&by_cause) {
+        text.push_str(&format!("  cause\t{name}\t{count}\n"));
+    }
+    for (name, count) in classes.iter().chain(&unknown).zip(&by_class) {
+        text.push_str(&format!("  class\t{name}\t{count}\n"));
+    }
+    Ok(text)
+}

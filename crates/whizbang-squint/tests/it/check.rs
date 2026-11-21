@@ -1905,6 +1905,141 @@ fn a_repair_of_an_invalid_submission_is_recorded_in_the_run() {
         kept["repairs"],
         json!(["chk:ob:SF2@candidate has no disposition"])
     );
+    // The rejection is kept by its class beside the cause of the run's end.
+    assert_eq!(
+        rejections(&left),
+        json!({"contract": "rejections/1", "cause": "concluded",
+               "rejections": [{"turn": 1, "class": "missing_item"}]})
+    );
+}
+
+// --- each rejection and why the run ended, on every exit (plan e1, task T1) ------------------
+
+/// What a run under a use case kept of its rejections and its end.
+fn rejections(left: &Left) -> Json {
+    serde_json::from_slice(left.diagnostic(whizbang_squint::check::REJECTIONS)).unwrap()
+}
+
+/// Runs source-fidelity against these turns: what it ended as, and what it kept of its
+/// rejections.
+fn rejected(world: &World, script: &[(Json, &str)]) -> (Outcome, Json) {
+    rejected_by(world, &turns(script))
+}
+
+fn rejected_by(world: &World, script: &str) -> (Outcome, Json) {
+    let job = Job::shorthand("source-fidelity", true, 0, None);
+    let call = judged_call(&job, &[world.other.id(), world.photo.id()]);
+    let (finished, left, _) = judged(world, &call, script);
+    (finished.outcome().clone(), rejections(&left))
+}
+
+fn ended_as(outcome: &Outcome) -> &str {
+    match outcome {
+        Outcome::Error { kind, .. } => kind,
+        other => other.name(),
+    }
+}
+
+#[test]
+fn a_second_rejected_submission_keeps_its_rejections() {
+    let world = World::new();
+    let missing = submission(json!([item("chk:ob:SF1@candidate", "held", "confident")]));
+    let alone = json!([submission(json!([])), viewing("v1")]);
+    let (outcome, kept) = rejected(
+        &world,
+        &[(json!([missing]), "tool_use"), (alone, "tool_use")],
+    );
+    assert_eq!(ended_as(&outcome), "invalid_submission");
+    assert_eq!(
+        kept,
+        json!({"contract": "rejections/1", "cause": "invalid_submission",
+               "rejections": [{"turn": 1, "class": "missing_item"},
+                              {"turn": 2, "class": "not_alone"}]})
+    );
+    // Classes and causes only: nothing the judge wrote, and no id of the checklist.
+    let text = kept.to_string();
+    assert!(
+        !text.contains("chk:") && !text.contains("looked at"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_turn_ended_without_a_submission_after_the_repair_keeps_its_cause() {
+    let world = World::new();
+    let talk = (json!([{"text": "It looks fine to me."}]), "end_turn");
+    let (outcome, kept) = rejected(&world, &[talk.clone(), talk]);
+    // The error is the one it was; the record tells the cause apart.
+    assert_eq!(ended_as(&outcome), "judge_output");
+    assert_eq!(
+        kept,
+        json!({"contract": "rejections/1", "cause": "no_submission_after_repair",
+               "rejections": [{"turn": 1, "class": "no_submission"},
+                              {"turn": 2, "class": "no_submission"}]})
+    );
+    assert!(!kept.to_string().contains("fine"));
+}
+
+#[test]
+fn a_cut_off_run_is_not_a_submission_failure() {
+    let world = World::new();
+    let cut = (json!([{"text": "I will"}]), "max_tokens");
+    let (outcome, kept) = rejected(&world, &[cut.clone(), cut]);
+    assert_eq!(ended_as(&outcome), "judge_output");
+    assert_eq!(
+        kept,
+        json!({"contract": "rejections/1", "cause": "cut_off", "rejections": []})
+    );
+    // A stop the loop does not know is another cause of the same error, and no
+    // submission failure either.
+    let paused = json!({"script": "judge-script/1", "entries": [{"turn": {
+        "parts": [{"text": "Hm."}], "stop": {"other": "pause"}, "usage": null,
+        "request_id": null}}]});
+    let paused = paused.to_string();
+    let (outcome, kept) = rejected_by(&world, &paused);
+    assert_eq!(ended_as(&outcome), "judge_output", "{outcome:?}");
+    assert_eq!(kept["cause"], "other");
+    let (outcome, kept) = rejected(&world, &[(json!([{"text": "No."}]), "refusal")]);
+    assert_eq!(ended_as(&outcome), "judge_refused", "{outcome:?}");
+    assert_eq!(kept["cause"], "refused");
+}
+
+#[test]
+fn the_turn_budget_spent_keeps_its_rejections() {
+    let world = World::new();
+    let missing = submission(json!([item("chk:ob:SF1@candidate", "held", "confident")]));
+    let mut script = vec![(json!([missing]), "tool_use")];
+    let looks: Vec<(Json, &str)> = (1..TURNS_LIMIT)
+        .map(|at| (json!([viewing(&format!("v{at}"))]), "tool_use"))
+        .collect();
+    script.extend(looks);
+    let (outcome, kept) = rejected(&world, &script);
+    assert_eq!(ended_as(&outcome), "judge_loop");
+    assert_eq!(
+        kept,
+        json!({"contract": "rejections/1", "cause": "turns",
+               "rejections": [{"turn": 1, "class": "missing_item"}]})
+    );
+}
+
+#[test]
+fn every_cause_has_its_name() {
+    use whizbang_squint::check::Cause;
+    let names: Vec<&str> = Cause::ALL.iter().map(|c| c.name()).collect();
+    assert_eq!(
+        names,
+        [
+            "concluded",
+            "invalid_submission",
+            "no_submission_after_repair",
+            "cut_off",
+            "ceiling",
+            "refused",
+            "turns",
+            "fault",
+            "other"
+        ]
+    );
 }
 
 // --- what a submission cites: the ids the judge is shown (the gate of 2026-11-19) -------------
