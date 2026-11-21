@@ -58,7 +58,7 @@ pub fn run(args: &Args, platform: Platform) -> Result<String, String> {
         && playing::answers(&hosting)
     {
         let token = Token::parse(&hosting.token);
-        hand_over(hosting.port, token.as_ref(), args.no_open);
+        hand_over(root, hosting.port, token.as_ref(), args.no_open);
         return Ok("the playground was already running for this store\n".to_owned());
     }
     // The store is made where there is none, its last folder alone, as `store import`
@@ -113,9 +113,10 @@ pub fn run(args: &Args, platform: Platform) -> Result<String, String> {
         playing::remove_hosting(root);
         return Err(format!("the playground could not start: {error}"));
     }
-    hand_over(port, Some(&token), args.no_open);
+    hand_over(root, port, Some(&token), args.no_open);
     let stopped = host.wait();
     playing::remove_hosting(root);
+    playing::remove_opener(root);
     Ok(match stopped.left {
         0 => "the playground stopped; every run it started has ended\n".to_owned(),
         left => format!(
@@ -127,38 +128,34 @@ pub fn run(args: &Args, platform: Platform) -> Result<String, String> {
 
 /// Opens the page in Chrome with its token, and prints the address without it; or,
 /// with `--no-open` or where Chrome cannot be started, prints the address with it.
-fn hand_over(port: u16, token: Option<&Token>, no_open: bool) {
+/// The token is never on a command line: Chrome is given an owner-only page in the
+/// store's folder that sends it on (`playing::write_opener`), as other local servers
+/// that hand a browser a token do.
+fn hand_over(root: &std::path::Path, port: u16, token: Option<&Token>, no_open: bool) {
     let with_token = playing::address(port, token);
+    let opened = !no_open
+        && playing::write_opener(root, &with_token)
+            .ok()
+            .is_some_and(|opener| open_in_chrome(&opener));
     let mut out = std::io::stdout();
-    if no_open || !open_in_chrome(&with_token) {
-        let _ = writeln!(out, "{with_token}");
-    } else {
+    if opened {
         let _ = writeln!(out, "{}", playing::address(port, None));
+    } else {
+        let _ = writeln!(out, "{with_token}");
     }
     let _ = out.flush();
 }
 
-/// Asks the system to open the address in Google Chrome: whether it was opened, as far
-/// as this can tell. On the Mac `open` answers at once whether Chrome is there; on
-/// Linux Chrome may stay attached to what started it, so it is waited for on a thread
-/// of its own, and nothing is left behind it.
-fn open_in_chrome(address: &str) -> bool {
-    use std::process::{Command, Stdio};
-    let quiet = |command: &mut Command| {
-        command
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-    };
+/// Asks the system to open the page `opener` in Google Chrome: whether it was opened,
+/// as far as this can tell. On the Mac `open` answers at once whether Chrome is there;
+/// on Linux Chrome may stay attached to what started it, so it is started in a process
+/// group of its own (a Ctrl-C or a hang-up meant for whizbang does not reach it) and
+/// waited for on a thread of its own, so nothing is left behind it.
+fn open_in_chrome(opener: &std::path::Path) -> bool {
+    let mut command = playing::chrome_command(opener, cfg!(target_os = "macos"));
     if cfg!(target_os = "macos") {
-        let mut command = Command::new("open");
-        command.args(["-a", "Google Chrome", address]);
-        quiet(&mut command);
         return command.status().is_ok_and(|status| status.success());
     }
-    let mut command = Command::new("google-chrome");
-    command.arg(address);
-    quiet(&mut command);
     let Ok(mut child) = command.spawn() else {
         return false;
     };

@@ -144,9 +144,15 @@ fn takes_a_writer(root: &Path) {
 
 #[test]
 fn hello_answers_the_version_and_the_store_behind_the_guard() {
+    // One launch for three of the plan's cases (keeping the fast tier's time):
+    // `play::hello_answers_the_version_and_the_store_behind_the_guard`,
+    // `play::play_json_is_owner_only_and_gone_after_a_quit` and
+    // `play::an_interrupt_signal_quits_as_the_page_does`. The quit is an interrupt from
+    // the terminal, which ends as the page's Quit does (the page's own is
+    // `play::a_quit_cancels_every_run_waits_and_releases_the_store`).
     let scratch = Scratch::new("play-hello");
     let root = scratch.path().join("store");
-    let played = play(&root, &[]);
+    let mut played = play(&root, &[]);
     let hello = played.api("GET", "/api/hello");
     assert_eq!(hello.status, 200, "{}", hello.text());
     assert_eq!(hello.json()["version"], env!("CARGO_PKG_VERSION"));
@@ -163,9 +169,24 @@ fn hello_answers_the_version_and_the_store_behind_the_guard() {
     );
     assert_eq!(bare.status, 401);
     assert!(!bare.text().contains("store"));
-    let (code, out, err) = played.ended();
-    assert_eq!(code, Some(0), "{err}");
-    assert!(out.contains("the playground stopped"), "{out}");
+    // `play.json`: this user's alone, naming the port, the process and the token.
+    let file = root.join("play.json");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "{mode:o}");
+    }
+    let hosting = read_hosting(&root).unwrap();
+    assert_eq!(hosting.port, played.port);
+    assert_eq!(hosting.process, played.child.id());
+    assert_eq!(hosting.token, played.token);
+    // An interrupt: the same quit, the file gone, the store free.
+    played.signal("INT");
+    assert_eq!(played.exits_within(Duration::from_secs(10)), Some(0));
+    let (_, out, _) = played.ended();
+    assert!(out.contains("every run it started has ended"), "{out}");
+    assert!(!file.exists());
     takes_a_writer(&root);
 }
 
@@ -211,61 +232,13 @@ fn a_second_play_on_a_held_store_opens_the_running_hosts_address() {
 }
 
 #[test]
-fn play_json_is_owner_only_and_gone_after_a_quit() {
-    let scratch = Scratch::new("play-json");
-    let root = scratch.path().join("store");
-    let played = play(&root, &[]);
-    let file = root.join("play.json");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(&file).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o600, "{mode:o}");
-    }
-    let hosting = read_hosting(&root).unwrap();
-    assert_eq!(hosting.port, played.port);
-    assert_eq!(hosting.process, played.child.id());
-    assert_eq!(hosting.token, played.token);
-    let origin = format!("http://127.0.0.1:{}", played.port);
-    let quit = api(
-        played.address(),
-        &played.token,
-        "POST",
-        "/api/quit",
-        Some(&origin),
-    );
-    assert_eq!(quit.status, 202);
-    let mut played = played;
-    assert_eq!(played.exits_within(Duration::from_secs(10)), Some(0));
-    assert!(!file.exists());
-    takes_a_writer(&root);
-}
-
-#[test]
-fn an_interrupt_signal_quits_as_the_page_does() {
-    let scratch = Scratch::new("play-interrupt");
-    let root = scratch.path().join("store");
-    let mut played = play(&root, &[]);
-    played.signal("INT");
-    assert_eq!(played.exits_within(Duration::from_secs(10)), Some(0));
-    let (_, out, _) = played.ended();
-    assert!(out.contains("every run it started has ended"), "{out}");
-    assert!(!root.join("play.json").exists());
-    takes_a_writer(&root);
-}
-
-#[test]
 fn two_interrupts_and_an_interrupt_with_every_worker_stalled_each_quit() {
+    // Every worker held by a client that sends half a request: the quit does not wait
+    // on a worker, so two signals (a hang-up, then an interrupt) end the host long
+    // before the workers' deadline. That a second quit ends the grace with a run still
+    // going is `play::a_second_quit_ends_the_grace_at_once`.
     let scratch = Scratch::new("play-interrupts");
     let root = scratch.path().join("store");
-    let mut played = play(&root, &[]);
-    played.signal("INT");
-    played.signal("INT");
-    assert_eq!(played.exits_within(Duration::from_secs(10)), Some(0));
-    assert!(!root.join("play.json").exists());
-
-    // Every worker held by a client that sends half a request: the quit does not wait
-    // on a worker, so a hang-up ends the host long before their deadline.
     let mut played = play(&root, &[]);
     let mut stalled = Vec::new();
     for _ in 0..20 {
@@ -275,14 +248,77 @@ fn two_interrupts_and_an_interrupt_with_every_worker_stalled_each_quit() {
     }
     let started = Instant::now();
     played.signal("HUP");
+    played.signal("INT");
     assert_eq!(played.exits_within(Duration::from_secs(10)), Some(0));
     assert!(
         started.elapsed() < Duration::from_secs(4),
         "{:?}",
         started.elapsed()
     );
+    assert!(!root.join("play.json").exists());
     takes_a_writer(&root);
     drop(stalled);
+}
+
+#[test]
+fn the_token_is_never_on_the_command_line_that_opens_chrome() {
+    let scratch = Scratch::new("play-opener");
+    let token = Token::new().unwrap();
+    let address = whizbang::playing::address(7341, Some(&token));
+    let opener = whizbang::playing::write_opener(scratch.path(), &address).unwrap();
+    for mac in [true, false] {
+        let command = whizbang::playing::chrome_command(&opener, mac);
+        let said: Vec<String> = std::iter::once(command.get_program())
+            .chain(command.get_args())
+            .map(|word| word.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            !said.iter().any(|word| word.contains(&token.hex())),
+            "{said:?}"
+        );
+        assert!(
+            said.iter().any(|word| word.ends_with("play-open.html")),
+            "{said:?}"
+        );
+    }
+    // The page that sends Chrome on holds it, for its owner alone.
+    let page = std::fs::read_to_string(&opener).unwrap();
+    assert!(page.contains(&address), "{page}");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&opener).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "{mode:o}");
+    }
+}
+
+#[test]
+fn a_hosting_file_that_others_could_have_written_is_not_trusted() {
+    let scratch = Scratch::new("play-trust");
+    let root = scratch.path().join("store");
+    drop(Store::open(&root, Arc::new(RealFs)).unwrap());
+    let hosting = whizbang::playing::Hosting {
+        port: 1,
+        process: 1,
+        token: Token::new().unwrap().hex(),
+    };
+    whizbang::playing::write_hosting(&root, &hosting).unwrap();
+    assert_eq!(read_hosting(&root), Some(hosting.clone()));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let set = |path: &Path, mode: u32| {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        let file = root.join("play.json");
+        set(&file, 0o644);
+        assert_eq!(read_hosting(&root), None, "a file others may read");
+        set(&file, 0o600);
+        set(&root, 0o770);
+        assert_eq!(read_hosting(&root), None, "a folder others may write");
+        set(&root, 0o700);
+        assert_eq!(read_hosting(&root), Some(hosting));
+    }
 }
 
 #[test]
@@ -475,6 +511,7 @@ impl Hosted {
         assert_eq!(prepared.status, 200, "{}", prepared.text());
         let mut start = call;
         start["handle"] = prepared.json()["handle"].clone();
+        start["request_id"] = json!(fresh_id());
         let started = self.api("POST", "/api/runs", Some(&start));
         assert_eq!(started.status, 201, "{}", started.text());
         started.json()["run"].as_str().unwrap().to_owned()
@@ -591,8 +628,17 @@ fn a_run_started_by_the_host_is_found_by_its_id_after_its_caller_is_gone() {
     );
     let ended = hosted.until_state(&run, "ended");
     assert_eq!(ended["outcome"], "cancelled");
-    let open = hosted.api("GET", "/api/runs?open=1", None);
-    assert_eq!(open.json()["runs"], json!([]));
+    // An ended run is not listed as going, whether or not the keeper has looked yet:
+    // asked until it is gone, which the list does at once.
+    let limit = Instant::now() + Duration::from_secs(10);
+    loop {
+        let open = hosted.api("GET", "/api/runs?open=1", None);
+        if open.json()["runs"] == json!([]) {
+            break;
+        }
+        assert!(Instant::now() < limit, "{}", open.text());
+        std::thread::sleep(Duration::from_millis(5));
+    }
     hosted.host.as_ref().unwrap().stopper().quit();
     assert_eq!(hosted.wait().left, 0);
 }
@@ -630,7 +676,7 @@ fn a_run_that_ignores_its_cancellation_keeps_its_place_and_quit_still_exits_afte
     let open = hosted.api("GET", "/api/runs?open=1", None);
     assert_eq!(open.json()["runs"][0]["state"], "stopping");
     // It keeps its place: no other run is started while it goes.
-    let call = json!({"action": "waits", "arguments": {}});
+    let call = json!({"action": "waits", "arguments": {}, "request_id": fresh_id()});
     let refused = hosted.api("POST", "/api/runs", Some(&call));
     assert_eq!(refused.status, 429, "{}", refused.text());
     let started = Instant::now();
@@ -688,7 +734,85 @@ fn a_quit_while_a_run_is_held_in_its_final_publication_exits_at_the_end_of_the_g
     hosted.gate.release();
 }
 
+#[test]
+fn a_second_quit_ends_the_grace_at_once() {
+    let mut hosted = Hosted::start("play-second-quit", |settings| {
+        settings.grace = Duration::from_secs(10);
+    });
+    let run = hosted.run("deaf");
+    hosted.until_state(&run, "running");
+    let started = Instant::now();
+    let stopper = hosted.host.as_ref().unwrap().stopper();
+    stopper.quit();
+    stopper.quit();
+    let stopped = hosted.wait();
+    assert_eq!(stopped.left, 1);
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn a_quit_while_a_start_is_admitted_cancels_the_run_it_makes() {
+    let mut hosted = Hosted::start("play-quit-admitting", |settings| {
+        settings.grace = Duration::from_secs(10);
+    });
+    let call = json!({"action": "waits", "arguments": {}});
+    let prepared = hosted.api("POST", "/api/prepare", Some(&call));
+    let mut start = call;
+    start["handle"] = prepared.json()["handle"].clone();
+    start["request_id"] = json!(fresh_id());
+    // The admission's first change to the disk waits until the test lets it go.
+    let gate = hosted.gate.clone();
+    let paused = gate.clone();
+    hosted
+        .fs
+        .pause_before(hosted.fs.events().len(), move || paused.enter_and_wait());
+    let (address, token) = (hosted.address, hosted.token.hex());
+    let starting = whizbang_testkit::threads::spawn(move || {
+        let origin = format!("http://127.0.0.1:{}", address.port());
+        send(
+            address,
+            &request(
+                address,
+                &token,
+                "POST",
+                "/api/runs",
+                Some(&origin),
+                Some(&start),
+            ),
+        )
+    });
+    gate.entered();
+    hosted.host.as_ref().unwrap().stopper().quit();
+    gate.release();
+    let started = starting.join().unwrap();
+    let stopped = hosted.wait();
+    // Either the admission saw the quit's cancel and made no run, or it made one,
+    // which was cancelled and waited for as every other run is: none is lost.
+    let reader = whizbang_core::store::Reader::open(&hosted.root(), Arc::new(RealFs)).unwrap();
+    let runs: Vec<String> = reader.snapshot().unwrap().runs().keys().cloned().collect();
+    drop(reader);
+    match runs.as_slice() {
+        [] => assert_ne!(started.status, 201, "{}", started.text()),
+        [run] => {
+            assert_eq!(stopped.left, 0, "{}", started.text());
+            let outcomes = hosted.outcomes_after_reopening(&[run]);
+            assert_eq!(outcomes, [Outcome::Cancelled]);
+        }
+        more => panic!("{more:?}"),
+    }
+}
+
 // Requests as bytes.
+
+/// A request id no other request of this process has.
+fn fresh_id() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    format!("page-{}", NEXT.fetch_add(1, Ordering::SeqCst))
+}
 
 struct Answer {
     status: u16,

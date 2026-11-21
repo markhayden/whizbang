@@ -164,7 +164,9 @@ fn emit(bytes: &[u8]) -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("whizbang: could not write: {error}");
+            // The error output may be gone too: what cannot be said is not said, and
+            // the exit code says it.
+            let _ = writeln!(std::io::stderr(), "whizbang: could not write: {error}");
             ExitCode::from(3)
         }
     }

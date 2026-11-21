@@ -17,6 +17,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as Json, json};
 use whizbang_core::contract::{ActionDescriptor, Call};
+use whizbang_core::store::fs::{Fs, RealFs};
 use whizbang_serve::play::{Play, Token};
 use whizbang_serve::tools;
 
@@ -114,9 +115,28 @@ pub fn write_hosting(root: &Path, hosting: &Hosting) -> io::Result<()> {
     file.sync_all()
 }
 
-/// The file of a host of the store at `root`, when one is there and reads as one.
+/// The file of a host of the store at `root`, when one is there, reads as one, and can
+/// be trusted: the store's folder is this user's and nobody else may write it, and the
+/// file is a regular file of this user's that nobody else may read or write. Anything
+/// else is not read, and a launch goes on as if no host were there.
 pub fn read_hosting(root: &Path) -> Option<Hosting> {
+    let writers = RealFs.who_may_write(root).ok()?;
+    if !writers.owner_is_this_user || writers.group || writers.anyone {
+        return None;
+    }
     let path = hosting_file(root);
+    let found = std::fs::symlink_metadata(&path).ok()?;
+    if !found.is_file() {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let user = whizbang_core::store::fs::this_user().ok()?;
+        if found.uid() != user || found.mode() & 0o077 != 0 {
+            return None;
+        }
+    }
     let mut text = Vec::new();
     std::fs::File::open(path)
         .ok()?
@@ -124,6 +144,72 @@ pub fn read_hosting(root: &Path) -> Option<Hosting> {
         .read_to_end(&mut text)
         .ok()?;
     serde_json::from_slice(&text).ok()
+}
+
+/// The name of the page that sends Chrome on to the address with its token.
+pub const OPENER_FILE: &str = "play-open.html";
+
+/// Writes, for its owner alone, the page in the store's folder that sends a browser on
+/// to `address`, the address with its token: what Chrome is given in place of the
+/// address, so that the token is never on a command line, which other users of the
+/// machine can read. The path of the page.
+pub fn write_opener(root: &Path, address: &str) -> io::Result<PathBuf> {
+    let path = root.join(OPENER_FILE);
+    match std::fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&path)?;
+    let page = format!(
+        "<!doctype html>\n<html><head><meta charset=\"utf-8\">\n\
+         <meta http-equiv=\"refresh\" content=\"0;url={address}\">\n\
+         <title>whizbang playground</title></head>\n\
+         <body><p><a href=\"{address}\">Open the playground</a></p></body></html>\n"
+    );
+    file.write_all(page.as_bytes())?;
+    file.sync_all()?;
+    Ok(path)
+}
+
+/// Removes the opening page of the store at `root`; one that is not there is nothing
+/// to remove.
+pub fn remove_opener(root: &Path) {
+    let _ = std::fs::remove_file(root.join(OPENER_FILE));
+}
+
+/// The command that opens the page `opener` in Google Chrome: `open -a "Google Chrome"`
+/// on the Mac, `google-chrome` elsewhere, in a process group of its own so that a
+/// signal meant for whizbang does not reach the browser. Its arguments name the page's
+/// path and nothing else of it.
+pub fn chrome_command(opener: &Path, mac: bool) -> std::process::Command {
+    use std::process::{Command, Stdio};
+    let mut command = if mac {
+        let mut command = Command::new("open");
+        command.args(["-a", "Google Chrome"]).arg(opener);
+        command
+    } else {
+        let mut command = Command::new("google-chrome");
+        command.arg(opener);
+        command
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    command
 }
 
 /// Removes the file of the host of the store at `root`; one that is not there is
