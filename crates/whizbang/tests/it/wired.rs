@@ -2279,13 +2279,14 @@ fn only_main_reads_where_the_platforms_data_folder_is() {
     // whole environment by `env::vars_os`, counted as `env::var` and as `env::vars`,
     // from which `uv`'s own is chosen.
     assert_eq!(reads, ["main.rs"; 16], "the environment is read elsewhere");
-    // The function's definition, and the six places it is handed on: to the two
+    // The function's definition, and the seven places it is handed on: to the two
     // commands that build an executor (`rascal`, and `squint`, plan 2A's task S2), to
     // the models commands (task N3b), to `setup` (task Y1) and to `backends status`
     // (task P7b), which opens the models directory a local backend's model is looked
     // up in; and to `serve` (plan 2C, task M1), which builds an executor as `squint`
-    // does; and to `lab run` (plan m3, task L2), which builds one to run a round.
-    assert_eq!(calls, ["main.rs"; 8], "the reading is named elsewhere");
+    // does; and to `lab run` (plan m3, task L2), which builds one to run a round; and
+    // to `play` (plan m5, task H1), which builds one as `serve` does.
+    assert_eq!(calls, ["main.rs"; 9], "the reading is named elsewhere");
     let main = std::fs::read_to_string(sources.join("main.rs")).unwrap();
     let main: String = main.chars().filter(|c| !c.is_whitespace()).collect();
     let main = main.replace(",)", ")");
@@ -2299,6 +2300,7 @@ fn only_main_reads_where_the_platforms_data_folder_is() {
         format!("backends::run(&command,{platform})"),
         format!("lab::run(&command,{platform})"),
         format!("serve::run(&args,{platform})"),
+        format!("play::run(&args,{platform})"),
     ] {
         assert_eq!(main.matches(&handed).count(), 1, "{handed}");
     }
