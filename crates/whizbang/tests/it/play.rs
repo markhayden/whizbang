@@ -629,16 +629,9 @@ fn a_run_started_by_the_host_is_found_by_its_id_after_its_caller_is_gone() {
     let ended = hosted.until_state(&run, "ended");
     assert_eq!(ended["outcome"], "cancelled");
     // An ended run is not listed as going, whether or not the keeper has looked yet:
-    // asked until it is gone, which the list does at once.
-    let limit = Instant::now() + Duration::from_secs(10);
-    loop {
-        let open = hosted.api("GET", "/api/runs?open=1", None);
-        if open.json()["runs"] == json!([]) {
-            break;
-        }
-        assert!(Instant::now() < limit, "{}", open.text());
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    // the first list asked after the run was seen to end does not hold it.
+    let open = hosted.api("GET", "/api/runs?open=1", None);
+    assert_eq!(open.json()["runs"], json!([]), "{}", open.text());
     hosted.host.as_ref().unwrap().stopper().quit();
     assert_eq!(hosted.wait().left, 0);
 }

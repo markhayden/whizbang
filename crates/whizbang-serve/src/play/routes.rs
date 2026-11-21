@@ -15,7 +15,7 @@ use whizbang_core::contract::{
 
 use super::guard::{self, Guarded};
 use super::http::{PAGE_POLICY, Response, Unread};
-use super::{Asked, Kept, PREPARATIONS_LIMIT, Shared, assets};
+use super::{Asked, Kept, PREPARATIONS_LIMIT, Shared, arguments_digest, assets};
 use crate::escaped;
 
 /// What body a route takes.
@@ -305,7 +305,8 @@ fn start(shared: &Shared, guarded: &Guarded<'_>) -> Response {
     // A repeated id is answered before anything else is looked at (ADR 0007): the run
     // it started, or a conflict when something else was asked under it.
     let earlier = shared.state().requests.get(&text_id).map(|earlier| {
-        let same = earlier.action == asked.action && earlier.arguments == asked.arguments;
+        let same = earlier.action == asked.action
+            && earlier.arguments == arguments_digest(&asked.arguments);
         (earlier.run.clone(), same)
     });
     if let Some((run, same)) = earlier {
@@ -374,8 +375,8 @@ fn start(shared: &Shared, guarded: &Guarded<'_>) -> Response {
                 text_id,
                 Asked {
                     run: run.clone(),
+                    arguments: arguments_digest(&asked.arguments),
                     action: asked.action,
-                    arguments: asked.arguments,
                 },
             );
             Response::json(201, &json!({"run": run.as_str(), "state": "running"}))
