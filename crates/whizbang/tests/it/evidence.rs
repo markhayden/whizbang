@@ -2136,9 +2136,16 @@ fn counted(count: &toml::Value, rate: Option<&toml::Value>) -> String {
     format!("{} ({})", count.as_integer().unwrap(), share(rate))
 }
 
+/// The headings of the format round's three tables, in the page's order.
+const SUBMISSION_TABLES: [&str; 3] = [
+    "## Per judge, before and after",
+    "## Rejections, causes and recoveries",
+    "## The clauses of each judge",
+];
+
 /// The rows of the format round's three tables, each written from the scores' scope `all`
-/// and the rule's clauses, in the order the page gives them.
-fn submission_rows(scores: &toml::Table) -> Vec<String> {
+/// and the rule's clauses: one group a table, in the order of [`SUBMISSION_TABLES`].
+fn submission_rows(scores: &toml::Table) -> [Vec<String>; 3] {
     let scopes = scores["scopes"].as_array().expect("scopes");
     let all = (scopes.iter())
         .find(|s| s["name"].as_str() == Some("all"))
@@ -2207,7 +2214,7 @@ fn submission_rows(scores: &toml::Table) -> Vec<String> {
             },
         )
     });
-    measures.into_iter().chain(counts).chain(clauses).collect()
+    [measures, counts, clauses.collect()]
 }
 
 #[test]
@@ -2258,6 +2265,8 @@ fn the_submission_record_holds_only_aggregates() {
         let commit = scores["commit"].as_str().unwrap();
         assert!(is_ancestor(commit), "{commit}");
         assert_eq!(round["commit"].as_str(), Some(commit));
+        let runs_commit = round["runs_commit"].as_str().expect("runs_commit");
+        assert!(is_ancestor(runs_commit), "{runs_commit}");
         let named = scores["matrices"].as_array().unwrap();
         assert_eq!(named.len(), 1);
         assert_eq!(named[0]["name"].as_str(), Some("e-submission"));
@@ -2288,16 +2297,27 @@ fn the_submission_record_holds_only_aggregates() {
             .unwrap();
         assert!(decision.contains(format["settled_by"].as_str().unwrap()));
         assert!(!page.contains("| Pending |"));
-        let rows = submission_rows(&scores);
-        let missing: Vec<&String> = rows
-            .iter()
-            .filter(|row| !page.contains(row.as_str()))
-            .collect();
-        assert!(
-            missing.is_empty(),
-            "the page lacks the rows the scores give:\n{}",
-            rows.join("\n")
-        );
+        // Each table holds exactly the rows the scores give it, under its own heading, each
+        // row with as many columns as its header.
+        for (heading, rows) in SUBMISSION_TABLES.iter().zip(submission_rows(&scores)) {
+            let section = page
+                .split(&format!("{heading}\n"))
+                .nth(1)
+                .and_then(|rest| rest.split("\n## ").next())
+                .unwrap_or_else(|| panic!("the page has no {heading}"));
+            let table: Vec<&str> = section.lines().filter(|l| l.starts_with('|')).collect();
+            assert!(table.len() >= 2, "{heading}: no table");
+            let columns = table[0].matches('|').count();
+            for line in &table {
+                assert_eq!(line.matches('|').count(), columns, "{heading}: {line}");
+            }
+            let wanted: Vec<&str> = rows.iter().map(String::as_str).collect();
+            assert!(
+                table[2..] == wanted[..],
+                "{heading}: the table is not the rows the scores give:\n{}",
+                rows.join("\n")
+            );
+        }
         texts.push(scores_text);
     }
     // No item, no family, no path, no key: in the page, and in the scores once there.

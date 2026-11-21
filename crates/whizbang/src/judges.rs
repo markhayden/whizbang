@@ -1180,7 +1180,8 @@ pub fn submission_rule(
 /// points: balanced accuracy lower, or the false-reject or false-accept rate higher, by more
 /// than [`ACCURACY_GIVEN`]; or balanced accuracy that cannot be worked out.
 fn breaches(j: &FormatClauses) -> Vec<String> {
-    let points = |v: f64| format!("{:+.1} points", v * 100.0);
+    // To two places, so a breach just past the line never reads as on it.
+    let points = |v: f64| format!("{:+.2} points", v * 100.0);
     let mut out = Vec::new();
     match j.balanced_accuracy_change {
         None => out.push("balanced accuracy cannot be worked out".to_owned()),
