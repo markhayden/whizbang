@@ -86,6 +86,35 @@ grep -v '<testsuites' "$tmp/junit.xml" >"$tmp/broken.xml"
 expect_fail "no total in the result file" "no total" "$timing" --junit "$tmp/broken.xml"
 expect_fail "a missing result file" "no result file" "$timing" --junit "$tmp/absent.xml"
 
+# The interface's unit tests (plan m5, "Fast-tier cost"): when `just ui-check` left their
+# seconds and results, each suite is a row, their seconds join the total under the one
+# limit, and the two files are removed so that they are counted once.
+mkdir "$tmp/ui"
+put_ui() { # <seconds>
+  printf '%s\n' "$1" >"$tmp/ui/unit-seconds"
+  cat >"$tmp/ui/unit-junit.xml" <<'XML'
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="3" failures="0" errors="0" time="0.110">
+    <testsuite name="src/app.test.tsx" timestamp="2026-11-21T15:37:14.042Z" tests="2" failures="0" errors="0" skipped="0" time="0.030">
+    </testsuite>
+    <testsuite name="src/shell.test.ts" timestamp="2026-11-21T15:37:14.042Z" tests="1" failures="0" errors="0" skipped="0" time="0.080">
+    </testsuite>
+</testsuites>
+XML
+}
+put_ui 1.250
+expect_pass "the interface's unit tests counted" "$timing" --junit "$tmp/junit.xml" --ui "$tmp/ui"
+grep -q -E '^ui: src/app.test.tsx +2 +0\.030$' "$tmp/out" || { cat "$tmp/out"; fail "a row per suite of the interface's tests"; }
+grep -q -F 'test time 3.750s, limit 300s' "$tmp/out" || { cat "$tmp/out"; fail "the interface's seconds join the total"; }
+[ ! -e "$tmp/ui/unit-seconds" ] && [ ! -e "$tmp/ui/unit-junit.xml" ] || fail "the interface's files are removed once counted"
+expect_pass "a second run without them" "$timing" --junit "$tmp/junit.xml" --ui "$tmp/ui"
+grep -q -F 'test time 2.500s,' "$tmp/out" || { cat "$tmp/out"; fail "the interface's seconds are counted once"; }
+put_ui 298.000
+expect_fail "the two together over the one limit" "test time 300.500s exceeds the limit of 300s" "$timing" --junit "$tmp/junit.xml" --ui "$tmp/ui"
+put_ui NaN
+expect_fail "seconds that are not a number" "are not a number" "$timing" --junit "$tmp/junit.xml" --ui "$tmp/ui"
+rm -f "$tmp/ui/unit-seconds" "$tmp/ui/unit-junit.xml"
+
 # The real run, opt-in because it runs the whole fast tier a second time: the fast tests,
 # with a limit no run can meet.
 if [ "${WHIZBANG_SLOW_TESTS:-}" = "1" ]; then

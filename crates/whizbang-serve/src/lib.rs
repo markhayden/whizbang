@@ -9,8 +9,10 @@
 //! - [`tools`]: an action's descriptor as a tool, and a tool's arguments as a call.
 //! - [`serve`]: the loop: what a client asks, the runs it started, progress, a stated
 //!   time for each run, cancellation, and the end of the input.
+//! - [`play`]: the playground's host (plan m5): the built interface it serves.
 
 pub mod frame;
+pub mod play;
 mod server;
 mod threads;
 pub mod tools;
