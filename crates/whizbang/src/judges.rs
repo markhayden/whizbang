@@ -40,13 +40,35 @@ use whizbang_eval::matrix::{Cell, Matrix};
 use whizbang_eval::metrics::{self, Computed, Counts, Expected, Resampling, Row};
 use whizbang_eval::sets;
 
+use whizbang_squint::check::{Cause, REJECTIONS};
+use whizbang_squint::use_case::Class;
+
 use crate::door::printable;
 use crate::evaluation::{Ended, cell_of};
 
 /// The form of what the command writes.
 pub const SCHEMA: &str = "judges/1";
-/// The name of the run's diagnostic that holds its rejections and its cause (task T1).
-pub const REJECTIONS: &str = "rejections.json";
+/// The contracts of the rejections diagnostic read: T1's, and F1's, which adds the format
+/// the run resolved, the other classes of a rejection and the recoveries. Any other is
+/// unknown.
+pub const CONTRACTS: [&str; 2] = ["rejections/1", "rejections/2"];
+/// The kinds of recovery submission v2 records (task F1), as it names them. Any other name
+/// read from the store is counted as `unknown`.
+pub const RECOVERY_KINDS: [&str; 7] = [
+    "list_as_text",
+    "array_form",
+    "enum_word",
+    "id_case",
+    "identical_duplicate",
+    "evidence_dropped",
+    "wrapper",
+];
+/// The word a class, cause or kind the build does not know is counted under: nothing read
+/// from the store is written as it was read.
+pub const UNKNOWN: &str = "unknown";
+/// What the record says of how rejections are counted by class.
+pub const CLASS_COUNTING: &str = "rejections_by_class counts each rejection's first class \
+    (its class); also_by_class counts the further classes a rejection named (its also)";
 /// The default judge a rule keeps when it picks none: the model the config guide's first
 /// example names today.
 pub const DEFAULT_JUDGE: &str = "claude-haiku-5-5";
@@ -77,7 +99,7 @@ pub const ACCURACY_GIVEN: f64 = 0.02;
 const TOLERANCE: f64 = 1e-9;
 
 /// The two causes of a run's end that are submission failures (plan e1, "Words").
-pub const FAILURE_CAUSES: [&str; 2] = ["invalid_submission", "no_submission_after_repair"];
+pub const FAILURE_CAUSES: [Cause; 2] = [Cause::InvalidSubmission, Cause::NoSubmissionAfterRepair];
 
 /// How the judges are compared.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,46 +146,86 @@ impl Rule {
     }
 }
 
-/// What task T1 kept of one decision's submissions: each rejection's class in order, the
-/// cause the run ended by, and each recovery's kind (submission v2, task F1).
+/// What task T1 kept of one decision's submissions: each rejection's first class in order
+/// and the further classes it named, the cause the run ended by, the submission format the
+/// run resolved, and each recovery's kind (submission v2, task F1). A name the build does not
+/// know is kept as [`UNKNOWN`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Submissions {
     pub classes: Vec<String>,
+    pub also: Vec<String>,
     pub cause: String,
+    /// `v1` or `v2`; `v1` under `rejections/1`, which knew no other.
+    pub submission: String,
     pub recoveries: Vec<String>,
 }
 
+/// A name read from the store as it is counted: itself when it is one of `known`, else
+/// [`UNKNOWN`].
+fn known_or_unknown(name: &str, known: &[&str]) -> String {
+    if known.contains(&name) {
+        name.to_owned()
+    } else {
+        UNKNOWN.to_owned()
+    }
+}
+
 impl Submissions {
-    /// The diagnostic as T1 writes it: `{"rejections": [{"turn": n, "class": "..."}, ...],
-    /// "cause": "..."}`, with `recoveries` of `{"kind": "..."}` (or each a word) where a run
-    /// recovered a near-miss. `None` when it is not of that form: such a run is unknown.
+    /// The diagnostic as T1 writes it, `{"contract": "rejections/1", "rejections": [{"turn":
+    /// n, "class": "..."}, ...], "cause": "..."}`, or as F1 writes it, `rejections/2` with
+    /// `"submission"`, `"also": [...]` on a rejection, and `"recoveries": [{"turn": n, "kind":
+    /// "..."}]`. `None` when it is of another contract or not of its form: such a run is
+    /// unknown.
     pub fn parse(bytes: &[u8]) -> Option<Submissions> {
         let json: serde_json::Value = serde_json::from_slice(bytes).ok()?;
-        let word = |value: &serde_json::Value, key: &str| -> Option<String> {
-            value
-                .as_str()
-                .or_else(|| value.get(key).and_then(serde_json::Value::as_str))
-                .map(str::to_owned)
-        };
-        let classes = (json.get("rejections")?.as_array()?.iter())
-            .map(|one| word(one, "class"))
-            .collect::<Option<Vec<String>>>()?;
+        let contract = json.get("contract")?.as_str()?;
+        if !CONTRACTS.contains(&contract) {
+            return None;
+        }
+        let classes_known: Vec<&str> = Class::ALL.iter().map(|c| c.name()).collect();
+        let causes_known: Vec<&str> = Cause::ALL.iter().map(|c| c.name()).collect();
+        let mut classes = Vec::new();
+        let mut also = Vec::new();
+        for one in json.get("rejections")?.as_array()? {
+            classes.push(known_or_unknown(
+                one.get("class")?.as_str()?,
+                &classes_known,
+            ));
+            match one.get("also") {
+                None | Some(serde_json::Value::Null) => {}
+                Some(list) => {
+                    for more in list.as_array()? {
+                        also.push(known_or_unknown(more.as_str()?, &classes_known));
+                    }
+                }
+            }
+        }
         let recoveries = match json.get("recoveries") {
             None | Some(serde_json::Value::Null) => Vec::new(),
             Some(list) => (list.as_array()?.iter())
-                .map(|one| word(one, "kind"))
+                .map(|one| {
+                    let kind = one.get("kind").and_then(serde_json::Value::as_str)?;
+                    Some(known_or_unknown(kind, &RECOVERY_KINDS))
+                })
                 .collect::<Option<Vec<String>>>()?,
+        };
+        let submission = match (contract, json.get("submission")) {
+            ("rejections/1", None) => "v1".to_owned(),
+            (_, Some(word)) => known_or_unknown(word.as_str()?, &["v1", "v2"]),
+            _ => return None,
         };
         Some(Submissions {
             classes,
-            cause: json.get("cause")?.as_str()?.to_owned(),
+            also,
+            cause: known_or_unknown(json.get("cause")?.as_str()?, &causes_known),
+            submission,
             recoveries,
         })
     }
 
     /// Whether the decision ended because of a rejection.
     pub fn failed(&self) -> bool {
-        FAILURE_CAUSES.contains(&self.cause.as_str())
+        FAILURE_CAUSES.iter().any(|c| c.name() == self.cause)
     }
 
     /// Whether its first submission was rejected, whether or not the repair saved it: the
@@ -171,6 +233,12 @@ impl Submissions {
     pub fn first_rejected(&self) -> bool {
         !self.classes.is_empty()
     }
+}
+
+/// The submission format an arm names (`C;submission=v2`), when it names one.
+pub fn format_of(arm: &str) -> Option<&str> {
+    arm.split(';')
+        .find_map(|setting| setting.strip_prefix("submission="))
 }
 
 /// One ended decision: the last attempt of a cell, completed or failed (a failed one is an
@@ -256,8 +324,12 @@ impl From<&whizbang_eval::bootstrap::Interval> for Estimate {
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct SubmissionMeasures {
     pub decisions: usize,
-    /// Decisions whose run kept no rejections diagnostic: never counted as clean.
+    /// Decisions whose run kept no rejections diagnostic of a contract this build reads:
+    /// never counted as clean.
     pub unknown: usize,
+    /// Decisions whose diagnostic says another submission format than their arm names:
+    /// counted here, and not scored.
+    pub mismatched: usize,
     pub failures: usize,
     /// Failures over the decisions whose diagnostic was kept.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -265,7 +337,10 @@ pub struct SubmissionMeasures {
     pub first_rejections: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub first_rejection_rate: Option<f64>,
+    /// Each rejection by its first class ([`CLASS_COUNTING`]).
     pub rejections_by_class: BTreeMap<String, usize>,
+    /// The further classes rejections named.
+    pub also_by_class: BTreeMap<String, usize>,
     pub causes: BTreeMap<String, usize>,
     pub recoveries_by_kind: BTreeMap<String, usize>,
 }
@@ -279,17 +354,24 @@ impl SubmissionMeasures {
                 m.unknown += 1;
                 continue;
             };
+            if format_of(&d.arm).is_some_and(|named| named != s.submission) {
+                m.mismatched += 1;
+                continue;
+            }
             m.failures += usize::from(s.failed());
             m.first_rejections += usize::from(s.first_rejected());
             for class in &s.classes {
                 *m.rejections_by_class.entry(class.clone()).or_default() += 1;
+            }
+            for class in &s.also {
+                *m.also_by_class.entry(class.clone()).or_default() += 1;
             }
             *m.causes.entry(s.cause.clone()).or_default() += 1;
             for kind in &s.recoveries {
                 *m.recoveries_by_kind.entry(kind.clone()).or_default() += 1;
             }
         }
-        let known = m.decisions - m.unknown;
+        let known = m.decisions - m.unknown - m.mismatched;
         m.failure_rate = (known > 0).then(|| m.failures as f64 / known as f64);
         m.first_rejection_rate = (known > 0).then(|| m.first_rejections as f64 / known as f64);
         m
@@ -316,6 +398,9 @@ pub struct Measures {
     pub balanced_accuracy: Option<Estimate>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub decided_correctly: Option<Estimate>,
+    /// The resamples balanced accuracy or decided correctly could not be worked out on (no
+    /// expected fail or no expected pass drawn): with any, that interval is not given.
+    pub unworked_resamples: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub catch_rate: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -440,6 +525,8 @@ pub struct FormatDecision {
     pub control_first_rejections: usize,
     pub treatment_first_rejections: usize,
     pub unknown: usize,
+    /// Decisions whose diagnostic names another format than their arm.
+    pub mismatched: usize,
     /// (a): `failures`, `first_rejections` or `too_few`; and whether it held.
     pub fewer_failures_by: String,
     pub fewer_failures: bool,
@@ -465,6 +552,8 @@ pub struct Scored {
     pub incomplete: Option<String>,
     pub seed: u64,
     pub resamples: usize,
+    /// How rejections are counted by class ([`CLASS_COUNTING`]).
+    pub class_counting: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub picks: Vec<Pick>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -552,40 +641,55 @@ fn scopes(decisions: &[Decision]) -> Vec<(String, Vec<&Decision>)> {
 
 /// The families of a set of decisions, each named by its set and its id, in order, each
 /// holding the indices of its decisions.
-fn families_of(rows: &[&Decision]) -> Vec<Vec<usize>> {
-    let mut by: BTreeMap<(String, String), Vec<usize>> = BTreeMap::new();
-    for (at, d) in rows.iter().enumerate() {
-        by.entry((d.set.clone(), d.family.clone()))
-            .or_default()
-            .push(at);
+fn families_of(rows: &[&Decision]) -> Vec<Vec<Row>> {
+    let mut by: BTreeMap<(&str, &str), Vec<Row>> = BTreeMap::new();
+    for d in rows {
+        (by.entry((d.set.as_str(), d.family.as_str())).or_default())
+            .push(bare(d.expected, d.computed));
     }
     by.into_values().collect()
 }
 
+/// A row of a label and a verdict alone: what a count needs, with no string to copy.
+fn bare(expected: Expected, computed: Computed) -> Row {
+    Row {
+        set: String::new(),
+        item: String::new(),
+        family: String::new(),
+        repetition: 1,
+        expected,
+        computed,
+        cost_usd: 0.0,
+        wall_ms: 0,
+    }
+}
+
 /// The 95% interval of a statistic of the decisions, resampled by family: the statistic on
-/// the whole, and the percentiles of it over the resamples (a resample it cannot be worked
-/// out on counts as the whole's value is not known, so as 0, as `bootstrap::interval` does).
+/// the whole, and the percentiles of it over the resamples. Not worked out (`Err`, with the
+/// resamples it could not be worked out on) when the statistic cannot be worked out on the
+/// whole or on any resample: a resample is never filled in with a value.
 fn estimate(
     rows: &[&Decision],
     how: &Resampling,
     statistic: fn(&Counts) -> Option<f64>,
-) -> Option<Estimate> {
-    let whole: Vec<Row> = rows.iter().map(|d| row_of(d)).collect();
-    let point = statistic(&Counts::of(&whole))?;
+) -> Result<Estimate, usize> {
     let families = families_of(rows);
-    let draws = resample_indices(how.seed, families.len(), how.resamples).ok()?;
-    let mut values: Vec<f64> = draws
-        .iter()
-        .map(|picks| {
-            let drawn: Vec<Row> = (picks.iter())
-                .flat_map(|&f| families[f].iter().map(|&at| row_of(rows[at])))
-                .collect();
-            statistic(&Counts::of(&drawn)).unwrap_or(0.0)
-        })
-        .collect();
+    let point = statistic(&Counts::of(families.iter().flatten())).ok_or(0usize)?;
+    let draws = resample_indices(how.seed, families.len(), how.resamples).map_err(|_| 0usize)?;
+    let mut values = Vec::with_capacity(draws.len());
+    let mut unworked = 0usize;
+    for picks in &draws {
+        match statistic(&Counts::of(picks.iter().flat_map(|&f| &families[f]))) {
+            Some(value) => values.push(value),
+            None => unworked += 1,
+        }
+    }
+    if unworked > 0 {
+        return Err(unworked);
+    }
     values.sort_by(f64::total_cmp);
     let low = how.alpha / 2.0 / how.hypotheses as f64;
-    Some(Estimate {
+    Ok(Estimate {
         point,
         lower: quantile_type7(&values, low),
         upper: quantile_type7(&values, 1.0 - low),
@@ -612,7 +716,7 @@ fn median(mut v: Vec<u64>) -> u64 {
 /// The measures of one judge under one arm over these decisions (every repetition).
 fn measures(judge: &JudgeKey, arm: &str, all: &[&Decision], how: &Resampling) -> Measures {
     let first: Vec<&Decision> = all.iter().copied().filter(|d| d.repetition == 1).collect();
-    let rows: Vec<Row> = first.iter().map(|d| row_of(d)).collect();
+    let rows: Vec<Row> = first.iter().map(|d| bare(d.expected, d.computed)).collect();
     let c = Counts::of(&rows);
     let by_item: BTreeMap<(&str, &str), Computed> = (first.iter())
         .map(|d| ((d.set.as_str(), d.item.as_str()), d.computed))
@@ -625,6 +729,9 @@ fn measures(judge: &JudgeKey, arm: &str, all: &[&Decision], how: &Resampling) ->
         }
     }
     let cost: f64 = first.iter().map(|d| d.cost_usd).sum();
+    let balanced = estimate(&first, how, Counts::balanced_accuracy);
+    let decided = estimate(&first, how, Counts::decided_correctly);
+    let unworked = |e: &Result<Estimate, usize>| *e.as_ref().err().unwrap_or(&0);
     Measures {
         backend: judge.0.clone(),
         model: judge.1.clone(),
@@ -638,8 +745,9 @@ fn measures(judge: &JudgeKey, arm: &str, all: &[&Decision], how: &Resampling) ->
         false_accepts: c.false_accepts,
         unsure: c.unsure,
         errors: c.errors,
-        balanced_accuracy: estimate(&first, how, Counts::balanced_accuracy),
-        decided_correctly: estimate(&first, how, Counts::decided_correctly),
+        unworked_resamples: unworked(&balanced).max(unworked(&decided)),
+        balanced_accuracy: balanced.ok(),
+        decided_correctly: decided.ok(),
         catch_rate: rate(c.detected, c.expected_fail),
         false_reject_rate: c.false_reject_rate(),
         false_accept_rate: c.false_accept_rate(),
@@ -723,7 +831,14 @@ pub fn judge_pick(
         );
     }
     let counts: Vec<Counts> = (judges.iter())
-        .map(|(_, list)| Counts::of(&list.iter().map(|d| row_of(d)).collect::<Vec<_>>()))
+        .map(|(_, list)| {
+            Counts::of(
+                &list
+                    .iter()
+                    .map(|d| bare(d.expected, d.computed))
+                    .collect::<Vec<_>>(),
+            )
+        })
         .collect();
     let decided: Vec<Option<f64>> = counts.iter().map(Counts::decided_correctly).collect();
     let balanced: Vec<Option<f64>> = counts.iter().map(Counts::balanced_accuracy).collect();
@@ -823,7 +938,8 @@ pub fn judge_pick(
 /// For each eligible judge, its balanced accuracy minus the highest among the eligible
 /// judges: on the whole sample, and the lower bound of its 95% interval resampled by family,
 /// with the highest taken again inside each resample, so that choosing the best is inside the
-/// interval. `None` when a resample cannot be drawn.
+/// interval. `None` when a resample cannot be drawn, or when the statistic cannot be worked
+/// out on the whole or on any resample.
 /// An item's label, and each chosen judge's verdict of it (none where it has no decision).
 type Verdicts = (Expected, Vec<Option<Computed>>);
 
@@ -855,41 +971,35 @@ fn reselected(
             .push((expected, verdicts));
     }
     let families: Vec<Vec<Verdicts>> = families.into_values().collect();
-    let accuracies = |drawn: &[usize]| -> Vec<Option<f64>> {
-        (0..chosen.len())
-            .map(|at| {
-                let rows: Vec<Row> = (drawn.iter())
-                    .flat_map(|&f| &families[f])
-                    .filter_map(|(expected, verdicts)| {
-                        verdicts[at].map(|computed| Row {
-                            set: String::new(),
-                            item: String::new(),
-                            family: String::new(),
-                            repetition: 1,
-                            expected: *expected,
-                            computed,
-                            cost_usd: 0.0,
-                            wall_ms: 0,
+    // Each chosen judge's rows of each family, made once: a resample only points at them.
+    let rows: Vec<Vec<Vec<Row>>> = (0..chosen.len())
+        .map(|at| {
+            (families.iter())
+                .map(|family| {
+                    (family.iter())
+                        .filter_map(|(expected, verdicts)| {
+                            verdicts[at].map(|computed| bare(*expected, computed))
                         })
-                    })
-                    .collect();
-                Counts::of(&rows).balanced_accuracy()
-            })
-            .collect()
-    };
-    let differences = |values: &[Option<f64>]| -> Option<Vec<f64>> {
-        let values: Vec<f64> = values.iter().copied().collect::<Option<Vec<f64>>>()?;
+                        .collect()
+                })
+                .collect()
+        })
+        .collect();
+    let differences = |drawn: &[usize]| -> Option<Vec<f64>> {
+        let values: Vec<f64> = (rows.iter())
+            .map(|mine| Counts::of(drawn.iter().flat_map(|&f| &mine[f])).balanced_accuracy())
+            .collect::<Option<Vec<f64>>>()?;
         let best = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         Some(values.iter().map(|v| v - best).collect())
     };
     let whole: Vec<usize> = (0..families.len()).collect();
-    let points = differences(&accuracies(&whole))?;
+    let points = differences(&whole)?;
     let draws = resample_indices(how.seed, families.len(), how.resamples).ok()?;
     let mut by_judge: Vec<Vec<f64>> = vec![Vec::with_capacity(draws.len()); chosen.len()];
     for picks in &draws {
-        // A resample the statistic cannot be worked out on counts as no difference, as
-        // `bootstrap::interval` counts it.
-        let found = differences(&accuracies(picks)).unwrap_or_else(|| vec![0.0; chosen.len()]);
+        // A resample the statistic cannot be worked out on is never filled in: the
+        // interval is then not worked out, and the rule makes no pick.
+        let found = differences(picks)?;
         for (at, value) in found.into_iter().enumerate() {
             by_judge[at].push(value);
         }
@@ -927,6 +1037,7 @@ pub fn submission_rule(
         control_first_rejections: sc.first_rejections,
         treatment_first_rejections: st.first_rejections,
         unknown: sc.unknown + st.unknown,
+        mismatched: sc.mismatched + st.mismatched,
         fewer_failures_by: "too_few".to_owned(),
         fewer_failures: false,
         judges: Vec::new(),
@@ -945,10 +1056,11 @@ pub fn submission_rule(
         );
         return out;
     }
-    if out.unknown > 0 {
+    if out.unknown > 0 || out.mismatched > 0 {
         let why = format!(
-            "{} decisions kept no rejections diagnostic; the control is kept",
-            out.unknown
+            "{} decisions kept no rejections diagnostic and {} name another format than their \
+             arm; the control is kept",
+            out.unknown, out.mismatched
         );
         settle(&mut out, "no_decision", "d", why);
         return out;
@@ -985,7 +1097,7 @@ pub fn submission_rule(
                 &(list
                     .iter()
                     .filter(|d| d.repetition == 1)
-                    .map(row_of)
+                    .map(|d| bare(d.expected, d.computed))
                     .collect::<Vec<_>>()),
             )
         };
@@ -1095,6 +1207,7 @@ pub fn score(population: &Population, asked: &Asked) -> Result<Scored, String> {
         incomplete: incomplete.clone(),
         seed: how.seed,
         resamples: how.resamples,
+        class_counting: CLASS_COUNTING.to_owned(),
         picks: Vec::new(),
         format: None,
         scopes: Vec::new(),
@@ -1110,7 +1223,22 @@ pub fn score(population: &Population, asked: &Asked) -> Result<Scored, String> {
                 scope.measures.push(measures(&judge, arm, &list, how));
             }
         }
+        // Comparisons are of complete matrices only: on part of them, `paired` would compare
+        // whatever both sides happened to have.
         match asked.mode {
+            _ if incomplete.is_some() => {
+                if asked.rule == Some(Rule::JudgePick)
+                    && (name == "all" || name == "source-fidelity")
+                {
+                    out.picks.push(judge_pick(
+                        &name,
+                        &rows,
+                        &arms[0],
+                        incomplete.as_deref(),
+                        how,
+                    ));
+                }
+            }
             Mode::Judges => {
                 let arm = &arms[0];
                 let judged = by_judge(&rows, arm);

@@ -3843,7 +3843,16 @@ fn eval_judges_scores_two_scripted_judges() {
     for m in measures {
         assert_eq!(m["decisions"].as_integer(), Some(2));
         assert_eq!(m["balanced_accuracy"]["point"].as_float(), Some(1.0));
-        assert_eq!(m["submissions"]["decisions"].as_integer(), Some(2));
+        // Each run kept T1's diagnostic, and it was read: none unknown, both concluded.
+        let submissions = &m["submissions"];
+        assert_eq!(submissions["decisions"].as_integer(), Some(2));
+        assert_eq!(submissions["unknown"].as_integer(), Some(0), "{m:?}");
+        assert_eq!(
+            submissions["causes"]["concluded"].as_integer(),
+            Some(2),
+            "{m:?}"
+        );
+        assert_eq!(submissions["failure_rate"].as_float(), Some(0.0));
     }
     assert_eq!(all["comparisons"].as_array().unwrap().len(), 1);
     let picks = record["picks"].as_array().unwrap();

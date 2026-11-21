@@ -49,6 +49,8 @@ fn clean() -> Option<Submissions> {
         classes: Vec::new(),
         cause: "concluded".to_owned(),
         recoveries: Vec::new(),
+        also: Vec::new(),
+        submission: "v1".to_owned(),
     })
 }
 
@@ -108,7 +110,14 @@ fn with(mut decisions: Vec<Decision>, items: &[&str], computed: Computed) -> Vec
     decisions
 }
 
-fn complete(decisions: Vec<Decision>) -> Population {
+/// A population of every cell ended and labelled, each kept diagnostic saying the format
+/// its arm names, as a run of that arm writes it.
+fn complete(mut decisions: Vec<Decision>) -> Population {
+    for d in &mut decisions {
+        if let (Some(s), Some(format)) = (&mut d.submissions, judges::format_of(&d.arm)) {
+            s.submission = format.to_owned();
+        }
+    }
     Population {
         cells: decisions.len(),
         decisions,
@@ -239,6 +248,12 @@ fn an_incomplete_matrix_is_no_pick() {
             scored.incomplete.as_deref().unwrap().contains(said),
             "{said}"
         );
+        assert!(
+            scored
+                .scopes
+                .iter()
+                .all(|scope| scope.comparisons.is_empty())
+        );
         for pick in &scored.picks {
             assert_eq!(pick.outcome, "no_pick");
             assert_eq!(pick.model, DEFAULT_JUDGE);
@@ -279,6 +294,8 @@ fn formats(judges: &[&str], families: usize, failed: (usize, usize)) -> Vec<Deci
                             classes: vec!["unknown_item".to_owned(), "missing_item".to_owned()],
                             cause: "invalid_submission".to_owned(),
                             recoveries: Vec::new(),
+                            also: Vec::new(),
+                            submission: "v1".to_owned(),
                         });
                     }
                     out.push(d);
@@ -368,22 +385,50 @@ fn selection_uses_repetition_one_only() {
 
 #[test]
 fn a_run_without_rejections_is_unknown_not_clean() {
-    // The diagnostic as T1 writes it, and what is not of its form.
-    let read = Submissions::parse(
-        br#"{"rejections": [{"turn": 1, "class": "unknown_item"}], "cause": "concluded"}"#,
+    // The diagnostic exactly as T1 writes it (`check`'s `Tally::document`).
+    let t1 = Submissions::parse(
+        br#"{"contract": "rejections/1", "rejections": [{"turn": 1, "class": "unknown_item"},
+            {"turn": 2, "class": "missing_item"}], "cause": "invalid_submission"}"#,
     )
     .unwrap();
-    assert_eq!(read.classes, ["unknown_item"]);
-    assert!(read.first_rejected() && !read.failed());
-    let failed = Submissions::parse(
-        br#"{"rejections": [{"turn": 1, "class": "evidence"}, {"turn": 2, "class": "evidence"}],
-            "cause": "invalid_submission", "recoveries": [{"kind": "enum_case"}]}"#,
+    assert_eq!(t1.classes, ["unknown_item", "missing_item"]);
+    assert_eq!((t1.submission.as_str(), t1.also.len()), ("v1", 0));
+    assert!(t1.first_rejected() && t1.failed());
+    // As F1 writes it: the format, the further classes of a rejection, the recoveries.
+    let f1 = Submissions::parse(
+        br#"{"contract": "rejections/2", "submission": "v2", "cause": "concluded",
+            "rejections": [{"turn": 1, "class": "location", "also": ["bad_field"]}],
+            "recoveries": [{"turn": 1, "kind": "wrapper"}, {"turn": 1, "kind": "enum_word"}]}"#,
     )
     .unwrap();
-    assert!(failed.failed());
-    assert_eq!(failed.recoveries, ["enum_case"]);
-    assert_eq!(Submissions::parse(br#"{"cause": "concluded"}"#), None);
-    assert_eq!(Submissions::parse(b"not json"), None);
+    assert_eq!(f1.classes, ["location"]);
+    assert_eq!(f1.also, ["bad_field"]);
+    assert_eq!(f1.submission, "v2");
+    assert_eq!(f1.recoveries, ["wrapper", "enum_word"]);
+    assert!(!f1.failed());
+    // A name the build does not know is counted as unknown, never written as read.
+    let odd = Submissions::parse(
+        br#"{"contract": "rejections/2", "submission": "v9", "cause": "<b>odd</b>",
+            "rejections": [{"turn": 1, "class": "made-up", "also": ["also-made-up"]}],
+            "recoveries": [{"turn": 1, "kind": "guessed"}]}"#,
+    )
+    .unwrap();
+    assert_eq!(odd.classes, ["unknown"]);
+    assert_eq!(odd.also, ["unknown"]);
+    assert_eq!(odd.cause, "unknown");
+    assert_eq!(odd.submission, "unknown");
+    assert_eq!(odd.recoveries, ["unknown"]);
+    // Another contract, none, a format missing under rejections/2, or not of the form:
+    // unknown.
+    for refused in [
+        br#"{"contract": "rejections/3", "rejections": [], "cause": "concluded"}"#.as_slice(),
+        br#"{"rejections": [], "cause": "concluded"}"#,
+        br#"{"contract": "rejections/2", "rejections": [], "cause": "concluded"}"#,
+        br#"{"contract": "rejections/1", "cause": "concluded"}"#,
+        b"not json",
+    ] {
+        assert_eq!(Submissions::parse(refused), None);
+    }
 
     // Half the decisions kept no diagnostic: counted as unknown, and the rate is over the
     // others alone.
@@ -395,6 +440,8 @@ fn a_run_without_rejections_is_unknown_not_clean() {
         classes: vec!["bad_field".to_owned()],
         cause: "invalid_submission".to_owned(),
         recoveries: Vec::new(),
+        also: Vec::new(),
+        submission: "v1".to_owned(),
     });
     let scored = judged(&complete(all));
     let m = &scored.scopes[0].measures[0].submissions;
@@ -517,6 +564,8 @@ mod submission_rule {
                     classes: vec!["location".to_owned()],
                     cause: "concluded".to_owned(),
                     recoveries: Vec::new(),
+                    also: Vec::new(),
+                    submission: "v1".to_owned(),
                 });
             }
         };
@@ -549,6 +598,8 @@ mod submission_rule {
                 classes: vec!["not_alone".to_owned(), "no_submission".to_owned()],
                 cause: "no_submission_after_repair".to_owned(),
                 recoveries: Vec::new(),
+                also: Vec::new(),
+                submission: "v1".to_owned(),
             });
         }
         let format = armed(&complete(decisions)).format.unwrap();
@@ -624,7 +675,7 @@ fn blinded(tiny: &Tiny, labels: &Path) {
 }
 
 fn reading<'a>(
-    world: &'a World,
+    store: &'a Path,
     tiny: &'a Tiny,
     matrices: &'a [std::path::PathBuf],
     labels: &'a Path,
@@ -632,7 +683,7 @@ fn reading<'a>(
 ) -> Reading<'a> {
     Reading {
         matrices,
-        store: &world.root,
+        store,
         sets_root: &tiny.root,
         labels_root: labels,
         out,
@@ -645,11 +696,27 @@ fn reading<'a>(
 
 #[test]
 fn a_blind_set_is_read_through_gating_labelled() {
-    let world = World::new("judges-blind");
-    let tiny = tiny(&world.beside("set"), &["a", "b"]);
+    use crate::anthropic::submission;
+    use crate::matrix::{PLENTY, never, ran, run_matrix, world_with};
+    // One item, judged once under arm C as a cell of a matrix that is then scored with the
+    // set made blind: its label reaches the scoring only from the owner's folder.
+    let (judged, tiny) = world_with("judges-blind", &["a"]);
+    let world = &judged.world;
+    let text = format!(
+        "[matrix]\nname = \"tiny-blind\"\nsets = [\"{SET}\"]\narms = [\"C\"]\n\
+         repetitions = 1\nconcurrency = 1\n\
+         [[matrix.judges]]\nbackend = \"default\"\nmodel = \"claude-haiku-5-5\"\n"
+    );
+    let matrix = whizbang_eval::matrix::Matrix::parse(&text).unwrap();
+    let (report, _) = run_matrix(&judged, vec![submission("held", "Kept.")], &|e| {
+        ran(e, &judged, &tiny, &matrix, PLENTY, &never)
+    });
+    assert_eq!(report.unwrap().completed, 1);
     let labels = world.beside("owner-labels");
     blinded(&tiny, &labels);
-    let matrices = [matrix_file(&world.beside("matrices"))];
+    std::fs::create_dir_all(world.beside("matrices")).unwrap();
+    let matrices = [world.beside("matrices").join("blind.toml")];
+    std::fs::write(&matrices[0], &text).unwrap();
     let out = world.beside("judges.toml");
     // Labels at or under the sets' folder are refused, as `eval run --gate` refuses them.
     let inside = tiny.root.join("private");
@@ -659,7 +726,7 @@ fn a_blind_set_is_read_through_gating_labelled() {
         inside.join(SET).join("labels.toml"),
     )
     .unwrap();
-    let refused = judges::run(&reading(&world, &tiny, &matrices, &inside, &out)).unwrap_err();
+    let refused = judges::run(&reading(&world.root, &tiny, &matrices, &inside, &out)).unwrap_err();
     assert!(
         refused.contains("never read from under the sets' folder"),
         "{refused}"
@@ -674,18 +741,25 @@ fn a_blind_set_is_read_through_gating_labelled() {
         text.replacen("pass", "fail", 1),
     )
     .unwrap();
-    let refused = judges::run(&reading(&world, &tiny, &matrices, &wrong, &out)).unwrap_err();
+    let refused = judges::run(&reading(&world.root, &tiny, &matrices, &wrong, &out)).unwrap_err();
     assert!(
         refused.contains("do not hash to the set's labels_sha256"),
         "{refused}"
     );
     assert!(!out.exists());
-    // The owner's labels are read, held to the seal: nothing was run, so no pick.
-    let written = judges::run(&reading(&world, &tiny, &matrices, &labels, &out)).unwrap();
+    // The owner's labels are read, held to the seal, and reach the one ended cell: an
+    // expected pass, passed, and scored under the blind split. One item has no expected
+    // fail, so no balanced accuracy and no pick.
+    let written = judges::run(&reading(&world.root, &tiny, &matrices, &labels, &out)).unwrap();
     let digest = whizbang_core::identity::Digest::of_bytes(text.as_bytes()).hex();
     assert_eq!(written.sets[0].labels_sha256, digest);
     assert_eq!(written.sets[0].split, "blind");
-    assert_eq!((written.scored.cells, written.scored.open), (4, 4));
+    let s = &written.scored;
+    assert_eq!((s.cells, s.open, s.unlabelled, s.decisions), (1, 0, 0, 1));
+    let blind = s.scopes.iter().find(|scope| scope.name == "blind").unwrap();
+    let m = &blind.measures[0];
+    assert_eq!((m.decisions, m.expected_pass, m.passed), (1, 1, 1));
+    assert_eq!(m.decided_correctly.unwrap().point, 1.0);
     for pick in &written.scored.picks {
         assert_eq!(
             (pick.outcome.as_str(), pick.model.as_str()),
@@ -710,8 +784,108 @@ fn out_under_the_sets_or_labels_is_refused() {
         labels.join("judges.toml"),
         world.beside("no-such-folder/judges.toml"),
     ] {
-        let refused = judges::run(&reading(&world, &tiny, &matrices, &labels, &out)).unwrap_err();
+        let refused =
+            judges::run(&reading(&world.root, &tiny, &matrices, &labels, &out)).unwrap_err();
         assert!(refused.contains("not written under"), "{refused}");
         assert!(!out.exists());
     }
+}
+
+#[test]
+fn rejections_count_first_classes_apart_from_also_and_a_mismatched_format_is_not_scored() {
+    let mut all = perfect("solo", 5, 0.01);
+    for d in &mut all {
+        d.arm = "C;submission=v2".to_owned();
+        if let Some(s) = &mut d.submissions {
+            s.submission = "v2".to_owned();
+        }
+    }
+    let rejected = Submissions {
+        classes: vec!["location".to_owned()],
+        also: vec!["bad_field".to_owned(), "evidence".to_owned()],
+        cause: "concluded".to_owned(),
+        submission: "v2".to_owned(),
+        recoveries: vec!["wrapper".to_owned()],
+    };
+    all[0].submissions = Some(rejected.clone());
+    // A diagnostic of v1 under an arm of v2: counted, and not scored.
+    all[1].submissions = Some(Submissions {
+        submission: "v1".to_owned(),
+        ..rejected
+    });
+    let population = Population {
+        cells: all.len(),
+        decisions: all,
+        open: 0,
+        unlabelled: 0,
+    };
+    let asked = Asked {
+        mode: Mode::Judges,
+        arm: Some("C;submission=v2".to_owned()),
+        treatment: None,
+        rule: None,
+        resampling: how(),
+    };
+    let scored = judges::score(&population, &asked).unwrap();
+    assert_eq!(scored.class_counting, judges::CLASS_COUNTING);
+    let m = &scored.scopes[0].measures[0].submissions;
+    assert_eq!((m.decisions, m.unknown, m.mismatched), (10, 0, 1));
+    assert_eq!(m.rejections_by_class.get("location"), Some(&1));
+    assert_eq!(m.also_by_class.get("bad_field"), Some(&1));
+    assert_eq!(m.also_by_class.get("evidence"), Some(&1));
+    assert_eq!(m.recoveries_by_kind.get("wrapper"), Some(&1));
+    assert_eq!(m.first_rejection_rate, Some(1.0 / 9.0));
+    // Under the format rule, a mismatch makes no decision.
+    let mut population = complete(formats(&["haiku"], 20, (10, 0)));
+    let first_v1 = (population.decisions.iter())
+        .position(|d| d.arm == "C;submission=v1")
+        .unwrap();
+    population.decisions[first_v1]
+        .submissions
+        .as_mut()
+        .unwrap()
+        .submission = "v2".to_owned();
+    let format = armed(&population).format.unwrap();
+    assert_eq!(
+        (
+            format.outcome.as_str(),
+            format.settled_by.as_str(),
+            format.mismatched
+        ),
+        ("no_decision", "d", 1)
+    );
+}
+
+#[test]
+fn a_resample_that_cannot_be_worked_out_gives_no_interval_and_no_pick() {
+    // Eleven families, one of them holding the only expected fail: about a third of the
+    // resamples draw no expected fail, and balanced accuracy cannot be worked out on them.
+    let mut all = Vec::new();
+    for judge in ["x", "y"] {
+        all.push(decision(
+            judge,
+            "f0",
+            "fam0",
+            Expected::Fail,
+            Computed::Fail,
+        ));
+        for n in 0..10 {
+            let family = format!("fam{}", n + 1);
+            let item = format!("p{n}");
+            all.push(decision(
+                judge,
+                &item,
+                &family,
+                Expected::Pass,
+                Computed::Pass,
+            ));
+        }
+    }
+    let scored = judged(&complete(all));
+    let m = &scored.scopes[0].measures[0];
+    assert!(m.unworked_resamples > 0);
+    assert_eq!(m.balanced_accuracy, None);
+    let pick = pick_of(&scored, "all");
+    assert_eq!(pick.outcome, "no_pick");
+    assert!(pick.why.contains("cannot be worked out"), "{}", pick.why);
 }

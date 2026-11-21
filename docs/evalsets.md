@@ -123,20 +123,28 @@ in code. It reads the store only, and never runs or sends anything.
   --gate` reads them: a set that publishes its labels by its own file, with its corrections; a
   blind set's from `<labels>/<set id>/labels.toml`, held to the set's seal, the labels' folder
   at or below the sets' folder refused. `--out` under the sets' or the labels' folder is
-  refused. Each run's diagnostic `rejections.json` (task T1) gives its rejections by class and
-  the cause it ended by; a run without it counts as unknown, never as clean.
+  refused. Each run's diagnostic `rejections.json` gives its rejections by class and the cause
+  it ended by: contract `rejections/1` (task T1) or `rejections/2` (task F1, which adds the
+  format the run resolved, the further classes of a rejection and the recoveries). A run
+  without it, or with another contract, counts as unknown, never as clean. A class, cause or
+  kind the build does not know is counted as `unknown`. A diagnostic whose format is not the
+  one its arm names (`submission=`) is counted as mismatched and not scored.
 - **The sample.** Balanced accuracy, decided correctly (catches and passes over every item),
   catch rate, false rejects, false accepts, unsure, errors, cost per decision and median time
   use repetition 1 only. Repetition 2 gives self-agreement. The submission measures (failures,
-  first rejections, rejections by class, causes, recoveries by kind) use every decision of the
-  cells compared. A submission failure is a run that ended as `invalid_submission` or
+  first rejections, rejections by first class, the further classes apart, causes, recoveries
+  by kind) use every decision of the cells compared. A submission failure is a run that ended as `invalid_submission` or
   `no_submission_after_repair`. Settled spend is reported apart.
 - **Modes.** `judges`: every judge under the one `--arm`, each against the best (the highest
   balanced accuracy among the eligible judges); a judge without a decision of that arm on an
   item makes the matrices incomplete. `arms`: the matrices have two arms; `--arm` names the
   control (the first arm of the first matrix when not given), and within each judge the other
   arm is compared with it. Each difference is resampled by family (seed 20261120, 2,000
-  resamples, 95%).
+  resamples, 95%). Nothing is compared when the matrices are incomplete. An interval of a
+  judge's own balanced accuracy or decided correctly, or of its difference from the best, is
+  not worked out when the statistic cannot be worked out on any resample (no expected fail or
+  no expected pass drawn): such a resample is counted, never filled in, and under
+  `judge-pick/1` it makes no pick.
 - **Scopes.** All sets pooled; the `dev` sets pooled; the `blind` sets pooled (`blind-v3`
   alone today); each use case, so `source-fidelity` pools `scenes-v1`, its adversarial set and
   `blind-v3`.
