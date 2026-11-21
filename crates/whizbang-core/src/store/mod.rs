@@ -528,15 +528,6 @@ impl Files {
         }
     }
 
-    /// What is at the root, for a writer: the number of the current generation of the
-    /// store there, or, when a store may be made (`make`), 0 where one may be made:
-    /// where there is nothing (and, for [`Make::RootOnly`], a directory to hold the
-    /// root), or nothing but an unfinished creation. Anything else is refused. Reads
-    /// only.
-    ///
-    /// Without the writer lock this is a look at something another writer may be changing
-    /// between two of its reads, and what it reports can be wrong: damage that is not
-    /// there, a directory that is not a store and is one. Only under the lock is it final.
     /// Whose the store's folder is, asked before anything in it is read or locked (plan
     /// m5, task H1; as a models directory is, ADR 0017): a folder that is another
     /// user's ([`Error::NotOwn`]), or that its group or anyone may write
@@ -568,6 +559,15 @@ impl Files {
         }
     }
 
+    /// What is at the root, for a writer: the number of the current generation of the
+    /// store there, or, when a store may be made (`make`), 0 where one may be made:
+    /// where there is nothing (and, for [`Make::RootOnly`], a directory to hold the
+    /// root), or nothing but an unfinished creation. Anything else is refused. Reads
+    /// only.
+    ///
+    /// Without the writer lock this is a look at something another writer may be changing
+    /// between two of its reads, and what it reports can be wrong: damage that is not
+    /// there, a directory that is not a store and is one. Only under the lock is it final.
     fn place(&self, make: Make) -> Result<u64> {
         let root = &self.layout.root;
         if !self.exists(root)? {
@@ -1033,8 +1033,11 @@ impl Store {
         let lock = match files.place(make) {
             Ok(_) => {
                 // The lock file is in the root, so the root comes first. It is made only
-                // where there was nothing.
+                // where there was nothing. A folder another process made at the name
+                // since the look is asked whose it is again before anything is made in
+                // it.
                 create_durably(fs, root, make == Make::WithParents)?;
+                files.whose()?;
                 fs.hold_lock_file(&lock_path, true)
                     .map_err(Error::io("lock", &lock_path))?
             }
@@ -1058,6 +1061,7 @@ impl Store {
         // store as it is, and recovery goes by this and not by the look before the lock:
         // since that look another writer may have published. Until here nothing was
         // changed.
+        files.whose()?;
         let current = files.place(make)?;
         lock.record(holder().as_bytes())
             .map_err(Error::io("write", &lock_path))?;
