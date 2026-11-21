@@ -537,6 +537,37 @@ impl Files {
     /// Without the writer lock this is a look at something another writer may be changing
     /// between two of its reads, and what it reports can be wrong: damage that is not
     /// there, a directory that is not a store and is one. Only under the lock is it final.
+    /// Whose the store's folder is, asked before anything in it is read or locked (plan
+    /// m5, task H1; as a models directory is, ADR 0017): a folder that is another
+    /// user's ([`Error::NotOwn`]), or that its group or anyone may write
+    /// ([`Error::OthersMayWrite`]), is refused, and nothing in it is read, locked or
+    /// changed. A folder that is not there is not refused here: a writer makes it, for
+    /// its owner only, and a reader is told it is missing. A file system that cannot
+    /// say whose a folder is (the tests' in-memory ones; a system with no owners and
+    /// modes) is not asked. A look, when the store is opened: a mode or an owner changed
+    /// afterwards is not seen, and the folders above it are not looked at.
+    fn whose(&self) -> Result<()> {
+        let root = &self.layout.root;
+        match self.fs.who_may_write(root) {
+            Ok(writers) if !writers.owner_is_this_user => Err(Error::NotOwn { root: root.clone() }),
+            Ok(writers) if writers.group || writers.anyone => {
+                Err(Error::OthersMayWrite { root: root.clone() })
+            }
+            Ok(_) => Ok(()),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound
+                        | io::ErrorKind::NotADirectory
+                        | io::ErrorKind::Unsupported
+                ) =>
+            {
+                Ok(())
+            }
+            Err(error) => Err(Error::io("look at", root)(error)),
+        }
+    }
+
     fn place(&self, make: Make) -> Result<u64> {
         let root = &self.layout.root;
         if !self.exists(root)? {
@@ -683,6 +714,7 @@ impl Reader {
                 root: root.to_path_buf(),
             },
         };
+        files.whose()?;
         if !files.exists(root)? {
             return Err(Error::Missing {
                 root: root.to_path_buf(),
@@ -991,6 +1023,7 @@ impl Store {
                 root: root.to_path_buf(),
             },
         };
+        files.whose()?;
         let fs = files.fs.as_ref();
         let layout = &files.layout;
         let lock_path = layout.lock();
@@ -1623,6 +1656,20 @@ impl Publication<'_> {
         let files = self.files;
         let fs = files.fs.as_ref();
         let layout = &files.layout;
+
+        // The writer's lock is still the file at `LOCK`: one that was removed or
+        // replaced while it was held may have let another writer in beside this one,
+        // and nothing is published over what that one may publish (plan m5, task H1).
+        let lock_path = layout.lock();
+        match self.store.lock.still_at(&lock_path) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(Error::LockReplaced {
+                    root: layout.root.clone(),
+                });
+            }
+            Err(error) => return Err(Error::io("look at", &lock_path)(error)),
+        }
 
         // The payloads, whose content `put` synced: their names, then the directory that
         // holds the names. The directory is synced for content that was already there
