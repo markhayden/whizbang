@@ -52,17 +52,65 @@ impl ModelIdentity {
     }
 }
 
-/// Why nothing answers a capability.
+/// Why nothing answers a capability, as a kind a door tells apart without reading a
+/// sentence (plan m5, task K1, item 1): the sentence beside it says the same in words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MissingKind {
+    /// The backend names a credential that the env file does not set.
+    NoKey,
+    /// A local model the catalogue holds, and no installation of it is in use.
+    NotInstalled,
+    /// A local model whose installation was made from another revision.
+    OutOfDate,
+    /// A local model whose installation is not whole, or could not be read.
+    Damaged,
+    /// A local model the catalogue does not hold.
+    NotInCatalogue,
+    /// A local model whose entry does not name this platform.
+    NotForThisPlatform,
+    /// Any other reason: the sentence says which.
+    Other,
+}
+
+impl MissingKind {
+    /// The kind as one word: `no_key`, `not_installed`, `out_of_date`, `damaged`,
+    /// `not_in_catalogue`, `not_for_this_platform` or `other`.
+    pub fn word(self) -> &'static str {
+        match self {
+            MissingKind::NoKey => "no_key",
+            MissingKind::NotInstalled => "not_installed",
+            MissingKind::OutOfDate => "out_of_date",
+            MissingKind::Damaged => "damaged",
+            MissingKind::NotInCatalogue => "not_in_catalogue",
+            MissingKind::NotForThisPlatform => "not_for_this_platform",
+            MissingKind::Other => "other",
+        }
+    }
+}
+
+/// Why nothing answers a capability: the sentence, and its kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unavailable {
+    kind: MissingKind,
     why: String,
 }
 
 impl Unavailable {
+    /// A reason of the kind [`MissingKind::Other`].
     pub fn new(why: &str) -> Unavailable {
+        Unavailable::of(MissingKind::Other, why)
+    }
+
+    /// A reason of this kind.
+    pub fn of(kind: MissingKind, why: &str) -> Unavailable {
         Unavailable {
+            kind,
             why: why.to_owned(),
         }
+    }
+
+    pub fn kind(&self) -> MissingKind {
+        self.kind
     }
 
     pub fn why(&self) -> &str {
@@ -161,6 +209,9 @@ pub enum Stale {
     Plan,
     /// The call is no longer one that prepares: what refuses it now.
     Refused(Box<Refusal>),
+    /// The request was marked as one that runs only under a preparation
+    /// ([`super::Request::needing_preparation`]), and came with none.
+    Missing,
 }
 
 impl std::fmt::Display for Stale {
@@ -177,6 +228,9 @@ impl std::fmt::Display for Stale {
             Stale::Estimate => f.write_str("what it may cost at most changed since"),
             Stale::Plan => f.write_str("the plan of the call would be another now"),
             Stale::Refused(refusal) => write!(f, "the call is refused now: {refusal}"),
+            Stale::Missing => {
+                f.write_str("it came with none, and runs only under the preparation it was shown")
+            }
         }
     }
 }
@@ -207,6 +261,11 @@ pub struct Need {
     features: Vec<String>,
     choice: Option<String>,
     model: Option<ModelIdentity>,
+    /// How many requests one call may send for it, by its plan or else its
+    /// requirement.
+    requests: u64,
+    /// The bound of one request, as the backends state it; none when nothing answers.
+    each: Option<Estimate>,
 }
 
 impl Need {
@@ -228,24 +287,52 @@ impl Need {
     pub fn model(&self) -> Option<&ModelIdentity> {
         self.model.as_ref()
     }
+
+    /// How many requests one call may send for this capability: what its plan says,
+    /// or else its requirement (ADR 0010).
+    pub fn requests(&self) -> u64 {
+        self.requests
+    }
+
+    /// The most one of its requests may cost, as the backends state it; none when
+    /// nothing answers the capability (plan m5, task K1, item 2).
+    pub fn each(&self) -> Option<Estimate> {
+        self.each
+    }
+
+    /// The most all of its requests may cost: [`Need::each`] times
+    /// [`Need::requests`], the figure preparation adds into the estimate. A product
+    /// past the largest amount is the largest amount, which is no bound. None when
+    /// nothing answers the capability, which adds nothing to the estimate.
+    pub fn bound(&self) -> Option<Estimate> {
+        (self.each).map(|each| Estimate::of_micros(each.micros.saturating_mul(self.requests)))
+    }
 }
 
-/// One capability a call needs and nothing answers, with the reason.
+/// One capability a call needs and nothing answers, with the reason and its kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Missing {
     capability: Capability,
     features: Vec<String>,
+    kind: MissingKind,
     why: String,
 }
 
 impl Missing {
-    /// A capability that nothing answers, for this reason.
+    /// A capability that nothing answers, for this reason, of the kind
+    /// [`MissingKind::Other`].
     pub(super) fn of(capability: Capability, features: &[String], why: &str) -> Missing {
         Missing {
             capability,
             features: features.to_vec(),
+            kind: MissingKind::Other,
             why: why.to_owned(),
         }
+    }
+
+    /// Why nothing answers, as a kind; [`Missing::why`] says it in words.
+    pub fn kind(&self) -> MissingKind {
+        self.kind
     }
 
     pub fn capability(&self) -> Capability {
@@ -1448,17 +1535,20 @@ pub(super) fn prepare(
         if sends == 0 {
             continue;
         }
+        let mut each = None;
         let model = match model {
             Ok(model) => {
                 let one = one.unwrap_or_default();
                 let bound = one.micros.saturating_mul(sends);
                 estimate.micros = estimate.micros.saturating_add(bound);
+                each = Some(one);
                 Some(model)
             }
             Err(unavailable) => {
                 missing.push(Missing {
                     capability,
                     features: features.clone(),
+                    kind: unavailable.kind,
                     why: unavailable.why,
                 });
                 None
@@ -1469,6 +1559,8 @@ pub(super) fn prepare(
             features,
             choice,
             model,
+            requests: sends,
+            each,
         });
     }
     let readiness = if missing.is_empty() {

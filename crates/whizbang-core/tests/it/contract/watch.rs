@@ -522,3 +522,164 @@ fn a_second_caller_reads_the_status_of_a_run_while_its_end_is_being_published() 
     barriers.release("busy");
     assert_eq!(other.wait(&executing).unwrap().state(), &completed());
 }
+
+// --- typed events and polls (plan m5, task K1) -----------------------------------------------
+
+#[test]
+fn a_second_caller_sees_a_step_started_before_the_parent_ends() {
+    // A recipe says its steps as it goes, through its run's own sink, so another caller
+    // reads them while the run executes, and not only from its journal at its end.
+    use crate::recipe::{Fake, TWO_MARKS, mask_at, recipe};
+    use crate::runner::{World, call, engine as recipe_engine};
+    use whizbang_core::artifact::ArtifactType;
+    use whizbang_core::contract::{Event, InputPort, OutputPort};
+
+    let world = World::new("watch-steps");
+    let seed = world.put(crate::artifact::support::rect_mask(
+        crate::artifact::support::on("photo"),
+    ));
+    let barriers = Barriers::new();
+    let hold: Arc<dyn Action> = {
+        let barriers = barriers.clone();
+        let descriptor = ActionDescriptor::draft("hold", "1.0.0", Kind::Primitive, "Holds.")
+            .input(InputPort::required("mask", ArtifactType::Mask, "The mask."))
+            .output(OutputPort::one("mask", ArtifactType::Mask, "The mask."))
+            .build()
+            .unwrap();
+        Arc::new(Fake(
+            descriptor,
+            Box::new(move |call, context: &Context| {
+                barriers.stop_at("hold");
+                Ok(Produced::nothing().with("mask", mask_at(call, context, "mask").unwrap()))
+            }),
+        ))
+    };
+    let steps = format!(
+        "{TWO_MARKS}\n[[step]]\nid = \"halt\"\nop = \"hold\"\ninputs = {{ mask = \"second.mask\" }}\n"
+    );
+    let executor = recipe_engine(&world, &recipe(&steps, "halt.mask"), vec![hold]);
+    let Ok(Answer::Started(run)) = executor.start(&Request::new(call(seed))) else {
+        panic!("the recipe was not started");
+    };
+    barriers.arrived("hold", 1);
+    let second = Engine::over(
+        crate::recipe::fakes(Vec::new()),
+        Arc::new(NoBackends),
+        world.store.clone(),
+        Digest::of_bytes(b""),
+    );
+    let watched = second.status(&run).unwrap();
+    assert_eq!(watched.state(), &RunState::NotEnded { here: true });
+    let typed: Vec<&Event> = watched.events().iter().filter_map(|l| l.event()).collect();
+    let kinds: Vec<String> = (typed.iter())
+        .map(|event| match event {
+            Event::StepStarted { step, .. } => format!("started {step}"),
+            Event::StepEnded { step, outcome, .. } => format!("ended {step} {outcome}"),
+            other => format!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "started first",
+            "ended first completed",
+            "started second",
+            "ended second completed",
+            "started halt",
+        ]
+    );
+    assert_eq!(watched.next(), watched.events().len() as u64);
+    assert_eq!(watched.skipped(), 0);
+    barriers.release("hold");
+    let ended = executor.wait(&run).unwrap();
+    assert!(
+        matches!(ended.state(), RunState::Ended(Outcome::Completed { .. })),
+        "{ended:?}"
+    );
+}
+
+/// `work` that says these progress messages, then this typed event, then stops at the
+/// barrier `said`.
+fn saying(barriers: &Barriers, messages: usize, typed: bool) -> Arc<dyn Action> {
+    let barriers = barriers.clone();
+    work(move |_, context| {
+        for n in 0..messages {
+            context.events().progress(&format!("message {n}"));
+        }
+        if typed {
+            context
+                .events()
+                .event(&whizbang_core::contract::Event::AttemptStarted {
+                    number: 1,
+                    changed: None,
+                });
+        }
+        barriers.stop_at("said");
+        Ok(Produced::nothing())
+    })
+}
+
+#[test]
+fn status_after_a_sequence_hands_back_only_the_newer_events() {
+    let dir = Scratch::new("watch-after");
+    let store = Arc::new(Store::open(&dir.path().join("store"), Arc::new(ShimFs::new())).unwrap());
+    let barriers = Barriers::new();
+    let executor = engine(store, vec![saying(&barriers, 3, false)]);
+    let Ok(Answer::Started(run)) = executor.start(&asked("order-after")) else {
+        panic!("the request was not started");
+    };
+    barriers.arrived("said", 1);
+    let whole = executor.status(&run).unwrap();
+    assert_eq!(messages(&whole), ["message 0", "message 1", "message 2"]);
+    assert_eq!((whole.skipped(), whole.next()), (0, 3));
+    let newer = executor.status_after(&run, 2).unwrap();
+    assert_eq!(messages(&newer), ["message 2"]);
+    assert_eq!(newer.events()[0].seq(), 2);
+    assert_eq!((newer.skipped(), newer.next()), (0, 3));
+    // A caller that has seen everything is handed nothing; one ahead, nothing either.
+    for seen in [3, 9] {
+        let none = executor.status_after(&run, seen).unwrap();
+        assert!(none.events().is_empty());
+        assert_eq!((none.skipped(), none.next()), (0, 3));
+    }
+    // The answer of the trait's own form is the same, and an answer cut at a place
+    // is never widened back past it.
+    assert_eq!(whole.clone().after(2), newer);
+    assert_eq!(newer.clone().after(0), newer);
+    barriers.release("said");
+    executor.wait(&run).unwrap();
+}
+
+#[test]
+fn a_poll_across_events_not_kept_is_answered_with_the_count_skipped() {
+    // The run says four more messages than it keeps, then a typed event, which is
+    // kept: a poll from before the gap is answered with what was kept and how many
+    // places in it were not.
+    use whizbang_core::contract::{EVENTS_KEPT_LIMIT, MESSAGES_KEPT_MAX_BYTES};
+    // Held to eight messages in place of the real bound, so a few make the gap.
+    let kept = 8;
+    let dir = Scratch::new("watch-skipped");
+    let store = Arc::new(Store::open(&dir.path().join("store"), Arc::new(ShimFs::new())).unwrap());
+    let barriers = Barriers::new();
+    let executor = engine(store, vec![saying(&barriers, kept + 4, true)]).with_journal_bounds(
+        kept,
+        MESSAGES_KEPT_MAX_BYTES,
+        EVENTS_KEPT_LIMIT,
+    );
+    let Ok(Answer::Started(run)) = executor.start(&asked("order-skipped")) else {
+        panic!("the request was not started");
+    };
+    barriers.arrived("said", 1);
+    let limit = kept as u64;
+    let polled = executor.status_after(&run, limit - 2).unwrap();
+    let places: Vec<u64> = polled.events().iter().map(|line| line.seq()).collect();
+    assert_eq!(places, [limit - 2, limit - 1, limit + 4]);
+    assert_eq!((polled.skipped(), polled.next()), (4, limit + 5));
+    assert!(polled.events()[2].event().is_some());
+    // Within the gap alone: nothing kept, and every place skipped.
+    let gap = executor.status_after(&run, limit).unwrap();
+    assert_eq!(gap.events().len(), 1);
+    assert_eq!(gap.skipped(), 4);
+    barriers.release("said");
+    executor.wait(&run).unwrap();
+}

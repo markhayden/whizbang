@@ -824,3 +824,59 @@ x = 1
     let finished = executor.submit(&from("one", "two", seed)).unwrap();
     assert_eq!(finished.outcome().name(), "completed");
 }
+
+#[test]
+fn a_recipe_says_each_step_started_and_ended_while_it_runs() {
+    // Beside its progress messages, the runner says each step as a typed event, through
+    // the run's own sink, as it goes (plan m5, task K1, item 3): the step started, then
+    // how it ended and its run. Its messages are the ones of before.
+    use whizbang_core::contract::{Event, Journal};
+    let world = World::new("recipe-events");
+    let seed = world.put(rect_mask(on("photo")));
+    let executor = engine(&world, &recipe(TWO_MARKS, "second.mask"), Vec::new());
+    let finished = executor.submit(&call(seed)).unwrap();
+    let steps = world.record(finished.run().as_str()).steps().to_vec();
+    let reader = Reader::open(&world.root(), world.fs.clone() as Arc<dyn Fs>).unwrap();
+    let generation = reader.snapshot().unwrap();
+    let run = generation.run(finished.run().as_str()).unwrap();
+    let entry = run.get(record::JOURNAL_NAME).unwrap();
+    let journal = Journal::read(&reader.read(entry).unwrap()).unwrap();
+    let started = |step: &str| Event::StepStarted {
+        step: step.to_owned(),
+        action: "mark".to_owned(),
+        attempt: None,
+    };
+    let ended = |step: &str, at: usize| Event::StepEnded {
+        step: step.to_owned(),
+        outcome: "completed".to_owned(),
+        run: steps[at].run().to_owned(),
+        attempt: None,
+    };
+    let said: Vec<(Option<&Event>, &str)> = (journal.lines().iter())
+        .map(|line| (line.event(), line.message()))
+        .collect();
+    assert_eq!(
+        said,
+        [
+            (None, "marks: step first (mark)"),
+            (Some(&started("first")), "step first (mark) started"),
+            (
+                Some(&ended("first", 0)),
+                format!("step first ended completed, run {}", steps[0].run()).as_str()
+            ),
+            (None, "marks: step second (mark)"),
+            (Some(&started("second")), "step second (mark) started"),
+            (
+                Some(&ended("second", 1)),
+                format!("step second ended completed, run {}", steps[1].run()).as_str()
+            ),
+        ]
+    );
+    // Every place is held, in order, and nothing was left out.
+    let places: Vec<u64> = journal.lines().iter().map(|line| line.seq()).collect();
+    assert_eq!(places, [0, 1, 2, 3, 4, 5]);
+    assert_eq!(
+        journal.not_kept().messages() + journal.not_kept().events(),
+        0
+    );
+}

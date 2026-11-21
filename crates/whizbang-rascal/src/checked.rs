@@ -46,9 +46,10 @@ use whizbang_core::artifact::{self, ArtifactId, ArtifactType};
 use whizbang_core::capability::PHRASE_LIMIT;
 use whizbang_core::contract::record::{ATTEMPT_TEXT_LIMIT, Attempt, Changed, Crop, Decision};
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Argument, Call, CallError, Capability, Context, Failure, Findings,
-    Finished, InputPort, Kind, Outcome, OutputPort, PLAN_WHY_LIMIT, Plan, Planning, PreparedCall,
-    Produced, RefusalKind, Registry, Requirement, ResultKind, RunId, Value, ValueType, Verdict,
+    Action, ActionDescriptor, Argument, Call, CallError, Capability, Context, Event, Failure,
+    Findings, Finished, InputPort, Kind, Outcome, OutputPort, PLAN_WHY_LIMIT, Plan, Planning,
+    PreparedCall, Produced, RefusalKind, Registry, Requirement, ResultKind, RunId, Value,
+    ValueType, Verdict,
 };
 use whizbang_core::identity::{DecodeLimits, Digest, Projection};
 use whizbang_core::recipe::{FROM, Recipe, SET, UNTIL, Written, from_port, until_port};
@@ -910,6 +911,19 @@ impl<'a> Looping<'a> {
         if context.deadline_passed() {
             return Err(Stopped::Deadline);
         }
+        // A stretch of an attempt is said as a step of it, typed, as it starts and as
+        // it ends (plan m5, task K1, item 3): its label is `a<number>_<stretch>`.
+        let step = label.and_then(|label| {
+            let (number, stretch) = label.strip_prefix('a')?.split_once('_')?;
+            Some((number.parse::<u32>().ok()?, stretch.to_owned()))
+        });
+        if let Some((attempt, stretch)) = &step {
+            context.events().event(&Event::StepStarted {
+                step: stretch.clone(),
+                action: call.action().to_owned(),
+                attempt: Some(*attempt),
+            });
+        }
         let finished = context.executor().submit(call).map_err(|error| {
             let budget = match &error {
                 CallError::Refused(refusal) => refusal.kind() == RefusalKind::OverCaller,
@@ -924,6 +938,14 @@ impl<'a> Looping<'a> {
             }
         })?;
         runs.push(finished.run().clone());
+        if let Some((attempt, stretch)) = step {
+            context.events().event(&Event::StepEnded {
+                step: stretch,
+                outcome: finished.outcome().name().to_owned(),
+                run: finished.run().to_string(),
+                attempt: Some(attempt),
+            });
+        }
         if let Some(label) = label {
             context.label_step(finished.run(), label, &[], None);
         }
@@ -1120,6 +1142,17 @@ impl<'a> Looping<'a> {
             let mut runs: Vec<RunId> = Vec::new();
             let label = |stretch: &str| format!("a{number}_{stretch}");
             self.say(&format!("attempt {number} of {} starts", self.allowed));
+            // And typed, with what its retry changes (plan m5, task K1, item 3).
+            context.events().event(&Event::AttemptStarted {
+                number,
+                changed: match &retry {
+                    None => None,
+                    Some(Retry::Wider(px)) => Some(format!("a wider mask, grown by {px} px")),
+                    Some(Retry::Located(places)) => {
+                        Some(format!("looks again in {} places", places.len()))
+                    }
+                },
+            });
             // Notes an attempt that has no verdict, and says so.
             let note = |attempt: Attempt, runs: &[RunId]| {
                 let settled = (spent(context) - before).clamp(0, i128::from(u64::MAX)) as u64;

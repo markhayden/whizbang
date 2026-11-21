@@ -12,9 +12,9 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
 use crate::store::Attached;
 
-use super::journal::Kept;
+use super::journal::{Heard, Kept};
 use super::nested::{Added, Nest};
-use super::{Cancellation, JournalLine, StoreFailure};
+use super::{Cancellation, StoreFailure};
 
 /// Where the executor is with an open run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,9 +97,10 @@ impl LiveRun {
         &self.signal
     }
 
-    /// The progress events the run has reported so far, the secrets taken out.
-    pub(super) fn events(&self) -> Vec<JournalLine> {
-        self.kept.lines()
+    /// The events the run has kept so far from the place `seen` on, the secrets taken
+    /// out, with how many of those places were not kept and the next place.
+    pub(super) fn events(&self, seen: u64) -> Heard {
+        self.kept.heard(seen)
     }
 
     /// Cancels the run, if its end has not begun: the rule of ADR 0008. Accepted, the

@@ -7,7 +7,7 @@
 
 use std::collections::BTreeSet;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -512,22 +512,41 @@ fn a_run_with_nothing_behind_it_is_abandoned_for_whoever_waits_asks_or_cancels()
     };
 
     // The last sync of the admission's publication is refused: the run is visible,
-    // its caller was told of the store's failure, and its action never starts.
+    // its caller was told of the store's failure, and its action never starts. Its
+    // executor would end it at once (plan m5, task K1, item 6); every call to the file
+    // system after that sync is refused too, so that end is never written.
     let dir = Scratch::new("cancel");
     let root = dir.path().join("store");
     let fs = Arc::new(ShimFs::new());
     let store = Arc::new(Store::open(&root, fs.clone()).unwrap());
     let executor = engine(store, vec![work(|_, _| panic!("the action started"))]);
-    fs.refuse_matching(0, {
+    fs.refuse_matching_times(0, usize::MAX, {
         let root = root.clone();
-        move |event| matches!(event, Event::SyncDir(dir) if *dir == root)
+        let synced = AtomicBool::new(false);
+        move |event| {
+            synced.load(Ordering::SeqCst)
+                || (matches!(event, Event::SyncDir(dir) if *dir == root)
+                    && !synced.swap(true, Ordering::SeqCst))
+        }
     });
     let Err(CallError::Store(failure)) = executor.request(&asked("order-1")) else {
         panic!("the admission was confirmed");
     };
     let said = CallError::Store(failure.clone()).to_string();
     assert!(said.contains("not confirmed durable"), "{said}");
-    abandoned(&executor, &the_run(&root), Some(failure));
+    // Abandoned with the failure of the end that could not be written.
+    let run = the_run(&root);
+    let RunState::Abandoned {
+        failure: Some(ending),
+    } = executor.status(&run).unwrap().state().clone()
+    else {
+        panic!("not abandoned");
+    };
+    assert!(
+        !ending.to_string().contains("not confirmed durable"),
+        "{ending}"
+    );
+    abandoned(&executor, &run, Some(ending));
 
     // The end of the run is refused by the store.
     let dir = Scratch::new("cancel");

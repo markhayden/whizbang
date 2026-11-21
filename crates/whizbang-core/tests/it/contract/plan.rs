@@ -363,13 +363,19 @@ mod prepare {
         world.cap(Some(300_000));
         let fitted = world.engine.prepare(&tries()).unwrap();
         assert_eq!(whole.config(), fitted.config());
-        assert_eq!(whole.needs(), fitted.needs());
+        // The same capabilities and models; their counts of requests are the plans'.
+        let models = |prepared: &PreparedCall| -> Vec<_> {
+            (prepared.needs().iter())
+                .map(|need| (need.capability(), need.model().cloned()))
+                .collect()
+        };
+        assert_eq!(models(&whole), models(&fitted));
         assert_ne!(whole.plan(), fitted.plan());
         assert_ne!(whole.fingerprint(), fitted.fingerprint());
         // And it is not the fingerprint the same call has with no plan.
         let plain = world_of(false, false);
         let unplanned = plain.engine.prepare(&tries()).unwrap();
-        assert_eq!(unplanned.needs(), whole.needs());
+        assert_eq!(models(&unplanned), models(&whole));
         assert_ne!(unplanned.fingerprint(), whole.fingerprint());
     }
 

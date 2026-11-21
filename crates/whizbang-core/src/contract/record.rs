@@ -30,7 +30,7 @@ use crate::egress::{Account, Classes, DataClass, Origin, Recipient};
 use crate::identity::Digest;
 use crate::store::{self, Entry, Generation, Kind};
 
-use super::journal::{JournalLine, journal_bytes};
+use super::journal::{Journal, JournalLine, journal_bytes};
 use super::{
     Capability, Findings, Outcome, Plan, PreparedCall, RequestId, RunId, Secrets, StoreFailure,
     Value, Verdict, text,
@@ -1324,6 +1324,13 @@ impl Diagnostic {
     /// Each line had the secrets taken out when it was made ([`JournalLine::new`]).
     pub fn journal(lines: &[JournalLine]) -> (Diagnostic, Vec<u8>) {
         let stored = journal_bytes(lines);
+        (Diagnostic::naming(JOURNAL_NAME.to_owned(), &stored), stored)
+    }
+
+    /// The journal of a run as [`Diagnostic::journal`] makes it, with what it counted
+    /// and did not keep.
+    pub fn whole_journal(journal: &Journal) -> (Diagnostic, Vec<u8>) {
+        let stored = journal.to_bytes();
         (Diagnostic::naming(JOURNAL_NAME.to_owned(), &stored), stored)
     }
 
