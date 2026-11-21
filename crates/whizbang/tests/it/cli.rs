@@ -3742,7 +3742,7 @@ fn check_with_submission_v2_under_a_scripted_judge() {
         "reason": "Nothing protected moved.", "allowed_by": null, "evidence": [],
         "location": null});
     let keyed = submitting(serde_json::json!({"schema_version": 2, "findings": [],
-        "items": {SF1: answer.clone(), SF2: answer},
+        "items": {"chk_ob_SF1_candidate": answer.clone(), "chk_ob_SF2_candidate": answer},
         "opinion": {"verdict": "pass", "reason": "Recorded only."}}));
     let (printed, log) = checked_submitting(&judged, vec![keyed], None, None, Some("v2"));
     let printed = printed.unwrap();
@@ -3753,7 +3753,19 @@ fn check_with_submission_v2_under_a_scripted_judge() {
         .unwrap();
     let items = &submit["input_schema"]["properties"]["items"];
     assert_eq!(items["type"], "object");
-    assert_eq!(items["required"], serde_json::json!([SF1, SF2]));
+    assert_eq!(
+        items["required"],
+        serde_json::json!(["chk_ob_SF1_candidate", "chk_ob_SF2_candidate"])
+    );
+    for id in [SF1, SF2] {
+        let described = items["properties"].as_object().unwrap().values();
+        assert_eq!(
+            described
+                .filter(|p| p["description"].as_str().unwrap().contains(id))
+                .count(),
+            1
+        );
+    }
     // The run of `check` records the form it answered in.
     let root = &judged.world.root;
     let checks = runs_of(root, "check");

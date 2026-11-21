@@ -255,7 +255,7 @@ pub fn v2_sent(provider: Provider, label: &str) -> (String, serde_json::Value) {
     let keyed = submitting_by(
         provider,
         serde_json::json!({"schema_version": 2, "findings": [],
-            "items": {"chk:ob:SF1@candidate": answer.clone(), "chk:ob:SF2@candidate": answer},
+            "items": {"chk_ob_SF1_candidate": answer.clone(), "chk_ob_SF2_candidate": answer},
             "opinion": {"verdict": "pass", "reason": "Recorded only."}}),
     );
     let (listener, log) = serving(&judged.pki, vec![keyed]);
@@ -296,6 +296,26 @@ pub fn v2_sent(provider: Provider, label: &str) -> (String, serde_json::Value) {
     (printed.unwrap(), first)
 }
 
+/// Every key of every object a schema names under `properties`, at any depth, holds to
+/// what every provider takes as a property's name: `^[a-zA-Z0-9_.-]{1,64}$`.
+pub fn keys_are_provider_safe(schema: &serde_json::Value) -> bool {
+    let safe = |key: &str| {
+        (1..=64).contains(&key.len())
+            && key
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c))
+    };
+    match schema {
+        serde_json::Value::Object(fields) => fields.iter().all(|(name, value)| {
+            let named = name != "properties"
+                || value.as_object().is_some_and(|p| p.keys().all(|k| safe(k)));
+            named && keys_are_provider_safe(value)
+        }),
+        serde_json::Value::Array(values) => values.iter().all(keys_are_provider_safe),
+        _ => true,
+    }
+}
+
 /// v2's tool for the checklist of source-fidelity's shorthand job.
 pub fn v2_schema() -> serde_json::Value {
     let job = whizbang_squint::job::Job::shorthand("source-fidelity", true, 0, None);
@@ -319,14 +339,15 @@ fn a_v2_keyed_submission_is_sent_with_its_definitions_in_place_and_read() {
     let text = sent.to_string();
     assert!(!text.contains("$ref") && !text.contains("$defs"), "{text}");
     let wanted = v2_schema();
+    assert!(keys_are_provider_safe(sent), "{text}");
     assert_eq!(sent["required"], wanted["required"]);
     assert_eq!(
         sent["properties"]["items"]["required"],
-        serde_json::json!(["chk:ob:SF1@candidate", "chk:ob:SF2@candidate"])
+        serde_json::json!(["chk_ob_SF1_candidate", "chk_ob_SF2_candidate"])
     );
     assert_eq!(
-        sent["properties"]["items"]["properties"]["chk:ob:SF1@candidate"]["required"],
-        wanted["$defs"]["ItemAnswer"]["required"]
+        sent["properties"]["items"]["properties"]["chk_ob_SF1_candidate"]["required"],
+        wanted["properties"]["items"]["properties"]["chk_ob_SF1_candidate"]["required"]
     );
     assert!(printed.contains("verdict: pass"), "{printed}");
 }

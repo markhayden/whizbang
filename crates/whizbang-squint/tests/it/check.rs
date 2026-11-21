@@ -1909,7 +1909,7 @@ fn a_repair_of_an_invalid_submission_is_recorded_in_the_run() {
     // The rejection is kept by its class beside the cause of the run's end.
     assert_eq!(
         rejections(&left),
-        json!({"contract": "rejections/1", "submission": "v1", "recoveries": [], "cause": "concluded",
+        json!({"contract": "rejections/2", "submission": "v1", "recoveries": [], "cause": "concluded",
                "rejections": [{"turn": 1, "class": "missing_item"}]})
     );
 }
@@ -1953,7 +1953,7 @@ fn a_second_rejected_submission_keeps_its_rejections() {
     assert_eq!(ended_as(&outcome), "invalid_submission");
     assert_eq!(
         kept,
-        json!({"contract": "rejections/1", "submission": "v1", "recoveries": [], "cause": "invalid_submission",
+        json!({"contract": "rejections/2", "submission": "v1", "recoveries": [], "cause": "invalid_submission",
                "rejections": [{"turn": 1, "class": "missing_item"},
                               {"turn": 2, "class": "not_alone"}]})
     );
@@ -1974,7 +1974,7 @@ fn a_turn_ended_without_a_submission_after_the_repair_keeps_its_cause() {
     assert_eq!(ended_as(&outcome), "judge_output");
     assert_eq!(
         kept,
-        json!({"contract": "rejections/1", "submission": "v1", "recoveries": [], "cause": "no_submission_after_repair",
+        json!({"contract": "rejections/2", "submission": "v1", "recoveries": [], "cause": "no_submission_after_repair",
                "rejections": [{"turn": 1, "class": "no_submission"},
                               {"turn": 2, "class": "no_submission"}]})
     );
@@ -1989,7 +1989,7 @@ fn a_cut_off_run_is_not_a_submission_failure() {
     assert_eq!(ended_as(&outcome), "judge_output");
     assert_eq!(
         kept,
-        json!({"contract": "rejections/1", "submission": "v1", "recoveries": [], "cause": "cut_off", "rejections": []})
+        json!({"contract": "rejections/2", "submission": "v1", "recoveries": [], "cause": "cut_off", "rejections": []})
     );
     // A stop the loop does not know is another cause of the same error, and no
     // submission failure either.
@@ -2018,7 +2018,7 @@ fn the_turn_budget_spent_keeps_its_rejections() {
     assert_eq!(ended_as(&outcome), "judge_loop");
     assert_eq!(
         kept,
-        json!({"contract": "rejections/1", "submission": "v1", "recoveries": [], "cause": "turns",
+        json!({"contract": "rejections/2", "submission": "v1", "recoveries": [], "cause": "turns",
                "rejections": [{"turn": 1, "class": "missing_item"}]})
     );
 }
@@ -3784,7 +3784,7 @@ fn v2_keyed_schema_lists_the_jobs_checklist_ids() {
     let sent = submit_sent(&judge, 0);
     assert_eq!(
         sent["properties"]["items"]["required"],
-        json!(["chk:ob:SF1@candidate", "chk:ob:SF2@candidate"])
+        json!(["chk_ob_SF1_candidate", "chk_ob_SF2_candidate"])
     );
     // The run records the format it answered in, and v1 stays the default.
     let kept = rejections(&left);
@@ -3822,7 +3822,7 @@ fn v2_recoveries_are_recorded_by_kind() {
     assert_eq!(judge.requests(), 1);
     assert_eq!(
         rejections(&left),
-        json!({"contract": "rejections/1", "submission": "v2", "cause": "concluded",
+        json!({"contract": "rejections/2", "submission": "v2", "cause": "concluded",
                "rejections": [],
                "recoveries": [{"turn": 1, "kind": "wrapper"}, {"turn": 1, "kind": "enum_word"}]})
     );

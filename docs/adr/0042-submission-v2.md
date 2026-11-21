@@ -32,24 +32,44 @@ counted.
 2. **v1 is unchanged:** its schema, description, messages and one repair, byte for byte
    (`submission::the_judge_sees_the_same_messages_as_before`), and the baseline replay runs on
    it.
-3. **v2 keys the items by checklist id.** The tool (`submit_verdict_v2.json`, written per job
-   by `use_case::submit_tool_v2`) gives `items` as an object whose required keys are the
-   job's checklist ids, `additionalProperties` false, each value v1's item answer without
-   `id`; `findings`, `opinion` and the definitions are v1's. The adapters send it as they send
-   v1: as written to Anthropic, not strict to OpenAI, its definitions written in place for
-   Google.
+3. **v2 keys the items by a key per checklist item.** The tool (`submit_verdict_v2.json`,
+   written per job by `use_case::submit_tool_v2`) gives `items` as an object with one
+   required key for each checklist item, `additionalProperties` false, each value v1's item
+   answer without `id`, its description naming the item's id; `findings`, `opinion` and the
+   definitions are v1's. A key is not the id itself: checklist ids hold `:` and `@`, and
+   Anthropic holds a property's name to `^[a-zA-Z0-9_.-]{1,64}$` (Google may hold it to
+   something alike), so each key is the id with every other character made `_` and cut to
+   64 (`chk:ob:SF1@candidate` is `chk_ob_SF1_candidate`); a key that would repeat an earlier
+   one, or come out empty, is `item_` and the item's place instead (`use_case::item_keys`).
+   The keys are one to one with the items, and the same for the same checklist. Reading a
+   submission maps each key back to its id; the id itself is read as its key too, and
+   `id_case` applies to keys and ids alike; any other key stays unknown. The adapters send
+   the tool as they send v1: as written to Anthropic, not strict to OpenAI, its definitions
+   written in place for Google, and a test of each holds every property name to the
+   pattern. Whether each provider takes the form is shown only by a live request: the
+   orchestrator sends one per provider before F2.
 4. **v2 reads near-misses that have one reading, and records each** in `rejections.json`
    under `recoveries`, `{turn, kind}`: `list_as_text` (a list, or the keyed object, given as a
    string that holds it), `array_form` (v1's list of answers, each with its id), `enum_word`
    (a disposition, confidence or location kind differing in case, surrounding space, or a
    space or hyphen for an underscore; `can't tell` and `cannot_tell` for `cant_tell`),
-   `id_case` (a checklist id differing only in case or surrounding space, exactly one id
-   matching), `identical_duplicate` (a second answer of an item the same in disposition,
+   `id_case` (a key or a checklist id differing only in case or surrounding space, exactly
+   one item matching), `identical_duplicate` (a second answer of an item the same in disposition,
    confidence, location and `allowed_by`, read as the first), `evidence_dropped` (an id of a
    call that did not complete, or evidence that is null) and `wrapper` (the submission inside
    an object whose only key is `submission` or `verdict`, once). Recoveries are recorded for a
    submission that was accepted. A differing duplicate, an id that matches none or more than
-   one, and a violation without a location are never recovered. A recovered answer is
+   one, and a violation without a location are never recovered. An answer under a key that
+   is not an object (a string, null) is refused as `bad_field` in v1's words for that item,
+   and counts as answered, so it is not also missing.
+   **A key written twice.** A JSON object cannot hold a key twice, and a parser keeps the
+   last, so a second answer under one key is gone once the arguments are parsed. Where the
+   text is at hand it is read for keys written twice (`capability::repeated_keys`): the
+   OpenAI adapter, which is sent the arguments as text, keeps the pointer of each beside the
+   call (`ToolCall::repeated_keys`), and `items` given as a string is read so too; a key
+   of an item written twice is refused as `duplicate_item`, in v1's words. **Known limit:**
+   Anthropic and Google send the arguments already parsed, so under them a key written
+   twice cannot be seen, and the last answer under it is read. A recovered answer is
    accepted under v2; nothing claims it is the verdict a v1 repair would have reached.
 5. **v2 names every problem in its one repair.** What is left after the recoveries is held to
    v1's rules unchanged (`decided_of`'s checks, in every-problem mode): the first problem of
@@ -60,22 +80,28 @@ counted.
 6. **The second look keeps its contract.** v2 applies to the first submission and its repair.
    The first submission is turned into v1's array form before the second look reads it, and
    the second look's turn offers v1's tool, so `tentative_items`, `merged` and the strict rule
-   see what they see under v1.
+   see what they see under v1. The swap of the tool between turns is tested with the fake
+   judge only; the live request per provider before F2 covers it on the wire.
 7. **v2 is a setting no default uses.** Task F2 runs v1 against v2 on the small judges and
-   decides by the rule `submission/1`, frozen in the plan; if v2 is adopted, its default
-   changes there, and this record is amended with the evidence.
+   decides by the rule `submission/1`, frozen in the plan. Adopting v2 means changing
+   `check`'s default and the `submission` of the judge's step in all five recipes, which
+   state `v1` themselves: the constant alone leaves every recipe, and so every door, on v1.
+   This record is amended with the evidence then.
+8. **What a rejection names.** A rejection of evidence names an item by its id only when
+   that is an id of the checklist, and otherwise "an item", under v1 and v2 alike: nothing
+   the judge wrote is said back to it.
 
 ## Consequences
 
 - A run's arguments now hold `submission`, so every key of the decision cache made by 1.7.0
   misses, as any version change of `check` makes it do.
 - `rejections.json` gains `submission` and `recoveries` beside T1's fields, and an `also` on
-  a rejection of v2 that named more than one problem.
+  a rejection of v2 that named more than one problem; its contract is `rejections/2`.
 - The bundle is measured together: all problems at once, the recoveries and the keyed schema.
   The recoveries are counted by kind, so the record shows which were used; separating the
   schema's effect is a later slice's.
-- A provider's strict mode may refuse the keyed form or its property names, which hold `:`
-  and `@`; each adapter has a test of the form it sends.
+- A provider may still refuse the keyed form; the keys hold only what Anthropic's pattern
+  allows, and each adapter has a test of the form it sends.
 - Reverting is a revert of the task's merge: no default uses v2 before F2.
 
 ## Alternatives

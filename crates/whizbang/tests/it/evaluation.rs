@@ -97,27 +97,31 @@ fn an_arm_f_and_an_arm_c_cell_send_what_they_sent_before() {
 // --- the setting `submission` in a matrix (plan e1, task F1, item 1) ---------------------------
 
 use crate::anthropic::submitting;
-use crate::matrix::{SF1, SF2, items};
+use crate::matrix::{SF1, items};
 
 /// A submission of v2, keyed by checklist id, as Anthropic answers.
 fn keyed() -> Vec<u8> {
     let answer = serde_json::json!({"disposition": "held", "confidence": "confident",
         "reason": "Kept.", "allowed_by": null, "evidence": [], "location": null});
     submitting(serde_json::json!({"schema_version": 2, "findings": [],
-        "items": {SF1: answer.clone(), SF2: answer},
+        "items": {"chk_ob_SF1_candidate": answer.clone(), "chk_ob_SF2_candidate": answer},
         "opinion": {"verdict": "pass", "reason": "Recorded only."}}))
 }
 
 #[test]
 fn a_resume_under_another_default_submission_is_refused() {
+    // One matrix run, two cells: arm C, which names no submission, fails (its judge left
+    // an item out twice), so its only attempt is a failed one; arm C;submission=v2
+    // completes. A resume under another default is refused for the failed cell alone.
     let (judged, tiny) = world_with("evaluation-submission", &["a"]);
     let matrix = matrix_with(SET, "\"C\", \"C;submission=v2\"");
-    let answers = vec![submission("held", "Kept."), keyed()];
+    let short = || items(&[(SF1, "held", "confident")]);
+    let answers = vec![short(), short(), keyed()];
     let (report, log) = run_matrix(&judged, answers, &|e| {
         ran(e, &judged, &tiny, &matrix, PLENTY, &never)
     });
     let report = report.unwrap();
-    assert_eq!((report.cells, report.completed), (2, 2));
+    assert_eq!((report.cells, report.failed), (2, 1));
     let root = &judged.world.root;
     // Each cell records the value it ran under: the arm's, or the binary's default.
     let mut ran_under: Vec<(String, Option<String>)> = checks(root)
@@ -139,7 +143,7 @@ fn a_resume_under_another_default_submission_is_refused() {
             ("C;submission=v2".to_owned(), Some("v2".to_owned()))
         ]
     );
-    // On the wire: v1's list, then v2's keys.
+    // On the wire: v1's list twice (the submission and its repair), then v2's keys.
     let sent: Vec<serde_json::Value> = (log.lock().unwrap().iter())
         .map(|(_, body)| serde_json::from_slice(body).unwrap())
         .collect();
@@ -150,9 +154,10 @@ fn a_resume_under_another_default_submission_is_refused() {
         submit["input_schema"]["properties"]["items"]["type"].clone()
     };
     assert_eq!(items_type(&sent[0]), "array");
-    assert_eq!(items_type(&sent[1]), "object");
+    assert_eq!(items_type(&sent[2]), "object");
     // A resume on this binary is allowed; on a binary whose default is v2 it is refused
-    // before anything runs, naming the setting and the arm that names none.
+    // before anything runs, naming the setting and the arm that names none, though that
+    // arm's only cell failed.
     whizbang::evaluation::submission_resumable(&matrix, root, None, "v1").unwrap();
     let refused =
         whizbang::evaluation::submission_resumable(&matrix, root, None, "v2").unwrap_err();
@@ -164,21 +169,4 @@ fn a_resume_under_another_default_submission_is_refused() {
         whizbang_squint::check::SUBMISSIONS,
         whizbang_eval::matrix::SUBMISSIONS
     );
-}
-
-#[test]
-fn a_resume_with_only_failed_cells_under_another_default_is_refused() {
-    let (judged, tiny) = world_with("evaluation-submission-failed", &["a"]);
-    let matrix = matrix_with(SET, "\"C\"");
-    let short = || items(&[(SF1, "held", "confident")]);
-    let (report, _) = run_matrix(&judged, vec![short(), short()], &|e| {
-        ran(e, &judged, &tiny, &matrix, PLENTY, &never)
-    });
-    let report = report.unwrap();
-    assert_eq!((report.cells, report.completed, report.failed), (1, 0, 1));
-    let root = &judged.world.root;
-    whizbang::evaluation::submission_resumable(&matrix, root, None, "v1").unwrap();
-    let refused =
-        whizbang::evaluation::submission_resumable(&matrix, root, None, "v2").unwrap_err();
-    assert!(refused.contains("submission"), "{refused}");
 }

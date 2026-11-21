@@ -336,8 +336,11 @@ pub(crate) fn turn(body: &[u8]) -> Result<Turn, Fault> {
                 // Arguments that are not JSON stay their text, which the action refuses.
                 let arguments =
                     serde_json::from_str(raw).unwrap_or_else(|_| Value::String(raw.to_owned()));
+                // A key written twice in the text is lost once it is parsed: where it was
+                // is kept beside the call (plan e1, task F1).
                 let call = ToolCall::new(field("call_id"), field("name"), arguments)
-                    .map_err(|_| malformed(BAD_CALL))?;
+                    .map_err(|_| malformed(BAD_CALL))?
+                    .with_repeated_keys(whizbang_core::capability::repeated_keys(raw));
                 calls += 1;
                 parts.push(opaque()?);
                 parts.push(Part::ToolCall(call));

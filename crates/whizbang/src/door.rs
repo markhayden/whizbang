@@ -757,8 +757,8 @@ pub struct Measuring<'a> {
     /// `off`, `on` or `strict` (plan m3, task U1, item 4).
     pub second_look: &'a str,
     /// The form the judge answers in, `v1` or `v2`, when the caller named one (plan e1,
-    /// task F1): stated to the recipe then, and the recipe's own (`check`'s default)
-    /// otherwise.
+    /// task F1): stated to the recipe then; otherwise the value the recipe's judge step
+    /// names answers, whatever `check`'s own default is.
     pub submission: Option<&'a str>,
 }
 

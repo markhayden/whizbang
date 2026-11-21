@@ -38,20 +38,61 @@ pub const PROBLEMS_SHOWN: usize = 12;
 /// v2's tool, before its checklist's ids are written into it.
 const SUBMIT_TOOL_V2: &str = include_str!("submit_verdict_v2.json");
 
-/// The tool the judge answers with under v2, for this checklist: `items` keyed by each of
-/// its ids, in its order, every one required, no other allowed.
+/// The most characters of a key of v2's `items`, and the characters it may hold: what
+/// every provider takes as a property's name (Anthropic holds them to
+/// `^[a-zA-Z0-9_.-]{1,64}$`).
+pub const KEY_LIMIT: usize = 64;
+
+/// Whether a character may be in a key of v2's `items`.
+fn safe(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-'
+}
+
+/// The key of each checklist item in v2's `items`, in the checklist's order, with its id:
+/// the id with every character a provider's property name cannot hold made `_` and cut
+/// to [`KEY_LIMIT`]; one that would repeat an earlier key, or comes out empty, is `item_`
+/// and its place from 1 instead, made longer until it is unique. One to one, so a key
+/// names one item and an item has one key.
+pub fn item_keys(checklist: &Checklist) -> Vec<(String, String)> {
+    let mut keys: Vec<(String, String)> = Vec::new();
+    for (at, id) in checklist.ids().enumerate() {
+        let mut key: String = id.chars().map(|c| if safe(c) { c } else { '_' }).collect();
+        key.truncate(KEY_LIMIT);
+        let mut n = at + 1;
+        while key.is_empty() || keys.iter().any(|(k, _)| *k == key) {
+            key = format!("item_{n}");
+            n += checklist.ids().count();
+        }
+        keys.push((key, id.to_owned()));
+    }
+    keys
+}
+
+/// The tool the judge answers with under v2, for this checklist: `items` keyed by each
+/// item's key ([`item_keys`]), in its order, every one required, no other allowed; each
+/// value an item's answer without its id, whose description names the item's id.
 pub fn submit_tool_v2(checklist: &Checklist) -> Option<ToolDefinition> {
     let mut tool: Json = serde_json::from_str(SUBMIT_TOOL_V2).ok()?;
+    let answer = tool.pointer("/input_schema/$defs/ItemAnswer")?.clone();
     let items = tool.pointer_mut("/input_schema/properties/items")?;
     let mut properties = Map::new();
     let mut required = Vec::new();
-    for id in checklist.ids() {
-        let answer = serde_json::json!({"$ref": "#/$defs/ItemAnswer"});
-        properties.insert(id.to_owned(), answer);
-        required.push(Json::String(id.to_owned()));
+    for (key, id) in item_keys(checklist) {
+        let mut answer = answer.clone();
+        answer["description"] = Json::String(format!(
+            "The answer for the checklist item {id}, as the checklist lists it."
+        ));
+        properties.insert(key.clone(), answer);
+        required.push(Json::String(key));
     }
     items["properties"] = Json::Object(properties);
     items["required"] = Json::Array(required);
+    if let Some(defs) = tool
+        .pointer_mut("/input_schema/$defs")
+        .and_then(Json::as_object_mut)
+    {
+        defs.remove("ItemAnswer");
+    }
     let description = tool.get("description")?.as_str()?.to_owned();
     ToolDefinition::new(SUBMIT, &description, tool.get("input_schema")?.clone()).ok()
 }
@@ -112,11 +153,19 @@ pub struct Submitted {
     pub recoveries: Vec<Recovery>,
 }
 
+/// What a call of `submit_verdict` under v2 gave: its arguments, and the JSON pointers
+/// of every key its adapter found written more than once in them as sent
+/// (`ToolCall::repeated_keys`), which the parsed arguments no longer show.
+pub struct Given<'a> {
+    pub arguments: &'a Json,
+    pub repeated: &'a [String],
+}
+
 /// What a submission of v2 decides, or every problem it has in one rejection, its class
 /// the first problem's. `shown` and `also` are what a submission may cite, as
 /// [`cited_calls_held`] takes them.
 pub fn decided_of_v2(
-    arguments: &Json,
+    call: &Given<'_>,
     job: &Job,
     resolved: &Resolved,
     checklist: &Checklist,
@@ -124,12 +173,26 @@ pub fn decided_of_v2(
     also: &[String],
 ) -> Result<Submitted, Rejection> {
     let mut recoveries = Vec::new();
-    let read = normalised(arguments, checklist, shown, also, &mut recoveries);
+    let (read, twice) = normalised(
+        call.arguments,
+        call.repeated,
+        checklist,
+        shown,
+        also,
+        &mut recoveries,
+    );
     let mut found = Vec::new();
-    if let Err(rejection) = cited_calls_held(&read, shown, also) {
+    if let Err(rejection) = cited_calls_held(&read, shown, also, checklist) {
         found.push(rejection);
     }
-    match decided_with(&read, job, resolved, checklist, true) {
+    // An item whose key was written twice: v1's words for an item given twice.
+    let twice = twice.into_iter().map(|id| {
+        let said = format!("{id} has more than one disposition");
+        Rejection::new(Class::DuplicateItem, said)
+    });
+    let decided = decided_with(&read, job, resolved, checklist, true);
+    found.extend(twice);
+    match decided {
         Ok(decided) if found.is_empty() => Ok(Submitted {
             decided,
             arguments: read,
@@ -249,14 +312,29 @@ fn evidence(answer: &mut Json, shown: &[String], also: &[String], recoveries: &m
 
 /// The checklist's id this one names: itself when it is one, or the one id it matches by
 /// case and surrounding space when exactly one does.
-fn id_read(said: &str, checklist: &Checklist, recoveries: &mut Vec<Recovery>) -> String {
+fn id_read(
+    said: &str,
+    keys: &[(String, String)],
+    checklist: &Checklist,
+    recoveries: &mut Vec<Recovery>,
+) -> String {
+    if let Some((_, id)) = keys.iter().find(|(key, _)| key == said) {
+        return id.clone();
+    }
     if checklist.get(said).is_some() {
         return said.to_owned();
     }
+    // By case and surrounding space, against the keys and the ids alike: one item
+    // matching, by either, is one reading.
     let plain = said.trim().to_lowercase();
-    let matching: Vec<&str> = (checklist.ids())
-        .filter(|id| id.to_lowercase() == plain)
-        .collect();
+    let mut matching: Vec<&str> = Vec::new();
+    for (key, id) in keys {
+        if (key.to_lowercase() == plain || id.to_lowercase() == plain)
+            && !matching.contains(&id.as_str())
+        {
+            matching.push(id);
+        }
+    }
     match matching.as_slice() {
         [one] => {
             recoveries.push(Recovery::IdCase);
@@ -264,6 +342,17 @@ fn id_read(said: &str, checklist: &Checklist, recoveries: &mut Vec<Recovery>) ->
         }
         _ => said.to_owned(),
     }
+}
+
+/// The key a JSON pointer names under `items`, unescaped: `/items/<key>`, or `/<key>`
+/// when `at_items` is the pointer's root; none for a pointer to anything else.
+fn item_key(pointer: &str, at_items: bool) -> Option<String> {
+    let rest = if at_items {
+        pointer.strip_prefix('/')?
+    } else {
+        pointer.strip_prefix("/items/")?
+    };
+    (!rest.contains('/')).then(|| rest.replace("~1", "/").replace("~0", "~"))
 }
 
 /// A list given as a string that holds one, read as it; or, where `object` is allowed, a
@@ -281,41 +370,69 @@ fn text_read(value: &mut Json, object: bool, recoveries: &mut Vec<Recovery>) {
 }
 
 /// The submission as v1's array form, every near-miss read and recorded.
+/// The submission as v1's array form, every near-miss read and recorded; and the ids of
+/// the checklist whose key the submission wrote more than once in `items`, which a JSON
+/// object cannot hold and its reader collapses: from the pointers the judge's adapter
+/// found repeated in the arguments as sent (`repeated`), and from `items` given as text.
 fn normalised(
     arguments: &Json,
+    repeated: &[String],
     checklist: &Checklist,
     shown: &[String],
     also: &[String],
     recoveries: &mut Vec<Recovery>,
-) -> Json {
+) -> (Json, Vec<String>) {
+    let keys = item_keys(checklist);
     let mut read = arguments.clone();
+    let mut prefix = String::new();
     if let Some(object) = read.as_object()
         && object.len() == 1
         && let Some((key, inner)) = object.iter().next()
         && (key == "submission" || key == "verdict")
         && inner.is_object()
     {
+        prefix = format!("/{key}");
         let inner = inner.clone();
         read = inner;
         recoveries.push(Recovery::Wrapper);
     }
+    let mut twice: Vec<String> = (repeated.iter())
+        .filter_map(|pointer| item_key(pointer.strip_prefix(prefix.as_str())?, false))
+        .collect();
     if !read.is_object() {
-        return read;
+        return (read, Vec::new());
     }
     if let Some(items) = read.get_mut("items") {
+        if let Some(text) = items.as_str() {
+            let found = whizbang_core::capability::repeated_keys(text);
+            twice.extend(found.iter().filter_map(|pointer| item_key(pointer, true)));
+        }
         text_read(items, true, recoveries);
+    }
+    let mut ids_twice: Vec<String> = Vec::new();
+    for key in &twice {
+        let id = id_read(key, &keys, checklist, &mut Vec::new());
+        if checklist.get(&id).is_some() && !ids_twice.contains(&id) {
+            ids_twice.push(id);
+        }
     }
     let items = match read.get("items") {
         Some(Json::Object(keyed)) => {
             // In the order of the checklist, then any other key in the order given.
             let mut answers: Vec<(usize, Json)> = Vec::new();
             for (key, answer) in keyed {
-                let id = id_read(key, checklist, recoveries);
+                let id = id_read(key, &keys, checklist, recoveries);
                 let at = checklist.ids().position(|c| c == id).unwrap_or(usize::MAX);
-                let mut answer = answer.clone();
-                if let Some(fields) = answer.as_object_mut() {
-                    fields.insert("id".to_owned(), Json::String(id));
-                }
+                // An answer that is not an object is still the item's answer: refused
+                // for what it holds, in v1's words, and not as missing or unknown.
+                let answer = match answer {
+                    Json::Object(fields) => {
+                        let mut fields = fields.clone();
+                        fields.insert("id".to_owned(), Json::String(id));
+                        Json::Object(fields)
+                    }
+                    _ => serde_json::json!({"id": id}),
+                };
                 answers.push((at, answer));
             }
             answers.sort_by_key(|(at, _)| *at);
@@ -326,7 +443,7 @@ fn normalised(
             let mut answers = list.clone();
             for answer in &mut answers {
                 if let Some(said) = answer.get("id").and_then(Json::as_str) {
-                    let id = id_read(said, checklist, recoveries);
+                    let id = id_read(said, &keys, checklist, recoveries);
                     answer["id"] = Json::String(id);
                 }
             }
@@ -366,5 +483,5 @@ fn normalised(
             evidence(finding, shown, also, recoveries);
         }
     }
-    read
+    (read, ids_twice)
 }

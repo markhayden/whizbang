@@ -492,8 +492,10 @@ unchanged.
    submission failure rate, the first rejection rate, rejections by class, recoveries by
    kind, balanced accuracy, cost per decision, self-agreement under each arm; the decision
    and its clause; descriptive, admits nothing.
-4. **If adopted:** the default of `submission` becomes `v2` (one constant and the recipe
-   files), ADR 0042 amended with the evidence, the use-case records' "Mark and history", and
+4. **If adopted:** the default of `submission` becomes `v2`: `check`'s constant and the
+   `submission` of the judge's step in all five recipe files, which state `v1` themselves
+   (changing the constant alone leaves every recipe, and so every door, on v1); ADR 0042
+   amended with the evidence; the use-case records' "Mark and history"; and
    `docs/guides/config.md`'s note on small models. The baseline replay stays on v1.
 
 **Done when:** the record is committed, `evidence::the_submission_record_holds_only_aggregates`

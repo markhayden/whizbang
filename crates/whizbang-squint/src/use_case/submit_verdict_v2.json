@@ -1,5 +1,5 @@
 {
-  "description": "Submit the final structured verdict: under items, one answer for each checklist item, keyed by its id exactly as listed; any further findings; and your own opinion (recorded only).",
+  "description": "Submit the final structured verdict: under items, one answer for each checklist item, under the key the schema gives it (each key's description names its item); any further findings; and your own opinion (recorded only).",
   "input_schema": {
     "$defs": {
       "Confidence": {
@@ -229,7 +229,7 @@
       }
     },
     "additionalProperties": false,
-    "description": "The submission, schema version 2. `items` is an object with one key for each checklist item, its\nid exactly as listed, and that item's answer as the value. Every property is required; optional\nvalues are nullable.",
+    "description": "The submission, schema version 2. `items` is an object with one key for each checklist item, as\nthe schema lists them, and that item's answer as the value. Every property is required; optional\nvalues are nullable.",
     "properties": {
       "findings": {
         "items": {
@@ -239,7 +239,7 @@
       },
       "items": {
         "additionalProperties": false,
-        "description": "One answer for each checklist item, keyed by the item's id exactly as listed, for example\n`chk:ob:SF1@candidate`.",
+        "description": "One answer for each checklist item, under the item's key; each key's description names the\nchecklist item it is for.",
         "properties": {},
         "required": [],
         "type": "object"

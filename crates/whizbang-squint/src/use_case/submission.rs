@@ -367,11 +367,15 @@ pub fn cited_calls_held(
     arguments: &Json,
     shown: &[String],
     also: &[String],
+    checklist: &Checklist,
 ) -> Result<(), Rejection> {
     let lists = |key: &str| arguments.get(key).and_then(Json::as_array).cloned();
+    // An item is named by its id only when that is an id of the checklist: never by
+    // what the judge wrote otherwise.
     let items = (lists("items").unwrap_or_default().into_iter()).map(|item| {
-        let named = item.get("id").and_then(Json::as_str).unwrap_or("an item");
-        (named.to_owned(), item)
+        let id = item.get("id").and_then(Json::as_str);
+        let named = id.filter(|id| checklist.get(id).is_some());
+        (named.unwrap_or("an item").to_owned(), item)
     });
     let findings = (lists("findings").unwrap_or_default().into_iter())
         .enumerate()

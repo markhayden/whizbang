@@ -110,8 +110,9 @@ pub const JUDGED: &str = "judged.json";
 /// completed or failed, and holds classes and causes only: no word of the judge.
 pub const REJECTIONS: &str = "rejections.json";
 
-/// The contract of [`REJECTIONS`].
-pub const REJECTIONS_CONTRACT: &str = "rejections/1";
+/// The contract of [`REJECTIONS`]: `rejections/2` since submission v2 added the run's
+/// `submission`, its `recoveries`, and a rejection's `also` (plan e1, task F1).
+pub const REJECTIONS_CONTRACT: &str = "rejections/2";
 
 /// Why a run of the loop ended, as [`REJECTIONS`] records it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1508,7 +1509,10 @@ impl Action for Check {
                                 submitted.first().map(|submit| submit.arguments().clone());
                             let read = match submitted.as_slice() {
                                 [submit] if calls == 1 && v2 => use_case::decided_of_v2(
-                                    submit.arguments(),
+                                    &use_case::Given {
+                                        arguments: submit.arguments(),
+                                        repeated: submit.repeated_keys(),
+                                    },
                                     &judging.job,
                                     &judging.resolved,
                                     &judging.checklist,
@@ -1526,6 +1530,7 @@ impl Action for Check {
                                     submit.arguments(),
                                     &run.shown,
                                     &run.completed,
+                                    &judging.checklist,
                                 )
                                 .and_then(|()| {
                                     use_case::decided_of(

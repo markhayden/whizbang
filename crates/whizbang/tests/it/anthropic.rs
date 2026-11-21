@@ -659,5 +659,8 @@ fn a_v2_keyed_submission_is_sent_as_written_and_read() {
     let sent = first["tools"].as_array().unwrap();
     let submit = sent.iter().find(|t| t["name"] == "submit_verdict").unwrap();
     assert_eq!(submit["input_schema"], v2_schema());
+    assert!(crate::google::keys_are_provider_safe(
+        &submit["input_schema"]
+    ));
     assert!(printed.contains("verdict: pass"), "{printed}");
 }

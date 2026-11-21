@@ -432,10 +432,13 @@ ends, each rejection of a submission by its class (`not_a_list`, `unknown_item`,
 the words the judge was sent are unchanged, and nothing it wrote is kept there. `ceiling` is
 a turn cut off at its backend's output ceiling; `cut_off` a turn cut off again after its
 limit was raised. `runs stats --rejections` counts both over a filter. A run answered from
-the decision cache sent nothing and keeps none.
+the decision cache sent nothing and keeps none. The diagnostic's contract is
+`rejections/2`.
 
 **Submission v2** (`--submission v2`, experimental; ADR 0042). The judge is given its items
-as an object keyed by checklist id, near-misses that have one reading are read (a list sent
+as an object with one key for each checklist item (the id with every character outside
+letters, digits, `_`, `.` and `-` made `_`, each key's description naming its item),
+near-misses that have one reading are read (a list sent
 as text, a word in another case, an id in another case, an identical answer given twice,
 evidence of a call that did not complete, one wrapper object) and each is recorded under
 `recoveries` in `rejections.json`, and the one repair names every problem at once. v1, the
