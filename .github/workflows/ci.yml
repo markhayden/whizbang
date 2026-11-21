@@ -49,6 +49,14 @@ jobs:
         with:
           fallback: none
           tool: just@1.59.0,cargo-nextest@0.9.148,cargo-deny@0.20.2,uv@0.12.23
+      # Node, at the version scripts/tool-versions.txt pins, for the playground's interface
+      # (ui/, plan m5, task U1; ADR 0043). Pinned to a commit (v7.1.0). npm's cache is keyed
+      # by ui/package-lock.json; scripts/ui.sh installs the packages from it with `npm ci`.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26.13.1
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
       # The Python the pack pins (pack/.python-version), for `just test-pack`. From GitHub's
       # releases only: without the mirror, uv tries its maker's own host first. When the
       # cache above already holds it, nothing is downloaded. The folder it is installed in
@@ -124,6 +132,14 @@ jobs:
         with:
           fallback: none
           tool: just@1.59.0,cargo-nextest@0.9.148,cargo-deny@0.20.2,uv@0.12.23
+      # Node, at the version scripts/tool-versions.txt pins, for the playground's interface
+      # (ui/, plan m5, task U1; ADR 0043). Pinned to a commit (v7.1.0). npm's cache is keyed
+      # by ui/package-lock.json; scripts/ui.sh installs the packages from it with `npm ci`.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26.13.1
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
       - name: The script tests, after the crates they read are in cargo's home
         run: just ci-scripts
 
@@ -176,6 +192,65 @@ jobs:
       - name: Release smoke, the example that must not compile, the secrets scan, and the release archive made and installed
         run: just ci-release
 
+  # The Chrome tier (plan m5, "Where the Chrome tier runs"; task U1): the fixture host
+  # built, then Playwright's cases in ui/e2e/ against it, in the Google Chrome each hosted
+  # image carries, held to 180 seconds of test time (`just e2e`, scripts/e2e.sh). In jobs
+  # of their own beside the others, so the fast tier's 300 seconds are untouched. Set up
+  # as `check` is, with Node. When a case fails, the report is kept for two weeks.
+  e2e:
+    name: e2e (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Rust toolchain
+        run: rustup show
+      # The cache holds the pack's pinned Python too (the folder uv installs it in, set by
+      # the step that installs it), keyed by the pin and by the pinned tools (uv among
+      # them), so that it is downloaded once for each pin and runner and not on every run.
+      # The key holds the workspace's Cargo.toml as well, where the profiles are: the
+      # cache's own key reads the crates' manifests and Cargo.lock and not that file, so
+      # when the profile of the dependencies changed the old key still matched in full, the
+      # cache was never saved again, and every run built every dependency afresh. It is
+      # saved when a step fails or the job is cancelled too, so that a job stopped at its
+      # limit still leaves its build behind.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: python-${{ hashFiles('Cargo.toml', 'pack/.python-version', 'scripts/tool-versions.txt') }}
+          cache-directories: ${{ runner.temp }}/uv-python
+          cache-on-failure: true
+      # Pinned to a commit (v2.90.5). Each tool is downloaded from its maker's GitHub
+      # releases and checked against the hash the action holds; with no fallback, a tool the
+      # action does not list fails the step instead of being built from crates.io.
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519
+        with:
+          fallback: none
+          tool: just@1.59.0,cargo-nextest@0.9.148,cargo-deny@0.20.2,uv@0.12.23
+      # Node, at the version scripts/tool-versions.txt pins, for the playground's interface
+      # (ui/, plan m5, task U1; ADR 0043). Pinned to a commit (v7.1.0). npm's cache is keyed
+      # by ui/package-lock.json; scripts/ui.sh installs the packages from it with `npm ci`.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26.13.1
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: The Chrome tier
+        run: just e2e
+      # Pinned to a commit (v7.0.2).
+      - name: The Playwright report of a failed run
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: playwright-report-${{ matrix.os }}
+          path: target/e2e/
+          retention-days: 14
+
   # The secrets scan and the attribution check over every commit, in a job of its own
   # beside the others: on a branch that adds many files it takes minutes, and in the
   # `check` job it took that job past its limit. One runner is enough: it reads commits,
@@ -210,7 +285,7 @@ jobs:
   ci:
     name: ci
     if: always()
-    needs: [check, scripts, release, secrets]
+    needs: [check, scripts, release, e2e, secrets]
     runs-on: ubuntu-22.04
     steps:
       - name: Every job passed
@@ -218,4 +293,5 @@ jobs:
           test "${{ needs.check.result }}" = "success"
           test "${{ needs.scripts.result }}" = "success"
           test "${{ needs.release.result }}" = "success"
+          test "${{ needs.e2e.result }}" = "success"
           test "${{ needs.secrets.result }}" = "success"

@@ -12,7 +12,7 @@ call='whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))'
 # sources (scripts/script-tests-local.sh), so this is where both refuse: the check passes
 # on the workspace, and it has seen the places that start the binary (a check that found
 # none would be looking in the wrong place).
-grep -q -x -F 'check-full: fmt-check clippy graph deny test-scripts docs-check timing test-pack' justfile ||
+grep -q -x -F 'check-full: fmt-check clippy graph deny test-scripts docs-check ui-check timing test-pack' justfile ||
   fail "justfile: check-full runs the script tests, and this check with them"
 grep -q -E '^part=".*scripts/tests/test-binary-start\.sh' scripts/script-tests-local.sh ||
   fail "scripts/script-tests-local.sh: the local check runs this test on a change to the crates' sources"

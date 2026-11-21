@@ -521,7 +521,7 @@ fn picture(shared: &Shared, guarded: &Guarded<'_>) -> Response {
 
 fn asset(_: &Shared, guarded: &Guarded<'_>) -> Response {
     let path = guarded.head.path.trim_start_matches('/');
-    let path = if path.is_empty() { "index.html" } else { path };
+    let path = if path.is_empty() { assets::INDEX } else { path };
     match assets::find(path) {
         Some((content_type, bytes)) => {
             let response = Response::bytes(200, content_type, bytes.to_vec());

@@ -280,8 +280,9 @@ binary's own public code; everything about the person's store is under `/api/`.
 starts and never written to a log, an event, a record or an error. `whizbang play` opens
 `http://127.0.0.1:<port>/#k=<token>` in Chrome (`open -a "Google Chrome"` on the Mac,
 `google-chrome` on Linux; `--no-open` prints the address instead) and prints the address
-without the token. The page reads the token from the address, keeps it in its own storage for
-that origin, and removes it from the address bar at once. A token from an earlier launch is
+without the token. The page reads the token from the address, keeps it in the tab's session
+storage (it lasts for a reload of that tab; each tab `whizbang play` opens carries its own
+`#k=`), and removes it from the address bar at once (ADR 0043). A token from an earlier launch is
 refused (401), and the page then says to run `whizbang play` again, which opens the address
 with the new one.
 
@@ -752,6 +753,14 @@ both runners.
   `scripts/tests/test-setup.sh` pass with Node; the install check starts and quits the host
   from the archive on both runners; `THIRD-PARTY-LICENSES.md` holds Preact's, marked's and the fonts'
   licences, held by `scripts/tests/test-third-party-licences.sh`; ADR 0042 merged.
+
+**As built (U1).** The record is ADR 0043, "The playground's interface": 0042 was taken by
+milestone E's "Submission v2" first. `marked` is left to W3, which adds it with its one
+wrapper that writes markup (a unit test refuses any other). In wave 1 the fixture host is the stand-in this task
+names (item 5 and "Waves"): the interface the binary embeds, behind the guard's checks in
+their order, with `GET /api/hello`, `POST /api/quit` and the upload's size and pixel checks;
+it becomes H1's host, with the fakes, when the second of the two lands. The install check's
+step (item 6) needs H1's `whizbang play`, and is added by whichever of the two lands second.
 
 **Keeping tests lean (U1).** Component tests render to `happy-dom` and compare text and
 attributes, never pixels. The Chrome cases use 64-by-64 pictures and scripted models; no case

@@ -32,6 +32,16 @@
 # them, told by words every text of that licence holds: no archive is made, and the text is
 # then added by a decision, not left out.
 #
+# The playground's interface is in the binary too (ui/dist/, embedded by
+# crates/whizbang-serve/src/play/assets.rs; plan m5, task U1): the npm packages that ship in
+# it, which are the dependencies of ui/package.json, and the fonts under ui/public/fonts/.
+# Their texts are committed under ui/licences/, named by ui/licences/list.tsv, because the
+# archive is made with no Node and no npm. The script fails when that list and those files
+# disagree: a dependency without a row, or at another version than ui/package-lock.json
+# pins; a row for a package that is not a dependency; a package under a licence that
+# deny.toml does not allow; a font file without a row, or a font not under OFL-1.1; a text
+# that is missing, empty, or not of its licence. The texts hold no address of a person.
+#
 # The Rust standard library is in the binary too, and in no lock file. Its two licence
 # texts are taken from the toolchain that builds the binary (`share/doc/rust/licenses` of
 # its sysroot; nothing is downloaded), and a toolchain without them fails the script. The
@@ -239,6 +249,55 @@ if [ -s "$tmp/without" ]; then
   exit 1
 fi
 
+# The interface's packages and fonts: the rows of ui/licences/list.tsv, held to the files.
+fence='~~~~'
+# Apart by another mark than a tab, as the crates' list is: `read` takes several tabs for one.
+ui_rows() { grep -v -e '^#' -e '^[[:space:]]*$' ui/licences/list.tsv | tr '\t' '\037'; }
+[ -f ui/licences/list.tsv ] || die "ui/licences/list.tsv is missing"
+allowed=$(awk '/^allow = \[/ { on = 1; next } on && /^\]/ { exit } on' deny.toml | sed -n 's/^ *"\([^"]*\)".*$/\1/p')
+[ -n "$allowed" ] || die "deny.toml allows no licence"
+jq -r '.dependencies | keys[]' ui/package.json | sort >"$tmp/ui-deps"
+ui_rows | awk -F '\037' '$1 == "package" { print $2 }' | sort >"$tmp/ui-packages"
+cmp -s "$tmp/ui-deps" "$tmp/ui-packages" ||
+  { diff "$tmp/ui-deps" "$tmp/ui-packages" | sed 's/^/    /' >&2 || true; die "ui/licences/list.tsv must hold one row for each dependency of ui/package.json, and no other package (< dependencies, > rows)"; }
+: >"$tmp/ui-fonts"
+while IFS=$'\037' read -r kind name version licence text source files; do
+  [ -n "$kind" ] && [ -n "$name" ] && [ -n "$version" ] && [ -n "$licence" ] && [ -n "$text" ] && [ -n "$source" ] ||
+    die "a row of ui/licences/list.tsv is not a kind, a name, a version, a licence, a text and a source: $kind $name"
+  [ -s "ui/licences/$text" ] || die "the text of $name, ui/licences/$text, is missing or empty"
+  if grep -e "^$fence" "ui/licences/$text" >/dev/null; then die "ui/licences/$text holds a line that starts with $fence"; fi
+  case "$kind" in
+    package)
+      pinned=$(jq -r --arg at "node_modules/$name" '.packages[$at].version // ""' ui/package-lock.json)
+      [ "$pinned" = "$version" ] || die "ui/licences/list.tsv says $name $version, and ui/package-lock.json pins ${pinned:-nothing}"
+      printf '%s\n' "$allowed" | grep -x -F -e "$licence" >/dev/null ||
+        die "the package $name is under $licence, which deny.toml does not allow"
+      phrase=$(marker "$licence") || die "the package $name is under $licence, whose text this script cannot tell"
+      ;;
+    font)
+      [ "$licence" = OFL-1.1 ] || die "the font $name is under $licence; a font is under OFL-1.1 only"
+      phrase="SIL Open Font License"
+      [ -n "$files" ] || die "the font $name names no file"
+      for file in $files; do printf '%s\n' "$file" >>"$tmp/ui-fonts"; done
+      ;;
+    *) die "a row of ui/licences/list.tsv is of no kind this script knows: $kind" ;;
+  esac
+  tr -s '[:space:]' ' ' <"ui/licences/$text" | grep -i -F -e "$phrase" >/dev/null ||
+    die "ui/licences/$text is not a text of $licence"
+done < <(ui_rows)
+(cd ui/public/fonts && find . -type f | sed 's|^\./||' | sort) >"$tmp/ui-font-files"
+sort "$tmp/ui-fonts" >"$tmp/ui-fonts.sorted"
+cmp -s "$tmp/ui-font-files" "$tmp/ui-fonts.sorted" ||
+  { diff "$tmp/ui-font-files" "$tmp/ui-fonts.sorted" | sed 's/^/    /' >&2 || true; die "ui/licences/list.tsv must name each file of ui/public/fonts/ once (< files, > named)"; }
+# Each font file is the one its source published: its SHA-256 is in ui/licences/fonts.sha256.
+[ -f ui/licences/fonts.sha256 ] || die "ui/licences/fonts.sha256 is missing"
+awk '{ print $2 }' ui/licences/fonts.sha256 | sort >"$tmp/ui-hashed"
+cmp -s "$tmp/ui-font-files" "$tmp/ui-hashed" ||
+  { diff "$tmp/ui-font-files" "$tmp/ui-hashed" | sed 's/^/    /' >&2 || true; die "ui/licences/fonts.sha256 must hold each file of ui/public/fonts/ once (< files, > hashed)"; }
+while read -r sum file; do
+  [ "$(sha256 "ui/public/fonts/$file")" = "$sum" ] || die "ui/public/fonts/$file is not the file ui/licences/fonts.sha256 names"
+done <ui/licences/fonts.sha256
+
 # The standard library's own two licence texts, from the toolchain that builds the binary:
 # nothing is downloaded. A toolchain without them fails the script.
 compiler=$(rustc -V) || die "rustc did not say its version"
@@ -292,6 +351,26 @@ released=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | sed -n '1p')
     echo "$fence"
   done <"$tmp/sums"
   echo
+  echo "## The playground's interface"
+  echo
+  echo "The binary holds the playground's built interface, which holds these npm packages, at"
+  echo "the versions \`ui/package-lock.json\` pins, and these fonts, each under the SIL Open Font"
+  echo "License."
+  echo
+  echo "| Package or font | Version | Licence | From | Files |"
+  echo "|---|---|---|---|---|"
+  while IFS=$'\037' read -r kind name version licence text source files; do
+    printf '| %s %s | %s | %s | %s | %s |\n' "$kind" "$name" "$version" "$licence" "$source" "${files:-}"
+  done < <(ui_rows)
+  while IFS=$'\037' read -r kind name version licence text source files; do
+    echo
+    echo "### The $kind $name"
+    echo
+    echo "$fence"
+    tr -d '\r' <"ui/licences/$text" | sed -e '$a\'
+    echo "$fence"
+  done < <(ui_rows)
+  echo
   echo "## The Rust standard library"
   echo
   echo "The binary is linked with the standard library of \`$compiler\`, which is under MIT"
@@ -310,7 +389,7 @@ released=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | sed -n '1p')
 } >"$tmp/out"
 mkdir -p "$(dirname "$out")"
 cp "$tmp/out" "$out"
-echo "third-party licences: wrote $out ($(wc -l <"$list" | tr -d ' ') crates, $(wc -l <"$tmp/sums" | tr -d ' ') texts)"
+echo "third-party licences: wrote $out ($(wc -l <"$list" | tr -d ' ') crates, $(wc -l <"$tmp/sums" | tr -d ' ') texts, $(ui_rows | wc -l | tr -d ' ') packages and fonts of the interface)"
 done_ok=1
 exit 0
 }

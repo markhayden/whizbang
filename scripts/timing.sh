@@ -21,6 +21,13 @@
 #
 # --junit FILE prints the table for a saved result file and runs nothing; it exists for
 # scripts/tests/test-timing.sh.
+#
+# The playground interface's unit tests (ui/) are counted too, under the same limit (plan
+# m5, "Fast-tier cost"): `just ui-check`, which `just check` runs just before this, leaves
+# their seconds in target/ui/unit-seconds and their results in target/ui/unit-junit.xml.
+# When it did, each suite is a row of the table, their seconds join the total, and the two
+# files are removed, so a later run without `ui-check` does not count them again. --ui DIR
+# reads the two files from DIR instead (scripts/tests/test-timing.sh).
 # The whole script is one function, read before any of it runs, so a change to this file
 # during a run does not change the run: see `main` in scripts/scan.sh.
 main() {
@@ -35,13 +42,18 @@ if [ -n "${WHIZBANG_TIMING_LIMIT:-}" ]; then
   why="from WHIZBANG_TIMING_LIMIT"
 fi
 junit=""
+ui=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --limit) limit=$2; why="from --limit"; shift 2 ;;
     --junit) junit=$2; shift 2 ;;
+    --ui) ui=$2; shift 2 ;;
     *) echo "timing: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+# The interface's seconds are read from target/ui on a real run, and with a saved result
+# file only from the folder --ui names.
+[ -n "$junit" ] || [ -n "$ui" ] || ui=target/ui
 # A plain number of seconds: digits, with an optional fraction. Anything else (NaN, 1e3,
 # 1.5.2) would be compared as text and could pass by accident.
 is_seconds() { echo "$1" | grep -E '^[0-9]+(\.[0-9]+)?$' >/dev/null; }
@@ -92,6 +104,26 @@ awk '
   /<testcase /  { tests[suite] += 1; secs[suite] += attr("time") }
   END { for (i = 1; i <= n; i++) printf "%-44s %6d %9.3f\n", order[i], tests[order[i]], secs[order[i]] }
 ' "$junit"
+# The interface's unit tests, when `just ui-check` ran them: their rows, and their seconds
+# added to the total.
+if [ -n "$ui" ] && [ -r "$ui/unit-seconds" ] && [ -r "$ui/unit-junit.xml" ]; then
+  ui_seconds=$(sed -n '1p' "$ui/unit-seconds")
+  is_seconds "$ui_seconds" || { echo "timing: the seconds in $ui/unit-seconds are not a number: $ui_seconds" >&2; exit 1; }
+  awk '
+    function attr(name,    m) {
+      if (match($0, " " name "=\"[^\"]*\"")) {
+        m = substr($0, RSTART, RLENGTH)
+        sub(/^[^"]*"/, "", m); sub(/"$/, "", m)
+        return m
+      }
+      return ""
+    }
+    /<testsuite / { printf "%-44s %6d %9.3f\n", "ui: " attr("name"), attr("tests"), attr("time") }
+  ' "$ui/unit-junit.xml"
+  echo "ui unit tests ${ui_seconds}s, as the clock saw the whole run of them"
+  total=$(awk -v a="$total" -v b="$ui_seconds" 'BEGIN { printf "%.3f", a + b }')
+  rm -f "$ui/unit-seconds" "$ui/unit-junit.xml"
+fi
 echo "test time ${total}s, limit ${limit}s: ${why} (compilation not counted)"
 
 if [ "$test_status" -ne 0 ]; then

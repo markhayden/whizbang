@@ -1,17 +1,39 @@
-//! The interface's files, embedded in the binary from a fixed list (ADR 0041; the plan's
-//! "How it ships"). Until the built interface (`ui/dist/`, task U1) lands, the list holds
-//! one placeholder page; U1 replaces it with `include_bytes!` of each built file, and a
-//! test then holds the list to the folder.
+//! The playground's built interface, `ui/dist/`, embedded in the binary (plan m5, "How it
+//! ships"; ADR 0043). The build writes fixed names with no hash in them, so the list is
+//! fixed: `scripts/ui.sh check` (part of `just check`) fails on a file of `ui/dist/` that
+//! this list does not hold, or the reverse, and on a `ui/dist/` that is not what the
+//! sources build. So `cargo build` needs no Node, and the bytes that ship are the bytes
+//! that were reviewed and scanned.
 
-/// The placeholder page: it says what it is, loads nothing, and runs nothing.
-const PLACEHOLDER: &str = "<!doctype html>\n<html lang=\"en\" data-theme=\"dark\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>whizbang playground</title>\n</head>\n<body>\n<h1>whizbang</h1>\n<p>The playground's host is running. Its interface arrives in a later build.</p>\n</body>\n</html>\n";
+/// One file: its path under the host's root, its type, and its bytes.
+type File = (&'static str, &'static str, &'static [u8]);
 
-/// Each file: its path under the host's root, its type, and its bytes.
-const FILES: &[(&str, &str, &[u8])] = &[(
-    "index.html",
-    "text/html; charset=utf-8",
-    PLACEHOLDER.as_bytes(),
-)];
+macro_rules! asset {
+    ($path:literal, $type:literal) => {
+        (
+            $path,
+            $type,
+            include_bytes!(concat!("../../../../ui/dist/", $path)),
+        )
+    };
+}
+
+/// Every file of `ui/dist/`, sorted by path.
+const FILES: &[File] = &[
+    asset!("app.css", "text/css; charset=utf-8"),
+    asset!("app.js", "text/javascript; charset=utf-8"),
+    asset!("fonts/bricolage-grotesque-800.woff2", "font/woff2"),
+    asset!("fonts/geist-400.woff2", "font/woff2"),
+    asset!("fonts/geist-500.woff2", "font/woff2"),
+    asset!("fonts/geist-600.woff2", "font/woff2"),
+    asset!("fonts/geist-700.woff2", "font/woff2"),
+    asset!("fonts/geist-mono-400.woff2", "font/woff2"),
+    asset!("fonts/geist-mono-600.woff2", "font/woff2"),
+    asset!("index.html", "text/html; charset=utf-8"),
+];
+
+/// The page itself, which the host serves at `/`.
+pub const INDEX: &str = "index.html";
 
 /// The file at this path (without its leading `/`), when the list holds one: its type
 /// and its bytes. Nothing outside the list is ever read.

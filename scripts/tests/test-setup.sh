@@ -41,11 +41,19 @@ cat >"$tmp/bin/uv" <<'SH'
 [ -n "$FAKE_UV" ] || exit 127
 echo "uv $FAKE_UV (0123456789 2026-10-03 aarch64-apple-darwin)"
 SH
-chmod +x "$tmp/bin/just" "$tmp/bin/cargo" "$tmp/bin/python3" "$tmp/bin/uv"
+# A fake `node`, which prints its version as the real one does, with a v before it. Its
+# variable is FAKE_NODE, the pinned version when unset; empty, it is not installed.
+cat >"$tmp/bin/node" <<'SH'
+#!/bin/sh
+[ "$1" = --version ] || exit 2
+[ -n "$FAKE_NODE" ] || exit 127
+echo "v$FAKE_NODE"
+SH
+chmod +x "$tmp/bin/just" "$tmp/bin/cargo" "$tmp/bin/python3" "$tmp/bin/uv" "$tmp/bin/node"
 # with_tools <just> <nextest> <deny> [python, 3.12 when not given; "" for not installed]
 with_tools() {
   env PATH="$tmp/bin:$PATH" FAKE_JUST="$1" FAKE_NEXTEST="$2" FAKE_DENY="$3" FAKE_PYTHON="${4-3.12}" \
-    FAKE_UV="${FAKE_UV-$(pin uv)}" "$setup" --check
+    FAKE_UV="${FAKE_UV-$(pin uv)}" FAKE_NODE="${FAKE_NODE-$(pin node)}" "$setup" --check
 }
 
 expect_pass "every tool at its pin" with_tools "$(pin just)" "$(pin cargo-nextest)" "$(pin cargo-deny)"
@@ -72,6 +80,18 @@ FAKE_UV="" expect_fail "no uv" \
   "uv is missing; uv $(pin uv) is needed; its release is https://github.com/astral-sh/uv/releases/tag/$(pin uv); downloading it on this machine needs the owner's approval" \
   with_tools "$(pin just)" "$(pin cargo-nextest)" "$(pin cargo-deny)"
 
+# Node builds and tests ui/ (plan m5, task U1): checked as uv is, and named with where it is
+# had, not with cargo.
+[ -n "$(pin node)" ] || fail "node is pinned in scripts/tool-versions.txt"
+expect_pass "node at its pin" with_tools "$(pin just)" "$(pin cargo-nextest)" "$(pin cargo-deny)"
+grep -q -F "tool ok: node $(pin node)" "$tmp/out" || { cat "$tmp/out"; fail "node at its pin is reported as ok"; }
+FAKE_NODE=1.2.3 expect_fail "node at another version" \
+  "node is at another version: found 1.2.3, pinned $(pin node); Node $(pin node) is needed for ui/" \
+  with_tools "$(pin just)" "$(pin cargo-nextest)" "$(pin cargo-deny)"
+FAKE_NODE="" expect_fail "no node" "node is missing; Node $(pin node) is needed for ui/" \
+  with_tools "$(pin just)" "$(pin cargo-nextest)" "$(pin cargo-deny)"
+grep -q -F "cargo install node" "$tmp/out" && { cat "$tmp/out"; fail "node is not installed with cargo"; }
+
 # Every problem is reported, not only the first.
 expect_fail "two problems at once" "just is missing" with_tools "" 9.9.9 "$(pin cargo-deny)"
 grep -q -F "cargo-nextest is at another version: found 9.9.9" "$tmp/out" ||
@@ -89,9 +109,13 @@ done
 expect_fail "no python3" "python3 is missing; scripts/baseline needs 3.9 or later" pins_ok ""
 expect_fail "a python3 that answers something else" "python3 is missing" pins_ok "Python"
 
-# CI installs exactly the pinned versions.
-pins=$(grep -v '^#' scripts/tool-versions.txt | awk 'NF { printf "%s%s@%s", sep, $1, $2; sep = "," }')
+# CI installs exactly the pinned versions: the tools with taiki-e/install-action, and Node
+# with actions/setup-node in every job that sets it up, at the pin and no other.
+pins=$(grep -v '^#' scripts/tool-versions.txt | awk 'NF && $1 != "node" { printf "%s%s@%s", sep, $1, $2; sep = "," }')
 grep -q -F "tool: $pins" .github/workflows/ci.yml ||
   fail ".github/workflows/ci.yml must install: $pins"
+nodes=$(grep -E '^ +node-version: ' .github/workflows/ci.yml | sort -u)
+[ "$nodes" = "          node-version: $(pin node)" ] ||
+  fail ".github/workflows/ci.yml must set up Node $(pin node) and no other (found: $nodes)"
 
 finished
