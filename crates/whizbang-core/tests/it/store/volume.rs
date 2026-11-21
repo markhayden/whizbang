@@ -176,7 +176,7 @@ fn runs_measured(label: &str, runs: usize) -> (u64, u128) {
     let store = Store::open(&root, std::sync::Arc::new(RealFs)).unwrap();
     let record = vec![b'x'; 300];
     let mut publication = store.begin().unwrap();
-    let mut made = |publication: &mut whizbang_core::store::Publication<'_>, at: usize| {
+    let made = |publication: &mut whizbang_core::store::Publication<'_>, at: usize| {
         let run = format!("1795275290505-{at}");
         publication.create_run(&run).unwrap();
         for (name, kind) in [
