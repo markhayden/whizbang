@@ -25,6 +25,8 @@ export interface LibraryProps {
   pictures: Picture[];
   label: string;
   onPick: (picture: Picture) => void;
+  /** Asks for the page after the last picture shown, when there may be one. */
+  onMore?: () => void;
 }
 
 /** The pictures the playground imported, to pick one from. */
@@ -35,6 +37,11 @@ export function Library(props: LibraryProps) {
       {props.pictures.map((picture) => (
         <StoredPicture key={picture.id} client={props.client} picture={picture} onClick={() => props.onPick(picture)} />
       ))}
+      {props.onMore ? (
+        <button type="button" class="link-button" onClick={props.onMore}>
+          More pictures
+        </button>
+      ) : null}
     </div>
   );
 }

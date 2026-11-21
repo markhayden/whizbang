@@ -16,9 +16,9 @@ import { PlanBlock } from "../../components/PlanBlock";
 import { Segmented } from "../../components/Segmented";
 import { TextField } from "../../components/TextField";
 import { dropDraft, draftOf, localStore, saveDraft } from "../../drafts";
-import { argumentsOf, choicesFor, defaultChoice, fieldsOf, given, labelOf, planNeeds, segmentQuery, shapeOf, whyNotRun, type Values } from "../../form";
+import { argumentsOf, choicesFor, displayed, fieldsOf, given, labelOf, planNeeds, seeded, segmentQuery, shapeOf, whyNotRun, type Values } from "../../form";
 import { ago, dollars } from "../../format";
-import { useArtifact } from "../../hooks";
+import { PICTURES_PAGE, useArtifact } from "../../hooks";
 import { actionOf } from "../../keyboard";
 import { seenOutputs } from "../../outputs";
 import { createPreparer, type Preparer } from "../../preparer";
@@ -130,7 +130,10 @@ function Draft(props: DraftProps) {
   const backends = backendsOf(props.hello);
   const store = localStore();
   const kept = useMemo(() => draftOf(store, task.name), [task.name]);
-  const [values, setValues] = useState<Values>(kept?.values ?? {});
+  // What a choice, a yes-or-no or a backend shows is what is sent: each is seeded with it.
+  const [values, setValues] = useState<Values>(() => seeded(task, kept?.values ?? {}, backends));
+  const backendsKey = JSON.stringify(backends.map((one) => [one.capability, one.name, one.default]));
+  useEffect(() => setValues((now) => seeded(task, now, backends)), [backendsKey]);
   const [pictures, setPictures] = useState<Record<string, Picture>>(kept?.pictures ?? {});
   const [library, setLibrary] = useState<Picture[] | null>(null);
   const [picking, setPicking] = useState<string | null>(null);
@@ -162,7 +165,9 @@ function Draft(props: DraftProps) {
 
   useEffect(() => {
     preparer.current?.change(task.name, args);
-    if (Object.keys(args).length > 0) saveDraft(store, { kit: props.kit, task: task.name, values, pictures, at: Date.now() });
+    // A draft is what the person gave: what every field shows of itself alone is none.
+    const shownAlone = JSON.stringify(argumentsOf(task, seeded(task, {}, backends)));
+    if (Object.keys(args).length > 0 && argsKey !== shownAlone) saveDraft(store, { kit: props.kit, task: task.name, values, pictures, at: Date.now() });
   }, [argsKey]);
 
   useEffect(() => {
@@ -176,9 +181,17 @@ function Draft(props: DraftProps) {
     };
   }, [task.name]);
 
+  const moreLibrary = () => {
+    const last = library?.[library.length - 1];
+    if (!last) return;
+    client.listPictures(PICTURES_PAGE, last.id).then(
+      (found) => setLibrary((now) => [...(now ?? []), ...found.filter((one) => !(now ?? []).some((seen) => seen.id === one.id))]),
+      () => undefined,
+    );
+  };
   const openLibrary = (name: string) => {
     setPicking((now) => (now === name ? null : name));
-    client.listPictures().then(setLibrary, () => setLibrary([]));
+    client.listPictures(PICTURES_PAGE).then(setLibrary, () => setLibrary([]));
   };
 
   const keep = (picture: Picture) => setPictures((now) => ({ ...now, [picture.id]: picture }));
@@ -295,6 +308,7 @@ function Draft(props: DraftProps) {
               }}
               onUpload={upload}
               onLibrary={() => openLibrary(field.name)}
+              onMoreLibrary={library && library.length > 0 && library.length % PICTURES_PAGE === 0 ? moreLibrary : undefined}
               onPicked={(picture) => {
                 keep(picture);
                 setPicking(null);
@@ -358,6 +372,8 @@ interface InputProps {
   onClear: () => void;
   onUpload: (files: File[]) => Promise<Picture[]>;
   onLibrary: () => void;
+  /** The library's next page, when the last was full. */
+  onMoreLibrary?: () => void;
   onPicked: (picture: Picture) => void;
 }
 
@@ -377,7 +393,8 @@ function Input(props: InputProps) {
       const min = field.min ?? undefined;
       const max = field.max ?? undefined;
       if (integer && min !== undefined && max !== undefined && max - min <= 8) {
-        const shown = typeof props.value === "number" ? props.value : typeof field.default === "number" ? field.default : min;
+        const seen = displayed(field, props.value, props.backends);
+      const shown = typeof seen === "number" ? seen : min;
         const segments = Array.from({ length: max - min + 1 }, (_, at) => ({ value: String(min + at), label: String(min + at) }));
         return (
           <Field id={id} label={label} optional={optional} help={help}>
@@ -388,7 +405,7 @@ function Input(props: InputProps) {
       return <NumberField id={id} label={label} value={typeof props.value === "number" ? props.value : null} integer={integer} min={min} max={max} optional={optional} help={help} onInput={props.onChange} />;
     }
     case "boolean": {
-      const shown = typeof props.value === "boolean" ? props.value : field.default === true;
+      const shown = displayed(field, props.value, props.backends) === true;
       return (
         <Field id={id} label={label} optional={optional} help={help}>
           <Segmented
@@ -405,7 +422,8 @@ function Input(props: InputProps) {
     }
     case "choice": {
       const choices = Array.isArray(field.choices) ? field.choices : [];
-      const shown = typeof props.value === "string" ? props.value : typeof field.default === "string" ? field.default : (choices[0] ?? "");
+      const seen = displayed(field, props.value, props.backends);
+      const shown = typeof seen === "string" ? seen : "";
       return (
         <Field id={id} label={label} optional={optional} help={help}>
           <Segmented label={label} segments={choices.map((choice) => ({ value: choice, label: choice }))} value={shown} onChange={props.onChange} />
@@ -414,7 +432,8 @@ function Input(props: InputProps) {
     }
     case "backend": {
       const choices = choicesFor(field, props.prepared, props.backends);
-      const shown = typeof props.value === "string" ? props.value : defaultChoice(field, props.backends);
+      const seen = displayed(field, props.value, props.backends);
+      const shown = typeof seen === "string" ? seen : null;
       return (
         <Field id={id} label={label} optional={optional} help={choices.length === 0 ? "The config offers no backend for this." : help}>
           <ChoiceList label={label} name={id} choices={choices} value={shown} onChange={props.onChange} />
@@ -470,6 +489,7 @@ function PictureInput(props: InputProps & { id: string; label: string }) {
         <Library
           client={props.client}
           pictures={props.library ?? []}
+          onMore={props.onMoreLibrary}
           label={`Pictures for ${props.label}`}
           onPick={(picture) => {
             props.onPicked(picture);
@@ -515,6 +535,7 @@ function PicturesInput(props: InputProps & { id: string; label: string }) {
         <Library
           client={props.client}
           pictures={props.library ?? []}
+          onMore={props.onMoreLibrary}
           label={`Pictures for ${props.label}`}
           onPick={(picture) => {
             props.onPicked(picture);

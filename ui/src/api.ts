@@ -281,6 +281,16 @@ export function newRequestId(random: () => string = () => globalThis.crypto.rand
 /** How often a start whose answer was lost is sent again, with the same request id. */
 export const START_TRIES = 3;
 
+/** The most artifacts and thumbnails the page fetches at once. */
+export const ARTIFACTS_AT_ONCE = 2;
+/** How many `blob:` addresses the page keeps; an older one is revoked. */
+export const BLOBS_KEPT = 64;
+
+/** A file's name as sent with it: at most 200 characters, cut between code points. */
+export function nameOf(file: { name: string }, most = 200): string {
+  return Array.from(file.name).slice(0, most).join("");
+}
+
 /** The most uploads the page sends at once (plan m5, "Who may call"). */
 export const UPLOADS_AT_ONCE = 2;
 /** How often a run open on screen is asked for (plan m5, "Live progress is polled"). */
@@ -296,6 +306,8 @@ export function retryPause(random: () => number = Math.random): number {
 export interface ClientOptions {
   token: string | null;
   fetch?: typeof fetch;
+  /** Makes and revokes `blob:` addresses; a test passes its own. */
+  blobs?: { make: (blob: Blob) => string; revoke: (url: string) => void };
   /** Called once a call is refused 401, so the page can say to run `whizbang play` again. */
   onUnauthorized?: (error: ApiError) => void;
   /** Waits that many milliseconds; a test passes one that does not wait. */
@@ -332,12 +344,19 @@ export interface Client {
   openRuns(): Promise<OpenRun[]>;
   /** Send a picture's bytes with its file name; at most two at once, the rest queued. */
   uploadPicture(file: File): Promise<Picture>;
-  /** The pictures the playground imported, newest first. */
-  listPictures(limit?: number): Promise<Picture[]>;
+  /** The pictures the playground imported, newest first: at most `limit`, after the picture `after` names. */
+  listPictures(limit?: number, after?: string): Promise<Picture[]>;
   /** A shape drawn on a picture, committed as a location: its identity. */
   commitLocation(picture: string, shape: DrawnShape): Promise<{ id: string }>;
-  /** An address the page can show bytes of the API from (`<img>` sends no token). */
-  blobUrl(path: string): Promise<string>;
+  /**
+   * An address the page can show bytes of the API from (`<img>` sends no token). At most
+   * two are fetched at once, the rest queued, so of Chrome's six connections to the host at
+   * least four stay free for polls, Stop and Quit while uploads run too. A fetch is shared by
+   * everyone who asks for the same path, and aborted once every one of them has given up
+   * (`signal`). The addresses made are kept in a cache of the newest
+   * [`BLOBS_KEPT`]; an older one is revoked.
+   */
+  blobUrl(path: string, signal?: AbortSignal): Promise<string>;
 }
 
 async function refusal(response: Response): Promise<ApiError> {
@@ -383,7 +402,25 @@ export function createClient(options: ClientOptions): Client {
       throw new ApiError(0, sentenceFor(0));
     }
   };
-  const blobs = new Map<string, Promise<string>>();
+  const artifacts = new Limiter(ARTIFACTS_AT_ONCE);
+  const made = options.blobs ?? { make: (blob: Blob) => URL.createObjectURL(blob), revoke: (url: string) => URL.revokeObjectURL(url) };
+  /** Each path's fetch: shared, counted, and kept (newest last) once it has an address. */
+  interface Fetched {
+    promise: Promise<string>;
+    controller: AbortController;
+    users: number;
+    url?: string;
+  }
+  const blobs = new Map<string, Fetched>();
+  const keep = (path: string, entry: Fetched) => {
+    blobs.delete(path);
+    blobs.set(path, entry);
+    const settled = [...blobs.entries()].filter(([, one]) => one.url !== undefined);
+    for (const [old, one] of settled.slice(0, Math.max(0, settled.length - BLOBS_KEPT))) {
+      blobs.delete(old);
+      if (one.url) made.revoke(one.url);
+    }
+  };
   const client: Client = {
     setToken: (next) => {
       token = next;
@@ -418,28 +455,67 @@ export function createClient(options: ClientOptions): Client {
       const answer = await client.request<{ runs?: OpenRun[] } | undefined>("GET", "/api/runs?open=1");
       return Array.isArray(answer?.runs) ? answer.runs : [];
     },
-    uploadPicture: (file) => client.upload<Picture>(`/api/pictures?name=${encodeURIComponent(file.name.slice(0, 200))}`, file),
-    listPictures: async (limit = 48) => {
-      const answer = await client.request<{ pictures?: Picture[] } | undefined>("GET", `/api/pictures?limit=${limit}`);
+    uploadPicture: (file) => client.upload<Picture>(`/api/pictures?name=${encodeURIComponent(nameOf(file))}`, file),
+    listPictures: async (limit = 48, after) => {
+      const from = after ? `&after=${encodeURIComponent(after)}` : "";
+      const answer = await client.request<{ pictures?: Picture[] } | undefined>("GET", `/api/pictures?limit=${limit}${from}`);
       return Array.isArray(answer?.pictures) ? answer.pictures : [];
     },
     commitLocation: (picture, shape) => client.request<{ id: string }>("POST", "/api/locations", { picture, shape }),
-    blobUrl: (path) => {
-      const known = blobs.get(path);
-      if (known) return known;
-      const made = (async () => {
-        let response: Response;
-        try {
-          response = await call(path, { method: "GET", headers: headers({}), cache: "no-store", credentials: "omit", redirect: "error" });
-        } catch {
-          throw new ApiError(0, sentenceFor(0));
-        }
-        if (!response.ok) throw await refusal(response);
-        return URL.createObjectURL(await response.blob());
-      })();
-      made.catch(() => blobs.delete(path));
-      blobs.set(path, made);
-      return made;
+    blobUrl: (path, signal) => {
+      let entry = blobs.get(path);
+      if (!entry) {
+        const controller = new AbortController();
+        const fresh: Fetched = { controller, users: 0, promise: Promise.resolve("") };
+        fresh.promise = artifacts.run(async () => {
+          if (controller.signal.aborted) throw new ApiError(0, "The picture was not wanted any more.");
+          let response: Response;
+          try {
+            response = await call(path, { method: "GET", headers: headers({}), cache: "no-store", credentials: "omit", redirect: "error", signal: controller.signal });
+          } catch {
+            throw new ApiError(0, sentenceFor(0));
+          }
+          if (!response.ok) throw await refusal(response);
+          const url = made.make(await response.blob());
+          fresh.url = url;
+          if (blobs.get(path) === fresh) keep(path, fresh);
+          else made.revoke(url);
+          return url;
+        });
+        fresh.promise.catch(() => {
+          if (blobs.get(path) === fresh) blobs.delete(path);
+        });
+        blobs.set(path, fresh);
+        entry = fresh;
+      } else if (entry.url !== undefined) {
+        keep(path, entry);
+        return Promise.resolve(entry.url);
+      }
+      const shared = entry;
+      shared.users += 1;
+      if (!signal) return shared.promise;
+      return new Promise<string>((resolve, reject) => {
+        const giveUp = () => {
+          shared.users -= 1;
+          if (shared.users <= 0 && shared.url === undefined) {
+            shared.controller.abort();
+            if (blobs.get(path) === shared) blobs.delete(path);
+          }
+          reject(new ApiError(0, "The picture was not wanted any more."));
+        };
+        if (signal.aborted) return giveUp();
+        signal.addEventListener("abort", giveUp, { once: true });
+        shared.promise.then(
+          (url) => {
+            signal.removeEventListener("abort", giveUp);
+            resolve(url);
+          },
+          (error: unknown) => {
+            signal.removeEventListener("abort", giveUp);
+            reject(error);
+          },
+        );
+      });
     },
     poll: <T>(path: (after: number) => string, next: (answer: T) => { after: number; done: boolean }, onError?: (error: ApiError) => void) => {
       let after = 0;

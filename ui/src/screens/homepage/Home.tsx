@@ -1,5 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
-import { ApiError, tasksOf, type Client, type Hello, type OpenRun, type Picture } from "../../api";
+import { ApiError, tasksOf, type Client, type Hello, type OpenRun } from "../../api";
 import { BrandArt } from "../../components/BrandArt";
 import { ContinueRow } from "../../components/ContinueRow";
 import { DropTarget } from "../../components/DropTarget";
@@ -9,6 +9,7 @@ import { Wordmark } from "../../components/Wordmark";
 import { readDrafts, localStore, type Draft } from "../../drafts";
 import { taskOf } from "../../form";
 import { ago } from "../../format";
+import { usePictures } from "../../hooks";
 import { hrefOf } from "../../routes";
 import { StoredPicture } from "../shared";
 
@@ -34,7 +35,6 @@ export function Home(props: HomeProps) {
   const tasks = tasksOf(props.hello);
   const [open, setOpen] = useState<OpenRun[]>([]);
   const [drafts] = useState<Draft[]>(() => readDrafts(localStore()));
-  const [pictures, setPictures] = useState<Picture[]>([]);
   const [problem, setProblem] = useState<string | null>(null);
   const [asked, setAsked] = useState(0);
   const client = props.client;
@@ -55,17 +55,8 @@ export function Home(props: HomeProps) {
     };
   }, [client]);
 
-  useEffect(() => {
-    if (!client) return;
-    let live = true;
-    client.listPictures().then(
-      (found) => live && setPictures(found),
-      () => undefined,
-    );
-    return () => {
-      live = false;
-    };
-  }, [client, asked]);
+  const library = usePictures(client, asked);
+  const pictures = library.pictures;
 
   const upload = (files: File[]) => {
     if (!client) return;
@@ -195,6 +186,11 @@ export function Home(props: HomeProps) {
             {pictures.map((picture) => (
               <StoredPicture key={picture.id} client={client} picture={picture} />
             ))}
+            {library.more ? (
+              <button type="button" class="link-button" onClick={library.next}>
+                More pictures
+              </button>
+            ) : null}
             <DropTarget label="Drop a picture" max={8} onFiles={upload} />
           </div>
         ) : null}

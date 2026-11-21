@@ -80,13 +80,14 @@ describe("the workspace", () => {
     input(view.get<HTMLInputElement>("#field-prompt"), "the garden hose");
     await later(300);
     expect(made.prepare).toHaveBeenCalledTimes(1);
-    expect(made.prepare).toHaveBeenLastCalledWith("remove_prompt", { prompt: "the garden hose" });
+    // What the attempts and the filler show is sent with what was typed.
+    expect(made.prepare).toHaveBeenLastCalledWith("remove_prompt", { attempts: 3, filler: "cloud-fill", prompt: "the garden hose" });
     expect(view.text()).toContain("up to $0.042");
     const run = view.get<HTMLButtonElement>(".button--primary");
     expect(run.disabled).toBe(false);
     click(run);
     await later(0);
-    expect(start).toHaveBeenCalledWith({ action: "remove_prompt", arguments: { prompt: "the garden hose" }, handle: "h-1" });
+    expect(start).toHaveBeenCalledWith({ action: "remove_prompt", arguments: { attempts: 3, filler: "cloud-fill", prompt: "the garden hose" }, handle: "h-1" });
     expect(go).toHaveBeenCalledWith("#/run/r-1");
     view.unmount();
   });

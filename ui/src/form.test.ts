@@ -1,7 +1,7 @@
 // The form, the plan and the step list, from what the host hands the page (plan m5, task W1).
 import { describe, expect, it } from "vitest";
 import type { HelloBackend, JournalLine, Prepared, Task } from "./api";
-import { argumentsOf, choicesFor, defaultChoice, endTag, hear, planNeeds, segmentQuery, shapeOf, stepsOf, unfilled, whyNotRun } from "./form";
+import { argumentsOf, choicesFor, defaultChoice, displayed, endTag, hear, PATH_POINTS, planNeeds, seeded, segmentQuery, shapeOf, stepsOf, thinned, unfilled, whyNotRun } from "./form";
 
 const TASK: Task = {
   name: "remove_prompt",
@@ -112,5 +112,49 @@ describe("hello as the page reads it", () => {
       ["check", "squint"],
       ["view", null],
     ]);
+  });
+});
+
+describe("review fixes of W1", () => {
+  it("thins a long stroke to the host's limit, keeping its ends", () => {
+    const points: Array<[number, number]> = Array.from({ length: 2000 }, (_, at) => [at / 4, 50 + 40 * Math.sin(at / 30)]);
+    const shape = shapeOf({ kind: "stroke", points, width: 12 }, ["stroke"]);
+    expect(shape?.kind).toBe("stroke");
+    const kept = shape && "points" in shape ? shape.points : [];
+    expect(kept.length).toBeGreaterThan(2);
+    expect(kept.length).toBeLessThanOrEqual(PATH_POINTS);
+    expect(kept[0]).toEqual(points[0]);
+    expect(kept[kept.length - 1]).toEqual(points[points.length - 1]);
+    // A straight line of 2,000 points is two; a cap below what simplification keeps holds.
+    const straight: Array<[number, number]> = Array.from({ length: 2000 }, (_, at) => [at, at]);
+    expect(thinned(straight, PATH_POINTS)).toEqual([[0, 0], [1999, 1999]]);
+    expect(thinned(points, 10)).toHaveLength(10);
+  });
+
+  it("seeds a choice, a yes-or-no, a small whole number and a backend with what each shows", () => {
+    const task: Task = {
+      name: "t",
+      fields: [
+        { name: "mode", kind: "choice", choices: ["a", "b"] },
+        { name: "strict", kind: "boolean" },
+        { name: "attempts", kind: "integer", min: 1, max: 3, default: 3 },
+        { name: "filler", kind: "backend", capability: "fill" },
+        { name: "words", kind: "text" },
+        { name: "size", kind: "number" },
+      ],
+    };
+    const values = seeded(task, { mode: "b" }, BACKENDS);
+    expect(values).toEqual({ mode: "b", strict: false, attempts: 3, filler: "cloud-fill" });
+    for (const field of task.fields ?? []) expect(displayed(field, values[field.name], BACKENDS)).toEqual(values[field.name]);
+    expect(argumentsOf(task, values)).toEqual(values);
+    // Nothing new to seed: the same object back.
+    expect(seeded(task, values, BACKENDS)).toBe(values);
+  });
+
+  it("names the backend the host resolved, and the default only when it names none", () => {
+    const prepared: Prepared = { ready: true, needs: [{ capability: "fill", backend: "other-fill", model: "m", requests: 1, each: 0.04, bound: 0.04 }] };
+    expect(planNeeds(prepared, BACKENDS)[0]?.backend).toBe("other-fill");
+    const unnamed: Prepared = { ready: true, needs: [{ capability: "fill", backend: "", model: "m", requests: 1, each: 0.04, bound: 0.04 }] };
+    expect(planNeeds(unnamed, BACKENDS)[0]?.backend).toBe("cloud-fill");
   });
 });

@@ -1,7 +1,54 @@
 // What the screens share: an artifact's bytes shown by a `blob:` address (an `<img>`
 // sends no token, so the page fetches the bytes with it), and a clock that ticks.
 import { useEffect, useState } from "preact/hooks";
-import { artifactPath, type Client } from "./api";
+import { artifactPath, type Client, type Picture } from "./api";
+
+/** How many pictures one page of the library asks for. */
+export const PICTURES_PAGE = 48;
+
+/** Pages of a list of pictures, newest first: `more` asks for the page after the last. */
+export interface Paged {
+  pictures: Picture[];
+  /** Whether the last page was full, so another may follow. */
+  more: boolean;
+  next: () => void;
+}
+
+/**
+ * The pictures the playground kept, a page at a time, read again whenever `asked` changes.
+ * The next page starts after the last picture shown (`?after=<id>`).
+ */
+export function usePictures(client: Client | undefined, asked: unknown, on = true): Paged {
+  const [pictures, setPictures] = useState<Picture[]>([]);
+  const [more, setMore] = useState(false);
+  useEffect(() => {
+    if (!client || !on) return;
+    let live = true;
+    client.listPictures(PICTURES_PAGE).then(
+      (found) => {
+        if (!live) return;
+        setPictures(found);
+        setMore(found.length === PICTURES_PAGE);
+      },
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [client, asked, on]);
+  const next = () => {
+    const last = pictures[pictures.length - 1];
+    if (!client || !last) return;
+    client.listPictures(PICTURES_PAGE, last.id).then(
+      (found) => {
+        setPictures((now) => [...now, ...found.filter((one) => !now.some((seen) => seen.id === one.id))]);
+        setMore(found.length === PICTURES_PAGE);
+      },
+      () => setMore(false),
+    );
+  };
+  return { pictures, more, next };
+}
 
 /** The address the page shows an artifact from, once its bytes are here. */
 export function useArtifact(client: Client, id: string | null | undefined, edge?: number): string | undefined {
@@ -16,12 +63,16 @@ export function useArtifact(client: Client, id: string | null | undefined, edge?
     } catch {
       return;
     }
-    client.blobUrl(path).then(
+    // Given up when the screen that asked goes: a fetch nobody waits for is aborted, so it
+    // holds none of the two places the page fetches artifacts in.
+    const asking = new AbortController();
+    client.blobUrl(path, asking.signal).then(
       (made) => live && setUrl(made),
       () => undefined,
     );
     return () => {
       live = false;
+      asking.abort();
     };
   }, [id, edge]);
   return url;

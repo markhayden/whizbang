@@ -148,7 +148,7 @@ function Following(props: { id: string; hello: Hello | null; client: Client }) {
           })}
         </dl>
         <footer class="workspace__foot">
-          {(last?.reserved ?? 0) > 0 || (last?.spent ?? 0) > 0 ? <SpendMeter spent={last?.spent ?? 0} reserved={last?.reserved ?? 0} /> : <p class="empty mono">nothing reserved: free</p>}
+          {(last?.reserved ?? 0) > 0 || (last?.spent ?? 0) > 0 ? <SpendMeter title="Settled so far" spent={last?.spent ?? 0} reserved={last?.reserved ?? 0} /> : <p class="empty mono">nothing reserved: free</p>}
           {problem ? (
             <p class="field__error" role="alert">
               {problem.message}

@@ -56,6 +56,48 @@ export function unfilled(task: Task | undefined, values: Values): string[] {
     .map(labelOf);
 }
 
+/**
+ * What a field shows when the person has said nothing: the value a choice, a yes-or-no, a
+ * small whole number or a backend is shown with. The workspace seeds its values with these
+ * ([`seeded`]), so what is shown is what is sent to prepare. None for a field that shows
+ * nothing selected (text, a number field, a picture).
+ */
+export function displayed(field: TaskField, value: unknown, backends: HelloBackend[]): unknown {
+  switch (field.kind) {
+    case "choice": {
+      if (typeof value === "string") return value;
+      const choices = Array.isArray(field.choices) ? field.choices : [];
+      return typeof field.default === "string" ? field.default : choices[0];
+    }
+    case "boolean":
+      return typeof value === "boolean" ? value : field.default === true;
+    case "integer": {
+      if (typeof value === "number") return value;
+      const { min, max } = field;
+      if (typeof min !== "number" || typeof max !== "number" || max - min > 8) return undefined;
+      return typeof field.default === "number" ? field.default : min;
+    }
+    case "backend":
+      return typeof value === "string" ? value : (defaultChoice(field, backends) ?? undefined);
+    default:
+      return value;
+  }
+}
+
+/** The values with each field that shows something it was not given set to what it shows. */
+export function seeded(task: Task | undefined, values: Values, backends: HelloBackend[]): Values {
+  const next: Values = { ...values };
+  let changed = false;
+  for (const field of fieldsOf(task)) {
+    if (field.name in values) continue;
+    const shown = displayed(field, undefined, backends);
+    if (shown === undefined || shown === null) continue;
+    next[field.name] = shown;
+    changed = true;
+  }
+  return changed ? next : values;
+}
+
 /** The backends hello lists for one capability. */
 export function backendsFor(capability: string | null | undefined, backends: HelloBackend[]): HelloBackend[] {
   return backends.filter((backend) => backend.capability === capability);
@@ -92,12 +134,12 @@ export function defaultChoice(field: TaskField, backends: HelloBackend[]): strin
 /** The plan block's lines from a preparation's needs. */
 export function planNeeds(prepared: Prepared | null, backends: HelloBackend[] = []): PlanNeed[] {
   const needs = Array.isArray(prepared?.needs) ? prepared.needs : [];
-  // A need the call chose no backend for says its model's maker; the plan names the
-  // config's backend that answers it, its default.
+  // The host names the config's backend the preparation resolved; only an answer that
+  // names none falls back to the capability's default.
   const named = (capability: string, backend: string | null | undefined): string => {
+    if (backend) return backend;
     const of = backendsFor(capability, backends);
-    if (backend && of.some((one) => one.name === backend)) return backend;
-    return (of.find((one) => one.default) ?? of[0])?.name ?? backend ?? "";
+    return (of.find((one) => one.default) ?? of[0])?.name ?? "";
   };
   return needs.map((need) => ({
     capability: need.capability,
@@ -132,19 +174,83 @@ export function shapeOf(mark: Mark, draw: TaskField["draw"]): DrawnShape | null 
     if (tools.includes("box")) return { kind: "box", left: mark.x, top: mark.y, right: mark.x + mark.w, bottom: mark.y + mark.h };
     return {
       kind: "polygon",
-      points: [
-        [mark.x, mark.y],
-        [mark.x + mark.w, mark.y],
-        [mark.x + mark.w, mark.y + mark.h],
-        [mark.x, mark.y + mark.h],
-      ],
+      points: thinned(
+        [
+          [mark.x, mark.y],
+          [mark.x + mark.w, mark.y],
+          [mark.x + mark.w, mark.y + mark.h],
+          [mark.x, mark.y + mark.h],
+        ],
+        POLYGON_POINTS,
+      ),
     };
   }
   if (mark.kind === "stroke") {
-    if (tools.includes("stroke")) return { kind: "stroke", points: mark.points, radius: Math.max(1, mark.width / 2) };
-    if (tools.includes("line")) return { kind: "line", points: mark.points, width: mark.width };
+    const points = thinned(mark.points, PATH_POINTS);
+    if (tools.includes("stroke")) return { kind: "stroke", points, radius: Math.max(1, mark.width / 2) };
+    if (tools.includes("line")) return { kind: "line", points, width: mark.width };
   }
   return null;
+}
+
+/** The most points the host takes in a stroke or a line, and in a polygon. */
+export const PATH_POINTS = 512;
+export const POLYGON_POINTS = 64;
+
+type P = [number, number];
+
+/** How far `p` is from the segment `a`–`b`. */
+function off(p: P, a: P, b: P): number {
+  const [dx, dy] = [b[0] - a[0], b[1] - a[1]];
+  const length = dx * dx + dy * dy;
+  const t = length === 0 ? 0 : Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length));
+  return Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy));
+}
+
+/** Ramer–Douglas–Peucker: the points that keep the path within `epsilon` of itself. */
+function simplified(points: P[], epsilon: number): P[] {
+  if (points.length < 3) return points.slice();
+  const keep = new Array<boolean>(points.length).fill(false);
+  keep[0] = keep[points.length - 1] = true;
+  const stack: Array<[number, number]> = [[0, points.length - 1]];
+  while (stack.length > 0) {
+    const [from, to] = stack.pop()!;
+    let far = -1;
+    let most = epsilon;
+    for (let at = from + 1; at < to; at += 1) {
+      const distance = off(points[at]!, points[from]!, points[to]!);
+      if (distance > most) {
+        most = distance;
+        far = at;
+      }
+    }
+    if (far >= 0) {
+      keep[far] = true;
+      stack.push([from, far], [far, to]);
+    }
+  }
+  return points.filter((_, at) => keep[at]);
+}
+
+/**
+ * A drawn path with at most `most` points, its first and last kept: points closer than a
+ * pixel to the last kept are dropped, the path is simplified to within half a pixel, and
+ * what is still too many is taken evenly. A hand drawing a long stroke makes thousands.
+ */
+export function thinned(points: P[], most: number): P[] {
+  if (points.length <= 2) return points.slice();
+  const spaced: P[] = [points[0]!];
+  for (const point of points.slice(1, -1)) {
+    const last = spaced[spaced.length - 1]!;
+    if (Math.hypot(point[0] - last[0], point[1] - last[1]) >= 1) spaced.push(point);
+  }
+  spaced.push(points[points.length - 1]!);
+  let kept = simplified(spaced, 0.5);
+  if (kept.length > most) {
+    const step = (kept.length - 1) / (most - 1);
+    kept = Array.from({ length: most }, (_, at) => kept[Math.round(at * step)]!);
+  }
+  return kept;
 }
 
 /** Segment's query from a click or a drag: its kind and its words. */
