@@ -12,22 +12,33 @@ data that would admit a format is owed to a later slice of E.
 
 ## The round
 
-The orchestrator fills this block after the run; `outcome` stays `pending` until then, and
-`evidence::the_submission_record_holds_only_aggregates` holds the page to the matrix as
-committed and, once the outcome is written, to `docs/results/e-submission.toml`: the rows of
-the three tables below are the ones that test prints when the page lacks them, each written
-from the TOML, and replace the `Pending` rows.
+Run by the orchestrator on the owner's Mac on 2026-11-21, in the evaluation store, from a
+binary built at `runs_commit`; scored from the store by `whizbang eval judges` built at
+`commit`, which changed only the wording of the rule's `why` (it now names every judge that
+broke clause (c) and each measure it broke). The scores are
+`docs/results/e-submission.toml`, and
+`evidence::the_submission_record_holds_only_aggregates` holds this page to them and to the
+matrix as committed: every row of the three tables below is one that test writes from the
+TOML.
 
 ```toml
 matrix = "e-submission"
 matrix_identity = "c386cd97d9b2d6c5"
 rule = "submission/1"
-outcome = "pending"
+outcome = "not_adopted"
+settled_by = "c"
+format = "C;submission=v1"
+commit = "4357da1b981401b8baf3ccc0126cf0beb5b1aa0a"
+runs_commit = "ac3a49a7b21d0a20e86c48c718eae2bc9e5f833f"
+settled_usd = 11.77
+started = 2026-11-21T15:54:18Z
+ended = 2026-11-21T19:40:45Z
 ```
 
-Once run, the block also gives `commit` (the commit the binary was built from, as the TOML
-names it), `settled_by` (the clause that settled the outcome), `format` (the arm kept or
-adopted), `settled_usd` (what the round settled, to the cent), `started` and `ended` (UTC).
+All 1,320 cells ended: 1,286 completed and 34 failed, every item labelled, and every
+decision kept its rejections diagnostic (no unknown, none mismatched). The round's cells
+settled 11.77 dollars, against a forecast of 38.08 and an estimate of 19.0; the store's books
+show 11.794984 in all, which also holds 0.023 of the probe below.
 
 ## How it is run
 
@@ -52,8 +63,8 @@ holds the count, the forecast and the cap below to the build.
   picture's address.
 - **The forecast** `eval matrix` sets against what the store has left: each cell at its
   model's settled cost of a decision under arm C, the whole doubled, 38.084640 dollars, under
-  the 69.97 the evaluation store has left. What it is expected to settle is half that, about
-  19.04.
+  the 69.97 the evaluation store had left. What it was expected to settle was half that, about
+  19.04; it settled 11.77.
 
 ```
 for set in source-fidelity/scenes-v1 reference-consistency/pets-v1 reality-checks/people-v1 \
@@ -77,7 +88,36 @@ read from it here.
 
 ## The decision
 
-Pending: written from the TOML's `[format]` after the round, with the clause that settled it.
+**Not adopted, by clause (c); v1 stays the default.** Clause (a) held: submission failures
+fell from 14 under v1 to 4 under v2, pooled over the three judges and both repetitions (660
+decisions an arm), at most half. Clause (b) held: no judge had more failures under v2. Clause
+(c) failed for all three judges, each moving by more than 2 points (point estimates,
+repetition 1):
+
+- `claude-haiku-5-5`: its false-reject rate rose 2.2 points, though its balanced accuracy
+  rose 2.3 and its submission failures fell from 14 to 4.
+- `gemini-3.8-flash`: its balanced accuracy fell 5.2 points. Its false-reject and false-accept
+  rates did not move; the fall is in the errors: 14 of its v2 decisions ended in a fault (one
+  under v1), none of them a submission failure.
+- `gpt-6.1-terra`: its balanced accuracy fell 3.3 points and its false-reject rate rose 11.1.
+
+As the rule writes it: under the treatment these judges move by more than 2 points:
+claude-haiku-5-5 (false-reject rate +2.2 points); gemini-3.8-flash (balanced accuracy -5.2
+points); gpt-6.1-terra (balanced accuracy -3.3 points, false-reject rate +11.1 points); the
+control is kept.
+
+Under v2 Haiku's first rejections rose (81 to 93) while its failures fell: the one repair,
+naming every problem, saved more of them. Its one recovery used was `evidence_dropped` (238
+citations of a call that did not complete, dropped rather than refused); no other kind was
+used by any judge. Flash and Terra rarely or never had a submission rejected under either
+format.
+
+**The live probe before the round.** One check under v2 for each of the three judges, from a
+build at 377a9e7f (2.3 cents): each provider accepted v2's keyed tool, its keys of the
+provider-safe form, and each check passed. Every judge answered confidently, so none asked
+for the second look and the swap of the tool between turns was not exercised. Nor did the
+round exercise it: both arms are arm C, whose second look is off, so no cell of the round ran
+a second look.
 
 ## Per judge, before and after
 
@@ -88,7 +128,44 @@ Each row is written from the TOML's scope `all`.
 
 | Judge | Arm | Decisions | Submission failures | First rejections | Unknown | Balanced accuracy | 95% interval | Cost per decision | Self-agreement |
 |---|---|---|---|---|---|---|---|---|---|
-| Pending | | | | | | | | | |
+| claude-haiku-5-5 | 14 | 4 | yes | +0.023 | +0.022 | -0.015 | no |
+| gemini-3.8-flash | 0 | 0 | yes | -0.052 | +0.000 | +0.000 | no |
+| gpt-6.1-terra | 0 | 0 | yes | -0.033 | +0.111 | +0.000 | no |
+| claude-haiku-5-5 | C;submission=v1 | class | bad_field | 3 |
+| claude-haiku-5-5 | C;submission=v1 | class | evidence | 45 |
+| claude-haiku-5-5 | C;submission=v1 | class | finding_cites | 32 |
+| claude-haiku-5-5 | C;submission=v1 | class | location | 3 |
+| claude-haiku-5-5 | C;submission=v1 | class | missing_item | 10 |
+| claude-haiku-5-5 | C;submission=v1 | class | not_a_list | 2 |
+| claude-haiku-5-5 | C;submission=v1 | cause | concluded | 206 |
+| claude-haiku-5-5 | C;submission=v1 | cause | invalid_submission | 14 |
+| gemini-3.8-flash | C;submission=v1 | class | bad_field | 1 |
+| gemini-3.8-flash | C;submission=v1 | class | location | 5 |
+| gemini-3.8-flash | C;submission=v1 | cause | concluded | 219 |
+| gemini-3.8-flash | C;submission=v1 | cause | fault | 1 |
+| gpt-6.1-terra | C;submission=v1 | cause | concluded | 220 |
+| claude-haiku-5-5 | C;submission=v2 | class | bad_field | 1 |
+| claude-haiku-5-5 | C;submission=v2 | class | finding_cites | 77 |
+| claude-haiku-5-5 | C;submission=v2 | class | location | 14 |
+| claude-haiku-5-5 | C;submission=v2 | class | not_a_list | 5 |
+| claude-haiku-5-5 | C;submission=v2 | also | finding_cites | 6 |
+| claude-haiku-5-5 | C;submission=v2 | also | location | 6 |
+| claude-haiku-5-5 | C;submission=v2 | cause | concluded | 215 |
+| claude-haiku-5-5 | C;submission=v2 | cause | fault | 1 |
+| claude-haiku-5-5 | C;submission=v2 | cause | invalid_submission | 4 |
+| claude-haiku-5-5 | C;submission=v2 | recovery | evidence_dropped | 238 |
+| gemini-3.8-flash | C;submission=v2 | class | bad_field | 5 |
+| gemini-3.8-flash | C;submission=v2 | class | location | 3 |
+| gemini-3.8-flash | C;submission=v2 | also | bad_field | 10 |
+| gemini-3.8-flash | C;submission=v2 | cause | concluded | 206 |
+| gemini-3.8-flash | C;submission=v2 | cause | fault | 14 |
+| gpt-6.1-terra | C;submission=v2 | cause | concluded | 220 |
+| claude-haiku-5-5 | C;submission=v1 | 220 | 14 (0.064) | 81 (0.368) | 0 | 0.533 | 0.437 to 0.633 | 0.003294 | 0.809 |
+| gemini-3.8-flash | C;submission=v1 | 220 | 0 (0.000) | 6 (0.027) | 0 | 0.880 | 0.810 to 0.946 | 0.013444 | 0.955 |
+| gpt-6.1-terra | C;submission=v1 | 220 | 0 (0.000) | 0 (0.000) | 0 | 0.755 | 0.653 to 0.849 | 0.009324 | 0.945 |
+| claude-haiku-5-5 | C;submission=v2 | 220 | 4 (0.018) | 93 (0.423) | 0 | 0.556 | 0.472 to 0.642 | 0.004350 | 0.873 |
+| gemini-3.8-flash | C;submission=v2 | 220 | 0 (0.000) | 8 (0.036) | 0 | 0.828 | 0.750 to 0.900 | 0.017073 | 0.891 |
+| gpt-6.1-terra | C;submission=v2 | 220 | 0 (0.000) | 0 (0.000) | 0 | 0.721 | 0.619 to 0.818 | 0.010553 | 0.936 |
 
 ## Rejections, causes and recoveries
 
@@ -97,7 +174,6 @@ ended by, and each recovery v2 made, by kind, over both repetitions.
 
 | Judge | Arm | Counted | Name | Count |
 |---|---|---|---|---|
-| Pending | | | | |
 
 ## The clauses of each judge
 
@@ -106,7 +182,6 @@ false-accept rates not higher, by more than 2 points (point estimates, repetitio
 
 | Judge | v1 failures | v2 failures | No new failures | Balanced accuracy change | False-reject change | False-accept change | Accuracy kept |
 |---|---|---|---|---|---|---|---|
-| Pending | | | | | | | |
 
 ## What this is not
 

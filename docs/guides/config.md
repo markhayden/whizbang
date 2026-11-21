@@ -443,7 +443,9 @@ near-misses that have one reading are read (a list sent
 as text, a word in another case, an id in another case, an identical answer given twice,
 evidence of a call that did not complete, one wrapper object) and each is recorded under
 `recoveries` in `rejections.json`, and the one repair names every problem at once. v1, the
-default, is unchanged. Which is the default is decided by the format round of milestone E.
+default, is unchanged. The format round of milestone E kept v1 as the default: v2 cut small
+models' submission failures, but moved each small judge's accuracy or false-reject rate by
+more than 2 points (`docs/results/e-submission.md`; ADR 0042).
 
 **What one request may cost** is fixed by three settings of the backend, each held
 before a byte is sent: `max_input_tokens` (40,000 when none is given),
