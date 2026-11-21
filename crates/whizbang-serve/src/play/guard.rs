@@ -168,9 +168,20 @@ pub(crate) fn admit<'a>(
             _ => {}
         }
     }
+    // A request another site makes is refused, but for one thing: the browser going to
+    // the page itself, as a document at the top, from wherever it was sent (the
+    // opener page `whizbang play` hands Chrome is a file, which Chrome calls another
+    // site). That loads the interface's own public files and nothing of the store;
+    // the page acts on nothing in its address but the token after `#k=`. Under
+    // `/api/` nothing from another site is taken.
+    let navigation = !api
+        && head.method == "GET"
+        && head.header("sec-fetch-mode") == Some("navigate")
+        && head.header("sec-fetch-dest") == Some("document");
     if let Some(site) = head.header("sec-fetch-site")
         && site != "same-origin"
         && site != "none"
+        && !navigation
     {
         return Err(refused(403, "a request from another site is refused"));
     }

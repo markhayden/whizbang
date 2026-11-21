@@ -241,6 +241,41 @@ fn a_cross_site_fetch_metadata_header_is_refused_403() {
         );
         assert_eq!(page.status, 403, "{site}");
     }
+    // The browser going to the page from elsewhere (the opener page is a file, which
+    // Chrome calls another site) is let through to the page, and to nothing under
+    // /api/, however it is sent.
+    let navigating = |path: &str, site: &str| {
+        let mut headers = vec![
+            ("Host", host.as_str()),
+            ("Sec-Fetch-Site", site),
+            ("Sec-Fetch-Mode", "navigate"),
+            ("Sec-Fetch-Dest", "document"),
+        ];
+        if path.starts_with("/api/") {
+            headers.push(("Authorization", bearer.as_str()));
+        }
+        send(running.address, &request("GET", path, &headers, None))
+    };
+    for site in ["cross-site", "same-site"] {
+        assert_eq!(navigating("/", site).status, 200, "{site}");
+        assert_eq!(navigating("/api/hello", site).status, 403, "{site}");
+    }
+    // A navigation that is not of a document, or not a GET, is no navigation.
+    let framed = send(
+        running.address,
+        &request(
+            "GET",
+            "/",
+            &[
+                ("Host", &host),
+                ("Sec-Fetch-Site", "cross-site"),
+                ("Sec-Fetch-Mode", "navigate"),
+                ("Sec-Fetch-Dest", "iframe"),
+            ],
+            None,
+        ),
+    );
+    assert_eq!(framed.status, 403);
     for site in ["same-origin", "none"] {
         let api = hello_with(
             &running,
