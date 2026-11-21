@@ -639,13 +639,28 @@ fn a_run_started_by_the_host_is_found_by_its_id_after_its_caller_is_gone() {
 #[test]
 fn a_run_past_its_stated_time_is_cancelled_with_its_children() {
     let mut hosted = Hosted::start("play-stated", |settings| {
-        settings.run_limit = Duration::from_millis(200);
+        settings.run_limit = Duration::from_millis(800);
     });
     let started = Instant::now();
     let run = hosted.run("nest");
+    // The child is called before the stated time comes: its run is in the store.
+    let limit = Instant::now() + Duration::from_secs(20);
+    let root = hosted.root();
+    while whizbang_core::store::Reader::open(&root, Arc::new(RealFs))
+        .and_then(|reader| reader.snapshot())
+        .map_or(0, |generation| generation.runs().len())
+        < 2
+    {
+        assert!(Instant::now() < limit, "the child was never called");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        started.elapsed() < Duration::from_millis(800),
+        "the child came after the stated time, on a machine too busy for this case"
+    );
     let ended = hosted.until_state(&run, "ended");
     assert_eq!(ended["outcome"], "cancelled", "{ended}");
-    assert!(started.elapsed() >= Duration::from_millis(180));
+    assert!(started.elapsed() >= Duration::from_millis(780));
     hosted.host.as_ref().unwrap().stopper().quit();
     assert_eq!(hosted.wait().left, 0);
     // The child it called was cancelled with it.
