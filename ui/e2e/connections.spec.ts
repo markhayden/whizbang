@@ -18,21 +18,28 @@ test("pictures held open on the host take two connections a tab and leave the tw
       expect(answer.status()).toBe(201);
     }
 
-    // Every picture the page asks for is held open from now on, and so is the run.
-    await script(request, host, "hold-pictures,hold");
+    // The run is held open from now on.
+    await script(request, host, "hold");
+    // A request is open from when it is sent until its answer's head arrives (which the
+    // page sees before it can send a picture again, a 429's retry among them), or it fails.
+    const inFlight = new Map<Page, Set<object>>();
     const open = new Map<Page, number>();
     let most = 0;
     const counting = (tab: Page) => {
       const artifact = (asked: { url(): string }) => asked.url().includes("/api/artifacts/");
+      const held = new Set<object>();
+      inFlight.set(tab, held);
       tab.on("request", (asked) => {
         if (!artifact(asked)) return;
-        const now = (open.get(tab) ?? 0) + 1;
-        open.set(tab, now);
-        most = Math.max(most, now);
+        held.add(asked);
+        open.set(tab, held.size);
+        most = Math.max(most, held.size);
       });
-      const done = (asked: { url(): string }) => {
-        if (artifact(asked)) open.set(tab, (open.get(tab) ?? 1) - 1);
+      const done = (asked: object) => {
+        held.delete(asked);
+        open.set(tab, held.size);
       };
+      tab.on("response", (answer) => done(answer.request()));
       tab.on("requestfinished", done);
       tab.on("requestfailed", done);
     };
@@ -42,8 +49,12 @@ test("pictures held open on the host take two connections a tab and leave the tw
     await page.locator("#field-prompt").fill("the hose");
     await runWhenReady(page);
     await expect(page.locator('.step-list [data-state="running"]').first()).toBeVisible();
+    await expect(page.locator(".canvas__picture").first()).toBeVisible();
+    // And every picture any tab asks for from now on is held open by the host.
+    await script(request, host, "hold-pictures");
 
-    // A second tab's library: its thumbnails are asked for and held, two at a time.
+    // A second tab's library: its thumbnails are asked for and held, two at a time; the
+    // rest wait in the page.
     const other = await page.context().newPage();
     counting(other);
     await openAt(other, host, "#/");
