@@ -283,8 +283,26 @@ export const START_TRIES = 3;
 
 /** The most artifacts and thumbnails the page fetches at once. */
 export const ARTIFACTS_AT_ONCE = 2;
-/** How many `blob:` addresses the page keeps; an older one is revoked. */
+/**
+ * How many `blob:` addresses the page keeps; past it the oldest that no mounted picture
+ * holds is revoked.
+ */
 export const BLOBS_KEPT = 64;
+/** How often an artifact the host answered 429 is asked for, in all. */
+export const ARTIFACT_TRIES = 4;
+/** The longest wait before an artifact is asked for again. */
+export const ARTIFACT_RETRY_MAX_MS = 4000;
+
+/**
+ * The wait before an artifact the host answered 429 is asked for again: its `Retry-After`
+ * seconds (1 when it says none), doubled for each try after the first, at most 4 s. The
+ * host makes at most two at once for every tab, and each tab fetches two.
+ */
+export function artifactRetryMs(retryAfter: string | null, attempt: number): number {
+  const said = Number(retryAfter);
+  const base = Number.isFinite(said) && said > 0 ? said * 1000 : 1000;
+  return Math.min(ARTIFACT_RETRY_MAX_MS, base * 2 ** Math.max(0, attempt - 1));
+}
 
 /** A file's name as sent with it: at most 200 characters, cut between code points. */
 export function nameOf(file: { name: string }, most = 200): string {
@@ -353,8 +371,9 @@ export interface Client {
    * two are fetched at once, the rest queued, so of Chrome's six connections to the host at
    * least four stay free for polls, Stop and Quit while uploads run too. A fetch is shared by
    * everyone who asks for the same path, and aborted once every one of them has given up
-   * (`signal`). The addresses made are kept in a cache of the newest
-   * [`BLOBS_KEPT`]; an older one is revoked.
+   * (`signal`). Until that signal aborts, its address is held and never revoked; past
+   * [`BLOBS_KEPT`] the oldest that nobody holds is revoked. A 429 is asked again after
+   * its `Retry-After` ([`artifactRetryMs`]), the fetch keeping its place meanwhile.
    */
   blobUrl(path: string, signal?: AbortSignal): Promise<string>;
 }
@@ -404,7 +423,11 @@ export function createClient(options: ClientOptions): Client {
   };
   const artifacts = new Limiter(ARTIFACTS_AT_ONCE);
   const made = options.blobs ?? { make: (blob: Blob) => URL.createObjectURL(blob), revoke: (url: string) => URL.revokeObjectURL(url) };
-  /** Each path's fetch: shared, counted, and kept (newest last) once it has an address. */
+  /**
+   * Each path's fetch: shared, and kept (newest last) once it has an address. `users`
+   * counts those that asked with a signal and have not given up: while one waits, the
+   * fetch goes on; while one holds the address (a mounted picture), it is not revoked.
+   */
   interface Fetched {
     promise: Promise<string>;
     controller: AbortController;
@@ -412,13 +435,36 @@ export function createClient(options: ClientOptions): Client {
     url?: string;
   }
   const blobs = new Map<string, Fetched>();
+  /** Past [`BLOBS_KEPT`] addresses, the oldest that nobody holds are let go and revoked. */
+  const prune = () => {
+    const settled = [...blobs.entries()].filter(([, one]) => one.url !== undefined);
+    let over = settled.length - BLOBS_KEPT;
+    for (const [old, one] of settled) {
+      if (over <= 0) break;
+      if (one.users > 0) continue;
+      blobs.delete(old);
+      if (one.url) made.revoke(one.url);
+      over -= 1;
+    }
+  };
   const keep = (path: string, entry: Fetched) => {
     blobs.delete(path);
     blobs.set(path, entry);
-    const settled = [...blobs.entries()].filter(([, one]) => one.url !== undefined);
-    for (const [old, one] of settled.slice(0, Math.max(0, settled.length - BLOBS_KEPT))) {
-      blobs.delete(old);
-      if (one.url) made.revoke(one.url);
+    prune();
+  };
+  /** One fetch of an artifact, sent again after a 429 while it holds its place. */
+  const fetchArtifact = async (path: string, controller: AbortController): Promise<Response> => {
+    const given = () => new ApiError(0, "The picture was not wanted any more.");
+    for (let attempt = 1; ; attempt += 1) {
+      if (controller.signal.aborted) throw given();
+      let response: Response;
+      try {
+        response = await call(path, { method: "GET", headers: headers({}), cache: "no-store", credentials: "omit", redirect: "error", signal: controller.signal });
+      } catch {
+        throw controller.signal.aborted ? given() : new ApiError(0, sentenceFor(0));
+      }
+      if (response.status !== 429 || attempt >= ARTIFACT_TRIES) return response;
+      await pause(artifactRetryMs(response.headers.get("Retry-After"), attempt));
     }
   };
   const client: Client = {
@@ -468,13 +514,7 @@ export function createClient(options: ClientOptions): Client {
         const controller = new AbortController();
         const fresh: Fetched = { controller, users: 0, promise: Promise.resolve("") };
         fresh.promise = artifacts.run(async () => {
-          if (controller.signal.aborted) throw new ApiError(0, "The picture was not wanted any more.");
-          let response: Response;
-          try {
-            response = await call(path, { method: "GET", headers: headers({}), cache: "no-store", credentials: "omit", redirect: "error", signal: controller.signal });
-          } catch {
-            throw new ApiError(0, sentenceFor(0));
-          }
+          const response = await fetchArtifact(path, controller);
           if (!response.ok) throw await refusal(response);
           const url = made.make(await response.blob());
           fresh.url = url;
@@ -489,32 +529,34 @@ export function createClient(options: ClientOptions): Client {
         entry = fresh;
       } else if (entry.url !== undefined) {
         keep(path, entry);
-        return Promise.resolve(entry.url);
       }
       const shared = entry;
-      shared.users += 1;
+      // Asked with no signal, nobody holds the address: it may be revoked when it is old.
       if (!signal) return shared.promise;
+      shared.users += 1;
+      const release = () => {
+        shared.users -= 1;
+        if (shared.users > 0) return;
+        if (shared.url === undefined) {
+          shared.controller.abort();
+          if (blobs.get(path) === shared) blobs.delete(path);
+        } else prune();
+      };
       return new Promise<string>((resolve, reject) => {
         const giveUp = () => {
-          shared.users -= 1;
-          if (shared.users <= 0 && shared.url === undefined) {
-            shared.controller.abort();
-            if (blobs.get(path) === shared) blobs.delete(path);
-          }
-          reject(new ApiError(0, "The picture was not wanted any more."));
+          const waiting = shared.url === undefined;
+          release();
+          if (waiting) reject(new ApiError(0, "The picture was not wanted any more."));
         };
         if (signal.aborted) return giveUp();
+        // The signal is the holder's: until it aborts (the picture unmounts), the address
+        // is held, and not revoked.
         signal.addEventListener("abort", giveUp, { once: true });
-        shared.promise.then(
-          (url) => {
-            signal.removeEventListener("abort", giveUp);
-            resolve(url);
-          },
-          (error: unknown) => {
-            signal.removeEventListener("abort", giveUp);
-            reject(error);
-          },
-        );
+        shared.promise.then(resolve, (error: unknown) => {
+          signal.removeEventListener("abort", giveUp);
+          if (shared.users > 0) shared.users -= 1;
+          reject(error);
+        });
       });
     },
     poll: <T>(path: (after: number) => string, next: (answer: T) => { after: number; done: boolean }, onError?: (error: ApiError) => void) => {

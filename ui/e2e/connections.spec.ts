@@ -1,57 +1,73 @@
-// Of Chrome's six connections to the host, the page's thumbnails and uploads take at most
-// two each, so polls, Stop and Quit always find one (plan m5, "Who may call"; the review of
-// task W1).
-import { expect, test } from "./fixtures";
+// Of Chrome's six connections to one host, the page's pictures take at most two a tab, so
+// even with two tabs' pictures held open by the host, polls, Stop and Quit find a
+// connection (plan m5, "Who may call"; the reviews of task W1). The fixture holds every
+// `/api/artifacts/…` request open while its script says `hold-pictures`.
+import type { Page } from "@playwright/test";
+import { expect, test, withHost } from "./fixtures";
 import { file, give, openAt, picture, runWhenReady, script } from "./play";
 
-test.afterEach(async ({ request, host }) => {
-  await script(request, host, "reset");
-});
+test("pictures held open on the host take two connections a tab and leave the two that polls, stop and quit need", async ({ page, request }) => {
+  // A host of its own: the case ends with Quit.
+  await withHost([], async (host) => {
+    const sent = { Authorization: `Bearer ${host.token}`, Origin: host.origin };
+    for (let seed = 300; seed < 306; seed += 1) {
+      const answer = await request.post(`${host.address}api/pictures?name=held-${seed}.png`, {
+        headers: { ...sent, "Content-Type": "image/png" },
+        data: picture(seed),
+      });
+      expect(answer.status()).toBe(201);
+    }
 
-test("thumbnails and uploads leave at least four of Chrome's six connections for polls, stop and quit", async ({ page, request, host }) => {
-  // A library of pictures, sent as the page sends them.
-  for (let seed = 200; seed < 212; seed += 1) {
-    const sent = await request.post(`${host.address}api/pictures?name=lib-${seed}.png`, {
-      headers: { Authorization: `Bearer ${host.token}`, Origin: host.origin, "Content-Type": "image/png" },
-      data: picture(seed),
-    });
-    expect(sent.status()).toBe(201);
-  }
-  // A run held at its first request, followed in one tab.
-  await script(request, host, "hold");
-  await openAt(page, host, "#/k/rascal/remove_prompt");
-  await give(page, "image", file("held.png", 199));
-  await page.locator("#field-prompt").fill("the hose");
-  await runWhenReady(page);
-  await expect(page.locator('.step-list [data-state="running"]').first()).toBeVisible();
+    // Every picture the page asks for is held open from now on, and so is the run.
+    await script(request, host, "hold-pictures,hold");
+    const open = new Map<Page, number>();
+    let most = 0;
+    const counting = (tab: Page) => {
+      const artifact = (asked: { url(): string }) => asked.url().includes("/api/artifacts/");
+      tab.on("request", (asked) => {
+        if (!artifact(asked)) return;
+        const now = (open.get(tab) ?? 0) + 1;
+        open.set(tab, now);
+        most = Math.max(most, now);
+      });
+      const done = (asked: { url(): string }) => {
+        if (artifact(asked)) open.set(tab, (open.get(tab) ?? 1) - 1);
+      };
+      tab.on("requestfinished", done);
+      tab.on("requestfailed", done);
+    };
+    counting(page);
+    await openAt(page, host, "#/k/rascal/remove_prompt");
+    await give(page, "image", file("held.png", 299));
+    await page.locator("#field-prompt").fill("the hose");
+    await runWhenReady(page);
+    await expect(page.locator('.step-list [data-state="running"]').first()).toBeVisible();
 
-  // Another tab of the same browser loads every thumbnail and sends pictures at once.
-  const other = await page.context().newPage();
-  let artifacts = 0;
-  let mostArtifacts = 0;
-  let uploads = 0;
-  let mostUploads = 0;
-  const kind = (url: string, method: string) => (url.includes("/api/artifacts/") ? "artifact" : method === "POST" && url.includes("/api/pictures") ? "upload" : null);
-  other.on("request", (sent) => {
-    const which = kind(sent.url(), sent.method());
-    if (which === "artifact") mostArtifacts = Math.max(mostArtifacts, (artifacts += 1));
-    if (which === "upload") mostUploads = Math.max(mostUploads, (uploads += 1));
+    // A second tab's library: its thumbnails are asked for and held, two at a time.
+    const other = await page.context().newPage();
+    counting(other);
+    await openAt(other, host, "#/");
+    await expect.poll(() => open.get(other) ?? 0).toBe(2);
+
+    // The run's tab still polls, and Stop is answered.
+    await page.getByRole("button", { name: "Stop run" }).click();
+    await expect(page.locator(".tag", { hasText: "CANCELLED" })).toBeVisible();
+
+    // Quit is answered too, and the host goes.
+    const quit = await request.post(`${host.address}api/quit`, { headers: sent });
+    expect(quit.status()).toBe(202);
+    await expect
+      .poll(async () => {
+        try {
+          await request.get(`${host.address}api/hello`, { headers: sent, timeout: 1_000 });
+          return "answering";
+        } catch {
+          return "gone";
+        }
+      })
+      .toBe("gone");
+    // No tab ever held more than two of its connections with pictures.
+    expect(most).toBeLessThanOrEqual(2);
+    await other.close();
   });
-  const done = (sent: { url(): string; method(): string }) => {
-    const which = kind(sent.url(), sent.method());
-    if (which === "artifact") artifacts -= 1;
-    if (which === "upload") uploads -= 1;
-  };
-  other.on("requestfinished", done);
-  other.on("requestfailed", done);
-  await openAt(other, host, "#/");
-  await other.locator(".home__pictures input[type=file]").setInputFiles(Array.from({ length: 6 }, (_, at) => file(`drop-${at}.png`, 220 + at)));
-
-  // Meanwhile the first tab still polls, and Stop is answered.
-  await page.getByRole("button", { name: "Stop run" }).click();
-  await expect(page.locator(".tag", { hasText: "CANCELLED" })).toBeVisible();
-  await expect(other.locator(".home__pictures img[src^=\"blob:\"]")).toHaveCount(13 + 6, { timeout: 15_000 });
-  expect(mostArtifacts).toBeLessThanOrEqual(2);
-  expect(mostUploads).toBeLessThanOrEqual(2);
-  await other.close();
 });
