@@ -11,7 +11,7 @@ pub const TOKEN_BYTES: usize = 32;
 
 /// A launch token. Only [`Token::hex`] gives its text, for the page's address and for the
 /// owner-only file of a running host.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct Token([u8; TOKEN_BYTES]);
 
 impl Token {

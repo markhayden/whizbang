@@ -399,7 +399,10 @@ fn a_fifth_running_call_is_answered_429_and_polling_cancel_and_quit_are_still_an
     let fifth = running.api(
         "POST",
         "/api/runs",
-        Some(&json!({"action": "waits", "arguments": {}, "handle": handle})),
+        Some(
+            &json!({"action": "waits", "arguments": {}, "handle": handle,
+                     "request_id": crate::fresh_id()}),
+        ),
     );
     assert_eq!(fifth.status, 429, "{}", fifth.whole());
     assert!(fifth.header("retry-after").is_some());
@@ -438,8 +441,11 @@ fn a_client_that_trickles_its_headers_or_reads_nothing_is_closed_at_its_deadline
     assert!(got.is_empty(), "{:?}", String::from_utf8_lossy(&got));
     assert!(took >= Duration::from_millis(250), "{took:?}");
     assert!(took < Duration::from_secs(5), "{took:?}");
-    // Sixteen clients that send a whole request and read nothing hold no worker: a
-    // seventeenth is answered.
+    // Sixteen clients that send a whole request and read nothing hold no worker: an
+    // answer the system can take whole is handed to it, and the worker goes on, so a
+    // seventeenth is answered. (An answer larger than the system takes, to a client that
+    // never reads it, is cut off at the answer's deadline for the whole answer:
+    // `http::tests::an_answer_a_client_does_not_take_is_cut_off_at_the_answer_deadline`.)
     let mut silent = Vec::new();
     for _ in 0..16 {
         let mut stream = TcpStream::connect(running.address).unwrap();

@@ -135,6 +135,11 @@ pub fn read_head(
 
 fn parse_head(bytes: &[u8]) -> Result<Head, &'static str> {
     let text = std::str::from_utf8(bytes).map_err(|_| "a request's headers are text")?;
+    // Each line ends in CR LF; a bare CR or LF inside one is refused, so that no
+    // reader of the headers can see a line this one does not.
+    if text.split("\r\n").any(|line| line.contains(['\r', '\n'])) {
+        return Err("a request's lines end in CR LF");
+    }
     let mut lines = text.split("\r\n");
     let line = lines.next().unwrap_or_default();
     let mut parts = line.split(' ');
@@ -367,12 +372,27 @@ impl Response {
         bytes
     }
 
-    /// Writes the answer within the answer's deadline, and closes the connection. What
-    /// the client sent and nobody read is drained for a moment first, so that the close
-    /// does not throw the answer away.
+    /// Writes the answer within the answer's deadline, which holds for the whole answer
+    /// and not for each write: it is written in pieces, each given what is left of the
+    /// deadline, so a client that takes it a few bytes at a time is cut off at the
+    /// deadline all the same. Then the connection is closed; what the client sent and
+    /// nobody read is drained for a moment first, so that the close does not throw the
+    /// answer away.
     pub fn send(&self, stream: &mut TcpStream, deadlines: &Deadlines) {
-        let _ = stream.set_write_timeout(Some(deadlines.answer));
-        let _ = stream.write_all(&self.to_bytes());
+        let since = Instant::now();
+        let bytes = self.to_bytes();
+        let mut written = 0;
+        while written < bytes.len() {
+            let left = deadlines.answer.saturating_sub(since.elapsed());
+            if left.is_zero() || stream.set_write_timeout(Some(left)).is_err() {
+                return;
+            }
+            let end = (written + 16 * 1024).min(bytes.len());
+            match stream.write(&bytes[written..end]) {
+                Ok(0) | Err(_) => return,
+                Ok(sent) => written += sent,
+            }
+        }
         let _ = stream.flush();
         let _ = stream.shutdown(Shutdown::Write);
         let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
@@ -383,5 +403,66 @@ impl Response {
                 Ok(_) => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_parser_refuses_what_could_be_read_two_ways() {
+        let refused = |head: &str| parse_head(head.as_bytes()).err();
+        let cases: [(&str, Option<&str>); 8] = [
+            (
+                "GET / HTTP/1.1\r\nHost: a\r\nHost: b",
+                Some("a header that is sent once was sent twice"),
+            ),
+            (
+                "POST / HTTP/1.1\r\nTransfer-Encoding: chunked",
+                Some("a body is sent with Content-Length, and not in chunks"),
+            ),
+            (
+                "GET / HTTP/1.1\r\nHost: a\r\n folded",
+                Some("a header is one line"),
+            ),
+            (
+                "GET / HTTP/1.1\r\nHost: a\nX-Other: b",
+                Some("a request's lines end in CR LF"),
+            ),
+            (
+                "GET / HTTP/1.1\r\nContent-Length: 12345678901234567890",
+                Some("Content-Length is a number"),
+            ),
+            (
+                "GET / HTTP/1.1\r\nContent-Length: -1",
+                Some("Content-Length is a number"),
+            ),
+            ("GET / HTTP/2\r\nHost: a", Some("a request is HTTP/1.1")),
+            ("GET /?a=1 HTTP/1.1\r\nHost: a\r\nContent-Length: 0", None),
+        ];
+        for (head, expected) in cases {
+            assert_eq!(refused(head), expected, "{head:?}");
+        }
+    }
+
+    #[test]
+    fn an_answer_a_client_does_not_take_is_cut_off_at_the_answer_deadline() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        // The client connects, and reads nothing.
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut served, _) = listener.accept().unwrap();
+        let deadlines = Deadlines {
+            answer: Duration::from_millis(300),
+            ..Deadlines::default()
+        };
+        // Far more than any socket's buffers hold.
+        let answer = Response::bytes(200, "application/octet-stream", vec![0u8; 64 << 20]);
+        let started = Instant::now();
+        answer.send(&mut served, &deadlines);
+        let took = started.elapsed();
+        assert!(took >= Duration::from_millis(250), "{took:?}");
+        assert!(took < Duration::from_secs(5), "{took:?}");
+        drop(client);
     }
 }

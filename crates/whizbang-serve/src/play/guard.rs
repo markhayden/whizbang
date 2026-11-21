@@ -10,7 +10,7 @@ use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use serde_json::Value as Json;
-use whizbang_core::identity::{DecodeLimits, IdentityError, identify};
+use whizbang_core::identity::{DecodeLimits, Digest};
 
 use super::Shared;
 use super::http::{self, Head, Response, Unread};
@@ -31,10 +31,65 @@ pub struct Guarded<'a> {
     pub params: Vec<String>,
     /// A JSON body, parsed.
     pub json: Option<Json>,
-    /// A picture's bytes, which decoded inside the core's limits.
-    pub picture: Option<Vec<u8>>,
+    /// A picture whose header says a size inside the core's limits.
+    pub picture: Option<Picture>,
     _upload: Option<Upload<'a>>,
     _sealed: Sealed,
+}
+
+/// A picture as the guard took it: its bytes, the digest of those bytes (the file's
+/// identity), and the size its header states. It is not decoded here.
+pub struct Picture {
+    pub bytes: Vec<u8>,
+    pub digest: Digest,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// The width and height a PNG's or a baseline or progressive JPEG's header states;
+/// none for anything else, or a header cut short.
+pub fn dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    let be32 = |at: usize| -> Option<u32> {
+        Some(u32::from_be_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
+    };
+    let be16 = |at: usize| -> Option<u32> {
+        Some(u32::from(u16::from_be_bytes(
+            bytes.get(at..at + 2)?.try_into().ok()?,
+        )))
+    };
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        if bytes.get(12..16)? != b"IHDR" {
+            return None;
+        }
+        return Some((be32(16)?, be32(20)?));
+    }
+    if !bytes.starts_with(&[0xff, 0xd8]) {
+        return None;
+    }
+    let mut at = 2;
+    loop {
+        // Fill bytes before a marker are skipped.
+        while *bytes.get(at)? == 0xff && *bytes.get(at + 1)? == 0xff {
+            at += 1;
+        }
+        if *bytes.get(at)? != 0xff {
+            return None;
+        }
+        let marker = *bytes.get(at + 1)?;
+        if (0xd0..=0xd9).contains(&marker) || marker == 0x01 {
+            at += 2;
+            continue;
+        }
+        let length = usize::try_from(be16(at + 2)?).ok()?;
+        let is_frame = matches!(marker, 0xc0..=0xcf) && !matches!(marker, 0xc4 | 0xc8 | 0xcc);
+        if is_frame {
+            return Some((be16(at + 7)?, be16(at + 5)?));
+        }
+        if length < 2 {
+            return None;
+        }
+        at += 2 + length;
+    }
 }
 
 /// What keeps [`Guarded`] from being made outside this module.
@@ -194,13 +249,29 @@ pub(crate) fn admit<'a>(
                 Err(_) => return Err(refused(400, "the body is not JSON")),
             }
         }
-        Body::Picture => match identify(&body, &DecodeLimits::default()) {
-            Ok(_) => picture = Some(body),
-            Err(IdentityError::Limit(why)) => {
-                return Err(refused(413, &format!("the picture is over a limit: {why}")));
+        Body::Picture => {
+            // Its size, from its header alone: nothing is decoded here. The handler
+            // that keeps a picture decodes it within the core's limits as it keeps it.
+            let Some((width, height)) = dimensions(&body) else {
+                return Err(refused(415, "the body is not a PNG or JPEG"));
+            };
+            let pixels = u64::from(width) * u64::from(height);
+            let most = DecodeLimits::default().max_pixels;
+            if pixels > most {
+                return Err(refused(
+                    413,
+                    &format!(
+                        "the picture is {width}x{height}, {pixels} pixels, over the limit of {most}"
+                    ),
+                ));
             }
-            Err(_) => return Err(refused(415, "the body is not a PNG or JPEG that decodes")),
-        },
+            picture = Some(Picture {
+                digest: Digest::of_bytes(&body),
+                width,
+                height,
+                bytes: body,
+            });
+        }
     }
     Ok((
         Guarded {
@@ -213,4 +284,31 @@ pub(crate) fn admit<'a>(
         },
         route,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dimensions;
+
+    #[test]
+    fn a_pictures_size_is_read_from_its_header_alone() {
+        let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+        png.extend_from_slice(&640u32.to_be_bytes());
+        png.extend_from_slice(&480u32.to_be_bytes());
+        assert_eq!(dimensions(&png), Some((640, 480)));
+        // A JPEG: an application segment, fill bytes, then its frame.
+        let jpeg = [
+            0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x00, 0x00, 0xff, 0xff, 0xc2, 0x00, 0x11, 0x08,
+            0x01, 0xe0, 0x02, 0x80,
+        ];
+        assert_eq!(dimensions(&jpeg), Some((640, 480)));
+        for not in [
+            &b"hello"[..],
+            &png[..20],
+            &jpeg[..12],
+            &[0xff, 0xd8, 0x00][..],
+        ] {
+            assert_eq!(dimensions(not), None, "{not:?}");
+        }
+    }
 }
