@@ -423,6 +423,17 @@ them alone. It is inside the run's 16 turns and what the run reserved, and the v
 still worked out from the dispositions. `runs stats --unsure-by rule` counts what made the
 unsure verdicts of a store unsure, by rule.
 
+**Why a submission was rejected.** Every run of `check` under a use case keeps, however it
+ends, each rejection of a submission by its class (`not_a_list`, `unknown_item`,
+`missing_item`, `duplicate_item`, `bad_field`, `location`, `allowed_by`, `finding_cites`,
+`evidence`, `not_alone`, `no_submission`) and why the run ended (`concluded`,
+`invalid_submission`, `no_submission_after_repair`, `cut_off`, `ceiling`, `refused`,
+`turns`, `fault`, `other`), in its diagnostic `rejections.json`. Classes and causes only:
+the words the judge was sent are unchanged, and nothing it wrote is kept there. `ceiling` is
+a turn cut off at its backend's output ceiling; `cut_off` a turn cut off again after its
+limit was raised. `runs stats --rejections` counts both over a filter. A run answered from
+the decision cache sent nothing and keeps none.
+
 **What one request may cost** is fixed by three settings of the backend, each held
 before a byte is sent: `max_input_tokens` (40,000 when none is given),
 `max_output_tokens` (4,096) and `max_pictures` (24), in a table

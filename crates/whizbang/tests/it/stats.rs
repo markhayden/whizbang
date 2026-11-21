@@ -98,6 +98,62 @@ fn unsure_by_rule_prints_aggregates_and_no_item() {
 }
 
 #[test]
+fn rejections_by_class_and_cause() {
+    // Plan e1, task T1, item 3. Three runs of `check` under arm F: the first repaired
+    // after an item was left out; the second left it out twice and failed; the third
+    // whole at once.
+    let (judged, tiny) = world_with("stats-rejections", &ITEMS);
+    let matrix = matrix_with(SET, "\"F\"");
+    let short = || items(&[(SF1, "held", "confident")]);
+    let whole = || items(&[(SF1, "held", "confident"), (SF2, "held", "confident")]);
+    let answers = vec![short(), whole(), short(), short(), whole()];
+    let (report, _) = run_matrix(&judged, answers, &|e| {
+        ran(e, &judged, &tiny, &matrix, PLENTY, &never)
+    });
+    assert!(report.is_ok(), "{report:?}");
+    let root = &judged.world.root;
+    let stats = whizbang(&["runs", "stats", "--rejections"], root);
+    assert_eq!(stats.code, Some(0), "{}", stats.err);
+    let (_, counted) = stats.out.split_once("rejections: ").unwrap();
+    assert_eq!(
+        counted,
+        "3 in 2 of 3 runs that kept them; 0 runs of check under a use case kept none\n\
+         \x20 cause\tconcluded\t2\n\
+         \x20 cause\tinvalid_submission\t1\n\
+         \x20 cause\tno_submission_after_repair\t0\n\
+         \x20 cause\tcut_off\t0\n\
+         \x20 cause\tceiling\t0\n\
+         \x20 cause\trefused\t0\n\
+         \x20 cause\tturns\t0\n\
+         \x20 cause\tfault\t0\n\
+         \x20 cause\tother\t0\n\
+         \x20 cause\tunknown\t0\n\
+         \x20 class\tnot_a_list\t0\n\
+         \x20 class\tunknown_item\t0\n\
+         \x20 class\tmissing_item\t3\n\
+         \x20 class\tduplicate_item\t0\n\
+         \x20 class\tbad_field\t0\n\
+         \x20 class\tlocation\t0\n\
+         \x20 class\tallowed_by\t0\n\
+         \x20 class\tfinding_cites\t0\n\
+         \x20 class\tevidence\t0\n\
+         \x20 class\tnot_alone\t0\n\
+         \x20 class\tno_submission\t0\n\
+         \x20 class\tunknown\t0\n"
+    );
+    // No item, set or run is named; without the flag, no count.
+    for item in ITEMS {
+        assert!(!stats.out.contains(item), "{item}");
+    }
+    assert!(!stats.out.contains(SET) && !stats.out.contains("chk:"));
+    for (run, _) in checks(root) {
+        assert!(!stats.out.contains(&run), "{run}");
+    }
+    let plain = whizbang(&["runs", "stats"], root);
+    assert!(!plain.out.contains("rejections:"), "{}", plain.out);
+}
+
+#[test]
 fn runs_stats_counts_a_loops_attempts_and_retries() {
     use crate::checked::{Looped, Setup, passes, remains};
     use whizbang_core::contract::Value;
