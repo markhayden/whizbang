@@ -14,10 +14,10 @@ use whizbang_core::contract::request::{StoredAdmissionError, admitted};
 use whizbang_core::contract::{
     ADMITTED_NAME, Action, ActionDescriptor, Admission, Answer, Argument, Backends, Call,
     CallError, Capability, Clock, Closing, Context, Declined, Ending, Engine, Estimate, Executor,
-    Failure, Kind, Ledger, MadeName, ModelIdentity, NoBackends, NotJudged, Outcome, PreparedCall,
-    Produced, REQUEST_ID_LIMIT, REQUEST_RECORD_MAX_BYTES, Refusal, Registry, Request, RequestId,
-    RequestRecordError, Requirement, Reread, Reservation, RunState, Secrets, Settled, Step,
-    Unavailable, Value, ValueType, request_fingerprint, reservations,
+    Failure, Kind, Ledger, MadeName, ModelIdentity, NOT_CONFIRMED_KIND, NoBackends, NotJudged,
+    Outcome, PreparedCall, Produced, REQUEST_ID_LIMIT, REQUEST_RECORD_MAX_BYTES, Refusal, Registry,
+    Request, RequestId, RequestRecordError, Requirement, Reread, Reservation, RunState, Secrets,
+    Settled, Step, Unavailable, Value, ValueType, request_fingerprint, reservations,
 };
 use whizbang_core::contract::{
     ConfigSource, InputFault, InputPort, Readiness, Snapshot, SourceRefused, Stale,
@@ -1900,11 +1900,12 @@ fn a_repeat_is_not_answered_from_another_run_that_took_the_deleted_runs_id() {
 }
 
 #[test]
-fn an_admission_that_was_visible_and_not_confirmed_takes_the_id_and_never_runs() {
+fn an_unconfirmed_admission_is_ended_as_an_error_by_the_executor_that_made_it() {
     // The last sync of the admission's publication is refused: the run is visible, the
-    // caller is told of the store's failure, and the action does not start. The id is
-    // taken all the same: the same request again is answered with that run, not ended,
-    // and another request under the id is a conflict.
+    // caller is told of the store's failure, and the action does not start. The
+    // executor that made the run ends it at once, as an error (plan m5, task K1, item
+    // 6): the same request again is answered with that run, ended, and another request
+    // under the id is a conflict.
     let world = World::new();
     let store = world.store();
     let engine = world.engine(store);
@@ -1920,12 +1921,11 @@ fn an_admission_that_was_visible_and_not_confirmed_takes_the_id_and_never_runs()
     );
     assert_eq!(world.ran(), 0);
     let earlier = repeat(engine.request(&asked("hello", "order-17")));
-    // Abandoned (ADR 0008, "A run with nothing behind it"): open here, and nothing ends it.
-    assert!(
-        matches!(earlier.state(), RunState::Abandoned { failure: Some(_) }),
-        "{:?}",
-        earlier.state()
-    );
+    let RunState::Ended(Outcome::Error { kind, message }) = earlier.state() else {
+        panic!("{:?}", earlier.state());
+    };
+    assert_eq!(kind, NOT_CONFIRMED_KIND);
+    assert!(message.contains("not confirmed durable"), "{message}");
     assert!(matches!(
         engine.request(&asked("goodbye", "order-17")),
         Err(CallError::Refused(Refusal::Conflict { .. }))
@@ -3600,4 +3600,100 @@ fn a_store_failure_inside_a_ledger_reaches_the_caller_as_the_stores() {
     let failed = engine.request(&asked("hello", "order-17")).unwrap_err();
     assert!(matches!(failed, CallError::Store(_)), "{failed:?}");
     assert_eq!(world.ran(), 0);
+}
+
+// --- a call that must run under a preparation (plan m5, task K1, item 5) --------------------
+
+#[test]
+fn a_call_needing_a_preparation_without_one_is_refused_stale_and_reserves_nothing() {
+    let world = World::new();
+    let store = world.store();
+    let ledger = Arc::new(whizbang_testkit::ledger::FakeLedger::new());
+    let engine = world.engine(store).with_ledger(ledger.clone());
+    let before = held(&world.root(), Arc::new(RealFs));
+    let stale = CallError::Refused(Refusal::Stale {
+        action: "paint".to_owned(),
+        why: Stale::Missing,
+    });
+    // With an id and without, requested and started alike.
+    for request in [
+        asked("hello", "order-21").needing_preparation(),
+        Request::new(call("hello")).needing_preparation(),
+    ] {
+        assert_eq!(engine.request(&request).unwrap_err(), stale);
+        assert_eq!(engine.start(&request).unwrap_err(), stale);
+    }
+    assert_eq!(
+        stale.to_string(),
+        "paint was not admitted: the preparation it came with is stale: it came with none, \
+         and runs only under the preparation it was shown"
+    );
+    // Nothing was admitted, reserved, run or written; the id is not taken.
+    assert_eq!(held(&world.root(), Arc::new(RealFs)), before);
+    assert_eq!((world.ran(), ledger.asked()), (0, 0));
+    // With a preparation that holds, the marked call runs; with one that does not, it
+    // is stale as any request is.
+    let prepared = engine.prepare(&call("hello")).unwrap();
+    let marked = asked("hello", "order-21").needing_preparation();
+    ran(engine.request(&marked.clone().expecting(&prepared)));
+    assert_eq!(world.ran(), 1);
+    let other = engine.prepare(&call("goodbye")).unwrap();
+    let refused = engine
+        .request(
+            &Request::new(call("hello"))
+                .needing_preparation()
+                .expecting(&other),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(
+            refused,
+            CallError::Refused(Refusal::Stale {
+                why: Stale::Call,
+                ..
+            })
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(world.ran(), 1);
+}
+
+#[test]
+fn a_repeat_needing_a_preparation_is_answered_with_its_run_before_the_check() {
+    // A repeated id is answered first, whatever came with it: a retry after the caller
+    // lost its preparation answers the run it started. Another call under the id is a
+    // conflict, and not a stale preparation.
+    let world = World::new();
+    let engine = world.engine(world.store());
+    let prepared = engine.prepare(&call("hello")).unwrap();
+    let first = asked("hello", "order-22").needing_preparation();
+    let finished = ran(engine.request(&first.clone().expecting(&prepared)));
+    let earlier = repeat(engine.request(&first));
+    assert_eq!(earlier.run(), finished.run());
+    let Ok(Answer::Repeat(started)) = engine.start(&first) else {
+        panic!("not answered as a repeat");
+    };
+    assert_eq!(started.run(), finished.run());
+    assert!(matches!(
+        engine.request(&asked("goodbye", "order-22").needing_preparation()),
+        Err(CallError::Refused(Refusal::Conflict { .. }))
+    ));
+    assert_eq!(world.ran(), 1);
+}
+
+#[test]
+fn an_unmarked_call_without_a_preparation_is_prepared_and_admitted_as_before() {
+    let world = World::new();
+    let engine = world.engine(world.store());
+    let request = asked("hello", "order-23");
+    assert!(!request.needs_preparation());
+    assert!(request.clone().needing_preparation().needs_preparation());
+    // The mark is no part of the request's fingerprint.
+    assert_eq!(
+        request.fingerprint(),
+        request.clone().needing_preparation().fingerprint()
+    );
+    let finished = ran(engine.request(&request));
+    assert_eq!(*finished.outcome(), completed());
+    assert_eq!(world.ran(), 1);
 }

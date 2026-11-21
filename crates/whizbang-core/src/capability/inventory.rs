@@ -15,7 +15,7 @@
 
 use std::sync::Arc;
 
-use crate::contract::{Backends, Capability, Estimate, ModelIdentity, Unavailable};
+use crate::contract::{Backends, Capability, Estimate, MissingKind, ModelIdentity, Unavailable};
 use crate::identity::Digest;
 
 use super::{
@@ -212,6 +212,21 @@ pub enum Unready {
     NotForThisPlatform,
 }
 
+impl Unready {
+    /// The kind a preparation says it as (plan m5, task K1, item 1). A model this
+    /// build has no adapter for is of no kind of its own: [`MissingKind::Other`].
+    pub fn kind(self) -> MissingKind {
+        match self {
+            Unready::NotInstalled => MissingKind::NotInstalled,
+            Unready::OutOfDate => MissingKind::OutOfDate,
+            Unready::Damaged => MissingKind::Damaged,
+            Unready::NotInCatalogue => MissingKind::NotInCatalogue,
+            Unready::NotForThisPlatform => MissingKind::NotForThisPlatform,
+            Unready::NoAdapter => MissingKind::Other,
+        }
+    }
+}
+
 impl std::fmt::Display for Unready {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
@@ -299,11 +314,14 @@ impl Backends for InstalledRoster {
             )),
             // The name is one the roster offers, and so a name; the reason is fixed
             // words. Nothing of the model is said.
-            Installed::NotReady(why) => Err(Unavailable::new(&format!(
-                "the {} backend {} is local, and its model is not ready: {why}",
-                capability.name(),
-                resolved.name()
-            ))),
+            Installed::NotReady(why) => Err(Unavailable::of(
+                why.kind(),
+                &format!(
+                    "the {} backend {} is local, and its model is not ready: {why}",
+                    capability.name(),
+                    resolved.name()
+                ),
+            )),
         }
     }
 

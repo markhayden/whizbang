@@ -76,9 +76,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::artifact::{self, ArtifactId};
 use crate::contract::record::{GIVEN_LIMIT, Given, Started};
 use crate::contract::{
-    Action, ActionDescriptor, Argument, Call, CallError, Capability, Context, Count, Failure,
-    Findings, InputPort, Kind, Outcome, OutputPort, Plan, Planning, PreparedCall, Produced,
-    Registry, Requirement, ResultKind, Value, ValueType, Verdict, When,
+    Action, ActionDescriptor, Argument, Call, CallError, Capability, Context, Count, Event,
+    Failure, Findings, InputPort, Kind, Outcome, OutputPort, Plan, Planning, PreparedCall,
+    Produced, Registry, Requirement, ResultKind, Value, ValueType, Verdict, When,
 };
 use crate::identity::{DecodeLimits, Digest};
 
@@ -780,6 +780,13 @@ impl Action for RecipeAction {
             context
                 .events()
                 .progress(&format!("{name}: step {} ({})", step.id, step.action));
+            // And typed, for whoever shows the run as it goes (plan m5, task K1, item
+            // 3): the step started, and below, how it ended and its run.
+            context.events().event(&Event::StepStarted {
+                step: step.id.clone(),
+                action: step.action.clone(),
+                attempt: None,
+            });
             let finished = context
                 .executor()
                 .submit(&asked)
@@ -800,6 +807,12 @@ impl Action for RecipeAction {
                 .into_iter()
                 .filter(|(name, _)| name != super::CONSTANTS)
                 .collect();
+            context.events().event(&Event::StepEnded {
+                step: step.id.clone(),
+                outcome: finished.outcome().name().to_owned(),
+                run: finished.run().to_string(),
+                attempt: None,
+            });
             context.label_step(finished.run(), &step.id, &labelled, constants.as_deref());
             match finished.outcome() {
                 Outcome::Completed { outputs } => {

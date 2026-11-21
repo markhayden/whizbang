@@ -16,7 +16,7 @@ use crate::egress::Ways;
 use crate::identity::{DecodeLimits, Digest};
 use crate::store::{self, Store};
 
-use super::journal::Kept;
+use super::journal::{Heard, Kept};
 use super::ledger::{Closing, Declined, Reread, Reservation, Settled, Step};
 use super::live::{self, LiveRun, Told};
 use super::nested::{Added, DESCENDANTS_LIMIT, Family, HeldOpen, Nested, Offer, Under};
@@ -89,6 +89,14 @@ pub trait Executor: Send + Sync {
     /// while the run's end is being published. A run the store does not hold is
     /// refused ([`Refusal::NoSuchRun`]).
     fn status(&self, run: &RunId) -> Result<Watched, CallError>;
+
+    /// As [`Executor::status`], with only the events from the place `seen` on: what a
+    /// caller that has seen the first `seen` places of the run's events has not, and
+    /// how many of those places hold an event the run did not keep (plan m5, task K1,
+    /// item 4). A poll copies no more than is new.
+    fn status_after(&self, run: &RunId, seen: u64) -> Result<Watched, CallError> {
+        self.status(run).map(|watched| watched.after(seen))
+    }
 
     /// As [`Executor::status`], once the run is over: it returns when the run has
     /// ended, or at once when nothing in this process is working on it. So it never
@@ -576,11 +584,15 @@ impl Executor for Engine {
     }
 
     fn status(&self, run: &RunId) -> Result<Watched, CallError> {
-        self.watch(run, false, None)
+        self.watch(run, false, None, 0)
+    }
+
+    fn status_after(&self, run: &RunId, seen: u64) -> Result<Watched, CallError> {
+        self.watch(run, false, None, seen)
     }
 
     fn wait(&self, run: &RunId) -> Result<Watched, CallError> {
-        self.watch(run, true, None)
+        self.watch(run, true, None, 0)
     }
 
     fn cancel(&self, run: &RunId) -> Result<Cancel, CallError> {
@@ -657,7 +669,21 @@ impl Engine {
     /// or the answer to a request that makes no run: a repeat.
     fn begin(&self, request: &Request) -> Result<Result<Admitted, Answer>, CallError> {
         let bounded = Bounded::by(request);
+        // A request marked as running only under a preparation, that came with none,
+        // is stale: refused before anything is prepared, admitted, reserved or sent
+        // (plan m5, task K1, item 5). A request with an id is looked up first.
+        let unprepared = || {
+            let action = request.call().action().to_owned();
+            let refused = Refusal::Stale {
+                action,
+                why: Stale::Missing,
+            };
+            (request.needs_preparation() && request.expected().is_none()).then_some(refused)
+        };
         let Some(id) = request.id() else {
+            if let Some(refused) = unprepared() {
+                return Err(refused.into());
+            }
             return match self.admit(request.call(), None, request.expected(), &bounded, None) {
                 Ok(admitted) => Ok(Ok(admitted)),
                 Err(Stopped::Refused(error)) => Err(error),
@@ -691,6 +717,9 @@ impl Engine {
         };
         if let Some(answered) = answer(self.look_up(id, fingerprint)?) {
             return answered;
+        }
+        if let Some(refused) = unprepared() {
+            return Err(refused.into());
         }
         let asked = Some((id, fingerprint));
         match self.admit(request.call(), asked, request.expected(), &bounded, None) {
@@ -1202,6 +1231,9 @@ impl Engine {
         };
         let mut run = self.name_run(store, start_ms)?;
         let mut namings = 1;
+        // An admission of a run nothing called that became visible and was not
+        // confirmed durable: the store's failure, and the run, which is ended below.
+        let mut unacknowledged: Option<StoreFailure> = None;
         loop {
             // Before each attempt, which is each time the ledger is asked: a request
             // that was cancelled meanwhile, or whose deadline passed, is given up with
@@ -1377,8 +1409,17 @@ impl Engine {
                 {
                     return Err(Stopped::Taken(error));
                 }
+                // An admission that became visible and was not confirmed, of a run
+                // nothing called: its run is in the store, and its action is never
+                // run. It is ended at once, as an error, by this executor, so that
+                // its request id answers a run that ended (plan m5, task K1, item 6).
+                Err(error @ store::Error::Unacknowledged { .. }) if under.is_none() => {
+                    unacknowledged = Some(StoreFailure::new(error));
+                    break;
+                }
                 // Among these is an admission that became visible and was not
-                // confirmed: its run is in the store and open here, and is abandoned.
+                // confirmed, of a run another called: it is in the store and open
+                // here, and is abandoned.
                 Err(error) => {
                     // The admission is in the store, naming the run it drew on and
                     // the amount: what was taken for it stays taken, or the
@@ -1414,6 +1455,8 @@ impl Engine {
         // action. A reading that fails is no answer, and is taken as one that says no.
         let ledger = self.ledger.as_ref().filter(|_| under.is_none());
         let stands = match (ledger, &reserved_as) {
+            // Not confirmed durable: nothing stands on it, and the books are not read.
+            _ if unacknowledged.is_some() => Ok(false),
             (Some(ledger), Some(reservation)) => match store.snapshot() {
                 Ok(generation) => {
                     let reread = Reread::new(&generation, store.as_ref());
@@ -1452,6 +1495,18 @@ impl Engine {
             },
             over: Some(over),
         };
+        if let Some(failure) = unacknowledged {
+            // Ended by the publication that ends any run, which closes its reservation
+            // and makes its request id's ending. Where that fails too, the run is
+            // abandoned as before, and the next recovery ends it. Either way the
+            // caller is told of the store's failure.
+            let message = format!(
+                "the run was admitted and its admission was not confirmed durable, so its \
+                 action was not run: {failure}"
+            );
+            drop(self.end(admitted, Some((NOT_CONFIRMED_KIND, &message))));
+            return Err(CallError::Store(failure).into());
+        }
         let (why, unread) = match stands {
             Ok(true) => return Ok(admitted),
             Ok(false) => (
@@ -1843,8 +1898,8 @@ impl Engine {
         // only then. The run must still be there: one that was deleted while it
         // executed is not made again from its last names. The run is reported after
         // this is durable.
-        let (lines, written) = kept.take();
-        let kept: Vec<(Diagnostic, Vec<u8>)> = std::iter::once(Diagnostic::journal(&lines))
+        let (journal, written) = kept.take();
+        let kept: Vec<(Diagnostic, Vec<u8>)> = std::iter::once(Diagnostic::whole_journal(&journal))
             .chain(written)
             .collect();
         // What the run's record says of the calls its action made: they are all over.
@@ -2251,7 +2306,7 @@ impl Engine {
         if let Some(then) = &self.before_watch {
             then();
         }
-        let watched = self.watch(run, true, Some(signal))?;
+        let watched = self.watch(run, true, Some(signal), 0)?;
         // And once more before the run is answered for: a cancellation that landed
         // after the first look, with a run that had ended and left the table by the
         // time the store was looked at, was never waited on and so never seen.
@@ -2272,6 +2327,7 @@ impl Engine {
         run: &RunId,
         wait: bool,
         unless: Option<&Cancellation>,
+        seen: u64,
     ) -> Result<Watched, CallError> {
         let unknown = || CallError::Refused(Refusal::NoSuchRun { run: run.clone() });
         let wait_for = |live: &Arc<LiveRun>| match unless {
@@ -2305,11 +2361,11 @@ impl Engine {
                         wait_for(&live)?;
                         // An end the executor did not confirm is not said to be one.
                         if let Some(failure) = live.abandoned() {
-                            return abandoned(failure, live.events());
+                            return abandoned(failure, live.events(seen));
                         }
                     }
                 }
-                return watched(RunState::Ended(outcome), Vec::new());
+                return watched(RunState::Ended(outcome), Heard::default());
             }
             Seen::Open => {}
         }
@@ -2319,32 +2375,32 @@ impl Engine {
         let attached = self.store.as_ref().and_then(|s| s.attached(run.as_str()));
         if let Some(attached) = attached {
             let Some(live) = live::of(attached) else {
-                return watched(RunState::NotEnded { here: true }, Vec::new());
+                return watched(RunState::NotEnded { here: true }, Heard::default());
             };
             if wait {
                 wait_for(&live)?;
             }
             let Some(failure) = live.abandoned() else {
                 if !wait {
-                    return watched(RunState::NotEnded { here: true }, live.events());
+                    return watched(RunState::NotEnded { here: true }, live.events(seen));
                 }
                 // It ended, and its end was confirmed: the store says how.
                 return match self.seen(run)? {
                     Seen::Nothing => Err(unknown()),
-                    Seen::Ended(outcome) => watched(RunState::Ended(outcome), Vec::new()),
-                    Seen::Open => watched(RunState::NotEnded { here: true }, live.events()),
+                    Seen::Ended(outcome) => watched(RunState::Ended(outcome), Heard::default()),
+                    Seen::Open => watched(RunState::NotEnded { here: true }, live.events(seen)),
                 };
             };
             // Nothing here works on it any more, and its end was not confirmed. A wait
             // says so, whatever became visible. A status says what the store says: an
             // end that became visible all the same, or the run abandoned as admitted.
             if wait {
-                return abandoned(failure, live.events());
+                return abandoned(failure, live.events(seen));
             }
             return match self.seen(run)? {
                 Seen::Nothing => Err(unknown()),
-                Seen::Ended(outcome) => watched(RunState::Ended(outcome), Vec::new()),
-                Seen::Open => watched(RunState::Abandoned { failure }, live.events()),
+                Seen::Ended(outcome) => watched(RunState::Ended(outcome), Heard::default()),
+                Seen::Open => watched(RunState::Abandoned { failure }, live.events(seen)),
             };
         }
         // Not in the table. Either this process never made it, or it left the table
@@ -2352,8 +2408,8 @@ impl Engine {
         // deletion, is visible: a second look sees that, and is the answer.
         match self.seen(run)? {
             Seen::Nothing => Err(unknown()),
-            Seen::Ended(outcome) => watched(RunState::Ended(outcome), Vec::new()),
-            Seen::Open => watched(RunState::NotEnded { here: false }, Vec::new()),
+            Seen::Ended(outcome) => watched(RunState::Ended(outcome), Heard::default()),
+            Seen::Open => watched(RunState::NotEnded { here: false }, Heard::default()),
         }
     }
 }

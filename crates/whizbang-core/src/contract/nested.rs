@@ -680,6 +680,14 @@ impl Nested {
         if request.id().is_some() {
             return Err(Refusal::IdInside { action: action() }.into());
         }
+        // As outside: a call that runs only under a preparation needs one.
+        if request.needs_preparation() && request.expected().is_none() {
+            return Err(Refusal::Stale {
+                action: action(),
+                why: super::Stale::Missing,
+            }
+            .into());
+        }
         // A run that froze the actions it calls calls no other, and gives a call
         // nothing but what it may read: decided here, where the call is dispatched,
         // from what the run was admitted with and what its own calls came to.

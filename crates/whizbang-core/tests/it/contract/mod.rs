@@ -21,6 +21,7 @@ pub mod findings;
 mod fixtures;
 mod interrupted;
 mod inventory;
+mod journal;
 mod ledger;
 mod nested;
 mod part;
