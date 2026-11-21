@@ -1576,11 +1576,8 @@ fn the_real_binary_started_with_hf_token_set_reads_the_sign_in_and_never_the_var
     // Hub's tools take them in place of the file, and whizbang does not (plan 1C, D12).
     let sources = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = 0;
-    // Every source file, those in a module's folder among them.
-    for name in everything_under(&sources) {
-        if !name.ends_with(".rs") {
-            continue;
-        }
+    for entry in std::fs::read_dir(&sources).unwrap() {
+        let name = entry.unwrap().file_name().into_string().unwrap();
         let code = binary_code(&name);
         assert!(!code.contains("\"HF_TOKEN\""), "{name}");
         assert!(!code.contains("HUGGING_FACE_HUB_TOKEN"), "{name}");

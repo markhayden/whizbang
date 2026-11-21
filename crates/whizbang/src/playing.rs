@@ -31,9 +31,6 @@ use crate::wiring::{self, Over};
 /// The name of the file a running host keeps in its store's folder.
 pub const PLAY_FILE: &str = "play.json";
 
-pub mod form;
-pub mod kept;
-
 /// The actions of a registry, offered to the page, over what the executor was built
 /// over; and the store's writer the executor holds, through which the page's pictures
 /// and drawn locations are kept (plan m5, task W1, item 3), let go when the host stops.
@@ -129,15 +126,16 @@ impl Play for Playground {
         let Some(descriptor) = self.descriptor(action) else {
             return Err("this build has no action of that name".to_owned());
         };
-        if form::is_use_case(descriptor.name()) {
-            return form::use_case_call(descriptor.name(), arguments).map(|call| (call, None));
+        if crate::play_form::is_use_case(descriptor.name()) {
+            return crate::play_form::use_case_call(descriptor.name(), arguments)
+                .map(|call| (call, None));
         }
         tools::call_of(descriptor, arguments)
     }
 
     fn hello(&self) -> Map<String, Json> {
         let mut said = Map::new();
-        let (kits, tools) = form::kits_json(&self.kits, &self.descriptors, &self.steps);
+        let (kits, tools) = crate::play_form::kits_json(&self.kits, &self.descriptors, &self.steps);
         said.insert("kits".to_owned(), kits);
         said.insert("tools".to_owned(), tools);
         // `backends` is always a list; a readiness that cannot be read is said beside it.
@@ -154,7 +152,7 @@ impl Play for Playground {
                 );
             }
         }
-        if let Some(allowance) = self.root.as_deref().and_then(kept::allowance) {
+        if let Some(allowance) = self.root.as_deref().and_then(crate::play_kept::allowance) {
             said.insert("allowance".to_owned(), allowance);
         }
         said
@@ -165,7 +163,7 @@ impl Play for Playground {
             return Vec::new();
         };
         let listed = backend_status::readiness(&self.over).unwrap_or_default();
-        form::choosers_of(descriptor)
+        crate::play_form::choosers_of(descriptor)
             .into_iter()
             .map(|(field, capability)| {
                 let rows = listed
@@ -180,30 +178,30 @@ impl Play for Playground {
     }
 
     fn picture(&self, bytes: &[u8], name: &str) -> Result<Json, Refused> {
-        kept::picture(self.store()?.as_ref(), bytes, name)
+        crate::play_kept::picture(self.store()?.as_ref(), bytes, name)
     }
 
     fn pictures(&self, after: Option<&str>, limit: usize) -> Result<Json, Refused> {
-        kept::pictures(self.store()?.as_ref(), after, limit)
+        crate::play_kept::pictures(self.store()?.as_ref(), after, limit)
     }
 
     fn artifact(&self, id: &str, edge: Option<u32>) -> Result<(&'static str, Vec<u8>), Refused> {
-        kept::artifact(self.store()?.as_ref(), id, edge)
+        crate::play_kept::artifact(self.store()?.as_ref(), id, edge)
     }
 
     fn location(&self, drawn: &Json) -> Result<Json, Refused> {
-        kept::location(self.store()?.as_ref(), drawn)
+        crate::play_kept::location(self.store()?.as_ref(), drawn)
     }
 
     fn facts(&self, run: &RunId, ended: bool) -> Map<String, Json> {
         match &self.root {
-            Some(root) => kept::facts(root, run, ended),
+            Some(root) => crate::play_kept::facts(root, run, ended),
             None => Map::new(),
         }
     }
 
     fn journal(&self, run: &RunId) -> Option<Vec<Json>> {
-        kept::journal(self.store().ok()?.as_ref(), run)
+        crate::play_kept::journal(self.store().ok()?.as_ref(), run)
     }
 
     fn closing(&self) {

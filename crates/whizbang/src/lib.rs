@@ -19,6 +19,8 @@ pub mod pack;
 pub mod pack_setup;
 pub mod pairs_page;
 pub mod parity;
+pub mod play_form;
+pub mod play_kept;
 pub mod playing;
 pub mod serving;
 pub mod sign_in;
