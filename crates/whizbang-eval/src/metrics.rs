@@ -131,6 +131,13 @@ impl Counts {
         Some((caught + passed) / 2.0)
     }
 
+    /// The share of every item decided correctly: an expected fail caught or an expected
+    /// pass passed, over every item (plan e1, task S1). An `unsure` or an error is neither.
+    /// `None` without an item.
+    pub fn decided_correctly(&self) -> Option<f64> {
+        (self.items > 0).then(|| (self.detected + self.passed) as f64 / self.items as f64)
+    }
+
     /// The share of expected fails passed; `None` without one.
     pub fn false_accept_rate(&self) -> Option<f64> {
         (self.expected_fail > 0).then(|| self.false_accepts as f64 / self.expected_fail as f64)
@@ -248,6 +255,10 @@ pub struct Paired {
     pub false_reject_increase: Option<Interval>,
     /// Treatment minus control, in the share of expected fails passed.
     pub false_accept_increase: Option<Interval>,
+    /// Treatment minus control, in the share of items decided correctly (plan e1, task S1).
+    /// Not written in a gate's receipt, whose form is frozen by its version.
+    #[serde(skip_serializing)]
+    pub decided_correctly_difference: Option<Interval>,
 }
 
 /// Compares two arms' rows. A family is named by its set and its id, so two sets never
@@ -334,6 +345,7 @@ pub fn paired(control: &[Row], treatment: &[Row], how: Resampling) -> Result<Pai
         gain: resample(Counts::balanced_accuracy),
         false_reject_increase: resample(Counts::false_reject_rate),
         false_accept_increase: resample(Counts::false_accept_rate),
+        decided_correctly_difference: resample(Counts::decided_correctly),
     })
 }
 
