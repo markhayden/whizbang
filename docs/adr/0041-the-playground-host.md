@@ -137,6 +137,10 @@ run that has not ended by then is left to be ended as interrupted by the next wr
 exit says how many. A second signal, or a second quit, during the grace ends the grace at
 once, and the same steps follow.
 
+**A fixture's script.** A request carrying `x-fixture-script` is refused, 400, by the
+real host (the door's `Play::script`); the fixture host of the Chrome cases reads it to
+steer its fake backends (plan m5, tasks U1 and W1). No page of the playground sends it.
+
 **Reconnecting.** The host writes `<store>/play.json` when it starts, readable by its owner
 only, with its port, its process id and the token, and removes it when it stops. A second
 `whizbang play` on a store held by a live host reads it, asks that host's `/api/hello` with
@@ -151,12 +155,16 @@ registered in `play/routes.rs` by one line.
 | `GET /` and the interface's files | The built interface, embedded (`play/assets.rs`) | H1, U1 |
 | `GET /api/hello` | Version, the store's folder, the backends' readiness (no probe), the allowance and what is left | H1, then W1 adds the kits |
 | `POST /api/quit` | Stop, as above | H1 |
-| `POST /api/prepare` | A preparation of a call, kept under a handle; its readiness | H1 (the handle), W1 (per choice, needs, plan) |
+| `POST /api/prepare` | A preparation of a call, kept under a handle when it is ready; its readiness and what is missing by kind, each need's bound, a loop's attempts, and each choice of a backend prepared on its own | H1 (the handle), W1 (per choice, needs, plan) |
 | `POST /api/runs` | Start a call with its handle and a request id | H1, W1 |
-| `GET /api/runs/{id}?after=<n>` | The run's state and its events after the `n`th | H1, W1 |
+| `GET /api/runs/{id}?after=<n>` | The run's state and its events after the `n`th, every text escaped (from its journal once it has ended), what was asked, what it spent of what it reserved, its outputs and its verdict | H1, W1 |
 | `POST /api/runs/{id}/cancel` | Stop a run | H1 |
 | `GET /api/runs?open=1` | The runs the host started that are still going | H1, then W3 adds history |
-| the rest of the plan's table | Pictures, locations, artifacts, records, reports, models, backends, stats, spend | W1, W2, W3, M1 |
+| `POST /api/pictures?name=` | A picture's bytes, decoded within `DecodeLimits` by the route (the guard reads only its header's size) and kept as `store import --picture` keeps one, through the host's writer, with its name beside it under `play/pictures/` in the same publication | W1 |
+| `GET /api/pictures?after=&limit=` | The pictures the playground kept, newest first, with their names | W1 |
+| `POST /api/locations` | A box, a polygon (at most 64 points), a stroke or a line drawn on a picture, committed as a location bound to it | W1 |
+| `GET /api/artifacts/{id}` and `…/thumb?edge=` | An artifact for display: a picture as its PNG, a mask as a grey picture, a location as JSON; a thumbnail made on request | W1 |
+| the rest of the plan's table | Records, reports, models, backends, stats, spend | W2, W3, M1 |
 
 No route takes a file path.
 

@@ -853,7 +853,7 @@ the run may cost, runs it, watches it, stops it, closes the tab and comes back t
    escapes control characters as the stdio server does (`escaped`): the carry-over row on a
    progress event's message is closed for the playground with a test.
 
-- [ ] Done when: row 1's ten Chrome cases, row 2's and row 9's pass in both `e2e` jobs;
+- [x] Done when: row 1's ten Chrome cases, row 2's and row 9's pass in both `e2e` jobs;
   `play::a_start_without_a_matching_fresh_preparation_is_refused_as_stale`,
   `play::a_start_sent_twice_with_one_request_id_answers_one_run`,
   `play::a_repeat_after_the_handle_expired_or_the_host_restarted_answers_its_run`,
@@ -871,6 +871,19 @@ the run may cost, runs it, watches it, stops it, closes the tab and comes back t
   `describe::the_description_is_static_with_kits_and_titles`, `home.spec.ts: a third kit
   of fake actions shows on home, in the switcher and in search` (on a fixture registry), and
   `just docs` regenerated.
+
+**As built (W1).** The shipped recipes' files are left as they are, since what was measured
+of a recipe names it by the digest of its text: their kits and titles are tables beside
+them (`whizbang_rascal::recipes::TITLES`, `whizbang_squint::recipes::TITLES`), and a user's
+recipe file may say `kit` and `title` itself; one that says no kit is rascal's, whose
+runner runs it. `check` is squint's, titled "Check by a job". The fixture's fakes are the
+test kit's `playkit` (`whizbang_testkit::playkit`), steered by `x-fixture-script` (`hold`,
+`release`, `pass`, `fail`, `reset`), which the real host refuses. A poll after a run's end
+reads its events from the run's journal, since the executor's status of an ended run
+holds none. A choice whose preparation is not ready for a reason the backend states of
+itself (a model not installed) shows that reason's kind. Left to W2's record route: a
+check's findings drawn as places on the canvas while a loop runs (item 6); the running
+screen shows the verdict once the run has ended.
 
 ## W2. The result: compare, verdict, Send to, Run again, Copy command (large)
 

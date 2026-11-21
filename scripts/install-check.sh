@@ -308,7 +308,7 @@ IFS= read -r -t "$limit" opened <&6 || { sed 's/^/    /' "$work/err" >&2; die "t
   die "the playground's first line is not its address with its token"
 port=${BASH_REMATCH[1]}
 token=${BASH_REMATCH[2]}
-asked_play() { # <path> [<header>]: one request; the answer's head in $work/head, its body in $work/out
+asked_play() { # <path> [<header>|@<file of headers>]: one request; the answer's head in $work/head, its body in $work/out
   /usr/bin/curl --silent --noproxy '*' --max-time "$limit" --dump-header "$work/head" --output "$work/out" \
     ${2:+--header "$2"} "http://127.0.0.1:$port$1" || die "the playground did not answer $1 within $limit seconds"
 }
@@ -317,7 +317,11 @@ head -n 1 "$work/head" | grep -E '^HTTP/1\.1 200 ' >/dev/null && grep -i '^conte
   die "the playground's page was not served with its policy"
 asked_play /api/hello
 head -n 1 "$work/head" | grep -E '^HTTP/1\.1 401 ' >/dev/null || die "the playground answered /api/hello without its token"
-asked_play /api/hello "Authorization: Bearer $token"
+# The token goes to curl in a file of this run's, read with `--header @file`, and never
+# on a command line, which other users of the machine can read; printf is the shell's
+# own, so it starts no process.
+(umask 077 && printf 'Authorization: Bearer %s\n' "$token" >"$work/bearer")
+asked_play /api/hello "@$work/bearer"
 head -n 1 "$work/head" | grep -E '^HTTP/1\.1 200 ' >/dev/null && said '"version":"'"$version"'"' ||
   { shown; die "the playground's /api/hello did not answer the token with whizbang $version"; }
 exec 5>&-
