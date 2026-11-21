@@ -7,25 +7,21 @@
 //! A picture is kept as the import keeps every picture: its canonical pixels as a PNG,
 //! with nothing of the file's metadata. The name a person gave it is the one thing kept
 //! beside it, under `play/pictures/<the image's digest>`, at most 200 characters, kept as
-//! given and escaped when it is shown. A picture that fails to decode, or to publish,
-//! leaves nothing behind.
+//! given and escaped when it is shown. The same picture sent again under another name
+//! keeps the newest name and moves to the front of the list: one picture, one entry. A
+//! picture that fails to decode, or to publish, leaves nothing behind.
 
 use std::io::Cursor;
-use std::path::Path;
-use std::sync::Arc;
 
 use image::{ExtendedColorType, ImageEncoder, ImageReader};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value as Json, json};
-use whizbang_core::artifact::{
-    self, Artifact, ArtifactId, ArtifactType, Location, Origin, Shape, Step,
-};
+use serde_json::{Value as Json, json};
+use whizbang_core::artifact::{self, Artifact, ArtifactId, Location, Origin, Shape, Step};
 use whizbang_core::contract::RunId;
 use whizbang_core::identity::{DecodeLimits, Digest, IdentityError, Point, Projection};
 use whizbang_core::spend::fold::Folded;
-use whizbang_core::spend::reading::Reading;
-use whizbang_core::store::fs::RealFs;
-use whizbang_core::store::{Reader, Store};
+use whizbang_core::spend::reading::{Names, Reading};
+use whizbang_core::store::Store;
 use whizbang_serve::escaped;
 use whizbang_serve::play::Refused;
 
@@ -77,16 +73,16 @@ pub fn picture(store: &Store, bytes: &[u8], name: &str) -> Result<Json, Refused>
         ));
     }
     let limits = DecodeLimits::default();
-    if let Err(error) = whizbang_core::identity::identify(bytes, &limits) {
-        return Err(match error {
+    // Decoded once, within the core's limits: what judges the bytes is what is kept.
+    let identified =
+        whizbang_core::identity::identify(bytes, &limits).map_err(|error| match error {
             IdentityError::Limit(why) => Refused::new(
                 413,
                 &format!("the picture is over the core's decode limits: {why}"),
             ),
             _ => Refused::new(400, "the body is not a picture this build reads"),
-        });
-    }
-    let image = import::image_of_bytes(bytes, Projection::Flat)
+        })?;
+    let image = import::image_of_identified(&identified, &limits, Projection::Flat)
         .map_err(|_| Refused::new(400, "the body is not a picture this build reads"))?;
     let space = image.space();
     let id = image.id();
@@ -128,10 +124,15 @@ pub fn pictures(store: &Store, after: Option<&str>, limit: usize) -> Result<Json
         .collect();
     kept.sort_by(|a, b| b.at_ms.cmp(&a.at_ms).then_with(|| a.id.cmp(&b.id)));
     let start = match after {
-        Some(after) => kept
-            .iter()
-            .position(|one| one.id == after)
-            .map_or(0, |at| at + 1),
+        Some(after) => match kept.iter().position(|one| one.id == after) {
+            Some(at) => at + 1,
+            None => {
+                return Err(Refused::new(
+                    400,
+                    "after names no picture the playground kept",
+                ));
+            }
+        },
         None => 0,
     };
     let listed: Vec<Json> = kept
@@ -150,7 +151,8 @@ fn not_found() -> Refused {
     Refused::new(404, "the store holds no artifact of that identity")
 }
 
-/// Reads the artifact of this identity, of whichever type it is.
+/// Reads the artifact of this identity, of whichever type it is: its type found once
+/// (`artifact::type_anywhere`), then it is read.
 fn read_any(store: &Store, id: &str) -> Result<Artifact, Refused> {
     let id = id
         .parse::<Digest>()
@@ -160,10 +162,7 @@ fn read_any(store: &Store, id: &str) -> Result<Artifact, Refused> {
     let generation = store
         .snapshot()
         .map_err(|_| Refused::new(500, "the store could not answer"))?;
-    let kind = ArtifactType::ALL
-        .into_iter()
-        .find(|kind| artifact::holds_anywhere(&generation, *kind, id))
-        .ok_or_else(not_found)?;
+    let kind = artifact::type_anywhere(&generation, id).ok_or_else(not_found)?;
     artifact::get_anywhere(store, kind, id, &limits).map_err(|_| not_found())
 }
 
@@ -355,49 +354,40 @@ fn dollars(micros: u128) -> f64 {
     micros as f64 / 1_000_000.0
 }
 
-/// The books of the store at `root`, folded, read by a reader of its own.
-fn folded(root: &Path) -> Option<Folded> {
-    let reader = Reader::open(root, Arc::new(RealFs)).ok()?;
-    let generation = reader.snapshot().ok()?;
-    let reading = Reading::of(&generation, |entry| reader.read(entry));
-    Some(Folded::of(reading))
-}
-
-/// The allowance of the newest epoch and what is left of it, in dollars; none before the
-/// first reset.
-pub fn allowance(root: &Path) -> Option<Json> {
-    let folded = folded(root)?;
-    let balance = folded.balance();
-    (balance.epoch > 0).then(|| {
+/// The allowance of the newest epoch and what is left of it, in dollars, none before the
+/// first reset; with the number of the generation it was read from. It folds the store's
+/// books, so [`Playground`](crate::playing::Playground) keeps the answer for that
+/// generation and folds again only when the store has published since.
+pub fn allowance(store: &Store) -> Option<(u64, Option<Json>)> {
+    let generation = store.snapshot().ok()?;
+    let reading = Reading::of(&generation, |entry| store.read(entry));
+    let balance = Folded::of(reading).balance();
+    let said = (balance.epoch > 0).then(|| {
         json!({"allowance": dollars(u128::from(balance.allowed.micros())),
                "left": dollars(u128::from(balance.left.micros()))})
-    })
-}
-
-/// What the ledger says of a run, in dollars: what was charged for it so far and what
-/// its reservation holds; and its verdict once it has ended, when it has one.
-pub fn facts(root: &Path, run: &RunId, ended: bool) -> Map<String, Json> {
-    let mut said = Map::new();
-    let (spent, reserved) = folded(root).map_or((0, 0), |folded| {
-        // What was charged under the run's own reservation, which its children's
-        // requests are sent under too.
-        let own = folded.reservation(run);
-        let spent = own.map_or(0, |one| one.names().charged().micros());
-        let reserved = own.map_or(0, |one| u128::from(one.names().amount().micros()));
-        (spent, reserved)
     });
-    said.insert("spent".to_owned(), json!(dollars(spent)));
-    said.insert("reserved".to_owned(), json!(dollars(reserved)));
-    let verdict = match ended {
-        true => crate::door::verdict(root, run).map(|stated| json!(escaped(&stated.word))),
-        false => None,
-    };
-    said.insert("verdict".to_owned(), verdict.unwrap_or(Json::Null));
-    said
+    Some((generation.number(), said))
 }
 
-/// The journal a run that has ended keeps in the store: each line as JSON, in order.
-pub fn journal(store: &Store, run: &RunId) -> Option<Vec<Json>> {
+/// What the ledger has settled for a run so far, and what its reservation holds, in
+/// dollars: read from the names of that one reservation, as the meter reads them, with
+/// no fold of the store's books.
+pub fn spend(store: &Store, run: &RunId) -> (f64, f64) {
+    let Ok(generation) = store.snapshot() else {
+        return (0.0, 0.0);
+    };
+    match Names::of_run(run, &generation, |entry| store.read(entry)) {
+        Some(names) => (
+            dollars(names.charged().micros()),
+            dollars(u128::from(names.amount().micros())),
+        ),
+        None => (0.0, 0.0),
+    }
+}
+
+/// The journal a run that has ended keeps in the store: each line as JSON, in order, and
+/// how many events the run counted and did not keep.
+pub fn journal(store: &Store, run: &RunId) -> Option<(Vec<Json>, u64)> {
     let generation = store.snapshot().ok()?;
     let entry = generation
         .run(run.as_str())?
@@ -405,11 +395,11 @@ pub fn journal(store: &Store, run: &RunId) -> Option<Vec<Json>> {
         .clone();
     let bytes = store.read(&entry).ok()?;
     let journal = whizbang_core::contract::Journal::read(&bytes).ok()?;
-    Some(
-        journal
-            .lines()
-            .iter()
-            .filter_map(|line| serde_json::to_value(line).ok())
-            .collect(),
-    )
+    let lines = journal
+        .lines()
+        .iter()
+        .filter_map(|line| serde_json::to_value(line).ok())
+        .collect();
+    let not_kept = journal.not_kept();
+    Some((lines, not_kept.messages().saturating_add(not_kept.events())))
 }

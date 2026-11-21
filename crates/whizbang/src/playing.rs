@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as Json, json};
-use whizbang_core::contract::{ActionDescriptor, Call, RunId};
+use whizbang_core::contract::{ActionDescriptor, Call, RequestId, RunId};
 use whizbang_core::description::Kit;
 use whizbang_core::store::Store;
 use whizbang_core::store::fs::{Fs, RealFs};
@@ -43,6 +43,26 @@ pub struct Playground {
     steps: BTreeMap<String, Vec<String>>,
     store: Mutex<Option<Arc<Store>>>,
     root: Option<PathBuf>,
+    /// What was read and is kept, so that a poll or a page of thumbnails does not read the
+    /// store again for what it already said.
+    kept: Mutex<Remembered>,
+}
+
+/// The most thumbnails kept in memory, and the most bytes of them.
+pub const THUMBNAILS_KEPT: usize = 64;
+pub const THUMBNAIL_BYTES_KEPT: usize = 16 * 1024 * 1024;
+
+/// The most verdicts of ended runs kept in memory.
+pub const VERDICTS_KEPT: usize = 512;
+
+/// What the playground keeps of what it read: the allowance with the generation it was
+/// read from; the newest thumbnails by identity and edge, the least recently used let go
+/// first; and the verdict of each run that has ended, which never changes.
+#[derive(Default)]
+struct Remembered {
+    allowance: Option<(u64, Option<Json>)>,
+    thumbnails: std::collections::VecDeque<((String, u32), Vec<u8>)>,
+    verdicts: std::collections::VecDeque<(String, Json)>,
 }
 
 /// The actions a recipe's steps call, from its text, in its order, each once.
@@ -88,6 +108,7 @@ impl Playground {
             steps,
             store: Mutex::new(None),
             root: None,
+            kept: Mutex::new(Remembered::default()),
         }
     }
 
@@ -110,6 +131,48 @@ impl Playground {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
             .ok_or_else(|| Refused::new(503, "the playground is stopping"))
+    }
+
+    fn remembered(&self) -> std::sync::MutexGuard<'_, Remembered> {
+        self.kept
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The allowance, folded from the store's books only when it has published since
+    /// it was last folded.
+    fn allowance(&self) -> Option<Json> {
+        let store = self.store().ok()?;
+        let newest = store.snapshot().ok()?.number();
+        if let Some((number, said)) = &self.remembered().allowance
+            && *number == newest
+        {
+            return said.clone();
+        }
+        let (number, said) = crate::play_kept::allowance(&store)?;
+        self.remembered().allowance = Some((number, said.clone()));
+        said
+    }
+
+    /// The verdict of a run that has ended, read once.
+    fn verdict(&self, run: &RunId) -> Json {
+        let key = run.as_str().to_owned();
+        if let Some((_, said)) = self.remembered().verdicts.iter().find(|(k, _)| *k == key) {
+            return said.clone();
+        }
+        let said = self
+            .root
+            .as_deref()
+            .and_then(|root| crate::door::verdict(root, run))
+            .map_or(Json::Null, |stated| {
+                json!(whizbang_serve::escaped(&stated.word))
+            });
+        let mut kept = self.remembered();
+        kept.verdicts.push_back((key, said.clone()));
+        while kept.verdicts.len() > VERDICTS_KEPT {
+            kept.verdicts.pop_front();
+        }
+        said
     }
 
     fn descriptor(&self, action: &str) -> Option<&ActionDescriptor> {
@@ -152,7 +215,7 @@ impl Play for Playground {
                 );
             }
         }
-        if let Some(allowance) = self.root.as_deref().and_then(crate::play_kept::allowance) {
+        if let Some(allowance) = self.allowance() {
             said.insert("allowance".to_owned(), allowance);
         }
         said
@@ -186,7 +249,31 @@ impl Play for Playground {
     }
 
     fn artifact(&self, id: &str, edge: Option<u32>) -> Result<(&'static str, Vec<u8>), Refused> {
-        crate::play_kept::artifact(self.store()?.as_ref(), id, edge)
+        let Some(edge) = edge else {
+            return crate::play_kept::artifact(self.store()?.as_ref(), id, None);
+        };
+        let key = (id.to_owned(), edge);
+        {
+            let mut kept = self.remembered();
+            if let Some(at) = kept.thumbnails.iter().position(|(k, _)| *k == key)
+                && let Some(found) = kept.thumbnails.remove(at)
+            {
+                let png = found.1.clone();
+                kept.thumbnails.push_back(found);
+                return Ok(("image/png", png));
+            }
+        }
+        let made = crate::play_kept::artifact(self.store()?.as_ref(), id, Some(edge))?;
+        if made.0 == "image/png" {
+            let mut kept = self.remembered();
+            kept.thumbnails.push_back((key, made.1.clone()));
+            let bytes =
+                |kept: &Remembered| kept.thumbnails.iter().map(|(_, b)| b.len()).sum::<usize>();
+            while kept.thumbnails.len() > THUMBNAILS_KEPT || bytes(&kept) > THUMBNAIL_BYTES_KEPT {
+                kept.thumbnails.pop_front();
+            }
+        }
+        Ok(made)
     }
 
     fn location(&self, drawn: &Json) -> Result<Json, Refused> {
@@ -194,14 +281,37 @@ impl Play for Playground {
     }
 
     fn facts(&self, run: &RunId, ended: bool) -> Map<String, Json> {
-        match &self.root {
-            Some(root) => crate::play_kept::facts(root, run, ended),
-            None => Map::new(),
-        }
+        let mut said = Map::new();
+        let Ok(store) = self.store() else {
+            return said;
+        };
+        let (spent, reserved) = crate::play_kept::spend(&store, run);
+        said.insert("spent".to_owned(), json!(spent));
+        said.insert("reserved".to_owned(), json!(reserved));
+        let verdict = if ended { self.verdict(run) } else { Json::Null };
+        said.insert("verdict".to_owned(), verdict);
+        said
     }
 
-    fn journal(&self, run: &RunId) -> Option<Vec<Json>> {
+    fn journal(&self, run: &RunId) -> Option<(Vec<Json>, u64)> {
         crate::play_kept::journal(self.store().ok()?.as_ref(), run)
+    }
+
+    fn default_backend(&self, capability: &str) -> Option<String> {
+        let listed = backend_status::readiness(&self.over).ok()?;
+        listed
+            .iter()
+            .find(|row| row["capability"] == capability && row["default"] == true)
+            .and_then(|row| row["name"].as_str().map(str::to_owned))
+    }
+
+    fn admitted(&self, id: &RequestId) -> bool {
+        let Ok(store) = self.store() else {
+            return false;
+        };
+        store
+            .snapshot()
+            .is_ok_and(|generation| generation.get(&id.admission_name()).is_some())
     }
 
     fn closing(&self) {
@@ -210,6 +320,7 @@ impl Play for Playground {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
+        *self.remembered() = Remembered::default();
         if let Some(worker) = &self.worker {
             worker.kill();
         }

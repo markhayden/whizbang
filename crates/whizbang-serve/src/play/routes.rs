@@ -298,16 +298,19 @@ fn dollars(micros: u64) -> f64 {
 
 /// What a preparation says of each need: its capability, the backend the call chose (or
 /// the model's), the model, its request count and its bounds (plan m5, task K1, item 2).
-fn needs_json(prepared: &PreparedCall) -> Vec<Json> {
+fn needs_json(shared: &Shared, prepared: &PreparedCall) -> Vec<Json> {
     prepared
         .needs()
         .iter()
         .map(|need| {
             let each = need.each().map_or(0, |each| each.micros());
             let bound = need.bound().map_or(0, |bound| bound.micros());
+            // The config's name of the backend that answers: the call's choice, else
+            // the capability's default, as preparation resolved it (ADR 0006).
             let backend = need
                 .choice()
                 .map(str::to_owned)
+                .or_else(|| shared.play.default_backend(need.capability().name()))
                 .or_else(|| need.model().map(|model| model.backend().to_owned()));
             json!({
                 "capability": need.capability().name(),
@@ -413,7 +416,7 @@ fn prepare(shared: &Shared, guarded: &Guarded<'_>) -> Response {
                 "why": null,
                 "handle": null,
                 "missing": missing_json(&prepared),
-                "needs": needs_json(&prepared),
+                "needs": needs_json(shared, &prepared),
                 "bound": dollars(prepared.estimate().micros()),
                 "attempts": prepared.plan().and_then(|plan| plan.stated()).map(|attempts| {
                     json!({"asked": attempts.asked, "allowed": attempts.allowed})
@@ -492,6 +495,47 @@ fn start(shared: &Shared, guarded: &Guarded<'_>) -> Response {
         Ok(id) => id,
         Err(error) => return call_refused(&error),
     };
+    // An id the host has forgotten (it restarted) and the store holds: the executor
+    // answers it with its run, or as a conflict, and admits nothing (ADR 0007), so it
+    // takes no place among the calls and is answered whatever is running.
+    if shared.play.admitted(&id) {
+        let Ok((call, _)) = shared.play.call(&asked.action, &asked.arguments) else {
+            return Response::json(
+                409,
+                &json!({"error": "another call was started under this request id",
+                        "kind": "conflict"}),
+            );
+        };
+        // A place is taken when one is free, and held only if the executor, against
+        // what the store said, made a run (its run was deleted, which frees its id).
+        let signal = Cancellation::new();
+        let until = Instant::now() + shared.settings.run_limit;
+        let place = shared.admit(&asked.action, &asked.arguments, &signal, until, now_ms());
+        let request = Request::new(call)
+            .cancelled_by(signal)
+            .until(until + shared.settings.grace)
+            .needing_preparation()
+            .with_id(id);
+        return match executor.start(&request) {
+            Ok(Answer::Repeat(earlier)) => Response::json(
+                200,
+                &json!({"run": earlier.run().as_str(), "repeat": true,
+                        "state": state_word(earlier.state(), false)}),
+            ),
+            Ok(Answer::Started(run)) => {
+                if let Some(place) = place {
+                    place.made(run.clone());
+                }
+                Response::json(201, &json!({"run": run.as_str(), "state": "running"}))
+            }
+            Ok(Answer::Ran(finished)) => Response::json(
+                200,
+                &json!({"run": finished.run().as_str(), "state": "ended",
+                        "outcome": finished.outcome().name()}),
+            ),
+            Err(error) => call_refused(&error),
+        };
+    }
     // A place among the calls, held while the start is admitted, and given back if it
     // makes no run.
     let signal = Cancellation::new();
@@ -620,6 +664,39 @@ fn watched_json(watched: &Watched, stopping: bool) -> Json {
     said
 }
 
+/// The events of an ended run's journal from the place `after` on, escaped; the place
+/// after its last event; and how many places from `after` on hold an event the run did
+/// not keep: the gaps between the kept events' places, and those it counted after its
+/// last kept one (a sequence number is given to every event, kept or not).
+fn from_journal(lines: &[Json], not_kept: u64, after: u64) -> (Vec<Json>, u64, u64) {
+    let seqs: Vec<u64> = lines
+        .iter()
+        .filter_map(|line| line["seq"].as_u64())
+        .collect();
+    // Every gap from the first place on, and so how many were not kept after the last.
+    let mut gaps_all = 0u64;
+    let mut expected = 0u64;
+    for seq in &seqs {
+        gaps_all += seq.saturating_sub(expected);
+        expected = seq + 1;
+    }
+    let trailing = not_kept.saturating_sub(gaps_all);
+    let end = expected + trailing;
+    let mut skipped = 0u64;
+    let mut expected = after;
+    let mut events = Vec::new();
+    for (line, seq) in lines.iter().zip(&seqs) {
+        if *seq < after {
+            continue;
+        }
+        skipped += seq - expected;
+        expected = seq + 1;
+        events.push(escaped_event(line));
+    }
+    skipped += end.saturating_sub(expected.max(after));
+    (events, end.max(after), skipped)
+}
+
 fn run_of(guarded: &Guarded<'_>) -> Result<RunId, Response> {
     let text = guarded
         .params
@@ -669,19 +746,12 @@ fn status(shared: &Shared, guarded: &Guarded<'_>) -> Response {
     // A run that has ended: the events the page has not seen are in its journal.
     if matches!(watched.state(), RunState::Ended(_))
         && watched.events().is_empty()
-        && let Some(lines) = shared.play.journal(&run)
+        && let Some((lines, not_kept)) = shared.play.journal(&run)
     {
-        let newer: Vec<Json> = lines
-            .into_iter()
-            .filter(|line| line["seq"].as_u64().is_some_and(|seq| seq >= after))
-            .map(|line| escaped_event(&line))
-            .collect();
-        let next = newer
-            .last()
-            .and_then(|line| line["seq"].as_u64())
-            .map_or(after, |seq| seq + 1);
-        said["events"] = Json::Array(newer);
-        said["next"] = json!(next.max(after));
+        let (events, next, skipped) = from_journal(&lines, not_kept, after);
+        said["events"] = Json::Array(events);
+        said["next"] = json!(next);
+        said["skipped"] = json!(skipped);
     }
     let (action, arguments) = asked.map_or((Json::Null, Json::Null), |(action, arguments)| {
         (json!(action), arguments)
@@ -811,6 +881,24 @@ fn thumb(shared: &Shared, guarded: &Guarded<'_>) -> Response {
             _ => return Response::refused(400, "edge is a number of pixels from 8 to 2048"),
         },
     };
+    // At most two made at once, as uploads are: a page of pictures leaves the workers
+    // that polls, Stop and Quit need.
+    {
+        let mut state = shared.state();
+        if state.thumbnails >= super::THUMBNAILS_LIMIT {
+            return Response::refused(429, "at most two thumbnails are made at once")
+                .with("Retry-After", "1");
+        }
+        state.thumbnails += 1;
+    }
+    struct Making<'a>(&'a Shared);
+    impl Drop for Making<'_> {
+        fn drop(&mut self) {
+            let mut state = self.0.state();
+            state.thumbnails = state.thumbnails.saturating_sub(1);
+        }
+    }
+    let _making = Making(shared);
     artifact_response(shared, guarded, Some(edge))
 }
 

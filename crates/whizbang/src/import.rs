@@ -556,6 +556,22 @@ pub fn picture_of_bytes_as(
     Ok(id)
 }
 
+/// The image of a picture already identified within `limits`, as `store import --picture`
+/// brings it in as this projection: what a door that decoded the bytes once to judge them
+/// keeps, with no second decode.
+pub fn image_of_identified(
+    identified: &whizbang_core::identity::Identified,
+    limits: &DecodeLimits,
+    projection: Projection,
+) -> Result<Image, String> {
+    picture(
+        &identified.pixels,
+        identified.identity.file.0,
+        limits,
+        projection,
+    )
+}
+
 /// The image a picture's file makes, as `store import --picture` brings it in as this
 /// projection, with no store: its identity and its binding are the ones the import gives
 /// it (plan m3, task B1: the edit set's locations are drawn on the pictures it imports).

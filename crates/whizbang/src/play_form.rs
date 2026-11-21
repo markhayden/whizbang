@@ -353,6 +353,17 @@ pub fn task_json(descriptor: &ActionDescriptor, kit: Option<&str>, tools: &[Stri
     })
 }
 
+/// The kit a task is listed in: its own, when the build lists that kit; else
+/// [`DEFAULT_KIT`], so that a user's recipe naming a kit the build does not have is never
+/// left out. A tool is listed in none.
+pub fn listed_in<'a>(descriptor: &'a ActionDescriptor, kits: &[Kit]) -> Option<&'a str> {
+    let kit = kit_of(descriptor)?;
+    match kits.iter().any(|listed| listed.name() == kit) {
+        true => Some(kit),
+        false => Some(DEFAULT_KIT),
+    }
+}
+
 /// The kits of the description, each with its tasks; then every tool, each in the kit of
 /// the first task whose steps call it, or in none.
 pub fn kits_json(
@@ -374,7 +385,7 @@ pub fn kits_json(
     for kit in kits {
         let tasks: Vec<Json> = ordered
             .iter()
-            .filter(|d| kit_of(d) == Some(kit.name()))
+            .filter(|d| listed_in(d, kits) == Some(kit.name()))
             .map(|d| {
                 for tool in tools_of(d.name()) {
                     tool_kit
