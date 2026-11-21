@@ -15,7 +15,7 @@ data that would admit a format is owed to a later slice of E.
 Run by the orchestrator on the owner's Mac on 2026-11-21, in the evaluation store, from a
 binary built at `runs_commit`; scored from the store by `whizbang eval judges` built at
 `commit`, which changed only the wording of the rule's `why` (it now names every judge that
-broke clause (c) and each measure it broke). The scores are
+broke clause (b) or (c), and each measure it broke, to two places). The scores are
 `docs/results/e-submission.toml`, and
 `evidence::the_submission_record_holds_only_aggregates` holds this page to them and to the
 matrix as committed: every row of the three tables below is one that test writes from the
@@ -28,7 +28,7 @@ rule = "submission/1"
 outcome = "not_adopted"
 settled_by = "c"
 format = "C;submission=v1"
-commit = "4357da1b981401b8baf3ccc0126cf0beb5b1aa0a"
+commit = "2c5b2ec06dcd3fbba72568cc7bd6106ee4e6cb8d"
 runs_commit = "ac3a49a7b21d0a20e86c48c718eae2bc9e5f833f"
 settled_usd = 11.77
 started = 2026-11-21T15:54:18Z
@@ -98,12 +98,12 @@ repetition 1):
   rose 2.3 and its submission failures fell from 14 to 4.
 - `gemini-3.8-flash`: its balanced accuracy fell 5.2 points. Its false-reject and false-accept
   rates did not move; the fall is in the errors: 14 of its v2 decisions ended in a fault (one
-  under v1), none of them a submission failure.
+  under v1), none of them a submission failure (below).
 - `gpt-6.1-terra`: its balanced accuracy fell 3.3 points and its false-reject rate rose 11.1.
 
 As the rule writes it: under the treatment these judges move by more than 2 points:
-claude-haiku-5-5 (false-reject rate +2.2 points); gemini-3.8-flash (balanced accuracy -5.2
-points); gpt-6.1-terra (balanced accuracy -3.3 points, false-reject rate +11.1 points); the
+claude-haiku-5-5 (false-reject rate +2.22 points); gemini-3.8-flash (balanced accuracy -5.21
+points); gpt-6.1-terra (balanced accuracy -3.33 points, false-reject rate +11.11 points); the
 control is kept.
 
 Under v2 Haiku's first rejections rose (81 to 93) while its failures fell: the one repair,
@@ -111,6 +111,21 @@ naming every problem, saved more of them. Its one recovery used was `evidence_dr
 citations of a call that did not complete, dropped rather than refused); no other kind was
 used by any judge. Flash and Terra rarely or never had a submission rejected under either
 format.
+
+**Flash's faults, by kind** (`whizbang runs export --matrix e-submission`, read from the
+store and counted; aggregates only). All 14 under v2, and the one under v1, are the same
+fault: `judge_fault`, `too_large`, a request counted over the 40,000 input tokens its backend
+sends, refused by the adapter before it was sent (stage `not_sent`, so nothing was charged for
+it). Under v2 they came after 3 to 8 requests of the run (6 on reference-consistency, 5
+product-fidelity, 2 brief-compliance, 1 source-fidelity); the one under v1 after 16, on
+reality-checks. Haiku's one fault under v2 is the same kind. **None is the provider refusing
+the keyed schema**: no request reached the provider, and every other Flash run under v2
+completed with the same tool. The count of input holds the tools' definitions, and v2's keyed
+tool is larger than v1's, so a likely reading is that it brought long conversations to the
+ceiling sooner; the record does not measure a tool's size, so that is not shown here. Clause
+(b) counts only submission failures, so it does not count these 14: they are runs v2 ended
+and v1 did not, counted as errors, and they reach the decision through clause (c), where they
+are Flash's fall in balanced accuracy.
 
 **The live probe before the round.** One check under v2 for each of the three judges, from a
 build at 377a9e7f (2.3 cents): each provider accepted v2's keyed tool, its keys of the
@@ -128,9 +143,20 @@ Each row is written from the TOML's scope `all`.
 
 | Judge | Arm | Decisions | Submission failures | First rejections | Unknown | Balanced accuracy | 95% interval | Cost per decision | Self-agreement |
 |---|---|---|---|---|---|---|---|---|---|
-| claude-haiku-5-5 | 14 | 4 | yes | +0.023 | +0.022 | -0.015 | no |
-| gemini-3.8-flash | 0 | 0 | yes | -0.052 | +0.000 | +0.000 | no |
-| gpt-6.1-terra | 0 | 0 | yes | -0.033 | +0.111 | +0.000 | no |
+| claude-haiku-5-5 | C;submission=v1 | 220 | 14 (0.064) | 81 (0.368) | 0 | 0.533 | 0.437 to 0.633 | 0.003294 | 0.809 |
+| gemini-3.8-flash | C;submission=v1 | 220 | 0 (0.000) | 6 (0.027) | 0 | 0.880 | 0.810 to 0.946 | 0.013444 | 0.955 |
+| gpt-6.1-terra | C;submission=v1 | 220 | 0 (0.000) | 0 (0.000) | 0 | 0.755 | 0.653 to 0.849 | 0.009324 | 0.945 |
+| claude-haiku-5-5 | C;submission=v2 | 220 | 4 (0.018) | 93 (0.423) | 0 | 0.556 | 0.472 to 0.642 | 0.004350 | 0.873 |
+| gemini-3.8-flash | C;submission=v2 | 220 | 0 (0.000) | 8 (0.036) | 0 | 0.828 | 0.750 to 0.900 | 0.017073 | 0.891 |
+| gpt-6.1-terra | C;submission=v2 | 220 | 0 (0.000) | 0 (0.000) | 0 | 0.721 | 0.619 to 0.818 | 0.010553 | 0.936 |
+
+## Rejections, causes and recoveries
+
+Each rejection by its first class, the further classes it named, each decision by the cause it
+ended by, and each recovery v2 made, by kind, over both repetitions.
+
+| Judge | Arm | Counted | Name | Count |
+|---|---|---|---|---|
 | claude-haiku-5-5 | C;submission=v1 | class | bad_field | 3 |
 | claude-haiku-5-5 | C;submission=v1 | class | evidence | 45 |
 | claude-haiku-5-5 | C;submission=v1 | class | finding_cites | 32 |
@@ -160,20 +186,6 @@ Each row is written from the TOML's scope `all`.
 | gemini-3.8-flash | C;submission=v2 | cause | concluded | 206 |
 | gemini-3.8-flash | C;submission=v2 | cause | fault | 14 |
 | gpt-6.1-terra | C;submission=v2 | cause | concluded | 220 |
-| claude-haiku-5-5 | C;submission=v1 | 220 | 14 (0.064) | 81 (0.368) | 0 | 0.533 | 0.437 to 0.633 | 0.003294 | 0.809 |
-| gemini-3.8-flash | C;submission=v1 | 220 | 0 (0.000) | 6 (0.027) | 0 | 0.880 | 0.810 to 0.946 | 0.013444 | 0.955 |
-| gpt-6.1-terra | C;submission=v1 | 220 | 0 (0.000) | 0 (0.000) | 0 | 0.755 | 0.653 to 0.849 | 0.009324 | 0.945 |
-| claude-haiku-5-5 | C;submission=v2 | 220 | 4 (0.018) | 93 (0.423) | 0 | 0.556 | 0.472 to 0.642 | 0.004350 | 0.873 |
-| gemini-3.8-flash | C;submission=v2 | 220 | 0 (0.000) | 8 (0.036) | 0 | 0.828 | 0.750 to 0.900 | 0.017073 | 0.891 |
-| gpt-6.1-terra | C;submission=v2 | 220 | 0 (0.000) | 0 (0.000) | 0 | 0.721 | 0.619 to 0.818 | 0.010553 | 0.936 |
-
-## Rejections, causes and recoveries
-
-Each rejection by its first class, the further classes it named, each decision by the cause it
-ended by, and each recovery v2 made, by kind, over both repetitions.
-
-| Judge | Arm | Counted | Name | Count |
-|---|---|---|---|---|
 
 ## The clauses of each judge
 
@@ -182,6 +194,9 @@ false-accept rates not higher, by more than 2 points (point estimates, repetitio
 
 | Judge | v1 failures | v2 failures | No new failures | Balanced accuracy change | False-reject change | False-accept change | Accuracy kept |
 |---|---|---|---|---|---|---|---|
+| claude-haiku-5-5 | 14 | 4 | yes | +0.023 | +0.022 | -0.015 | no |
+| gemini-3.8-flash | 0 | 0 | yes | -0.052 | +0.000 | +0.000 | no |
+| gpt-6.1-terra | 0 | 0 | yes | -0.033 | +0.111 | +0.000 | no |
 
 ## What this is not
 

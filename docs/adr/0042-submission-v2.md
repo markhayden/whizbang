@@ -117,6 +117,16 @@ rule `submission/1` did **not adopt** v2, settled by **clause (c)**:
   faults up from 1 to 14; `gpt-6.1-terra`'s balanced accuracy -3.3 points and false-reject rate
   +11.1 points.
 
+**Flash's 14 faults under v2** (one under v1) are all one kind, counted from the store's
+records: `judge_fault`, `too_large`, a request counted over its backend's 40,000 input tokens
+and refused by the adapter before it was sent (`not_sent`), after 3 to 8 requests of a run;
+Haiku's one fault under v2 is the same. None is the provider refusing the keyed schema: no
+such request reached the provider, and the rest of Flash's v2 runs completed with that tool.
+v2's keyed tool is larger than v1's and the count of input holds it, which likely brought long
+conversations to the ceiling sooner; the record does not measure that. Clause (b) counts
+submission failures only, so it does not count these runs v2 ended and v1 did not; they count
+as errors, and reach the decision through clause (c) as Flash's fall in balanced accuracy.
+
 Of the recoveries, only `evidence_dropped` was used (238 times, all Haiku's). The evidence is
 descriptive, on dev sets, and admits nothing either way.
 

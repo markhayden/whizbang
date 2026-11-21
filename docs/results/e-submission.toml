@@ -1,7 +1,7 @@
 arm = "C;submission=v1"
 cells = 1320
 class_counting = "rejections_by_class counts each rejection's first class (its class); also_by_class counts the further classes a rejection named (its also)"
-commit = "4357da1b981401b8baf3ccc0126cf0beb5b1aa0a"
+commit = "2c5b2ec06dcd3fbba72568cc7bd6106ee4e6cb8d"
 decisions = 1320
 mode = "arms"
 open = 0
@@ -26,7 +26,7 @@ treatment = "C;submission=v2"
 treatment_failures = 4
 treatment_first_rejections = 101
 unknown = 0
-why = "under the treatment these judges move by more than 2 points: claude-haiku-5-5 (false-reject rate +2.2 points); gemini-3.8-flash (balanced accuracy -5.2 points); gpt-6.1-terra (balanced accuracy -3.3 points, false-reject rate +11.1 points); the control is kept"
+why = "under the treatment these judges move by more than 2 points: claude-haiku-5-5 (false-reject rate +2.22 points); gemini-3.8-flash (balanced accuracy -5.21 points); gpt-6.1-terra (balanced accuracy -3.33 points, false-reject rate +11.11 points); the control is kept"
 
 [[format.judges]]
 accuracy_kept = false
