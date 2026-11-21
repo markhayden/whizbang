@@ -43,6 +43,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value as Json};
 use whizbang_core::contract::{Call, Cancellation, Executor, PreparedCall, RunId, RunState};
+use whizbang_core::identity::Digest;
 
 pub use http::Deadlines;
 pub use token::Token;
@@ -161,11 +162,18 @@ pub(crate) struct Kept {
     pub at: Instant,
 }
 
-/// A request id of a run the host started, with what was asked under it.
+/// A request id of a run the host started, with what was asked under it: the action,
+/// and the digest of its arguments as the page sent them (their names sorted).
 pub(crate) struct Asked {
     pub run: RunId,
     pub action: String,
-    pub arguments: Map<String, Json>,
+    pub arguments: Digest,
+}
+
+/// The digest of a call's arguments as the page sent them: their JSON, whose object
+/// keys are kept sorted, so the same arguments give the same digest however sent.
+pub(crate) fn arguments_digest(arguments: &Map<String, Json>) -> Digest {
+    Digest::of_bytes(&serde_json::to_vec(arguments).unwrap_or_default())
 }
 
 /// What the canceller is asked to do.
@@ -608,7 +616,13 @@ fn keep(shared: &Shared, address: SocketAddr) {
         }
         if let Some(end) = grace_end {
             let admitting = state.runs.iter().any(|held| held.run.is_none());
-            let all_waited = state.unwaited.is_empty() && !admitting;
+            // Every run waited for, and every thread the executor started (the runs
+            // those runs called among them) has let go of the store: then dropping the
+            // executor lets the store's writer go at once.
+            let idle = shared
+                .executor()
+                .is_none_or(|executor| executor.on_threads() == 0);
+            let all_waited = state.unwaited.is_empty() && !admitting && idle;
             let hurried = state.quit == Quit::Hurried;
             if all_waited || hurried || Instant::now() >= end {
                 state.left = state.runs.len();

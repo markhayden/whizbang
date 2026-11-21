@@ -118,6 +118,15 @@ pub trait Executor: Send + Sync {
     /// text that holds one without showing any of it. An id that starts
     /// [`super::RESERVED_REQUEST_PREFIX`] is refused: those are a lab's cells'.
     fn request_id(&self, text: &str) -> Result<RequestId, CallError>;
+
+    /// How many runs this executor started on threads of their own, a run called from
+    /// inside an action among them, whose thread has not yet let go of everything it
+    /// held of the executor and the store (plan m5, task H1): a door that drops its
+    /// executor once this is 0 lets the store's writer go with it. None for an
+    /// executor that starts no run.
+    fn on_threads(&self) -> usize {
+        0
+    }
 }
 
 /// The executor of one build: a registry, the backends, a store and the digest of the
@@ -553,6 +562,14 @@ impl Executor for Engine {
             // Only a request with an id makes the name that can be taken.
             Err(Stopped::Taken(error)) => Err(CallError::Store(StoreFailure::new(error))),
         }
+    }
+
+    fn on_threads(&self) -> usize {
+        // A started run holds its place until its thread has let go of its clone of
+        // the executor (`Engine::execute_and_let_go`), which is the last thing it does.
+        self.store
+            .as_ref()
+            .map_or(0, |store| store.started_places())
     }
 
     fn request_id(&self, text: &str) -> Result<RequestId, CallError> {

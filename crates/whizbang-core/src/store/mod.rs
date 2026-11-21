@@ -981,6 +981,11 @@ impl Store {
             .map(|_| Place(self.started.clone()))
     }
 
+    /// How many places among the started runs are taken now ([`Store::start_place`]).
+    pub fn started_places(&self) -> usize {
+        self.started.load(Ordering::SeqCst)
+    }
+
     /// What the maker of the run `run` attached to it ([`Publication::attach`]), when
     /// this writer made the run and has it open: exactly when [`Store::made_here`] says
     /// so, since the two are one table. A run that was made with nothing attached has
