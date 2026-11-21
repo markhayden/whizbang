@@ -573,7 +573,7 @@ ledger are made fit to be held by one process for days, which is what the carry-
    and the token, reopening, stopping, what the host holds, that the store is refused to other
    writers while it runs. Listed in `docs/guides/README.md` under "Written".
 
-- [ ] Done when: the seventeen negative tests of "The playground API" pass;
+- [x] Done when: the seventeen negative tests of "The playground API" pass;
   `play::hello_answers_the_version_and_the_store_behind_the_guard`,
   `play::a_second_play_on_a_held_store_opens_the_running_hosts_address`,
   `play::play_json_is_owner_only_and_gone_after_a_quit`,
