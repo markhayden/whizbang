@@ -9,13 +9,14 @@ setup:
 
 # The fast tier on this machine: format check, lint, the repo checks, the script tests a
 # change of this branch can reach (test-scripts-local), the generated reference against a
-# fresh copy, the fast tests with their timing table, then the pack's Python tests.
-check: fmt-check clippy graph deny test-scripts-local docs-check timing test-pack
+# fresh copy, the playground interface's type check and unit tests (ui-check), the fast
+# tests with their timing table, then the pack's Python tests.
+check: fmt-check clippy graph deny test-scripts-local docs-check ui-check timing test-pack
 
 # The fast tier with every script test, whatever changed: what `ci` runs, so CI runs them
 # all on every push. scripts/tests/test-ci-jobs.sh holds `check` to it, the script tests
 # aside.
-check-full: fmt-check clippy graph deny test-scripts docs-check timing test-pack
+check-full: fmt-check clippy graph deny test-scripts docs-check ui-check timing test-pack
 
 fmt-check:
     cargo fmt --all -- --check
@@ -86,6 +87,25 @@ docs:
 # Fails when the committed reference differs from a fresh generation.
 docs-check:
     scripts/docs.sh --check
+
+# The playground's interface (ui/, plan m5, task U1; ADR 0043), with the Node that
+# scripts/tool-versions.txt pins and the packages ui/package-lock.json pins (installed by
+# `npm ci` when missing). `ui-build` writes ui/dist/, which is committed with its sources:
+# the binary embeds it, so no user needs Node.
+ui-build:
+    scripts/ui.sh build
+
+# The interface's type check and unit tests, ui/dist/ against a fresh build, and the
+# host's list of the files it embeds against ui/dist/. The unit tests' seconds are counted
+# by `timing`, which runs next, under the fast tier's one limit (scripts/ui.sh).
+ui-check:
+    scripts/ui.sh check
+
+# The Chrome tier: the fixture host built, then Playwright's cases in ui/e2e/ against it
+# in the Google Chrome installed here, held to 180 seconds of test time (scripts/e2e.sh).
+# Heavy. CI runs it in the jobs `e2e (macos-15)` and `e2e (ubuntu-22.04)`.
+e2e:
+    scripts/e2e.sh
 
 # The real timeout: a fixture test that sleeps 31 seconds fails by timeout at 30. About 35
 # seconds, so it is not in `check`; CI runs it on one runner.
@@ -159,19 +179,20 @@ scan-range-secrets base head:
 
 # What a pull request runs: `check` with every script test (check-full), and more: the
 # advisories, the smoke of the release binary, the example that must not compile, the
-# secrets scan, and the release archive made and installed.
-ci: check-full deny-advisories smoke compile-fail scan-secrets package install-check
+# secrets scan, the release archive made and installed, and the Chrome tier.
+ci: check-full deny-advisories smoke compile-fail scan-secrets package install-check e2e
 
-# `ci` in three parts, for CI, where the script tests alone take a runner three to five
+# `ci` in four parts, for CI, where the script tests alone take a runner three to five
 # minutes and the rest took the macOS runner past its limit: it runs each part in a job of
 # its own, side by side, on each runner (.github/workflows/ci.yml). The first is `ci`
 # without the script tests and without the release build and what follows it; the second
 # is those (the smoke of the release binary, the example that must not compile, the
 # secrets scan, and then the release archive made and installed: `package` and
 # `install-check`, plan m4, task R1); the third is the script tests, after `deny` as in `check`: one of them
-# reads the workspace's crates from cargo's home, where `deny` puts them.
-# scripts/tests/test-ci-jobs.sh holds the three to `check-full` and `ci`.
-ci-without-scripts: fmt-check clippy graph deny docs-check timing test-pack deny-advisories
+# reads the workspace's crates from cargo's home, where `deny` puts them; the fourth is
+# the recipe `e2e`, the Chrome tier, in jobs of its own (plan m5, task U1).
+# scripts/tests/test-ci-jobs.sh holds the four to `check-full` and `ci`.
+ci-without-scripts: fmt-check clippy graph deny docs-check ui-check timing test-pack deny-advisories
 
 ci-release: smoke compile-fail scan-secrets package install-check
 

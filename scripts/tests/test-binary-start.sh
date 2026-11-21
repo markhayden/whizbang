@@ -12,7 +12,7 @@ call='whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))'
 # sources (scripts/script-tests-local.sh), so this is where both refuse: the check passes
 # on the workspace, and it has seen the places that start the binary (a check that found
 # none would be looking in the wrong place).
-grep -q -x -F 'check-full: fmt-check clippy graph deny test-scripts docs-check timing test-pack' justfile ||
+grep -q -x -F 'check-full: fmt-check clippy graph deny test-scripts docs-check ui-check timing test-pack' justfile ||
   fail "justfile: check-full runs the script tests, and this check with them"
 grep -q -E '^part=".*scripts/tests/test-binary-start\.sh' scripts/script-tests-local.sh ||
   fail "scripts/script-tests-local.sh: the local check runs this test on a change to the crates' sources"
@@ -20,10 +20,10 @@ expect_pass "the workspace" "$check"
 started=$(sed -n 's/^binary start: ok (.* the real binary is started in \([0-9][0-9]*\) places, .*$/\1/p' "$tmp/out")
 # Exactly the number the plan states (N3c, "Shown by"): a test that starts the binary is
 # added to both, or the check has stopped seeing some.
-[ "$started" = 23 ] ||
-  { cat "$tmp/out" >&2; fail "the check counts the places that start the real binary: twenty-three, not ${started:-none}"; }
-grep -q -F 'with twenty-three places counted' docs/plans/m1c-local-pack.md ||
-  fail "the plan states the number of places, twenty-three"
+[ "$started" = 27 ] ||
+  { cat "$tmp/out" >&2; fail "the check counts the places that start the real binary: twenty-seven, not ${started:-none}"; }
+grep -q -F 'with twenty-seven places counted' docs/plans/m1c-local-pack.md ||
+  fail "the plan states the number of places, twenty-seven"
 # The function is the test kit's, clears the environment, and is the only thing in the
 # crates that does: no test builds a cleared command of its own beside it.
 grep -q -F 'pub fn command(path: impl AsRef<OsStr>) -> Binary' crates/whizbang-testkit/src/binary.rs ||

@@ -19,6 +19,7 @@ pub mod pack;
 pub mod pack_setup;
 pub mod pairs_page;
 pub mod parity;
+pub mod playing;
 pub mod serving;
 pub mod sign_in;
 pub mod tool_file;

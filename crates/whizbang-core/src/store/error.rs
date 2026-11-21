@@ -38,6 +38,17 @@ pub enum Error {
         root: PathBuf,
         holder: Option<String>,
     },
+    /// The store's folder is another user's: it is refused when it is opened, to read
+    /// or to write, before anything in it is read or locked (plan m5, task H1). Nothing
+    /// was changed.
+    NotOwn { root: PathBuf },
+    /// The store's folder is this user's, and its mode lets its group or anyone write
+    /// it: refused as [`Error::NotOwn`] is. Its mode is not changed.
+    OthersMayWrite { root: PathBuf },
+    /// The writer's `LOCK` is no longer the file at that name: it was removed or
+    /// replaced while this writer held it, so another writer may be admitted beside it.
+    /// Nothing was published, and nothing more will be by this writer (plan m5, task H1).
+    LockReplaced { root: PathBuf },
     /// This cannot be the id of a run: it is empty, or it holds a control character.
     InvalidRun { run: String },
     /// A generation file says it is of a format this build does not read. A store written
@@ -136,6 +147,13 @@ impl Error {
             Error::Missing { .. } | Error::NoParent { .. } => "there is no store".to_owned(),
             Error::NotAStore { .. } => "what was opened is not a store".to_owned(),
             Error::Held { .. } => "the store is being written by another process".to_owned(),
+            Error::NotOwn { .. } => "the store's folder is another user's".to_owned(),
+            Error::OthersMayWrite { .. } => {
+                "the store's folder may be written by others than its owner".to_owned()
+            }
+            Error::LockReplaced { .. } => {
+                "the store's lock file was replaced while it was held".to_owned()
+            }
             Error::InvalidRun { .. } => "the store was given a run id it does not take".to_owned(),
             Error::OtherFormat {
                 path,
@@ -211,6 +229,24 @@ impl fmt::Display for Error {
                 root.display(),
                 holder.as_deref().unwrap_or("another process")
             ),
+            Error::NotOwn { root } => write!(
+                f,
+                "the store at {} is another user's folder, and is not opened: use a folder \
+                 of your own, or have it given to you (chown)",
+                root.display()
+            ),
+            Error::OthersMayWrite { root } => write!(
+                f,
+                "the store at {} may be written by its group or by anyone, and is not \
+                 opened: make it yours alone (chmod go-w)",
+                root.display()
+            ),
+            Error::LockReplaced { root } => write!(
+                f,
+                "the lock file of the store at {} was removed or replaced while this \
+                 writer held it, so another writer may be at work; nothing was published",
+                root.display()
+            ),
             Error::InvalidRun { run } => write!(
                 f,
                 "{run:?} cannot be a run's id: an id is not empty and holds no control \
@@ -276,6 +312,9 @@ impl std::error::Error for Error {
             | Error::NoParent { .. }
             | Error::NotAStore { .. }
             | Error::Held { .. }
+            | Error::NotOwn { .. }
+            | Error::OthersMayWrite { .. }
+            | Error::LockReplaced { .. }
             | Error::NoSuchRun { .. }
             | Error::RunExists { .. }
             | Error::NameExists { .. }

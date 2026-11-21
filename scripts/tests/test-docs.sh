@@ -18,9 +18,9 @@ recipe() {
 }
 grep -q -E '^check:( [a-z-]+)* docs-check( [a-z-]+)*$' justfile ||
   fail "justfile: check must depend on docs-check"
-grep -q -E '^check-full:( [a-z-]+)* docs-check( [a-z-]+)*$' justfile ||
+grep -q -E '^check-full:( [a-z0-9-]+)* docs-check( [a-z0-9-]+)*$' justfile ||
   fail "justfile: check-full must depend on docs-check"
-grep -q -E '^ci:( [a-z-]+)* check-full( [a-z-]+)*$' justfile ||
+grep -q -E '^ci:( [a-z0-9-]+)* check-full( [a-z0-9-]+)*$' justfile ||
   fail "justfile: ci must depend on check-full"
 [ "$(recipe docs-check)" = "scripts/docs.sh --check" ] ||
   fail "justfile: docs-check must run exactly: scripts/docs.sh --check"

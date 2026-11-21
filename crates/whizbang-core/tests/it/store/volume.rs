@@ -164,3 +164,74 @@ fn nested_calls_at_the_limit_publish_within_the_measured_bound() {
         "{bytes} bytes"
     );
 }
+
+/// What one publication of one more run costs in a store that holds `runs` runs, each as
+/// a run of the playground leaves it (plan m5, task H1, item 7): its record, its journal
+/// and two more diagnostics, one output, its request id's two names and two names of the
+/// ledger. Made in one publication, so that the measurement is of the store at that size.
+/// The size of the generation file it wrote, and its time in milliseconds.
+fn runs_measured(label: &str, runs: usize) -> (u64, u128) {
+    let scratch = Scratch::new(label);
+    let root = scratch.path().join("store");
+    let store = Store::open(&root, std::sync::Arc::new(RealFs)).unwrap();
+    let record = vec![b'x'; 300];
+    let mut publication = store.begin().unwrap();
+    let made = |publication: &mut whizbang_core::store::Publication<'_>, at: usize| {
+        let run = format!("1795275290505-{at}");
+        publication.create_run(&run).unwrap();
+        for (name, kind) in [
+            ("record.json", Kind::Diagnostic),
+            ("journal.jsonl", Kind::Diagnostic),
+            ("diagnostics/1", Kind::Diagnostic),
+            ("diagnostics/2", Kind::Diagnostic),
+            ("outputs/mask", Kind::Output),
+        ] {
+            // One content for each name, whichever run: what grows a generation is its
+            // names, not their content, and a content written once is synced once.
+            let mut bytes = record.clone();
+            bytes.extend_from_slice(name.as_bytes());
+            publication.put_in(&run, name, kind, &bytes).unwrap();
+        }
+        let id = format!("play-0123456789abcdef-{at:06}");
+        for name in [
+            format!("requests/{id}/admitted"),
+            format!("requests/{id}/ended"),
+            format!("spend/{run}/reserved"),
+            format!("spend/{run}/released"),
+        ] {
+            publication
+                .create(&name, Kind::Diagnostic, &record)
+                .unwrap();
+        }
+    };
+    for at in 0..runs {
+        made(&mut publication, at);
+    }
+    publication.publish().unwrap();
+    let started = Instant::now();
+    let mut publication = store.begin().unwrap();
+    made(&mut publication, runs);
+    let published = publication.publish().unwrap();
+    let took = started.elapsed().as_millis();
+    let generation = root
+        .join("generations")
+        .join(format!("{}.json", published.generation));
+    let bytes = std::fs::metadata(generation).unwrap().len();
+    eprintln!("{runs} runs: a generation of {bytes} bytes, one publication in {took} ms");
+    (bytes, took)
+}
+
+/// The bound measured at 10,000 runs, on the owner's Mac in the tests' build (plan m5,
+/// task H1): 1,706 bytes of the generation file a run (a file of 17.1 MB), and one
+/// publication of one more run in 712 and 678 ms; held here with room for a slower
+/// machine. The 64 MiB limit of a generation is reached at about 39,000 such runs.
+const BYTES_PER_RUN: u64 = 1_800;
+const MS_AT_TEN_THOUSAND_RUNS: u128 = 2_500;
+
+#[test]
+#[ignore = "about two seconds and 20 MB of disk; run by hand, its numbers in docs/carry-over.md"]
+fn ten_thousand_runs_publish_within_the_measured_bound() {
+    let (bytes, took) = runs_measured("volume-runs", 10_000);
+    assert!(bytes <= 10_001 * BYTES_PER_RUN, "{bytes} bytes");
+    assert!(took <= MS_AT_TEN_THOUSAND_RUNS, "{took} ms");
+}

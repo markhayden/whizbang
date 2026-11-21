@@ -123,6 +123,11 @@ lives in an env file you name; nothing is sent anywhere until a config approves 
 recipient. The config guide,
 `https://github.com/markhayden/whizbang/blob/main/docs/guides/config.md`, says how.
 
+**The playground needs Google Chrome.** `whizbang play` opens the playground, a page
+served by the `whizbang` process to this machine alone, in Google Chrome, the only browser
+it supports. The page is inside the binary, with its fonts: there is nothing more to
+install for it, and it loads nothing from anywhere but that process.
+
 ## A local model, on a Mac
 
 ```sh

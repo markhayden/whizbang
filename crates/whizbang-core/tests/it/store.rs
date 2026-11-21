@@ -1897,3 +1897,184 @@ fn every_failure_can_be_said_without_a_path() {
         "generation 3 is visible but was not confirmed durable"
     );
 }
+
+// A store held for days (plan m5, task H1, item 7).
+
+/// The real file system, noting each call, which says the store's folder is another
+/// user's when told to.
+struct Asked {
+    anothers: bool,
+    calls: std::sync::Mutex<Vec<&'static str>>,
+}
+
+impl Asked {
+    fn new(anothers: bool) -> Arc<Asked> {
+        Arc::new(Asked {
+            anothers,
+            calls: std::sync::Mutex::new(Vec::new()),
+        })
+    }
+
+    fn note(&self, call: &'static str) {
+        self.calls.lock().unwrap().push(call);
+    }
+
+    fn calls(&self) -> Vec<&'static str> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+impl Fs for Asked {
+    fn create_dir(&self, path: &Path) -> io::Result<()> {
+        self.note("create_dir");
+        RealFs.create_dir(path)
+    }
+    fn write_new(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
+        self.note("write_new");
+        RealFs.write_new(path, bytes)
+    }
+    fn sync_dir(&self, path: &Path) -> io::Result<()> {
+        self.note("sync_dir");
+        RealFs.sync_dir(path)
+    }
+    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+        self.note("rename");
+        RealFs.rename(from, to)
+    }
+    fn remove_all(&self, path: &Path) -> io::Result<()> {
+        self.note("remove_all");
+        RealFs.remove_all(path)
+    }
+    fn read_at_most(&self, path: &Path, limit: u64) -> io::Result<Vec<u8>> {
+        self.note("read_at_most");
+        RealFs.read_at_most(path, limit)
+    }
+    fn list(&self, path: &Path) -> io::Result<Vec<PathBuf>> {
+        self.note("list");
+        RealFs.list(path)
+    }
+    fn exists(&self, path: &Path) -> io::Result<bool> {
+        self.note("exists");
+        RealFs.exists(path)
+    }
+    fn hold_lock_file(&self, path: &Path, create: bool) -> io::Result<Option<Box<dyn LockFile>>> {
+        self.note("hold_lock_file");
+        RealFs.hold_lock_file(path, create)
+    }
+    fn share(&self, path: &Path) -> io::Result<Box<dyn Held>> {
+        self.note("share");
+        RealFs.share(path)
+    }
+    fn try_alone(&self, path: &Path) -> io::Result<Option<Box<dyn Held>>> {
+        self.note("try_alone");
+        RealFs.try_alone(path)
+    }
+    fn who_may_write(&self, path: &Path) -> io::Result<whizbang_core::store::fs::Writers> {
+        self.note("who_may_write");
+        let mut writers = RealFs.who_may_write(path)?;
+        if self.anothers {
+            writers.owner_is_this_user = false;
+        }
+        Ok(writers)
+    }
+}
+
+#[cfg(unix)]
+fn set_mode(path: &Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+}
+
+#[test]
+fn a_writer_whose_lock_file_was_replaced_refuses_to_publish() {
+    let dir = Scratch::new("store-lock-replaced");
+    let root = root(&dir);
+    let store = Store::open(&root, Arc::new(RealFs)).unwrap();
+    let mut publication = store.begin().unwrap();
+    publication.put("a", A1).unwrap();
+    publication.publish().unwrap();
+
+    // The name `LOCK` now names another file: a second writer could lock that one.
+    let lock = root.join("LOCK");
+    std::fs::remove_file(&lock).unwrap();
+    std::fs::write(&lock, b"").unwrap();
+    let mut publication = store.begin().unwrap();
+    publication.put("b", B).unwrap();
+    let refused = publication.publish().unwrap_err();
+    assert!(matches!(refused, Error::LockReplaced { .. }), "{refused:?}");
+    assert!(refused.to_string().contains("nothing was published"));
+    assert!(!refused.without_paths().contains(&*root.to_string_lossy()));
+    // Removed and not replaced: the same.
+    std::fs::remove_file(&lock).unwrap();
+    let mut publication = store.begin().unwrap();
+    publication.put("c", C).unwrap();
+    assert!(matches!(
+        publication.publish().unwrap_err(),
+        Error::LockReplaced { .. }
+    ));
+    drop(store);
+    // What was published before stands, and nothing after it.
+    let reader = Reader::open(&root, Arc::new(RealFs)).unwrap();
+    let generation = reader.snapshot().unwrap();
+    assert!(generation.get("a").is_some());
+    assert!(generation.get("b").is_none() && generation.get("c").is_none());
+}
+
+#[test]
+#[cfg(unix)]
+fn a_store_that_others_can_write_is_refused_when_it_is_opened() {
+    let dir = Scratch::new("store-others");
+    let root = root(&dir);
+    drop(Store::open(&root, Arc::new(RealFs)).unwrap());
+    for mode in [0o720, 0o770, 0o702, 0o707, 0o777, 0o1777] {
+        set_mode(&root, mode);
+        let fs = Asked::new(false);
+        let refused = Store::open(&root, fs.clone()).err().unwrap();
+        assert!(
+            matches!(refused, Error::OthersMayWrite { .. }),
+            "{mode:o}: {refused:?}"
+        );
+        assert!(refused.to_string().contains("chmod go-w"));
+        // Nothing in it was read, listed or locked: the one thing asked was whose it is.
+        assert_eq!(fs.calls(), ["who_may_write"], "{mode:o}");
+        let fs = Asked::new(false);
+        let refused = Reader::open(&root, fs.clone()).err().unwrap();
+        assert!(matches!(refused, Error::OthersMayWrite { .. }), "{mode:o}");
+        assert_eq!(fs.calls(), ["who_may_write"], "{mode:o}");
+    }
+    // Its owner's alone, or others reading it: taken, to write and to read.
+    for mode in [0o700, 0o750, 0o755] {
+        set_mode(&root, mode);
+        drop(Store::open(&root, Arc::new(RealFs)).unwrap());
+        drop(Reader::open(&root, Arc::new(RealFs)).unwrap());
+    }
+    // A store that is made is made for its owner alone.
+    let made = dir.path().join("made");
+    drop(Store::open(&made, Arc::new(RealFs)).unwrap());
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(&made).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode & 0o022, 0, "{mode:o}");
+}
+
+#[test]
+fn a_store_owned_by_another_user_is_refused_to_a_reader_and_a_writer() {
+    let dir = Scratch::new("store-anothers");
+    let root = root(&dir);
+    drop(Store::open(&root, Arc::new(RealFs)).unwrap());
+    let fs = Asked::new(true);
+    let refused = Store::open(&root, fs.clone()).err().unwrap();
+    assert!(matches!(refused, Error::NotOwn { .. }), "{refused:?}");
+    assert!(refused.to_string().contains("chown"));
+    assert_eq!(fs.calls(), ["who_may_write"]);
+    let fs = Asked::new(true);
+    let refused = Reader::open(&root, fs.clone()).err().unwrap();
+    assert!(matches!(refused, Error::NotOwn { .. }), "{refused:?}");
+    assert_eq!(fs.calls(), ["who_may_write"]);
+    // A folder that is not there yet is not refused for it: a writer makes it, and
+    // a reader is told it is missing.
+    let missing = dir.path().join("missing");
+    assert!(matches!(
+        Reader::open(&missing, Asked::new(true)).err().unwrap(),
+        Error::Missing { .. }
+    ));
+}

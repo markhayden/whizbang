@@ -26,6 +26,11 @@ whizbang-serve.workspace = true
 # Evaluation sets and matrices (plan 2C, task E1).
 whizbang-eval = { path = "../whizbang-eval" }
 clap.workspace = true
+# The terminal's signals for `whizbang play` alone, through the safe iterator, so that
+# Ctrl-C cancels and accounts for the runs going and lets the store go (plan m5, task H1,
+# open question 1, approved by the owner; ADR 0041). With `signal-hook-registry`, both
+# MIT or Apache-2.0; `libc` is in the lock file already.
+signal-hook = { version = "=0.3.18", default-features = false, features = ["iterator"] }
 serde.workspace = true
 serde_json.workspace = true
 # A tool file's declaration (plan 2C, task X1; ADR 0032), read as squint reads a job.

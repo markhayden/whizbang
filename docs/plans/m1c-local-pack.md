@@ -1894,9 +1894,9 @@ add start the binary through the function from the first.
 **Shown by:** `binary::the_command_has_a_cleared_environment_and_a_temporary_home`
 (the test kit: a process with a planted variable calls the function, and the program
 it starts lists its whole environment); `scripts/tests/test-binary-start.sh` (the
-workspace passes, with twenty-three places counted: the twenty above, the one N3a
-added in `wired.rs`, the one N3b added in `models.rs` and the one Y1 added in
-`setup.rs`; each other way is refused on planted files); and the tests of `crates/whizbang/tests/it/` that start the binary, each
+workspace passes, with twenty-seven places counted: the twenty above, the one N3a
+added in `wired.rs`, the one N3b added in `models.rs`, the one Y1 added in
+`setup.rs`, and the four plan m5's task H1 added in `play.rs` and `store.rs`; each other way is refused on planted files); and the tests of `crates/whizbang/tests/it/` that start the binary, each
 through the function, which the check counts.
 **Size:** small.
 

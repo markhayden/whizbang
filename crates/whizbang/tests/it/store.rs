@@ -784,3 +784,104 @@ fn an_imported_picture_keeps_where_it_came_from_by_a_name_of_its_own() {
         2
     );
 }
+
+/// The real binary with these arguments, as they are: its exit code and its output.
+fn binary(args: &[&str]) -> Ran {
+    let out = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
+        .args(args)
+        .output()
+        .expect("the binary runs");
+    Ran {
+        code: out.status.code(),
+        out: String::from_utf8(out.stdout).expect("output is UTF-8"),
+        err: String::from_utf8(out.stderr).expect("output is UTF-8"),
+    }
+}
+
+#[test]
+fn the_binary_deletes_a_run_with_its_children_while_another_process_reads_the_generation_before() {
+    // The deletion's carry-over row (plan m5, task H1, item 7): a recipe's run and the
+    // runs its steps made, made by the binary; this process reads the generation from
+    // before; another process, the binary, deletes the recipe's run with its children
+    // and prunes. What this process holds stays readable; once it lets go, the next
+    // prune removes it.
+    let dir = Scratch::new("cli-store-tree");
+    let root = dir.path().join("store");
+    let picture = dir.path().join("p.png");
+    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/compare");
+    std::fs::copy(fixtures.join("before.png"), &picture).unwrap();
+    let store = root.to_str().unwrap();
+    let imported = binary(&[
+        "store",
+        "import",
+        "--picture",
+        picture.to_str().unwrap(),
+        "--create",
+        "--store",
+        store,
+    ]);
+    assert_eq!(imported.code, Some(0), "{}", imported.err);
+    let image = imported.out.lines().last().unwrap();
+    let image = image.strip_prefix("imported image ").unwrap();
+    let ran = binary(&[
+        "rascal",
+        "mask-rect",
+        "--image",
+        image,
+        "--box",
+        "2 2 10 10",
+        "--store",
+        store,
+    ]);
+    assert_eq!(ran.code, Some(0), "{}", ran.err);
+    let parent = ran.out.lines().next().unwrap();
+    let parent = parent
+        .strip_prefix("run ")
+        .unwrap()
+        .strip_suffix(" completed")
+        .unwrap();
+    let children: Vec<&str> = ran
+        .out
+        .lines()
+        .filter_map(|line| line.strip_prefix("step "))
+        .map(|line| line.rsplit(' ').next().unwrap())
+        .collect();
+    assert_eq!(children.len(), 2, "{}", ran.out);
+
+    let reader = Reader::open(&root, Arc::new(RealFs)).unwrap();
+    let generation = reader.snapshot().unwrap();
+    assert_eq!(generation.runs().len(), 3);
+    let deleted = whizbang(&["delete", parent], &root);
+    assert_eq!(deleted.code, Some(0), "{}", deleted.err);
+    assert!(
+        deleted.out.starts_with("runs deleted: 3\n"),
+        "{}",
+        deleted.out
+    );
+    assert!(
+        deleted
+            .out
+            .contains("generations left for a reader that still holds them: 1"),
+        "{}",
+        deleted.out
+    );
+    // Every reference of what this process holds reads whole.
+    for entry in generation.references() {
+        reader.read(entry).unwrap();
+    }
+    let after = Reader::open(&root, Arc::new(RealFs)).unwrap();
+    let now = after.snapshot().unwrap();
+    assert!(now.runs().is_empty(), "{:?}", now.runs().keys());
+    for child in &children {
+        assert!(!now.runs().contains_key(*child));
+    }
+    drop(after);
+    drop(reader);
+    let pruned = whizbang(&["prune"], &root);
+    assert_eq!(pruned.code, Some(0), "{}", pruned.err);
+    assert!(
+        pruned.out.starts_with("generations removed: 1\n"),
+        "{}",
+        pruned.out
+    );
+}

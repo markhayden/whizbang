@@ -84,6 +84,10 @@ case "\$*" in
     # Its input has ended. One that stays ends itself after a minute and not before.
     [ "\$kind" != stays ] || exec sleep 60
     ;;
+  'play --store store --no-open --stdin-quit --port 0')
+    echo "\$\$" >"\$record/player"
+    exec /usr/bin/perl "$root/scripts/tests/fixtures/play-stand-in.pl" "$says" "\$kind"
+    ;;
   setup)
     command -v uv >/dev/null || { echo "whizbang: uv was not found on PATH" >&2; exit 1; }
     [ -d "\$UV_PYTHON_INSTALL_DIR" ] || { echo "whizbang: no Python" >&2; exit 1; }
@@ -172,6 +176,7 @@ grep -x -F "UV_PYTHON_INSTALL_DIR=$(cd "$prereqs" && pwd -P)/python" "$tmp/recor
 # Every command of the check was given, the server's and the refusals among them.
 for asked in --version 'describe --json --pretty' 'store import --picture picture.png --store store --create' \
   "rascal mask-rect --image $image --box 2 2 10 10 --store store" 'runs show 100-1 --store store' 'serve --store store' \
+  'play --store store --no-open --stdin-quit --port 0' \
   setup 'backends status' "rascal remove-prompt --image $image --prompt the corner --until feather --store store --config config.toml"; do
   grep -x -F -e "$asked" "$tmp/record/commands" >/dev/null || fail "the check runs: whizbang $asked"
 done
@@ -181,6 +186,14 @@ else
   grep -x -F 'setup --extra torch' "$tmp/record/commands" >/dev/null && fail "on a Mac the check installs no extra"
 fi
 gone "$(cat "$tmp/record/server")" || fail "the server of a good archive has ended"
+gone "$(cat "$tmp/record/player")" || fail "the playground of a good archive has ended"
+grep -x -F "install-check: ok: whizbang play served its page and /api/hello to its token over loopback, and ended with its input" "$tmp/out" >/dev/null ||
+  fail "it says the playground was asked and ended"
+
+# --- A playground that does not end when its input does is killed and waited for.
+archive "$tmp/play-stays" play-stays
+expect_fail "a playground that does not end" "the playground did not end within 1 seconds of the end of its input; it was killed and waited for" check "$tmp/play-stays"
+gone "$(cat "$tmp/record/player")" || fail "a playground that does not end is killed"
 
 # --- The prerequisites' folder without uv, or without the Python.
 cp -R "$prereqs" "$tmp/no-uv" && rm "$tmp/no-uv/uv"
@@ -284,10 +297,12 @@ archive "$tmp/silent" silent
 rm -rf "$tmp/record" && mkdir "$tmp/record"
 expect_fail "a server that never answers" "the server gave no answer to initialize within 1 seconds" check "$tmp/silent"
 gone "$(cat "$tmp/record/server")" || fail "a server that never answers is killed"
-# The script never waits on its server without a bound: each wait counts to the limit.
+# The script never waits on its server or its playground without a bound: each wait
+# counts to the limit.
 [ "$(grep -c -x -F '  wait "$server" 2>/dev/null || true' "$script")" = 1 ] && [ "$(grep -c -F 'wait "$server"' "$script")" = 2 ] &&
-  [ "$(grep -c -F 'if [ "$waited" -ge $((limit * 10)) ]; then' "$script")" = 2 ] ||
-  fail "the check waits for its server in two places, each after a loop that counts to the limit"
+  [ "$(grep -c -x -F '  wait "$player" 2>/dev/null || true' "$script")" = 1 ] && [ "$(grep -c -F 'wait "$player"' "$script")" = 2 ] &&
+  [ "$(grep -c -F 'if [ "$waited" -ge $((limit * 10)) ]; then' "$script")" = 4 ] ||
+  fail "the check waits for its server and its playground in two places each, each after a loop that counts to the limit"
 
 # A server that ends before it is asked anything is reported in words, not by a signal.
 archive "$tmp/dies" dies

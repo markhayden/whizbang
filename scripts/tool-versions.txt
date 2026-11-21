@@ -1,8 +1,11 @@
 # The tools `just check` needs, at the versions this repo is tested with. Read by
 # scripts/setup.sh; .github/workflows/ci.yml installs the same versions, and
 # scripts/tests/test-setup.sh fails when the two disagree. The Rust toolchain is pinned in
-# rust-toolchain.toml.
+# rust-toolchain.toml. Node builds and tests the playground's interface (ui/, plan m5, task
+# U1): CI installs it with actions/setup-node, and the interface's packages are pinned by
+# ui/package-lock.json. A user never needs Node: the built interface is in the binary.
 just 1.59.0
 cargo-nextest 0.9.148
 cargo-deny 0.20.2
 uv 0.12.23
+node 26.13.1
