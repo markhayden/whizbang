@@ -101,6 +101,11 @@ pub enum Command {
         /// only with a location cited for it, and stays tentative otherwise. Experimental.
         #[arg(long, value_name = "WHEN", default_value = "off", value_parser = ["off", "on", "strict"])]
         second_look: String,
+        /// The form the judge answers in: `v1`, the default, or `v2`, whose items are
+        /// keyed by checklist id, whose near-misses that have one reading are read and
+        /// recorded, and whose one repair names every problem (ADR 0042). Experimental.
+        #[arg(long, value_name = "FORM", value_parser = ["v1", "v2"])]
+        submission: Option<String>,
         /// A tool file the config lists under `[tools] paths`, offered to the judge with
         /// the schema its declaration gives; give it again for more. An experimental tool
         /// is offered only to a run that names it.
@@ -137,6 +142,7 @@ fn run_at(
             detail,
             projection,
             second_look,
+            submission,
             tools,
             at,
             under,
@@ -148,6 +154,7 @@ fn run_at(
             let measuring = door::Measuring {
                 tools,
                 second_look: second_look.as_str(),
+                submission: submission.as_deref(),
                 ..door::Measuring::stated(details.as_deref(), projection.as_deref())?
                     .measuring(detail.as_deref())?
             };

@@ -432,7 +432,18 @@ ends, each rejection of a submission by its class (`not_a_list`, `unknown_item`,
 the words the judge was sent are unchanged, and nothing it wrote is kept there. `ceiling` is
 a turn cut off at its backend's output ceiling; `cut_off` a turn cut off again after its
 limit was raised. `runs stats --rejections` counts both over a filter. A run answered from
-the decision cache sent nothing and keeps none.
+the decision cache sent nothing and keeps none. The second look's own refusals are not
+tallied: a second look that settles nothing leaves the first verdict, and `judged.json`
+keeps its outcome and why. The diagnostic's contract is `rejections/2`.
+
+**Submission v2** (`--submission v2`, experimental; ADR 0042). The judge is given its items
+as an object with one key for each checklist item (the id with every character outside
+letters, digits, `_`, `.` and `-` made `_`, each key's description naming its item),
+near-misses that have one reading are read (a list sent
+as text, a word in another case, an id in another case, an identical answer given twice,
+evidence of a call that did not complete, one wrapper object) and each is recorded under
+`recoveries` in `rejections.json`, and the one repair names every problem at once. v1, the
+default, is unchanged. Which is the default is decided by the format round of milestone E.
 
 **What one request may cost** is fixed by three settings of the backend, each held
 before a byte is sent: `max_input_tokens` (40,000 when none is given),
