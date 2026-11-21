@@ -889,3 +889,10 @@ fn a_resample_that_cannot_be_worked_out_gives_no_interval_and_no_pick() {
     assert_eq!(pick.outcome, "no_pick");
     assert!(pick.why.contains("cannot be worked out"), "{}", pick.why);
 }
+
+#[test]
+fn the_reader_takes_the_contract_check_writes_today() {
+    // The contract `check` writes is one the reader takes, so a run of today's binary is
+    // never counted as unknown for its contract alone.
+    assert!(judges::CONTRACTS.contains(&whizbang_squint::check::REJECTIONS_CONTRACT));
+}

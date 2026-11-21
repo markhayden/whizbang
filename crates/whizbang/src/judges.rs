@@ -41,28 +41,17 @@ use whizbang_eval::metrics::{self, Computed, Counts, Expected, Resampling, Row};
 use whizbang_eval::sets;
 
 use whizbang_squint::check::{Cause, REJECTIONS};
-use whizbang_squint::use_case::Class;
+use whizbang_squint::use_case::{Class, FORMATS, Recovery};
 
 use crate::door::printable;
 use crate::evaluation::{Ended, cell_of};
 
 /// The form of what the command writes.
 pub const SCHEMA: &str = "judges/1";
-/// The contracts of the rejections diagnostic read: T1's, and F1's, which adds the format
-/// the run resolved, the other classes of a rejection and the recoveries. Any other is
-/// unknown.
+/// The contracts of the rejections diagnostic read: T1's, and F1's
+/// ([`whizbang_squint::check::REJECTIONS_CONTRACT`]), which adds the format the run resolved,
+/// the further classes of a rejection and the recoveries. Any other is unknown.
 pub const CONTRACTS: [&str; 2] = ["rejections/1", "rejections/2"];
-/// The kinds of recovery submission v2 records (task F1), as it names them. Any other name
-/// read from the store is counted as `unknown`.
-pub const RECOVERY_KINDS: [&str; 7] = [
-    "list_as_text",
-    "array_form",
-    "enum_word",
-    "id_case",
-    "identical_duplicate",
-    "evidence_dropped",
-    "wrapper",
-];
 /// The word a class, cause or kind the build does not know is counted under: nothing read
 /// from the store is written as it was read.
 pub const UNKNOWN: &str = "unknown";
@@ -205,13 +194,14 @@ impl Submissions {
             Some(list) => (list.as_array()?.iter())
                 .map(|one| {
                     let kind = one.get("kind").and_then(serde_json::Value::as_str)?;
-                    Some(known_or_unknown(kind, &RECOVERY_KINDS))
+                    let kinds: Vec<&str> = Recovery::ALL.iter().map(|r| r.name()).collect();
+                    Some(known_or_unknown(kind, &kinds))
                 })
                 .collect::<Option<Vec<String>>>()?,
         };
         let submission = match (contract, json.get("submission")) {
             ("rejections/1", None) => "v1".to_owned(),
-            (_, Some(word)) => known_or_unknown(word.as_str()?, &["v1", "v2"]),
+            (_, Some(word)) => known_or_unknown(word.as_str()?, &FORMATS),
             _ => return None,
         };
         Some(Submissions {
