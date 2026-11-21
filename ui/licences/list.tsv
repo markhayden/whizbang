@@ -1,0 +1,11 @@
+# What the playground's built interface (ui/dist/, embedded in the binary) holds of other
+# people's work, and the licence text of each: the npm packages that ship (the dependencies
+# of ui/package.json, at the versions ui/package-lock.json pins) and the fonts under
+# ui/public/fonts/. scripts/third-party-licences.sh writes them into THIRD-PARTY-LICENSES.md
+# and fails when this list and those files disagree. Fields, apart by tabs: kind, name,
+# version, licence, the text's file in this folder, and for a font the files it is.
+package	preact	10.29.8	MIT	preact.txt
+package	marked	18.1.3	MIT	marked.txt
+font	geist	5.3.0	OFL-1.1	geist.txt	geist-400.woff2 geist-500.woff2 geist-600.woff2 geist-700.woff2
+font	geist-mono	5.3.0	OFL-1.1	geist-mono.txt	geist-mono-400.woff2 geist-mono-600.woff2
+font	bricolage-grotesque	5.3.0	OFL-1.1	bricolage-grotesque.txt	bricolage-grotesque-800.woff2

@@ -1,0 +1,143 @@
+/*
+ * The playground's design tokens, taken by their exact values from the Paper file
+ * "whizbang playground" (its tokens, and the page "Components"). The names are the Paper
+ * file's: there each colour is named once for light (`--color-panel`) and once for dark
+ * (`--color-panel-dark`); here the dark value is under `:root` and the light value under
+ * `[data-theme="light"]`, both by the one name. The page is dark only (`<html
+ * data-theme="dark">` is fixed); the light set is kept so that light can return.
+ *
+ * Below the Paper tokens are the few colours the components of that page use as literal
+ * values (the ink on a filled tag, the veil of a mark's label, a shadow): each is named
+ * here, for both themes, so no component holds a colour of its own. A unit test
+ * (`src/tokens.test.ts`) fails on a colour written anywhere else.
+ */
+
+:root {
+  /* Colour: surfaces and lines. */
+  --color-canvas: #0A0B0D;
+  --color-panel: #131518;
+  --color-raised: #1A1D21;
+  --color-hover: #22252A;
+  --color-line: #2A2E34;
+  --color-line-strong: #3B4048;
+  /* Colour: text. */
+  --color-ink: #F5F7F9;
+  --color-ink-2: #C8CDD5;
+  --color-muted: #8B929C;
+  --color-faint: #5B616A;
+  /* Colour: accents. */
+  --color-brass: #FFC51F;
+  --color-brass-soft: #382B00;
+  --color-brass-ink: #1A1200;
+  --color-lacquer: #FF4552;
+  --color-lacquer-soft: #3A1216;
+  --color-copper: #FF8636;
+  --color-volt: #33D1FF;
+  --color-pass: #34D77E;
+  --color-unsure: #9F8CFF;
+
+  /* Named here: the components' literal colours. */
+  --color-on-lacquer: #1A0806;
+  --color-on-pass: #0B1A10;
+  --color-on-unsure: #14102A;
+  --color-on-copper: #1A0E06;
+  --color-pass-tint: #34D77E29;
+  --color-unsure-tint: #9F8CFF29;
+  --color-lacquer-tint: #FF455229;
+  --color-lacquer-wash: #FF455214;
+  --color-running: #FFC51F;
+  --color-press-veil: #FFFFFF1F;
+  --color-mask: #FFC51F52;
+  --color-mark: #FFFFFF;
+  --color-mark-label: #1C1814EB;
+  --color-mark-label-ink: #F3ECE2;
+  --color-scrim: #0000008C;
+  --color-on-scrim: #FFFFFF;
+  --color-art-ground: #0E0C0A;
+  --shadow-panel: #FFF0DC0F 0px 0px 0px 1px, #00000066 0px 1px 3px;
+  --shadow-menu: #FFF0DC14 0px 0px 0px 1px, #0000008C 0px 12px 32px;
+  --shadow-banner: #FFF0DC14 0px 0px 0px 1px, #00000066 0px 2px 8px;
+  --shadow-chip: #FFF0DC14 0px 0px 0px 1px;
+  --shadow-handle: #00000066 0px 2px 6px;
+
+  /* Type. */
+  --font-sans: "Geist", system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, monospace;
+  --font-display: "Bricolage Grotesque", system-ui, sans-serif;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-lg: 15px;
+  --text-xl: 18px;
+  --text-2xl: 24px;
+  --text-3xl: 34px;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --font-weight-display: 800;
+  --tracking-tight: -0.02em;
+  --tracking-display: -0.03em;
+  --tracking-caps: 0.06em;
+  --leading-ui: 18px;
+  --opacity-muted: 60%;
+
+  /* Space and shape. */
+  --breakpoint-desktop: 1440px;
+  --spacing-1: 4px;
+  --spacing-1-5: 6px;
+  --spacing-2: 8px;
+  --spacing-3: 12px;
+  --spacing-4: 16px;
+  --spacing-6: 24px;
+  --spacing-8: 32px;
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+}
+
+[data-theme="light"] {
+  --color-canvas: #F3F4F6;
+  --color-panel: #FFFFFF;
+  --color-raised: #F9FAFB;
+  --color-hover: #EEF0F3;
+  --color-line: #E2E5E9;
+  --color-line-strong: #CBD0D6;
+  --color-ink: #0E1014;
+  --color-ink-2: #363B44;
+  --color-muted: #6A707A;
+  --color-faint: #A2A8B1;
+  --color-brass: #FFB800;
+  --color-brass-soft: #FFF3CC;
+  --color-brass-ink: #1F1600;
+  --color-lacquer: #E5212F;
+  --color-lacquer-soft: #FFE5E7;
+  --color-copper: #FF6A13;
+  --color-volt: #00A9E0;
+  --color-pass: #12A150;
+  --color-unsure: #7B5CFF;
+
+  --color-on-lacquer: #FFFFFF;
+  --color-on-pass: #FFFFFF;
+  --color-on-unsure: #FFFFFF;
+  --color-on-copper: #1A0E06;
+  --color-pass-tint: #12A15024;
+  --color-unsure-tint: #7B5CFF24;
+  --color-lacquer-tint: #FFE5E7;
+  --color-lacquer-wash: #FFE5E7;
+  --color-running: #C98F00;
+  --color-press-veil: #0000000F;
+  --color-mask: #FFB8004D;
+  --color-mark: #FFFFFF;
+  --color-mark-label: #FFFFFFEB;
+  --color-mark-label-ink: #1E1915;
+  --color-scrim: #0000008C;
+  --color-on-scrim: #FFFFFF;
+  --color-art-ground: #F3F4F6;
+  --shadow-panel: #1E19150F 0px 0px 0px 1px, #1E19150F 0px 1px 3px;
+  --shadow-menu: #1E191514 0px 0px 0px 1px, #1E191524 0px 12px 32px;
+  --shadow-banner: #1E191514 0px 0px 0px 1px, #1E19150F 0px 2px 8px;
+  --shadow-chip: #1E191514 0px 0px 0px 1px;
+  --shadow-handle: #1E191524 0px 2px 6px;
+}
