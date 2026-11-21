@@ -5,14 +5,16 @@ import { ApiError, type Client, type Hello } from "./api";
 import { App, NO_TOKEN } from "./app";
 import { HOSTILE, render } from "./test/render";
 
+let lastClient: Client;
 function clientAnswering(hello: Promise<Hello>): Client {
-  return {
-    hello: () => hello,
+  lastClient = {
+    hello: vi.fn(() => hello),
     request: vi.fn(),
     upload: vi.fn(),
     start: vi.fn(),
     poll: vi.fn(),
   } as unknown as Client;
+  return lastClient;
 }
 
 async function settle() {
@@ -82,6 +84,21 @@ describe("the shell", () => {
   it("says so when the page holds no token at all", async () => {
     const { view } = mount("#/", Promise.reject(new ApiError(401, "x")), false);
     expect(view.get("[role=alert]").textContent).toBe(NO_TOKEN);
+  });
+
+  it("acts on nothing in the address: any route asks hello and changes nothing", async () => {
+    // The host lets a top-level navigation reach the page (H1), so an address another
+    // page made must start, stop or upload nothing. Only #k= is read, by token.ts.
+    for (const hash of ["#/", "#/k/rascal/remove_prompt?run=1", "#/run/r-1", "#/history?kit=rascal&result=pass", "#/models", "#/quit", "#/k/rascal/remove_prompt/start"]) {
+      const { view } = mount(hash, Promise.resolve(HELLO));
+      await settle();
+      expect(lastClient.hello, hash).toHaveBeenCalledTimes(1);
+      expect(lastClient.request, hash).not.toHaveBeenCalled();
+      expect(lastClient.upload, hash).not.toHaveBeenCalled();
+      expect(lastClient.start, hash).not.toHaveBeenCalled();
+      expect(lastClient.poll, hash).not.toHaveBeenCalled();
+      view.unmount();
+    }
   });
 
   it("follows the address, and the keys open search, Home and a kit", async () => {
