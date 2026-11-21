@@ -10,7 +10,8 @@
 #
 # A tool that is missing, or at another version than scripts/tool-versions.txt pins, is
 # named with the command that installs the pinned version (for uv, which cargo does not
-# install, its release and that downloading it needs the owner's approval), and the
+# install, its release and that downloading it needs the owner's approval; for Node, where
+# it is had), and the
 # script fails. jq and
 # python3 (3.9 or later, for scripts/baseline) are checked without a pin. The hooks
 # are installed either way. `just check` does not run this: only setup is strict about
@@ -116,6 +117,8 @@ installed() {
   case "$1" in
     just) just --version ;;
     uv) uv --version ;;
+    # Node prints its version alone, with a v before it.
+    node) node --version | sed 's/^v/node /' ;;
     cargo-*) cargo "${1#cargo-}" --version ;;
   esac 2>/dev/null | awk 'NR == 1 { print $2 }' || true
 }
@@ -142,6 +145,14 @@ while read -r tool want; do
       echo "tool problem: uv is missing; uv $want is needed; its release is https://github.com/astral-sh/uv/releases/tag/$want; downloading it on this machine needs the owner's approval" >&2
     else
       echo "tool problem: uv is at another version: found $have, pinned $want; uv $want is needed; its release is https://github.com/astral-sh/uv/releases/tag/$want; downloading it on this machine needs the owner's approval" >&2
+    fi
+    status=1
+  elif [ "$tool" = node ]; then
+    # Node is not installed by cargo either. It builds and tests ui/ (ADR 0042).
+    if [ -z "$have" ]; then
+      echo "tool problem: node is missing; Node $want is needed for ui/; install it from nodejs.org or with a version manager (fnm install $want)" >&2
+    else
+      echo "tool problem: node is at another version: found $have, pinned $want; Node $want is needed for ui/; install it from nodejs.org or with a version manager (fnm install $want)" >&2
     fi
     status=1
   elif [ -z "$have" ]; then

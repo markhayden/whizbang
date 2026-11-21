@@ -34,7 +34,8 @@
 #   CLAUDE.md, SPEC.md, the workspace's Cargo.toml, Cargo.lock and rust-toolchain.toml,
 #   each crate's Cargo.toml and build.rs (test-deny, test-features, test-crate-graph),
 #   .gitignore, pack/ and docs/ (the plan, the notes, the reference, the baseline, the
-#   carry-over, the sources). These are whole. A path git prints in quotes, for a character
+#   carry-over, the sources), and ui/ (test-ui builds a copy of it, test-e2e reads its
+#   Playwright configuration, test-third-party-licences its licences). These are whole. A path git prints in quotes, for a character
 #   it will not print bare, is taken as whole too.
 # A new script test that reads the crates' sources joins `part`.
 # The whole script is one function, read before any of it runs, so a change to this file
@@ -44,7 +45,7 @@ set -euo pipefail
 export LC_ALL=C
 
 part="scripts/tests/test-baseline.sh scripts/tests/test-binary-start.sh scripts/tests/test-compile-fail.sh scripts/tests/test-deny.sh scripts/tests/test-notes.sh scripts/tests/test-pack.sh scripts/tests/test-sign-in.sh scripts/tests/test-thread-lint.sh"
-listed="scripts/, justfile, .github/, .config/, .claude/, .mcp.json, clippy.toml, deny.toml, AGENTS.md, CLAUDE.md, SPEC.md, Cargo.toml, Cargo.lock, rust-toolchain.toml, a crate's Cargo.toml or build.rs, .gitignore, pack/ or docs/"
+listed="scripts/, justfile, .github/, .config/, .claude/, .mcp.json, clippy.toml, deny.toml, AGENTS.md, CLAUDE.md, SPEC.md, Cargo.toml, Cargo.lock, rust-toolchain.toml, a crate's Cargo.toml or build.rs, .gitignore, pack/, docs/ or ui/"
 
 dry=0
 case "$*" in
@@ -77,7 +78,7 @@ whole() {
   local lower
   case "$1" in
     '"'* | scripts/* | justfile | .github/* | .config/* | clippy.toml | deny.toml | AGENTS.md | CLAUDE.md \
-      | SPEC.md | Cargo.toml | Cargo.lock | rust-toolchain.toml | .gitignore | pack/* | docs/* \
+      | SPEC.md | Cargo.toml | Cargo.lock | rust-toolchain.toml | .gitignore | pack/* | docs/* | ui/* \
       | crates/*/Cargo.toml | crates/*/build.rs) return 0 ;;
   esac
   lower=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')

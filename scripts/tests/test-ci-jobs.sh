@@ -25,7 +25,12 @@
 #   Linux runner, with the check job's limit and no condition, and in no other job (plan
 #   2C, task E1: in `check` it took that job past its limit);
 # - the aggregate `ci`, the one check a merge waits for, needs every other job and passes
-#   only when each of them did.
+#   only when each of them did;
+# - since plan m5, task U1: the Chrome tier is the fourth part, the recipe `e2e`, in the
+#   jobs `e2e (<runner>)`, set up as `check` is and with Node; `check` and `scripts` set up
+#   the same Node, since `ui-check` is in the first part and a script test builds ui/; a
+#   type error or a stale ui/dist/ fails `ui-check` (scripts/tests/test-ui.sh), so the
+#   first part.
 #
 # Every rule is shown to fail on a copy with one thing changed. Nothing here runs a recipe.
 source "$(dirname "$0")/lib.sh"
@@ -72,8 +77,18 @@ check_justfile() { # <justfile>
       want="$want $word"
     fi
   done
-  [ " $(deps "$file" ci-without-scripts) $(deps "$file" ci-release)" = "$want" ] ||
-    { echo "justfile: ci-without-scripts and then ci-release must depend on exactly what ci runs, in its order, without test-scripts:$want"; return 1; }
+  [ " $(deps "$file" ci-without-scripts) $(deps "$file" ci-release) e2e" = "$want" ] ||
+    { echo "justfile: ci-without-scripts, then ci-release, then e2e must be exactly what ci runs, in its order, without test-scripts:$want"; return 1; }
+  # The interface: checked in the fast tier before the timing table counts its seconds;
+  # built and checked by the one script; the Chrome tier by its own.
+  case " $(deps "$file" check-full) " in *" ui-check timing "*) ;; *)
+    echo "justfile: check-full must run ui-check just before timing, which counts its seconds"; return 1 ;; esac
+  [ "$(body "$file" ui-check)" = "scripts/ui.sh check" ] ||
+    { echo "justfile: ui-check must run exactly: scripts/ui.sh check"; return 1; }
+  [ "$(body "$file" ui-build)" = "scripts/ui.sh build" ] ||
+    { echo "justfile: ui-build must run exactly: scripts/ui.sh build"; return 1; }
+  [ "$(body "$file" e2e)" = "scripts/e2e.sh" ] ||
+    { echo "justfile: e2e must run exactly: scripts/e2e.sh"; return 1; }
   # The release build and what follows it, in the job `release`; nothing else is there.
   # The archive is made after the smoke, which built the binary, and installed after it
   # is made.
@@ -98,21 +113,29 @@ rm -rf target/install-prereqs' ] ||
 }
 
 # jobs <workflow>: the name of each job, one a line.
-jobs() { awk '/^jobs:$/ { on = 1; next } on && /^  [a-z][a-z-]*:$/ { sub(/^  /, ""); sub(/:$/, ""); print }' "$1"; }
+jobs() { awk '/^jobs:$/ { on = 1; next } on && /^  [a-z][a-z0-9-]*:$/ { sub(/^  /, ""); sub(/:$/, ""); print }' "$1"; }
 # job <workflow> <name>: the lines of one job.
 job() {
   awk -v head="  $2:" '/^jobs:$/ { in_jobs = 1; next }
-    in_jobs && /^  [a-z][a-z-]*:$/ { on = ($0 == head); next } on' "$1"
+    in_jobs && /^  [a-z][a-z0-9-]*:$/ { on = ($0 == head); next } on' "$1"
 }
 # before <text> <step's line, as a pattern>: the line above that step's line.
 before() { grep -B1 -E "$2" <<<"$1" | head -n 1 || true; }
 # set_up <job's lines>: from its checkout to the line that names the pinned tools.
 set_up() { awk '/^      - uses: actions\/checkout@/ { on = 1 } on { print } on && /^          tool: / { exit }' <<<"$1"; }
 
+# node <job's lines>: the step that sets up Node, from its `uses` to the next step.
+node() { awk '/^      - uses: actions\/setup-node@/ { on = 1; print; next } on && /^        / { print; next } on { exit }' <<<"$1"; }
+NODE_STEP='      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26.13.1
+          cache: npm
+          cache-dependency-path: ui/package-lock.json'
+
 check_workflow() { # <workflow>
-  local file=$1 check scripts release secrets ci name
-  [ "$(jobs "$file" | tr '\n' ' ')" = "check scripts release secrets ci " ] ||
-    { echo "CI: the jobs must be check, scripts, release, secrets and ci (found: $(jobs "$file" | tr '\n' ' '))"; return 1; }
+  local file=$1 check scripts release e2e secrets ci name
+  [ "$(jobs "$file" | tr '\n' ' ')" = "check scripts release e2e secrets ci " ] ||
+    { echo "CI: the jobs must be check, scripts, release, e2e, secrets and ci (found: $(jobs "$file" | tr '\n' ' '))"; return 1; }
   # A step or a job that may fail without failing the run would pass anything.
   if grep -E 'continue-on-error' "$file" >/dev/null; then
     echo "CI: nothing may continue on error"; return 1
@@ -120,6 +143,7 @@ check_workflow() { # <workflow>
   check=$(job "$file" check)
   scripts=$(job "$file" scripts)
   release=$(job "$file" release)
+  e2e=$(job "$file" e2e)
   secrets=$(job "$file" secrets)
   ci=$(job "$file" ci)
 
@@ -166,6 +190,32 @@ check_workflow() { # <workflow>
   [ "$(set_up "$release")" = "$(set_up "$check")" ] ||
     { echo "CI: release must be set up exactly as check is: the checkout, the toolchain, the cache and the pinned tools"; return 1; }
 
+  # Node: the one step, pinned to a commit, at the pin, with npm's cache keyed by the
+  # lock file, in check, scripts and e2e (ui-check, the script test of ui/, the Chrome tier).
+  for name in check scripts e2e; do
+    [ "$(node "$(job "$file" "$name")")" = "$NODE_STEP" ] ||
+      { echo "CI: $name must set up Node with actions/setup-node pinned to its commit, at the pin, with npm's cache keyed by ui/package-lock.json"; return 1; }
+  done
+  [ "$(grep -c -F 'uses: actions/setup-node@' "$file")" = 3 ] ||
+    { echo "CI: Node is set up in check, scripts and e2e, and nowhere else"; return 1; }
+
+  # e2e: the fourth part, on both runners, set up as check is, within 15 minutes, running
+  # the Chrome tier in a step with no condition; only the report of a failed run is kept.
+  grep -x -F '        os: [macos-15, ubuntu-22.04]' <<<"$e2e" >/dev/null &&
+    grep -x -F '    runs-on: ${{ matrix.os }}' <<<"$e2e" >/dev/null ||
+    { echo "CI: e2e must run on macos-15 and ubuntu-22.04"; return 1; }
+  grep -x -F '    timeout-minutes: 15' <<<"$e2e" >/dev/null ||
+    { echo "CI: e2e must run within 15 minutes"; return 1; }
+  [ "$(set_up "$e2e")" = "$(set_up "$check")" ] ||
+    { echo "CI: e2e must be set up exactly as check is: the checkout, the toolchain, the cache and the pinned tools"; return 1; }
+  [ "$(grep -c -E '^ +run: just ' <<<"$e2e")" = 1 ] && grep -E '^ +run: just e2e$' <<<"$e2e" >/dev/null ||
+    { echo "CI: e2e must run exactly: just e2e"; return 1; }
+  case "$(before "$e2e" '^ +run: just e2e$')" in *' if: '*)
+    echo "CI: e2e must run just e2e on every runner, with no condition"; return 1 ;; esac
+  [ "$(grep -E '^ +if:' <<<"$e2e")" = "        if: failure()" ] &&
+    grep -A1 -x -F '        if: failure()' <<<"$e2e" | grep -x -F '        uses: actions/upload-artifact@v4' >/dev/null ||
+    { echo "CI: the one condition in e2e keeps the report of a failed run, and nothing else"; return 1; }
+
   # secrets: the scan of every commit, alone, on Linux, within the check job's limit, with
   # no condition; and in no other job.
   grep -x -F '    runs-on: ubuntu-22.04' <<<"$secrets" >/dev/null &&
@@ -183,9 +233,9 @@ check_workflow() { # <workflow>
   # ci: runs whatever happened, needs every other job, and passes only when each passed.
   grep -x -F '    if: always()' <<<"$ci" >/dev/null ||
     { echo "CI: the aggregate ci must run always, so that a failed job fails it and does not skip it"; return 1; }
-  grep -x -F '    needs: [check, scripts, release, secrets]' <<<"$ci" >/dev/null ||
-    { echo "CI: the aggregate ci must need: [check, scripts, release, secrets]"; return 1; }
-  for name in check scripts release secrets; do
+  grep -x -F '    needs: [check, scripts, release, e2e, secrets]' <<<"$ci" >/dev/null ||
+    { echo "CI: the aggregate ci must need: [check, scripts, release, e2e, secrets]"; return 1; }
+  for name in check scripts release e2e secrets; do
     grep -x -F "          test \"\${{ needs.$name.result }}\" = \"success\"" <<<"$ci" >/dev/null ||
       { echo "CI: the aggregate ci must fail unless $name succeeded"; return 1; }
   done
@@ -208,7 +258,8 @@ check_rules() { # <AGENTS.md>
     '`release (macos-15)` and `release (ubuntu-22.04)` run the second' \
     '`scripts (macos-15)` and `scripts (ubuntu-22.04)` run the third' \
     'The job `secrets` runs the secrets scan and the attribution check over every commit' \
-    'the aggregate `ci`, which needs all seven'; do
+    '`e2e (macos-15)` and `e2e (ubuntu-22.04)` run the fourth, `just e2e`' \
+    'the aggregate `ci`, which needs all nine'; do
     case "$row" in *"$text"*) ;; *) echo "AGENTS.md: the row of the three parts must say: $text"; return 1 ;; esac
   done
 }
@@ -226,7 +277,7 @@ changed check_justfile justfile 's/^check-full: fmt-check clippy graph deny test
   "check-full must run every script test"
 changed check_justfile justfile 's/^ci: check-full /ci: fmt-check /' "ci must depend on check-full"
 changed check_justfile justfile 's/^ci: check-full /ci: check-full check /' "ci must not depend on check"
-changed check_justfile justfile 's/^ci: check-full /ci: check-full test-scripts-local /' "ci-without-scripts and then ci-release must depend on exactly"
+changed check_justfile justfile 's/^ci: check-full /ci: check-full test-scripts-local /' "ci-without-scripts, then ci-release, then e2e must be exactly"
 # `check` and `check-full` apart: a recipe in one and not the other, or the local choice
 # in check-full, or every script test in check.
 changed check_justfile justfile 's/^check: fmt-check /check: fmt-check new-check /' "check must depend on exactly what check-full does"
@@ -241,11 +292,11 @@ changed check_justfile justfile 's/^check-full: .*$/&\
     true/' "run nothing of their own"
 # A recipe added to both: ci-without-scripts must have it too.
 changed check_justfile justfile 's/^check: fmt-check /check: fmt-check new-check /;s/^check-full: fmt-check /check-full: fmt-check new-check /' \
-  "ci-without-scripts and then ci-release must depend on exactly"
-changed check_justfile justfile 's/^ci: check-full deny-advisories /ci: check-full deny-advisories new-step /' "ci-without-scripts and then ci-release must depend on exactly"
-changed check_justfile justfile 's/^\(ci-without-scripts: .*\) timing /\1 /' "ci-without-scripts and then ci-release must depend on exactly"
-changed check_justfile justfile 's/^\(ci-without-scripts: .*\) docs-check /\1 /' "ci-without-scripts and then ci-release must depend on exactly"
-changed check_justfile justfile 's/^\(ci-release: .*\) scan-secrets /\1 /' "ci-without-scripts and then ci-release must depend on exactly"
+  "ci-without-scripts, then ci-release, then e2e must be exactly"
+changed check_justfile justfile 's/^ci: check-full deny-advisories /ci: check-full deny-advisories new-step /' "ci-without-scripts, then ci-release, then e2e must be exactly"
+changed check_justfile justfile 's/^\(ci-without-scripts: .*\) timing /\1 /' "ci-without-scripts, then ci-release, then e2e must be exactly"
+changed check_justfile justfile 's/^\(ci-without-scripts: .*\) docs-check /\1 /' "ci-without-scripts, then ci-release, then e2e must be exactly"
+changed check_justfile justfile 's/^\(ci-release: .*\) scan-secrets /\1 /' "ci-without-scripts, then ci-release, then e2e must be exactly"
 # The release build back in the first part, or another recipe moved into the third.
 changed check_justfile justfile 's/^ci-release: smoke /ci-release: /;s/^\(ci-without-scripts: .*\)$/\1 smoke/' "ci-release must depend on exactly"
 changed check_justfile justfile 's/^\(ci-without-scripts: .*\) deny-advisories$/\1/;s/^ci-release: /ci-release: deny-advisories /' "ci-release must depend on exactly"
@@ -254,11 +305,11 @@ changed check_justfile justfile 's/^ci-release: smoke compile-fail scan-secrets 
 # The release job without the archive, without its install, or with them the other way
 # round; the archive made another way; the install check without the bootstrap, on a
 # folder that is not fresh, or with the machine's own uv and Python in place of the folder.
-changed check_justfile justfile 's/^\(ci: .*\) package install-check$/\1 install-check/;s/^\(ci-release: .*\) package install-check$/\1 install-check/' \
+changed check_justfile justfile 's/^\(ci: .*\) package install-check e2e$/\1 install-check e2e/;s/^\(ci-release: .*\) package install-check$/\1 install-check/' \
   "ci-release must depend on exactly"
-changed check_justfile justfile 's/^\(ci: .*\) package install-check$/\1 package/;s/^\(ci-release: .*\) package install-check$/\1 package/' \
+changed check_justfile justfile 's/^\(ci: .*\) package install-check e2e$/\1 package e2e/;s/^\(ci-release: .*\) package install-check$/\1 package/' \
   "ci-release must depend on exactly"
-changed check_justfile justfile 's/^\(ci: .*\) package install-check$/\1 install-check package/;s/^\(ci-release: .*\) package install-check$/\1 install-check package/' \
+changed check_justfile justfile 's/^\(ci: .*\) package install-check e2e$/\1 install-check package e2e/;s/^\(ci-release: .*\) package install-check$/\1 install-check package/' \
   "ci-release must depend on exactly"
 changed check_justfile justfile 's/^    scripts\/package.sh$/    cargo build --release -p whizbang/' "package must run exactly"
 changed check_justfile justfile '/^    scripts\/install-prereqs.sh /d' "install-check must run exactly"
@@ -275,12 +326,14 @@ changed check_justfile justfile 's/^ci-scripts: deny test-scripts$/&\
 changed check_rules AGENTS.md 's/`scripts (macos-15)` and `scripts (ubuntu-22.04)` run the third/the other jobs run the third/' "must say: \`scripts (macos-15)\`"
 changed check_rules AGENTS.md 's/`release (macos-15)` and `release (ubuntu-22.04)` run the second/the other jobs run the second/' "must say: \`release (macos-15)\`"
 changed check_rules AGENTS.md 's/ and `check (ubuntu-22.04)` run the first/ runs the first/' "must say: \`check (macos-15)\`"
-changed check_rules AGENTS.md 's/, which needs all seven/, which needs five/' "must say: the aggregate"
+changed check_rules AGENTS.md 's/, which needs all nine/, which needs seven/' "must say: the aggregate"
+changed check_rules AGENTS.md 's/`e2e (macos-15)` and `e2e (ubuntu-22.04)` run the fourth/the e2e jobs run the fourth/' "must say: \`e2e (macos-15)\`"
 changed check_rules AGENTS.md 's/The job `secrets` runs/A job runs/' "must say: The job"
 
 # --- The workflow.
 # The aggregate without the new job: a red script test on macOS would not fail it.
-changed check_workflow "$workflow" 's/^    needs: \[check, scripts, release, secrets\]$/    needs: [check, scripts, secrets]/' "must need: [check, scripts, release, secrets]"
+changed check_workflow "$workflow" 's/^    needs: \[check, scripts, release, e2e, secrets\]$/    needs: [check, scripts, release, secrets]/' "must need: [check, scripts, release, e2e, secrets]"
+changed check_workflow "$workflow" '/needs\.e2e\.result/d' "must fail unless e2e succeeded"
 changed check_workflow "$workflow" '/needs\.release\.result/d' "must fail unless release succeeded"
 changed check_workflow "$workflow" '/needs\.secrets\.result/d' "must fail unless secrets succeeded"
 # The scan of every commit in another job as well, skipped, allowed to fail, given more
@@ -324,7 +377,7 @@ changed check_workflow "$workflow" 's/^  scripts:$/&\
     if: github.event_name == '"'push'"'/' "may have a condition"
 changed check_workflow "$workflow" 's/^  scripts:$/&\
     continue-on-error: true/' "nothing may continue on error"
-changed check_workflow "$workflow" 's/^  scripts:$/  tests:/' "the jobs must be check, scripts, release, secrets and ci"
+changed check_workflow "$workflow" 's/^  scripts:$/  tests:/' "the jobs must be check, scripts, release, e2e, secrets and ci"
 # The third job: elsewhere, skipped, allowed to fail, given more time, running something
 # else, or set up another way.
 changed check_workflow "$workflow" 's/^  release:$/&\
@@ -357,5 +410,35 @@ third '          tool: just@1.59.0' '^          tool: '
 third delete '^        run: rustup show$'
 third delete '^      - uses: Swatinem/rust-cache@'
 third '          cache-on-failure: false' '^          cache-on-failure: '
+fourth() { nth 4 e2e "$@"; }
+fourth '          tool: just@1.59.0' '^          tool: '
+fourth delete '^        run: rustup show$'
+
+# --- The interface and the Chrome tier (plan m5, task U1).
+changed check_justfile justfile 's/^\(check-full: .*\) ui-check timing /\1 timing ui-check /;s/^\(check: .*\) ui-check timing /\1 timing ui-check /;s/^\(ci-without-scripts: .*\) ui-check timing /\1 timing ui-check /' \
+  "check-full must run ui-check just before timing"
+changed check_justfile justfile 's/^\(check-full: .*\) ui-check /\1 /;s/^\(check: .*\) ui-check /\1 /;s/^\(ci-without-scripts: .*\) ui-check /\1 /' \
+  "check-full must run ui-check just before timing"
+changed check_justfile justfile 's/^\(ci-without-scripts: .*\) ui-check /\1 /' "ci-without-scripts, then ci-release, then e2e must be exactly"
+changed check_justfile justfile 's/^\(ci: .*\) e2e$/\1/' "ci-without-scripts, then ci-release, then e2e must be exactly"
+changed check_justfile justfile 's/^    scripts\/ui.sh check$/    scripts\/ui.sh build/' "ui-check must run exactly"
+changed check_justfile justfile 's/^    scripts\/e2e.sh$/    scripts\/e2e.sh --limit 999/' "e2e must run exactly"
+changed check_workflow "$workflow" 's/^  e2e:$/  chrome:/' "the jobs must be check, scripts, release, e2e, secrets and ci"
+changed check_workflow "$workflow" 's/^\( *\)run: just e2e$/\1if: matrix.os == '"'macos-15'"'\
+\1run: just e2e/' "e2e must run just e2e on every runner, with no condition"
+changed check_workflow "$workflow" 's/^\( *\)run: just e2e$/\1run: just ui-check/' "e2e must run exactly: just e2e"
+changed check_workflow "$workflow" 's/^  e2e:$/&\
+    continue-on-error: true/' "nothing may continue on error"
+awk '/^  e2e:$/ { on = 1 } on && /^    timeout-minutes: 15$/ { $0 = "    timeout-minutes: 30"; on = 0 } { print }' "$workflow" >"$tmp/e2e-longer"
+expect_fail "e2e with a longer limit" "e2e must run within 15 minutes" check_workflow "$tmp/e2e-longer"
+awk '/^        os: \[macos-15, ubuntu-22.04\]$/ { n++; if (n == 4) $0 = "        os: [ubuntu-22.04]" } { print }' "$workflow" >"$tmp/e2e-matrix"
+expect_fail "the fourth matrix on Linux alone" "e2e must run on macos-15 and ubuntu-22.04" check_workflow "$tmp/e2e-matrix"
+changed check_workflow "$workflow" 's/^        if: failure()$/        if: always()/' "the one condition in e2e"
+# Node at another version, unpinned, without the lock file's cache, or missing from a job.
+changed check_workflow "$workflow" 's/^          node-version: 26.13.1$/          node-version: 26/' "must set up Node with actions/setup-node pinned"
+changed check_workflow "$workflow" 's/^      - uses: actions\/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1$/      - uses: actions\/setup-node@v7/' "must set up Node with actions/setup-node pinned"
+changed check_workflow "$workflow" '/^          cache-dependency-path: ui\/package-lock.json$/d' "must set up Node with actions/setup-node pinned"
+awk '/^      - uses: actions\/setup-node@/ { n++; if (n == 2) { skip = 5 } } skip > 0 { skip--; next } { print }' "$workflow" >"$tmp/no-node"
+expect_fail "scripts without Node" "scripts must set up Node" check_workflow "$tmp/no-node"
 
 finished

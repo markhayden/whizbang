@@ -65,7 +65,7 @@ while IFS=$'\t' read -r name version licence folder; do
     grep -x -F "### $label" "$tmp/made.md" >/dev/null || fail "$label, which $name names, is printed"
   done
 done <"$tmp/list-$host"
-[ "$(grep -c '^| ' "$tmp/made.md")" = "$(($(wc -l <"$tmp/list-$host") + 1))" ] || fail "the table has its heading, one row for each crate and no other"
+[ "$(sed -n '/^## Crates$/,/^## Texts$/p' "$tmp/made.md" | grep -c '^| ')" = "$(($(wc -l <"$tmp/list-$host") + 1))" ] || fail "the table has its heading, one row for each crate and no other"
 # A licence everybody knows is in it, whole.
 grep -F 'Permission is hereby granted, free of charge, to any person obtaining a copy' "$tmp/made.md" >/dev/null || fail "an MIT text is printed"
 grep -F 'TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION' "$tmp/made.md" >/dev/null || fail "an Apache text is printed"
@@ -84,6 +84,16 @@ done
 # a text for each, one of them in a subfolder.
 grep -F '| ring | ' "$tmp/made.md" | grep -F 'Apache-2.0 AND ISC' | grep -F '/LICENSE' >/dev/null ||
   fail "ring, under two licences at once, has its texts, those in its subfolders among them"
+
+# The playground's interface, which the binary embeds (plan m5, task U1): Preact's and
+# marked's texts, and the fonts', each under its heading, with its table.
+grep -x -F "## The playground's interface" "$tmp/made.md" >/dev/null || fail "the file names the playground's interface"
+for heading in 'The package preact' 'The package marked' 'The font geist' 'The font geist-mono' 'The font bricolage-grotesque'; do
+  grep -x -F "### $heading" "$tmp/made.md" >/dev/null || fail "the file holds: $heading"
+done
+grep -F '| package preact | 10.29.8 | MIT |' "$tmp/made.md" >/dev/null || fail "Preact has its row, at the version the lock file pins"
+grep -F 'SIL OPEN FONT LICENSE Version 1.1' "$tmp/made.md" >/dev/null || fail "the fonts' licence is printed"
+grep -F 'Copyright (c) 2015-present Jason Miller' "$tmp/made.md" >/dev/null || fail "Preact's text is printed"
 
 # The same lock file gives the same bytes.
 expect_pass "the file a second time" "$script" "$host" "$tmp/again.md"
@@ -168,5 +178,45 @@ expect_fail "a crate whose folder is not there" "the folder of gone 1.0.0 is not
 expect_fail "an empty list" "the list holds no crate" "$script" --render "$tmp/empty.tsv" "$host" "$tmp/x.md"
 expect_fail "another target" "no archive is made for the target" "$script" --list x86_64-pc-windows-msvc
 [ ! -e "$tmp/x.md" ] || fail "a refused list writes no file"
+
+# --- The interface's packages and fonts, held to ui/: on copies of the files it reads, in
+# a throwaway repository, with the crates of this test's own good list.
+ui_copy() {
+  rm -rf "$tmp/uirepo"
+  mkdir -p "$tmp/uirepo/scripts" "$tmp/uirepo/ui/public"
+  cp scripts/third-party-licences.sh "$tmp/uirepo/scripts/"
+  cp deny.toml Cargo.toml "$tmp/uirepo/"
+  cp ui/package.json ui/package-lock.json "$tmp/uirepo/ui/"
+  cp -R ui/licences "$tmp/uirepo/ui/"
+  cp -R ui/public/fonts "$tmp/uirepo/ui/public/"
+  git -C "$tmp/uirepo" init -q
+}
+render_ui() { (cd "$tmp/uirepo" && scripts/third-party-licences.sh --render "$tmp/good.tsv" "$host" "$tmp/ui.md"); }
+edit_list() { sed "$1" "$tmp/uirepo/ui/licences/list.tsv" >"$tmp/list.tsv" && mv "$tmp/list.tsv" "$tmp/uirepo/ui/licences/list.tsv"; }
+ui_copy
+expect_pass "the interface as it is" render_ui
+grep -x -F '### The font geist' "$tmp/ui.md" >/dev/null || fail "the copy's file holds the fonts"
+ui_copy
+jq '.dependencies.extra = "1.0.0"' ui/package.json >"$tmp/uirepo/ui/package.json"
+expect_fail "a dependency with no row" "must hold one row for each dependency of ui/package.json" render_ui
+ui_copy
+edit_list 's/^package	preact	10.29.8	/package	preact	10.0.0	/'
+expect_fail "a row at another version than the lock file's" "says preact 10.0.0, and ui/package-lock.json pins 10.29.8" render_ui
+ui_copy
+edit_list 's/^package	marked	18.1.3	MIT	/package	marked	18.1.3	GPL-3.0	/'
+expect_fail "a package under a licence deny.toml does not allow" "under GPL-3.0, which deny.toml does not allow" render_ui
+ui_copy
+: >"$tmp/uirepo/ui/public/fonts/extra.woff2"
+expect_fail "a font file with no row" "must name each file of ui/public/fonts/ once" render_ui
+ui_copy
+edit_list 's/^font	geist	5.3.0	OFL-1.1	/font	geist	5.3.0	Apache-2.0	/'
+expect_fail "a font not under OFL-1.1" "a font is under OFL-1.1 only" render_ui
+ui_copy
+echo "Words of no licence." >"$tmp/uirepo/ui/licences/preact.txt"
+expect_fail "a text that is not of its licence" "ui/licences/preact.txt is not a text of MIT" render_ui
+ui_copy
+rm "$tmp/uirepo/ui/licences/marked.txt"
+expect_fail "a text that is missing" "ui/licences/marked.txt, is missing or empty" render_ui
+[ ! -e "$tmp/x.md" ] || fail "a refused interface writes no file"
 
 finished
