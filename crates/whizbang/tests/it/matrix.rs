@@ -620,6 +620,147 @@ fn an_arm_with_the_second_look_gives_one_on_a_tentative_item() {
     assert!(looks[1].is_null());
 }
 
+/// The bound of one check by a model, in millionths of a dollar: sixteen requests at the
+/// default ceilings, at the model's row of prices in this build.
+fn bound_of_a_check(model: &str) -> u64 {
+    use whizbang_backends::service::spend::{DEFAULT_CEILINGS, bound_micros};
+    let prices = (whizbang_backends::anthropic::spend::prices_of(model))
+        .or_else(|| whizbang_backends::google::spend::prices_of(model))
+        .or_else(|| whizbang_backends::openai::spend::prices_of(model))
+        .unwrap_or_else(|| panic!("{model} has no price"));
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let request = bound_micros(DEFAULT_CEILINGS, prices).round() as u64;
+    request * whizbang_squint::check::TURNS_LIMIT as u64
+}
+
+#[test]
+fn the_judge_round_is_220_and_715_cells_forecast_within_its_store_and_capped_by_its_dearest_check()
+{
+    // Plan e1, task J1, items 1 and 2, and "Prices and caps": the two committed matrices of
+    // the judge round, their cells over the sets as committed, the forecasts `eval matrix`
+    // sets against what the evaluation store has left after the format round (58.20
+    // dollars), and the cap of one call: the largest bound of one check among the round's
+    // judges, plus a cent. Nothing is run or sent.
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let read = |name: &str| -> Matrix {
+        let text = std::fs::read_to_string(repo.join(format!("matrices/{name}.toml"))).unwrap();
+        Matrix::parse(&text).unwrap()
+    };
+    let (dev, blind) = (read("e-judges-dev"), read("e-judges-blind"));
+    assert_eq!(dev.matrix.name, "e-judges-dev");
+    assert_eq!(blind.matrix.name, "e-judges-blind");
+    // The settled arm, named, and arm C: nothing measured first, view and align offered,
+    // no second look; one repetition, two at once.
+    for m in [&dev, &blind] {
+        let arms: Vec<String> = m.matrix.arms.iter().map(ToString::to_string).collect();
+        assert_eq!(arms, ["C;submission=v1"]);
+        let arm = &m.matrix.arms[0];
+        assert_eq!(arm.details(), "none");
+        assert_eq!(arm.offered(), "view,align");
+        assert!(!arm.looks());
+        assert_eq!(m.matrix.repetitions, 1);
+        assert_eq!(m.matrix.concurrency, 2);
+    }
+    let judges_of = |m: &Matrix| -> Vec<(String, String)> {
+        (m.matrix.judges.iter())
+            .map(|j| (j.backend.clone(), j.model.clone()))
+            .collect()
+    };
+    let pair = |b: &str, m: &str| (b.to_owned(), m.to_owned());
+    assert_eq!(
+        judges_of(&dev),
+        [
+            pair("gemini-4-argon", "gemini-4-argon"),
+            pair("gpt-6-1-sol", "gpt-6.1-sol"),
+        ]
+    );
+    let five = [
+        pair("claude-haiku-5-5", "claude-haiku-5-5"),
+        pair("gemini-3-8-flash", "gemini-3.8-flash"),
+        pair("gemini-4-argon", "gemini-4-argon"),
+        pair("gpt-6-1-terra", "gpt-6.1-terra"),
+        pair("gpt-6-1-sol", "gpt-6.1-sol"),
+    ];
+    assert_eq!(judges_of(&blind), five);
+    // Each judge is a judge of the evaluation config, of the model it names.
+    let config = std::fs::read(repo.join("labs/e-loop/config.toml")).unwrap();
+    let config =
+        whizbang_core::config::Config::parse(&config, &whizbang_core::contract::Secrets::none())
+            .unwrap();
+    let offered: Vec<(&str, Option<&str>)> = (config
+        .backends(whizbang_core::contract::Capability::Judge))
+    .map(|(name, backend)| (name, backend.model()))
+    .collect();
+    for (backend, model) in &five {
+        assert!(
+            offered.contains(&(backend.as_str(), Some(model.as_str()))),
+            "{backend}"
+        );
+    }
+    // The dev matrix names every dev set the repo holds, each with its own labels: the ten
+    // the format round ran, 110 items. The blind matrix names blind-v3 alone, whose labels
+    // are not published: 143 items, 24 families. 253 items in all.
+    let items_of = |m: &Matrix, split: &str| -> Vec<(String, Vec<String>)> {
+        (m.matrix.sets.iter())
+            .map(|id| {
+                let set = whizbang_eval::sets::find(&repo.join("evalsets"), id).unwrap();
+                assert_eq!(set.manifest.set.split.to_string(), split, "{id}");
+                assert_eq!(set.manifest.set.labels.is_some(), split == "dev", "{id}");
+                (
+                    id.clone(),
+                    set.jobs.iter().map(|(i, _)| i.clone()).collect(),
+                )
+            })
+            .collect()
+    };
+    let mut every_dev = Vec::new();
+    for dir in whizbang_eval::sets::discover(&repo.join("evalsets")).unwrap() {
+        let set = whizbang_eval::sets::Set::load(&dir).unwrap();
+        if set.manifest.set.split.to_string() == "dev" {
+            every_dev.push(set.manifest.set.id.clone());
+        }
+    }
+    let mut named = dev.matrix.sets.clone();
+    named.sort();
+    every_dev.sort();
+    assert_eq!(named, every_dev);
+    assert_eq!(blind.matrix.sets, ["source-fidelity/blind-v3"]);
+    let (dev_items, blind_items) = (items_of(&dev, "dev"), items_of(&blind, "blind"));
+    let count = |items: &[(String, Vec<String>)]| items.iter().map(|(_, i)| i.len()).sum::<usize>();
+    assert_eq!((count(&dev_items), count(&blind_items)), (110, 143));
+    let v3 = whizbang_eval::sets::find(&repo.join("evalsets"), "source-fidelity/blind-v3").unwrap();
+    let families: std::collections::BTreeSet<String> =
+        v3.families_by_item().into_values().collect();
+    assert_eq!(families.len(), 24);
+    // The cells, as the binary counts them.
+    let (dev_cells, blind_cells) = (dev.cells(&dev_items), blind.cells(&blind_items));
+    assert_eq!(dev_cells.len(), 110 * 2);
+    assert_eq!(blind_cells.len(), 143 * 5);
+    assert_eq!((dev_cells.len(), blind_cells.len()), (220, 715));
+    // The forecasts: each cell at its model's settled cost of a decision under arm C, the
+    // whole doubled. The dev matrix runs first, against the 58.20 dollars left; the blind
+    // one is set against what is left after it, at worst its whole forecast less.
+    let forecast = |cells: &[whizbang_eval::matrix::Cell]| -> u64 {
+        whizbang_eval::matrix::forecast(cells).unwrap()
+    };
+    let left: u64 = 58_200_000;
+    assert_eq!(forecast(&dev_cells), 2 * 110 * (29_732 + 33_635));
+    assert_eq!(forecast(&dev_cells), 13_940_740);
+    assert_eq!(
+        forecast(&blind_cells),
+        2 * 143 * (3_293 + 22_752 + 29_732 + 17_233 + 33_635)
+    );
+    assert_eq!(forecast(&blind_cells), 30_500_470);
+    assert!(forecast(&dev_cells) <= left);
+    assert!(forecast(&blind_cells) <= left - forecast(&dev_cells));
+    // The cap: the largest bound of one check among the round's judges, plus a cent; the
+    // dearest rows, Argon's and Sol's, are equal.
+    let bounds: Vec<u64> = five.iter().map(|(_, m)| bound_of_a_check(m)).collect();
+    assert_eq!(bounds, [112_768, 725_760, 1_935_360, 967_680, 1_935_360]);
+    let cap = bounds.iter().max().unwrap() + 10_000;
+    assert_eq!(cap, 1_945_360);
+}
+
 #[test]
 fn arm_c_is_check_as_it_ships() {
     // One item, judged once as a cell of arm C and once as `whizbang squint check` calls
