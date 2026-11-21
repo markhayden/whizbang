@@ -620,7 +620,7 @@ W1 builds on them; none changes what a run of any other door does.
 3. **Typed events.** A run's journal line may carry a kind beside its message: a step
    started, a step ended (with its outcome and child run), an attempt started (with its
    number and what changed), a request sent to a capability and answered (backend, model,
-   seconds). The recipe runner (`recipe/runner.rs`) and the loop (`whizbang_rascal::checked`)
+   milliseconds). The recipe runner (`recipe/runner.rs`) and the loop (`whizbang_rascal::checked`)
    say them as they go, through the same `Events` sink, so they are published while the
    run executes, in this process, and kept in the journal at its end. A line without a kind
    is a message as today; the journal's format gains a version, and a reader of the older one
