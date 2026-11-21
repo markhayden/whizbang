@@ -509,7 +509,7 @@ impl Kind for Handing {
 /// The real disk without the syncs: a file's content and a directory's names are
 /// written and never made durable, which is slow and which these tests do not test.
 /// Everything else is the real file system's own.
-struct Unsynced;
+pub struct Unsynced;
 
 impl Fs for Unsynced {
     fn create_dir(&self, path: &Path) -> std::io::Result<()> {
