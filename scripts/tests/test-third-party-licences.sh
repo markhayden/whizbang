@@ -140,6 +140,11 @@ line vendoring 6.0.0 "(MIT OR Apache-2.0) AND ISC" >"$tmp/and.tsv"
 expect_fail "a part that is a choice, with a text of neither" "no text of MIT or Apache-2.0 among its files" "$script" --render "$tmp/and.tsv" "$host" "$tmp/x.md"
 line vendoring 6.0.0 "MIT OR ISC" >"$tmp/and.tsv"
 expect_pass "a choice of licences with the text of one" "$script" --render "$tmp/and.tsv" "$host" "$tmp/or.md"
+# The older form of a choice, with `/`, as crates.io still shows it for some crates.
+line vendoring 6.0.0 "MIT/ISC" >"$tmp/and.tsv"
+expect_pass "a choice written with a slash, with the text of one" "$script" --render "$tmp/and.tsv" "$host" "$tmp/or.md"
+line vendoring 6.0.0 "MIT/Apache-2.0" >"$tmp/and.tsv"
+expect_fail "a choice written with a slash, with a text of neither" "no text of MIT or Apache-2.0 among its files" "$script" --render "$tmp/and.tsv" "$host" "$tmp/x.md"
 line vendoring 6.0.0 "Apache-2.0 WITH LLVM-exception OR ISC" >"$tmp/and.tsv"
 expect_pass "an exception is not a licence to find" "$script" --render "$tmp/and.tsv" "$host" "$tmp/or.md"
 # A licence the script knows no words of, and expressions it cannot read.

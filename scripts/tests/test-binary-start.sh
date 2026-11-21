@@ -20,10 +20,10 @@ expect_pass "the workspace" "$check"
 started=$(sed -n 's/^binary start: ok (.* the real binary is started in \([0-9][0-9]*\) places, .*$/\1/p' "$tmp/out")
 # Exactly the number the plan states (N3c, "Shown by"): a test that starts the binary is
 # added to both, or the check has stopped seeing some.
-[ "$started" = 23 ] ||
-  { cat "$tmp/out" >&2; fail "the check counts the places that start the real binary: twenty-three, not ${started:-none}"; }
-grep -q -F 'with twenty-three places counted' docs/plans/m1c-local-pack.md ||
-  fail "the plan states the number of places, twenty-three"
+[ "$started" = 27 ] ||
+  { cat "$tmp/out" >&2; fail "the check counts the places that start the real binary: twenty-seven, not ${started:-none}"; }
+grep -q -F 'with twenty-seven places counted' docs/plans/m1c-local-pack.md ||
+  fail "the plan states the number of places, twenty-seven"
 # The function is the test kit's, clears the environment, and is the only thing in the
 # crates that does: no test builds a cleared command of its own beside it.
 grep -q -F 'pub fn command(path: impl AsRef<OsStr>) -> Binary' crates/whizbang-testkit/src/binary.rs ||
