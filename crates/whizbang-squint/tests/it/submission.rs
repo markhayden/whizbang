@@ -389,3 +389,278 @@ fn the_judge_sees_the_same_messages_as_before() {
         assert_eq!(refused.to_string(), said, "{what}");
     }
 }
+
+// --- submission v2 (plan e1, task F1) ----------------------------------------------------------
+
+use whizbang_core::contract::record::Decision;
+use whizbang_squint::use_case::Submitted;
+
+/// What v2 makes of a submission of source-fidelity, with one call of the run completed as
+/// `call:0`.
+fn read_v2(submitted: &Json) -> Result<Submitted, use_case::Rejection> {
+    let job = whizbang_squint::job::Job::shorthand("source-fidelity", true, 0, None);
+    let resolved = use_case::resolve(&job).unwrap();
+    let checklist = Checklist::build(&resolved, &job);
+    use_case::decided_of_v2(
+        submitted,
+        &job,
+        &resolved,
+        &checklist,
+        &["call:0".to_owned()],
+        &[],
+    )
+}
+
+/// An answer of v2: an item's answer without its id.
+fn keyed_answer() -> Json {
+    json!({"disposition": "held", "confidence": "confident", "reason": "Looked at.",
+           "allowed_by": null, "evidence": [], "location": null})
+}
+
+/// A whole submission of v2, keyed by checklist id, the first answer changed by `first`.
+fn keyed(first: &dyn Fn(&mut Json)) -> Json {
+    let mut one = keyed_answer();
+    first(&mut one);
+    json!({"schema_version": 2, "findings": [],
+           "items": {"chk:ob:SF1@candidate": one, "chk:ob:SF2@candidate": keyed_answer()},
+           "opinion": {"verdict": "pass", "reason": "Recorded only."}})
+}
+
+fn kinds(read: &Submitted) -> Vec<&'static str> {
+    read.recoveries.iter().map(|r| r.name()).collect()
+}
+
+#[test]
+fn v2_reads_a_whole_keyed_submission_with_no_recovery() {
+    let read = read_v2(&keyed(&|_| {})).unwrap();
+    assert_eq!(read.decided.verdict.decision(), Decision::Pass);
+    assert!(read.recoveries.is_empty());
+    // What the second look and the record read is v1's array form.
+    let ids: Vec<&str> = (read.arguments["items"].as_array().unwrap().iter())
+        .map(|i| i["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["chk:ob:SF1@candidate", "chk:ob:SF2@candidate"]);
+}
+
+#[test]
+fn v2_reads_items_given_as_a_string_holding_a_list() {
+    let mut submitted = keyed(&|_| {});
+    let list = json!([
+        {"id": "chk:ob:SF1@candidate", "disposition": "held", "confidence": "confident",
+         "reason": "Looked at.", "allowed_by": null, "evidence": [], "location": null},
+        {"id": "chk:ob:SF2@candidate", "disposition": "held", "confidence": "confident",
+         "reason": "Looked at.", "allowed_by": null, "evidence": [], "location": null}
+    ]);
+    submitted["items"] = Json::String(list.to_string());
+    submitted["findings"] = Json::String("[]".to_owned());
+    let read = read_v2(&submitted).unwrap();
+    assert_eq!(read.decided.verdict.decision(), Decision::Pass);
+    assert_eq!(kinds(&read), ["list_as_text", "array_form", "list_as_text"]);
+    // A string that holds no list is no near-miss.
+    submitted["findings"] = Json::String("none".to_owned());
+    assert_eq!(read_v2(&submitted).unwrap_err().class, Class::NotAList);
+}
+
+#[test]
+fn v2_reads_enum_words_by_case() {
+    for (said, read) in [
+        ("Held", "held"),
+        (" held ", "held"),
+        ("can't tell", "cant_tell"),
+        ("cannot_tell", "cant_tell"),
+        ("Allowed-Change", "allowed_change"),
+        ("cant tell", "cant_tell"),
+    ] {
+        let mut submitted = keyed(&|a| a["disposition"] = json!(said));
+        if read == "allowed_change" {
+            // An allowed change of an exemption that waives nothing is refused after the
+            // word is read: the word was read.
+            let refused = read_v2(&submitted).unwrap_err();
+            assert_eq!(refused.class, Class::AllowedBy, "{said}");
+            continue;
+        }
+        submitted["items"]["chk:ob:SF2@candidate"]["confidence"] = json!("Confident");
+        let done = read_v2(&submitted).unwrap_or_else(|e| panic!("{said}: {e}"));
+        assert_eq!(done.arguments["items"][0]["disposition"], read, "{said}");
+        assert_eq!(done.arguments["items"][1]["confidence"], "confident");
+        assert_eq!(kinds(&done), ["enum_word", "enum_word"], "{said}");
+    }
+    // A word that is no enum's after the same reading is refused as before.
+    let refused = read_v2(&keyed(&|a| a["disposition"] = json!("fine"))).unwrap_err();
+    assert_eq!(refused.class, Class::BadField);
+}
+
+#[test]
+fn v2_reads_a_checklist_id_by_case_when_one_matches() {
+    let mut submitted = keyed(&|_| {});
+    let items = submitted["items"].as_object_mut().unwrap();
+    let one = items.remove("chk:ob:SF1@candidate").unwrap();
+    items.insert(" CHK:OB:sf1@Candidate ".to_owned(), one);
+    let read = read_v2(&submitted).unwrap();
+    assert_eq!(read.arguments["items"][0]["id"], "chk:ob:SF1@candidate");
+    assert_eq!(kinds(&read), ["id_case"]);
+}
+
+#[test]
+fn v2_reads_identical_duplicates_as_one() {
+    let item = |reason: &str| {
+        json!({"id": "chk:ob:SF1@candidate", "disposition": "held", "confidence": "confident",
+               "reason": reason, "allowed_by": null, "evidence": [], "location": null})
+    };
+    let mut two = item("Looked at.");
+    two["id"] = json!("chk:ob:SF2@candidate");
+    let submitted = json!({"items": [item("First."), item("Second."), two], "findings": []});
+    let read = read_v2(&submitted).unwrap();
+    assert_eq!(read.arguments["items"].as_array().unwrap().len(), 2);
+    assert_eq!(read.arguments["items"][0]["reason"], "First.");
+    assert_eq!(kinds(&read), ["array_form", "identical_duplicate"]);
+}
+
+#[test]
+fn v2_drops_evidence_of_a_call_that_did_not_complete() {
+    let submitted = keyed(&|a| a["evidence"] = json!(["call:0", "call:9", 7]));
+    let read = read_v2(&submitted).unwrap();
+    assert_eq!(read.arguments["items"][0]["evidence"], json!(["call:0"]));
+    assert_eq!(kinds(&read), ["evidence_dropped"]);
+    let read = read_v2(&keyed(&|a| a["evidence"] = Json::Null)).unwrap();
+    assert_eq!(read.arguments["items"][0]["evidence"], json!([]));
+    assert_eq!(kinds(&read), ["evidence_dropped"]);
+    // Evidence that is neither a list nor null is still refused.
+    let refused = read_v2(&keyed(&|a| a["evidence"] = json!("call:0"))).unwrap_err();
+    assert_eq!(refused.class, Class::Evidence);
+}
+
+#[test]
+fn v2_unwraps_one_wrapper() {
+    for key in ["submission", "verdict"] {
+        let read = read_v2(&json!({key: keyed(&|_| {})})).unwrap();
+        assert_eq!(read.decided.verdict.decision(), Decision::Pass, "{key}");
+        assert_eq!(kinds(&read), ["wrapper"]);
+    }
+    // Only once, and only an object whose one key is the wrapper.
+    let twice = json!({"submission": {"verdict": keyed(&|_| {})}});
+    assert_eq!(read_v2(&twice).unwrap_err().class, Class::NotAList);
+    let beside = json!({"submission": keyed(&|_| {}), "note": "x"});
+    assert!(read_v2(&beside).is_err());
+}
+
+#[test]
+fn v2_never_recovers_a_differing_duplicate() {
+    let item = |disposition: &str| {
+        json!({"id": "chk:ob:SF2@candidate", "disposition": disposition, "confidence": "confident",
+               "reason": "Seen.", "allowed_by": null, "evidence": [], "location": null})
+    };
+    let mut one = item("held");
+    one["id"] = json!("chk:ob:SF1@candidate");
+    let submitted = json!({"items": [one, item("held"), item("cant_tell")], "findings": []});
+    let refused = read_v2(&submitted).unwrap_err();
+    assert_eq!(refused.class, Class::DuplicateItem);
+    assert!(
+        refused
+            .message
+            .contains("chk:ob:SF2@candidate has more than one disposition")
+    );
+}
+
+#[test]
+fn v2_never_recovers_an_ambiguous_id() {
+    // Two ids of the checklist would match only if they differed by case alone; an id
+    // that matches none, or one beside its exact twin, is no near-miss.
+    let mut submitted = keyed(&|_| {});
+    let items = submitted["items"].as_object_mut().unwrap();
+    items.insert("chk:ob:SF9@candidate".to_owned(), keyed_answer());
+    assert_eq!(read_v2(&submitted).unwrap_err().class, Class::UnknownItem);
+    let mut submitted = keyed(&|_| {});
+    let items = submitted["items"].as_object_mut().unwrap();
+    let mut other = keyed_answer();
+    other["disposition"] = json!("cant_tell");
+    items.insert("CHK:OB:SF1@CANDIDATE".to_owned(), other);
+    assert_eq!(read_v2(&submitted).unwrap_err().class, Class::DuplicateItem);
+}
+
+#[test]
+fn v2_never_recovers_a_violation_without_a_location() {
+    let refused = read_v2(&keyed(&|a| a["disposition"] = json!("violation"))).unwrap_err();
+    assert_eq!(refused.class, Class::Location);
+    assert_eq!(
+        refused.message,
+        "chk:ob:SF1@candidate: a violation has a location"
+    );
+}
+
+#[test]
+fn v2_names_every_problem_in_one_repair() {
+    let mut submitted = keyed(&|a| a["disposition"] = json!("violation"));
+    submitted["items"]["chk:ob:SF2@candidate"]["reason"] = json!(" ");
+    submitted["findings"] = json!([{"obligation_ids": [], "disposition": "violation",
+        "confidence": "confident", "reason": "Seen.", "allowed_by": null, "evidence": [],
+        "location": {"kind": "whole_image", "frame": "raw:candidate"}}]);
+    let refused = read_v2(&submitted).unwrap_err();
+    assert_eq!(refused.class, Class::Location);
+    assert_eq!(refused.also, [Class::BadField, Class::FindingCites]);
+    assert_eq!(
+        refused.message,
+        "3 problems: chk:ob:SF1@candidate: a violation has a location; \
+         chk:ob:SF2@candidate: the reason is empty; finding 0: cites no obligation: \
+         obligation_ids lists the rules it bears on, of the obligations SF1, SF2, or for an \
+         observed finding the observe rules SF4"
+    );
+    // At most twelve are named, then how many more.
+    let many: Vec<Json> = (0..15)
+        .map(|_| {
+            json!({"obligation_ids": ["ZZ9"], "disposition": "violation",
+            "confidence": "confident", "reason": "Seen.", "allowed_by": null,
+            "evidence": [], "location": {"kind": "whole_image", "frame": "raw:candidate"}})
+        })
+        .collect();
+    let mut submitted = keyed(&|_| {});
+    submitted["findings"] = json!(many);
+    let refused = read_v2(&submitted).unwrap_err();
+    assert!(
+        refused.message.starts_with("15 problems: finding 0: "),
+        "{}",
+        refused.message
+    );
+    assert!(
+        refused.message.ends_with("; and 3 more"),
+        "{}",
+        refused.message
+    );
+    assert_eq!(refused.message.matches("its obligation_ids").count(), 12);
+}
+
+#[test]
+fn v2_keyed_tool_lists_the_checklist_ids_as_its_required_keys() {
+    let job = whizbang_squint::job::Job::shorthand("source-fidelity", true, 0, None);
+    let resolved = use_case::resolve(&job).unwrap();
+    let checklist = Checklist::build(&resolved, &job);
+    let tool = use_case::submit_tool_v2(&checklist).unwrap();
+    assert_eq!(tool.name(), "submit_verdict");
+    let items = &tool.schema()["properties"]["items"];
+    assert_eq!(items["type"], "object");
+    assert_eq!(items["additionalProperties"], false);
+    assert_eq!(
+        items["required"],
+        json!(["chk:ob:SF1@candidate", "chk:ob:SF2@candidate"])
+    );
+    let keys: Vec<&String> = items["properties"].as_object().unwrap().keys().collect();
+    assert_eq!(keys, ["chk:ob:SF1@candidate", "chk:ob:SF2@candidate"]);
+    // Each value is an item's answer without its id; findings are v1's.
+    let answer = &tool.schema()["$defs"]["ItemAnswer"];
+    assert!(answer["properties"].get("id").is_none());
+    assert!(
+        !answer["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("id"))
+    );
+    let v1 = use_case::submit_tool().unwrap();
+    assert_eq!(
+        tool.schema()["properties"]["findings"],
+        v1.schema()["properties"]["findings"]
+    );
+    assert_eq!(
+        tool.schema()["$defs"]["Finding"],
+        v1.schema()["$defs"]["Finding"]
+    );
+}

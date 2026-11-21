@@ -173,6 +173,7 @@ pub fn every_tool_sent(provider: Provider, label: &str) -> (String, serde_json::
         projection: "full",
         tools: &more,
         second_look: "off",
+        submission: None,
     };
     let root = judged.world.root.clone();
     let printed =
@@ -239,5 +240,93 @@ fn every_tool_of_the_build_is_sent_and_its_arguments_read_by_its_schema() {
             "{text}"
         );
     }
+    assert!(printed.contains("verdict: pass"), "{printed}");
+}
+
+/// A run of `check` under submission v2 (plan e1, task F1) under a judge of this provider
+/// on loopback that answers in v2's keyed form: what was printed, and the body of the one
+/// request, which carried v2's tool.
+pub fn v2_sent(provider: Provider, label: &str) -> (String, serde_json::Value) {
+    use crate::anthropic::{CHECK_CLASSES, Judged, pair, serving, submitting_by};
+    let judged = Judged::of(label, provider);
+    let (source, candidate) = pair(&judged);
+    let answer = serde_json::json!({"disposition": "held", "confidence": "confident",
+        "reason": "Kept.", "allowed_by": null, "evidence": [], "location": null});
+    let keyed = submitting_by(
+        provider,
+        serde_json::json!({"schema_version": 2, "findings": [],
+            "items": {"chk:ob:SF1@candidate": answer.clone(), "chk:ob:SF2@candidate": answer},
+            "opinion": {"verdict": "pass", "reason": "Recorded only."}}),
+    );
+    let (listener, log) = serving(&judged.pki, vec![keyed]);
+    let origin = format!("https://127.0.0.1:{}", listener.port());
+    let over = judged.over_with(
+        &judged.address(listener.port()),
+        Some(&origin),
+        &CHECK_CLASSES,
+        "",
+    );
+    let executor = judged.runner(&over);
+    let asked = whizbang::door::CheckAsked {
+        use_case: "source-fidelity",
+        source: Some(&source),
+        candidate: &candidate,
+        references: &[],
+        judge: None,
+        brief: None,
+        request_id: None,
+        details: whizbang::door::Details::None,
+        detail: None,
+        projection: "visual_only",
+    };
+    let (job, images) = whizbang::door::shorthand(&asked).unwrap();
+    let measuring = whizbang::door::Measuring {
+        submission: Some("v2"),
+        ..whizbang::door::Measuring::arm(whizbang::door::Details::None, None)
+    };
+    let root = judged.world.root.clone();
+    let printed =
+        whizbang::door::check_job(&executor, &job, &images, None, None, &measuring, &|run| {
+            whizbang::door::verdict(&root, run)
+        });
+    drop(executor);
+    assert_eq!(listener.finish(), 1);
+    let log = log.lock().unwrap();
+    let first: serde_json::Value = serde_json::from_slice(&log[0].1).unwrap();
+    (printed.unwrap(), first)
+}
+
+/// v2's tool for the checklist of source-fidelity's shorthand job.
+pub fn v2_schema() -> serde_json::Value {
+    let job = whizbang_squint::job::Job::shorthand("source-fidelity", true, 0, None);
+    let resolved = whizbang_squint::use_case::resolve(&job).unwrap();
+    let checklist = whizbang_squint::use_case::Checklist::build(&resolved, &job);
+    let tool = whizbang_squint::use_case::submit_tool_v2(&checklist).unwrap();
+    tool.schema().clone()
+}
+
+#[test]
+fn a_v2_keyed_submission_is_sent_with_its_definitions_in_place_and_read() {
+    let (printed, first) = v2_sent(GOOGLE, "google-v2");
+    let declared = first["tools"][0]["functionDeclarations"]
+        .as_array()
+        .unwrap();
+    let submit = declared
+        .iter()
+        .find(|d| d["name"] == "submit_verdict")
+        .unwrap();
+    let sent = &submit["parametersJsonSchema"];
+    let text = sent.to_string();
+    assert!(!text.contains("$ref") && !text.contains("$defs"), "{text}");
+    let wanted = v2_schema();
+    assert_eq!(sent["required"], wanted["required"]);
+    assert_eq!(
+        sent["properties"]["items"]["required"],
+        serde_json::json!(["chk:ob:SF1@candidate", "chk:ob:SF2@candidate"])
+    );
+    assert_eq!(
+        sent["properties"]["items"]["properties"]["chk:ob:SF1@candidate"]["required"],
+        wanted["$defs"]["ItemAnswer"]["required"]
+    );
     assert!(printed.contains("verdict: pass"), "{printed}");
 }

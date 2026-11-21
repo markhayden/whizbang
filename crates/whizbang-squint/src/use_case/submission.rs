@@ -128,6 +128,9 @@ impl Class {
 pub struct Rejection {
     pub class: Class,
     pub message: String,
+    /// Under submission v2, which names every problem at once, the class of each problem
+    /// after the first, in order; empty under v1.
+    pub also: Vec<Class>,
 }
 
 impl Rejection {
@@ -135,6 +138,7 @@ impl Rejection {
         Rejection {
             class,
             message: message.into(),
+            also: Vec::new(),
         }
     }
 }
@@ -439,6 +443,36 @@ pub fn decided_of(
     resolved: &Resolved,
     checklist: &Checklist,
 ) -> Result<Decided, Rejection> {
+    decided_with(arguments, job, resolved, checklist, false).map_err(|mut found| found.remove(0))
+}
+
+/// The same, with every problem of the submission when `all` is set (submission v2; plan
+/// e1, task F1, item 2): the first of each item and each finding, in the order they were
+/// given, and the items missing or given twice. Without it, the first problem alone, as
+/// v1 has always said it. Never an empty list.
+pub(crate) fn decided_with(
+    arguments: &Json,
+    job: &Job,
+    resolved: &Resolved,
+    checklist: &Checklist,
+    all: bool,
+) -> Result<Decided, Vec<Rejection>> {
+    let mut found: Vec<Rejection> = Vec::new();
+    // A problem of an item or a finding: kept and the next looked at when every problem
+    // is asked for, or else the answer.
+    macro_rules! problem {
+        (@$label:lifetime, $rejection:expr) => {{
+            let rejection = $rejection;
+            if all {
+                found.push(rejection);
+                continue $label;
+            }
+            return Err(vec![rejection]);
+        }};
+        ($label:lifetime, $class:expr, $message:expr $(,)?) => {
+            problem!(@$label, Rejection::new($class, $message))
+        };
+    }
     let submission: Submission = serde_json::from_value(arguments.clone()).map_err(|_| {
         let text = ["items", "findings"]
             .into_iter()
@@ -452,35 +486,42 @@ pub fn decided_of(
                 keys.join(" and ")
             ),
         };
-        Rejection::new(Class::NotAList, said)
+        vec![Rejection::new(Class::NotAList, said)]
     })?;
     let Some(items) = submission.items else {
-        return refused(Class::NotAList, "items is not a list");
+        return Err(vec![Rejection::new(Class::NotAList, "items is not a list")]);
     };
     let mut said = Vec::new();
     let mut counted = Vec::new();
-    for value in &items {
+    'item: for value in &items {
         let named = value.get("id").and_then(Json::as_str).unwrap_or_default();
         let Some(entry) = checklist.get(named) else {
-            return refused(Class::UnknownItem, "an item is not on the checklist");
+            problem!('item, Class::UnknownItem, "an item is not on the checklist");
         };
         let id = entry.id.clone();
-        let answer = read(value, &id)?;
+        // Counted before it is read, so that an item refused for what it holds is not
+        // also said to be missing.
         counted.push(id.clone());
+        let answer = match read(value, &id) {
+            Ok(answer) => answer,
+            Err(rejection) => problem!(@'item, rejection),
+        };
         if answer.reason.trim().is_empty() {
-            return refused(Class::BadField, format!("{id}: the reason is empty"));
+            problem!('item, Class::BadField, format!("{id}: the reason is empty"));
         }
         let placed = match &answer.location {
-            Some(location) => Some(place(location, job).map_err(misplaced(&id))?),
+            Some(location) => match place(location, job).map_err(misplaced(&id)) {
+                Ok(placed) => Some(placed),
+                Err(rejection) => problem!(@'item, rejection),
+            },
             None => None,
         };
         match answer.disposition {
             Disposition::Violation if placed.is_none() => {
-                return refused(Class::Location, format!("{id}: a violation has a location"));
+                problem!('item, Class::Location, format!("{id}: a violation has a location"));
             }
             Disposition::Observed => {
-                return refused(
-                    Class::BadField,
+                problem!('item, Class::BadField,
                     format!(
                         "{id}: the disposition is not one of violation, held, allowed_change, \
                          hidden, cant_tell"
@@ -490,16 +531,16 @@ pub fn decided_of(
             Disposition::AllowedChange => {
                 let by = answer.allowed_by.as_deref();
                 let Some(by) = by else {
-                    return refused(
-                        Class::AllowedBy,
+                    problem!('item, Class::AllowedBy,
                         format!("{id}: an allowed change names its allowed_by"),
                     );
                 };
-                applies(by, &entry.instances, resolved, &id).map_err(unexempt)?;
+                if let Err(why) = applies(by, &entry.instances, resolved, &id) {
+                    problem!(@'item, unexempt(why));
+                }
             }
             _ if answer.allowed_by.is_some() => {
-                return refused(
-                    Class::AllowedBy,
+                problem!('item, Class::AllowedBy,
                     format!("{id}: allowed_by is only valid with disposition allowed_change"),
                 );
             }
@@ -531,29 +572,30 @@ pub fn decided_of(
                          "clamped": placed.is_some_and(|p| p.clamped)}),
         });
     }
-    for id in checklist.ids() {
+    'count: for id in checklist.ids() {
         let n = counted.iter().filter(|c| *c == id).count();
         if n == 0 {
-            return refused(Class::MissingItem, format!("{id} has no disposition"));
+            problem!('count, Class::MissingItem, format!("{id} has no disposition"));
         }
         if n > 1 {
-            return refused(
-                Class::DuplicateItem,
+            problem!('count, Class::DuplicateItem,
                 format!("{id} has more than one disposition"),
             );
         }
     }
     let findings = submission.findings.unwrap_or_default();
-    for (at, value) in findings.iter().enumerate() {
+    'finding: for (at, value) in findings.iter().enumerate() {
         let tag = format!("finding {at}");
-        let answer = read(value, &tag)?;
+        let answer = match read(value, &tag) {
+            Ok(answer) => answer,
+            Err(rejection) => problem!(@'finding, rejection),
+        };
         if answer.reason.trim().is_empty() {
-            return refused(Class::BadField, format!("{tag}: the reason is empty"));
+            problem!('finding, Class::BadField, format!("{tag}: the reason is empty"));
         }
         let ids = answer.obligation_ids.clone().unwrap_or_default();
         if ids.is_empty() {
-            return refused(
-                Class::FindingCites,
+            problem!('finding, Class::FindingCites,
                 format!(
                     "{tag}: cites no obligation: obligation_ids lists the rules it bears on, \
                      of {}",
@@ -562,9 +604,12 @@ pub fn decided_of(
             );
         }
         let Some(location) = answer.location.as_ref() else {
-            return refused(Class::Location, format!("{tag}: has no location"));
+            problem!('finding, Class::Location, format!("{tag}: has no location"));
         };
-        let placed = place(location, job).map_err(misplaced(&tag))?;
+        let placed = match place(location, job).map_err(misplaced(&tag)) {
+            Ok(placed) => placed,
+            Err(rejection) => problem!(@'finding, rejection),
+        };
         let mut mandatory = Vec::new();
         let mut observed = 0;
         for id in &ids {
@@ -574,8 +619,7 @@ pub fn decided_of(
                 match on.iter().find(|i| i.target == placed.image) {
                     Some(inst) => mandatory.push(inst.id()),
                     None => {
-                        return refused(
-                            Class::FindingCites,
+                        problem!('finding, Class::FindingCites,
                             format!(
                                 "{tag}: {id} does not judge image {:?} where the finding is \
                                  located",
@@ -586,8 +630,7 @@ pub fn decided_of(
                 }
             } else if let Some(ob) = resolved.observations.iter().find(|o| &o.id == id) {
                 if !ob.targets.contains(&placed.image) {
-                    return refused(
-                        Class::FindingCites,
+                    problem!('finding, Class::FindingCites,
                         format!("{tag}: observation {id} is not on image {}", placed.image),
                     );
                 }
@@ -601,24 +644,21 @@ pub fn decided_of(
                         ex.waives.join(", ")
                     )
                 };
-                return refused(
-                    Class::FindingCites,
+                problem!('finding, Class::FindingCites,
                     format!(
                         "{tag}: {id} is an exemption; cite the obligation the change bears \
                          on{then}"
                     ),
                 );
             } else {
-                return refused(
-                    Class::FindingCites,
+                problem!('finding, Class::FindingCites,
                     format!("{tag}: its obligation_ids are not rules of the list"),
                 );
             }
         }
         match answer.disposition {
             Disposition::Observed if !mandatory.is_empty() || observed == 0 => {
-                return refused(
-                    Class::FindingCites,
+                problem!('finding, Class::FindingCites,
                     format!(
                         "{tag}: observed findings cite observe rules only ({}); a finding on \
                          an obligation is a violation, cant_tell or allowed_change",
@@ -627,24 +667,23 @@ pub fn decided_of(
                 );
             }
             Disposition::Violation | Disposition::CantTell if mandatory.is_empty() => {
-                return refused(
-                    Class::FindingCites,
+                problem!('finding, Class::FindingCites,
                     format!("{tag}: it must cite a mandatory obligation"),
                 );
             }
             Disposition::AllowedChange => {
                 let by = answer.allowed_by.as_deref();
                 let Some(by) = by else {
-                    return refused(
-                        Class::AllowedBy,
+                    problem!('finding, Class::AllowedBy,
                         format!("{tag}: an allowed change names its allowed_by"),
                     );
                 };
-                applies(by, &mandatory, resolved, &tag).map_err(unexempt)?;
+                if let Err(why) = applies(by, &mandatory, resolved, &tag) {
+                    problem!(@'finding, unexempt(why));
+                }
             }
             Disposition::Held | Disposition::Hidden => {
-                return refused(
-                    Class::BadField,
+                problem!('finding, Class::BadField,
                     format!(
                         "{tag}: the disposition is not one of violation, allowed_change, \
                          cant_tell, observed"
@@ -652,8 +691,7 @@ pub fn decided_of(
                 );
             }
             _ if answer.allowed_by.is_some() => {
-                return refused(
-                    Class::AllowedBy,
+                problem!('finding, Class::AllowedBy,
                     format!("{tag}: allowed_by is only valid with allowed_change"),
                 );
             }
@@ -673,6 +711,9 @@ pub fn decided_of(
             kept: json!({"obligation_ids": ids, "location": placed.kept,
                          "clamped": placed.clamped}),
         });
+    }
+    if !found.is_empty() {
+        return Err(found);
     }
     let strictest = said.iter().map(|s| s.row).max().unwrap_or(Row::Recorded);
     let decision = match strictest {

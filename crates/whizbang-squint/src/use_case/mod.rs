@@ -18,6 +18,7 @@
 
 mod render;
 mod submission;
+mod v2;
 
 use std::collections::BTreeSet;
 
@@ -27,6 +28,9 @@ pub use render::{Checklist, Item, NO_BRIEF, clean, opening, system, system_with}
 pub use submission::{
     Class, Decided, REASONS, Rejection, cited_calls_held, decided_of, submit_definition,
     submit_tool,
+};
+pub use v2::{
+    DEFAULT_FORMAT, FORMATS, PROBLEMS_SHOWN, Recovery, Submitted, decided_of_v2, submit_tool_v2,
 };
 
 use crate::job::{Job, Role};

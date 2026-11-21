@@ -79,7 +79,7 @@ pub const NAME: &str = "check";
 /// The action a tool file's capability is asked through (`whizbang_rascal::segment`).
 const SEGMENT: &str = "segment";
 /// The action's version.
-pub const VERSION: &str = "1.7.0";
+pub const VERSION: &str = "1.8.0";
 /// The most requests one run sends its judge, the retry of a cut-off turn included.
 pub const TURNS_LIMIT: usize = 16;
 /// The most tool calls one run dispatches. It is far under what the executor lets one
@@ -186,9 +186,14 @@ impl Cause {
 /// What a run under a use case keeps of its rejections as the loop goes: each one, by the
 /// number of the request it answered (from 1) and its class; and the cause of its end
 /// where a failure's kind does not tell it (`judge_output` is more than one cause).
-#[derive(Default)]
 struct Tally {
-    rejections: Vec<(usize, use_case::Class)>,
+    /// The form the run's judge answered in.
+    submission: &'static str,
+    /// Each rejection: the request, its class, and under v2 the class of each problem
+    /// after the first.
+    rejections: Vec<(usize, use_case::Class, Vec<use_case::Class>)>,
+    /// Each near-miss v2 read in a submission it accepted: the request and its kind.
+    recoveries: Vec<(usize, use_case::Recovery)>,
     cause: Option<Cause>,
 }
 
@@ -196,15 +201,30 @@ impl Tally {
     /// The diagnostic, for a run that ended so.
     fn document(&self, ended: &Result<Produced, Failure>) -> Json {
         let rejections: Vec<Json> = (self.rejections.iter())
-            .map(|(turn, class)| json!({"turn": turn, "class": class.name()}))
+            .map(|(turn, class, also)| {
+                let mut one = json!({"turn": turn, "class": class.name()});
+                if !also.is_empty() {
+                    one["also"] = json!(also.iter().map(|c| c.name()).collect::<Vec<_>>());
+                }
+                one
+            })
+            .collect();
+        let recoveries: Vec<Json> = (self.recoveries.iter())
+            .map(|(turn, kind)| json!({"turn": turn, "kind": kind.name()}))
             .collect();
         let cause = self.cause.unwrap_or_else(|| Cause::of(ended));
-        json!({"contract": REJECTIONS_CONTRACT, "rejections": rejections, "cause": cause.name()})
+        json!({"contract": REJECTIONS_CONTRACT, "submission": self.submission,
+               "rejections": rejections, "recoveries": recoveries, "cause": cause.name()})
     }
 }
 
 /// The input that takes the images an earlier step measured first and handed on.
 pub const MEASURED_IMAGES: &str = "measured_images";
+
+/// The values of the argument `submission`, the form the judge answers in (plan e1, task
+/// F1; ADR 0042), and its default.
+pub const SUBMISSIONS: [&str; 2] = use_case::FORMATS;
+pub const DEFAULT_SUBMISSION: &str = use_case::DEFAULT_FORMAT;
 
 /// The values of the argument `second_look`.
 pub const SECOND_LOOK: [&str; 3] = ["off", "on", "strict"];
@@ -355,6 +375,12 @@ impl Check {
             "off, on, or strict: one more turn, in the run's budget, to settle items a submission left tentative; strict settles toward pass only with a cited location.",
             ValueType::choice(&SECOND_LOOK),
             Value::text("off"),
+        ))
+        .argument(Argument::with_default(
+            "submission",
+            "v1 or v2: the form the judge answers in under a use case of the table. v2 keys the items by checklist id, reads near-misses that have one reading, and names every problem in its repair.",
+            ValueType::choice(&SUBMISSIONS),
+            Value::text(DEFAULT_SUBMISSION),
         ))
         .input(InputPort::variadic(
             MEASURED_IMAGES,
@@ -532,9 +558,18 @@ fn verdict_of(turn: &Turn) -> Option<Verdict> {
     Some(Verdict::new(decision, why.trim()))
 }
 
-/// Adds the tool the judge answers with under a use case of the table.
-fn run_tools_submit(tools: &mut Vec<ToolDefinition>) -> Result<(), Failure> {
-    let submit = use_case::submit_tool();
+/// Adds the tool the judge answers with under a use case of the table: v1's, or v2's
+/// keyed by this checklist's ids.
+fn run_tools_submit(
+    tools: &mut Vec<ToolDefinition>,
+    v2: bool,
+    checklist: &Checklist,
+) -> Result<(), Failure> {
+    let submit = if v2 {
+        use_case::submit_tool_v2(checklist)
+    } else {
+        use_case::submit_tool()
+    };
     tools.push(submit.ok_or_else(|| failed("tools", &"the submission's schema is not read"))?);
     Ok(())
 }
@@ -1225,6 +1260,8 @@ impl Action for Check {
         // `on` or `strict`; `off`, or a run with no checklist, gives none.
         let look_mode = chosen("second_look", &SECOND_LOOK)?;
         let second_look = look_mode != "off" && judging.is_some();
+        let format = chosen("submission", &SUBMISSIONS)?;
+        let v2 = format == "v2";
         let strict = look_mode == "strict";
         // The decision cache's key is known here, before anything is measured or sent;
         // a run of the same key that completed answers this one (crate::cache).
@@ -1291,7 +1328,12 @@ impl Action for Check {
         // Every rejection, and why the run ended, kept on every way the loop below ends
         // under a use case of the table (plan e1, task T1).
         let under_use_case = judging.is_some();
-        let mut tally = Tally::default();
+        let mut tally = Tally {
+            submission: if v2 { "v2" } else { "v1" },
+            rejections: Vec::new(),
+            recoveries: Vec::new(),
+            cause: None,
+        };
         let ended = (|| -> Result<Produced, Failure> {
             // Whether every turn said which model answered it: only then is the run's
             // verdict kept for a later run to answer from.
@@ -1339,7 +1381,7 @@ impl Action for Check {
                 opening.extend(run.said_details(&entries)?);
                 opening.push(Part::Text(judging.checklist.render(&judging.resolved)));
                 opening.push(Part::Text(use_case::INSTRUCTION.to_owned()));
-                run_tools_submit(&mut run.tools)?;
+                run_tools_submit(&mut run.tools, v2, &judging.checklist)?;
                 let tools = details::tools_section(&named);
                 use_case::system_with(&judging.resolved, &judging.job, &tools)
             } else {
@@ -1460,9 +1502,26 @@ impl Action for Check {
                             && !submitted.is_empty()
                         {
                             let calls = turn.tool_calls().count();
-                            let arguments =
+                            // The submission as the second look reads it: v1's array form,
+                            // into which v2's is turned.
+                            let mut arguments =
                                 submitted.first().map(|submit| submit.arguments().clone());
                             let read = match submitted.as_slice() {
+                                [submit] if calls == 1 && v2 => use_case::decided_of_v2(
+                                    submit.arguments(),
+                                    &judging.job,
+                                    &judging.resolved,
+                                    &judging.checklist,
+                                    &run.shown,
+                                    &run.completed,
+                                )
+                                .map(|read| {
+                                    let turn = sent_turns + 1;
+                                    let kinds = read.recoveries.iter().map(|kind| (turn, *kind));
+                                    tally.recoveries.extend(kinds);
+                                    arguments = Some(read.arguments);
+                                    read.decided
+                                }),
                                 [submit] if calls == 1 => use_case::cited_calls_held(
                                     submit.arguments(),
                                     &run.shown,
@@ -1505,6 +1564,13 @@ impl Action for Check {
                                         messages.push(said);
                                         messages
                                             .push(Message::new(Role::User, asked).map_err(unfit)?);
+                                        // The second look keeps its own contract: v1's
+                                        // tool, whatever the first submission's form.
+                                        if v2 {
+                                            run.tools.retain(|t| t.name() != use_case::SUBMIT);
+                                            let checklist = &judging.checklist;
+                                            run_tools_submit(&mut run.tools, false, checklist)?;
+                                        }
                                         looking = Some(Looking {
                                             first: decided,
                                             arguments: arguments.unwrap_or(Json::Null),
@@ -1524,7 +1590,9 @@ impl Action for Check {
                                     return conclude(context, call, judging, &decided, &concluded);
                                 }
                                 Err(rejection) => {
-                                    tally.rejections.push((sent_turns + 1, rejection.class));
+                                    let turn = sent_turns + 1;
+                                    let also = rejection.also.clone();
+                                    tally.rejections.push((turn, rejection.class, also));
                                     rejection.message
                                 }
                             };
@@ -1558,7 +1626,7 @@ impl Action for Check {
                     {
                         let why = "the judge ended its turn without calling submit_verdict";
                         let class = use_case::Class::NoSubmission;
-                        tally.rejections.push((sent_turns + 1, class));
+                        tally.rejections.push((sent_turns + 1, class, Vec::new()));
                         if repaired {
                             tally.cause = Some(Cause::NoSubmissionAfterRepair);
                             return Err(failed("judge_output", &why));

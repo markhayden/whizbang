@@ -52,3 +52,14 @@ fn every_tool_of_the_build_is_sent_and_its_arguments_read_by_its_schema() {
     }
     assert!(printed.contains("verdict: pass"), "{printed}");
 }
+
+#[test]
+fn a_v2_keyed_submission_is_sent_as_written_not_strict_and_read() {
+    use crate::google::{v2_schema, v2_sent};
+    let (printed, first) = v2_sent(OPENAI, "openai-v2");
+    let sent = first["tools"].as_array().unwrap();
+    let submit = sent.iter().find(|t| t["name"] == "submit_verdict").unwrap();
+    assert_eq!(submit["parameters"], v2_schema());
+    assert_eq!(submit["strict"], false);
+    assert!(printed.contains("verdict: pass"), "{printed}");
+}

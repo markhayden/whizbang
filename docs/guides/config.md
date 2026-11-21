@@ -434,6 +434,13 @@ a turn cut off at its backend's output ceiling; `cut_off` a turn cut off again a
 limit was raised. `runs stats --rejections` counts both over a filter. A run answered from
 the decision cache sent nothing and keeps none.
 
+**Submission v2** (`--submission v2`, experimental; ADR 0042). The judge is given its items
+as an object keyed by checklist id, near-misses that have one reading are read (a list sent
+as text, a word in another case, an id in another case, an identical answer given twice,
+evidence of a call that did not complete, one wrapper object) and each is recorded under
+`recoveries` in `rejections.json`, and the one repair names every problem at once. v1, the
+default, is unchanged. Which is the default is decided by the format round of milestone E.
+
 **What one request may cost** is fixed by three settings of the backend, each held
 before a byte is sent: `max_input_tokens` (40,000 when none is given),
 `max_output_tokens` (4,096) and `max_pictures` (24), in a table

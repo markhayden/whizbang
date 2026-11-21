@@ -1209,17 +1209,18 @@ fn the_records_of_check_completed_failed_and_cancelled_hold_what_the_spec_lists(
                    "whizbang": env!("CARGO_PKG_VERSION")}),
             "{how}"
         );
-        // What was asked: the action, and its exact arguments, the seven that have a
+        // What was asked: the action, and its exact arguments, the eight that have a
         // value by default among them; no settings yet; the config's digest.
         assert_eq!(
             record["asked"],
-            json!({"action": "check", "version": "1.7.0", "settings": [],
+            json!({"action": "check", "version": "1.8.0", "settings": [],
                    "arguments": [{"name": "tools", "value": {"text": "view"}},
                                  {"name": "use_case", "value": {"text": "general"}},
                                  {"name": "details", "value": {"text": "none"}},
                                  {"name": "detail", "value": {"text": "align"}},
                                  {"name": "projection", "value": {"text": "full"}},
                                  {"name": "second_look", "value": {"text": "off"}},
+                                 {"name": "submission", "value": {"text": "v1"}},
                                  {"name": "max_output_tokens", "value": {"integer": 1024}}],
                    "config": Digest::of_bytes(b"").to_string()}),
             "{how}"
@@ -1424,7 +1425,7 @@ fn submission(items: Json) -> Json {
         "opinion": {"verdict": "pass", "reason": "Recorded only."}}}})
 }
 
-fn item(id: &str, disposition: &str, confidence: &str) -> Json {
+pub fn item(id: &str, disposition: &str, confidence: &str) -> Json {
     let location = (disposition == "violation").then(|| {
         json!({
         "kind": "bbox", "frame": "raw:candidate", "bbox": [0.1, 0.1, 0.4, 0.4],
@@ -1908,7 +1909,7 @@ fn a_repair_of_an_invalid_submission_is_recorded_in_the_run() {
     // The rejection is kept by its class beside the cause of the run's end.
     assert_eq!(
         rejections(&left),
-        json!({"contract": "rejections/1", "cause": "concluded",
+        json!({"contract": "rejections/1", "submission": "v1", "recoveries": [], "cause": "concluded",
                "rejections": [{"turn": 1, "class": "missing_item"}]})
     );
 }
@@ -1952,7 +1953,7 @@ fn a_second_rejected_submission_keeps_its_rejections() {
     assert_eq!(ended_as(&outcome), "invalid_submission");
     assert_eq!(
         kept,
-        json!({"contract": "rejections/1", "cause": "invalid_submission",
+        json!({"contract": "rejections/1", "submission": "v1", "recoveries": [], "cause": "invalid_submission",
                "rejections": [{"turn": 1, "class": "missing_item"},
                               {"turn": 2, "class": "not_alone"}]})
     );
@@ -1973,7 +1974,7 @@ fn a_turn_ended_without_a_submission_after_the_repair_keeps_its_cause() {
     assert_eq!(ended_as(&outcome), "judge_output");
     assert_eq!(
         kept,
-        json!({"contract": "rejections/1", "cause": "no_submission_after_repair",
+        json!({"contract": "rejections/1", "submission": "v1", "recoveries": [], "cause": "no_submission_after_repair",
                "rejections": [{"turn": 1, "class": "no_submission"},
                               {"turn": 2, "class": "no_submission"}]})
     );
@@ -1988,7 +1989,7 @@ fn a_cut_off_run_is_not_a_submission_failure() {
     assert_eq!(ended_as(&outcome), "judge_output");
     assert_eq!(
         kept,
-        json!({"contract": "rejections/1", "cause": "cut_off", "rejections": []})
+        json!({"contract": "rejections/1", "submission": "v1", "recoveries": [], "cause": "cut_off", "rejections": []})
     );
     // A stop the loop does not know is another cause of the same error, and no
     // submission failure either.
@@ -2017,7 +2018,7 @@ fn the_turn_budget_spent_keeps_its_rejections() {
     assert_eq!(ended_as(&outcome), "judge_loop");
     assert_eq!(
         kept,
-        json!({"contract": "rejections/1", "cause": "turns",
+        json!({"contract": "rejections/1", "submission": "v1", "recoveries": [], "cause": "turns",
                "rejections": [{"turn": 1, "class": "missing_item"}]})
     );
 }
@@ -2170,7 +2171,7 @@ pub fn paired() -> (World, Image, Image, Image) {
 }
 
 /// `check` of a pair under source-fidelity, with these arguments beside.
-fn of_pair(source: &Image, candidate: &Image, arguments: &[(&str, &str)]) -> Call {
+pub fn of_pair(source: &Image, candidate: &Image, arguments: &[(&str, &str)]) -> Call {
     let job = whizbang_squint::job::Job::shorthand("source-fidelity", true, 0, None);
     let mut call = judged_call(&job, &[candidate.id(), source.id()]);
     for (name, value) in arguments {
@@ -3732,4 +3733,174 @@ fn measurements_that_leave_out_a_call_the_step_of_details_made_are_refused() {
         other => panic!("{other:?}"),
     }
     assert_eq!(judge.requests(), 0);
+}
+
+// --- submission v2 (plan e1, task F1) ----------------------------------------------------------
+
+/// The items of a submission of v2: the answers of `items`, keyed by their ids.
+fn keyed_items(items: &Json) -> Json {
+    let mut keyed = serde_json::Map::new();
+    for item in items.as_array().unwrap() {
+        let mut answer = item.clone();
+        let id = answer.as_object_mut().unwrap().remove("id").unwrap();
+        keyed.insert(id.as_str().unwrap().to_owned(), answer);
+    }
+    Json::Object(keyed)
+}
+
+/// A submission of v2 of these items, as the judge's one call.
+pub fn submission_v2(items: &Json) -> Json {
+    json!({"tool_call": {"id": "s1", "name": "submit_verdict", "arguments": {
+        "schema_version": 2, "items": keyed_items(items), "findings": [],
+        "opinion": {"verdict": "pass", "reason": "Recorded only."}}}})
+}
+
+/// The tool `submit_verdict` as the judge was sent it in its request of this number.
+fn submit_sent(judge: &FakeJudge, request: usize) -> Json {
+    let received = judge.received();
+    let tool = (received[request].tools().iter())
+        .find(|tool| tool.name() == "submit_verdict")
+        .unwrap();
+    tool.schema().clone()
+}
+
+#[test]
+fn v2_keyed_schema_lists_the_jobs_checklist_ids() {
+    let world = World::new();
+    let items = json!([
+        item("chk:ob:SF1@candidate", "held", "confident"),
+        item("chk:ob:SF2@candidate", "held", "confident")
+    ]);
+    let call = fidelity(&world).argument("submission", Value::text("v2"));
+    let script = turns(&[(json!([submission_v2(&items)]), "tool_use")]);
+    let (finished, left, judge) = judged(&world, &call, &script);
+    assert_eq!(
+        finished.outcome().name(),
+        "completed",
+        "{:?}",
+        finished.outcome()
+    );
+    assert_eq!(left.record().verdict().unwrap().0, Decision::Pass);
+    let sent = submit_sent(&judge, 0);
+    assert_eq!(
+        sent["properties"]["items"]["required"],
+        json!(["chk:ob:SF1@candidate", "chk:ob:SF2@candidate"])
+    );
+    // The run records the format it answered in, and v1 stays the default.
+    let kept = rejections(&left);
+    assert_eq!(kept["submission"], "v2");
+    let (_, left, judge) = judged(
+        &world,
+        &fidelity(&world),
+        &turns(&[(json!([submission(items)]), "tool_use")]),
+    );
+    assert_eq!(
+        submit_sent(&judge, 0)["properties"]["items"]["type"],
+        "array"
+    );
+    assert_eq!(rejections(&left)["submission"], "v1");
+}
+
+#[test]
+fn v2_recoveries_are_recorded_by_kind() {
+    let world = World::new();
+    let mut first = item("chk:ob:SF1@candidate", "held", "confident");
+    first["disposition"] = json!("Held");
+    let items = json!([first, item("chk:ob:SF2@candidate", "held", "confident")]);
+    let mut wrapped = submission_v2(&items);
+    let arguments = wrapped["tool_call"]["arguments"].take();
+    wrapped["tool_call"]["arguments"] = json!({"submission": arguments});
+    let call = fidelity(&world).argument("submission", Value::text("v2"));
+    let script = turns(&[(json!([wrapped]), "tool_use")]);
+    let (finished, left, judge) = judged(&world, &call, &script);
+    assert_eq!(
+        finished.outcome().name(),
+        "completed",
+        "{:?}",
+        finished.outcome()
+    );
+    assert_eq!(judge.requests(), 1);
+    assert_eq!(
+        rejections(&left),
+        json!({"contract": "rejections/1", "submission": "v2", "cause": "concluded",
+               "rejections": [],
+               "recoveries": [{"turn": 1, "kind": "wrapper"}, {"turn": 1, "kind": "enum_word"}]})
+    );
+    // A repair under v2 names every problem, and the rejection is kept with each class.
+    let mut nowhere = item("chk:ob:SF1@candidate", "violation", "confident");
+    nowhere["location"] = Json::Null;
+    let mut empty = item("chk:ob:SF2@candidate", "held", "confident");
+    empty["reason"] = json!("");
+    let bad = submission_v2(&json!([nowhere, empty]));
+    let script = turns(&[
+        (json!([bad]), "tool_use"),
+        (json!([submission_v2(&items)]), "tool_use"),
+    ]);
+    let (_, left, judge) = judged(&world, &call, &script);
+    assert_eq!(
+        rejection(&judge, 1),
+        "Submission rejected: 2 problems: chk:ob:SF1@candidate: a violation has a location; \
+         chk:ob:SF2@candidate: the reason is empty"
+    );
+    assert_eq!(
+        rejections(&left)["rejections"],
+        json!([{"turn": 1, "class": "location", "also": ["bad_field"]}])
+    );
+}
+
+#[test]
+fn v2_with_the_second_look_on_settles_the_tentative_items() {
+    let world = World::new();
+    let first = reality_items("held", "tentative", Json::Null);
+    let settled = json!([item(RE2, "held", "confident")]);
+    let call = reality(&world, "on").argument("submission", Value::text("v2"));
+    let script = turns(&[
+        (json!([submission_v2(&first)]), "tool_use"),
+        (json!([submission(settled)]), "tool_use"),
+    ]);
+    let (finished, left, judge) = judged(&world, &call, &script);
+    assert_eq!(
+        finished.outcome().name(),
+        "completed",
+        "{:?}",
+        finished.outcome()
+    );
+    assert_eq!(judge.requests(), 2);
+    // The first turn is v2's keyed tool; the second look asks under v1's array form.
+    assert_eq!(
+        submit_sent(&judge, 0)["properties"]["items"]["type"],
+        "object"
+    );
+    assert_eq!(
+        submit_sent(&judge, 1)["properties"]["items"]["type"],
+        "array"
+    );
+    assert_eq!(left.record().verdict().unwrap().0, Decision::Pass);
+    let look = second_look_kept(&left);
+    assert_eq!(look["items"], json!([RE2]));
+    assert_eq!(look["outcome"], "settled");
+    assert_eq!(look["verdict_after"], "pass");
+}
+
+#[test]
+fn v2_with_the_second_look_strict_keeps_the_strict_rule() {
+    let world = World::new();
+    let first = reality_items("held", "tentative", Json::Null);
+    let call = reality(&world, "strict").argument("submission", Value::text("v2"));
+    // Held with no location stays tentative under strict; with a box it settles.
+    for (location, decided) in [
+        (Json::Null, Decision::Unsure),
+        (a_box([0.1, 0.1, 0.3, 0.3]), Decision::Pass),
+    ] {
+        let mut held = item(RE2, "held", "confident");
+        held["location"] = location;
+        let script = turns(&[
+            (json!([submission_v2(&first)]), "tool_use"),
+            (json!([submission(json!([held]))]), "tool_use"),
+        ]);
+        let (_, left, judge) = judged(&world, &call, &script);
+        assert_eq!(judge.requests(), 2);
+        assert_eq!(left.record().verdict().unwrap().0, decided);
+        assert_eq!(second_look_kept(&left)["strict"], true);
+    }
 }

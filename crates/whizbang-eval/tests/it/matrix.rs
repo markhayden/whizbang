@@ -258,3 +258,63 @@ fn a_judge_given_its_own_repetitions_is_repeated_so_and_a_matrix_without_keeps_i
     );
     assert!(Matrix::parse(&twice).is_err());
 }
+
+/// A matrix of one judge and these arms, as a file writes it.
+fn with_arms(arms: &str) -> String {
+    format!(
+        "[matrix]\nname = \"m\"\nsets = [\"a/b\"]\narms = {arms}\nrepetitions = 1\n\
+         [[matrix.judges]]\nbackend = \"haiku\"\nmodel = \"claude-haiku-5-5\"\n"
+    )
+}
+
+#[test]
+fn an_arm_with_submission_v1_or_v2_parses_and_names_it_in_its_identity() {
+    // Plan e1, task F1, item 1.
+    for value in ["v1", "v2"] {
+        let arm: matrix::Arm = format!("C;submission={value}").parse().unwrap();
+        assert_eq!(arm.submission.as_deref(), Some(value));
+        assert_eq!(arm.to_string(), format!("C;submission={value}"));
+        let f: matrix::Arm = format!("F;second_look=on;submission={value}")
+            .parse()
+            .unwrap();
+        assert_eq!(
+            f.to_string(),
+            format!("F;second_look=on;submission={value}")
+        );
+    }
+    let v1 = Matrix::parse(&with_arms("[\"C;submission=v1\"]")).unwrap();
+    let v2 = Matrix::parse(&with_arms("[\"C;submission=v2\"]")).unwrap();
+    let plain = Matrix::parse(&with_arms("[\"C\"]")).unwrap();
+    assert_ne!(v1.identity(), v2.identity());
+    assert_ne!(v1.identity(), plain.identity());
+    let cells = v2.cells(&[("a/b".to_owned(), vec!["i".to_owned()])]);
+    assert_eq!(cells[0].arm, "C;submission=v2");
+    // As a table, the same arm.
+    let table = Matrix::parse(&with_arms("[{ arm = \"C\", submission = \"v2\" }]")).unwrap();
+    assert_eq!(table.identity(), v2.identity());
+    // Any other value, or the setting twice, is refused.
+    assert!("C;submission=v3".parse::<matrix::Arm>().is_err());
+    assert!("C;submission=".parse::<matrix::Arm>().is_err());
+    assert!(
+        "C;submission=v1;submission=v2"
+            .parse::<matrix::Arm>()
+            .is_err()
+    );
+}
+
+#[test]
+fn an_arm_without_submission_keeps_its_identity() {
+    let arm: matrix::Arm = "C".parse().unwrap();
+    assert_eq!(arm.submission, None);
+    assert_eq!(arm.to_string(), "C");
+    let plain = Matrix::parse(&with_arms("[\"C\", \"F;second_look=on\"]")).unwrap();
+    let canonical = serde_json::to_string(&plain).unwrap();
+    assert_eq!(canonical, serde_json::to_string(&plain).unwrap());
+    assert!(!canonical.contains("submission"), "{canonical}");
+    // The identity of a matrix written before the setting is unchanged: the hash of its
+    // canonical form, which names no submission.
+    assert!(
+        canonical.contains("\"arms\":[\"C\",\"F;second_look=on\"]"),
+        "{canonical}"
+    );
+}

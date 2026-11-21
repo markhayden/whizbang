@@ -726,6 +726,7 @@ pub fn check(
         projection: asked.projection,
         tools: &[],
         second_look: "off",
+        submission: None,
     };
     check_job(
         executor,
@@ -755,6 +756,10 @@ pub struct Measuring<'a> {
     /// Whether a submission that leaves a mandatory item tentative gets one more turn:
     /// `off`, `on` or `strict` (plan m3, task U1, item 4).
     pub second_look: &'a str,
+    /// The form the judge answers in, `v1` or `v2`, when the caller named one (plan e1,
+    /// task F1): stated to the recipe then, and the recipe's own (`check`'s default)
+    /// otherwise.
+    pub submission: Option<&'a str>,
 }
 
 impl<'a> Measuring<'a> {
@@ -792,6 +797,7 @@ impl<'a> Measuring<'a> {
             projection: projection.unwrap_or(details.projection()),
             tools: &[],
             second_look: "off",
+            submission: None,
         }
     }
 }
@@ -854,6 +860,9 @@ pub fn check_call(
         "{JUDGE_STEP}.second_look={}",
         measuring.second_look
     ));
+    if let Some(submission) = measuring.submission {
+        set.push(format!("{JUDGE_STEP}.submission={submission}"));
+    }
     call = call.argument(whizbang_core::recipe::SET, Value::text(&set.join("\n")));
     call
 }
