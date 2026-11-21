@@ -86,12 +86,14 @@ grep -F '| ring | ' "$tmp/made.md" | grep -F 'Apache-2.0 AND ISC' | grep -F '/LI
   fail "ring, under two licences at once, has its texts, those in its subfolders among them"
 
 # The playground's interface, which the binary embeds (plan m5, task U1): Preact's and
-# marked's texts, and the fonts', each under its heading, with its table.
+# the fonts' texts (marked is W3's), each under its heading, with its table.
 grep -x -F "## The playground's interface" "$tmp/made.md" >/dev/null || fail "the file names the playground's interface"
-for heading in 'The package preact' 'The package marked' 'The font geist' 'The font geist-mono' 'The font bricolage-grotesque'; do
+for heading in 'The package preact' 'The font geist' 'The font geist-mono' 'The font bricolage-grotesque'; do
   grep -x -F "### $heading" "$tmp/made.md" >/dev/null || fail "the file holds: $heading"
 done
-grep -F '| package preact | 10.29.8 | MIT |' "$tmp/made.md" >/dev/null || fail "Preact has its row, at the version the lock file pins"
+grep -F '| package preact | 10.29.8 | MIT | npm preact@10.29.8 |' "$tmp/made.md" >/dev/null || fail "Preact has its row, at the version the lock file pins"
+grep -F '| font geist | 5.3.0 | OFL-1.1 | npm @fontsource/geist-sans@5.3.0 |' "$tmp/made.md" >/dev/null || fail "a font's row names where its files came from"
+grep -F '| package marked ' "$tmp/made.md" >/dev/null && fail "marked is not in the interface until task W3 adds it"
 grep -F 'SIL OPEN FONT LICENSE Version 1.1' "$tmp/made.md" >/dev/null || fail "the fonts' licence is printed"
 grep -F 'Copyright (c) 2015-present Jason Miller' "$tmp/made.md" >/dev/null || fail "Preact's text is printed"
 
@@ -203,7 +205,7 @@ ui_copy
 edit_list 's/^package	preact	10.29.8	/package	preact	10.0.0	/'
 expect_fail "a row at another version than the lock file's" "says preact 10.0.0, and ui/package-lock.json pins 10.29.8" render_ui
 ui_copy
-edit_list 's/^package	marked	18.1.3	MIT	/package	marked	18.1.3	GPL-3.0	/'
+edit_list 's/^package	preact	10.29.8	MIT	/package	preact	10.29.8	GPL-3.0	/'
 expect_fail "a package under a licence deny.toml does not allow" "under GPL-3.0, which deny.toml does not allow" render_ui
 ui_copy
 : >"$tmp/uirepo/ui/public/fonts/extra.woff2"
@@ -215,8 +217,17 @@ ui_copy
 echo "Words of no licence." >"$tmp/uirepo/ui/licences/preact.txt"
 expect_fail "a text that is not of its licence" "ui/licences/preact.txt is not a text of MIT" render_ui
 ui_copy
-rm "$tmp/uirepo/ui/licences/marked.txt"
-expect_fail "a text that is missing" "ui/licences/marked.txt, is missing or empty" render_ui
+rm "$tmp/uirepo/ui/licences/geist-mono.txt"
+expect_fail "a text that is missing" "ui/licences/geist-mono.txt, is missing or empty" render_ui
+ui_copy
+printf 'x' >>"$tmp/uirepo/ui/public/fonts/geist-400.woff2"
+expect_fail "a font file that is not the one published" "ui/public/fonts/geist-400.woff2 is not the file ui/licences/fonts.sha256 names" render_ui
+ui_copy
+grep -v 'geist-500' "$tmp/uirepo/ui/licences/fonts.sha256" >"$tmp/sums" && mv "$tmp/sums" "$tmp/uirepo/ui/licences/fonts.sha256"
+expect_fail "a font file with no hash" "ui/licences/fonts.sha256 must hold each file of ui/public/fonts/ once" render_ui
+ui_copy
+edit_list 's/	npm @fontsource\/geist-sans@5.3.0	/		/'
+expect_fail "a font with no source" "a licence, a text and a source: font geist" render_ui
 [ ! -e "$tmp/x.md" ] || fail "a refused interface writes no file"
 
 finished

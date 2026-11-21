@@ -9,13 +9,18 @@ test("the page loads with the token, removes it from the address and shows Home"
   await expect(page.getByRole("status")).toContainText("ready");
   expect(page.url()).toBe(`${host.address}#/`);
   expect(page.url()).not.toContain(host.token);
-  // The token was kept for this origin: a reload without it in the address still works.
+  // The token is kept for this tab: a reload of the same tab, without it in the address,
+  // still works; another tab is not given it.
   await page.reload();
   await expect(page.getByRole("status")).toContainText("ready");
   await expect(page.getByRole("alert")).toHaveCount(0);
+  const other = await page.context().newPage();
+  await other.goto(host.address);
+  await expect(other.getByRole("alert")).toContainText("Run whizbang play again");
+  await other.close();
 });
 
-test("a request from the page without the token is refused and the page says to run whizbang play again", async ({ page, host }) => {
+test("a request from the page without the token is refused and the page says to run whizbang play again", async ({ page, host, otherOrigin }) => {
   const refused = page.waitForResponse((response) => response.url() === `${host.address}api/hello`);
   await page.goto(host.address);
   expect((await refused).status()).toBe(401);
@@ -26,6 +31,21 @@ test("a request from the page without the token is refused and the page says to 
   await page.reload();
   expect((await stale).status()).toBe(401);
   await expect(page.getByRole("alert")).toContainText("Run whizbang play again");
+  // Another page may send Chrome to the page (a top-level navigation is let through to the
+  // static files), at an address it makes: the page opens, acts on nothing in it, and asks
+  // for nothing but hello.
+  await page.goto(otherOrigin.address);
+  const changes: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() !== "GET") changes.push(`${request.method()} ${request.url()}`);
+  });
+  const arrived = page.waitForResponse((response) => response.url() === `${host.address}api/hello`);
+  await page.evaluate((to) => {
+    window.location.href = to;
+  }, `${host.address}#/k/rascal/remove_checked?start=1`);
+  expect((await arrived).status()).toBe(401);
+  await expect(page.getByRole("alert")).toContainText("Run whizbang play again");
+  expect(changes).toEqual([]);
 });
 
 test("the page loads nothing from any origin but its host", async ({ page, host }) => {

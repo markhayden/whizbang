@@ -118,25 +118,42 @@ export const START_TRIES = 3;
 export const UPLOADS_AT_ONCE = 2;
 /** How often a run open on screen is asked for (plan m5, "Live progress is polled"). */
 export const POLL_MS = 250;
+/** The longest a poll waits between two asks while the host answers 503. */
+export const POLL_MAX_MS = 4000;
+
+/** The wait before a start is sent again: 250 to 500 ms. */
+export function retryPause(random: () => number = Math.random): number {
+  return 250 + Math.floor(random() * 250);
+}
 
 export interface ClientOptions {
   token: string | null;
   fetch?: typeof fetch;
   /** Called once a call is refused 401, so the page can say to run `whizbang play` again. */
   onUnauthorized?: (error: ApiError) => void;
+  /** Waits that many milliseconds; a test passes one that does not wait. */
+  pause?: (ms: number) => Promise<void>;
 }
 
 export interface Client {
+  /** Use another token from now on: one a later `#k=` in the address handed the page. */
+  setToken(token: string | null): void;
   request<T>(method: string, path: string, body?: unknown): Promise<T>;
   hello(): Promise<Hello>;
   upload<T>(path: string, file: Blob): Promise<T>;
   /**
    * Start a run under one request id, made here unless given, and sent again with the same
-   * id when the answer was lost on the way (no status). A refusal is not retried: 409 says
+   * id, 250 to 500 ms later, when the answer was lost on the way: no status, or a 2xx whose
+   * body could not be read. A refusal is not retried: 409 says
    * the preparation is stale (prepare again, then start with a new id) or that the id
    * names another call; 429 says four runs are going.
    */
   start(call: RunStart, requestId?: string): Promise<Started & { requestId: string }>;
+  /**
+   * Ask every 250 ms with the events after the last the page has, until `next` says the run
+   * is done or the poll is stopped. A refusal (4xx) other than 429 stops it; a 503 (the host
+   * stopping) or a 429 doubles the wait, up to 4 s; any other failure keeps the pace.
+   */
   poll<T>(path: (after: number) => string, next: (answer: T) => { after: number; done: boolean }, onError?: (error: ApiError) => void): () => void;
 }
 
@@ -153,10 +170,12 @@ async function refusal(response: Response): Promise<ApiError> {
 
 export function createClient(options: ClientOptions): Client {
   const call = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
+  const pause = options.pause ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const uploads = new Limiter(UPLOADS_AT_ONCE);
+  let token = options.token;
   const headers = (extra: Record<string, string>): Record<string, string> => {
     const all: Record<string, string> = { ...extra };
-    if (options.token) all.Authorization = `Bearer ${options.token}`;
+    if (token) all.Authorization = `Bearer ${token}`;
     return all;
   };
   const send = async <T>(method: string, path: string, body: BodyInit | undefined, type: string | undefined): Promise<T> => {
@@ -172,9 +191,17 @@ export function createClient(options: ClientOptions): Client {
       throw error;
     }
     if (response.status === 204) return undefined as T;
-    return (await response.json()) as T;
+    try {
+      return (await response.json()) as T;
+    } catch {
+      // The host answered, and the answer was lost on the way: as if no answer came.
+      throw new ApiError(0, sentenceFor(0));
+    }
   };
   const client: Client = {
+    setToken: (next) => {
+      token = next;
+    },
     request: <T>(method: string, path: string, body?: unknown) =>
       send<T>(method, path, body === undefined ? undefined : JSON.stringify(body), body === undefined ? undefined : "application/json"),
     hello: () => client.request<Hello>("GET", "/api/hello"),
@@ -186,12 +213,14 @@ export function createClient(options: ClientOptions): Client {
         } catch (error) {
           if (!(error instanceof ApiError) || error.status !== 0 || attempt >= START_TRIES) throw error;
         }
+        await pause(retryPause());
       }
     },
     upload: <T>(path: string, file: Blob) => uploads.run(() => send<T>("POST", path, file, file.type || "application/octet-stream")),
     poll: <T>(path: (after: number) => string, next: (answer: T) => { after: number; done: boolean }, onError?: (error: ApiError) => void) => {
       let after = 0;
       let stopped = false;
+      let wait = POLL_MS;
       let timer: ReturnType<typeof setTimeout> | undefined;
       const tick = async () => {
         if (stopped) return;
@@ -200,13 +229,16 @@ export function createClient(options: ClientOptions): Client {
           if (stopped) return;
           const said = next(answer);
           after = said.after;
+          wait = POLL_MS;
           if (said.done) return;
         } catch (error) {
           if (stopped) return;
-          onError?.(error instanceof ApiError ? error : new ApiError(0, sentenceFor(0)));
-          if (error instanceof ApiError && error.status === 401) return;
+          const refused = error instanceof ApiError ? error : new ApiError(0, sentenceFor(0));
+          onError?.(refused);
+          if (refused.status >= 400 && refused.status < 500 && refused.status !== 429) return;
+          wait = refused.status === 503 || refused.status === 429 ? Math.min(POLL_MAX_MS, wait * 2) : POLL_MS;
         }
-        timer = setTimeout(() => void tick(), POLL_MS);
+        timer = setTimeout(() => void tick(), wait);
       };
       void tick();
       return () => {

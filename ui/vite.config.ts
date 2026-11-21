@@ -1,4 +1,4 @@
-// The build of the playground (ADR 0042). Fixed file names, no source maps and no hash in
+// The build of the playground (ADR 0043). Fixed file names, no source maps and no hash in
 // a name, so the host can embed a fixed list of files (crates/whizbang-serve/src/play/
 // assets.rs) and the same sources give the same bytes: `scripts/ui.sh check` builds again
 // and compares with the committed ui/dist/.

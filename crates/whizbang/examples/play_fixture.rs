@@ -279,9 +279,18 @@ fn answer(host: &Host, request: &Request, reader: &mut BufReader<TcpStream>) -> 
             return Answer::refused(403, "A request from another origin is refused.");
         }
     }
+    // A top-level navigation to a page (a GET outside /api/ that Chrome marks as one) may
+    // come from anywhere, as `whizbang play`'s opening page does (H1): it reaches the static
+    // files only, which are the binary's own public code, and the page acts on nothing in
+    // its address but `#k=`.
+    let navigation = !api
+        && request.method == "GET"
+        && request.header("sec-fetch-mode") == Some("navigate")
+        && request.header("sec-fetch-dest") == Some("document");
     if let Some(site) = request.header("sec-fetch-site")
         && site != "same-origin"
         && site != "none"
+        && !navigation
     {
         return Answer::refused(403, "A request from another site is refused.");
     }

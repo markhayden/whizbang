@@ -88,7 +88,7 @@ docs:
 docs-check:
     scripts/docs.sh --check
 
-# The playground's interface (ui/, plan m5, task U1; ADR 0042), with the Node that
+# The playground's interface (ui/, plan m5, task U1; ADR 0043), with the Node that
 # scripts/tool-versions.txt pins and the packages ui/package-lock.json pins (installed by
 # `npm ci` when missing). `ui-build` writes ui/dist/, which is committed with its sources:
 # the binary embeds it, so no user needs Node.

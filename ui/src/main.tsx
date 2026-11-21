@@ -9,7 +9,8 @@ import "./shell.css";
 
 // The token first, before anything else reads the address: it is taken out of the address
 // bar at once (plan m5, "The token").
-const token = takeToken(window.location, window.localStorage, (url) => window.history.replaceState(null, "", url));
+const take = () => takeToken(window.location, window.sessionStorage, (url) => window.history.replaceState(null, "", url));
+const { token } = take();
 const client = createClient({ token });
 
 const root = document.getElementById("app");
@@ -27,6 +28,7 @@ if (root) {
       go={(hash) => {
         window.location.hash = hash;
       }}
+      takeToken={take}
     />,
     root,
   );

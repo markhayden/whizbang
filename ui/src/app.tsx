@@ -9,6 +9,7 @@ import { TopBar } from "./components/TopBar";
 import { actionOf } from "./keyboard";
 import { hrefOf, parseRoute, type Route } from "./routes";
 import { EmptyScreen } from "./screens/Empty";
+import type { Taken } from "./token";
 import { History } from "./screens/history/History";
 import { Home } from "./screens/homepage/Home";
 import { Models } from "./screens/models/Models";
@@ -23,6 +24,12 @@ export interface AppProps {
   initialHash: string;
   subscribeHash: (listener: (hash: string) => void) => () => void;
   go: (hash: string) => void;
+  /**
+   * Reads a `#k=` the address carries now, takes it out of the bar and keeps it
+   * (`takeToken`); the page calls it on every hash change, so a token handed to a tab that
+   * is already open is used, and an address that tries to hand one over is never left.
+   */
+  takeToken: () => Taken;
 }
 
 /** The sentence when the page holds no token at all. */
@@ -36,7 +43,20 @@ export function App(props: AppProps) {
   const [searching, setSearching] = useState(false);
   const [switching, setSwitching] = useState(false);
 
-  useEffect(() => props.subscribeHash((hash) => setRoute(parseRoute(hash))), []);
+  const [asked, setAsked] = useState(0);
+  useEffect(
+    () =>
+      props.subscribeHash((hash) => {
+        const taken = props.takeToken();
+        if (taken.fresh) {
+          props.client.setToken(taken.token);
+          setProblem(null);
+          setAsked((n) => n + 1);
+        }
+        setRoute(parseRoute(taken.offered ? "#/" : hash));
+      }),
+    [],
+  );
   useEffect(() => {
     let live = true;
     props.client.hello().then(
@@ -46,7 +66,7 @@ export function App(props: AppProps) {
     return () => {
       live = false;
     };
-  }, []);
+  }, [asked]);
 
   const kits = hello?.kits ?? [];
   const entries = useMemo<SearchEntry[]>(

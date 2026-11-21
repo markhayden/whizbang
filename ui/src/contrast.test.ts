@@ -2,7 +2,7 @@
 // 18 px (plan m5, task U1, item 2; WCAG 2.2, 1.4.3). Text of a disabled control is exempt,
 // as WCAG exempts it, and so is `--color-faint`, which is used for nothing else.
 import { describe, expect, it } from "vitest";
-import { block, source } from "./test/files";
+import { block, source, sources } from "./test/files";
 
 const tokens = source("tokens.css");
 
@@ -71,6 +71,12 @@ const PAIRS: Array<[string, string, string | null, string]> = [
   ["unsure", "unsure-tint", "panel", "UNSURE in a history row"],
   ["lacquer", "lacquer-tint", "panel", "NO KEY in a model row"],
   ["panel", "ink", null, "the selected number of a segmented control"],
+  ["on-copper", "copper", null, "the mark of a kit in copper"],
+  ["on-copper", "volt", null, "the mark of a kit in volt"],
+  ["mark-label-ink", "mark-label", "canvas", "a mask's label on the canvas"],
+  ["on-scrim", "scrim", "mark", "BEFORE and AFTER over a light picture"],
+  ["running", "hover", null, "a running step's mark"],
+  ["muted", "lacquer-wash", "panel", "a failed step's figures"],
 ];
 
 /**
@@ -92,6 +98,8 @@ const LIGHT_SHORTFALLS: string[] = [
   "pass on pass-tint over panel (PASS in a history row, READY in a model row): 2.87",
   "unsure on unsure-tint over panel (UNSURE in a history row): 3.65",
   "lacquer on lacquer-tint over panel (NO KEY in a model row): 3.84",
+  "running on hover (a running step's mark): 2.48",
+  "muted on lacquer-wash over panel (a failed step's figures): 4.18",
 ];
 
 function shortfalls(theme: Map<string, string>): string[] {
@@ -113,7 +121,28 @@ function shortfalls(theme: Map<string, string>): string[] {
   return found;
 }
 
+/** Each colour the styles give text (`color:`, not `border-color:`), by its token. */
+export function textColours(css: string): Set<string> {
+  return new Set([...css.matchAll(/(?<![-\w])color:\s*var\(--color-([a-z0-9-]+)\)/g)].map((m) => m[1]!));
+}
+
+/** Text colours exempt from the pairs: faint, kept for disabled and decorative text. */
+const EXEMPT = new Set(["faint"]);
+
 describe("contrast", () => {
+  it("checks a pair for every colour the styles give text, but the exempt one", () => {
+    const used = new Set<string>();
+    for (const path of sources([".css"]).filter((p) => p !== "tokens.css")) for (const name of textColours(source(path))) used.add(name);
+    const covered = new Set(PAIRS.map(([text]) => text));
+    const missing = [...used].filter((name) => !covered.has(name) && !EXEMPT.has(name)).sort();
+    expect(missing).toEqual([]);
+    expect(used.size).toBeGreaterThan(10);
+  });
+
+  it("reads text colours and not border colours", () => {
+    expect([...textColours(".a { color: var(--color-ink); border-color: var(--color-brass); }")]).toEqual(["ink"]);
+  });
+
   it("computes the ratios WCAG gives", () => {
     expect(ratio(parse("#000000"), parse("#FFFFFF"))).toBeCloseTo(21, 5);
     expect(ratio(parse("#777777"), parse("#FFFFFF"))).toBeCloseTo(4.48, 2);

@@ -148,7 +148,7 @@ while read -r tool want; do
     fi
     status=1
   elif [ "$tool" = node ]; then
-    # Node is not installed by cargo either. It builds and tests ui/ (ADR 0042).
+    # Node is not installed by cargo either. It builds and tests ui/ (ADR 0043).
     if [ -z "$have" ]; then
       echo "tool problem: node is missing; Node $want is needed for ui/; install it from nodejs.org or with a version manager (fnm install $want)" >&2
     else

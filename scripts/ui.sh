@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The playground's interface, `ui/` (plan m5, task U1; ADR 0042).
+# The playground's interface, `ui/` (plan m5, task U1; ADR 0043).
 #
 #   scripts/ui.sh install the packages and nothing else (scripts/e2e.sh)
 #   scripts/ui.sh build   write ui/dist/ from the sources (`just ui-build`); commit the result

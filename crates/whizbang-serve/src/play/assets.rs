@@ -1,5 +1,5 @@
 //! The playground's built interface, `ui/dist/`, embedded in the binary (plan m5, "How it
-//! ships"; ADR 0042). The build writes fixed names with no hash in them, so the list is
+//! ships"; ADR 0043). The build writes fixed names with no hash in them, so the list is
 //! fixed: `scripts/ui.sh check` (part of `just check`) fails on a file of `ui/dist/` that
 //! this list does not hold, or the reverse, and on a `ui/dist/` that is not what the
 //! sources build. So `cargo build` needs no Node, and the bytes that ship are the bytes

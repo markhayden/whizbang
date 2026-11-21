@@ -290,7 +290,8 @@
 .step-list__step--failed .step-list__glyph { color: var(--color-lacquer); }
 .step-list__step--running { background: var(--color-hover); }
 .step-list__step--running .step-list__glyph { color: var(--color-running); }
-.step-list__step--waiting .step-list__glyph, .step-list__step--waiting .step-list__name { color: var(--color-faint); }
+.step-list__step--waiting .step-list__glyph { color: var(--color-faint); }
+.step-list__step--waiting .step-list__name { color: var(--color-muted); }
 .step-list__body { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 0; }
 .step-list__head { display: flex; justify-content: space-between; gap: var(--spacing-2); }
 .step-list__name { color: var(--color-ink); font-size: var(--text-sm); }

@@ -50,7 +50,7 @@ jobs:
           fallback: none
           tool: just@1.59.0,cargo-nextest@0.9.148,cargo-deny@0.20.2,uv@0.12.23
       # Node, at the version scripts/tool-versions.txt pins, for the playground's interface
-      # (ui/, plan m5, task U1; ADR 0042). Pinned to a commit (v7.1.0). npm's cache is keyed
+      # (ui/, plan m5, task U1; ADR 0043). Pinned to a commit (v7.1.0). npm's cache is keyed
       # by ui/package-lock.json; scripts/ui.sh installs the packages from it with `npm ci`.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
@@ -133,7 +133,7 @@ jobs:
           fallback: none
           tool: just@1.59.0,cargo-nextest@0.9.148,cargo-deny@0.20.2,uv@0.12.23
       # Node, at the version scripts/tool-versions.txt pins, for the playground's interface
-      # (ui/, plan m5, task U1; ADR 0042). Pinned to a commit (v7.1.0). npm's cache is keyed
+      # (ui/, plan m5, task U1; ADR 0043). Pinned to a commit (v7.1.0). npm's cache is keyed
       # by ui/package-lock.json; scripts/ui.sh installs the packages from it with `npm ci`.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
@@ -233,7 +233,7 @@ jobs:
           fallback: none
           tool: just@1.59.0,cargo-nextest@0.9.148,cargo-deny@0.20.2,uv@0.12.23
       # Node, at the version scripts/tool-versions.txt pins, for the playground's interface
-      # (ui/, plan m5, task U1; ADR 0042). Pinned to a commit (v7.1.0). npm's cache is keyed
+      # (ui/, plan m5, task U1; ADR 0043). Pinned to a commit (v7.1.0). npm's cache is keyed
       # by ui/package-lock.json; scripts/ui.sh installs the packages from it with `npm ci`.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
@@ -242,9 +242,10 @@ jobs:
           cache-dependency-path: ui/package-lock.json
       - name: The Chrome tier
         run: just e2e
+      # Pinned to a commit (v7.0.2).
       - name: The Playwright report of a failed run
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: playwright-report-${{ matrix.os }}
           path: target/e2e/

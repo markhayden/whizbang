@@ -1,6 +1,6 @@
 // The shell's pieces that are not components: the token, the routes, the keys, the client.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, createClient, Limiter, newRequestId, POLL_MS, sentenceFor, START_TRIES, UPLOADS_AT_ONCE } from "./api";
+import { ApiError, createClient, Limiter, newRequestId, POLL_MAX_MS, POLL_MS, retryPause, sentenceFor, START_TRIES, UPLOADS_AT_ONCE } from "./api";
 import { actionOf } from "./keyboard";
 import { hrefOf, parseRoute } from "./routes";
 import { takeToken, TOKEN_KEY } from "./token";
@@ -13,22 +13,44 @@ function keeper(initial: Record<string, string> = {}) {
 }
 
 describe("the token", () => {
+  const at = (hash: string) => ({ hash, pathname: "/", search: "" });
   it("is read from the address, kept, and taken out of the address", () => {
     const kept = keeper();
     const replace = vi.fn();
-    expect(takeToken({ hash: `#k=${TOKEN}`, pathname: "/", search: "" }, kept, replace)).toBe(TOKEN);
+    expect(takeToken(at(`#k=${TOKEN}`), kept, replace)).toEqual({ token: TOKEN, offered: true, fresh: true });
     expect(kept.items.get(TOKEN_KEY)).toBe(TOKEN);
     expect(replace).toHaveBeenCalledWith("/#/");
   });
+  it("reads the address before it replaces it, as the live location changes under it", () => {
+    const live = { hash: `#k=${TOKEN}`, pathname: "/", search: "" };
+    const taken = takeToken(live, keeper(), (url) => {
+      live.hash = url.slice(url.indexOf("#"));
+    });
+    expect(taken).toEqual({ token: TOKEN, offered: true, fresh: true });
+    expect(live.hash).toBe("#/");
+  });
+  it("takes a token in capitals, and keeps it as the host writes it", () => {
+    const kept = keeper();
+    expect(takeToken(at(`#k=${TOKEN.toUpperCase()}`), kept, () => undefined)).toEqual({ token: TOKEN, offered: true, fresh: true });
+    expect(kept.items.get(TOKEN_KEY)).toBe(TOKEN);
+  });
   it("is the one kept before when the address holds none, and nothing is replaced", () => {
     const replace = vi.fn();
-    expect(takeToken({ hash: "#/history", pathname: "/", search: "" }, keeper({ [TOKEN_KEY]: TOKEN }), replace)).toBe(TOKEN);
+    expect(takeToken(at("#/history"), keeper({ [TOKEN_KEY]: TOKEN }), replace)).toEqual({ token: TOKEN, offered: false, fresh: false });
     expect(replace).not.toHaveBeenCalled();
   });
-  it("is null when there is none, and an address that is not a token is left alone", () => {
-    const replace = vi.fn();
-    expect(takeToken({ hash: "#k=short", pathname: "/", search: "" }, keeper(), replace)).toBeNull();
-    expect(replace).not.toHaveBeenCalled();
+  it("takes out of the bar any hash that begins with #k=, valid or not, and keeps nothing of it", () => {
+    for (const hash of ["#k=short", `#k=${TOKEN}&x=1`, `#K=${TOKEN}`, "#k=", `#k=${TOKEN}#/run/r-1`]) {
+      const kept = keeper({ [TOKEN_KEY]: "kept" });
+      const replace = vi.fn();
+      const taken = takeToken(at(hash), kept, replace);
+      expect(replace, hash).toHaveBeenCalledWith("/#/");
+      expect(kept.items.get(TOKEN_KEY), hash).toBe("kept");
+      expect(taken, hash).toEqual({ token: "kept", offered: true, fresh: false });
+    }
+  });
+  it("is null when there is none", () => {
+    expect(takeToken(at(""), keeper(), () => undefined).token).toBeNull();
   });
   it("lives for the page when storage refuses it", () => {
     const refusing = {
@@ -39,8 +61,8 @@ describe("the token", () => {
         throw new Error("denied");
       },
     };
-    expect(takeToken({ hash: `#k=${TOKEN}`, pathname: "/", search: "" }, refusing, () => undefined)).toBe(TOKEN);
-    expect(takeToken({ hash: "", pathname: "/", search: "" }, refusing, () => undefined)).toBeNull();
+    expect(takeToken(at(`#k=${TOKEN}`), refusing, () => undefined).token).toBe(TOKEN);
+    expect(takeToken(at(""), refusing, () => undefined).token).toBeNull();
   });
 });
 
@@ -56,7 +78,7 @@ describe("the routes", () => {
     expect(history.name === "history" && history.query.get("result")).toBe("pass");
   });
   it("refuses what is not a route", () => {
-    for (const hash of ["#/k/Rascal", "#/k/rascal/a/b", "#/run/a%20b", "#/run", "#/nowhere", "#/k/<img>"]) {
+    for (const hash of ["#/k/Rascal", "#/k/rascal/a/b", "#/run/a%20b", "#/run", "#/nowhere", "#/k/<img>", "#/k/%E0%A4%A", "#/run/%"]) {
       expect(parseRoute(hash).name, hash).toBe("unknown");
     }
   });
@@ -108,6 +130,16 @@ describe("the client", () => {
     expect((init.headers as Record<string, string>).Authorization).toBe(`Bearer ${TOKEN}`);
     expect(init.credentials).toBe("omit");
   });
+  it("uses a token it is given later", async () => {
+    const fetch = vi.fn(async () => answer(200, { version: "0.1.0" }));
+    const client = createClient({ token: null, fetch: fetch as unknown as typeof globalThis.fetch });
+    await client.hello();
+    client.setToken(TOKEN);
+    await client.hello();
+    const auth = fetch.mock.calls.map((c) => ((c as unknown as [string, RequestInit])[1].headers as Record<string, string>).Authorization);
+    expect(auth).toEqual([undefined, `Bearer ${TOKEN}`]);
+  });
+
   it("turns a refusal into its sentence, the host's own when it gives one", async () => {
     const fetch = vi.fn(async () => answer(413, { error: "The picture is over the limit of 50000000 pixels." }));
     const client = createClient({ token: TOKEN, fetch: fetch as unknown as typeof globalThis.fetch });
@@ -157,15 +189,35 @@ describe("a run's start", () => {
       if (calls < 3) throw new TypeError("the connection dropped");
       return answer(201, { run: "r-1" });
     });
-    const client = createClient({ token: TOKEN, fetch: fetch as unknown as typeof globalThis.fetch });
+    const waits: number[] = [];
+    const client = createClient({ token: TOKEN, fetch: fetch as unknown as typeof globalThis.fetch, pause: async (ms) => void waits.push(ms) });
     const started = await client.start(call, "play-given");
     expect(started).toEqual({ run: "r-1", requestId: "play-given" });
     expect(bodies(fetch).map((body) => body.request_id)).toEqual(["play-given", "play-given", "play-given"]);
+    expect(waits).toHaveLength(2);
+    for (const ms of waits) expect(ms >= 250 && ms <= 500, `${ms}`).toBe(true);
+  });
+
+  it("takes a 2xx whose body cannot be read for a lost answer, and sends the same id again", async () => {
+    let calls = 0;
+    const fetch = vi.fn(async () => {
+      calls += 1;
+      return calls === 1 ? new Response("{not json", { status: 201 }) : answer(201, { run: "r-1" });
+    });
+    const client = createClient({ token: TOKEN, fetch: fetch as unknown as typeof globalThis.fetch, pause: async () => undefined });
+    const started = await client.start(call, "play-same");
+    expect(started.run).toBe("r-1");
+    expect(bodies(fetch).map((body) => body.request_id)).toEqual(["play-same", "play-same"]);
+  });
+
+  it("waits 250 to 500 ms between tries", () => {
+    expect(retryPause(() => 0)).toBe(250);
+    expect(retryPause(() => 0.999)).toBe(499);
   });
 
   it("gives up after its tries, and never retries a refusal", async () => {
     const dropped = vi.fn(async () => Promise.reject(new TypeError("dropped")));
-    const client = createClient({ token: TOKEN, fetch: dropped as unknown as typeof globalThis.fetch });
+    const client = createClient({ token: TOKEN, fetch: dropped as unknown as typeof globalThis.fetch, pause: async () => undefined });
     await expect(client.start(call)).rejects.toMatchObject({ status: 0 });
     expect(dropped).toHaveBeenCalledTimes(START_TRIES);
     for (const status of [409, 429]) {
@@ -246,6 +298,25 @@ describe("the poll", () => {
     await vi.advanceTimersByTimeAsync(POLL_MS * 4);
     expect(asked).toEqual(["/api/runs/r-1?after=0", "/api/runs/r-1?after=2", "/api/runs/r-1?after=5"]);
   });
+  it("stops on a refusal other than 429, and backs off on 503 and 429 up to its most", async () => {
+    for (const status of [400, 403, 404, 409]) {
+      const refused = vi.fn(async () => answer(status, { error: "no" }));
+      createClient({ token: TOKEN, fetch: refused as unknown as typeof globalThis.fetch }).poll(() => "/api/runs/r-1", () => ({ after: 0, done: false }));
+      await vi.advanceTimersByTimeAsync(POLL_MS * 8);
+      expect(refused, String(status)).toHaveBeenCalledTimes(1);
+    }
+    const asked: number[] = [];
+    const busy = vi.fn(async () => {
+      asked.push(Date.now());
+      return answer(503, { error: "stopping" });
+    });
+    createClient({ token: TOKEN, fetch: busy as unknown as typeof globalThis.fetch }).poll(() => "/api/runs/r-1", () => ({ after: 0, done: false }));
+    await vi.advanceTimersByTimeAsync(POLL_MAX_MS * 6);
+    const gaps = asked.slice(1).map((t, i) => t - asked[i]!);
+    expect(gaps.slice(0, 4)).toEqual([500, 1000, 2000, 4000]);
+    expect(Math.max(...gaps)).toBe(POLL_MAX_MS);
+  });
+
   it("stops when told, and on a 401", async () => {
     const fetch = vi.fn(async () => answer(200, { after: 1, done: false }));
     const client = createClient({ token: TOKEN, fetch: fetch as unknown as typeof globalThis.fetch });

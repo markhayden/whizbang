@@ -24,7 +24,7 @@ export function render(node: VNode): Rendered {
     text: () => (root.textContent ?? "").replace(/\s+/g, " ").trim(),
     get: <T extends Element>(selector: string) => {
       const found = root.querySelector<T>(selector);
-      if (!found) throw new Error(`nothing matches ${selector} in: ${root.innerHTML}`);
+      if (!found) throw new Error(`nothing matches ${selector} in a root whose text is: ${root.textContent ?? ""}`);
       return found;
     },
     all: <T extends Element>(selector: string) => Array.from(root.querySelectorAll<T>(selector)),

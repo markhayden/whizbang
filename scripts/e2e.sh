@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# The Chrome tier (plan m5, "Where the Chrome tier runs"; ADR 0042): `just e2e`. Heavy.
+# The Chrome tier (plan m5, "Where the Chrome tier runs"; ADR 0043): `just e2e`. Heavy.
 #
 #   scripts/e2e.sh [--limit SECONDS]
 #   scripts/e2e.sh --report FILE [--limit SECONDS]
 #                    print the table for a saved Playwright JSON report and run nothing
 #                    (scripts/tests/test-e2e.sh)
 #
-# It builds the fixture host (`cargo build -p whizbang --example play_fixture`), then runs
+# It says which Google Chrome it found, builds the fixture host (`cargo build -p whizbang --example play_fixture`), then runs
 # Playwright's cases in ui/e2e/ against it, in the Google Chrome installed on the machine,
 # one worker, no retry, 30 seconds a case (ui/playwright.config.ts), under
 # scripts/thread-guard.sh. Then it reads the run's own JSON report, prints the seconds by
@@ -53,6 +53,13 @@ if [ -z "$report" ]; then
   # The packages and Node. The page is the committed ui/dist/, which the fixture host
   # embeds as the binary does; whether it is what the sources build is `just ui-check`'s.
   scripts/ui.sh install
+  # The Chrome the cases run in, said in the log: Playwright drives the one installed here.
+  case "$(uname -s)" in
+    Darwin) chrome="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ;;
+    *) chrome=$(command -v google-chrome || command -v google-chrome-stable || true) ;;
+  esac
+  [ -n "$chrome" ] && [ -x "$chrome" ] || die "Google Chrome is not installed where Playwright looks for it; the Chrome tier needs it"
+  echo "e2e: $("$chrome" --version 2>/dev/null || echo "Google Chrome, version unknown")"
   cargo build --quiet -p whizbang --example play_fixture || die "the fixture host did not build"
   fixture=$(cargo metadata --format-version 1 --no-deps | jq -r .target_directory)/debug/examples/play_fixture
   [ -x "$fixture" ] || die "no fixture host at $fixture"

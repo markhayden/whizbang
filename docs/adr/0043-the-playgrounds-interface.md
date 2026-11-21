@@ -32,11 +32,13 @@ says `default-src 'self'`.
 | Build | Vite, to fixed names (`index.html`, `app.js`, `app.css`, `fonts/…`), no source maps, no hash in a name |
 | Fonts | Geist, Geist Mono and Bricolage Grotesque (SIL Open Font License 1.1), the Latin subset of the weights used, as WOFF2 files under `ui/public/fonts/`, served by the host. Nothing is loaded from a font service |
 
-The packages are those the owner approved and no other: `preact` and `marked` (MIT), which
-ship in the bundle; and, for development only, `vite`, `typescript`, `vitest`, `happy-dom`,
+The packages are those the owner approved and no other: `preact` (MIT), which ships in the
+bundle; and, for development only, `vite`, `typescript`, `vitest`, `happy-dom`,
 `@preact/preset-vite` and `@playwright/test`. `ui/package-lock.json` pins every package
 and what each brings, all from npm's registry; `npm ci` installs them, with no install
-script run and no browser downloaded. Node is pinned in `scripts/tool-versions.txt` (26, the
+script run and no browser downloaded. `marked`, also approved, is not added here: task W3
+adds it, with the one wrapper that may turn a tool's record into markup, and a unit test
+(`ui/src/markup.test.ts`) fails until that wrapper is allowed by name. Node is pinned in `scripts/tool-versions.txt` (26, the
 long-term release current when this was written, by its exact version), checked by `just
 setup`, and set up in CI by `actions/setup-node` pinned to a commit. Node's own types,
 which the tests use to read the sources, come with Vitest's and happy-dom's dependencies
@@ -48,10 +50,19 @@ fails when `crates/whizbang-serve/src/play/assets.rs`, which embeds each file wi
 `include_bytes!`, does not list exactly the files of `ui/dist/`. So `cargo build`, the
 release build and the archive need no Node; the archive still holds five files; and the
 bytes that ship are the bytes that were reviewed and scanned. The licences of what the
-bundle holds, Preact's, marked's and the fonts', are committed under `ui/licences/` with a
+bundle holds, Preact's and the fonts', are committed under `ui/licences/` with a
 list, `ui/licences/list.tsv`, that `scripts/third-party-licences.sh` writes into the
 archive's `THIRD-PARTY-LICENSES.md` and holds to `ui/package.json`, `ui/package-lock.json`
-and the font files.
+and the font files; each font file's source (the npm package and version it was taken
+from) is in the list, and its SHA-256 in `ui/licences/fonts.sha256`, which the script
+checks.
+
+**The token.** The page reads the launch token from `#k=`, keeps it in the tab's session
+storage and takes it out of the address bar at once; it does the same for a `#k=` that a
+hash change brings, and takes out of the bar any hash that begins with `#k=`, a token or
+not. Session storage lasts for a reload of the same tab and ends with the tab: each tab
+`whizbang play` opens carries its own `#k=`, and no other tab or later launch reads it. The
+page acts on nothing else in its address: a route only chooses a screen.
 
 **The brand.** The wordmark, the mark, the emblem and the crew illustration are the owner's
 art and arrive with task W3 (plan m5, open question 3). Until then the components
@@ -60,8 +71,10 @@ takes the art's address when it is committed under `ui/public/brand/`.
 
 **The tests.** The unit tests hold every component in each of its states; that text a run
 hands the page (`<img onerror>` in a reason) is shown as those characters; that the tokens
-are the Paper file's values and that no source but `tokens.css` writes a colour; and that
-each text and ground the components use is at least 4.5 to 1 in the dark theme. Their
+are the Paper file's values and that no source but `tokens.css` writes a colour (in CSS, a
+style object or an SVG attribute); that no source writes markup (`innerHTML` and its
+kin); and that each text and ground the components use is at least 4.5 to 1 in the dark
+theme, with a test that fails when the styles give text a colour no checked pair covers. Their
 seconds count under the fast tier's one limit of 300 (`scripts/timing.sh`). The Chrome
 cases run in `ui/e2e/` against the fixture host (`crates/whizbang/examples/play_fixture.rs`),
 one worker, no retry, 30 seconds a case, the whole run held to 180 seconds of test time by
@@ -76,7 +89,7 @@ others, so the fast tier's 300 seconds are untouched.
   the check says so.
 - The bundle may trip the clean-room scan by chance, being minified; then the offending
   package is replaced or the word kept out by the build, and the owner is told.
-- The light theme's tokens, as the Paper file holds them, leave twelve pairs of text and
+- The light theme's tokens, as the Paper file holds them, leave fourteen pairs of text and
   ground under 4.5 to 1 (pass and volt on white among them). The contrast test records
   each by name, fails on a new one, and fails when one is fixed and left on the list; the
   design settles them before light is shown.

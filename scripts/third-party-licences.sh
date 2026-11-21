@@ -250,18 +250,19 @@ fi
 
 # The interface's packages and fonts: the rows of ui/licences/list.tsv, held to the files.
 fence='~~~~'
-ui_rows() { grep -v -e '^#' -e '^[[:space:]]*$' ui/licences/list.tsv; }
+# Apart by another mark than a tab, as the crates' list is: `read` takes several tabs for one.
+ui_rows() { grep -v -e '^#' -e '^[[:space:]]*$' ui/licences/list.tsv | tr '\t' '\037'; }
 [ -f ui/licences/list.tsv ] || die "ui/licences/list.tsv is missing"
 allowed=$(awk '/^allow = \[/ { on = 1; next } on && /^\]/ { exit } on' deny.toml | sed -n 's/^ *"\([^"]*\)".*$/\1/p')
 [ -n "$allowed" ] || die "deny.toml allows no licence"
 jq -r '.dependencies | keys[]' ui/package.json | sort >"$tmp/ui-deps"
-ui_rows | awk -F '\t' '$1 == "package" { print $2 }' | sort >"$tmp/ui-packages"
+ui_rows | awk -F '\037' '$1 == "package" { print $2 }' | sort >"$tmp/ui-packages"
 cmp -s "$tmp/ui-deps" "$tmp/ui-packages" ||
   { diff "$tmp/ui-deps" "$tmp/ui-packages" | sed 's/^/    /' >&2 || true; die "ui/licences/list.tsv must hold one row for each dependency of ui/package.json, and no other package (< dependencies, > rows)"; }
 : >"$tmp/ui-fonts"
-while IFS=$'\t' read -r kind name version licence text files; do
-  [ -n "$kind" ] && [ -n "$name" ] && [ -n "$version" ] && [ -n "$licence" ] && [ -n "$text" ] ||
-    die "a row of ui/licences/list.tsv is not a kind, a name, a version, a licence and a text: $kind $name"
+while IFS=$'\037' read -r kind name version licence text source files; do
+  [ -n "$kind" ] && [ -n "$name" ] && [ -n "$version" ] && [ -n "$licence" ] && [ -n "$text" ] && [ -n "$source" ] ||
+    die "a row of ui/licences/list.tsv is not a kind, a name, a version, a licence, a text and a source: $kind $name"
   [ -s "ui/licences/$text" ] || die "the text of $name, ui/licences/$text, is missing or empty"
   if grep -e "^$fence" "ui/licences/$text" >/dev/null; then die "ui/licences/$text holds a line that starts with $fence"; fi
   case "$kind" in
@@ -287,6 +288,14 @@ done < <(ui_rows)
 sort "$tmp/ui-fonts" >"$tmp/ui-fonts.sorted"
 cmp -s "$tmp/ui-font-files" "$tmp/ui-fonts.sorted" ||
   { diff "$tmp/ui-font-files" "$tmp/ui-fonts.sorted" | sed 's/^/    /' >&2 || true; die "ui/licences/list.tsv must name each file of ui/public/fonts/ once (< files, > named)"; }
+# Each font file is the one its source published: its SHA-256 is in ui/licences/fonts.sha256.
+[ -f ui/licences/fonts.sha256 ] || die "ui/licences/fonts.sha256 is missing"
+awk '{ print $2 }' ui/licences/fonts.sha256 | sort >"$tmp/ui-hashed"
+cmp -s "$tmp/ui-font-files" "$tmp/ui-hashed" ||
+  { diff "$tmp/ui-font-files" "$tmp/ui-hashed" | sed 's/^/    /' >&2 || true; die "ui/licences/fonts.sha256 must hold each file of ui/public/fonts/ once (< files, > hashed)"; }
+while read -r sum file; do
+  [ "$(sha256 "ui/public/fonts/$file")" = "$sum" ] || die "ui/public/fonts/$file is not the file ui/licences/fonts.sha256 names"
+done <ui/licences/fonts.sha256
 
 # The standard library's own two licence texts, from the toolchain that builds the binary:
 # nothing is downloaded. A toolchain without them fails the script.
@@ -347,12 +356,12 @@ released=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | sed -n '1p')
   echo "the versions \`ui/package-lock.json\` pins, and these fonts, each under the SIL Open Font"
   echo "License."
   echo
-  echo "| Package or font | Version | Licence | Files |"
-  echo "|---|---|---|---|"
-  while IFS=$'\t' read -r kind name version licence text files; do
-    printf '| %s %s | %s | %s | %s |\n' "$kind" "$name" "$version" "$licence" "${files:-}"
+  echo "| Package or font | Version | Licence | From | Files |"
+  echo "|---|---|---|---|---|"
+  while IFS=$'\037' read -r kind name version licence text source files; do
+    printf '| %s %s | %s | %s | %s | %s |\n' "$kind" "$name" "$version" "$licence" "$source" "${files:-}"
   done < <(ui_rows)
-  while IFS=$'\t' read -r kind name version licence text files; do
+  while IFS=$'\037' read -r kind name version licence text source files; do
     echo
     echo "### The $kind $name"
     echo

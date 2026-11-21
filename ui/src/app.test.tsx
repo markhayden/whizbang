@@ -3,12 +3,14 @@ import { describe, expect, it, vi } from "vitest";
 import { act } from "preact/test-utils";
 import { ApiError, type Client, type Hello } from "./api";
 import { App, NO_TOKEN } from "./app";
+import type { Taken } from "./token";
 import { HOSTILE, render } from "./test/render";
 
 let lastClient: Client;
 function clientAnswering(hello: Promise<Hello>): Client {
   lastClient = {
     hello: vi.fn(() => hello),
+    setToken: vi.fn(),
     request: vi.fn(),
     upload: vi.fn(),
     start: vi.fn(),
@@ -23,10 +25,12 @@ async function settle() {
   });
 }
 
-function mount(hash: string, hello: Promise<Hello>, hasToken = true) {
+function mount(hash: string, hello: Promise<Hello>, hasToken = true, takeToken: () => Taken = () => ({ token: null, offered: false, fresh: false })) {
   const listeners: Array<(hash: string) => void> = [];
   const go = vi.fn((next: string) => listeners.forEach((listener) => listener(next)));
-  const view = render(<App client={clientAnswering(hello)} hasToken={hasToken} initialHash={hash} subscribeHash={(l) => (listeners.push(l), () => undefined)} go={go} />);
+  const view = render(
+    <App client={clientAnswering(hello)} hasToken={hasToken} initialHash={hash} subscribeHash={(l) => (listeners.push(l), () => undefined)} go={go} takeToken={takeToken} />,
+  );
   return { view, go };
 }
 
@@ -87,8 +91,11 @@ describe("the shell", () => {
   });
 
   it("acts on nothing in the address: any route asks hello and changes nothing", async () => {
-    // The host lets a top-level navigation reach the page (H1), so an address another
-    // page made must start, stop or upload nothing. Only #k= is read, by token.ts.
+    // The host lets a top-level navigation (a GET outside /api/ that Chrome marks as a
+    // navigation to a document) reach the page without the token (H1, and the fixture
+    // host's guard), so another page can open it at any address it makes. Such an address
+    // must start, stop or upload nothing: a route only chooses a screen, and only #k= is
+    // acted on, by token.ts.
     for (const hash of ["#/", "#/k/rascal/remove_prompt?run=1", "#/run/r-1", "#/history?kit=rascal&result=pass", "#/models", "#/quit", "#/k/rascal/remove_prompt/start"]) {
       const { view } = mount(hash, Promise.resolve(HELLO));
       await settle();
@@ -99,6 +106,28 @@ describe("the shell", () => {
       expect(lastClient.poll, hash).not.toHaveBeenCalled();
       view.unmount();
     }
+  });
+
+  it("takes a #k= that a hash change brings, uses its token, and asks hello again", async () => {
+    const fresh = "cd".repeat(32);
+    let next: Taken = { token: null, offered: false, fresh: false };
+    const { view, go } = mount("#/", Promise.reject(new ApiError(401, "Run whizbang play again.")), false, () => next);
+    await settle();
+    expect(view.get("[role=alert]").textContent).toContain("whizbang play again");
+    (lastClient.hello as ReturnType<typeof vi.fn>).mockImplementation(() => Promise.resolve(HELLO));
+    next = { token: fresh, offered: true, fresh: true };
+    act(() => go(`#k=${fresh}`));
+    await settle();
+    expect(lastClient.setToken).toHaveBeenCalledWith(fresh);
+    expect(lastClient.hello).toHaveBeenCalledTimes(2);
+    expect(view.all("[role=alert]")).toHaveLength(0);
+    expect(view.text()).toContain("store /data/store");
+    // A #k= that is not a token is taken out of the bar and changes nothing else.
+    next = { token: fresh, offered: true, fresh: false };
+    act(() => go("#k=nonsense&x"));
+    await settle();
+    expect(lastClient.setToken).toHaveBeenCalledTimes(1);
+    expect(view.get("h1").textContent).toContain("whizbang");
   });
 
   it("follows the address, and the keys open search, Home and a kit", async () => {

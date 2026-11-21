@@ -213,8 +213,8 @@ check_workflow() { # <workflow>
   case "$(before "$e2e" '^ +run: just e2e$')" in *' if: '*)
     echo "CI: e2e must run just e2e on every runner, with no condition"; return 1 ;; esac
   [ "$(grep -E '^ +if:' <<<"$e2e")" = "        if: failure()" ] &&
-    grep -A1 -x -F '        if: failure()' <<<"$e2e" | grep -x -F '        uses: actions/upload-artifact@v4' >/dev/null ||
-    { echo "CI: the one condition in e2e keeps the report of a failed run, and nothing else"; return 1; }
+    grep -A1 -x -F '        if: failure()' <<<"$e2e" | grep -x -F '        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9' >/dev/null ||
+    { echo "CI: the one condition in e2e keeps the report of a failed run, with actions/upload-artifact pinned to its commit, and nothing else"; return 1; }
 
   # secrets: the scan of every commit, alone, on Linux, within the check job's limit, with
   # no condition; and in no other job.
@@ -434,6 +434,7 @@ expect_fail "e2e with a longer limit" "e2e must run within 15 minutes" check_wor
 awk '/^        os: \[macos-15, ubuntu-22.04\]$/ { n++; if (n == 4) $0 = "        os: [ubuntu-22.04]" } { print }' "$workflow" >"$tmp/e2e-matrix"
 expect_fail "the fourth matrix on Linux alone" "e2e must run on macos-15 and ubuntu-22.04" check_workflow "$tmp/e2e-matrix"
 changed check_workflow "$workflow" 's/^        if: failure()$/        if: always()/' "the one condition in e2e"
+changed check_workflow "$workflow" 's/^        uses: actions\/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9$/        uses: actions\/upload-artifact@v7/' "the one condition in e2e"
 # Node at another version, unpinned, without the lock file's cache, or missing from a job.
 changed check_workflow "$workflow" 's/^          node-version: 26.13.1$/          node-version: 26/' "must set up Node with actions/setup-node pinned"
 changed check_workflow "$workflow" 's/^      - uses: actions\/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1$/      - uses: actions\/setup-node@v7/' "must set up Node with actions/setup-node pinned"

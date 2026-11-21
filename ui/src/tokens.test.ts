@@ -58,8 +58,15 @@ const PAPER_ONE: Array<[string, string]> = [
   ["--radius-lg", "10px"],
 ];
 
-/** A colour written as a value: hexadecimal, a colour function, or a named colour. */
-const COLOUR = /#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(|:\s*(?:white|black|red|green|blue|gray|grey|silver|yellow|orange|purple)\b/;
+/**
+ * A colour written as a value: hexadecimal; a colour function (`rgb(`, `oklch(`,
+ * `color-mix(` and the rest); or a named colour given to a colour property in CSS, in a
+ * style object, or in an SVG attribute (`fill="white"`, `stroke='red'`, `stop-color`).
+ * `none`, `currentColor`, `inherit`, `transparent` and a `var(` are not colours of a
+ * component's own.
+ */
+const COLOUR =
+  /#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|color-mix|light-dark)\(|(?<![-\w])(?:color|background|background-color|border-color|border(?:-top|-right|-bottom|-left)?-color|outline-color|fill|stroke|stop-color|flood-color|lighting-color|caret-color|accent-color|text-decoration-color|column-rule-color)\s*[=:]\s*["'{]?\s*["']?(?!none\b|currentColor\b|currentcolor\b|inherit\b|initial\b|unset\b|transparent\b|var\(|url\()[a-zA-Z]{3,}/;
 
 /** Every source but the tokens, the tests and their helpers. */
 const SOURCES: Record<string, string> = Object.fromEntries(
@@ -107,6 +114,14 @@ describe("tokens", () => {
     expect(COLOUR.test(".x { color: #1A0806; }")).toBe(true);
     expect(COLOUR.test("background: rgba(0, 0, 0, 0.5)")).toBe(true);
     expect(COLOUR.test("color: white;")).toBe(true);
+    expect(COLOUR.test('<path fill="white" />')).toBe(true);
+    expect(COLOUR.test("<rect stroke='red' />")).toBe(true);
+    expect(COLOUR.test("style={{ color: \"rebeccapurple\" }}")).toBe(true);
+    expect(COLOUR.test("background: color-mix(in srgb, var(--color-ink) 40%, transparent);")).toBe(true);
+    expect(COLOUR.test('<stop stop-color="gold" />')).toBe(true);
+    expect(COLOUR.test('<path fill="none" stroke="currentColor" />')).toBe(false);
+    expect(COLOUR.test("color: inherit; background: transparent; fill: var(--color-mask);")).toBe(false);
+    expect(COLOUR.test("stroke-width: 2px; border-color: var(--color-line);")).toBe(false);
     expect(COLOUR.test("#app { height: 100%; }")).toBe(false);
     expect(COLOUR.test("mask={`url(#canvas-mask-${index})`}")).toBe(false);
   });

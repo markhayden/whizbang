@@ -20,7 +20,14 @@ export function parseRoute(hash: string): Route {
   const [path = "", search = ""] = raw.split("?", 2);
   const parts = path.split("/").filter(Boolean);
   if (parts.length === 0) return { name: "home" };
-  const [head, a, b] = parts.map((part) => decodeURIComponent(part));
+  let decoded: string[];
+  try {
+    decoded = parts.map((part) => decodeURIComponent(part));
+  } catch {
+    // A bad escape (`%E0%A4%A`) names no route.
+    return { name: "unknown", hash };
+  }
+  const [head, a, b] = decoded;
   if (head === "k" && a && NAME.test(a) && parts.length <= 3) {
     if (b === undefined) return { name: "kit", kit: a };
     if (NAME.test(b)) return { name: "kit", kit: a, task: b };
