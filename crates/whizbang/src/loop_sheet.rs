@@ -5,22 +5,26 @@
 //! For every completed fill of every run of the manifest's request ids under the judge
 //! named ([`crate::loop_score::runs_of`]): the picture the loop was given, read from the
 //! folder of the pictures by the pin its entry holds, and the filled picture, from the
-//! store, each re-encoded from its pixels. The order is drawn from [`SEED`]. On the page
+//! store, each re-encoded from its pixels. The order is drawn from a seed drawn from the
+//! operating system's entropy for each sheet ([`fresh_seed`]) and written only in
+//! `assignment.json`, so no one can work the order out again without it. On the page
 //! each picture is shown with the phrase of what was to be removed and two marks a person
 //! may set, "the named thing is still visible" and "something else was damaged", and a
 //! third, "looked at", which either of the two sets. Nothing else: no verdict, no
 //! coverage, no attempt number, no run and no judge. A picture goes by a key
 //! ([`crate::loop_score::key`]) that names neither its run nor its attempt.
 //!
-//! Written in the folder `--out` names, and nowhere else, and refused inside a git work
-//! tree, since the fills are new pictures that are never committed:
+//! Written in the folder `--out` names, and nowhere else: refused inside a git work tree,
+//! since the fills are new pictures that are never committed, and refused when the folder
+//! is there and not empty, so no sheet is written over another:
 //!
 //! - `index.html`: the page, built as the pairs page is ([`crate::pairs_page`]): a policy
 //!   that lets nothing load but its own pictures, and no script or style but its own, by
 //!   digest; every string escaped for where it goes; its script sets text, never markup.
 //!   The marks leave it only as `marks.json`, a file the person saves through the
-//!   browser, holding the pictures looked at by key; one saved can be opened again to
-//!   resume. `eval loop score --labels` reads it.
+//!   browser, holding the sheet's id ([`loop_score::sheet_id`]) and the pictures looked at
+//!   by key; one saved can be opened again to resume. `eval loop score --labels` reads it
+//!   with the assignment.
 //! - `pictures/<nnn>-source.png` and `<nnn>-edited.png`, named by their place on the page.
 //! - `assignment.json`: the seed, and each picture's place, key, item, run and attempt.
 //!   The page never reads it, and the person does not open it.
@@ -43,8 +47,15 @@ use crate::pairs_page::{escape, folder, json_in_html, png, policy_for, write_new
 
 const TEMPLATE: &str = include_str!("../pages/loop_sheet.html");
 
-/// The seed the order of the pictures is drawn from.
-pub const SEED: u64 = 20_261_121;
+/// A seed for one sheet, from the operating system's entropy (`/dev/urandom`).
+pub fn fresh_seed() -> Result<u64, String> {
+    use std::io::Read;
+    let mut bytes = [0u8; 8];
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut bytes))
+        .map_err(|e| format!("no seed could be drawn for the sheet: {}", e.kind()))?;
+    Ok(u64::from_le_bytes(bytes))
+}
 
 /// What `eval loop sheet` is given.
 pub struct Asked<'a> {
@@ -70,10 +81,10 @@ pub fn policy() -> String {
     policy_for(TEMPLATE)
 }
 
-/// The page, from its summary and its pictures in their order.
-pub fn page(summary: &str, pictures: &[OnSheet]) -> String {
+/// The page, from its summary, the sheet's id and its pictures in their order.
+pub fn page(summary: &str, sheet: &str, pictures: &[OnSheet]) -> String {
     let data = serde_json::json!({
-        "seed": SEED,
+        "sheet": sheet,
         "pictures": pictures.iter().map(|p| serde_json::json!({
             "file": p.file, "key": p.key, "phrase": p.phrase,
         })).collect::<Vec<_>>(),
@@ -140,6 +151,14 @@ pub fn sheet(asked: &Asked<'_>) -> Result<Written, String> {
                 .to_owned(),
         );
     }
+    let occupied = std::fs::read_dir(asked.out).is_ok_and(|mut e| e.next().is_some());
+    if occupied || asked.out.is_file() {
+        return Err(
+            "the contact sheet's folder is there and not empty; name a new or empty folder; \
+             nothing was written"
+                .to_owned(),
+        );
+    }
     let (manifest, _): (Manifest, String) = Manifest::read(asked.manifest)?;
     let runs = loop_score::runs_of(asked.root, &manifest, asked.judge)?;
     let mut fills = Vec::new();
@@ -154,12 +173,13 @@ pub fn sheet(asked: &Asked<'_>) -> Result<Written, String> {
         return Err("the store holds no completed fill of these runs; nothing was written".into());
     }
     let reader = Reader::open(asked.root, Arc::new(RealFs)).map_err(|e| e.to_string())?;
+    let seed = fresh_seed()?;
     folder(asked.out)?;
     folder(&asked.out.join("pictures"))?;
     let mut bytes = 0;
     let mut on_sheet = Vec::new();
     let mut assigned = Vec::new();
-    for (place, at) in order(fills.len(), SEED).into_iter().enumerate() {
+    for (place, at) in order(fills.len(), seed).into_iter().enumerate() {
         let (run, attempt, image) = fills[at];
         let entry = (manifest.item.iter())
             .find(|e| e.id == run.item)
@@ -175,17 +195,24 @@ pub fn sheet(asked: &Asked<'_>) -> Result<Written, String> {
             let encoded = png(pixels.rgba(), pixels.width(), pixels.height())?;
             bytes += write_new(&pictures.join(format!("{file}-{side}.png")), &encoded)?;
         }
-        let key = loop_score::key(SEED, &run.run, attempt);
-        assigned.push(serde_json::json!({
-            "picture": file, "key": key, "item": run.item, "run": run.run, "attempt": attempt,
-        }));
+        let key = loop_score::key(seed, &run.run, attempt);
+        assigned.push(loop_score::Assigned {
+            picture: file.clone(),
+            key: key.clone(),
+            item: run.item.clone(),
+            run: run.run.clone(),
+            attempt,
+        });
         on_sheet.push(OnSheet {
             file,
             key,
             phrase: entry.phrase.clone(),
         });
     }
-    let assignment = serde_json::json!({"seed": SEED, "pictures": assigned});
+    let assignment = loop_score::Assignment {
+        seed,
+        pictures: assigned,
+    };
     let text = serde_json::to_string_pretty(&assignment).map_err(|e| e.to_string())? + "\n";
     bytes += write_new(&asked.out.join("assignment.json"), text.as_bytes())?;
     let summary = format!(
@@ -193,7 +220,7 @@ pub fn sheet(asked: &Asked<'_>) -> Result<Written, String> {
         on_sheet.len(),
         &digest_of(text.as_bytes())[7..23]
     );
-    let html = page(&summary, &on_sheet);
+    let html = page(&summary, &loop_score::sheet_id(seed), &on_sheet);
     bytes += write_new(&asked.out.join("index.html"), html.as_bytes())?;
     Ok(Written {
         pictures: on_sheet.len(),

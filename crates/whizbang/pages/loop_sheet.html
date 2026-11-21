@@ -41,7 +41,7 @@ figcaption { font-size: 12px; color: var(--muted); }
 <script type="application/json" id="data">{{DATA}}</script>
 <script>
 "use strict";
-// The page knows the seed, each picture's key, its file and the phrase, and nothing of
+// The page knows the sheet's id, each picture's key, its file and the phrase, and nothing of
 // what made it. The marks leave it only as a file the person saves.
 const data = JSON.parse(document.getElementById("data").textContent);
 const marks = {};
@@ -50,7 +50,7 @@ let saved = true;
 function written() {
   // Only the pictures marked as looked at: one not looked at is no mark at all.
   const list = data.pictures.filter((p) => marks[p.key].touched).map((p) => ({ picture: p.key, visible: marks[p.key].visible, damaged: marks[p.key].damaged }));
-  return JSON.stringify({ marks_version: 1, seed: data.seed, marks: list }, null, 2) + "\n";
+  return JSON.stringify({ marks_version: 1, sheet: data.sheet, marks: list }, null, 2) + "\n";
 }
 function offer() {
   const save = by("save");
@@ -112,7 +112,7 @@ by("load").addEventListener("change", (e) => {
   reader.onload = () => {
     let read;
     try { read = JSON.parse(reader.result); } catch (_) { by("status").textContent = "that file is not a marks file"; return; }
-    if (!read || read.marks_version !== 1 || read.seed !== data.seed || !Array.isArray(read.marks)) {
+    if (!read || read.marks_version !== 1 || read.sheet !== data.sheet || !Array.isArray(read.marks)) {
       by("status").textContent = "those marks were made on another sheet; nothing was loaded";
       return;
     }

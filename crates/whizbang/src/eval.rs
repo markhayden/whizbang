@@ -219,9 +219,16 @@ pub enum LoopCommand {
         /// The judge, by its name in the config's `[backends.judge]` tables.
         #[arg(long, value_name = "NAME")]
         judge: String,
+        /// How many repetitions of each entry were run: each is a requested run, and one
+        /// the store does not hold is counted as missing.
+        #[arg(long, value_name = "1..9")]
+        repetitions: u32,
         /// A person's marks of the contact sheet, the marks.json it saves.
-        #[arg(long, value_name = "FILE")]
+        #[arg(long, value_name = "FILE", requires = "sheet")]
         labels: Option<PathBuf>,
+        /// The sheet's assignment.json, which the marks are read through.
+        #[arg(long, value_name = "FILE", requires = "labels")]
+        sheet: Option<PathBuf>,
         /// The file the score is written to.
         #[arg(long, value_name = "FILE")]
         out: PathBuf,
@@ -229,9 +236,10 @@ pub enum LoopCommand {
         at: Where,
     },
     /// Write the contact sheet: for every completed fill of those runs, the picture the
-    /// loop was given and the filled picture side by side, in an order drawn from a seed,
-    /// with no verdict, coverage, attempt or judge on the page, and two marks to set.
-    /// Never inside a git work tree. Prints counts.
+    /// loop was given and the filled picture side by side, in an order drawn from a seed
+    /// drawn for this sheet, with no verdict, coverage, attempt or judge on the page, and
+    /// marks to set. Never inside a git work tree, nor in a folder that is not empty.
+    /// Prints counts.
     Sheet {
         /// The loop's manifest, as labs/e-loop/segment-01.toml.
         #[arg(long, value_name = "FILE")]
@@ -242,7 +250,7 @@ pub enum LoopCommand {
         /// The judge, by its name in the config's `[backends.judge]` tables.
         #[arg(long, value_name = "NAME")]
         judge: String,
-        /// The folder the page is written in: never inside a git work tree.
+        /// The folder the page is written in: new or empty, never inside a git work tree.
         #[arg(long, value_name = "DIR")]
         out: PathBuf,
         #[command(flatten)]
@@ -470,7 +478,9 @@ fn eval_loop(command: &LoopCommand) -> Result<String, String> {
             manifest,
             set,
             judge,
+            repetitions,
             labels,
+            sheet,
             out,
             at,
         } => {
@@ -479,7 +489,8 @@ fn eval_loop(command: &LoopCommand) -> Result<String, String> {
                 set,
                 root: at.root(),
                 judge,
-                labels: labels.as_deref(),
+                repetitions: *repetitions,
+                labels: labels.as_deref().zip(sheet.as_deref()),
             };
             let score = whizbang::loop_score::score(&scoring)?;
             score.write(out)?;

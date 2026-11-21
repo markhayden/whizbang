@@ -133,6 +133,7 @@ impl Scripted {
             set: &self.folder,
             root: &self.world.root,
             judge: JUDGE,
+            repetitions: 1,
             labels: None,
         }
     }
@@ -296,8 +297,12 @@ fn attempt(number: u32, shaped: Option<f64>, filled: bool, rq1: Option<Rq1>) -> 
             rq1,
             unchecked: (rq1.is_none()).then(|| "why".to_owned()),
         },
-        found: shaped.map(measured),
-        shaped: shaped.map(measured),
+        found: shaped
+            .map(measured)
+            .ok_or_else(|| "its_mask_could_not_be_made".to_owned()),
+        shaped: shaped
+            .map(measured)
+            .ok_or_else(|| "its_mask_could_not_be_made".to_owned()),
     }
 }
 
@@ -526,13 +531,25 @@ fn labels_add_the_visible_and_damaged_tables() {
     let seen: Vec<RunSeen> = runs.iter().map(|r| r.seen.clone()).collect();
     // The marks file as the sheet saves it: by key, of the pictures looked at. The second
     // run's picture was not looked at.
-    let seed = whizbang::loop_sheet::SEED;
+    let seed = 7_u64;
     let key = |run: &str, n: u32| loop_score::key(seed, run, n);
-    let file = serde_json::json!({"marks_version": 1, "seed": seed, "marks": [
+    let assigned = |run: &str, n: u32| loop_score::Assigned {
+        picture: format!("00{n}"),
+        key: key(run, n),
+        item: ITEM.to_owned(),
+        run: run.to_owned(),
+        attempt: n,
+    };
+    let assignment = loop_score::Assignment {
+        seed,
+        pictures: vec![assigned("r1", 1), assigned("r1", 2), assigned("r2", 1)],
+    };
+    let sheet = loop_score::sheet_id(seed);
+    let file = serde_json::json!({"marks_version": 1, "sheet": sheet, "marks": [
         {"picture": key("r1", 1), "visible": true, "damaged": false},
         {"picture": key("r1", 2), "visible": false, "damaged": false},
     ]});
-    let marks = loop_score::marks_of(file.to_string().as_bytes(), &seen).unwrap();
+    let marks = loop_score::marks_of(file.to_string().as_bytes(), &assignment, &seen).unwrap();
     let g = of(&runs, Some(&marks));
     let p = g.pictures.clone().unwrap();
     assert_eq!((p.rq1_confident_visible, p.rq1_none_not_visible), (1, 1));
@@ -542,11 +559,19 @@ fn labels_add_the_visible_and_damaged_tables() {
     assert_eq!(p.unmarked_fills, 1);
     let text = loop_score::toml_text(&g).unwrap();
     assert!(text.contains("[pictures]"), "{text}");
-    // A mark of no fill of these runs is refused.
-    let stray = serde_json::json!({"marks_version": 1, "seed": seed, "marks": [
-        {"picture": key("r9", 1), "visible": true, "damaged": false},
-    ]});
-    assert!(loop_score::marks_of(stray.to_string().as_bytes(), &seen).is_err());
+    // Refused: a mark of no picture of the sheet; one picture marked twice; marks saved
+    // from another sheet.
+    let read = |marks: serde_json::Value, sheet: &str| {
+        let file = serde_json::json!({"marks_version": 1, "sheet": sheet, "marks": marks});
+        loop_score::marks_of(file.to_string().as_bytes(), &assignment, &seen)
+    };
+    let one = |run: &str, n: u32| serde_json::json!({"picture": key(run, n), "visible": true, "damaged": false});
+    let stray = read(serde_json::json!([one("r9", 1)]), &sheet).unwrap_err();
+    assert!(stray.contains("no completed fill"), "{stray}");
+    let twice = read(serde_json::json!([one("r1", 1), one("r1", 1)]), &sheet).unwrap_err();
+    assert!(twice.contains("twice"), "{twice}");
+    let other = read(serde_json::json!([one("r1", 1)]), &loop_score::sheet_id(8)).unwrap_err();
+    assert!(other.contains("another sheet"), "{other}");
 }
 
 #[test]
@@ -590,6 +615,8 @@ mod cli {
                 scripted.folder.to_str().unwrap(),
                 "--judge",
                 JUDGE,
+                "--repetitions",
+                "1",
                 "--out",
                 out.to_str().unwrap(),
             ],
@@ -597,8 +624,10 @@ mod cli {
         );
         assert_eq!(ran.code, Some(0), "{}", ran.err);
         assert!(
-            ran.out
-                .contains("runs: 1\nattempts: 2\nchecked: 2\nfilled: 2\nretries compared: 1\n"),
+            ran.out.contains(
+                "requested: 1\nmissing: 0\nruns: 1\nattempts: 2\nchecked: 2\nfilled: 2\n\
+                 retries compared: 1\n"
+            ),
             "{}",
             ran.out
         );
@@ -624,13 +653,19 @@ mod cli {
                 scripted.folder.to_str().unwrap(),
                 "--judge",
                 "dear",
+                "--repetitions",
+                "1",
                 "--out",
                 other.to_str().unwrap(),
             ],
             &scripted.world.root,
         );
         assert_eq!(ran.code, Some(0), "{}", ran.err);
-        assert!(ran.out.starts_with("runs: 0\n"), "{}", ran.out);
+        assert!(
+            ran.out.starts_with("requested: 1\nmissing: 1\nruns: 0\n"),
+            "{}",
+            ran.out
+        );
     }
 }
 
@@ -660,6 +695,12 @@ fn the_plan_alone_is_said_and_nothing_runs() {
     );
     assert_eq!(world.kit.requests(), (0, 0, 0));
     drop(engine);
+    // No run is kept, and the allowance is whole: nothing was reserved.
+    let reader = world.reader();
+    let generation = reader.snapshot().unwrap();
+    assert!(generation.runs().is_empty());
+    let folded = whizbang_core::spend::fold::fold(&generation, |entry| reader.read(entry));
+    assert_eq!(folded.balance().left.micros(), setup.allowance);
     // Under a cap that covers two attempts, the plan says so.
     let mut setup = Setup::answering(vec![passes()]);
     setup.dear = true;
@@ -671,4 +712,128 @@ fn the_plan_alone_is_said_and_nothing_runs() {
         said.starts_with("plan: 2 of 3 attempts asked, checked;"),
         "{said}"
     );
+}
+
+#[test]
+fn a_missing_repetition_is_requested_and_counted_missing() {
+    let scripted = scripted("score-missing", vec![passes()]);
+    // Two repetitions asked, one run: one requested run is missing, overall and in its group.
+    let scoring = Scoring {
+        repetitions: 2,
+        ..scripted.scoring()
+    };
+    let score = loop_score::score(&scoring).unwrap();
+    assert_eq!(
+        (score.all.requested, score.all.missing, score.all.runs),
+        (2, 1, 1)
+    );
+    let whole = &score.group[GROUP];
+    assert_eq!((whole.requested, whole.missing), (2, 1));
+    let text = score.toml().unwrap();
+    assert!(
+        text.contains("requested = 2") && text.contains("missing = 1"),
+        "{text}"
+    );
+    assert_eq!(score.repetitions, 2);
+    // Repetitions out of range are refused.
+    let none = Scoring {
+        repetitions: 0,
+        ..scripted.scoring()
+    };
+    assert!(loop_score::score(&none).is_err());
+}
+
+#[test]
+fn a_mask_of_another_size_is_unavailable_for_size_and_the_score_goes_on() {
+    let scripted = scripted("score-size", vec![remains(), passes()]);
+    // The truth mask the manifest pins is of 32 by 32, and the loop's masks of 64 by 64.
+    let mut small = Vec::new();
+    let mut rgba = Vec::new();
+    for _ in 0..32 * 32 {
+        rgba.extend_from_slice(&[255, 255, 255, 255]);
+    }
+    PngEncoder::new(&mut small)
+        .write_image(&rgba, 32, 32, ExtendedColorType::Rgba8)
+        .unwrap();
+    let file = (scripted.folder.join("segmentation/segment-01/items"))
+        .join(ITEM)
+        .join("truth.png");
+    let old = pin(&std::fs::read(&file).unwrap());
+    std::fs::write(&file, &small).unwrap();
+    let manifest = std::fs::read_to_string(&scripted.manifest).unwrap();
+    std::fs::write(&scripted.manifest, manifest.replace(&old, &pin(&small))).unwrap();
+    let score = loop_score::score(&scripted.scoring()).unwrap();
+    let all = &score.all;
+    assert_eq!(all.first_shaped_mask.attempts, 0);
+    assert_eq!(all.first_shaped_mask.unavailable_by_reason["size"], 1);
+    assert_eq!(all.kept_shaped_mask.unavailable_by_reason["size"], 1);
+    assert_eq!(
+        all.rq1_against_under_coverage.unavailable_by_reason["size"],
+        2
+    );
+    assert_eq!(all.coverage_across_a_retry.unavailable_by_reason["size"], 1);
+    assert_eq!(
+        all.kept_had_the_highest_coverage.unavailable_by_reason["size"],
+        1
+    );
+    // What needs no mask is still counted.
+    assert_eq!(
+        (all.runs, all.attempts, all.checked, all.filled),
+        (1, 2, 2, 2)
+    );
+}
+
+#[test]
+fn a_truth_mask_with_no_object_pixel_is_refused() {
+    let empty = png(Some([0, 0, 0, 0]));
+    let refused = loop_score::truth_of(&empty).unwrap_err();
+    assert!(refused.contains("no pixel of the object"), "{refused}");
+    assert!(loop_score::truth_of(&png(Some(TRUTH))).is_ok());
+}
+
+#[test]
+fn every_unavailable_has_a_reason_and_the_sensitivity_counts_have_shares() {
+    let mut failed = scored("r2", Vec::new(), None);
+    failed.seen.status = "error".to_owned();
+    let runs = [
+        scored(
+            "r1",
+            vec![
+                attempt(1, Some(0.85), true, Some(Rq1::Confident)),
+                attempt(2, None, false, None),
+                attempt(3, Some(0.97), true, Some(Rq1::None)),
+            ],
+            Some(3),
+        ),
+        failed,
+    ];
+    let g = of(&runs, None);
+    let first = &g.first_shaped_mask;
+    assert_eq!((first.attempts, first.unavailable), (1, 1));
+    assert_eq!(first.unavailable_by_reason["no_attempt"], 1);
+    assert_eq!((first.under_090, first.under_090_share), (1, Some(1.0)));
+    assert_eq!((first.under_099, first.under_099_share), (1, Some(1.0)));
+    let kept = &g.kept_shaped_mask;
+    assert_eq!((kept.under_099, kept.under_099_share), (1, Some(1.0)));
+    assert_eq!((kept.under_090, kept.under_090_share), (0, Some(0.0)));
+    // The run with no kept attempt is unavailable for every measure of the kept attempt.
+    assert_eq!(kept.unavailable_by_reason["no_kept_attempt"], 1);
+    let highest = &g.kept_had_the_highest_coverage;
+    assert_eq!((highest.runs, highest.unavailable), (1, 1));
+    assert_eq!(highest.unavailable_by_reason["no_kept_attempt"], 1);
+    // The retry with no shaped mask, and the next compared with the last one there was.
+    let retry = &g.coverage_across_a_retry;
+    assert_eq!(
+        (retry.compared, retry.coverage_up, retry.unavailable),
+        (1, 1, 1)
+    );
+    assert_eq!(retry.unavailable_by_reason["its_mask_could_not_be_made"], 1);
+    for map in [
+        &first.unavailable_by_reason,
+        &kept.unavailable_by_reason,
+        &retry.unavailable_by_reason,
+        &highest.unavailable_by_reason,
+    ] {
+        assert!(map.values().sum::<usize>() > 0);
+    }
 }

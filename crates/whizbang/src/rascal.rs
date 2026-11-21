@@ -383,8 +383,8 @@ pub enum Command {
         /// the config's default for judge answers.
         #[arg(long, value_name = "NAME")]
         judge: Option<String>,
-        /// Prepare the call and print its plan on the output, and run nothing: no
-        /// request is sent and nothing is reserved.
+        /// Prepare the call and print its plan on the output, without running it or
+        /// spending: no request is sent, nothing is reserved, and no run is kept.
         #[arg(long)]
         plan_only: bool,
         #[command(flatten)]

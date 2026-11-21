@@ -465,8 +465,16 @@ pub struct Against {
     pub size: f64,
 }
 
-/// A mask of the store against a truth mask of the same size.
-pub fn against(reader: &Reader, mask: ArtifactId, truth: &Truth) -> Result<Against, String> {
+/// Why a mask that exists could not be measured: it is not the size of the truth mask.
+pub const SIZE: &str = "size";
+
+/// A mask of the store against a truth mask of the same size; a mask of another size is
+/// no measure, for the reason [`SIZE`], and the rest of the score goes on.
+pub fn against(
+    reader: &Reader,
+    mask: ArtifactId,
+    truth: &Truth,
+) -> Result<Result<Against, String>, String> {
     let limits = DecodeLimits::default();
     let read = artifact::get_anywhere(reader, ArtifactType::Mask, mask, &limits);
     let mask = (read.map_err(|e| e.to_string())?)
@@ -474,7 +482,7 @@ pub fn against(reader: &Reader, mask: ArtifactId, truth: &Truth) -> Result<Again
         .map_err(|e| e.to_string())?;
     let space = mask.space();
     if (space.width(), space.height()) != (truth.width, truth.height) {
-        return Err("a mask of the loop is not the size of its picture's truth mask".to_owned());
+        return Ok(Err(SIZE.to_owned()));
     }
     let mut weights = Vec::with_capacity(truth.pixels.len());
     for y in 0..space.height() {
@@ -482,11 +490,11 @@ pub fn against(reader: &Reader, mask: ArtifactId, truth: &Truth) -> Result<Again
             weights.push(mask.weight(x, y).unwrap_or(0.0));
         }
     }
-    Ok(Against {
+    Ok(Ok(Against {
         coverage: crate::edits::coverage(&truth.pixels, &weights)?,
         iou: crate::edits::iou(&truth.pixels, &weights)?,
         size: crate::edits::size_ratio(&truth.pixels, &weights)?,
-    })
+    }))
 }
 
 /// A truth mask: its size, and which pixels are of the object.
@@ -502,19 +510,27 @@ pub struct Truth {
 pub fn truth_of(bytes: &[u8]) -> Result<Truth, String> {
     let read = identify(bytes, &DecodeLimits::default()).map_err(|e| e.to_string())?;
     let pixels = read.pixels;
-    Ok(Truth {
+    let truth = Truth {
         width: pixels.width(),
         height: pixels.height(),
         pixels: pixels.rgba().chunks(4).map(|p| p[0] >= 128).collect(),
-    })
+    };
+    if !truth.pixels.contains(&true) {
+        return Err(
+            "a truth mask has no pixel of the object, so nothing can be measured \
+                    against it"
+                .to_owned(),
+        );
+    }
+    Ok(truth)
 }
 
-/// One attempt with its masks measured.
+/// One attempt with its masks measured: each a measure, or why there is none.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttemptScored {
     pub seen: AttemptSeen,
-    pub found: Option<Against>,
-    pub shaped: Option<Against>,
+    pub found: Result<Against, String>,
+    pub shaped: Result<Against, String>,
 }
 
 /// One run with its attempts measured.
@@ -541,8 +557,9 @@ pub type Marks = BTreeMap<(String, u32), Mark>;
 pub struct MaskStats {
     /// The attempts measured: those whose mask exists.
     pub attempts: usize,
-    /// Those of the attempts asked about whose mask does not exist.
+    /// Those asked about with no measure: no attempt, no mask, a mask of another size.
     pub unavailable: usize,
+    pub unavailable_by_reason: BTreeMap<String, usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub coverage_mean: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -551,9 +568,13 @@ pub struct MaskStats {
     pub under_covered: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub under_covered_share: Option<f64>,
-    /// Coverage below 0.90 and 0.99: sensitivity only.
+    /// Coverage below 0.90 and 0.99: sensitivity only, as counts and shares.
     pub under_090: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub under_090_share: Option<f64>,
     pub under_099: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub under_099_share: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub iou_mean: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -561,22 +582,34 @@ pub struct MaskStats {
 }
 
 impl MaskStats {
-    fn of(masks: &[Option<Against>]) -> MaskStats {
-        let measured: Vec<Against> = masks.iter().flatten().copied().collect();
+    fn of(masks: &[Result<Against, String>]) -> MaskStats {
+        let measured: Vec<Against> = masks
+            .iter()
+            .filter_map(|m| m.as_ref().ok())
+            .copied()
+            .collect();
+        let mut unavailable_by_reason = BTreeMap::new();
+        for why in masks.iter().filter_map(|m| m.as_ref().err()) {
+            add(&mut unavailable_by_reason, why);
+        }
         let n = measured.len();
         let mean = |f: fn(&Against) -> f64| {
             (n > 0).then(|| measured.iter().map(f).sum::<f64>() / n as f64)
         };
         let under = |at: f64| measured.iter().filter(|a| a.coverage < at).count();
+        let share = |count: usize| (n > 0).then(|| count as f64 / n as f64);
         MaskStats {
             attempts: n,
             unavailable: masks.len() - n,
+            unavailable_by_reason,
             coverage_mean: mean(|a| a.coverage),
             coverage_least: (measured.iter().map(|a| a.coverage)).reduce(f64::min),
             under_covered: under(UNDER),
-            under_covered_share: (n > 0).then(|| under(UNDER) as f64 / n as f64),
+            under_covered_share: share(under(UNDER)),
             under_090: under(SENSITIVITY[0]),
+            under_090_share: share(under(SENSITIVITY[0])),
             under_099: under(SENSITIVITY[1]),
+            under_099_share: share(under(SENSITIVITY[1])),
             iou_mean: mean(|a| a.iou),
             size_mean: mean(|a| a.size),
         }
@@ -594,6 +627,9 @@ pub struct Rq1Table {
     pub tentative_violation_covered: usize,
     pub no_violation_under_covered: usize,
     pub no_violation_covered: usize,
+    /// Checked attempts whose shaped mask has no measure, by why.
+    pub unavailable: usize,
+    pub unavailable_by_reason: BTreeMap<String, usize>,
 }
 
 /// Mask coverage across a retry: each attempt after the first whose shaped mask exists,
@@ -609,17 +645,22 @@ pub struct RetryTable {
     pub size_larger: usize,
     pub size_within: usize,
     pub size_smaller: usize,
-    /// Retries with no shaped mask, or no earlier one to compare with.
+    /// Retries not compared, by why: no measure of their own shaped mask, or none of an
+    /// earlier one.
     pub unavailable: usize,
+    pub unavailable_by_reason: BTreeMap<String, usize>,
 }
 
 /// Whether the kept attempt had the highest shaped-mask coverage of its run.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct KeptTable {
-    /// Runs with a kept attempt whose shaped mask exists: the denominator.
+    /// Runs with a kept attempt whose shaped mask was measured: the denominator.
     pub runs: usize,
     pub highest: usize,
     pub not_highest: usize,
+    /// Runs not counted, by why: no kept attempt, or no measure of its shaped mask.
+    pub unavailable: usize,
+    pub unavailable_by_reason: BTreeMap<String, usize>,
 }
 
 /// What a person's marks say, beside the masks.
@@ -656,7 +697,11 @@ pub struct Pictures {
 /// The measures of a group of runs, or of all of them.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct Group {
-    /// Runs of the loop found under the request ids: every requested run that ran.
+    /// Runs requested: each entry of the group under each repetition asked; of them, those
+    /// the store holds no run of.
+    pub requested: usize,
+    pub missing: usize,
+    /// Runs of the loop found under the request ids.
     pub runs: usize,
     pub runs_by_outcome: BTreeMap<String, usize>,
     /// Runs that recorded no attempt: a first find, shape or fill that failed.
@@ -694,6 +739,7 @@ pub struct Score {
     pub images_rev: String,
     pub manifest_sha256: String,
     pub entries: usize,
+    pub repetitions: u32,
     pub under_covered_below: f64,
     pub sensitivity: Vec<f64>,
     /// Whether a person's marks were read; without them nothing is said of the pictures.
@@ -747,14 +793,27 @@ pub fn group(runs: &[&RunScored], marks: Option<&Marks>) -> Group {
             g.runs_with_no_attempt += 1;
         }
         g.attempts += run.attempts.len();
-        if let Some(first) = run.attempts.first() {
-            first_found.push(first.found);
-            first_shaped.push(first.shaped);
+        let no = |why: &str| Err::<Against, String>(why.to_owned());
+        match run.attempts.first() {
+            Some(first) => {
+                first_found.push(first.found.clone());
+                first_shaped.push(first.shaped.clone());
+            }
+            None => {
+                first_found.push(no("no_attempt"));
+                first_shaped.push(no("no_attempt"));
+            }
         }
         let kept = (run.seen.kept).and_then(|k| run.attempts.iter().find(|a| a.seen.number == k));
-        if let Some(kept) = kept {
-            kept_found.push(kept.found);
-            kept_shaped.push(kept.shaped);
+        match kept {
+            Some(kept) => {
+                kept_found.push(kept.found.clone());
+                kept_shaped.push(kept.shaped.clone());
+            }
+            None => {
+                kept_found.push(no("no_kept_attempt"));
+                kept_shaped.push(no("no_kept_attempt"));
+            }
         }
         let mut before: Option<Against> = None;
         for (at, attempt) in run.attempts.iter().enumerate() {
@@ -770,7 +829,13 @@ pub fn group(runs: &[&RunScored], marks: Option<&Marks>) -> Group {
                 Some(_) => g.checked += 1,
                 None => add(&mut g.no_check, why_no_check(seen)),
             }
-            if let (Some(rq1), Some(shaped)) = (seen.rq1, attempt.shaped) {
+            if let (Some(_), Err(why)) = (seen.rq1, &attempt.shaped) {
+                let t = &mut g.rq1_against_under_coverage;
+                t.unavailable += 1;
+                add(&mut t.unavailable_by_reason, why);
+            }
+            if let (Some(rq1), Ok(shaped)) = (seen.rq1, attempt.shaped.as_ref()) {
+                let shaped = *shaped;
                 let t = &mut g.rq1_against_under_coverage;
                 t.checked += 1;
                 let under = shaped.coverage < UNDER;
@@ -785,7 +850,7 @@ pub fn group(runs: &[&RunScored], marks: Option<&Marks>) -> Group {
             }
             if at > 0 {
                 let t = &mut g.coverage_across_a_retry;
-                match (attempt.shaped, before) {
+                match (attempt.shaped.as_ref().ok().copied(), before) {
                     (Some(now), Some(then)) => {
                         t.compared += 1;
                         let change = now.coverage - then.coverage;
@@ -805,20 +870,41 @@ pub fn group(runs: &[&RunScored], marks: Option<&Marks>) -> Group {
                             t.size_within += 1;
                         }
                     }
-                    _ => t.unavailable += 1,
+                    (None, _) => {
+                        t.unavailable += 1;
+                        let why = attempt
+                            .shaped
+                            .as_ref()
+                            .err()
+                            .map_or("no_shaped_mask", String::as_str);
+                        add(&mut t.unavailable_by_reason, why);
+                    }
+                    (Some(_), None) => {
+                        t.unavailable += 1;
+                        add(&mut t.unavailable_by_reason, "no_earlier_shaped_mask");
+                    }
                 }
             }
-            if attempt.shaped.is_some() {
-                before = attempt.shaped;
+            if let Ok(shaped) = &attempt.shaped {
+                before = Some(*shaped);
             }
         }
-        if let Some(shaped) = kept.and_then(|k| k.shaped) {
+        let kept_shaped_measure = match kept {
+            None => Err("no_kept_attempt".to_owned()),
+            Some(k) => k.shaped.clone(),
+        };
+        if let Err(why) = &kept_shaped_measure {
+            let t = &mut g.kept_had_the_highest_coverage;
+            t.unavailable += 1;
+            add(&mut t.unavailable_by_reason, why);
+        }
+        if let Ok(shaped) = kept_shaped_measure {
             if shaped.coverage < UNDER {
                 g.ended_under_covered += 1;
                 add(&mut g.ended_under_covered_by_reason, &run.seen.reason);
             }
             let best = (run.attempts.iter())
-                .filter_map(|a| a.shaped.map(|s| s.coverage))
+                .filter_map(|a| a.shaped.as_ref().ok().map(|s| s.coverage))
                 .fold(f64::MIN, f64::max);
             let t = &mut g.kept_had_the_highest_coverage;
             t.runs += 1;
@@ -903,15 +989,29 @@ pub struct Scoring<'a> {
     pub set: &'a Path,
     pub root: &'a Path,
     pub judge: &'a str,
-    /// A person's marks of the contact sheet, a file outside the repository.
-    pub labels: Option<&'a Path>,
+    /// How many repetitions of each entry were asked: every one is a requested run.
+    pub repetitions: u32,
+    /// A person's marks of the contact sheet and the sheet's `assignment.json`, both files
+    /// outside the repository.
+    pub labels: Option<(&'a Path, &'a Path)>,
 }
 
+/// The most repetitions a score asks about.
+pub const REPETITIONS_LIMIT: u32 = 9;
+
 /// The key a picture of the contact sheet goes by: the first 16 hex digits of the
-/// SHA-256 of the sheet's seed, the run and the attempt. It names neither, so the page
-/// that shows it says nothing of either, and a marks file is read back by it.
+/// SHA-256 of the sheet's seed, the run and the attempt. The seed is drawn for each sheet
+/// and written only in its `assignment.json`, so the key names neither run nor attempt to
+/// anyone who has not got it.
 pub fn key(seed: u64, run: &str, attempt: u32) -> String {
     let hex = Digest::of_bytes(format!("{seed}/{run}/{attempt}").as_bytes()).hex();
+    hex.chars().take(16).collect()
+}
+
+/// What a sheet's page and its marks file call it: the first 16 hex digits of the SHA-256
+/// of its seed, which does not give the seed back.
+pub fn sheet_id(seed: u64) -> String {
+    let hex = Digest::of_bytes(format!("sheet/{seed}").as_bytes()).hex();
     hex.chars().take(16).collect()
 }
 
@@ -920,7 +1020,7 @@ pub fn key(seed: u64, run: &str, attempt: u32) -> String {
 #[serde(deny_unknown_fields)]
 pub struct MarksFile {
     pub marks_version: u32,
-    pub seed: u64,
+    pub sheet: String,
     pub marks: Vec<MarkOf>,
 }
 
@@ -933,43 +1033,85 @@ pub struct MarkOf {
     pub damaged: bool,
 }
 
-/// The marks of a saved file, by the run and attempt of each picture of these runs; a
-/// mark whose key is of no completed fill of them is refused.
-pub fn marks_of(bytes: &[u8], runs: &[RunSeen]) -> Result<Marks, String> {
+/// A sheet's `assignment.json`: its seed, and each picture's place, key, item, run and
+/// attempt.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Assignment {
+    pub seed: u64,
+    pub pictures: Vec<Assigned>,
+}
+
+/// One picture of a sheet.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Assigned {
+    pub picture: String,
+    pub key: String,
+    pub item: String,
+    pub run: String,
+    pub attempt: u32,
+}
+
+/// The marks of a saved file, by the run and attempt of each picture, read through the
+/// sheet's assignment. Refused: marks of another sheet; a picture marked twice; a key the
+/// assignment does not hold, or holds for no completed fill of these runs.
+pub fn marks_of(bytes: &[u8], assignment: &Assignment, runs: &[RunSeen]) -> Result<Marks, String> {
     let file: MarksFile =
         serde_json::from_slice(bytes).map_err(|_| "the marks file is not one the sheet saves")?;
     if file.marks_version != 1 {
         return Err("the marks file is of another version".to_owned());
     }
+    if file.sheet != sheet_id(assignment.seed) {
+        return Err("the marks file was saved from another sheet than this assignment's".into());
+    }
+    let filled: std::collections::BTreeSet<(String, u32)> = (runs.iter())
+        .flat_map(|run| {
+            (run.attempts.iter())
+                .filter(|a| a.filled.is_some())
+                .map(|a| (run.run.clone(), a.number))
+        })
+        .collect();
     let mut by_key = BTreeMap::new();
-    for run in runs {
-        for attempt in run.attempts.iter().filter(|a| a.filled.is_some()) {
-            let at = (run.run.clone(), attempt.number);
-            by_key.insert(key(file.seed, &run.run, attempt.number), at);
+    for one in &assignment.pictures {
+        if one.key != key(assignment.seed, &one.run, one.attempt) {
+            return Err("the assignment's keys are not those of its seed".to_owned());
         }
+        by_key.insert(one.key.clone(), (one.run.clone(), one.attempt));
     }
     let mut out = Marks::new();
     for mark in &file.marks {
-        let Some(at) = by_key.get(&mark.picture) else {
+        let Some(at) = by_key.get(&mark.picture).filter(|at| filled.contains(*at)) else {
             return Err(
                 "the marks file marks a picture that is no completed fill of these runs".to_owned(),
             );
         };
-        out.insert(
-            at.clone(),
-            Mark {
-                visible: mark.visible,
-                damaged: mark.damaged,
-            },
-        );
+        let given = Mark {
+            visible: mark.visible,
+            damaged: mark.damaged,
+        };
+        if out.insert(at.clone(), given).is_some() {
+            return Err("the marks file marks one picture twice".to_owned());
+        }
     }
     Ok(out)
 }
 
-/// Scores the loop's runs (the module's description says what).
+/// Scores the loop's runs (the module's description says what). A run of a repetition
+/// past those asked is refused, so no run is left out unsaid.
 pub fn score(scoring: &Scoring<'_>) -> Result<Score, String> {
+    if !(1..=REPETITIONS_LIMIT).contains(&scoring.repetitions) {
+        return Err(format!("--repetitions is 1 to {REPETITIONS_LIMIT}"));
+    }
     let (manifest, digest) = Manifest::read(scoring.manifest)?;
     let seen = runs_of(scoring.root, &manifest, scoring.judge)?;
+    if seen.iter().any(|r| r.repetition > scoring.repetitions) {
+        return Err(format!(
+            "the store holds a run of a repetition past the {} asked; give --repetitions as \
+             many as were run",
+            scoring.repetitions
+        ));
+    }
     let reader = Reader::open(scoring.root, Arc::new(RealFs)).map_err(|e| e.to_string())?;
     let mut truths: BTreeMap<String, Truth> = BTreeMap::new();
     let mut scored = Vec::new();
@@ -982,14 +1124,19 @@ pub fn score(scoring: &Scoring<'_>) -> Result<Score, String> {
             truths.insert(entry.id.clone(), truth_of(&bytes)?);
         }
         let truth = &truths[&entry.id];
-        let measure = |mask: Option<ArtifactId>| -> Result<Option<Against>, String> {
-            mask.map(|m| against(&reader, m, truth)).transpose()
-        };
+        let measure =
+            |mask: Option<ArtifactId>, none: &str| -> Result<Result<Against, String>, String> {
+                match mask {
+                    Some(m) => against(&reader, m, truth),
+                    None => Ok(Err(none.to_owned())),
+                }
+            };
         let mut attempts = Vec::new();
         for attempt in &run.attempts {
+            let none = why_no_shaped(attempt);
             attempts.push(AttemptScored {
-                found: measure(attempt.found)?,
-                shaped: measure(attempt.shaped)?,
+                found: measure(attempt.found, none)?,
+                shaped: measure(attempt.shaped, none)?,
                 seen: attempt.clone(),
             });
         }
@@ -999,15 +1146,43 @@ pub fn score(scoring: &Scoring<'_>) -> Result<Score, String> {
         });
     }
     let marks = match scoring.labels {
-        Some(file) => Some(marks_of(&read_limited(file, "the marks file")?, &seen)?),
+        Some((file, assignment)) => {
+            let read = read_limited(assignment, "the sheet's assignment")?;
+            let assignment: Assignment = serde_json::from_slice(&read)
+                .map_err(|_| "the sheet's assignment is not one the sheet writes")?;
+            Some(marks_of(
+                &read_limited(file, "the marks file")?,
+                &assignment,
+                &seen,
+            )?)
+        }
         None => None,
+    };
+    // Each entry under each repetition asked, and whether the store holds its run.
+    let held: std::collections::BTreeSet<(&str, u32)> = seen
+        .iter()
+        .map(|r| (r.item.as_str(), r.repetition))
+        .collect();
+    let counted = |entries: &[&Entry]| {
+        let requested = entries.len() * scoring.repetitions as usize;
+        let present = (entries.iter())
+            .flat_map(|e| (1..=scoring.repetitions).map(move |n| (e.id.as_str(), n)))
+            .filter(|at| held.contains(at))
+            .count();
+        (requested, requested - present)
     };
     let all: Vec<&RunScored> = scored.iter().collect();
     let mut groups = BTreeMap::new();
     for name in manifest.groups().keys() {
         let of: Vec<&RunScored> = (scored.iter()).filter(|r| &r.seen.group == name).collect();
-        groups.insert(name.clone(), group(&of, marks.as_ref()));
+        let mut g = group(&of, marks.as_ref());
+        let entries: Vec<&Entry> = manifest.item.iter().filter(|e| &e.group == name).collect();
+        (g.requested, g.missing) = counted(&entries);
+        groups.insert(name.clone(), g);
     }
+    let mut whole = group(&all, marks.as_ref());
+    let entries: Vec<&Entry> = manifest.item.iter().collect();
+    (whole.requested, whole.missing) = counted(&entries);
     Ok(Score {
         schema: SCHEMA.to_owned(),
         judge: scoring.judge.to_owned(),
@@ -1015,10 +1190,11 @@ pub fn score(scoring: &Scoring<'_>) -> Result<Score, String> {
         images_rev: manifest.images_rev.clone(),
         manifest_sha256: digest,
         entries: manifest.item.len(),
+        repetitions: scoring.repetitions,
         under_covered_below: UNDER,
         sensitivity: SENSITIVITY.to_vec(),
         marked: marks.is_some(),
-        all: group(&all, marks.as_ref()),
+        all: whole,
         group: groups,
     })
 }
@@ -1108,8 +1284,10 @@ impl Score {
     pub fn text(&self) -> String {
         let g = &self.all;
         format!(
-            "runs: {}\nattempts: {}\nchecked: {}\nfilled: {}\nretries compared: {}\n\
-             ended under-covered: {}\nmarks read: {}\n",
+            "requested: {}\nmissing: {}\nruns: {}\nattempts: {}\nchecked: {}\nfilled: {}\n\
+             retries compared: {}\nended under-covered: {}\nmarks read: {}\n",
+            g.requested,
+            g.missing,
             g.runs,
             g.attempts,
             g.checked,
