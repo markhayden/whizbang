@@ -21,8 +21,8 @@
 //! machine.
 //!
 //! **The script.** A request that carries `x-fixture-script: <words>` sets the kit's
-//! script before it is answered (`PlayKit::set`: `hold`, `release`, `pass`, `fail`,
-//! `reset`); the real host refuses that header.
+//! script before it is answered (`PlayKit::set`: `hold`, `hold-pictures`, `release`,
+//! `pass`, `fail`, `reset`); the real host refuses that header.
 //!
 //! Options: `--store <folder>` (made if missing, its last folder alone), `--port <n>` (0,
 //! the default, takes a free port), `--stdin-quit` (quit when the standard input ends, so
@@ -139,6 +139,8 @@ impl Play for Fixture {
         self.door.pictures(after, limit)
     }
     fn artifact(&self, id: &str, edge: Option<u32>) -> Result<(&'static str, Vec<u8>), Refused> {
+        // Held while the script says `hold-pictures`: the page's connections stay open.
+        self.kit.picture_asked();
         self.door.artifact(id, edge)
     }
     fn location(&self, drawn: &Json) -> Result<Json, Refused> {
@@ -153,7 +155,7 @@ impl Play for Fixture {
     fn default_backend(&self, capability: &str) -> Option<String> {
         self.door.default_backend(capability)
     }
-    fn admitted(&self, id: &RequestId) -> bool {
+    fn admitted(&self, id: &RequestId) -> Option<RunId> {
         self.door.admitted(id)
     }
     fn script(&self, words: &str) -> Result<(), String> {

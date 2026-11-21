@@ -939,6 +939,7 @@ fn shouting() -> Arc<dyn Action> {
 /// The host over the kit, in a store of its own with ten dollars to spend.
 struct Kitted {
     scratch: Scratch,
+    door: Arc<Playground>,
     kit: Arc<whizbang_testkit::playkit::PlayKit>,
     host: Option<Host>,
     address: SocketAddr,
@@ -987,15 +988,16 @@ impl Kitted {
             .unwrap();
         let descriptors = registry.descriptors().cloned().collect();
         let runner = wiring::runner(registry, store.clone(), &over).unwrap();
-        let play = Playground::new(descriptors, Arc::new(over)).with_store(store, &root);
+        let play = Arc::new(Playground::new(descriptors, Arc::new(over)).with_store(store, &root));
         let mut settings = Settings::new(root);
         settings.port = 0;
         settings.grace = Duration::from_millis(400);
         let token = Token::new().unwrap();
-        let host = Host::start(Arc::new(runner), Arc::new(play), settings, token.clone()).unwrap();
+        let host = Host::start(Arc::new(runner), play.clone(), settings, token.clone()).unwrap();
         Kitted {
             address: host.address(),
             scratch,
+            door: play,
             kit,
             host: Some(host),
             token,
@@ -1168,13 +1170,14 @@ fn a_conflicting_request_under_one_id_is_refused_as_a_conflict() {
     let conflict = kitted.begin("shout", &other, &handle, "page-one");
     assert_eq!(conflict.status, 409, "{}", conflict.text());
     assert_eq!(conflict.json()["kind"], "conflict");
-    // And after a restart, when the executor alone knows the id.
+    // After a restart the host holds no copy of what was asked: the id the store holds
+    // is answered with its run, whatever is sent under it (ADR 0041, "Runs belong to
+    // the host").
     kitted.until_ended(first.json()["run"].as_str().unwrap());
     let kitted = kitted.restarted();
-    let handle = kitted.prepare("shout", &other)["handle"].clone();
-    let conflict = kitted.begin("shout", &other, &handle, "page-one");
-    assert_eq!(conflict.status, 409, "{}", conflict.text());
-    assert_eq!(conflict.json()["kind"], "conflict");
+    let answered = kitted.begin("shout", &other, &Json::Null, "page-one");
+    assert_eq!(answered.status, 200, "{}", answered.text());
+    assert_eq!(answered.json()["run"], first.json()["run"]);
 }
 
 #[test]
@@ -1510,8 +1513,11 @@ fn a_repeat_after_a_restart_is_answered_while_every_place_is_taken() {
     let repeat = kitted.begin("shout", &words("first"), &Json::Null, "page-first");
     assert_eq!(repeat.status, 200, "{}", repeat.text());
     assert_eq!(repeat.json()["run"], first.json()["run"]);
-    let conflict = kitted.begin("shout", &words("other"), &Json::Null, "page-first");
-    assert_eq!(conflict.status, 409, "{}", conflict.text());
+    // Under a config changed since, the same id is still its run's.
+    let config = kitted.scratch.path().join("whizbang.toml");
+    std::fs::write(&config, kit_config("other-fill")).unwrap();
+    let again = kitted.begin("shout", &words("first"), &Json::Null, "page-first");
+    assert_eq!(again.json()["run"], first.json()["run"], "{}", again.text());
     for run in &runs {
         kitted.api("POST", &format!("/api/runs/{run}/cancel"), None);
     }
@@ -1702,4 +1708,25 @@ fn two_pictures_sent_at_once_are_both_kept() {
     assert_ne!(ids[0], ids[1]);
     let listed = kitted.api("GET", "/api/pictures", None).json();
     assert_eq!(listed["pictures"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn a_thumbnail_asked_for_again_is_the_one_kept_and_not_made_twice() {
+    let kitted = Kitted::new("play-w1-kept-thumb");
+    let picture = kitted.picture(70);
+    let path = format!("/api/artifacts/{picture}/thumb?edge=24");
+    let first = kitted.api("GET", &path, None);
+    assert_eq!(first.status, 200);
+    assert_eq!(kitted.door.thumbnails_made(), 1);
+    let again = kitted.api("GET", &path, None);
+    assert_eq!(again.body, first.body);
+    assert_eq!(kitted.door.thumbnails_made(), 1, "taken from those kept");
+    // Another edge is another thumbnail.
+    let other = kitted.api(
+        "GET",
+        &format!("/api/artifacts/{picture}/thumb?edge=12"),
+        None,
+    );
+    assert_eq!(other.status, 200);
+    assert_eq!(kitted.door.thumbnails_made(), 2);
 }

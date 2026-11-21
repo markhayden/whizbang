@@ -107,3 +107,37 @@ fn a_repeated_request_id_answers_its_run_before_the_places_are_looked_at() {
     unnamed.as_object_mut().unwrap().remove("request_id");
     assert_eq!(running.api("POST", "/api/runs", Some(&unnamed)).status, 400);
 }
+
+#[test]
+fn two_thumbnails_being_made_make_a_third_answer_429_and_polls_go_on() {
+    let running = Arc::new(Running::start("runs-thumbs", |_| {}));
+    let id = format!("sha256:{}", "a".repeat(64));
+    let held: Vec<_> = (0..2)
+        .map(|_| {
+            let running = running.clone();
+            let path = format!("/api/artifacts/{id}/thumb?edge=64");
+            whizbang_testkit::threads::spawn(move || running.api("GET", &path, None).status)
+        })
+        .collect();
+    for _ in 0..2000 {
+        if running.asked.load(std::sync::atomic::Ordering::SeqCst) == 2 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(running.asked.load(std::sync::atomic::Ordering::SeqCst), 2);
+    let third = running.api("GET", &format!("/api/artifacts/{id}/thumb?edge=64"), None);
+    assert_eq!(third.status, 429, "{}", third.text());
+    assert_eq!(third.header("Retry-After").as_deref(), Some("1"));
+    // The door was not asked a third time, and a poll is answered meanwhile.
+    assert_eq!(running.asked.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(running.api("GET", "/api/runs?open=1", None).status, 200);
+    running
+        .released
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    for one in held {
+        assert_eq!(one.join().unwrap(), 200);
+    }
+    let again = running.api("GET", &format!("/api/artifacts/{id}/thumb?edge=64"), None);
+    assert_eq!(again.status, 200);
+}

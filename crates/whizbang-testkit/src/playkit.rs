@@ -15,7 +15,8 @@
 //! request wait, after it is counted, until `release` or until its run is cancelled (which
 //! is answered with the fault `cancelled`; `release,hold` lets go every request held then and
 //! holds those that come after); `pass` and `fail` choose the judge's answer;
-//! `reset` is `pass` and `release`. A test or the fixture host sets it; nothing else does.
+//! `hold-pictures` holds every picture a host asks [`PlayKit::picture_asked`] about until
+//! `release`; `reset` is `pass` and `release`. A test or the fixture host sets it; nothing else does.
 //!
 //! A table of the kind may name a credential (`key_env`) and an address (`url`): a
 //! backend whose credential is not set is not ready, as a real one is, and the address
@@ -58,6 +59,8 @@ pub enum Answer {
 #[derive(Debug)]
 struct Script {
     hold: bool,
+    /// Whether a picture the page asks for is held, as a request is by `hold`.
+    hold_pictures: bool,
     answer: Answer,
     /// How many times `release` was said: a request held lets go once it changes, so
     /// `release,hold` lets every request held go and holds those that come after.
@@ -81,6 +84,7 @@ impl PlayKit {
         Arc::new(PlayKit {
             script: Mutex::new(Script {
                 hold: false,
+                hold_pictures: false,
                 answer: Answer::Pass,
                 released: 0,
             }),
@@ -99,23 +103,26 @@ impl PlayKit {
             .collect();
         if let Some(unknown) = words
             .iter()
-            .find(|w| !["hold", "release", "pass", "fail", "reset"].contains(w))
+            .find(|w| !["hold", "hold-pictures", "release", "pass", "fail", "reset"].contains(w))
         {
             let _ = unknown;
-            return Err("a script is hold, release, pass, fail or reset".to_owned());
+            return Err("a script is hold, hold-pictures, release, pass, fail or reset".to_owned());
         }
         let mut script = lock(&self.script);
         for word in words {
             match word {
                 "hold" => script.hold = true,
+                "hold-pictures" => script.hold_pictures = true,
                 "release" => {
                     script.hold = false;
+                    script.hold_pictures = false;
                     script.released += 1;
                 }
                 "pass" => script.answer = Answer::Pass,
                 "fail" => script.answer = Answer::Fail,
                 _ => {
                     script.hold = false;
+                    script.hold_pictures = false;
                     script.released += 1;
                     script.answer = Answer::Pass;
                 }
@@ -156,6 +163,22 @@ impl PlayKit {
             return Err(Fault::new(FaultKind::Cancelled, "the run was cancelled").unresolved());
         }
         Ok(script.answer)
+    }
+
+    /// Holds a picture the page asked for while the script says `hold-pictures`: until
+    /// released, or [`HOLD_LIMIT`] has passed. What a host that serves pictures calls
+    /// first, so that a test can hold the page's connections open.
+    pub fn picture_asked(&self) {
+        let limit = Instant::now() + HOLD_LIMIT;
+        let mut script = lock(&self.script);
+        let arrived = script.released;
+        while script.hold_pictures && script.released == arrived && Instant::now() < limit {
+            script = self
+                .changed
+                .wait_timeout(script, Duration::from_millis(20))
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
     }
 
     /// The kind that makes this kit's backends.
