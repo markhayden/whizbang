@@ -574,11 +574,12 @@ ledger are made fit to be held by one process for days, which is what the carry-
    writers while it runs. Listed in `docs/guides/README.md` under "Written".
 
 - [x] Done when: the seventeen negative tests of "The playground API" pass;
-  `play::hello_answers_the_version_and_the_store_behind_the_guard`,
+  `play::hello_answers_the_version_and_the_store_behind_the_guard` (one launch, which shows
+  `play.json` owner-only and gone, and an interrupt quitting as the page does, in place of
+  the two cases `play_json_is_owner_only_and_gone_after_a_quit` and
+  `an_interrupt_signal_quits_as_the_page_does`, to keep the fast tier's time),
   `play::a_second_play_on_a_held_store_opens_the_running_hosts_address`,
-  `play::play_json_is_owner_only_and_gone_after_a_quit`,
   `play::a_quit_cancels_every_run_waits_and_releases_the_store`,
-  `play::an_interrupt_signal_quits_as_the_page_does`,
   `play::a_run_that_outlives_the_grace_is_counted_and_ended_as_interrupted_by_the_next_writer`,
   `play::a_run_started_by_the_host_is_found_by_its_id_after_its_caller_is_gone`,
   `store::a_writer_whose_lock_file_was_replaced_refuses_to_publish`,
@@ -715,8 +716,11 @@ both runners.
    Models, the allowance), the status bar, the routes (by the address's hash:
    `#/`, `#/k/<kit>/<task>`, `#/run/<id>`, `#/history`, `#/models`), the client of the API
    (`ui/src/api.ts`: the token, the poll, at most two uploads at once with the rest queued,
+   and a `request_id` the page makes for every start, which the host requires (H1),
    a refusal shown as a sentence), the token's reading
-   and removal from the address, the keyboard (⌘K, ⌘↵ for Run, ⌘S for Save, ⌘1 to ⌘9 for
+   and removal from the address (the page acts on nothing in its address but `#k=` and
+   the route after `#/`, since the host lets a top-level navigation from another site
+   through to the page, H1), the keyboard (⌘K, ⌘↵ for Run, ⌘S for Save, ⌘1 to ⌘9 for
    kits in the switcher's order, ⌘0 for Home), and an empty state for each screen.
 5. **The fixture host**, `crates/whizbang/examples/play_fixture.rs`: the host of H1 with the
    binary's registry and wiring and, in place of models, the test kit's fake segmenter, a
@@ -785,7 +789,8 @@ the run may cost, runs it, watches it, stops it, closes the tab and comes back t
    change to `ui/`: `SPEC.md` section 1's rule for a door.
 3. **Pictures and drawn locations in.** An artifact must be in the store before a call can
    name it (preparation resolves its inputs there), so neither comes in through an action.
-   `POST /api/pictures` takes the bytes, held to 64 MiB and decoded inside `DecodeLimits`,
+   `POST /api/pictures` takes the bytes, held to 64 MiB and decoded inside `DecodeLimits`
+   by the route's handler (the guard only screens the size the header states, H1),
    and commits them as `whizbang store import` does (`import.rs`), through the host's own
    writer: `import::commit` is changed to take an open writer as well as a folder. In the same
    publication, so both are there or neither is, the host writes a small entry beside the

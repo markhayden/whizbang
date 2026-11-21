@@ -51,6 +51,13 @@ fails answers and closes:
 | A picture decodes inside the core's `DecodeLimits` | 413, naming the limit |
 | A body arrives at no less than 1 MiB a second after its first 5 seconds; an answer is taken within 10 seconds | closed |
 
+One request from another site is let through the `Sec-Fetch-Site` check: the browser
+going to a static page as a top-level document (a `GET` outside `/api/`, with
+`Sec-Fetch-Mode: navigate` and `Sec-Fetch-Dest: document`), which is how Chrome arrives from
+the opener page, a file it calls another site. It loads only the binary's public files, and
+the page acts on nothing in its address but the token after `#k=`. Nothing under `/api/` is
+taken from another site.
+
 A refusal names the check and nothing the request held. Static files (the interface) are
 served to any request that passes the Host check: they are the binary's own public code, and
 everything of the person's store is under `/api/`. No response carries a header that allows
@@ -97,7 +104,12 @@ conflict) before anything else is looked at; then the start is marked as needing
 preparation (`Request::needing_preparation`) and sent with the preparation the page's handle
 names, when the host still holds it (at most 64, each for an hour). A quit that comes while a
 start is being admitted trips its cancellation too, and a run that admission then makes is
-cancelled and waited for as the others are.
+cancelled and waited for as the others are. Two limits of the repeat's look-up, accepted: the host remembers the ids
+of the runs it started (the newest 4,096, by the action and a digest of the arguments as the
+page sent them); an id of an earlier launch is answered by the executor only once a place is
+free, so while every place is taken it is answered 429 like any start. And the host compares
+the arguments as sent, not as filled in, so a retry that writes out a default the first
+request left out is answered as a conflict.
 
 **A run's stated time.** Each run the host starts has a stated time, one hour unless
 `--run-limit-s` says otherwise, at which the keeper trips its cancellation and hands it to the
@@ -117,7 +129,9 @@ in the terminal, and the end of standard input under `--stdin-quit`. The host fi
 taking requests (503 to any that arrive) and starts the grace of ten seconds; then it trips
 every held cancellation, which never waits, and queues each run for the canceller. The keeper,
 which holds the grace's time, only reads each run's status, which answers during a final
-publication. The host waits for every run to end within the grace, then stops the pack's
+publication. The host waits within the grace for every run to end, and for every thread the executor
+started (the runs those runs called among them) to let go of the store
+(`Executor::on_threads`), then stops the pack's
 worker, removes `play.json`, drops its store, which lets the writer's lock go, and exits 0. A
 run that has not ended by then is left to be ended as interrupted by the next writer, and the
 exit says how many. A second signal, or a second quit, during the grace ends the grace at
