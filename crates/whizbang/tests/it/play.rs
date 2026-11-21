@@ -969,6 +969,16 @@ impl Kitted {
         }
         let mut registry = wiring::registry_over(&over, false).unwrap();
         registry.register(shouting()).unwrap();
+        // Says one message more than a run keeps.
+        registry
+            .register(scripted("chatty", |context| {
+                let most = whizbang_core::contract::MESSAGES_KEPT_LIMIT;
+                for at in 0..most + 3 {
+                    context.events().progress(&format!("message {at}"));
+                }
+                Ok(Produced::nothing())
+            }))
+            .unwrap();
         registry
             .register(scripted("waits", |context| {
                 context.events().progress("waiting for a stop");
@@ -1407,4 +1417,289 @@ fn hello_lists_the_kits_and_says_why_beside_an_empty_list_of_backends() {
         (loop_["title"].clone(), loop_["uses"].clone()),
         (json!("Remove, checked"), json!("squint"))
     );
+}
+
+/// The raw request of the page, with one header more.
+fn with_header(kitted: &Kitted, path: &str, header: &str) -> Answer {
+    let request = format!(
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {token}\r\n{header}\r\n\r\n",
+        port = kitted.address.port(),
+        token = kitted.token.hex(),
+    );
+    send(kitted.address, request.as_bytes())
+}
+
+#[test]
+fn a_request_with_the_fixture_script_header_is_refused_400_by_the_real_host() {
+    let kitted = Kitted::new("play-w1-script");
+    let before = kitted.generation().number();
+    for path in ["/api/hello", "/api/pictures", "/"] {
+        let refused = with_header(&kitted, path, "x-fixture-script: hold");
+        assert_eq!(refused.status, 400, "{path}: {}", refused.text());
+    }
+    // Nothing changed: the store, and the kit's script, which the real door never sets.
+    assert_eq!(kitted.generation().number(), before);
+    let prepared = kitted.prepare("shout", &words("free"));
+    let started = kitted.begin("shout", &words("free"), &prepared["handle"], &fresh_id());
+    let ended = kitted.until_ended(started.json()["run"].as_str().unwrap());
+    assert_eq!(ended["outcome"], "completed");
+}
+
+/// Polls an ended run from this place.
+fn poll_from(kitted: &Kitted, run: &str, after: u64) -> Json {
+    kitted
+        .api("GET", &format!("/api/runs/{run}?after={after}"), None)
+        .json()
+}
+
+#[test]
+fn an_ended_run_polled_from_a_place_is_answered_from_its_journal_from_there() {
+    let kitted = Kitted::new("play-w1-after");
+    let prepared = kitted.prepare("chatty", &json!({}));
+    let started = kitted.begin("chatty", &json!({}), &prepared["handle"], &fresh_id());
+    let run = started.json()["run"].as_str().unwrap().to_owned();
+    let whole = kitted.until_ended(&run);
+    let next = whole["next"].as_u64().unwrap();
+    let later = poll_from(&kitted, &run, 10);
+    let seqs: Vec<u64> = (later["events"].as_array().unwrap().iter())
+        .filter_map(|event| event["seq"].as_u64())
+        .collect();
+    assert_eq!(seqs.first(), Some(&10), "{}", later["next"]);
+    assert!(seqs.iter().all(|seq| *seq >= 10));
+    assert_eq!(later["next"], next);
+    let past = poll_from(&kitted, &run, next);
+    assert_eq!(past["events"], json!([]));
+    assert_eq!(
+        (past["next"].clone(), past["skipped"].clone()),
+        (json!(next), json!(0))
+    );
+}
+
+#[test]
+fn an_ended_run_past_its_kept_messages_is_polled_with_the_count_skipped() {
+    let kitted = Kitted::new("play-w1-skipped");
+    let prepared = kitted.prepare("chatty", &json!({}));
+    let started = kitted.begin("chatty", &json!({}), &prepared["handle"], &fresh_id());
+    let run = started.json()["run"].as_str().unwrap().to_owned();
+    kitted.until_ended(&run);
+    let kept = whizbang_core::contract::MESSAGES_KEPT_LIMIT as u64;
+    // From near the end of what was kept: the last kept events, then the places of
+    // those not kept counted as skipped.
+    let tail = poll_from(&kitted, &run, kept - 2);
+    let skipped = tail["skipped"].as_u64().unwrap();
+    assert!(skipped >= 3, "{}", tail["skipped"]);
+    let next = tail["next"].as_u64().unwrap();
+    let shown = tail["events"].as_array().unwrap().len() as u64;
+    assert_eq!(next - (kept - 2), shown + skipped, "{tail}");
+}
+
+#[test]
+fn a_repeat_after_a_restart_is_answered_while_every_place_is_taken() {
+    let kitted = Kitted::new("play-w1-full");
+    let prepared = kitted.prepare("shout", &words("first"));
+    let first = kitted.begin("shout", &words("first"), &prepared["handle"], "page-first");
+    kitted.until_ended(first.json()["run"].as_str().unwrap());
+    let kitted = kitted.restarted();
+    let mut runs = Vec::new();
+    for _ in 0..4 {
+        let handle = kitted.prepare("waits", &json!({}))["handle"].clone();
+        let started = kitted.begin("waits", &json!({}), &handle, &fresh_id());
+        assert_eq!(started.status, 201, "{}", started.text());
+        runs.push(started.json()["run"].as_str().unwrap().to_owned());
+    }
+    let repeat = kitted.begin("shout", &words("first"), &Json::Null, "page-first");
+    assert_eq!(repeat.status, 200, "{}", repeat.text());
+    assert_eq!(repeat.json()["run"], first.json()["run"]);
+    let conflict = kitted.begin("shout", &words("other"), &Json::Null, "page-first");
+    assert_eq!(conflict.status, 409, "{}", conflict.text());
+    for run in &runs {
+        kitted.api("POST", &format!("/api/runs/{run}/cancel"), None);
+    }
+}
+
+#[test]
+fn a_paid_run_says_what_the_ledger_settled_of_what_it_reserved() {
+    let kitted = Kitted::new("play-w1-spend");
+    let arguments = json!({"image": kitted.picture(30), "prompt": "the hose"});
+    let prepared = kitted.prepare("remove_prompt", &arguments);
+    // The config's name of the backend that answers: a lone table is named `default`.
+    assert_eq!(prepared["needs"][1]["backend"], "default", "{prepared}");
+    let bound = prepared["bound"].as_f64().unwrap();
+    let started = kitted.begin(
+        "remove_prompt",
+        &arguments,
+        &prepared["handle"],
+        &fresh_id(),
+    );
+    let ended = kitted.until_ended(started.json()["run"].as_str().unwrap());
+    assert_eq!(ended["outcome"], "completed", "{ended}");
+    // One fill of four cents, settled, under a reservation of the preparation's bound.
+    assert!(
+        (ended["spent"].as_f64().unwrap() - 0.04).abs() < 1e-9,
+        "{ended}"
+    );
+    assert!(
+        (ended["reserved"].as_f64().unwrap() - bound).abs() < 1e-9,
+        "{ended}"
+    );
+}
+
+#[test]
+fn the_artifact_route_shows_each_type_it_can_and_refuses_the_rest() {
+    let kitted = Kitted::new("play-w1-artifacts");
+    let picture = kitted.picture(31);
+    for id in [
+        "not-an-id",
+        "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    ] {
+        assert_eq!(
+            kitted
+                .api("GET", &format!("/api/artifacts/{id}"), None)
+                .status,
+            404,
+            "{id}"
+        );
+    }
+    // A mask, made by a task that needs no model, shown as a grey picture.
+    let arguments = json!({"image": picture, "box": "4 4 20 20"});
+    let handle = kitted.prepare("mask_rect", &arguments)["handle"].clone();
+    let started = kitted.begin("mask_rect", &arguments, &handle, &fresh_id());
+    let ended = kitted.until_ended(started.json()["run"].as_str().unwrap());
+    let mask = (ended["outputs"].as_array().unwrap().iter())
+        .find(|output| output["type"] == "mask")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let shown = kitted.api("GET", &format!("/api/artifacts/{mask}"), None);
+    assert_eq!(shown.status, 200);
+    // The PNG's colour type, in its header: 0, grey.
+    assert_eq!(shown.body[25], 0, "a grey picture");
+    // A series, which has no picture to show.
+    let inputs = json!({"mask": mask, "image": picture});
+    let handle = kitted.prepare("inspect", &inputs)["handle"].clone();
+    let started = kitted.begin("inspect", &inputs, &handle, &fresh_id());
+    let ended = kitted.until_ended(started.json()["run"].as_str().unwrap());
+    let series = (ended["outputs"].as_array().unwrap().iter())
+        .find(|output| output["type"] == "series")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(
+        kitted
+            .api("GET", &format!("/api/artifacts/{series}"), None)
+            .status,
+        415
+    );
+    // Thumbnails: an edge from 8 to 2048, and the picture no larger than it.
+    for edge in [7, 2049] {
+        let path = format!("/api/artifacts/{picture}/thumb?edge={edge}");
+        assert_eq!(kitted.api("GET", &path, None).status, 400, "{edge}");
+    }
+    let thumb = kitted.api(
+        "GET",
+        &format!("/api/artifacts/{picture}/thumb?edge=16"),
+        None,
+    );
+    assert_eq!(thumb.status, 200);
+    let size = image::load_from_memory(&thumb.body).unwrap();
+    assert!(size.width() <= 16 && size.height() <= 16);
+    // Asked again: the same bytes, kept.
+    let again = kitted.api(
+        "GET",
+        &format!("/api/artifacts/{picture}/thumb?edge=16"),
+        None,
+    );
+    assert_eq!(again.body, thumb.body);
+}
+
+#[test]
+fn the_pictures_are_paged_newest_first_and_a_picture_sent_again_keeps_its_newest_name() {
+    let kitted = Kitted::new("play-w1-paging");
+    let ids: Vec<String> = (40..43).map(|shade| kitted.picture(shade)).collect();
+    let first = kitted.api("GET", "/api/pictures?limit=2", None).json();
+    let listed: Vec<&str> = (first["pictures"].as_array().unwrap().iter())
+        .filter_map(|p| p["id"].as_str())
+        .collect();
+    assert_eq!(listed, [ids[2].as_str(), ids[1].as_str()]);
+    let rest = kitted
+        .api(
+            "GET",
+            &format!("/api/pictures?limit=2&after={}", ids[1]),
+            None,
+        )
+        .json();
+    assert_eq!(rest["pictures"].as_array().unwrap().len(), 1);
+    assert_eq!(rest["pictures"][0]["id"], ids[0].as_str());
+    let unknown = format!("/api/pictures?after=sha256:{}", "1".repeat(64));
+    assert_eq!(kitted.api("GET", &unknown, None).status, 400);
+    // The oldest sent again under another name: one entry, the newest name, first.
+    let again = kitted.upload(&png(64, 48, 40), "renamed.png");
+    assert_eq!(again.json()["id"], ids[0].as_str());
+    let all = kitted.api("GET", "/api/pictures", None).json();
+    assert_eq!(all["pictures"].as_array().unwrap().len(), 3);
+    assert_eq!(all["pictures"][0]["name"], "renamed.png");
+}
+
+#[test]
+fn a_line_is_drawn_and_a_path_or_polygon_past_its_points_is_refused() {
+    let kitted = Kitted::new("play-w1-lines");
+    let picture = kitted.picture(50);
+    let line = json!({"picture": picture,
+                      "shape": {"kind": "line", "points": [[2, 2], [40, 30]], "width": 4}});
+    let made = kitted.api("POST", "/api/locations", Some(&line));
+    assert_eq!(made.status, 201, "{}", made.text());
+    let id = made.json()["id"].as_str().unwrap().to_owned();
+    let shown = kitted
+        .api("GET", &format!("/api/artifacts/{id}"), None)
+        .json();
+    assert_eq!(shown["kind"], "line");
+    let long: Vec<Json> = (0..513).map(|at| json!([at % 60, at % 40])).collect();
+    for kind in ["stroke", "line"] {
+        let shape = json!({"picture": picture,
+                           "shape": {"kind": kind, "points": long, "radius": 3, "width": 3}});
+        let mut shape = shape;
+        if kind == "stroke" {
+            shape["shape"].as_object_mut().unwrap().remove("width");
+        } else {
+            shape["shape"].as_object_mut().unwrap().remove("radius");
+        }
+        assert_eq!(
+            kitted.api("POST", "/api/locations", Some(&shape)).status,
+            400,
+            "{kind}"
+        );
+    }
+    let most: Vec<Json> = (0..512).map(|at| json!([at % 60, at % 40])).collect();
+    let stroke =
+        json!({"picture": picture, "shape": {"kind": "stroke", "points": most, "radius": 3}});
+    assert_eq!(
+        kitted.api("POST", "/api/locations", Some(&stroke)).status,
+        201
+    );
+}
+
+#[test]
+fn two_pictures_sent_at_once_are_both_kept() {
+    let kitted = Arc::new(Kitted::new("play-w1-two"));
+    let sent: Vec<_> = (0..2u8)
+        .map(|at| {
+            let kitted = kitted.clone();
+            whizbang_testkit::threads::spawn(move || {
+                kitted.upload(&png(64, 48, 60 + at), "both.png")
+            })
+        })
+        .collect();
+    let ids: Vec<String> = sent
+        .into_iter()
+        .map(|handle| {
+            let answer = handle.join().unwrap();
+            assert_eq!(answer.status, 201, "{}", answer.text());
+            answer.json()["id"].as_str().unwrap().to_owned()
+        })
+        .collect();
+    assert_ne!(ids[0], ids[1]);
+    let listed = kitted.api("GET", "/api/pictures", None).json();
+    assert_eq!(listed["pictures"].as_array().unwrap().len(), 2);
 }

@@ -41,7 +41,7 @@ use whizbang::wiring::{self, Make, Over};
 use whizbang_core::artifact::ArtifactType;
 use whizbang_core::contract::{
     Action, ActionDescriptor, Call, Context, Failure, InputPort, Kind, PreparedCall, Produced,
-    RunId,
+    RequestId, RunId,
 };
 use whizbang_core::description::Kit;
 use whizbang_core::spend::Amount;
@@ -147,8 +147,14 @@ impl Play for Fixture {
     fn facts(&self, run: &RunId, ended: bool) -> Map<String, Json> {
         self.door.facts(run, ended)
     }
-    fn journal(&self, run: &RunId) -> Option<Vec<Json>> {
+    fn journal(&self, run: &RunId) -> Option<(Vec<Json>, u64)> {
         self.door.journal(run)
+    }
+    fn default_backend(&self, capability: &str) -> Option<String> {
+        self.door.default_backend(capability)
+    }
+    fn admitted(&self, id: &RequestId) -> bool {
+        self.door.admitted(id)
     }
     fn script(&self, words: &str) -> Result<(), String> {
         self.kit.set(words)
