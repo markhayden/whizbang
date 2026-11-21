@@ -291,6 +291,13 @@ pub(crate) trait Recorder: Send + Sync {
     /// stored. What comes back is the name it is kept under among the run's names; or
     /// none when it was not kept.
     fn exchange(&self, place: usize, written: &[u8], room: &dyn Fn(u64) -> bool) -> Option<String>;
+
+    /// A request of the run is over: what is said of it as it goes (plan m5, task K1,
+    /// item 3). It is told under the tally's lock, before the request is accounted
+    /// for, and takes no lock but its own.
+    fn answered(&self, event: &crate::contract::Event) {
+        let _ = event;
+    }
 }
 
 /// The most bytes of exchanges with a judge that one run stores, as they are stored
@@ -632,6 +639,23 @@ impl Drop for Sent {
             .map_or(0, |recorder| recorder.now_ms());
         let asked = &mut counts.asked[self.place];
         asked.end_ms = now.max(asked.start_ms);
+        let event = crate::contract::Event::Answered {
+            capability: asked.capability.name().to_owned(),
+            backend: asked.model.backend().to_owned(),
+            model: asked.model.model().to_owned(),
+            ms: asked.end_ms - asked.start_ms,
+            ended: match asked.ended {
+                HowEnded::Answered => "answered".to_owned(),
+                HowEnded::Fault(kind) => kind.name().to_owned(),
+                HowEnded::Unwound => "unwound".to_owned(),
+            },
+        };
+        // Said before the request is accounted for, so that whoever waits for every
+        // request of the run, and then ends it, finds the event in its journal. The
+        // journal's lock is taken under the tally's and takes no other.
+        if let Some(recorder) = &counts.recorder {
+            recorder.answered(&event);
+        }
         counts.accounted += 1;
         self.tally.changed.notify_all();
     }

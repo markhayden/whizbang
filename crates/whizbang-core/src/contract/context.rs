@@ -153,6 +153,13 @@ impl Cancellation {
 pub trait Events: Send + Sync {
     /// The action got this far.
     fn progress(&self, message: &str);
+
+    /// A typed event (plan m5, task K1, item 3): a step started or ended, an attempt
+    /// started, a request answered. A run keeps it in its journal beside its progress
+    /// messages, in one order with them. A sink that keeps no such thing drops it.
+    fn event(&self, event: &super::Event) {
+        let _ = event;
+    }
 }
 
 /// Where an action writes diagnostic evidence: an intermediate image, an exchange that

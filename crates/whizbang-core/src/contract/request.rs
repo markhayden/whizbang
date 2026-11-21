@@ -111,6 +111,8 @@ pub struct Request {
     cancellation: Option<Cancellation>,
     deadline: Option<Instant>,
     cap: Option<Estimate>,
+    /// Whether the call runs only under a preparation it came with.
+    needing: bool,
 }
 
 impl Request {
@@ -123,7 +125,25 @@ impl Request {
             cancellation: None,
             deadline: None,
             cap: None,
+            needing: false,
         }
+    }
+
+    /// The same request, marked as one that runs only under the preparation it came
+    /// with (plan m5, task K1, item 5): a door that shows a call's preparation before
+    /// it runs sets it on every call it sends. A repeated or conflicting id is answered
+    /// first, as for any request; then a marked request that came with no preparation
+    /// ([`Request::expecting`]) is refused as stale, before anything is admitted,
+    /// reserved or sent, as one whose preparation no longer holds is. It is no part of
+    /// the request's fingerprint.
+    pub fn needing_preparation(mut self) -> Request {
+        self.needing = true;
+        self
+    }
+
+    /// Whether the request runs only under the preparation it came with.
+    pub fn needs_preparation(&self) -> bool {
+        self.needing
     }
 
     /// The same request, with a cap of its own on what its call may cost: the most
@@ -754,11 +774,48 @@ pub struct Watched {
     run: RunId,
     state: RunState,
     events: Vec<JournalLine>,
+    skipped: u64,
+    next: u64,
+    /// The place its events were asked from: none before it is held.
+    from: u64,
 }
 
 impl Watched {
-    pub(super) fn new(run: RunId, state: RunState, events: Vec<JournalLine>) -> Watched {
-        Watched { run, state, events }
+    pub(super) fn new(run: RunId, state: RunState, heard: super::journal::Heard) -> Watched {
+        Watched {
+            run,
+            state,
+            events: heard.events,
+            skipped: heard.skipped,
+            next: heard.next,
+            from: heard.from,
+        }
+    }
+
+    /// The same answer, with only the events from the place `seen` on: what a caller
+    /// that has seen the first `seen` places of the run's events has not, with how
+    /// many of those places were not kept. It only narrows: an answer cut at a later
+    /// place holds nothing before it, and is answered from that place.
+    pub fn after(mut self, seen: u64) -> Watched {
+        let seen = seen.max(self.from);
+        let cut = self.events.partition_point(|line| line.seq() < seen);
+        self.events.drain(..cut);
+        self.skipped = self.next.saturating_sub(seen) - self.events.len() as u64;
+        self.from = seen;
+        self
+    }
+
+    /// Of the places asked about, how many hold an event the run counted and did not
+    /// keep (plan m5, task K1, item 4): the events of a run that executes here, from
+    /// the place asked for on ([`super::Executor::status_after`]); none of any other.
+    pub fn skipped(&self) -> u64 {
+        self.skipped
+    }
+
+    /// The place the run's next event will have, while it executes here: how many it
+    /// has reported so far, kept or not. Nothing of any other.
+    pub fn next(&self) -> u64 {
+        self.next
     }
 
     pub fn run(&self) -> &RunId {

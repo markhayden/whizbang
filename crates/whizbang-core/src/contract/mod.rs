@@ -78,7 +78,11 @@ pub use findings::{
     FindingCount, Findings, Form, FoundAt, LeftOut, is_obligation_id,
 };
 pub use interrupted::Interrupted;
-pub use journal::{Clock, EXCHANGE_PREFIX, JournalLine, SystemClock, journal_bytes, read_journal};
+pub use journal::{
+    Clock, EVENT_MAX_BYTES, EVENTS_KEPT_LIMIT, EXCHANGE_PREFIX, Event, Journal, JournalLine,
+    MESSAGES_KEPT_LIMIT, MESSAGES_KEPT_MAX_BYTES, NotKept, SystemClock, journal_bytes,
+    read_journal,
+};
 pub use ledger::{
     Closing, Declined, DispatchRefused, LEDGER_NAME_LIMIT, Ledger, MadeName, RESERVATION_RECORD,
     RESERVATIONS_PREFIX, Reread, Reservation, SPEND_PREFIX, Settled, Step, reservations,
@@ -93,8 +97,8 @@ pub use part::{
 pub use plan::{Able, Attempts, PLAN_ATTEMPTS_MAX, PLAN_WHY_LIMIT, Plan, Planning, Sends};
 pub use prepare::{
     ARGUMENTS_TEXT_MAX_BYTES, Backends, CallError, Estimate, INPUTS_LIMIT, InputFault, Missing,
-    ModelIdentity, Need, NoBackends, NotJudged, PreparedCall, Readiness, Refusal, ResolvedInput,
-    Stale, StoreFailure, Unavailable,
+    MissingKind, ModelIdentity, Need, NoBackends, NotJudged, PreparedCall, Readiness, Refusal,
+    ResolvedInput, Stale, StoreFailure, Unavailable,
 };
 pub use record::{
     DIAGNOSTIC_NAME_LIMIT, DIAGNOSTICS_LIMIT, RECIPE_ARGUMENTS_LIMIT, RECIPE_STEPS_LIMIT,

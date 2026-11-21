@@ -2015,3 +2015,89 @@ fn an_unchecked_pass_is_told_as_it_starts_and_ends_with_its_reason() {
         ]
     );
 }
+
+#[test]
+fn the_loop_says_each_attempt_started_and_what_changed_while_it_runs() {
+    // Typed, through its run's own sink, as it goes (plan m5, task K1, item 3): each
+    // attempt as it starts, with what its retry changed, and each of its stretches as a
+    // step of that attempt. Another caller reads them while the loop is at its check.
+    use whizbang_core::contract::{Event, Executor, Request, RunState};
+    let world = Looped::new("loop-events", &Setup::answering(vec![remains(), passes()]));
+    let engine = Arc::new(world.engine());
+    let Ok(whizbang_core::contract::Answer::Started(run)) =
+        engine.start(&Request::new(world.call()))
+    else {
+        panic!("the loop was not started");
+    };
+    let seen: Arc<Mutex<Option<Vec<Event>>>> = Arc::default();
+    {
+        let (engine, run, seen) = (engine.clone(), run.clone(), seen.clone());
+        world.kit.after_judge(move || {
+            let watched = engine.status(&run).unwrap();
+            assert_eq!(watched.state(), &RunState::NotEnded { here: true });
+            let typed = watched.events().iter().filter_map(|l| l.event().cloned());
+            *seen.lock().unwrap() = Some(typed.collect());
+        });
+    }
+    let ended = engine.wait(&run).unwrap();
+    assert!(matches!(ended.state(), RunState::Ended(_)), "{ended:?}");
+    drop(engine);
+    let started = |step: &str, action: &str, attempt: u32| Event::StepStarted {
+        step: step.to_owned(),
+        action: action.to_owned(),
+        attempt: Some(attempt),
+    };
+    let while_checking = seen.lock().unwrap().take().expect("the judge was asked");
+    let short = |events: &[Event]| -> Vec<String> {
+        (events.iter())
+            .map(|event| match event {
+                Event::AttemptStarted { number, changed } => {
+                    format!("attempt {number} {changed:?}")
+                }
+                Event::StepStarted { step, attempt, .. } => {
+                    format!("started {step} {}", attempt.unwrap_or(0))
+                }
+                Event::StepEnded { step, outcome, .. } => format!("ended {step} {outcome}"),
+                Event::Answered { .. } => "answered".to_owned(),
+            })
+            .collect()
+    };
+    assert_eq!(
+        short(&while_checking),
+        [
+            "attempt 1 None",
+            "started find 1",
+            "ended find completed",
+            "started shape 1",
+            "ended shape completed",
+            "started fill 1",
+            "ended fill completed",
+            "started check 1",
+        ]
+    );
+    assert_eq!(while_checking[7], started("check", CHECK, 1));
+    // The whole run, from its journal: the second attempt says what its retry changed.
+    let reader = world.reader();
+    let generation = reader.snapshot().unwrap();
+    let entry = (generation.run(run.as_str()).unwrap())
+        .get(whizbang_core::contract::record::JOURNAL_NAME)
+        .unwrap();
+    let journal = whizbang_core::contract::Journal::read(&reader.read(entry).unwrap()).unwrap();
+    let typed: Vec<Event> = journal
+        .lines()
+        .iter()
+        .filter_map(|l| l.event().cloned())
+        .collect();
+    assert!(typed.contains(&Event::AttemptStarted {
+        number: 2,
+        changed: Some("a wider mask, grown by 8 px".to_owned()),
+    }));
+    assert!(typed.contains(&started("shape", REMOVE, 2)));
+    // The messages a door tells are the ones of before.
+    let told: Vec<&str> = (journal.lines().iter())
+        .filter(|line| line.event().is_none())
+        .map(|line| line.message())
+        .filter(|message| message.starts_with("remove_checked: attempt "))
+        .collect();
+    assert_eq!(told[0], "remove_checked: attempt 1 of 3 starts");
+}
