@@ -1868,10 +1868,12 @@ fn a_retryable_fault_is_retried_after_its_wait_and_a_final_one_ends_the_loop() {
         kept["retries"],
         json!([{"kind": "unavailable", "wait_ms": 5}, {"kind": "timed_out", "wait_ms": 7}])
     );
-    // A fault that is final ends the loop at once.
-    let (finished, _, judge) = judged(&world, &call, &with_faults(vec![fault("rejected", None)]));
+    // A fault that is final ends the loop at once, and the run keeps that cause.
+    let (finished, left, judge) =
+        judged(&world, &call, &with_faults(vec![fault("rejected", None)]));
     assert!(matches!(finished.outcome(), Outcome::Error { kind, .. } if kind == "judge_fault"));
     assert_eq!(judge.requests(), 1);
+    assert_eq!(rejections(&left)["cause"], "fault");
     // And so does one more than the run may retry.
     let four = (0..4).map(|_| fault("unavailable", Some(1))).collect();
     let (finished, _, judge) = judged(&world, &call, &with_faults(four));
@@ -2003,6 +2005,21 @@ fn a_cut_off_run_is_not_a_submission_failure() {
     let (outcome, kept) = rejected(&world, &[(json!([{"text": "No."}]), "refusal")]);
     assert_eq!(ended_as(&outcome), "judge_refused", "{outcome:?}");
     assert_eq!(kept["cause"], "refused");
+    // A turn cut off at its backend's output ceiling, which a retry would not raise.
+    let script = turns(&[(json!([{"text": "I will"}]), "max_tokens")]);
+    let turns = whizbang_core::capability::written::read_script(script.as_bytes()).unwrap();
+    let turns = (turns.into_iter())
+        .map(|turn| turn.map(|turn| turn.under_output_ceiling(1024)))
+        .collect();
+    let judge = Arc::new(FakeJudge::scripted(turns));
+    let executor = world.engine(judge, Secrets::none());
+    let job = Job::shorthand("source-fidelity", true, 0, None);
+    let call = judged_call(&job, &[world.other.id(), world.photo.id()]);
+    let finished = executor.submit(&call).unwrap();
+    drop(executor);
+    assert_eq!(ended_as(finished.outcome()), "judge_output_ceiling");
+    let left = left(&world.root(), world.fs.clone(), finished.run());
+    assert_eq!(rejections(&left)["cause"], "ceiling");
 }
 
 #[test]

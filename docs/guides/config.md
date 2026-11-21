@@ -432,8 +432,9 @@ ends, each rejection of a submission by its class (`not_a_list`, `unknown_item`,
 the words the judge was sent are unchanged, and nothing it wrote is kept there. `ceiling` is
 a turn cut off at its backend's output ceiling; `cut_off` a turn cut off again after its
 limit was raised. `runs stats --rejections` counts both over a filter. A run answered from
-the decision cache sent nothing and keeps none. The diagnostic's contract is
-`rejections/2`.
+the decision cache sent nothing and keeps none. The second look's own refusals are not
+tallied: a second look that settles nothing leaves the first verdict, and `judged.json`
+keeps its outcome and why. The diagnostic's contract is `rejections/2`.
 
 **Submission v2** (`--submission v2`, experimental; ADR 0042). The judge is given its items
 as an object with one key for each checklist item (the id with every character outside
