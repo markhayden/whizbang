@@ -1495,3 +1495,190 @@ fn an_executor_that_only_reads_its_store_runs_nothing() {
     assert!(refusal.to_string().contains("only reads its store"));
     assert_eq!(tree(&world.root), before);
 }
+
+#[test]
+fn a_missing_capability_says_its_kind_beside_its_words() {
+    // Why a capability is not ready reaches a caller as a kind beside the sentence it
+    // always had, so a door tells the cases apart without reading the sentence (plan
+    // m5, task K1, item 1). The words are those of before.
+    use whizbang_core::capability::{InstalledRoster, Unready};
+    use whizbang_core::config::{Config, EnvFile, Kinds, Offers};
+    use whizbang_core::contract::MissingKind;
+    use whizbang_testkit::inventory::FakeInventory;
+    use whizbang_testkit::kinds::FakeKind;
+
+    let world = world();
+    let ask = Call::new("ask")
+        .argument("query", Value::text("a dog"))
+        .input("image", world.photo);
+    let missing = |executor: &Engine| {
+        let prepared = executor.prepare(&ask).unwrap();
+        let Readiness::NotReady(missing) = prepared.readiness() else {
+            panic!("ready: {prepared:?}");
+        };
+        assert_eq!(missing.len(), 1);
+        (missing[0].kind(), missing[0].why().to_owned())
+    };
+
+    // A backend whose key the env file does not set.
+    let config = "[backends.segment]\nkind = \"fake\"\nmodel = \"sam\"\n\
+                  url = \"https://a.example/v1\"\nkey_env = \"SEG_KEY\"\n\
+                  [backends.segment.settings]\nfeatures = \"phrase\"\n";
+    let env = EnvFile::parse(b"").unwrap();
+    let config = Config::parse(config.as_bytes(), &env.secrets()).unwrap();
+    let credentials = env.credentials(&config).unwrap();
+    let mut kinds = Kinds::new();
+    kinds.register(Arc::new(FakeKind::new("fake"))).unwrap();
+    let offers = Offers::of(&config, &credentials, &kinds).unwrap();
+    assert_eq!(
+        missing(&world.engine(offers)),
+        (
+            MissingKind::NoKey,
+            "the default segment backend is not ready: the env file does not set the \
+             variable its `key_env` names"
+                .to_owned()
+        )
+    );
+
+    // A local model, for each reason an inventory gives.
+    let inventory = Arc::new(FakeInventory::new());
+    let local = Declaration::new(ModelIdentity::new("fake", "sam", "declared"), &["phrase"]);
+    let roster = Roster::new()
+        .offer(Capability::Segment, "here", local.unwrap())
+        .unwrap()
+        .default_for(Capability::Segment, "here")
+        .unwrap();
+    let executor = world.engine(InstalledRoster::over(roster, inventory.clone()));
+    for (why, kind, word) in [
+        (
+            Unready::NotInstalled,
+            MissingKind::NotInstalled,
+            "not_installed",
+        ),
+        (Unready::OutOfDate, MissingKind::OutOfDate, "out_of_date"),
+        (Unready::Damaged, MissingKind::Damaged, "damaged"),
+        (
+            Unready::NotInCatalogue,
+            MissingKind::NotInCatalogue,
+            "not_in_catalogue",
+        ),
+        (
+            Unready::NotForThisPlatform,
+            MissingKind::NotForThisPlatform,
+            "not_for_this_platform",
+        ),
+        (Unready::NoAdapter, MissingKind::Other, "other"),
+    ] {
+        inventory.fail("sam", why);
+        let (said_kind, words) = missing(&executor);
+        assert_eq!(said_kind, kind);
+        assert_eq!(kind.word(), word);
+        assert_eq!(
+            words,
+            format!("the segment backend here is local, and its model is not ready: {why}")
+        );
+    }
+
+    // Any other reason is `other`, with its words.
+    assert_eq!(
+        missing(&world.engine(NoBackends)),
+        (
+            MissingKind::Other,
+            "no backend is configured for segment".to_owned()
+        )
+    );
+}
+
+#[test]
+fn each_need_hands_out_its_request_count_and_bound_and_they_sum_to_the_estimate() {
+    // The figures preparation multiplies into the estimate are handed out need by need
+    // (plan m5, task K1, item 2): the requests one call may send, the bound of one, and
+    // of all of them. A need nothing answers has no bound and adds nothing.
+    use whizbang_core::contract::Estimate;
+
+    struct Priced;
+    impl Backends for Priced {
+        fn resolve(
+            &self,
+            capability: Capability,
+            _: Option<&str>,
+            _: &[String],
+        ) -> Result<ModelIdentity, Unavailable> {
+            match capability {
+                Capability::Judge => Err(Unavailable::new("no judge here")),
+                other => Ok(ModelIdentity::new("fake", other.name(), "1")),
+            }
+        }
+        fn bound(&self, capability: Capability, _: &ModelIdentity) -> Estimate {
+            Estimate::of_micros(match capability {
+                Capability::Segment => 3,
+                _ => 500,
+            })
+        }
+    }
+    let world = world();
+    let mut registry = Registry::new();
+    let draft = ActionDescriptor::draft("dear", "1.0.0", Kind::Primitive, "Costs something.")
+        .needs(Requirement::new(Capability::Segment))
+        .needs(Requirement::new(Capability::Fill).requests(3));
+    registry
+        .register(Arc::new(Fake(draft.build().unwrap())))
+        .unwrap();
+    let judged = ActionDescriptor::draft("judged", "1.0.0", Kind::Primitive, "Asks a judge.")
+        .needs(Requirement::new(Capability::Segment))
+        .needs(Requirement::new(Capability::Judge).requests(2));
+    registry
+        .register(Arc::new(Fake(judged.build().unwrap())))
+        .unwrap();
+    let reader = Reader::open(&world.root, world.fs.clone()).unwrap();
+    let executor = Engine::new(
+        registry,
+        Arc::new(Priced),
+        Arc::new(reader),
+        Digest::of_bytes(b"config"),
+    );
+
+    let prepared = executor.prepare(&Call::new("dear")).unwrap();
+    let figures: Vec<_> = (prepared.needs().iter())
+        .map(|need| {
+            (
+                need.capability(),
+                need.requests(),
+                need.each(),
+                need.bound(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        figures,
+        [
+            (
+                Capability::Segment,
+                1,
+                Some(Estimate::of_micros(3)),
+                Some(Estimate::of_micros(3))
+            ),
+            (
+                Capability::Fill,
+                3,
+                Some(Estimate::of_micros(500)),
+                Some(Estimate::of_micros(1500))
+            ),
+        ]
+    );
+    let summed: u64 = (prepared.needs().iter())
+        .filter_map(|need| need.bound())
+        .map(|bound| bound.micros())
+        .sum();
+    assert_eq!(summed, prepared.estimate().micros());
+    assert_eq!(summed, 1503);
+
+    // A need nothing answers keeps its count and has no bound.
+    let prepared = executor.prepare(&Call::new("judged")).unwrap();
+    let judge = &prepared.needs()[1];
+    assert_eq!(
+        (judge.requests(), judge.each(), judge.bound()),
+        (2, None, None)
+    );
+    assert_eq!(prepared.estimate(), Estimate::of_micros(3));
+}

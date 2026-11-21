@@ -118,8 +118,10 @@ struct Running {
     tool: String,
     run: RunId,
     token: Option<Json>,
-    /// The next event to send, by its place among the run's events.
+    /// How many progress notifications were sent.
     next: u64,
+    /// The place of the next of the run's events to look at.
+    seen: u64,
     until: Instant,
     signal: Cancellation,
     /// When the server gave up on the run: at its stated time, or at the end of the
@@ -385,6 +387,7 @@ impl<W: Write> Serving<'_, W> {
             run,
             token,
             next: 0,
+            seen: 0,
             until,
             signal,
             gave_up: None,
@@ -410,9 +413,14 @@ impl<W: Write> Serving<'_, W> {
     /// Sends the events of a run from the place it got to: those `status` gave while
     /// it ran, or its journal once it ended.
     fn events(&mut self, running: &mut Running, events: &[JournalLine]) -> io::Result<()> {
-        // The first progress said the run started: an event's place is one on.
         for event in events {
-            if event.seq() + 1 >= running.next {
+            if event.seq() < running.seen {
+                continue;
+            }
+            running.seen = event.seq() + 1;
+            // A typed event is for whoever shows a run's steps (plan m5, task K1): a
+            // client is sent the progress messages it was always sent, and no more.
+            if event.event().is_none() {
                 self.progress(running, event.message())?;
             }
         }
@@ -424,7 +432,8 @@ impl<W: Write> Serving<'_, W> {
         let now = Instant::now();
         let mut left = Vec::new();
         for mut running in std::mem::take(&mut self.running) {
-            let state = match self.executor.status(&running.run) {
+            // Only the events after those already looked at are copied.
+            let state = match self.executor.status_after(&running.run, running.seen) {
                 Ok(watched) => {
                     self.events(&mut running, watched.events())?;
                     watched.state().clone()

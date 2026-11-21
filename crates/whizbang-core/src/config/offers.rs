@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use crate::capability::{InstalledRoster, Inventory, Resolved, Roster, RosterError, Unresolved};
 use crate::contract::{
-    Backends, Capability, Estimate, Made, ModelIdentity, Offered, Secrets, Unavailable,
+    Backends, Capability, Estimate, Made, MissingKind, ModelIdentity, Offered, Secrets, Unavailable,
 };
 
 use super::{CAPABILITIES, Config, Credentials, KindRefused, Kinds, Table};
@@ -368,7 +368,16 @@ impl Backends for Offers {
         features: &[String],
     ) -> Result<ModelIdentity, Unavailable> {
         if let Err(unanswered) = Offers::resolve(self, capability, choice, features) {
-            return Err(Unavailable::new(&unanswered.to_string()));
+            // A credential the env file does not set is a kind of its own (plan m5,
+            // task K1, item 1); every other reason is said in words alone.
+            let kind = match &unanswered {
+                Unanswered::NotReady {
+                    why: NotReady::Missing { .. },
+                    ..
+                } => MissingKind::NoKey,
+                _ => MissingKind::Other,
+            };
+            return Err(Unavailable::of(kind, &unanswered.to_string()));
         }
         match &self.installed {
             Some(installed) => installed.resolve(capability, choice, features),

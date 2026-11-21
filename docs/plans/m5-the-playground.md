@@ -620,7 +620,7 @@ W1 builds on them; none changes what a run of any other door does.
 3. **Typed events.** A run's journal line may carry a kind beside its message: a step
    started, a step ended (with its outcome and child run), an attempt started (with its
    number and what changed), a request sent to a capability and answered (backend, model,
-   seconds). The recipe runner (`recipe/runner.rs`) and the loop (`whizbang_rascal::checked`)
+   milliseconds). The recipe runner (`recipe/runner.rs`) and the loop (`whizbang_rascal::checked`)
    say them as they go, through the same `Events` sink, so they are published while the
    run executes, in this process, and kept in the journal at its end. A line without a kind
    is a message as today; the journal's format gains a version, and a reader of the older one
@@ -654,7 +654,7 @@ W1 builds on them; none changes what a run of any other door does.
    the executor that admitted it, so its request id answers a run that ended. In K1 because
    admission is in `contract/engine.rs`, which K1 alone changes in wave 1.
 
-- [ ] Done when: `admit::a_call_needing_a_preparation_without_one_is_refused_stale_and_reserves_nothing`,
+- [x] Done when: `admit::a_call_needing_a_preparation_without_one_is_refused_stale_and_reserves_nothing`,
   `admit::a_repeat_needing_a_preparation_is_answered_with_its_run_before_the_check`,
   `admit::an_unmarked_call_without_a_preparation_is_prepared_and_admitted_as_before`,
   `prepare::a_missing_capability_says_its_kind_beside_its_words`,

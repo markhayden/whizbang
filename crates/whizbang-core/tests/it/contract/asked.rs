@@ -2139,3 +2139,123 @@ fn the_types_hold_a_record_to_as_many_requests_as_a_run_sends_whatever_else_agre
     assert_eq!(named(129), Err(RecordError::Inconsistent(said.to_owned())));
     assert_eq!(named(128), Err(RecordError::NotCanonical));
 }
+
+#[test]
+fn each_request_a_child_sends_is_a_typed_event_in_its_own_journal_with_the_secrets_taken_out() {
+    // A run that a run called asks a judge twice: one request is answered, one ends in
+    // a fault. Each is a typed event in the journal of the run that sent it, and in no
+    // other, as it ended, with its model's name redacted (plan m5, task K1, item 3).
+    use whizbang_core::contract::{Event, Journal, record::JOURNAL_NAME};
+    let world = World::new();
+    let key = made_up_key("-model");
+    let model = format!("judge-{key}");
+    let declaration = Declaration::new(ModelIdentity::new("fake", &model, "1"), &[]).unwrap();
+    let unavailable = Fault::new(FaultKind::Unavailable, "overloaded");
+    let judge = Arc::new(
+        FakeJudge::scripted(vec![Ok(said("yes")), Err(unavailable)]).declared_as(declaration),
+    );
+    let asks = action(
+        "asks",
+        vec![Requirement::new(Capability::Judge)],
+        |_, context| {
+            let judge = context.capabilities().judge().unwrap();
+            judge.send(&asking("one", 64)).unwrap();
+            judge.send(&asking("two", 64)).unwrap_err();
+            Ok(Produced::nothing())
+        },
+    );
+    let outer = action("outer", Vec::new(), |_, context| {
+        context.executor().submit(&Call::new("asks")).unwrap();
+        Ok(Produced::nothing())
+    });
+    let executor = engine(
+        &world,
+        roster(None, None, Some(judge.as_ref())),
+        Capabilities::none().with_judge(judge.clone()),
+        vec![asks, outer],
+    )
+    .with_secrets(Secrets::new([key.clone()]).unwrap());
+    let finished = executor.submit(&Call::new("outer")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    let journal_of = |run: &RunId| {
+        let (_, names) = stored(&world, run);
+        Journal::read(&names[JOURNAL_NAME]).unwrap()
+    };
+    let answered = |journal: &Journal| -> Vec<Event> {
+        (journal.lines().iter())
+            .filter_map(|line| line.event().cloned())
+            .filter(|event| matches!(event, Event::Answered { .. }))
+            .collect()
+    };
+    // The parent sent nothing, and says nothing of its child's requests.
+    let (record, _) = stored(&world, finished.run());
+    assert!(answered(&journal_of(finished.run())).is_empty());
+    let child = RunId::parse(record.steps()[0].run()).unwrap();
+    let (child_record, _) = stored(&world, &child);
+    let took: Vec<u64> = (child_record.time().durations.iter())
+        .filter(|d| d.of == Timed::Request)
+        .map(|d| d.ms)
+        .collect();
+    assert_eq!(took.len(), 2);
+    let event = |ms: u64, ended: &str| Event::Answered {
+        capability: "judge".to_owned(),
+        backend: "fake".to_owned(),
+        model: "judge-[redacted]".to_owned(),
+        ms,
+        ended: ended.to_owned(),
+    };
+    let journal = journal_of(&child);
+    assert_eq!(
+        answered(&journal),
+        [event(took[0], "answered"), event(took[1], "unavailable")]
+    );
+    assert!(took[0] >= 1, "{took:?}");
+    // The key is in no line of the journal, its messages among them.
+    let bytes = journal.to_bytes();
+    assert!(!String::from_utf8(bytes).unwrap().contains(&key));
+}
+
+#[test]
+fn a_long_model_name_is_cut_and_the_run_and_the_step_never_are() {
+    // A typed event is held to its bound by cutting what may be long; a step's name
+    // and a run's id are what a caller finds them by, and stay whole.
+    use whizbang_core::contract::{EVENT_MAX_BYTES, Event, JournalLine};
+    let run = format!("1700000000000-{}", "7".repeat(40));
+    let ended = Event::StepEnded {
+        step: "a_step_with_a_long_name".to_owned(),
+        outcome: "x".repeat(3000),
+        run: run.clone(),
+        attempt: Some(2),
+    };
+    let line = JournalLine::typed(0, 5, &ended, &Secrets::none());
+    let Some(Event::StepEnded {
+        step,
+        outcome,
+        run: kept,
+        ..
+    }) = line.event()
+    else {
+        panic!("{line:?}");
+    };
+    assert_eq!((step.as_str(), kept), ("a_step_with_a_long_name", &run));
+    assert!(outcome.len() < 3000);
+    let answered = Event::Answered {
+        capability: "judge".to_owned(),
+        backend: "fake".to_owned(),
+        model: "m".repeat(5000),
+        ms: 12,
+        ended: "answered".to_owned(),
+    };
+    let line = JournalLine::typed(1, 5, &answered, &Secrets::none());
+    let Some(Event::Answered { model, ms, .. }) = line.event() else {
+        panic!("{line:?}");
+    };
+    assert!(model.len() < 5000 && *ms == 12);
+    for line in [
+        JournalLine::typed(0, 5, &ended, &Secrets::none()),
+        line.clone(),
+    ] {
+        let written = serde_json::to_vec(&(line.message(), line.event().unwrap())).unwrap();
+        assert!(written.len() <= EVENT_MAX_BYTES, "{}", written.len());
+    }
+}

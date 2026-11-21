@@ -339,6 +339,8 @@ struct State {
     fail_before: Option<usize>,
     /// Refuse a call whose event matches, after letting this many such calls through.
     fail_matching: Option<(usize, Matches)>,
+    /// How many more matching calls are refused after the first.
+    fail_matching_more: usize,
     cross_device: Option<PathBuf>,
     hook: Option<(usize, Hook)>,
     /// Run once after the first rename onto a path of this file name.
@@ -413,7 +415,20 @@ impl ShimFs {
     /// `skip` such calls were let through. As with [`ShimFs::fail_before`], nothing is
     /// dropped and the refused call is not recorded. It replaces one still waiting.
     pub fn refuse_matching(&self, skip: usize, matches: impl Fn(&Event) -> bool + Send + 'static) {
-        self.lock().fail_matching = Some((skip, Box::new(matches)));
+        self.refuse_matching_times(skip, 1, matches);
+    }
+
+    /// As [`ShimFs::refuse_matching`], refusing `times` matching calls in a row, after
+    /// `skip` were let through.
+    pub fn refuse_matching_times(
+        &self,
+        skip: usize,
+        times: usize,
+        matches: impl Fn(&Event) -> bool + Send + 'static,
+    ) {
+        let mut state = self.lock();
+        state.fail_matching = Some((skip, Box::new(matches)));
+        state.fail_matching_more = times.saturating_sub(1);
     }
 
     /// Treats `dir` as another file system: a rename from inside it to outside it, or the
@@ -553,7 +568,10 @@ impl ShimFs {
                 && matches(event)
             {
                 if *skip == 0 {
-                    state.fail_matching = None;
+                    match state.fail_matching_more {
+                        0 => state.fail_matching = None,
+                        _ => state.fail_matching_more -= 1,
+                    }
                     return Err(io::Error::other(format!("injected failure of {event:?}")));
                 }
                 *skip -= 1;

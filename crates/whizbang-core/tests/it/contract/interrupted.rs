@@ -444,8 +444,10 @@ fn a_run_that_a_wrappers_failure_abandoned_is_ended_at_the_next_open_and_its_res
 fn an_admission_that_was_visible_and_not_confirmed_is_ended_at_the_next_open_and_its_request_is_then_answered_with_the_run_that_ended()
  {
     // The last sync of the admission's publication is refused: the run is in the
-    // store, its action never starts, and in the process that made it the same
-    // request is answered with a run that will not end there (ADR 0007).
+    // store and its action never starts. The executor that made it ends it at once
+    // (plan m5, task K1, item 6); here every call to the file system after that sync is refused, so
+    // in the process that made it the same request is answered with a run that will
+    // not end there (ADR 0007).
     let world = World::new();
     let ran = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let paint = || {
@@ -457,10 +459,12 @@ fn an_admission_that_was_visible_and_not_confirmed_is_ended_at_the_next_open_and
     };
     let engine = engine(world.store(), vec![paint()]);
     let root = world.root();
-    world.fs.refuse_matching(
-        0,
-        move |event| matches!(event, Event::SyncDir(dir) if *dir == root),
-    );
+    let synced = std::sync::atomic::AtomicBool::new(false);
+    world.fs.refuse_matching_times(0, usize::MAX, move |event| {
+        use std::sync::atomic::Ordering::SeqCst;
+        synced.load(SeqCst)
+            || (matches!(event, Event::SyncDir(dir) if *dir == root) && !synced.swap(true, SeqCst))
+    });
     let asked = Request::new(Call::new("paint")).with_id(id("order-17"));
     let refused = engine.request(&asked).unwrap_err();
     assert!(
