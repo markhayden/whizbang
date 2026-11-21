@@ -1031,3 +1031,18 @@ fn a_judges_own_unsupported_fault_with_no_stage_is_unresolved() {
     );
     assert_eq!(stub.sent(), 1);
 }
+
+#[test]
+fn repeated_keys_names_each_key_written_twice_by_its_pointer() {
+    use whizbang_core::capability::repeated_keys;
+    assert!(repeated_keys(r#"{"a": 1, "b": [1, {"c": 2}]}"#).is_empty());
+    assert_eq!(
+        repeated_keys(
+            r#"{"a": 1, "a": 2, "b": [{"c": 1, "c": 2, "c": 3}], "d/e": {"x": 1, "x": 1}}"#
+        ),
+        ["/a", "/b/0/c", "/d~1e/x"]
+    );
+    // A text that is not JSON has none.
+    assert!(repeated_keys("{\"a\": ").is_empty());
+    assert!(repeated_keys("not json").is_empty());
+}

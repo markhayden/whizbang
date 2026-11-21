@@ -367,7 +367,12 @@ pub fn submission(disposition: &str, said: &str) -> Vec<u8> {
 
 /// The same, as this provider answers.
 pub fn submission_by(provider: Provider, disposition: &str, said: &str) -> Vec<u8> {
-    let input = verdict_input(disposition, said);
+    submitting_by(provider, verdict_input(disposition, said))
+}
+
+/// An answer of 200 whose turn, as this provider answers, calls `submit_verdict` once
+/// with these arguments.
+pub fn submitting_by(provider: Provider, input: serde_json::Value) -> Vec<u8> {
     let body = match provider.name {
         "google" => serde_json::json!({
             "candidates": [{ "content": { "role": "model", "parts": [
@@ -558,8 +563,22 @@ pub fn checked_stated(
     details: Option<&str>,
     projection: Option<&str>,
 ) -> (Result<String, String>, Log) {
+    checked_submitting(judged, answers, details, projection, None)
+}
+
+/// As `checked_stated`, with the form the judge answers in as `--submission` gives it.
+pub fn checked_submitting(
+    judged: &Judged,
+    answers: Vec<Vec<u8>>,
+    details: Option<&str>,
+    projection: Option<&str>,
+    submission: Option<&str>,
+) -> (Result<String, String>, Log) {
     let (source, candidate) = pair(judged);
-    let measuring = whizbang::door::Measuring::stated(details, projection).unwrap();
+    let measuring = whizbang::door::Measuring {
+        submission,
+        ..whizbang::door::Measuring::stated(details, projection).unwrap()
+    };
     let asked = whizbang::door::CheckAsked {
         use_case: "source-fidelity",
         source: Some(&source),
@@ -617,6 +636,7 @@ pub fn checked_job(
         projection: "full",
         tools: &[],
         second_look: "off",
+        submission: None,
     };
     let printed = whizbang::door::check_job(&executor, job, images, None, None, &measuring, &read);
     drop(executor);
@@ -629,4 +649,18 @@ pub fn checklist_of(job: &whizbang_squint::job::Job) -> Vec<String> {
     use whizbang_squint::use_case::{Checklist, resolve};
     let checklist = Checklist::build(&resolve(job).unwrap(), job);
     checklist.ids().map(str::to_owned).collect()
+}
+
+#[test]
+fn a_v2_keyed_submission_is_sent_as_written_and_read() {
+    // Plan e1, task F1, item 4: Anthropic is sent v2's tool as the build wrote it.
+    use crate::google::{v2_schema, v2_sent};
+    let (printed, first) = v2_sent(ANTHROPIC, "anthropic-v2");
+    let sent = first["tools"].as_array().unwrap();
+    let submit = sent.iter().find(|t| t["name"] == "submit_verdict").unwrap();
+    assert_eq!(submit["input_schema"], v2_schema());
+    assert!(crate::google::keys_are_provider_safe(
+        &submit["input_schema"]
+    ));
+    assert!(printed.contains("verdict: pass"), "{printed}");
 }

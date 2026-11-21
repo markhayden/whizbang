@@ -17,6 +17,8 @@
 # details `check` measured first since plan 2C's task A2 (ADR 0029) as a step of their own.
 # The second look stays off here: on reality-checks it raised false accepts (plan m3,
 # task U1, docs/results/m3-unsure.md); a run sets it with --set judge.second_look=on.
+# The judge answers in submission v1, `check`'s default; a run asks for v2 with
+# --set judge.submission=v2 (plan e1, task F1; ADR 0042).
 version = 1
 name = "reality-checks"
 purpose = "Checks a picture for mistakes no real photograph would make: the judge looks, and calls view to look closer as it needs."
@@ -48,4 +50,5 @@ measured = "details.measurements"
 tools = "view,align"
 projection = "visual_only"
 second_look = "off"
+submission = "v1"
 max_output_tokens = 2048

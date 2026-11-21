@@ -44,6 +44,11 @@ what is measured first, the tools offered, the projection and the second look ar
 as overrides of the steps on every call (`--second-look on` sets `judge.second_look`), so
 the command does not lean on what the recipe's file says.
 
+The judge answers in submission v1, `check`'s default (`submission = "v1"` in the judge's
+step). `--submission v2` sets `judge.submission=v2`: the items keyed by checklist id,
+near-misses with one reading read and recorded, and every problem named in the one repair
+(ADR 0042). v2 is experimental and no default uses it.
+
 The images a recipe's steps make (the aligned frames, the judge's crops) are names of the
 recipe's run: its own calls read them, and a run of another call cannot take them as inputs
 (plan m3, task Q1, item 3).
@@ -150,6 +155,7 @@ decisions settled 0.809051 dollars, about 0.0037 dollars each, on `claude-haiku-
 - **Arm `F`, details first** (`--details first`): what the recipe did until plan m4, task
   A1; the gate above found no gain from the details on the dev sets.
 - **The second look on**: `--second-look on` (plan m3, task U1).
+- **Submission v2**: `--submission v2` (plan e1, task F1; ADR 0042).
 
 ## Limits
 
