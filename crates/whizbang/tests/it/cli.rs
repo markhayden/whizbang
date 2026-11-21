@@ -3730,3 +3730,131 @@ fn rascal_remove_checked_retries_inside_a_named_place_under_a_scripted_judge() {
         shown.out
     );
 }
+
+#[test]
+fn eval_judges_scores_two_scripted_judges() {
+    use crate::anthropic::{CHECK_CLASSES, serving, submission};
+    // A set of two items, one labelled fail, judged by two backends of the config on
+    // loopback, each answering as scripted; then scored through the binary.
+    let (judged, tiny) = crate::matrix::world_with("cli-eval-judges", &["itm-a", "itm-b"]);
+    let set = tiny.root.join(crate::fetch::SET);
+    let labels = std::fs::read_to_string(set.join("labels.toml")).unwrap();
+    let turned = labels.replacen(
+        "item = \"itm-b\"\nexpected = \"pass\"",
+        "item = \"itm-b\"\nexpected = \"fail\"",
+        1,
+    );
+    std::fs::write(set.join("labels.toml"), turned).unwrap();
+    let matrices = judged.world.beside("matrices");
+    std::fs::create_dir_all(&matrices).unwrap();
+    let matrix = matrices.join("two.toml");
+    std::fs::write(
+        &matrix,
+        format!(
+            "[matrix]\nname = \"two-judges\"\nsets = [\"{}\"]\narms = [\"C\"]\n\
+             repetitions = 1\nconcurrency = 1\n\
+             [[matrix.judges]]\nbackend = \"one\"\nmodel = \"claude-haiku-5-5\"\n\
+             [[matrix.judges]]\nbackend = \"two\"\nmodel = \"claude-haiku-5-5\"\n",
+            crate::fetch::SET
+        ),
+    )
+    .unwrap();
+    // The cells in order: itm-a by one, then two; itm-b by one, then two. Both judges keep
+    // what is kept and catch what is not.
+    let (held, gone) = (
+        submission("held", "Kept."),
+        submission("violation", "Gone."),
+    );
+    let (listener, log) = serving(&judged.pki, vec![held.clone(), held, gone.clone(), gone]);
+    let origin = format!("https://127.0.0.1:{}", listener.port());
+    let over = judged.over_with(
+        &judged.address(listener.port()),
+        Some(&origin),
+        &CHECK_CLASSES,
+        "",
+    );
+    // The one judge the helper writes, written again as two named backends.
+    let config = std::fs::read_to_string(judged.world.config_path()).unwrap();
+    let (judge, rest) = config.split_once("\n\n").unwrap();
+    let body = judge.strip_prefix("[backends.judge]\n").unwrap();
+    std::fs::write(
+        judged.world.config_path(),
+        format!(
+            "[backends.judge]\ndefault = \"one\"\n[backends.judge.one]\n{body}\n\
+             [backends.judge.two]\n{body}\n\n{rest}"
+        ),
+    )
+    .unwrap();
+    let executor = judged.runner(&over);
+    let parsed =
+        whizbang_eval::matrix::Matrix::parse(&std::fs::read_to_string(&matrix).unwrap()).unwrap();
+    let (planned, labelled) =
+        whizbang::evaluation::plan(&parsed, &tiny.root, &judged.world.root).unwrap();
+    let running = whizbang::evaluation::Running {
+        executor: &executor,
+        root: &judged.world.root,
+        left_micros: 20_000_000,
+        stop: &|| false,
+    };
+    let report = whizbang::evaluation::run(&parsed, &planned, &labelled, &running).unwrap();
+    drop(executor);
+    listener.finish();
+    assert_eq!((report.completed, log.lock().unwrap().len()), (4, 4));
+    let owner = judged.world.beside("owner-labels");
+    std::fs::create_dir_all(&owner).unwrap();
+    let out = judged.world.beside("judges.toml");
+    let ran = whizbang(
+        &[
+            "eval",
+            "judges",
+            "--matrix",
+            matrix.to_str().unwrap(),
+            "--labels",
+            owner.to_str().unwrap(),
+            "--mode",
+            "judges",
+            "--arm",
+            "C",
+            "--rule",
+            "judge-pick/1",
+            "--out",
+            out.to_str().unwrap(),
+            "--root",
+            tiny.root.to_str().unwrap(),
+        ],
+        &judged.world.root,
+    );
+    assert_eq!(ran.code, Some(0), "{}", ran.err);
+    has_line(&ran.out, "decisions scored: 4");
+    let text = std::fs::read_to_string(&out).unwrap();
+    // Aggregates only: no item, no family, no word of a judge.
+    for word in ["itm-a", "itm-b", "house", "Kept", "Gone"] {
+        assert!(!text.contains(word), "{word}: {text}");
+        assert!(!ran.out.contains(word), "{word}: {}", ran.out);
+    }
+    let record: toml::Value = toml::from_str(&text).unwrap();
+    assert_eq!(record["schema"].as_str(), Some("judges/1"));
+    assert_eq!(record["matrices"][0]["name"].as_str(), Some("two-judges"));
+    let all = (record["scopes"].as_array().unwrap().iter())
+        .find(|s| s["name"].as_str() == Some("all"))
+        .unwrap();
+    let measures = all["measures"].as_array().unwrap();
+    assert_eq!(measures.len(), 2);
+    for m in measures {
+        assert_eq!(m["decisions"].as_integer(), Some(2));
+        assert_eq!(m["balanced_accuracy"]["point"].as_float(), Some(1.0));
+        assert_eq!(m["submissions"]["decisions"].as_integer(), Some(2));
+    }
+    assert_eq!(all["comparisons"].as_array().unwrap().len(), 1);
+    let picks = record["picks"].as_array().unwrap();
+    assert_eq!(picks.len(), 2);
+    for pick in picks {
+        let judges = pick["judges"].as_array().unwrap();
+        assert_eq!(judges.len(), 2, "{pick:?}");
+        for clauses in judges {
+            assert_eq!(clauses["eligible"].as_bool(), Some(true), "{pick:?}");
+        }
+    }
+    let versions = record["judges"].as_array().unwrap();
+    assert_eq!(versions.len(), 2);
+}

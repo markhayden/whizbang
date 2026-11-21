@@ -53,7 +53,7 @@ pub struct Frozen {
     pub matrix: Matrix,
 }
 
-fn read_limited(file: &Path, what: &str) -> Result<Vec<u8>, String> {
+pub(crate) fn read_limited(file: &Path, what: &str) -> Result<Vec<u8>, String> {
     use std::io::Read;
     let shown = printable(&file.display().to_string());
     let opened = std::fs::File::open(file).map_err(|e| format!("{shown}: {e}"))?;
@@ -174,7 +174,7 @@ fn blind_labels_base(sets_root: &Path, labels_root: &Path) -> Result<PathBuf, St
 
 /// Whether a file at `path` would be at or below `root`, both as the file system resolves
 /// them. Fails closed: when either cannot be resolved, it is taken to be below.
-fn under(path: &Path, root: &Path) -> bool {
+pub(crate) fn under(path: &Path, root: &Path) -> bool {
     let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
     let parent = parent.unwrap_or(Path::new("."));
     match (root.canonicalize(), parent.canonicalize()) {

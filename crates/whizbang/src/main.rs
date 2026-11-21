@@ -35,6 +35,9 @@ const VERSION_AND_COMMIT: &str = concat!(
     ")"
 );
 
+/// The commit alone, as `eval judges` records it beside what it scored (plan e1, task S1).
+const COMMIT: &str = env!("WHIZBANG_COMMIT");
+
 #[derive(Parser)]
 #[command(
     name = "whizbang",

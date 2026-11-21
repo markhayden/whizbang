@@ -619,3 +619,50 @@ fn an_arm_with_the_second_look_gives_one_on_a_tentative_item() {
     assert_eq!(looks[0]["verdict_after"], "pass");
     assert!(looks[1].is_null());
 }
+
+#[test]
+fn arm_c_is_check_as_it_ships() {
+    // One item, judged once as a cell of arm C and once as `whizbang squint check` calls
+    // it with no option but the judge (`door::check_job` with the measuring of nothing
+    // stated): the judge is sent the same request, byte for byte (plan e1, task S1, item 8).
+    let (judged, tiny) = world_with("matrix-arm-c", &["a"]);
+    let matrix = matrix_of("C", 1, 1);
+    let (report, by_matrix) = run_matrix(&judged, vec![submission("held", "Kept.")], &|e| {
+        ran(e, &judged, &tiny, &matrix, PLENTY, &never)
+    });
+    assert_eq!(report.unwrap().completed, 1);
+    let set = whizbang_eval::sets::find(&tiny.root, SET).unwrap();
+    let job = whizbang_squint::job::Job::from_toml(&set.jobs[0].1).unwrap();
+    let held = whizbang::import::pictures_by_file(&judged.world.root).unwrap();
+    let images: Vec<_> = (job.images.iter())
+        .map(|image| {
+            let pin = image.source.as_ref().unwrap().sha256.as_deref().unwrap();
+            held[&whizbang_core::identity::Digest::from_hex(pin).unwrap()]
+        })
+        .collect();
+    let (listener, by_door) = serving(&judged.pki, vec![submission("held", "Kept.")]);
+    let origin = format!("https://127.0.0.1:{}", listener.port());
+    let over = judged.over_with(
+        &judged.address(listener.port()),
+        Some(&origin),
+        &CHECK_CLASSES,
+        "",
+    );
+    let executor = judged.runner(&over);
+    let measuring = whizbang::door::Measuring::stated(None, None).unwrap();
+    let root = judged.world.root.clone();
+    let read = |run: &_| whizbang::door::verdict(&root, run);
+    let printed =
+        whizbang::door::check_job(&executor, &job, &images, None, None, &measuring, &read);
+    drop(executor);
+    listener.finish();
+    assert!(printed.unwrap().contains("verdict: pass"));
+    let (by_matrix, by_door) = (by_matrix.lock().unwrap(), by_door.lock().unwrap());
+    assert_eq!((by_matrix.len(), by_door.len()), (1, 1));
+    assert!(
+        by_matrix[0].1 == by_door[0].1,
+        "the judge was sent another request:\n{}\n{}",
+        String::from_utf8_lossy(&by_matrix[0].1),
+        String::from_utf8_lossy(&by_door[0].1)
+    );
+}
