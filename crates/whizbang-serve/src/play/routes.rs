@@ -495,46 +495,20 @@ fn start(shared: &Shared, guarded: &Guarded<'_>) -> Response {
         Ok(id) => id,
         Err(error) => return call_refused(&error),
     };
-    // An id the host has forgotten (it restarted) and the store holds: the executor
-    // answers it with its run, or as a conflict, and admits nothing (ADR 0007), so it
-    // takes no place among the calls and is answered whatever is running.
-    if shared.play.admitted(&id) {
-        let Ok((call, _)) = shared.play.call(&asked.action, &asked.arguments) else {
-            return Response::json(
-                409,
-                &json!({"error": "another call was started under this request id",
-                        "kind": "conflict"}),
-            );
-        };
-        // A place is taken when one is free, and held only if the executor, against
-        // what the store said, made a run (its run was deleted, which frees its id).
-        let signal = Cancellation::new();
-        let until = Instant::now() + shared.settings.run_limit;
-        let place = shared.admit(&asked.action, &asked.arguments, &signal, until, now_ms());
-        let request = Request::new(call)
-            .cancelled_by(signal)
-            .until(until + shared.settings.grace)
-            .needing_preparation()
-            .with_id(id);
-        return match executor.start(&request) {
-            Ok(Answer::Repeat(earlier)) => Response::json(
-                200,
-                &json!({"run": earlier.run().as_str(), "repeat": true,
-                        "state": state_word(earlier.state(), false)}),
-            ),
-            Ok(Answer::Started(run)) => {
-                if let Some(place) = place {
-                    place.made(run.clone());
-                }
-                Response::json(201, &json!({"run": run.as_str(), "state": "running"}))
-            }
-            Ok(Answer::Ran(finished)) => Response::json(
-                200,
-                &json!({"run": finished.run().as_str(), "state": "ended",
-                        "outcome": finished.outcome().name()}),
-            ),
-            Err(error) => call_refused(&error),
-        };
+    // An id the host has forgotten (it restarted) and the store holds: answered with the
+    // run its admission names, by that id alone, before a place is taken or the call
+    // is made again (ADR 0007). The call is not compared: after a restart the host
+    // holds no copy of what was asked, and a call made again under a changed config
+    // would not be the one the id was given for. A request id is the page's, one for
+    // each Run pressed.
+    if let Some(run) = shared.play.admitted(&id) {
+        let state = executor
+            .status_after(&run, u64::MAX)
+            .map_or("removed", |watched| state_word(watched.state(), false));
+        return Response::json(
+            200,
+            &json!({"run": run.as_str(), "repeat": true, "state": state}),
+        );
     }
     // A place among the calls, held while the start is admitted, and given back if it
     // makes no run.
@@ -854,7 +828,45 @@ fn pictures(shared: &Shared, guarded: &Guarded<'_>) -> Response {
     }
 }
 
+/// A place among the pictures being made for display, of one kind (thumbnails, or
+/// artifacts whole), given back when dropped.
+struct Making<'a> {
+    shared: &'a Shared,
+    thumbnail: bool,
+}
+
+impl Drop for Making<'_> {
+    fn drop(&mut self) {
+        let mut state = self.shared.state();
+        let made = match self.thumbnail {
+            true => &mut state.thumbnails,
+            false => &mut state.displays,
+        };
+        *made = made.saturating_sub(1);
+    }
+}
+
 fn artifact_response(shared: &Shared, guarded: &Guarded<'_>, edge: Option<u32>) -> Response {
+    // At most two of each kind made at once, as uploads are: a page of pictures leaves
+    // the workers that polls, Stop and Quit need. The page retries a 429 after its
+    // `Retry-After`.
+    let thumbnail = edge.is_some();
+    {
+        let mut state = shared.state();
+        let made = match thumbnail {
+            true => &mut state.thumbnails,
+            false => &mut state.displays,
+        };
+        if *made >= super::DISPLAYS_LIMIT {
+            let why = match thumbnail {
+                true => "at most two thumbnails are made at once",
+                false => "at most two artifacts are shown whole at once",
+            };
+            return Response::refused(429, why).with("Retry-After", "1");
+        }
+        *made += 1;
+    }
+    let _making = Making { shared, thumbnail };
     let id = guarded
         .params
         .first()
@@ -881,24 +893,6 @@ fn thumb(shared: &Shared, guarded: &Guarded<'_>) -> Response {
             _ => return Response::refused(400, "edge is a number of pixels from 8 to 2048"),
         },
     };
-    // At most two made at once, as uploads are: a page of pictures leaves the workers
-    // that polls, Stop and Quit need.
-    {
-        let mut state = shared.state();
-        if state.thumbnails >= super::THUMBNAILS_LIMIT {
-            return Response::refused(429, "at most two thumbnails are made at once")
-                .with("Retry-After", "1");
-        }
-        state.thumbnails += 1;
-    }
-    struct Making<'a>(&'a Shared);
-    impl Drop for Making<'_> {
-        fn drop(&mut self) {
-            let mut state = self.0.state();
-            state.thumbnails = state.thumbnails.saturating_sub(1);
-        }
-    }
-    let _making = Making(shared);
     artifact_response(shared, guarded, Some(edge))
 }
 

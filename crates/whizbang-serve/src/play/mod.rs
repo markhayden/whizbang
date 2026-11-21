@@ -55,9 +55,10 @@ pub const PORT_DEFAULT: u16 = 7341;
 pub const WORKERS: usize = 16;
 /// How many uploads hold a worker at once; one more is answered 429.
 pub const UPLOADS_LIMIT: usize = 2;
-/// How many thumbnails are made at once; one more is answered 429, as an upload is, so a
-/// page of pictures never holds the workers that polls, Stop and Quit need.
-pub const THUMBNAILS_LIMIT: usize = 2;
+/// How many thumbnails, and how many artifacts shown whole, are made at once: one more
+/// of either is answered 429, as an upload is, so a page of pictures never holds the
+/// workers that polls, Stop and Quit need.
+pub const DISPLAYS_LIMIT: usize = 2;
 /// The most preparations the host keeps under handles, the oldest dropped first.
 pub const PREPARATIONS_LIMIT: usize = 64;
 /// How long the host keeps a preparation.
@@ -137,11 +138,11 @@ pub trait Play: Send + Sync {
     fn default_backend(&self, _capability: &str) -> Option<String> {
         None
     }
-    /// Whether the store holds an admission under this request id: then the executor
-    /// answers it with its run, or as a conflict, before anything is admitted (ADR 0007),
-    /// so a repeat the host has forgotten (it restarted) takes no place among the calls.
-    fn admitted(&self, _id: &whizbang_core::contract::RequestId) -> bool {
-        false
+    /// The run the store's admission under this request id names, when it holds one:
+    /// a repeat the host has forgotten (it restarted) is answered with that run, before
+    /// a place is taken or the call is made again (ADR 0007).
+    fn admitted(&self, _id: &whizbang_core::contract::RequestId) -> Option<RunId> {
+        None
     }
     /// A script of the fixture host's (`x-fixture-script`), which the real host refuses:
     /// `Err` with fixed words (plan m5, task U1, item 5).
@@ -279,8 +280,9 @@ pub(crate) struct State {
     pub requests: BTreeMap<String, Asked>,
     requests_order: VecDeque<String>,
     pub uploads: usize,
-    /// How many thumbnails are being made now.
+    /// How many thumbnails, and artifacts shown whole, are being made now.
     pub thumbnails: usize,
+    pub displays: usize,
     quit: Quit,
     done: bool,
     left: usize,
@@ -578,6 +580,7 @@ impl Host {
                 requests_order: VecDeque::new(),
                 uploads: 0,
                 thumbnails: 0,
+                displays: 0,
                 quit: Quit::Running,
                 done: false,
                 left: 0,

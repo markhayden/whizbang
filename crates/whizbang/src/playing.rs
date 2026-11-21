@@ -46,6 +46,8 @@ pub struct Playground {
     /// What was read and is kept, so that a poll or a page of thumbnails does not read the
     /// store again for what it already said.
     kept: Mutex<Remembered>,
+    /// How many thumbnails were made, not taken from those kept.
+    made: std::sync::atomic::AtomicU64,
 }
 
 /// The most thumbnails kept in memory, and the most bytes of them.
@@ -109,6 +111,7 @@ impl Playground {
             store: Mutex::new(None),
             root: None,
             kept: Mutex::new(Remembered::default()),
+            made: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -154,25 +157,49 @@ impl Playground {
         said
     }
 
-    /// The verdict of a run that has ended, read once.
+    /// The verdict of a run that has ended, read once it is known: a verdict, or a record
+    /// read whole that holds none. A record that could not be read (the store was busy)
+    /// is not kept, and is read again at the next poll.
     fn verdict(&self, run: &RunId) -> Json {
         let key = run.as_str().to_owned();
         if let Some((_, said)) = self.remembered().verdicts.iter().find(|(k, _)| *k == key) {
             return said.clone();
         }
-        let said = self
+        let stated = self
             .root
             .as_deref()
-            .and_then(|root| crate::door::verdict(root, run))
-            .map_or(Json::Null, |stated| {
-                json!(whizbang_serve::escaped(&stated.word))
-            });
+            .and_then(|root| crate::door::verdict(root, run));
+        let said = match stated {
+            Some(stated) => json!(whizbang_serve::escaped(&stated.word)),
+            None if self.has_record(run) => Json::Null,
+            None => return Json::Null,
+        };
         let mut kept = self.remembered();
         kept.verdicts.push_back((key, said.clone()));
         while kept.verdicts.len() > VERDICTS_KEPT {
             kept.verdicts.pop_front();
         }
         said
+    }
+
+    /// Whether the store holds the run's record, read whole.
+    fn has_record(&self, run: &RunId) -> bool {
+        let Ok(store) = self.store() else {
+            return false;
+        };
+        let Ok(generation) = store.snapshot() else {
+            return false;
+        };
+        whizbang_core::contract::record::stored(&generation, run.as_str(), |entry| {
+            store.read(entry)
+        })
+        .is_some_and(|read| read.is_ok())
+    }
+
+    /// How many thumbnails were made, not taken from those kept: for a test.
+    #[doc(hidden)]
+    pub fn thumbnails_made(&self) -> u64 {
+        self.made.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     fn descriptor(&self, action: &str) -> Option<&ActionDescriptor> {
@@ -264,6 +291,7 @@ impl Play for Playground {
             }
         }
         let made = crate::play_kept::artifact(self.store()?.as_ref(), id, Some(edge))?;
+        self.made.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if made.0 == "image/png" {
             let mut kept = self.remembered();
             kept.thumbnails.push_back((key, made.1.clone()));
@@ -305,13 +333,13 @@ impl Play for Playground {
             .and_then(|row| row["name"].as_str().map(str::to_owned))
     }
 
-    fn admitted(&self, id: &RequestId) -> bool {
-        let Ok(store) = self.store() else {
-            return false;
-        };
-        store
-            .snapshot()
-            .is_ok_and(|generation| generation.get(&id.admission_name()).is_some())
+    fn admitted(&self, id: &RequestId) -> Option<RunId> {
+        let store = self.store().ok()?;
+        let generation = store.snapshot().ok()?;
+        let entry = generation.get(&id.admission_name())?.clone();
+        let bytes = store.read(&entry).ok()?;
+        let admission = whizbang_core::contract::Admission::from_bytes(&bytes).ok()?;
+        (admission.request() == Some(id)).then(|| admission.run().clone())
     }
 
     fn closing(&self) {
