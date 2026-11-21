@@ -143,6 +143,10 @@ pub struct ToolCall {
     name: String,
     arguments: Value,
     size: usize,
+    /// The JSON pointers of the keys the arguments wrote more than once, as the adapter
+    /// read them from the text the provider sent: what the parsed arguments, which keep
+    /// the last, no longer show. Empty when the provider sent parsed JSON.
+    repeated: Vec<String>,
 }
 
 impl ToolCall {
@@ -177,7 +181,22 @@ impl ToolCall {
             name: name.to_owned(),
             arguments,
             size,
+            repeated: Vec::new(),
         })
+    }
+
+    /// The same call, with the pointers of the keys its arguments wrote more than once
+    /// ([`repeated_keys`] of the text they were read from), at most 64 of them.
+    pub fn with_repeated_keys(mut self, mut repeated: Vec<String>) -> ToolCall {
+        repeated.truncate(REPEATED_LIMIT);
+        self.repeated = repeated;
+        self
+    }
+
+    /// The pointers of the keys its arguments wrote more than once, as its adapter found
+    /// them; empty when none was, or when the provider sent parsed JSON.
+    pub fn repeated_keys(&self) -> &[String] {
+        &self.repeated
     }
 
     pub fn id(&self) -> &str {
@@ -191,6 +210,92 @@ impl ToolCall {
     pub fn arguments(&self) -> &Value {
         &self.arguments
     }
+}
+
+/// The most repeated keys a call keeps.
+const REPEATED_LIMIT: usize = 64;
+
+/// The JSON pointer (RFC 6901) of every key a JSON text writes more than once in one
+/// object, each repetition once, in the order met; none for a text that is not JSON. A
+/// parsed value keeps only the last of such keys, so this is read from the text.
+pub fn repeated_keys(text: &str) -> Vec<String> {
+    use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
+    struct Walk<'a> {
+        at: String,
+        found: &'a mut Vec<String>,
+    }
+    impl<'de> DeserializeSeed<'de> for Walk<'_> {
+        type Value = ();
+        fn deserialize<D: serde::Deserializer<'de>>(self, d: D) -> Result<(), D::Error> {
+            d.deserialize_any(self)
+        }
+    }
+    impl<'de> Visitor<'de> for Walk<'_> {
+        type Value = ();
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("JSON")
+        }
+        fn visit_bool<E>(self, _: bool) -> Result<(), E> {
+            Ok(())
+        }
+        fn visit_i64<E>(self, _: i64) -> Result<(), E> {
+            Ok(())
+        }
+        fn visit_u64<E>(self, _: u64) -> Result<(), E> {
+            Ok(())
+        }
+        fn visit_f64<E>(self, _: f64) -> Result<(), E> {
+            Ok(())
+        }
+        fn visit_str<E>(self, _: &str) -> Result<(), E> {
+            Ok(())
+        }
+        fn visit_unit<E>(self) -> Result<(), E> {
+            Ok(())
+        }
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<(), A::Error> {
+            let found = self.found;
+            let mut n = 0usize;
+            loop {
+                let at = format!("{}/{n}", self.at);
+                if seq
+                    .next_element_seed(Walk {
+                        at,
+                        found: &mut *found,
+                    })?
+                    .is_none()
+                {
+                    return Ok(());
+                }
+                n += 1;
+            }
+        }
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
+            let found = self.found;
+            let mut seen = BTreeSet::new();
+            while let Some(key) = map.next_key::<String>()? {
+                let at = format!("{}/{}", self.at, key.replace('~', "~0").replace('/', "~1"));
+                if !seen.insert(key) && !found.contains(&at) {
+                    found.push(at.clone());
+                }
+                map.next_value_seed(Walk {
+                    at,
+                    found: &mut *found,
+                })?;
+            }
+            Ok(())
+        }
+    }
+    let mut found = Vec::new();
+    let mut reader = serde_json::Deserializer::from_str(text);
+    let walk = Walk {
+        at: String::new(),
+        found: &mut found,
+    };
+    if walk.deserialize(&mut reader).is_err() || reader.end().is_err() {
+        return Vec::new();
+    }
+    found
 }
 
 impl std::fmt::Debug for ToolCall {

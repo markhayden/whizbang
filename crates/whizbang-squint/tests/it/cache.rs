@@ -107,3 +107,48 @@ fn the_same_pixels_in_the_fast_encoders_file_miss_what_the_old_encoders_file_was
     let (fast, _) = decided(&world, &source, &new);
     assert!(fast.contains("\"kept\""), "{fast}");
 }
+
+#[test]
+fn the_submission_setting_is_in_the_key() {
+    use super::check::{item, of_pair, submission_v2, turns};
+    use serde_json::json;
+    // Plan e1, task F1, item 1: a run of v2 is never answered by a run of v1, nor the
+    // reverse, though everything else is the same.
+    let (mut world, source, candidate, _) = paired();
+    world.cached = true;
+    let items = json!([
+        item("chk:ob:SF1@candidate", "held", "confident"),
+        item("chk:ob:SF2@candidate", "held", "confident"),
+    ]);
+    let ran = |submission: &str| -> String {
+        let script = if submission == "v2" {
+            turns(&[(json!([submission_v2(&items)]), "tool_use")])
+        } else {
+            submitting(&[])
+        };
+        let turns = read_script(script.as_bytes()).unwrap();
+        let turns = (turns.into_iter())
+            .map(|turn| turn.map(|turn| turn.reported_by(Some("fake-judge"))))
+            .collect();
+        let executor = world.engine(Arc::new(FakeJudge::scripted(turns)), Secrets::none());
+        let call = of_pair(&source, &candidate, &[("submission", submission)]);
+        let finished = executor.submit(&call).unwrap();
+        drop(executor);
+        assert_eq!(
+            finished.outcome().name(),
+            "completed",
+            "{:?}",
+            finished.outcome()
+        );
+        let left = super::world::left(&world.root(), world.fs.clone(), finished.run());
+        let settings = &left.record().asked().settings;
+        (settings.iter())
+            .find(|s| s.name() == whizbang_squint::cache::SETTING)
+            .map(|s| format!("{:?}", s.value()))
+            .unwrap_or_default()
+    };
+    assert!(ran("v1").contains("\"kept\""));
+    assert!(ran("v1").contains("\"hit\""));
+    assert!(ran("v2").contains("\"kept\""));
+    assert!(ran("v2").contains("\"hit\""));
+}

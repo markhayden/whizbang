@@ -17,6 +17,8 @@
 # details `check` measured first since plan 2C's task A2 (ADR 0029) as a step of their own.
 # The second look is off unless a run sets it (--set judge.second_look=on), as `check`'s
 # own default is (plan m3, task U1); whether this recipe turns it on is its gate's to decide.
+# The judge answers in submission v1, `check`'s default; a run asks for v2 with
+# --set judge.submission=v2 (plan e1, task F1; ADR 0042).
 version = 1
 name = "source-fidelity"
 purpose = "Checks whether an edit kept what mattered in its source: the judge looks, and calls view and align as it needs."
@@ -48,4 +50,5 @@ measured = "details.measurements"
 tools = "view,align"
 projection = "visual_only"
 second_look = "off"
+submission = "v1"
 max_output_tokens = 2048

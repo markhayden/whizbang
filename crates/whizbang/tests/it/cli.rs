@@ -3730,3 +3730,58 @@ fn rascal_remove_checked_retries_inside_a_named_place_under_a_scripted_judge() {
         shown.out
     );
 }
+
+#[test]
+fn check_with_submission_v2_under_a_scripted_judge() {
+    // Plan e1, task F1: `--submission v2` reaches the judge's step of the recipe; the judge
+    // is given v2's tool, keyed by the checklist's ids, and its keyed answer is the verdict.
+    use crate::anthropic::{Judged, checked_submitting, submitting};
+    use crate::matrix::{SF1, SF2, argument, runs_of};
+    let judged = Judged::new("cli-squint-submission-v2");
+    let answer = serde_json::json!({"disposition": "held", "confidence": "Confident",
+        "reason": "Nothing protected moved.", "allowed_by": null, "evidence": [],
+        "location": null});
+    let keyed = submitting(serde_json::json!({"schema_version": 2, "findings": [],
+        "items": {"chk_ob_SF1_candidate": answer.clone(), "chk_ob_SF2_candidate": answer},
+        "opinion": {"verdict": "pass", "reason": "Recorded only."}}));
+    let (printed, log) = checked_submitting(&judged, vec![keyed], None, None, Some("v2"));
+    let printed = printed.unwrap();
+    assert_eq!(printed.lines().nth(1), Some("verdict: pass"), "{printed}");
+    let sent = sent_of(&log);
+    let submit = (sent[0]["tools"].as_array().unwrap().iter())
+        .find(|tool| tool["name"] == "submit_verdict")
+        .unwrap();
+    let items = &submit["input_schema"]["properties"]["items"];
+    assert_eq!(items["type"], "object");
+    assert_eq!(
+        items["required"],
+        serde_json::json!(["chk_ob_SF1_candidate", "chk_ob_SF2_candidate"])
+    );
+    for id in [SF1, SF2] {
+        let described = items["properties"].as_object().unwrap().values();
+        assert_eq!(
+            described
+                .filter(|p| p["description"].as_str().unwrap().contains(id))
+                .count(),
+            1
+        );
+    }
+    // The run of `check` records the form it answered in.
+    let root = &judged.world.root;
+    let checks = runs_of(root, "check");
+    assert_eq!(checks.len(), 1);
+    assert_eq!(argument(&checks[0].1, "submission").as_deref(), Some("v2"));
+    // The command line takes v1 or v2 and nothing else.
+    let refused = crate::wired::whizbang_storeless(&[
+        "squint",
+        "check",
+        "--candidate",
+        "c.png",
+        "--source",
+        "s.png",
+        "--submission",
+        "v3",
+    ]);
+    assert_eq!(refused.code, Some(2), "{}", refused.err);
+    assert!(refused.err.contains("--submission"), "{}", refused.err);
+}

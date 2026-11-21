@@ -93,3 +93,80 @@ fn an_arm_f_and_an_arm_c_cell_send_what_they_sent_before() {
     assert_eq!(offered(of_c), ["view", "align", "submit_verdict"]);
     assert_eq!(offered(of_f), ["view", "align", "resize", "submit_verdict"]);
 }
+
+// --- the setting `submission` in a matrix (plan e1, task F1, item 1) ---------------------------
+
+use crate::anthropic::submitting;
+use crate::matrix::{SF1, items};
+
+/// A submission of v2, keyed by checklist id, as Anthropic answers.
+fn keyed() -> Vec<u8> {
+    let answer = serde_json::json!({"disposition": "held", "confidence": "confident",
+        "reason": "Kept.", "allowed_by": null, "evidence": [], "location": null});
+    submitting(serde_json::json!({"schema_version": 2, "findings": [],
+        "items": {"chk_ob_SF1_candidate": answer.clone(), "chk_ob_SF2_candidate": answer},
+        "opinion": {"verdict": "pass", "reason": "Recorded only."}}))
+}
+
+#[test]
+fn a_resume_under_another_default_submission_is_refused() {
+    // One matrix run, two cells: arm C, which names no submission, fails (its judge left
+    // an item out twice), so its only attempt is a failed one; arm C;submission=v2
+    // completes. A resume under another default is refused for the failed cell alone.
+    let (judged, tiny) = world_with("evaluation-submission", &["a"]);
+    let matrix = matrix_with(SET, "\"C\", \"C;submission=v2\"");
+    let short = || items(&[(SF1, "held", "confident")]);
+    let answers = vec![short(), short(), keyed()];
+    let (report, log) = run_matrix(&judged, answers, &|e| {
+        ran(e, &judged, &tiny, &matrix, PLENTY, &never)
+    });
+    let report = report.unwrap();
+    assert_eq!((report.cells, report.failed), (2, 1));
+    let root = &judged.world.root;
+    // Each cell records the value it ran under: the arm's, or the binary's default.
+    let mut ran_under: Vec<(String, Option<String>)> = checks(root)
+        .iter()
+        .map(|(_, record)| {
+            let cell: serde_json::Value =
+                serde_json::from_str(&argument(record, "cell").unwrap()).unwrap();
+            (
+                cell["arm"].as_str().unwrap().to_owned(),
+                argument(record, "submission"),
+            )
+        })
+        .collect();
+    ran_under.sort();
+    assert_eq!(
+        ran_under,
+        [
+            ("C".to_owned(), Some("v1".to_owned())),
+            ("C;submission=v2".to_owned(), Some("v2".to_owned()))
+        ]
+    );
+    // On the wire: v1's list twice (the submission and its repair), then v2's keys.
+    let sent: Vec<serde_json::Value> = (log.lock().unwrap().iter())
+        .map(|(_, body)| serde_json::from_slice(body).unwrap())
+        .collect();
+    let items_type = |sent: &serde_json::Value| {
+        let submit = (sent["tools"].as_array().unwrap().iter())
+            .find(|t| t["name"] == "submit_verdict")
+            .unwrap();
+        submit["input_schema"]["properties"]["items"]["type"].clone()
+    };
+    assert_eq!(items_type(&sent[0]), "array");
+    assert_eq!(items_type(&sent[2]), "object");
+    // A resume on this binary is allowed; on a binary whose default is v2 it is refused
+    // before anything runs, naming the setting and the arm that names none, though that
+    // arm's only cell failed.
+    whizbang::evaluation::submission_resumable(&matrix, root, None, "v1").unwrap();
+    let refused =
+        whizbang::evaluation::submission_resumable(&matrix, root, None, "v2").unwrap_err();
+    assert!(refused.contains("submission"), "{refused}");
+    assert!(refused.contains("arm C "), "{refused}");
+    assert!(!refused.contains("C;submission=v2"), "{refused}");
+    // The binary's values are the matrix's.
+    assert_eq!(
+        whizbang_squint::check::SUBMISSIONS,
+        whizbang_eval::matrix::SUBMISSIONS
+    );
+}

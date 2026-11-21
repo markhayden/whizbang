@@ -427,6 +427,11 @@ fn call_of(planned: &Planned, argument: &CellArgument) -> Result<Call, String> {
     if let Some(detail) = arm.detail_for(&planned.job.use_case) {
         call = call.argument("detail", Value::text(&detail));
     }
+    // Only when the arm names it: an arm that names none runs the binary's default, and
+    // keeps the identity it had before the setting (plan e1, task F1, item 1).
+    if let Some(submission) = &arm.submission {
+        call = call.argument("submission", Value::text(submission));
+    }
     if planned.cell.backend != "default" {
         call = call.argument("judge", Value::text(&planned.cell.backend));
     }
@@ -532,11 +537,67 @@ pub fn run_under(
         let ours = argument.identity == identity && argument.gate.as_deref() == gate;
         ours.then(|| (key_of(&argument.cell), argument.attempt))
     };
+    submission_resumable(
+        matrix,
+        running.root,
+        gate,
+        whizbang_squint::check::DEFAULT_SUBMISSION,
+    )?;
     let at_once = usize::try_from(matrix.matrix.concurrency).unwrap_or(1);
     let started = harness::run(&work, &recognise, running, at_once, "matrix")?;
     let mut report = summary(planned, labels, running.root, &identity, gate)?;
     report.started = started;
     Ok(report)
+}
+
+/// Whether the matrix may resume over what the store holds under a binary whose default
+/// `submission` is `default` (plan e1, task F1, item 1): refused, before anything runs,
+/// when a cell of an arm that names no `submission` has an attempt that completed or
+/// failed under another value, so that one arm's identity never holds two formats. Both
+/// are kept on a resume and both are scored. A run recorded before the setting existed
+/// answered in v1.
+pub fn submission_resumable(
+    matrix: &Matrix,
+    root: &Path,
+    gate: Option<&str>,
+    default: &str,
+) -> Result<(), String> {
+    let identity: String = matrix.identity().chars().take(16).collect();
+    let mut differing: Option<(String, String)> = None;
+    harness::each_run(root, &mut |record, _, ended| {
+        if differing.is_some() || matches!(ended, Ended::Interrupted) {
+            return;
+        }
+        let Some(argument) = cell_of(record) else {
+            return;
+        };
+        if argument.identity != identity || argument.gate.as_deref() != gate {
+            return;
+        }
+        let named = (argument.cell.arm.parse::<matrix::Arm>()).map(|arm| arm.submission);
+        if !matches!(named, Ok(None)) {
+            return;
+        }
+        let recorded = (record.asked().arguments.iter())
+            .find(|a| a.name == "submission")
+            .and_then(|a| match &a.value {
+                ArgumentValue::Text(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .unwrap_or("v1");
+        if recorded != default {
+            differing = Some((argument.cell.arm.clone(), recorded.to_owned()));
+        }
+    })?;
+    match differing {
+        None => Ok(()),
+        Some((arm, recorded)) => Err(format!(
+            "arm {arm} names no submission, and a cell of it ran under submission {recorded} \
+             while this binary's default is {default}: one arm would hold two formats; name \
+             submission in the arm as a new matrix, or resume on a binary of the same \
+             default; nothing was run"
+        )),
+    }
 }
 
 /// What the store holds of each cell of the matrix: its last attempt's end, and the

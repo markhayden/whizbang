@@ -48,7 +48,7 @@ pub(crate) use judge::Judged;
 pub use judge::{
     CONVERSATION_LIMIT, Controls, DESCRIPTION_LIMIT, Excluded, Judge, JudgeHandle, JudgeRequest,
     MESSAGE_LIMIT, Message, Opaque, PART_LIMIT, Part, RESULT_IMAGE_LIMIT, Role, StopReason,
-    TEXT_LIMIT, TOOL_LIMIT, ToolCall, ToolDefinition, ToolResult, Turn, Usage,
+    TEXT_LIMIT, TOOL_LIMIT, ToolCall, ToolDefinition, ToolResult, Turn, Usage, repeated_keys,
 };
 pub use price::{Price, Quote, QuoteKind, TimeLimit};
 pub use segment::{
