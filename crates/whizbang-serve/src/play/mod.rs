@@ -238,8 +238,30 @@ impl State {
     }
 }
 
+/// The executor as the host lends it to one of its own threads for a call.
+pub(crate) struct Lent<'a> {
+    executor: Arc<dyn Executor>,
+    lent: &'a std::sync::atomic::AtomicUsize,
+}
+
+impl std::ops::Deref for Lent<'_> {
+    type Target = dyn Executor;
+
+    fn deref(&self) -> &(dyn Executor + 'static) {
+        self.executor.as_ref()
+    }
+}
+
+impl Drop for Lent<'_> {
+    fn drop(&mut self) {
+        self.lent.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 pub(crate) struct Shared {
     executor: RwLock<Option<Arc<dyn Executor>>>,
+    /// How many times the executor is lent out now ([`Shared::executor`]).
+    lent: std::sync::atomic::AtomicUsize,
     pub play: Arc<dyn Play>,
     pub token: Token,
     pub settings: Settings,
@@ -293,12 +315,19 @@ impl Drop for Admitting<'_> {
 }
 
 impl Shared {
-    /// The executor, while the host holds it.
-    pub fn executor(&self) -> Option<Arc<dyn Executor>> {
-        self.executor
+    /// The executor, while the host holds it, lent: the host counts what it has lent,
+    /// so that its end can wait for its own handlers and canceller to give it back.
+    pub fn executor(&self) -> Option<Lent<'_>> {
+        let executor = self
+            .executor
             .read()
             .unwrap_or_else(|e| e.into_inner())
-            .clone()
+            .clone()?;
+        self.lent.fetch_add(1, Ordering::SeqCst);
+        Some(Lent {
+            executor,
+            lent: &self.lent,
+        })
     }
 
     pub fn state(&self) -> MutexGuard<'_, State> {
@@ -452,6 +481,7 @@ impl Host {
         let address = listener.local_addr()?;
         let shared = Arc::new(Shared {
             executor: RwLock::new(Some(executor)),
+            lent: std::sync::atomic::AtomicUsize::new(0),
             play,
             token,
             port: address.port(),
@@ -649,19 +679,18 @@ fn keep(shared: &Shared, address: SocketAddr) {
 /// The end: the executor let go, the door told, everyone waiting woken, and the acceptor
 /// woken by a connection of its own so that it sees the end and closes the listener.
 ///
-/// A handler or the canceller may still hold a clone of the executor for a moment (a
-/// start answered as the quit came, say): the end waits, until the grace's end at most,
-/// for this to be the last, so that dropping it lets the store's writer go.
+/// A handler or the canceller may still hold the executor lent for a moment (a start
+/// answered as the quit came, say): the end waits, until the grace's end at most, for
+/// each to give it back, so that dropping the host's own lets the store's writer go.
+/// What the caller of [`Host::start`] holds of the executor beside is its own.
 fn finish(shared: &Shared, address: SocketAddr, until: Instant) {
     let executor = shared
         .executor
         .write()
         .unwrap_or_else(|e| e.into_inner())
         .take();
-    if let Some(executor) = &executor {
-        while Arc::strong_count(executor) > 1 && Instant::now() < until {
-            std::thread::sleep(Duration::from_millis(2));
-        }
+    while shared.lent.load(Ordering::SeqCst) > 0 && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(2));
     }
     drop(executor);
     shared.play.closing();
