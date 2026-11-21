@@ -7,6 +7,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod play_guard;
+mod play_runs;
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -16,8 +17,8 @@ use std::time::Duration;
 
 use serde_json::{Map, Value as Json, json};
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Call, Context, Engine, Failure, Kind, NoBackends, PreparedCall,
-    Produced, Registry,
+    Action, ActionDescriptor, Argument, Call, Context, Engine, Failure, Kind, NoBackends,
+    PreparedCall, Produced, Registry, ValueType,
 };
 use whizbang_core::identity::Digest;
 use whizbang_core::store::Store;
@@ -83,6 +84,19 @@ pub fn actions(released: Arc<AtomicBool>) -> Vec<Arc<dyn Action>> {
             }
             Ok(Produced::nothing())
         }),
+        {
+            let draft =
+                ActionDescriptor::draft("counts", "1.0.0", Kind::Primitive, "A test action.")
+                    .argument(Argument::optional(
+                        "n",
+                        "A number.",
+                        ValueType::integer(Some(0), Some(9)),
+                    ));
+            Arc::new(Scripted(
+                draft.build().unwrap(),
+                Box::new(|_: &Context| Ok(Produced::nothing())),
+            ))
+        },
         scripted("nest", |context| {
             let child = context.executor().submit(&Call::new("waits"));
             match child {
@@ -206,7 +220,8 @@ impl Running {
         )
     }
 
-    /// Prepares and starts a call of `action`: the run's id.
+    /// Prepares and starts a call of `action`, under a request id of its own: the run's
+    /// id.
     pub fn run(&self, action: &str) -> String {
         let prepared = self.api(
             "POST",
@@ -218,7 +233,8 @@ impl Running {
         let started = self.api(
             "POST",
             "/api/runs",
-            Some(&json!({"action": action, "arguments": {}, "handle": handle})),
+            Some(&json!({"action": action, "arguments": {}, "handle": handle,
+                         "request_id": fresh_id()})),
         );
         assert_eq!(started.status, 201, "{}", started.text());
         started.json()["run"].as_str().unwrap().to_owned()
@@ -260,6 +276,12 @@ impl Drop for Running {
             host.wait();
         }
     }
+}
+
+/// A request id no other request of this process has.
+pub fn fresh_id() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    format!("page-{}", NEXT.fetch_add(1, Ordering::SeqCst))
 }
 
 /// A request's bytes.

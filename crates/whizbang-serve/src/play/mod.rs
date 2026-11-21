@@ -30,9 +30,10 @@ pub mod routes;
 pub mod threads;
 pub mod token;
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io;
 use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
@@ -64,6 +65,9 @@ pub const GRACE: Duration = Duration::from_secs(10);
 /// How many connections accepted and not yet taken by a worker are kept; past it a
 /// connection is closed at once.
 const QUEUED_LIMIT: usize = 64;
+/// How many request ids of runs it started the host remembers, the oldest forgotten
+/// first; an older one is still answered by the executor.
+pub const REQUESTS_REMEMBERED: usize = 4096;
 
 /// What the binary hands the host beside the executor: how the page's call becomes a
 /// call of an action, what `/api/hello` says beside the version and the store, and what
@@ -104,6 +108,8 @@ pub struct Settings {
     pub grace: Duration,
     /// The most runs the host started that are going at once.
     pub calls: usize,
+    /// How long the host keeps a preparation under its handle.
+    pub preparation_age: Duration,
     /// How often the keeper looks at the runs and the grace.
     pub look: Duration,
     pub deadlines: Deadlines,
@@ -118,22 +124,26 @@ impl Settings {
             run_limit: RUN_LIMIT_DEFAULT,
             grace: GRACE,
             calls: crate::CALLS_LIMIT,
+            preparation_age: PREPARATION_AGE,
             look: Duration::from_millis(50),
             deadlines: Deadlines::default(),
         }
     }
 }
 
-/// How a host ended: how many runs it started had not ended at the end of the grace.
-/// Each is left to be ended as interrupted by the next writer of the store.
+/// How a host ended: how many runs it started (or was admitting) had not ended at the
+/// end of the grace. Each is left to be ended as interrupted by the next writer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Stopped {
     pub left: usize,
 }
 
-/// One run the host started and holds.
+/// One run the host started and holds, or a start it is admitting.
 pub(crate) struct Held {
-    pub run: RunId,
+    /// The place's own number, which finds it again once its start is answered.
+    pub place: u64,
+    /// The run, once its start was answered; none while it is being admitted.
+    pub run: Option<RunId>,
     pub action: String,
     pub signal: Cancellation,
     pub until: Instant,
@@ -151,6 +161,13 @@ pub(crate) struct Kept {
     pub at: Instant,
 }
 
+/// A request id of a run the host started, with what was asked under it.
+pub(crate) struct Asked {
+    pub run: RunId,
+    pub action: String,
+    pub arguments: Map<String, Json>,
+}
+
 /// What the canceller is asked to do.
 enum Job {
     Cancel(RunId),
@@ -165,19 +182,52 @@ enum Quit {
 }
 
 pub(crate) struct State {
+    /// The places: runs going, and starts being admitted.
     pub runs: Vec<Held>,
-    /// Places taken by starts that are being admitted.
-    pub starting: usize,
-    /// Runs that ended and gave their place back, not yet waited for.
-    finished: Vec<RunId>,
+    next_place: u64,
+    /// Every run the host started that the canceller has not waited for yet: a quit
+    /// is over once this is empty and no start is being admitted.
+    unwaited: BTreeSet<String>,
     jobs: VecDeque<Job>,
-    /// Runs the canceller has waited for since the quit.
-    waited: BTreeSet<String>,
     pub preparations: VecDeque<Kept>,
+    /// The request ids of runs the host started, newest last.
+    pub requests: BTreeMap<String, Asked>,
+    requests_order: VecDeque<String>,
     pub uploads: usize,
     quit: Quit,
     done: bool,
     left: usize,
+}
+
+impl State {
+    fn quitting(&self) -> bool {
+        self.quit != Quit::Running
+    }
+
+    /// Trips the cancellation of a held run and hands it to the canceller, once.
+    fn stop_held(&mut self, at: usize) {
+        let held = &mut self.runs[at];
+        held.signal.cancel();
+        held.stopping = true;
+        if let Some(run) = &held.run
+            && !held.cancel_sent
+        {
+            held.cancel_sent = true;
+            let run = run.clone();
+            self.jobs.push_back(Job::Cancel(run));
+        }
+    }
+
+    pub fn remember(&mut self, id: String, asked: Asked) {
+        if self.requests.insert(id.clone(), asked).is_none() {
+            self.requests_order.push_back(id);
+        }
+        while self.requests_order.len() > REQUESTS_REMEMBERED {
+            if let Some(oldest) = self.requests_order.pop_front() {
+                self.requests.remove(&oldest);
+            }
+        }
+    }
 }
 
 pub(crate) struct Shared {
@@ -189,6 +239,49 @@ pub(crate) struct Shared {
     pub stopping: AtomicBool,
     state: Mutex<State>,
     changed: Condvar,
+}
+
+/// A place taken for a start while it is admitted: given back when this is dropped,
+/// unless the start made a run, so that a refused start, or a handler that panicked,
+/// leaks no place.
+pub(crate) struct Admitting<'a> {
+    shared: &'a Shared,
+    pub place: u64,
+    kept: bool,
+}
+
+impl Admitting<'_> {
+    /// The start made this run: the place is its own from now on. When the host began
+    /// to quit while the run was admitted, it is cancelled and waited for as the rest.
+    pub fn made(mut self, run: RunId) {
+        let mut state = self.shared.state();
+        let quitting = state.quitting();
+        state.unwaited.insert(run.as_str().to_owned());
+        if let Some(at) = state.runs.iter().position(|h| h.place == self.place) {
+            state.runs[at].run = Some(run.clone());
+            if quitting || state.runs[at].stopping {
+                state.runs[at].cancel_sent = false;
+                state.stop_held(at);
+            }
+        }
+        if quitting {
+            state.jobs.push_back(Job::Wait(run));
+        }
+        self.kept = true;
+        drop(state);
+        self.shared.notify();
+    }
+}
+
+impl Drop for Admitting<'_> {
+    fn drop(&mut self) {
+        if !self.kept {
+            let mut state = self.shared.state();
+            state.runs.retain(|held| held.place != self.place);
+            drop(state);
+            self.shared.notify();
+        }
+    }
 }
 
 impl Shared {
@@ -208,20 +301,90 @@ impl Shared {
         self.changed.notify_all();
     }
 
+    /// Takes a place for a start of `action`, when fewer than [`Settings::calls`] are
+    /// taken and the host is not quitting; first giving back the places of runs that
+    /// have ended. None when every place is taken.
+    pub fn admit(
+        &self,
+        action: &str,
+        signal: &Cancellation,
+        until: Instant,
+        started_ms: u64,
+    ) -> Option<Admitting<'_>> {
+        self.forget_ended();
+        let mut state = self.state();
+        if state.runs.len() >= self.settings.calls || state.quitting() {
+            return None;
+        }
+        let place = state.next_place;
+        state.next_place += 1;
+        state.runs.push(Held {
+            place,
+            run: None,
+            action: action.to_owned(),
+            signal: signal.clone(),
+            until,
+            started_ms,
+            stopping: false,
+            cancel_sent: false,
+        });
+        Some(Admitting {
+            shared: self,
+            place,
+            kept: false,
+        })
+    }
+
+    /// Gives back the place of every held run that has ended, asking each run's status
+    /// without the lock (it answers during a final publication), and hands each to the
+    /// canceller to be waited for. A status that fails is taken as a run still going:
+    /// a place is never given back while its run may not be over. What comes back is
+    /// the held runs still going, with their stated times and whether they are stopping.
+    pub fn forget_ended(&self) -> Vec<(RunId, Instant, bool)> {
+        let looked: Vec<RunId> = self
+            .state()
+            .runs
+            .iter()
+            .filter_map(|held| held.run.clone())
+            .collect();
+        let Some(executor) = self.executor() else {
+            return Vec::new();
+        };
+        let mut over = Vec::new();
+        for run in looked {
+            if let Ok(watched) = executor.status_after(&run, u64::MAX)
+                && !matches!(watched.state(), RunState::NotEnded { here: true })
+            {
+                over.push(run);
+            }
+        }
+        drop(executor);
+        let mut state = self.state();
+        for run in &over {
+            state.runs.retain(|held| held.run.as_ref() != Some(run));
+            state.jobs.push_back(Job::Wait(run.clone()));
+        }
+        let going = state
+            .runs
+            .iter()
+            .filter_map(|held| Some((held.run.clone()?, held.until, held.stopping)))
+            .collect();
+        drop(state);
+        if !over.is_empty() {
+            self.notify();
+        }
+        going
+    }
+
     /// Stops the run `run`, which the host holds: trips its cancellation and hands it
     /// to the canceller, once however often it is asked. Never waits. False when the
     /// host holds no such run.
     pub fn stop(&self, run: &RunId) -> bool {
         let mut state = self.state();
-        let Some(held) = state.runs.iter_mut().find(|held| &held.run == run) else {
+        let Some(at) = state.runs.iter().position(|h| h.run.as_ref() == Some(run)) else {
             return false;
         };
-        held.signal.cancel();
-        held.stopping = true;
-        if !held.cancel_sent {
-            held.cancel_sent = true;
-            state.jobs.push_back(Job::Cancel(run.clone()));
-        }
+        state.stop_held(at);
         drop(state);
         self.notify();
         true
@@ -255,6 +418,11 @@ impl Stopper {
 }
 
 /// A running host.
+///
+/// Its workers are not joined by [`Host::wait`]: once the acceptor has ended, each
+/// ends after the connection it holds, which its deadlines bound (the head's, the
+/// body's rate and the answer's: at most about 15 seconds with the defaults, longer
+/// only for an upload that keeps to the rate), and none holds the executor by then.
 pub struct Host {
     shared: Arc<Shared>,
     address: SocketAddr,
@@ -263,9 +431,9 @@ pub struct Host {
 
 impl Host {
     /// Listens on `127.0.0.1` at the settings' port and starts serving: the acceptor,
-    /// the workers, the keeper and the canceller, each a counted thread. A port in use is
-    /// an error of the kind [`io::ErrorKind::AddrInUse`]; nothing is left running when
-    /// this fails.
+    /// the workers, the keeper and the canceller, each a counted thread
+    /// ([`threads::THREADS_LIMIT`] in a process). A port in use is an error of the kind
+    /// [`io::ErrorKind::AddrInUse`]; nothing is left running when this fails.
     pub fn start(
         executor: Arc<dyn Executor>,
         play: Arc<dyn Play>,
@@ -283,11 +451,12 @@ impl Host {
             stopping: AtomicBool::new(false),
             state: Mutex::new(State {
                 runs: Vec::new(),
-                starting: 0,
-                finished: Vec::new(),
+                next_place: 0,
+                unwaited: BTreeSet::new(),
                 jobs: VecDeque::new(),
-                waited: BTreeSet::new(),
                 preparations: VecDeque::new(),
+                requests: BTreeMap::new(),
+                requests_order: VecDeque::new(),
                 uploads: 0,
                 quit: Quit::Running,
                 done: false,
@@ -321,10 +490,7 @@ impl Host {
             Err(error) => {
                 // What was made ends: the keeper finishes at once, and the workers end
                 // when the acceptor's side of their channel is gone.
-                {
-                    let mut state = shared.state();
-                    state.quit = Quit::Hurried;
-                }
+                shared.state().quit = Quit::Hurried;
                 shared.stopping.store(true, Ordering::SeqCst);
                 shared.notify();
                 Err(error)
@@ -362,13 +528,17 @@ impl Host {
     }
 }
 
-/// The acceptor: accepts, and hands each connection to a worker, never reading.
+/// The acceptor: accepts, and hands each connection to a worker, never reading. An
+/// error of the system (such as too many open files) is waited out briefly, not spun on.
 fn accept(shared: &Shared, listener: &TcpListener, send: &SyncSender<(TcpStream, Instant)>) {
     for stream in listener.incoming() {
         if shared.state().done {
             return;
         }
-        let Ok(stream) = stream else { continue };
+        let Ok(stream) = stream else {
+            std::thread::sleep(Duration::from_millis(50));
+            continue;
+        };
         match send.try_send((stream, Instant::now())) {
             Ok(()) => {}
             // Every worker is busy and the queue is full: the connection is closed.
@@ -378,14 +548,17 @@ fn accept(shared: &Shared, listener: &TcpListener, send: &SyncSender<(TcpStream,
     }
 }
 
-/// A connection worker: one request, one answer, then the next connection.
+/// A connection worker: one request, one answer, then the next connection. A handler
+/// that panics loses its connection and not the worker.
 fn work(shared: &Shared, receive: &Mutex<Receiver<(TcpStream, Instant)>>) {
     loop {
         let next = receive.lock().unwrap_or_else(|e| e.into_inner()).recv();
         let Ok((mut stream, since)) = next else {
             return;
         };
-        routes::serve(shared, &mut stream, since);
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            routes::serve(shared, &mut stream, since);
+        }));
     }
 }
 
@@ -394,90 +567,48 @@ fn work(shared: &Shared, receive: &Mutex<Receiver<(TcpStream, Instant)>>) {
 fn keep(shared: &Shared, address: SocketAddr) {
     let settings = &shared.settings;
     let mut grace_end: Option<Instant> = None;
-    let mut to_wait: BTreeSet<String> = BTreeSet::new();
     loop {
         let now = Instant::now();
+        {
+            let mut state = shared.state();
+            // A quit, the first time it is seen: trip every held cancellation, starts
+            // being admitted among them, and hand every run the host started and has
+            // not waited for to the canceller: first each cancel, then each wait.
+            if grace_end.is_none() && state.quitting() {
+                let asked = match state.quit {
+                    Quit::Asked(at) => at,
+                    _ => now,
+                };
+                grace_end = Some(asked + settings.grace);
+                for at in 0..state.runs.len() {
+                    state.stop_held(at);
+                }
+                let waits: Vec<String> = state.unwaited.iter().cloned().collect();
+                for run in waits {
+                    if let Ok(run) = RunId::parse(&run) {
+                        state.jobs.push_back(Job::Wait(run));
+                    }
+                }
+                drop(state);
+                shared.notify();
+            }
+        }
+        let going = shared.forget_ended();
         let mut state = shared.state();
-        // A quit, the first time it is seen: trip every held cancellation, and hand
-        // each run to the canceller to be cancelled and waited for.
-        if grace_end.is_none() && state.quit != Quit::Running {
-            let asked = match state.quit {
-                Quit::Asked(at) => at,
-                _ => now,
-            };
-            grace_end = Some(asked + settings.grace);
-            let mut jobs = Vec::new();
-            for held in &mut state.runs {
-                held.signal.cancel();
-                held.stopping = true;
-                if !held.cancel_sent {
-                    held.cancel_sent = true;
-                    jobs.push(Job::Cancel(held.run.clone()));
+        if grace_end.is_none() {
+            for (run, until, stopping) in going {
+                if !stopping
+                    && now >= until
+                    && let Some(at) = state.runs.iter().position(|h| h.run.as_ref() == Some(&run))
+                {
+                    state.stop_held(at);
+                    shared.notify();
                 }
             }
-            let mut waits: Vec<RunId> = state.runs.iter().map(|h| h.run.clone()).collect();
-            waits.append(&mut state.finished);
-            for run in waits {
-                to_wait.insert(run.as_str().to_owned());
-                jobs.push(Job::Wait(run));
-            }
-            state.jobs.extend(jobs);
-            shared.notify();
-        }
-        let looked: Vec<(RunId, Instant, bool)> = state
-            .runs
-            .iter()
-            .map(|held| (held.run.clone(), held.until, held.stopping))
-            .collect();
-        drop(state);
-
-        // Each run's status, without the lock: it answers during a final publication.
-        let executor = shared.executor();
-        let mut over = Vec::new();
-        let mut late = Vec::new();
-        for (run, until, stopping) in looked {
-            let state = executor
-                .as_ref()
-                .and_then(|executor| executor.status_after(&run, u64::MAX).ok());
-            let going = matches!(
-                state.as_ref().map(|watched| watched.state()),
-                Some(RunState::NotEnded { here: true })
-            );
-            if !going {
-                over.push(run);
-            } else if !stopping && now >= until {
-                late.push(run);
-            }
-        }
-        drop(executor);
-        let mut state = shared.state();
-        for run in &over {
-            state.runs.retain(|held| &held.run != run);
-            if grace_end.is_none() {
-                state.finished.push(run.clone());
-            }
-        }
-        for run in &late {
-            if let Some(held) = state.runs.iter_mut().find(|held| &held.run == run) {
-                held.signal.cancel();
-                held.stopping = true;
-                if !held.cancel_sent {
-                    held.cancel_sent = true;
-                    state.jobs.push_back(Job::Cancel(run.clone()));
-                }
-            }
-        }
-        // A run that ended outside a quit is waited for too, so that its thread holds
-        // nothing of the store when the host lets the store go.
-        if grace_end.is_none() && !state.finished.is_empty() && state.jobs.is_empty() {
-            let finished = std::mem::take(&mut state.finished);
-            state.jobs.extend(finished.into_iter().map(Job::Wait));
-        }
-        if !over.is_empty() || !late.is_empty() {
-            shared.notify();
         }
         if let Some(end) = grace_end {
-            let all_waited = to_wait.iter().all(|run| state.waited.contains(run));
+            let admitting = state.runs.iter().any(|held| held.run.is_none());
+            let all_waited = state.unwaited.is_empty() && !admitting;
             let hurried = state.quit == Quit::Hurried;
             if all_waited || hurried || Instant::now() >= end {
                 state.left = state.runs.len();
@@ -515,13 +646,21 @@ fn finish(shared: &Shared, address: SocketAddr) {
 }
 
 /// The canceller: the one thread that calls [`Executor::cancel`] and
-/// [`Executor::wait`], each of which can wait.
+/// [`Executor::wait`], each of which can wait. Cancels go before waits, so a run that
+/// ignores its cancellation holds up no other run's cancel.
 fn cancel(shared: &Shared) {
     loop {
         let mut state = shared.state();
         let job = loop {
             if state.done {
                 return;
+            }
+            let cancel_at = state
+                .jobs
+                .iter()
+                .position(|job| matches!(job, Job::Cancel(_)));
+            if let Some(job) = cancel_at.and_then(|at| state.jobs.remove(at)) {
+                break job;
             }
             if let Some(job) = state.jobs.pop_front() {
                 break job;
@@ -542,7 +681,7 @@ fn cancel(shared: &Shared) {
             Job::Wait(run) => {
                 let _ = executor.wait(&run);
                 drop(executor);
-                shared.state().waited.insert(run.as_str().to_owned());
+                shared.state().unwaited.remove(run.as_str());
                 shared.notify();
             }
         }

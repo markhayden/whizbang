@@ -15,7 +15,7 @@ use whizbang_core::contract::{
 
 use super::guard::{self, Guarded};
 use super::http::{PAGE_POLICY, Response, Unread};
-use super::{Held, Kept, PREPARATION_AGE, PREPARATIONS_LIMIT, Shared, assets};
+use super::{Asked, Kept, PREPARATIONS_LIMIT, Shared, assets};
 use crate::escaped;
 
 /// What body a route takes.
@@ -189,7 +189,7 @@ fn quit(shared: &Shared, _: &Guarded<'_>) -> Response {
 /// The body of a preparation: an action and its arguments, and nothing else.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Asked {
+struct Preparing {
     action: String,
     #[serde(default)]
     arguments: Map<String, Json>,
@@ -250,7 +250,7 @@ fn kind_word(refusal: &Refusal) -> String {
 }
 
 fn prepare(shared: &Shared, guarded: &Guarded<'_>) -> Response {
-    let asked: Asked = match body(guarded) {
+    let asked: Preparing = match body(guarded) {
         Ok(asked) => asked,
         Err(refused) => return refused,
     };
@@ -268,9 +268,10 @@ fn prepare(shared: &Shared, guarded: &Guarded<'_>) -> Response {
             };
             let mut state = shared.state();
             let now = Instant::now();
+            let age = shared.settings.preparation_age;
             state
                 .preparations
-                .retain(|kept| now.duration_since(kept.at) < PREPARATION_AGE);
+                .retain(|kept| now.duration_since(kept.at) < age);
             while state.preparations.len() >= PREPARATIONS_LIMIT {
                 state.preparations.pop_front();
             }
@@ -295,76 +296,88 @@ fn start(shared: &Shared, guarded: &Guarded<'_>) -> Response {
         Ok(asked) => asked,
         Err(refused) => return refused,
     };
-    let (call, from_arguments) = match shared.play.call(&asked.action, &asked.arguments) {
-        Ok(made) => made,
-        Err(why) => return Response::refused(422, &escaped(&why)),
+    let Some(text_id) = asked.request_id.clone() else {
+        return Response::refused(400, "a start names its request_id, of the page's making");
     };
     let Some(executor) = shared.executor() else {
         return Response::refused(503, "the playground is stopping");
     };
-    // A place among the calls, held while the start is admitted.
-    let prepared = {
-        let mut state = shared.state();
-        if state.runs.len() + state.starting >= shared.settings.calls {
-            let why = format!(
-                "at most {} runs started here go at once; try again when one ends",
-                shared.settings.calls
+    // A repeated id is answered before anything else is looked at (ADR 0007): the run
+    // it started, or a conflict when something else was asked under it.
+    let earlier = shared.state().requests.get(&text_id).map(|earlier| {
+        let same = earlier.action == asked.action && earlier.arguments == asked.arguments;
+        (earlier.run.clone(), same)
+    });
+    if let Some((run, same)) = earlier {
+        if !same {
+            return Response::json(
+                409,
+                &json!({"refused": "another call was started under this request id",
+                        "kind": "conflict"}),
             );
-            return Response::refused(429, &why).with("Retry-After", "5");
         }
-        state.starting += 1;
-        let now = Instant::now();
-        asked.handle.as_ref().and_then(|handle| {
-            state
-                .preparations
-                .iter()
-                .find(|kept| {
-                    &kept.handle == handle && now.duration_since(kept.at) < PREPARATION_AGE
-                })
-                .map(|kept| kept.prepared.clone())
-        })
+        let state = executor
+            .status_after(&run, u64::MAX)
+            .map_or("running", |watched| state_word(watched.state(), false));
+        return Response::json(
+            200,
+            &json!({"run": run.as_str(), "repeat": true, "state": state}),
+        );
+    }
+    let id = match executor.request_id(&text_id) {
+        Ok(id) => id,
+        Err(error) => return call_refused(&error),
     };
+    // A place among the calls, held while the start is admitted, and given back if it
+    // makes no run.
+    let signal = Cancellation::new();
+    let until = Instant::now() + shared.settings.run_limit;
+    let Some(admitting) = shared.admit(&asked.action, &signal, until, now_ms()) else {
+        if shared.stopping.load(std::sync::atomic::Ordering::SeqCst) {
+            return Response::refused(503, "the playground is stopping");
+        }
+        let why = format!(
+            "at most {} runs started here go at once; try again when one ends",
+            shared.settings.calls
+        );
+        return Response::refused(429, &why).with("Retry-After", "5");
+    };
+    let (call, _) = match shared.play.call(&asked.action, &asked.arguments) {
+        Ok(made) => made,
+        Err(why) => return Response::refused(422, &escaped(&why)),
+    };
+    let age = shared.settings.preparation_age;
+    let prepared = asked.handle.as_ref().and_then(|handle| {
+        let now = Instant::now();
+        let state = shared.state();
+        state
+            .preparations
+            .iter()
+            .find(|kept| &kept.handle == handle && now.duration_since(kept.at) < age)
+            .map(|kept| kept.prepared.clone())
+    });
     // At its stated time the keeper cancels the run, and its children with it. The
     // run's own deadline comes a grace later: a backstop for an action that reads its
     // deadline and not its cancellation, which does not race the cancel.
-    let signal = Cancellation::new();
-    let until = Instant::now() + shared.settings.run_limit;
     let mut request = Request::new(call)
-        .cancelled_by(signal.clone())
+        .cancelled_by(signal)
         .until(until + shared.settings.grace)
-        .needing_preparation();
+        .needing_preparation()
+        .with_id(id);
     if let Some(prepared) = &prepared {
         request = request.expecting(prepared);
     }
-    let text_id = asked.request_id.or(from_arguments);
-    let mut refused = None;
-    if let Some(text) = text_id {
-        match executor.request_id(&text) {
-            Ok(id) => request = request.with_id(id),
-            Err(error) => refused = Some(call_refused(&error)),
-        }
-    }
-    let answered = match refused {
-        Some(refusal) => Err(refusal),
-        None => executor
-            .start(&request)
-            .map_err(|error| call_refused(&error)),
-    };
-    let mut state = shared.state();
-    state.starting -= 1;
-    match answered {
+    match executor.start(&request) {
         Ok(Answer::Started(run)) => {
-            state.runs.push(Held {
-                run: run.clone(),
-                action: asked.action,
-                signal,
-                until,
-                started_ms: now_ms(),
-                stopping: false,
-                cancel_sent: false,
-            });
-            drop(state);
-            shared.notify();
+            admitting.made(run.clone());
+            shared.state().remember(
+                text_id,
+                Asked {
+                    run: run.clone(),
+                    action: asked.action,
+                    arguments: asked.arguments,
+                },
+            );
             Response::json(201, &json!({"run": run.as_str(), "state": "running"}))
         }
         Ok(Answer::Repeat(earlier)) => Response::json(
@@ -377,7 +390,7 @@ fn start(shared: &Shared, guarded: &Guarded<'_>) -> Response {
             &json!({"run": finished.run().as_str(), "state": "ended",
                     "outcome": finished.outcome().name()}),
         ),
-        Err(response) => response,
+        Err(error) => call_refused(&error),
     }
 }
 
@@ -440,7 +453,7 @@ fn status(shared: &Shared, guarded: &Guarded<'_>) -> Response {
         .state()
         .runs
         .iter()
-        .any(|held| held.run == run && held.stopping);
+        .any(|held| held.run.as_ref() == Some(&run) && held.stopping);
     let Some(executor) = shared.executor() else {
         return Response::refused(503, "the playground is stopping");
     };
@@ -471,17 +484,20 @@ fn open(shared: &Shared, guarded: &Guarded<'_>) -> Response {
             "this build lists the runs still going: ask with open=1",
         );
     }
+    // A run that has ended is not listed, whether or not the keeper has looked yet.
+    shared.forget_ended();
     let state = shared.state();
     let runs: Vec<Json> = state
         .runs
         .iter()
-        .map(|held| {
-            json!({
-                "run": held.run.as_str(),
+        .filter_map(|held| {
+            let run = held.run.as_ref()?;
+            Some(json!({
+                "run": run.as_str(),
                 "action": held.action,
                 "started_ms": held.started_ms,
                 "state": if held.stopping { "stopping" } else { "running" },
-            })
+            }))
         })
         .collect();
     Response::json(200, &json!({"runs": runs}))
@@ -492,7 +508,10 @@ fn picture(shared: &Shared, guarded: &Guarded<'_>) -> Response {
     if name.chars().count() > 200 {
         return Response::refused(400, "a picture's name is at most 200 characters");
     }
-    let bytes = guarded.picture.as_deref().unwrap_or_default();
+    let bytes = guarded
+        .picture
+        .as_ref()
+        .map_or(&[][..], |picture| &picture.bytes[..]);
     match shared.play.picture(bytes, name) {
         Ok(made) => Response::json(201, &made),
         Err(why) => Response::refused(501, &escaped(&why)),
