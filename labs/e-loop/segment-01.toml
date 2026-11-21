@@ -1,0 +1,192 @@
+# The loop's pictures of milestone E, slice 1 (plan e1, task L1, item 2): the set
+# segmentation/segment-01 of the public evaluation-pictures repository, at the revision
+# below, 20 pictures with hand-drawn truth masks in four groups. Each entry's id, group,
+# phrase and two pins are copied from the set's own set.toml at that revision (its
+# `prompt` is the phrase here); nothing of the set is changed. The pictures are read from
+# a folder laid out as the repository is (`<folder>/<set>/<path>`), outside the work tree,
+# and never committed. `image` is what the loop is given; `truth` is read only by
+# `whizbang eval loop score`, by its pin, and never imported.
+kind = "segment-01"
+set = "segmentation/segment-01"
+images_repo = "github.com/markhayden/wafflery-evalsets"
+images_rev = "d5413a4f0806c0c8d4e0376eb71bffe3d541b98e"
+
+[[item]]
+id = "whole-01"
+group = "whole"
+phrase = "coffee mug"
+image = "items/whole-01/image.png"
+image_sha256 = "sha256:ed2fad8a1ee04f6f9eadde05cc712d975b08f011d0fbb9c6ed45fe9b416ec1c3"
+truth = "items/whole-01/truth.png"
+truth_sha256 = "sha256:a140c2926f01b2bc501809321d58a7fff4f1b71d0d62b6151b4509cd62b4764e"
+
+[[item]]
+id = "whole-02"
+group = "whole"
+phrase = "traffic cone"
+image = "items/whole-02/image.png"
+image_sha256 = "sha256:e4a34502b25f9cd8cfbf49e731cbf0644b9d182e192f84b81a2471d9f7e865a1"
+truth = "items/whole-02/truth.png"
+truth_sha256 = "sha256:d99e9e4575266437f67d24862c2bb5db2917a2fd0c524d7359774e582371be1f"
+
+[[item]]
+id = "whole-03"
+group = "whole"
+phrase = "suitcase"
+image = "items/whole-03/image.png"
+image_sha256 = "sha256:0299b7b41a8d4870fb627e00c7e3aa933a6be62666b7e4596046c9b2bbe27606"
+truth = "items/whole-03/truth.png"
+truth_sha256 = "sha256:4c16d2b73fe5bf78abbd5b0eb6edaddc1a3c95a6f5921d4210799e16d89ad1b2"
+
+[[item]]
+id = "whole-04"
+group = "whole"
+phrase = "office chair"
+image = "items/whole-04/image.png"
+image_sha256 = "sha256:3244c27c82862df7f6df5253c0252627a5310c3c562cfd81f79cefdfd7334b62"
+truth = "items/whole-04/truth.png"
+truth_sha256 = "sha256:386471319e2f7fc77cee226c6f38ab67f140aa65845abd7bd3ceb2abfcd242c3"
+
+[[item]]
+id = "whole-05"
+group = "whole"
+phrase = "hose reel"
+image = "items/whole-05/image.png"
+image_sha256 = "sha256:6bdc9514e71b4766c8ce8bfad6702ec71c88c4651172e328a6b542f00e8107e3"
+truth = "items/whole-05/truth.png"
+truth_sha256 = "sha256:0983450527de0cf9f31288b20553b1431eb1b3a52b5effae36a379772e6d86ae"
+
+[[item]]
+id = "parts-01"
+group = "parts"
+phrase = "leather collar. dog tags"
+image = "items/parts-01/image.png"
+image_sha256 = "sha256:cb0d70455ec904f3a9f712189a18490da7f95874c8f69001daa36eda044b5c46"
+truth = "items/parts-01/truth.png"
+truth_sha256 = "sha256:ae61a46a394eb2398b5088c3cf862dc5ba85b000dcba02320bcf68d0d7fe7ba2"
+
+[[item]]
+id = "parts-02"
+group = "parts"
+phrase = "bicycle"
+image = "items/parts-02/image.png"
+image_sha256 = "sha256:00d718ce10596700c7544a35538f44657872f9359dbd14b18e52bbb8a3a673eb"
+truth = "items/parts-02/truth.png"
+truth_sha256 = "sha256:625073f556d4217c3f7470eb9f2601e3417ad9121f106f6517112be9dfb26412"
+
+[[item]]
+id = "parts-03"
+group = "parts"
+phrase = "wristwatch"
+image = "items/parts-03/image.png"
+image_sha256 = "sha256:f7dbef5f23e44e83c6c38a2360d09604eb3c98a0a8b7941246bff8740f06b8af"
+truth = "items/parts-03/truth.png"
+truth_sha256 = "sha256:198c0d56115cc562bb979f2dcb4670a126b70bbb3af66a8064882fedd1cd55e1"
+
+[[item]]
+id = "parts-04"
+group = "parts"
+phrase = "headphones"
+image = "items/parts-04/image.png"
+image_sha256 = "sha256:31f4136cb30cad7bcd829063c17db59452c1724bef80781377a5350eeb3e1826"
+truth = "items/parts-04/truth.png"
+truth_sha256 = "sha256:855312757a9978f73e5af5257530d3ae9ef573b23072401c78043dd11975a52c"
+
+[[item]]
+id = "parts-05"
+group = "parts"
+phrase = "handbag"
+image = "items/parts-05/image.png"
+image_sha256 = "sha256:bda9c20741831c9d1dabc61b60ba89657a614b6ac1c1d86a95ef3fed2b998662"
+truth = "items/parts-05/truth.png"
+truth_sha256 = "sha256:62e352443d479447fde5bc7dd3e1e75bf50c658ed00eec664ea551bfb0e8c89a"
+
+[[item]]
+id = "parts-06"
+group = "parts"
+phrase = "camera. tripod"
+image = "items/parts-06/image.png"
+image_sha256 = "sha256:0b006a2c5953cc53e20f5911e3e5bc77d1c699b9796b933288a9a1f9c64cc18f"
+truth = "items/parts-06/truth.png"
+truth_sha256 = "sha256:c694bd776fd35979dbae1103011e2725d7ae31a5c0c701f88f3b1ed3a0ed0f32"
+
+[[item]]
+id = "thin-01"
+group = "thin"
+phrase = "bistro chair"
+image = "items/thin-01/image.png"
+image_sha256 = "sha256:1486103a6c3089d28c9720b40c61f1ce36e796984045382abb4568f9586d37cb"
+truth = "items/thin-01/truth.png"
+truth_sha256 = "sha256:7604dcc9ac7991bcaf6bb9df38649bc4b920eb505890f2c3d4b667cb45281955"
+
+[[item]]
+id = "thin-02"
+group = "thin"
+phrase = "floor lamp"
+image = "items/thin-02/image.png"
+image_sha256 = "sha256:6374bec148d42d16306b61ef0bd678ffb83f695258fbc06a25c3441eeec58968"
+truth = "items/thin-02/truth.png"
+truth_sha256 = "sha256:4a6eb064b463f299fdaf4969b095383e4aedd187eda3e175edb80a0d430e6c57"
+
+[[item]]
+id = "thin-03"
+group = "thin"
+phrase = "cable. fan"
+image = "items/thin-03/image.png"
+image_sha256 = "sha256:55bb489ddcd8549d8851c3ea66f93581e4a780689bd51cc0925f3455307dff38"
+truth = "items/thin-03/truth.png"
+truth_sha256 = "sha256:97199f5ef677990bb174e7b221764b2b5589358f31404486e34aca418fb59c34"
+
+[[item]]
+id = "thin-04"
+group = "thin"
+phrase = "fishing rod"
+image = "items/thin-04/image.png"
+image_sha256 = "sha256:d3bd417d70ede29099580e5c0240fa3953fae5e310b3723f4128fbaac5f0823f"
+truth = "items/thin-04/truth.png"
+truth_sha256 = "sha256:771a152cf9fb18f254ea0c7048d30619cb1e2e072c711cc01941a6a15150325c"
+
+[[item]]
+id = "thin-05"
+group = "thin"
+phrase = "music stand"
+image = "items/thin-05/image.png"
+image_sha256 = "sha256:98c0ef3e0dec32392fe6b6e46132e51d6f7a89edb4ed02134036ac4403b441da"
+truth = "items/thin-05/truth.png"
+truth_sha256 = "sha256:d83d6cce25c099adbcc8f7e37ffe1d4bb0c30b20571299560c83a78dd5d7c2af"
+
+[[item]]
+id = "hole-01"
+group = "keep-the-hole"
+phrase = "picture frame"
+image = "items/hole-01/image.png"
+image_sha256 = "sha256:21dec5c2cb19814c14035396249fa0dcf8edc225ec57cecdc4b9270c14ce15bd"
+truth = "items/hole-01/truth.png"
+truth_sha256 = "sha256:c234c16c3ed28becf0d1cdcc0b0656d8c53348b6d970e9f977ab8ad4bbdc47cf"
+
+[[item]]
+id = "hole-02"
+group = "keep-the-hole"
+phrase = "tyre swing"
+image = "items/hole-02/image.png"
+image_sha256 = "sha256:a95045b707f51d17925febcdf6ebd6521e81e4e8b0c92caa7e145007787f2e03"
+truth = "items/hole-02/truth.png"
+truth_sha256 = "sha256:500ba6a96d3b7738a71ea42f7ac186bfb25093f7362631c5eff078a598aea852"
+
+[[item]]
+id = "hole-03"
+group = "keep-the-hole"
+phrase = "basketball hoop"
+image = "items/hole-03/image.png"
+image_sha256 = "sha256:61cad7b2ae7a9fef378897e769552a41f5c7536d5c256b45918728b9deb642c6"
+truth = "items/hole-03/truth.png"
+truth_sha256 = "sha256:3a204c17528ba7380861546784812175216266917068b485978b0d25bf5db7e3"
+
+[[item]]
+id = "hole-04"
+group = "keep-the-hole"
+phrase = "wreath"
+image = "items/hole-04/image.png"
+image_sha256 = "sha256:59865e0872b4ab95aba2be10d945e28887dab5103a946023debf15707061a006"
+truth = "items/hole-04/truth.png"
+truth_sha256 = "sha256:9dc6f32403c9ca2439db5d32f9259dea88267e362355c11df76bed2f2ef2453d"

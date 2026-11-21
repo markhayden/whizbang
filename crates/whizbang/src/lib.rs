@@ -11,6 +11,8 @@ pub mod gating;
 pub mod harness;
 pub mod import;
 pub mod laboratory;
+pub mod loop_score;
+pub mod loop_sheet;
 pub mod model_commands;
 pub mod pack;
 pub mod pack_setup;

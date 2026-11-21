@@ -1026,6 +1026,21 @@ pub fn remove_checked_call(asked: &RemoveCheckedAsked<'_>) -> Result<Call, Strin
     Ok(call)
 }
 
+/// The plan of a call of `remove_checked`, prepared and not run (`--plan-only`; plan
+/// e1, task L1, item 4): its line as the door says it before a run, and nothing sent or
+/// reserved. A call that cannot be prepared is the complaint.
+pub fn remove_checked_plan(
+    executor: &dyn Executor,
+    asked: &RemoveCheckedAsked<'_>,
+) -> Result<String, String> {
+    let call = remove_checked_call(asked)?;
+    let prepared = executor.prepare(&call).map_err(|e| refused(&e))?;
+    let plan = prepared
+        .plan()
+        .ok_or("the call was prepared with no plan, so nothing can be said of it")?;
+    Ok(format!("{}\n", plan.line()))
+}
+
 /// The events a run has kept in its journal, as the store holds them.
 fn journal_of(root: &Path, run: &RunId) -> Vec<whizbang_core::contract::JournalLine> {
     let read = || {
