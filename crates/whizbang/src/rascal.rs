@@ -383,6 +383,10 @@ pub enum Command {
         /// the config's default for judge answers.
         #[arg(long, value_name = "NAME")]
         judge: Option<String>,
+        /// Prepare the call and print its plan on the output, without running it or
+        /// spending: no request is sent, nothing is reserved, and no run is kept.
+        #[arg(long)]
+        plan_only: bool,
         #[command(flatten)]
         common: Common,
     },
@@ -871,6 +875,7 @@ fn run_at(
             backend,
             filler,
             judge,
+            plan_only,
             common,
         } => {
             let uses = Uses::One(Capability::Segment, backend.as_deref());
@@ -898,6 +903,9 @@ fn run_at(
                 check: check.as_deref(),
                 request_id: common.request_id.as_deref(),
             };
+            if *plan_only {
+                return door::remove_checked_plan(&executor, &asked);
+            }
             let say: door::Say<'_> = &mut door::on_the_error_stream;
             door::remove_checked(&executor, &asked, common.at.root(), say)
         }

@@ -236,6 +236,58 @@ loops: 3 runs, 4 attempts, 1 retries; kept an attempt that was checked 2, not ch
 in its record, and the pictures they made are named there; they are the loop's own, and no
 later call can take one.
 
+## The plan alone
+
+`--plan-only` prepares the call and prints its plan on the output, without running it or
+spending: no request is sent, nothing is reserved, and no run is kept. It is how a caller learns, before paying for
+anything, whether the cap of one call covers three checked attempts with the judge named.
+
+```
+whizbang rascal remove-checked --image <id> --prompt "coffee mug" --judge <judge> --plan-only \
+        --store <dir> --config <file> --env-file <file>
+plan: 3 of 3 attempts asked, checked; segment 17; fill 3; judge 48
+```
+
+## Measuring the loop
+
+The loop's round on `segmentation/segment-01` (plan e1, tasks L1 and L2) measures it on
+20 pictures with hand-drawn truth masks, in four groups: whole, parts, thin and
+keep-the-hole. The manifest `labs/e-loop/segment-01.toml` pins each picture and truth
+mask by SHA-256, copied from the set's own manifest at one revision of the public
+pictures' repository; the pictures are read from a folder laid out as that repository is,
+outside the work tree, and are never committed.
+
+- `scripts/loop-evidence.sh --manifest labs/e-loop/segment-01.toml --repetition <n> …`
+  runs the loop once on each picture, under the request id
+  `e-loop-<judge>-<n>-<item>`, and writes a tally of aggregates, by group too. Before the
+  first run it prepares one call with `--plan-only` and stops, having run nothing, unless
+  the plan is three checked attempts of three. Only the pictures are given to the loop:
+  an entry that names a truth mask is refused.
+- `whizbang eval loop score --manifest <file> --set <folder> --judge <judge>
+  --repetitions <n> --out <file> --store <dir>` reads those runs from the store. Every
+  entry under every repetition asked is a requested run, and one the store does not hold
+  is counted as missing, overall and by group. It scores each attempt's found and
+  shaped masks against the truth mask, which it reads from the folder by its pin and never
+  imports: coverage (the share of the truth inside the mask where its weight is at least a
+  half), IoU and size; the judge's `RQ1` answer against mask under-coverage (coverage
+  below 0.95, with 0.90 and 0.99 as sensitivity); coverage across each retry; and whether
+  the kept attempt had the highest coverage. Every measure says its denominator, and an
+  attempt without what a measure needs (a retry whose mask was the one before has no fill
+  or check; a run with no kept attempt has no kept mask; a mask of another size than its
+  truth mask has no measure, for the reason `size`) is counted as unavailable for it, by
+  why. A truth mask with no pixel of the object is refused. It writes `loop-score/1`, aggregates
+  only. These are statements about masks, not about the finished pictures: a fill can
+  erase beyond its mask or leave a trace inside it.
+- `whizbang eval loop sheet … --out <folder>` writes the contact sheet: every completed
+  fill beside its original, in an order drawn from a seed drawn for that sheet and written
+  only in its `assignment.json`, with no verdict, coverage,
+  attempt number or judge on the page, and marks a person may set, "the named thing is
+  still visible" and "something else was damaged". The marks leave the page only as
+  `marks.json`, saved through the browser; `eval loop score --labels marks.json --sheet
+  assignment.json` then adds what they say of the finished pictures, by group, and refuses
+  a picture marked twice. The sheet is never written inside a git work tree, nor into a
+  folder that is not empty.
+
 ## What it does not do yet
 
 - A place whose cut would be over 1,024 pixels on a side is not looked into, and a

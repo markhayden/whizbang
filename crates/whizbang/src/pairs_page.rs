@@ -160,7 +160,7 @@ pub fn checked_out(out: &Path, store: &Path, force: bool) -> Result<PathBuf, Str
 }
 
 /// A folder made if it is not there; refused when a link or not a folder is.
-fn folder(path: &Path) -> Result<(), String> {
+pub(crate) fn folder(path: &Path) -> Result<(), String> {
     match std::fs::symlink_metadata(path) {
         Ok(m) if m.file_type().is_dir() => Ok(()),
         Ok(_) => Err("the folder of --out, or its pictures, is a link or a file".to_owned()),
@@ -171,7 +171,7 @@ fn folder(path: &Path) -> Result<(), String> {
 
 /// A file written new: what is there (a file or a link) is taken away first, never
 /// written through.
-fn write_new(path: &Path, bytes: &[u8]) -> Result<u64, String> {
+pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> Result<u64, String> {
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
     let name = name.unwrap_or_default();
     if let Ok(m) = std::fs::symlink_metadata(path) {
@@ -254,8 +254,14 @@ fn inside<'a>(page: &'a str, open: &str, close: &str) -> &'a str {
 /// The page's policy: nothing but its own pictures, its own style and its own script, the
 /// last two by their digests.
 pub fn policy() -> String {
-    let script = inside(TEMPLATE, "<script>", "</script>");
-    let style = inside(TEMPLATE, "<style>", "</style>");
+    policy_for(TEMPLATE)
+}
+
+/// The same policy for another page built this way (the loop's contact sheet,
+/// [`crate::loop_sheet`]): its first script and its style, by their digests.
+pub fn policy_for(template: &str) -> String {
+    let script = inside(template, "<script>", "</script>");
+    let style = inside(template, "<style>", "</style>");
     let digest = |text: &str| {
         let hex = whizbang_core::identity::Digest::of_bytes(text.as_bytes()).hex();
         let raw: Vec<u8> = (0..hex.len() / 2)
@@ -351,7 +357,7 @@ fn shown_as(cell: &str, attempt: u32) -> Shown {
     }
 }
 
-fn png(pixels: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
+pub(crate) fn png(pixels: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
     use whizbang_core::identity::encode::{Channels, png_of};
     png_of(pixels, width, height, Channels::Rgba)
 }

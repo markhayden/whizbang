@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="{{CSP}}">
+<meta name="referrer" content="no-referrer">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>whizbang contact sheet</title>
+<style>
+:root { --bg: #f7f6f3; --fg: #1d1c1a; --muted: #66625c; --line: #dcd7cf; --card: #ffffff; --accent: #1f5fbf; }
+@media (prefers-color-scheme: dark) { :root { --bg: #141416; --fg: #e9e6e1; --muted: #9a958e; --line: #2c2b30; --card: #1d1d21; --accent: #7fb0ff; } }
+html { color-scheme: light dark; }
+body { margin: 0; padding: 16px max(16px, 3vw) 48px; background: var(--bg); color: var(--fg); font: 14px/1.45 ui-sans-serif, system-ui, sans-serif; }
+h1 { font-size: 18px; margin: 0 0 4px; }
+.meta { color: var(--muted); margin: 0 0 8px; }
+.bar { position: sticky; top: 0; z-index: 1; background: var(--bg); padding: 8px 0; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+.bar .grow { flex: 1 1 auto; }
+.bar button, label.load { padding: 6px 12px; border: 1px solid var(--line); border-radius: 4px; background: var(--card); color: var(--fg); cursor: pointer; font: inherit; }
+label.load input { display: none; }
+#status { color: var(--accent); }
+.card { border: 1px solid var(--line); border-radius: 6px; background: var(--card); padding: 12px; margin: 12px 0; }
+.card h2 { font-size: 14px; margin: 0 0 8px; }
+.sides { display: flex; gap: 12px; flex-wrap: wrap; }
+.sides figure { margin: 0; flex: 1 1 280px; min-width: 0; }
+.sides img { display: block; width: 100%; height: auto; background: #808080; }
+figcaption { font-size: 12px; color: var(--muted); }
+.marks { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<h1>whizbang contact sheet</h1>
+<p class="meta">{{SUMMARY}} For each picture, the original is on the left and the edited one on the right. Tick what you see: whether the named thing is still visible, and whether something else was damaged; ticking either marks the picture as looked at, and a picture with nothing to tick is marked as looked at by hand. Only pictures looked at are saved. Save the marks file when you are done.</p>
+<div class="bar">
+  <span id="count"></span>
+  <span class="grow"></span>
+  <a id="save" download="marks.json" href="#"><button type="button" tabindex="-1">Save marks.json</button></a>
+  <label class="load">Resume from a saved marks.json<input id="load" type="file" accept=".json,application/json"></label>
+  <span id="status"></span>
+</div>
+<div id="sheet"></div>
+<script type="application/json" id="data">{{DATA}}</script>
+<script>
+"use strict";
+// The page knows the sheet's id, each picture's key, its file and the phrase, and nothing of
+// what made it. The marks leave it only as a file the person saves.
+const data = JSON.parse(document.getElementById("data").textContent);
+const marks = {};
+const by = (id) => document.getElementById(id);
+let saved = true;
+function written() {
+  // Only the pictures marked as looked at: one not looked at is no mark at all.
+  const list = data.pictures.filter((p) => marks[p.key].touched).map((p) => ({ picture: p.key, visible: marks[p.key].visible, damaged: marks[p.key].damaged }));
+  return JSON.stringify({ marks_version: 1, sheet: data.sheet, marks: list }, null, 2) + "\n";
+}
+function offer() {
+  const save = by("save");
+  if (save.href.startsWith("blob:")) { URL.revokeObjectURL(save.href); }
+  save.href = URL.createObjectURL(new Blob([written()], { type: "application/json" }));
+}
+function count() {
+  const touched = data.pictures.filter((p) => marks[p.key] && marks[p.key].touched).length;
+  by("count").textContent = data.pictures.length + " pictures; " + touched + " looked at";
+}
+const boxes = {};
+data.pictures.forEach((p, n) => {
+  marks[p.key] = { visible: false, damaged: false, touched: false };
+  const card = document.createElement("section");
+  card.className = "card";
+  const h = document.createElement("h2");
+  h.textContent = "Picture " + (n + 1) + ": the named thing is “" + p.phrase + "”";
+  card.appendChild(h);
+  const sides = document.createElement("div");
+  sides.className = "sides";
+  for (const [side, words] of [["source", "original"], ["edited", "edited"]]) {
+    const figure = document.createElement("figure");
+    const img = document.createElement("img");
+    img.src = "pictures/" + p.file + "-" + side + ".png";
+    img.alt = words;
+    img.loading = "lazy";
+    const caption = document.createElement("figcaption");
+    caption.textContent = words;
+    figure.appendChild(img);
+    figure.appendChild(caption);
+    sides.appendChild(figure);
+  }
+  card.appendChild(sides);
+  const row = document.createElement("div");
+  row.className = "marks";
+  boxes[p.key] = {};
+  for (const [name, words] of [["visible", "the named thing is still visible"], ["damaged", "something else was damaged"], ["touched", "looked at"]]) {
+    const label = document.createElement("label");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.addEventListener("change", () => {
+      marks[p.key][name] = box.checked;
+      if (name !== "touched" && box.checked) { marks[p.key].touched = true; boxes[p.key].touched.checked = true; }
+      saved = false; offer(); count();
+    });
+    boxes[p.key][name] = box;
+    label.appendChild(box);
+    label.appendChild(document.createTextNode(" " + words));
+    row.appendChild(label);
+  }
+  card.appendChild(row);
+  by("sheet").appendChild(card);
+});
+by("save").addEventListener("click", () => { offer(); saved = true; by("status").textContent = "saved"; });
+by("load").addEventListener("change", (e) => {
+  const chosen = e.target.files[0];
+  if (!chosen) { return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    let read;
+    try { read = JSON.parse(reader.result); } catch (_) { by("status").textContent = "that file is not a marks file"; return; }
+    if (!read || read.marks_version !== 1 || read.sheet !== data.sheet || !Array.isArray(read.marks)) {
+      by("status").textContent = "those marks were made on another sheet; nothing was loaded";
+      return;
+    }
+    let loaded = 0;
+    for (const m of read.marks) {
+      if (m && boxes[m.picture]) {
+        for (const name of ["visible", "damaged"]) { marks[m.picture][name] = !!m[name]; boxes[m.picture][name].checked = !!m[name]; }
+        marks[m.picture].touched = true;
+        boxes[m.picture].touched.checked = true;
+        loaded++;
+      }
+    }
+    by("status").textContent = "resumed: " + loaded + " pictures loaded";
+    saved = true;
+    offer();
+    count();
+  };
+  reader.readAsText(chosen);
+});
+window.addEventListener("beforeunload", (e) => { if (!saved) { e.preventDefault(); e.returnValue = ""; } });
+offer();
+count();
+</script>
+</body>
+</html>

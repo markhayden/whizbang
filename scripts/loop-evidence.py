@@ -7,17 +7,25 @@ committed manifest of the edit set, and run records as `whizbang runs export` wr
 one JSON object a line. It never opens an env file, a config or a store.
 
   loop-evidence.py entries --manifest M --set FOLDER
-      The entries the evidence runs, checked before anything is imported: those of the
-      manifest whose recipe is `remove_prompt`, exactly 24, each with its picture in the
-      folder under the SHA-256 the manifest pins, and none that names a truth mask or a
-      clean picture. Prints one line an entry, in the manifest's order: its id, the
-      picture's path and the phrase, separated by tabs. On any difference it prints one
-      line naming the entry and exits 1, having printed no entry.
+      The entries the evidence runs, checked before anything is imported. Of the edit
+      set's manifest: those whose recipe is `remove_prompt`, exactly 24, none that names a
+      truth mask or a clean picture. Of a manifest of the kind `segment-01` (plan e1, task
+      L1; labs/e-loop/segment-01.toml): every entry, as many as it holds, each picture an
+      `image.png` of the set's folder and none a truth mask, by path or by pin. Each
+      picture in the folder under the SHA-256 the manifest pins. Prints one line an entry,
+      in the manifest's order: its id, the picture's path and the phrase, separated by
+      tabs. On any difference it prints one line naming the entry and exits 1, having
+      printed no entry.
 
-  loop-evidence.py tally --records R --manifest M --judge J --commit C --whizbang V --out F
-      The aggregates of the runs whose request id is `m4-loop-<judge>-<item id>`, and of
-      the runs under them. Writes F, which holds no item: no id, no picture's name, no
-      path, no identity of an artifact, no word of a judge.
+  loop-evidence.py kind --manifest M
+      `segment-01` for a manifest of that kind, `edits` for the edit set's; and on the
+      next line how many entries the evidence runs of it.
+
+  loop-evidence.py tally --records R --manifest M --judge J [--repetition N] --commit C --whizbang V --out F
+      The aggregates of the runs whose request id is `m4-loop-<judge>-<item id>` (the edit
+      set) or `e-loop-<judge>-<N>-<item id>` (segment-01, with --repetition), and of the
+      runs under them; for segment-01, by group too. Writes F, which holds no item: no id,
+      no picture's name, no path, no identity of an artifact, no word of a judge.
 
   loop-evidence.py case --records R --request ID --name N --commit C --whizbang V --out F
       The fields of one run made by hand: its outcome, its plan, its attempts, its verdict,
@@ -41,6 +49,8 @@ import sys
 sys.dont_write_bytecode = True
 
 SCHEMA = "loop-evidence/1"
+SEGMENT = "segment-01"
+SEGMENT_LIMIT = 200
 ACTION = "remove_checked"
 CHECK = "source-fidelity"
 RECIPE = "remove_prompt"
@@ -153,9 +163,74 @@ def sha256_of(path):
     return "sha256:" + digest.hexdigest()
 
 
+def kind_of(manifest_path):
+    """`segment-01` for a manifest of that kind, `edits` for the edit set's."""
+    with open(manifest_path, "rb") as f:
+        fields = top_fields(f.read().decode("utf-8"))
+    return SEGMENT if fields.get("kind") == SEGMENT else "edits"
+
+
+def segment_entries(manifest_path, folder=None):
+    """The entries of a manifest of the kind `segment-01`, each (id, picture, phrase,
+    group); the picture's path is under the set's folder."""
+    with open(manifest_path, "rb") as f:
+        raw = f.read()
+    text = raw.decode("utf-8")
+    fields = top_fields(text)
+    items = read_tables(text, "item")
+    agrees_with_tomllib(text, "item", items)
+    set_id = fields.get("set", "")
+    parts = set_id.split("/")
+    if not set_id or any(not re.match(r"^[a-z0-9][a-z0-9._-]{0,63}$", p) for p in parts):
+        raise Refused("the manifest names no set")
+    if not 1 <= len(items) <= SEGMENT_LIMIT:
+        raise Refused("the manifest holds %d entries, and a manifest of %s holds 1 to %d" % (len(items), SEGMENT, SEGMENT_LIMIT))
+    truths = set()
+    for item in items:
+        for key in ("truth", "truth_sha256"):
+            if item.get(key):
+                truths.add(item[key])
+    seen, chosen = set(), []
+    for at, item in enumerate(items, 1):
+        for key in ("id", "group", "phrase", "image", "image_sha256"):
+            if not item.get(key):
+                raise Refused("entry %d of the manifest has no %s" % (at, key))
+        name, image = item["id"], item["image"]
+        if not re.match(r"^[a-z0-9][a-z0-9-]{0,63}$", name):
+            raise Refused("an entry's id is not letters, digits and -: %r" % name[:64])
+        if not re.match(r"^[a-z0-9][a-z0-9-]{0,63}$", item["group"]):
+            raise Refused("the entry %s has a group that is not letters, digits and -" % name)
+        if name in seen:
+            raise Refused("the entry %s is in the manifest twice" % name)
+        seen.add(name)
+        if "\t" in item["phrase"] or "\n" in item["phrase"] or not item["phrase"].strip():
+            raise Refused("the entry %s has a phrase that is empty or holds a tab" % name)
+        if image in truths or item["image_sha256"] in truths or image.endswith("truth.png"):
+            raise Refused("the entry %s names a truth mask" % name)
+        pieces = image.split("/")
+        if image.startswith("/") or "\\" in image or any(p in ("", ".", "..") for p in pieces):
+            raise Refused("the entry %s names a picture outside the set's folder" % name)
+        if pieces[-1] != "image.png":
+            raise Refused("the entry %s names a file that is not an image.png" % name)
+        if not re.match(r"^sha256:[0-9a-f]{64}$", item["image_sha256"]):
+            raise Refused("the entry %s pins no SHA-256" % name)
+        chosen.append((name, "%s/%s" % (set_id, image), item["phrase"], item["group"], item["image_sha256"]))
+    if folder is not None:
+        for name, picture, _, _, pin in chosen:
+            path = os.path.join(folder, *picture.split("/"))
+            if os.path.islink(path) or not os.path.isfile(path):
+                raise Refused("the entry %s: its picture is not in the folder" % name)
+            if sha256_of(path) != pin:
+                raise Refused("the entry %s: its picture is not the one the manifest pins" % name)
+    return "sha256:" + hashlib.sha256(raw).hexdigest(), [c[:4] for c in chosen]
+
+
 def entries(manifest_path, folder=None):
-    """The entries the evidence runs, each (id, picture, phrase); checked whole, against
-    the folder too when one is given, before one is handed back."""
+    """The entries the evidence runs, each (id, picture, phrase, group); checked whole,
+    against the folder too when one is given, before one is handed back. The edit set's
+    have no group."""
+    if kind_of(manifest_path) == SEGMENT:
+        return segment_entries(manifest_path, folder)
     digest, items, sources = manifest(manifest_path)
     chosen = [item for item in items if item.get("recipe") == RECIPE]
     for at, item in enumerate(chosen, 1):
@@ -207,7 +282,7 @@ def entries(manifest_path, folder=None):
                 raise Refused(
                     "the entry %s: its picture is not the one the manifest pins" % item["id"]
                 )
-    return digest, [(item["id"], item["picture"], item["phrase"]) for item in chosen]
+    return digest, [(item["id"], item["picture"], item["phrase"], None) for item in chosen]
 
 
 # --- the records ------------------------------------------------------------------------
@@ -418,7 +493,41 @@ def held_version(version):
 # --- tally ------------------------------------------------------------------------------
 
 
+def request_of(kind, judge, repetition, name):
+    """The request id of an entry's run: `m4-loop-<judge>-<id>` for the edit set,
+    `e-loop-<judge>-<repetition>-<id>` for segment-01."""
+    if kind == SEGMENT:
+        return "e-loop-%s-%d-%s" % (judge, repetition, name)
+    return "m4-loop-%s-%s" % (judge, name)
+
+
+def held_repetition(kind, repetition):
+    """The repetition: 1 to 9 for segment-01, which needs one; none for the edit set."""
+    if kind != SEGMENT:
+        if repetition is not None:
+            raise Refused("--repetition is for a manifest of the kind %s" % SEGMENT)
+        return None
+    if repetition is None or not re.match(r"^[1-9]$", repetition):
+        raise Refused("a manifest of the kind %s needs --repetition, 1 to 9" % SEGMENT)
+    return int(repetition)
+
+
+GROUPED = (
+    "runs",
+    "attempts_made",
+    "retried",
+    "passed_at_first",
+    "passed_after_retry",
+    "kept_unsure",
+    "kept_fail",
+    "unchecked",
+    "error",
+)
+
+
 def tally(args):
+    manifest_kind = kind_of(args.manifest)
+    repetition = held_repetition(manifest_kind, args.repetition)
     digest, chosen = entries(args.manifest)
     if not re.match(r"^[a-z][a-z0-9_-]{0,63}$", args.judge):
         raise Refused("the judge is not a backend's name")
@@ -429,13 +538,16 @@ def tally(args):
         if request and record["asked"].get("action") == ACTION:
             by_request[request] = record
     loops = []
-    for name, _, _ in chosen:
-        record = by_request.get("m4-loop-%s-%s" % (args.judge, name))
+    groups = {}
+    for name, _, _, group in chosen:
+        if group is not None:
+            groups.setdefault(group, dict.fromkeys(GROUPED, 0))
+        record = by_request.get(request_of(manifest_kind, args.judge, repetition, name))
         if record is None:
             continue
         if argument(record, "judge") != args.judge:
             raise Refused("a run under this judge's request id was asked of another judge")
-        loops.append(record)
+        loops.append((record, group))
 
     outcomes = dict.fromkeys(("completed", "error", "invalid", "cancelled", "interrupted", "other"), 0)
     ended = dict.fromkeys(
@@ -467,8 +579,14 @@ def tally(args):
     attempts_made = unsure_rascal = not_complete = 0
     reserved = settled = unresolved = by_attempts = 0
     times, templates, configs, versions, whole = [], set(), set(), set(), []
-    for record in loops:
+    for record, group in loops:
         tree = tree_of(records, record["identity"]["run"])
+        if group is not None:
+            mine = groups[group]
+            mine["runs"] += 1
+            mine["attempts_made"] += len((record.get("attempts") or {}).get("list", []))
+            mine["retried"] += int(len((record.get("attempts") or {}).get("list", [])) > 1)
+            mine[how_it_ended(record)] += 1
         whole.extend(tree)
         status = status_of(record)
         outcomes[status if status in outcomes else "other"] += 1
@@ -562,10 +680,19 @@ def tally(args):
         for value in values:
             if value != "none" and not re.match(r"^sha256:[0-9a-f]{64}$", value):
                 raise Refused("a record names a digest that is not one")
-    out = [
-        "# What the loop `remove_checked` did on the %d entries of `remove_prompt` of the edit" % ENTRIES,
-        "# set, under one judge (plan m4, task E1, item 1). Written by scripts/loop-evidence.sh;",
-        "# never edited by hand. Aggregates only: no item, no picture, no path, no word of a judge.",
+    if manifest_kind == SEGMENT:
+        heading = [
+            "# What the loop `remove_checked` did on the %d entries of segment-01, under one judge," % len(chosen),
+            "# one repetition (plan e1, task L1, item 4). Written by scripts/loop-evidence.sh; never",
+            "# edited by hand. Aggregates only: no item, no picture, no path, no word of a judge.",
+        ]
+    else:
+        heading = [
+            "# What the loop `remove_checked` did on the %d entries of `remove_prompt` of the edit" % ENTRIES,
+            "# set, under one judge (plan m4, task E1, item 1). Written by scripts/loop-evidence.sh;",
+            "# never edited by hand. Aggregates only: no item, no picture, no path, no word of a judge.",
+        ]
+    out = heading + [
         "#",
         "# `unsure_a_retry_under_rascals_rule_would_have_followed` is an upper bound: the runs that",
         "# stopped on an `unsure` whose check held a tentative violation of RQ1 and cited any place.",
@@ -586,6 +713,9 @@ def tally(args):
             ("commit", held_commit(args.commit)),
             ("whizbang", held_version(args.whizbang)),
             ("judge", args.judge),
+        ]
+        + ([("kind", SEGMENT), ("repetition", repetition)] if manifest_kind == SEGMENT else [])
+        + [
             ("judge_model", models_of(whole, "judge")),
             ("filler", models_of(whole, "fill")),
             ("finder", models_of(whole, "segment")),
@@ -622,6 +752,8 @@ def tally(args):
     out += table("stopped_by_row", list(rows.items()))
     out += table("stopped_by_reason", list(reasons.items()))
     out += table("places", list(places.items()))
+    for group in sorted(groups):
+        out += table("group.%s" % group, list(groups[group].items()))
     for (obligation, disposition, confidence), count in sorted(counts.items()):
         out += ["", "[[finding]]"] + toml_lines(
             [
@@ -816,9 +948,12 @@ def main(argv):
     listing = commands.add_parser("entries")
     listing.add_argument("--manifest", required=True)
     listing.add_argument("--set", required=True)
+    kinding = commands.add_parser("kind")
+    kinding.add_argument("--manifest", required=True)
     counting = commands.add_parser("tally")
     for name in ("--records", "--manifest", "--judge", "--commit", "--whizbang", "--out"):
         counting.add_argument(name, required=True)
+    counting.add_argument("--repetition")
     one = commands.add_parser("case")
     for name in ("--records", "--request", "--name", "--commit", "--whizbang", "--out"):
         one.add_argument(name, required=True)
@@ -830,8 +965,13 @@ def main(argv):
     try:
         if args.command == "entries":
             _, chosen = entries(args.manifest, args.set)
-            for name, picture, phrase in chosen:
+            for name, picture, phrase, _ in chosen:
                 print("%s\t%s\t%s" % (name, picture, phrase))
+        elif args.command == "kind":
+            kind = kind_of(args.manifest)
+            _, chosen = entries(args.manifest)
+            print(kind)
+            print(len(chosen))
         elif args.command == "tally":
             tally(args)
         elif args.command == "case":

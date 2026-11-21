@@ -1,0 +1,64 @@
+# The config of the loop's round on segment-01 (plan e1, task L1; task L2 runs it;
+# scripts/loop-evidence.sh): SAM 3 on the Mac through the pack, Bria Eraser through fal,
+# and the five judges this build prices, each under the name `--judge` takes. A backend's
+# name holds no dot, so the judge of the model `gpt-6.1-terra` is named `gpt-6-1-terra`.
+#
+# `call_cap_usd` is set before the round, never from this file: the three-attempt bound of
+# the judge the round runs under, in the binary that runs it, plus a cent
+# (docs/guides/loop.md, "What it costs"; plan e1, "Prices and caps"). The value below is
+# Haiku's at the plan's prices, and the script refuses to start unless the plan of its
+# first call is three checked attempts. There is no `[cache]` table: no check is answered
+# from an earlier one. The keys are in the env file the command names, never here.
+[backends.segment]
+kind = "pack"
+model = "sam3"
+
+[backends.fill]
+kind = "service"
+provider = "fal"
+model = "bria-eraser"
+key_env = "FAL_KEY"
+
+[backends.judge]
+default = "claude-haiku-5-5"
+[backends.judge.claude-haiku-5-5]
+kind = "service"
+provider = "anthropic"
+model = "claude-haiku-5-5"
+key_env = "ANTHROPIC_API_KEY"
+[backends.judge.gemini-3-8-flash]
+kind = "service"
+provider = "google"
+model = "gemini-3.8-flash"
+key_env = "GEMINI_API_KEY"
+[backends.judge.gemini-4-argon]
+kind = "service"
+provider = "google"
+model = "gemini-4-argon"
+key_env = "GEMINI_API_KEY"
+[backends.judge.gpt-6-1-terra]
+kind = "service"
+provider = "openai"
+model = "gpt-6.1-terra"
+key_env = "OPENAI_API_KEY"
+[backends.judge.gpt-6-1-sol]
+kind = "service"
+provider = "openai"
+model = "gpt-6.1-sol"
+key_env = "OPENAI_API_KEY"
+
+[spend]
+call_cap_usd = 0.46
+
+[egress.recipients.fal]
+origin = "https://fal.run"
+classes = ["source_images", "derived_images"]
+[egress.recipients.anthropic]
+origin = "https://api.anthropic.com"
+classes = ["source_images", "derived_images", "prompts", "evidence"]
+[egress.recipients.openai]
+origin = "https://api.openai.com"
+classes = ["source_images", "derived_images", "prompts", "evidence"]
+[egress.recipients.google]
+origin = "https://generativelanguage.googleapis.com"
+classes = ["source_images", "derived_images", "prompts", "evidence"]

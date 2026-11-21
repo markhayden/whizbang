@@ -729,12 +729,28 @@ pub fn sources_of(set: &whizbang_eval::sets::Set, folder: &Path) -> Result<Vec<S
 }
 
 /// Whether a folder, or the nearest of its parents that is there, is inside a git work
-/// tree: where a set's pictures could be committed.
+/// tree: where a set's pictures could be committed. The path is asked about twice, as it
+/// is written and with its `..` taken lexically, and is inside when either is: a folder
+/// named through a part that is not there yet (`<gone>/../<repo>/out`) is not taken for
+/// the place above the part.
 pub fn inside_a_work_tree(folder: &Path) -> bool {
     let absolute = std::path::absolute(folder).unwrap_or_else(|_| folder.to_path_buf());
-    let there = absolute.ancestors().find(|a| a.exists());
-    let resolved = there.and_then(|a| a.canonicalize().ok());
-    resolved.is_some_and(|r| r.ancestors().any(|a| a.join(".git").exists()))
+    let mut lexical = std::path::PathBuf::new();
+    for part in absolute.components() {
+        match part {
+            std::path::Component::ParentDir => {
+                lexical.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => lexical.push(other),
+        }
+    }
+    let inside = |path: &Path| {
+        let there = path.ancestors().find(|a| a.exists());
+        let resolved = there.and_then(|a| a.canonicalize().ok());
+        resolved.is_some_and(|r| r.ancestors().any(|a| a.join(".git").exists()))
+    };
+    inside(&absolute) || inside(&lexical)
 }
 
 /// Writes a draw's files and its manifest under `out`, making the folders it needs.

@@ -130,6 +130,12 @@ pub enum Command {
         #[command(subcommand)]
         command: EditsCommand,
     },
+    /// The loop `remove_checked` on the pictures of segment-01 (plan e1, task L1): its
+    /// attempts' masks scored against the truth masks, and the contact sheet of its fills.
+    Loop {
+        #[command(subcommand)]
+        command: LoopCommand,
+    },
     /// The baseline gate: each recorded decision of a baseline package replayed with a judge
     /// that answers its recorded turns, squint's loop on whizbang's tools and preparation,
     /// and compared with its recorded transcript. Writes the receipt and prints counts only.
@@ -221,6 +227,64 @@ pub enum EditsCommand {
         #[arg(long, value_name = "SHA")]
         commit: String,
         /// The folder the record is written to.
+        #[arg(long, value_name = "DIR")]
+        out: PathBuf,
+        #[command(flatten)]
+        at: Where,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum LoopCommand {
+    /// Score the runs of the loop under one judge whose request ids are the manifest's
+    /// (`e-loop-<judge>-<repetition>-<item>`): each attempt's found and shaped masks against
+    /// the item's truth mask, read from the folder by its pin and never imported; the
+    /// judge's RQ1 answer against mask under-coverage; coverage across each retry. With
+    /// --labels, what a person's marks of the contact sheet say of the finished pictures.
+    /// Writes loop-score/1, aggregates only, and prints counts. Reads the store only.
+    Score {
+        /// The loop's manifest, as labs/e-loop/segment-01.toml.
+        #[arg(long, value_name = "FILE")]
+        manifest: PathBuf,
+        /// A folder of the pictures, laid out as their repository is
+        /// (`<folder>/<set id>/<path>`).
+        #[arg(long, value_name = "DIR")]
+        set: PathBuf,
+        /// The judge, by its name in the config's `[backends.judge]` tables.
+        #[arg(long, value_name = "NAME")]
+        judge: String,
+        /// How many repetitions of each entry were run: each is a requested run, and one
+        /// the store does not hold is counted as missing.
+        #[arg(long, value_name = "1..9")]
+        repetitions: u32,
+        /// A person's marks of the contact sheet, the marks.json it saves.
+        #[arg(long, value_name = "FILE", requires = "sheet")]
+        labels: Option<PathBuf>,
+        /// The sheet's assignment.json, which the marks are read through.
+        #[arg(long, value_name = "FILE", requires = "labels")]
+        sheet: Option<PathBuf>,
+        /// The file the score is written to.
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
+        #[command(flatten)]
+        at: Where,
+    },
+    /// Write the contact sheet: for every completed fill of those runs, the picture the
+    /// loop was given and the filled picture side by side, in an order drawn from a seed
+    /// drawn for this sheet, with no verdict, coverage, attempt or judge on the page, and
+    /// marks to set. Never inside a git work tree, nor in a folder that is not empty.
+    /// Prints counts.
+    Sheet {
+        /// The loop's manifest, as labs/e-loop/segment-01.toml.
+        #[arg(long, value_name = "FILE")]
+        manifest: PathBuf,
+        /// A folder of the pictures, laid out as their repository is.
+        #[arg(long, value_name = "DIR")]
+        set: PathBuf,
+        /// The judge, by its name in the config's `[backends.judge]` tables.
+        #[arg(long, value_name = "NAME")]
+        judge: String,
+        /// The folder the page is written in: new or empty, never inside a git work tree.
         #[arg(long, value_name = "DIR")]
         out: PathBuf,
         #[command(flatten)]
@@ -391,6 +455,7 @@ pub fn run(command: &Command) -> Result<String, String> {
             whizbang::edits::write_record(&record, out)?;
             Ok(record.text())
         }
+        Command::Loop { command } => eval_loop(command),
         Command::Run {
             gate,
             labels,
@@ -464,6 +529,50 @@ pub fn run(command: &Command) -> Result<String, String> {
                 sets,
                 pictures.as_deref(),
             )
+        }
+    }
+}
+
+/// `eval loop score` and `eval loop sheet`.
+fn eval_loop(command: &LoopCommand) -> Result<String, String> {
+    match command {
+        LoopCommand::Score {
+            manifest,
+            set,
+            judge,
+            repetitions,
+            labels,
+            sheet,
+            out,
+            at,
+        } => {
+            let scoring = whizbang::loop_score::Scoring {
+                manifest,
+                set,
+                root: at.root(),
+                judge,
+                repetitions: *repetitions,
+                labels: labels.as_deref().zip(sheet.as_deref()),
+            };
+            let score = whizbang::loop_score::score(&scoring)?;
+            score.write(out)?;
+            Ok(score.text())
+        }
+        LoopCommand::Sheet {
+            manifest,
+            set,
+            judge,
+            out,
+            at,
+        } => {
+            let asked = whizbang::loop_sheet::Asked {
+                manifest,
+                set,
+                root: at.root(),
+                judge,
+                out,
+            };
+            whizbang::loop_sheet::sheet(&asked).map(|written| written.text())
         }
     }
 }
