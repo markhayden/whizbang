@@ -106,6 +106,22 @@ Amended: 2026-11-18, an eighteenth note, with task F1 of plan 1D
 Changed in "Both files, each time" and "A download's token": a config that names a
 variable is read without an env file, and hands no backend a key; the command asks for
 the env file, from the backends it chose. `LoadRefused::NoEnvFile` is gone.
+Amended: 2026-11-22, a nineteenth note, with the playground's live fixes (plan m5; ADR
+0041, "What a backend that is not ready says"). An exception to the rule that a reason
+names no variable: the playground says which variable a backend's missing key is under,
+by its name alone, when the name has the shape of a variable's: at least two words joined
+by single underscores, each of 1 to 12 upper-case letters or digits, the first word
+starting with a letter, at most 64 characters in all (`FAL_KEY`, `GEMINI_API_KEY`). Any
+other name is said as "the variable its key_env names", as before. Why: "the env file
+does not set the variable its `key_env` names" left a person to find which variable in
+the config, and a fix message should say what to set. What it guards against: a key
+pasted where its variable's name belongs being printed. Keys hold lower-case letters or
+symbols, or one long run of upper-case letters and digits (an AWS access key id is
+twenty), which a word of twelve at most cannot hold; and a name that holds a value of the
+env file is refused before this, as "Both files, each time" says. The value is never read
+for this. The rule is `whizbang::backend_status::variable_shaped`, held by
+`play::a_variable_is_named_only_when_it_has_the_shape_of_one`; the core's reasons
+(`NotReady::Missing`) still name no variable.
 
 ## Context
 

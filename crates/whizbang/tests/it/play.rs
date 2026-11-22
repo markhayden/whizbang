@@ -1443,24 +1443,48 @@ fn a_backend_is_ready_by_its_own_readiness_and_a_key_not_set_names_its_variable(
 #[test]
 fn a_variable_is_named_only_when_it_has_the_shape_of_one() {
     use whizbang::backend_status::variable_shaped;
-    for name in ["FAL_KEY", "OPENAI_API_KEY", "PLAYKIT_TEST_KEY", "K2_V3"] {
+    for name in [
+        "FAL_KEY",
+        "GEMINI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "PLAYKIT_TEST_KEY",
+        "K2_V3",
+    ] {
         assert!(variable_shaped(name), "{name}");
     }
     // A key pasted where its name belongs, or anything else, is not said back.
     for name in [
+        // One word.
         "FALKEY",
+        // A lower-case key with underscores.
+        "sk_live_abc123_def456",
         "fal_key",
-        "sk-proj-abc_DEF",
-        "_FAL_KEY",
-        "FAL__KEY",
-        "FAL_KEY_",
+        // A long hex string, in either case.
+        "9F86D081884C7D659A2FEAA0C55AD015A3BF4F1B2B0B822CD15D6C15B0F00A08",
+        "9f86d081884c7d659a2feaa0c55ad015",
+        // A word of thirteen characters.
+        "ABCDEFGHIJKLM_KEY",
+        // A leading digit, a double underscore, an underscore at either end.
         "2FAL_KEY",
+        "FAL__KEY",
+        "_FAL_KEY",
+        "FAL_KEY_",
         "FAL-KEY",
         "",
     ] {
         assert!(!variable_shaped(name), "{name}");
     }
-    assert!(!variable_shaped(&format!("A_{}", "B".repeat(63))));
+    // An AWS-style access key id: "AKIA" and sixteen upper-case letters and digits,
+    // made here so that no file holds one.
+    let id = format!("AKIA{}", "Q7".repeat(8));
+    assert_eq!(id.len(), 20);
+    assert!(!variable_shaped(&id), "{id}");
+    // At most 64 characters in all, though each word is short enough.
+    let long = ["ABCDEFGHIJKL"; 6].join("_");
+    assert!(long.len() > 64);
+    assert!(!variable_shaped(&long));
+    assert!(variable_shaped(&["ABCDEFGHIJKL"; 5].join("_")));
 }
 
 #[test]

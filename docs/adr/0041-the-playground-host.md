@@ -183,13 +183,12 @@ No route takes a file path.
 
 **What a backend that is not ready says.** A preparation's reason for a backend whose key
 the env file does not set names the variable to set, by its name alone: "the filler needs
-FAL_KEY in your env file". The value is never read for this. ADR 0011 says no variable's
-name in a reason, since a key pasted where its name belongs cannot be told from a name; the
-playground names one only when it has the shape of a variable's name (upper-case letters
-and digits in words joined by underscores, at most 64 characters, as `FAL_KEY`), which a
-pasted key is very unlikely to have, and a config that holds a value of the env file is
-refused before this (ADR 0011). Any other name is said as "the variable its key_env names".
-The rule is `backend_status::variable_shaped`, through the door's `Play::key_variable`. A
+FAL_KEY in your env file". The value is never read for this. This is an exception to ADR
+0011's rule that a reason names no variable, recorded there (its amendment of
+2026-11-22): a name is said only when it has the shape of one (at least two words of 1 to
+12 upper-case letters or digits joined by single underscores, the first starting with a
+letter, at most 64 characters, as `FAL_KEY`); any other is said as "the variable its
+key_env names". The rule is `backend_status::variable_shaped`, through the door's `Play::key_variable`. A
 run's record, as the result screen reads it, says a key not set the same way, in every
 reason it holds (an unchecked attempt's, why the attempts ended).
 

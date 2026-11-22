@@ -19,7 +19,7 @@ whizbang play --store <dir> [--config <file> [--env-file <file>]] [--models-dir 
   group or anyone may write, is refused (`chmod go-w` on the folder mends the second).
 - **A config that names a key, and no env file,** still opens: the backend whose key is
   missing is shown as not ready (no key), with the variable to set named ("the filler needs
-  FAL_KEY in your env file"; a name that does not look like one, upper-case words joined by
+  FAL_KEY in your env file"; a name that does not look like one, short upper-case words joined by
   underscores, is not said back), and work that needs no key runs. Nothing on the page asks
   for a key.
 - **The port** is 7341 unless `--port` says otherwise. It stays the same from one launch to

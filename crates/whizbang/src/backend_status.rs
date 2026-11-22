@@ -157,26 +157,24 @@ pub fn readiness(over: &Over) -> Result<Vec<serde_json::Value>, String> {
     Ok(listed)
 }
 
-/// Whether a variable's name has the shape of one: upper-case words of letters and
-/// digits joined by underscores, as `FAL_KEY`, at most 64 characters. A key pasted where
-/// the name belongs is very unlikely to have it (keys hold lower-case letters, and
-/// rarely an underscore between upper-case words), so only such a name is ever said back.
+/// Whether a variable's name has the shape of one (ADR 0011, amended): at least two words
+/// joined by single underscores, each of 1 to 12 upper-case letters or digits, the first
+/// word starting with a letter, at most 64 characters in all, as `FAL_KEY` or
+/// `GEMINI_API_KEY`. Only such a name is ever said back. A key pasted where the name
+/// belongs is very unlikely to have this shape: keys hold lower-case letters or symbols,
+/// or are one long run of upper-case letters and digits (an AWS access key id is twenty),
+/// which no word of twelve at most can hold.
 pub fn variable_shaped(name: &str) -> bool {
-    let mut words = name.split('_');
+    let words: Vec<&str> = name.split('_').collect();
     name.len() <= 64
-        && name.contains('_')
-        && words.next().is_some_and(|first| {
-            first.starts_with(|c: char| c.is_ascii_uppercase())
-                && first
-                    .chars()
-                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
-        })
-        && words.all(|word| {
-            !word.is_empty()
+        && words.len() >= 2
+        && words.iter().all(|word| {
+            (1..=12).contains(&word.len())
                 && word
                     .chars()
                     .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
         })
+        && name.starts_with(|c: char| c.is_ascii_uppercase())
 }
 
 /// The variable a backend's table names for the credential the env file does not set,
