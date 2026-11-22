@@ -17,8 +17,9 @@
 #
 # WHIZBANG_E2E_SHARD=<k>/<n> runs only the k-th of n shards of the cases (Playwright's
 # --shard), as CI's jobs `e2e (<runner>, shard <k>)` do, so that no one job comes near the
-# limit; the limit then holds for that shard's own test time. Unset, as `just e2e` runs
-# locally, every case runs and the limit holds for all of them.
+# limit; a shard's own test time is then held to 90 seconds, the limit of one shard: half
+# of the owner's 180 for the whole tier, so two shards together stay within it. Unset, as
+# `just e2e` runs locally, every case runs and all of them are held to the 180.
 #
 # The packages are installed as scripts/ui.sh installs them. The report is kept in
 # target/e2e/ (report.json, and html/ for a person), where CI keeps it when a case fails.
@@ -36,16 +37,18 @@ die() {
 }
 limit=180
 why="the Chrome tier's limit (plan m5)"
-if [ -n "${WHIZBANG_E2E_LIMIT:-}" ]; then
-  limit=$WHIZBANG_E2E_LIMIT
-  why="from WHIZBANG_E2E_LIMIT"
-fi
 shard=${WHIZBANG_E2E_SHARD:-}
 if [ -n "$shard" ]; then
   echo "$shard" | grep -E '^[1-9][0-9]*/[1-9][0-9]*$' >/dev/null ||
     die "WHIZBANG_E2E_SHARD must be <k>/<n>, as 1/2: $shard"
   [ "${shard%/*}" -le "${shard#*/}" ] || die "WHIZBANG_E2E_SHARD names a shard past the last: $shard"
-  why="$why, for shard $shard"
+  # Half of the owner's 180 for the whole tier, which is not raised by sharding it.
+  limit=90
+  why="the Chrome tier's limit for one shard (plan m5), shard $shard"
+fi
+if [ -n "${WHIZBANG_E2E_LIMIT:-}" ]; then
+  limit=$WHIZBANG_E2E_LIMIT
+  why="from WHIZBANG_E2E_LIMIT${shard:+, shard $shard}"
 fi
 report=""
 while [ $# -gt 0 ]; do

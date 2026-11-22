@@ -42,10 +42,14 @@ grep -q -F 'limit 200s: from --limit' "$tmp/out" || { cat "$tmp/out"; fail "--li
 expect_fail "the environment's limit" "exceeds the limit of 1s" env WHIZBANG_E2E_LIMIT=1 "$e2e" --report "$tmp/ok.json"
 expect_fail "a limit that is not a number" "must be a number of seconds" here "$e2e" --report "$tmp/ok.json" --limit 1e3
 
-# A shard: the limit holds for its own cases, and the line says which shard it is.
+# A shard: its own cases are held to the limit of one shard, 90 s (half the tier's 180), and the line says
+# which shard it is.
 expect_pass "a shard" env -u WHIZBANG_E2E_LIMIT WHIZBANG_E2E_SHARD=2/2 "$e2e" --report "$tmp/ok.json"
-grep -q -F "limit 180s: the Chrome tier's limit (plan m5), for shard 2/2" "$tmp/out" || { cat "$tmp/out"; fail "a shard says which it is"; }
-expect_fail "a shard over the limit" "exceeds the limit of 180s" env -u WHIZBANG_E2E_LIMIT WHIZBANG_E2E_SHARD=1/2 "$e2e" --report "$tmp/long.json"
+grep -q -F "limit 90s: the Chrome tier's limit for one shard (plan m5), shard 2/2" "$tmp/out" || { cat "$tmp/out"; fail "a shard says its limit and which it is"; }
+report 90000 expected >"$tmp/shard-long.json"
+expect_fail "a shard over 90 s" "test time 90.750s exceeds the limit of 90s" env -u WHIZBANG_E2E_LIMIT WHIZBANG_E2E_SHARD=1/2 "$e2e" --report "$tmp/shard-long.json"
+expect_pass "the whole tier at the same time, under 180 s" here "$e2e" --report "$tmp/shard-long.json"
+expect_pass "a shard's --limit" env -u WHIZBANG_E2E_LIMIT WHIZBANG_E2E_SHARD=1/2 "$e2e" --report "$tmp/shard-long.json" --limit 100
 expect_fail "a shard that is not k/n" "must be <k>/<n>" env -u WHIZBANG_E2E_LIMIT WHIZBANG_E2E_SHARD=half "$e2e" --report "$tmp/ok.json"
 expect_fail "a shard past the last" "past the last" env -u WHIZBANG_E2E_LIMIT WHIZBANG_E2E_SHARD=3/2 "$e2e" --report "$tmp/ok.json"
 

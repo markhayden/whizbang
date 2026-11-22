@@ -199,8 +199,9 @@ jobs:
   # of their own beside the others, so the fast tier's 300 seconds are untouched. Set up
   # as `check` is, with Node. When a case fails, the report is kept for two weeks. The cases
   # are split in two shards on each runner (WHIZBANG_E2E_SHARD, Playwright's --shard), each
-  # held to the limit for its own test time: the whole tier came to 165.5 of the 180 seconds
-  # on macos-15 (November 2026).
+  # held to 90 seconds for its own test time, half of the owner's 180 for the whole tier, so
+  # the two together stay within it: the whole tier came to 165.5 of the 180 seconds on
+  # macos-15 in one job (November 2026).
   e2e:
     name: e2e (${{ matrix.os }}, shard ${{ matrix.shard }})
     strategy:
