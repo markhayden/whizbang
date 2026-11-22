@@ -86,15 +86,18 @@ grep -F '| ring | ' "$tmp/made.md" | grep -F 'Apache-2.0 AND ISC' | grep -F '/LI
   fail "ring, under two licences at once, has its texts, those in its subfolders among them"
 
 # The playground's interface, which the binary embeds (plan m5, task U1): Preact's and
-# the fonts' texts (marked is W3's), each under its heading, with its table.
+# marked's (task W3) and the fonts' texts, each under its heading, with its table.
 grep -x -F "## The playground's interface" "$tmp/made.md" >/dev/null || fail "the file names the playground's interface"
-for heading in 'The package preact' 'The font geist' 'The font geist-mono' 'The font bricolage-grotesque'; do
+for heading in 'The package marked' 'The package preact' 'The font geist' 'The font geist-mono' 'The font bricolage-grotesque' 'The outlined roboto-slab'; do
   grep -x -F "### $heading" "$tmp/made.md" >/dev/null || fail "the file holds: $heading"
 done
 grep -F '| package preact | 10.29.8 | MIT | npm preact@10.29.8 |' "$tmp/made.md" >/dev/null || fail "Preact has its row, at the version the lock file pins"
 grep -F '| font geist | 5.3.0 | OFL-1.1 | npm @fontsource/geist-sans@5.3.0 |' "$tmp/made.md" >/dev/null || fail "a font's row names where its files came from"
-grep -F '| package marked ' "$tmp/made.md" >/dev/null && fail "marked is not in the interface until task W3 adds it"
+grep -F '| package marked | 18.1.3 | MIT | npm marked@18.1.3 |' "$tmp/made.md" >/dev/null || fail "marked has its row, at the version the lock file pins (task W3)"
 grep -F 'SIL OPEN FONT LICENSE Version 1.1' "$tmp/made.md" >/dev/null || fail "the fonts' licence is printed"
+grep -F '| outlined roboto-slab | 2.002 | Apache-2.0 | github google/fonts@' "$tmp/made.md" | grep -F '| wordmark.svg |' >/dev/null ||
+  fail "the wordmark's font has its row, with where it came from and the file drawn from it"
+grep -F 'Copyright 2018 The Roboto Slab Project Authors' "$tmp/made.md" >/dev/null || fail "Roboto Slab's notice is printed"
 grep -F 'Copyright (c) 2015-present Jason Miller' "$tmp/made.md" >/dev/null || fail "Preact's text is printed"
 
 # The same lock file gives the same bytes.
@@ -196,6 +199,8 @@ ui_copy() {
   cp ui/package.json ui/package-lock.json "$tmp/uirepo/ui/"
   cp -R ui/licences "$tmp/uirepo/ui/"
   cp -R ui/public/fonts "$tmp/uirepo/ui/public/"
+  mkdir -p "$tmp/uirepo/ui/public/brand"
+  cp ui/public/brand/wordmark.svg "$tmp/uirepo/ui/public/brand/"
   git -C "$tmp/uirepo" init -q
 }
 render_ui() { (cd "$tmp/uirepo" && scripts/third-party-licences.sh --render "$tmp/good.tsv" "$host" "$tmp/ui.md"); }
@@ -230,6 +235,12 @@ expect_fail "a font file that is not the one published" "ui/public/fonts/geist-4
 ui_copy
 grep -v 'geist-500' "$tmp/uirepo/ui/licences/fonts.sha256" >"$tmp/sums" && mv "$tmp/sums" "$tmp/uirepo/ui/licences/fonts.sha256"
 expect_fail "a font file with no hash" "ui/licences/fonts.sha256 must hold each file of ui/public/fonts/ once" render_ui
+ui_copy
+rm "$tmp/uirepo/ui/public/brand/wordmark.svg"
+expect_fail "an outlined font whose file is missing" "names ui/public/brand/wordmark.svg, which is missing" render_ui
+ui_copy
+edit_list 's/^outlined	roboto-slab	2.002	Apache-2.0	/outlined	roboto-slab	2.002	GPL-3.0	/'
+expect_fail "an outlined font under a licence deny.toml does not allow" "outlined font roboto-slab is under GPL-3.0" render_ui
 ui_copy
 edit_list 's/	npm @fontsource\/geist-sans@5.3.0	/		/'
 expect_fail "a font with no source" "a licence, a text and a source: font geist" render_ui

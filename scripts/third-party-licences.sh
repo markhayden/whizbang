@@ -39,7 +39,9 @@
 # archive is made with no Node and no npm. The script fails when that list and those files
 # disagree: a dependency without a row, or at another version than ui/package-lock.json
 # pins; a row for a package that is not a dependency; a package under a licence that
-# deny.toml does not allow; a font file without a row, or a font not under OFL-1.1; a text
+# deny.toml does not allow; a font file without a row, or a font not under OFL-1.1; a font
+# outlined into a file of ui/public/brand/ (the wordmark) under a licence deny.toml does not
+# allow, or naming a file that is not there; a text
 # that is missing, empty, or not of its licence. The texts hold no address of a person.
 #
 # The Rust standard library is in the binary too, and in no lock file. Its two licence
@@ -280,6 +282,17 @@ while IFS=$'\037' read -r kind name version licence text source files; do
       [ -n "$files" ] || die "the font $name names no file"
       for file in $files; do printf '%s\n' "$file" >>"$tmp/ui-fonts"; done
       ;;
+    outlined)
+      # A font whose letters are drawn as outlines into a file of ui/public/brand/ (the
+      # wordmark): no font file ships, so its licence is any deny.toml allows.
+      printf '%s\n' "$allowed" | grep -x -F -e "$licence" >/dev/null ||
+        die "the outlined font $name is under $licence, which deny.toml does not allow"
+      phrase=$(marker "$licence") || die "the outlined font $name is under $licence, whose text this script cannot tell"
+      [ -n "$files" ] || die "the outlined font $name names no file"
+      for file in $files; do
+        [ -f "ui/public/brand/$file" ] || die "the outlined font $name names ui/public/brand/$file, which is missing"
+      done
+      ;;
     *) die "a row of ui/licences/list.tsv is of no kind this script knows: $kind" ;;
   esac
   tr -s '[:space:]' ' ' <"ui/licences/$text" | grep -i -F -e "$phrase" >/dev/null ||
@@ -355,7 +368,8 @@ released=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | sed -n '1p')
   echo
   echo "The binary holds the playground's built interface, which holds these npm packages, at"
   echo "the versions \`ui/package-lock.json\` pins, and these fonts, each under the SIL Open Font"
-  echo "License."
+  echo "License. A font of the kind \`outlined\` ships as no font file: its letters are drawn as"
+  echo "outlines into the files it names, under \`ui/public/brand/\`."
   echo
   echo "| Package or font | Version | Licence | From | Files |"
   echo "|---|---|---|---|---|"
