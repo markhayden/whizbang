@@ -100,6 +100,10 @@ if ! jq -r -s '
     and only(lower + upper + digits + " .,;:\"()/%+-" + ([39] | implode))  # 39 is the apostrophe
     and (contains("://") | not) and (ascii_downcase | contains("www.") | not);
   def need(ok; $what): if ok then . else error($what) end;
+  # word: a name printed on the page (a field, an artifact type, a capability), held to the
+  # rule for names, so nothing printed can be read as markup.
+  def word: if slug then "`\(.)`" else error("a field, type or capability of an action is not a plain name") end;
+  def count: "\(.min // 0) to \(if .max == null then "any" else .max end)";
 
   need(length == 1; "expected exactly one JSON document, found \(length)")
   | .[0]
@@ -141,7 +145,23 @@ if ! jq -r -s '
              (if .title == null then empty
               else "\(.title): a task of the kit `\(.kit // "none")`"
                    + (if .uses == null then "" else ", which uses the kit `\(.uses)`" end) + "." end),
-             .purpose) end) ]
+             .purpose,
+             # Its arguments, ports and needs (plan m5, task W3, item 8): what the
+             # form of the playground and a report read of it.
+             (if ((.arguments // []) | length) == 0 then empty
+              else "Arguments: " + ((.arguments | map((.name | word) + " ("
+                + (.type.type | word | ltrimstr("`") | rtrimstr("`"))
+                + (if .required then ", required" else "" end) + ")")) | join(", ")) + "." end),
+             (if ((.inputs // []) | length) == 0 then empty
+              else "Takes: " + ((.inputs | map((.name | word) + " ("
+                + (.artifact | word | ltrimstr("`") | rtrimstr("`")) + ", " + (.count | count) + ")")) | join(", ")) + "." end),
+             (if ((.outputs // []) | length) == 0 then empty
+              else "Gives: " + ((.outputs | map((.name | word) + " ("
+                + (.artifact | word | ltrimstr("`") | rtrimstr("`")) + ", " + (.count | count) + ")")) | join(", ")) + "." end),
+             (if ((.needs // []) | length) == 0 then "Needs: no capability."
+              else "Needs, each a capability a backend must be configured for: " + ((.needs | map((.capability | word)
+                + (if .requests == null then "" else ", up to \(.requests) requests" end)
+                + (if .chosen_by == null then "" else ", chosen by " + (.chosen_by | word) end))) | join("; ")) + "." end)) end) ]
   | join("\n\n")' "$tmp/description.json" >"$tmp/actions.md" 2>"$tmp/error"; then
   echo "docs: not a description: $(head -n 1 "$tmp/error")" >&2
   exit 1

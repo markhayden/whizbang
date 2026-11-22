@@ -16,7 +16,6 @@ mod spend;
 #[cfg(test)]
 mod spending;
 mod squint;
-mod stats;
 mod store;
 mod tool_try;
 

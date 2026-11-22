@@ -48,6 +48,9 @@ pub struct Playground {
     kept: Mutex<Remembered>,
     /// How many thumbnails were made, not taken from those kept.
     made: std::sync::atomic::AtomicU64,
+    /// The runs of the store's current generation, read once for history and the
+    /// figures (`crate::play_history`).
+    pub(crate) shelved: crate::play_history::Shelved,
     /// The Models screen's door (plan m5, task M1), when the host offers it.
     models: Option<crate::play_models::PlayModels>,
 }
@@ -114,6 +117,7 @@ impl Playground {
             root: None,
             kept: Mutex::new(Remembered::default()),
             made: std::sync::atomic::AtomicU64::new(0),
+            shelved: crate::play_history::Shelved::default(),
             models: None,
         }
     }
@@ -215,6 +219,16 @@ impl Playground {
     #[doc(hidden)]
     pub fn thumbnails_made(&self) -> u64 {
         self.made.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// The store's folder, when the playground keeps a store; and the actions it offers
+    /// (for its history, `crate::play_history`).
+    pub(crate) fn root(&self) -> Option<&Path> {
+        self.root.as_deref()
+    }
+
+    pub(crate) fn descriptors(&self) -> &[ActionDescriptor] {
+        &self.descriptors
     }
 
     fn descriptor(&self, action: &str) -> Option<&ActionDescriptor> {
@@ -355,6 +369,10 @@ impl Play for Playground {
         let bytes = store.read(&entry).ok()?;
         let admission = whizbang_core::contract::Admission::from_bytes(&bytes).ok()?;
         (admission.request() == Some(id)).then(|| admission.run().clone())
+    }
+
+    fn shelf(&self) -> Option<&dyn whizbang_serve::play::history::Shelf> {
+        Some(self)
     }
 
     fn models(&self) -> Option<&dyn whizbang_serve::play::models::Models> {

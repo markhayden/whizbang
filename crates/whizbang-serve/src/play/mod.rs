@@ -25,8 +25,10 @@
 
 pub mod assets;
 pub mod guard;
+pub mod history;
 pub mod http;
 pub mod models;
+pub mod records;
 pub mod routes;
 pub mod threads;
 pub mod token;
@@ -149,6 +151,11 @@ pub trait Play: Send + Sync {
     /// `Err` with fixed words (plan m5, task U1, item 5).
     fn script(&self, _words: &str) -> Result<(), String> {
         Err("this host takes no script".to_owned())
+    }
+    /// What answers history, the figures, a run's report and its export (plan m5, task
+    /// W3), when the door keeps a store.
+    fn shelf(&self) -> Option<&dyn history::Shelf> {
+        None
     }
     /// The host has stopped and let its executor go: stop what the door holds (the
     /// pack's worker), and let the store go.

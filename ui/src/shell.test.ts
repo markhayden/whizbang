@@ -74,16 +74,18 @@ describe("the routes", () => {
     expect(parseRoute("#/k/rascal/remove_checked")).toEqual({ name: "kit", kit: "rascal", task: "remove_checked" });
     expect(parseRoute("#/run/r-8c21_x")).toEqual({ name: "run", id: "r-8c21_x" });
     expect(parseRoute("#/models")).toEqual({ name: "models" });
+    expect(parseRoute("#/run/r-1/report")).toEqual({ name: "report", id: "r-1" });
+    expect(parseRoute("#/record/remove_prompt")).toEqual({ name: "record", record: "remove_prompt" });
     const history = parseRoute("#/history?kit=rascal&result=pass");
     expect(history.name === "history" && history.query.get("result")).toBe("pass");
   });
   it("refuses what is not a route", () => {
-    for (const hash of ["#/k/Rascal", "#/k/rascal/a/b", "#/run/a%20b", "#/run", "#/nowhere", "#/k/<img>", "#/k/%E0%A4%A", "#/run/%"]) {
+    for (const hash of ["#/k/Rascal", "#/k/rascal/a/b", "#/run/a%20b", "#/run", "#/nowhere", "#/k/<img>", "#/k/%E0%A4%A", "#/run/%", "#/run/r-1/other", "#/record/View", "#/record/a/b"]) {
       expect(parseRoute(hash).name, hash).toBe("unknown");
     }
   });
   it("writes each route back as it reads", () => {
-    for (const hash of ["#/", "#/k/rascal", "#/k/rascal/remove_checked", "#/run/r-1", "#/history", "#/history?kit=squint", "#/models"]) {
+    for (const hash of ["#/", "#/k/rascal", "#/k/rascal/remove_checked", "#/run/r-1", "#/history", "#/history?kit=squint", "#/models", "#/run/r-1/report", "#/record/view"]) {
       expect(hrefOf(parseRoute(hash))).toBe(hash);
     }
   });
