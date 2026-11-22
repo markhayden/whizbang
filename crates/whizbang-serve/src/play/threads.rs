@@ -1,5 +1,5 @@
 //! The threads of the playground host (ADR 0041, "Threads"): its acceptor, its sixteen
-//! connection workers, its keeper and its canceller, and the binary's reader of the
+//! connection workers, its keeper, its canceller and its one install, and the binary's reader of the
 //! terminal's signals and of its input.
 //!
 //! This is the fifth place in the workspace that makes a thread, beside the executor's
@@ -11,10 +11,11 @@ use std::io;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::JoinHandle;
 
-/// How many threads made here one process holds at once: two hosts' twenty (one host's
-/// acceptor, sixteen workers, keeper and canceller are nineteen), and the binary's
-/// readers of its signals and its input.
-pub const THREADS_LIMIT: usize = 42;
+/// How many threads made here one process holds at once: two hosts' twenty each (one
+/// host's acceptor, sixteen workers, keeper, canceller and its one install, task M1),
+/// and the binary's readers of its signals and its input and the waiter of a Chrome
+/// started on Linux.
+pub const THREADS_LIMIT: usize = 44;
 
 static LIVE: AtomicUsize = AtomicUsize::new(0);
 

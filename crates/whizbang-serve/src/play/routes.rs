@@ -143,7 +143,7 @@ pub(crate) const ROUTES: &[Route] = &[
 /// path no route has is 404, and one whose route takes another method 405.
 pub(crate) fn find(method: &str, path: &str) -> Result<(&'static Route, Vec<String>), Unread> {
     let mut path_known = false;
-    for route in ROUTES {
+    for route in ROUTES.iter().chain(super::models::ROUTES) {
         let Some(params) = matched(route.pattern, path) else {
             continue;
         };

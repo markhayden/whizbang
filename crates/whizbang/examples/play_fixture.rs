@@ -24,6 +24,13 @@
 //! script before it is answered (`PlayKit::set`: `hold`, `hold-pictures`, `release`,
 //! `pass`, `fail`, `reset`); the real host refuses that header.
 //!
+//! **Its models** (plan m5, task M1): the shipped catalogue and, beside it, the test kit's
+//! `pocket` (`whizbang_testkit::playmodels`), whose three small files a fake download
+//! serves from memory, at an address of the `.example` domain. The script holds an
+//! install after its first file (`hold-install`, `release-install`), and holds the
+//! installed `pocket` as a run does (`use-model`, `let-model-go`), so a removal waits and
+//! answers busy. A removal waits one second.
+//!
 //! Options: `--store <folder>` (made if missing, its last folder alone), `--port <n>` (0,
 //! the default, takes a free port), `--stdin-quit` (quit when the standard input ends, so
 //! a test that dies leaves no host behind), `--third-kit` (a kit of fake actions,
@@ -35,18 +42,30 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::{Map, Value as Json};
+use whizbang::model_commands::{Downloads, Tools};
 use whizbang::pack::OneWorker;
+use whizbang::play_models::PlayModels;
 use whizbang::playing::{Playground, address};
 use whizbang::wiring::{self, Make, Over};
+use whizbang_backends::models::{
+    Catalogue, CatalogueFile, Current, Entry, EntryParts, FileName, Hold, Holds, Licence,
+    ModelName, ModelsDir, Platform as ModelPlatform, Revision, Title, current,
+};
 use whizbang_core::artifact::ArtifactType;
 use whizbang_core::contract::{
     Action, ActionDescriptor, Call, Context, Failure, InputPort, Kind, PreparedCall, Produced,
     RequestId, RunId,
 };
+use whizbang_core::contract::{Secrets, SystemClock};
 use whizbang_core::description::Kit;
+use whizbang_core::egress::{Address, CheckedDownloader, Origin};
+use whizbang_core::identity::Digest;
 use whizbang_core::spend::Amount;
+use whizbang_core::store::fs::RealFs;
 use whizbang_serve::play::{Host, Play, Refused, Settings, Token, threads};
+use whizbang_testkit::downloads::FakeDownloader;
 use whizbang_testkit::playkit::{KIND, PlayKit};
+use whizbang_testkit::playmodels::{self, GatedDownloader, MODEL};
 
 fn fail(message: &str) -> ! {
     eprintln!("play_fixture: {message}");
@@ -112,10 +131,87 @@ fn echo() -> Arc<dyn Action> {
     Arc::new(Echo(descriptor))
 }
 
-/// The binary's door, with the kit's script.
+/// The binary's door, with the kit's script and the models' fakes.
 struct Fixture {
     door: Playground,
     kit: Arc<PlayKit>,
+    downloads: Arc<GatedDownloader>,
+    models: PathBuf,
+    held: std::sync::Mutex<Option<Hold>>,
+}
+
+impl Fixture {
+    /// A hold on the installed `pocket`, as a run that uses it takes one.
+    fn use_model(&self) -> Result<(), String> {
+        let none = Secrets::none();
+        let dir = ModelsDir::open(Arc::new(RealFs), &self.models, Arc::new(SystemClock))
+            .map_err(|refused| refused.to_string())?;
+        let name = ModelName::new(MODEL, &none).map_err(|refused| refused.to_string())?;
+        let Ok(Current::Installed(record)) = current(&dir, &name, &none) else {
+            return Err("pocket is not installed".to_owned());
+        };
+        let hold = Holds::over(dir)
+            .hold(&name, record.identity(), &none)
+            .map_err(|refused| refused.to_string())?;
+        *self
+            .held
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(hold);
+        Ok(())
+    }
+}
+
+/// The catalogue the fixture's models are of: the shipped one, and `pocket`.
+fn catalogue() -> Catalogue {
+    let none = Secrets::none();
+    let shipped = wiring::catalogue().unwrap_or_else(|why| fail(&why));
+    let files = playmodels::files()
+        .into_iter()
+        .map(|(name, bytes)| {
+            let at = Address::of(&playmodels::address_of(name), &none)
+                .unwrap_or_else(|why| fail(&why.to_string()));
+            CatalogueFile::new(
+                FileName::new(name, &none).unwrap_or_else(|why| fail(&why.to_string())),
+                bytes.len() as u64,
+                Digest::of_bytes(&bytes),
+                at,
+                &none,
+            )
+            .unwrap_or_else(|why| fail(&why.to_string()))
+        })
+        .collect();
+    let named =
+        |text: &str| ModelName::new(text, &none).unwrap_or_else(|why| fail(&why.to_string()));
+    let parts = EntryParts {
+        name: named(MODEL),
+        title: Title::new("Pocket (a fixture's model)", &none)
+            .unwrap_or_else(|why| fail(&why.to_string())),
+        revision: Revision::new("2026-11.1", &none).unwrap_or_else(|why| fail(&why.to_string())),
+        adapter: named("owlv2-sam2"),
+        licence: Licence::new("Apache-2.0", &none).unwrap_or_else(|why| fail(&why.to_string())),
+        platforms: ModelPlatform::ALL.to_vec(),
+        features: Vec::new(),
+        origins: vec![
+            Origin::of(playmodels::ORIGIN, &none).unwrap_or_else(|why| fail(&why.to_string())),
+        ],
+        files,
+    };
+    let pocket = Entry::new(parts, &none).unwrap_or_else(|why| fail(&why.to_string()));
+    let mut entries = shipped.entries().to_vec();
+    entries.push(pocket);
+    Catalogue::new(entries, &none).unwrap_or_else(|why| fail(&why.to_string()))
+}
+
+/// The fake download of `pocket`'s files, held when the script says so.
+fn served() -> Arc<GatedDownloader> {
+    let none = Secrets::none();
+    let mut fake = FakeDownloader::new();
+    for (name, bytes) in playmodels::files() {
+        let at = Address::of(&playmodels::address_of(name), &none)
+            .unwrap_or_else(|why| fail(&why.to_string()));
+        fake = fake.serving(&at, bytes);
+    }
+    Arc::new(GatedDownloader::new(fake))
 }
 
 impl Play for Fixture {
@@ -159,10 +255,32 @@ impl Play for Fixture {
         self.door.admitted(id)
     }
     fn script(&self, words: &str) -> Result<(), String> {
-        self.kit.set(words)
+        match words {
+            "hold-install" => {
+                self.downloads.hold();
+                Ok(())
+            }
+            "release-install" => {
+                self.downloads.release();
+                Ok(())
+            }
+            "use-model" => self.use_model(),
+            "let-model-go" => {
+                self.held
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take();
+                Ok(())
+            }
+            _ => self.kit.set(words),
+        }
     }
     fn closing(&self) {
+        self.downloads.release();
         self.door.closing();
+    }
+    fn models(&self) -> Option<&dyn whizbang_serve::play::models::Models> {
+        self.door.models()
     }
 }
 
@@ -206,13 +324,16 @@ fn main() {
     // The catalogue's models as on the Mac, whose platform `sam3` names, on every runner:
     // so it is shown not installed, with its size, and never not for this platform.
     // Nothing is installed or run.
-    let shipped = wiring::Models::shipped()
-        .unwrap_or_else(|why| fail(&why))
+    let adapters = wiring::adapters()
+        .into_iter()
+        .map(|adapter| (adapter.name, adapter.revision))
+        .collect();
+    let shipped = wiring::Models::of(catalogue(), adapters)
         .runs_on(Some(whizbang_backends::models::Platform::MacosArm64));
     let over = Over::nothing()
         .config(Some(&config))
         .kinds(kinds)
-        .installed(shipped.flag(Some(&models)))
+        .installed(shipped.clone().flag(Some(&models)))
         .unwrap_or_else(|why| fail(&why));
     let opening = wiring::opening(&store, Make::TheRoot, wiring::recovery())
         .unwrap_or_else(|error| fail(&wiring::not_opened(&error)));
@@ -233,10 +354,25 @@ fn main() {
     }
     let descriptors = registry.descriptors().cloned().collect();
     let executor = wiring::runner(registry, writer.clone(), &over).unwrap_or_else(|why| fail(&why));
+    let downloads = served();
+    let serving = downloads.clone();
+    let made: Downloads = Arc::new(move |_least: u64, origins: &[Origin], _: &Secrets| {
+        CheckedDownloader::new(serving.clone(), origins)
+    });
+    let tools = Tools::of(shipped.flag(Some(&models)), Arc::new(SystemClock), made);
+    let models_door =
+        PlayModels::new(tools, Some(&config), None).waiting(std::time::Duration::from_secs(1));
     let door = Playground::new(descriptors, Arc::new(over))
         .with_store(writer, &store)
-        .with_kits(kits);
-    let play = Arc::new(Fixture { door, kit });
+        .with_kits(kits)
+        .with_models(models_door);
+    let play = Arc::new(Fixture {
+        door,
+        kit,
+        downloads,
+        models: models.clone(),
+        held: std::sync::Mutex::new(None),
+    });
     let token = Token::new().unwrap_or_else(|error| fail(&error.to_string()));
     let mut settings = Settings::new(store);
     settings.port = port;
