@@ -15,6 +15,11 @@
 # tier's own, apart from the fast tier's 300 (SPEC.md section 13); it is not raised
 # without the owner.
 #
+# WHIZBANG_E2E_SHARD=<k>/<n> runs only the k-th of n shards of the cases (Playwright's
+# --shard), as CI's jobs `e2e (<runner>, shard <k>)` do, so that no one job comes near the
+# limit; the limit then holds for that shard's own test time. Unset, as `just e2e` runs
+# locally, every case runs and the limit holds for all of them.
+#
 # The packages are installed as scripts/ui.sh installs them. The report is kept in
 # target/e2e/ (report.json, and html/ for a person), where CI keeps it when a case fails.
 # The whole script is one function, read before any of it runs, so a change to this file
@@ -34,6 +39,13 @@ why="the Chrome tier's limit (plan m5)"
 if [ -n "${WHIZBANG_E2E_LIMIT:-}" ]; then
   limit=$WHIZBANG_E2E_LIMIT
   why="from WHIZBANG_E2E_LIMIT"
+fi
+shard=${WHIZBANG_E2E_SHARD:-}
+if [ -n "$shard" ]; then
+  echo "$shard" | grep -E '^[1-9][0-9]*/[1-9][0-9]*$' >/dev/null ||
+    die "WHIZBANG_E2E_SHARD must be <k>/<n>, as 1/2: $shard"
+  [ "${shard%/*}" -le "${shard#*/}" ] || die "WHIZBANG_E2E_SHARD names a shard past the last: $shard"
+  why="$why, for shard $shard"
 fi
 report=""
 while [ $# -gt 0 ]; do
@@ -63,7 +75,9 @@ if [ -z "$report" ]; then
   cargo build --quiet -p whizbang --example play_fixture || die "the fixture host did not build"
   fixture=$(cargo metadata --format-version 1 --no-deps | jq -r .target_directory)/debug/examples/play_fixture
   [ -x "$fixture" ] || die "no fixture host at $fixture"
-  (cd ui && WHIZBANG_PLAY_FIXTURE="$fixture" "$OLDPWD/scripts/thread-guard.sh" node_modules/.bin/playwright test) || status=$?
+  sharded=()
+  [ -z "$shard" ] || sharded=("--shard=$shard")
+  (cd ui && WHIZBANG_PLAY_FIXTURE="$fixture" "$OLDPWD/scripts/thread-guard.sh" node_modules/.bin/playwright test ${sharded[@]+"${sharded[@]}"}) || status=$?
 fi
 [ -r "$report" ] || die "no report at $report"
 

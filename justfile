@@ -114,7 +114,8 @@ ui-check:
 
 # The Chrome tier: the fixture host built, then Playwright's cases in ui/e2e/ against it
 # in the Google Chrome installed here, held to 180 seconds of test time (scripts/e2e.sh).
-# Heavy. CI runs it in the jobs `e2e (macos-15)` and `e2e (ubuntu-22.04)`.
+# Heavy. CI runs it in two shards on each runner, the jobs `e2e (<runner>, shard <k>)`,
+# each given WHIZBANG_E2E_SHARD=<k>/2; here it runs every case.
 e2e:
     scripts/e2e.sh
 
