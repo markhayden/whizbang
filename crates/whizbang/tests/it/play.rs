@@ -1853,6 +1853,23 @@ fn history_filters_by_kit_task_result_and_words() {
     );
 }
 
+#[test]
+fn history_and_the_figures_read_the_store_again_only_when_it_has_published_since() {
+    let kitted = Kitted::new("play-w3-shelved");
+    kitted.ran("shout", &json!({}));
+    assert_eq!(kitted.listed("").len(), 1);
+    let read = kitted.door.records_read();
+    assert!(read >= 1);
+    // The same generation: another page, another filter and the figures read nothing new.
+    assert_eq!(kitted.listed("words=nothing").len(), 0);
+    assert_eq!(kitted.api("GET", "/api/stats", None).status, 200);
+    assert_eq!(kitted.door.records_read(), read);
+    // A run published since: read again.
+    kitted.ran("shout", &json!({}));
+    assert_eq!(kitted.listed("").len(), 2);
+    assert!(kitted.door.records_read() > read);
+}
+
 /// A store holding a loop, a decision answered from the cache, unsure verdicts, a
 /// cancelled run with spend left unresolved, and runs of both kits.
 fn figured() -> Kitted {
@@ -2164,6 +2181,12 @@ mod report {
             kitted.api("GET", "/api/runs/r-none/report", None).status,
             404
         );
+    }
+
+    #[test]
+    fn a_reports_escaping_keeps_tabs_ends_lines_once_and_shows_a_change_of_direction() {
+        let said = whizbang::report::escape("a\tb\r\nc\u{202e}d\u{2066}e\u{7}<");
+        assert_eq!(said, "a\tb\nc\\u{202e}d\\u{2066}e\\u{7}&lt;");
     }
 
     fn picture(shade: u8) -> Picture {

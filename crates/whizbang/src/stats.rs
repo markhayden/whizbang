@@ -231,8 +231,9 @@ impl Read<'_> {
         let start = record.time().start_ms;
         let action = asked.action.as_deref();
         let said = |words: &str| {
+            // What a row of history shows: the arguments' words, not a job's JSON.
             let texts = (asked.arguments.iter()).filter_map(|a| match &a.value {
-                ArgumentValue::Text(text) => Some(text.to_lowercase()),
+                ArgumentValue::Text(text) if a.name != "job" => Some(text.to_lowercase()),
                 _ => None,
             });
             let names = lookups
@@ -263,32 +264,35 @@ impl Read<'_> {
     }
 }
 
-/// The runs of one generation of a store that a filter admits, with what reads what they
-/// kept beside their records.
-pub struct Runs {
-    /// Each run with a record that the filter admits, in the order of their ids.
-    pub found: Vec<(String, RunRecord)>,
+/// Every run record of one generation of a store, read once, with what reads what the
+/// runs kept beside their records: what history and the figures choose from. The
+/// playground keeps one for its store's current generation and reads the store again
+/// only when it has published since (plan m5, task W3).
+pub struct Loaded {
+    /// The generation's number.
+    pub number: u64,
+    /// Each record read, by its run's id.
+    pub all: BTreeMap<String, RunRecord>,
+    /// Each run's children, by the run that called them.
+    pub children: BTreeMap<String, Vec<String>>,
     /// How many runs have no record that was read.
     pub without: usize,
-    /// How many runs have a record, of every run the store holds, admitted or not, by
-    /// the run that called each: a run's children.
-    pub children: BTreeMap<String, Vec<String>>,
-    /// Each record read, admitted or not, by its run's id.
-    pub all: BTreeMap<String, RunRecord>,
-    pub lookups: Lookups,
+    /// The name of each picture the playground kept, by the hex of its identity.
+    pub names: BTreeMap<String, String>,
     generation: Generation,
     reader: Reader,
+    /// What the runs kept as JSON, read once each: by run and name.
+    kept: std::sync::Mutex<BTreeMap<(String, String), Option<serde_json::Value>>>,
 }
 
-impl Runs {
-    /// The runs of the store at `root`, read by a reader of its own, that `filter`
-    /// admits; `lookups` names the kits (the names of the pictures are read here).
-    pub fn matching(root: &Path, filter: &Filter, lookups: Lookups) -> Result<Runs, String> {
-        let read = filter.read()?;
+impl Loaded {
+    /// Reads every record of the store at `root`, by a reader of its own.
+    pub fn load(root: &Path) -> Result<Loaded, String> {
         let reader = Reader::open(root, Arc::new(RealFs)).map_err(|e| e.to_string())?;
         let generation = reader.snapshot().map_err(|e| e.to_string())?;
-        let lookups = lookups.with_names(&generation, &|entry| reader.read(entry));
-        let mut found = Vec::new();
+        let names = Lookups::default()
+            .with_names(&generation, &|entry| reader.read(entry))
+            .names;
         let mut all = BTreeMap::new();
         let mut children: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut without = 0;
@@ -298,22 +302,20 @@ impl Runs {
                     if let Some(parent) = &record.identity().parent {
                         children.entry(parent.clone()).or_default().push(id.clone());
                     }
-                    if read.admits(&record, &lookups) {
-                        found.push((id.clone(), record.clone()));
-                    }
                     all.insert(id.clone(), record);
                 }
                 _ => without += 1,
             }
         }
-        Ok(Runs {
-            found,
-            without,
-            children,
+        Ok(Loaded {
+            number: generation.number(),
             all,
-            lookups,
+            children,
+            without,
+            names,
             generation,
             reader,
+            kept: std::sync::Mutex::new(BTreeMap::new()),
         })
     }
 
@@ -327,10 +329,75 @@ impl Runs {
         }
     }
 
-    /// [`Runs::diagnostic`], read as JSON.
+    /// [`Loaded::diagnostic`], read as JSON once and kept.
     fn diagnostic_json(&self, id: &str, name: &str) -> Option<serde_json::Value> {
-        let bytes = self.diagnostic(id, name)?;
-        serde_json::from_slice(&bytes).ok()
+        let key = (id.to_owned(), name.to_owned());
+        let lock = || {
+            self.kept
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        };
+        if let Some(said) = lock().get(&key) {
+            return said.clone();
+        }
+        let read =
+            (self.diagnostic(id, name)).and_then(|bytes| serde_json::from_slice(&bytes).ok());
+        lock().insert(key, read.clone());
+        read
+    }
+}
+
+/// The runs of a [`Loaded`] generation that a filter admits.
+pub struct Runs {
+    /// Each run with a record that the filter admits, in the order of their ids.
+    pub found: Vec<(String, RunRecord)>,
+    pub lookups: Lookups,
+    pub loaded: Arc<Loaded>,
+}
+
+impl Runs {
+    /// The runs of the store at `root`, read by a reader of its own, that `filter`
+    /// admits; `lookups` names the kits (the names of the pictures are read here).
+    pub fn matching(root: &Path, filter: &Filter, lookups: Lookups) -> Result<Runs, String> {
+        Runs::within(Arc::new(Loaded::load(root)?), filter, lookups)
+    }
+
+    /// The runs of what was loaded that `filter` admits: nothing is read from the store.
+    pub fn within(loaded: Arc<Loaded>, filter: &Filter, lookups: Lookups) -> Result<Runs, String> {
+        let read = filter.read()?;
+        let lookups = Lookups {
+            kits: lookups.kits,
+            names: loaded.names.clone(),
+        };
+        let found = (loaded.all.iter())
+            .filter(|(_, record)| read.admits(record, &lookups))
+            .map(|(id, record)| (id.clone(), record.clone()))
+            .collect();
+        Ok(Runs {
+            found,
+            lookups,
+            loaded,
+        })
+    }
+
+    /// How many runs have no record that was read.
+    pub fn without(&self) -> usize {
+        self.loaded.without
+    }
+
+    /// What the run `id` kept among its diagnostics under `name`, when it kept it.
+    pub fn diagnostic(&self, id: &str, name: &str) -> Option<Vec<u8>> {
+        self.loaded.diagnostic(id, name)
+    }
+
+    fn diagnostic_json(&self, id: &str, name: &str) -> Option<serde_json::Value> {
+        self.loaded.diagnostic_json(id, name)
+    }
+
+    /// The children of a run.
+    pub fn children_of(&self, id: &str) -> impl Iterator<Item = &RunRecord> {
+        (self.loaded.children.get(id).into_iter().flatten())
+            .filter_map(|child| self.loaded.all.get(child))
     }
 
     /// What the run and every run under it settled, in millionths of a US dollar.
@@ -342,13 +409,13 @@ impl Runs {
             if !seen.insert(run.clone()) {
                 continue;
             }
-            if let Some(record) = self.all.get(&run) {
+            if let Some(record) = self.loaded.all.get(&run) {
                 let paid = record.spend().requests.iter();
                 total += paid
                     .map(|paid| u128::from(paid.settled_micros()))
                     .sum::<u128>();
             }
-            next.extend(self.children.get(&run).cloned().unwrap_or_default());
+            next.extend(self.loaded.children.get(&run).cloned().unwrap_or_default());
         }
         total
     }
@@ -542,7 +609,7 @@ impl Figures {
             .count();
         Figures {
             runs: found.len(),
-            without_record: runs.without,
+            without_record: runs.without(),
             ended,
             verdicts,
             retries,

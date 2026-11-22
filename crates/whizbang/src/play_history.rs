@@ -4,6 +4,7 @@
 //! the ones `runs stats` prints for the same filter ([`stats::Figures`]).
 
 use std::path::Path;
+use std::sync::Arc;
 
 use serde_json::{Map, Value as Json, json};
 use whizbang_core::artifact::ArtifactType;
@@ -14,7 +15,16 @@ use whizbang_serve::play::Refused;
 use whizbang_serve::play::history::{Asked, Document, Shelf};
 
 use crate::playing::Playground;
-use crate::stats::{self, Figures, Filter, Lookups, Runs};
+use crate::stats::{self, Figures, Filter, Loaded, Lookups, Runs};
+
+/// The runs of the store's current generation, as the playground keeps them: read whole
+/// once, and again only when the store has published since; and how many records were
+/// read so, for a test.
+#[derive(Default)]
+pub struct Shelved {
+    loaded: std::sync::Mutex<Option<Arc<Loaded>>>,
+    records_read: std::sync::atomic::AtomicU64,
+}
 
 /// The filter the page asked for, as `runs stats` takes it: the page's `task` is the
 /// action it names.
@@ -68,11 +78,7 @@ fn row(runs: &Runs, id: &str, record: &RunRecord, titles: &dyn Fn(&str) -> Optio
         .map(|n| escaped(n))
         .collect();
     let mut models: Vec<String> = (record.models().iter())
-        .chain(
-            (runs.children.get(id).into_iter().flatten())
-                .filter_map(|child| runs.all.get(child))
-                .flat_map(|child| child.models().iter()),
-        )
+        .chain(runs.children_of(id).flat_map(|child| child.models().iter()))
         .map(|model| escaped(&model.model))
         .collect();
     models.sort();
@@ -101,13 +107,13 @@ fn row(runs: &Runs, id: &str, record: &RunRecord, titles: &dyn Fn(&str) -> Optio
 /// are its own), newest first, after the run `before` names when it names one, at most
 /// `limit`; and whether there are more.
 pub fn listed(
-    root: &Path,
+    loaded: Arc<Loaded>,
     asked: &Asked,
     lookups: Lookups,
     titles: &dyn Fn(&str) -> Option<String>,
 ) -> Result<Json, Refused> {
     let filter = filter_of(&asked.filter)?;
-    let runs = Runs::matching(root, &filter, lookups).map_err(|why| Refused::new(400, &why))?;
+    let runs = Runs::within(loaded, &filter, lookups).map_err(|why| Refused::new(400, &why))?;
     let mut top: Vec<&(String, RunRecord)> = (runs.found.iter())
         .filter(|(_, record)| record.identity().parent.is_none())
         .collect();
@@ -130,9 +136,9 @@ pub fn listed(
 }
 
 /// The figures of `runs stats` over the filter the page asked for.
-pub fn figures(root: &Path, asked: &Asked, lookups: Lookups) -> Result<Json, Refused> {
+pub fn figures(loaded: Arc<Loaded>, asked: &Asked, lookups: Lookups) -> Result<Json, Refused> {
     let filter = filter_of(&asked.filter)?;
-    let runs = Runs::matching(root, &filter, lookups).map_err(|why| Refused::new(400, &why))?;
+    let runs = Runs::within(loaded, &filter, lookups).map_err(|why| Refused::new(400, &why))?;
     let figures = Figures::of(&runs);
     let mut said = serde_json::to_value(&figures).unwrap_or(Json::Null);
     said["text"] = json!(figures.text());
@@ -150,15 +156,13 @@ fn file_name(action: &str, run: &RunId, extension: &str) -> String {
 
 impl Shelf for Playground {
     fn runs(&self, asked: &Asked) -> Result<Json, Refused> {
-        let root = self.root_of()?;
-        listed(&root, asked, self.lookups(), &|action| {
+        listed(self.loaded()?, asked, self.lookups(), &|action| {
             self.title_of(action)
         })
     }
 
     fn stats(&self, asked: &Asked) -> Result<Json, Refused> {
-        let root = self.root_of()?;
-        figures(&root, asked, self.lookups())
+        figures(self.loaded()?, asked, self.lookups())
     }
 
     fn report(&self, run: &RunId) -> Result<Document, Refused> {
@@ -187,6 +191,40 @@ impl Shelf for Playground {
 }
 
 impl Playground {
+    /// The runs of the store's current generation: those read before when the store has
+    /// not published since, else read again.
+    fn loaded(&self) -> Result<Arc<Loaded>, Refused> {
+        let root = self.root_of()?;
+        let busy = || Refused::new(500, "the store could not answer");
+        let reader =
+            whizbang_core::store::Reader::open(&root, Arc::new(whizbang_core::store::fs::RealFs))
+                .map_err(|_| busy())?;
+        let number = reader.snapshot().map_err(|_| busy())?.number();
+        let kept = &self.shelved;
+        let mut held = kept
+            .loaded
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(loaded) = held.as_ref()
+            && loaded.number == number
+        {
+            return Ok(loaded.clone());
+        }
+        let loaded = Arc::new(Loaded::load(&root).map_err(|why| Refused::new(500, &why))?);
+        kept.records_read
+            .fetch_add(loaded.all.len() as u64, std::sync::atomic::Ordering::SeqCst);
+        *held = Some(loaded.clone());
+        Ok(loaded)
+    }
+
+    /// How many run records history and the figures have read from the store: for a test.
+    #[doc(hidden)]
+    pub fn records_read(&self) -> u64 {
+        self.shelved
+            .records_read
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     fn root_of(&self) -> Result<std::path::PathBuf, Refused> {
         self.root()
             .map(Path::to_path_buf)

@@ -29,7 +29,7 @@ use whizbang_core::contract::RunId;
 use whizbang_core::contract::record::{
     self, ArgumentValue, DIAGNOSTICS_PREFIX, Judged, RunRecord, Status,
 };
-use whizbang_core::identity::{DecodeLimits, Digest, PixelDigest};
+use whizbang_core::identity::{CanonicalPixels, DecodeLimits, Digest, PixelDigest};
 use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{Generation, Kind, Reader};
 
@@ -48,9 +48,17 @@ pub const RUNS_LIMIT: usize = 256;
 /// The most judge turns a report shows whole.
 pub const TURNS_SHOWN: usize = 64;
 
+/// Whether a character changes the direction text is shown in (U+202A to U+202E and
+/// U+2066 to U+2069), which could make a reason read other than it is.
+fn bidi(c: char) -> bool {
+    matches!(u32::from(c), 0x202A..=0x202E | 0x2066..=0x2069)
+}
+
 /// Escapes text for HTML: the five characters that could start markup or end an
-/// attribute, and every control character but a new line, as its code.
+/// attribute; a new line and a tab kept, and `\r\n` as a new line; every other control
+/// character, and each that changes the direction of text, as its code.
 pub fn escape(text: &str) -> String {
+    let text = text.replace("\r\n", "\n");
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
         match c {
@@ -59,8 +67,8 @@ pub fn escape(text: &str) -> String {
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
             '\'' => out.push_str("&#39;"),
-            '\n' => out.push('\n'),
-            c if c.is_control() => {
+            '\n' | '\t' => out.push(c),
+            c if c.is_control() || bidi(c) => {
                 let _ = write!(out, "\\u{{{:x}}}", u32::from(c));
             }
             c => out.push(c),
@@ -148,6 +156,9 @@ struct Shelf {
     reader: Reader,
     generation: Generation,
     limits: DecodeLimits,
+    /// Each artifact read, and each image's pixels decoded, once.
+    artifacts: std::cell::RefCell<BTreeMap<Digest, Option<std::rc::Rc<Artifact>>>>,
+    pixels: std::cell::RefCell<BTreeMap<Digest, Option<std::rc::Rc<CanonicalPixels>>>>,
 }
 
 impl Shelf {
@@ -158,6 +169,8 @@ impl Shelf {
             reader,
             generation,
             limits: DecodeLimits::default(),
+            artifacts: std::cell::RefCell::new(BTreeMap::new()),
+            pixels: std::cell::RefCell::new(BTreeMap::new()),
         })
     }
 
@@ -182,10 +195,38 @@ impl Shelf {
             .flatten()
     }
 
-    fn artifact(&self, id: Digest) -> Option<Artifact> {
-        let id = ArtifactId(id);
-        let kind = artifact::type_anywhere(&self.generation, id)?;
-        artifact::get_anywhere(&self.reader, kind, id, &self.limits).ok()
+    /// The artifact of this identity, read once.
+    fn artifact(&self, id: Digest) -> Option<std::rc::Rc<Artifact>> {
+        if let Some(read) = self.artifacts.borrow().get(&id) {
+            return read.clone();
+        }
+        let wanted = ArtifactId(id);
+        let read = artifact::type_anywhere(&self.generation, wanted)
+            .and_then(|kind| artifact::get_anywhere(&self.reader, kind, wanted, &self.limits).ok())
+            .map(std::rc::Rc::new);
+        self.artifacts.borrow_mut().insert(id, read.clone());
+        read
+    }
+
+    /// The canonical pixels of the image of this identity, decoded once.
+    fn pixels(&self, id: Digest) -> Option<std::rc::Rc<CanonicalPixels>> {
+        if let Some(read) = self.pixels.borrow().get(&id) {
+            return read.clone();
+        }
+        let read = match self.artifact(id).as_deref() {
+            Some(Artifact::Image(image)) => image.pixels(&self.limits).ok().map(std::rc::Rc::new),
+            _ => None,
+        };
+        self.pixels.borrow_mut().insert(id, read.clone());
+        read
+    }
+
+    /// The pixel digest of the image of this identity, from its file's identity.
+    fn pixel_digest(&self, id: Digest) -> Option<PixelDigest> {
+        match self.artifact(id).as_deref() {
+            Some(Artifact::Image(image)) => Some(image.identity().pixels),
+            _ => None,
+        }
     }
 }
 
@@ -225,8 +266,6 @@ fn tree(shelf: &Shelf, run: &str, top: RunRecord) -> Vec<Ran> {
 
 /// The pictures a report shows, each by the identity of its artifact.
 struct Pictures {
-    /// Each image's pixel digest, by the identity of its artifact.
-    by_pixels: BTreeMap<PixelDigest, Digest>,
     /// The `data:` address of each picture drawn, by a key of the report's own.
     drawn: BTreeMap<String, Option<String>>,
     count: usize,
@@ -235,7 +274,6 @@ struct Pictures {
 impl Pictures {
     fn new() -> Pictures {
         Pictures {
-            by_pixels: BTreeMap::new(),
             drawn: BTreeMap::new(),
             count: 0,
         }
@@ -249,14 +287,8 @@ impl Pictures {
             return said.clone();
         }
         let made = match self.count < PICTURES_LIMIT {
-            true => match shelf.artifact(id) {
-                Some(Artifact::Image(image)) => {
-                    self.by_pixels.insert(image.identity().pixels, id);
-                    let pixels = image.pixels(&shelf.limits).ok();
-                    pixels.and_then(|p| png_at_most(p.width(), p.height(), p.rgba().to_vec()))
-                }
-                _ => None,
-            },
+            true => (shelf.pixels(id))
+                .and_then(|p| png_at_most(p.width(), p.height(), p.rgba().to_vec())),
             false => None,
         };
         let said = made.map(|png| format!("data:image/png;base64,{}", base64(&png)));
@@ -274,14 +306,12 @@ impl Pictures {
         }
         let mut made = None;
         if self.count < PICTURES_LIMIT
-            && let Some(Artifact::Mask(mask)) = shelf.artifact(id)
+            && let Some(read) = shelf.artifact(id)
+            && let Artifact::Mask(mask) = read.as_ref()
         {
-            let base = on.iter().find_map(|image| match shelf.artifact(*image) {
-                Some(Artifact::Image(image)) if image.identity().pixels == mask.image() => {
-                    image.pixels(&shelf.limits).ok()
-                }
-                _ => None,
-            });
+            let base = (on.iter())
+                .find(|image| shelf.pixel_digest(**image) == Some(mask.image()))
+                .and_then(|image| shelf.pixels(*image));
             let space = mask.space();
             let (width, height) = (space.width(), space.height());
             let count = (width as usize) * (height as usize);
@@ -423,7 +453,7 @@ fn parts_html(out: &mut String, parts: &[Shown]) {
                 ..
             } => {
                 let said = match found {
-                    true => "a picture of the run",
+                    true => "a picture of the run, in the store, not shown in this report",
                     false => "a picture the store does not hold",
                 };
                 let _ = write!(
@@ -744,8 +774,15 @@ pub fn report(root: &Path, run: &RunId, title: Option<&str>) -> Result<String, S
     };
     let mut masks = masks_of(&ran[0]);
     if masks.is_empty() {
-        masks = ran.iter().skip(1).flat_map(masks_of).take(8).collect();
+        masks = ran.iter().skip(1).flat_map(masks_of).collect();
     }
+    // Each mask once, at most eight.
+    let mut seen = std::collections::BTreeSet::new();
+    masks.retain(|(_, id)| seen.insert(*id));
+    masks.truncate(8);
+    let mut all_images = all_images;
+    all_images.sort();
+    all_images.dedup();
     if !masks.is_empty() {
         out.push_str("<h2>Masks over the picture</h2><div class=\"pictures\">");
         for (caption, id) in &masks {
@@ -827,7 +864,12 @@ pub fn report(root: &Path, run: &RunId, title: Option<&str>) -> Result<String, S
         .collect();
     if !turns.is_empty() {
         out.push_str("<h2>The judge's turns</h2>");
-        let found_pixels = |digest: PixelDigest| pictures.by_pixels.contains_key(&digest);
+        // A picture the judge was shown is the store's when an image of the run's tree has
+        // its pixels: resolved against the store, not against what this report inlined.
+        let held: std::collections::BTreeSet<PixelDigest> = (all_images.iter())
+            .filter_map(|id| shelf.pixel_digest(*id))
+            .collect();
+        let found_pixels = |digest: PixelDigest| held.contains(&digest);
         for (at, (r, turn)) in turns.iter().enumerate() {
             let Judged::Turn {
                 request,
@@ -983,11 +1025,20 @@ pub fn archive(root: &Path, run: &RunId, title: Option<&str>) -> Result<Vec<u8>,
     tar_file(&mut out, "record.json", &line, mtime);
     let report = report(root, run, title)?;
     tar_file(&mut out, "report.html", report.as_bytes(), mtime);
-    for output in record.outputs() {
-        let port: String = (output.port.chars())
+    let mut named = std::collections::BTreeSet::new();
+    for (at, output) in record.outputs().iter().enumerate() {
+        let plain: String = (output.port.chars())
             .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
             .take(64)
             .collect();
+        // A name that is empty once cleaned, or taken already, is the output's place.
+        let mut port = match plain.is_empty() {
+            true => format!("output-{}", at + 1),
+            false => plain,
+        };
+        while !named.insert(port.clone()) {
+            port = format!("{port}-{}", at + 1);
+        }
         let Some(held) = shelf.artifact(output.artifact) else {
             continue;
         };
@@ -998,7 +1049,7 @@ pub fn archive(root: &Path, run: &RunId, title: Option<&str>) -> Result<Vec<u8>,
             &held.to_bytes(),
             mtime,
         );
-        let png = match &held {
+        let png = match held.as_ref() {
             Artifact::Image(image) => image
                 .pixels(&shelf.limits)
                 .ok()
