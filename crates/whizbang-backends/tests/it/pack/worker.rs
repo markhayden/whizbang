@@ -1037,13 +1037,25 @@ fn a_request_the_worker_does_not_read_ends_at_the_calls_limit_as_timed_out_and_l
     let pid = worker.pid().unwrap();
     clock.rush_through_after(CALL_LIMIT, Duration::from_millis(500));
     let asked = Instant::now();
+    let asked_on_the_clock = clock.now();
     let failed = worker.call(larger_than_a_pipe()).unwrap_err();
     assert!(
         asked.elapsed() < Duration::from_secs(10),
         "{:?}",
         asked.elapsed()
     );
-    assert!(clock.moved() >= CALL_LIMIT, "{:?}", clock.moved());
+    // The limit passed on the clock the supervisor reads: the machine's time and what the
+    // rush moved it by, together. The half second of the hold is part of it, and more on a
+    // busy machine, so the rush alone can stop short of the limit (at 119 seconds on CI,
+    // after more than a second of the machine's time); the clock as a whole never does.
+    // Nothing of the call before its wait pauses on the clock, so this is the span of the
+    // wait, give or take the machine's time to begin it.
+    let on_the_clock = clock.now() - asked_on_the_clock;
+    assert!(
+        on_the_clock >= CALL_LIMIT,
+        "{on_the_clock:?}, of which the rush {:?}",
+        clock.moved()
+    );
     assert_eq!(failed.fault.kind(), FaultKind::TimedOut, "{failed:?}");
     assert_eq!(
         failed.fault.sentence(),
