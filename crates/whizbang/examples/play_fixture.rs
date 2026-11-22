@@ -326,11 +326,16 @@ fn config_path(store: &Path) -> PathBuf {
 /// The config, its env file and the models directory are the host's, written again beside the store
 /// the words name, so a command the host copied runs under the same config.
 fn cli(words: Vec<String>) -> std::process::ExitCode {
-    let store = words
-        .iter()
-        .position(|word| word == "--store")
-        .and_then(|at| words.get(at + 1))
-        .map(PathBuf::from);
+    // `--store <dir>` or `--store=<dir>`, as the parser takes either.
+    let store =
+        words
+            .iter()
+            .enumerate()
+            .find_map(|(at, word)| match word.strip_prefix("--store") {
+                Some("") => words.get(at + 1).map(PathBuf::from),
+                Some(rest) => rest.strip_prefix('=').map(PathBuf::from),
+                None => None,
+            });
     let Some(store) = store else {
         fail("cli: the command names no --store");
     };
