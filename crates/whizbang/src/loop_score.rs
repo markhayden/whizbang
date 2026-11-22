@@ -18,7 +18,8 @@
 //! **The truth masks** are read from the folder of the pictures (`<folder>/<set>/<path>`),
 //! each held to the SHA-256 its entry pins, through no link; they are never imported, and
 //! never reach the loop. A pixel is of the object where its first channel is at least a
-//! half.
+//! half. A grey truth mask that carries a colour profile, which has no canonical pixels, is
+//! read by its grey samples as they are ([`truth_of`]).
 //!
 //! **Measures**, every one named for what it is: [`coverage`](crate::edits::coverage),
 //! [`iou`](crate::edits::iou) and [`size_ratio`](crate::edits::size_ratio) of an attempt's
@@ -42,7 +43,7 @@ use serde::{Deserialize, Serialize};
 use whizbang_core::artifact::{self, ArtifactId, ArtifactType};
 use whizbang_core::contract::record::{ArgumentValue, Changed, RunRecord, Status};
 use whizbang_core::contract::{Confidence, Disposition};
-use whizbang_core::identity::{DecodeLimits, Digest, identify};
+use whizbang_core::identity::{DecodeLimits, Digest, IdentityError, identify};
 use whizbang_core::store::Reader;
 use whizbang_core::store::fs::RealFs;
 use whizbang_eval::lab::{digest_of, is_digest};
@@ -507,13 +508,27 @@ pub struct Truth {
 
 /// A truth mask from its file's bytes: a pixel is of the object where its first channel
 /// is at least a half.
+///
+/// A grey PNG that carries a colour profile has no canonical pixels (ADR 0001), so
+/// [`identify`] refuses it; segment-01's truth masks are such files. A truth mask is a 0 or
+/// 255 mask of the object, not a photograph, and its profile says nothing about which
+/// pixels are of the object, so such a mask is read by its grey samples as they are. This
+/// is the truth mask's reading only: every other image is read by its canonical pixels.
 pub fn truth_of(bytes: &[u8]) -> Result<Truth, String> {
-    let read = identify(bytes, &DecodeLimits::default()).map_err(|e| e.to_string())?;
-    let pixels = read.pixels;
-    let truth = Truth {
-        width: pixels.width(),
-        height: pixels.height(),
-        pixels: pixels.rgba().chunks(4).map(|p| p[0] >= 128).collect(),
+    let truth = match identify(bytes, &DecodeLimits::default()) {
+        Ok(read) => {
+            let pixels = read.pixels;
+            Truth {
+                width: pixels.width(),
+                height: pixels.height(),
+                pixels: pixels.rgba().chunks(4).map(|p| p[0] >= 128).collect(),
+            }
+        }
+        // Refused as unsupported, the file was within the decode limits.
+        Err(IdentityError::Unsupported(why)) => {
+            grey_samples(bytes)?.ok_or_else(|| format!("unsupported image: {why}"))?
+        }
+        Err(refused) => return Err(refused.to_string()),
     };
     if !truth.pixels.contains(&true) {
         return Err(
@@ -523,6 +538,47 @@ pub fn truth_of(bytes: &[u8]) -> Result<Truth, String> {
         );
     }
     Ok(truth)
+}
+
+/// The samples of a grey PNG, whatever colour profile it carries, as a truth mask; `None`
+/// when the file is not a grey PNG.
+fn grey_samples(bytes: &[u8]) -> Result<Option<Truth>, String> {
+    use image::{DynamicImage, ExtendedColorType as C, ImageDecoder};
+    const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
+    if !bytes.starts_with(PNG) {
+        return Ok(None);
+    }
+    let cannot = |e: image::ImageError| format!("a truth mask cannot be decoded: {e}");
+    let mut decoder =
+        image::codecs::png::PngDecoder::new(std::io::Cursor::new(bytes)).map_err(cannot)?;
+    let grey = [
+        C::L1,
+        C::L2,
+        C::L4,
+        C::L8,
+        C::L16,
+        C::La1,
+        C::La2,
+        C::La4,
+        C::La8,
+        C::La16,
+    ];
+    if !grey.contains(&decoder.original_color_type()) {
+        return Ok(None);
+    }
+    let mut limits = image::Limits::default();
+    // As `identify` allows: 512 MiB.
+    limits.max_alloc = Some(512 * 1024 * 1024);
+    decoder.set_limits(limits).map_err(cannot)?;
+    let orientation = (decoder.orientation()).unwrap_or(image::metadata::Orientation::NoTransforms);
+    let mut decoded = DynamicImage::from_decoder(decoder).map_err(cannot)?;
+    decoded.apply_orientation(orientation);
+    let grey = decoded.into_luma8();
+    Ok(Some(Truth {
+        width: grey.width(),
+        height: grey.height(),
+        pixels: grey.as_raw().iter().map(|&v| v >= 128).collect(),
+    }))
 }
 
 /// One attempt with its masks measured: each a measure, or why there is none.
