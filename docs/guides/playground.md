@@ -18,8 +18,10 @@ whizbang play --store <dir> [--config <file> [--env-file <file>]] [--models-dir 
   its last folder alone, for you only. A store whose folder is another user's, or that its
   group or anyone may write, is refused (`chmod go-w` on the folder mends the second).
 - **A config that names a key, and no env file,** still opens: the backend whose key is
-  missing is shown as not ready (no key), and work that needs no key runs. Nothing on the
-  page asks for a key.
+  missing is shown as not ready (no key), with the variable to set named ("the filler needs
+  FAL_KEY in your env file"; a name that does not look like one, short upper-case words joined by
+  underscores, is not said back), and work that needs no key runs. Nothing on the page asks
+  for a key.
 - **The port** is 7341 unless `--port` says otherwise. It stays the same from one launch to
   the next, so that the page keeps what it saved for you. A port in use is refused, and the
   sentence names `--port`. The playground listens on `127.0.0.1` only; there is no flag that
@@ -174,7 +176,11 @@ call_cap_usd`), which the page shows and does not change. **Reset…** asks for 
 allowance in dollars and for the word `reset` typed again, and only then resets it, as
 `whizbang spend reset --allowance` does: the books close, what was spent before stops
 counting, and the new allowance starts with nothing spent. Runs already admitted keep what
-they reserved, under the books they were admitted under. There is no monthly allowance.
+they reserved, under the books they were admitted under. There is no monthly allowance. The top bar
+says the same figure, what is spent since the last reset of the allowance and what runs
+still going hold ("$7.07 spent · $5.93 held of $25.00"; "at least" when the books cannot
+say exactly; "no allowance" before any reset), and reads it again when a run ends or the
+allowance is reset.
 
 A store on a network file system is not supported: the store's locks may not hold there,
 and the playground holds a store for as long as it runs.

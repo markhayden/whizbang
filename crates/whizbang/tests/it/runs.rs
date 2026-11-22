@@ -1168,6 +1168,133 @@ fn runs_show_says_how_much_of_what_a_run_cost_is_of_requests_that_no_answer_sett
 }
 
 #[test]
+fn runs_show_adds_up_what_the_runs_a_cancelled_run_called_cost() {
+    // A recipe cancelled while its fill was out: the recipe sent no request of its own,
+    // and its child's request, which no answer settled, is booked at its bound.
+    let child = ordinary_record()
+        .replace(
+            r#""identity":{"run":"1000-1","request":"req-7","parent":null,"#,
+            r#""identity":{"run":"1000-2","request":null,"parent":"1000-1","#,
+        )
+        .replace(r#""status":"completed""#, r#""status":"cancelled""#)
+        .replace(r#""ended":"answered""#, r#""ended":"timed_out""#)
+        .replace(
+            r#""spend":{"reserved_micros":500,"requests":[{"request":0,"reserved_micros":500,"settled_micros":900,"unresolved_micros":0,"stage":"answered","over_bound":true}]}"#,
+            r#""spend":{"reserved_micros":40000,"requests":[{"request":0,"reserved_micros":40000,"settled_micros":40000,"unresolved_micros":40000,"stage":"unresolved","over_bound":false}]}"#,
+        );
+    assert!(child.contains(r#""unresolved_micros":40000"#), "{child}");
+    let parent = ordinary_record()
+        .replace(r#""status":"completed""#, r#""status":"cancelled""#)
+        .replace(r#""durations":[{"of":"request","index":0,"start_ms":1001,"ms":1}]"#, r#""durations":[]"#)
+        .replace(
+            r#""models":[{"capability":"fill","backend":"fake","model":"m","version":"1","device":null,"cached":null,"ended":"answered"}],"#,
+            r#""models":[],"#,
+        )
+        .replace(
+            r#""spend":{"reserved_micros":500,"requests":[{"request":0,"reserved_micros":500,"settled_micros":900,"unresolved_micros":0,"stage":"answered","over_bound":true}]}"#,
+            r#""spend":{"reserved_micros":40000,"requests":[]}"#,
+        )
+        .replace(
+            r#""steps":[]"#,
+            r#""steps":[{"step":"call","run":"1000-2","action":"fill","status":"cancelled"}]"#,
+        );
+    assert!(
+        parent.contains(r#""requests":[]"#) && parent.contains("1000-2"),
+        "{parent}"
+    );
+    let dir = Scratch::new("runs");
+    let root = dir.path().join("store");
+    let store = Store::open(&root, Arc::new(RealFs)).unwrap();
+    let mut publication = store.begin().unwrap();
+    publication
+        .put_in("1000-1", "record", Kind::Diagnostic, parent.as_bytes())
+        .unwrap();
+    publication
+        .put_in("1000-2", "record", Kind::Diagnostic, child.as_bytes())
+        .unwrap();
+    publication.publish().unwrap();
+    drop(store);
+    let shown = whizbang(&["show", "1000-1"], &root);
+    assert_eq!(shown.code, Some(0), "{}", shown.err);
+    let text = shown.text();
+    // Its own line says what it alone sent; the next adds the runs it called.
+    has_line(
+        text,
+        "spend: $0.04 reserved; paid requests: none; cost: $0.00",
+    );
+    has_line(
+        text,
+        "with the runs it called: 1 run; paid requests: 1; cost: $0.04, of which $0.04 is \
+         of requests that no answer settled",
+    );
+    // A run that called nothing says no such line.
+    let alone = whizbang(&["show", "1000-2"], &root);
+    assert!(
+        !alone.text().contains("with the runs it called"),
+        "{}",
+        alone.text()
+    );
+}
+
+#[test]
+fn runs_show_adds_up_a_grandchilds_cost_and_says_how_many_runs_below_could_not_be_read() {
+    // A loop (1000-1) called a recipe (1000-2), which called a fill (1000-3) that was
+    // settled at four cents, and a run (1000-9) the store holds no record of.
+    let unresolved = r#""spend":{"reserved_micros":500,"requests":[{"request":0,"reserved_micros":500,"settled_micros":900,"unresolved_micros":0,"stage":"answered","over_bound":true}]}"#;
+    let none = r#""spend":{"reserved_micros":40000,"requests":[]}"#;
+    let models_none = |record: String| {
+        record
+            .replace(r#""durations":[{"of":"request","index":0,"start_ms":1001,"ms":1}]"#, r#""durations":[]"#)
+            .replace(
+                r#""models":[{"capability":"fill","backend":"fake","model":"m","version":"1","device":null,"cached":null,"ended":"answered"}],"#,
+                r#""models":[],"#,
+            )
+            .replace(unresolved, none)
+    };
+    let top = models_none(ordinary_record()).replace(
+        r#""steps":[]"#,
+        r#""steps":[{"step":"call","run":"1000-2","action":"recipe","status":"completed"}]"#,
+    );
+    let middle = models_none(ordinary_record())
+        .replace(
+            r#""identity":{"run":"1000-1","request":"req-7","parent":null,"#,
+            r#""identity":{"run":"1000-2","request":null,"parent":"1000-1","#,
+        )
+        .replace(
+            r#""steps":[]"#,
+            r#""steps":[{"step":"call","run":"1000-3","action":"fill","status":"completed"},{"step":"call","run":"1000-9","action":"fill","status":"completed"}]"#,
+        );
+    let leaf = ordinary_record()
+        .replace(
+            r#""identity":{"run":"1000-1","request":"req-7","parent":null,"#,
+            r#""identity":{"run":"1000-3","request":null,"parent":"1000-2","#,
+        )
+        .replace(
+            unresolved,
+            r#""spend":{"reserved_micros":40000,"requests":[{"request":0,"reserved_micros":40000,"settled_micros":40000,"unresolved_micros":0,"stage":"answered","over_bound":false}]}"#,
+        );
+    assert!(top.contains("1000-2") && middle.contains("1000-9") && leaf.contains("1000-3"));
+    let dir = Scratch::new("runs");
+    let root = dir.path().join("store");
+    let store = Store::open(&root, Arc::new(RealFs)).unwrap();
+    let mut publication = store.begin().unwrap();
+    for (run, record) in [("1000-1", &top), ("1000-2", &middle), ("1000-3", &leaf)] {
+        publication
+            .put_in(run, "record", Kind::Diagnostic, record.as_bytes())
+            .unwrap();
+    }
+    publication.publish().unwrap();
+    drop(store);
+    let shown = whizbang(&["show", "1000-1"], &root);
+    assert_eq!(shown.code, Some(0), "{}", shown.err);
+    has_line(
+        shown.text(),
+        "with the runs it called: 2 runs; paid requests: 1; cost: $0.04; 1 run below it could \
+         not be read, so this is at least what it cost",
+    );
+}
+
+#[test]
 fn show_prints_an_installations_identity_whole_and_two_installations_are_told_apart() {
     // Two requests of one run to one local model, answered from two installations
     // whose identities differ in their last seven digits alone: what a cut at 64

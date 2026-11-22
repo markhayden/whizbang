@@ -27,7 +27,8 @@
 # - the aggregate `ci`, the one check a merge waits for, needs every other job and passes
 #   only when each of them did;
 # - since plan m5, task U1: the Chrome tier is the fourth part, the recipe `e2e`, in the
-#   jobs `e2e (<runner>)`, set up as `check` is and with Node; `check` and `scripts` set up
+#   jobs `e2e (<runner>, shard <k>)`, two shards on each runner (since the m5 live
+#   fixes), set up as `check` is and with Node; `check` and `scripts` set up
 #   the same Node, since `ui-check` is in the first part and a script test builds ui/; a
 #   type error or a stale ui/dist/ fails `ui-check` (scripts/tests/test-ui.sh), so the
 #   first part;
@@ -225,6 +226,11 @@ check_workflow() { # <workflow>
     { echo "CI: e2e must run on macos-15 and ubuntu-22.04"; return 1; }
   grep -x -F '    timeout-minutes: 15' <<<"$e2e" >/dev/null ||
     { echo "CI: e2e must run within 15 minutes"; return 1; }
+  # In two shards on each runner, each named by the job and handed to the tier.
+  grep -x -F '        shard: [1, 2]' <<<"$e2e" >/dev/null &&
+    grep -x -F '          WHIZBANG_E2E_SHARD: ${{ matrix.shard }}/2' <<<"$e2e" >/dev/null &&
+    grep -x -F '    name: e2e (${{ matrix.os }}, shard ${{ matrix.shard }})' <<<"$e2e" >/dev/null ||
+    { echo "CI: e2e must run in two shards on each runner, each handed WHIZBANG_E2E_SHARD"; return 1; }
   [ "$(set_up "$e2e")" = "$(set_up "$check")" ] ||
     { echo "CI: e2e must be set up exactly as check is: the checkout, the toolchain, the cache and the pinned tools"; return 1; }
   [ "$(grep -c -E '^ +run: just ' <<<"$e2e")" = 1 ] && grep -E '^ +run: just e2e$' <<<"$e2e" >/dev/null ||
@@ -293,9 +299,9 @@ check_rules() { # <AGENTS.md>
     '`release (macos-15)` and `release (ubuntu-22.04)` run the second' \
     '`scripts (macos-15)` and `scripts (ubuntu-22.04)` run the third' \
     'The job `secrets` runs the secrets scan and the attribution check over every commit' \
-    '`e2e (macos-15)` and `e2e (ubuntu-22.04)` run the fourth, `just e2e`' \
+    '`e2e (macos-15, shard 1)`, `e2e (macos-15, shard 2)`, `e2e (ubuntu-22.04, shard 1)` and `e2e (ubuntu-22.04, shard 2)` run the fourth, `just e2e`' \
     '`sweeps (macos-15)` and `sweeps (ubuntu-22.04)` run the fifth, `just timing-sweeps`' \
-    'the aggregate `ci`, which needs all eleven'; do
+    'the aggregate `ci`, which needs all thirteen'; do
     case "$row" in *"$text"*) ;; *) echo "AGENTS.md: the row of the three parts must say: $text"; return 1 ;; esac
   done
 }
@@ -361,9 +367,9 @@ changed check_justfile justfile 's/^ci-scripts: deny test-scripts$/&\
 changed check_rules AGENTS.md 's/`scripts (macos-15)` and `scripts (ubuntu-22.04)` run the third/the other jobs run the third/' "must say: \`scripts (macos-15)\`"
 changed check_rules AGENTS.md 's/`release (macos-15)` and `release (ubuntu-22.04)` run the second/the other jobs run the second/' "must say: \`release (macos-15)\`"
 changed check_rules AGENTS.md 's/ and `check (ubuntu-22.04)` run the first/ runs the first/' "must say: \`check (macos-15)\`"
-changed check_rules AGENTS.md 's/, which needs all eleven/, which needs nine/' "must say: the aggregate"
+changed check_rules AGENTS.md 's/, which needs all thirteen/, which needs nine/' "must say: the aggregate"
 changed check_rules AGENTS.md 's/`sweeps (macos-15)` and `sweeps (ubuntu-22.04)` run the fifth/the sweeps run the fifth/' "must say: \`sweeps (macos-15)\`"
-changed check_rules AGENTS.md 's/`e2e (macos-15)` and `e2e (ubuntu-22.04)` run the fourth/the e2e jobs run the fourth/' "must say: \`e2e (macos-15)\`"
+changed check_rules AGENTS.md 's/and `e2e (ubuntu-22.04, shard 2)` run the fourth/run the fourth/' "must say: \`e2e (macos-15, shard 1)\`"
 changed check_rules AGENTS.md 's/The job `secrets` runs/A job runs/' "must say: The job"
 
 # --- The workflow.
@@ -371,6 +377,8 @@ changed check_rules AGENTS.md 's/The job `secrets` runs/A job runs/' "must say: 
 changed check_workflow "$workflow" 's/^    needs: \[check, scripts, release, e2e, sweeps, secrets\]$/    needs: [check, scripts, release, sweeps, secrets]/' "must need: [check, scripts, release, e2e, sweeps, secrets]"
 changed check_workflow "$workflow" 's/^    needs: \[check, scripts, release, e2e, sweeps, secrets\]$/    needs: [check, scripts, release, e2e, secrets]/' "must need: [check, scripts, release, e2e, sweeps, secrets]"
 changed check_workflow "$workflow" '/needs\.sweeps\.result/d' "must fail unless sweeps succeeded"
+changed check_workflow "$workflow" 's/^        shard: \[1, 2\]$/        shard: [1]/' "e2e must run in two shards"
+changed check_workflow "$workflow" '/WHIZBANG_E2E_SHARD: /d' "e2e must run in two shards"
 changed check_workflow "$workflow" '/needs\.e2e\.result/d' "must fail unless e2e succeeded"
 changed check_workflow "$workflow" '/needs\.release\.result/d' "must fail unless release succeeded"
 changed check_workflow "$workflow" '/needs\.secrets\.result/d' "must fail unless secrets succeeded"

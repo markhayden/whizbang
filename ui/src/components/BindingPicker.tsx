@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import { cx } from "./cx";
 
 /** An output of an earlier run that a port of this type can take. */
@@ -9,6 +10,11 @@ export interface Binding {
   /** The run that made it, and its task, as text. */
   run: string;
   task: string;
+  /**
+   * What that run was asked, as text: its words and its pictures' names, as "Runs of this
+   * task" says them; what tells two runs of one task apart.
+   */
+  asked?: string;
   /** When, already in words. */
   when: string;
   thumb?: string;
@@ -26,6 +32,8 @@ export interface BindingPickerProps {
   error?: string;
   /** Asks for the outputs of earlier runs past the last shown, when there may be more. */
   onMore?: () => void;
+  /** The thumbnail of an output (a mask as a grey picture), drawn by the screen, which holds the token. */
+  thumb?: (binding: Binding) => ComponentChildren;
 }
 
 /** The outputs of earlier runs of one type, newest first, for a port of that type. */
@@ -53,8 +61,11 @@ export function BindingPicker(props: BindingPickerProps) {
         return (
           <li key={binding.id} role="option" aria-selected={selected ? "true" : "false"}>
             <button type="button" class={cx("binding-picker__row", selected && "binding-picker__row--selected")} disabled={props.disabled} onClick={() => props.onPick?.(binding.id)}>
-              {binding.thumb ? <img class="binding-picker__thumb" src={binding.thumb} alt="" /> : <span class="binding-picker__thumb" aria-hidden="true" />}
-              <span class="binding-picker__task">{binding.task}</span>
+              {props.thumb ? props.thumb(binding) : binding.thumb ? <img class="binding-picker__thumb" src={binding.thumb} alt="" /> : <span class="binding-picker__thumb" aria-hidden="true" />}
+              <span class="binding-picker__words">
+                <span class="binding-picker__task">{binding.asked || binding.task}</span>
+                {binding.asked ? <span class="binding-picker__of">{binding.task}</span> : null}
+              </span>
               <span class="binding-picker__run mono">{binding.run}</span>
               <span class="binding-picker__when mono">{binding.when}</span>
             </button>

@@ -373,16 +373,28 @@ fn dollars(micros: u128) -> f64 {
     micros as f64 / 1_000_000.0
 }
 
-/// The allowance of the newest epoch and what is left of it, in dollars, none before the
-/// first reset; with the number of the generation it was read from. It folds the store's
+/// The allowance of the newest epoch, what is counted against it since that reset (as
+/// `GET /api/spend` counts it), split into what was spent and what runs still going hold
+/// beyond it, whether the count is exact or only at least that, and what is left of it, in dollars, none before the first reset; with the number of the generation
+/// it was read from. It folds the store's
 /// books, so [`Playground`](crate::playing::Playground) keeps the answer for that
 /// generation and folds again only when the store has published since.
 pub fn allowance(store: &Store) -> Option<(u64, Option<Json>)> {
     let generation = store.snapshot().ok()?;
     let reading = Reading::of(&generation, |entry| store.read(entry));
     let balance = Folded::of(reading).balance();
+    let (counted, exactly) = match balance.counted {
+        whizbang_core::spend::reading::Counted::Exactly(sum) => (sum.micros(), true),
+        whizbang_core::spend::reading::Counted::AtLeast(sum) => (sum.micros(), false),
+    };
+    // What is counted is what was spent and what runs still going hold beyond it: said
+    // apart, so a run going does not read as spent.
+    let held = balance.held.micros().min(counted);
     let said = (balance.epoch > 0).then(|| {
         json!({"allowance": dollars(u128::from(balance.allowed.micros())),
+               "spent": dollars(counted - held),
+               "held": dollars(held),
+               "exactly": exactly,
                "left": dollars(u128::from(balance.left.micros()))})
     });
     Some((generation.number(), said))

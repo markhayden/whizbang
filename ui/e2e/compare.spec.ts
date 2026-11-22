@@ -1,7 +1,7 @@
 // Before and after (plan m5, task W2; SPEC.md section 7, row 3 of the plan's acceptance
 // table): a result's source and its picture side by side, swiped and as their difference.
 import { expect, test } from "./fixtures";
-import { file, give, openAt, runWhenReady, script } from "./play";
+import { file, give, openAt, picture, runWhenReady, script } from "./play";
 
 test.afterEach(async ({ request, host }) => {
   await script(request, host, "reset");
@@ -44,4 +44,21 @@ test("side by side, swipe and difference show the source and the result at one z
     .toBeGreaterThan(0);
   const box = await difference.boundingBox();
   expect(`${box?.width}px`).toBe(sizes[0]!.split("|")[0]);
+});
+
+test("two pictures wider than half the canvas both fit side by side, at one zoom", async ({ page, host }) => {
+  await openAt(page, host, "#/k/rascal/remove_prompt");
+  await page.locator(".field:has(#field-image) input[type=file]").setInputFiles({ name: "large.png", mimeType: "image/png", buffer: picture(32, 640, 480) });
+  await page.locator("#field-prompt").fill("the hose");
+  await runWhenReady(page);
+  await expect(page.locator(".workspace__title-row .tag", { hasText: "DONE" })).toBeVisible();
+  await page.getByRole("tab", { name: "Compare" }).click();
+  const figures = page.locator(".compare__side .compare__figure");
+  await expect(figures).toHaveCount(2);
+  const stage = (await page.locator(".compare__stage").boundingBox())!;
+  const [before, after] = [(await figures.nth(0).boundingBox())!, (await figures.nth(1).boundingBox())!];
+  expect(before.width).toBe(after.width);
+  expect(before.width).toBeGreaterThan(100);
+  expect(after.x + after.width).toBeLessThanOrEqual(stage.x + stage.width + 0.5);
+  expect(before.y + before.height).toBeLessThanOrEqual(stage.y + stage.height + 0.5);
 });

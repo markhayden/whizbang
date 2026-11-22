@@ -1207,6 +1207,39 @@ squint use cases run in two tabs, each one at a time, within the host's two uplo
 runs at once. Tests: `play::a_picture_is_looked_up_by_its_identity_and_one_not_kept_answers_none`
 and `play::history_of_an_output_type_is_paged_after_the_last_run_shown`.
 
+**As built (the live fixes).** The orchestrator's first run on a real store found ten bugs,
+fixed in one pull request. The top bar says what is spent since the last reset of the
+allowance ("$7.07 spent of $25.00"; "no allowance" before any reset), from hello's new
+`spent`, and reads hello again when a run the page followed ends or a reset is made
+(`Client.settled`). Compare's side by side fits both pictures in the canvas at one zoom
+measured from the stage. The workspace reads its lists of history again once its first look
+at the runs going answers, so a run that ended between the first read and that look is
+listed (the race behind empty lists after a return), and an older answer to the mask picker
+never replaces a newer one. A choice of a backend is ready by its own capability's
+readiness, so a segmenter that needs no key is not NO KEY beside a filler that has none; one
+hello is not sure of shows CHECKING until a preparation answers; a need whose backend is not
+ready is neither local nor free, and the plan says "not ready" with why: a key not set
+names its variable when it has the shape of one (ADR 0041). A run ended because a step found
+nothing says so plainly over the original picture, its record unchanged. `runs show` adds a
+line of what the run and the runs below it cost together, and the result's cost now
+reports `unresolved`, how much of its total no answer settled. An unchecked run (no judge with a key) says why once, naming the
+variable, and shows its judge as not used (no key). Uploads answered 429 are sent again after `Retry-After`. A run
+open on screen is asked every 250 ms while events come, and about once a second while none
+do. Tests: `play::a_backend_is_ready_by_its_own_readiness_and_a_key_not_set_names_its_variable`,
+`play::a_variable_is_named_only_when_it_has_the_shape_of_one`,
+`play_result::the_record_of_a_run_stopped_while_its_fill_was_out_counts_that_request`,
+`runs::runs_show_adds_up_what_the_runs_a_cancelled_run_called_cost`,
+`play_result::an_unchecked_run_says_which_variable_its_judge_needs_and_never_the_core_words`, unit tests beside each
+screen, and `run.spec.ts`'s and `compare.spec.ts`'s new cases.
+
+Follow-ups of the live fixes (the review of #282):
+
+- `choice_json`'s `Err(_)` arm (`crates/whizbang-serve/src/play/routes.rs`) answers a
+  choice whose call cannot be prepared with that backend's own readiness, as hello lists it,
+  for every refusal alike: a refusal that is about the choice itself (not the call's missing
+  input) should say so. Tell the two apart, with a test, or say here why the backend's own
+  readiness is enough.
+
 ## E1. The loop by hand in the playground, and the guide (medium; the orchestrator's runs)
 
 ### Goal

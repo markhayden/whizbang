@@ -161,6 +161,14 @@ pub trait Play: Send + Sync {
     fn default_backend(&self, _capability: &str) -> Option<String> {
         None
     }
+    /// The name of the variable a backend's table names for its key, when the env file
+    /// does not set it and the name has the shape of a variable's (ADR 0041, "What a
+    /// backend that is not ready says"): what a preparation tells the person to set. Its
+    /// value is never read for this, and a name of another shape, which may be a key
+    /// pasted where the name belongs, is never answered.
+    fn key_variable(&self, _capability: &str, _backend: &str) -> Option<String> {
+        None
+    }
     /// The run the store's admission under this request id names, when it holds one:
     /// a repeat the host has forgotten (it restarted) is answered with that run, before
     /// a place is taken or the call is made again (ADR 0007).

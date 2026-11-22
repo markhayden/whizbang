@@ -253,4 +253,14 @@ describe("BindingPicker", () => {
     view.rerender(<BindingPicker type="series" bindings={bindings} value={null} />);
     expect(view.text()).toBe("No earlier run made a series yet.");
   });
+  it("tells two runs of one task apart by what each was asked, with each output's thumbnail", () => {
+    const two = [
+      { id: "m1", type: "mask", run: "r-1", task: "Remove, checked", asked: "the hose · porch.png", when: "now" },
+      { id: "m2", type: "mask", run: "r-2", task: "Remove, checked", asked: "the rake · yard.png", when: "1m ago" },
+    ];
+    const view = render(<BindingPicker type="mask" bindings={two} value={null} thumb={(binding) => <img class="binding-picker__thumb" src={`blob:${binding.id}`} alt="" />} />);
+    expect(view.all(".binding-picker__task").map((el) => el.textContent)).toEqual(["the hose · porch.png", "the rake · yard.png"]);
+    expect(view.all(".binding-picker__of").map((el) => el.textContent)).toEqual(["Remove, checked", "Remove, checked"]);
+    expect(view.all("img.binding-picker__thumb").map((el) => el.getAttribute("src"))).toEqual(["blob:m1", "blob:m2"]);
+  });
 });

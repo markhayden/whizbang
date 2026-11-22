@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { ApiError, backendsOf, tasksOf, type Client, type Hello, type OpenRun, type Picture, type Prepared, type Task, type TaskField } from "../../api";
+import { ApiError, backendsOf, IDENTITY, tasksOf, type Client, type Hello, type OpenRun, type Picture, type Prepared, type Task, type TaskField } from "../../api";
 import { BindingPicker, type Binding } from "../../components/BindingPicker";
 import { Button } from "../../components/Button";
 import { Canvas, type DrawTool, type Mark } from "../../components/Canvas";
@@ -142,7 +142,8 @@ export function bindingsOf(runs: HistoryRun[], type: string, now: number): Bindi
   for (const run of runs) {
     for (const output of Array.isArray(run.outputs) ? run.outputs : []) {
       if (output.type !== type || made.some((one) => one.id === output.id)) continue;
-      made.push({ id: output.id, type, run: run.run, task: run.title ?? run.action, when: typeof run.at_ms === "number" ? ago(run.at_ms, now) : "" });
+      const asked = [...(Array.isArray(run.words) ? run.words : []), ...(Array.isArray(run.pictures) ? run.pictures : [])].join(" · ");
+      made.push({ id: output.id, type, run: run.run, task: run.title ?? run.action, asked: asked || undefined, when: typeof run.at_ms === "number" ? ago(run.at_ms, now) : "" });
     }
   }
   return made;
@@ -190,10 +191,14 @@ function appended(now: Paging<HistoryRun> | undefined, page: Answered<typeof NON
 function useEarlier(client: Client, task: string, ended: number): Paging<HistoryRun> & { next: () => void } {
   const [paged, setPaged] = useState<Paging<HistoryRun>>({ list: [], more: false });
   const query = new URLSearchParams({ task });
+  // Each first page read starts a new list: a later page asked of the list before it is
+  // dropped when it comes, so it is never put after a list it does not follow.
+  const reading = useRef(0);
   useEffect(() => {
     let live = true;
+    const mine = (reading.current += 1);
     void asked(() => listRuns(client, query, undefined, EARLIER_PAGE), NONE).then((page) => {
-      if (live) setPaged((now) => appended(now, page, false));
+      if (live && mine === reading.current) setPaged((now) => appended(now, page, false));
     });
     return () => {
       live = false;
@@ -201,7 +206,10 @@ function useEarlier(client: Client, task: string, ended: number): Paging<History
   }, [task, ended]);
   const next = () => {
     if (!paged.last) return;
-    void asked(() => listRuns(client, query, paged.last, EARLIER_PAGE), NONE).then((page) => setPaged((now) => appended(now, page, true)));
+    const mine = reading.current;
+    void asked(() => listRuns(client, query, paged.last, EARLIER_PAGE), NONE).then((page) => {
+      if (mine === reading.current) setPaged((now) => appended(now, page, true));
+    });
   };
   return { ...paged, next };
 }
@@ -214,8 +222,16 @@ function useEarlier(client: Client, task: string, ended: number): Paging<History
 function useBindings(client: Client, types: string[], ended: number): { of: (type: string) => Binding[]; more: (type: string) => (() => void) | undefined; error: (type: string) => string | undefined } {
   const [pages, setPages] = useState<Record<string, Paging<HistoryRun>>>({});
   const key = types.join(",");
-  const load = (type: string, before?: string) =>
-    asked(() => runsMaking(client, type, before), NONE).then((page) => setPages((now) => ({ ...now, [type]: appended(now[type], page, before !== undefined) })));
+  // Each first page asked is numbered: an answer to one older than the newest asked is
+  // dropped, so a slow first read never puts back a list a later one replaced.
+  const newest = useRef<Record<string, number>>({});
+  const load = (type: string, before?: string) => {
+    const mine = before === undefined ? (newest.current[type] = (newest.current[type] ?? 0) + 1) : newest.current[type];
+    return asked(() => runsMaking(client, type, before), NONE).then((page) => {
+      if (newest.current[type] !== mine) return;
+      setPages((now) => ({ ...now, [type]: appended(now[type], page, before !== undefined) }));
+    });
+  };
   useEffect(() => {
     for (const type of types) void load(type);
   }, [key, ended]);
@@ -234,11 +250,15 @@ function useBindings(client: Client, types: string[], ended: number): { of: (typ
 const OPEN_EVERY_MS = 2000;
 
 /**
- * The runs still going, asked every two seconds, and a count that goes up each time one
- * that was going is no longer: what was listed of history is then read again.
+ * The runs still going, asked every two seconds, and a count that goes up whenever what
+ * was listed of history may be behind: once the first look has answered, and each time a
+ * run that was going is no longer, or a run the page followed ends (`Client.settled`).
+ * The first look counts because history is read when the screen opens, beside it: a run
+ * that ends between that read and the first look was never seen going, so its going
+ * would never be seen to end, and the lists would stay without it until a reload.
  */
 function useOpen(client: Client): { open: OpenRun[]; ended: number } {
-  const [state, setState] = useState<{ open: OpenRun[]; ended: number }>({ open: [], ended: 0 });
+  const [state, setState] = useState<{ open: OpenRun[]; ended: number; looked: boolean }>({ open: [], ended: 0, looked: false });
   useEffect(() => {
     let live = true;
     const look = () =>
@@ -247,18 +267,23 @@ function useOpen(client: Client): { open: OpenRun[]; ended: number } {
           live &&
           setState((now) => {
             const gone = now.open.some((was) => !runs.some((still) => still.run === was.run));
-            return { open: runs, ended: gone ? now.ended + 1 : now.ended };
+            // A run that ended here or anywhere (another tab, the command line) changed
+            // the books: the top bar reads its allowance again.
+            if (gone && typeof client.settled === "function") queueMicrotask(() => client.settled());
+            return { open: runs, ended: gone || !now.looked ? now.ended + 1 : now.ended, looked: true };
           }),
         () => undefined,
       );
     void look();
     const timer = setInterval(() => void look(), OPEN_EVERY_MS);
+    const settled = typeof client.onSettled === "function" ? client.onSettled(() => live && setState((now) => ({ ...now, ended: now.ended + 1 }))) : undefined;
     return () => {
       live = false;
       clearInterval(timer);
+      settled?.();
     };
   }, [client]);
-  return state;
+  return { open: state.open, ended: state.ended };
 }
 
 function Draft(props: DraftProps) {
@@ -276,6 +301,9 @@ function Draft(props: DraftProps) {
   const [picking, setPicking] = useState<string | null>(null);
   const [prepared, setPrepared] = useState<Prepared | null>(null);
   const [preparing, setPreparing] = useState(false);
+  // Whether a preparation has settled yet, answered or failed: until then a backend hello
+  // is not sure of says CHECKING, and after it, NOT READY.
+  const [settled, setSettled] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [drawn, setDrawn] = useState<Record<string, Mark>>({});
   const tools = toolsOf(fields);
@@ -306,8 +334,14 @@ function Draft(props: DraftProps) {
   useEffect(() => {
     const made = createPreparer({
       prepare: (action, sent) => client.prepare(action, sent),
-      onAnswer: (answer) => setPrepared(answer),
-      onError: (error) => setProblem(error instanceof ApiError ? error.message : String(error)),
+      onAnswer: (answer) => {
+        setPrepared(answer);
+        setSettled(true);
+      },
+      onError: (error) => {
+        setSettled(true);
+        setProblem(error instanceof ApiError ? error.message : String(error));
+      },
       onBusy: setPreparing,
     });
     preparer.current = made;
@@ -464,6 +498,7 @@ function Draft(props: DraftProps) {
               value={values[field.name]}
               backends={backends}
               prepared={prepared}
+              settled={settled}
               pictures={pictures}
               client={client}
               picking={picking === field.name}
@@ -493,7 +528,7 @@ function Draft(props: DraftProps) {
           ))}
         </div>
         <footer class="workspace__foot">
-          <PlanBlock needs={planNeeds(prepared, backendsOf(props.hello))} bound={bound} attempts={prepared?.attempts ?? undefined} stale={preparing} />
+          <PlanBlock needs={planNeeds(prepared, backendsOf(props.hello))} bound={bound} attempts={prepared?.attempts ?? undefined} stale={preparing} ready={prepared ? prepared.ready : undefined} />
           {problem ? (
             <p class="field__error" role="alert">
               {problem}
@@ -579,6 +614,8 @@ interface InputProps {
   value: unknown;
   backends: ReturnType<typeof backendsOf>;
   prepared: Prepared | null;
+  /** Whether a preparation has settled yet. */
+  settled: boolean;
   pictures: Record<string, Picture>;
   client: Client;
   picking: boolean;
@@ -654,7 +691,7 @@ function Input(props: InputProps) {
       );
     }
     case "backend": {
-      const choices = choicesFor(field, props.prepared, props.backends);
+      const choices = choicesFor(field, props.prepared, props.backends, props.settled);
       const seen = displayed(field, props.value, props.backends);
       const shown = typeof seen === "string" ? seen : null;
       return (
@@ -681,7 +718,7 @@ function Input(props: InputProps) {
               ) : null}
             </div>
           ) : null}
-          <BindingPicker type={field.artifact ?? ""} bindings={offered(props.bindings, field.artifact ?? "", props.value, props.drawn)} value={typeof props.value === "string" ? props.value : null} onPick={props.onChange} onMore={props.onMoreBindings} error={props.bindingsError} />
+          <BindingPicker type={field.artifact ?? ""} bindings={offered(props.bindings, field.artifact ?? "", props.value, props.drawn)} value={typeof props.value === "string" ? props.value : null} onPick={props.onChange} onMore={props.onMoreBindings} error={props.bindingsError} thumb={(binding) => <OutputThumb client={props.client} id={binding.id} />} />
         </Field>
       );
     }
@@ -787,6 +824,12 @@ export function withJob(args: Record<string, unknown>, jobOf: string | null): Re
 export function offered(bindings: Binding[], type: string, value: unknown, drawn: boolean): Binding[] {
   if (typeof value !== "string" || drawn || bindings.some((one) => one.id === value)) return bindings;
   return [{ id: value, type, run: middle(value, 20), task: "given to this draft", when: "" }, ...bindings];
+}
+
+/** An earlier output's thumbnail in a binding picker: a mask as a grey picture, fetched with the token. */
+function OutputThumb(props: { client: Client; id: string }) {
+  const src = useArtifact(props.client, IDENTITY.test(props.id) ? props.id : null, 64);
+  return src ? <img class="binding-picker__thumb" src={src} alt="" /> : <span class="binding-picker__thumb" aria-hidden="true" />;
 }
 
 /** A picture other than the draft's own (the last run's result, or a mask over its picture). */

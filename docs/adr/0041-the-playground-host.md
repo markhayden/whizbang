@@ -159,9 +159,9 @@ a module of its own, whose table `play/routes.rs` lists by one line (`TABLES`).
 | Route | What | Task |
 |---|---|---|
 | `GET /` and the interface's files | The built interface, embedded (`play/assets.rs`) | H1, U1 |
-| `GET /api/hello` | Version, the store's folder, the backends' readiness (no probe), the allowance and what is left | H1, then W1 adds the kits |
+| `GET /api/hello` | Version, the store's folder, the backends' readiness (no probe), the allowance, what is spent and held since its reset (`spent`, the top bar's figure) and what is left | H1, then W1 adds the kits; `spent`, the m5 live fixes |
 | `POST /api/quit` | Stop, as above | H1 |
-| `POST /api/prepare` | A preparation of a call, kept under a handle when it is ready; its readiness and what is missing by kind, each need's bound, a loop's attempts, and each choice of a backend prepared on its own | H1 (the handle), W1 (per choice, needs, plan) |
+| `POST /api/prepare` | A preparation of a call, kept under a handle when it is ready; its readiness and what is missing by kind, each need's bound and whether its backend is ready (`ready`, `why`; a need that is not is neither `local` nor free), a loop's attempts, and each choice of a backend prepared on its own, ready by its own capability's readiness alone, or by its own readiness as hello lists it when the call as given cannot be prepared | H1 (the handle), W1 (per choice, needs, plan), the m5 live fixes |
 | `POST /api/runs` | Start a call with its handle and a request id | H1, W1 |
 | `GET /api/runs/{id}?after=<n>` | The run's state and its events after the `n`th, every text escaped (from its journal once it has ended), what was asked, what it spent of what it reserved, its outputs and its verdict | H1, W1 |
 | `POST /api/runs/{id}/cancel` | Stop a run | H1 |
@@ -180,6 +180,20 @@ a module of its own, whose table `play/routes.rs` lists by one line (`TABLES`).
 | the rest of the plan's table | Models, backends, spend | M1 |
 
 No route takes a file path.
+
+**What a backend that is not ready says.** A preparation's reason for a backend whose key
+the env file does not set names the variable to set, by its name alone: "the filler needs
+FAL_KEY in your env file". The value is never read for this. This is an exception to ADR
+0011's rule that a reason names no variable, recorded there (its amendment of
+2026-11-22): a name is said only when it has the shape of one (at least two words of 1 to
+12 upper-case letters or digits joined by single underscores, the first starting with a
+letter, at most 64 characters, as `FAL_KEY`); any other is said as "the variable its
+key_env names". The rule is `backend_status::variable_shaped`, through the door's `Play::key_variable`. A
+run's record, as the result screen reads it, says a key not set the same way, in every
+reason it holds (an unchecked attempt's, why the attempts ended).
+
+**A run's cost** in its record (`GET /api/runs/{id}/record`) is every paid request of the
+run and the runs below it, and `unresolved` says how much of the total no answer settled.
 
 ## Consequences
 
@@ -200,7 +214,9 @@ No route takes a file path.
 - **The token in a cookie.** Rejected: a cookie rides on a forged request from another
   page; a header set by the page's own script does not.
 - **Events pushed over a held connection.** Rejected: a held connection costs a worker for
-  as long as a run is open; a poll every 250 ms costs one short request.
+  as long as a run is open; a poll costs one short request: every 250 ms while events come,
+  and twice the last wait, up to a second, while none do (the m5 live fixes; a step that runs
+  for a minute was asked about 4 times a second before).
 - **A random port.** Rejected: the page's origin would change at every launch and its
   drafts would be lost. `--port 0` stays, for tests.
 - **Calling `Executor::cancel` from the route or on the grace's thread.** Rejected (the

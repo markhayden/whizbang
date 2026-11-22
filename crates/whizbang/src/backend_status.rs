@@ -157,6 +157,44 @@ pub fn readiness(over: &Over) -> Result<Vec<serde_json::Value>, String> {
     Ok(listed)
 }
 
+/// Whether a variable's name has the shape of one (ADR 0011, amended): at least two words
+/// joined by single underscores, each of 1 to 12 upper-case letters or digits, the first
+/// word starting with a letter, at most 64 characters in all, as `FAL_KEY` or
+/// `GEMINI_API_KEY`. Only such a name is ever said back. A key pasted where the name
+/// belongs is very unlikely to have this shape: keys hold lower-case letters or symbols,
+/// or are one long run of upper-case letters and digits (an AWS access key id is twenty),
+/// which no word of twelve at most can hold.
+pub fn variable_shaped(name: &str) -> bool {
+    let words: Vec<&str> = name.split('_').collect();
+    name.len() <= 64
+        && words.len() >= 2
+        && words.iter().all(|word| {
+            (1..=12).contains(&word.len())
+                && word
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+        })
+        && name.starts_with(|c: char| c.is_ascii_uppercase())
+}
+
+/// The variable a backend's table names for the credential the env file does not set,
+/// by its name alone and only when it has the shape of one ([`variable_shaped`]): what
+/// the playground tells a person to set. The env file's values are not looked at.
+pub fn missing_variable(over: &Over, capability: &str, name: &str) -> Option<String> {
+    let configured = over.configured().ok()??;
+    let capability = CAPABILITIES.into_iter().find(|c| c.name() == capability)?;
+    let Some(NotReady::Missing { setting }) = configured.offers.not_ready(capability, name) else {
+        return None;
+    };
+    let config = configured.loaded.config();
+    let (_, backend) = config
+        .backends(capability)
+        .into_iter()
+        .find(|(offered, _)| *offered == name)?;
+    let (_, variable) = backend.credentials().find(|(key, _)| *key == *setting)?;
+    variable_shaped(variable).then(|| variable.to_owned())
+}
+
 /// Why one backend is not ready, as a kind; none when it is.
 fn kind_of(configured: &Configured, capability: Capability, name: &str) -> Option<MissingKind> {
     let offers = &configured.offers;

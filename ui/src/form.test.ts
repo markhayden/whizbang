@@ -43,11 +43,26 @@ describe("the form", () => {
     expect(defaultChoice(field, BACKENDS)).toBe("cloud-fill");
   });
 
+  it("says checking, not not ready, for a backend hello is not sure of before any preparation answers", () => {
+    const field = TASK.fields![2]!;
+    const unsure: HelloBackend[] = [...BACKENDS, { capability: "fill", name: "third-fill", ready: false, missing: null }];
+    expect(choicesFor(field, null, unsure).map((c) => [c.value, c.readiness])).toEqual([
+      ["cloud-fill", "ready"],
+      ["other-fill", "no_key"],
+      ["third-fill", "checking"],
+    ]);
+    // Once a preparation has settled, answered or failed, with nothing more said of it:
+    // not ready.
+    expect(choicesFor(field, null, unsure, true).map((c) => c.readiness)).toEqual(["ready", "no_key", "other"]);
+  });
+
   it("says why Run cannot be pressed, and nothing once a ready preparation has a handle", () => {
     const values = { image: "sha256:a", prompt: "hose" };
     expect(whyNotRun(TASK, {}, null, false)).toBe("Give Image, Prompt.");
     expect(whyNotRun(TASK, values, null, true)).toBe("Preparing…");
-    expect(whyNotRun(TASK, values, { ready: false, missing: [{ capability: "judge", kind: "no_key", why: "the key is not set" }] }, false)).toBe("judge: the key is not set");
+    expect(whyNotRun(TASK, values, { ready: false, missing: [{ capability: "judge", kind: "other", why: "the judge is out" }] }, false)).toBe("judge: the judge is out");
+    // A key that is not set: the host's plain sentence, which names the variable to set.
+    expect(whyNotRun(TASK, values, { ready: false, missing: [{ capability: "fill", kind: "no_key", why: "the filler needs FAL_KEY in your env file" }] }, false)).toBe("The filler needs FAL_KEY in your env file.");
     expect(whyNotRun(TASK, values, { ready: false, refused: true, why: "no such picture" }, false)).toBe("no such picture");
     expect(whyNotRun(TASK, values, { ready: true, handle: "h" }, false)).toBeNull();
   });
