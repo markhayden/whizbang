@@ -67,10 +67,17 @@ export function App(props: AppProps) {
   };
   const doQuit = () => {
     setQuit((now) => ({ stage: "quitting", going: now?.going ?? null }));
-    props.client.quit().then(
-      () => setQuit((now) => ({ stage: "quit", going: now?.going ?? null })),
-      (error: unknown) => setQuit((now) => ({ stage: "asking", going: now?.going ?? null, problem: error instanceof ApiError ? error.message : String(error) })),
-    );
+    const quitted = () => setQuit((now) => ({ stage: "quit", going: now?.going ?? null }));
+    const failed = (error: unknown) => setQuit((now) => ({ stage: "asking", going: now?.going ?? null, problem: error instanceof ApiError ? error.message : String(error) }));
+    props.client.quit().then(quitted, (error: unknown) => {
+      // No answer at all: the host may have stopped before its answer reached the page.
+      // It has quit when it no longer answers hello either (or answers that it is stopping).
+      if (!(error instanceof ApiError) || error.status !== 0) return failed(error);
+      props.client.hello().then(
+        () => failed(error),
+        (again: unknown) => (again instanceof ApiError && (again.status === 0 || again.status === 503) ? quitted() : failed(error)),
+      );
+    });
   };
 
   const [asked, setAsked] = useState(0);

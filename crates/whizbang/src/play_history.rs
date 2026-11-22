@@ -111,8 +111,9 @@ fn row(runs: &Runs, id: &str, record: &RunRecord, titles: &dyn Fn(&str) -> Optio
 }
 
 /// One page of history: the runs the filter admits that nothing nested (a run's steps
-/// are its own), and, when `output` is asked, that made an output of that type, newest first, after the run `before` names when it names one, at most
-/// `limit`; and whether there are more.
+/// are its own) and, when `output` is asked, that made an output of that type; newest
+/// first, after the run `before` names when it names one, at most `limit`; and whether
+/// there are more.
 pub fn listed(
     loaded: Arc<Loaded>,
     asked: &Asked,

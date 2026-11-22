@@ -369,6 +369,8 @@ export interface Client {
   uploadPicture(file: File): Promise<Picture>;
   /** The pictures the playground imported, newest first: at most `limit`, after the picture `after` names. */
   listPictures(limit?: number, after?: string): Promise<Picture[]>;
+  /** The picture the playground kept under this identity, or null when it kept none. */
+  pictureById(id: string): Promise<Picture | null>;
   /** A shape drawn on a picture, committed as a location: its identity. */
   commitLocation(picture: string, shape: DrawnShape): Promise<{ id: string }>;
   /**
@@ -514,6 +516,10 @@ export function createClient(options: ClientOptions): Client {
       const from = after ? `&after=${encodeURIComponent(after)}` : "";
       const answer = await client.request<{ pictures?: Picture[] } | undefined>("GET", `/api/pictures?limit=${limit}${from}`);
       return Array.isArray(answer?.pictures) ? answer.pictures : [];
+    },
+    pictureById: async (id) => {
+      const answer = await client.request<{ pictures?: Picture[] } | undefined>("GET", `/api/pictures?id=${encodeURIComponent(id)}`);
+      return (Array.isArray(answer?.pictures) ? answer.pictures : []).find((one) => one.id === id) ?? null;
     },
     commitLocation: (picture, shape) => client.request<{ id: string }>("POST", "/api/locations", { picture, shape }),
     bytes: async (path) => {

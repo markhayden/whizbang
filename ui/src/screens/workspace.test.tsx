@@ -170,6 +170,44 @@ describe("the workspace", () => {
     view.unmount();
   });
 
+  it("reads history again once a run going ends, and drops the row given to this draft once the store lists it", async () => {
+    const mask = `sha256:${"66".repeat(32)}`;
+    let ended = false;
+    const going = [{ run: "r-going", action: "remove_prompt", started_ms: 1, state: "running" }];
+    const listed = { run: "r-going", action: "remove_prompt", title: "Remove what you name", result: "done", at_ms: Date.now(), outputs: [{ port: "mask", type: "mask", id: mask }] };
+    const request = vi.fn((_: string, path: string) => Promise.resolve({ runs: ended && path.includes("output=mask") ? [listed] : [], more: false }));
+    const hello: Hello = { version: "0.1.0", kits: [{ id: "rascal", name: "Rascal", tasks: [{ name: "protect", title: "Protect a first edit", fields: [{ name: "mask", kind: "artifact", artifact: "mask" }] }] }] };
+    localStorage.setItem("whizbang.drafts", JSON.stringify([{ kit: "rascal", task: "protect", values: { mask }, pictures: {}, at: 1 }]));
+    const made = { ...client(() => ({ ready: false })), request, openRuns: vi.fn(() => Promise.resolve(ended ? [] : going)) } as unknown as Client;
+    const view = render(<Workspace kit="rascal" task="protect" hello={hello} client={made} />);
+    await flush();
+    const rows = () => view.all(".binding-picker [role=option]").map((one) => one.textContent ?? "");
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]).toContain("given to this draft");
+    const asked = request.mock.calls.length;
+    ended = true;
+    await later(2000);
+    await flush();
+    expect(request.mock.calls.length).toBeGreaterThan(asked);
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]).toContain("Remove what you name");
+    expect(rows()[0]).not.toContain("given to this draft");
+    view.unmount();
+  });
+
+  it("says why history could not be read, in place of the empty lists", async () => {
+    const request = vi.fn(() => Promise.reject(new ApiError(501, "this build keeps no history")));
+    const hello: Hello = { version: "0.1.0", kits: [{ id: "rascal", name: "Rascal", tasks: [{ name: "protect", title: "Protect a first edit", fields: [{ name: "mask", kind: "artifact", artifact: "mask" }] }] }] };
+    const made = { ...client(() => ({ ready: false })), request } as unknown as Client;
+    const view = render(<Workspace kit="rascal" task="protect" hello={hello} client={made} />);
+    await flush();
+    expect(view.get(".workspace__right [role=alert]").textContent).toContain("this build keeps no history");
+    expect(view.text()).not.toContain("Not run yet");
+    expect(view.get(".field [role=alert]").textContent).toContain("Earlier mask outputs could not be read: this build keeps no history");
+    expect(view.text()).not.toContain("No earlier run made a mask yet");
+    view.unmount();
+  });
+
   it("offers a port's value that history does not list, as given to this draft", () => {
     const given = `sha256:${"44".repeat(32)}`;
     const listed = [{ id: `sha256:${"55".repeat(32)}`, type: "mask", run: "r-1", task: "Remove", when: "now" }];

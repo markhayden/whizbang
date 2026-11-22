@@ -106,7 +106,7 @@ pub(crate) const ROUTES: &[Route] = &[
         method: "GET",
         pattern: "/api/pictures",
         body: Body::None,
-        query: &["after", "limit"],
+        query: &["after", "limit", "id"],
         handler: pictures,
     },
     Route {
@@ -824,6 +824,23 @@ fn picture(shared: &Shared, guarded: &Guarded<'_>) -> Response {
 const PICTURES_PAGE: usize = 200;
 
 fn pictures(shared: &Shared, guarded: &Guarded<'_>) -> Response {
+    // One picture by its identity: a picture picked past the first page, or named by an
+    // address, is looked up rather than listed.
+    if let Some(id) = guarded.head.field("id") {
+        let identity = id.strip_prefix("sha256:").is_some_and(|hex| {
+            hex.len() == 64 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        });
+        if !identity {
+            return Response::refused(400, "id is a picture's identity");
+        }
+        return match shared.play.picture_kept(id) {
+            Ok(found) => Response::json(
+                200,
+                &json!({ "pictures": found.into_iter().collect::<Vec<_>>() }),
+            ),
+            Err(refused) => refused_by_play(&refused),
+        };
+    }
     let limit = match guarded.head.field("limit") {
         None => 60,
         Some(text) => match text.parse::<usize>() {

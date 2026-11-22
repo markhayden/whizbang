@@ -147,6 +147,25 @@ pub fn pictures(store: &Store, after: Option<&str>, limit: usize) -> Result<Json
     Ok(json!({ "pictures": listed }))
 }
 
+/// The picture the playground kept under this identity, as the list shows it, or none.
+pub fn kept(store: &Store, id: &str) -> Result<Option<Json>, Refused> {
+    let Ok(digest) = id.parse::<Digest>() else {
+        return Ok(None);
+    };
+    let generation = store
+        .snapshot()
+        .map_err(|_| Refused::new(500, "the store could not answer"))?;
+    let Some(entry) = generation.get(&format!("{PICTURES}{}", digest.hex())) else {
+        return Ok(None);
+    };
+    let one =
+        (store.read(entry).ok()).and_then(|bytes| serde_json::from_slice::<Named>(&bytes).ok());
+    Ok(one.map(|one| {
+        json!({"id": one.id, "name": escaped(&one.name), "width": one.width,
+               "height": one.height, "at_ms": one.at_ms})
+    }))
+}
+
 fn not_found() -> Refused {
     Refused::new(404, "the store holds no artifact of that identity")
 }

@@ -186,6 +186,48 @@ describe("the shell", () => {
     click(view.get("[role=alertdialog] .button--danger"));
     await settle();
     expect(view.get("[role=alertdialog] [role=alert]").textContent).toContain("not answering");
+    view.unmount();
+  });
+
+  it("takes a quit whose answer was lost for a quit once hello is not answered either", async () => {
+    const { view } = mount("#/", Promise.resolve(HELLO));
+    await settle();
+    vi.mocked(lastClient.quit).mockImplementation(() => Promise.reject(new ApiError(0, "The playground's host is not answering.")));
+    vi.mocked(lastClient.hello).mockImplementation(() => Promise.reject(new ApiError(0, "The playground's host is not answering.")));
+    click(view.get(".top-bar__quit"));
+    await settle();
+    click(view.get("[role=alertdialog] .button--danger"));
+    await settle();
+    expect(view.get("h1").textContent).toBe("The playground has quit");
+  });
+
+  it("keeps the keys of the page from the page while Quit asks, and Tab goes round the dialog", async () => {
+    const { view, go } = mount("#/", Promise.resolve(HELLO));
+    await settle();
+    click(view.get(".top-bar__quit"));
+    await settle();
+    const press = (key: string, more: KeyboardEventInit = {}) =>
+      act(() => {
+        (document.activeElement ?? window).dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...more }));
+      });
+    press("k", { metaKey: true });
+    press("0", { metaKey: true });
+    expect(view.all("[role=dialog]")).toHaveLength(0);
+    expect(go).not.toHaveBeenCalled();
+    const buttons = view.all<HTMLButtonElement>("[role=alertdialog] button");
+    expect(document.activeElement).toBe(buttons[0]);
+    press("Tab");
+    expect(document.activeElement).toBe(buttons[1]);
+    press("Tab");
+    expect(document.activeElement).toBe(buttons[0]);
+    press("Tab", { shiftKey: true });
+    expect(document.activeElement).toBe(buttons[1]);
+    press("Escape");
+    expect(view.all("[role=alertdialog]")).toHaveLength(0);
+    // Closed, the keys reach the page again.
+    press("k", { metaKey: true });
+    expect(view.all("[role=dialog]")).toHaveLength(1);
+    view.unmount();
   });
 
   it("follows an address changed before it subscribed to the address's changes", async () => {

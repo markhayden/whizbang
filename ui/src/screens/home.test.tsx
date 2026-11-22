@@ -24,10 +24,11 @@ const HELLO: Hello = {
   ],
 };
 
-function client(): Client {
+function client(listed: Picture[] = [PORCH], kept: Picture | null = PORCH): Client {
   return {
     openRuns: vi.fn(() => Promise.resolve([])),
-    listPictures: vi.fn(() => Promise.resolve([PORCH])),
+    listPictures: vi.fn(() => Promise.resolve(listed)),
+    pictureById: vi.fn(() => Promise.resolve(kept)),
     blobUrl: vi.fn(() => new Promise(() => undefined)),
   } as unknown as Client;
 }
@@ -81,6 +82,42 @@ describe("a picture picked on Home", () => {
     expect(go).toHaveBeenLastCalledWith("#/k/rascal/remove_prompt");
     expect(draftOf(localStore(), "remove_prompt")?.values).toEqual({ image: PORCH.id });
     expect(localStorage.getItem(DRAFTS_KEY)).toContain(PORCH.id);
+    view.unmount();
+  });
+
+  it("brings the panel into view once for a picture, not on every render", async () => {
+    const scrolled = vi.fn();
+    const before = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrolled;
+    try {
+      const made = client();
+      const view = render(<Home hello={HELLO} client={made} picture={PORCH.id} />);
+      await settle();
+      view.rerender(<Home hello={HELLO} client={made} picture={PORCH.id} />);
+      await settle();
+      view.rerender(<Home hello={HELLO} client={made} picture={PORCH.id} />);
+      await settle();
+      expect(scrolled).toHaveBeenCalledTimes(1);
+      view.unmount();
+    } finally {
+      Element.prototype.scrollIntoView = before;
+    }
+  });
+
+  it("looks up a picture past the library's first page by its identity", async () => {
+    const made = client([], PORCH);
+    const view = render(<Home hello={HELLO} client={made} picture={PORCH.id} />);
+    await settle();
+    expect(made.pictureById).toHaveBeenCalledWith(PORCH.id);
+    expect(view.get("[role=region]").getAttribute("aria-label")).toBe("Start a task with porch.png");
+    view.unmount();
+  });
+
+  it("says a picture the store does not hold is missing, and offers no task", async () => {
+    const view = render(<Home hello={HELLO} client={client([], null)} picture={PORCH.id} />);
+    await settle();
+    expect(view.get("[role=region] [role=alert]").textContent).toContain("holds no picture");
+    expect(view.all(".picked__task")).toHaveLength(0);
     view.unmount();
   });
 });

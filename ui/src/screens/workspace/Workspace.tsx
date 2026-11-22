@@ -148,11 +148,21 @@ export function bindingsOf(runs: HistoryRun[], type: string, now: number): Bindi
   return made;
 }
 
-/** A page of the store's runs, asked so that a client without the call (a test) gives none. */
-function asked<T>(call: () => Promise<T>, fallback: T): Promise<T> {
+/** A page of the store's runs, or why it could not be had. */
+interface Answered<T> {
+  value: T;
+  /** The host's refusal (a 400, a 501), said where the list would be. */
+  error?: string;
+}
+
+/** A page of the store's runs; a client without the call (a test of the form) gives none. */
+function asked<T>(call: () => Promise<T>, fallback: T): Promise<Answered<T>> {
   return Promise.resolve()
     .then(call)
-    .catch(() => fallback);
+    .then(
+      (value) => ({ value }),
+      (error: unknown) => (error instanceof ApiError ? { value: fallback, error: error.message } : { value: fallback }),
+    );
 }
 
 interface Paging<T> {
@@ -160,26 +170,38 @@ interface Paging<T> {
   more: boolean;
   /** The last run of the last page, which the next starts after. */
   last?: string;
+  error?: string;
 }
 
-/** The runs of a task in history, newest first, a page at a time (the right column). */
-function useEarlier(client: Client, task: string): Paging<HistoryRun> & { next: () => void } {
+const NONE = { runs: [] as HistoryRun[], more: false };
+
+/** A page put after those listed, each run once. */
+function appended(now: Paging<HistoryRun> | undefined, page: Answered<typeof NONE>, after: boolean): Paging<HistoryRun> {
+  const had = after ? (now?.list ?? []) : [];
+  if (page.error) return { list: had, more: false, last: now?.last, error: page.error };
+  const runs = page.value.runs.filter((one) => !had.some((seen) => seen.run === one.run));
+  return { list: [...had, ...runs], more: page.value.more, last: page.value.runs[page.value.runs.length - 1]?.run ?? (after ? now?.last : undefined) };
+}
+
+/**
+ * The runs of a task in history, newest first, a page at a time (the right column); read
+ * again from the first page whenever `ended` changes (a run going has ended).
+ */
+function useEarlier(client: Client, task: string, ended: number): Paging<HistoryRun> & { next: () => void } {
   const [paged, setPaged] = useState<Paging<HistoryRun>>({ list: [], more: false });
   const query = new URLSearchParams({ task });
   useEffect(() => {
     let live = true;
-    asked(() => listRuns(client, query, undefined, EARLIER_PAGE), { runs: [], more: false }).then((page) => {
-      if (live) setPaged({ list: page.runs, more: page.more, last: page.runs[page.runs.length - 1]?.run });
+    void asked(() => listRuns(client, query, undefined, EARLIER_PAGE), NONE).then((page) => {
+      if (live) setPaged((now) => appended(now, page, false));
     });
     return () => {
       live = false;
     };
-  }, [task]);
+  }, [task, ended]);
   const next = () => {
     if (!paged.last) return;
-    asked(() => listRuns(client, query, paged.last, EARLIER_PAGE), { runs: [], more: false }).then((page) =>
-      setPaged((now) => ({ list: [...now.list, ...page.runs.filter((one) => !now.list.some((seen) => seen.run === one.run))], more: page.more, last: page.runs[page.runs.length - 1]?.run ?? now.last })),
-    );
+    void asked(() => listRuns(client, query, paged.last, EARLIER_PAGE), NONE).then((page) => setPaged((now) => appended(now, page, true)));
   };
   return { ...paged, next };
 }
@@ -187,20 +209,16 @@ function useEarlier(client: Client, task: string): Paging<HistoryRun> & { next: 
 /**
  * The outputs of earlier runs for each binding picker, by type, from the store's history
  * (`GET /api/runs?output=<type>`), a page at a time: what a reload or a restart keeps.
+ * Read again from the first page whenever `ended` changes (a run going has ended).
  */
-function useBindings(client: Client, types: string[]): { of: (type: string) => Binding[]; more: (type: string) => (() => void) | undefined } {
+function useBindings(client: Client, types: string[], ended: number): { of: (type: string) => Binding[]; more: (type: string) => (() => void) | undefined; error: (type: string) => string | undefined } {
   const [pages, setPages] = useState<Record<string, Paging<HistoryRun>>>({});
   const key = types.join(",");
   const load = (type: string, before?: string) =>
-    asked(() => runsMaking(client, type, before), { runs: [], more: false }).then((page) =>
-      setPages((now) => {
-        const had = before ? (now[type]?.list ?? []) : [];
-        return { ...now, [type]: { list: [...had, ...page.runs.filter((one) => !had.some((seen) => seen.run === one.run))], more: page.more, last: page.runs[page.runs.length - 1]?.run ?? now[type]?.last } };
-      }),
-    );
+    asked(() => runsMaking(client, type, before), NONE).then((page) => setPages((now) => ({ ...now, [type]: appended(now[type], page, before !== undefined) })));
   useEffect(() => {
     for (const type of types) void load(type);
-  }, [key]);
+  }, [key, ended]);
   const now = Date.now();
   return {
     of: (type) => bindingsOf(pages[type]?.list ?? [], type, now),
@@ -208,7 +226,39 @@ function useBindings(client: Client, types: string[]): { of: (type: string) => B
       const page = pages[type];
       return page?.more && page.last ? () => void load(type, page.last) : undefined;
     },
+    error: (type) => pages[type]?.error,
   };
+}
+
+/** How often the workspace asks for the runs still going. */
+const OPEN_EVERY_MS = 2000;
+
+/**
+ * The runs still going, asked every two seconds, and a count that goes up each time one
+ * that was going is no longer: what was listed of history is then read again.
+ */
+function useOpen(client: Client): { open: OpenRun[]; ended: number } {
+  const [state, setState] = useState<{ open: OpenRun[]; ended: number }>({ open: [], ended: 0 });
+  useEffect(() => {
+    let live = true;
+    const look = () =>
+      client.openRuns().then(
+        (runs) =>
+          live &&
+          setState((now) => {
+            const gone = now.open.some((was) => !runs.some((still) => still.run === was.run));
+            return { open: runs, ended: gone ? now.ended + 1 : now.ended };
+          }),
+        () => undefined,
+      );
+    void look();
+    const timer = setInterval(() => void look(), OPEN_EVERY_MS);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [client]);
+  return state;
 }
 
 function Draft(props: DraftProps) {
@@ -232,9 +282,10 @@ function Draft(props: DraftProps) {
   const [tool, setTool] = useState<string>(tools[0]?.value ?? "");
   const [zoom, setZoom] = useState<number | "fit">("fit");
   const [starting, setStarting] = useState(false);
-  const [open, setOpen] = useState<OpenRun[]>([]);
-  const earlier = useEarlier(client, task.name);
-  const bindings = useBindings(client, bindingTypes(fields));
+  const going = useOpen(client);
+  const open = going.open.filter((run) => run.action === task.name);
+  const earlier = useEarlier(client, task.name, going.ended);
+  const bindings = useBindings(client, bindingTypes(fields), going.ended);
   const [view, setView] = useState("original");
   const preparer = useRef<Preparer | null>(null);
   // A draft Send to opened (plan m5, task W2, item 3): where it came from, the fields it
@@ -272,17 +323,6 @@ function Draft(props: DraftProps) {
       saveDraft(store, { kit: props.kit, task: task.name, values, pictures, at: Date.now(), ...from });
     }
   }, [argsKey]);
-
-  useEffect(() => {
-    let live = true;
-    client.openRuns().then(
-      (runs) => live && setOpen(runs.filter((run) => run.action === task.name)),
-      () => undefined,
-    );
-    return () => {
-      live = false;
-    };
-  }, [task.name]);
 
   const moreLibrary = () => {
     const last = library?.[library.length - 1];
@@ -431,6 +471,7 @@ function Draft(props: DraftProps) {
               drawn={Boolean(drawn[field.name])}
               bindings={field.kind === "artifact" && field.artifact ? bindings.of(field.artifact) : []}
               onMoreBindings={field.kind === "artifact" && field.artifact ? bindings.more(field.artifact) : undefined}
+              bindingsError={field.kind === "artifact" && field.artifact ? bindings.error(field.artifact) : undefined}
               from={fromFields.includes(field.name) ? fromWords : undefined}
               onChange={(value) => set(field.name, value)}
               onClear={() => {
@@ -483,8 +524,13 @@ function Draft(props: DraftProps) {
       </section>
       <aside class="workspace__right">
         <h2 class="section-title">Runs of this task</h2>
+        {earlier.error ? (
+          <p class="field__error" role="alert">
+            {`History could not be read: ${earlier.error}`}
+          </p>
+        ) : null}
         {open.length === 0 && earlier.list.length === 0 ? (
-          <p class="empty">Not run yet. The plan on the left is what will happen.</p>
+          earlier.error ? null : <p class="empty">Not run yet. The plan on the left is what will happen.</p>
         ) : (
           <div class="workspace__runs">
             {open.map((one) => (
@@ -541,6 +587,8 @@ interface InputProps {
   /** The outputs of earlier runs this port can take, from the store, and the next page. */
   bindings: Binding[];
   onMoreBindings?: () => void;
+  /** Why the earlier outputs could not be read, when they could not. */
+  bindingsError?: string;
   onChange: (value: unknown) => void;
   onClear: () => void;
   onUpload: (files: File[]) => Promise<Picture[]>;
@@ -633,7 +681,7 @@ function Input(props: InputProps) {
               ) : null}
             </div>
           ) : null}
-          <BindingPicker type={field.artifact ?? ""} bindings={offered(props.bindings, field.artifact ?? "", props.value, props.drawn)} value={typeof props.value === "string" ? props.value : null} onPick={props.onChange} onMore={props.onMoreBindings} />
+          <BindingPicker type={field.artifact ?? ""} bindings={offered(props.bindings, field.artifact ?? "", props.value, props.drawn)} value={typeof props.value === "string" ? props.value : null} onPick={props.onChange} onMore={props.onMoreBindings} error={props.bindingsError} />
         </Field>
       );
     }

@@ -22,6 +22,8 @@ export interface BindingPickerProps {
   value: string | null;
   disabled?: boolean;
   onPick?: (id: string) => void;
+  /** Why the outputs of earlier runs could not be read, said in place of the list. */
+  error?: string;
   /** Asks for the outputs of earlier runs past the last shown, when there may be more. */
   onMore?: () => void;
 }
@@ -29,6 +31,12 @@ export interface BindingPickerProps {
 /** The outputs of earlier runs of one type, newest first, for a port of that type. */
 export function BindingPicker(props: BindingPickerProps) {
   const offered = props.bindings.filter((binding) => binding.type === props.type);
+  const failed = props.error ? (
+    <p class="field__error" role="alert">
+      {`Earlier ${props.type.replace(/_/g, " ")} outputs could not be read: ${props.error}`}
+    </p>
+  ) : null;
+  if (offered.length === 0 && failed) return failed;
   if (offered.length === 0) {
     return <p class="binding-picker__empty">No earlier run made a {props.type.replace(/_/g, " ")} yet.</p>;
   }
@@ -55,6 +63,7 @@ export function BindingPicker(props: BindingPickerProps) {
       })}
     </ul>
     {more}
+    {failed}
     </>
   );
 }

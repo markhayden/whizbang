@@ -26,8 +26,34 @@ export function quitWords(going: number | null): string {
  */
 export function QuitDialog(props: QuitDialogProps) {
   const keep = useRef<HTMLDivElement>(null);
+  const cancel = useRef(props.onCancel);
+  cancel.current = props.onCancel;
   useEffect(() => {
     keep.current?.querySelector<HTMLButtonElement>(".button--quiet")?.focus();
+    // Modal: while it is open, no key reaches the page behind it (⌘K, ⌘↵, ⌘S and the
+    // rest), Escape keeps playing, and Tab goes round the dialog's own buttons.
+    const onKey = (event: KeyboardEvent) => {
+      const dialog = keep.current;
+      if (!dialog) return;
+      event.stopPropagation();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cancel.current?.();
+        return;
+      }
+      if (event.key === "Tab") {
+        event.preventDefault();
+        const stops = Array.from(dialog.querySelectorAll<HTMLButtonElement>("button:not([disabled])"));
+        if (stops.length === 0) return;
+        const at = stops.indexOf(document.activeElement as HTMLButtonElement);
+        const next = event.shiftKey ? (at <= 0 ? stops.length - 1 : at - 1) : at < 0 || at >= stops.length - 1 ? 0 : at + 1;
+        stops[next]?.focus();
+        return;
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey || !dialog.contains(event.target as Node)) event.preventDefault();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, []);
   return (
     <div class="palette-scrim" onClick={props.onCancel}>
@@ -39,9 +65,6 @@ export function QuitDialog(props: QuitDialogProps) {
         aria-labelledby="quit-title"
         aria-describedby="quit-what"
         onClick={(event) => event.stopPropagation()}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") props.onCancel?.();
-        }}
       >
         <h2 id="quit-title" class="quit-dialog__title">
           Quit the playground?

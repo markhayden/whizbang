@@ -1195,6 +1195,17 @@ paint's "not ready" holds, so a case moved on before the page listened to the ad
 the page followed the address only from when it subscribed, after its first paint, so a
 change made before then was lost. The page now reads the address once it listens
 (`hashNow`), and the cases wait for "ready" not preceded by "not".
+From the review of #281: a picked picture is looked up in the store by its identity
+(`GET /api/pictures?id=`, ADR 0041) when the library's first page does not hold it, and one
+the store does not hold is said to be missing, with no task offered; the panel scrolls into
+view once for each picture, not on every render. The workspace asks for the runs going every
+two seconds and reads its earlier runs and its pickers' outputs again when one ends; a
+history the host could not give (400, 501) is said in place of the empty lists. Quit's
+dialog is modal (Tab goes round it, no key of the page reaches the page) and a quit whose
+answer was lost counts as a quit once hello is not answered either. `run.spec.ts`'s five
+squint use cases run in two tabs, each one at a time, within the host's two uploads and four
+runs at once. Tests: `play::a_picture_is_looked_up_by_its_identity_and_one_not_kept_answers_none`
+and `play::history_of_an_output_type_is_paged_after_the_last_run_shown`.
 
 ## E1. The loop by hand in the playground, and the guide (medium; the orchestrator's runs)
 

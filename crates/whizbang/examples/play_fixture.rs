@@ -244,6 +244,9 @@ impl Play for Fixture {
     fn pictures(&self, after: Option<&str>, limit: usize) -> Result<Json, Refused> {
         self.door.pictures(after, limit)
     }
+    fn picture_kept(&self, id: &str) -> Result<Option<Json>, Refused> {
+        self.door.picture_kept(id)
+    }
     fn artifact(&self, id: &str, edge: Option<u32>) -> Result<(&'static str, Vec<u8>), Refused> {
         // Held while the script says `hold-pictures`: the page's connections stay open.
         self.kit.picture_asked();
