@@ -48,6 +48,17 @@ export const WORDMARK = "brand/wordmark.svg";
 /** The sentence when the page holds no token at all. */
 export const NO_TOKEN = "This page was opened without its key. Run whizbang play again, which opens the page with a new one.";
 
+/** What the top bar shows of hello's allowance: spent of the allowance, or none set. */
+type Allowance = { allowance: number; spent: number } | null;
+
+/** The allowance of hello's answer: spent and held since the last reset, or none set. */
+export function allowanceOf(hello: Hello): Allowance {
+  const said = hello.allowance;
+  if (!said || typeof said.allowance !== "number") return null;
+  const spent = typeof said.spent === "number" ? said.spent : typeof said.left === "number" ? Math.max(0, said.allowance - said.left) : 0;
+  return { allowance: said.allowance, spent };
+}
+
 /** The shell: the top bar, the screen of the route, the status bar, search and the keys. */
 export function App(props: AppProps) {
   const [hello, setHello] = useState<Hello | null>(null);
@@ -100,13 +111,32 @@ export function App(props: AppProps) {
   useEffect(() => {
     let live = true;
     props.client.hello().then(
-      (answer) => live && setHello(answer),
+      (answer) => {
+        if (!live) return;
+        setHello(answer);
+        setAllowance(allowanceOf(answer));
+      },
       (error: unknown) => live && setProblem(error instanceof ApiError ? error.message : String(error)),
     );
     return () => {
       live = false;
     };
   }, [asked]);
+  // The top bar's allowance, read again from hello whenever the books may have changed: a
+  // run the page followed ended, or a reset. Only the allowance is taken from the answer.
+  const [allowance, setAllowance] = useState<Allowance | undefined>(undefined);
+  useEffect(() => {
+    if (typeof props.client.onSettled !== "function") return;
+    let asking = 0;
+    const stop = props.client.onSettled(() => {
+      const mine = (asking += 1);
+      props.client.hello().then(
+        (answer) => mine === asking && setAllowance(allowanceOf(answer)),
+        () => undefined,
+      );
+    });
+    return stop;
+  }, []);
 
   const kits = Array.isArray(hello?.kits) ? hello.kits : [];
   const [pictures, setPictures] = useState<Picture[]>([]);
@@ -187,8 +217,8 @@ export function App(props: AppProps) {
     <div class="shell">
       <TopBar
         where={where}
-        left={hello?.allowance?.left}
-        allowance={hello?.allowance?.allowance}
+        spent={allowance?.spent}
+        allowance={allowance === undefined ? undefined : (allowance?.allowance ?? null)}
         current={route.name === "history" ? "history" : route.name === "models" ? "models" : undefined}
         homeHref={hrefOf({ name: "home" })}
         wordmark={WORDMARK}

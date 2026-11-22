@@ -329,7 +329,49 @@ fn show(root: &Path, given: &str, json: bool, diagnostic: Option<&str>) -> Resul
     if json {
         return Ok(record.to_bytes());
     }
-    Ok(text_of(&record).into_bytes())
+    let called = called_records(&reader, &generation, &record);
+    Ok(text_of(&record, &called).into_bytes())
+}
+
+/// The most runs below one that `runs show` reads to add up what they cost.
+const CALLED_LIMIT: usize = 512;
+
+/// The records of the runs a run called, and the runs they called, breadth first, each
+/// once, at most [`CALLED_LIMIT`]; a run whose record cannot be read is left out, and
+/// [`text_of`] says how many were.
+fn called_records(reader: &Reader, generation: &Generation, top: &RunRecord) -> Called {
+    let mut called = Called::default();
+    let mut waiting: std::collections::VecDeque<String> = top
+        .steps()
+        .iter()
+        .map(|step| step.run().to_owned())
+        .collect();
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some(run) = waiting.pop_front() {
+        if !seen.insert(run.clone()) {
+            continue;
+        }
+        if called.records.len() >= CALLED_LIMIT {
+            called.unread += 1;
+            continue;
+        }
+        match record_of(reader, generation, &run) {
+            Some(Ok(record)) => {
+                waiting.extend(record.steps().iter().map(|step| step.run().to_owned()));
+                called.records.push(record);
+            }
+            _ => called.unread += 1,
+        }
+    }
+    called
+}
+
+/// The runs below one, as [`called_records`] reads them.
+#[derive(Default)]
+struct Called {
+    records: Vec<RunRecord>,
+    /// How many runs below it were named and could not be read.
+    unread: usize,
 }
 
 /// The admission of a run that has something under `admitted`, or why it is not read,
@@ -414,8 +456,9 @@ fn admitted_text(admission: &Admission) -> String {
     )
 }
 
-/// A record for a person: every group, the empty ones said to be empty.
-fn text_of(record: &RunRecord) -> String {
+/// A record for a person: every group, the empty ones said to be empty; and, for a run
+/// that called others, what it and they cost together.
+fn text_of(record: &RunRecord, called: &Called) -> String {
     let identity = record.identity();
     let asked = record.asked();
     let outcome = record.outcome();
@@ -640,6 +683,29 @@ fn text_of(record: &RunRecord) -> String {
             } else {
                 ""
             }
+        ));
+    }
+    // What the run and every run below it cost together: a run that called others
+    // (a recipe, a loop) sends no request of its own, and what its children were
+    // settled at, a request no answer settled among them, is what the call cost.
+    if !record.steps().is_empty() {
+        let mut requests: Vec<Paid> = spend.requests.clone();
+        for child in &called.records {
+            requests.extend(child.spend().requests.iter().cloned());
+        }
+        let unread = match called.unread {
+            0 => String::new(),
+            1 => "; 1 run below it could not be read, so this is at least what it cost".to_owned(),
+            n => format!("; {n} runs below it could not be read, so this is at least what it cost"),
+        };
+        let runs = match called.records.len() {
+            1 => "1 run".to_owned(),
+            n => format!("{n} runs"),
+        };
+        line(format!(
+            "with the runs it called: {runs}; paid requests: {}; cost: {}{unread}",
+            requests.len(),
+            cost(&requests)
         ));
     }
     // Where the run's data went: an origin, the account cut, the classes, and

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { act } from "preact/test-utils";
 import { click, expectShownAsText, HOSTILE, render } from "../test/render";
 import { boxOf, Canvas, stepZoom, toPicture } from "./Canvas";
-import { Compare, differenceOf } from "./Compare";
+import { Compare, differenceOf, fitZoom } from "./Compare";
 import { HistoryRow } from "./HistoryRow";
 import { ModelRow } from "./ModelRow";
 
@@ -115,6 +115,19 @@ describe("Compare", () => {
     view.rerender(<Compare before="/a.png" after="/b.png" width={64} height={32} mode="difference" zoom={1} />);
     expect(view.get("canvas").getAttribute("width")).toBe("64");
     expect(view.get<HTMLElement>("figure").style.width).toBe("64px");
+  });
+  it("fits two large pictures side by side in the stage, at one zoom", () => {
+    // 2400 by 1792 in a stage 790 wide: each a little under half of it, both inside it.
+    const zoom = fitZoom(2400, 1792, { width: 790, height: 600 });
+    expect(2 * Math.floor(2400 * zoom) + 2).toBeLessThanOrEqual(790);
+    expect(Math.floor(1792 * zoom)).toBeLessThanOrEqual(600);
+    // A short stage holds them to its height; a small picture is not blown up past four.
+    expect(Math.floor(1792 * fitZoom(2400, 1792, { width: 4000, height: 300 }))).toBeLessThanOrEqual(300);
+    expect(fitZoom(16, 16, { width: 4000, height: 4000 })).toBe(4);
+    const view = render(<Compare before="/a.png" after="/b.png" width={2400} height={1792} mode="side" zoom="fit" />);
+    const widths = view.all<HTMLElement>("figure").map((f) => parseInt(f.style.width, 10));
+    expect(widths[0]).toBe(widths[1]);
+    expect(widths[0]! * 2).toBeLessThanOrEqual(960);
   });
 });
 

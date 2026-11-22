@@ -305,72 +305,155 @@ fn dollars(micros: u64) -> f64 {
     micros as f64 / 1_000_000.0
 }
 
+/// The config's name of the backend that answers a capability in this preparation: the
+/// call's choice, else the capability's default, as preparation resolved it (ADR 0006).
+fn backend_of(shared: &Shared, prepared: &PreparedCall, capability: &str) -> Option<String> {
+    let need = prepared
+        .needs()
+        .iter()
+        .find(|need| need.capability().name() == capability);
+    need.and_then(|need| need.choice().map(str::to_owned))
+        .or_else(|| shared.play.default_backend(capability))
+        .or_else(|| need.and_then(|need| need.model().map(|model| model.backend().to_owned())))
+}
+
+/// What a capability's backend is called in a sentence.
+fn role(capability: &str) -> &'static str {
+    match capability {
+        "segment" => "segmenter",
+        "fill" => "filler",
+        "judge" => "judge",
+        _ => "backend",
+    }
+}
+
+/// Why a capability's backend is not ready, as the page says it: a key that is not set
+/// names the variable to set, by its name alone, when it has the shape of one ([`Play::key_variable`]);
+/// every other reason is the core's words, escaped.
+fn missing_why(
+    shared: &Shared,
+    capability: &str,
+    backend: Option<&str>,
+    kind: &str,
+    why: &str,
+) -> String {
+    if kind != "no_key" {
+        return escaped(why);
+    }
+    let named = backend.and_then(|backend| shared.play.key_variable(capability, backend));
+    match named {
+        Some(variable) => format!("the {} needs {variable} in your env file", role(capability)),
+        None => format!(
+            "the {} needs its key in your env file, under the variable its key_env names",
+            role(capability)
+        ),
+    }
+}
+
 /// What a preparation says of each need: its capability, the backend the call chose (or
-/// the model's), the model, its request count and its bounds (plan m5, task K1, item 2).
+/// the model's), the model, its request count and its bounds (plan m5, task K1, item 2);
+/// and whether its backend is ready, with why not. A need whose backend is not ready is
+/// neither local nor free: nothing is known of what it would cost.
 fn needs_json(shared: &Shared, prepared: &PreparedCall) -> Vec<Json> {
+    let missing = match prepared.readiness() {
+        Readiness::Ready => Vec::new(),
+        Readiness::NotReady(missing) => missing.to_vec(),
+    };
     prepared
         .needs()
         .iter()
         .map(|need| {
+            let capability = need.capability().name();
             let each = need.each().map_or(0, |each| each.micros());
             let bound = need.bound().map_or(0, |bound| bound.micros());
-            // The config's name of the backend that answers: the call's choice, else
-            // the capability's default, as preparation resolved it (ADR 0006).
-            let backend = need
-                .choice()
-                .map(str::to_owned)
-                .or_else(|| shared.play.default_backend(need.capability().name()))
-                .or_else(|| need.model().map(|model| model.backend().to_owned()));
+            let backend = backend_of(shared, prepared, capability);
+            let unready = missing
+                .iter()
+                .find(|missing| missing.capability().name() == capability);
+            let why = unready.map(|missing| {
+                missing_why(
+                    shared,
+                    capability,
+                    backend.as_deref(),
+                    missing.kind().word(),
+                    missing.why(),
+                )
+            });
             json!({
-                "capability": need.capability().name(),
+                "capability": capability,
                 "backend": backend.map(|backend| escaped(&backend)),
                 "model": need.model().map(|model| escaped(model.model())),
                 "requests": need.requests(),
                 "each": dollars(each),
                 "bound": dollars(bound),
-                "local": each == 0,
+                "local": each == 0 && unready.is_none(),
+                "ready": unready.is_none(),
+                "why": why,
             })
         })
         .collect()
 }
 
 /// Why a preparation is not ready: each capability nothing answers, with its kind.
-fn missing_json(prepared: &PreparedCall) -> Vec<Json> {
+fn missing_json(shared: &Shared, prepared: &PreparedCall) -> Vec<Json> {
     match prepared.readiness() {
         Readiness::Ready => Vec::new(),
         Readiness::NotReady(missing) => missing
             .iter()
             .map(|missing| {
+                let capability = missing.capability().name();
+                let backend = backend_of(shared, prepared, capability);
                 json!({
-                    "capability": missing.capability().name(),
+                    "capability": capability,
                     "kind": missing.kind().word(),
-                    "why": escaped(missing.why()),
+                    "why": missing_why(shared, capability, backend.as_deref(), missing.kind().word(), missing.why()),
                 })
             })
             .collect(),
     }
 }
 
-/// One choice's readiness, from its own preparation: `ready`, or the kind of the first
-/// capability nothing answers, or the kind of the refusal.
-fn choice_json(value: &str, prepared: Result<PreparedCall, CallError>) -> Json {
+/// One choice's readiness, from its own preparation: the readiness of its own
+/// capability, which another capability of the call that is not ready (a filler with no
+/// key beside a segmenter that needs none) does not change; when the call as given
+/// cannot be prepared at all (an input still missing), the backend's own readiness, as
+/// `/api/hello` lists it (`row`).
+fn choice_json(
+    shared: &Shared,
+    capability: &str,
+    row: &Json,
+    value: &str,
+    prepared: Result<PreparedCall, CallError>,
+) -> Json {
+    let own = |row: &Json| {
+        let ready = row["ready"] == true;
+        let kind = row["missing"]
+            .as_str()
+            .unwrap_or(if ready { "ready" } else { "other" });
+        let why = row["why"]
+            .as_str()
+            .filter(|_| !ready)
+            .map(|why| missing_why(shared, capability, Some(value), kind, why));
+        json!({"value": value, "ready": ready, "kind": kind, "why": why})
+    };
     match prepared {
         Ok(prepared) => match prepared.readiness() {
             Readiness::Ready => {
                 json!({"value": value, "ready": true, "kind": "ready", "why": null})
             }
             Readiness::NotReady(missing) => {
-                let first = missing.first();
-                json!({"value": value, "ready": false,
-                       "kind": first.map_or("other", |m| m.kind().word()),
-                       "why": first.map(|m| escaped(m.why()))})
+                match missing
+                    .iter()
+                    .find(|missing| missing.capability().name() == capability)
+                {
+                    Some(mine) => json!({"value": value, "ready": false,
+                           "kind": mine.kind().word(),
+                           "why": missing_why(shared, capability, Some(value), mine.kind().word(), mine.why())}),
+                    None => json!({"value": value, "ready": true, "kind": "ready", "why": null}),
+                }
             }
         },
-        Err(CallError::Refused(refusal)) => {
-            json!({"value": value, "ready": false, "kind": kind_word(&refusal),
-                   "why": escaped(&refusal.to_string())})
-        }
-        Err(_) => json!({"value": value, "ready": false, "kind": "other", "why": null}),
+        Err(_) => own(row),
     }
 }
 
@@ -401,7 +484,11 @@ fn prepare(shared: &Shared, guarded: &Guarded<'_>) -> Response {
                 Ok((call, _)) => executor.prepare(&call),
                 Err(_) => continue,
             };
-            let mut answer = choice_json(value, prepared);
+            let capability = backend["capability"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned();
+            let mut answer = choice_json(shared, &capability, &backend, value, prepared);
             // A backend that is not ready for a reason of its own (a model not
             // installed, a key not set) says that reason, which the preparation may
             // only see as a feature it cannot declare.
@@ -424,7 +511,7 @@ fn prepare(shared: &Shared, guarded: &Guarded<'_>) -> Response {
                 "kind": null,
                 "why": null,
                 "handle": null,
-                "missing": missing_json(&prepared),
+                "missing": missing_json(shared, &prepared),
                 "needs": needs_json(shared, &prepared),
                 "bound": dollars(prepared.estimate().micros()),
                 "attempts": prepared.plan().and_then(|plan| plan.stated()).map(|attempts| {

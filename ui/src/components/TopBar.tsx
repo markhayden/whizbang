@@ -6,9 +6,13 @@ import { Wordmark } from "./Wordmark";
 export interface TopBarProps {
   /** The middle of the bar's left side: "Home", or the breadcrumb of a kit. */
   where: ComponentChildren;
-  /** What is left of the allowance, and the allowance, in US dollars. */
-  left?: number;
-  allowance?: number;
+  /**
+   * What is spent and held since the last reset, and the allowance, in US dollars; `null`
+   * when the host said the store has no allowance yet (no reset has set one), `undefined`
+   * while it has not said.
+   */
+  spent?: number;
+  allowance?: number | null;
   current?: "history" | "models";
   homeHref: string;
   historyHref: string;
@@ -40,9 +44,13 @@ export function TopBar(props: TopBarProps) {
         <a class={cx("top-bar__link", props.current === "models" && "top-bar__link--current")} href={props.modelsHref}>
           Models
         </a>
-        {props.left !== undefined && props.allowance !== undefined ? (
-          <span class="top-bar__allowance mono" title="What is left of the allowance since the last reset">
-            {dollars(props.left)} <span class="top-bar__of">/ {props.allowance.toFixed(2)}</span>
+        {typeof props.allowance === "number" && typeof props.spent === "number" ? (
+          <span class="top-bar__allowance mono" title="Spent since the last reset, of the allowance it set">
+            {dollars(props.spent)} <span class="top-bar__of">spent of {dollars(props.allowance)}</span>
+          </span>
+        ) : props.allowance === null ? (
+          <span class="top-bar__allowance mono" title="No reset has set an allowance, so every paid run is refused">
+            <span class="top-bar__of">no allowance</span>
           </span>
         ) : null}
         {props.onQuit ? (

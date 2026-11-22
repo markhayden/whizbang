@@ -962,10 +962,17 @@ impl Kitted {
         Kitted::built(Scratch::new(label), true, true)
     }
 
+    /// A host over a config of the test's own, in a new store with its allowance.
+    fn configured(label: &str, text: &str) -> Kitted {
+        let scratch = Scratch::new(label);
+        std::fs::write(scratch.path().join("whizbang.toml"), text).unwrap();
+        Kitted::built(scratch, true, false)
+    }
+
     fn built(scratch: Scratch, new: bool, cached: bool) -> Kitted {
         let root = scratch.path().join("store");
         let config = scratch.path().join("whizbang.toml");
-        if new {
+        if new && !config.exists() {
             std::fs::write(&config, kit_config("fill")).unwrap();
         }
         let kit = whizbang_testkit::playkit::PlayKit::new();
@@ -1025,6 +1032,11 @@ impl Kitted {
 
     fn root(&self) -> PathBuf {
         self.scratch.path().join("store")
+    }
+
+    /// The script of the kit's fakes, which a test steers.
+    pub(crate) fn kit(&self) -> &whizbang_testkit::playkit::PlayKit {
+        &self.kit
     }
 
     pub(crate) fn api(&self, method: &str, path: &str, body: Option<&Json>) -> Answer {
@@ -1374,6 +1386,84 @@ fn each_choice_is_prepared_and_answered_with_its_readiness_kind() {
 }
 
 #[test]
+fn a_backend_is_ready_by_its_own_readiness_and_a_key_not_set_names_its_variable() {
+    // A filler whose key the env file does not set (there is none), beside a segmenter
+    // that needs no key.
+    let config = kit_config("fill").replace(
+        "[backends.fill]\nkind = \"playkit\"\nmodel = \"fill\"\n",
+        "[backends.fill]\nkind = \"playkit\"\nmodel = \"fill\"\nkey_env = \"PLAYKIT_FILL_KEY\"\n",
+    );
+    assert!(config.contains("PLAYKIT_FILL_KEY"), "{config}");
+    let kitted = Kitted::configured("play-own-readiness", &config);
+    let arguments = json!({"image": kitted.picture(23), "prompt": "the hose"});
+    let prepared = kitted.prepare("remove_prompt", &arguments);
+    assert_eq!(prepared["ready"], false, "{prepared}");
+    // The segmenter is ready: the filler's missing key is not its own.
+    let segmenters = prepared["choices"]["backend"].as_array().unwrap();
+    assert!(!segmenters.is_empty(), "{prepared}");
+    for choice in segmenters {
+        assert_ne!(choice["kind"], "no_key", "{choice}");
+    }
+    assert!(
+        segmenters
+            .iter()
+            .any(|choice| choice["value"] == "default" && choice["ready"] == true),
+        "{prepared}"
+    );
+    // What is missing says which variable to set, by its name, in plain words.
+    let missing = &prepared["missing"][0];
+    assert_eq!(missing["capability"], "fill", "{prepared}");
+    assert_eq!(missing["kind"], "no_key", "{prepared}");
+    assert_eq!(
+        missing["why"], "the filler needs PLAYKIT_FILL_KEY in your env file",
+        "{prepared}"
+    );
+    // The plan's fill is neither local nor free, and says why.
+    let fill = prepared["needs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|need| need["capability"] == "fill")
+        .unwrap();
+    assert_eq!(fill["local"], false, "{fill}");
+    assert_eq!(fill["ready"], false, "{fill}");
+    assert_eq!(
+        fill["why"], "the filler needs PLAYKIT_FILL_KEY in your env file",
+        "{fill}"
+    );
+    let segment = prepared["needs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|need| need["capability"] == "segment")
+        .unwrap();
+    assert_eq!(segment["ready"], true, "{segment}");
+}
+
+#[test]
+fn a_variable_is_named_only_when_it_has_the_shape_of_one() {
+    use whizbang::backend_status::variable_shaped;
+    for name in ["FAL_KEY", "OPENAI_API_KEY", "PLAYKIT_TEST_KEY", "K2_V3"] {
+        assert!(variable_shaped(name), "{name}");
+    }
+    // A key pasted where its name belongs, or anything else, is not said back.
+    for name in [
+        "FALKEY",
+        "fal_key",
+        "sk-proj-abc_DEF",
+        "_FAL_KEY",
+        "FAL__KEY",
+        "FAL_KEY_",
+        "2FAL_KEY",
+        "FAL-KEY",
+        "",
+    ] {
+        assert!(!variable_shaped(name), "{name}");
+    }
+    assert!(!variable_shaped(&format!("A_{}", "B".repeat(63))));
+}
+
+#[test]
 fn an_event_message_with_an_escape_sequence_is_answered_escaped() {
     let kitted = Kitted::new("play-w1-escaped");
     let prepared = kitted.prepare("shout", &json!({}));
@@ -1557,6 +1647,19 @@ fn a_paid_run_says_what_the_ledger_settled_of_what_it_reserved() {
     assert!(
         (ended["reserved"].as_f64().unwrap() - bound).abs() < 1e-9,
         "{ended}"
+    );
+    // Hello, asked again once the run has ended (the top bar does), says what is spent
+    // since the reset: the four cents, of the ten dollars; and what is left.
+    let hello = kitted.api("GET", "/api/hello", None).json();
+    let allowance = &hello["allowance"];
+    assert_eq!(allowance["allowance"], 10.0, "{allowance}");
+    assert!(
+        (allowance["spent"].as_f64().unwrap() - 0.04).abs() < 1e-9,
+        "{allowance}"
+    );
+    assert!(
+        (allowance["left"].as_f64().unwrap() - 9.96).abs() < 1e-9,
+        "{allowance}"
     );
 }
 

@@ -157,6 +157,46 @@ pub fn readiness(over: &Over) -> Result<Vec<serde_json::Value>, String> {
     Ok(listed)
 }
 
+/// Whether a variable's name has the shape of one: upper-case words of letters and
+/// digits joined by underscores, as `FAL_KEY`, at most 64 characters. A key pasted where
+/// the name belongs is very unlikely to have it (keys hold lower-case letters, and
+/// rarely an underscore between upper-case words), so only such a name is ever said back.
+pub fn variable_shaped(name: &str) -> bool {
+    let mut words = name.split('_');
+    name.len() <= 64
+        && name.contains('_')
+        && words.next().is_some_and(|first| {
+            first.starts_with(|c: char| c.is_ascii_uppercase())
+                && first
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+        })
+        && words.all(|word| {
+            !word.is_empty()
+                && word
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+        })
+}
+
+/// The variable a backend's table names for the credential the env file does not set,
+/// by its name alone and only when it has the shape of one ([`variable_shaped`]): what
+/// the playground tells a person to set. The env file's values are not looked at.
+pub fn missing_variable(over: &Over, capability: &str, name: &str) -> Option<String> {
+    let configured = over.configured().ok()??;
+    let capability = CAPABILITIES.into_iter().find(|c| c.name() == capability)?;
+    let Some(NotReady::Missing { setting }) = configured.offers.not_ready(capability, name) else {
+        return None;
+    };
+    let config = configured.loaded.config();
+    let (_, backend) = config
+        .backends(capability)
+        .into_iter()
+        .find(|(offered, _)| *offered == name)?;
+    let (_, variable) = backend.credentials().find(|(key, _)| *key == *setting)?;
+    variable_shaped(variable).then(|| variable.to_owned())
+}
+
 /// Why one backend is not ready, as a kind; none when it is.
 fn kind_of(configured: &Configured, capability: Capability, name: &str) -> Option<MissingKind> {
     let offers = &configured.offers;

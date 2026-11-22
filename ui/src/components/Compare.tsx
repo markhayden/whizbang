@@ -9,8 +9,11 @@ export interface CompareProps {
   width: number;
   height: number;
   mode: CompareMode;
-  /** One scale for both pictures: 1 is their own size. */
-  zoom: number;
+  /**
+   * One scale for both pictures: 1 is their own size; "fit" scales them so the two fit
+   * the stage side by side, whatever its size, as it is measured.
+   */
+  zoom: number | "fit";
   onMode?: (mode: CompareMode) => void;
 }
 
@@ -47,6 +50,36 @@ function pixelsOf(src: string, width: number, height: number): Promise<Uint8Clam
   });
 }
 
+/** The gap between the two pictures side by side, in pixels (`.compare__side`). */
+const SIDE_GAP = 2;
+
+/**
+ * The one zoom at which two pictures of this size fit a stage of this size side by side:
+ * at most 4, and never past the stage's width or, when it is known, its height.
+ */
+export function fitZoom(width: number, height: number, stage: { width: number; height: number }): number {
+  if (width <= 0 || height <= 0 || stage.width <= 0) return 1;
+  const across = (stage.width - SIDE_GAP) / (2 * width);
+  const down = stage.height > 0 ? stage.height / height : Infinity;
+  return Math.max(0.01, Math.min(4, across, down));
+}
+
+/** The size of an element, again whenever it changes; none until it is measured. */
+function useMeasured(element: { current: HTMLElement | null }): { width: number; height: number } {
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    const node = element.current;
+    if (!node) return;
+    const measure = () => setSize((now) => (now.width === node.clientWidth && now.height === node.clientHeight ? now : { width: node.clientWidth, height: node.clientHeight }));
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  return size;
+}
+
 const MODES = [
   { value: "side", label: "Side by side" },
   { value: "swipe", label: "Swipe" },
@@ -57,6 +90,10 @@ const MODES = [
 export function Compare(props: CompareProps) {
   const [split, setSplit] = useState(50);
   const difference = useRef<HTMLCanvasElement>(null);
+  const stage = useRef<HTMLDivElement>(null);
+  const measured = useMeasured(stage);
+  // A stage not measured yet (a test's page has no layout) fits a half of 960 pixels.
+  const zoom = props.zoom === "fit" ? fitZoom(props.width, props.height, measured.width > 0 ? measured : { width: 960, height: 0 }) : props.zoom;
   useEffect(() => {
     if (props.mode !== "difference") return;
     let live = true;
@@ -72,11 +109,11 @@ export function Compare(props: CompareProps) {
       live = false;
     };
   }, [props.mode, props.before, props.after, props.width, props.height]);
-  const size = { width: `${props.width * props.zoom}px`, height: `${props.height * props.zoom}px` };
+  const size = { width: `${Math.floor(props.width * zoom)}px`, height: `${Math.floor(props.height * zoom)}px` };
   return (
     <div class="compare">
       <Segmented label="Compare" segments={MODES} value={props.mode} onChange={(mode) => props.onMode?.(mode as CompareMode)} />
-      <div class="compare__stage">
+      <div class="compare__stage" ref={stage}>
         {props.mode === "side" ? (
           <div class="compare__side">
             <figure class="compare__figure" style={size}>

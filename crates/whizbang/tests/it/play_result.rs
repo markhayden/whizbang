@@ -317,3 +317,44 @@ fn the_record_of_a_run_that_has_not_ended_is_refused_409() {
     let stopped = kitted.api("POST", &format!("/api/runs/{run}/cancel"), None);
     assert_eq!(stopped.status, 202);
 }
+
+#[test]
+fn the_record_of_a_run_stopped_while_its_fill_was_out_counts_that_request() {
+    let kitted = Kitted::new("result-cancelled-cost");
+    let arguments = json!({"image": kitted.picture(33), "prompt": "the hose"});
+    let prepared = kitted.prepare("remove_prompt", &arguments);
+    assert_eq!(prepared["ready"], true, "{prepared}");
+    // The segmenter answers; the fill is held until the run is stopped.
+    let before = kitted.kit().requests();
+    kitted.kit().set("hold").unwrap();
+    let started = kitted.begin(
+        "remove_prompt",
+        &arguments,
+        &prepared["handle"],
+        &fresh_id(),
+    );
+    assert_eq!(started.status, 201, "{}", started.text());
+    let run = started.json()["run"].as_str().unwrap().to_owned();
+    kitted.kit().set("release,hold").unwrap();
+    let limit = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while kitted.kit().requests() < before + 2 {
+        assert!(std::time::Instant::now() < limit, "the fill was never sent");
+        kitted.kit().set("release,hold").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let stopped = kitted.api("POST", &format!("/api/runs/{run}/cancel"), None);
+    assert_eq!(stopped.status, 202, "{}", stopped.text());
+    kitted.until_ended(&run);
+    let said = record(&kitted, &run);
+    assert_eq!(said["outcome"], "cancelled", "{said}");
+    // The fill no answer settled is booked at its bound, and the result says so.
+    let fill = whizbang_testkit::playkit::FILL_MICROS as f64 / 1e6;
+    assert!(
+        (said["cost"]["total"].as_f64().unwrap() - fill).abs() < 1e-9,
+        "{said}"
+    );
+    assert!(
+        (said["cost"]["unresolved"].as_f64().unwrap() - fill).abs() < 1e-9,
+        "{said}"
+    );
+}

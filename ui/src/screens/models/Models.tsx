@@ -230,6 +230,8 @@ function Allowance(props: { spend: Spend | null; client: Client; onReset: () => 
         setRefused(null);
         setDone(`The books are closed: the allowance is ${dollars(opened.allowance)} from now on.`);
         props.onReset();
+        // The top bar's allowance is read again.
+        if (typeof props.client.settled === "function") props.client.settled();
       },
       (error: unknown) => {
         setStep("asking");

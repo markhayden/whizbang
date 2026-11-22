@@ -18,6 +18,13 @@ function readiness(kind: string | null | undefined, ready: boolean): ReadinessKi
   return kind && READINESS.has(kind) && kind !== "ready" ? (kind as ReadinessKind) : "other";
 }
 
+/** What hello says of a backend, before any preparation: "checking" when it is not certain. */
+function hellosReadiness(backend: HelloBackend): ReadinessKind {
+  if (backend.ready === true) return "ready";
+  const said = readiness(backend.missing, false);
+  return said === "other" ? "checking" : said;
+}
+
 /** A field's label: the host's, or its name in words. */
 export function labelOf(field: TaskField): string {
   if (field.label) return field.label;
@@ -103,7 +110,13 @@ export function backendsFor(capability: string | null | undefined, backends: Hel
   return backends.filter((backend) => backend.capability === capability);
 }
 
-/** The choices of a backend field: from its own preparations when there are any, else hello's readiness. */
+/**
+ * The choices of a backend field: from its own preparations when there are any, else
+ * hello's readiness, until the first preparation answers. Hello's readiness is read
+ * without a probe: a backend it says is ready, or names a reason for (no key, not
+ * installed), is shown so; one it says nothing certain of is "checking", never "not
+ * ready" before anything has said so.
+ */
 export function choicesFor(field: TaskField, prepared: Prepared | null, backends: HelloBackend[]): Choice[] {
   const sizes = new Map(backends.map((backend) => [`${backend.capability}:${backend.name}`, backend.size ?? undefined]));
   const own = prepared?.choices?.[field.name];
@@ -119,7 +132,7 @@ export function choicesFor(field: TaskField, prepared: Prepared | null, backends
   return backendsFor(field.capability, backends).map((backend) => ({
     value: backend.name,
     label: backend.model ? `${backend.name} · ${backend.model}` : backend.name,
-    readiness: readiness(backend.missing, backend.ready),
+    readiness: hellosReadiness(backend),
     size: backend.size ?? undefined,
     why: backend.why,
   }));
@@ -149,6 +162,7 @@ export function planNeeds(prepared: Prepared | null, backends: HelloBackend[] = 
     each: need.each,
     total: need.bound,
     local: need.local,
+    ...(need.ready === false ? { ready: false, why: need.why ?? undefined } : {}),
   }));
 }
 
@@ -161,7 +175,9 @@ export function whyNotRun(task: Task | undefined, values: Values, prepared: Prep
   if (!prepared.ready) {
     const missing = Array.isArray(prepared.missing) ? prepared.missing : [];
     if (missing.length === 0) return prepared.why ?? "This call cannot run now.";
-    return missing.map((one) => `${one.capability}: ${one.why}`).join(" ");
+    // A key that is not set is said as the host says it, a sentence of its own: "the
+    // filler needs FAL_KEY in your env file".
+    return missing.map((one) => (one.kind === "no_key" ? `${one.why.charAt(0).toUpperCase()}${one.why.slice(1)}.` : `${one.capability}: ${one.why}`)).join(" ");
   }
   if (!prepared.handle) return "Preparing…";
   return null;

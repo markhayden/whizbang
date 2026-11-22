@@ -1,7 +1,7 @@
 // The client's fetches of artifacts: at most two at once, shared, aborted when nobody waits,
 // and their addresses kept in a cache that revokes the oldest (the review of task W1).
-import { describe, expect, it } from "vitest";
-import { ApiError, ARTIFACTS_AT_ONCE, artifactRetryMs, BLOBS_KEPT, createClient, nameOf } from "./api";
+import { describe, expect, it, vi } from "vitest";
+import { ApiError, ARTIFACTS_AT_ONCE, artifactRetryMs, BLOBS_KEPT, createClient, nameOf, POLL_IDLE_MS, POLL_MS } from "./api";
 
 /** A fetch whose answers the test hands out by hand. */
 function held() {
@@ -157,5 +157,78 @@ describe("a file's name as sent", () => {
     expect(Array.from(cut)).toHaveLength(200);
     expect(cut.endsWith("\u{1F4F7}")).toBe(true);
     expect(nameOf({ name: "short.png" })).toBe("short.png");
+  });
+});
+
+describe("an upload the host is too busy for", () => {
+  it("is sent again after its Retry-After, and kept", async () => {
+    const answers = [
+      new Response(JSON.stringify({ error: "at most two uploads at once" }), { status: 429, headers: { "Retry-After": "2" } }),
+      new Response(JSON.stringify({ id: "sha256:a", name: "porch.png" }), { status: 201 }),
+    ];
+    const sent: string[] = [];
+    const fetch = (path: string, init?: RequestInit) => {
+      sent.push(`${init?.method} ${path}`);
+      return Promise.resolve(answers.shift()!);
+    };
+    const waited: number[] = [];
+    const client = createClient({
+      token: "t",
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      pause: (ms) => {
+        waited.push(ms);
+        return Promise.resolve();
+      },
+    });
+    const kept = await client.uploadPicture(new File([new Uint8Array([1, 2, 3])], "porch.png", { type: "image/png" }));
+    expect(kept).toEqual({ id: "sha256:a", name: "porch.png" });
+    expect(sent).toEqual(["POST /api/pictures?name=porch.png", "POST /api/pictures?name=porch.png"]);
+    expect(waited).toEqual([2000]);
+  });
+
+  it("is given up after its tries, with the host's sentence", async () => {
+    const fetch = () => Promise.resolve(new Response(JSON.stringify({ error: "busy" }), { status: 429 }));
+    const client = createClient({ token: "t", fetch: fetch as unknown as typeof globalThis.fetch, pause: () => Promise.resolve() });
+    await expect(client.uploadPicture(new File([new Uint8Array([1])], "a.png", { type: "image/png" }))).rejects.toMatchObject({ status: 429, message: "busy" });
+  });
+});
+
+describe("a run followed on screen", () => {
+  it("is asked again soon while events come, and about once a second while a step runs without any", async () => {
+    vi.useFakeTimers();
+    try {
+      // Events at the first two answers, then none for a long step.
+      let asked = 0;
+      const at: number[] = [];
+      const fetch = () => {
+        asked += 1;
+        at.push(Date.now());
+        const next = Math.min(asked, 2);
+        return Promise.resolve(new Response(JSON.stringify({ run: "r", state: "running", events: [], next, skipped: 0 }), { status: 200 }));
+      };
+      const client = createClient({ token: "t", fetch: fetch as unknown as typeof globalThis.fetch });
+      const stop = client.pollRun("r", () => undefined);
+      await vi.advanceTimersByTimeAsync(10_000);
+      stop();
+      const gaps = at.slice(1).map((one, index) => one - at[index]!);
+      expect(gaps.slice(0, 2)).toEqual([POLL_MS, POLL_MS]);
+      expect(gaps.slice(2, 4)).toEqual([500, POLL_IDLE_MS]);
+      expect(Math.max(...gaps)).toBe(POLL_IDLE_MS);
+      // Ten seconds of a long step: about ten asks, not forty.
+      expect(asked).toBeLessThan(15);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("says the books may have changed once it has ended", async () => {
+    const fetch = () => Promise.resolve(new Response(JSON.stringify({ run: "r", state: "ended", outcome: "completed", events: [], next: 0, skipped: 0 }), { status: 200 }));
+    const client = createClient({ token: "t", fetch: fetch as unknown as typeof globalThis.fetch });
+    let heard = 0;
+    client.onSettled(() => (heard += 1));
+    client.pollRun("r", () => undefined);
+    await settle();
+    await settle();
+    expect(heard).toBe(1);
   });
 });

@@ -2,8 +2,8 @@
 // call carries the launch token in `Authorization: Bearer`, never in a cookie. A refusal
 // becomes an `ApiError` whose sentence the page shows. Uploads are held to two at once and
 // the rest queued, so of Chrome's six connections to the host at least four are left for
-// polls, Stop and Quit. A run open on screen is polled every 250 ms with the events after
-// the last one the page has.
+// polls, Stop and Quit. A run open on screen is polled with the events after the last one
+// the page has: every 250 ms while events come, backing off to once a second while none do.
 
 /** What `GET /api/hello` answers (plan m5, task W1, item 2). */
 export interface Hello {
@@ -16,7 +16,8 @@ export interface Hello {
   backends?: HelloBackend[];
   /** Why the backends' readiness could not be read, when it could not. */
   backends_error?: string;
-  allowance?: { allowance: number; left: number; since?: string };
+  /** The allowance of the newest reset, what is spent and held since it, and what is left. */
+  allowance?: { allowance: number; left: number; spent?: number; since?: string };
 }
 
 export interface HelloKit {
@@ -106,6 +107,10 @@ export interface PreparedNeed {
   each: number;
   bound: number;
   local?: boolean;
+  /** Whether its backend is ready; a need that is not is neither local nor free. */
+  ready?: boolean;
+  /** Why its backend is not ready, in words: "the filler needs FAL_KEY in your env file". */
+  why?: string | null;
 }
 
 /** One choice of a backend field, prepared alone. */
@@ -196,10 +201,13 @@ export class ApiError extends Error {
   readonly status: number;
   /** The kind of refusal the host named (`stale`, `conflict`, …), when it named one. */
   readonly kind: string | undefined;
-  constructor(status: number, sentence: string, kind?: string) {
+  /** The `Retry-After` a 429 carried, as the host said it. */
+  readonly retryAfter: string | undefined;
+  constructor(status: number, sentence: string, kind?: string, retryAfter?: string) {
     super(sentence);
     this.status = status;
     this.kind = kind;
+    this.retryAfter = retryAfter;
     this.name = "ApiError";
   }
 }
@@ -311,8 +319,13 @@ export function nameOf(file: { name: string }, most = 200): string {
 
 /** The most uploads the page sends at once (plan m5, "Who may call"). */
 export const UPLOADS_AT_ONCE = 2;
-/** How often a run open on screen is asked for (plan m5, "Live progress is polled"). */
+/**
+ * How often a run open on screen is asked for while its events come (plan m5, "Live
+ * progress is polled"); each answer that brings no new event doubles the wait, up to
+ * [`POLL_IDLE_MS`], so a step that runs for long is asked after about once a second.
+ */
 export const POLL_MS = 250;
+export const POLL_IDLE_MS = 1000;
 /** The longest a poll waits between two asks while the host answers 503. */
 export const POLL_MAX_MS = 4000;
 
@@ -347,14 +360,19 @@ export interface Client {
    */
   start(call: RunStart, requestId?: string): Promise<Started & { requestId: string }>;
   /**
-   * Ask every 250 ms with the events after the last the page has, until `next` says the run
-   * is done or the poll is stopped. A refusal (4xx) other than 429 stops it; a 503 (the host
-   * stopping) or a 429 doubles the wait, up to 4 s; any other failure keeps the pace.
+   * Ask with the events after the last the page has, until `next` says the run is done or
+   * the poll is stopped: 250 ms after an answer that brought new events, and twice the last
+   * wait, up to a second, after one that brought none. A refusal (4xx) other than 429 stops
+   * it; a 503 (the host stopping) or a 429 doubles the wait, up to 4 s; any other failure
+   * keeps the pace.
    */
   poll<T>(path: (after: number) => string, next: (answer: T) => { after: number; done: boolean }, onError?: (error: ApiError) => void): () => void;
   /** Prepare a call: readiness per choice, each need's bound, a handle when it is ready. */
   prepare(action: string, args: Record<string, unknown>): Promise<Prepared>;
-  /** Follow a run: every 250 ms, the events after the last the page has, until it ends. */
+  /**
+   * Follow a run: the events after the last the page has, as [`Client.poll`] paces them,
+   * until it ends; then [`Client.settled`].
+   */
   pollRun(run: string, onAnswer: (answer: Polled) => void, onError?: (error: ApiError) => void): () => void;
   /** Stop a run: the host answers "stopping" at once. */
   cancelRun(run: string): Promise<{ run: string; state: string }>;
@@ -385,6 +403,13 @@ export interface Client {
   blobUrl(path: string, signal?: AbortSignal): Promise<string>;
   /** The bytes a `GET` of the API answers, as they came: a report, a record, a download. */
   bytes(path: string): Promise<Blob>;
+  /**
+   * Something the store's books hold may have changed: a run the page followed ended, or
+   * the allowance was reset. Whoever listens (the top bar's allowance) reads it again.
+   */
+  settled(): void;
+  /** Listen for [`Client.settled`]; the function returned stops listening. */
+  onSettled(listener: () => void): () => void;
 }
 
 async function refusal(response: Response): Promise<ApiError> {
@@ -397,7 +422,7 @@ async function refusal(response: Response): Promise<ApiError> {
   } catch {
     // No JSON body: the sentence for the status stands.
   }
-  return new ApiError(response.status, sentence, kind);
+  return new ApiError(response.status, sentence, kind, response.headers?.get?.("Retry-After") ?? undefined);
 }
 
 export function createClient(options: ClientOptions): Client {
@@ -476,7 +501,15 @@ export function createClient(options: ClientOptions): Client {
       await pause(artifactRetryMs(response.headers.get("Retry-After"), attempt));
     }
   };
+  const listeners = new Set<() => void>();
   const client: Client = {
+    settled: () => {
+      for (const listener of [...listeners]) listener();
+    },
+    onSettled: (listener) => {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
     setToken: (next) => {
       token = next;
     },
@@ -494,14 +527,28 @@ export function createClient(options: ClientOptions): Client {
         await pause(retryPause());
       }
     },
-    upload: <T>(path: string, file: Blob) => uploads.run(() => send<T>("POST", path, file, file.type || "application/octet-stream")),
+    // An upload the host is too busy for (it takes two at once, from every tab) is sent
+    // again after its `Retry-After`, as an artifact is, keeping its place in the queue.
+    upload: <T>(path: string, file: Blob) =>
+      uploads.run(async () => {
+        for (let attempt = 1; ; attempt += 1) {
+          try {
+            return await send<T>("POST", path, file, file.type || "application/octet-stream");
+          } catch (error) {
+            if (!(error instanceof ApiError) || error.status !== 429 || attempt >= ARTIFACT_TRIES) throw error;
+            await pause(artifactRetryMs(error.retryAfter ?? null, attempt));
+          }
+        }
+      }),
     prepare: (action, args) => client.request<Prepared>("POST", "/api/prepare", { action, arguments: args }),
     pollRun: (run, onAnswer, onError) =>
       client.poll<Polled>(
         (after) => `/api/runs/${encodeURIComponent(run)}?after=${after}`,
         (answer) => {
           onAnswer(answer);
-          return { after: answer.next, done: answer.state !== "running" && answer.state !== "stopping" };
+          const done = answer.state !== "running" && answer.state !== "stopping";
+          if (done) client.settled();
+          return { after: answer.next, done };
         },
         onError,
       ),
@@ -598,15 +645,16 @@ export function createClient(options: ClientOptions): Client {
           const answer = await client.request<T>("GET", path(after));
           if (stopped) return;
           const said = next(answer);
+          // New events: asked again soon. None: the wait doubles, up to once a second.
+          wait = said.after !== after ? POLL_MS : Math.min(POLL_IDLE_MS, wait * 2);
           after = said.after;
-          wait = POLL_MS;
           if (said.done) return;
         } catch (error) {
           if (stopped) return;
           const refused = error instanceof ApiError ? error : new ApiError(0, sentenceFor(0));
           onError?.(refused);
           if (refused.status >= 400 && refused.status < 500 && refused.status !== 429) return;
-          wait = refused.status === 503 || refused.status === 429 ? Math.min(POLL_MAX_MS, wait * 2) : POLL_MS;
+          wait = refused.status === 503 || refused.status === 429 ? Math.min(POLL_MAX_MS, wait * 2) : Math.max(POLL_MS, wait);
         }
         timer = setTimeout(() => void tick(), wait);
       };

@@ -686,9 +686,15 @@ fn a_reset_from_the_page_needs_the_amount_and_the_word_and_closes_the_books() {
     assert_eq!(later["epoch"], 2);
     assert_eq!(later["counted"]["sum"]["usd"], 0.0, "{later}");
     assert_eq!(later["left"], 12.5);
-    // And hello says the same allowance.
+    // And hello says the same allowance, with what is spent since the reset (the top
+    // bar's figure) beside what is left.
     let hello = hosted.api("GET", "/api/hello", None).json();
     assert_eq!(hello["allowance"]["allowance"], 12.5);
+    assert_eq!(
+        hello["allowance"]["spent"], later["counted"]["sum"]["usd"],
+        "{hello}"
+    );
+    assert_eq!(hello["allowance"]["left"], 12.5);
 }
 
 #[test]

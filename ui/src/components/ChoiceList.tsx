@@ -13,7 +13,8 @@ export type ReadinessKind =
   | "damaged"
   | "not_in_catalogue"
   | "not_for_this_platform"
-  | "other";
+  | "other"
+  | "checking";
 
 export interface Choice {
   value: string;
@@ -38,6 +39,8 @@ export function readinessMark(kind: ReadinessKind, size?: number): { text: strin
       return { text: size === undefined ? "UPDATE" : `UPDATE · ${bytes(size)}`, tone: "volt" };
     case "damaged":
       return { text: "DAMAGED", tone: "lacquer" };
+    case "checking":
+      return { text: "CHECKING", tone: "muted" };
     case "not_in_catalogue":
     case "not_for_this_platform":
     case "other":
@@ -68,7 +71,7 @@ export function ChoiceList(props: ChoiceListProps) {
         return (
           <label
             key={choice.value}
-            class={cx("choice-list__row", selected && "choice-list__row--selected", choice.readiness !== "ready" && "choice-list__row--unready")}
+            class={cx("choice-list__row", selected && "choice-list__row--selected", choice.readiness !== "ready" && choice.readiness !== "checking" && "choice-list__row--unready")}
             title={choice.why}
           >
             <input

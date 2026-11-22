@@ -52,9 +52,20 @@ export function usePictures(client: Client | undefined, asked: unknown, on = tru
 
 /** The address the page shows an artifact from, once its bytes are here. */
 export function useArtifact(client: Client, id: string | null | undefined, edge?: number): string | undefined {
+  return useArtifactState(client, id, edge).url;
+}
+
+/**
+ * The same, and why the bytes could not be had when they could not (a picture the host
+ * was too busy for every time it was asked, or one the store does not hold), so a screen
+ * says so rather than "Loading" for ever.
+ */
+export function useArtifactState(client: Client, id: string | null | undefined, edge?: number): { url?: string; failed?: string } {
   const [url, setUrl] = useState<string | undefined>(undefined);
+  const [failed, setFailed] = useState<string | undefined>(undefined);
   useEffect(() => {
     setUrl(undefined);
+    setFailed(undefined);
     if (!id) return;
     let live = true;
     let path: string;
@@ -68,14 +79,14 @@ export function useArtifact(client: Client, id: string | null | undefined, edge?
     const asking = new AbortController();
     client.blobUrl(path, asking.signal).then(
       (made) => live && setUrl(made),
-      () => undefined,
+      (error: unknown) => live && setFailed(error instanceof Error ? error.message : String(error)),
     );
     return () => {
       live = false;
       asking.abort();
     };
   }, [id, edge]);
-  return url;
+  return { url, failed };
 }
 
 /** The time now, again every `ms` while `on`. */

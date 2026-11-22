@@ -124,6 +124,19 @@ describe("PlanBlock", () => {
     expect(view.get(".plan-block__total").textContent).toBe("free");
     expect(view.get("section").getAttribute("aria-busy")).toBe("true");
   });
+  it("calls a need whose backend is not ready neither local nor free, says why, and holds nothing", () => {
+    const unready = { capability: "fill", backend: "default", requests: 1, each: 0, total: 0, local: false, ready: false, why: "the filler needs FAL_KEY in your env file" };
+    expect(needFigures(unready)).toBe("not ready");
+    const view = render(<PlanBlock needs={[needs[0]!, unready]} bound={0} attempts={{ asked: 3, allowed: 1 }} ready={false} />);
+    expect(view.text()).not.toContain("1 req · local");
+    expect(view.get(".plan-block__why").textContent).toBe("the filler needs FAL_KEY in your env file");
+    expect(view.get(".plan-block__total").textContent).toBe("not ready");
+    expect(view.text()).toContain("3 asked");
+    expect(view.text()).not.toContain("of at most");
+    // Ready, a loop whose allowance lets fewer attempts run than were asked says so.
+    view.rerender(<PlanBlock needs={[needs[1]!]} bound={0.04} attempts={{ asked: 3, allowed: 1 }} ready />);
+    expect(view.text()).toContain("1 of the 3 asked");
+  });
 });
 
 describe("StepList", () => {

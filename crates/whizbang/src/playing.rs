@@ -516,6 +516,10 @@ impl Play for Playground {
             .and_then(|row| row["name"].as_str().map(str::to_owned))
     }
 
+    fn key_variable(&self, capability: &str, backend: &str) -> Option<String> {
+        backend_status::missing_variable(&self.over, capability, backend)
+    }
+
     fn admitted(&self, id: &RequestId) -> Option<RunId> {
         let store = self.store().ok()?;
         let generation = store.snapshot().ok()?;

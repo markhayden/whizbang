@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "preact/test-utils";
 import { ApiError, type Client, type Hello, type Prepared } from "../api";
 import { HOSTILE, click, input, render } from "../test/render";
-import { offered, Workspace } from "./workspace/Workspace";
+import { bindingsOf, offered, Workspace } from "./workspace/Workspace";
 
 const HELLO: Hello = {
   version: "0.1.0",
@@ -98,7 +98,7 @@ describe("the workspace", () => {
     input(view.get<HTMLInputElement>("#field-prompt"), "hose");
     await later(300);
     expect(view.get<HTMLButtonElement>(".button--primary").disabled).toBe(true);
-    expect(view.text()).toContain("fill: the backend's key is not set");
+    expect(view.text()).toContain("The backend's key is not set.");
     view.unmount();
   });
 
@@ -195,6 +195,30 @@ describe("the workspace", () => {
     view.unmount();
   });
 
+  it("lists a run that ended between the first read of history and the first look at the runs going", async () => {
+    // The screen opens right after a run ends: history is read before the store lists the
+    // run, and the runs going, asked beside it, are answered after it has ended, so the
+    // run is never seen going. The lists are read again once that first look answers.
+    const mask = `sha256:${"77".repeat(32)}`;
+    let ended = false;
+    const listed = { run: "r-just", action: "protect", title: "Protect a first edit", words: ["the hose"], result: "done", at_ms: Date.now(), outputs: [{ port: "mask", type: "mask", id: mask }] };
+    const request = vi.fn(() => Promise.resolve({ runs: ended ? [listed] : [], more: false }));
+    let answerOpen: (runs: never[]) => void = () => undefined;
+    const openRuns = vi.fn(() => new Promise<never[]>((resolve) => (answerOpen = resolve)));
+    const hello: Hello = { version: "0.1.0", kits: [{ id: "rascal", name: "Rascal", tasks: [{ name: "protect", title: "Protect a first edit", fields: [{ name: "mask", kind: "artifact", artifact: "mask" }] }] }] };
+    const made = { ...client(() => ({ ready: false })), request, openRuns } as unknown as Client;
+    const view = render(<Workspace kit="rascal" task="protect" hello={hello} client={made} />);
+    await flush();
+    expect(view.text()).toContain("Not run yet");
+    ended = true;
+    await act(async () => answerOpen([]));
+    await flush();
+    expect(view.text()).not.toContain("Not run yet");
+    expect(view.get(".workspace__runs .continue-row").textContent).toContain("the hose");
+    expect(view.get(".binding-picker [role=option]").textContent).toContain("the hose");
+    view.unmount();
+  });
+
   it("says why history could not be read, in place of the empty lists", async () => {
     const request = vi.fn(() => Promise.reject(new ApiError(501, "this build keeps no history")));
     const hello: Hello = { version: "0.1.0", kits: [{ id: "rascal", name: "Rascal", tasks: [{ name: "protect", title: "Protect a first edit", fields: [{ name: "mask", kind: "artifact", artifact: "mask" }] }] }] };
@@ -223,3 +247,16 @@ describe("the workspace", () => {
 async function flush() {
   for (let at = 0; at < 6; at += 1) await later(0);
 }
+
+describe("the outputs a binding picker offers", () => {
+  it("say what each run was asked, as its runs list says it", () => {
+    const runs = [
+      { run: "r-2", action: "remove_checked", title: "Remove, checked", words: ["the rake"], pictures: ["yard.png"], result: "pass" as const, at_ms: 1000, outputs: [{ port: "mask", type: "mask", id: "sha256:2" }] },
+      { run: "r-1", action: "remove_checked", title: "Remove, checked", words: [], pictures: [], result: "pass" as const, at_ms: 1000, outputs: [{ port: "mask", type: "mask", id: "sha256:1" }] },
+    ];
+    expect(bindingsOf(runs, "mask", 1000).map((one) => [one.id, one.asked, one.task])).toEqual([
+      ["sha256:2", "the rake · yard.png", "Remove, checked"],
+      ["sha256:1", undefined, "Remove, checked"],
+    ]);
+  });
+});

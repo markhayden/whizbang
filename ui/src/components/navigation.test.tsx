@@ -183,15 +183,18 @@ describe("SearchPalette", () => {
 });
 
 describe("TopBar, Wordmark and BrandArt", () => {
-  it("renders the wordmark, where you are, search, the pages and the allowance", () => {
+  it("renders the wordmark, where you are, search, the pages and the allowance spent", () => {
     const onSearch = vi.fn();
-    const view = render(<TopBar where={<span>Home</span>} left={7.61} allowance={10} current="history" homeHref="#/" historyHref="#/history" modelsHref="#/models" onSearch={onSearch} />);
-    expect(view.text()).toBe("whizbangHomeSearch tasks, tools and pictures⌘KHistoryModels$7.61 / 10.00");
+    const view = render(<TopBar where={<span>Home</span>} spent={2.39} allowance={10} current="history" homeHref="#/" historyHref="#/history" modelsHref="#/models" onSearch={onSearch} />);
+    expect(view.text()).toBe("whizbangHomeSearch tasks, tools and pictures⌘KHistoryModels$2.39 spent of $10.00");
     expect(view.get(".top-bar__link--current").textContent).toBe("History");
     click(view.get(".top-bar__search"));
     expect(onSearch).toHaveBeenCalled();
     view.rerender(<TopBar where={null} homeHref="#/" historyHref="#/history" modelsHref="#/models" />);
     expect(view.all(".top-bar__allowance")).toHaveLength(0);
+    // A store no reset has given an allowance says so, rather than nothing.
+    view.rerender(<TopBar where={null} allowance={null} homeHref="#/" historyHref="#/history" modelsHref="#/models" />);
+    expect(view.get(".top-bar__allowance").textContent).toBe("no allowance");
   });
   it("sets the wordmark in type until the art is committed, then shows the art", () => {
     const view = render(<Wordmark />);

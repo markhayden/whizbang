@@ -12,12 +12,12 @@ import { VerdictCard } from "../../components/VerdictCard";
 import { draftOf, localStore, saveDraft } from "../../drafts";
 import { endTag, fieldsOf, labelOf, taskOf } from "../../form";
 import { dollars, elapsed, middle } from "../../format";
-import { useArtifact, useImageSize } from "../../hooks";
+import { useArtifact, useArtifactState, useImageSize } from "../../hooks";
 import { actionOf } from "../../keyboard";
 import { hrefOf } from "../../routes";
 import { StoredPicture } from "../shared";
 import "./result.css";
-import { attemptWords, costLines, draftFrom, fetchCommand, fetchRecord, flagsOf, targetsOf, verdictOf, verdictTitle, type CommandView, type OpenDraft, type RunRecordView } from "./record";
+import { attemptWords, costLines, draftFrom, fetchCommand, fetchRecord, flagsOf, nothingFound, targetsOf, verdictOf, verdictTitle, type CommandView, type OpenDraft, type RunRecordView } from "./record";
 
 export interface ResultProps {
   id: string;
@@ -147,6 +147,9 @@ export function Result(props: ResultProps) {
 
   const verdict = verdictOf(record.verdict?.word);
   const tag = endTag(record.outcome, record.verdict?.word);
+  // A step that found nothing (a vague prompt) is said plainly; the record's own words
+  // stay beside it, smaller.
+  const nothing = nothingFound(record);
   const took = record.start_ms && record.end_ms ? elapsed(record.end_ms - record.start_ms) : null;
   const total = record.cost?.total ?? 0;
   const meta = [`run ${middle(record.run, 18)}`, took, total > 0 || (record.reserved ?? 0) > 0 ? `${dollars(total)}${record.reserved ? ` of up to ${dollars(record.reserved)}` : ""}` : "free"].filter(Boolean).join(" · ");
@@ -161,7 +164,7 @@ export function Result(props: ResultProps) {
             <h1 id="result-title" class="workspace__title">
               {record.title ?? task?.title ?? record.action ?? "Result"}
             </h1>
-            <Tag kind={tag} />
+            <Tag kind={tag} detail={nothing ? "nothing found" : undefined} />
           </div>
           <p class="workspace__purpose mono">{meta}</p>
           <a class="run__report" href={hrefOf({ name: "report", id: props.id })}>
@@ -264,8 +267,13 @@ export function Result(props: ResultProps) {
       <aside class="workspace__right" aria-label="Summary">
         <h2 class="section-title">Summary</h2>
         {verdict ? <VerdictCard verdict={verdict} title={verdictTitle(verdict)} detail={record.attempts?.kept ? `attempt ${record.attempts.kept}` : undefined} reasons={record.verdict?.reasons ?? []} /> : null}
-        {record.error ? <p class="field__error">{`${record.error.kind}: ${record.error.message}`}</p> : null}
-        {record.invalid ? <p class="field__error">{record.invalid}</p> : null}
+        {nothing ? (
+          <p class="field__error result__nothing" role="status">
+            {nothing}
+          </p>
+        ) : null}
+        {record.error ? <p class={nothing ? "workspace__purpose mono" : "field__error"}>{`${record.error.kind}: ${record.error.message}`}</p> : null}
+        {record.invalid && record.invalid !== record.error?.message ? <p class={nothing ? "workspace__purpose mono" : "field__error"}>{record.invalid}</p> : null}
         {attempts.length > 0 ? (
           <section aria-label="How it got there">
             <h2 class="section-title">How it got there</h2>
@@ -287,6 +295,9 @@ export function Result(props: ResultProps) {
         <section aria-label="Cost">
           <h2 class="section-title">Cost</h2>
           {costLines(record.cost).length > 0 ? <CostTable lines={costLines(record.cost)} /> : <p class="empty">Nothing was asked of a model: free.</p>}
+          {(record.cost?.unresolved ?? 0) > 0 ? (
+            <p class="workspace__purpose result__unresolved">{`Of ${dollars(total)}, ${dollars(record.cost?.unresolved ?? 0)} is of requests no answer settled: each is counted at its bound.`}</p>
+          ) : null}
         </section>
         {props.steps && props.steps.length > 0 ? (
           <section aria-label="Steps">
@@ -309,18 +320,25 @@ function Compared(props: { client: Client; before: string; after: string; mode: 
   const after = useArtifact(props.client, props.after);
   const size = useImageSize(after);
   if (!before || !after || !size) return <p class="empty workspace__nothing">Loading the pictures…</p>;
-  // One zoom for both, so the picture fits a half of the stage side by side.
-  const zoom = Math.min(4, Math.max(0.05, 480 / Math.max(size.width, size.height)));
-  return <Compare before={before} after={after} width={size.width} height={size.height} mode={props.mode} zoom={zoom} onMode={props.onMode} />;
+  // One zoom for both, at which the two fit the stage side by side, as it is measured.
+  return <Compare before={before} after={after} width={size.width} height={size.height} mode={props.mode} zoom="fit" onMode={props.onMode} />;
 }
 
 /** One picture with its marks: the mask over the result, or the verdict's places. */
 function Shown(props: { client: Client; id: string | null; mask: string | null; record: RunRecordView; zoom: number | "fit"; onZoom: (zoom: number | "fit") => void; diagnostic: string | null }) {
-  const src = useArtifact(props.client, props.id);
+  const shown = useArtifactState(props.client, props.id);
+  const src = shown.url;
   const maskSrc = useArtifact(props.client, props.mask);
   const size = useImageSize(src);
   const note = props.diagnostic ? <p class="workspace__purpose result__diagnostic">{props.diagnostic}</p> : null;
   if (!props.id) return <p class="empty workspace__nothing">This run made no picture to show.</p>;
+  if (shown.failed && !src) {
+    return (
+      <p class="field__error workspace__nothing" role="alert">
+        {`The picture could not be loaded: ${shown.failed}`}
+      </p>
+    );
+  }
   if (!src || !size) {
     return (
       <>

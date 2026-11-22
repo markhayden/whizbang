@@ -6,7 +6,7 @@ import { DRAFTS_KEY, readDrafts } from "../../drafts";
 import type { Heard } from "../../form";
 import { HOSTILE, click, expectShownAsText, render } from "../../test/render";
 import { withJob } from "../workspace/Workspace";
-import { checksEnded, costLines, draftFrom, flagsOf, targetsOf, verdictTitle, type RunRecordView } from "./record";
+import { checksEnded, costLines, draftFrom, flagsOf, nothingFound, targetsOf, verdictTitle, type RunRecordView } from "./record";
 import { Result } from "./Result";
 
 const A = `sha256:${"a".repeat(64)}`;
@@ -65,6 +65,14 @@ function client(): Client {
 }
 
 describe("what the page makes of a record", () => {
+  it("says plainly that nothing matched a prompt, and nothing for any other end", () => {
+    const invalid = { invalid: null, error: { kind: "invalid", message: "the step segment (segment) found nothing, so the step select (select) had no mask to take" }, arguments: [{ name: "prompt", value: "the thing" }] };
+    expect(nothingFound(invalid)).toBe('Nothing in the picture matched "the thing". Name what to remove more exactly.');
+    expect(nothingFound({ ...invalid, arguments: [] })).toContain("Nothing was found in the picture");
+    expect(nothingFound({ invalid: null, error: { kind: "failed", message: "the filler timed out" }, arguments: [] })).toBeNull();
+    expect(nothingFound({ invalid: null, error: null, arguments: [] })).toBeNull();
+  });
+
   it("says the cost by capability and backend, free local work as free", () => {
     expect(costLines(RECORD.cost)).toEqual([
       { what: "segment", backend: "local-seg local", cost: 0 },

@@ -19,7 +19,10 @@
 //! `release`; `unsure` makes the judge say it cannot tell, tentatively, of the item a
 //! `fail` violates; `placed` makes a violation cite a place, a box over the middle half of
 //! the candidate; `markup` puts markup into every reason the judge gives (plan m5, task
-//! W3: a report shows them as text); `reset` is `pass` and `release`, without either. A test or the fixture host sets it; nothing else does.
+//! W3: a report shows them as text); `nothing` makes the segmenter find nothing for a
+//! phrase (a prompt too vague to match), so the step after it has no mask to take;
+//! `reset` is `pass` and `release`, without any of the others. A test or the fixture host
+//! sets it; nothing else does.
 //!
 //! A table of the kind may name a credential (`key_env`) and an address (`url`): a
 //! backend whose credential is not set is not ready, as a real one is, and the address
@@ -74,6 +77,8 @@ struct Script {
     markup: bool,
     /// Whether a violation cites a place.
     placed: bool,
+    /// Whether the segmenter finds nothing for a phrase.
+    nothing: bool,
     /// How many times `release` was said: a request held lets go once it changes, so
     /// `release,hold` lets every request held go and holds those that come after.
     released: u64,
@@ -100,6 +105,7 @@ impl PlayKit {
                 answer: Answer::Pass,
                 markup: false,
                 placed: false,
+                nothing: false,
                 released: 0,
             }),
             changed: Condvar::new(),
@@ -108,7 +114,8 @@ impl PlayKit {
     }
 
     /// Sets the script from its words, comma separated: `hold`, `release`, `pass`,
-    /// `fail`, `unsure`, `markup`, `reset`. A word it does not know is refused, and nothing is changed.
+    /// `fail`, `unsure`, `markup`, `placed`, `nothing`, `reset`. A word it does not know is
+    /// refused, and nothing is changed.
     pub fn set(&self, words: &str) -> Result<(), String> {
         let words: Vec<&str> = words
             .split(',')
@@ -125,13 +132,14 @@ impl PlayKit {
                 "unsure",
                 "markup",
                 "placed",
+                "nothing",
                 "reset",
             ]
             .contains(w)
         }) {
             let _ = unknown;
             return Err(
-                "a script is hold, hold-pictures, release, pass, fail, unsure, markup, placed or reset"
+                "a script is hold, hold-pictures, release, pass, fail, unsure, markup, placed, nothing or reset"
                     .to_owned(),
             );
         }
@@ -150,9 +158,11 @@ impl PlayKit {
                 "unsure" => script.answer = Answer::Unsure,
                 "markup" => script.markup = true,
                 "placed" => script.placed = true,
+                "nothing" => script.nothing = true,
                 _ => {
                     script.markup = false;
                     script.placed = false;
+                    script.nothing = false;
                     script.hold = false;
                     script.hold_pictures = false;
                     script.released += 1;
@@ -311,9 +321,14 @@ impl Segmenter for PlaySegmenter {
 
     fn segment(&self, request: &SegmentRequest, bounds: &Bounds) -> Result<SegmentResponse, Fault> {
         self.kit.arrive(bounds)?;
+        let nothing = lock(&self.kit.script).nothing;
         let (width, height) = (request.image().width(), request.image().height());
         let mut answers = Vec::new();
         for query in request.queries() {
+            if nothing && matches!(query.asked(), Asked::Phrase(_)) {
+                answers.push(Vec::new());
+                continue;
+            }
             let found = match query.asked() {
                 Asked::Phrase(_) => [width / 4, height / 4, 3 * width / 4, 3 * height / 4],
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
