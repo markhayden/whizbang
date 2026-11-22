@@ -170,3 +170,9 @@ in code. It reads the store only, and never runs or sends anything.
   its seal, labels and corrections; the commit; and each judge's backend, model and the
   versions its records report. Never an item, a family, a verdict of an item or a word of a
   judge. It prints the counts and the outcomes.
+- **Plan e1's judge round** (task J1) is scored from three matrices under one arm,
+  `C;submission=v1`: the format round's (`matrices/e-submission.toml`, whose cells of that arm
+  and repetition 1 give the three small judges on the dev sets), `matrices/e-judges-dev.toml`
+  (the other two judges on the ten dev sets) and `matrices/e-judges-blind.toml` (all five on
+  `source-fidelity/blind-v3`), so every judge is scored on the same 253 items. Its record is
+  `docs/results/e-judges.md`.
