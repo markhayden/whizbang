@@ -143,6 +143,20 @@ Rung 2 is **shown in part**, and this part says which.
   measured there against a clean picture, and no first attempt is compared with a kept
   one: whether a retry makes a result better is not known. That is rung 2 proper, and it
   is milestone E's with rungs 3 and 4.
+- **The retries live, on pictures where one pass leaves something behind.** The loop was
+  run on the 20 pictures of `segmentation/segment-01`, each with a hand-drawn truth mask,
+  under its judge `gemini-4-argon` and under `claude-haiku-5-5`, two repetitions each
+  (`docs/results/e-loop.md`, plan e1, task L2). 26 of Argon's 40 runs retried and 7 of
+  Haiku's, and both kinds of retry were made: 19 wider and 16 located under Argon, 1 and 9
+  under Haiku. Each attempt's mask is scored there against the truth mask by `whizbang eval
+  loop score`. Under Argon a retry never lowered mask coverage: of 35 compared with the
+  attempt before, 6 raised it (4 in keep-the-hole, 2 in parts) and 29 left it within 0.01.
+  The kept masks' mean coverage was 0.88 against the first masks' 0.86, and 14 of 37 runs
+  ended with the kept mask under-covered, the 4 that passed among them. When the mask was
+  under-covered, Argon found a confident violation of `RQ1` in 32 attempts and none in 4;
+  and 23 of its 33 runs that ended `fail` had a kept mask that was not under-covered. Under
+  Haiku 1 retry of 10 raised coverage. These are about the mask, not the finished picture:
+  whether a fill left a trace, or the judge is strict, waits on a person's marks.
 - **Visual quality.** No person has looked at what the loop hands back:
   not yet confirmed by a person; owed by milestone E (the owner's decision of 2026-11-19)
 
@@ -201,6 +215,7 @@ cap of 5.94 covers them.
 | On Linux no local segmenter runs, so the loop is not ready there | `docs/guides/loop.md` |
 | The check is squint's `source-fidelity` as it ships, and is unverified on fresh data: a judge's verdict is its own, and the loop takes it as given | `docs/reference/tools/source-fidelity.md` |
 | The live record is one synthetic set and one phrase, on masks that covered the drawn thing whole; it scores nothing | `docs/results/m4-loop.md` |
+| On segment-01 a retry raised mask coverage in 6 of 35 cases under its judge and lowered it in none, and the judge passed 4 runs whose masks were under-covered; the masks are scored against hand-drawn truth masks, whose edges are imprecise, and no person has marked the finished pictures | `docs/results/e-loop.md` |
 
 ## Mark and history
 
@@ -212,7 +227,7 @@ keep are reported and not scored, and its visual quality is owed by milestone E
 | Rung | Result | Evidence |
 |---|---|---|
 | 1. Single examples | Shown | The three examples above, run as tests under a fake segmenter, a scripted filler and a scripted judge: one of each kind of retry, and a case it handles badly |
-| 2. Scored alone | In part | Preservation, `checked::every_pixel_outside_the_kept_mask_is_the_pictures_own`; the mask and the fill, `docs/results/m3-edits.md`; what the loop adds, reported in `docs/results/m4-loop.md` and not scored; visual quality owed by milestone E |
+| 2. Scored alone | In part | Preservation, `checked::every_pixel_outside_the_kept_mask_is_the_pictures_own`; the mask and the fill, `docs/results/m3-edits.md`; what the loop adds, reported in `docs/results/m4-loop.md` and not scored; the retries live on segment-01, their masks scored against truth masks, in `docs/results/e-loop.md`; visual quality owed by milestone E |
 | 3 and 4 | Not yet | Milestone E |
 
 **Gates.** None faced.
@@ -220,4 +235,6 @@ keep are reported and not scored, and its visual quality is owed by milestone E
 **History.** Built by plan m4, task L1 (ADR 0039): the loop, its table of what may enlarge
 a mask, its one budget and its record; rascal's loop is its model, narrowed (no retry on an
 `unsure`). Plan m4, task L2: the located retry, with `carry`. Plan m4, task E1: this record
-and the live record.
+and the live record. Plan e1, task L2: the loop round on segment-01, where both kinds of
+retry were made live, its masks scored against truth masks, and its record; the mark is
+unchanged, since the finished pictures are not yet judged by a person.

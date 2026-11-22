@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { ApiError, backendsOf, tasksOf, type Client, type Hello, type OpenRun, type Picture, type Prepared, type Task, type TaskField } from "../../api";
-import { BindingPicker } from "../../components/BindingPicker";
+import { BindingPicker, type Binding } from "../../components/BindingPicker";
 import { Button } from "../../components/Button";
 import { Canvas, type DrawTool, type Mark } from "../../components/Canvas";
 import { ChoiceList } from "../../components/ChoiceList";
@@ -18,15 +18,15 @@ import { SentFromBanner } from "../../components/SentFromBanner";
 import { TextField } from "../../components/TextField";
 import { dropDraft, draftOf, localStore, saveDraft } from "../../drafts";
 import { argumentsOf, choicesFor, displayed, fieldsOf, given, labelOf, planNeeds, seeded, segmentQuery, shapeOf, whyNotRun, type Values } from "../../form";
-import { ago, dollars } from "../../format";
+import { ago, dollars, middle } from "../../format";
 import { PICTURES_PAGE, useArtifact, useImageSize } from "../../hooks";
 import { actionOf } from "../../keyboard";
-import { seenOutputs } from "../../outputs";
 import { createPreparer, type Preparer } from "../../preparer";
 import { hrefOf } from "../../routes";
 import { EmptyScreen } from "../Empty";
 import "../result/result.css";
 import { toneOf } from "../result/record";
+import { listRuns, runsMaking, type HistoryRun } from "../history/calls";
 import { Library } from "../shared";
 
 export interface WorkspaceProps {
@@ -127,6 +127,140 @@ function firstId(value: unknown): string | null {
   return null;
 }
 
+/** How many earlier runs of a task the right column lists a page. */
+export const EARLIER_PAGE = 10;
+
+/** The types of artifact a task's binding pickers take: every artifact port's but a picture's. */
+function bindingTypes(fields: TaskField[]): string[] {
+  const types = fields.filter((field) => field.kind === "artifact" && field.artifact && field.artifact !== "image").map((field) => field.artifact as string);
+  return [...new Set(types)];
+}
+
+/** The outputs of a type that a page of runs made, newest first, each once. */
+export function bindingsOf(runs: HistoryRun[], type: string, now: number): Binding[] {
+  const made: Binding[] = [];
+  for (const run of runs) {
+    for (const output of Array.isArray(run.outputs) ? run.outputs : []) {
+      if (output.type !== type || made.some((one) => one.id === output.id)) continue;
+      made.push({ id: output.id, type, run: run.run, task: run.title ?? run.action, when: typeof run.at_ms === "number" ? ago(run.at_ms, now) : "" });
+    }
+  }
+  return made;
+}
+
+/** A page of the store's runs, or why it could not be had. */
+interface Answered<T> {
+  value: T;
+  /** The host's refusal (a 400, a 501), said where the list would be. */
+  error?: string;
+}
+
+/** A page of the store's runs; a client without the call (a test of the form) gives none. */
+function asked<T>(call: () => Promise<T>, fallback: T): Promise<Answered<T>> {
+  return Promise.resolve()
+    .then(call)
+    .then(
+      (value) => ({ value }),
+      (error: unknown) => (error instanceof ApiError ? { value: fallback, error: error.message } : { value: fallback }),
+    );
+}
+
+interface Paging<T> {
+  list: T[];
+  more: boolean;
+  /** The last run of the last page, which the next starts after. */
+  last?: string;
+  error?: string;
+}
+
+const NONE = { runs: [] as HistoryRun[], more: false };
+
+/** A page put after those listed, each run once. */
+function appended(now: Paging<HistoryRun> | undefined, page: Answered<typeof NONE>, after: boolean): Paging<HistoryRun> {
+  const had = after ? (now?.list ?? []) : [];
+  if (page.error) return { list: had, more: false, last: now?.last, error: page.error };
+  const runs = page.value.runs.filter((one) => !had.some((seen) => seen.run === one.run));
+  return { list: [...had, ...runs], more: page.value.more, last: page.value.runs[page.value.runs.length - 1]?.run ?? (after ? now?.last : undefined) };
+}
+
+/**
+ * The runs of a task in history, newest first, a page at a time (the right column); read
+ * again from the first page whenever `ended` changes (a run going has ended).
+ */
+function useEarlier(client: Client, task: string, ended: number): Paging<HistoryRun> & { next: () => void } {
+  const [paged, setPaged] = useState<Paging<HistoryRun>>({ list: [], more: false });
+  const query = new URLSearchParams({ task });
+  useEffect(() => {
+    let live = true;
+    void asked(() => listRuns(client, query, undefined, EARLIER_PAGE), NONE).then((page) => {
+      if (live) setPaged((now) => appended(now, page, false));
+    });
+    return () => {
+      live = false;
+    };
+  }, [task, ended]);
+  const next = () => {
+    if (!paged.last) return;
+    void asked(() => listRuns(client, query, paged.last, EARLIER_PAGE), NONE).then((page) => setPaged((now) => appended(now, page, true)));
+  };
+  return { ...paged, next };
+}
+
+/**
+ * The outputs of earlier runs for each binding picker, by type, from the store's history
+ * (`GET /api/runs?output=<type>`), a page at a time: what a reload or a restart keeps.
+ * Read again from the first page whenever `ended` changes (a run going has ended).
+ */
+function useBindings(client: Client, types: string[], ended: number): { of: (type: string) => Binding[]; more: (type: string) => (() => void) | undefined; error: (type: string) => string | undefined } {
+  const [pages, setPages] = useState<Record<string, Paging<HistoryRun>>>({});
+  const key = types.join(",");
+  const load = (type: string, before?: string) =>
+    asked(() => runsMaking(client, type, before), NONE).then((page) => setPages((now) => ({ ...now, [type]: appended(now[type], page, before !== undefined) })));
+  useEffect(() => {
+    for (const type of types) void load(type);
+  }, [key, ended]);
+  const now = Date.now();
+  return {
+    of: (type) => bindingsOf(pages[type]?.list ?? [], type, now),
+    more: (type) => {
+      const page = pages[type];
+      return page?.more && page.last ? () => void load(type, page.last) : undefined;
+    },
+    error: (type) => pages[type]?.error,
+  };
+}
+
+/** How often the workspace asks for the runs still going. */
+const OPEN_EVERY_MS = 2000;
+
+/**
+ * The runs still going, asked every two seconds, and a count that goes up each time one
+ * that was going is no longer: what was listed of history is then read again.
+ */
+function useOpen(client: Client): { open: OpenRun[]; ended: number } {
+  const [state, setState] = useState<{ open: OpenRun[]; ended: number }>({ open: [], ended: 0 });
+  useEffect(() => {
+    let live = true;
+    const look = () =>
+      client.openRuns().then(
+        (runs) =>
+          live &&
+          setState((now) => {
+            const gone = now.open.some((was) => !runs.some((still) => still.run === was.run));
+            return { open: runs, ended: gone ? now.ended + 1 : now.ended };
+          }),
+        () => undefined,
+      );
+    void look();
+    const timer = setInterval(() => void look(), OPEN_EVERY_MS);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [client]);
+  return state;
+}
+
 function Draft(props: DraftProps) {
   const { task, client } = props;
   const fields = fieldsOf(task);
@@ -148,7 +282,11 @@ function Draft(props: DraftProps) {
   const [tool, setTool] = useState<string>(tools[0]?.value ?? "");
   const [zoom, setZoom] = useState<number | "fit">("fit");
   const [starting, setStarting] = useState(false);
-  const [open, setOpen] = useState<OpenRun[]>([]);
+  const going = useOpen(client);
+  const open = going.open.filter((run) => run.action === task.name);
+  const earlier = useEarlier(client, task.name, going.ended);
+  const bindings = useBindings(client, bindingTypes(fields), going.ended);
+  const [view, setView] = useState("original");
   const preparer = useRef<Preparer | null>(null);
   // A draft Send to opened (plan m5, task W2, item 3): where it came from, the fields it
   // filled, tagged until changed, and the run whose job a check takes, until the brief
@@ -185,17 +323,6 @@ function Draft(props: DraftProps) {
       saveDraft(store, { kit: props.kit, task: task.name, values, pictures, at: Date.now(), ...from });
     }
   }, [argsKey]);
-
-  useEffect(() => {
-    let live = true;
-    client.openRuns().then(
-      (runs) => live && setOpen(runs.filter((run) => run.action === task.name)),
-      () => undefined,
-    );
-    return () => {
-      live = false;
-    };
-  }, [task.name]);
 
   const moreLibrary = () => {
     const last = library?.[library.length - 1];
@@ -234,6 +361,19 @@ function Draft(props: DraftProps) {
   const loadedSize = useImageSize(shownPicture?.width ? undefined : shownSrc);
   const shownSize = shownPicture?.width && shownPicture.height ? { width: shownPicture.width, height: shownPicture.height } : loadedSize;
   const current = tools.find((one) => one.value === tool) ?? tools[0];
+  // Mask and Result, once they exist: the draft's own mask, else the last run's; the last
+  // run's result (plan m5, task W1, item 4).
+  const last = earlier.list[0];
+  const lastOutput = (type: string) => (Array.isArray(last?.outputs) ? last.outputs.find((output) => output.type === type)?.id : undefined) ?? null;
+  const draftMask = fields.filter((field) => field.kind === "artifact" && field.artifact === "mask").map((field) => values[field.name]).find((value): value is string => typeof value === "string") ?? null;
+  const maskShown = draftMask ? { mask: draftMask, on: shownId } : lastOutput("mask") ? { mask: lastOutput("mask"), on: last?.thumb ?? null } : null;
+  const resultShown = lastOutput("image");
+  const views = [
+    { value: "original", label: "Original" },
+    ...(maskShown ? [{ value: "mask", label: "Mask" }] : []),
+    ...(resultShown ? [{ value: "result", label: "Result" }] : []),
+  ];
+  const chosen = views.find((one) => one.value === view)?.value ?? "original";
 
   const onDraw = (mark: Mark) => {
     if (!current) return;
@@ -329,6 +469,9 @@ function Draft(props: DraftProps) {
               picking={picking === field.name}
               library={library}
               drawn={Boolean(drawn[field.name])}
+              bindings={field.kind === "artifact" && field.artifact ? bindings.of(field.artifact) : []}
+              onMoreBindings={field.kind === "artifact" && field.artifact ? bindings.more(field.artifact) : undefined}
+              bindingsError={field.kind === "artifact" && field.artifact ? bindings.error(field.artifact) : undefined}
               from={fromFields.includes(field.name) ? fromWords : undefined}
               onChange={(value) => set(field.name, value)}
               onClear={() => {
@@ -366,10 +509,14 @@ function Draft(props: DraftProps) {
       </section>
       <section class="workspace__centre" aria-label="Canvas">
         <div class="workspace__tabs">
-          <Segmented label="View" segments={[{ value: "original", label: "Original" }]} value="original" />
-          {tools.length > 0 ? <Segmented label="Draw" segments={tools.map((one) => ({ value: one.value, label: one.label }))} value={current?.value ?? ""} onChange={setTool} /> : null}
+          <Segmented label="View" segments={views} value={chosen} onChange={setView} />
+          {tools.length > 0 && chosen === "original" ? <Segmented label="Draw" segments={tools.map((one) => ({ value: one.value, label: one.label }))} value={current?.value ?? ""} onChange={setTool} /> : null}
         </div>
-        {shownId && shownSrc && shownSize ? (
+        {chosen === "mask" && maskShown ? (
+          <Other client={client} id={maskShown.on} mask={maskShown.mask} zoom={zoom} onZoom={setZoom} note={draftMask ? "The mask this draft is given, over its picture." : `The mask of the last run, ${last?.run ?? ""}, over its picture.`} />
+        ) : chosen === "result" && resultShown ? (
+          <Other client={client} id={resultShown} mask={null} zoom={zoom} onZoom={setZoom} note={`The result of the last run, ${last?.run ?? ""}.`} />
+        ) : shownId && shownSrc && shownSize ? (
           <Canvas src={shownSrc} name={shownPicture?.name ?? "the picture"} width={shownSize.width} height={shownSize.height} marks={marks} zoom={zoom} tool={current?.tool ?? null} onDraw={onDraw} onZoom={setZoom} />
         ) : (
           <p class="empty workspace__nothing">{shown ? "Give the task a picture to see it here." : "This task takes no picture."}</p>
@@ -377,12 +524,36 @@ function Draft(props: DraftProps) {
       </section>
       <aside class="workspace__right">
         <h2 class="section-title">Runs of this task</h2>
-        {open.length === 0 ? (
-          <p class="empty">Not run yet here. The plan on the left is what will happen.</p>
+        {earlier.error ? (
+          <p class="field__error" role="alert">
+            {`History could not be read: ${earlier.error}`}
+          </p>
+        ) : null}
+        {open.length === 0 && earlier.list.length === 0 ? (
+          earlier.error ? null : <p class="empty">Not run yet. The plan on the left is what will happen.</p>
         ) : (
-          open.map((one) => (
-            <ContinueRow key={one.run} title={task.title ?? task.name} what={one.run} tag={{ kind: "running" }} when={ago(one.started_ms, Date.now())} onOpen={() => props.go(hrefOf({ name: "run", id: one.run }))} />
-          ))
+          <div class="workspace__runs">
+            {open.map((one) => (
+              <ContinueRow key={one.run} title={task.title ?? task.name} what={one.run} tag={{ kind: "running" }} when={ago(one.started_ms, Date.now())} onOpen={() => props.go(hrefOf({ name: "run", id: one.run }))} />
+            ))}
+            {earlier.list
+              .filter((one) => !open.some((going) => going.run === one.run))
+              .map((one) => (
+                <ContinueRow
+                  key={one.run}
+                  title={[...(one.words ?? []), ...(one.pictures ?? [])].join(" · ") || (task.title ?? task.name)}
+                  what={one.run}
+                  tag={{ kind: one.result, soft: true }}
+                  when={typeof one.at_ms === "number" ? ago(one.at_ms, Date.now()) : ""}
+                  onOpen={() => props.go(hrefOf({ name: "run", id: one.run }))}
+                />
+              ))}
+            {earlier.more ? (
+              <button type="button" class="link-button" onClick={earlier.next}>
+                Earlier runs
+              </button>
+            ) : null}
+          </div>
         )}
         <h2 class="section-title">Tools this task uses</h2>
         <p class="workspace__tools mono">
@@ -413,6 +584,11 @@ interface InputProps {
   picking: boolean;
   library: Picture[] | null;
   drawn: boolean;
+  /** The outputs of earlier runs this port can take, from the store, and the next page. */
+  bindings: Binding[];
+  onMoreBindings?: () => void;
+  /** Why the earlier outputs could not be read, when they could not. */
+  bindingsError?: string;
   onChange: (value: unknown) => void;
   onClear: () => void;
   onUpload: (files: File[]) => Promise<Picture[]>;
@@ -505,7 +681,7 @@ function Input(props: InputProps) {
               ) : null}
             </div>
           ) : null}
-          <BindingPicker type={field.artifact ?? ""} bindings={seenOutputs()} value={typeof props.value === "string" ? props.value : null} onPick={props.onChange} />
+          <BindingPicker type={field.artifact ?? ""} bindings={offered(props.bindings, field.artifact ?? "", props.value, props.drawn)} value={typeof props.value === "string" ? props.value : null} onPick={props.onChange} onMore={props.onMoreBindings} error={props.bindingsError} />
         </Field>
       );
     }
@@ -601,4 +777,37 @@ export function withJob(args: Record<string, unknown>, jobOf: string | null): Re
   const next: Record<string, unknown> = { ...args, job_of: jobOf };
   delete next.brief;
   return next;
+}
+
+/**
+ * What a binding picker offers: the earlier outputs of its type, and first, when the port
+ * holds one that is not among them (sent from a result, or kept in a draft) and was not
+ * drawn here, that one, so the picker shows what the draft is given.
+ */
+export function offered(bindings: Binding[], type: string, value: unknown, drawn: boolean): Binding[] {
+  if (typeof value !== "string" || drawn || bindings.some((one) => one.id === value)) return bindings;
+  return [{ id: value, type, run: middle(value, 20), task: "given to this draft", when: "" }, ...bindings];
+}
+
+/** A picture other than the draft's own (the last run's result, or a mask over its picture). */
+function Other(props: { client: Client; id: string | null; mask: string | null; zoom: number | "fit"; onZoom: (zoom: number | "fit") => void; note: string }) {
+  const src = useArtifact(props.client, props.id);
+  const maskSrc = useArtifact(props.client, props.mask);
+  const size = useImageSize(src);
+  const note = <p class="workspace__purpose workspace__note">{props.note}</p>;
+  if (!props.id) return <p class="empty workspace__nothing">Give the task a picture to see its mask over it.</p>;
+  if (!src || !size) {
+    return (
+      <>
+        {note}
+        <p class="empty workspace__nothing">Loading the picture…</p>
+      </>
+    );
+  }
+  return (
+    <>
+      {note}
+      <Canvas src={src} name={props.note} width={size.width} height={size.height} marks={maskSrc ? [{ kind: "mask", src: maskSrc, label: "mask" }] : []} zoom={props.zoom} onZoom={props.onZoom} />
+    </>
+  );
 }

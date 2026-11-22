@@ -51,10 +51,16 @@ export async function bytesOf(request: APIRequestContext, host: Host, id: string
   return answer.body();
 }
 
+/**
+ * The status bar once the host has answered: "ready", and not the "not ready" it says
+ * before then, which also holds the word.
+ */
+export const READY = /(?<!not )ready/;
+
 /** Opens the page with its token, then at a route of the same tab. */
 export async function openAt(page: Page, host: Host, route: string): Promise<void> {
   await page.goto(host.opening);
-  await expect(page.getByRole("status")).toContainText("ready");
+  await expect(page.getByRole("status")).toContainText(READY);
   await page.goto(`${host.address}${route}`);
 }
 

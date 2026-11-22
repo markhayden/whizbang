@@ -1,23 +1,27 @@
-import { useEffect, useState } from "preact/hooks";
-import { ApiError, tasksOf, type Client, type Hello, type OpenRun } from "../../api";
+import { useEffect, useRef, useState } from "preact/hooks";
+import { ApiError, tasksOf, type Client, type Hello, type OpenRun, type Picture } from "../../api";
+import { Button } from "../../components/Button";
 import { BrandArt } from "../../components/BrandArt";
 import { ContinueRow } from "../../components/ContinueRow";
 import { DropTarget } from "../../components/DropTarget";
 import { KitPanel } from "../../components/KitPanel";
 import { kitTone } from "../../components/kitTone";
 import { Wordmark } from "../../components/Wordmark";
-import { readDrafts, localStore, type Draft } from "../../drafts";
+import { draftOf, readDrafts, localStore, saveDraft, type Draft } from "../../drafts";
 import { taskOf } from "../../form";
 import { ago } from "../../format";
 import { usePictures } from "../../hooks";
 import { hrefOf } from "../../routes";
 import { StoredPicture } from "../shared";
+import { draftWith, startersOf, type Starter } from "./picked";
 
 export interface HomeProps {
   hello: Hello | null;
   /** The client of the API; without one (a test of the shell alone) Home asks nothing. */
   client?: Client;
   go?: (hash: string) => void;
+  /** A picture picked here or in search (`#/?picture=<identity>`), to start a task with. */
+  picture?: string;
 }
 
 const STEPS = [
@@ -174,6 +178,16 @@ export function Home(props: HomeProps) {
         <h2 id="pictures-title" class="section-title">
           Pictures
         </h2>
+        {client && props.picture ? (
+          <Picked
+            client={client}
+            id={props.picture}
+            listed={pictures.find((one) => one.id === props.picture)}
+            starters={startersOf(props.hello)}
+            onClose={() => props.go?.(hrefOf({ name: "home" }))}
+            go={(hash) => props.go?.(hash)}
+          />
+        ) : null}
         {problem ? (
           <p class="field__error" role="alert">
             {problem}
@@ -184,7 +198,13 @@ export function Home(props: HomeProps) {
           <div class="library home__pictures">
             {pictures.length === 0 ? <p class="empty">No pictures yet. A picture you give a task is kept in the store and shows here.</p> : null}
             {pictures.map((picture) => (
-              <StoredPicture key={picture.id} client={client} picture={picture} />
+              <StoredPicture
+                key={picture.id}
+                client={client}
+                picture={picture}
+                selected={picture.id === props.picture}
+                onClick={() => props.go?.(hrefOf(picture.id === props.picture ? { name: "home" } : { name: "home", picture: picture.id }))}
+              />
             ))}
             {library.more ? (
               <button type="button" class="link-button" onClick={library.next}>
@@ -196,5 +216,119 @@ export function Home(props: HomeProps) {
         ) : null}
       </section>
     </main>
+  );
+}
+
+/** A picked picture as the page knows it: still being looked up, kept, or not in the store. */
+type Found = { state: "looking" } | { state: "kept"; picture: Picture } | { state: "none" } | { state: "failed"; why: string };
+
+/**
+ * The picture a picked identity names: the library's own when it lists it, else looked up
+ * in the store by its identity (a picture past the first page, or an address typed).
+ */
+function useFound(client: Client, id: string, listed: Picture | undefined): Found {
+  const [found, setFound] = useState<Found>(listed ? { state: "kept", picture: listed } : { state: "looking" });
+  useEffect(() => {
+    if (listed) {
+      setFound({ state: "kept", picture: listed });
+      return;
+    }
+    let live = true;
+    setFound({ state: "looking" });
+    client.pictureById(id).then(
+      (picture) => live && setFound(picture ? { state: "kept", picture } : { state: "none" }),
+      (error: unknown) => live && setFound({ state: "failed", why: error instanceof ApiError ? error.message : String(error) }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [id, listed?.id, listed?.name]);
+  return found;
+}
+
+/**
+ * A picture picked from the library or from search: shown larger, with every task that
+ * takes a picture; picking one opens its draft with the picture given. A draft of that
+ * task not yet run is replaced only once the person says so. A picture the store does
+ * not hold is said to be missing, and no task is offered.
+ */
+function Picked(props: { client: Client; id: string; listed: Picture | undefined; starters: Starter[]; onClose: () => void; go: (hash: string) => void }) {
+  const [replacing, setReplacing] = useState<Starter | null>(null);
+  const found = useFound(props.client, props.id, props.listed);
+  const panel = useRef<HTMLDivElement>(null);
+  // Brought into view once for each picture picked, not again on every render (Home
+  // renders again as it polls the runs going).
+  useEffect(() => {
+    panel.current?.scrollIntoView?.({ block: "nearest" });
+  }, [props.id]);
+  const picture = found.state === "kept" ? found.picture : null;
+  const start = (starter: Starter, sure = false) => {
+    if (!picture) return;
+    const store = localStore();
+    if (!sure && draftOf(store, starter.task.name)) {
+      setReplacing(starter);
+      return;
+    }
+    saveDraft(store, draftWith(starter, picture, Date.now()));
+    props.go(hrefOf({ name: "kit", kit: starter.kit, task: starter.task.name }));
+  };
+  const close = (
+    <button type="button" class="link-button" onClick={props.onClose}>
+      Close
+    </button>
+  );
+  if (!picture) {
+    return (
+      <div class="picked" ref={panel} role="region" aria-label="A picture picked">
+        <div class="picked__tasks">
+          {found.state === "looking" ? <p class="empty">Looking for the picture in the store…</p> : null}
+          {found.state === "none" ? (
+            <p class="field__error" role="alert">
+              The store holds no picture the playground kept under that identity, so no task can start with it.
+            </p>
+          ) : null}
+          {found.state === "failed" ? (
+            <p class="field__error" role="alert">
+              {found.why}
+            </p>
+          ) : null}
+          {close}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div class="picked" ref={panel} role="region" aria-label={`Start a task with ${picture.name}`}>
+      <div class="picked__picture">
+        <StoredPicture client={props.client} picture={picture} />
+        <span class="picked__name mono">{picture.name}</span>
+      </div>
+      <div class="picked__tasks">
+        <p class="picked__line">Start a task with this picture:</p>
+        {props.starters.length === 0 ? <p class="empty">No task of this build takes a picture.</p> : null}
+        <ul class="picked__list">
+          {props.starters.map((starter) => (
+            <li key={`${starter.kit}/${starter.task.name}`}>
+              <button type="button" class="picked__task" onClick={() => start(starter)}>
+                <span class="picked__title">{starter.task.title ?? starter.task.name}</span>
+                <span class="picked__as mono">{`${starter.kitName} · as its ${starter.label.toLowerCase()}`}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+        {replacing ? (
+          <div class="picked__replacing" role="alert">
+            <p class="workspace__purpose">{`This replaces the draft of ${replacing.task.title ?? replacing.task.name} you have not run yet.`}</p>
+            <Button variant="secondary" onClick={() => start(replacing, true)}>
+              Replace it
+            </Button>
+            <Button variant="quiet" onClick={() => props.go(hrefOf({ name: "kit", kit: replacing.kit, task: replacing.task.name }))}>
+              Open my draft
+            </Button>
+          </div>
+        ) : null}
+        {close}
+      </div>
+    </div>
   );
 }

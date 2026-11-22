@@ -224,7 +224,10 @@ imported() {
     "$binary" spend reset --store "$store" --allowance "$allowance" >/dev/null || return 1
     say "made the store and gave it an allowance of $allowance dollars" >&2
   fi
-  printf '%s\n' "$printed" | sed -n 's/^imported image \(sha256:[0-9a-f]\{64\}\)$/\1/p' | sed -n '1p'
+  # A picture the store holds already is named the same way under `already there:`, as when
+  # a round is run again after one that stopped part way.
+  printf '%s\n' "$printed" |
+    sed -E -n 's/^(imported|already there:) image (sha256:[0-9a-f]{64})$/\2/p' | sed -n '1p'
 }
 # exported: every record of the store, one a line, in $work/records.
 exported() {

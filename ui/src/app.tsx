@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 import { ApiError, backendsOf, tasksOf, type Client, type Hello, type Picture } from "./api";
 import { Breadcrumb } from "./components/Breadcrumb";
 import { KitSwitcher } from "./components/KitSwitcher";
+import { QuitDialog } from "./components/QuitDialog";
 import { kitTone } from "./components/kitTone";
 import { SearchPalette, type SearchEntry } from "./components/SearchPalette";
 import { StatusBar } from "./components/StatusBar";
@@ -25,6 +26,13 @@ export interface AppProps {
   /** The address's hash and a way to follow it; the page passes `location`. */
   initialHash: string;
   subscribeHash: (listener: (hash: string) => void) => () => void;
+  /**
+   * The address's hash now. The page follows hash changes from when it subscribes, after
+   * its first paint; a change before then (a link followed, or an address typed, while the
+   * page was still starting) is caught up with this once subscribed. The page passes
+   * `location.hash`.
+   */
+  hashNow?: () => string;
   go: (hash: string) => void;
   /**
    * Reads a `#k=` the address carries now, takes it out of the bar and keeps it
@@ -47,21 +55,48 @@ export function App(props: AppProps) {
   const [route, setRoute] = useState<Route>(parseRoute(props.initialHash));
   const [searching, setSearching] = useState(false);
   const [switching, setSwitching] = useState(false);
+  // Quit: asked first, with the runs going counted; then the host is told, and the page
+  // says it has quit and asks nothing more.
+  const [quit, setQuit] = useState<{ stage: "asking" | "quitting" | "quit"; going: number | null; problem?: string } | null>(null);
+  const askQuit = () => {
+    setQuit({ stage: "asking", going: null });
+    props.client.openRuns().then(
+      (runs) => setQuit((now) => (now?.stage === "asking" ? { ...now, going: runs.length } : now)),
+      () => undefined,
+    );
+  };
+  const doQuit = () => {
+    setQuit((now) => ({ stage: "quitting", going: now?.going ?? null }));
+    const quitted = () => setQuit((now) => ({ stage: "quit", going: now?.going ?? null }));
+    const failed = (error: unknown) => setQuit((now) => ({ stage: "asking", going: now?.going ?? null, problem: error instanceof ApiError ? error.message : String(error) }));
+    props.client.quit().then(quitted, (error: unknown) => {
+      // No answer at all: the host may have stopped before its answer reached the page.
+      // It has quit when it no longer answers hello either (or answers that it is stopping).
+      if (!(error instanceof ApiError) || error.status !== 0) return failed(error);
+      props.client.hello().then(
+        () => failed(error),
+        (again: unknown) => (again instanceof ApiError && (again.status === 0 || again.status === 503) ? quitted() : failed(error)),
+      );
+    });
+  };
 
   const [asked, setAsked] = useState(0);
-  useEffect(
-    () =>
-      props.subscribeHash((hash) => {
-        const taken = props.takeToken();
-        if (taken.fresh) {
-          props.client.setToken(taken.token);
-          setProblem(null);
-          setAsked((n) => n + 1);
-        }
-        setRoute(parseRoute(taken.offered ? "#/" : hash));
-      }),
-    [],
-  );
+  useEffect(() => {
+    const follow = (hash: string) => {
+      const taken = props.takeToken();
+      if (taken.fresh) {
+        props.client.setToken(taken.token);
+        setProblem(null);
+        setAsked((n) => n + 1);
+      }
+      setRoute(parseRoute(taken.offered ? "#/" : hash));
+    };
+    const stop = props.subscribeHash(follow);
+    // A change made between the first render and now fired no event this page heard.
+    const now = props.hashNow?.();
+    if (now !== undefined && now !== props.initialHash) follow(now);
+    return stop;
+  }, []);
   useEffect(() => {
     let live = true;
     props.client.hello().then(
@@ -94,7 +129,7 @@ export function App(props: AppProps) {
       label: task.title ?? task.name,
       detail: task.kind === "primitive" ? `tool${task.kit ? ` · ${kitName(task.kit)}` : ""}` : kitName(task.kit),
     }));
-    const shown = pictures.map((picture) => ({ key: `#/?picture=${picture.id}`, kind: "picture" as const, label: picture.name, detail: "picture" }));
+    const shown = pictures.map((picture) => ({ key: hrefOf({ name: "home", picture: picture.id }), kind: "picture" as const, label: picture.name, detail: "picture" }));
     // Each task's and tool's record (plan m5, task W3, item 7).
     const records = tasksOf(hello).map((task) => ({
       key: hrefOf({ name: "record", record: task.name }),
@@ -136,6 +171,18 @@ export function App(props: AppProps) {
       <span class="top-bar__place">Home</span>
     ) : null;
 
+  if (quit?.stage === "quit") {
+    return (
+      <div class="shell">
+        <div class="shell__screen">
+          <EmptyScreen title="The playground has quit">
+            {`The host has stopped. ${quit.going ? `It cancelled ${quit.going === 1 ? "the run" : `the ${quit.going} runs`} still going; each one's record says cancelled. ` : ""}Run whizbang play to open the playground again.`}
+          </EmptyScreen>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div class="shell">
       <TopBar
@@ -148,6 +195,7 @@ export function App(props: AppProps) {
         historyHref={hrefOf({ name: "history", query: new URLSearchParams() })}
         modelsHref={hrefOf({ name: "models" })}
         onSearch={() => setSearching(true)}
+        onQuit={hello ? askQuit : undefined}
       />
       {switching ? (
         <div class="shell__switcher">
@@ -181,6 +229,9 @@ export function App(props: AppProps) {
         version={hello?.version}
         problem={problem ?? undefined}
       />
+      {quit ? (
+        <QuitDialog going={quit.going} quitting={quit.stage === "quitting"} problem={quit.problem} onQuit={doQuit} onCancel={() => quit.stage === "asking" && setQuit(null)} />
+      ) : null}
       {searching ? (
         <SearchPalette
           entries={entries}
@@ -198,7 +249,7 @@ export function App(props: AppProps) {
 function screenOf(route: Route, hello: Hello | null, client: Client, go: (hash: string) => void) {
   switch (route.name) {
     case "home":
-      return <Home hello={hello} client={client} go={go} />;
+      return <Home hello={hello} client={client} go={go} picture={route.picture} />;
     case "kit":
       return <Workspace kit={route.kit} task={route.task} hello={hello} client={client} go={go} />;
     case "run":

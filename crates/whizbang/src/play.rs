@@ -189,8 +189,9 @@ fn open_in_chrome(opener: &std::path::Path) -> bool {
     .is_ok()
 }
 
-/// The terminal's signals, each a quit: the first starts it, a second ends its grace.
-fn signals(stopper: &Stopper) -> std::io::Result<()> {
+/// The terminal's signals, each a quit: the first starts it, a second ends its grace. The
+/// fixture host takes them the same way, for the Chrome case of an interrupt.
+pub(crate) fn signals(stopper: &Stopper) -> std::io::Result<()> {
     let mut signals = Signals::new([SIGINT, SIGTERM, SIGHUP])?;
     let stopper = stopper.clone();
     threads::spawn(

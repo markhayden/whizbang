@@ -85,3 +85,25 @@
 .workspace__tools a { color: var(--color-ink-2); }
 .workspace__record { font-size: var(--text-sm); }
 .run__report { color: var(--color-ink); font-size: var(--text-sm); }
+.picked { display: flex; gap: var(--spacing-6); margin-bottom: var(--spacing-4); padding: var(--spacing-4); border-radius: var(--radius-md); background: var(--color-panel); box-shadow: var(--shadow-panel); }
+.picked__picture { display: flex; flex-direction: column; gap: var(--spacing-2); width: 280px; flex-shrink: 0; }
+.picked__picture .picture-tile { width: 280px; height: 186px; }
+.picked__name { color: var(--color-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.picked__tasks { display: flex; flex-direction: column; align-items: flex-start; gap: var(--spacing-2); flex: 1; min-width: 0; }
+.picked__line { margin: 0; color: var(--color-ink-2); font-size: var(--text-md); }
+.picked__list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 2px var(--spacing-3); width: 100%; margin: 0; padding: 0; list-style: none; }
+.picked__task { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 6px var(--spacing-2); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--color-ink); text-align: left; cursor: pointer; }
+.picked__task:hover { background: var(--color-hover); }
+.picked__title { font-size: var(--text-md); }
+.picked__as { color: var(--color-muted); font-size: var(--text-xs); }
+.picked__replacing { display: flex; align-items: center; flex-wrap: wrap; gap: var(--spacing-2); }
+.picked__replacing p { margin: 0; }
+.workspace__runs { display: flex; flex-direction: column; align-items: flex-start; gap: var(--spacing-1-5); }
+.workspace__runs .continue-row { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "title tag" "what when"; gap: 2px var(--spacing-2); height: auto; padding-block: 6px; }
+.workspace__runs .continue-row__thumb { display: none; }
+.workspace__runs .continue-row__title { grid-area: title; width: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace__runs .continue-row__what { grid-area: what; width: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace__runs .tag { grid-area: tag; justify-self: end; }
+.workspace__runs .continue-row__gap { display: none; }
+.workspace__runs .continue-row__when { grid-area: when; justify-self: end; }
+.workspace__note { padding: var(--spacing-2) var(--spacing-3) 0; }

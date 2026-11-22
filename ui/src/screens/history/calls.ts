@@ -1,6 +1,6 @@
 // What History, a report and a record ask of the API (plan m5, task W3): this screen's own
 // calls, kept beside it, through the client's token.
-import type { Client } from "../../api";
+import type { Client, RunOutput } from "../../api";
 
 /** One run in history, as `GET /api/runs` lists it. */
 export interface HistoryRun {
@@ -16,6 +16,8 @@ export interface HistoryRun {
   cost?: number;
   at_ms?: number | null;
   thumb?: string | null;
+  /** What the run made, by port, type and identity. */
+  outputs?: RunOutput[];
 }
 
 /** The figures of `runs stats`, as `GET /api/stats` answers them. */
@@ -54,9 +56,21 @@ export function filterOf(query: URLSearchParams): URLSearchParams {
 }
 
 /** One page of history under the filter, after the run `before` names. */
-export async function listRuns(client: Client, query: URLSearchParams, before?: string): Promise<{ runs: HistoryRun[]; more: boolean }> {
+export async function listRuns(client: Client, query: URLSearchParams, before?: string, limit = PAGE): Promise<{ runs: HistoryRun[]; more: boolean }> {
   const asked = filterOf(query);
-  asked.set("limit", String(PAGE));
+  asked.set("limit", String(limit));
+  if (before) asked.set("before", before);
+  const answer = await client.request<{ runs?: HistoryRun[]; more?: boolean } | undefined>("GET", `/api/runs?${asked.toString()}`);
+  return { runs: Array.isArray(answer?.runs) ? answer.runs : [], more: answer?.more === true };
+}
+
+/**
+ * One page of the runs that made an output of a type (`output=<type>`), newest first,
+ * after the run `before` names: what the binding picker offers a port of that type, from
+ * the store, so a reload or a restart keeps it.
+ */
+export async function runsMaking(client: Client, type: string, before?: string, limit = 20): Promise<{ runs: HistoryRun[]; more: boolean }> {
+  const asked = new URLSearchParams({ output: type, limit: String(limit) });
   if (before) asked.set("before", before);
   const answer = await client.request<{ runs?: HistoryRun[]; more?: boolean } | undefined>("GET", `/api/runs?${asked.toString()}`);
   return { runs: Array.isArray(answer?.runs) ? answer.runs : [], more: answer?.more === true };

@@ -15,9 +15,11 @@ export interface TopBarProps {
   modelsHref: string;
   wordmark?: string;
   onSearch?: () => void;
+  /** Quit: asks first, then stops the host (`POST /api/quit`). */
+  onQuit?: () => void;
 }
 
-/** The top bar: the wordmark, where you are, ⌘K search, History, Models, the allowance. */
+/** The top bar: the wordmark, where you are, ⌘K search, History, Models, the allowance, Quit. */
 export function TopBar(props: TopBarProps) {
   return (
     <header class="top-bar">
@@ -42,6 +44,11 @@ export function TopBar(props: TopBarProps) {
           <span class="top-bar__allowance mono" title="What is left of the allowance since the last reset">
             {dollars(props.left)} <span class="top-bar__of">/ {props.allowance.toFixed(2)}</span>
           </span>
+        ) : null}
+        {props.onQuit ? (
+          <button type="button" class="top-bar__link top-bar__quit" onClick={props.onQuit}>
+            Quit
+          </button>
         ) : null}
       </nav>
     </header>

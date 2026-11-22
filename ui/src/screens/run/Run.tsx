@@ -7,9 +7,8 @@ import { SpendMeter } from "../../components/SpendMeter";
 import { StepList } from "../../components/StepList";
 import { Tag } from "../../components/Tag";
 import { attemptOf, endTag, fieldsOf, hear, labelOf, stepsOf, taskOf, type Heard } from "../../form";
-import { ago, middle } from "../../format";
+import { middle } from "../../format";
 import { useArtifact, useImageSize, useNow } from "../../hooks";
-import { rememberOutputs } from "../../outputs";
 import { hrefOf } from "../../routes";
 import { EmptyScreen } from "../Empty";
 import { Result } from "../result/Result";
@@ -76,10 +75,6 @@ function Following(props: { id: string; hello: Hello | null; client: Client; go:
   const task = taskOf(tasks, followed.action);
   const ended = last !== null && !going;
   const outputs: RunOutput[] = Array.isArray(last?.outputs) ? last.outputs : [];
-
-  useEffect(() => {
-    if (ended && outputs.length > 0) rememberOutputs(props.id, task?.title ?? followed.action ?? "", outputs, ago(Date.now(), Date.now()));
-  }, [ended]);
 
   // A check's places, drawn on the canvas once the check that made them has ended, while
   // the loop goes on: read from that check's record (plan m5, task W1, item 6).

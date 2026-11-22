@@ -84,6 +84,12 @@ fn row(runs: &Runs, id: &str, record: &RunRecord, titles: &dyn Fn(&str) -> Optio
     models.sort();
     models.dedup();
     let time = record.time();
+    let outputs: Vec<Json> = (record.outputs().iter())
+        .map(|output| {
+            json!({"port": escaped(&output.port), "type": output.artifact_type.name(),
+                   "id": output.artifact.to_string()})
+        })
+        .collect();
     let thumb = (record.inputs().iter())
         .find(|input| input.artifact_type == ArtifactType::Image)
         .map(|input| input.artifact.to_string());
@@ -100,12 +106,14 @@ fn row(runs: &Runs, id: &str, record: &RunRecord, titles: &dyn Fn(&str) -> Optio
         "cost": dollars(runs.settled_under(id)),
         "at_ms": time.start_ms,
         "thumb": thumb,
+        "outputs": outputs,
     })
 }
 
 /// One page of history: the runs the filter admits that nothing nested (a run's steps
-/// are its own), newest first, after the run `before` names when it names one, at most
-/// `limit`; and whether there are more.
+/// are its own) and, when `output` is asked, that made an output of that type; newest
+/// first, after the run `before` names when it names one, at most `limit`; and whether
+/// there are more.
 pub fn listed(
     loaded: Arc<Loaded>,
     asked: &Asked,
@@ -116,6 +124,11 @@ pub fn listed(
     let runs = Runs::within(loaded, &filter, lookups).map_err(|why| Refused::new(400, &why))?;
     let mut top: Vec<&(String, RunRecord)> = (runs.found.iter())
         .filter(|(_, record)| record.identity().parent.is_none())
+        .filter(|(_, record)| {
+            asked.output.as_deref().is_none_or(|wanted| {
+                (record.outputs().iter()).any(|output| output.artifact_type.name() == wanted)
+            })
+        })
         .collect();
     top.sort_by(|a, b| {
         let at = |r: &RunRecord| r.time().start_ms.unwrap_or(0);

@@ -1,11 +1,12 @@
 // A kit the interface has never heard of shows wherever kits do (SPEC.md section 1: a new
 // kit needs no change to a door; plan m5, task W1, item 2).
 import { expect, test, withHost } from "./fixtures";
+import { READY } from "./play";
 
 test("a third kit of fake actions shows on home, in the switcher and in search", async ({ page }) => {
   await withHost(["--third-kit"], async (host) => {
     await page.goto(host.opening);
-    await expect(page.getByRole("status")).toContainText("ready");
+    await expect(page.getByRole("status")).toContainText(READY);
     const panel = page.locator(".kit-panel", { has: page.getByRole("heading", { name: /tinker/i }) });
     await expect(panel).toContainText("Echo a picture");
     await panel.getByRole("link", { name: /Echo a picture/ }).click();

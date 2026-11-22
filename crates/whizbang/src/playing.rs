@@ -348,6 +348,10 @@ impl Play for Playground {
         crate::play_kept::pictures(self.store()?.as_ref(), after, limit)
     }
 
+    fn picture_kept(&self, id: &str) -> Result<Option<Json>, Refused> {
+        crate::play_kept::kept(self.store()?.as_ref(), id)
+    }
+
     fn artifact(&self, id: &str, edge: Option<u32>) -> Result<(&'static str, Vec<u8>), Refused> {
         let Some(edge) = edge else {
             return crate::play_kept::artifact(self.store()?.as_ref(), id, None);
