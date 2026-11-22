@@ -322,9 +322,8 @@ and `play_result::the_record_of_a_run_that_has_not_ended_is_refused_409` (fast t
 `compare.spec.ts: side by side, swipe and difference show the source and the result at one
 zoom`, `run.spec.ts: a rascal task runs from a picture and words to a result` and
 `run.spec.ts: a squint task runs from two pictures and a brief to a verdict` (Chrome tier);
-the loop's three cases (a clean pass or a retry then a pass, a vague prompt showing its
-tries and its flag, an unset key leaving the run unchecked), by hand
-(`docs/results/m5-playground.md`).
+the loop's cases by hand (a fail the loop stopped, a clean pass, and a vague prompt that
+found nothing; `docs/results/m5-playground.md`).
 
 ### Save picture, Send to, Run again, Copy command
 
@@ -484,8 +483,8 @@ same install`, `models.spec.ts: cancel leaves the earlier install in place`,
 `models.spec.ts: remove of a model in use answers busy and the model stays`,
 `models.spec.ts: no key is shown for a backend without one and no key is ever in the page`
 and `models.spec.ts: a reset needs the amount and the word reset, and the allowance is then
-what is spent since it` (Chrome tier); a run left unchecked by an unset key, by hand
-(`docs/results/m5-playground.md`).
+what is spent since it` (Chrome tier); an empty env file showing NO KEY and Run
+refused before any run starts, by hand (`docs/results/m5-playground.md`).
 
 ## What the playground holds while it runs
 

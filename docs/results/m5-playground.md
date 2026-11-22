@@ -2,98 +2,147 @@
 
 Plan m5, task E1, items 1 and 2. The by-hand check of the loop `remove_checked` that
 milestone 4 left to the playground (`docs/carry-over.md`, "Acceptance checks moved here"),
-run live in `whizbang play` on the owner's Mac, with SAM 3 on the Mac finding the phrase,
-Bria Eraser through fal filling and a judge in the cloud checking; and one quit with a paid
-run going. Each run's figures were read from its record. Only aggregates and run ids are
-kept here, never a picture, its name, a path or a key; each result screen's screenshot is
-kept out of the repository.
+run live in `whizbang play` in Chrome by the orchestrator, on the binary built at `main`
+d62a2182, against the E loop store, with the E loop's config (`labs/e-loop/config.toml`)
+under `gemini-4-argon` as the default judge and a call cap of 6.00 dollars. SAM 3 on the Mac
+found the phrase, Bria Eraser through fal filled, and Argon checked. Each run's figures were
+read from its record and from `whizbang spend status`. Only aggregates and run ids are kept
+here, never an item of the set, its phrase, a picture, a path or a key; each result screen's
+screenshot is kept out of the repository.
 
 **What this is not.** It scores nothing. It shows that the playground runs the loop, shows
-its tries, says why a run was not checked, and accounts for a quit, as a person sees them.
-Whether a retry makes a result better is milestone E's.
-
-**Pending.** The runs are not made yet: every field below says `pending` until they are,
-and then holds its value. `evidence::the_playgrounds_record_holds_only_aggregates_and_run_ids`
-holds the page either way.
+how each run ended and why, refuses a run it cannot make, and accounts for a quit, as a
+person sees them. Whether a retry makes a result better, and whether Argon is right, are
+milestone E's.
 
 ## The runs
 
 ```toml
-cases = "pending"
-settled_micros = "pending"
+commit = "d62a2182137dac635014d6437b1df4a9ac2f2bb1"
+whizbang = "0.1.0"
+runs = 4
+settled_micros = 136000
+unresolved_micros = 40000
 ```
 
-## Three cases by hand
+Four runs were made, and one more case started none. They settled 0.136 dollars, and 0.04
+dollars more is booked as unresolved: the bound of the fill a quit cut off (below).
+
+## The cases by hand
 
 The cases of the carry-over list: `pass`, a clean pass, or a retry then a pass; `vague`, a
-prompt that names nothing in the picture, showing its tries and its flag; `no-key`, an env
-file without the judge's key, leaving the run unchecked and saying why.
+prompt that names nothing in the picture, showing how it ends; `no-key`, an env file without
+the keys. Beside them, `fail`, the first run made, kept because it shows the loop's stop.
+
+### `fail`
+
+```toml
+case = "fail"
+run = "1795342659824-1"
+verdict = "fail"
+attempts = 1
+seconds = 77
+settled_micros = 66000
+reserved_micros = 5930000
+```
+
+A removal on a picture of the E loop's set ended FAIL on its first attempt, at 0.066
+dollars (a fill, 0.040 on fal; two judge turns, 0.026 on Google) of 5.93 held. The loop
+stopped by design and did not retry: "attempt 1 changed something that must be preserved,
+which painting more cannot mend". The named object was removed and a part fixed to it was
+left, at the check's third place; Argon held that part as something to preserve. That is a
+question of the judge for milestone E, not of the playground.
 
 ### `pass`
 
 ```toml
 case = "pass"
-run = "pending"
-commit = "pending"
-whizbang = "pending"
-outcome = "pending"
-verdict = "pending"
-attempts = "pending"
-kept = "pending"
-ended_as = "pending"
-settled_micros = "pending"
-reserved_micros = "pending"
+run = "1795342796956-18"
+verdict = "pass"
+attempts = 1
+seconds = 79
+settled_micros = 70000
 ```
+
+The same task on another picture of the set, picked from the library, passed on its first
+attempt at 0.070 dollars: the clean pass the carry-over list asked for. One part of the
+named object was left in the picture and Argon passed the run, a concrete case of the judge
+round's finding that Argon passes runs whose mask left part of the object
+(`docs/results/e-judges.md`).
 
 ### `vague`
 
 ```toml
 case = "vague"
-run = "pending"
-commit = "pending"
-whizbang = "pending"
-outcome = "pending"
-verdict = "pending"
-attempts = "pending"
-kept = "pending"
-ended_as = "pending"
-settled_micros = "pending"
-reserved_micros = "pending"
+run = "1795342910635-35"
+checked = false
+seconds = 1.4
+sent = "nothing"
+settled_micros = 0
 ```
+
+The prompt "the thing" on the same picture: the segmenter found nothing, so the run stopped
+in 1.4 seconds with nothing sent off the machine and nothing spent. The page said so in
+words a person does not use, and its canvas stayed loading (both found live, below).
 
 ### `no-key`
 
 ```toml
 case = "no-key"
-run = "pending"
-commit = "pending"
-whizbang = "pending"
-outcome = "pending"
-verdict = "pending"
-attempts = "pending"
-kept = "pending"
-ended_as = "pending"
-unchecked_why = "pending"
-settled_micros = "pending"
-reserved_micros = "pending"
+run = "none"
+sent = "nothing"
+settled_micros = 0
 ```
 
-## A quit during a paid fill
+A second playground on a new store, with an empty env file. The status bar said "no key"
+for the filler and for every judge, and Run stayed unavailable with the reason beside it, so
+no run was started and nothing was sent. Quit, with nothing running, stopped it. The
+playground refuses a call it cannot make before it starts a run, so the form "a run left
+unchecked, saying why" that the command line shows (`docs/results/m4-loop.md`, `no-key`) is
+not reached this way: a judge's key missing with the filler's set would reach it, and that
+case was not run.
 
-One loop started from the page and the playground stopped from the terminal while its fill
-was going: its record says cancelled, `whizbang spend status` names nothing open, and the
-store takes a writer at once.
+## A quit during a paid fill
 
 ### `quit`
 
 ```toml
 case = "quit"
-run = "pending"
-commit = "pending"
-whizbang = "pending"
-outcome = "pending"
-open_reservations = "pending"
-store_took_a_writer = "pending"
-settled_micros = "pending"
-reserved_micros = "pending"
+run = "1795343001136-38"
+outcome = "cancelled"
+seconds_into_fill = 8.4
+open_reservations = 0
+store_took_a_writer = true
+settled_micros = 0
+reserved_micros = 5930000
+unresolved_micros = 40000
 ```
+
+One loop started from the page, and Quit pressed 8.4 seconds into its fill. The question said
+one run going would be cancelled; the page then said the host had stopped, and the run's
+record says cancelled. `whizbang spend status` named no reservation left open: the run's
+5.93 dollars were released, and the fill request in flight was booked at its bound, 0.04
+dollars, as unresolved (`whizbang spend status --run` shows it). The store was opened to
+write straight after, in under a tenth of a second, and the command exited 0.
+
+## Found live
+
+Each was found in these runs and is fixed by the pull request of the branch
+`m5-live-fixes`:
+
+- The top bar shows what is left as if it were spent, never reads it again, and is missing
+  on a new store.
+- Compare, side by side, clips the picture after.
+- Coming back to a task after a run sometimes shows its lists of runs and masks empty.
+- The form shows NOT READY for a moment before its first preparation.
+- With no key, the segmenter on the Mac is marked NO KEY, the plan calls the fill that is
+  not ready "local" and "free", and the reason is in the code's words.
+- A vague prompt's message is in the code's words, and the canvas stays loading.
+- `whizbang runs show` of a cancelled run says 0.00 dollars while its child has 0.04
+  unresolved.
+- The rows of the picker of what to keep out cannot be told apart.
+- An upload answered 429 is not tried again.
+- The run's page asks for news about four times a second.
+
+A follow-up, not fixed: Home's library lists only the pictures given through the
+playground, so a store filled from the command line shows "No pictures yet".

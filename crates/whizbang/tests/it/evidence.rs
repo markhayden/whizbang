@@ -2723,33 +2723,32 @@ fn the_submission_record_holds_only_aggregates() {
 /// The record of the loop by hand in the playground (plan m5, task E1, items 1 and 2).
 const PLAYGROUND_PAGE: &str = "docs/results/m5-playground.md";
 
-/// The fields each case of the playground's record holds, and no other.
-fn playground_fields(case: &str) -> Vec<&'static str> {
-    let mut fields = vec![
-        "case",
-        "run",
-        "commit",
-        "whizbang",
-        "outcome",
-        "settled_micros",
-        "reserved_micros",
-    ];
-    if case == "quit" {
-        fields.extend(["open_reservations", "store_took_a_writer"]);
-    } else {
-        fields.extend(["verdict", "attempts", "kept", "ended_as"]);
-    }
-    if case == "no-key" {
-        fields.push("unchecked_why");
-    }
-    fields.sort_unstable();
-    fields
-}
+/// The cases of the playground's record, each with the fields it holds and no other.
+const PLAYGROUND_CASES: [(&str, &[&str]); 5] = [
+    (
+        "fail",
+        &["attempts", "reserved_micros", "seconds", "verdict"],
+    ),
+    ("pass", &["attempts", "seconds", "verdict"]),
+    ("vague", &["checked", "seconds", "sent"]),
+    ("no-key", &["sent"]),
+    (
+        "quit",
+        &[
+            "open_reservations",
+            "outcome",
+            "reserved_micros",
+            "seconds_into_fill",
+            "store_took_a_writer",
+            "unresolved_micros",
+        ],
+    ),
+];
 
 #[test]
 fn the_playgrounds_record_holds_only_aggregates_and_run_ids() {
-    // Each case is pending, every field saying so, until the orchestrator's live run fills
-    // it; then it holds a run id, a commit of this tree and the spend its record settled.
+    // The orchestrator's live runs, committed: each case its run id (or none, where no run
+    // was started), what the run settled, and the claims of its case; the totals the sum.
     let page = std::fs::read_to_string(repository().join(PLAYGROUND_PAGE))
         .expect("the playground's record is committed");
     let block = |heading: &str| -> toml::Table {
@@ -2765,23 +2764,28 @@ fn the_playgrounds_record_holds_only_aggregates_and_run_ids() {
             .as_integer()
             .unwrap_or_else(|| panic!("{name} is a whole number"))
     };
-    let (mut made, mut settled) = (0_i64, 0_i64);
-    for case in ["pass", "vague", "no-key", "quit"] {
+    let (mut runs, mut settled, mut unresolved) = (0_i64, 0_i64, 0_i64);
+    for (case, own) in PLAYGROUND_CASES {
         let fields = block(&format!("### `{case}`"));
         let mut names: Vec<&str> = fields.keys().map(String::as_str).collect();
         names.sort_unstable();
-        assert_eq!(names, playground_fields(case), "{case}: its fields");
+        let mut wanted: Vec<&str> = ["case", "run", "settled_micros"].to_vec();
+        wanted.extend(own);
+        wanted.sort_unstable();
+        assert_eq!(names, wanted, "{case}: its fields");
         assert_eq!(fields["case"].as_str(), Some(case));
-        if fields["run"].as_str() == Some("pending") {
-            for (name, value) in &fields {
-                if name != "case" {
-                    assert_eq!(value.as_str(), Some("pending"), "{case}: {name}");
-                }
-            }
+        let spent = whole(&fields, "settled_micros");
+        assert!(spent >= 0, "{case}");
+        settled += spent;
+        let run = fields["run"].as_str().expect("a run id, or none");
+        if run == "none" {
+            // No run was started, so nothing was sent or spent.
+            assert_eq!(case, "no-key");
+            assert_eq!(fields["sent"].as_str(), Some("nothing"));
+            assert_eq!(spent, 0);
             continue;
         }
-        made += 1;
-        let run = fields["run"].as_str().expect("a run id");
+        runs += 1;
         let (at, count) = run.split_once('-').expect("a run id is <ms>-<count>");
         for part in [at, count] {
             assert!(
@@ -2789,52 +2793,54 @@ fn the_playgrounds_record_holds_only_aggregates_and_run_ids() {
                 "{case}: {run}"
             );
         }
-        assert!(is_ancestor(fields["commit"].as_str().unwrap()), "{case}");
-        assert!(fields["whizbang"].as_str().is_some_and(|v| !v.is_empty()));
-        let spent = whole(&fields, "settled_micros");
-        assert!(
-            (0..=whole(&fields, "reserved_micros")).contains(&spent),
-            "{case}"
-        );
-        settled += spent;
-        if case == "quit" {
-            assert_eq!(fields["outcome"].as_str(), Some("cancelled"));
-            assert_eq!(whole(&fields, "open_reservations"), 0);
-            assert_eq!(fields["store_took_a_writer"].as_bool(), Some(true));
-            continue;
+        if let Some(reserved) = fields.get("reserved_micros") {
+            assert!(spent <= reserved.as_integer().unwrap(), "{case}");
         }
-        for name in ["outcome", "verdict", "ended_as"] {
-            assert!(fields[name].is_str(), "{case}: {name}");
-        }
-        let attempts = whole(&fields, "attempts");
-        assert!((1..=3).contains(&attempts), "{case}: {attempts}");
-        assert!((0..=attempts).contains(&whole(&fields, "kept")), "{case}");
-        let ended_as = fields["ended_as"].as_str().unwrap();
         match case {
-            // A clean pass, or a retry then a pass; or the page says it still owes one.
-            "pass" => assert!(
-                fields["verdict"].as_str() == Some("pass") || page.contains("still owes"),
-                "the pass case passed or the page says what it still owes"
-            ),
-            "vague" => assert!(!ended_as.starts_with("passed"), "{ended_as}"),
+            "fail" | "pass" => {
+                assert_eq!(fields["verdict"].as_str(), Some(case));
+                assert!((1..=3).contains(&whole(&fields, "attempts")), "{case}");
+            }
+            "vague" => {
+                // Found nothing: not checked, nothing sent, nothing spent.
+                assert_eq!(fields["checked"].as_bool(), Some(false));
+                assert_eq!(fields["sent"].as_str(), Some("nothing"));
+                assert_eq!(spent, 0);
+            }
             _ => {
-                assert_eq!(ended_as, "unchecked");
-                assert_ne!(fields["unchecked_why"].as_str(), Some("none"));
+                assert_eq!(fields["outcome"].as_str(), Some("cancelled"));
+                assert_eq!(whole(&fields, "open_reservations"), 0);
+                assert_eq!(fields["store_took_a_writer"].as_bool(), Some(true));
+                unresolved += whole(&fields, "unresolved_micros");
             }
         }
     }
-    let runs = block("## The runs");
-    if made == 0 {
-        assert_eq!(runs["cases"].as_str(), Some("pending"));
-        assert_eq!(runs["settled_micros"].as_str(), Some("pending"));
-    } else {
-        assert_eq!(whole(&runs, "cases"), made);
-        assert_eq!(whole(&runs, "settled_micros"), settled);
-    }
-    for held in ["It scores nothing", "kept out of the repository"] {
+    let total = block("## The runs");
+    assert!(is_ancestor(total["commit"].as_str().unwrap()));
+    assert_eq!(total["whizbang"].as_str(), Some(LOOP_MEASURED_BY));
+    assert_eq!(whole(&total, "runs"), runs);
+    assert_eq!(whole(&total, "settled_micros"), settled);
+    assert_eq!(whole(&total, "unresolved_micros"), unresolved);
+    for held in [
+        "It scores nothing",
+        "kept out of the repository",
+        "## Found live",
+    ] {
         assert!(page.contains(held), "{held}");
     }
-    // Aggregates and run ids only: no picture, no path, no key, no token.
+    // Aggregates and run ids only: no item of the set or its phrase, no picture, no path,
+    // no key, no token.
+    let manifest: toml::Table =
+        std::fs::read_to_string(repository().join("labs/e-loop/segment-01.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
+    for item in manifest["item"].as_array().unwrap() {
+        for name in ["id", "phrase", "image"] {
+            let held = item[name].as_str().unwrap();
+            assert!(!page.contains(held), "{held}");
+        }
+    }
     for held in [
         "/Users/",
         "/home/",
