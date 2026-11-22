@@ -98,7 +98,8 @@ Three ways, which do the same:
 is cancelled; that each cancelled run's record says cancelled, with every request it sent
 accounted for in the ledger, so nothing stays reserved; that a run not ended within ten
 seconds is ended as interrupted the next time the store is opened; and that your pictures,
-history and drafts stay. **Keep playing** closes it; **Quit** quits, and the page then says
+history and drafts stay. While it is open nothing else on the page can be reached: Tab
+stays inside it, the page's keys do nothing, and Escape or **Keep playing** closes it; **Quit** quits, and the page then says
 the playground has quit and asks nothing more until you run `whizbang play` again. Closing
 the tab is not quitting: the playground keeps running.
 
@@ -169,7 +170,8 @@ Home (`#/`) is where the page opens.
   pages of 48, under the name it came with; and a place to drop up to eight at once.
   Clicking a picture opens a panel of every task that takes a picture; picking one opens its
   draft with the picture given. An unrun draft of that task is replaced only once you
-  confirm.
+  confirm. A picture the store no longer holds is said to be missing, and no task is
+  offered.
 
 **Drafts** are a task with its inputs given and not yet run. They are kept in Chrome's own
 storage for the playground's address, one a task and the twelve newest in all, and are a
@@ -204,7 +206,7 @@ left, the canvas in the middle, and the task's runs and tools on the right.
   click on the canvas is its point and a drag its box;
 - **another artifact** (a mask, a location, a profile) from the outputs of that type in the
   store's history, newest first, by pages. The list is the store's, so it is the same after
-  a reload or a restart;
+  a reload or a restart, and it is read again when a run of the task ends;
 - **a backend**, where the task lets you choose one: each choice the config offers with its
   state, READY, NO KEY, GET · its size (a model not installed), UPDATE, DAMAGED or NOT READY.
   A choice that is not ready can still be picked, and Run then says what is missing.
@@ -229,7 +231,8 @@ as from the command line.
 on it, under three tabs where the task has them: **Original**, the picture given; **Mask**,
 the draft's own mask, or else the last run's mask over that run's picture; and **Result**,
 the last run's picture. **The right column** lists the runs of this task still going and,
-under "Earlier runs", its runs from history, ten at a time; the tools it uses (each a link
+under "Earlier runs", its runs from history, ten at a time, read again when a run ends (when
+history cannot be read, it says why); the tools it uses (each a link
 to its record); and "Read this task's record".
 
 A draft has no command of its own: a command is made from a saved run, so use Copy command
