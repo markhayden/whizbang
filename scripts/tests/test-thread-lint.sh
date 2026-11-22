@@ -30,15 +30,15 @@ expect_pass "the fixture's library alone" lint --lib
 # executor's spawner, once; the spawner of the pack's supervisors, once, which holds a
 # process to two workers' three threads (the model's and the tool worker, ADR 0032); the spawner of the MCP server's reader, once,
 # which holds a process to two (plan 2C, task M1); the playground host's spawner, once,
-# which holds a process to 42 (plan m5, task H1; ADR 0041); and the test kit's helper,
+# which holds a process to 44 (plan m5, task H1; ADR 0041); and the test kit's helper,
 # for a thread, a scope and a thread of a scope.
 allowed=$(grep -r -l -F 'disallowed_methods' crates --include='*.rs' | sort | tr '\n' ' ')
 [ "$allowed" = "crates/whizbang-backends/src/pack/threads.rs crates/whizbang-core/src/contract/engine.rs crates/whizbang-serve/src/play/threads.rs crates/whizbang-serve/src/threads.rs crates/whizbang-testkit/src/threads.rs " ] ||
   fail "clippy::disallowed_methods is allowed in the executor's spawner, the pack supervisor's spawner, the server reader's spawner, the playground host's spawner and the test kit's helper only (found in: $allowed)"
 [ "$(grep -c -F 'allow(clippy::disallowed_methods)' crates/whizbang-serve/src/play/threads.rs)" = 1 ] ||
   fail "the playground host allows the lint once, on its spawner"
-grep -F 'pub const THREADS_LIMIT: usize = 42;' crates/whizbang-serve/src/play/threads.rs >/dev/null ||
-  fail "the playground host's spawner holds a process to 42 threads"
+grep -F 'pub const THREADS_LIMIT: usize = 44;' crates/whizbang-serve/src/play/threads.rs >/dev/null ||
+  fail "the playground host's spawner holds a process to 44 threads"
 [ "$(grep -c -F 'allow(clippy::disallowed_methods)' crates/whizbang-serve/src/threads.rs)" = 1 ] ||
   fail "the server allows the lint once, on its reader's spawner"
 grep -F 'pub const READERS_LIMIT: usize = 2;' crates/whizbang-serve/src/threads.rs >/dev/null ||

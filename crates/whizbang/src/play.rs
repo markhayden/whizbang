@@ -18,8 +18,11 @@ use std::time::Duration;
 use clap::Args as ClapArgs;
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
+use whizbang::model_commands::Tools;
+use whizbang::play_models::PlayModels;
 use whizbang::playing::{self, Hosting, Playground};
 use whizbang::wiring::{self, Make, Platform, Uses};
+use whizbang_core::contract::SystemClock;
 use whizbang_serve::play::{Host, PORT_DEFAULT, Settings, Stopper, Token, threads};
 
 use crate::rascal::Under;
@@ -63,7 +66,7 @@ pub fn run(args: &Args, platform: Platform) -> Result<String, String> {
     }
     // The store is made where there is none, its last folder alone, as `store import`
     // makes one: a person may start the playground on a new folder.
-    let over = args.under.over(Some(platform), Uses::Nothing)?;
+    let over = args.under.over(Some(platform.clone()), Uses::Nothing)?;
     let cached = over.decisions_cached()?;
     let opening = wiring::opening(root, Make::TheRoot, wiring::recovery())
         .map_err(|error| wiring::not_opened(&error))?;
@@ -71,7 +74,24 @@ pub fn run(args: &Args, platform: Platform) -> Result<String, String> {
     let registry = wiring::registry_over(&over, cached)?;
     let descriptors = registry.descriptors().cloned().collect();
     let executor = wiring::runner(registry, store.clone(), &over)?;
-    let play = Arc::new(Playground::new(descriptors, Arc::new(over)).with_store(store, root));
+    // The Models screen (plan m5, task M1): the models commands' own tools, under the
+    // config and env file the host runs under. The Hub's sign-in is not read from the
+    // page: a token the config names in the env file is (`play_models::PlayModels`).
+    let models = wiring::Models::shipped()?
+        .flag(args.under.models_dir())
+        .platform(platform.clone());
+    let tools = Tools::of(
+        models,
+        Arc::new(SystemClock),
+        Arc::new(whizbang_backends::net::downloader),
+    );
+    let asked = args.under.asked();
+    let models = PlayModels::new(tools, asked.config, asked.env_file);
+    let play = Arc::new(
+        Playground::new(descriptors, Arc::new(over))
+            .with_store(store, root)
+            .with_models(models),
+    );
     let token = Token::new().map_err(|error| error.to_string())?;
     let mut settings = Settings::new(root.to_path_buf());
     settings.port = args.port;
