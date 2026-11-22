@@ -71,7 +71,11 @@ pub fn run(args: &Args, platform: Platform) -> Result<String, String> {
     let registry = wiring::registry_over(&over, cached)?;
     let descriptors = registry.descriptors().cloned().collect();
     let executor = wiring::runner(registry, store.clone(), &over)?;
-    let play = Arc::new(Playground::new(descriptors, Arc::new(over)).with_store(store, root));
+    let play = Arc::new(
+        Playground::new(descriptors, Arc::new(over))
+            .with_store(store, root)
+            .with_commands(Arc::new(super::command_of::words)),
+    );
     let token = Token::new().map_err(|error| error.to_string())?;
     let mut settings = Settings::new(root.to_path_buf());
     settings.port = args.port;

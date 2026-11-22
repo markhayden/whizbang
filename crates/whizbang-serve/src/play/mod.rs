@@ -26,6 +26,7 @@
 pub mod assets;
 pub mod guard;
 pub mod http;
+pub mod result;
 pub mod routes;
 pub mod threads;
 pub mod token;
@@ -132,6 +133,21 @@ pub trait Play: Send + Sync {
     /// so a poll that comes after the end reads the rest here.
     fn journal(&self, _run: &RunId) -> Option<(Vec<Json>, u64)> {
         None
+    }
+    /// A run's record as the result screen reads it, every text escaped (plan m5, task
+    /// W2): 404 for no such run, 409 for one that has not ended.
+    fn record(&self, _run: &RunId) -> Result<Json, Refused> {
+        Err(Refused::new(
+            501,
+            "this build reads no run's record for the page",
+        ))
+    }
+    /// The command line that makes the run's call again (plan m5, task W2, item 5).
+    fn command(&self, _run: &RunId) -> Result<Json, Refused> {
+        Err(Refused::new(
+            501,
+            "this build says no command line of a run",
+        ))
     }
     /// The config's name of the backend a call that names none uses for this capability:
     /// its default, which preparation resolves to (ADR 0006).

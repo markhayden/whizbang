@@ -901,6 +901,35 @@ impl Over {
         Ok(config.decisions_cached())
     }
 
+    /// The config file this is under, the env file beside it, and the models directory
+    /// that was opened, each when there is one: what the playground's copied command names
+    /// by its path (plan m5, task W2, item 5). Never a value the env file holds.
+    pub fn files_named(&self) -> (Option<&Path>, Option<&Path>, Option<&Path>) {
+        (
+            self.config.as_deref(),
+            self.env.as_deref(),
+            self.installed.as_ref().map(|opened| opened.root.as_path()),
+        )
+    }
+
+    /// The digest of the config as it reads now, as a run's record names the config it
+    /// ran under (`asked.config`); none when it cannot be read, or none is named.
+    pub fn config_digest(&self) -> Option<whizbang_core::identity::Digest> {
+        let configured = self.configured().ok()??;
+        Some(configured.loaded.config().digest())
+    }
+
+    /// The recipe file the config lists whose recipe is named `name`, by its path.
+    pub fn recipe_file_named(&self, name: &str) -> Option<PathBuf> {
+        let path = self.config.as_ref()?;
+        let config = Config::read(path, &self.secrets).ok()?;
+        config.recipe_paths().find_map(|path| {
+            let text = recipe_file(path).ok()?;
+            let recipe = whizbang_core::recipe::Recipe::read(&text).ok()?;
+            (recipe.name == name).then(|| path.to_path_buf())
+        })
+    }
+
     /// What is installed, as this was given it: the inventory of the models
     /// directory that was opened, or none.
     pub fn installations(&self) -> Option<&Arc<Installations>> {

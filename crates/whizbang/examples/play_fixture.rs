@@ -30,6 +30,15 @@
 //! `tinker`, beside the build's: `SPEC.md` section 1's rule that a kit needs no change
 //! to a door).
 
+/// The binary's own command line, parse and dispatch (`main.rs` and its commands), for the
+/// mode `cli` (plan m5, task W2, item 5). Its `main` is not called here.
+#[path = "../src/main.rs"]
+#[allow(dead_code)]
+mod binary;
+// The commands name one another from the crate's root, as they do in the binary.
+#[allow(unused_imports)]
+use binary::{COMMIT, eval, export, rascal, runs, spend, stats, store};
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -152,6 +161,12 @@ impl Play for Fixture {
     fn journal(&self, run: &RunId) -> Option<(Vec<Json>, u64)> {
         self.door.journal(run)
     }
+    fn record(&self, run: &RunId) -> Result<Json, Refused> {
+        self.door.record(run)
+    }
+    fn command(&self, run: &RunId) -> Result<Json, Refused> {
+        self.door.command(run)
+    }
     fn default_backend(&self, capability: &str) -> Option<String> {
         self.door.default_backend(capability)
     }
@@ -173,7 +188,46 @@ fn config_path(store: &Path) -> PathBuf {
     store.with_file_name(name)
 }
 
-fn main() {
+/// The mode `cli`: the binary's own parse and dispatch of the words after `cli`, as
+/// `whizbang` would run them, over the fixture's fake backends (plan m5, task W2, item 5).
+/// The config and the models directory are the host's, written again beside the store
+/// the words name, so a command the host copied runs under the same config.
+fn cli(words: Vec<String>) -> std::process::ExitCode {
+    let store = words
+        .iter()
+        .position(|word| word == "--store")
+        .and_then(|at| words.get(at + 1))
+        .map(PathBuf::from);
+    let Some(store) = store else {
+        fail("cli: the command names no --store");
+    };
+    let config = config_path(&store);
+    std::fs::write(&config, config_text()).unwrap_or_else(|error| fail(&error.to_string()));
+    let models = config.with_extension("models");
+    let _ = std::fs::create_dir(&models);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&models, std::fs::Permissions::from_mode(0o700));
+    }
+    let kit = PlayKit::new();
+    let _ = rascal::MORE_KINDS.set(vec![kit.kind()]);
+    let code = binary::run(std::iter::once("whizbang".to_owned()).chain(words));
+    let _ = std::fs::remove_file(&config);
+    let _ = std::fs::remove_dir_all(&models);
+    code
+}
+
+fn main() -> std::process::ExitCode {
+    let mut given = std::env::args().skip(1).peekable();
+    if given.peek().map(String::as_str) == Some("cli") {
+        return cli(given.skip(1).collect());
+    }
+    host();
+    std::process::ExitCode::SUCCESS
+}
+
+fn host() {
     let mut store = std::env::temp_dir().join("whizbang-play-fixture");
     let mut port: u16 = 0;
     let mut stdin_quit = false;
@@ -235,7 +289,8 @@ fn main() {
     let executor = wiring::runner(registry, writer.clone(), &over).unwrap_or_else(|why| fail(&why));
     let door = Playground::new(descriptors, Arc::new(over))
         .with_store(writer, &store)
-        .with_kits(kits);
+        .with_kits(kits)
+        .with_commands(Arc::new(binary::command_of::words));
     let play = Arc::new(Fixture { door, kit });
     let token = Token::new().unwrap_or_else(|error| fail(&error.to_string()));
     let mut settings = Settings::new(store);

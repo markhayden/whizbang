@@ -577,7 +577,7 @@ impl Details {
     }
 
     /// The tools the judge is offered, and the name `check` takes.
-    fn tools_and_name(self) -> (&'static str, &'static str) {
+    pub fn tools_and_name(self) -> (&'static str, &'static str) {
         match self {
             Details::First => ("view,align,resize", "first"),
             Details::None => ("view,align", "none"),
@@ -635,6 +635,35 @@ pub fn shorthand(asked: &CheckAsked<'_>) -> Result<(Job, Vec<ArtifactId>), Strin
         images.push(identity("reference", reference)?);
     }
     let job = Job::shorthand(asked.use_case, asked.source.is_some(), given, asked.brief);
+    Ok((job, images))
+}
+
+/// A job of the contract `job/1` given as JSON, as a stored run holds it, and its images
+/// by their identities in the job's order (`squint check --job-json`; plan m5, task W2,
+/// item 5): of the use case typed, with one identity for each of its images.
+pub fn job_json(
+    text: &str,
+    images: &[String],
+    use_case: &str,
+) -> Result<(Job, Vec<ArtifactId>), String> {
+    let job = Job::from_json(text).map_err(|why| format!("--job-json: {}", printable(&why)))?;
+    if job.use_case != use_case {
+        return Err(format!(
+            "--job-json is a job of another use case than {use_case}"
+        ));
+    }
+    if images.len() != job.images.len() {
+        return Err(format!(
+            "--job-json names {} image(s), and --image was given {} time(s): give each of \
+             its images once, in its order",
+            job.images.len(),
+            images.len()
+        ));
+    }
+    let images = images
+        .iter()
+        .map(|id| identity("image", id))
+        .collect::<Result<Vec<_>, _>>()?;
     Ok((job, images))
 }
 

@@ -130,6 +130,8 @@ pub(crate) const ROUTES: &[Route] = &[
         query: &[],
         handler: location,
     },
+    super::result::RECORD,
+    super::result::COMMAND,
     Route {
         method: "GET",
         pattern: "*",
@@ -671,7 +673,7 @@ fn from_journal(lines: &[Json], not_kept: u64, after: u64) -> (Vec<Json>, u64, u
     (events, end.max(after), skipped)
 }
 
-fn run_of(guarded: &Guarded<'_>) -> Result<RunId, Response> {
+pub(crate) fn run_of(guarded: &Guarded<'_>) -> Result<RunId, Response> {
     let text = guarded
         .params
         .first()
@@ -792,7 +794,7 @@ fn kept_arguments(arguments: &Map<String, Json>) -> Json {
     }
 }
 
-fn refused_by_play(refused: &super::Refused) -> Response {
+pub(crate) fn refused_by_play(refused: &super::Refused) -> Response {
     Response::refused(refused.status, &escaped(&refused.why))
 }
 

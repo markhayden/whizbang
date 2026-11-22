@@ -37,16 +37,20 @@ pub enum Command {
         use_case: String,
         /// The picture that is judged, by its identity in the store: sha256: and 64 hex
         /// digits, as `whizbang store import` prints it.
-        #[arg(long, required_unless_present = "job", conflicts_with = "job")]
+        #[arg(
+            long,
+            required_unless_present_any = ["job", "job_json"],
+            conflicts_with_all = ["job", "job_json"]
+        )]
         candidate: Option<String>,
         /// What the candidate was edited from, by its identity in the store: for
         /// source-fidelity.
-        #[arg(long, conflicts_with = "job")]
+        #[arg(long, conflicts_with_all = ["job", "job_json"])]
         source: Option<String>,
         /// What the candidate is held to, by its identity in the store: for
         /// reference-consistency and product-fidelity. Up to 8, each labelled by its
         /// place: reference 1, reference 2, and so on.
-        #[arg(long = "reference", value_name = "ID", conflicts_with = "job")]
+        #[arg(long = "reference", value_name = "ID", conflicts_with_all = ["job", "job_json"])]
         references: Vec<String>,
         /// The judge, by its name in the config's `[backends.judge]` tables. With
         /// none, the config's default judge answers.
@@ -55,14 +59,25 @@ pub enum Command {
         /// The job's requirements in words, such as "change only the sky; the parrot's
         /// tail keeps its colour". The judge holds the picture to it. brief-compliance
         /// needs one; with none, nothing is named as kept or as asked for.
-        #[arg(long, value_name = "TEXT", conflicts_with = "job")]
+        #[arg(long, value_name = "TEXT", conflicts_with_all = ["job", "job_json"])]
         brief: Option<String>,
         /// A squint job file, read whole: its brief, its requirements with their ids,
         /// scopes and evidence, and its images with their roles and labels, each
         /// brought into the store from the file it names, relative to the job file's
         /// folder, and checked against the SHA-256 the job pins.
-        #[arg(long, value_name = "FILE")]
+        #[arg(long, value_name = "FILE", conflicts_with = "job_json")]
         job: Option<PathBuf>,
+        /// A job of the contract job/1 as JSON, as a stored run holds it (the argument
+        /// `job` of a check's record): its brief, its requirements and its images by role,
+        /// whose pictures are given by --image, by their identities in the store, once
+        /// each in the job's order. The command the playground copies from a check says
+        /// its whole job this way.
+        #[arg(long, value_name = "JSON", requires = "images")]
+        job_json: Option<String>,
+        /// With --job-json: each of the job's images, by its identity in the store, in
+        /// the job's order.
+        #[arg(long = "image", value_name = "ID", requires = "job_json")]
+        images: Vec<String>,
         #[command(flatten)]
         at: Where,
         #[command(flatten)]
@@ -138,6 +153,8 @@ fn run_at(
             judge,
             brief,
             job,
+            job_json,
+            images,
             details,
             detail,
             projection,
@@ -160,9 +177,10 @@ fn run_at(
             };
             // What the command line states is checked, and a job file read and its
             // pictures brought in, before anything runs.
-            let (job, images) = match job {
-                Some(file) => door::job_file(file, use_case, &root, &recovery)?,
-                None => {
+            let (job, images) = match (job, job_json) {
+                (Some(file), _) => door::job_file(file, use_case, &root, &recovery)?,
+                (None, Some(text)) => door::job_json(text, images, use_case)?,
+                (None, None) => {
                     let references: Vec<&str> = references.iter().map(String::as_str).collect();
                     door::shorthand(&CheckAsked {
                         use_case,

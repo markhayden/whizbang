@@ -30,15 +30,15 @@ use whizbang_testkit::scratch::Scratch;
 
 /// `whizbang play` started on a free port, printing its address, stopping at the end
 /// of its input.
-struct Played {
+pub(crate) struct Played {
     child: Child,
     input: Option<ChildStdin>,
     _binary: Binary,
     port: u16,
-    token: String,
+    pub(crate) token: String,
 }
 
-fn play(store: &Path, more: &[&str]) -> Played {
+pub(crate) fn play(store: &Path, more: &[&str]) -> Played {
     let mut binary = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"));
     binary
         .args([
@@ -86,11 +86,11 @@ fn parsed_address(address: &str) -> (u16, String) {
 }
 
 impl Played {
-    fn address(&self) -> SocketAddr {
+    pub(crate) fn address(&self) -> SocketAddr {
         SocketAddr::from(([127, 0, 0, 1], self.port))
     }
 
-    fn api(&self, method: &str, path: &str) -> Answer {
+    pub(crate) fn api(&self, method: &str, path: &str) -> Answer {
         api(self.address(), &self.token, method, path, None)
     }
 
@@ -103,7 +103,7 @@ impl Played {
     }
 
     /// Waits for the process, 20 seconds at most: its exit code and what it printed.
-    fn ended(mut self) -> (Option<i32>, String, String) {
+    pub(crate) fn ended(mut self) -> (Option<i32>, String, String) {
         drop(self.input.take());
         let limit = Instant::now() + Duration::from_secs(20);
         loop {
@@ -494,7 +494,7 @@ impl Hosted {
         }
     }
 
-    fn root(&self) -> PathBuf {
+    pub(crate) fn root(&self) -> PathBuf {
         self.scratch.path().join("store")
     }
 
@@ -817,27 +817,27 @@ fn a_quit_while_a_start_is_admitted_cancels_the_run_it_makes() {
 // Requests as bytes.
 
 /// A request id no other request of this process has.
-fn fresh_id() -> String {
+pub(crate) fn fresh_id() -> String {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     format!("page-{}", NEXT.fetch_add(1, Ordering::SeqCst))
 }
 
-struct Answer {
-    status: u16,
-    body: Vec<u8>,
+pub(crate) struct Answer {
+    pub(crate) status: u16,
+    pub(crate) body: Vec<u8>,
 }
 
 impl Answer {
-    fn text(&self) -> String {
+    pub(crate) fn text(&self) -> String {
         String::from_utf8_lossy(&self.body).into_owned()
     }
 
-    fn json(&self) -> Json {
+    pub(crate) fn json(&self) -> Json {
         serde_json::from_slice(&self.body).unwrap_or(Json::Null)
     }
 }
 
-fn request(
+pub(crate) fn request(
     address: SocketAddr,
     token: &str,
     method: &str,
@@ -871,7 +871,7 @@ fn api(address: SocketAddr, token: &str, method: &str, path: &str, origin: Optio
     )
 }
 
-fn send(address: SocketAddr, bytes: &[u8]) -> Answer {
+pub(crate) fn send(address: SocketAddr, bytes: &[u8]) -> Answer {
     let mut stream = TcpStream::connect(address).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(20)))
@@ -937,7 +937,7 @@ fn shouting() -> Arc<dyn Action> {
 }
 
 /// The host over the kit, in a store of its own with ten dollars to spend.
-struct Kitted {
+pub(crate) struct Kitted {
     scratch: Scratch,
     door: Arc<Playground>,
     kit: Arc<whizbang_testkit::playkit::PlayKit>,
@@ -947,7 +947,7 @@ struct Kitted {
 }
 
 impl Kitted {
-    fn new(label: &str) -> Kitted {
+    pub(crate) fn new(label: &str) -> Kitted {
         Kitted::over(Scratch::new(label), true)
     }
 
@@ -1017,7 +1017,7 @@ impl Kitted {
         self.scratch.path().join("store")
     }
 
-    fn api(&self, method: &str, path: &str, body: Option<&Json>) -> Answer {
+    pub(crate) fn api(&self, method: &str, path: &str, body: Option<&Json>) -> Answer {
         let origin = format!("http://127.0.0.1:{}", self.address.port());
         let origin = (method != "GET").then_some(origin.as_str());
         let bytes = request(self.address, &self.token.hex(), method, path, origin, body);
@@ -1025,7 +1025,7 @@ impl Kitted {
     }
 
     /// A picture sent as the page sends one.
-    fn upload(&self, png: &[u8], name: &str) -> Answer {
+    pub(crate) fn upload(&self, png: &[u8], name: &str) -> Answer {
         let mut head = format!(
             "POST /api/pictures?name={name} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
              Authorization: Bearer {token}\r\nOrigin: http://127.0.0.1:{port}\r\n\
@@ -1040,26 +1040,26 @@ impl Kitted {
     }
 
     /// A picture of the store, by its identity.
-    fn picture(&self, shade: u8) -> String {
+    pub(crate) fn picture(&self, shade: u8) -> String {
         let sent = self.upload(&png(64, 48, shade), "porch.png");
         assert_eq!(sent.status, 201, "{}", sent.text());
         sent.json()["id"].as_str().unwrap().to_owned()
     }
 
-    fn prepare(&self, action: &str, arguments: &Json) -> Json {
+    pub(crate) fn prepare(&self, action: &str, arguments: &Json) -> Json {
         let body = json!({"action": action, "arguments": arguments});
         let prepared = self.api("POST", "/api/prepare", Some(&body));
         assert_eq!(prepared.status, 200, "{}", prepared.text());
         prepared.json()
     }
 
-    fn begin(&self, action: &str, arguments: &Json, handle: &Json, id: &str) -> Answer {
+    pub(crate) fn begin(&self, action: &str, arguments: &Json, handle: &Json, id: &str) -> Answer {
         let body = json!({"action": action, "arguments": arguments, "handle": handle,
                           "request_id": id});
         self.api("POST", "/api/runs", Some(&body))
     }
 
-    fn until_ended(&self, run: &str) -> Json {
+    pub(crate) fn until_ended(&self, run: &str) -> Json {
         for _ in 0..4000 {
             let polled = self.api("GET", &format!("/api/runs/{run}?after=0"), None);
             assert_eq!(polled.status, 200, "{}", polled.text());
@@ -1091,7 +1091,7 @@ impl Drop for Kitted {
 }
 
 /// A PNG of this size, one shade.
-fn png(width: u32, height: u32, shade: u8) -> Vec<u8> {
+pub(crate) fn png(width: u32, height: u32, shade: u8) -> Vec<u8> {
     use image::ImageEncoder;
     let rgb: Vec<u8> = (0..width * height)
         .flat_map(|at| [shade, (at % 251) as u8, 90])
