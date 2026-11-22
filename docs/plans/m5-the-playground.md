@@ -753,7 +753,7 @@ both runners.
    from the other origin, a request to the host under another name that resolves to loopback,
    and an upload of a picture over the pixel limit.
 
-- [ ] Done when: the unit tests of every component and of the tokens and contrast pass under
+- [x] Done when: the unit tests of every component and of the tokens and contrast pass under
   `just ui-check` in under 20 seconds; the seven Chrome cases pass under `just e2e` on the
   owner's Mac and in both `e2e` jobs; `scripts/tests/test-ci-jobs.sh` and
   `scripts/tests/test-setup.sh` pass with Node; the install check starts and quits the host
@@ -1238,7 +1238,7 @@ Follow-ups of the live fixes (the review of #282):
   choice whose call cannot be prepared with that backend's own readiness, as hello lists it,
   for every refusal alike: a refusal that is about the choice itself (not the call's missing
   input) should say so. Tell the two apart, with a test, or say here why the backend's own
-  readiness is enough.
+  readiness is enough. *Moved to `docs/carry-over.md` by N1.*
 
 ## E1. The loop by hand in the playground, and the guide (medium; the orchestrator's runs)
 
@@ -1258,7 +1258,7 @@ the guide finished.
 3. **The guide whole**: `docs/guides/playground.md` with every screen in words, each marked
    example by its tier.
 
-- [ ] Done when: the three cases and the quit are in `docs/results/m5-playground.md` with
+- [x] Done when: the three cases and the quit are in `docs/results/m5-playground.md` with
   their run ids and spend; the `pass` case has a pass (the carry-over line closed) or the
   record says it still owes one and why; the guide is whole.
 
@@ -1285,6 +1285,13 @@ the guide finished.
 
 - [ ] Done when: the note is merged, `m5` is tagged, and each of the four repos shows as
   archived with the pointer (or the owner's no is recorded in the note).
+
+**As built (N1).** The note is `docs/plans/m5-note.md`; `scripts/tests/test-notes.sh` now
+also fails when a note names a Chrome case (`<file>.spec.ts: <title>`) that `ui/e2e/` does
+not hold, and holds this note to at least 50 cases and 50 tests. The spec's wording of item 2
+is in `SPEC.md` sections 3, 12 and 13. Every carry-over row that named milestone 5 is closed,
+dropped or re-owned with its line, and the follow-ups of the milestone are rows with owners.
+This box is ticked once `m5` is tagged and the repos are archived, by the orchestrator.
 
 ## Carry-over rows owned by milestone 5, and who takes each
 

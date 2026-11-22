@@ -24,6 +24,40 @@ missing() {
   done
 }
 
+# A Chrome case (plan m5) is cited as `<file>.spec.ts: <title>`, which may run across a
+# line break. It exists when ui/e2e/<file>.spec.ts holds `test("<title>"`.
+
+# chrome_cited <file>: each Chrome case the file cites, one a line, each once.
+chrome_cited() {
+  tr '\n' ' ' <"$1" | tr -s ' ' |
+    { grep -o -E '`[a-z]+\.spec\.ts: [^`]+`' || true; } | tr -d '`' | sort -u
+}
+
+# chrome_missing <file> [<root>]: each cited Chrome case that is not under <root>/ui/e2e/.
+chrome_missing() {
+  local span file title root=${2:-.}
+  chrome_cited "$1" | while IFS= read -r span; do
+    file=${span%%.spec.ts: *}
+    title=${span#*.spec.ts: }
+    { [ -f "$root/ui/e2e/$file.spec.ts" ] &&
+      grep -F -e "test(\"$title\"" "$root/ui/e2e/$file.spec.ts" >/dev/null; } || echo "$span"
+  done
+}
+
+# The check of Chrome cases, on a tree and a note written here: one case that exists, cited
+# across a line, one whose title is not there, and one whose file is not there.
+mkdir -p "$tmp/tree/ui/e2e"
+cat >"$tmp/tree/ui/e2e/run.spec.ts" <<'SPEC'
+test("a rascal task runs from a picture and words to a result", async ({ page }) => {});
+SPEC
+cat >"$tmp/chrome.md" <<'NOTE'
+Held by `run.spec.ts: a rascal task runs from a picture
+and words to a result`, by `run.spec.ts: a case nobody wrote` and by `gone.spec.ts: a case`.
+NOTE
+[ "$(chrome_cited "$tmp/chrome.md" | wc -l | tr -d ' ')" = 3 ] || fail "three Chrome cases are cited, one across a line"
+[ "$(chrome_missing "$tmp/chrome.md" "$tmp/tree" | tr '\n' '|')" = "gone.spec.ts: a case|run.spec.ts: a case nobody wrote|" ] ||
+  fail "a cited Chrome case that does not exist is not reported, or one that exists is"
+
 # The check itself, on a note written here: one test that exists, one that does not, and a
 # path that is no test.
 cat >"$tmp/note.md" <<'NOTE'
@@ -43,6 +77,8 @@ for note in docs/plans/*-note.md; do
   found=$((found + 1))
   gone=$(missing "$note")
   [ -z "$gone" ] || fail "$note cites tests that no file under crates/ defines: $(echo "$gone" | tr '\n' ' ')"
+  gone=$(chrome_missing "$note")
+  [ -z "$gone" ] || fail "$note cites Chrome cases that ui/e2e/ does not hold: $(echo "$gone" | tr '\n' '|')"
 done
 [ "$found" -gt 0 ] || fail "no note under docs/plans"
 # The note of checkpoint 1A matches each clause of its row in the spec to tests: it cites many.
@@ -64,5 +100,12 @@ done
 # And the note of milestone 4 (plan m4, task N1), for its row.
 [ "$(cited docs/plans/m4-note.md | wc -l | tr -d ' ')" -ge 50 ] ||
   fail "docs/plans/m4-note.md cites fewer than 50 tests: its table of clauses is gone or is no longer read"
+
+# And the note of milestone 5 (plan m5, task N1), for its row: the Chrome cases of each kept
+# row of section 7, and the tests behind them and the guard's.
+[ "$(chrome_cited docs/plans/m5-note.md | wc -l | tr -d ' ')" -ge 50 ] ||
+  fail "docs/plans/m5-note.md cites fewer than 50 Chrome cases: its table of rows is gone or is no longer read"
+[ "$(cited docs/plans/m5-note.md | wc -l | tr -d ' ')" -ge 50 ] ||
+  fail "docs/plans/m5-note.md cites fewer than 50 tests: its table of clauses is gone or is no longer read"
 
 finished
