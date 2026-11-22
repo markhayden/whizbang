@@ -306,7 +306,25 @@ holds what the brief asked for and nothing it forbade; and `product-fidelity`, w
 product shot keeps the exact product. The judge is a backend of the kind `service`, whose
 provider is Anthropic, Google or OpenAI; the config names its model and the variable its
 key is in, caps what one call may reserve, and approves the provider for the four
-classes of data a check sends (plan 2A, "What the owner provides (S)"). For Anthropic:
+classes of data a check sends (plan 2A, "What the owner provides (S)").
+For Google, whose key goes in the header `x-goog-api-key` and never in the address:
+
+```toml
+[backends.judge]
+kind = "service"
+provider = "google"
+model = "gemini-4-argon"
+key_env = "GEMINI_API_KEY"
+
+[spend]
+call_cap_usd = 2.00
+
+[egress.recipients.google]
+origin = "https://generativelanguage.googleapis.com"
+classes = ["source_images", "derived_images", "prompts", "evidence"]
+```
+
+For Anthropic:
 
 ```toml
 [backends.judge]
@@ -320,23 +338,6 @@ call_cap_usd = 2.00
 
 [egress.recipients.anthropic]
 origin = "https://api.anthropic.com"
-classes = ["source_images", "derived_images", "prompts", "evidence"]
-```
-
-For Google, whose key goes in the header `x-goog-api-key` and never in the address:
-
-```toml
-[backends.judge]
-kind = "service"
-provider = "google"
-model = "gemini-3.8-flash"
-key_env = "GEMINI_API_KEY"
-
-[spend]
-call_cap_usd = 2.00
-
-[egress.recipients.google]
-origin = "https://generativelanguage.googleapis.com"
 classes = ["source_images", "derived_images", "prompts", "evidence"]
 ```
 

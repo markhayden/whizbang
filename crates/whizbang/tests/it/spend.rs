@@ -346,9 +346,9 @@ mod judge {
 
     #[test]
     fn the_example_configs_whole_call_reservation_fits_its_cap_for_each_judge() {
-        // The examples of the guide, as the owner writes them, one for each provider:
-        // the bound of one request of its judge, times the sixteen turns `check`
-        // reserves, is within its cap.
+        // The examples of the guide, as the owner writes them, one for each provider,
+        // the default judge's first (ADR 0044): the bound of one request of its judge,
+        // times the sixteen turns `check` reserves, is within its cap.
         let guide = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../docs/guides/config.md"
@@ -365,8 +365,8 @@ mod judge {
             .map(|rest| rest.split("```").next().unwrap())
             .collect();
         let expected = [
+            ("gemini-4-argon", "GEMINI_API_KEY", 120_960),
             ("claude-haiku-5-5", "ANTHROPIC_API_KEY", BOUND),
-            ("gemini-3.8-flash", "GEMINI_API_KEY", 45_360),
             ("gpt-6.1-terra", "OPENAI_API_KEY", 60_480),
         ];
         assert_eq!(examples.len(), expected.len());

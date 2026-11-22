@@ -140,6 +140,9 @@ The examples above take well under a second each with the scripted judge. With a
 a run is the judge's turns: in F1's rerun of the evaluation, over all five use cases,
 `check` took 15,686 ms at the median and 29,381 ms at the 95th percentile, and the 220
 decisions settled 0.809051 dollars, about 0.0037 dollars each, on `claude-haiku-5-5`.
+In the judge round of milestone E (plan e1, task J1), under `C;submission=v1` on this
+use case's sets, a decision settled 0.0036 to 0.0298 dollars across the five
+judges, at a median of 15,727 to 35,609 ms (`docs/results/e-judges.md`).
 `align` took 400 ms at the median and 985 ms at the 95th percentile in E1's run (172 runs).
 
 ## Alternatives
@@ -153,6 +156,17 @@ decisions settled 0.809051 dollars, about 0.0037 dollars each, on `claude-haiku-
   A1; the gate above found no gain from the details on the dev sets.
 - **The second look on**: `--second-look on` (plan m3, task U1).
 - **Submission v2**: `--submission v2` (plan e1, task F1; ADR 0042).
+- **Another judge** (plan e1, task J1; ADR 0044): the five judges this build prices,
+  under `C;submission=v1`, repetition 1, on this use case's sets, `blind-v3` among them
+  (`docs/results/e-judges.md`, "By scope", the scope `source-fidelity`):
+
+| Judge | Decisions | Balanced accuracy | Decided correctly | Unsure | Errors | Cost per decision |
+|---|---|---|---|---|---|---|
+| `claude-haiku-5-5` | 165 | 0.794 (0.730 to 0.854) | 0.794 (0.730 to 0.854) | 27 | 1 | 0.003569 |
+| `gemini-3.8-flash` | 165 | 0.854 (0.810 to 0.899) | 0.855 (0.810 to 0.899) | 0 | 5 | 0.018420 |
+| `gemini-4-argon` | 165 | 0.964 (0.929 to 0.988) | 0.964 (0.929 to 0.988) | 0 | 0 | 0.029759 |
+| `gpt-6.1-sol` | 165 | 0.964 (0.937 to 0.988) | 0.964 (0.937 to 0.988) | 2 | 0 | 0.022383 |
+| `gpt-6.1-terra` | 165 | 0.934 (0.890 to 0.971) | 0.933 (0.890 to 0.971) | 1 | 0 | 0.011060 |
 
 ## Limits
 
