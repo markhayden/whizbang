@@ -4,6 +4,10 @@ One TOML file says which backend answers each capability, what one call may spen
 who may receive data. This page is how to write it. Why it is this way, and exactly how
 its digest is made, is in `docs/adr/0011-the-config-file.md`.
 
+The playground (`whizbang play`, `docs/guides/playground.md`) reads this file and its env
+file, as every command does, and never writes either: its Models screen says whether each
+backend's key is set, and never shows, takes or stores a key.
+
 Every example on this page is read by the fast tier: a block that is shown as read is
 read, and a block that is shown as refused is refused with the sentence under it
 (`config::examples::every_example_in_the_guide_and_in_the_record_is_read`,
@@ -187,9 +191,9 @@ unless it leaves the worker's process group. List only files you wrote or read.
 
 ## Who may receive data
 
-This table is what will be enforced once the gate is built: nothing will leave the
-machine to a recipient it does not name, and a recipient will receive only the classes of
-data listed for it. Today it is read and checked, and nothing sends anything.
+This table is enforced: nothing leaves the machine to a recipient it does not name, and a
+recipient receives only the classes of data listed for it. Each run records where its data
+went.
 
 ```toml
 [egress.recipients.fal]

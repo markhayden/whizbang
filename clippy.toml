@@ -6,7 +6,7 @@ allow-expect-in-tests = true
 # the seventh live thread of a process, two workers' three being the most (the model's and
 # the tool worker, ADR 0032; `whizbang_backends::pack::threads`); the spawner of the MCP server's reader, which refuses
 # the third live reader of a process (`whizbang_serve`, ADR 0031); the spawner of the
-# playground host, which refuses the 43rd live thread of a process (`whizbang_serve::play::threads`,
+# playground host, which refuses the 45th live thread of a process (`whizbang_serve::play::threads`,
 # ADR 0041); and `whizbang_testkit::threads`, which refuses the 65th live thread of a
 # process before it is made. A test that made threads until the system refused one took a
 # machine down. Each of the five has an `#[allow]` with its reason;
