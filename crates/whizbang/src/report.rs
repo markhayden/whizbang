@@ -289,7 +289,7 @@ impl Pictures {
                 Some(p) if p.width() == width && p.height() == height => p.rgba().to_vec(),
                 _ => [40u8, 40, 40, 255].repeat(count),
             };
-            for (at, pixel) in rgba.chunks_exact_mut(4).enumerate() {
+            for (at, pixel) in rgba.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                 let core = f32::from(*mask.core().get(at).unwrap_or(&0));
                 let blend = f32::from(*mask.blend().get(at).unwrap_or(&0));
                 let weight = core.max(blend) / 255.0 * 0.6;
@@ -931,10 +931,10 @@ pub fn report(root: &Path, run: &RunId, title: Option<&str>) -> Result<String, S
             usd(total)
         );
     }
-    let _ = write!(
+    let _ = writeln!(
         out,
         "<p class=\"quiet\">Made by whizbang {} from the run's record. It loads nothing and \
-         runs nothing.</p></body></html>\n",
+         runs nothing.</p></body></html>",
         env!("CARGO_PKG_VERSION")
     );
     Ok(out)
