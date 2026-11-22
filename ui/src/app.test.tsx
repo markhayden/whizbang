@@ -4,7 +4,7 @@ import { act } from "preact/test-utils";
 import { ApiError, type Client, type Hello } from "./api";
 import { App, NO_TOKEN } from "./app";
 import type { Taken } from "./token";
-import { HOSTILE, render } from "./test/render";
+import { HOSTILE, click, render } from "./test/render";
 
 let lastClient: Client;
 function clientAnswering(hello: Promise<Hello>): Client {
@@ -19,6 +19,7 @@ function clientAnswering(hello: Promise<Hello>): Client {
     pollRun: vi.fn(() => () => undefined),
     cancelRun: vi.fn(),
     openRuns: vi.fn(() => Promise.resolve([])),
+    quit: vi.fn(() => Promise.resolve({ stopping: true })),
     uploadPicture: vi.fn(),
     listPictures: vi.fn(() => Promise.resolve([])),
     commitLocation: vi.fn(),
@@ -142,6 +143,49 @@ describe("the shell", () => {
     await settle();
     expect(lastClient.setToken).toHaveBeenCalledTimes(1);
     expect(view.get("h1 img").getAttribute("alt")).toBe("whizbang");
+  });
+
+  it("asks before Quit, saying what it does to the runs going, then quits and asks nothing more", async () => {
+    const { view } = mount("#/", Promise.resolve(HELLO));
+    await settle();
+    const going = [
+      { run: "r-1", action: "remove_prompt", started_ms: 1, state: "running" },
+      { run: "r-2", action: "remove_prompt", started_ms: 2, state: "running" },
+    ];
+    vi.mocked(lastClient.openRuns).mockImplementation(() => Promise.resolve(going));
+    click(view.get(".top-bar__quit"));
+    await settle();
+    const dialog = view.get("[role=alertdialog]");
+    expect(dialog.textContent).toContain("Quit the playground?");
+    expect(dialog.textContent).toContain("The 2 runs still going are cancelled.");
+    expect(dialog.textContent).toContain("record that says cancelled");
+    expect(dialog.textContent).toContain("accounted for in the ledger");
+    expect(dialog.textContent).toContain("ended as interrupted");
+    expect(lastClient.quit).not.toHaveBeenCalled();
+    // Keep playing leaves everything as it was.
+    click(view.get("[role=alertdialog] .button--quiet"));
+    expect(view.all("[role=alertdialog]")).toHaveLength(0);
+    click(view.get(".top-bar__quit"));
+    await settle();
+    click(view.get("[role=alertdialog] .button--danger"));
+    await settle();
+    expect(lastClient.quit).toHaveBeenCalledTimes(1);
+    expect(view.get("h1").textContent).toBe("The playground has quit");
+    expect(view.text()).toContain("the 2 runs still going");
+    expect(view.text()).toContain("Run whizbang play");
+    expect(view.all(".top-bar")).toHaveLength(0);
+  });
+
+  it("says nothing is cancelled when nothing is running, and keeps the dialog when the quit fails", async () => {
+    const { view } = mount("#/", Promise.resolve(HELLO));
+    await settle();
+    vi.mocked(lastClient.quit).mockImplementation(() => Promise.reject(new ApiError(0, "The playground's host is not answering.")));
+    click(view.get(".top-bar__quit"));
+    await settle();
+    expect(view.get("[role=alertdialog]").textContent).toContain("Nothing is running, so no run is cancelled.");
+    click(view.get("[role=alertdialog] .button--danger"));
+    await settle();
+    expect(view.get("[role=alertdialog] [role=alert]").textContent).toContain("not answering");
   });
 
   it("follows the address, and the keys open search, Home and a kit", async () => {

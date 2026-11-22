@@ -3,8 +3,10 @@
 //! [`super::routes`], and what the binary answers them with, [`Shelf`].
 //!
 //! - `GET /api/runs?…`: the runs of the store, newest first, by pages, under the filter
-//!   of `runs stats` and the page's kit, task, result and words. `open=1` is still W1's
-//!   list of the runs going ([`super::routes`]).
+//!   of `runs stats` and the page's kit, task, result and words; `output=<type>` keeps
+//!   the runs that made an output of that artifact type, for the binding picker. Each
+//!   row names its outputs. `open=1` is still W1's list of the runs going
+//!   ([`super::routes`]).
 //! - `GET /api/stats?…`: the figures of `runs stats` over the same filter.
 //! - `GET /api/runs/{id}/report`: the run's report, one self-contained HTML document
 //!   with a policy of its own and no script, for the page's isolated frame and for
@@ -28,11 +30,11 @@ pub const FILTER: &[&str] = &[
     "words",
 ];
 
-/// The fields `GET /api/runs` takes: the filter, a page's place and size, and W1's
-/// `open`.
+/// The fields `GET /api/runs` takes: the filter, the type of an output, a page's place
+/// and size, and W1's `open`.
 pub const LISTED: &[&str] = &[
     "action", "model", "backend", "use_case", "matrix", "since", "until", "kit", "task", "result",
-    "words", "before", "limit", "open",
+    "words", "output", "before", "limit", "open",
 ];
 
 /// The most runs one page of history lists, and how many when the page does not say.
@@ -47,6 +49,8 @@ pub const FIELD_LIMIT: usize = 256;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Asked {
     pub filter: Map<String, Json>,
+    /// History only: keep the runs that made an output of this artifact type.
+    pub output: Option<String>,
     pub before: Option<String>,
     pub limit: usize,
 }
@@ -155,11 +159,29 @@ fn asked(guarded: &Guarded<'_>) -> Result<Asked, Response> {
     {
         return Err(Response::refused(400, "before names no run"));
     }
+    let output = guarded.head.field("output").map(str::to_owned);
+    if let Some(output) = &output
+        && !is_type_name(output)
+    {
+        return Err(Response::refused(
+            400,
+            "output is an artifact type: lower-case letters, digits and _",
+        ));
+    }
     Ok(Asked {
         filter,
+        output,
         before,
         limit,
     })
+}
+
+/// An artifact type's name as a record writes it: `mask`, `band_profile`.
+fn is_type_name(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars.next().is_some_and(|c| c.is_ascii_lowercase())
+        && text.len() <= 64
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
 fn shelf(shared: &Shared) -> Result<&dyn Shelf, Response> {

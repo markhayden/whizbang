@@ -1,10 +1,11 @@
-// The page's routes, by the address's hash (plan m5, task U1, item 4): `#/`,
+// The page's routes, by the address's hash (plan m5, task U1, item 4): `#/` (with
+// `?picture=<identity>`, a picture of the library picked, to start a task with),
 // `#/k/<kit>/<task>`, `#/run/<id>`, `#/history`, `#/models`; and task W3's
 // `#/run/<id>/report` and `#/record/<name>`. A hash keeps every route on
 // the one page the host serves, so a reload or a copied address finds the same screen.
 
 export type Route =
-  | { name: "home" }
+  | { name: "home"; picture?: string }
   | { name: "kit"; kit: string; task?: string }
   | { name: "run"; id: string }
   | { name: "history"; query: URLSearchParams }
@@ -17,12 +18,17 @@ export type Route =
 const NAME = /^[a-z][a-z0-9_-]{0,63}$/;
 /** A run's id: letters, digits, `-` and `_`. */
 const RUN = /^[A-Za-z0-9_-]{1,128}$/;
+/** A picture's identity in the store. */
+const PICTURE = /^sha256:[0-9a-f]{64}$/;
 
 export function parseRoute(hash: string): Route {
   const raw = hash.replace(/^#/, "");
   const [path = "", search = ""] = raw.split("?", 2);
   const parts = path.split("/").filter(Boolean);
-  if (parts.length === 0) return { name: "home" };
+  if (parts.length === 0) {
+    const picture = new URLSearchParams(search).get("picture");
+    return picture && PICTURE.test(picture) ? { name: "home", picture } : { name: "home" };
+  }
   let decoded: string[];
   try {
     decoded = parts.map((part) => decodeURIComponent(part));
@@ -46,7 +52,7 @@ export function parseRoute(hash: string): Route {
 export function hrefOf(route: Route): string {
   switch (route.name) {
     case "home":
-      return "#/";
+      return route.picture ? `#/?picture=${route.picture}` : "#/";
     case "kit":
       return route.task ? `#/k/${encodeURIComponent(route.kit)}/${encodeURIComponent(route.task)}` : `#/k/${encodeURIComponent(route.kit)}`;
     case "run":

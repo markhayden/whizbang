@@ -391,3 +391,10 @@ img.wordmark--home { height: 40px; }
 .palette__input { height: 34px; padding-inline: 10px; border: 0; border-radius: var(--radius-sm); background: var(--color-panel); color: var(--color-ink); box-shadow: var(--color-line-strong) 0 0 0 1px inset; font-size: var(--text-md); }
 .palette__input::placeholder { color: var(--color-muted); }
 .palette__list { list-style: none; margin: var(--spacing-1) 0 0; padding: 0; max-height: 360px; overflow: auto; }
+.top-bar__quit { padding: 0; border: 0; background: transparent; cursor: pointer; }
+.quit-dialog { width: 440px; padding: var(--spacing-4); gap: var(--spacing-3); }
+.quit-dialog__title { margin: 0; color: var(--color-ink); font-size: var(--text-lg); font-weight: var(--font-weight-bold); }
+.quit-dialog__what { display: flex; flex-direction: column; gap: var(--spacing-2); color: var(--color-ink-2); font-size: var(--text-md); line-height: var(--leading-ui); }
+.quit-dialog__what p { margin: 0; }
+.quit-dialog__going { color: var(--color-ink); font-weight: var(--font-weight-medium); }
+.quit-dialog__actions { display: flex; justify-content: flex-end; gap: var(--spacing-2); }

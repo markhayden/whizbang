@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "preact/test-utils";
 import { ApiError, type Client, type Hello, type Prepared } from "../api";
 import { HOSTILE, click, input, render } from "../test/render";
-import { Workspace } from "./workspace/Workspace";
+import { offered, Workspace } from "./workspace/Workspace";
 
 const HELLO: Hello = {
   version: "0.1.0",
@@ -115,4 +115,73 @@ describe("the workspace", () => {
     expect(made.prepare).toHaveBeenCalledTimes(2);
     view.unmount();
   });
+
+  it("lists the task's earlier runs from history, a page at a time, and opens one", async () => {
+    const page = (from: number, more: boolean) => ({
+      runs: Array.from({ length: 10 }, (_, at) => ({ run: `r-${from + at}`, action: "remove_prompt", result: at === 0 ? "cancelled" : "done", words: [`the hose ${from + at}`], at_ms: Date.now() })),
+      more,
+    });
+    const request = vi.fn((_: string, path: string) => Promise.resolve(path.includes("before=r-9") ? page(10, false) : page(0, true)));
+    const made = { ...client(() => ({ ready: false })), request } as unknown as Client;
+    const go = vi.fn();
+    const view = render(<Workspace kit="rascal" task="remove_prompt" hello={HELLO} client={made} go={go} />);
+    await flush();
+    expect(request).toHaveBeenCalledWith("GET", "/api/runs?task=remove_prompt&limit=10");
+    const rows = () => view.all(".workspace__runs .continue-row");
+    expect(rows()).toHaveLength(10);
+    expect(rows()[0]!.textContent).toContain("the hose 0");
+    expect(rows()[0]!.textContent).toContain("CANCELLED");
+    click(view.get(".workspace__runs .link-button"));
+    await flush();
+    expect(request).toHaveBeenLastCalledWith("GET", "/api/runs?task=remove_prompt&limit=10&before=r-9");
+    expect(rows()).toHaveLength(20);
+    expect(view.all(".workspace__runs .link-button")).toHaveLength(0);
+    click(rows()[12]!);
+    expect(go).toHaveBeenLastCalledWith("#/run/r-12");
+    view.unmount();
+  });
+
+  it("shows Mask and Result once the last run made them, and a mask port offers the store's masks", async () => {
+    const mask = `sha256:${"11".repeat(32)}`;
+    const result = `sha256:${"22".repeat(32)}`;
+    const input = `sha256:${"33".repeat(32)}`;
+    const ran = { run: "r-last", action: "protect", title: "Protect a first edit", result: "done", at_ms: Date.now(), thumb: input, outputs: [{ port: "result", type: "image", id: result }, { port: "mask", type: "mask", id: mask }] };
+    const request = vi.fn((_: string, path: string) => Promise.resolve({ runs: [ran], more: path.includes("output=mask") }));
+    const hello: Hello = {
+      version: "0.1.0",
+      kits: [{ id: "rascal", name: "Rascal", tasks: [{ name: "protect", title: "Protect a first edit", fields: [{ name: "image", kind: "picture", artifact: "image" }, { name: "mask", kind: "artifact", artifact: "mask" }] }] }],
+    };
+    const made = { ...client(() => ({ ready: false })), request } as unknown as Client;
+    const view = render(<Workspace kit="rascal" task="protect" hello={hello} client={made} />);
+    await flush();
+    expect(view.all(".workspace__tabs [role=tab]").map((tab) => tab.textContent)).toEqual(["Original", "Mask", "Result"]);
+    expect(request).toHaveBeenCalledWith("GET", "/api/runs?output=mask&limit=20");
+    const option = view.get(".binding-picker [role=option]");
+    expect(option.textContent).toContain("Protect a first edit");
+    expect(option.textContent).toContain("r-last");
+    // A later page of masks, after the last run shown.
+    click(view.get(".binding-picker + .link-button"));
+    await flush();
+    expect(request).toHaveBeenLastCalledWith("GET", "/api/runs?output=mask&limit=20&before=r-last");
+    click(view.get(".workspace__tabs [role=tab]:nth-child(2)"));
+    expect(view.text()).toContain("The mask of the last run, r-last, over its picture.");
+    click(view.get(".workspace__tabs [role=tab]:nth-child(3)"));
+    expect(view.text()).toContain("The result of the last run, r-last.");
+    view.unmount();
+  });
+
+  it("offers a port's value that history does not list, as given to this draft", () => {
+    const given = `sha256:${"44".repeat(32)}`;
+    const listed = [{ id: `sha256:${"55".repeat(32)}`, type: "mask", run: "r-1", task: "Remove", when: "now" }];
+    expect(offered(listed, "mask", given, false).map((one) => [one.id, one.task])).toEqual([
+      [given, "given to this draft"],
+      [listed[0]!.id, "Remove"],
+    ]);
+    expect(offered(listed, "mask", listed[0]!.id, false)).toEqual(listed);
+    expect(offered(listed, "location", given, true)).toEqual(listed);
+  });
 });
+
+async function flush() {
+  for (let at = 0; at < 6; at += 1) await later(0);
+}

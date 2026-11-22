@@ -1158,6 +1158,32 @@ command-line sign-in (only `main.rs` names where it is, `scripts/tests/test-sign
 a model's token is taken from the env file, and a config that names the sign-in is told to
 use `whizbang models get`.
 
+**As built (the gaps after the screens).** An audit against the acceptance table found
+row 10's two Chrome cases missing, and parts of W1's items 3 and 4 not built; one pull
+request closed them. **Quit** is in the top bar: it asks first ("Quit the playground?"),
+saying how many runs are going, that each is cancelled with a record that says so and every
+request it sent accounted for in the ledger, that a run not ended within ten seconds is
+ended as interrupted the next time the store is opened, and that pictures, history and drafts
+stay; then it calls `POST /api/quit`, and the page says the playground has quit and asks
+nothing more. `quit.spec.ts` holds row 10's two cases; for the interrupt, the fixture host
+takes the terminal's signals as `whizbang play` does (`play::signals`, now `pub(crate)`). A
+**picture picked** on Home or in ⌘K search (`#/?picture=<identity>`) is shown larger with
+every task that takes a picture; picking one opens that task's draft with the picture given
+(a draft of that task not yet run is replaced only once the person says so). The
+workspace's canvas has **Original, Mask and Result**: Mask once the draft is given a mask,
+or else the last run of the task made one (shown over that run's picture), Result once the
+last run made a picture. The right column lists the task's **earlier runs** from history
+(`GET /api/runs?task=`), ten a page, beside those still going. The **binding picker** reads
+the store: `GET /api/runs` takes `output=<type>`, which keeps the runs that made an output
+of that type, and each history row names its outputs (ADR 0041's table), so a reload or a
+restart keeps what it offers; a value the port holds that history does not list (one sent
+from a result) is offered first as "given to this draft". The in-memory list of outputs
+(`ui/src/outputs.ts`) is gone. The result screen's right column is headed **Summary**, so
+"Report" names only the HTML report. The draft's `>_` stays hidden (W2's note). Tests:
+`play::history_lists_the_runs_that_made_an_output_of_a_type_with_their_outputs`, and
+`inputs.spec.ts: a picture picked in search starts a task, whose mask port lists the store's
+masks after a reload, and a task shows its earlier runs with their mask and result`.
+
 ## E1. The loop by hand in the playground, and the guide (medium; the orchestrator's runs)
 
 ### Goal

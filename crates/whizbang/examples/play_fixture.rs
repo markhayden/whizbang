@@ -473,6 +473,8 @@ fn host() {
     let mut out = std::io::stdout();
     let _ = writeln!(out, "{}", address(host.address().port(), Some(&token)));
     let _ = out.flush();
+    // The terminal's signals, as `whizbang play` takes them (quit.spec.ts's interrupt).
+    binary::play::signals(&host.stopper()).unwrap_or_else(|error| fail(&error.to_string()));
     if stdin_quit {
         let stopper = host.stopper();
         threads::spawn(

@@ -1854,6 +1854,45 @@ fn history_filters_by_kit_task_result_and_words() {
 }
 
 #[test]
+fn history_lists_the_runs_that_made_an_output_of_a_type_with_their_outputs() {
+    let kitted = Kitted::new("play-gaps-outputs");
+    let removed = kitted.ran(
+        "remove_prompt",
+        &json!({"image": kitted.picture(95), "prompt": "the rake"}),
+    );
+    kitted.ran("reality-checks", &json!({"candidate": kitted.picture(96)}));
+    // Each row names its outputs, by port, type and identity.
+    let all = kitted.listed("");
+    let outputs = all[1]["outputs"].as_array().unwrap();
+    let mask = outputs
+        .iter()
+        .find(|output| output["type"] == "mask")
+        .unwrap_or_else(|| panic!("a removal makes a mask: {}", all[1]));
+    assert!(
+        mask["id"].as_str().unwrap().starts_with("sha256:"),
+        "{mask}"
+    );
+    assert!(mask["port"].is_string(), "{mask}");
+    // `output=` lists only the runs that made one of that type, by pages as before.
+    assert_eq!(runs_of(&kitted.listed("output=mask")), [removed.as_str()]);
+    assert_eq!(
+        runs_of(&kitted.listed("output=band_profile")),
+        Vec::<&str>::new()
+    );
+    assert_eq!(
+        runs_of(&kitted.listed(&format!("output=mask&before={removed}"))),
+        Vec::<&str>::new()
+    );
+    for bad in ["output=Mask!", "output="] {
+        let answer = kitted.api("GET", &format!("/api/runs?{bad}"), None);
+        assert_eq!(answer.status, 400, "{bad}: {}", answer.text());
+    }
+    // From the store, so a restart keeps them.
+    let kitted = kitted.restarted();
+    assert_eq!(runs_of(&kitted.listed("output=mask")), [removed.as_str()]);
+}
+
+#[test]
 fn history_and_the_figures_read_the_store_again_only_when_it_has_published_since() {
     let kitted = Kitted::new("play-w3-shelved");
     kitted.ran("shout", &json!({}));

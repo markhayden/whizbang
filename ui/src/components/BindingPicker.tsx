@@ -22,6 +22,8 @@ export interface BindingPickerProps {
   value: string | null;
   disabled?: boolean;
   onPick?: (id: string) => void;
+  /** Asks for the outputs of earlier runs past the last shown, when there may be more. */
+  onMore?: () => void;
 }
 
 /** The outputs of earlier runs of one type, newest first, for a port of that type. */
@@ -30,7 +32,13 @@ export function BindingPicker(props: BindingPickerProps) {
   if (offered.length === 0) {
     return <p class="binding-picker__empty">No earlier run made a {props.type.replace(/_/g, " ")} yet.</p>;
   }
+  const more = props.onMore ? (
+    <button type="button" class="link-button" onClick={props.onMore}>
+      More {props.type.replace(/_/g, " ")} outputs
+    </button>
+  ) : null;
   return (
+    <>
     <ul class="binding-picker" role="listbox" aria-label={`Earlier ${props.type.replace(/_/g, " ")} outputs`}>
       {offered.map((binding) => {
         const selected = binding.id === props.value;
@@ -46,5 +54,7 @@ export function BindingPicker(props: BindingPickerProps) {
         );
       })}
     </ul>
+    {more}
+    </>
   );
 }

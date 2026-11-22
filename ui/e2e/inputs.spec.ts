@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
-import { expect, test } from "./fixtures";
+import { expect, test, withHost } from "./fixtures";
 import { api, bytesOf, file, give, openAt, picture, runOf, runWhenReady, script } from "./play";
 
 interface HelloForm {
@@ -141,4 +141,39 @@ test("a picture changed on disk after it was sent leaves the run's input and res
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }
+});
+
+test("a picture picked in search starts a task, whose mask port lists the store's masks after a reload, and a task shows its earlier runs with their mask and result", async ({ page }) => {
+  await withHost([], async (host) => {
+    await openAt(page, host, "#/k/rascal/remove_prompt");
+    await give(page, "image", file("picked.png", 71));
+    await page.locator("#field-prompt").fill("the rake");
+    await runWhenReady(page);
+    await expect(page.locator(".workspace__title-row .tag", { hasText: "DONE" })).toBeVisible();
+    const removed = runOf(page);
+    // Picked in search, the picture starts a task with it given.
+    await page.goto(`${host.address}#/`);
+    await page.keyboard.press("ControlOrMeta+k");
+    await page.getByLabel("Search tasks, tools and pictures").fill("picked.png");
+    await page.getByRole("option", { name: /picked\.png/ }).click();
+    await expect(page).toHaveURL(/#\/\?picture=sha256:[0-9a-f]{64}$/);
+    const panel = page.getByRole("region", { name: "Start a task with picked.png" });
+    await panel.getByRole("button", { name: /Protect a first edit/ }).click();
+    await expect(page).toHaveURL(/#\/k\/rascal\/protect$/);
+    await expect(page.locator(".field:has(#field-image) .picture-field__name")).toContainText("picked.png");
+    // The mask port offers the removal's mask from the store, after a reload too.
+    await page.reload();
+    const option = page.locator(".binding-picker [role=option]");
+    await expect(option).toHaveCount(1);
+    await expect(option).toContainText(removed);
+    await option.locator("button").click();
+    await expect(page.getByRole("tab", { name: "Mask" })).toBeVisible();
+    // The removal's own task lists it among its runs, and its mask and result as tabs.
+    await page.goto(`${host.address}#/k/rascal/remove_prompt`);
+    await expect(page.locator(".workspace__runs .continue-row", { hasText: removed })).toContainText("DONE");
+    await expect(page.getByRole("tab", { name: "Mask" })).toBeVisible();
+    await page.getByRole("tab", { name: "Result" }).click();
+    await expect(page.locator(".workspace__note")).toContainText(`The result of the last run, ${removed}.`);
+    await expect(page.locator(".canvas__picture")).toBeVisible();
+  });
 });
