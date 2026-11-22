@@ -2719,3 +2719,137 @@ fn the_submission_record_holds_only_aggregates() {
         }
     }
 }
+
+/// The record of the loop by hand in the playground (plan m5, task E1, items 1 and 2).
+const PLAYGROUND_PAGE: &str = "docs/results/m5-playground.md";
+
+/// The fields each case of the playground's record holds, and no other.
+fn playground_fields(case: &str) -> Vec<&'static str> {
+    let mut fields = vec![
+        "case",
+        "run",
+        "commit",
+        "whizbang",
+        "outcome",
+        "settled_micros",
+        "reserved_micros",
+    ];
+    if case == "quit" {
+        fields.extend(["open_reservations", "store_took_a_writer"]);
+    } else {
+        fields.extend(["verdict", "attempts", "kept", "ended_as"]);
+    }
+    if case == "no-key" {
+        fields.push("unchecked_why");
+    }
+    fields.sort_unstable();
+    fields
+}
+
+#[test]
+fn the_playgrounds_record_holds_only_aggregates_and_run_ids() {
+    // Each case is pending, every field saying so, until the orchestrator's live run fills
+    // it; then it holds a run id, a commit of this tree and the spend its record settled.
+    let page = std::fs::read_to_string(repository().join(PLAYGROUND_PAGE))
+        .expect("the playground's record is committed");
+    let block = |heading: &str| -> toml::Table {
+        page.split(&format!("{heading}\n\n```toml\n"))
+            .nth(1)
+            .and_then(|rest| rest.split("\n```").next())
+            .unwrap_or_else(|| panic!("the page has no block under {heading}"))
+            .parse()
+            .unwrap_or_else(|_| panic!("the block under {heading} is TOML"))
+    };
+    let whole = |fields: &toml::Table, name: &str| -> i64 {
+        fields[name]
+            .as_integer()
+            .unwrap_or_else(|| panic!("{name} is a whole number"))
+    };
+    let (mut made, mut settled) = (0_i64, 0_i64);
+    for case in ["pass", "vague", "no-key", "quit"] {
+        let fields = block(&format!("### `{case}`"));
+        let mut names: Vec<&str> = fields.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        assert_eq!(names, playground_fields(case), "{case}: its fields");
+        assert_eq!(fields["case"].as_str(), Some(case));
+        if fields["run"].as_str() == Some("pending") {
+            for (name, value) in &fields {
+                if name != "case" {
+                    assert_eq!(value.as_str(), Some("pending"), "{case}: {name}");
+                }
+            }
+            continue;
+        }
+        made += 1;
+        let run = fields["run"].as_str().expect("a run id");
+        let (at, count) = run.split_once('-').expect("a run id is <ms>-<count>");
+        for part in [at, count] {
+            assert!(
+                !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()),
+                "{case}: {run}"
+            );
+        }
+        assert!(is_ancestor(fields["commit"].as_str().unwrap()), "{case}");
+        assert!(fields["whizbang"].as_str().is_some_and(|v| !v.is_empty()));
+        let spent = whole(&fields, "settled_micros");
+        assert!(
+            (0..=whole(&fields, "reserved_micros")).contains(&spent),
+            "{case}"
+        );
+        settled += spent;
+        if case == "quit" {
+            assert_eq!(fields["outcome"].as_str(), Some("cancelled"));
+            assert_eq!(whole(&fields, "open_reservations"), 0);
+            assert_eq!(fields["store_took_a_writer"].as_bool(), Some(true));
+            continue;
+        }
+        for name in ["outcome", "verdict", "ended_as"] {
+            assert!(fields[name].is_str(), "{case}: {name}");
+        }
+        let attempts = whole(&fields, "attempts");
+        assert!((1..=3).contains(&attempts), "{case}: {attempts}");
+        assert!((0..=attempts).contains(&whole(&fields, "kept")), "{case}");
+        let ended_as = fields["ended_as"].as_str().unwrap();
+        match case {
+            // A clean pass, or a retry then a pass; or the page says it still owes one.
+            "pass" => assert!(
+                fields["verdict"].as_str() == Some("pass") || page.contains("still owes"),
+                "the pass case passed or the page says what it still owes"
+            ),
+            "vague" => assert!(!ended_as.starts_with("passed"), "{ended_as}"),
+            _ => {
+                assert_eq!(ended_as, "unchecked");
+                assert_ne!(fields["unchecked_why"].as_str(), Some("none"));
+            }
+        }
+    }
+    let runs = block("## The runs");
+    if made == 0 {
+        assert_eq!(runs["cases"].as_str(), Some("pending"));
+        assert_eq!(runs["settled_micros"].as_str(), Some("pending"));
+    } else {
+        assert_eq!(whole(&runs, "cases"), made);
+        assert_eq!(whole(&runs, "settled_micros"), settled);
+    }
+    for held in ["It scores nothing", "kept out of the repository"] {
+        assert!(page.contains(held), "{held}");
+    }
+    // Aggregates and run ids only: no picture, no path, no key, no token.
+    for held in [
+        "/Users/",
+        "/home/",
+        "/private/",
+        "/tmp/",
+        "~/",
+        "FAL_KEY",
+        "API_KEY",
+        "_KEY=",
+        "#k=",
+        ".png",
+        ".jpg",
+        ".webp",
+        "sha256:",
+    ] {
+        assert!(!page.contains(held), "{held}");
+    }
+}
