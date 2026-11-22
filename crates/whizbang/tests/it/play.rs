@@ -953,6 +953,16 @@ impl Kitted {
 
     /// A host over the store and config in `scratch`; a new store gets its allowance.
     fn over(scratch: Scratch, new: bool) -> Kitted {
+        Kitted::built(scratch, new, false)
+    }
+
+    /// The same, with the decision cache of `check` on, as `whizbang play` turns it on
+    /// when the config does (plan m5, task W3).
+    fn cached(label: &str) -> Kitted {
+        Kitted::built(Scratch::new(label), true, true)
+    }
+
+    fn built(scratch: Scratch, new: bool, cached: bool) -> Kitted {
         let root = scratch.path().join("store");
         let config = scratch.path().join("whizbang.toml");
         if new {
@@ -968,7 +978,7 @@ impl Kitted {
             let ten = whizbang_core::spend::Amount::new(10_000_000).unwrap();
             whizbang_core::spend::reset(&store, ten, 1).unwrap();
         }
-        let mut registry = wiring::registry_over(&over, false).unwrap();
+        let mut registry = wiring::registry_over(&over, cached).unwrap();
         registry.register(shouting()).unwrap();
         // Says one message more than a run keeps.
         registry
@@ -1729,4 +1739,491 @@ fn a_thumbnail_asked_for_again_is_the_one_kept_and_not_made_twice() {
     );
     assert_eq!(other.status, 200);
     assert_eq!(kitted.door.thumbnails_made(), 2);
+}
+
+// History, its figures, reports and the tool records (plan m5, task W3).
+
+impl Kitted {
+    /// Runs a task to its end, as the page runs it: prepared, started, polled.
+    fn ran(&self, action: &str, arguments: &Json) -> String {
+        let prepared = self.prepare(action, arguments);
+        assert_eq!(prepared["ready"], true, "{prepared}");
+        let started = self.begin(action, arguments, &prepared["handle"], &fresh_id());
+        assert_eq!(started.status, 201, "{}", started.text());
+        let run = started.json()["run"].as_str().unwrap().to_owned();
+        self.until_ended(&run);
+        run
+    }
+
+    fn listed(&self, query: &str) -> Vec<Json> {
+        let answer = self.api("GET", &format!("/api/runs?{query}"), None);
+        assert_eq!(answer.status, 200, "{query}: {}", answer.text());
+        answer.json()["runs"].as_array().unwrap().clone()
+    }
+
+    fn report(&self, run: &str) -> String {
+        let answer = self.api("GET", &format!("/api/runs/{run}/report"), None);
+        assert_eq!(answer.status, 200, "{}", answer.text());
+        answer.text()
+    }
+}
+
+fn runs_of(rows: &[Json]) -> Vec<&str> {
+    rows.iter()
+        .map(|row| row["run"].as_str().unwrap())
+        .collect()
+}
+
+#[test]
+fn history_filters_by_kit_task_result_and_words() {
+    let kitted = Kitted::new("play-w3-history");
+    let porch = kitted.upload(&png(64, 48, 90), "Back%20porch.png");
+    let porch = porch.json()["id"].as_str().unwrap().to_owned();
+    let removed = kitted.ran(
+        "remove_prompt",
+        &json!({"image": porch, "prompt": "the garden HOSE"}),
+    );
+    let passed = kitted.ran("reality-checks", &json!({"candidate": kitted.picture(91)}));
+    kitted.kit.set("fail").unwrap();
+    let failed = kitted.ran("reality-checks", &json!({"candidate": kitted.picture(92)}));
+    kitted.kit.set("reset").unwrap();
+    // Newest first, the runs nothing nested only, each with what the page shows.
+    let all = kitted.listed("");
+    assert_eq!(
+        runs_of(&all),
+        [failed.as_str(), passed.as_str(), removed.as_str()]
+    );
+    let row = &all[2];
+    assert_eq!(row["kit"], "rascal");
+    assert_eq!(row["title"], "Remove what you name");
+    assert_eq!(row["result"], "done");
+    assert_eq!(row["words"], json!(["the garden HOSE"]));
+    assert_eq!(row["pictures"], json!(["Back porch.png"]));
+    assert_eq!(row["thumb"], json!(porch));
+    assert!(row["cost"].as_f64().unwrap() > 0.0, "{row}");
+    assert!(row["time_ms"].is_u64() && row["at_ms"].is_u64(), "{row}");
+    assert_eq!(all[0]["result"], "fail");
+    // Each filter narrows the list.
+    assert_eq!(
+        runs_of(&kitted.listed("kit=squint")),
+        [failed.as_str(), passed.as_str()]
+    );
+    assert_eq!(runs_of(&kitted.listed("result=fail")), [failed.as_str()]);
+    assert_eq!(
+        runs_of(&kitted.listed("task=remove_prompt")),
+        [removed.as_str()]
+    );
+    assert_eq!(runs_of(&kitted.listed("words=hose")), [removed.as_str()]);
+    assert_eq!(
+        runs_of(&kitted.listed("words=BACK%20PORCH")),
+        [removed.as_str()]
+    );
+    assert_eq!(
+        runs_of(&kitted.listed("kit=rascal&result=pass")),
+        Vec::<&str>::new()
+    );
+    // By pages.
+    let first = kitted.api("GET", "/api/runs?limit=2", None).json();
+    assert_eq!(
+        runs_of(first["runs"].as_array().unwrap()),
+        [failed.as_str(), passed.as_str()]
+    );
+    assert_eq!(first["more"], true);
+    let next = kitted.listed(&format!("limit=2&before={passed}"));
+    assert_eq!(runs_of(&next), [removed.as_str()]);
+    // What it does not take.
+    for bad in [
+        "result=maybe",
+        "limit=0",
+        "before=nothing",
+        "since=yesterday",
+    ] {
+        let answer = kitted.api("GET", &format!("/api/runs?{bad}"), None);
+        assert_eq!(answer.status, 400, "{bad}: {}", answer.text());
+    }
+    assert_eq!(kitted.api("GET", "/api/runs?colour=red", None).status, 400);
+    // W1's list of the runs still going is the same route.
+    let open = kitted.api("GET", "/api/runs?open=1", None).json();
+    assert_eq!(open["runs"], json!([]));
+    // History survives a restart.
+    let kitted = kitted.restarted();
+    assert_eq!(
+        runs_of(&kitted.listed("")),
+        [failed.as_str(), passed.as_str(), removed.as_str()]
+    );
+}
+
+/// A store holding a loop, a decision answered from the cache, unsure verdicts, a
+/// cancelled run with spend left unresolved, and runs of both kits.
+fn figured() -> Kitted {
+    let kitted = Kitted::cached("play-w3-figures");
+    let candidate = kitted.picture(100);
+    kitted.ran("reality-checks", &json!({"candidate": candidate}));
+    kitted.ran("reality-checks", &json!({"candidate": candidate}));
+    kitted.kit.set("unsure").unwrap();
+    kitted.ran("reality-checks", &json!({"candidate": kitted.picture(101)}));
+    kitted.kit.set("reset").unwrap();
+    kitted.ran(
+        "remove_checked",
+        &json!({"image": kitted.picture(102), "prompt": "the hose"}),
+    );
+    // A fill held, then cancelled: its spend is left unresolved.
+    kitted.kit.set("hold").unwrap();
+    let arguments = json!({"image": kitted.picture(103), "prompt": "the hose"});
+    let prepared = kitted.prepare("remove_prompt", &arguments);
+    let before = kitted.kit.requests();
+    let started = kitted.begin(
+        "remove_prompt",
+        &arguments,
+        &prepared["handle"],
+        &fresh_id(),
+    );
+    let run = started.json()["run"].as_str().unwrap().to_owned();
+    let arrived = |count: u64| {
+        for _ in 0..4000 {
+            if kitted.kit.requests() >= count {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("the request never arrived");
+    };
+    // The segmenter's request, held; then the fill's.
+    arrived(before + 1);
+    kitted.kit.set("release,hold").unwrap();
+    arrived(before + 2);
+    assert_eq!(
+        kitted
+            .api("POST", &format!("/api/runs/{run}/cancel"), None)
+            .status,
+        202
+    );
+    kitted.until_ended(&run);
+    kitted.kit.set("reset").unwrap();
+    kitted
+}
+
+#[test]
+fn stats_answers_what_runs_stats_answers_for_the_same_filter() {
+    let kitted = figured();
+    let root = kitted.root();
+    for (query, flags) in [
+        ("", vec![]),
+        ("kit=squint", vec!["--kit", "squint"]),
+        ("result=unsure", vec!["--result", "unsure"]),
+        ("action=check", vec!["--action", "check"]),
+        (
+            "task=remove_checked&words=hose",
+            vec!["--action", "remove_checked", "--words", "hose"],
+        ),
+    ] {
+        let answer = kitted.api("GET", &format!("/api/stats?{query}"), None);
+        assert_eq!(answer.status, 200, "{query}: {}", answer.text());
+        let figures = answer.json();
+        let mut args = vec!["runs", "stats", "--unsure-by", "rule"];
+        args.extend(flags);
+        let printed = crate::wired::whizbang(&args, &root);
+        assert_eq!(printed.code, Some(0), "{}", printed.err);
+        let text = figures["text"].as_str().unwrap();
+        assert!(
+            printed.out.starts_with(text),
+            "{query}:\n{text}\n---\n{}",
+            printed.out
+        );
+        if query.is_empty() {
+            assert!(text.contains("cache hits: 1\n"), "{text}");
+            assert!(text.contains("loops: 1 runs"), "{text}");
+            assert!(
+                figures["unresolved_micros"].as_u64().unwrap() > 0,
+                "{figures}"
+            );
+            assert!(
+                figures["verdicts"]["unsure"].as_u64().unwrap() >= 1,
+                "{figures}"
+            );
+            assert!(printed.out.contains("unsure by rule: "), "{}", printed.out);
+            assert_eq!(
+                figures["unsure_by_rule"]["verdicts"].as_u64(),
+                figures["verdicts"]["unsure"].as_u64()
+            );
+        }
+    }
+    assert_eq!(kitted.api("GET", "/api/stats?until=soon", None).status, 400);
+}
+
+#[test]
+fn the_embedded_records_are_the_reference_folder() {
+    let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/reference/tools");
+    let mut on_disk = Vec::new();
+    let mut next = vec![folder.clone()];
+    while let Some(dir) = next.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                next.push(path);
+            } else {
+                let name = path.strip_prefix(&folder).unwrap();
+                on_disk.push(name.to_str().unwrap().replace('\\', "/"));
+            }
+        }
+    }
+    on_disk.sort();
+    let embedded: Vec<String> = whizbang_serve::play::records::paths()
+        .map(str::to_owned)
+        .collect();
+    let missing: Vec<&String> = on_disk.iter().filter(|p| !embedded.contains(p)).collect();
+    let extra: Vec<&String> = embedded.iter().filter(|p| !on_disk.contains(p)).collect();
+    assert!(
+        missing.is_empty() && extra.is_empty(),
+        "crates/whizbang-serve/src/play/records.rs lists the folder: add {missing:?}, remove {extra:?}"
+    );
+    for path in &embedded {
+        let (_, bytes) = whizbang_serve::play::records::find(path).unwrap();
+        assert_eq!(bytes, std::fs::read(folder.join(path)).unwrap(), "{path}");
+    }
+    // Served by name, with its images, behind the guard.
+    let kitted = Kitted::new("play-w3-records");
+    let page = kitted.api("GET", "/api/records/remove_prompt", None);
+    assert_eq!(page.status, 200);
+    assert!(page.text().starts_with("# remove_prompt"));
+    let names = kitted.api("GET", "/api/records", None).json();
+    assert!(
+        names["records"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("view"))
+    );
+    let image = kitted.api("GET", "/api/records/view/scene.png", None);
+    assert_eq!((image.status, &image.body[1..4]), (200, &b"PNG"[..]));
+    for missing in [
+        "/api/records/nothing",
+        "/api/records/view/..%2Fview.md",
+        "/api/records/view/none.png",
+    ] {
+        assert_eq!(kitted.api("GET", missing, None).status, 404, "{missing}");
+    }
+    let unguarded = api(
+        kitted.address,
+        "0".repeat(64).as_str(),
+        "GET",
+        "/api/records/view",
+        None,
+    );
+    assert_eq!(unguarded.status, 401);
+}
+
+mod report {
+    //! `play::report::…`: a run's report (plan m5, task W3, items 3 to 5).
+    use super::*;
+    use whizbang_core::capability::written::{Keep, for_display, write_exchange};
+    use whizbang_core::capability::{
+        Controls, Fault, FaultKind, JudgeRequest, Message, Opaque, Part, Picture, Role, StopReason,
+        Turn,
+    };
+    use whizbang_core::identity::CanonicalPixels;
+
+    /// No way for a document to run or load anything.
+    fn inert(html: &str) {
+        let lower = html.to_lowercase();
+        for said in [
+            "<script",
+            "javascript:",
+            "<iframe",
+            "<link",
+            "<form",
+            "<object",
+            "<embed",
+            "<base",
+            "http://",
+            "https://",
+            "src=\"/",
+            "url(",
+        ] {
+            assert!(!lower.contains(said), "the report holds {said:?}");
+        }
+        // No tag carries an event handler.
+        for tag in lower.split('<').skip(1) {
+            let tag = tag.split('>').next().unwrap_or_default();
+            let handler = tag
+                .split_whitespace()
+                .skip(1)
+                .any(|word| word.starts_with("on"));
+            assert!(!handler, "a tag with a handler: <{tag}>");
+        }
+        assert!(html.contains(
+            "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src data:; style-src 'unsafe-inline'\">"
+        ));
+    }
+
+    #[test]
+    fn a_squint_report_holds_its_verdict_findings_places_and_turns_and_no_script() {
+        let kitted = Kitted::new("play-w3-report-squint");
+        kitted.kit.set("fail").unwrap();
+        let run = kitted.ran("reality-checks", &json!({"candidate": kitted.picture(110)}));
+        let html = kitted.report(&run);
+        inert(&html);
+        for said in [
+            "Reality check",
+            "<span class=\"verdict verdict--fail\">FAIL</span>",
+            "<h2>Reasons</h2>",
+            "<h2>Checklist</h2>",
+            "violation",
+            "The judge's turns",
+            "turn 1",
+            "calls submit_verdict",
+            "<h2>Cost</h2>",
+            "$0.0020",
+        ] {
+            assert!(html.contains(said), "{said}:\n{html}");
+        }
+        // The place the judge found, drawn on the candidate.
+        assert!(html.contains("1 place the judge found"), "{html}");
+        assert!(
+            html.contains("<rect x=\"0.25\" y=\"0.25\" width=\"0.5\" height=\"0.5\""),
+            "{html}"
+        );
+        // The same after a restart, and as a download named for its task and run.
+        let kitted = kitted.restarted();
+        let again = kitted.api("GET", &format!("/api/runs/{run}/report"), None);
+        assert_eq!(again.text(), html);
+    }
+
+    #[test]
+    fn every_text_from_a_model_or_a_person_is_escaped() {
+        let kitted = Kitted::new("play-w3-report-escaped");
+        kitted.kit.set("markup").unwrap();
+        let brief = "<b onmouseover=\"x()\">a kitchen</b> & <script>y()</script>";
+        let run = kitted.ran(
+            "brief-compliance",
+            &json!({"candidate": kitted.picture(111), "brief": brief}),
+        );
+        let html = kitted.report(&run);
+        inert(&html);
+        assert!(html.contains("&lt;b onmouseover="), "{html}");
+        assert!(
+            html.contains("a kitchen&lt;/b&gt; &amp; &lt;script&gt;y()&lt;/script&gt;"),
+            "{html}"
+        );
+        assert!(
+            html.contains("&lt;img src=x onerror=&quot;document.title=&#39;ran&#39;&quot;&gt;"),
+            "{html}"
+        );
+        assert!(!html.contains("<b onmouseover") && !html.contains("<img src=x"));
+    }
+
+    #[test]
+    fn the_document_opens_alone_with_its_pictures_inline() {
+        let kitted = Kitted::new("play-w3-report-alone");
+        let run = kitted.ran(
+            "remove_prompt",
+            &json!({"image": kitted.picture(112), "prompt": "the hose"}),
+        );
+        let answer = kitted.api("GET", &format!("/api/runs/{run}/report"), None);
+        let html = answer.text();
+        inert(&html);
+        for said in [
+            "Remove what you name",
+            "<h2>Masks over the picture</h2>",
+            "<h2>Steps</h2>",
+            "segment",
+            "fill",
+            "given: image",
+            "made: image",
+        ] {
+            assert!(html.contains(said), "{said}:\n{html}");
+        }
+        // Every picture inline, and none named by an address.
+        let inline = html.matches("src=\"data:image/png;base64,").count();
+        assert_eq!(inline, html.matches("src=\"").count());
+        assert!(inline >= 3, "{inline}");
+        // The archive: the record, the report and each output.
+        let archive = kitted.api("GET", &format!("/api/runs/{run}/export"), None);
+        assert_eq!(archive.status, 200);
+        let names: Vec<String> = archive
+            .body
+            .chunks(512)
+            .filter(|block| block[257..262] == *b"ustar")
+            .map(|block| {
+                String::from_utf8_lossy(&block[..100])
+                    .trim_end_matches('\0')
+                    .to_owned()
+            })
+            .collect();
+        for name in [
+            "record.json",
+            "report.html",
+            "outputs/image.image",
+            "outputs/image.png",
+            "outputs/mask.mask",
+            "outputs/mask.png",
+        ] {
+            assert!(names.contains(&name.to_owned()), "{name}: {names:?}");
+        }
+        assert_eq!(
+            kitted.api("GET", "/api/runs/r-none/report", None).status,
+            404
+        );
+    }
+
+    fn picture(shade: u8) -> Picture {
+        let rgba = (0..6u8).flat_map(|at| [shade, at, 0, 255]).collect();
+        Picture::new(CanonicalPixels::from_rgba(3, 2, rgba).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_withheld_part_a_missing_picture_and_a_failed_turn_each_show_as_such() {
+        let opaque = Part::Opaque(Opaque::new("thinking", "{\"signature\":\"zz9\"}").unwrap());
+        let said = vec![Part::Text("<b>I looked</b>".to_owned()), opaque];
+        let turn = Turn::new(said, StopReason::EndTurn, None, None).unwrap();
+        let messages = vec![
+            Message::new(
+                Role::User,
+                vec![Part::Text("Look.".to_owned()), Part::Image(picture(3))],
+            )
+            .unwrap(),
+        ];
+        let request = JudgeRequest::new(
+            "You judge.",
+            messages,
+            Vec::new(),
+            Controls::new(64).unwrap(),
+        )
+        .unwrap();
+        let none = |_| false;
+        let written = write_exchange(0, &request, &Ok(turn), Keep::Digests);
+        let html = whizbang::report::answer_html(&for_display(&written, &none).unwrap());
+        assert!(html.contains("&lt;b&gt;I looked&lt;/b&gt;"), "{html}");
+        assert!(
+            html.contains("[part 2 withheld: 19 bytes of thinking, kept as its digest]"),
+            "{html}"
+        );
+        assert!(html.contains("1 pictures not in the store"), "{html}");
+        let fault = Fault::new(FaultKind::ALL[0], "the judge went away");
+        let failed = write_exchange(1, &request, &Err(fault), Keep::Digests);
+        let html = whizbang::report::answer_html(&for_display(&failed, &none).unwrap());
+        assert!(
+            html.contains("the turn failed: ") && html.contains("the judge went away"),
+            "{html}"
+        );
+    }
+}
+
+mod stats {
+    //! `play::stats::…`: the figures, counted for the command and the page alike.
+    use super::*;
+
+    #[test]
+    fn cache_hits_are_counted_from_the_records() {
+        let kitted = Kitted::cached("play-w3-cache-hits");
+        let candidate = kitted.picture(120);
+        let first = kitted.ran("reality-checks", &json!({"candidate": candidate}));
+        let printed = crate::wired::whizbang(&["runs", "stats"], &kitted.root());
+        assert!(printed.out.contains("cache hits: 0\n"), "{}", printed.out);
+        let second = kitted.ran("reality-checks", &json!({"candidate": candidate}));
+        assert_ne!(first, second);
+        let printed = crate::wired::whizbang(&["runs", "stats"], &kitted.root());
+        assert!(printed.out.contains("cache hits: 1\n"), "{}", printed.out);
+        let figures = kitted.api("GET", "/api/stats", None).json();
+        assert_eq!(figures["cache_hits"], 1, "{figures}");
+    }
 }

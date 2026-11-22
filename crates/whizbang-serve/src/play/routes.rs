@@ -78,8 +78,8 @@ pub(crate) const ROUTES: &[Route] = &[
         method: "GET",
         pattern: "/api/runs",
         body: Body::None,
-        query: &["open"],
-        handler: open,
+        query: super::history::LISTED,
+        handler: super::history::runs,
     },
     Route {
         method: "GET",
@@ -139,11 +139,15 @@ pub(crate) const ROUTES: &[Route] = &[
     },
 ];
 
+/// The tables: this one, then each later task's, one line each. The static files'
+/// route matches no path under `/api/`, so no route of a later table is hidden by it.
+const TABLES: &[&[Route]] = &[ROUTES, super::history::ROUTES];
+
 /// The route of this method and path, with the parts of the path its pattern names: a
 /// path no route has is 404, and one whose route takes another method 405.
 pub(crate) fn find(method: &str, path: &str) -> Result<(&'static Route, Vec<String>), Unread> {
     let mut path_known = false;
-    for route in ROUTES {
+    for route in TABLES.iter().flat_map(|table| table.iter()) {
         let Some(params) = matched(route.pattern, path) else {
             continue;
         };
@@ -753,7 +757,7 @@ fn stop(shared: &Shared, guarded: &Guarded<'_>) -> Response {
     }
 }
 
-fn open(shared: &Shared, guarded: &Guarded<'_>) -> Response {
+pub(crate) fn open(shared: &Shared, guarded: &Guarded<'_>) -> Response {
     if guarded.head.field("open") != Some("1") {
         return Response::refused(
             400,

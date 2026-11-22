@@ -16,7 +16,9 @@
 //! is answered with the fault `cancelled`; `release,hold` lets go every request held then and
 //! holds those that come after); `pass` and `fail` choose the judge's answer;
 //! `hold-pictures` holds every picture a host asks [`PlayKit::picture_asked`] about until
-//! `release`; `reset` is `pass` and `release`. A test or the fixture host sets it; nothing else does.
+//! `release`; `unsure` makes the judge say it cannot tell, tentatively, of the item a
+//! `fail` violates; `markup` puts markup into every reason the judge gives (plan m5, task
+//! W3: a report shows it as text); `reset` is `pass` and `release`, without markup. A test or the fixture host sets it; nothing else does.
 //!
 //! A table of the kind may name a credential (`key_env`) and an address (`url`): a
 //! backend whose credential is not set is not ready, as a real one is, and the address
@@ -54,7 +56,12 @@ pub const JUDGE_MICROS: u64 = 2_000;
 pub enum Answer {
     Pass,
     Fail,
+    Unsure,
 }
+
+/// The reason the judge gives each item under the script's `markup`.
+pub const MARKUP_REASON: &str =
+    "<img src=x onerror=\"document.title='ran'\"><script>document.title='ran'</script> held";
 
 #[derive(Debug)]
 struct Script {
@@ -62,6 +69,8 @@ struct Script {
     /// Whether a picture the page asks for is held, as a request is by `hold`.
     hold_pictures: bool,
     answer: Answer,
+    /// Whether the judge's reasons hold markup.
+    markup: bool,
     /// How many times `release` was said: a request held lets go once it changes, so
     /// `release,hold` lets every request held go and holds those that come after.
     released: u64,
@@ -86,6 +95,7 @@ impl PlayKit {
                 hold: false,
                 hold_pictures: false,
                 answer: Answer::Pass,
+                markup: false,
                 released: 0,
             }),
             changed: Condvar::new(),
@@ -94,19 +104,31 @@ impl PlayKit {
     }
 
     /// Sets the script from its words, comma separated: `hold`, `release`, `pass`,
-    /// `fail`, `reset`. A word it does not know is refused, and nothing is changed.
+    /// `fail`, `unsure`, `markup`, `reset`. A word it does not know is refused, and nothing is changed.
     pub fn set(&self, words: &str) -> Result<(), String> {
         let words: Vec<&str> = words
             .split(',')
             .map(str::trim)
             .filter(|w| !w.is_empty())
             .collect();
-        if let Some(unknown) = words
-            .iter()
-            .find(|w| !["hold", "hold-pictures", "release", "pass", "fail", "reset"].contains(w))
-        {
+        if let Some(unknown) = words.iter().find(|w| {
+            ![
+                "hold",
+                "hold-pictures",
+                "release",
+                "pass",
+                "fail",
+                "unsure",
+                "markup",
+                "reset",
+            ]
+            .contains(w)
+        }) {
             let _ = unknown;
-            return Err("a script is hold, hold-pictures, release, pass, fail or reset".to_owned());
+            return Err(
+                "a script is hold, hold-pictures, release, pass, fail, unsure, markup or reset"
+                    .to_owned(),
+            );
         }
         let mut script = lock(&self.script);
         for word in words {
@@ -120,7 +142,10 @@ impl PlayKit {
                 }
                 "pass" => script.answer = Answer::Pass,
                 "fail" => script.answer = Answer::Fail,
+                "unsure" => script.answer = Answer::Unsure,
+                "markup" => script.markup = true,
                 _ => {
+                    script.markup = false;
                     script.hold = false;
                     script.hold_pictures = false;
                     script.released += 1;
@@ -141,6 +166,11 @@ impl PlayKit {
     /// Counts a request, then holds it while the script says `hold`: until released,
     /// its run is cancelled, or [`HOLD_LIMIT`] has passed.
     fn arrive(&self, bounds: &Bounds) -> Result<Answer, Fault> {
+        self.arrive_saying(bounds).map(|(answer, _)| answer)
+    }
+
+    /// [`PlayKit::arrive`], and whether the judge's reasons hold markup.
+    fn arrive_saying(&self, bounds: &Bounds) -> Result<(Answer, bool), Fault> {
         self.requests.fetch_add(1, Ordering::SeqCst);
         let limit = Instant::now() + HOLD_LIMIT;
         let mut script = lock(&self.script);
@@ -162,7 +192,7 @@ impl PlayKit {
         if bounds.is_cancelled() {
             return Err(Fault::new(FaultKind::Cancelled, "the run was cancelled").unresolved());
         }
-        Ok(script.answer)
+        Ok((script.answer, script.markup))
     }
 
     /// Holds a picture the page asked for while the script says `hold-pictures`: until
@@ -344,9 +374,11 @@ fn checklist(request: &JudgeRequest) -> Vec<String> {
     ids
 }
 
-fn whole() -> Json {
-    json!({"kind": "whole_image", "frame": "raw:candidate", "bbox": null, "polygon": null,
-           "yaw": null, "pitch": null, "fov": null})
+/// Where a violation is: the middle half of the candidate, where the segmenter finds
+/// anything, as a box in fractions of the picture, so that its finding has a place.
+fn middle() -> Json {
+    json!({"kind": "bbox", "frame": "raw:candidate", "bbox": [0.25, 0.25, 0.75, 0.75],
+           "polygon": null, "yaw": null, "pitch": null, "fov": null})
 }
 
 impl Judge for PlayJudge {
@@ -355,7 +387,11 @@ impl Judge for PlayJudge {
     }
 
     fn send(&self, request: &JudgeRequest, bounds: &Bounds) -> Result<Turn, Fault> {
-        let answer = self.kit.arrive(bounds)?;
+        let (answer, markup) = self.kit.arrive_saying(bounds)?;
+        let reason = match markup {
+            true => MARKUP_REASON,
+            false => "The fixture's judge says so.",
+        };
         let ids = checklist(request);
         // The item a failed check violates: the loop's own requirement, that the thing
         // named is gone, where the job has it; else the first.
@@ -365,18 +401,24 @@ impl Judge for PlayJudge {
             .enumerate()
             .map(|(at, id)| {
                 let failed = answer == Answer::Fail && at == violated;
-                let disposition = if failed { "violation" } else { "held" };
-                json!({"id": id, "disposition": disposition, "confidence": "confident",
-                       "reason": "The fixture's judge says so.", "allowed_by": null,
-                       "evidence": [], "location": if failed { whole() } else { Json::Null }})
+                let unsure = answer == Answer::Unsure && at == violated;
+                let (disposition, confidence) = match (failed, unsure) {
+                    (true, _) => ("violation", "confident"),
+                    (_, true) => ("cant_tell", "tentative"),
+                    _ => ("held", "confident"),
+                };
+                json!({"id": id, "disposition": disposition, "confidence": confidence,
+                       "reason": reason, "allowed_by": null,
+                       "evidence": [], "location": if failed { middle() } else { Json::Null }})
             })
             .collect();
         let verdict = match answer {
             Answer::Pass => "pass",
             Answer::Fail => "fail",
+            Answer::Unsure => "unsure",
         };
         let submission = json!({"schema_version": 1, "items": items, "findings": [],
-                                "opinion": {"verdict": verdict, "reason": "The fixture's judge."}});
+                                "opinion": {"verdict": verdict, "reason": reason}});
         let call =
             json!({"tool_call": {"id": "s1", "name": "submit_verdict", "arguments": submission}});
         let script = json!({"script": "judge-script/1", "entries": [
@@ -386,6 +428,9 @@ impl Judge for PlayJudge {
             .ok()
             .and_then(|mut turns| turns.pop())
             .unwrap_or_else(|| Err(Fault::new(FaultKind::Malformed, "the fixture's turn")))?;
+        // It says which model answered, as a real provider does, so that a decision it
+        // made is kept for the decision cache.
+        let turn = turn.reported_by(Some("playkit-judge"));
         Ok(match charge(JUDGE_MICROS) {
             Some(charge) => turn.charged(charge),
             None => turn,

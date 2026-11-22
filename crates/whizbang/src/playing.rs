@@ -202,6 +202,16 @@ impl Playground {
         self.made.load(std::sync::atomic::Ordering::SeqCst)
     }
 
+    /// The store's folder, when the playground keeps a store; and the actions it offers
+    /// (for its history, `crate::play_history`).
+    pub(crate) fn root(&self) -> Option<&Path> {
+        self.root.as_deref()
+    }
+
+    pub(crate) fn descriptors(&self) -> &[ActionDescriptor] {
+        &self.descriptors
+    }
+
     fn descriptor(&self, action: &str) -> Option<&ActionDescriptor> {
         self.descriptors.iter().find(|d| d.name() == action)
     }
@@ -340,6 +350,10 @@ impl Play for Playground {
         let bytes = store.read(&entry).ok()?;
         let admission = whizbang_core::contract::Admission::from_bytes(&bytes).ok()?;
         (admission.request() == Some(id)).then(|| admission.run().clone())
+    }
+
+    fn shelf(&self) -> Option<&dyn whizbang_serve::play::history::Shelf> {
+        Some(self)
     }
 
     fn closing(&self) {
