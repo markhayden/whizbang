@@ -16,7 +16,8 @@
 //! catalogue's `sam3` through the kind `pack`, not installed in an empty models directory
 //! of its own; a filler, `cloud-fill`, and a judge,
 //! `cloud-judge`, each at an address of the reserved `.example` domain, which nothing
-//! contacts; and a judge whose key is named and not set, `keyless-judge`. The store's
+//! contacts (the filler's key a made-up one, in an env file the fixture writes beside the
+//! store); and a judge whose key is named and not set, `keyless-judge`. The store's
 //! allowance is set to ten dollars. Nothing a case does reaches a model or leaves the
 //! machine.
 //!
@@ -81,7 +82,7 @@ fn config_text() -> String {
          [backends.segment.sam3]\nkind = \"pack\"\nmodel = \"sam3\"\n\n\
          [backends.fill]\ndefault = \"cloud-fill\"\n\n\
          [backends.fill.cloud-fill]\nkind = \"{KIND}\"\nmodel = \"fill\"\n\
-         url = \"https://fill.example.org/v1\"\n\n\
+         url = \"https://fill.example.org/v1\"\nkey_env = \"PLAYKIT_FILL_KEY\"\n\n\
          [backends.judge]\ndefault = \"cloud-judge\"\n\n\
          [backends.judge.cloud-judge]\nkind = \"{KIND}\"\nmodel = \"judge\"\n\
          url = \"https://judge.example.org/v1\"\n\n\
@@ -284,6 +285,20 @@ impl Play for Fixture {
     }
 }
 
+/// The made-up key of `cloud-fill`, which the fixture's env file sets: a Chrome case looks
+/// for it in everything the page is answered and shows (plan m5, task M1). Assembled so
+/// that no scan of this file finds one.
+fn made_up_key() -> String {
+    ["made", "up", "fixture", "key", "0123456789"].join("-")
+}
+
+/// The env file's place: beside the store, named after it.
+fn env_path(store: &Path) -> PathBuf {
+    let mut name = store.file_name().unwrap_or_default().to_os_string();
+    name.push(".fixture.env");
+    store.with_file_name(name)
+}
+
 /// The config's file: beside the store, named after it.
 fn config_path(store: &Path) -> PathBuf {
     let mut name = store.file_name().unwrap_or_default().to_os_string();
@@ -307,6 +322,14 @@ fn main() {
         }
     }
     let config = config_path(&store);
+    let env = env_path(&store);
+    std::fs::write(&env, format!("PLAYKIT_FILL_KEY={}\n", made_up_key()))
+        .unwrap_or_else(|error| fail(&error.to_string()));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&env, std::fs::Permissions::from_mode(0o600));
+    }
     std::fs::write(&config, config_text()).unwrap_or_else(|error| fail(&error.to_string()));
     let kit = PlayKit::new();
     let mut kinds = wiring::kinds(&OneWorker::installed());
@@ -332,6 +355,7 @@ fn main() {
         .runs_on(Some(whizbang_backends::models::Platform::MacosArm64));
     let over = Over::nothing()
         .config(Some(&config))
+        .env_file(Some(&env))
         .kinds(kinds)
         .installed(shipped.clone().flag(Some(&models)))
         .unwrap_or_else(|why| fail(&why));
@@ -360,8 +384,8 @@ fn main() {
         CheckedDownloader::new(serving.clone(), origins)
     });
     let tools = Tools::of(shipped.flag(Some(&models)), Arc::new(SystemClock), made);
-    let models_door =
-        PlayModels::new(tools, Some(&config), None).waiting(std::time::Duration::from_secs(1));
+    let models_door = PlayModels::new(tools, Some(&config), Some(&env))
+        .waiting(std::time::Duration::from_secs(1));
     let door = Playground::new(descriptors, Arc::new(over))
         .with_store(writer, &store)
         .with_kits(kits)
@@ -394,5 +418,6 @@ fn main() {
     }
     host.wait();
     let _ = std::fs::remove_file(&config);
+    let _ = std::fs::remove_file(&env);
     let _ = std::fs::remove_dir_all(&models);
 }

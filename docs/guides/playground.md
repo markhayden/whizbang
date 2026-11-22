@@ -79,10 +79,49 @@ Quit is the way out.
   you only. A second `whizbang play` trusts it only while the folder and the file are yours
   alone. It is removed when the playground stops; one left by a playground that was
   killed is replaced at the next launch.
-- **Threads.** The host makes 19 threads; one process holds at most 42 made by playground
-  hosts.
+- **Threads.** The host makes 19 threads, and one more while it installs a model; one
+  process holds at most 44 made by playground hosts.
 - **Nothing on another machine.** The playground sends nothing off the machine itself; the
   runs it starts go only where your config already approves, as from the command line.
+
+## Models and keys
+
+The Models screen (the top bar's **Models**, or `#/models`) says what runs where, and what a
+run may spend.
+
+**On your Mac** lists the models of the catalogue this build ships (the same list as
+`whizbang models list`), with each one's size and state. **Get** installs one as `whizbang
+models get` does, into the models directory the playground was started with
+(`--models-dir`, the config's `[models] dir`, or the platform's), from the origins the
+catalogue names and no other. The install runs in the playground's process on a thread of
+its own, one at a time: Get on a model that is being installed follows that install, and Get
+on another model waits until it ends. Its progress is counted in files, not bytes ("1 of 3
+files"). **Cancel** stops it, and whatever was installed before stays as it was. Quitting
+the playground cancels an install that is going, the same way. **Remove** removes a model as
+`whizbang models remove` does: it waits five seconds for the runs that use it, and if they
+have not let it go, it says the model is busy and removes nothing.
+
+A model whose files need a sign-in (SAM 3's do, on Hugging Face) can be got from the page
+only when the config names where its token is (`[[models.tokens]]`, `docs/guides/models.md`,
+"A model whose files need a token"); otherwise its row says NOT SET UP and **How to add**
+says what to add. The page never asks for a token.
+
+**In the cloud** lists each backend the config offers that sends data somewhere, with KEY
+SET when the env file sets the variable the config names for its key, NO KEY when it does
+not, NOT SET UP when the backend cannot be used for another reason, and READY when it needs
+no key; and its price per request as the backend states it. **The playground never shows a
+key, never sends one to the page, and never writes the config or the env file.** To add a
+key, name its variable in the config (`key_env = "NAME"`), put `NAME=…` in the env file,
+and start the playground again with the same `--config` and `--env-file`
+(`docs/guides/config.md`). There is no Probe: readiness needs none, and a backend is not
+contacted from this screen.
+
+**The allowance** shows what is counted against the store's allowance since the last reset,
+with the reset's date, and what is left; and the config's cap of one call (`[spend]
+call_cap_usd`), which the page shows and does not change. **Reset…** asks for the new
+allowance in dollars and for the word `reset` typed again, and only then resets it, as
+`whizbang spend reset --allowance` does: the books close, what was spent before stops
+counting, and the new allowance starts with nothing spent. There is no monthly allowance.
 
 A store on a network file system is not supported: the store's locks may not hold there,
 and the playground holds a store for as long as it runs.
