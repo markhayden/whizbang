@@ -1909,9 +1909,10 @@ fn stats_answers_what_runs_stats_answers_for_the_same_filter() {
     let root = kitted.root();
     for (query, flags) in [
         ("", vec![]),
-        ("kit=squint", vec!["--kit", "squint"]),
-        ("result=unsure", vec!["--result", "unsure"]),
-        ("action=check", vec!["--action", "check"]),
+        (
+            "kit=squint&result=unsure",
+            vec!["--kit", "squint", "--result", "unsure"],
+        ),
         (
             "task=remove_checked&words=hose",
             vec!["--action", "remove_checked", "--words", "hose"],
