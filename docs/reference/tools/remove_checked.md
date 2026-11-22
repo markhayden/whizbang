@@ -169,6 +169,12 @@ beside the fill's 0.04. What the loop's own runs settled, and the median time of
 SAM 3, the filler and each of two judges, are in `docs/results/m4-loop.md`. The loop's own
 work between its calls is not timed here: a run's time is its models'.
 
+The loop's judge, when `--judge` names none, is the config's default judge, which the
+config guide names `gemini-4-argon`: the judge round of milestone E picked it over all
+sets, and over the `source-fidelity` sets alone picked none, so the loop keeps it (ADR
+0044, `docs/results/e-judges.md`). Its three checked attempts reserve 5.926080 dollars; a
+cap of 5.94 covers them.
+
 ## Alternatives
 
 - **`remove_prompt`**: one pass, not checked, for the cost of a fill. The loop's every

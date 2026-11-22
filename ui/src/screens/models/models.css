@@ -31,3 +31,6 @@
   .models__panels, .models__allowance-row { flex-direction: column; align-items: stretch; }
   .models__allowance-words { width: auto; }
 }
+.models__confirm { display: flex; flex-direction: column; gap: var(--spacing-2); padding: var(--spacing-3); border-top: 1px solid var(--color-line); background: var(--color-raised); }
+.models__confirm-words { margin: 0; color: var(--color-ink); font-size: var(--text-sm); line-height: 18px; }
+.models__confirm-actions { display: flex; align-items: flex-start; gap: var(--spacing-2); }
