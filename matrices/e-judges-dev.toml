@@ -1,0 +1,35 @@
+# The judge round of plan e1, task J1, on the dev sets: the ten dev sets (the five use cases'
+# dev sets and their adversarial sets, 110 items) under the format the format round settled,
+# `C;submission=v1` (submission/1 did not adopt v2), named explicitly so no cell's identity
+# depends on the binary's default, and the two judges the format round did not run, once:
+# 110 x 2 = 220 cells. The three small judges' dev cells are the format round's
+# (`matrices/e-submission.toml`), of the same arm, repetition 1: `eval judges --mode judges
+# --arm "C;submission=v1"` reads that matrix beside this one and scores each judge under that
+# one arm only. The judges are named as labs/e-loop/config.toml names them (a backend's name
+# holds no dot). Run by the orchestrator on the owner's Mac; the commands are in
+# docs/results/e-judges.md, "How it is run".
+[matrix]
+name = "e-judges-dev"
+sets = [
+  "source-fidelity/scenes-v1",
+  "reference-consistency/pets-v1",
+  "reality-checks/people-v1",
+  "brief-compliance/stills-v1",
+  "product-fidelity/packshots-v1",
+  "source-fidelity/adversarial-v1",
+  "reference-consistency/adversarial-v1",
+  "reality-checks/adversarial-v1",
+  "brief-compliance/adversarial-v1",
+  "product-fidelity/adversarial-v1",
+]
+arms = ["C;submission=v1"]
+repetitions = 1
+concurrency = 2
+
+[[matrix.judges]]
+backend = "gemini-4-argon"
+model = "gemini-4-argon"
+
+[[matrix.judges]]
+backend = "gpt-6-1-sol"
+model = "gpt-6.1-sol"

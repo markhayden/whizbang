@@ -25,6 +25,8 @@ fn the_ported_study_matrices_are_read() {
     assert_eq!(
         names,
         [
+            "e-judges-blind",
+            "e-judges-dev",
             "e-submission",
             "e1-evidence",
             "study-flash",
@@ -50,7 +52,7 @@ fn the_ported_study_matrices_are_read() {
         assert!(matrix::forecast(&m.cells(&items)).is_ok(), "{name}");
     }
     // Squint's D_<tool> is the control and that tool.
-    let (_, haiku) = &read[3];
+    let (_, haiku) = &read[5];
     let arms: Vec<String> = haiku.matrix.arms.iter().map(|a| a.offered()).collect();
     assert_eq!(
         arms,
@@ -58,7 +60,7 @@ fn the_ported_study_matrices_are_read() {
     );
     assert_eq!(haiku.matrix.repetitions, 2);
     // The evidence matrix: 110 items' sets under arm F, twice, two at once.
-    let (_, evidence) = &read[1];
+    let (_, evidence) = &read[3];
     assert_eq!(evidence.matrix.sets.len(), 10);
     assert_eq!(evidence.matrix.arms[0].details(), "first");
     assert_eq!(evidence.matrix.concurrency, 2);

@@ -1,0 +1,35 @@
+# The judge round of plan e1, task J1, on the exposed regression set: source-fidelity/blind-v3
+# (143 items, 24 families) under the format the format round settled, `C;submission=v1`
+# (submission/1 did not adopt v2), named explicitly, and all five judges this build prices,
+# once: 143 x 5 = 715 cells. With matrices/e-submission.toml (the three small judges, dev
+# sets) and matrices/e-judges-dev.toml (the other two, dev sets), every judge is scored on the
+# same 253 items under one arm. blind-v3 is exposed: it never admits a tool. Its labels are
+# read from the owner's folder, held to the set's seal, and never committed. The judges are
+# named as labs/e-loop/config.toml names them. Run by the orchestrator on the owner's Mac;
+# the commands are in docs/results/e-judges.md, "How it is run".
+[matrix]
+name = "e-judges-blind"
+sets = ["source-fidelity/blind-v3"]
+arms = ["C;submission=v1"]
+repetitions = 1
+concurrency = 2
+
+[[matrix.judges]]
+backend = "claude-haiku-5-5"
+model = "claude-haiku-5-5"
+
+[[matrix.judges]]
+backend = "gemini-3-8-flash"
+model = "gemini-3.8-flash"
+
+[[matrix.judges]]
+backend = "gemini-4-argon"
+model = "gemini-4-argon"
+
+[[matrix.judges]]
+backend = "gpt-6-1-terra"
+model = "gpt-6.1-terra"
+
+[[matrix.judges]]
+backend = "gpt-6-1-sol"
+model = "gpt-6.1-sol"
