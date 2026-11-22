@@ -791,6 +791,56 @@ fn a_truth_mask_with_no_object_pixel_is_refused() {
     assert!(loop_score::truth_of(&png(Some(TRUTH))).is_ok());
 }
 
+/// A grey PNG of 64 by 64, white inside the box and black outside, that carries a colour
+/// profile in an `iCCP` chunk, as segment-01's truth masks do.
+fn grey_with_profile(inside: [u32; 4]) -> Vec<u8> {
+    let [l, t, r, b] = inside;
+    let mut grey = Vec::new();
+    for y in 0..64_u32 {
+        for x in 0..64_u32 {
+            grey.push(if x >= l && x < r && y >= t && y < b {
+                255
+            } else {
+                0
+            });
+        }
+    }
+    let mut out = Vec::new();
+    let mut encoder = PngEncoder::new(&mut out);
+    encoder
+        .set_icc_profile(b"a grey profile, never applied to a mask".to_vec())
+        .unwrap();
+    encoder
+        .write_image(&grey, 64, 64, ExtendedColorType::L8)
+        .unwrap();
+    out
+}
+
+#[test]
+fn a_grey_truth_mask_with_a_colour_profile_is_read_by_its_grey_samples() {
+    let bytes = grey_with_profile(TRUTH);
+    // The rule for images in general is unchanged: such a file has no canonical pixels.
+    let refused = whizbang_core::identity::identify(
+        &bytes,
+        &whizbang_core::identity::DecodeLimits::default(),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        refused.contains("grey image with a colour profile"),
+        "{refused}"
+    );
+    // A truth mask is a mask, not a photograph: its grey samples are read as they are.
+    let truth = loop_score::truth_of(&bytes).unwrap();
+    assert_eq!(truth, loop_score::truth_of(&png(Some(TRUTH))).unwrap());
+    let [l, t, r, b] = TRUTH;
+    let inside = (truth.pixels.iter()).filter(|&&p| p).count();
+    assert_eq!(inside, ((r - l) * (b - t)) as usize);
+    // One with no object pixel is still refused.
+    let empty = loop_score::truth_of(&grey_with_profile([0, 0, 0, 0])).unwrap_err();
+    assert!(empty.contains("no pixel of the object"), "{empty}");
+}
+
 #[test]
 fn every_unavailable_has_a_reason_and_the_sensitivity_counts_have_shares() {
     let mut failed = scored("r2", Vec::new(), None);

@@ -283,9 +283,10 @@ outside the work tree, and are never committed.
   attempt without what a measure needs (a retry whose mask was the one before has no fill
   or check; a run with no kept attempt has no kept mask; a mask of another size than its
   truth mask has no measure, for the reason `size`) is counted as unavailable for it, by
-  why. A truth mask with no pixel of the object is refused. It writes `loop-score/1`, aggregates
-  only. These are statements about masks, not about the finished pictures: a fill can
-  erase beyond its mask or leave a trace inside it.
+  why. A truth mask with no pixel of the object is refused; a grey one that carries a
+  colour profile is read by its grey samples, since a mask's profile says nothing of the
+  object. It writes `loop-score/1`, aggregates only. These are statements about masks, not
+  about the finished pictures: a fill can erase beyond its mask or leave a trace inside it.
 - `whizbang eval loop sheet … --out <folder>` writes the contact sheet: every completed
   fill beside its original, in an order drawn from a seed drawn for that sheet and written
   only in its `assignment.json`, with no verdict, coverage,

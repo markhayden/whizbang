@@ -71,7 +71,7 @@ case "\$1 \$2" in
       case " \$* " in *" --create "*) mkdir "\$store" && echo "created a store at \$store" ;; *) echo "whizbang: no store" >&2; exit 1 ;; esac
     fi
     if command -v sha256sum >/dev/null; then sum=\$(sha256sum "\$4" | cut -d' ' -f1); else sum=\$(shasum -a 256 "\$4" | cut -d' ' -f1); fi
-    echo "imported image sha256:\$sum"
+    if [ -e "\$store/imported-\$sum" ]; then echo "already there: image sha256:\$sum"; else : >"\$store/imported-\$sum"; echo "imported image sha256:\$sum"; fi
     ;;
   "spend reset") echo "\$*" >>"$fix/allowances"; echo 'allowance reset' ;;
   "runs export") [ ! -f "\$store/records.jsonl" ] || cat "\$store/records.jsonl" ;;
