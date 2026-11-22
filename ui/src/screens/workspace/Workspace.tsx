@@ -352,7 +352,19 @@ function Draft(props: DraftProps) {
           ))
         )}
         <h2 class="section-title">Tools this task uses</h2>
-        <p class="workspace__tools mono">{Array.isArray(task.tools) && task.tools.length > 0 ? task.tools.join(" · ") : "none"}</p>
+        <p class="workspace__tools mono">
+          {Array.isArray(task.tools) && task.tools.length > 0
+            ? task.tools.map((tool, at) => (
+                <span key={tool}>
+                  {at > 0 ? " · " : null}
+                  <a href={hrefOf({ name: "record", record: tool })}>{tool}</a>
+                </span>
+              ))
+            : "none"}
+        </p>
+        <a class="screen__link workspace__record" href={hrefOf({ name: "record", record: task.name })}>
+          Read this task's record
+        </a>
       </aside>
     </main>
   );

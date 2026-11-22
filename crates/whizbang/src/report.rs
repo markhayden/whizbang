@@ -547,8 +547,9 @@ pub fn report(root: &Path, run: &RunId, title: Option<&str>) -> Result<String, S
         out,
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta http-equiv=\"Content-Security-Policy\" content=\"{POLICY}\">\
-         <meta name=\"referrer\" content=\"no-referrer\">\
+         <meta name=\"referrer\" content=\"no-referrer\"><meta name=\"task\" content=\"{}\">\
          <title>{} · {}</title><style>{STYLE}</style></head><body>",
+        escape(&action),
         escape(heading),
         escape(run.as_str())
     );

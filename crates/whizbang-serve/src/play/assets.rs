@@ -22,6 +22,11 @@ macro_rules! asset {
 const FILES: &[File] = &[
     asset!("app.css", "text/css; charset=utf-8"),
     asset!("app.js", "text/javascript; charset=utf-8"),
+    asset!("brand/README.md", "text/markdown; charset=utf-8"),
+    asset!("brand/crew.webp", "image/webp"),
+    asset!("brand/emblem.webp", "image/webp"),
+    asset!("brand/mark.svg", "image/svg+xml"),
+    asset!("brand/wordmark.svg", "image/svg+xml"),
     asset!("fonts/bricolage-grotesque-800.woff2", "font/woff2"),
     asset!("fonts/geist-400.woff2", "font/woff2"),
     asset!("fonts/geist-500.woff2", "font/woff2"),
