@@ -1659,6 +1659,31 @@ fn the_pictures_are_paged_newest_first_and_a_picture_sent_again_keeps_its_newest
 }
 
 #[test]
+fn a_picture_is_looked_up_by_its_identity_and_one_not_kept_answers_none() {
+    let kitted = Kitted::new("play-gaps-picture");
+    let ids: Vec<String> = (44..47).map(|shade| kitted.picture(shade)).collect();
+    // The oldest, past a first page of one: found by its identity, with its name.
+    let found = kitted
+        .api("GET", &format!("/api/pictures?id={}", ids[0]), None)
+        .json();
+    let listed = found["pictures"].as_array().unwrap();
+    assert_eq!(listed.len(), 1, "{found}");
+    assert_eq!(listed[0]["id"], ids[0].as_str());
+    assert!(listed[0]["name"].is_string(), "{found}");
+    // An identity the playground kept no picture under: none.
+    let unknown = format!("/api/pictures?id=sha256:{}", "1".repeat(64));
+    assert_eq!(
+        kitted.api("GET", &unknown, None).json()["pictures"],
+        json!([])
+    );
+    // Not an identity: refused.
+    assert_eq!(
+        kitted.api("GET", "/api/pictures?id=porch", None).status,
+        400
+    );
+}
+
+#[test]
 fn a_line_is_drawn_and_a_path_or_polygon_past_its_points_is_refused() {
     let kitted = Kitted::new("play-w1-lines");
     let picture = kitted.picture(50);
@@ -1851,6 +1876,78 @@ fn history_filters_by_kit_task_result_and_words() {
         runs_of(&kitted.listed("")),
         [failed.as_str(), passed.as_str(), removed.as_str()]
     );
+}
+
+#[test]
+fn history_lists_the_runs_that_made_an_output_of_a_type_with_their_outputs() {
+    let kitted = Kitted::new("play-gaps-outputs");
+    let removed = kitted.ran(
+        "remove_prompt",
+        &json!({"image": kitted.picture(95), "prompt": "the rake"}),
+    );
+    kitted.ran("reality-checks", &json!({"candidate": kitted.picture(96)}));
+    // Each row names its outputs, by port, type and identity.
+    let all = kitted.listed("");
+    let outputs = all[1]["outputs"].as_array().unwrap();
+    let mask = outputs
+        .iter()
+        .find(|output| output["type"] == "mask")
+        .unwrap_or_else(|| panic!("a removal makes a mask: {}", all[1]));
+    assert!(
+        mask["id"].as_str().unwrap().starts_with("sha256:"),
+        "{mask}"
+    );
+    assert!(mask["port"].is_string(), "{mask}");
+    // `output=` lists only the runs that made one of that type, by pages as before.
+    assert_eq!(runs_of(&kitted.listed("output=mask")), [removed.as_str()]);
+    assert_eq!(
+        runs_of(&kitted.listed("output=band_profile")),
+        Vec::<&str>::new()
+    );
+    assert_eq!(
+        runs_of(&kitted.listed(&format!("output=mask&before={removed}"))),
+        Vec::<&str>::new()
+    );
+    for bad in ["output=Mask!", "output="] {
+        let answer = kitted.api("GET", &format!("/api/runs?{bad}"), None);
+        assert_eq!(answer.status, 400, "{bad}: {}", answer.text());
+    }
+    // From the store, so a restart keeps them.
+    let kitted = kitted.restarted();
+    assert_eq!(runs_of(&kitted.listed("output=mask")), [removed.as_str()]);
+}
+
+#[test]
+fn history_of_an_output_type_is_paged_after_the_last_run_shown() {
+    let kitted = Kitted::new("play-gaps-output-pages");
+    let removed: Vec<String> = (97..100)
+        .map(|shade| {
+            kitted.ran(
+                "remove_prompt",
+                &json!({"image": kitted.picture(shade), "prompt": "the rake"}),
+            )
+        })
+        .collect();
+    kitted.ran("reality-checks", &json!({"candidate": kitted.picture(100)}));
+    let mut before: Option<String> = None;
+    let mut seen = Vec::new();
+    let mut mores = Vec::new();
+    for _ in 0..3 {
+        let path = match &before {
+            Some(run) => format!("/api/runs?output=mask&limit=1&before={run}"),
+            None => "/api/runs?output=mask&limit=1".to_owned(),
+        };
+        let page = kitted.api("GET", &path, None).json();
+        let runs = page["runs"].as_array().unwrap();
+        assert_eq!(runs.len(), 1, "{page}");
+        let run = runs[0]["run"].as_str().unwrap().to_owned();
+        seen.push(run.clone());
+        mores.push(page["more"].as_bool().unwrap());
+        before = Some(run);
+    }
+    assert_eq!(mores, [true, true, false]);
+    let newest_first: Vec<String> = removed.into_iter().rev().collect();
+    assert_eq!(seen, newest_first);
 }
 
 #[test]

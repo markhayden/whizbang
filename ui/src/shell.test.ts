@@ -70,6 +70,10 @@ describe("the routes", () => {
   it("reads each route of the hash", () => {
     expect(parseRoute("")).toEqual({ name: "home" });
     expect(parseRoute("#/")).toEqual({ name: "home" });
+    const picture = `sha256:${"ab".repeat(32)}`;
+    expect(parseRoute(`#/?picture=${picture}`)).toEqual({ name: "home", picture });
+    expect(hrefOf({ name: "home", picture })).toBe(`#/?picture=${picture}`);
+    expect(parseRoute("#/?picture=../etc")).toEqual({ name: "home" });
     expect(parseRoute("#/k/rascal")).toEqual({ name: "kit", kit: "rascal" });
     expect(parseRoute("#/k/rascal/remove_checked")).toEqual({ name: "kit", kit: "rascal", task: "remove_checked" });
     expect(parseRoute("#/run/r-8c21_x")).toEqual({ name: "run", id: "r-8c21_x" });

@@ -360,10 +360,17 @@ export interface Client {
   cancelRun(run: string): Promise<{ run: string; state: string }>;
   /** The runs this host started that are still going. */
   openRuns(): Promise<OpenRun[]>;
+  /**
+   * Quit (`POST /api/quit`): the host stops taking requests, cancels every run it started
+   * and waits up to its grace for each to be accounted for, then exits (ADR 0041).
+   */
+  quit(): Promise<{ stopping: boolean }>;
   /** Send a picture's bytes with its file name; at most two at once, the rest queued. */
   uploadPicture(file: File): Promise<Picture>;
   /** The pictures the playground imported, newest first: at most `limit`, after the picture `after` names. */
   listPictures(limit?: number, after?: string): Promise<Picture[]>;
+  /** The picture the playground kept under this identity, or null when it kept none. */
+  pictureById(id: string): Promise<Picture | null>;
   /** A shape drawn on a picture, committed as a location: its identity. */
   commitLocation(picture: string, shape: DrawnShape): Promise<{ id: string }>;
   /**
@@ -503,11 +510,16 @@ export function createClient(options: ClientOptions): Client {
       const answer = await client.request<{ runs?: OpenRun[] } | undefined>("GET", "/api/runs?open=1");
       return Array.isArray(answer?.runs) ? answer.runs : [];
     },
+    quit: () => client.request<{ stopping: boolean }>("POST", "/api/quit"),
     uploadPicture: (file) => client.upload<Picture>(`/api/pictures?name=${encodeURIComponent(nameOf(file))}`, file),
     listPictures: async (limit = 48, after) => {
       const from = after ? `&after=${encodeURIComponent(after)}` : "";
       const answer = await client.request<{ pictures?: Picture[] } | undefined>("GET", `/api/pictures?limit=${limit}${from}`);
       return Array.isArray(answer?.pictures) ? answer.pictures : [];
+    },
+    pictureById: async (id) => {
+      const answer = await client.request<{ pictures?: Picture[] } | undefined>("GET", `/api/pictures?id=${encodeURIComponent(id)}`);
+      return (Array.isArray(answer?.pictures) ? answer.pictures : []).find((one) => one.id === id) ?? null;
     },
     commitLocation: (picture, shape) => client.request<{ id: string }>("POST", "/api/locations", { picture, shape }),
     bytes: async (path) => {

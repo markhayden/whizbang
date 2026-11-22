@@ -261,8 +261,8 @@ export function Result(props: ResultProps) {
           <Shown client={props.client} id={shownId} mask={chosen === "mask" ? mask : null} record={record} zoom={zoom} onZoom={setZoom} diagnostic={attemptShown ? `Attempt ${attemptShown.attempt}: a picture the loop made on the way, not its result` : null} />
         )}
       </section>
-      <aside class="workspace__right" aria-label="Report">
-        <h2 class="section-title">Report</h2>
+      <aside class="workspace__right" aria-label="Summary">
+        <h2 class="section-title">Summary</h2>
         {verdict ? <VerdictCard verdict={verdict} title={verdictTitle(verdict)} detail={record.attempts?.kept ? `attempt ${record.attempts.kept}` : undefined} reasons={record.verdict?.reasons ?? []} /> : null}
         {record.error ? <p class="field__error">{`${record.error.kind}: ${record.error.message}`}</p> : null}
         {record.invalid ? <p class="field__error">{record.invalid}</p> : null}

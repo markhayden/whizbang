@@ -116,6 +116,10 @@ pub trait Play: Send + Sync {
     fn pictures(&self, _after: Option<&str>, _limit: usize) -> Result<Json, Refused> {
         Ok(serde_json::json!({ "pictures": [] }))
     }
+    /// The picture the playground kept under this identity, with its name, or none.
+    fn picture_kept(&self, _id: &str) -> Result<Option<Json>, Refused> {
+        Ok(None)
+    }
     /// An artifact of the store, for display: its type of content and its bytes; a
     /// thumbnail at most `edge` pixels on its long side when one is asked for.
     fn artifact(&self, _id: &str, _edge: Option<u32>) -> Result<(&'static str, Vec<u8>), Refused> {

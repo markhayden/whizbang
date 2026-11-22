@@ -66,17 +66,33 @@ test("the running step list shows a step running and an attempt started before t
   await expect(page.locator(".workspace__title-row .tag", { hasText: /PASS|FAIL|DONE/ })).toBeVisible();
 });
 
-test("each of the five squint use cases runs from its form", async ({ page, host }) => {
-  await openAt(page, host, "#/");
-  let seed = 10;
-  for (const useCase of USE_CASES) {
-    await page.goto(`${host.address}#/k/squint/${useCase}`);
-    await give(page, "candidate", file(`${useCase}.png`, (seed += 1)));
-    if (await page.locator("#field-source").count()) await give(page, "source", file("source.png", (seed += 1)));
-    if (await page.locator("#field-references").count()) await give(page, "references", file("reference.png", (seed += 1)));
-    if (await page.locator("#field-brief").count()) await page.locator("#field-brief").fill("A kitchen with a window, and no person in it.");
-    await runWhenReady(page);
-    await expect(page.locator(".tag", { hasText: "PASS" }), useCase).toBeVisible();
+test("each of the five squint use cases runs from its form", async ({ page, context, host }) => {
+  // Two tabs, each running its share of the use cases one after another: each tab waits
+  // for one picture's upload before it gives the next, so the two stay within the host's
+  // two uploads at once, and at most two runs go at once, within its four.
+  const other = await context.newPage();
+  // A picture given, and its upload answered, before the next is given.
+  const sent = async (tab: typeof page, field: string, given: ReturnType<typeof file>) => {
+    const answered = tab.waitForResponse((response) => response.url().includes("/api/pictures?name=") && response.request().method() === "POST");
+    await give(tab, field, given);
+    expect((await answered).status(), field).toBe(201);
+  };
+  const lane = async (tab: typeof page, cases: string[], seed: number) => {
+    await openAt(tab, host, "#/");
+    for (const useCase of cases) {
+      await tab.goto(`${host.address}#/k/squint/${useCase}`);
+      await sent(tab, "candidate", file(`${useCase}.png`, (seed += 1)));
+      if (await tab.locator("#field-source").count()) await sent(tab, "source", file("source.png", (seed += 1)));
+      if (await tab.locator("#field-references").count()) await sent(tab, "references", file("reference.png", (seed += 1)));
+      if (await tab.locator("#field-brief").count()) await tab.locator("#field-brief").fill("A kitchen with a window, and no person in it.");
+      await runWhenReady(tab);
+      await expect(tab.locator(".tag", { hasText: "PASS" }), useCase).toBeVisible();
+    }
+  };
+  try {
+    await Promise.all([lane(page, USE_CASES.filter((_, at) => at % 2 === 0), 10), lane(other, USE_CASES.filter((_, at) => at % 2 === 1), 30)]);
+  } finally {
+    await other.close();
   }
 });
 
