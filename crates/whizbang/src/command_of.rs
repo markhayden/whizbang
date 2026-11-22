@@ -456,7 +456,7 @@ mod tests {
 
     use serde_json::{Map, Value as Json, json};
     use whizbang::playing::Playground;
-    use whizbang::wiring::{self, Make, Over};
+    use whizbang::wiring::{self, Make};
     use whizbang_core::contract::record::RunRecord;
     use whizbang_core::contract::{Answer, Executor, Request, RunId};
     use whizbang_core::store::Reader;
@@ -544,9 +544,11 @@ mod tests {
 
         /// The playground's door and its executor over the store's writer.
         fn door(&self) -> (Arc<dyn Executor>, Playground) {
-            let mut kinds = wiring::kinds(&whizbang::pack::OneWorker::installed());
-            kinds.register(self.kit.kind()).unwrap();
-            let over = Over::nothing().config(Some(&self.config())).kinds(kinds);
+            // Over the build's kinds and the kit's, as the copied command's are.
+            let kinds = super::super::rascal::kinds_of_a_command();
+            let over = whizbang::wiring::Over::nothing()
+                .config(Some(&self.config()))
+                .kinds(kinds);
             let opening = wiring::opening(&self.root(), Make::Nothing, wiring::recovery()).unwrap();
             let writer = opening.writer().unwrap();
             let registry = wiring::registry_over(&over, false).unwrap();

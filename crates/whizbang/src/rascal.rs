@@ -60,6 +60,17 @@ pub(crate) static MORE_KINDS: std::sync::OnceLock<
     Vec<std::sync::Arc<dyn whizbang_core::config::Kind>>,
 > = std::sync::OnceLock::new();
 
+/// The kinds a command of this build is built over, with [`MORE_KINDS`]: what a test of
+/// the copied command builds its door over, as the command it copies does.
+#[cfg(test)]
+pub(crate) fn kinds_of_a_command() -> whizbang_core::config::Kinds {
+    let mut kinds = wiring::kinds(&OneWorker::installed());
+    for kind in MORE_KINDS.get().into_iter().flatten() {
+        let _ = kinds.register(kind.clone());
+    }
+    kinds
+}
+
 impl Under {
     /// The config and the env file, as the models commands take them.
     pub fn asked(&self) -> whizbang::model_commands::Under<'_> {
