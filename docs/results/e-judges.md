@@ -139,7 +139,8 @@ are not run again: each counts as an error, and the 2% clause sees it.
   0.700).
 - **The `source-fidelity` sets, the loop's scope: no pick, so the rule keeps the current
   default, `claude-haiku-5-5`.** No judge is within the margin. `gemini-4-argon` and
-  `gpt-6.1-sol` are tied for best (0.964 balanced accuracy each), and the lower bounds of
+  `gpt-6.1-sol` are tied for best at three places (0.964 balanced accuracy each; the best
+  point is Sol's, 0.9639 against 0.9637), and the lower bounds of
   their differences from the best, taken again inside each resample, are -0.038 and -0.035:
   just past -0.03. `gpt-6.1-terra` is at -0.076. `gemini-3.8-flash` is not eligible (5
   errors of 165, 3.0%), nor is `claude-haiku-5-5` (decided correctly 0.794).
@@ -148,7 +149,11 @@ are not run again: each counts as an error, and the 2% clause sees it.
   a pick of another judge: it picks none. So the loop's judge is the pick over all sets,
   `gemini-4-argon`, and the loop's round (task L2) runs under it, with `claude-haiku-5-5`
   beside it as the plan says. The default the no pick names is a judge the rule found
-  ineligible in that very scope, so it is not read as a pick.
+  ineligible in that very scope, so it is not read as a pick. `gemini-4-argon` failed the
+  margin over `source-fidelity` too: it is the loop's judge because `check`'s pick carries
+  over. This departs from the literal reading of task S1, item 5, "No pick keeps the
+  current default (`claude-haiku-5-5`)", for the loop, as ADR 0044, "Decision", item 2,
+  explains.
 
 ## The five judges
 
@@ -272,9 +277,18 @@ balanced accuracy (0.690 against 0.924) and 22.9 of decided correctly (0.700 aga
 0.929); what it saves is about 25 dollars per 1,000 checks (3.52 against 28.51): Argon
 costs about 8 times as much a decision.
 
+The pick is close. Over all sets the lower bound of `gemini-4-argon`'s difference from the
+best is -0.0276, 0.24 points inside the -0.03 the margin asks; a slightly different sample
+could have left no judge within it. And it is not best everywhere: on the dev sets of two
+use cases, 22 items each, it trails `gemini-3.8-flash` at about twice its cost a decision
+(`brief-compliance` 0.667 against 0.833, `reality-checks` 0.636 against 0.727); it ties
+it on `product-fidelity` (1.000 each) and leads it on `reference-consistency` (1.000
+against 0.955).
+
 Among the eligible judges the cheaper ones give up little: `gpt-6.1-sol` is 1.3 points of
 balanced accuracy behind Argon over all sets (0.911 against 0.924) and tied with it over
-`source-fidelity`, for 21.16 dollars per 1,000 checks against 28.51; it misses the margin
+`source-fidelity` at three places (0.964 each; to four, Sol's point is the best, 0.9639
+against 0.9637), for 21.16 dollars per 1,000 checks against 28.51; it misses the margin
 by its interval, not its point. `gpt-6.1-terra` is 6.3 points behind for 10.49 dollars per
 1,000. Argon's lead is `blind-v3`'s: on the dev sets alone its balanced accuracy is 0.844,
 behind `gemini-3.8-flash`'s 0.880, and its false-reject rate there is 0.311, the highest of

@@ -39,9 +39,13 @@ From the round's scores (`docs/results/e-judges.toml`; the record, `docs/results
    finds no pick: `gemini-4-argon` and `gpt-6.1-sol` are tied for best, and the lower
    bounds of their differences from the best are -0.038 and -0.035, just past -0.03. The
    plan gives the loop check's model "unless the source-fidelity scope picks another"; a no
-   pick picks no other judge, so the loop keeps `check`'s. The default the no pick would
-   keep, `claude-haiku-5-5`, is ineligible in that scope (decided correctly 0.794, under
-   0.80), and is not taken as the loop's judge.
+   pick picks no other judge, so the loop keeps `check`'s. `gemini-4-argon` also failed
+   the margin over `source-fidelity`: it is the loop's judge because `check`'s pick carries
+   over, not because that scope chose it. This departs from the literal reading of plan
+   e1's task S1, item 5, "No pick keeps the current default (`claude-haiku-5-5`)", for the
+   loop: that default is ineligible in that scope (decided correctly 0.794, under 0.80),
+   and task J1, item 4, gives the loop `check`'s judge unless `source-fidelity` picks
+   another, which it did not. So `claude-haiku-5-5` is not taken as the loop's judge.
 3. **Under the format v1**, the default the format round kept (`C;submission=v1`).
 4. **What it rests on**: descriptive evidence only, the ten dev sets and the exposed
    `blind-v3`, 253 items; it admits nothing, and the gate on fresh data that would admit a
@@ -61,11 +65,15 @@ From the round's scores (`docs/results/e-judges.toml`; the record, `docs/results
 - A check costs more: about 0.0285 dollars a decision settled against Haiku's 0.0035, about
   8 times as much (28.51 against 3.52 dollars per 1,000 checks), and roughly double that
   after Argon's price changes. One check reserves 1.935360 dollars against Haiku's
-  0.112768, so a config's `call_cap_usd` must be at least that; the guide's 2.00 covers it.
+  0.112768, so a config's `call_cap_usd` must be at least that. One loop attempt under it
+  reserves 1.97536 and three 5.92608, so the guide's first example caps a call at 6.00: at
+  the old example's 2.00 a loop under it would never try again.
 - The pooled pick leans on `blind-v3`, 143 of the 253 items and one source-fidelity set: on
   the dev sets alone `gemini-4-argon`'s balanced accuracy (0.844) is behind
   `gemini-3.8-flash`'s (0.880), with the highest false-reject rate of the five (0.311).
   The record says so.
+- The tool records' "Another judge" tables, this ADR's figures and the guides' are copied
+  from the TOML by hand, and no test holds them to it yet (a carry-over row).
 - No code changed: no code picks a judge, and `judges.rs`'s fallback for a no pick still
   names `claude-haiku-5-5`. A revert of the pull request names `claude-haiku-5-5` in the
   guides again.

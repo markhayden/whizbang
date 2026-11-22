@@ -317,12 +317,16 @@ model = "gemini-4-argon"
 key_env = "GEMINI_API_KEY"
 
 [spend]
-call_cap_usd = 2.00
+call_cap_usd = 6.00
 
 [egress.recipients.google]
 origin = "https://generativelanguage.googleapis.com"
 classes = ["source_images", "derived_images", "prompts", "evidence"]
 ```
+
+The cap of 6.00 covers three attempts of the loop under `gemini-4-argon` (5.92608 dollars,
+[The loop](loop.md), "What it costs"); a cap of 2.00 covers one check, but one loop attempt
+only (1.97536), so a loop under it never tries again.
 
 For Anthropic:
 

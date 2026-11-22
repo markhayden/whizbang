@@ -348,7 +348,8 @@ mod judge {
     fn the_example_configs_whole_call_reservation_fits_its_cap_for_each_judge() {
         // The examples of the guide, as the owner writes them, one for each provider,
         // the default judge's first (ADR 0044): the bound of one request of its judge,
-        // times the sixteen turns `check` reserves, is within its cap.
+        // times the sixteen turns `check` reserves, is within its cap. The first's cap
+        // covers three loop attempts under its judge, each a check and a 0.04 fill.
         let guide = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../docs/guides/config.md"
@@ -365,15 +366,17 @@ mod judge {
             .map(|rest| rest.split("```").next().unwrap())
             .collect();
         let expected = [
-            ("gemini-4-argon", "GEMINI_API_KEY", 120_960),
-            ("claude-haiku-5-5", "ANTHROPIC_API_KEY", BOUND),
-            ("gpt-6.1-terra", "OPENAI_API_KEY", 60_480),
+            ("gemini-4-argon", "GEMINI_API_KEY", 120_960, "6.00"),
+            ("claude-haiku-5-5", "ANTHROPIC_API_KEY", BOUND, "2.00"),
+            ("gpt-6.1-terra", "OPENAI_API_KEY", 60_480, "2.00"),
         ];
         assert_eq!(examples.len(), expected.len());
-        for (toml, (model, variable, bound)) in examples.into_iter().zip(expected) {
+        for (at, (toml, (model, variable, bound, stated))) in
+            examples.into_iter().zip(expected).enumerate()
+        {
             assert!(
                 toml.contains(&format!("model = \"{model}\""))
-                    && toml.contains("call_cap_usd = 2.00"),
+                    && toml.contains(&format!("call_cap_usd = {stated}")),
                 "{toml}"
             );
             let judged = Judged::new(&format!("spend-example-{model}"));
@@ -399,7 +402,11 @@ mod judge {
             assert_eq!(quoted, Some(bound), "{model}");
             let turns = whizbang_squint::check::TURNS_LIMIT as u64;
             let cap = loaded.config().call_cap_micros().unwrap();
-            assert_eq!(cap, 2_000_000);
+            assert_eq!(cap, if at == 0 { 6_000_000 } else { 2_000_000 });
+            if at == 0 {
+                assert_eq!(3 * (bound * turns + 40_000), 5_926_080);
+                assert!(3 * (bound * turns + 40_000) <= cap);
+            }
             assert!(
                 bound * turns <= cap,
                 "{model}: {} over {cap}",
