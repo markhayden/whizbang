@@ -124,8 +124,9 @@ Opened by this note:
   closed;
 - tests that failed at random during the slice: the pack worker's test of a request it
   does not read, on the clock (fixed by #276), and a cancel test of `play_models`, whose fix
-  is being made; and a third, seen once by this pull request's check, a crash test of the
-  model installs that timed out under load and passed alone.
+  is being made; and a third, seen once by this pull request's check, crash tests of the
+  model installs, which timed out under load twice, a different part each time, and passed
+  alone.
 
 ## What the next slice of E owes
 
