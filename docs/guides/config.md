@@ -405,7 +405,12 @@ whizbang squint check brief-compliance --candidate <id> \
 `--job <file>` takes a squint job file in place of those flags: its brief, its
 requirements with their ids, and its images with their roles and labels. Each picture is
 brought into the store from the file the job names, relative to the job file's folder,
-and refused when its SHA-256 is not the one the job pins (ADR 0028).
+and refused when its SHA-256 is not the one the job pins (ADR 0028). `--job-json <json>`
+takes a job as a stored run holds it (the argument `job` of a check's record), with each of
+its images by `--image <id>`, by identity in the store, once each in the job's order: what the
+playground's Copy command writes for a check, so its requirements come with it. It is held as
+a job file is: at most 1 MiB, no picture given inline, and a picture whose SHA-256 the job
+pins must be one the store imported from a file of that SHA-256.
 
 Nothing is measured before the judge looks, unless the run asks: the judge is offered `view`
 and `align` and calls them, and a call of `align` is answered with its pictures and a fixed

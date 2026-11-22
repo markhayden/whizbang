@@ -888,7 +888,18 @@ fn a_cancel_of_an_install_another_process_runs_leaves_it_going_and_says_detached
         );
         std::thread::sleep(Duration::from_millis(5));
     }
-    // The page's Get follows it; its Cancel leaves it, and it goes on.
+    // The page's Get, cancelled at once: before the host's request has found the other
+    // install, or after it attached, the other goes on, and the host says it left it.
+    // (Cancelled first, it was said "cancelled", which the Linux runner met: #275.)
+    assert_eq!(
+        hosted.api("POST", "/api/models/pocket/get", None).status,
+        202
+    );
+    let cancel = hosted.api("POST", "/api/models/pocket/cancel", None);
+    assert_eq!(cancel.status, 202, "{}", cancel.text());
+    let row = hosted.pocket_until(|row| row["last"]["ended"] == "detached");
+    assert_eq!(row["files_done"], 1, "{row}");
+    // Again, cancelled once it shows the other's progress: the same.
     assert_eq!(
         hosted.api("POST", "/api/models/pocket/get", None).status,
         202

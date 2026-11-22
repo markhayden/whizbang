@@ -71,6 +71,36 @@ Cancelling a run cancels the runs it called. A run whose work ignores the cancel
 shown as stopping and keeps its place among the four that may run at once until it ends;
 Quit is the way out.
 
+## A result
+
+When a run ends, its screen is the result: its verdict or how it ended; the picture it was
+given and the one it made, side by side, swiped or as their difference, at one zoom; the
+verdict's reasons and the places they cite; a loop's attempts, each with its outcome and the
+picture it made on the way (marked as such: it is not the result); and the cost of the run
+and every run it called, by capability and backend, local work shown as free.
+
+- **Save picture** (⌘S) downloads the picture it made.
+- **Send to** opens a new draft of another task with the result's outputs filled in: a field
+  is filled when it is the only one of that task that takes the output's type, and left for
+  you to fill when two or more do. A removal sent to "Check an edit" gives its picture as
+  the source, its result as the edit and, when it had words, the job the loop writes from
+  them, requirements and all. The draft says where it came from and leads back to the run.
+- **Run again** opens a new draft of the same task with the run's inputs and the backends it
+  used written out. Changing it changes nothing of the run.
+- **Copy command** gives the `whizbang` command that makes the same call: every input by its
+  identity in the store; the store, config, env file, models directory and a recipe file by
+  their absolute paths; each backend the run took from the config's default named
+  explicitly; each flag with its value as one word (`--prompt=-a hose`), so a value that
+  begins with `-` is never read as a flag; every word quoted for a POSIX shell. When the
+  config, or a recipe file the run ran, has changed since the run, a line above the command
+  says so (`: '…'`, which a shell runs as nothing), and the command runs what is there now.
+  A run whose words hold a control or format character other than a new line or a tab gives
+  no command: no pasted line says it safely. Run it once the playground has quit: the store
+  takes one writer.
+
+Send to and Run again replace a draft of the same task you have not run only once you say
+so.
+
 ## History, reports and records
 
 - **History** lists every run of the store, newest first, by pages, and keeps them across

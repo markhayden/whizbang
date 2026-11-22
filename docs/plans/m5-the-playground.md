@@ -954,7 +954,7 @@ result on to another task, try again from it, and take it away as a command. Row
    with the command's own parser. A user's recipe file gives `whizbang rascal run <file>`
    with its inputs as `NAME=VALUE`.
 
-- [ ] Done when: row 3's, row 4's and row 8's Chrome cases pass in both `e2e` jobs;
+- [x] Done when: row 3's, row 4's and row 8's Chrome cases pass in both `e2e` jobs;
   `play::the_record_route_splits_cost_by_capability_and_backend_and_names_free_local_work`,
   `play::send_to_offers_each_task_whose_ports_a_results_outputs_fill`,
   `play::the_command_of_a_run_makes_the_same_call` (for a recipe, a loop, a squint use case
@@ -967,6 +967,40 @@ result on to another task, try again from it, and take it away as a command. Row
   `play::the_command_names_a_default_choice_explicitly_and_says_when_the_config_changed`,
   `play::send_to_leaves_a_port_empty_when_two_ports_take_the_same_type`,
   `send.spec.ts: a removal sent to check an edit carries the job the loop writes`.
+
+**As built (W2).** The routes are `play/result.rs`, each registered by one line, over two
+methods the door gained (`Play::record`, `Play::command`); the record is read by
+`whizbang::play_result`. A record names a request's backend by its kind, so the cost table
+and the choices a command writes out name the config's backend whose kind and model those
+are (`playing::resolved`); one the config names twice, or not at all, falls back to the
+config's default. A check takes the job of a run of the store by that run's id (`job_of`),
+read by the host from the run's record (a removal's phrase through `checked::job`, or a
+check's own job when it is run again), never a job sent by the page; a brief given beside it
+is refused. Draft values (Send to, Run again) are the run's own, unescaped, and put in as
+text; what the record shows is escaped. Copy command refuses a run whose words hold a
+control or format (Cf) character other than a new line or a tab, which no pasted line says
+safely; writes each flag with its value as one word (`--flag=value`), so a value that begins
+with `-` is not read as a flag; gives every path absolute; quotes a word that begins with
+`=`; holds every command to the command line's own parser; and says a changed config or
+recipe file in a line `: '…'`, which an interactive zsh runs as nothing where it would
+refuse a `#` comment. `--job-json` is held as `--job` is: its size, no inline picture, and a
+pinned SHA-256 that must be the file the store imported that picture from
+(`import::pictures_by_file`). A check run again keeps its run's `set` (what it measured first
+and offered its judge). Send to and Run again replace an unrun draft of the same task only
+once the person says so, in the page, with no dialog. The map
+from an action to its command (`command_of.rs`) is a table for the shipped recipes, the loop
+and three operations of their own form (`fill`, `paste`, `grow`), `segment` by its query's
+kind, `squint check --job-json` for a use case, `rascal run <file>` for a recipe file the
+config lists (`rascal run` now registers such a file once, as the config's), and any other
+operation by its own flags, held to its own parse (`rascal::operation_of`). The binary's
+`main.rs` is included by the fixture as a module (`#[path]`), its commands `pub(crate)` and
+its dispatch callable as `run(args)`; the fixture's fakes reach the commands through
+`rascal::MORE_KINDS`, which the shipped binary never sets. The tests named `play::…` and
+`cli::…` above are `play_result::…` (`crates/whizbang/tests/it/play_result.rs`) and, for
+those that run the copied command through the binary's own dispatch, `command_of::tests::…`
+in the binary. The places of a loop's checks are drawn on the running screen from the last
+check's record once it has ended (W1's item 6). The draft's `>_` (W1, item 5) stays hidden:
+the command route is a run's, and a draft has none.
 
 ## W3. History, stats, reports and their export; the brand (large)
 

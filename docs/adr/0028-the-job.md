@@ -42,7 +42,8 @@ did (`Job::from_shorthand`): the candidate, then the source when one is given, t
 its `source.path` names (relative to the job file's folder), refuses a file whose SHA-256 is
 not the one the job pins, and passes the job on unchanged
 (`cli::squint_check_job_takes_a_squint_job_file_whole`). A picture given inline (`base64`) is
-not taken.
+not taken. `--job-json` takes a job as a run's record holds it, its images by `--image`, by
+identity, in the job's order (plan m5, task W2: the playground's copied command of a check).
 
 **What the run keeps.** The job is an argument, so the run's record holds it as given, the
 brief and each image's role and label among it; the run's diagnostic `judged.json` holds what
