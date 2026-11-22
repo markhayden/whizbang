@@ -58,7 +58,8 @@ fn added() -> Vec<(&'static str, Vec<u8>)> {
 }
 
 /// `pocket` at this revision, its files as the test kit serves them (and, past the first
-/// revision, [`added`]); and `locked`, whose one file needs a token from its origin.
+/// revision, [`added`]); `locked`, whose one file needs a token from its origin; and
+/// `broken`, which needs the token too and whose one file the fake does not serve.
 fn catalogue(revision: &str) -> Catalogue {
     let file = |name: &str, bytes: &[u8]| {
         CatalogueFile::new(
@@ -101,7 +102,10 @@ fn catalogue(revision: &str) -> Catalogue {
     let locked = entry("locked", vec![file("LICENSE", &playmodels::files()[0].1)])
         .needing_a_token_at(Origin::of(playmodels::ORIGIN, &none()).unwrap())
         .unwrap();
-    Catalogue::new(vec![pocket, locked], &none()).unwrap()
+    let broken = entry("broken", vec![file("missing.bin", b"never served")])
+        .needing_a_token_at(Origin::of(playmodels::ORIGIN, &none()).unwrap())
+        .unwrap();
+    Catalogue::new(vec![pocket, locked, broken], &none()).unwrap()
 }
 
 /// The fake download of `pocket`'s files, held when the test says so.
@@ -165,15 +169,22 @@ struct Hosted {
     address: SocketAddr,
     token: Token,
     secrets: Vec<String>,
+    /// The catalogue's models as the door has them, for a request of another "process".
+    models: Models,
 }
 
 impl Hosted {
     /// A host over a new store in a new scratch folder, with `pocket` at `revision`.
     fn new(label: &str, revision: &str) -> Hosted {
-        Hosted::over(Scratch::new(label), revision, true)
+        Hosted::over(Scratch::new(label), revision, true, Duration::ZERO)
     }
 
-    fn over(scratch: Scratch, revision: &str, new: bool) -> Hosted {
+    /// The same, with a removal waiting `wait` for the runs that hold a model.
+    fn waiting(label: &str, wait: Duration) -> Hosted {
+        Hosted::over(Scratch::new(label), FIRST, true, wait)
+    }
+
+    fn over(scratch: Scratch, revision: &str, new: bool, wait: Duration) -> Hosted {
         let root = scratch.path().join("store");
         let config = scratch.path().join("whizbang.toml");
         let env = scratch.path().join("keys.env");
@@ -227,11 +238,12 @@ impl Hosted {
         let made: Downloads = Arc::new(move |_: u64, origins: &[Origin], _: &Secrets| {
             CheckedDownloader::new(serving.clone(), origins)
         });
-        let tools = Tools::of(models, Arc::new(SystemClock), made);
-        let door = PlayModels::new(tools, Some(&config), Some(&env)).waiting(Duration::ZERO);
+        let tools = Tools::of(models.clone(), Arc::new(SystemClock), made);
+        let door = PlayModels::new(tools, Some(&config), Some(&env)).waiting(wait);
+        // The door before the store: the order the two are given in does not matter.
         let play = Playground::new(descriptors, Arc::new(over))
-            .with_store(store, &root)
-            .with_models(door);
+            .with_models(door)
+            .with_store(store, &root);
         let mut settings = Settings::new(root);
         settings.port = 0;
         settings.grace = Duration::from_secs(5);
@@ -244,7 +256,53 @@ impl Hosted {
             host: Some(host),
             token,
             secrets,
+            models,
         }
+    }
+
+    /// The env file's path.
+    fn env(&self) -> PathBuf {
+        self.scratch.path().join("keys.env")
+    }
+
+    /// A `waits` run, prepared and started as the page starts one: its id.
+    fn waits(&self, id: &str) -> String {
+        let call = json!({"action": "waits", "arguments": {}});
+        let prepared = self.api("POST", "/api/prepare", Some(&call));
+        assert_eq!(prepared.status, 200, "{}", prepared.text());
+        let mut start = call;
+        start["handle"] = prepared.json()["handle"].clone();
+        start["request_id"] = json!(id);
+        let started = self.api("POST", "/api/runs", Some(&start));
+        assert_eq!(started.status, 201, "{}", started.text());
+        started.json()["run"].as_str().unwrap().to_owned()
+    }
+
+    /// Polls a run until it has ended, 20 seconds at most.
+    fn run_ended(&self, run: &str) -> Json {
+        let limit = Instant::now() + Duration::from_secs(20);
+        loop {
+            let polled = self.api("GET", &format!("/api/runs/{run}?after=0"), None);
+            assert_eq!(polled.status, 200, "{}", polled.text());
+            if polled.json()["state"] == "ended" {
+                return polled.json();
+            }
+            assert!(Instant::now() < limit, "the run never ended");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// A row of `GET /api/models`, by its model's name.
+    fn row(&self, name: &str) -> Json {
+        let listed = self.api("GET", "/api/models", None);
+        assert_eq!(listed.status, 200, "{}", listed.text());
+        listed.json()["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["name"] == name)
+            .cloned()
+            .unwrap()
     }
 
     /// Quits, and starts a host again over the same folder with `pocket` at `revision`.
@@ -253,7 +311,7 @@ impl Hosted {
         host.stopper().quit();
         host.wait();
         let scratch = std::mem::replace(&mut self.scratch, Scratch::new("play-models-spent"));
-        Hosted::over(scratch, revision, false)
+        Hosted::over(scratch, revision, false, Duration::ZERO)
     }
 
     fn models_dir(&self) -> PathBuf {
@@ -283,15 +341,7 @@ impl Hosted {
 
     /// `pocket`'s row of `GET /api/models`.
     fn pocket(&self) -> Json {
-        let listed = self.api("GET", "/api/models", None);
-        assert_eq!(listed.status, 200, "{}", listed.text());
-        listed.json()["models"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|row| row["name"] == MODEL)
-            .cloned()
-            .unwrap()
+        self.row(MODEL)
     }
 
     /// Polls `pocket`'s row until `done` holds of it, 20 seconds at most.
@@ -379,7 +429,9 @@ fn send(address: SocketAddr, bytes: &[u8]) -> Answer {
     }
 }
 
-fn texts_hold_none_of(answers: &[Answer], secrets: &[&str]) {
+/// No answer holds a secret, a variable's name or the env file's path.
+fn texts_hold_none_of(answers: &[Answer], secrets: &[&str], env: &std::path::Path) {
+    let env = env.to_string_lossy().into_owned();
     for answer in answers {
         let text = answer.text();
         for secret in secrets {
@@ -389,7 +441,22 @@ fn texts_hold_none_of(answers: &[Answer], secrets: &[&str]) {
         // Neither the variables' names, which a key pasted in place of a name would be.
         assert!(!text.contains("PLAYKIT_FILL_KEY"), "{text}");
         assert!(!text.contains("POCKET_TOKEN"), "{text}");
+        assert!(!text.contains("PLAYKIT_UNSET_KEY"), "{text}");
+        assert!(!text.contains(&env), "{text}");
+        assert!(!text.contains("keys.env"), "{text}");
     }
+}
+
+/// A request's answer, and that it came within about a second.
+fn quickly(hosted: &Hosted, method: &str, path: &str) -> Answer {
+    let asked = Instant::now();
+    let answer = hosted.api(method, path, None);
+    let took = asked.elapsed();
+    assert!(
+        took < Duration::from_millis(1500),
+        "{method} {path} took {took:?}"
+    );
+    answer
 }
 
 #[test]
@@ -404,15 +471,15 @@ fn models_lists_only_the_catalogues_models_and_the_configs_backends() {
         .iter()
         .map(|row| row["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, ["locked", MODEL]);
-    let pocket = &rows["models"][1];
+    assert_eq!(names, ["broken", "locked", MODEL]);
+    let pocket = &rows["models"][2];
     assert_eq!(pocket["state"], "not_installed");
     assert_eq!(pocket["files"], 3);
     assert_eq!(pocket["bytes"], 600 + 900 + 4096);
     assert_eq!(pocket["sign_in"], "none");
     // `locked` needs a token from its origin, which the config leads to through the env
     // file: Get is offered, and the token is not answered.
-    assert_eq!(rows["models"][0]["sign_in"], "none");
+    assert_eq!(rows["models"][1]["sign_in"], "none");
     let backends = hosted.api("GET", "/api/backends", None);
     assert_eq!(backends.status, 200, "{}", backends.text());
     let access: Vec<(String, String)> = backends.json()["backends"]
@@ -526,25 +593,18 @@ fn status_cancel_and_quit_answer_with_four_runs_and_an_install_going() {
         202
     );
     hosted.until_held();
-    let mut runs = Vec::new();
-    for at in 0..4 {
-        let call = json!({"action": "waits", "arguments": {}});
-        let prepared = hosted.api("POST", "/api/prepare", Some(&call));
-        assert_eq!(prepared.status, 200, "{}", prepared.text());
-        let mut start = call;
-        start["handle"] = prepared.json()["handle"].clone();
-        start["request_id"] = json!(format!("models-busy-{at}"));
-        let started = hosted.api("POST", "/api/runs", Some(&start));
-        assert_eq!(started.status, 201, "{}", started.text());
-        runs.push(started.json()["run"].as_str().unwrap().to_owned());
-    }
-    // A poll, the models' list, a Stop: each answered at once.
-    let polled = hosted.api("GET", &format!("/api/runs/{}?after=0", runs[0]), None);
+    let runs: Vec<String> = (0..4)
+        .map(|at| hosted.waits(&format!("models-busy-{at}")))
+        .collect();
+    // A poll, the models' list, a Stop: each answered within about a second.
+    let polled = quickly(&hosted, "GET", &format!("/api/runs/{}?after=0", runs[0]));
     assert_eq!(polled.status, 200, "{}", polled.text());
+    let listed = quickly(&hosted, "GET", "/api/models");
+    assert_eq!(listed.status, 200, "{}", listed.text());
     assert_eq!(hosted.pocket()["install"], "installing");
-    let stop = hosted.api("POST", &format!("/api/runs/{}/cancel", runs[0]), None);
+    let stop = quickly(&hosted, "POST", &format!("/api/runs/{}/cancel", runs[0]));
     assert_eq!(stop.status, 202, "{}", stop.text());
-    let quit = hosted.api("POST", "/api/quit", None);
+    let quit = quickly(&hosted, "POST", "/api/quit");
     assert_eq!(quit.status, 202, "{}", quit.text());
     let stopped = hosted.host.take().unwrap().wait();
     assert_eq!(stopped.left, 0);
@@ -561,19 +621,7 @@ fn a_removal_of_a_model_in_use_answers_busy_and_the_model_stays() {
     hosted.pocket_until(|row| row["last"]["ended"] == "installed");
     let installed = hosted.installed().unwrap();
     // A run holds it, as a run of a local backend does.
-    let dir = ModelsDir::open(
-        Arc::new(RealFs),
-        &hosted.models_dir(),
-        Arc::new(SystemClock),
-    )
-    .unwrap();
-    let name = ModelName::new(MODEL, &none()).unwrap();
-    let Ok(Current::Installed(record)) = current(&dir, &name, &none()) else {
-        panic!("pocket is not installed");
-    };
-    let hold = Holds::over(dir)
-        .hold(&name, record.identity(), &none())
-        .unwrap();
+    let hold = hold_pocket(&hosted);
     let busy = hosted.api("DELETE", "/api/models/pocket", None);
     assert_eq!(busy.status, 409, "{}", busy.text());
     assert!(busy.text().contains("not removed"), "{}", busy.text());
@@ -609,6 +657,13 @@ fn a_reset_from_the_page_needs_the_amount_and_the_word_and_closes_the_books() {
         assert_eq!(refused.status, 400, "{body}: {}", refused.text());
     }
     assert_eq!(hosted.api("GET", "/api/spend", None).json()["epoch"], 1);
+    // A run admitted before the reset, still going: its reservation is the earlier
+    // epoch's, and the reset does not stop it (ADR 0016).
+    let run = hosted.waits("models-reset-open");
+    let open = hosted
+        .api("GET", &format!("/api/runs/{run}?after=0"), None)
+        .json();
+    assert_eq!(open["state"], "running", "{open}");
     // The amount and the word: the books close, and a new epoch opens at the amount.
     let body = json!({"allowance": "12.50", "confirm": "reset"});
     let reset = hosted.api("POST", "/api/spend/reset", Some(&body));
@@ -620,6 +675,17 @@ fn a_reset_from_the_page_needs_the_amount_and_the_word_and_closes_the_books() {
     assert_eq!(after["left"], 12.5);
     assert_eq!(after["charged"]["usd"], 0.0);
     assert!(after["since_ms"].as_u64().unwrap() > 1, "{after}");
+    assert_eq!(after["counted"]["sum"]["usd"], 0.0, "{after}");
+    // The run admitted before goes on, ends when it is stopped, and counts for nothing in
+    // the new epoch.
+    let stop = hosted.api("POST", &format!("/api/runs/{run}/cancel"), None);
+    assert_eq!(stop.status, 202, "{}", stop.text());
+    let ended = hosted.run_ended(&run);
+    assert_eq!(ended["outcome"], "cancelled", "{ended}");
+    let later = hosted.api("GET", "/api/spend", None).json();
+    assert_eq!(later["epoch"], 2);
+    assert_eq!(later["counted"]["sum"]["usd"], 0.0, "{later}");
+    assert_eq!(later["left"], 12.5);
     // And hello says the same allowance.
     let hello = hosted.api("GET", "/api/hello", None).json();
     assert_eq!(hello["allowance"]["allowance"], 12.5);
@@ -635,28 +701,37 @@ fn no_response_of_any_route_holds_a_key_a_sign_in_or_the_token() {
     // `locked` needs the token the env file holds: its install carries it, and nothing
     // the page is answered holds it, its install's end and its failure among them.
     answers.push(hosted.api("POST", "/api/models/locked/get", None));
-    let row = {
+    let ended = |name: &str, answers: &mut Vec<Answer>| -> Json {
         let limit = Instant::now() + Duration::from_secs(20);
         loop {
-            let listed = hosted.api("GET", "/api/models", None);
-            let row = listed.json()["models"][0].clone();
+            let row = hosted.row(name);
             if row["last"].is_object() {
-                answers.push(listed);
-                break row;
+                answers.push(hosted.api("GET", "/api/models", None));
+                return row;
             }
-            assert!(Instant::now() < limit, "locked's install never ended");
+            assert!(Instant::now() < limit, "{name}'s install never ended");
             std::thread::sleep(Duration::from_millis(10));
         }
     };
-    assert_eq!(row["name"], "locked");
+    assert_eq!(ended("locked", &mut answers)["last"]["ended"], "installed");
+    // `broken` needs the token too, and its download fails: its failure holds none.
+    answers.push(hosted.api("POST", "/api/models/broken/get", None));
+    let broken = ended("broken", &mut answers);
+    assert_eq!(broken["last"]["ended"], "failed", "{broken}");
     answers.push(hosted.api("POST", "/api/models/locked/cancel", None));
     answers.push(hosted.api("DELETE", "/api/models/locked", None));
     answers.push(hosted.api("POST", "/api/models/depth/get", None));
     let body = json!({"allowance": "nope", "confirm": "reset"});
     answers.push(hosted.api("POST", "/api/spend/reset", Some(&body)));
+    // The run routes: a preparation, a start, a poll, the runs going, a Stop.
     let prepare = json!({"action": "waits", "arguments": {}});
     answers.push(hosted.api("POST", "/api/prepare", Some(&prepare)));
+    let run = hosted.waits("models-secrets-run");
+    answers.push(hosted.api("GET", &format!("/api/runs/{run}?after=0"), None));
     answers.push(hosted.api("GET", "/api/runs?open=1", None));
+    answers.push(hosted.api("POST", &format!("/api/runs/{run}/cancel"), None));
+    hosted.run_ended(&run);
+    answers.push(hosted.api("GET", &format!("/api/runs/{run}?after=0"), None));
     answers.push(hosted.api("GET", "/api/pictures", None));
     for answer in &answers {
         assert_ne!(answer.status, 0);
@@ -668,5 +743,163 @@ fn no_response_of_any_route_holds_a_key_a_sign_in_or_the_token() {
         .map(String::as_str)
         .chain([token.as_str()])
         .collect();
-    texts_hold_none_of(&answers, &secrets);
+    texts_hold_none_of(&answers, &secrets, &hosted.env());
+}
+
+#[test]
+fn a_get_while_an_install_stops_or_a_removal_waits_is_refused() {
+    let hosted = Hosted::waiting("play-models-not-now", Duration::from_secs(10));
+    // An install that is stopping, and has not ended: a Get of it is not attached.
+    hosted.downloads.hold_deaf();
+    assert_eq!(
+        hosted.api("POST", "/api/models/pocket/get", None).status,
+        202
+    );
+    hosted.until_held();
+    let cancel = hosted.api("POST", "/api/models/pocket/cancel", None);
+    assert_eq!(cancel.status, 202, "{}", cancel.text());
+    assert_eq!(hosted.pocket()["install"], "stopping");
+    let again = hosted.api("POST", "/api/models/pocket/get", None);
+    assert_eq!(again.status, 409, "{}", again.text());
+    assert!(again.text().contains("stopping"), "{}", again.text());
+    hosted.downloads.release();
+    hosted.pocket_until(|row| row["last"]["ended"] == "cancelled");
+    // Installed, then held by a run: its removal waits, and a Get meanwhile is refused.
+    assert_eq!(
+        hosted.api("POST", "/api/models/pocket/get", None).status,
+        202
+    );
+    hosted.pocket_until(|row| row["last"]["ended"] == "installed");
+    let hold = hold_pocket(&hosted);
+    let address = hosted.address;
+    let removing = {
+        let head = removal_request(&hosted);
+        whizbang_testkit::threads::spawn(move || send(address, &head))
+    };
+    let limit = Instant::now() + Duration::from_secs(10);
+    loop {
+        let other = hosted.api("POST", "/api/models/locked/get", None);
+        if other.status == 409 {
+            assert!(other.text().contains("being removed"), "{}", other.text());
+            break;
+        }
+        assert!(
+            Instant::now() < limit,
+            "the removal never began: {}",
+            other.text()
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    drop(hold);
+    let removed = removing.join().unwrap();
+    assert_eq!(removed.status, 200, "{}", removed.text());
+}
+
+/// A hold on the installed `pocket`, as a run of a local backend takes one.
+fn hold_pocket(hosted: &Hosted) -> whizbang_backends::models::Hold {
+    let dir = ModelsDir::open(
+        Arc::new(RealFs),
+        &hosted.models_dir(),
+        Arc::new(SystemClock),
+    )
+    .unwrap();
+    let name = ModelName::new(MODEL, &none()).unwrap();
+    let Ok(Current::Installed(record)) = current(&dir, &name, &none()) else {
+        panic!("pocket is not installed");
+    };
+    Holds::over(dir)
+        .hold(&name, record.identity(), &none())
+        .unwrap()
+}
+
+/// The bytes of `DELETE /api/models/pocket`, as the page sends it.
+fn removal_request(hosted: &Hosted) -> Vec<u8> {
+    let port = hosted.address.port();
+    format!(
+        "DELETE /api/models/pocket HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+         Authorization: Bearer {}\r\nOrigin: http://127.0.0.1:{port}\r\n\r\n",
+        hosted.token.hex()
+    )
+    .into_bytes()
+}
+
+#[test]
+fn a_hold_let_go_during_a_removals_wait_lets_the_removal_through() {
+    let hosted = Hosted::waiting("play-models-drain", Duration::from_secs(10));
+    assert_eq!(
+        hosted.api("POST", "/api/models/pocket/get", None).status,
+        202
+    );
+    hosted.pocket_until(|row| row["last"]["ended"] == "installed");
+    let hold = hold_pocket(&hosted);
+    let letting = whizbang_testkit::threads::spawn(move || {
+        std::thread::sleep(Duration::from_millis(400));
+        drop(hold);
+    });
+    let asked = Instant::now();
+    let removed = hosted.api("DELETE", "/api/models/pocket", None);
+    assert_eq!(removed.status, 200, "{}", removed.text());
+    assert!(
+        asked.elapsed() >= Duration::from_millis(300),
+        "{:?}",
+        asked.elapsed()
+    );
+    assert!(
+        asked.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        asked.elapsed()
+    );
+    letting.join().unwrap();
+    assert!(hosted.installed().is_none());
+    assert_eq!(hosted.pocket()["state"], "not_installed");
+}
+
+#[test]
+fn a_cancel_of_an_install_another_process_runs_leaves_it_going_and_says_detached() {
+    let hosted = Hosted::new("play-models-detached", FIRST);
+    // Another request installs `pocket`, held after its first file: as another process
+    // would, with a download of its own.
+    let theirs = served();
+    theirs.hold();
+    let serving = theirs.clone();
+    let made: Downloads = Arc::new(move |_: u64, origins: &[Origin], _: &Secrets| {
+        CheckedDownloader::new(serving.clone(), origins)
+    });
+    let tools = Tools::of(hosted.models.clone(), Arc::new(SystemClock), made);
+    let (config, env) = (hosted.scratch.path().join("whizbang.toml"), hosted.env());
+    let other = whizbang_testkit::threads::spawn(move || {
+        let under = whizbang::model_commands::Under {
+            config: Some(&config),
+            env_file: Some(&env),
+        };
+        whizbang::model_commands::get_until(
+            under,
+            MODEL,
+            &tools,
+            &whizbang_core::contract::Cancellation::new(),
+            &mut |_| {},
+        )
+    });
+    let limit = Instant::now() + Duration::from_secs(20);
+    while !theirs.waiting() {
+        assert!(
+            Instant::now() < limit,
+            "the other install never reached the gate"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // The page's Get follows it; its Cancel leaves it, and it goes on.
+    assert_eq!(
+        hosted.api("POST", "/api/models/pocket/get", None).status,
+        202
+    );
+    hosted.pocket_until(|row| row["install"] == "installing" && row["files_done"] == 1);
+    let cancel = hosted.api("POST", "/api/models/pocket/cancel", None);
+    assert_eq!(cancel.status, 202, "{}", cancel.text());
+    let row = hosted.pocket_until(|row| row["last"]["ended"] == "detached");
+    assert_eq!(row["files_done"], 1, "{row}");
+    theirs.release();
+    other.join().unwrap().unwrap();
+    let row = hosted.pocket_until(|row| row["state"] == "installed");
+    assert_eq!(row["last"]["ended"], "detached");
 }

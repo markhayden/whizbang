@@ -27,9 +27,9 @@ use whizbang_core::spend::{Amount, Counted, Name, Reading, Record, Sum};
 use whizbang_core::store::Store;
 use whizbang_serve::escaped;
 use whizbang_serve::play::Refused;
-use whizbang_serve::play::models::Models;
+use whizbang_serve::play::models::{Models, NotInstalled};
 
-use crate::model_commands::{self, Tools, Under};
+use crate::model_commands::{self, FailedKind, Tools, Under};
 use crate::wiring::Over;
 
 /// How long a removal from the page waits for the runs that hold the model before it
@@ -167,6 +167,15 @@ fn reset_at(store: &Store, reading: &Reading, newest: u64) -> Option<u64> {
         })
 }
 
+/// The status a refusal of the models commands is answered with, by its kind.
+fn status_of(kind: FailedKind) -> u16 {
+    match kind {
+        FailedKind::NotInCatalogue => 404,
+        FailedKind::NotInstallable | FailedKind::Busy | FailedKind::NotInstalled => 409,
+        FailedKind::Left | FailedKind::Other => 500,
+    }
+}
+
 impl Models for PlayModels {
     fn models(&self) -> Result<Json, Refused> {
         let rows = model_commands::rows(self.under(), &self.tools)
@@ -290,32 +299,23 @@ impl Models for PlayModels {
     }
 
     fn installable(&self, model: &str) -> Result<(), Refused> {
-        model_commands::installable(self.under(), model, &self.tools).map_err(|why| {
-            let status = if why.starts_with("the catalogue holds no model") {
-                404
-            } else {
-                409
-            };
-            Refused::new(status, &escaped(&why))
-        })
+        model_commands::installable(self.under(), model, &self.tools)
+            .map_err(|failed| Refused::new(status_of(failed.kind), &escaped(&failed.why)))
     }
 
-    fn install(&self, model: &str, cancellation: &Cancellation) -> Result<String, String> {
+    fn install(&self, model: &str, cancellation: &Cancellation) -> Result<String, NotInstalled> {
         model_commands::get_until(self.under(), model, &self.tools, cancellation, &mut |_| {})
+            .map_err(|failed| NotInstalled {
+                left: failed.kind == FailedKind::Left,
+                why: failed.why,
+            })
     }
 
     fn remove(&self, model: &str) -> Result<Json, Refused> {
-        match model_commands::remove(self.under(), model, self.wait, &self.tools) {
+        match model_commands::remove_typed(self.under(), model, self.wait, &self.tools) {
             Ok(said) => Ok(json!({"model": escaped(model), "removed": true,
                                   "said": escaped(said.trim_end())})),
-            Err(why) => {
-                let status = if why.starts_with("the catalogue holds no model") {
-                    404
-                } else {
-                    409
-                };
-                Err(Refused::new(status, &escaped(&why)))
-            }
+            Err(failed) => Err(Refused::new(status_of(failed.kind), &escaped(&failed.why))),
         }
     }
 }

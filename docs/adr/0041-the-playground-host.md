@@ -70,7 +70,9 @@ workers; one keeper, which holds each run's stated time and the grace of a quit;
 canceller, which calls `Executor::cancel`, the one call of the executor that can wait. Each is
 made by the host's own counted spawner (`play::threads`), the fifth place in the workspace
 that makes threads (`clippy.toml`), which refuses the 45th live thread it would make in a
-process: two hosts' twenty each (the twentieth is a host's one install, plan m5, task M1), and room for the binary's readers of its signals and its
+process: two hosts' twenty each (the twentieth is a host's one install, plan m5, task M1:
+an install's thread wakes the keeper when it ends, and the next install waits for it to
+end before its own is made, so a host never holds two), and room for the binary's readers of its signals and its
 input and the waiter of a Chrome started on Linux. At most two
 uploads hold a worker at once: a third is answered 429 as soon as its headers are read. Every
 other request is a short read and a short answer, so polls, Stop and Quit find a free worker. A
