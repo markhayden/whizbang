@@ -358,3 +358,20 @@ fn the_record_of_a_run_stopped_while_its_fill_was_out_counts_that_request() {
         "{said}"
     );
 }
+
+#[test]
+fn an_unchecked_run_says_which_variable_its_judge_needs_and_never_the_core_words() {
+    let kitted = Kitted::new("result-unchecked");
+    let arguments = json!({"image": kitted.picture(34), "prompt": "the hose",
+                           "judge": "keyless-judge"});
+    let run = ran(&kitted, "remove_checked", &arguments);
+    let said = record(&kitted, &run);
+    assert_eq!(said["outcome"], "completed", "{said}");
+    let text = said.to_string();
+    assert!(!text.contains("key_env"), "{said}");
+    let ended = said["attempts"]["ended"].as_str().unwrap_or_default();
+    assert!(
+        ended.contains("the judge needs PLAYKIT_TEST_KEY in your env file"),
+        "{said}"
+    );
+}

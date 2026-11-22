@@ -189,7 +189,9 @@ playground names one only when it has the shape of a variable's name (upper-case
 and digits in words joined by underscores, at most 64 characters, as `FAL_KEY`), which a
 pasted key is very unlikely to have, and a config that holds a value of the env file is
 refused before this (ADR 0011). Any other name is said as "the variable its key_env names".
-The rule is `backend_status::variable_shaped`, through the door's `Play::key_variable`.
+The rule is `backend_status::variable_shaped`, through the door's `Play::key_variable`. A
+run's record, as the result screen reads it, says a key not set the same way, in every
+reason it holds (an unchecked attempt's, why the attempts ended).
 
 **A run's cost** in its record (`GET /api/runs/{id}/record`) is every paid request of the
 run and the runs below it: a request no model line names (one cancelled before any answer)

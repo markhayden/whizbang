@@ -1222,12 +1222,14 @@ ready is neither local nor free, and the plan says "not ready" with why: a key n
 names its variable when it has the shape of one (ADR 0041). A run ended because a step found
 nothing says so plainly over the original picture, its record unchanged. `runs show` adds a
 line of what the run and the runs below it cost together, and the result's cost books a
-request no answer settled. Uploads answered 429 are sent again after `Retry-After`. A run
+request no answer settled. An unchecked run (no judge with a key) says why once, naming the
+variable, and shows its judge as not used (no key). Uploads answered 429 are sent again after `Retry-After`. A run
 open on screen is asked every 250 ms while events come, and about once a second while none
 do. Tests: `play::a_backend_is_ready_by_its_own_readiness_and_a_key_not_set_names_its_variable`,
 `play::a_variable_is_named_only_when_it_has_the_shape_of_one`,
 `play_result::the_record_of_a_run_stopped_while_its_fill_was_out_counts_that_request`,
-`runs::runs_show_adds_up_what_the_runs_a_cancelled_run_called_cost`, unit tests beside each
+`runs::runs_show_adds_up_what_the_runs_a_cancelled_run_called_cost`,
+`play_result::an_unchecked_run_says_which_variable_its_judge_needs_and_never_the_core_words`, unit tests beside each
 screen, and `run.spec.ts`'s and `compare.spec.ts`'s new cases.
 
 ## E1. The loop by hand in the playground, and the guide (medium; the orchestrator's runs)

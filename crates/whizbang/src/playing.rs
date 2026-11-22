@@ -258,6 +258,80 @@ impl Playground {
     }
 }
 
+impl Playground {
+    /// A record's reasons, with the core's words for a key the env file does not set
+    /// ("the judge backend the call chose is not ready: the env file does not set the
+    /// variable its `key_env` names") said as the prepare route says them: "the judge
+    /// needs GEMINI_KEY in your env file", naming the variable only when it has the
+    /// shape of one (ADR 0041). The backend is the one the call named for that
+    /// capability, else the config's default. Each text is escaped already, and the words
+    /// put in are a capability's role and a variable's name of that shape.
+    fn plain_keys(&self, said: &mut Json) {
+        let choosers = said["action"]
+            .as_str()
+            .and_then(|action| self.descriptor(action))
+            .map(crate::play_form::choosers_of)
+            .unwrap_or_default();
+        let named = |capability: &str| -> Option<String> {
+            let backend = said["arguments"]
+                .as_array()
+                .and_then(|arguments| {
+                    arguments.iter().find_map(|one| {
+                        let name = one["name"].as_str()?;
+                        let chooses = choosers
+                            .iter()
+                            .any(|(field, of)| field == name && of == capability);
+                        chooses.then(|| one["value"].as_str().map(str::to_owned))?
+                    })
+                })
+                .or_else(|| self.default_backend(capability))?;
+            backend_status::missing_variable(&self.over, capability, &backend)
+        };
+        let mut plain = Vec::new();
+        for (capability, role) in [
+            ("judge", "judge"),
+            ("fill", "filler"),
+            ("segment", "segmenter"),
+        ] {
+            let sentence = match named(capability) {
+                Some(variable) => format!("the {role} needs {variable} in your env file"),
+                None => format!(
+                    "the {role} needs its key in your env file, under the variable its key_env names"
+                ),
+            };
+            for chose in ["the call chose", ""] {
+                let core = if chose.is_empty() {
+                    format!(
+                        "the default {capability} backend is not ready: the env file does not set the variable its `key_env` names"
+                    )
+                } else {
+                    format!(
+                        "the {capability} backend {chose} is not ready: the env file does not set the variable its `key_env` names"
+                    )
+                };
+                plain.push((core, sentence.clone()));
+            }
+        }
+        rewrite(said, &plain);
+    }
+}
+
+/// Every string in `value` with each `(from, to)` replaced.
+fn rewrite(value: &mut Json, plain: &[(String, String)]) {
+    match value {
+        Json::String(text) => {
+            for (from, to) in plain {
+                if text.contains(from.as_str()) {
+                    *text = text.replace(from.as_str(), to);
+                }
+            }
+        }
+        Json::Array(items) => items.iter_mut().for_each(|item| rewrite(item, plain)),
+        Json::Object(fields) => fields.values_mut().for_each(|item| rewrite(item, plain)),
+        _ => {}
+    }
+}
+
 impl Play for Playground {
     fn call(
         &self,
@@ -411,7 +485,9 @@ impl Play for Playground {
         let rows = backend_status::readiness(&self.over).unwrap_or_default();
         let resolve =
             |capability: &str, kind: &str, model: &str| resolved(&rows, capability, kind, model);
-        crate::play_result::record_json(&store, root, run, &self.tasks(), &resolve)
+        let mut said = crate::play_result::record_json(&store, root, run, &self.tasks(), &resolve)?;
+        self.plain_keys(&mut said);
+        Ok(said)
     }
 
     fn command(&self, run: &RunId) -> Result<Json, Refused> {

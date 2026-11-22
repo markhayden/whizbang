@@ -174,10 +174,12 @@ export function Result(props: ResultProps) {
         <dl class="run__inputs" aria-label="Inputs">
           {record.arguments.map((argument) => {
             const field = fields.find((one) => one.name === argument.name);
+            const value = typeof argument.value === "string" || typeof argument.value === "number" || typeof argument.value === "boolean" ? String(argument.value) : "";
+            const unused = field?.kind === "backend" ? unusedWhy(record, field.capability) : null;
             return (
               <div class="run__input" key={`a-${argument.name}`}>
                 <dt class="field__label">{field ? labelOf(field) : argument.name}</dt>
-                <dd class="run__value">{typeof argument.value === "string" || typeof argument.value === "number" || typeof argument.value === "boolean" ? String(argument.value) : ""}</dd>
+                <dd class="run__value">{unused ? `${value} · not used (${unused})` : value}</dd>
               </div>
             );
           })}
@@ -285,7 +287,7 @@ export function Result(props: ResultProps) {
                     {attempt.changed ? ` · ${attempt.changed}` : ""}
                     {record.attempts?.kept === attempt.attempt ? " · kept" : ""}
                   </span>
-                  <span class="mono result__attempt-word">{attemptWords(attempt)}</span>
+                  <span class="mono result__attempt-word">{attempt.unchecked && record.attempts?.ended?.includes(attempt.unchecked) ? "not checked" : attemptWords(attempt)}</span>
                 </li>
               ))}
             </ol>
@@ -312,6 +314,22 @@ export function Result(props: ResultProps) {
       </aside>
     </main>
   );
+}
+
+/**
+ * Why a backend the call named was not used, when it was not: the run asked nothing of
+ * its capability (no cost line names it) and the record says the capability was not
+ * ready. "no key" when what it says is a key the env file does not set.
+ */
+export function unusedWhy(record: RunRecordView, capability: string | null | undefined): string | null {
+  if (!capability) return null;
+  const lines = Array.isArray(record.cost?.lines) ? record.cost.lines : [];
+  if (lines.some((line) => line.capability === capability)) return null;
+  const said = [record.attempts?.ended, ...(record.attempts?.list ?? []).map((one) => one.unchecked), record.error?.message, record.invalid].filter((one): one is string => typeof one === "string");
+  const role = capability === "fill" ? "filler" : capability === "segment" ? "segmenter" : capability;
+  const about = said.filter((one) => one.includes(`the ${role} needs`) || one.includes(`no ${capability}`) || one.includes(`${capability} backend`));
+  if (about.length === 0) return null;
+  return about.some((one) => one.includes("env file")) ? "no key" : "not ready";
 }
 
 /** Before and after at one zoom: the two pictures fetched with the token, then compared. */
