@@ -62,10 +62,13 @@ test("remove of a model in use answers busy and the model stays", async ({ page,
     await expect(pocket).toContainText("READY");
     await script(request, host, "use-model");
     await pocket.getByRole("button", { name: "Remove" }).click();
+    await page.locator(".models__confirm").getByRole("button", { name: "Remove pocket" }).click();
     await expect(page.locator(".models__problem")).toContainText("not removed");
     await expect(pocket).toContainText("READY");
     await script(request, host, "let-model-go");
     await pocket.getByRole("button", { name: "Remove" }).click();
+    await expect(page.locator(".models__confirm")).toContainText("Its files are deleted");
+    await page.locator(".models__confirm").getByRole("button", { name: "Remove pocket" }).click();
     await expect(pocket.getByRole("button", { name: "Get" })).toBeVisible();
   });
 });
