@@ -1,0 +1,180 @@
+# What the loop `remove_checked` did on the 20 entries of segment-01, under one judge,
+# one repetition (plan e1, task L1, item 4). Written by scripts/loop-evidence.sh; never
+# edited by hand. Aggregates only: no item, no picture, no path, no word of a judge.
+#
+# `unsure_a_retry_under_rascals_rule_would_have_followed` is an upper bound: the runs that
+# stopped on an `unsure` whose check held a tentative violation of RQ1 and cited any place.
+# A record keeps a check's places apart from its findings, so the place may be another
+# finding's. `stopped_by_row` is the row of the loop's table the last judged attempt's
+# findings are of; `stopped_by_reason` is the sentence the loop wrote, as one of a closed set.
+#
+# `[places]`: `looked_into` is the cuts the retries made (runs of `view`); `joined` the places
+# a located retry lists; a place looked into and not listed is one where nothing was found
+# and which covers over a tenth of the picture. What a record does not hold, and no count
+# here says: the places a finding cited that were never looked into (a cut over 1,024
+# pixels or of the whole picture, a ninth place, one cited twice), since `cited_by_checks`
+# counts the places of every finding and not only of those that allow a retry.
+schema = "loop-evidence/1"
+commit = "186da513f2ea92e22a80387751c700bedfd638c9"
+whizbang = "0.1.0"
+judge = "gemini-4-argon"
+kind = "segment-01"
+repetition = 2
+judge_model = "google gemini-4-argon 1+fit1-jpeg90-1536"
+filler = "fal bria-eraser 1+fit1-png-binary1-2048"
+finder = "pack sam3 sha256:4c1428553b40dcc493f53221fb1134c487432e43f3a39b5a8a5ab5c60f3ed652"
+action = "remove_checked 1.0.0"
+job_template = "sha256:ec762228fe769d09e6dadebd716e865c643cc095d395fac2f64d4da452d06c40"
+config = "sha256:d87d18a0145a9b6c76000f0e960d9c0bc829c949b380bf0790ad8622bdc13038"
+manifest_sha256 = "sha256:98b996172c65d1b7cd7516cec796aac42a4e4e47fe0c688faa6937606a7d7295"
+entries = 20
+runs = 20
+not_run = 0
+attempts_made = 35
+unsure_a_retry_under_rascals_rule_would_have_followed = 0
+stopped_on_findings_not_complete = 0
+median_ms = 173853
+least_ms = 7169
+most_ms = 312766
+reserved_micros = 118521600
+settled_micros = 2421487
+settled_by_attempts_micros = 2381487
+unresolved_micros = 40000
+
+[outcomes]
+cancelled = 0
+completed = 18
+error = 2
+interrupted = 0
+invalid = 0
+other = 0
+
+[errors_by_type]
+invalid = 1
+step = 1
+
+[ended]
+passed_at_first = 1
+passed_after_retry = 1
+kept_unsure = 0
+kept_fail = 16
+unchecked = 0
+error = 2
+
+[plans]
+checked = 20
+unchecked = 0
+none = 0
+allowed_1 = 0
+allowed_2 = 0
+allowed_3 = 20
+
+[runs_by_attempts_made]
+made_1 = 5
+made_2 = 9
+made_3 = 4
+
+[attempt_verdicts]
+pass = 2
+fail = 33
+unsure = 0
+unchecked = 0
+
+[retries]
+wider = 9
+located = 8
+
+[stopped_by_row]
+row_0_cut_short = 0
+row_1_damaged = 0
+row_2_remains = 10
+row_3_not_sure = 0
+row_4_no_violation = 0
+row_5_other_violation = 6
+passed = 2
+not_checked = 0
+no_attempt = 2
+
+[stopped_by_reason]
+passed = 2
+findings_cut_short = 0
+damaged_something_preserved = 0
+nothing_says_it_remains = 6
+last_attempt_of_the_plan = 3
+wider_mask_already_used = 7
+mask_is_the_one_before = 0
+one_unchecked_pass = 0
+check_could_not_run = 0
+budget_ran_out = 0
+deadline_passed = 0
+retry_could_not_be_made = 0
+never_said = 0
+other = 0
+no_attempt = 2
+
+[places]
+looked_into = 8
+joined = 8
+found_something = 7
+found_nothing_joined_as_itself = 1
+found_nothing_left_out_over_a_tenth = 0
+cited_by_checks = 50
+cited_as_polygons = 0
+retries_wider_after_places_gave_nothing = 0
+retries_wider_though_a_check_cited_a_place = 9
+
+[group.keep-the-hole]
+runs = 4
+attempts_made = 8
+retried = 3
+passed_at_first = 1
+passed_after_retry = 1
+kept_unsure = 0
+kept_fail = 2
+unchecked = 0
+error = 0
+
+[group.parts]
+runs = 6
+attempts_made = 13
+retried = 4
+passed_at_first = 0
+passed_after_retry = 0
+kept_unsure = 0
+kept_fail = 6
+unchecked = 0
+error = 0
+
+[group.thin]
+runs = 5
+attempts_made = 8
+retried = 4
+passed_at_first = 0
+passed_after_retry = 0
+kept_unsure = 0
+kept_fail = 4
+unchecked = 0
+error = 1
+
+[group.whole]
+runs = 5
+attempts_made = 6
+retried = 2
+passed_at_first = 0
+passed_after_retry = 0
+kept_unsure = 0
+kept_fail = 4
+unchecked = 0
+error = 1
+
+[[finding]]
+obligation = "RQ1"
+disposition = "violation"
+confidence = "confident"
+count = 27
+
+[[finding]]
+obligation = "RQ3"
+disposition = "violation"
+confidence = "confident"
+count = 23

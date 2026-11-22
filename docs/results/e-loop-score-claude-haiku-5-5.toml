@@ -1,0 +1,630 @@
+# What the loop `remove_checked` did on segment-01 (plan e1, task L1, item 5),
+# written by `whizbang eval loop score`. Aggregates only: no item, no run, no
+# picture and no word of a judge. Every mask measure is about the mask, not the
+# finished picture; `pictures` is there only when a person's marks were read.
+entries = 20
+images_rev = "d5413a4f0806c0c8d4e0376eb71bffe3d541b98e"
+judge = "claude-haiku-5-5"
+manifest_sha256 = "sha256:98b996172c65d1b7cd7516cec796aac42a4e4e47fe0c688faa6937606a7d7295"
+marked = false
+repetitions = 2
+schema = "loop-score/1"
+sensitivity = [0.9, 0.99]
+set = "segmentation/segment-01"
+under_covered_below = 0.95
+
+[all]
+attempts = 48
+checked = 41
+ended_under_covered = 15
+filled = 48
+missing = 0
+requested = 40
+runs = 40
+runs_with_no_attempt = 2
+
+[all.coverage_across_a_retry]
+compared = 10
+coverage_down = 0
+coverage_up = 1
+coverage_within = 9
+size_larger = 3
+size_smaller = 0
+size_within = 7
+unavailable = 0
+
+[all.coverage_across_a_retry.unavailable_by_reason]
+
+[all.ended_under_covered_by_reason]
+check_could_not_run = 1
+damaged_something_preserved = 3
+last_attempt_of_the_plan = 3
+nothing_says_it_remains = 7
+wider_mask_already_used = 1
+
+[all.first_found_mask]
+attempts = 38
+coverage_least = 0.21929701661135387
+coverage_mean = 0.8301343081637192
+iou_mean = 0.8008987112805424
+size_mean = 0.8751410310258669
+unavailable = 2
+under_090 = 14
+under_090_share = 0.3684210526315789
+under_099 = 36
+under_099_share = 0.9473684210526315
+under_covered = 20
+under_covered_share = 0.5263157894736842
+
+[all.first_found_mask.unavailable_by_reason]
+no_attempt = 2
+
+[all.first_shaped_mask]
+attempts = 38
+coverage_least = 0.29427890912229654
+coverage_mean = 0.8640234051887306
+iou_mean = 0.6968295167289856
+size_mean = 1.1414762603100925
+unavailable = 2
+under_090 = 14
+under_090_share = 0.3684210526315789
+under_099 = 20
+under_099_share = 0.5263157894736842
+under_covered = 16
+under_covered_share = 0.42105263157894735
+
+[all.first_shaped_mask.unavailable_by_reason]
+no_attempt = 2
+
+[all.kept_found_mask]
+attempts = 38
+coverage_least = 0.21929701661135387
+coverage_mean = 0.8413477989439597
+iou_mean = 0.7947255228724073
+size_mean = 0.9431909233666667
+unavailable = 2
+under_090 = 13
+under_090_share = 0.34210526315789475
+under_099 = 35
+under_099_share = 0.9210526315789473
+under_covered = 19
+under_covered_share = 0.5
+
+[all.kept_found_mask.unavailable_by_reason]
+no_kept_attempt = 2
+
+[all.kept_had_the_highest_coverage]
+highest = 35
+not_highest = 3
+runs = 38
+unavailable = 2
+
+[all.kept_had_the_highest_coverage.unavailable_by_reason]
+no_kept_attempt = 2
+
+[all.kept_shaped_mask]
+attempts = 38
+coverage_least = 0.29427890912229654
+coverage_mean = 0.8716053602782994
+iou_mean = 0.6895694669761976
+size_mean = 1.212590332077951
+unavailable = 2
+under_090 = 13
+under_090_share = 0.34210526315789475
+under_099 = 19
+under_099_share = 0.5
+under_covered = 15
+under_covered_share = 0.39473684210526316
+
+[all.kept_shaped_mask.unavailable_by_reason]
+no_kept_attempt = 2
+
+[all.no_check]
+the_check_was_not_made_or_could_not_run = 7
+
+[all.no_fill]
+
+[all.no_shaped_mask]
+
+[all.rq1_against_under_coverage]
+checked = 41
+confident_violation_covered = 1
+confident_violation_under_covered = 16
+no_violation_covered = 17
+no_violation_under_covered = 4
+tentative_violation_covered = 0
+tentative_violation_under_covered = 3
+unavailable = 0
+
+[all.rq1_against_under_coverage.unavailable_by_reason]
+
+[all.runs_by_outcome]
+completed = 38
+error = 2
+
+[group]
+
+[group.keep-the-hole]
+attempts = 9
+checked = 6
+ended_under_covered = 6
+filled = 9
+missing = 0
+requested = 8
+runs = 8
+runs_with_no_attempt = 0
+
+[group.keep-the-hole.coverage_across_a_retry]
+compared = 1
+coverage_down = 0
+coverage_up = 0
+coverage_within = 1
+size_larger = 0
+size_smaller = 0
+size_within = 1
+unavailable = 0
+
+[group.keep-the-hole.coverage_across_a_retry.unavailable_by_reason]
+
+[group.keep-the-hole.ended_under_covered_by_reason]
+check_could_not_run = 1
+damaged_something_preserved = 1
+nothing_says_it_remains = 4
+
+[group.keep-the-hole.first_found_mask]
+attempts = 8
+coverage_least = 0.21929701661135387
+coverage_mean = 0.7017296216917375
+iou_mean = 0.6923483317332938
+size_mean = 0.7169810393953223
+unavailable = 0
+under_090 = 4
+under_090_share = 0.5
+under_099 = 8
+under_099_share = 1.0
+under_covered = 8
+under_covered_share = 1.0
+
+[group.keep-the-hole.first_found_mask.unavailable_by_reason]
+
+[group.keep-the-hole.first_shaped_mask]
+attempts = 8
+coverage_least = 0.29427890912229654
+coverage_mean = 0.7444663362851248
+iou_mean = 0.6792774581366771
+size_mean = 0.833077292365306
+unavailable = 0
+under_090 = 4
+under_090_share = 0.5
+under_099 = 8
+under_099_share = 1.0
+under_covered = 6
+under_covered_share = 0.75
+
+[group.keep-the-hole.first_shaped_mask.unavailable_by_reason]
+
+[group.keep-the-hole.kept_found_mask]
+attempts = 8
+coverage_least = 0.21929701661135387
+coverage_mean = 0.7017296216917375
+iou_mean = 0.6923483317332938
+size_mean = 0.7169810393953223
+unavailable = 0
+under_090 = 4
+under_090_share = 0.5
+under_099 = 8
+under_099_share = 1.0
+under_covered = 8
+under_covered_share = 1.0
+
+[group.keep-the-hole.kept_found_mask.unavailable_by_reason]
+
+[group.keep-the-hole.kept_had_the_highest_coverage]
+highest = 7
+not_highest = 1
+runs = 8
+unavailable = 0
+
+[group.keep-the-hole.kept_had_the_highest_coverage.unavailable_by_reason]
+
+[group.keep-the-hole.kept_shaped_mask]
+attempts = 8
+coverage_least = 0.29427890912229654
+coverage_mean = 0.7444663362851248
+iou_mean = 0.6792774581366771
+size_mean = 0.833077292365306
+unavailable = 0
+under_090 = 4
+under_090_share = 0.5
+under_099 = 8
+under_099_share = 1.0
+under_covered = 6
+under_covered_share = 0.75
+
+[group.keep-the-hole.kept_shaped_mask.unavailable_by_reason]
+
+[group.keep-the-hole.no_check]
+the_check_was_not_made_or_could_not_run = 3
+
+[group.keep-the-hole.no_fill]
+
+[group.keep-the-hole.no_shaped_mask]
+
+[group.keep-the-hole.rq1_against_under_coverage]
+checked = 6
+confident_violation_covered = 0
+confident_violation_under_covered = 2
+no_violation_covered = 0
+no_violation_under_covered = 2
+tentative_violation_covered = 0
+tentative_violation_under_covered = 2
+unavailable = 0
+
+[group.keep-the-hole.rq1_against_under_coverage.unavailable_by_reason]
+
+[group.keep-the-hole.runs_by_outcome]
+completed = 8
+
+[group.parts]
+attempts = 19
+checked = 18
+ended_under_covered = 7
+filled = 19
+missing = 0
+requested = 12
+runs = 12
+runs_with_no_attempt = 0
+
+[group.parts.coverage_across_a_retry]
+compared = 7
+coverage_down = 0
+coverage_up = 1
+coverage_within = 6
+size_larger = 2
+size_smaller = 0
+size_within = 5
+unavailable = 0
+
+[group.parts.coverage_across_a_retry.unavailable_by_reason]
+
+[group.parts.ended_under_covered_by_reason]
+damaged_something_preserved = 2
+last_attempt_of_the_plan = 3
+nothing_says_it_remains = 2
+
+[group.parts.first_found_mask]
+attempts = 12
+coverage_least = 0.569196358252213
+coverage_mean = 0.7557549562395643
+iou_mean = 0.7225870682614116
+size_mean = 0.825053925134056
+unavailable = 0
+under_090 = 8
+under_090_share = 0.6666666666666666
+under_099 = 10
+under_099_share = 0.8333333333333334
+under_covered = 8
+under_covered_share = 0.6666666666666666
+
+[group.parts.first_found_mask.unavailable_by_reason]
+
+[group.parts.first_shaped_mask]
+attempts = 12
+coverage_least = 0.6376685973984901
+coverage_mean = 0.7930856549494071
+iou_mean = 0.6607468193967673
+size_mean = 1.0274417953662245
+unavailable = 0
+under_090 = 8
+under_090_share = 0.6666666666666666
+under_099 = 8
+under_099_share = 0.6666666666666666
+under_covered = 8
+under_covered_share = 0.6666666666666666
+
+[group.parts.first_shaped_mask.unavailable_by_reason]
+
+[group.parts.kept_found_mask]
+attempts = 12
+coverage_least = 0.569196358252213
+coverage_mean = 0.7912643437103256
+iou_mean = 0.7030386383023174
+size_mean = 1.0405452508799227
+unavailable = 0
+under_090 = 7
+under_090_share = 0.5833333333333334
+under_099 = 9
+under_099_share = 0.75
+under_covered = 7
+under_covered_share = 0.5833333333333334
+
+[group.parts.kept_found_mask.unavailable_by_reason]
+
+[group.parts.kept_had_the_highest_coverage]
+highest = 10
+not_highest = 2
+runs = 12
+unavailable = 0
+
+[group.parts.kept_had_the_highest_coverage.unavailable_by_reason]
+
+[group.parts.kept_shaped_mask]
+attempts = 12
+coverage_least = 0.6376685973984901
+coverage_mean = 0.8170678952038245
+iou_mean = 0.6392635707269371
+size_mean = 1.2497696656206434
+unavailable = 0
+under_090 = 7
+under_090_share = 0.5833333333333334
+under_099 = 7
+under_099_share = 0.5833333333333334
+under_covered = 7
+under_covered_share = 0.5833333333333334
+
+[group.parts.kept_shaped_mask.unavailable_by_reason]
+
+[group.parts.no_check]
+the_check_was_not_made_or_could_not_run = 1
+
+[group.parts.no_fill]
+
+[group.parts.no_shaped_mask]
+
+[group.parts.rq1_against_under_coverage]
+checked = 18
+confident_violation_covered = 0
+confident_violation_under_covered = 12
+no_violation_covered = 4
+no_violation_under_covered = 2
+tentative_violation_covered = 0
+tentative_violation_under_covered = 0
+unavailable = 0
+
+[group.parts.rq1_against_under_coverage.unavailable_by_reason]
+
+[group.parts.runs_by_outcome]
+completed = 12
+
+[group.thin]
+attempts = 9
+checked = 9
+ended_under_covered = 2
+filled = 9
+missing = 0
+requested = 10
+runs = 10
+runs_with_no_attempt = 2
+
+[group.thin.coverage_across_a_retry]
+compared = 1
+coverage_down = 0
+coverage_up = 0
+coverage_within = 1
+size_larger = 1
+size_smaller = 0
+size_within = 0
+unavailable = 0
+
+[group.thin.coverage_across_a_retry.unavailable_by_reason]
+
+[group.thin.ended_under_covered_by_reason]
+nothing_says_it_remains = 1
+wider_mask_already_used = 1
+
+[group.thin.first_found_mask]
+attempts = 8
+coverage_least = 0.6889102229719981
+coverage_mean = 0.9021696063355105
+iou_mean = 0.8302842527228436
+size_mean = 0.9886360755099639
+unavailable = 2
+under_090 = 2
+under_090_share = 0.25
+under_099 = 8
+under_099_share = 1.0
+under_covered = 2
+under_covered_share = 0.25
+
+[group.thin.first_found_mask.unavailable_by_reason]
+no_attempt = 2
+
+[group.thin.first_shaped_mask]
+attempts = 8
+coverage_least = 0.7098700347387932
+coverage_mean = 0.9201558093618425
+iou_mean = 0.5908593861124793
+size_mean = 1.5542828205796808
+unavailable = 2
+under_090 = 2
+under_090_share = 0.25
+under_099 = 4
+under_099_share = 0.5
+under_covered = 2
+under_covered_share = 0.25
+
+[group.thin.first_shaped_mask.unavailable_by_reason]
+no_attempt = 2
+
+[group.thin.kept_found_mask]
+attempts = 8
+coverage_least = 0.6889102229719981
+coverage_mean = 0.9021696063355105
+iou_mean = 0.8302842527228436
+size_mean = 0.9886360755099639
+unavailable = 2
+under_090 = 2
+under_090_share = 0.25
+under_099 = 8
+under_099_share = 1.0
+under_covered = 2
+under_covered_share = 0.25
+
+[group.thin.kept_found_mask.unavailable_by_reason]
+no_kept_attempt = 2
+
+[group.thin.kept_had_the_highest_coverage]
+highest = 8
+not_highest = 0
+runs = 8
+unavailable = 2
+
+[group.thin.kept_had_the_highest_coverage.unavailable_by_reason]
+no_kept_attempt = 2
+
+[group.thin.kept_shaped_mask]
+attempts = 8
+coverage_least = 0.7098700347387932
+coverage_mean = 0.9201967356556683
+iou_mean = 0.5885990227914807
+size_mean = 1.5585828560953798
+unavailable = 2
+under_090 = 2
+under_090_share = 0.25
+under_099 = 4
+under_099_share = 0.5
+under_covered = 2
+under_covered_share = 0.25
+
+[group.thin.kept_shaped_mask.unavailable_by_reason]
+no_kept_attempt = 2
+
+[group.thin.no_check]
+
+[group.thin.no_fill]
+
+[group.thin.no_shaped_mask]
+
+[group.thin.rq1_against_under_coverage]
+checked = 9
+confident_violation_covered = 0
+confident_violation_under_covered = 2
+no_violation_covered = 6
+no_violation_under_covered = 0
+tentative_violation_covered = 0
+tentative_violation_under_covered = 1
+unavailable = 0
+
+[group.thin.rq1_against_under_coverage.unavailable_by_reason]
+
+[group.thin.runs_by_outcome]
+completed = 8
+error = 2
+
+[group.whole]
+attempts = 11
+checked = 8
+ended_under_covered = 0
+filled = 11
+missing = 0
+requested = 10
+runs = 10
+runs_with_no_attempt = 0
+
+[group.whole.coverage_across_a_retry]
+compared = 1
+coverage_down = 0
+coverage_up = 0
+coverage_within = 1
+size_larger = 0
+size_smaller = 0
+size_within = 1
+unavailable = 0
+
+[group.whole.coverage_across_a_retry.unavailable_by_reason]
+
+[group.whole.ended_under_covered_by_reason]
+
+[group.whole.first_found_mask]
+attempts = 10
+coverage_least = 0.9311436715962276
+coverage_mean = 0.9644850411128578
+iou_mean = 0.9582045533874577
+size_mean = 0.9709775158131982
+unavailable = 0
+under_090 = 0
+under_090_share = 0.0
+under_099 = 10
+under_099_share = 1.0
+under_covered = 2
+under_covered_share = 0.2
+
+[group.whole.first_found_mask.unavailable_by_reason]
+
+[group.whole.first_shaped_mask]
+attempts = 10
+coverage_least = 0.9994421863015721
+coverage_mean = 0.9998884372603143
+iou_mean = 0.8389465048947002
+size_mean = 1.1947915443828927
+unavailable = 0
+under_090 = 0
+under_090_share = 0.0
+under_099 = 0
+under_099_share = 0.0
+under_covered = 0
+under_covered_share = 0.0
+
+[group.whole.first_shaped_mask.unavailable_by_reason]
+
+[group.whole.kept_found_mask]
+attempts = 10
+coverage_least = 0.9311436715962276
+coverage_mean = 0.9644850411128578
+iou_mean = 0.9582045533874577
+size_mean = 0.9709775158131982
+unavailable = 0
+under_090 = 0
+under_090_share = 0.0
+under_099 = 10
+under_099_share = 1.0
+under_covered = 2
+under_covered_share = 0.2
+
+[group.whole.kept_found_mask.unavailable_by_reason]
+
+[group.whole.kept_had_the_highest_coverage]
+highest = 10
+not_highest = 0
+runs = 10
+unavailable = 0
+
+[group.whole.kept_had_the_highest_coverage.unavailable_by_reason]
+
+[group.whole.kept_shaped_mask]
+attempts = 10
+coverage_least = 0.9994421863015721
+coverage_mean = 0.9998884372603143
+iou_mean = 0.8389465048947002
+size_mean = 1.1947915443828927
+unavailable = 0
+under_090 = 0
+under_090_share = 0.0
+under_099 = 0
+under_099_share = 0.0
+under_covered = 0
+under_covered_share = 0.0
+
+[group.whole.kept_shaped_mask.unavailable_by_reason]
+
+[group.whole.no_check]
+the_check_was_not_made_or_could_not_run = 3
+
+[group.whole.no_fill]
+
+[group.whole.no_shaped_mask]
+
+[group.whole.rq1_against_under_coverage]
+checked = 8
+confident_violation_covered = 1
+confident_violation_under_covered = 0
+no_violation_covered = 7
+no_violation_under_covered = 0
+tentative_violation_covered = 0
+tentative_violation_under_covered = 0
+unavailable = 0
+
+[group.whole.rq1_against_under_coverage.unavailable_by_reason]
+
+[group.whole.runs_by_outcome]
+completed = 10
