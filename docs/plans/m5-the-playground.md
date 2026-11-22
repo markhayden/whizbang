@@ -948,7 +948,7 @@ result on to another task, try again from it, and take it away as a command. Row
    with the command's own parser. A user's recipe file gives `whizbang rascal run <file>`
    with its inputs as `NAME=VALUE`.
 
-- [ ] Done when: row 3's, row 4's and row 8's Chrome cases pass in both `e2e` jobs;
+- [x] Done when: row 3's, row 4's and row 8's Chrome cases pass in both `e2e` jobs;
   `play::the_record_route_splits_cost_by_capability_and_backend_and_names_free_local_work`,
   `play::send_to_offers_each_task_whose_ports_a_results_outputs_fill`,
   `play::the_command_of_a_run_makes_the_same_call` (for a recipe, a loop, a squint use case
@@ -961,6 +961,40 @@ result on to another task, try again from it, and take it away as a command. Row
   `play::the_command_names_a_default_choice_explicitly_and_says_when_the_config_changed`,
   `play::send_to_leaves_a_port_empty_when_two_ports_take_the_same_type`,
   `send.spec.ts: a removal sent to check an edit carries the job the loop writes`.
+
+**As built (W2).** The routes are `play/result.rs`, each registered by one line, over two
+methods the door gained (`Play::record`, `Play::command`); the record is read by
+`whizbang::play_result`. A record names a request's backend by its kind, so the cost table
+and the choices a command writes out name the config's backend whose kind and model those
+are (`playing::resolved`); one the config names twice, or not at all, falls back to the
+config's default. A check takes the job of a run of the store by that run's id (`job_of`),
+read by the host from the run's record (a removal's phrase through `checked::job`, or a
+check's own job when it is run again), never a job sent by the page; a brief given beside it
+is refused. Draft values (Send to, Run again) are the run's own, unescaped, and put in as
+text; what the record shows is escaped. Copy command refuses a run whose words hold a
+control or format (Cf) character other than a new line or a tab, which no pasted line says
+safely; writes each flag with its value as one word (`--flag=value`), so a value that begins
+with `-` is not read as a flag; gives every path absolute; quotes a word that begins with
+`=`; holds every command to the command line's own parser; and says a changed config or
+recipe file in a line `: '…'`, which an interactive zsh runs as nothing where it would
+refuse a `#` comment. `--job-json` is held as `--job` is: its size, no inline picture, and a
+pinned SHA-256 that must be the file the store imported that picture from
+(`import::pictures_by_file`). A check run again keeps its run's `set` (what it measured first
+and offered its judge). Send to and Run again replace an unrun draft of the same task only
+once the person says so, in the page, with no dialog. The map
+from an action to its command (`command_of.rs`) is a table for the shipped recipes, the loop
+and three operations of their own form (`fill`, `paste`, `grow`), `segment` by its query's
+kind, `squint check --job-json` for a use case, `rascal run <file>` for a recipe file the
+config lists (`rascal run` now registers such a file once, as the config's), and any other
+operation by its own flags, held to its own parse (`rascal::operation_of`). The binary's
+`main.rs` is included by the fixture as a module (`#[path]`), its commands `pub(crate)` and
+its dispatch callable as `run(args)`; the fixture's fakes reach the commands through
+`rascal::MORE_KINDS`, which the shipped binary never sets. The tests named `play::…` and
+`cli::…` above are `play_result::…` (`crates/whizbang/tests/it/play_result.rs`) and, for
+those that run the copied command through the binary's own dispatch, `command_of::tests::…`
+in the binary. The places of a loop's checks are drawn on the running screen from the last
+check's record once it has ended (W1's item 6). The draft's `>_` (W1, item 5) stays hidden:
+the command route is a run's, and a draft has none.
 
 ## W3. History, stats, reports and their export; the brand (large)
 
@@ -1030,7 +1064,7 @@ squint's can be taken away as a document. Rows 6, 7 and 11, and `SPEC.md` sectio
    localisation of `metrics.rs` are dropped with a line (no report needs them); an artifact
    type's preview is answered by the canvas's marks.
 
-- [ ] Done when: row 6's, row 7's and row 11's Chrome cases pass in both `e2e` jobs;
+- [x] Done when: row 6's, row 7's and row 11's Chrome cases pass in both `e2e` jobs;
   `report::a_squint_report_holds_its_verdict_findings_places_and_turns_and_no_script`,
   `report::every_text_from_a_model_or_a_person_is_escaped`,
   `report::the_document_opens_alone_with_its_pictures_inline`,
@@ -1044,6 +1078,22 @@ squint's can be taken away as a document. Rows 6, 7 and 11, and `SPEC.md` sectio
   its pictures decoded and its styles applied`,
   `play::the_embedded_records_are_the_reference_folder`, `just docs` regenerated
   with the arguments, ports and needs, and the rows closed with their lines.
+
+**As built (W3).** The tests named above are at `play::report::…`, `play::stats::…` and
+`capability::written::…` (the report's and the figures' beside the host's harness); the
+measurement of stored exchanges is `check::a_check_at_its_full_budget_of_turns_stores_its_exchanges_within_a_runs_bound`.
+`stats` moved from the binary to the library, and `runs stats` and `runs export` take the
+page's `--kit`, `--result` and `--words`. The embedded records are a fixed list in
+`play/records.rs` held to the folder by its test, as `assets.rs` is held to `ui/dist/`, not
+a list `just docs` writes. The archive of "Export run" is a tar file (`record.json`,
+`report.html`, each output's canonical file and a PNG of each picture or mask). The result
+screen is W2's: W3 adds the route `#/run/<id>/report` and a Report link on an ended run,
+and W2's Report tab shows the same `IsolatedFrame`. Records link from the workspace and
+from search; the kit panel's rows still open the workspace. The fixture's judge says which
+model answered (so a repeated check is answered from the decision cache) and takes three
+script words more: `unsure`, `markup` and `placed`. `describe` gains no field for a
+preview: the carry-over row is dropped with a line. The wordmark is outlined at weight 900,
+as the owner asked, where the Paper file sets it at 700.
 
 ## M1. Models: install, readiness, keys and the allowance (medium)
 
@@ -1079,7 +1129,7 @@ interface. Row 5.
 5. **The guide's part on models and keys**, in `docs/guides/playground.md`, linked from "How
    to add".
 
-- [ ] Done when: row 5's four Chrome cases pass in both `e2e` jobs;
+- [x] Done when: row 5's four Chrome cases pass in both `e2e` jobs;
   `play::no_response_of_any_route_holds_a_key_a_sign_in_or_the_token` (every route's answer
   scanned for the env file's values),
   `play::a_second_get_attaches_to_the_running_install`,
@@ -1087,6 +1137,26 @@ interface. Row 5.
   `play::status_cancel_and_quit_answer_with_four_runs_and_an_install_going`,
   `play::a_reset_from_the_page_needs_the_amount_and_the_word_and_closes_the_books`,
   `play::models_lists_only_the_catalogues_models_and_the_configs_backends`.
+
+**As built (M1).** The tests are `play_models::…` (`crates/whizbang/tests/it/play_models.rs`)
+under the names above, beside
+`play_models::a_removal_of_a_model_in_use_answers_busy_and_the_model_stays`; and a fifth
+Chrome case, `models.spec.ts: a reset needs the amount and the word reset, and the
+allowance is then what is spent since it`. The routes are `play/models.rs`, registered in
+`play/routes.rs` by one line, behind a trait the door implements
+(`whizbang_serve::play::models::Models`, `whizbang::play_models::PlayModels`); the
+allowance is read by `GET /api/spend`, a row the plan's table did not name. An install runs
+on a thread of the host's counted spawner, so a host makes twenty threads and a process at
+most 44 (ADR 0041). A removal holds its connection for the drain's wait, five seconds, one
+removal at a time. The fixture host's catalogue adds the test kit's `pocket`
+(`whizbang_testkit::playmodels`), whose files a fake serves; its filler has a made-up key in
+an env file of its own. Chrome's cancel case shows the earlier state (not installed) kept;
+an earlier installation of another revision kept is the Rust case's, since the fixture's
+catalogue has one revision. The top bar's allowance is the one `hello` read when the page
+opened, until the page is opened again. The playground does not read the Hub's
+command-line sign-in (only `main.rs` names where it is, `scripts/tests/test-sign-in.sh`):
+a model's token is taken from the env file, and a config that names the sign-in is told to
+use `whizbang models get`.
 
 ## E1. The loop by hand in the playground, and the guide (medium; the orchestrator's runs)
 

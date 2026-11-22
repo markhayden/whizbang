@@ -1,0 +1,36 @@
+/* The Models screen (plan m5, task M1), from the Paper file's "Models": two panels side by
+   side, on this Mac and in the cloud, and the allowance under them. Tokens only. */
+.screen.models { gap: var(--spacing-3); }
+.models__head { display: flex; flex-direction: column; gap: 2px; }
+.models__lead { margin: 0; color: var(--color-muted); font-size: var(--text-sm); line-height: 16px; }
+.models__problem { margin: 0; padding: var(--spacing-2) var(--spacing-3); border-radius: var(--radius-md); background: var(--color-lacquer-soft); color: var(--color-ink); font-size: var(--text-md); }
+.models__panels { display: flex; align-items: flex-start; gap: 14px; }
+.models__panel { display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; overflow: clip; border-radius: var(--radius-md); background: var(--color-panel); box-shadow: var(--shadow-panel); }
+.models__panel .model-row:last-child { border-bottom: none; }
+.models__panel-head { display: flex; align-items: center; justify-content: space-between; height: 40px; flex-shrink: 0; padding-inline: var(--spacing-3); border-bottom: 1px solid var(--color-line); }
+.models__panel-title { margin: 0; color: var(--color-ink); font-size: var(--text-md); font-weight: var(--font-weight-semibold); line-height: 16px; }
+.models__panel-note { color: var(--color-muted); font-size: var(--text-xs); }
+.models__panel-sub { color: var(--color-muted); font-size: var(--text-sm); line-height: 16px; }
+.models__empty { margin: 0; padding: var(--spacing-3); color: var(--color-muted); font-size: var(--text-sm); }
+.models__help { display: flex; flex-direction: column; align-items: flex-start; gap: var(--spacing-2); padding: 14px var(--spacing-4); border-radius: var(--radius-md); background: var(--color-panel); box-shadow: var(--shadow-panel); color: var(--color-ink-2); font-size: var(--text-sm); line-height: 18px; }
+.models__help p { margin: 0; max-width: 760px; }
+.models__help-guide { color: var(--color-muted); }
+.models__allowance { display: flex; flex-direction: column; gap: var(--spacing-3); padding: 14px var(--spacing-4); border-radius: var(--radius-md); background: var(--color-panel); box-shadow: var(--shadow-panel); }
+.models__allowance-row { display: flex; align-items: center; gap: var(--spacing-6); }
+.models__allowance-words { display: flex; flex-direction: column; gap: 2px; width: 260px; flex-shrink: 0; }
+.models__allowance-bar { flex: 1; min-width: 0; }
+.models__allowance-figures { display: flex; align-items: center; gap: var(--spacing-2); flex-shrink: 0; }
+.models__chip { display: flex; align-items: center; gap: var(--spacing-2); height: 30px; padding-inline: 10px; border-radius: var(--radius-sm); background: var(--color-raised); box-shadow: var(--color-line-strong) 0 0 0 1px inset; color: var(--color-ink); font-size: var(--text-sm); }
+.models__chip-label { color: var(--color-muted); font-size: var(--text-xs); }
+.models__reset { display: flex; flex-direction: column; gap: var(--spacing-3); padding-top: var(--spacing-3); border-top: 1px solid var(--color-line); }
+.models__reset-words { margin: 0; max-width: 760px; color: var(--color-ink-2); font-size: var(--text-sm); line-height: 18px; }
+.models__reset-fields { display: flex; gap: var(--spacing-4); }
+.models__reset-fields .field { width: 240px; }
+.models__reset-actions { display: flex; align-items: flex-start; gap: var(--spacing-2); }
+@media (max-width: 900px) {
+  .models__panels, .models__allowance-row { flex-direction: column; align-items: stretch; }
+  .models__allowance-words { width: auto; }
+}
+.models__confirm { display: flex; flex-direction: column; gap: var(--spacing-2); padding: var(--spacing-3); border-top: 1px solid var(--color-line); background: var(--color-raised); }
+.models__confirm-words { margin: 0; color: var(--color-ink); font-size: var(--text-sm); line-height: 18px; }
+.models__confirm-actions { display: flex; align-items: flex-start; gap: var(--spacing-2); }

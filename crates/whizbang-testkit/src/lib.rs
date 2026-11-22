@@ -14,6 +14,7 @@ pub mod ledger;
 pub mod loopback;
 pub mod part;
 pub mod playkit;
+pub mod playmodels;
 pub mod recover;
 pub mod schema;
 pub mod scratch;

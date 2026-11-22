@@ -8,8 +8,10 @@ import { source, sources } from "./test/files";
 /** The ways to write markup into a document. */
 const MARKUP = /dangerouslySetInnerHTML|\binnerHTML\b|\bouterHTML\s*=|insertAdjacentHTML|document\.write\s*\(|createContextualFragment|\bsrcdoc\b/;
 
-/** Sources allowed to write markup, each with its reason. None yet. */
-const ALLOWED = new Map<string, string>();
+/** Sources allowed to write markup, each with its reason. */
+const ALLOWED = new Map<string, string>([
+  ["isolated.tsx", "the one wrapper (plan m5, task W3): a record's Markdown through marked, raw HTML escaped and addresses held to http, https, fragments and relative, shown only in the sandboxed frame it makes, which also shows a report"],
+]);
 
 describe("markup", () => {
   it("is written by no source of the interface", () => {

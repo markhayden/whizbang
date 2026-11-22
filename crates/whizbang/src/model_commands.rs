@@ -205,6 +205,40 @@ fn run(
     }
 }
 
+/// What kind of refusal a command's complaint is, for a caller that answers each kind its
+/// own way (the playground's Models screen, plan m5, task M1) rather than by its words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailedKind {
+    /// The catalogue holds no model of that name.
+    NotInCatalogue,
+    /// The model cannot be installed here as things stand: its platform, its adapter,
+    /// an origin the config does not approve, or a token the config does not lead to.
+    NotInstallable,
+    /// Runs held the model past the removal's wait, or another held its lock: nothing
+    /// was removed.
+    Busy,
+    /// There was nothing to remove.
+    NotInstalled,
+    /// This request had attached to an install another request runs, and left it when
+    /// its cancellation was tripped: that install goes on.
+    Left,
+    /// Anything else: the config, the directory, the download, a cancelled install.
+    Other,
+}
+
+/// A command's complaint, with its kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Failed {
+    pub kind: FailedKind,
+    pub why: String,
+}
+
+impl From<Failed> for String {
+    fn from(failed: Failed) -> String {
+        failed.why
+    }
+}
+
 /// The entry of the model of this name, compared exactly: none when the catalogue
 /// holds no model of it, or when its name holds a secret.
 fn entry<'a>(models: &'a Models, name: &str, secrets: &Secrets) -> Result<&'a Entry, String> {
@@ -460,10 +494,27 @@ pub fn get(
     tools: &Tools,
     say: &mut dyn FnMut(&str),
 ) -> Result<String, String> {
+    get_until(under, model, tools, &Cancellation::new(), say).map_err(String::from)
+}
+
+/// [`get`], until `cancellation` is tripped (plan m5, task M1: the playground's Cancel and
+/// its quit). An install this request started ends cancelled, and the installation that
+/// was there before it is left as it was; one this request attached to goes on, and
+/// this request leaves it (ADR 0017, "Attaching and cancelling").
+pub fn get_until(
+    under: Under<'_>,
+    model: &str,
+    tools: &Tools,
+    cancellation: &Cancellation,
+    say: &mut dyn FnMut(&str),
+) -> Result<String, Failed> {
+    let kind = std::cell::Cell::new(FailedKind::Other);
     run(under, tools, |read| {
         let models = with_users_for(tools, model, read)?;
-        let entry = entry(&models, model, &read.secrets)?;
+        let entry = entry(&models, model, &read.secrets)
+            .inspect_err(|_| kind.set(FailedKind::NotInCatalogue))?;
         if unrunnable(entry, tools.models.runs_on, true) == Some(Unready::NotForThisPlatform) {
+            kind.set(FailedKind::NotInstallable);
             return Err(format!(
                 "the model does not run on this platform (its entry names {}), so it was not \
                  installed and nothing was downloaded",
@@ -471,6 +522,7 @@ pub fn get(
             ));
         }
         let Some(adapter) = revision_of(&models, entry) else {
+            kind.set(FailedKind::NotInstallable);
             return Err(
                 "this build has no adapter for the model, so it was not installed and \
                         nothing was downloaded"
@@ -532,7 +584,7 @@ pub fn get(
                 entry,
                 adapter,
                 &carrying,
-                &Cancellation::new(),
+                cancellation,
                 &secrets,
                 &mut |status| {
                     let line = shown(status);
@@ -544,6 +596,9 @@ pub fn get(
                 },
             )
             .map_err(|refused| {
+                if refused == InstallRefused::Left {
+                    kind.set(FailedKind::Left);
+                }
                 // Every file was held when looked at, so no token was read; one was
                 // removed before the model's lock was taken, and its download went
                 // without one (the review of plan 1D, task Q1).
@@ -566,6 +621,10 @@ pub fn get(
             Ok(text) => Ok(secrets.redact(&text)),
             Err(complaint) => Err(secrets.redact(&complaint)),
         }
+    })
+    .map_err(|why| Failed {
+        kind: kind.get(),
+        why,
     })
 }
 
@@ -914,12 +973,25 @@ pub fn remove(
     wait: Duration,
     tools: &Tools,
 ) -> Result<String, String> {
+    remove_typed(under, model, wait, tools).map_err(String::from)
+}
+
+/// [`remove`], with the kind of its refusal.
+pub fn remove_typed(
+    under: Under<'_>,
+    model: &str,
+    wait: Duration,
+    tools: &Tools,
+) -> Result<String, Failed> {
+    let kind = std::cell::Cell::new(FailedKind::Other);
     run(under, tools, |read| {
         let secrets = &read.secrets;
         let models = with_users_for(tools, model, read)?;
-        let entry = entry(&models, model, secrets)?;
+        let entry =
+            entry(&models, model, secrets).inspect_err(|_| kind.set(FailedKind::NotInCatalogue))?;
         let (said, root) = tools.models.chosen(read.dir.as_deref())?;
         if !there(&root) {
+            kind.set(FailedKind::NotInstalled);
             return Err(not_removed(RemoveRefused::NotInstalled));
         }
         let dir = wiring::open_models_dir(said, &root, tools.clock.clone())?;
@@ -927,7 +999,16 @@ pub fn remove(
         let removed = remove_model(&dir, entry.name(), &*clock, wait, secrets, &mut || {
             clock.pause(PAUSE);
         })
-        .map_err(not_removed)?;
+        .map_err(|refused| {
+            kind.set(match refused {
+                RemoveRefused::Busy | RemoveRefused::Held | RemoveRefused::DirectoryBusy => {
+                    FailedKind::Busy
+                }
+                RemoveRefused::NotInstalled => FailedKind::NotInstalled,
+                _ => FailedKind::Other,
+            });
+            not_removed(refused)
+        })?;
         // A copy of a user's adapter that only the removed installation named goes
         // with it (plan 2C, task F1); one that cannot be taken now is taken by the next.
         let _ = remove_unnamed_adapters(&dir, secrets);
@@ -935,6 +1016,10 @@ pub fn remove(
             Some(id) => format!("removed {}: {}\n", entry.name().as_str(), id.digest()),
             None => format!("removed {}\n", entry.name().as_str()),
         })
+    })
+    .map_err(|why| Failed {
+        kind: kind.get(),
+        why,
     })
 }
 
@@ -948,6 +1033,191 @@ fn not_removed(refused: RemoveRefused) -> String {
         ),
         other => format!("the model was not removed: {other}"),
     }
+}
+
+// --- the playground's Models screen (plan m5, task M1) -------------------------------------
+
+/// One model of the catalogue as the playground's Models screen shows it: what `list`
+/// prints of it, with its state as a word beside the words, and how far an install of
+/// it that is running has got, from its status record (files done of files: an install
+/// counts files, not bytes).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Row {
+    pub name: String,
+    pub title: String,
+    pub licence: String,
+    pub bytes: u64,
+    pub files: u64,
+    /// `installed`, `not_installed`, `damaged`, `out_of_date`, `being_removed`,
+    /// `not_for_this_platform`, `no_adapter`, `link` or `unreadable`.
+    pub state: &'static str,
+    /// The state in words, as `list` prints it.
+    pub why: String,
+    /// While an install of the model runs, here or in another process: the files it has
+    /// staged.
+    pub files_done: Option<u64>,
+    /// Whether a download of the model needs a token the config does not lead to:
+    /// `none` when it needs none or the config names where it is; `not_named` when the
+    /// config names none for its origin; `not_set` when the config names a variable of
+    /// the env file that the env file does not set; `not_here` when the config names the
+    /// Hub's sign-in and these tools were given no place for it (the playground's). Never
+    /// the token, nor the variable.
+    pub sign_in: &'static str,
+}
+
+/// The state of a model as a word, from the words [`state`] and [`absent`] say.
+fn state_word(words: &str) -> &'static str {
+    let ends = |tail: &str| words.ends_with(tail);
+    if words == "installed" {
+        "installed"
+    } else if words == "being removed" {
+        "being_removed"
+    } else if words.contains("is a link") {
+        "link"
+    } else if words.contains("cannot be read") {
+        "unreadable"
+    } else if ends(&Unready::NotForThisPlatform.to_string()) {
+        "not_for_this_platform"
+    } else if ends(&Unready::NoAdapter.to_string()) {
+        "no_adapter"
+    } else if words.contains("out of date") {
+        "out_of_date"
+    } else if words.starts_with("damaged") {
+        "damaged"
+    } else {
+        "not_installed"
+    }
+}
+
+/// Whether the config leads to the token a download of this entry needs (see
+/// [`Row::sign_in`]). The Hub's sign-in is not read: that it is named, and that these
+/// tools were given a place for it, is enough here, and `get` says when it is not there.
+fn sign_in_of(entry: &Entry, read: &Read, tools: &Tools) -> &'static str {
+    let Some(origin) = entry.needs_token() else {
+        return "none";
+    };
+    match read.tokens.iter().find(|token| token.origin() == origin) {
+        None => "not_named",
+        Some(token) => match token.from() {
+            TokenFrom::SignIn if tools.sign_in.is_some() => "none",
+            TokenFrom::SignIn => "not_here",
+            TokenFrom::Variable(_) => match read.credentials.model_token(origin) {
+                Some(_) => "none",
+                None => "not_set",
+            },
+        },
+    }
+}
+
+/// The catalogue's models as the Models screen shows them: [`list`]'s, as rows. Nothing
+/// is made: a directory that is not there holds nothing.
+pub fn rows(under: Under<'_>, tools: &Tools) -> Result<Vec<Row>, String> {
+    tools.models.flag_is_absolute()?;
+    let read = read(under)?;
+    let secrets = &read.secrets;
+    let (said, root) = tools.models.chosen(read.dir.as_deref())?;
+    let dir = if there(&root) {
+        Some(wiring::open_models_dir(said, &root, tools.clock.clone())?)
+    } else {
+        None
+    };
+    let models = match &dir {
+        Some(dir) => tools.models.clone().with_users(dir, secrets)?,
+        None => tools.models.clone(),
+    };
+    let inventory = dir.as_ref().map(|dir| {
+        wiring::inventory_of(
+            dir,
+            &models.catalogue,
+            &models.adapters,
+            models.runs_on,
+            secrets,
+        )
+    });
+    let mut rows = Vec::new();
+    for entry in models.catalogue.entries() {
+        if holds_secret(entry.name().as_str(), secrets) {
+            continue;
+        }
+        let words = match (&dir, &inventory) {
+            (Some(dir), Some(inventory)) => state(dir, inventory, entry, secrets),
+            _ => absent(&models, entry),
+        };
+        let files_done = dir.as_ref().and_then(|dir| {
+            let status = whizbang_backends::models::status(dir, entry.name(), secrets).ok()??;
+            (status.state() == State::Installing).then(|| status.files_done())
+        });
+        rows.push(Row {
+            name: entry.name().as_str().to_owned(),
+            title: secrets.redact(entry.title().as_str()),
+            licence: secrets.redact(entry.licence().as_str()),
+            bytes: entry.bytes(),
+            files: entry.files().len() as u64,
+            state: state_word(&words),
+            why: secrets.redact(&words),
+            files_done,
+            sign_in: sign_in_of(entry, &read, tools),
+        });
+    }
+    Ok(rows)
+}
+
+/// Whether `get` of this model would start an install: the checks it makes before it
+/// reads a token or makes anything, and that the config leads to the token its download
+/// needs. Why not, in `get`'s words; nothing is read but the config and its env file.
+pub fn installable(under: Under<'_>, model: &str, tools: &Tools) -> Result<(), Failed> {
+    let kind = std::cell::Cell::new(FailedKind::Other);
+    run(under, tools, |read| {
+        let models = with_users_for(tools, model, read)?;
+        let entry = entry(&models, model, &read.secrets)
+            .inspect_err(|_| kind.set(FailedKind::NotInCatalogue))?;
+        kind.set(FailedKind::NotInstallable);
+        if unrunnable(entry, tools.models.runs_on, true) == Some(Unready::NotForThisPlatform) {
+            return Err(format!(
+                "the model does not run on this platform (its entry names {})",
+                platforms(entry, ", ")
+            ));
+        }
+        if revision_of(&models, entry).is_none() {
+            return Err("this build has no adapter for the model".to_owned());
+        }
+        if models.is_users(entry)
+            && !entry
+                .origins()
+                .iter()
+                .all(|origin| read.approved.contains(origin))
+        {
+            return Err(
+                "the model's entry names an origin the config does not approve as a \
+                 recipient (`[egress.recipients]`)"
+                    .to_owned(),
+            );
+        }
+        match sign_in_of(entry, read, tools) {
+            "not_named" => Err(
+                "a download of the model needs a sign-in, and the config names none for its \
+                 origin: add one under `[[models.tokens]]` (docs/guides/models.md, \"A model whose files need a token\")"
+                    .to_owned(),
+            ),
+            "not_here" => Err(
+                "a download of the model needs a token, and the config names the Hub's sign-in \
+                 for it, which the playground does not read: name a variable of the env file \
+                 as `key_env` in its place, or run `whizbang models get`"
+                    .to_owned(),
+            ),
+            "not_set" => Err(
+                "a download of the model needs a token, and the env file does not set the \
+                 variable the config names for it: set it in the env file"
+                    .to_owned(),
+            ),
+            _ => Ok(String::new()),
+        }
+    })
+    .map(|_| ())
+    .map_err(|why| Failed {
+        kind: kind.get(),
+        why,
+    })
 }
 
 #[cfg(test)]

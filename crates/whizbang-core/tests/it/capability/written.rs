@@ -5,8 +5,8 @@
 
 use serde_json::{Value as Json, json};
 use whizbang_core::capability::written::{
-    EXCHANGE, Keep, SCRIPT, SCRIPT_ENTRIES_LIMIT, SCRIPT_MAX_BYTES, Unread, read_exchange,
-    read_script, write_exchange, write_script,
+    EXCHANGE, Keep, SCRIPT, SCRIPT_ENTRIES_LIMIT, SCRIPT_MAX_BYTES, Shown, ShownAnswer, ShownText,
+    Unread, for_display, read_exchange, read_script, write_exchange, write_script,
 };
 use whizbang_core::capability::{
     Controls, Fault, FaultKind, JudgeRequest, Message, Opaque, Part, Picture, Role, StopReason,
@@ -461,4 +461,98 @@ fn an_exchange_whose_turn_was_not_written_is_not_read_back() {
     }});
     let bytes = serde_json::to_vec(&document).unwrap();
     assert_eq!(read_exchange(&bytes, &pictures), Err(Unread::Withheld));
+}
+
+/// Plan m5, task W3, item 3: what `read_exchange` stops at, `for_display` reads on past:
+/// a text whole, an opaque part kept without its body said with its place, adapter and
+/// length, a picture the caller has and one it has not, and the answer; then a failed
+/// turn, and a turn that was not kept.
+#[test]
+fn one_exchange_with_text_a_withheld_part_a_missing_picture_and_an_answer_reads_whole_for_display()
+{
+    let written = write_exchange(3, &request(), &Ok(calling()), Keep::Digests);
+    assert_eq!(read_exchange(&written, &pictures), Err(Unread::Withheld));
+    // Only the first picture is found: the crop in the tool's answer is missing.
+    let found = |digest: PixelDigest| digest == picture(1).digest();
+    let shown = for_display(&written, &found).unwrap();
+    assert_eq!(shown.place, 3);
+    assert_eq!(shown.system.text, "You judge.");
+    let roles: Vec<&str> = shown.messages.iter().map(|m| m.role).collect();
+    assert_eq!(roles, ["system", "user", "assistant", "user"]);
+    assert_eq!(
+        shown.messages[1].parts,
+        [
+            Shown::Text {
+                text: "Look.".to_owned(),
+                cut: 0
+            },
+            Shown::Picture {
+                width: 3,
+                height: 2,
+                pixels: picture(1).digest(),
+                found: true
+            },
+        ]
+    );
+    assert_eq!(
+        shown.messages[2].parts[2],
+        Shown::Withheld {
+            at: 2,
+            adapter: "fake".to_owned(),
+            bytes: BODY.len() as u64
+        }
+    );
+    let Shown::Answered { pictures, .. } = &shown.messages[3].parts[0] else {
+        panic!("a tool's answer: {:?}", shown.messages[3].parts[0]);
+    };
+    assert!(matches!(pictures[0], Shown::Picture { found: false, .. }));
+    let ShownAnswer::Turn {
+        parts,
+        stop,
+        tokens,
+    } = &shown.answer
+    else {
+        panic!("a turn: {:?}", shown.answer);
+    };
+    assert_eq!((stop.as_str(), *tokens), ("tool_use", Some((120, 30))));
+    assert_eq!(
+        parts[0],
+        Shown::Text {
+            text: "I will look.".to_owned(),
+            cut: 0
+        }
+    );
+    assert!(
+        matches!(&parts[1], Shown::Call { name, arguments: ShownText { cut: 0, .. } } if name == "view")
+    );
+    assert!(matches!(&parts[2], Shown::Withheld { at: 2, .. }));
+    // A failed turn shows its error.
+    let fault = Fault::new(FaultKind::ALL[0], "the judge is busy");
+    let failed = write_exchange(0, &request(), &Err(fault), Keep::Digests);
+    let shown = for_display(&failed, &found).unwrap();
+    assert!(
+        matches!(&shown.answer, ShownAnswer::Failed { sentence, .. } if sentence == "the judge is busy"),
+        "{:?}",
+        shown.answer
+    );
+    // A turn that was not kept says its size.
+    let mut document: Json = serde_json::from_slice(&failed).unwrap();
+    document["answer"] = json!({"turn_withheld": {
+        "parts": 1, "bytes": 14, "stop": "max_tokens",
+        "digest": Digest::of_bytes(b"The crop shows").to_string(),
+    }});
+    let unkept = for_display(&serde_json::to_vec(&document).unwrap(), &found).unwrap();
+    assert_eq!(
+        unkept.answer,
+        ShownAnswer::Withheld {
+            parts: 1,
+            bytes: 14,
+            stop: "max_tokens".to_owned()
+        }
+    );
+    // Not an exchange: refused, as `read_exchange` refuses it.
+    assert!(matches!(
+        for_display(b"{\"exchange\":\"judge-exchange/0\"}", &found),
+        Err(Unread::OtherVersion { .. })
+    ));
 }

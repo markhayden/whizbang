@@ -25,7 +25,11 @@
 
 pub mod assets;
 pub mod guard;
+pub mod history;
 pub mod http;
+pub mod models;
+pub mod records;
+pub mod result;
 pub mod routes;
 pub mod threads;
 pub mod token;
@@ -133,6 +137,21 @@ pub trait Play: Send + Sync {
     fn journal(&self, _run: &RunId) -> Option<(Vec<Json>, u64)> {
         None
     }
+    /// A run's record as the result screen reads it, every text escaped (plan m5, task
+    /// W2): 404 for no such run, 409 for one that has not ended.
+    fn record(&self, _run: &RunId) -> Result<Json, Refused> {
+        Err(Refused::new(
+            501,
+            "this build reads no run's record for the page",
+        ))
+    }
+    /// The command line that makes the run's call again (plan m5, task W2, item 5).
+    fn command(&self, _run: &RunId) -> Result<Json, Refused> {
+        Err(Refused::new(
+            501,
+            "this build says no command line of a run",
+        ))
+    }
     /// The config's name of the backend a call that names none uses for this capability:
     /// its default, which preparation resolves to (ADR 0006).
     fn default_backend(&self, _capability: &str) -> Option<String> {
@@ -149,9 +168,19 @@ pub trait Play: Send + Sync {
     fn script(&self, _words: &str) -> Result<(), String> {
         Err("this host takes no script".to_owned())
     }
+    /// What answers history, the figures, a run's report and its export (plan m5, task
+    /// W3), when the door keeps a store.
+    fn shelf(&self) -> Option<&dyn history::Shelf> {
+        None
+    }
     /// The host has stopped and let its executor go: stop what the door holds (the
     /// pack's worker), and let the store go.
     fn closing(&self) {}
+    /// The Models screen's models, backends and allowance (plan m5, task M1), when the
+    /// door offers them.
+    fn models(&self) -> Option<&dyn models::Models> {
+        None
+    }
 }
 
 /// Why a [`Play`] did not do what the page asked: the status and fixed or escaped words.
@@ -344,6 +373,8 @@ pub(crate) struct Shared {
     /// How many times the executor is lent out now ([`Shared::executor`]).
     lent: std::sync::atomic::AtomicUsize,
     pub play: Arc<dyn Play>,
+    /// The one install, and the one removal, the host runs at a time (task M1).
+    pub(crate) installs: models::Installs,
     pub token: Token,
     pub settings: Settings,
     pub port: u16,
@@ -566,6 +597,7 @@ impl Host {
             executor: RwLock::new(Some(executor)),
             lent: std::sync::atomic::AtomicUsize::new(0),
             play,
+            installs: models::Installs::default(),
             token,
             port: address.port(),
             settings,
@@ -587,6 +619,7 @@ impl Host {
             }),
             changed: Condvar::new(),
         });
+        shared.installs.wakes(&shared);
         let (send, receive) = sync_channel::<(TcpStream, Instant)>(QUEUED_LIMIT);
         let receive = Arc::new(Mutex::new(receive));
         let started = (|| -> io::Result<JoinHandle<()>> {
@@ -703,6 +736,7 @@ fn keep(shared: &Shared, address: SocketAddr) {
                     _ => now,
                 };
                 grace_end = Some(asked + settings.grace);
+                shared.installs.close();
                 for at in 0..state.runs.len() {
                     state.stop_held(at);
                 }
@@ -737,7 +771,8 @@ fn keep(shared: &Shared, address: SocketAddr) {
             let idle = shared
                 .executor()
                 .is_none_or(|executor| executor.on_threads() == 0);
-            let all_waited = state.unwaited.is_empty() && !admitting && idle;
+            let all_waited =
+                state.unwaited.is_empty() && !admitting && idle && shared.installs.idle();
             let hurried = state.quit == Quit::Hurried;
             if all_waited || hurried || Instant::now() >= end {
                 state.left = state.runs.len();

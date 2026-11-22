@@ -376,6 +376,8 @@ export interface Client {
    * its `Retry-After` ([`artifactRetryMs`]), the fetch keeping its place meanwhile.
    */
   blobUrl(path: string, signal?: AbortSignal): Promise<string>;
+  /** The bytes a `GET` of the API answers, as they came: a report, a record, a download. */
+  bytes(path: string): Promise<Blob>;
 }
 
 async function refusal(response: Response): Promise<ApiError> {
@@ -508,6 +510,20 @@ export function createClient(options: ClientOptions): Client {
       return Array.isArray(answer?.pictures) ? answer.pictures : [];
     },
     commitLocation: (picture, shape) => client.request<{ id: string }>("POST", "/api/locations", { picture, shape }),
+    bytes: async (path) => {
+      let response: Response;
+      try {
+        response = await call(path, { method: "GET", headers: headers({}), cache: "no-store", credentials: "omit", redirect: "error" });
+      } catch {
+        throw new ApiError(0, sentenceFor(0));
+      }
+      if (!response.ok) {
+        const error = await refusal(response);
+        if (error.status === 401) options.onUnauthorized?.(error);
+        throw error;
+      }
+      return response.blob();
+    },
     blobUrl: (path, signal) => {
       let entry = blobs.get(path);
       if (!entry) {

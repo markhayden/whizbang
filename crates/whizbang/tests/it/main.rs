@@ -41,6 +41,8 @@ mod pack;
 mod pairs_page;
 mod parity;
 mod play;
+mod play_models;
+mod play_result;
 mod prepare;
 mod rascal;
 mod recipe;

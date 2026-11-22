@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as Json, json};
-use whizbang_core::contract::{ActionDescriptor, Call, RequestId, RunId};
+use whizbang_core::contract::{ActionDescriptor, Call, RequestId, RunId, Value};
 use whizbang_core::description::Kit;
 use whizbang_core::store::Store;
 use whizbang_core::store::fs::{Fs, RealFs};
@@ -48,7 +48,20 @@ pub struct Playground {
     kept: Mutex<Remembered>,
     /// How many thumbnails were made, not taken from those kept.
     made: std::sync::atomic::AtomicU64,
+    /// The binary's map from a run to its command line (plan m5, task W2, item 5), when
+    /// it gave one: the commands' parser lives in the binary.
+    commands: Option<Commands>,
+    /// The runs of the store's current generation, read once for history and the
+    /// figures (`crate::play_history`).
+    pub(crate) shelved: crate::play_history::Shelved,
+    /// The Models screen's door (plan m5, task M1), when the host offers it.
+    models: Option<crate::play_models::PlayModels>,
 }
+
+/// The binary's map from what a run asked to the words of the command that asks it
+/// again (`command_of.rs`), or why no command line says it.
+pub type Commands =
+    Arc<dyn Fn(&crate::play_result::Commanded) -> Result<Vec<String>, String> + Send + Sync>;
 
 /// The most thumbnails kept in memory, and the most bytes of them.
 pub const THUMBNAILS_KEPT: usize = 64;
@@ -112,11 +125,39 @@ impl Playground {
             root: None,
             kept: Mutex::new(Remembered::default()),
             made: std::sync::atomic::AtomicU64::new(0),
+            commands: None,
+            shelved: crate::play_history::Shelved::default(),
+            models: None,
         }
     }
 
-    /// The same, with the store the executor writes, open to write, at `root`.
+    /// The same, saying each run's command line through the binary's map.
+    pub fn with_commands(mut self, commands: Commands) -> Playground {
+        self.commands = Some(commands);
+        self
+    }
+
+    fn tasks(&self) -> crate::play_result::Tasks<'_> {
+        crate::play_result::Tasks {
+            descriptors: &self.descriptors,
+            kits: &self.kits,
+        }
+    }
+
+    /// The same, with the Models screen's door, over this playground's wiring and the
+    /// store [`Playground::with_store`] gives, before this or after it (plan m5, task M1).
+    pub fn with_models(mut self, models: crate::play_models::PlayModels) -> Playground {
+        let store = self.store.get_mut().ok().and_then(|store| store.clone());
+        self.models = Some(models.over(self.over.clone(), store));
+        self
+    }
+
+    /// The same, with the store the executor writes, open to write, at `root`: the Models
+    /// screen's door, when it was given first, is given it too.
     pub fn with_store(mut self, store: Arc<Store>, root: &Path) -> Playground {
+        if let Some(models) = self.models.take() {
+            self.models = Some(models.over(self.over.clone(), Some(store.clone())));
+        }
         self.store = Mutex::new(Some(store));
         self.root = Some(root.to_path_buf());
         self
@@ -202,6 +243,16 @@ impl Playground {
         self.made.load(std::sync::atomic::Ordering::SeqCst)
     }
 
+    /// The store's folder, when the playground keeps a store; and the actions it offers
+    /// (for its history, `crate::play_history`).
+    pub(crate) fn root(&self) -> Option<&Path> {
+        self.root.as_deref()
+    }
+
+    pub(crate) fn descriptors(&self) -> &[ActionDescriptor] {
+        &self.descriptors
+    }
+
     fn descriptor(&self, action: &str) -> Option<&ActionDescriptor> {
         self.descriptors.iter().find(|d| d.name() == action)
     }
@@ -217,7 +268,29 @@ impl Play for Playground {
             return Err("this build has no action of that name".to_owned());
         };
         if crate::play_form::is_use_case(descriptor.name()) {
-            return crate::play_form::use_case_call(descriptor.name(), arguments)
+            // A check that takes a run's job reads it from the store, by the run's id.
+            let job = match arguments.get(crate::play_result::JOB_OF) {
+                None | Some(Json::Null) => None,
+                Some(Json::String(run)) => {
+                    let store = self.store().map_err(|refused| refused.why)?;
+                    Some(crate::play_result::job_and_measuring_of(
+                        &store,
+                        run,
+                        descriptor.name(),
+                    )?)
+                }
+                Some(_) => return Err("job_of names a run by its id".to_owned()),
+            };
+            let (job, measuring) = match job {
+                Some((job, measuring)) => (Some(job), measuring),
+                None => (None, None),
+            };
+            // A check run again keeps what it measured first and offered its judge.
+            return crate::play_form::use_case_call(descriptor.name(), arguments, job.as_ref())
+                .map(|call| match measuring {
+                    Some(set) => call.argument(whizbang_core::recipe::SET, Value::text(&set)),
+                    None => call,
+                })
                 .map(|call| (call, None));
         }
         tools::call_of(descriptor, arguments)
@@ -325,6 +398,112 @@ impl Play for Playground {
         crate::play_kept::journal(self.store().ok()?.as_ref(), run)
     }
 
+    fn record(&self, run: &RunId) -> Result<Json, Refused> {
+        let store = self.store()?;
+        let root = self
+            .root
+            .as_deref()
+            .ok_or_else(|| Refused::new(503, "the playground is stopping"))?;
+        let rows = backend_status::readiness(&self.over).unwrap_or_default();
+        let resolve =
+            |capability: &str, kind: &str, model: &str| resolved(&rows, capability, kind, model);
+        crate::play_result::record_json(&store, root, run, &self.tasks(), &resolve)
+    }
+
+    fn command(&self, run: &RunId) -> Result<Json, Refused> {
+        let Some(commands) = &self.commands else {
+            return Err(Refused::new(
+                501,
+                "this build says no command line of a run",
+            ));
+        };
+        let store = self.store()?;
+        let root = self
+            .root
+            .clone()
+            .ok_or_else(|| Refused::new(503, "the playground is stopping"))?;
+        let top = crate::play_result::record_of(&store, run)?;
+        let recorded = top.asked().config;
+        let records = crate::play_result::tree(&store, top);
+        let action = records[0].asked().action.clone().unwrap_or_default();
+        let descriptor = self.descriptor(&action);
+        let default_of = |capability: &str| self.default_backend(capability);
+        let rows = backend_status::readiness(&self.over).unwrap_or_default();
+        let resolve =
+            |capability: &str, kind: &str, model: &str| resolved(&rows, capability, kind, model);
+        let mut commanded =
+            crate::play_result::commanded(&records, descriptor, &resolve, &default_of)?;
+        // Every path absolute, so the command runs from any folder.
+        let absolute =
+            |path: &Path| std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+        let (config, env_file, models_dir) = self.over.files_named();
+        commanded.store = absolute(&root);
+        commanded.config = config.map(absolute);
+        commanded.env_file = env_file.map(absolute);
+        commanded.models_dir = models_dir.map(absolute);
+        let shipped = whizbang_rascal::recipes::TITLES
+            .iter()
+            .any(|(name, _)| *name == action);
+        let mut recipe_changed = None;
+        if descriptor.is_some_and(|d| d.kind() == whizbang_core::contract::Kind::Recipe)
+            && !shipped
+            && !crate::play_form::is_use_case(&action)
+        {
+            commanded.recipe_file = self
+                .over
+                .recipe_file_named(&action)
+                .map(|path| absolute(&path));
+            // The file as it is now against the digest of the text the run ran.
+            let ran = records[0].asked().settings.iter().find_map(|setting| {
+                match (setting.name(), setting.value()) {
+                    (
+                        whizbang_core::recipe::runner::DIGEST_SETTING,
+                        whizbang_core::contract::record::ArgumentValue::Text(text),
+                    ) => Some(text.clone()),
+                    _ => None,
+                }
+            });
+            let now = (commanded.recipe_file.as_deref())
+                .and_then(|path| wiring::recipe_file(path).ok())
+                .map(|text| whizbang_core::identity::Digest::of_bytes(text.as_bytes()).to_string());
+            if let (Some(ran), Some(now)) = (ran, now)
+                && ran != now
+            {
+                recipe_changed = Some((ran, now));
+            }
+        }
+        let words = commands(&commanded)
+            .map_err(|why| Refused::new(422, &whizbang_serve::escaped(&why)))?;
+        crate::play_result::said_safely(&words)?;
+        let now = self.over.config_digest();
+        let changed = match (recorded, now) {
+            (Some(recorded), Some(now)) => recorded != now,
+            _ => false,
+        };
+        let mut text = String::new();
+        if changed && let (Some(recorded), Some(now)) = (recorded, now) {
+            text.push_str(&crate::play_result::said_line(&format!(
+                "the config has changed since this run: it ran under {recorded}, and this \
+                 command runs under the config as it is now, {now}"
+            )));
+        }
+        if let Some((ran, now)) = &recipe_changed {
+            text.push_str(&crate::play_result::said_line(&format!(
+                "the recipe file has changed since this run: it ran the text {ran}, and this \
+                 command runs the file as it is now, {now}"
+            )));
+        }
+        text.push_str(&crate::play_result::command_line(&words));
+        Ok(json!({
+            "command": text,
+            "words": words,
+            "config_changed": changed,
+            "recorded_config": recorded.map(|digest| digest.to_string()),
+            "config": now.map(|digest| digest.to_string()),
+            "recipe_changed": recipe_changed.is_some(),
+        }))
+    }
+
     fn default_backend(&self, capability: &str) -> Option<String> {
         let listed = backend_status::readiness(&self.over).ok()?;
         listed
@@ -342,6 +521,16 @@ impl Play for Playground {
         (admission.request() == Some(id)).then(|| admission.run().clone())
     }
 
+    fn shelf(&self) -> Option<&dyn whizbang_serve::play::history::Shelf> {
+        Some(self)
+    }
+
+    fn models(&self) -> Option<&dyn whizbang_serve::play::models::Models> {
+        self.models
+            .as_ref()
+            .map(|models| models as &dyn whizbang_serve::play::models::Models)
+    }
+
     fn closing(&self) {
         // The store's writer goes with the executor's: the host has let that go.
         self.store
@@ -349,10 +538,27 @@ impl Play for Playground {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
         *self.remembered() = Remembered::default();
+        if let Some(models) = &self.models {
+            models.closing();
+        }
         if let Some(worker) = &self.worker {
             worker.kill();
         }
     }
+}
+
+/// The config's name of the backend of this capability whose kind and model are these, as
+/// a run's record names a request's backend: none when the config names none, or more
+/// than one, so.
+fn resolved(rows: &[Json], capability: &str, kind: &str, model: &str) -> Option<String> {
+    let mut named = rows.iter().filter(|row| {
+        row["capability"] == capability && row["kind"] == kind && row["model"] == model
+    });
+    let one = named.next()?;
+    if named.next().is_some() {
+        return None;
+    }
+    one["name"].as_str().map(str::to_owned)
 }
 
 /// A backend's row with the size of the catalogue's model it would fetch, for a local

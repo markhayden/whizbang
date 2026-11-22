@@ -4,6 +4,10 @@ One TOML file says which backend answers each capability, what one call may spen
 who may receive data. This page is how to write it. Why it is this way, and exactly how
 its digest is made, is in `docs/adr/0011-the-config-file.md`.
 
+The playground (`whizbang play`, `docs/guides/playground.md`) reads this file and its env
+file, as every command does, and never writes either: its Models screen says whether each
+backend's key is set, and never shows, takes or stores a key.
+
 Every example on this page is read by the fast tier: a block that is shown as read is
 read, and a block that is shown as refused is refused with the sentence under it
 (`config::examples::every_example_in_the_guide_and_in_the_record_is_read`,
@@ -187,9 +191,9 @@ unless it leaves the worker's process group. List only files you wrote or read.
 
 ## Who may receive data
 
-This table is what will be enforced once the gate is built: nothing will leave the
-machine to a recipient it does not name, and a recipient will receive only the classes of
-data listed for it. Today it is read and checked, and nothing sends anything.
+This table is enforced: nothing leaves the machine to a recipient it does not name, and a
+recipient receives only the classes of data listed for it. Each run records where its data
+went.
 
 ```toml
 [egress.recipients.fal]
@@ -306,7 +310,29 @@ holds what the brief asked for and nothing it forbade; and `product-fidelity`, w
 product shot keeps the exact product. The judge is a backend of the kind `service`, whose
 provider is Anthropic, Google or OpenAI; the config names its model and the variable its
 key is in, caps what one call may reserve, and approves the provider for the four
-classes of data a check sends (plan 2A, "What the owner provides (S)"). For Anthropic:
+classes of data a check sends (plan 2A, "What the owner provides (S)").
+For Google, whose key goes in the header `x-goog-api-key` and never in the address:
+
+```toml
+[backends.judge]
+kind = "service"
+provider = "google"
+model = "gemini-4-argon"
+key_env = "GEMINI_API_KEY"
+
+[spend]
+call_cap_usd = 6.00
+
+[egress.recipients.google]
+origin = "https://generativelanguage.googleapis.com"
+classes = ["source_images", "derived_images", "prompts", "evidence"]
+```
+
+The cap of 6.00 covers three attempts of the loop under `gemini-4-argon` (5.92608 dollars,
+[The loop](loop.md), "What it costs"); a cap of 2.00 covers one check, but one loop attempt
+only (1.97536), so a loop under it never tries again.
+
+For Anthropic:
 
 ```toml
 [backends.judge]
@@ -320,23 +346,6 @@ call_cap_usd = 2.00
 
 [egress.recipients.anthropic]
 origin = "https://api.anthropic.com"
-classes = ["source_images", "derived_images", "prompts", "evidence"]
-```
-
-For Google, whose key goes in the header `x-goog-api-key` and never in the address:
-
-```toml
-[backends.judge]
-kind = "service"
-provider = "google"
-model = "gemini-3.8-flash"
-key_env = "GEMINI_API_KEY"
-
-[spend]
-call_cap_usd = 2.00
-
-[egress.recipients.google]
-origin = "https://generativelanguage.googleapis.com"
 classes = ["source_images", "derived_images", "prompts", "evidence"]
 ```
 
@@ -396,7 +405,12 @@ whizbang squint check brief-compliance --candidate <id> \
 `--job <file>` takes a squint job file in place of those flags: its brief, its
 requirements with their ids, and its images with their roles and labels. Each picture is
 brought into the store from the file the job names, relative to the job file's folder,
-and refused when its SHA-256 is not the one the job pins (ADR 0028).
+and refused when its SHA-256 is not the one the job pins (ADR 0028). `--job-json <json>`
+takes a job as a stored run holds it (the argument `job` of a check's record), with each of
+its images by `--image <id>`, by identity in the store, once each in the job's order: what the
+playground's Copy command writes for a check, so its requirements come with it. It is held as
+a job file is: at most 1 MiB, no picture given inline, and a picture whose SHA-256 the job
+pins must be one the store imported from a file of that SHA-256.
 
 Nothing is measured before the judge looks, unless the run asks: the judge is offered `view`
 and `align` and calls them, and a call of `align` is answered with its pictures and a fixed

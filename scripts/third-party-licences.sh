@@ -39,7 +39,9 @@
 # archive is made with no Node and no npm. The script fails when that list and those files
 # disagree: a dependency without a row, or at another version than ui/package-lock.json
 # pins; a row for a package that is not a dependency; a package under a licence that
-# deny.toml does not allow; a font file without a row, or a font not under OFL-1.1; a text
+# deny.toml does not allow; a font file without a row, or a font not under OFL-1.1; a font
+# outlined into a file of ui/public/brand/ (the wordmark) under a licence deny.toml does not
+# allow, or naming a file that is not there; a text
 # that is missing, empty, or not of its licence. The texts hold no address of a person.
 #
 # The Rust standard library is in the binary too, and in no lock file. Its two licence
@@ -270,15 +272,33 @@ while IFS=$'\037' read -r kind name version licence text source files; do
     package)
       pinned=$(jq -r --arg at "node_modules/$name" '.packages[$at].version // ""' ui/package-lock.json)
       [ "$pinned" = "$version" ] || die "ui/licences/list.tsv says $name $version, and ui/package-lock.json pins ${pinned:-nothing}"
-      printf '%s\n' "$allowed" | grep -x -F -e "$licence" >/dev/null ||
-        die "the package $name is under $licence, which deny.toml does not allow"
-      phrase=$(marker "$licence") || die "the package $name is under $licence, whose text this script cannot tell"
+      # A package under several licences at once (`A AND B`, marked's MIT and the BSD
+      # licence of the Markdown it is drawn from) has the text of each in its file.
+      parts=${licence// AND /$'\n'}
+      while IFS= read -r part; do
+        printf '%s\n' "$allowed" | grep -x -F -e "$part" >/dev/null ||
+          die "the package $name is under $part, which deny.toml does not allow"
+        phrase=$(marker "$part") || die "the package $name is under $part, whose text this script cannot tell"
+        tr -s '[:space:]' ' ' <"ui/licences/$text" | grep -i -F -e "$phrase" >/dev/null ||
+          die "ui/licences/$text is not a text of $part"
+      done <<<"$parts"
       ;;
     font)
       [ "$licence" = OFL-1.1 ] || die "the font $name is under $licence; a font is under OFL-1.1 only"
       phrase="SIL Open Font License"
       [ -n "$files" ] || die "the font $name names no file"
       for file in $files; do printf '%s\n' "$file" >>"$tmp/ui-fonts"; done
+      ;;
+    outlined)
+      # A font whose letters are drawn as outlines into a file of ui/public/brand/ (the
+      # wordmark): no font file ships, so its licence is any deny.toml allows.
+      printf '%s\n' "$allowed" | grep -x -F -e "$licence" >/dev/null ||
+        die "the outlined font $name is under $licence, which deny.toml does not allow"
+      phrase=$(marker "$licence") || die "the outlined font $name is under $licence, whose text this script cannot tell"
+      [ -n "$files" ] || die "the outlined font $name names no file"
+      for file in $files; do
+        [ -f "ui/public/brand/$file" ] || die "the outlined font $name names ui/public/brand/$file, which is missing"
+      done
       ;;
     *) die "a row of ui/licences/list.tsv is of no kind this script knows: $kind" ;;
   esac
@@ -355,7 +375,8 @@ released=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | sed -n '1p')
   echo
   echo "The binary holds the playground's built interface, which holds these npm packages, at"
   echo "the versions \`ui/package-lock.json\` pins, and these fonts, each under the SIL Open Font"
-  echo "License."
+  echo "License. A font of the kind \`outlined\` ships as no font file: its letters are drawn as"
+  echo "outlines into the files it names, under \`ui/public/brand/\`."
   echo
   echo "| Package or font | Version | Licence | From | Files |"
   echo "|---|---|---|---|---|"

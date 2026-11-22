@@ -9,6 +9,9 @@
 !docs/**/*.png
 # The parity fixtures: their pictures and planes (plan 1D, task V1).
 !fixtures/**/*.png
+# The owner's brand art, which the playground embeds (plan m5, task W3, item 6).
+!ui/public/brand/*.webp
+!ui/dist/brand/*.webp
 .claude/settings.local.json
 .claude/worktrees/
 # The nextest results of the script-test fixtures.

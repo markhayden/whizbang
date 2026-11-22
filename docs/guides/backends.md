@@ -3,7 +3,9 @@
 A backend is what answers a capability: a local model the pack's worker runs, or, from
 milestone 2, a provider somewhere else. The config file names them (`docs/guides/config.md`).
 `whizbang backends status` says, for each one the config offers, whether it is ready, and
-with `--probe` checks that it answers.
+with `--probe` checks that it answers. The playground's Models screen shows the same list
+without a probe, with whether each key is set (`docs/guides/playground.md`, "Models and
+keys").
 
 ```text
 whizbang backends status [--probe] [--config <file> [--env-file <file>]] [--models-dir <dir>]

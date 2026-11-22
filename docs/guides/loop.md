@@ -126,6 +126,14 @@ answer says it used, a check that takes two turns of its sixteen gives the rest 
 an attempt that is not made costs nothing; what a run settled is in its record, attempt
 by attempt.
 
+**The default judge** is the config's `default` judge backend, used when `--judge` names
+none. The config guide's first judge example names `gemini-4-argon`, the judge the judge
+round of milestone E picked over all sets under `judge-pick/1` (ADR 0044,
+`docs/results/e-judges.md`). The loop's own scope, the `source-fidelity` sets, picked no
+judge, so the loop keeps that one. Three checked attempts with
+`gemini-4-argon` reserve 5.926080 dollars, so a config that wants them sets
+`call_cap_usd` to at least that; with less, the plan says how many attempts the cap covers.
+
 **The cap of one call** (`spend.call_cap_usd`) is held against the bound of the whole
 plan. When three attempts would reserve more than the cap, the plan is the most attempts
 the cap covers, and it says so:

@@ -13,11 +13,25 @@ Check by a job: a task of the kit `squint`.
 
 Has a judge look at images through evidence tools and conclude: pass, fail or unsure.
 
+Arguments: `tools` (text), `judge` (text), `use_case` (text), `job` (text), `details` (choice), `detail` (text), `projection` (choice), `second_look` (choice), `submission` (choice), `measured` (text), `recipe_digest` (text), `cell` (text), `max_output_tokens` (integer).
+
+Takes: `images` (image, 1 to 10), `measured_images` (image, 0 to 32).
+
+Needs, each a capability a backend must be configured for: `judge`, up to 16 requests, chosen by `judge`.
+
 ## `remove_prompt`
 
 Remove what you name: a task of the kit `rascal`.
 
 Removes what a phrase names: its mask found, grown, closed, plugged, kept off protect and feathered, then filled.
+
+Arguments: `backend` (text), `filler` (text), `prompt` (text, required), `set` (text), `from` (choice), `until` (choice).
+
+Takes: `image` (image, 1 to 1), `protect` (mask, 0 to 1), `from_segment_mask` (mask, 0 to 64), `from_select_mask` (mask, 0 to 1), `from_grow_mask` (mask, 0 to 1), `from_close_mask` (mask, 0 to 1), `from_plug_mask` (mask, 0 to 1), `from_subtract_mask` (mask, 0 to 1), `from_feather_mask` (mask, 0 to 1).
+
+Gives: `image` (image, 1 to 1), `mask` (mask, 1 to 1), `until_segment_mask` (mask, 0 to 64), `until_select_mask` (mask, 0 to 1), `until_grow_mask` (mask, 0 to 1), `until_close_mask` (mask, 0 to 1), `until_plug_mask` (mask, 0 to 1), `until_subtract_mask` (mask, 0 to 1), `until_feather_mask` (mask, 0 to 1).
+
+Needs, each a capability a backend must be configured for: `segment`, up to 1 requests, chosen by `backend`; `fill`, up to 1 requests, chosen by `filler`.
 
 ## `remove`
 
@@ -25,11 +39,27 @@ Remove at a place: a task of the kit `rascal`.
 
 Removes the thing at a location: the mask grown, closed, plugged, kept off protect and feathered, then filled.
 
+Arguments: `backend` (text), `set` (text), `from` (choice), `until` (choice).
+
+Takes: `image` (image, 1 to 1), `location` (location, 1 to 1), `protect` (mask, 0 to 1), `from_rasterize_mask` (mask, 0 to 1), `from_grow_mask` (mask, 0 to 1), `from_close_mask` (mask, 0 to 1), `from_plug_mask` (mask, 0 to 1), `from_subtract_mask` (mask, 0 to 1), `from_feather_mask` (mask, 0 to 1).
+
+Gives: `image` (image, 1 to 1), `mask` (mask, 1 to 1), `until_rasterize_mask` (mask, 0 to 1), `until_grow_mask` (mask, 0 to 1), `until_close_mask` (mask, 0 to 1), `until_plug_mask` (mask, 0 to 1), `until_subtract_mask` (mask, 0 to 1), `until_feather_mask` (mask, 0 to 1).
+
+Needs, each a capability a backend must be configured for: `fill`, up to 1 requests, chosen by `backend`.
+
 ## `repair_area`
 
 Repair a spot: a task of the kit `rascal`.
 
 Repairs a stain or a spot at a location: the box or polygon as drawn, feathered, then filled.
+
+Arguments: `backend` (text), `set` (text), `from` (choice), `until` (choice).
+
+Takes: `image` (image, 1 to 1), `location` (location, 1 to 1), `from_rasterize_mask` (mask, 0 to 1), `from_feather_mask` (mask, 0 to 1).
+
+Gives: `image` (image, 1 to 1), `mask` (mask, 1 to 1), `until_rasterize_mask` (mask, 0 to 1), `until_feather_mask` (mask, 0 to 1).
+
+Needs, each a capability a backend must be configured for: `fill`, up to 1 requests, chosen by `backend`.
 
 ## `mask_rect`
 
@@ -37,11 +67,27 @@ Mask a rectangle: a task of the kit `rascal`.
 
 Makes a rectangle on an image a mask: the box's pixels the core, no blend and nothing protected.
 
+Arguments: `box` (text, required), `set` (text), `from` (choice), `until` (choice).
+
+Takes: `image` (image, 1 to 1), `from_rect_location` (location, 0 to 1).
+
+Gives: `mask` (mask, 1 to 1), `until_rect_location` (location, 0 to 1).
+
+Needs: no capability.
+
 ## `protect`
 
 Protect a first edit: a task of the kit `rascal`.
 
 Makes the mask for a second pass: what the first mask reached is protected, the rest of the image the core.
+
+Arguments: `set` (text).
+
+Takes: `image` (image, 1 to 1), `mask` (mask, 1 to 1).
+
+Gives: `mask` (mask, 1 to 1).
+
+Needs: no capability.
 
 ## `repair`
 
@@ -49,11 +95,27 @@ Repair a scratch: a task of the kit `rascal`.
 
 Repairs a scratch or a tear along a stroke: the stroke tightened to the defect's edges, feathered, then filled.
 
+Arguments: `backend` (text), `set` (text), `from` (choice), `until` (choice).
+
+Takes: `image` (image, 1 to 1), `stroke` (location, 1 to 1), `from_tighten_mask` (mask, 0 to 1), `from_feather_mask` (mask, 0 to 1).
+
+Gives: `image` (image, 1 to 1), `mask` (mask, 1 to 1), `until_tighten_mask` (mask, 0 to 1), `until_feather_mask` (mask, 0 to 1).
+
+Needs, each a capability a backend must be configured for: `fill`, up to 1 requests, chosen by `backend`.
+
 ## `seam`
 
 Heal a panorama seam: a task of the kit `rascal`.
 
 Heals the wrap edge of a panorama: the band along the seam measured, its tone step ramped, then filled and put back.
+
+Arguments: `backend` (text), `set` (text), `from` (choice), `until` (choice).
+
+Takes: `image` (image, 1 to 1), `from_cut_image` (image, 0 to 1), `from_cut_plan` (plan, 0 to 1), `from_line_location` (location, 0 to 1), `from_fan_band` (band_profile, 0 to 1), `from_band_mask` (mask, 0 to 1), `from_ramp_mask` (mask, 0 to 1), `from_apply_image` (image, 0 to 1), `from_apply_mask` (mask, 0 to 1), `from_fill_image` (image, 0 to 1), `from_fill_mask` (mask, 0 to 1).
+
+Gives: `image` (image, 1 to 1), `mask` (mask, 1 to 1), `until_cut_image` (image, 0 to 1), `until_cut_plan` (plan, 0 to 1), `until_line_location` (location, 0 to 1), `until_fan_band` (band_profile, 0 to 1), `until_band_mask` (mask, 0 to 1), `until_ramp_mask` (mask, 0 to 1), `until_apply_image` (image, 0 to 1), `until_apply_mask` (mask, 0 to 1), `until_fill_image` (image, 0 to 1), `until_fill_mask` (mask, 0 to 1).
+
+Needs, each a capability a backend must be configured for: `fill`, up to 1 requests, chosen by `backend`.
 
 ## `source-fidelity`
 
@@ -61,11 +123,27 @@ Check an edit: a task of the kit `squint`.
 
 Checks whether an edit kept what mattered in its source: the judge looks, and calls view and align as it needs.
 
+Arguments: `job` (text, required), `judge` (text), `set` (text), `from` (choice), `until` (choice).
+
+Takes: `images` (image, 1 to any), `from_details_images` (image, 0 to 32).
+
+Gives: `until_details_images` (image, 0 to 32).
+
+Needs, each a capability a backend must be configured for: `judge`, up to 16 requests, chosen by `judge`.
+
 ## `reference-consistency`
 
 Check against references: a task of the kit `squint`.
 
 Checks whether a subject of the references appears faithfully: the judge looks, and calls view and align as it needs.
+
+Arguments: `job` (text, required), `judge` (text), `set` (text), `from` (choice), `until` (choice).
+
+Takes: `images` (image, 1 to any), `from_details_images` (image, 0 to 32).
+
+Gives: `until_details_images` (image, 0 to 32).
+
+Needs, each a capability a backend must be configured for: `judge`, up to 16 requests, chosen by `judge`.
 
 ## `reality-checks`
 
@@ -73,11 +151,27 @@ Reality check: a task of the kit `squint`.
 
 Checks a picture for mistakes no real photograph would make: the judge looks, and calls view to look closer as it needs.
 
+Arguments: `job` (text, required), `judge` (text), `set` (text), `from` (choice), `until` (choice).
+
+Takes: `images` (image, 1 to any), `from_details_images` (image, 0 to 32).
+
+Gives: `until_details_images` (image, 0 to 32).
+
+Needs, each a capability a backend must be configured for: `judge`, up to 16 requests, chosen by `judge`.
+
 ## `brief-compliance`
 
 Check against a brief: a task of the kit `squint`.
 
 Checks whether a picture holds what its brief asked for and nothing it forbade: the judge looks, and calls view and align as it needs.
+
+Arguments: `job` (text, required), `judge` (text), `set` (text), `from` (choice), `until` (choice).
+
+Takes: `images` (image, 1 to any), `from_details_images` (image, 0 to 32).
+
+Gives: `until_details_images` (image, 0 to 32).
+
+Needs, each a capability a backend must be configured for: `judge`, up to 16 requests, chosen by `judge`.
 
 ## `product-fidelity`
 
@@ -85,144 +179,416 @@ Check a product shot: a task of the kit `squint`.
 
 Checks whether a product shot keeps the exact product of its references: the judge looks, and calls view and align as it needs.
 
+Arguments: `job` (text, required), `judge` (text), `set` (text), `from` (choice), `until` (choice).
+
+Takes: `images` (image, 1 to any), `from_details_images` (image, 0 to 32).
+
+Gives: `until_details_images` (image, 0 to 32).
+
+Needs, each a capability a backend must be configured for: `judge`, up to 16 requests, chosen by `judge`.
+
 ## `remove_checked`
 
 Remove, checked: a task of the kit `rascal`, which uses the kit `squint`.
 
 Removes what a phrase names, has the result checked against its source, and tries again a bounded number of times.
 
+Arguments: `prompt` (text, required), `backend` (text), `filler` (text), `judge` (text), `attempts` (integer), `check` (choice).
+
+Takes: `image` (image, 1 to 1), `protect` (mask, 0 to 1).
+
+Gives: `image` (image, 1 to 1), `mask` (mask, 1 to 1).
+
+Needs, each a capability a backend must be configured for: `segment`, up to 1 requests, chosen by `backend`; `fill`, up to 1 requests, chosen by `filler`; `judge`, up to 16 requests, chosen by `judge`.
+
 ## `align`
 
 Registers one flat image onto another of the same scene and viewpoint, and returns it warped into the other's frame.
+
+Takes: `image` (image, 1 to 1), `against` (image, 1 to 1).
+
+Gives: `aligned` (image, 0 to 1).
+
+Needs: no capability.
 
 ## `change_map`
 
 Shows where two images in one grid differ in structure: a grey map, bright where the locally normalised luminance disagrees.
 
+Takes: `frame` (image, 1 to 1), `against` (image, 1 to 1).
+
+Gives: `map` (image, 1 to 1).
+
+Needs: no capability.
+
 ## `edge_similarity`
 
 Scores how much two images in one grid share the same edges: 1 for the same structure, near 0 for unrelated ones.
+
+Takes: `frame` (image, 1 to 1), `against` (image, 1 to 1).
+
+Needs: no capability.
 
 ## `details`
 
 Measures the details of a use case's images before its judge looks, and hands on what each tool found.
 
+Arguments: `use_case` (choice, required), `job` (text, required), `details` (choice), `detail` (text).
+
+Takes: `images` (image, 1 to 10).
+
+Gives: `images` (image, 0 to 32).
+
+Needs: no capability.
+
 ## `close`
 
 Closes the core of a mask by a disc, so gaps and notches narrower than the disc fill in.
+
+Arguments: `radius_px` (number, required).
+
+Takes: `mask` (mask, 1 to 1).
+
+Gives: `mask` (mask, 1 to 1).
+
+Needs: no capability.
 
 ## `feather`
 
 Sets the blend of a mask to a feather of its core's edge, outward, with one sigma.
 
+Arguments: `sigma_px` (number, required).
+
+Takes: `mask` (mask, 1 to 1).
+
+Gives: `mask` (mask, 1 to 1).
+
+Needs: no capability.
+
 ## `grow`
 
 Grows the core of a mask by a disc, and further downward for a shadow.
+
+Arguments: `px` (number, required), `down_px` (number).
+
+Takes: `mask` (mask, 1 to 1).
+
+Gives: `mask` (mask, 1 to 1).
+
+Needs: no capability.
 
 ## `plug`
 
 Fills the holes of a mask's core up to a share of the area of the shape around each.
 
+Arguments: `max_share` (number).
+
+Takes: `mask` (mask, 1 to 1).
+
+Gives: `mask` (mask, 1 to 1).
+
+Needs: no capability.
+
 ## `render`
 
 Makes a mask into a picture: the image cut out by it (alpha), or its weight in grey (plain).
+
+Arguments: `profile` (choice, required).
+
+Takes: `mask` (mask, 1 to 1), `image` (image, 0 to 1).
+
+Gives: `image` (image, 1 to 1).
+
+Needs: no capability.
 
 ## `resize`
 
 Scales an image down to a long edge, so the whole picture can be seen at once.
 
+Arguments: `long_edge` (integer, required).
+
+Takes: `image` (image, 1 to 1).
+
+Gives: `resized` (image, 1 to 1).
+
+Needs: no capability.
+
 ## `segment`
 
 Finds each instance a phrase, a point or a box asks for in an image, as one mask for each.
+
+Arguments: `kind` (choice), `query` (text, required), `max_instances` (integer), `backend` (text).
+
+Takes: `image` (image, 1 to 1).
+
+Gives: `mask` (mask, 0 to 64).
+
+Needs, each a capability a backend must be configured for: `segment`, up to 1 requests, chosen by `backend`.
 
 ## `select`
 
 One mask from the instance masks to keep: the union of their cores, minus exclude boxes.
 
+Arguments: `exclude` (text), `at` (text), `use_case` (choice).
+
+Takes: `mask` (mask, 1 to 64).
+
+Gives: `mask` (mask, 1 to 1).
+
+Needs: no capability.
+
 ## `subtract`
 
 Protects the pixels of a second mask or a location, grown by a margin; with neither the mask is unchanged.
+
+Arguments: `grow_px` (number).
+
+Takes: `mask` (mask, 1 to 1), `subtract` (mask, 0 to 1), `location` (location, 0 to 1).
+
+Gives: `mask` (mask, 1 to 1).
+
+Needs: no capability.
 
 ## `view`
 
 Shows a region of an image closer, and the same region of a second image when one is given.
 
+Arguments: `left` (number, required), `top` (number, required), `right` (number, required), `bottom` (number, required).
+
+Takes: `image` (image, 1 to 1), `also` (image, 0 to 1).
+
+Gives: `crops` (image, 1 to 2).
+
+Needs: no capability.
+
 ## `paste`
 
 Pastes a fill onto its base image under a mask; every pixel the mask weighs nothing is the base's.
+
+Arguments: `mode` (choice), `constants` (choice).
+
+Takes: `image` (image, 1 to 1), `fill` (image, 1 to 1), `mask` (mask, 1 to 1).
+
+Gives: `image` (image, 1 to 1).
+
+Needs: no capability.
 
 ## `fill`
 
 Fills what a mask covers in an image with the configured filler, and rebinds the mask onto the result.
 
+Arguments: `backend` (text).
+
+Takes: `image` (image, 1 to 1), `mask` (mask, 1 to 1).
+
+Gives: `image` (image, 1 to 1), `mask` (mask, 1 to 1).
+
+Needs, each a capability a backend must be configured for: `fill`, up to 1 requests, chosen by `backend`.
+
 ## `cut`
 
 Cuts a panorama at its seam: its last and first strips side by side on a flat canvas whose middle column is the seam.
+
+Arguments: `strip` (number).
+
+Takes: `image` (image, 1 to 1).
+
+Gives: `image` (image, 1 to 1), `plan` (plan, 1 to 1).
+
+Needs: no capability.
 
 ## `put`
 
 Puts a cut's canvas back onto its panorama; nothing outside the two strips changes.
 
+Takes: `image` (image, 1 to 1), `canvas` (image, 1 to 1), `plan` (plan, 1 to 1), `mask` (mask, 1 to 1).
+
+Gives: `image` (image, 1 to 1).
+
+Needs: no capability.
+
 ## `window`
 
 Crops an image and its mask around the mask's support, with context; the mask handed back places the crop onto the image.
+
+Arguments: `max_side` (integer), `context` (number), `constants` (choice).
+
+Takes: `image` (image, 1 to 1), `mask` (mask, 1 to 1).
+
+Gives: `image` (image, 1 to 1), `mask` (mask, 1 to 1).
+
+Needs: no capability.
 
 ## `unwindow`
 
 Writes a crop back into exactly the box of the image window cut it from; nothing outside the box changes.
 
+Takes: `image` (image, 1 to 1), `crop` (image, 1 to 1), `mask` (mask, 1 to 1).
+
+Gives: `image` (image, 1 to 1).
+
+Needs: no capability.
+
 ## `apply`
 
 Performs a mask's prescriptions on its image, once each and in order, and rebinds the mask onto the working image.
+
+Takes: `image` (image, 1 to 1), `mask` (mask, 1 to 1).
+
+Gives: `image` (image, 1 to 1), `mask` (mask, 1 to 1).
+
+Needs: no capability.
 
 ## `line`
 
 A line location on an image: a whole column or a path, with its full width in pixels.
 
+Arguments: `column` (number), `column_share` (number), `path` (text), `width_px` (number, required).
+
+Takes: `image` (image, 1 to 1).
+
+Gives: `location` (location, 1 to 1).
+
+Needs: no capability.
+
 ## `rect`
 
 A box as a location on an image, from its left, top, right and bottom edges in pixels.
+
+Arguments: `box` (text, required).
+
+Takes: `image` (image, 1 to 1).
+
+Gives: `location` (location, 1 to 1).
+
+Needs: no capability.
 
 ## `stroke`
 
 A stroke location on an image: a rough mark along a path, with a radius in pixels.
 
+Arguments: `path` (text, required), `radius_px` (number, required).
+
+Takes: `image` (image, 1 to 1).
+
+Gives: `location` (location, 1 to 1).
+
+Needs: no capability.
+
 ## `rasterize`
 
 A location's inside as the core of a new mask: a box or polygon as drawn, a line as a band, a stroke widened.
+
+Arguments: `use_case` (choice).
+
+Takes: `location` (location, 1 to 1), `image` (image, 1 to 1).
+
+Gives: `mask` (mask, 1 to 1).
+
+Needs: no capability.
 
 ## `shrink`
 
 Shrinks the core of a mask by a disc; a core against the border shrinks from it too.
 
+Arguments: `px` (number, required).
+
+Takes: `mask` (mask, 1 to 1).
+
+Gives: `mask` (mask, 1 to 1).
+
+Needs: no capability.
+
 ## `invert`
 
 The mask for a second pass: what the first mask reached is protected, and every other pixel is the core.
+
+Arguments: `left` (integer), `top` (integer).
+
+Takes: `mask` (mask, 1 to 1), `image` (image, 1 to 1), `crop` (image, 0 to 1).
+
+Gives: `mask` (mask, 1 to 1).
+
+Needs: no capability.
 
 ## `carry`
 
 Carries masks from a crop onto the picture it was cut from: the same pixels, where the crop sits.
 
+Arguments: `left` (integer, required), `top` (integer, required).
+
+Takes: `mask` (mask, 1 to 64), `crop` (image, 1 to 1), `image` (image, 1 to 1).
+
+Gives: `mask` (mask, 1 to 64).
+
+Needs: no capability.
+
 ## `tighten`
 
 Tightens a stroke to the defect's edges: at each sample the two strongest opposite edges inside the stroke bound the core.
+
+Arguments: `min_contrast` (number), `min_defect_px` (number), `max_defect_factor` (number), `path_sigma` (number), `sample_spacing_px` (number), `constants` (choice).
+
+Takes: `stroke` (location, 1 to 1), `image` (image, 1 to 1).
+
+Gives: `mask` (mask, 1 to 1).
+
+Needs: no capability.
 
 ## `inspect`
 
 A mask for the eye: the overlay on its image, the core's width on each row, and its counts in the journal.
 
+Takes: `mask` (mask, 1 to 1), `image` (image, 1 to 1).
+
+Gives: `overlay` (image, 1 to 1), `widths` (series, 1 to 1).
+
+Needs: no capability.
+
 ## `fan`
 
 Measures the band along a column line: a half-width for each row, wide on smooth surfaces where the sides differ, thin on detail.
+
+Arguments: `object_edge` (number), `object_margin_px` (number), `tex_low` (number), `tex_high` (number), `wide_max` (number), `thin_px` (number), `row_sigma` (number), `width_sigma` (number), `ref_width` (integer), `gate` (boolean), `constants` (choice).
+
+Takes: `image` (image, 1 to 1), `line` (location, 1 to 1).
+
+Gives: `band` (band_profile, 1 to 1).
+
+Needs: no capability.
 
 ## `profile`
 
 Makes the band mask of a band profile: the core at each row's half-width, the blend a feather whose sigma follows the row.
 
+Arguments: `feather_ratio` (number), `constants` (choice).
+
+Takes: `band` (band_profile, 1 to 1).
+
+Gives: `mask` (mask, 1 to 1).
+
+Needs: no capability.
+
 ## `ramp`
 
 Measures the colour step across a band mask's line, row by row, and adds it to the mask as a tone ramp for apply.
 
+Arguments: `share` (number), `ramp_sigma` (number), `constants` (choice).
+
+Takes: `image` (image, 1 to 1), `mask` (mask, 1 to 1).
+
+Gives: `mask` (mask, 1 to 1).
+
+Needs: no capability.
+
 ## `measure`
 
 Measures a seam or a composite: continuity, tone step, transition, texture match and drift, per row; none is a verdict.
+
+Arguments: `set` (text), `constants` (choice).
+
+Takes: `after` (image, 1 to 1), `before` (image, 0 to 1), `mask` (mask, 1 to 1), `line` (location, 0 to 1).
+
+Gives: `continuity` (series, 0 to 1), `tone_step_dl` (series, 0 to 1), `tone_step_dchroma` (series, 0 to 1), `tone_step_dhue` (series, 0 to 1), `transition` (series, 0 to 1), `texture_match` (series, 0 to 1).
+
+Needs: no capability.

@@ -57,7 +57,7 @@ describe("the shell", () => {
   it("shows Home with the kits of hello, the status bar and the allowance", async () => {
     const { view } = mount("#/", Promise.resolve(HELLO));
     await settle();
-    expect(view.get("h1").textContent).toContain("whizbang");
+    expect(view.get("h1 img").getAttribute("alt")).toBe("whizbang");
     expect(view.all(".kit-panel h2").map((h) => h.textContent)).toEqual(["Rascal", "Squint"]);
     expect(view.text()).toContain("store /data/store");
     expect(view.text()).toContain("whizbang 0.1.0");
@@ -77,7 +77,7 @@ describe("the shell", () => {
       ["#/k/rascal", "This build has no kit of that name."],
       ["#/run/r-1", "Waiting for the first step."],
       ["#/history", "No runs yet."],
-      ["#/models", "does not list models"],
+      ["#/models", "Looking at the models directory"],
       ["#/nowhere", "no page at this address"],
     ]) {
       const { view } = mount(hash!, Promise.resolve({ version: "0.1.0" }));
@@ -109,8 +109,10 @@ describe("the shell", () => {
       const { view } = mount(hash, Promise.resolve(HELLO));
       await settle();
       expect(lastClient.hello, hash).toHaveBeenCalledTimes(1);
-      // Screens read (the runs still going, the pictures, a run's state): nothing else.
-      expect(lastClient.request, hash).not.toHaveBeenCalled();
+      // Screens read (the runs still going, the pictures, a run's state, the models):
+      // nothing else, and no request but a read.
+      const sent = vi.mocked(lastClient.request).mock.calls.filter(([method]) => method !== "GET");
+      expect(sent, hash).toEqual([]);
       expect(lastClient.upload, hash).not.toHaveBeenCalled();
       expect(lastClient.uploadPicture, hash).not.toHaveBeenCalled();
       expect(lastClient.start, hash).not.toHaveBeenCalled();
@@ -139,7 +141,7 @@ describe("the shell", () => {
     act(() => go("#k=nonsense&x"));
     await settle();
     expect(lastClient.setToken).toHaveBeenCalledTimes(1);
-    expect(view.get("h1").textContent).toContain("whizbang");
+    expect(view.get("h1 img").getAttribute("alt")).toBe("whizbang");
   });
 
   it("follows the address, and the keys open search, Home and a kit", async () => {
@@ -157,6 +159,7 @@ describe("the shell", () => {
     expect(go).toHaveBeenLastCalledWith("#/");
     press("k");
     expect(view.all("[role=dialog]")).toHaveLength(1);
-    expect(view.all("[role=option]").length).toBe(2);
+    // Each task, and each task's record (plan m5, task W3, item 7).
+    expect(view.all("[role=option]").length).toBe(4);
   });
 });

@@ -16,6 +16,23 @@ export interface Draft {
   /** What the page knows of the pictures the values name, to show them again. */
   pictures: Record<string, Picture>;
   at: number;
+  /** The result this draft was sent from (plan m5, task W2, item 3). */
+  sent?: Sent;
+  /** A check run again takes the job of the run it came from (task W2, item 4). */
+  jobOf?: string;
+}
+
+/** Where a draft that Send to opened came from: the run, its kit and task, and when. */
+export interface Sent {
+  run: string;
+  /** The sending run's kit and task, by the names a person reads. */
+  kit: string;
+  title: string;
+  at: number;
+  /** The fields it filled, tagged FROM <KIT>. */
+  fields: string[];
+  /** The run whose job the check takes (the loop's, from a removal's phrase). */
+  jobOf?: string;
 }
 
 export interface Store {

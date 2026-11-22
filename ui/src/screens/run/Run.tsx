@@ -12,12 +12,15 @@ import { useArtifact, useImageSize, useNow } from "../../hooks";
 import { rememberOutputs } from "../../outputs";
 import { hrefOf } from "../../routes";
 import { EmptyScreen } from "../Empty";
+import { Result } from "../result/Result";
+import { checksEnded, fetchRecord, flagsOf, type Place } from "../result/record";
 import { StoredPicture } from "../shared";
 
 export interface RunProps {
   id: string;
   hello?: Hello | null;
   client?: Client;
+  go?: (hash: string) => void;
 }
 
 /** What the screen keeps of a run as it is polled. */
@@ -39,10 +42,10 @@ export function Run(props: RunProps) {
       </EmptyScreen>
     );
   }
-  return <Following key={props.id} id={props.id} hello={props.hello ?? null} client={props.client} />;
+  return <Following key={props.id} id={props.id} hello={props.hello ?? null} client={props.client} go={props.go ?? (() => undefined)} />;
 }
 
-function Following(props: { id: string; hello: Hello | null; client: Client }) {
+function Following(props: { id: string; hello: Hello | null; client: Client; go: (hash: string) => void }) {
   const [followed, setFollowed] = useState<Followed>({ last: null, heard: [], action: null, arguments: null });
   const [problem, setProblem] = useState<ApiError | null>(null);
   const [stopping, setStopping] = useState(false);
@@ -78,6 +81,28 @@ function Following(props: { id: string; hello: Hello | null; client: Client }) {
     if (ended && outputs.length > 0) rememberOutputs(props.id, task?.title ?? followed.action ?? "", outputs, ago(Date.now(), Date.now()));
   }, [ended]);
 
+  // A check's places, drawn on the canvas once the check that made them has ended, while
+  // the loop goes on: read from that check's record (plan m5, task W1, item 6).
+  const checks = new Set(tasks.filter((one) => task?.uses && one.kit === task.uses).map((one) => one.name));
+  const checked = checksEnded(followed.heard, checks);
+  const lastCheck = checked[checked.length - 1] ?? null;
+  const [placed, setPlaced] = useState<{ image: string; places: Place[] } | null>(null);
+  useEffect(() => {
+    if (!lastCheck || typeof props.client.request !== "function") return;
+    let live = true;
+    fetchRecord(props.client, lastCheck).then(
+      (record) => {
+        const places = record.verdict?.places ?? [];
+        const image = places[0]?.image ?? record.inputs.find((one) => one.type === "image")?.id;
+        if (live && image) setPlaced({ image, places });
+      },
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [lastCheck]);
+
   if (!last && problem) {
     return (
       <EmptyScreen title={`Run ${middle(props.id, 24)}`} link={{ href: "#/", words: "Back to Home" }}>
@@ -106,6 +131,10 @@ function Following(props: { id: string; hello: Hello | null; client: Client }) {
   const tag = ended ? endTag(last?.outcome, last?.verdict) : null;
   const backHref = task ? hrefOf({ name: "kit", kit: task.kit ?? "tools", task: task.name }) : "#/";
 
+  if (ended && last?.state === "ended") {
+    return <Result id={props.id} hello={props.hello} client={props.client} go={props.go} steps={entries} />;
+  }
+
   const stop = () => {
     setStopping(true);
     props.client.cancelRun(props.id).catch((error: unknown) => {
@@ -125,6 +154,11 @@ function Following(props: { id: string; hello: Hello | null; client: Client }) {
             {tag ? <Tag kind={tag} /> : <Tag kind="running" detail={last?.state === "stopping" || stopping ? "stopping" : undefined} />}
           </div>
           <p class="workspace__purpose mono">run {props.id}</p>
+          {ended ? (
+            <a class="run__report" href={hrefOf({ name: "report", id: props.id })}>
+              Report
+            </a>
+          ) : null}
         </header>
         <dl class="run__inputs" aria-label="Inputs">
           {Object.entries(args).map(([name, value]) => {
@@ -167,7 +201,7 @@ function Following(props: { id: string; hello: Hello | null; client: Client }) {
       </section>
       <section class="workspace__centre" aria-label="Canvas">
         <div class="workspace__tabs">{views.length > 0 ? <Segmented label="View" segments={views} value={chosen} onChange={setView} /> : null}</div>
-        <Shown client={props.client} id={shownId} mask={chosen === "mask" ? maskId : null} zoom={zoom} onZoom={setZoom} name={chosen} />
+        <Shown client={props.client} id={going && placed ? placed.image : shownId} mask={chosen === "mask" ? maskId : null} places={going && placed ? placed.places : []} zoom={zoom} onZoom={setZoom} name={going && placed ? "the last checked attempt" : chosen} />
       </section>
       <aside class="workspace__right">
         <div class="run__steps-head">
@@ -180,8 +214,8 @@ function Following(props: { id: string; hello: Hello | null; client: Client }) {
   );
 }
 
-/** The picture of the view chosen, with a mask over it when the view is the mask. */
-function Shown(props: { client: Client; id: string | null; mask: string | null; zoom: number | "fit"; onZoom: (zoom: number | "fit") => void; name: string }) {
+/** The picture of the view chosen, with a mask over it when the view is the mask, or a check's places. */
+function Shown(props: { client: Client; id: string | null; mask: string | null; places: Place[]; zoom: number | "fit"; onZoom: (zoom: number | "fit") => void; name: string }) {
   const src = useArtifact(props.client, props.id);
   const maskSrc = useArtifact(props.client, props.mask);
   const size = useImageSize(src);
@@ -190,10 +224,10 @@ function Shown(props: { client: Client; id: string | null; mask: string | null; 
   return (
     <Canvas
       src={src}
-      name={props.name === "result" ? "the result" : "the original"}
+      name={props.name === "result" ? "the result" : props.name === "original" ? "the original" : props.name}
       width={size.width}
       height={size.height}
-      marks={maskSrc ? [{ kind: "mask", src: maskSrc, label: "mask" }] : []}
+      marks={maskSrc ? [{ kind: "mask", src: maskSrc, label: "mask" }] : flagsOf(props.places, props.id, size.width, size.height)}
       zoom={props.zoom}
       onZoom={props.onZoom}
     />

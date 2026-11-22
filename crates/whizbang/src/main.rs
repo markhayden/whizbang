@@ -1,24 +1,29 @@
 //! The `whizbang` binary: argument parsing and wiring only.
+//!
+//! The parse and dispatch ([`run`]) are callable apart from `main`: the playground's fixture
+//! host includes this file and runs a copied command line through them, over its own fake
+//! backends (plan m5, task W2, item 5). `main` is the one place that reads the process's
+//! arguments.
 
-mod backends;
-mod eval;
-mod export;
-mod lab;
-mod models;
-mod play;
-mod rascal;
+pub(crate) mod backends;
+pub(crate) mod command_of;
+pub(crate) mod eval;
+pub(crate) mod export;
+pub(crate) mod lab;
+pub(crate) mod models;
+pub(crate) mod play;
+pub(crate) mod rascal;
 #[cfg(test)]
 mod recovering;
-mod runs;
-mod serve;
-mod setup;
-mod spend;
+pub(crate) mod runs;
+pub(crate) mod serve;
+pub(crate) mod setup;
+pub(crate) mod spend;
 #[cfg(test)]
 mod spending;
-mod squint;
-mod stats;
-mod store;
-mod tool_try;
+pub(crate) mod squint;
+pub(crate) mod store;
+pub(crate) mod tool_try;
 
 use std::process::ExitCode;
 
@@ -37,7 +42,7 @@ const VERSION_AND_COMMIT: &str = concat!(
 );
 
 /// The commit alone, as `eval judges` records it beside what it scored (plan e1, task S1).
-const COMMIT: &str = env!("WHIZBANG_COMMIT");
+pub(crate) const COMMIT: &str = env!("WHIZBANG_COMMIT");
 
 #[derive(Parser)]
 #[command(
@@ -247,7 +252,18 @@ fn hub_sign_in_token_file() -> Option<std::path::PathBuf> {
 
 fn main() -> ExitCode {
     door::quiet_panics();
-    let cli = match Cli::try_parse() {
+    run(std::env::args_os())
+}
+
+/// Parses a command line, its first item the program's name, and runs it: what `main`
+/// does with the process's own arguments, and what the playground's fixture host does with
+/// a command it copied (plan m5, task W2, item 5).
+pub(crate) fn run<I, T>(args: I) -> ExitCode
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    let cli = match Cli::try_parse_from(args) {
         Ok(cli) => cli,
         Err(error) => return answered_by_the_parser(&error),
     };
