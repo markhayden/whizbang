@@ -596,6 +596,7 @@ impl Host {
             }),
             changed: Condvar::new(),
         });
+        shared.installs.wakes(&shared);
         let (send, receive) = sync_channel::<(TcpStream, Instant)>(QUEUED_LIMIT);
         let receive = Arc::new(Mutex::new(receive));
         let started = (|| -> io::Result<JoinHandle<()>> {

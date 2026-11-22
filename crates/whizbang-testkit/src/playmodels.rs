@@ -46,6 +46,9 @@ pub fn address_of(file: &str) -> String {
 #[derive(Default)]
 struct Gate {
     held: bool,
+    /// Held whatever a download's cancellation says, until released: an install that is
+    /// stopping and has not ended yet.
+    deaf: bool,
     /// How many downloads have started.
     started: u64,
 }
@@ -78,9 +81,19 @@ impl GatedDownloader {
         self.changed.notify_all();
     }
 
+    /// As [`GatedDownloader::hold`], and a download waiting at the gate does not end when
+    /// it is cancelled, until [`GatedDownloader::release`].
+    pub fn hold_deaf(&self) {
+        self.hold();
+        self.gate().deaf = true;
+    }
+
     /// Lets every waiting download go on.
     pub fn release(&self) {
-        self.gate().held = false;
+        let mut gate = self.gate();
+        gate.held = false;
+        gate.deaf = false;
+        drop(gate);
         self.changed.notify_all();
     }
 
@@ -103,7 +116,7 @@ impl Downloader for GatedDownloader {
         gate.started += 1;
         self.changed.notify_all();
         while gate.held && gate.started > 1 {
-            if cancellation.is_cancelled() {
+            if cancellation.is_cancelled() && !gate.deaf {
                 return Err(Fault::new(
                     FaultKind::Cancelled,
                     "the download was cancelled",

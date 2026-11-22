@@ -12,6 +12,7 @@ import {
   cancelInstall,
   dayOf,
   getModel,
+  cancellable,
   installing,
   isAllowance,
   lineOf,
@@ -46,6 +47,8 @@ export function Models(props: ModelsProps) {
   const [problem, setProblem] = useState<string | null>(null);
   const [asked, setAsked] = useState(0);
   const [helping, setHelping] = useState(false);
+  /** The model whose Remove was pressed, waiting for its confirmation. */
+  const [removing, setRemoving] = useState<string | null>(null);
 
   // The models, asked for again (every 250 ms) while an install runs.
   useEffect(
@@ -132,11 +135,33 @@ export function Models(props: ModelsProps) {
               size={model.bytes}
               state={stateOf(model)}
               onGet={() => act(() => getModel(client, model.name))}
-              onCancel={model.install === "stopping" ? undefined : () => act(() => cancelInstall(client, model.name))}
-              onRemove={() => act(() => removeModel(client, model.name))}
+              onCancel={cancellable(model) ? () => act(() => cancelInstall(client, model.name)) : undefined}
+              onRemove={() => setRemoving(model.name)}
               onHowToAdd={model.sign_in && model.sign_in !== "none" ? () => setHelping(true) : undefined}
             />
           ))}
+          {removing ? (
+            <div class="models__confirm" role="group" aria-label={`Remove ${removing}`}>
+              <p class="models__confirm-words">
+                Remove <span class="mono">{removing}</span>? Its files are deleted. Runs that use it are waited for five seconds; if they still hold it, nothing is removed.
+              </p>
+              <div class="models__confirm-actions">
+                <Button
+                  variant="danger"
+                  onClick={() => {
+                    const name = removing;
+                    setRemoving(null);
+                    act(() => removeModel(client, name));
+                  }}
+                >
+                  Remove {removing}
+                </Button>
+                <Button variant="quiet" onClick={() => setRemoving(null)}>
+                  Keep it
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </section>
         <section class="models__panel" aria-labelledby="models-cloud">
           <header class="models__panel-head">
@@ -255,7 +280,8 @@ function Allowance(props: { spend: Spend | null; client: Client; onReset: () => 
       {step !== "idle" ? (
         <div class="models__reset" role="group" aria-label="Reset the allowance">
           <p class="models__reset-words">
-            A reset closes the books: what was spent {since} stops counting, and the new allowance starts with nothing spent. It is the same as{" "}
+            A reset closes the books: what was spent {since} stops counting, and the new allowance starts with nothing spent. Runs already admitted keep what they reserved, under
+            the books they were admitted under. It is the same as{" "}
             <span class="mono">whizbang spend reset</span>.
           </p>
           <div class="models__reset-fields">

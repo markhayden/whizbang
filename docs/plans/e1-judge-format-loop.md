@@ -544,6 +544,11 @@ passes, and, if adopted, `check::the_default_submission_is_v2` and the baseline 
    model unless the source-fidelity scope picks another), under the settled format, the
    rule, the evidence, and that it is chosen again when a judge is added, a price changes by
    more than half, the format's default changes, or a later slice gates on fresh data.
+   (Note, 2026-11-21: written as ADR 0044, `docs/adr/0044-the-default-judge.md`, since
+   0041 to 0043 were taken before J1.)
+   (Note, 2026-11-22: the round picked over all sets and found no pick over
+   `source-fidelity`; the loop's judge is `check`'s pick, carried over, and not S1 item 5's
+   kept default, which was ineligible in that scope. ADR 0044, "Decision", item 2.)
 5. **The documents.** `docs/guides/config.md`: the first example names the pick, the others
    follow; `docs/guides/loop.md`: the default judge, and the call cap three attempts need
    with it; each use case's record, `docs/reference/tools/<use case>.md`, "Alternatives"
