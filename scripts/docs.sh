@@ -159,7 +159,7 @@ if ! jq -r -s '
               else "Gives: " + ((.outputs | map((.name | word) + " ("
                 + (.artifact | word | ltrimstr("`") | rtrimstr("`")) + ", " + (.count | count) + ")")) | join(", ")) + "." end),
              (if ((.needs // []) | length) == 0 then "Needs: no capability."
-              else "Needs: " + ((.needs | map((.capability | word)
+              else "Needs, each a capability a backend must be configured for: " + ((.needs | map((.capability | word)
                 + (if .requests == null then "" else ", up to \(.requests) requests" end)
                 + (if .chosen_by == null then "" else ", chosen by " + (.chosen_by | word) end))) | join("; ")) + "." end)) end) ]
   | join("\n\n")' "$tmp/description.json" >"$tmp/actions.md" 2>"$tmp/error"; then

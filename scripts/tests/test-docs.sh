@@ -105,6 +105,25 @@ cmp -s "$tmp/changed.json" "$tmp/frombin/description.json" || fail "a failed gen
 
 # --- Generation ----------------------------------------------------------------------------
 
+# An action's arguments, ports and needs are printed by their names (plan m5, task W3,
+# item 8), each held to the rule for names: one that could be read as markup is refused.
+cat >"$tmp/fields.json" <<'JSON'
+{"description_version": 1, "name": "whizbang", "version": "9.9.9", "actions": [
+  {"name": "fill", "purpose": "Fills.",
+   "arguments": [{"name": "prompt", "type": {"type": "text"}, "required": true}],
+   "inputs": [{"name": "image", "artifact": "image", "count": {"min": 1, "max": 1}}],
+   "outputs": [{"name": "mask", "artifact": "mask", "count": {"min": 0, "max": null}}],
+   "needs": [{"capability": "fill", "requests": 3, "chosen_by": "filler"}]},
+  {"name": "look", "purpose": "Looks.", "needs": []}]}
+JSON
+expect_pass "an action's fields" "$docs" --description "$tmp/fields.json" --out "$tmp/fields"
+for said in 'Arguments: `prompt` (text, required).' 'Takes: `image` (image, 1 to 1).' 'Gives: `mask` (mask, 0 to any).' \
+  'Needs, each a capability a backend must be configured for: `fill`, up to 3 requests, chosen by `filler`.' 'Needs: no capability.'; do
+  grep -q -x -F "$said" "$tmp/fields/actions.md" || fail "the page says: $said"
+done
+jq '.actions[0].arguments[0].name = "<img src=x onerror=y>"' "$tmp/fields.json" >"$tmp/marked.json"
+expect_fail "a field whose name is markup" "not a plain name" "$docs" --description "$tmp/marked.json" --out "$tmp/marked"
+
 # Odd spacing and key order: description.json is a copy, not a reformatting.
 printf '{"version":"9.9.9",   "name": "whizbang",\n "actions":[ ],"description_version":1}\n' >"$tmp/empty.json"
 cat >"$tmp/two.json" <<'JSON'

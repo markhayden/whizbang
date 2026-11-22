@@ -3,17 +3,24 @@
 One toolkit for working on images with models: finding and editing things in an image
 (`rascal`), judging an image against rules (`squint`), and a playground for both.
 
-**State:** little a person would use yet, and nothing that runs a model. Checkpoint 1A,
-the contracts and the store, is complete: [docs/plans/m1a-note.md](docs/plans/m1a-note.md).
-At its tag, `m1a`, one command runs an action: `whizbang rascal grow` grows a mask that is
-in a store and commits the result. `check`, squint's judge loop, is described and has no
-command, and cannot run on this build, which holds no judge. `whizbang runs list|show`
-reads what a run recorded, `whizbang store list|delete|prune|import` looks after a store,
-and `whizbang describe` says what the build holds. Checkpoint 1B, policy and controls, is
-complete too: [docs/plans/m1b-note.md](docs/plans/m1b-note.md). At its tag, `m1b`,
-`whizbang spend status|reset` shows and sets what a store may spend, and every backend,
-download and recipient is still a fake in a test. Checkpoint 1C, the local pack, is
-next. The design is in [SPEC.md](SPEC.md); the plans are in [docs/plans/](docs/plans/). It replaces four earlier projects, which stay available as
+**State:** milestones 1 to 4 are done (their notes are in [docs/plans/](docs/plans/)), and
+milestone 5, the playground, is being built. Whizbang runs on the command line, as a stdio
+server for agents, and in a browser:
+
+- `whizbang rascal …` finds what a phrase names, removes it and repairs a spot, with SAM 3
+  on the Mac and a filler in the cloud; `whizbang rascal remove-checked` removes and has
+  squint check the result, trying again when it fails.
+- `whizbang squint check` has a judge look at an edit through evidence tools and conclude
+  pass, fail or unsure, under five use cases.
+- `whizbang serve` offers both to an agent over stdio ([docs/guides/serve.md](docs/guides/serve.md)).
+- `whizbang play` opens the playground in Chrome: run a task from a picture and words,
+  watch it, read its report, and find every run again in History
+  ([docs/guides/playground.md](docs/guides/playground.md)).
+- `whizbang runs list|show|stats|export` reads what every run recorded, `whizbang store …`
+  looks after a store, `whizbang spend …` sets what it may spend, and `whizbang models …`
+  installs the local models.
+
+The design is in [SPEC.md](SPEC.md); the plans are in [docs/plans/](docs/plans/). It replaces four earlier projects, which stay available as
 reference; their final commits are pinned in [docs/sources.toml](docs/sources.toml).
 
 What a build can do is listed in [docs/reference/actions.md](docs/reference/actions.md), which

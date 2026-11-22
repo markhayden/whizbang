@@ -17,7 +17,7 @@ Arguments: `tools` (text), `judge` (text), `use_case` (text), `job` (text), `det
 
 Takes: `images` (image, 1 to 10), `measured_images` (image, 0 to 32).
 
-Needs: `judge`, up to 16 requests, chosen by `judge`.
+Needs, each a capability a backend must be configured for: `judge`, up to 16 requests, chosen by `judge`.
 
 ## `remove_prompt`
 
@@ -31,7 +31,7 @@ Takes: `image` (image, 1 to 1), `protect` (mask, 0 to 1), `from_segment_mask` (m
 
 Gives: `image` (image, 1 to 1), `mask` (mask, 1 to 1), `until_segment_mask` (mask, 0 to 64), `until_select_mask` (mask, 0 to 1), `until_grow_mask` (mask, 0 to 1), `until_close_mask` (mask, 0 to 1), `until_plug_mask` (mask, 0 to 1), `until_subtract_mask` (mask, 0 to 1), `until_feather_mask` (mask, 0 to 1).
 
-Needs: `segment`, up to 1 requests, chosen by `backend`; `fill`, up to 1 requests, chosen by `filler`.
+Needs, each a capability a backend must be configured for: `segment`, up to 1 requests, chosen by `backend`; `fill`, up to 1 requests, chosen by `filler`.
 
 ## `remove`
 
@@ -45,7 +45,7 @@ Takes: `image` (image, 1 to 1), `location` (location, 1 to 1), `protect` (mask, 
 
 Gives: `image` (image, 1 to 1), `mask` (mask, 1 to 1), `until_rasterize_mask` (mask, 0 to 1), `until_grow_mask` (mask, 0 to 1), `until_close_mask` (mask, 0 to 1), `until_plug_mask` (mask, 0 to 1), `until_subtract_mask` (mask, 0 to 1), `until_feather_mask` (mask, 0 to 1).
 
-Needs: `fill`, up to 1 requests, chosen by `backend`.
+Needs, each a capability a backend must be configured for: `fill`, up to 1 requests, chosen by `backend`.
 
 ## `repair_area`
 
@@ -59,7 +59,7 @@ Takes: `image` (image, 1 to 1), `location` (location, 1 to 1), `from_rasterize_m
 
 Gives: `image` (image, 1 to 1), `mask` (mask, 1 to 1), `until_rasterize_mask` (mask, 0 to 1), `until_feather_mask` (mask, 0 to 1).
 
-Needs: `fill`, up to 1 requests, chosen by `backend`.
+Needs, each a capability a backend must be configured for: `fill`, up to 1 requests, chosen by `backend`.
 
 ## `mask_rect`
 
@@ -101,7 +101,7 @@ Takes: `image` (image, 1 to 1), `stroke` (location, 1 to 1), `from_tighten_mask`
 
 Gives: `image` (image, 1 to 1), `mask` (mask, 1 to 1), `until_tighten_mask` (mask, 0 to 1), `until_feather_mask` (mask, 0 to 1).
 
-Needs: `fill`, up to 1 requests, chosen by `backend`.
+Needs, each a capability a backend must be configured for: `fill`, up to 1 requests, chosen by `backend`.
 
 ## `seam`
 
@@ -115,7 +115,7 @@ Takes: `image` (image, 1 to 1), `from_cut_image` (image, 0 to 1), `from_cut_plan
 
 Gives: `image` (image, 1 to 1), `mask` (mask, 1 to 1), `until_cut_image` (image, 0 to 1), `until_cut_plan` (plan, 0 to 1), `until_line_location` (location, 0 to 1), `until_fan_band` (band_profile, 0 to 1), `until_band_mask` (mask, 0 to 1), `until_ramp_mask` (mask, 0 to 1), `until_apply_image` (image, 0 to 1), `until_apply_mask` (mask, 0 to 1), `until_fill_image` (image, 0 to 1), `until_fill_mask` (mask, 0 to 1).
 
-Needs: `fill`, up to 1 requests, chosen by `backend`.
+Needs, each a capability a backend must be configured for: `fill`, up to 1 requests, chosen by `backend`.
 
 ## `source-fidelity`
 
@@ -129,7 +129,7 @@ Takes: `images` (image, 1 to any), `from_details_images` (image, 0 to 32).
 
 Gives: `until_details_images` (image, 0 to 32).
 
-Needs: `judge`, up to 16 requests, chosen by `judge`.
+Needs, each a capability a backend must be configured for: `judge`, up to 16 requests, chosen by `judge`.
 
 ## `reference-consistency`
 
@@ -143,7 +143,7 @@ Takes: `images` (image, 1 to any), `from_details_images` (image, 0 to 32).
 
 Gives: `until_details_images` (image, 0 to 32).
 
-Needs: `judge`, up to 16 requests, chosen by `judge`.
+Needs, each a capability a backend must be configured for: `judge`, up to 16 requests, chosen by `judge`.
 
 ## `reality-checks`
 
@@ -157,7 +157,7 @@ Takes: `images` (image, 1 to any), `from_details_images` (image, 0 to 32).
 
 Gives: `until_details_images` (image, 0 to 32).
 
-Needs: `judge`, up to 16 requests, chosen by `judge`.
+Needs, each a capability a backend must be configured for: `judge`, up to 16 requests, chosen by `judge`.
 
 ## `brief-compliance`
 
@@ -171,7 +171,7 @@ Takes: `images` (image, 1 to any), `from_details_images` (image, 0 to 32).
 
 Gives: `until_details_images` (image, 0 to 32).
 
-Needs: `judge`, up to 16 requests, chosen by `judge`.
+Needs, each a capability a backend must be configured for: `judge`, up to 16 requests, chosen by `judge`.
 
 ## `product-fidelity`
 
@@ -185,7 +185,7 @@ Takes: `images` (image, 1 to any), `from_details_images` (image, 0 to 32).
 
 Gives: `until_details_images` (image, 0 to 32).
 
-Needs: `judge`, up to 16 requests, chosen by `judge`.
+Needs, each a capability a backend must be configured for: `judge`, up to 16 requests, chosen by `judge`.
 
 ## `remove_checked`
 
@@ -199,7 +199,7 @@ Takes: `image` (image, 1 to 1), `protect` (mask, 0 to 1).
 
 Gives: `image` (image, 1 to 1), `mask` (mask, 1 to 1).
 
-Needs: `segment`, up to 1 requests, chosen by `backend`; `fill`, up to 1 requests, chosen by `filler`; `judge`, up to 16 requests, chosen by `judge`.
+Needs, each a capability a backend must be configured for: `segment`, up to 1 requests, chosen by `backend`; `fill`, up to 1 requests, chosen by `filler`; `judge`, up to 16 requests, chosen by `judge`.
 
 ## `align`
 
@@ -323,7 +323,7 @@ Takes: `image` (image, 1 to 1).
 
 Gives: `mask` (mask, 0 to 64).
 
-Needs: `segment`, up to 1 requests, chosen by `backend`.
+Needs, each a capability a backend must be configured for: `segment`, up to 1 requests, chosen by `backend`.
 
 ## `select`
 
@@ -383,7 +383,7 @@ Takes: `image` (image, 1 to 1), `mask` (mask, 1 to 1).
 
 Gives: `image` (image, 1 to 1), `mask` (mask, 1 to 1).
 
-Needs: `fill`, up to 1 requests, chosen by `backend`.
+Needs, each a capability a backend must be configured for: `fill`, up to 1 requests, chosen by `backend`.
 
 ## `cut`
 

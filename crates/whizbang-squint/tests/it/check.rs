@@ -1075,6 +1075,32 @@ fn a_judge_that_never_concludes_is_stopped_at_the_loops_bounds() {
     assert_eq!(last[2].text(), "not called: a run calls at most 32 tools");
 }
 
+/// Plan m5, task W3, item 3 (the carry-over row on stored exchanges): what a run of
+/// `check` keeps of its exchanges at its full budget of turns, each turn's text near its
+/// bound, measured, and held under what a run may store. Each exchange holds the whole
+/// request, so the total grows with the square of the turns.
+#[test]
+fn a_check_at_its_full_budget_of_turns_stores_its_exchanges_within_a_runs_bound() {
+    let world = World::new();
+    let said = "y".repeat(TURN_TEXT_LIMIT - 4096);
+    let turn = |at: usize| {
+        let call = calls(&format!("c{at}"), &world);
+        (json!([{"text": said}, call]), "tool_use")
+    };
+    let script: Vec<_> = (0..TURNS_LIMIT).map(turn).collect();
+    let (_, left, judge) = run(&world, &turns(&script), &[]);
+    assert_eq!(judge.requests() as usize, TURNS_LIMIT);
+    let sizes: Vec<usize> = (1..=TURNS_LIMIT)
+        .map(|n| left.diagnostic(&format!("exchange-{n:04}")).len())
+        .collect();
+    let total: usize = sizes.iter().sum();
+    // Measured on 2026-11-21: 16 exchanges, from 259,286 bytes to 4,137,673, 35,175,593
+    // (about 33.5 MiB) in all: about an eighth of the 256 MiB a run may store.
+    assert!(sizes.windows(2).all(|w| w[0] < w[1]), "{sizes:?}");
+    assert!(total < 40 << 20, "{total} bytes");
+    assert!(total > 24 << 20, "{total} bytes");
+}
+
 #[test]
 fn a_secret_in_a_judges_turn_a_tool_argument_and_a_tool_error_is_in_nothing_under_the_store() {
     // A made-up key, put together here: in the judge's text, in an argument of a call
