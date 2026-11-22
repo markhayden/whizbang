@@ -596,7 +596,17 @@ pub fn get_until(
                 },
             )
             .map_err(|refused| {
-                if refused == InstallRefused::Left {
+                // Cancelled before this request found that another request holds the
+                // model's install: it never attached, and it started nothing, but the
+                // other's install goes on all the same, as when one that attached leaves.
+                // The status record says so: this request wrote none, so one that says
+                // installing is the other's.
+                let others = refused == InstallRefused::Cancelled
+                    && whizbang_backends::models::status(&dir, entry.name(), &secrets)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|status| status.state() == State::Installing);
+                if refused == InstallRefused::Left || others {
                     kind.set(FailedKind::Left);
                 }
                 // Every file was held when looked at, so no token was read; one was

@@ -43,6 +43,17 @@ test-only +args:
 timing:
     scripts/timing.sh
 
+# The fast tests in two parts, each with its table and the same limit of 300 seconds: CI
+# runs `timing-fast` in the jobs `check (<runner>)` and `timing-sweeps` in the jobs
+# `sweeps (<runner>)`, because on the hosted macOS runner the whole came near its limit.
+# `sweeps` is the test group `crash-sweeps` and squint's check of every use case; `fast`
+# is every other test (scripts/timing.sh, `--part`). `just check` runs `timing`, the whole.
+timing-fast:
+    scripts/timing.sh --part fast
+
+timing-sweeps:
+    scripts/timing.sh --part sweeps
+
 # The pack's Python tests, with the Python the pack pins (pack/.python-version), offline,
 # through the guard; the runner ends itself at 60 seconds (scripts/test-pack.sh).
 test-pack:
@@ -182,17 +193,20 @@ scan-range-secrets base head:
 # secrets scan, the release archive made and installed, and the Chrome tier.
 ci: check-full deny-advisories smoke compile-fail scan-secrets package install-check e2e
 
-# `ci` in four parts, for CI, where the script tests alone take a runner three to five
+# `ci` in five parts, for CI, where the script tests alone take a runner three to five
 # minutes and the rest took the macOS runner past its limit: it runs each part in a job of
 # its own, side by side, on each runner (.github/workflows/ci.yml). The first is `ci`
-# without the script tests and without the release build and what follows it; the second
+# without the script tests, without the release build and what follows it, and with
+# `timing-fast` in the place of `timing`; the second
 # is those (the smoke of the release binary, the example that must not compile, the
 # secrets scan, and then the release archive made and installed: `package` and
 # `install-check`, plan m4, task R1); the third is the script tests, after `deny` as in `check`: one of them
 # reads the workspace's crates from cargo's home, where `deny` puts them; the fourth is
-# the recipe `e2e`, the Chrome tier, in jobs of its own (plan m5, task U1).
-# scripts/tests/test-ci-jobs.sh holds the four to `check-full` and `ci`.
-ci-without-scripts: fmt-check clippy graph deny docs-check ui-check timing test-pack deny-advisories
+# the recipe `e2e`, the Chrome tier, in jobs of its own (plan m5, task U1); the fifth is
+# `timing-sweeps`, the rest of `timing`, in the jobs `sweeps (<runner>)`: with every test in
+# `check (macos-15)` its test time came to 225 to 271 seconds of the 300.
+# scripts/tests/test-ci-jobs.sh holds the five to `check-full` and `ci`.
+ci-without-scripts: fmt-check clippy graph deny docs-check ui-check timing-fast test-pack deny-advisories
 
 ci-release: smoke compile-fail scan-secrets package install-check
 
