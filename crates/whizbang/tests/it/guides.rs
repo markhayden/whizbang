@@ -55,3 +55,69 @@ fn the_loops_guide_states_the_bound_of_an_attempt_for_each_judge_of_the_catalogu
     let index = include_str!("../../../../docs/guides/README.md");
     assert!(index.contains("[The loop: remove, check, retry](loop.md)"));
 }
+
+/// The code spans of a guide, each with its white space made single spaces, so a span
+/// that a line break cuts is read whole.
+fn spans(guide: &str) -> Vec<String> {
+    (guide.split('`').skip(1).step_by(2))
+        .map(|span| span.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect()
+}
+
+#[test]
+fn the_playgrounds_guide_names_only_cases_that_exist() {
+    // Plan m5, task E1, item 3: each example of the playground's guide is marked by the
+    // tier that holds it. A Rust case is named `<module>::<test>`, a Chrome case
+    // `<file>.spec.ts: <title>`; each must be in the tree, so a case renamed or dropped
+    // fails here and the guide is mended with it.
+    let guide = include_str!("../../../../docs/guides/playground.md");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let read = |path: &str| {
+        std::fs::read_to_string(root.join(path)).unwrap_or_else(|_| panic!("{path} is read"))
+    };
+    let modules = [
+        ("play", "crates/whizbang/tests/it/play.rs"),
+        ("play_result", "crates/whizbang/tests/it/play_result.rs"),
+        ("play_models", "crates/whizbang/tests/it/play_models.rs"),
+        ("play_guard", "crates/whizbang-serve/tests/it/play_guard.rs"),
+        ("guides", "crates/whizbang/tests/it/guides.rs"),
+    ];
+    let (mut rust, mut chrome) = (0, 0);
+    for span in spans(guide) {
+        if let Some((module, test)) = span.split_once("::") {
+            let Some((_, path)) = modules.iter().find(|(name, _)| *name == module) else {
+                continue;
+            };
+            if test == "…" {
+                // A module named as a whole, as the guide's first part names each.
+                continue;
+            }
+            assert!(
+                test.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'),
+                "a case is named whole: {span}"
+            );
+            assert!(
+                read(path).contains(&format!("fn {test}()")),
+                "the guide names a case that is not there: {span}"
+            );
+            rust += 1;
+        } else if let Some((file, title)) = span.split_once(".spec.ts: ") {
+            let text = read(&format!("ui/e2e/{file}.spec.ts"));
+            assert!(
+                text.contains(&format!("test(\"{title}\"")),
+                "the guide names a Chrome case that is not there: {span}"
+            );
+            chrome += 1;
+        }
+    }
+    // Every screen is held by cases of both tiers.
+    assert!(rust >= 40, "{rust} Rust cases named");
+    assert!(chrome >= 40, "{chrome} Chrome cases named");
+    for tier in ["(fast tier)", "(Chrome tier)", "by hand"] {
+        assert!(guide.contains(tier), "{tier}");
+    }
+    // The guide is listed with the others.
+    let index = include_str!("../../../../docs/guides/README.md");
+    assert!(index.contains("[The playground](playground.md)"));
+}

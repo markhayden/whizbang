@@ -2720,6 +2720,183 @@ fn the_submission_record_holds_only_aggregates() {
     }
 }
 
+/// The record of the loop by hand in the playground (plan m5, task E1, items 1 and 2).
+const PLAYGROUND_PAGE: &str = "docs/results/m5-playground.md";
+
+/// The cases of the playground's record, each with the fields it holds and no other.
+const PLAYGROUND_CASES: [(&str, &[&str]); 6] = [
+    (
+        "fail",
+        &[
+            "attempts",
+            "outcome",
+            "reserved_micros",
+            "seconds",
+            "verdict",
+        ],
+    ),
+    (
+        "pass",
+        &[
+            "attempts",
+            "outcome",
+            "reserved_micros",
+            "seconds",
+            "verdict",
+        ],
+    ),
+    (
+        "vague",
+        &["checked", "outcome", "reserved_micros", "seconds", "sent"],
+    ),
+    (
+        "unchecked",
+        &[
+            "attempts",
+            "checked",
+            "outcome",
+            "reserved_micros",
+            "seconds",
+        ],
+    ),
+    ("no-key", &["sent"]),
+    (
+        "quit",
+        &[
+            "open_reservations",
+            "outcome",
+            "reserved_micros",
+            "seconds_into_fill",
+            "store_took_a_writer",
+            "unresolved_micros",
+        ],
+    ),
+];
+
+#[test]
+fn the_playgrounds_record_holds_only_aggregates_and_run_ids() {
+    // The orchestrator's live runs, committed: each case its run id (or none, where no run
+    // was started), what the run settled, and the claims of its case; the totals the sum.
+    let page = std::fs::read_to_string(repository().join(PLAYGROUND_PAGE))
+        .expect("the playground's record is committed");
+    let block = |heading: &str| -> toml::Table {
+        page.split(&format!("{heading}\n\n```toml\n"))
+            .nth(1)
+            .and_then(|rest| rest.split("\n```").next())
+            .unwrap_or_else(|| panic!("the page has no block under {heading}"))
+            .parse()
+            .unwrap_or_else(|_| panic!("the block under {heading} is TOML"))
+    };
+    let whole = |fields: &toml::Table, name: &str| -> i64 {
+        fields[name]
+            .as_integer()
+            .unwrap_or_else(|| panic!("{name} is a whole number"))
+    };
+    let (mut runs, mut settled, mut unresolved) = (0_i64, 0_i64, 0_i64);
+    for (case, own) in PLAYGROUND_CASES {
+        let fields = block(&format!("### `{case}`"));
+        let mut names: Vec<&str> = fields.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        let mut wanted: Vec<&str> = ["case", "run", "settled_micros"].to_vec();
+        wanted.extend(own);
+        wanted.sort_unstable();
+        assert_eq!(names, wanted, "{case}: its fields");
+        assert_eq!(fields["case"].as_str(), Some(case));
+        let spent = whole(&fields, "settled_micros");
+        assert!(spent >= 0, "{case}");
+        settled += spent;
+        let run = fields["run"].as_str().expect("a run id, or none");
+        if run == "none" {
+            // No run was started, so nothing was sent or spent.
+            assert_eq!(case, "no-key");
+            assert_eq!(fields["sent"].as_str(), Some("nothing"));
+            assert_eq!(spent, 0);
+            continue;
+        }
+        runs += 1;
+        let (at, count) = run.split_once('-').expect("a run id is <ms>-<count>");
+        for part in [at, count] {
+            assert!(
+                !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()),
+                "{case}: {run}"
+            );
+        }
+        if let Some(reserved) = fields.get("reserved_micros") {
+            assert!(spent <= reserved.as_integer().unwrap(), "{case}");
+        }
+        match case {
+            "fail" | "pass" => {
+                assert_eq!(fields["outcome"].as_str(), Some("completed"));
+                assert_eq!(fields["verdict"].as_str(), Some(case));
+                assert!((1..=3).contains(&whole(&fields, "attempts")), "{case}");
+            }
+            "unchecked" => {
+                // No judge ready: one fill, not checked, and the run completed.
+                assert_eq!(fields["outcome"].as_str(), Some("completed"));
+                assert_eq!(fields["checked"].as_bool(), Some(false));
+                assert_eq!(whole(&fields, "attempts"), 1);
+                assert!(spent > 0, "the fill was paid for");
+            }
+            "vague" => {
+                // Found nothing: not checked, nothing sent, nothing spent.
+                assert_eq!(fields["outcome"].as_str(), Some("error"));
+                assert_eq!(fields["checked"].as_bool(), Some(false));
+                assert_eq!(fields["sent"].as_str(), Some("nothing"));
+                assert_eq!(spent, 0);
+            }
+            _ => {
+                assert_eq!(fields["outcome"].as_str(), Some("cancelled"));
+                assert_eq!(whole(&fields, "open_reservations"), 0);
+                assert_eq!(fields["store_took_a_writer"].as_bool(), Some(true));
+                unresolved += whole(&fields, "unresolved_micros");
+            }
+        }
+    }
+    let total = block("## The runs");
+    assert!(is_ancestor(total["commit"].as_str().unwrap()));
+    assert_eq!(total["whizbang"].as_str(), Some(LOOP_MEASURED_BY));
+    assert_eq!(whole(&total, "runs"), runs);
+    assert_eq!(whole(&total, "settled_micros"), settled);
+    assert_eq!(whole(&total, "unresolved_micros"), unresolved);
+    for held in [
+        "It scores nothing",
+        "kept out of the repository",
+        "## Found live",
+    ] {
+        assert!(page.contains(held), "{held}");
+    }
+    // Aggregates and run ids only: no item of the set or its phrase, no picture, no path,
+    // no key, no token.
+    let manifest: toml::Table =
+        std::fs::read_to_string(repository().join("labs/e-loop/segment-01.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
+    for item in manifest["item"].as_array().unwrap() {
+        for name in ["id", "phrase", "image"] {
+            let held = item[name].as_str().unwrap();
+            assert!(!page.contains(held), "{held}");
+        }
+    }
+    for held in [
+        "/Users/",
+        "/home/",
+        "/private/",
+        "/tmp/",
+        "~/",
+        "FAL_KEY",
+        "API_KEY",
+        "_KEY=",
+        "#k=",
+        ".png",
+        ".jpg",
+        ".webp",
+        "sha256:",
+    ] {
+        assert!(!page.contains(held), "{held}");
+    }
+}
+
 /// The loop round's record (plan e1, task L2), the tallies `scripts/loop-evidence.sh`
 /// wrote beside it, and the scores `whizbang eval loop score` writes once the round is
 /// scored.
