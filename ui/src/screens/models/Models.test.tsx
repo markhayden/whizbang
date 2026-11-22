@@ -149,6 +149,8 @@ describe("the models screen", () => {
     expect(stateOf({ name: "a", state: "damaged" })).toEqual({ kind: "damaged" });
     expect(stateOf({ name: "a", state: "not_for_this_platform", why: "it does not run here" })).toEqual({ kind: "not-set-up" });
     expect(lineOf({ name: "a", state: "not_for_this_platform", why: "it does not run here" }, [])).toBe("it does not run here");
+    expect(stateOf({ name: "a", state: "not_installed", sign_in: "not_here" })).toEqual({ kind: "not-set-up" });
+    expect(lineOf({ name: "a", state: "not_installed", sign_in: "not_here" }, [])).toContain("does not read");
     expect(lineOf({ name: "a", title: "A", state: "not_installed", last: { ended: "cancelled", why: "the install was cancelled" } }, [])).toBe("A · the install was cancelled");
     expect(["20", "12.50", "0.000001"].every(isAllowance)).toBe(true);
     expect(["", "-1", "12,50", "1.0000001", "1e3", " 20"].some(isAllowance)).toBe(false);

@@ -22,6 +22,7 @@ use whizbang::model_commands::Tools;
 use whizbang::play_models::PlayModels;
 use whizbang::playing::{self, Hosting, Playground};
 use whizbang::wiring::{self, Make, Platform, Uses};
+use whizbang_core::contract::SystemClock;
 use whizbang_serve::play::{Host, PORT_DEFAULT, Settings, Stopper, Token, threads};
 
 use crate::rascal::Under;
@@ -74,13 +75,16 @@ pub fn run(args: &Args, platform: Platform) -> Result<String, String> {
     let descriptors = registry.descriptors().cloned().collect();
     let executor = wiring::runner(registry, store.clone(), &over)?;
     // The Models screen (plan m5, task M1): the models commands' own tools, under the
-    // config and env file the host runs under, with the Hub's sign-in read by an install
-    // alone, as `models get` reads it.
-    let tools = Tools::shipped(
-        args.under.models_dir(),
-        platform.clone(),
-        Arc::new(crate::hub_sign_in_token_file),
-    )?;
+    // config and env file the host runs under. The Hub's sign-in is not read from the
+    // page: a token the config names in the env file is (`play_models::PlayModels`).
+    let models = wiring::Models::shipped()?
+        .flag(args.under.models_dir())
+        .platform(platform.clone());
+    let tools = Tools::of(
+        models,
+        Arc::new(SystemClock),
+        Arc::new(whizbang_backends::net::downloader),
+    );
     let asked = args.under.asked();
     let models = PlayModels::new(tools, asked.config, asked.env_file);
     let play = Arc::new(

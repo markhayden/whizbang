@@ -103,8 +103,10 @@ have not let it go, it says the model is busy and removes nothing.
 
 A model whose files need a sign-in (SAM 3's do, on Hugging Face) can be got from the page
 only when the config names where its token is (`[[models.tokens]]`, `docs/guides/models.md`,
-"A model whose files need a token"); otherwise its row says NOT SET UP and **How to add**
-says what to add. The page never asks for a token.
+"A model whose files need a token") as a variable of the env file (`key_env`); otherwise its
+row says NOT SET UP and **How to add** says what to add. The playground does not read the
+Hugging Face command-line sign-in (`sign_in = "huggingface"`): with that in the config, get
+the model with `whizbang models get`. The page never asks for a token.
 
 **In the cloud** lists each backend the config offers that sends data somewhere, with KEY
 SET when the env file sets the variable the config names for its key, NO KEY when it does

@@ -988,7 +988,9 @@ pub struct Row {
     /// Whether a download of the model needs a token the config does not lead to:
     /// `none` when it needs none or the config names where it is; `not_named` when the
     /// config names none for its origin; `not_set` when the config names a variable of
-    /// the env file that the env file does not set. Never the token, nor the variable.
+    /// the env file that the env file does not set; `not_here` when the config names the
+    /// Hub's sign-in and these tools were given no place for it (the playground's). Never
+    /// the token, nor the variable.
     pub sign_in: &'static str,
 }
 
@@ -1017,16 +1019,17 @@ fn state_word(words: &str) -> &'static str {
 }
 
 /// Whether the config leads to the token a download of this entry needs (see
-/// [`Row::sign_in`]). The Hub's sign-in is not read: that it is named is enough here,
-/// and `get` says when it is not there.
-fn sign_in_of(entry: &Entry, read: &Read) -> &'static str {
+/// [`Row::sign_in`]). The Hub's sign-in is not read: that it is named, and that these
+/// tools were given a place for it, is enough here, and `get` says when it is not there.
+fn sign_in_of(entry: &Entry, read: &Read, tools: &Tools) -> &'static str {
     let Some(origin) = entry.needs_token() else {
         return "none";
     };
     match read.tokens.iter().find(|token| token.origin() == origin) {
         None => "not_named",
         Some(token) => match token.from() {
-            TokenFrom::SignIn => "none",
+            TokenFrom::SignIn if tools.sign_in.is_some() => "none",
+            TokenFrom::SignIn => "not_here",
             TokenFrom::Variable(_) => match read.credentials.model_token(origin) {
                 Some(_) => "none",
                 None => "not_set",
@@ -1082,7 +1085,7 @@ pub fn rows(under: Under<'_>, tools: &Tools) -> Result<Vec<Row>, String> {
             state: state_word(&words),
             why: secrets.redact(&words),
             files_done,
-            sign_in: sign_in_of(entry, &read),
+            sign_in: sign_in_of(entry, &read, tools),
         });
     }
     Ok(rows)
@@ -1116,10 +1119,16 @@ pub fn installable(under: Under<'_>, model: &str, tools: &Tools) -> Result<(), S
                     .to_owned(),
             );
         }
-        match sign_in_of(entry, read) {
+        match sign_in_of(entry, read, tools) {
             "not_named" => Err(
                 "a download of the model needs a sign-in, and the config names none for its \
                  origin: add one under `[[models.tokens]]` (docs/guides/models.md, \"A model whose files need a token\")"
+                    .to_owned(),
+            ),
+            "not_here" => Err(
+                "a download of the model needs a token, and the config names the Hub's sign-in \
+                 for it, which the playground does not read: name a variable of the env file \
+                 as `key_env` in its place, or run `whizbang models get`"
                     .to_owned(),
             ),
             "not_set" => Err(

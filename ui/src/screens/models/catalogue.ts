@@ -18,7 +18,7 @@ export interface ModelInfo {
   why?: string;
   /** While an install runs: the files it has staged. */
   files_done?: number | null;
-  /** `none`, or why the download's sign-in is missing: `not_named`, `not_set`. */
+  /** `none`, or why the download's sign-in is missing: `not_named`, `not_set`, `not_here`. */
   sign_in?: string;
   /** This host's install of it: `installing` or `stopping`. */
   install?: string;
@@ -106,6 +106,8 @@ export function lineOf(model: ModelInfo, usedBy: string[]): string {
     parts.push(model.install === "stopping" ? "cancelling" : "installing: counted in files, not bytes");
   } else if (model.sign_in === "not_named") {
     parts.push("its download needs a sign-in the config does not name");
+  } else if (model.sign_in === "not_here") {
+    parts.push("its download needs the Hugging Face sign-in, which the playground does not read: name a token in the env file");
   } else if (model.sign_in === "not_set") {
     parts.push("its download needs a token the env file does not set");
   } else if (model.state && model.state !== "installed" && model.state !== "not_installed" && model.why) {

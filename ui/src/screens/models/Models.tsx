@@ -169,7 +169,8 @@ function HowToAdd(props: { config: string | null; onClose: () => void }) {
         <span class="mono">key_env = "NAME"</span>; the key itself goes in the env file, as <span class="mono">NAME=…</span>, and nowhere else.
       </p>
       <p>
-        A model whose files need a sign-in names where its token is under <span class="mono">[[models.tokens]]</span> in the config: a variable of the env file, or the Hugging Face sign-in.
+        A model whose files need a sign-in names where its token is under <span class="mono">[[models.tokens]]</span> in the config, as a variable of the env file (the playground does not read the Hugging Face sign-in;
+        <span class="mono"> whizbang models get</span> does).
         Then start the playground again with the same <span class="mono">--config</span> and <span class="mono">--env-file</span>.
       </p>
       <p class="models__help-guide">The guide: docs/guides/playground.md, "Models and keys".</p>

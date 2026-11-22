@@ -1103,7 +1103,10 @@ removal at a time. The fixture host's catalogue adds the test kit's `pocket`
 an env file of its own. Chrome's cancel case shows the earlier state (not installed) kept;
 an earlier installation of another revision kept is the Rust case's, since the fixture's
 catalogue has one revision. The top bar's allowance is the one `hello` read when the page
-opened, until the page is opened again.
+opened, until the page is opened again. The playground does not read the Hub's
+command-line sign-in (only `main.rs` names where it is, `scripts/tests/test-sign-in.sh`):
+a model's token is taken from the env file, and a config that names the sign-in is told to
+use `whizbang models get`.
 
 ## E1. The loop by hand in the playground, and the guide (medium; the orchestrator's runs)
 
