@@ -264,15 +264,15 @@ fn the_command_copied_from_a_mask_rect_run_makes_the_same_call_with_the_shipped_
     assert_eq!(command.status, 200, "{}", command.text());
     let text = command.json()["command"].as_str().unwrap().to_owned();
     assert!(text.starts_with("whizbang rascal mask-rect "), "{text}");
-    // The host stops first: the store has one writer. Then a shell runs the copied text,
-    // with `whizbang` the shipped binary.
+    // The host stops first: the store has one writer. Then the shipped binary runs the
+    // copied words (how a shell reads the quoted text is the quoting test's).
     let (code, _, err) = played.ended();
     assert_eq!(code, Some(0), "{err}");
-    let binary = quoted(env!("CARGO_BIN_EXE_whizbang"));
-    let script = format!("{binary}{}", text.strip_prefix("whizbang").unwrap());
-    let mut shell = whizbang_testkit::binary::command("/bin/sh");
-    shell.args(["-c", &script]);
-    let out = shell.output().unwrap();
+    let words: Vec<String> = serde_json::from_value(command.json()["words"].clone()).unwrap();
+    assert_eq!(command_line(&words), text);
+    let mut binary = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"));
+    binary.args(&words[1..]);
+    let out = binary.output().unwrap();
     assert!(
         out.status.success(),
         "{}",
