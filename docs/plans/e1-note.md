@@ -2,10 +2,9 @@
 
 The first slice of milestone E, "the default judge, the submission format, the loop's
 retries", ends with task L2 of `e1-judge-format-loop.md`. This note is written by L2's pull
-request from its branch, after the three rounds were run. It is not finished: the loop
-round's scores (`whizbang eval loop score`, one TOML a judge) are not yet in, and the parts
-that need them say so. Its slice ran beside milestone 5, as decided with the owner on
-2026-11-20 (`docs/plans/m4-note.md`).
+request from its branch, after the three rounds were run and the loop round was scored.
+Its slice ran beside milestone 5, as decided with the owner on 2026-11-20
+(`docs/plans/m4-note.md`).
 
 ## The three outcomes
 
@@ -23,8 +22,20 @@ that need them say so. Its slice ran beside milestone 5, as decided with the own
   `segmentation/segment-01`, under Argon and under `claude-haiku-5-5`, two repetitions each,
   80 runs (`docs/results/e-loop.md`). Under Argon 26 of 40 runs retried, with 19 wider and 16
   located retries; under Haiku 7 of 40, with 1 and 9. Both kinds of retry were made live for
-  the first time. What a retry did to the mask, against the hand-drawn truth masks, is
-  written once the round is scored.
+  the first time. Scored against the hand-drawn truth masks (`whizbang eval loop score`;
+  `docs/results/e-loop-score-<judge>.toml`):
+  - Under Argon a retry never lowered mask coverage: of 35 retries compared with the
+    attempt before, 6 raised it, 29 left it within 0.01 and none lowered it. The gains are
+    in keep-the-hole (4 of 8) and parts (2 of 16), none in thin (0 of 8) or whole (0 of 3).
+  - The kept masks' mean coverage was 0.88 against the first masks' 0.86, and 14 of the 37
+    runs with a kept mask ended under-covered.
+  - When the mask was under-covered, Argon found a confident violation of `RQ1` in 32
+    attempts and none in 4; those 4 are the 4 runs that passed, all in keep-the-hole.
+  - 23 of Argon's 33 runs that ended `fail` had a kept mask that was not under-covered.
+    Mask coverage cannot say whether those fills left a trace or the judge is strict: only
+    the owner's marks on the blind contact sheet can, and the record makes no claim either
+    way without them.
+  - Haiku retried rarely: 1 of its 10 retries compared raised coverage, and none lowered it.
 
 All three are descriptive and admit nothing: the gate on fresh data that would admit a
 default judge or a format is owed (below).
@@ -40,7 +51,7 @@ default judge or a format is owed (below).
 | #264 | F1 | Submission v2, a setting no default uses |
 | #267 | F2 | The format round and its decision: v2 not adopted (clause c) |
 | #270 | J1 | The judge round, its record, and the default judge (ADR 0044) |
-| This one | L2 | The loop round's tallies and record; `eval loop score` reading a grey truth mask with a colour profile; this note |
+| This one | L2 | The loop round's tallies, scores and record; `eval loop score` reading a grey truth mask with a colour profile; this note |
 
 Each record is held to its numbers by a test: `evidence::the_submission_record_holds_only_aggregates`,
 `evidence::the_judges_record_holds_only_aggregates` and
@@ -96,8 +107,8 @@ only about the masks.
 ## What moved to the carry-over list
 
 Narrowed: the loop's retries, wider and located, have no live evidence. Both kinds were made
-live and recorded; what is left is what each retry changed, beside the attempt before it,
-which the loop round's scores give.
+live and recorded, and what each retry did to the mask is scored beside the attempt before
+it; what is left is what it did to the finished picture, owed to the owner's marks.
 
 Opened by this note:
 
@@ -118,6 +129,7 @@ Opened by this note:
 
 ## What the next slice of E owes
 
-The loop's rung 2 scored and read; its visual quality confirmed by a person; the gate on
+The loop's finished pictures judged by a person, from the owner's marks of the contact
+sheet; its visual quality confirmed by a person; the gate on
 fresh data for the default judge and the format; the blinded picking rounds of milestone 3;
 `tiles` and the second look; details first gated again on fresh data.

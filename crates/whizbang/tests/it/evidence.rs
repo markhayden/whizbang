@@ -2731,12 +2731,8 @@ const LOOP_ROUND_REPETITIONS: [i64; 2] = [1, 2];
 /// Twice the plan's estimate of the round (plan e1, "Spend": a round that passes twice its
 /// estimate stops and is said).
 const LOOP_ROUND_MOST_MICROS: i64 = 10_000_000;
-/// The sections the scores fill, each a line `| Pending |` until they are in.
-const LOOP_ROUND_SCORED: [&str; 3] = [
-    "## Mask coverage across a retry",
-    "## The judge's `RQ1` answer against mask under-coverage",
-    "## The runs that ended under-covered, and why",
-];
+/// The rows of the scored tables: each group in the manifest's order, then the whole round.
+const LOOP_ROUND_ALL: &str = "all";
 
 /// The integer field `name` of a table, or of the table `table` in it.
 fn integer(tally: &toml::Table, table: Option<&str>, name: &str) -> i64 {
@@ -2953,53 +2949,151 @@ fn the_loop_records_hold_only_aggregates_by_group() {
         "the page states the round's whole spend"
     );
 
-    // The scores: either none yet, and each section they fill says so; or one for each
-    // judge, of this manifest, over both repetitions.
-    let scores: Vec<PathBuf> = (LOOP_ROUND_JUDGES.iter())
-        .map(|judge| results.join(format!("e-loop-score-{judge}.toml")))
-        .collect();
-    let scored = scores.iter().filter(|p| p.exists()).count();
-    assert!(
-        scored == 0 || scored == scores.len(),
-        "a score for every judge, or none"
-    );
-    for heading in LOOP_ROUND_SCORED {
-        let section = page
-            .split(&format!("{heading}\n"))
-            .nth(1)
-            .and_then(|rest| rest.split("\n## ").next())
-            .unwrap_or_else(|| panic!("the page has no {heading}"));
-        assert_eq!(
-            section.contains("| Pending |"),
-            scored == 0,
-            "{heading}: pending exactly while there is no score"
-        );
-    }
+    // The scores, one for each judge, of this manifest, over both repetitions, every run
+    // requested and none missing.
     let mut marked = false;
-    for (judge, path) in LOOP_ROUND_JUDGES.iter().zip(&scores) {
-        if !path.exists() {
-            continue;
-        }
-        let text = std::fs::read_to_string(path).unwrap();
+    let mut scores: Vec<(&str, toml::Table)> = Vec::new();
+    for judge in LOOP_ROUND_JUDGES {
+        let path = results.join(format!("e-loop-score-{judge}.toml"));
+        let text = std::fs::read_to_string(&path).expect("each judge's score is committed");
         let score: toml::Table = text.parse().expect("a score is TOML");
         assert_eq!(score["schema"].as_str(), Some("loop-score/1"));
-        assert_eq!(score["judge"].as_str(), Some(*judge));
+        assert_eq!(score["judge"].as_str(), Some(judge));
         assert_eq!(score["set"].as_str(), Some(manifest.set.as_str()));
         assert_eq!(
             score["images_rev"].as_str(),
             Some(manifest.images_rev.as_str())
         );
+        assert_eq!(
+            score["manifest_sha256"].as_str(),
+            Some(digest_of(LOOP_ROUND_MANIFEST).as_str())
+        );
         assert_eq!(score["entries"].as_integer(), Some(20));
         assert_eq!(score["repetitions"].as_integer(), Some(2));
+        assert_eq!(score["under_covered_below"].as_float(), Some(0.95));
         assert_eq!(score["all"]["requested"].as_integer(), Some(40));
+        assert_eq!(score["all"]["missing"].as_integer(), Some(0));
         let by_group = score["group"].as_table().expect("the score by group");
         assert_eq!(
             by_group.keys().cloned().collect::<Vec<_>>(),
             groups.keys().cloned().collect::<Vec<_>>()
         );
+        // The score's runs by group are the tallies'.
+        for (group, fields) in by_group {
+            let runs: i64 = (of_judge(judge).iter())
+                .map(|t| t["group"][group.as_str()]["runs"].as_integer().unwrap())
+                .sum();
+            assert_eq!(fields["runs"].as_integer(), Some(runs), "{judge} {group}");
+        }
         marked |= score["marked"].as_bool().unwrap();
         texts.push(text);
+        scores.push((judge, score));
     }
+
+    // The scored tables are the scores' numbers, row for row: for each judge, each group
+    // in the manifest's order and then the whole round.
+    let mut names: Vec<&str> = order.clone();
+    names.push(LOOP_ROUND_ALL);
+    let of = |score: &toml::Table, name: &str| -> toml::Table {
+        let value = match name {
+            LOOP_ROUND_ALL => &score["all"],
+            group => &score["group"][group],
+        };
+        value.as_table().unwrap().clone()
+    };
+    let count =
+        |table: &toml::Table, part: &str, name: &str| -> i64 { integer(table, Some(part), name) };
+    let mean = |table: &toml::Table, part: &str| -> String {
+        match table[part]
+            .get("coverage_mean")
+            .and_then(toml::Value::as_float)
+        {
+            Some(mean) => format!("{mean:.3}"),
+            None => "none".to_owned(),
+        }
+    };
+    let each = |row: &dyn Fn(&str, &str, &toml::Table) -> String| -> Vec<String> {
+        let mut rows = Vec::new();
+        for (judge, score) in &scores {
+            for name in &names {
+                rows.push(row(judge, name, &of(score, name)));
+            }
+        }
+        rows
+    };
+    let wanted = each(&|judge, name, g| {
+        let r = |n: &str| count(g, "coverage_across_a_retry", n);
+        format!(
+            "| `{judge}` | {name} | {} | {} | {} | {} | {} | {} | {} |",
+            r("compared"),
+            r("coverage_up"),
+            r("coverage_within"),
+            r("coverage_down"),
+            r("size_larger"),
+            r("size_within"),
+            r("size_smaller"),
+        )
+    });
+    assert_eq!(rows_under(&page, "## Mask coverage across a retry"), wanted);
+    let wanted = each(&|judge, name, g| {
+        let h = |n: &str| count(g, "kept_had_the_highest_coverage", n);
+        format!(
+            "| `{judge}` | {name} | {} | {} | {} | {} | {} | {} | {} of {} |",
+            count(g, "first_shaped_mask", "attempts"),
+            mean(g, "first_shaped_mask"),
+            count(g, "first_shaped_mask", "under_covered"),
+            count(g, "kept_shaped_mask", "attempts"),
+            mean(g, "kept_shaped_mask"),
+            count(g, "kept_shaped_mask", "under_covered"),
+            h("highest"),
+            h("runs"),
+        )
+    });
+    assert_eq!(
+        rows_under(&page, "## Mask coverage of the first and the kept attempt"),
+        wanted
+    );
+    let wanted = each(&|judge, name, g| {
+        let q = |n: &str| count(g, "rq1_against_under_coverage", n);
+        format!(
+            "| `{judge}` | {name} | {} | {} | {} | {} | {} | {} | {} |",
+            q("checked"),
+            q("confident_violation_under_covered"),
+            q("confident_violation_covered"),
+            q("tentative_violation_under_covered"),
+            q("tentative_violation_covered"),
+            q("no_violation_under_covered"),
+            q("no_violation_covered"),
+        )
+    });
+    assert_eq!(
+        rows_under(
+            &page,
+            "## The judge's `RQ1` answer against mask under-coverage"
+        ),
+        wanted
+    );
+    let wanted = each(&|judge, name, g| {
+        let why = g["ended_under_covered_by_reason"].as_table().unwrap();
+        let why: Vec<String> = (why.iter())
+            .map(|(reason, n)| format!("`{reason}` {}", n.as_integer().unwrap()))
+            .collect();
+        format!(
+            "| `{judge}` | {name} | {} | {} | {} |",
+            count(g, "kept_shaped_mask", "attempts"),
+            integer(g, None, "ended_under_covered"),
+            if why.is_empty() {
+                "none".to_owned()
+            } else {
+                why.join(", ")
+            },
+        )
+    });
+    assert_eq!(
+        rows_under(&page, "## The runs that ended under-covered, and why"),
+        wanted
+    );
+    assert!(!page.contains("Pending"));
     // Without the owner's marks, nothing is said of the finished pictures.
     if !marked {
         assert!(page.contains("makes no claim about the finished pictures"));
