@@ -1685,6 +1685,43 @@ fn a_paid_run_says_what_the_ledger_settled_of_what_it_reserved() {
         (allowance["left"].as_f64().unwrap() - 9.96).abs() < 1e-9,
         "{allowance}"
     );
+    // Nothing is going, so nothing is held, and the count is exact.
+    assert_eq!(allowance["held"], 0.0, "{allowance}");
+    assert_eq!(allowance["exactly"], true, "{allowance}");
+}
+
+#[test]
+fn hello_says_what_a_run_going_holds_apart_from_what_was_spent() {
+    let kitted = Kitted::new("play-held");
+    let arguments = json!({"image": kitted.picture(35), "prompt": "the hose"});
+    let prepared = kitted.prepare("remove_prompt", &arguments);
+    let bound = prepared["bound"].as_f64().unwrap();
+    kitted.kit().set("hold").unwrap();
+    let started = kitted.begin(
+        "remove_prompt",
+        &arguments,
+        &prepared["handle"],
+        &fresh_id(),
+    );
+    assert_eq!(started.status, 201, "{}", started.text());
+    let run = started.json()["run"].as_str().unwrap().to_owned();
+    // While the run is held, its reservation is held, and nothing is spent yet.
+    let limit = Instant::now() + Duration::from_secs(20);
+    let allowance = loop {
+        let hello = kitted.api("GET", "/api/hello", None).json();
+        if hello["allowance"]["held"].as_f64().unwrap_or(0.0) > 0.0 {
+            break hello["allowance"].clone();
+        }
+        assert!(Instant::now() < limit, "nothing was ever held: {hello}");
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert!(
+        (allowance["held"].as_f64().unwrap() - bound).abs() < 1e-9,
+        "{allowance}"
+    );
+    assert_eq!(allowance["spent"], 0.0, "{allowance}");
+    kitted.kit().set("release").unwrap();
+    kitted.until_ended(&run);
 }
 
 #[test]

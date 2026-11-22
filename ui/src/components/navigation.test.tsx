@@ -194,7 +194,12 @@ describe("TopBar, Wordmark and BrandArt", () => {
     expect(view.all(".top-bar__allowance")).toHaveLength(0);
     // A store no reset has given an allowance says so, rather than nothing.
     view.rerender(<TopBar where={null} allowance={null} homeHref="#/" historyHref="#/history" modelsHref="#/models" />);
-    expect(view.get(".top-bar__allowance").textContent).toBe("no allowance");
+    expect(view.get(".top-bar__allowance").textContent).toBe("no allowance");    // A run going holds part of it, apart from what is spent; a count that is only a
+    // lower bound says so.
+    view.rerender(<TopBar where={null} spent={7.07} held={5.93} allowance={25} homeHref="#/" historyHref="#/history" modelsHref="#/models" />);
+    expect(view.get(".top-bar__allowance").textContent).toBe("$7.07 spent · $5.93 held of $25.00");
+    view.rerender(<TopBar where={null} spent={7.07} exactly={false} allowance={25} homeHref="#/" historyHref="#/history" modelsHref="#/models" />);
+    expect(view.get(".top-bar__allowance").textContent).toBe("at least $7.07 spent of $25.00");
   });
   it("sets the wordmark in type until the art is committed, then shows the art", () => {
     const view = render(<Wordmark />);

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { ApiError, backendsOf, tasksOf, type Client, type Hello, type Picture } from "./api";
 import { Breadcrumb } from "./components/Breadcrumb";
 import { KitSwitcher } from "./components/KitSwitcher";
@@ -49,14 +49,14 @@ export const WORDMARK = "brand/wordmark.svg";
 export const NO_TOKEN = "This page was opened without its key. Run whizbang play again, which opens the page with a new one.";
 
 /** What the top bar shows of hello's allowance: spent of the allowance, or none set. */
-type Allowance = { allowance: number; spent: number } | null;
+type Allowance = { allowance: number; spent: number; held: number; exactly: boolean } | null;
 
 /** The allowance of hello's answer: spent and held since the last reset, or none set. */
 export function allowanceOf(hello: Hello): Allowance {
   const said = hello.allowance;
   if (!said || typeof said.allowance !== "number") return null;
   const spent = typeof said.spent === "number" ? said.spent : typeof said.left === "number" ? Math.max(0, said.allowance - said.left) : 0;
-  return { allowance: said.allowance, spent };
+  return { allowance: said.allowance, spent, held: typeof said.held === "number" ? said.held : 0, exactly: said.exactly !== false };
 }
 
 /** The shell: the top bar, the screen of the route, the status bar, search and the keys. */
@@ -108,13 +108,20 @@ export function App(props: AppProps) {
     if (now !== undefined && now !== props.initialHash) follow(now);
     return stop;
   }, []);
+  // The top bar's allowance: from the first hello, then read again from hello whenever
+  // the books may have changed (a run the page followed ended, a run going is no longer
+  // listed, a reset). Every answer is numbered, the first among them, and only the newest
+  // asked is taken, so a slow first answer never puts back an older figure.
+  const [allowance, setAllowance] = useState<Allowance | undefined>(undefined);
+  const asking = useRef(0);
   useEffect(() => {
     let live = true;
+    const mine = (asking.current += 1);
     props.client.hello().then(
       (answer) => {
         if (!live) return;
         setHello(answer);
-        setAllowance(allowanceOf(answer));
+        if (mine === asking.current) setAllowance(allowanceOf(answer));
       },
       (error: unknown) => live && setProblem(error instanceof ApiError ? error.message : String(error)),
     );
@@ -122,16 +129,12 @@ export function App(props: AppProps) {
       live = false;
     };
   }, [asked]);
-  // The top bar's allowance, read again from hello whenever the books may have changed: a
-  // run the page followed ended, or a reset. Only the allowance is taken from the answer.
-  const [allowance, setAllowance] = useState<Allowance | undefined>(undefined);
   useEffect(() => {
     if (typeof props.client.onSettled !== "function") return;
-    let asking = 0;
     const stop = props.client.onSettled(() => {
-      const mine = (asking += 1);
+      const mine = (asking.current += 1);
       props.client.hello().then(
-        (answer) => mine === asking && setAllowance(allowanceOf(answer)),
+        (answer) => mine === asking.current && setAllowance(allowanceOf(answer)),
         () => undefined,
       );
     });
@@ -218,6 +221,8 @@ export function App(props: AppProps) {
       <TopBar
         where={where}
         spent={allowance?.spent}
+        held={allowance?.held}
+        exactly={allowance?.exactly}
         allowance={allowance === undefined ? undefined : (allowance?.allowance ?? null)}
         current={route.name === "history" ? "history" : route.name === "models" ? "models" : undefined}
         homeHref={hrefOf({ name: "home" })}

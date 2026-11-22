@@ -86,6 +86,19 @@ describe("the shell", () => {
     expect(view.get(".top-bar__allowance").textContent).toBe("$7.07 spent of $25.00");
   });
 
+  it("never lets a slow first hello put back an older allowance than a later one", async () => {
+    let answerFirst: (hello: Hello) => void = () => undefined;
+    const { view } = mount("#/", new Promise<Hello>((resolve) => (answerFirst = resolve)));
+    await settle();
+    (lastClient.hello as ReturnType<typeof vi.fn>).mockImplementation(() => Promise.resolve({ ...HELLO, allowance: { allowance: 25, left: 15, spent: 10, held: 0 } }));
+    settledListeners.forEach((listener) => listener());
+    await settle();
+    expect(view.get(".top-bar__allowance").textContent).toBe("$10.00 spent of $25.00");
+    answerFirst({ ...HELLO, allowance: { allowance: 25, left: 25, spent: 0 } });
+    await settle();
+    expect(view.get(".top-bar__allowance").textContent).toBe("$10.00 spent of $25.00");
+  });
+
   it("has an empty state for Home, a kit, a run, History, Models and an unknown address", async () => {
     const empty = mount("#/", Promise.resolve({ version: "0.1.0" }));
     await settle();

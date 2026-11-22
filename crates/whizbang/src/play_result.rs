@@ -157,37 +157,6 @@ pub fn cost(records: &[RunRecord], resolve: &Resolve<'_>) -> Json {
             }
         }
     }
-    // A paid request no model line names (one cancelled before any answer came, in a run
-    // that was stopped) is still booked: it is a line of its own, so the total is what
-    // every request of these runs was settled at, and none is left out.
-    for record in records {
-        let answered = record.models().len() as u64;
-        for paid in record
-            .spend()
-            .requests
-            .iter()
-            .filter(|paid| paid.request() >= answered)
-        {
-            let line = match lines.iter().position(|line| line.capability == UNANSWERED) {
-                Some(found) => &mut lines[found],
-                None => {
-                    lines.push(Line {
-                        capability: UNANSWERED.to_owned(),
-                        backend: String::new(),
-                        model: String::new(),
-                        requests: 0,
-                        micros: 0,
-                        paid: false,
-                    });
-                    let last = lines.len() - 1;
-                    &mut lines[last]
-                }
-            };
-            line.requests += 1;
-            line.micros += paid.settled_micros();
-            line.paid = true;
-        }
-    }
     let unresolved: u64 = records
         .iter()
         .flat_map(|record| record.spend().requests.iter())
@@ -204,9 +173,6 @@ pub fn cost(records: &[RunRecord], resolve: &Resolve<'_>) -> Json {
         .collect();
     json!({"lines": shown, "total": dollars(total), "unresolved": dollars(unresolved)})
 }
-
-/// The cost line of paid requests that no model line names.
-pub const UNANSWERED: &str = "requests not answered";
 
 /// What names a backend by the config's name for it, from what a record says of a
 /// request: its capability, and the kind and model the backend declared. None when the

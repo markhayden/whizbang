@@ -346,7 +346,9 @@ fn called_records(reader: &Reader, generation: &Generation, top: &RunRecord) -> 
         .iter()
         .map(|step| step.run().to_owned())
         .collect();
-    let mut seen = std::collections::BTreeSet::new();
+    // The top run is seen already: a step that names it again (a record that lists itself)
+    // is not counted twice.
+    let mut seen = std::collections::BTreeSet::from([top.identity().run.clone()]);
     while let Some(run) = waiting.pop_front() {
         if !seen.insert(run.clone()) {
             continue;

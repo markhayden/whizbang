@@ -219,6 +219,58 @@ describe("the workspace", () => {
     view.unmount();
   });
 
+  it("keeps the newer of two first reads of a mask port's outputs when they answer in reverse order", async () => {
+    const older = { run: "r-old", action: "protect", title: "Protect a first edit", words: ["older"], result: "done", at_ms: Date.now(), outputs: [{ port: "mask", type: "mask", id: `sha256:${"88".repeat(32)}` }] };
+    const newer = { ...older, run: "r-new", words: ["newer"], outputs: [{ port: "mask", type: "mask", id: `sha256:${"99".repeat(32)}` }] };
+    const answers: Array<(value: unknown) => void> = [];
+    const request = vi.fn((_: string, path: string) => (path.includes("output=mask") ? new Promise((resolve) => answers.push(resolve)) : Promise.resolve({ runs: [], more: false })));
+    let answerOpen: (runs: never[]) => void = () => undefined;
+    const openRuns = vi.fn(() => new Promise<never[]>((resolve) => (answerOpen = resolve)));
+    const hello: Hello = { version: "0.1.0", kits: [{ id: "rascal", name: "Rascal", tasks: [{ name: "protect", title: "Protect a first edit", fields: [{ name: "mask", kind: "artifact", artifact: "mask" }] }] }] };
+    const made = { ...client(() => ({ ready: false })), request, openRuns } as unknown as Client;
+    const view = render(<Workspace kit="rascal" task="protect" hello={hello} client={made} />);
+    await flush();
+    // The first look at the runs going asks the outputs again: two first reads are out.
+    await act(async () => answerOpen([]));
+    await flush();
+    expect(answers).toHaveLength(2);
+    await act(async () => answers[1]!({ runs: [newer], more: false }));
+    await act(async () => answers[0]!({ runs: [older], more: false }));
+    await flush();
+    const rows = view.all(".binding-picker [role=option]").map((one) => one.textContent ?? "");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toContain("newer");
+    view.unmount();
+  });
+
+  it("drops a later page of a task's runs asked before the list was read again", async () => {
+    const page = (from: number, more: boolean) => ({ runs: Array.from({ length: 10 }, (_, at) => ({ run: `r-${from + at}`, action: "remove_prompt", result: "done", words: [`run ${from + at}`], at_ms: Date.now() })), more });
+    let answerLater: (value: unknown) => void = () => undefined;
+    let first = true;
+    const request = vi.fn((_: string, path: string) => {
+      if (path.includes("before=")) return new Promise((resolve) => (answerLater = resolve));
+      const answer = first ? page(0, true) : page(100, false);
+      first = false;
+      return Promise.resolve(answer);
+    });
+    let answerOpen: (runs: never[]) => void = () => undefined;
+    const openRuns = vi.fn(() => new Promise<never[]>((resolve) => (answerOpen = resolve)));
+    const made = { ...client(() => ({ ready: false })), request, openRuns } as unknown as Client;
+    const view = render(<Workspace kit="rascal" task="remove_prompt" hello={HELLO} client={made} go={vi.fn()} />);
+    await flush();
+    click(view.get(".workspace__runs .link-button"));
+    // The list is read again (the first look at the runs going) while that page is out.
+    await act(async () => answerOpen([]));
+    await flush();
+    await act(async () => answerLater(page(10, false)));
+    await flush();
+    const rows = view.all(".workspace__runs .continue-row").map((one) => one.textContent ?? "");
+    expect(rows).toHaveLength(10);
+    expect(rows[0]).toContain("run 100");
+    expect(rows.some((one) => /run 1\d(?!\d)/.test(one))).toBe(false);
+    view.unmount();
+  });
+
   it("says why history could not be read, in place of the empty lists", async () => {
     const request = vi.fn(() => Promise.reject(new ApiError(501, "this build keeps no history")));
     const hello: Hello = { version: "0.1.0", kits: [{ id: "rascal", name: "Rascal", tasks: [{ name: "protect", title: "Protect a first edit", fields: [{ name: "mask", kind: "artifact", artifact: "mask" }] }] }] };

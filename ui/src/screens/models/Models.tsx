@@ -61,6 +61,8 @@ export function Models(props: ModelsProps) {
           return { after: 0, done: !listed.some(installing) };
         },
         (error) => setProblem(error.message),
+        // An install's progress has no events: asked every 250 ms, with no back-off.
+        { backoff: false },
       ),
     [client, asked],
   );

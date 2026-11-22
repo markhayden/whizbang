@@ -177,8 +177,9 @@ allowance in dollars and for the word `reset` typed again, and only then resets 
 `whizbang spend reset --allowance` does: the books close, what was spent before stops
 counting, and the new allowance starts with nothing spent. Runs already admitted keep what
 they reserved, under the books they were admitted under. There is no monthly allowance. The top bar
-says the same figure, what is spent since the last reset of the allowance ("$7.07 spent of
-$25.00", or "no allowance" before any reset), and reads it again when a run ends or the
+says the same figure, what is spent since the last reset of the allowance and what runs
+still going hold ("$7.07 spent · $5.93 held of $25.00"; "at least" when the books cannot
+say exactly; "no allowance" before any reset), and reads it again when a run ends or the
 allowance is reset.
 
 A store on a network file system is not supported: the store's locks may not hold there,

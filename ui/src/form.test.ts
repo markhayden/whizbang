@@ -51,6 +51,9 @@ describe("the form", () => {
       ["other-fill", "no_key"],
       ["third-fill", "checking"],
     ]);
+    // Once a preparation has settled, answered or failed, with nothing more said of it:
+    // not ready.
+    expect(choicesFor(field, null, unsure, true).map((c) => c.readiness)).toEqual(["ready", "no_key", "other"]);
   });
 
   it("says why Run cannot be pressed, and nothing once a ready preparation has a handle", () => {

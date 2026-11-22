@@ -12,6 +12,10 @@ export interface TopBarProps {
    * while it has not said.
    */
   spent?: number;
+  /** What runs still going hold beyond what they spent. */
+  held?: number;
+  /** False when the count is only a lower bound: then it says "at least". */
+  exactly?: boolean;
   allowance?: number | null;
   current?: "history" | "models";
   homeHref: string;
@@ -45,8 +49,16 @@ export function TopBar(props: TopBarProps) {
           Models
         </a>
         {typeof props.allowance === "number" && typeof props.spent === "number" ? (
-          <span class="top-bar__allowance mono" title="Spent since the last reset, of the allowance it set">
-            {dollars(props.spent)} <span class="top-bar__of">spent of {dollars(props.allowance)}</span>
+          <span class="top-bar__allowance mono" title="Spent since the last reset, and held by runs still going, of the allowance it set">
+            {props.exactly === false ? "at least " : ""}
+            {dollars(props.spent)} <span class="top-bar__of">spent</span>
+            {props.held ? (
+              <>
+                {" · "}
+                {dollars(props.held)} <span class="top-bar__of">held</span>
+              </>
+            ) : null}{" "}
+            <span class="top-bar__of">of {dollars(props.allowance)}</span>
           </span>
         ) : props.allowance === null ? (
           <span class="top-bar__allowance mono" title="No reset has set an allowance, so every paid run is refused">

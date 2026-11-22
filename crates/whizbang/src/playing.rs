@@ -263,7 +263,8 @@ impl Playground {
     /// ("the judge backend the call chose is not ready: the env file does not set the
     /// variable its `key_env` names") said as the prepare route says them: "the judge
     /// needs GEMINI_KEY in your env file", naming the variable only when it has the
-    /// shape of one (ADR 0041). The backend is the one the call named for that
+    /// shape of one (ADR 0041), in its `attempts`, `error` and `invalid` alone. The
+    /// backend is the one the call named for that
     /// capability, else the config's default. Each text is escaped already, and the words
     /// put in are a capability's role and a variable's name of that shape.
     fn plain_keys(&self, said: &mut Json) {
@@ -312,7 +313,13 @@ impl Playground {
                 plain.push((core, sentence.clone()));
             }
         }
-        rewrite(said, &plain);
+        // Only the reasons are rewritten: what Send to and Run again open, and every other
+        // field, is left as the record gives it.
+        for field in ["attempts", "error", "invalid"] {
+            if let Some(value) = said.get_mut(field) {
+                rewrite(value, &plain);
+            }
+        }
     }
 }
 

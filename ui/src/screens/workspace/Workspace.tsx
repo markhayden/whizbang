@@ -191,10 +191,14 @@ function appended(now: Paging<HistoryRun> | undefined, page: Answered<typeof NON
 function useEarlier(client: Client, task: string, ended: number): Paging<HistoryRun> & { next: () => void } {
   const [paged, setPaged] = useState<Paging<HistoryRun>>({ list: [], more: false });
   const query = new URLSearchParams({ task });
+  // Each first page read starts a new list: a later page asked of the list before it is
+  // dropped when it comes, so it is never put after a list it does not follow.
+  const reading = useRef(0);
   useEffect(() => {
     let live = true;
+    const mine = (reading.current += 1);
     void asked(() => listRuns(client, query, undefined, EARLIER_PAGE), NONE).then((page) => {
-      if (live) setPaged((now) => appended(now, page, false));
+      if (live && mine === reading.current) setPaged((now) => appended(now, page, false));
     });
     return () => {
       live = false;
@@ -202,7 +206,10 @@ function useEarlier(client: Client, task: string, ended: number): Paging<History
   }, [task, ended]);
   const next = () => {
     if (!paged.last) return;
-    void asked(() => listRuns(client, query, paged.last, EARLIER_PAGE), NONE).then((page) => setPaged((now) => appended(now, page, true)));
+    const mine = reading.current;
+    void asked(() => listRuns(client, query, paged.last, EARLIER_PAGE), NONE).then((page) => {
+      if (mine === reading.current) setPaged((now) => appended(now, page, true));
+    });
   };
   return { ...paged, next };
 }
@@ -260,6 +267,9 @@ function useOpen(client: Client): { open: OpenRun[]; ended: number } {
           live &&
           setState((now) => {
             const gone = now.open.some((was) => !runs.some((still) => still.run === was.run));
+            // A run that ended here or anywhere (another tab, the command line) changed
+            // the books: the top bar reads its allowance again.
+            if (gone && typeof client.settled === "function") queueMicrotask(() => client.settled());
             return { open: runs, ended: gone || !now.looked ? now.ended + 1 : now.ended, looked: true };
           }),
         () => undefined,
@@ -291,6 +301,9 @@ function Draft(props: DraftProps) {
   const [picking, setPicking] = useState<string | null>(null);
   const [prepared, setPrepared] = useState<Prepared | null>(null);
   const [preparing, setPreparing] = useState(false);
+  // Whether a preparation has settled yet, answered or failed: until then a backend hello
+  // is not sure of says CHECKING, and after it, NOT READY.
+  const [settled, setSettled] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [drawn, setDrawn] = useState<Record<string, Mark>>({});
   const tools = toolsOf(fields);
@@ -321,8 +334,14 @@ function Draft(props: DraftProps) {
   useEffect(() => {
     const made = createPreparer({
       prepare: (action, sent) => client.prepare(action, sent),
-      onAnswer: (answer) => setPrepared(answer),
-      onError: (error) => setProblem(error instanceof ApiError ? error.message : String(error)),
+      onAnswer: (answer) => {
+        setPrepared(answer);
+        setSettled(true);
+      },
+      onError: (error) => {
+        setSettled(true);
+        setProblem(error instanceof ApiError ? error.message : String(error));
+      },
       onBusy: setPreparing,
     });
     preparer.current = made;
@@ -479,6 +498,7 @@ function Draft(props: DraftProps) {
               value={values[field.name]}
               backends={backends}
               prepared={prepared}
+              settled={settled}
               pictures={pictures}
               client={client}
               picking={picking === field.name}
@@ -594,6 +614,8 @@ interface InputProps {
   value: unknown;
   backends: ReturnType<typeof backendsOf>;
   prepared: Prepared | null;
+  /** Whether a preparation has settled yet. */
+  settled: boolean;
   pictures: Record<string, Picture>;
   client: Client;
   picking: boolean;
@@ -669,7 +691,7 @@ function Input(props: InputProps) {
       );
     }
     case "backend": {
-      const choices = choicesFor(field, props.prepared, props.backends);
+      const choices = choicesFor(field, props.prepared, props.backends, props.settled);
       const seen = displayed(field, props.value, props.backends);
       const shown = typeof seen === "string" ? seen : null;
       return (

@@ -19,10 +19,10 @@ function readiness(kind: string | null | undefined, ready: boolean): ReadinessKi
 }
 
 /** What hello says of a backend, before any preparation: "checking" when it is not certain. */
-function hellosReadiness(backend: HelloBackend): ReadinessKind {
+function hellosReadiness(backend: HelloBackend, settled: boolean): ReadinessKind {
   if (backend.ready === true) return "ready";
   const said = readiness(backend.missing, false);
-  return said === "other" ? "checking" : said;
+  return said === "other" && !settled ? "checking" : said;
 }
 
 /** A field's label: the host's, or its name in words. */
@@ -115,9 +115,10 @@ export function backendsFor(capability: string | null | undefined, backends: Hel
  * hello's readiness, until the first preparation answers. Hello's readiness is read
  * without a probe: a backend it says is ready, or names a reason for (no key, not
  * installed), is shown so; one it says nothing certain of is "checking", never "not
- * ready" before anything has said so.
+ * ready" before anything has said so: until the first preparation has settled (`settled`),
+ * answered or failed, after which it is not ready.
  */
-export function choicesFor(field: TaskField, prepared: Prepared | null, backends: HelloBackend[]): Choice[] {
+export function choicesFor(field: TaskField, prepared: Prepared | null, backends: HelloBackend[], settled = false): Choice[] {
   const sizes = new Map(backends.map((backend) => [`${backend.capability}:${backend.name}`, backend.size ?? undefined]));
   const own = prepared?.choices?.[field.name];
   if (Array.isArray(own) && own.length > 0) {
@@ -132,7 +133,7 @@ export function choicesFor(field: TaskField, prepared: Prepared | null, backends
   return backendsFor(field.capability, backends).map((backend) => ({
     value: backend.name,
     label: backend.model ? `${backend.name} · ${backend.model}` : backend.name,
-    readiness: hellosReadiness(backend),
+    readiness: hellosReadiness(backend, settled),
     size: backend.size ?? undefined,
     why: backend.why,
   }));

@@ -193,8 +193,7 @@ run's record, as the result screen reads it, says a key not set the same way, in
 reason it holds (an unchecked attempt's, why the attempts ended).
 
 **A run's cost** in its record (`GET /api/runs/{id}/record`) is every paid request of the
-run and the runs below it: a request no model line names (one cancelled before any answer)
-is a line of its own, and `unresolved` says how much of the total no answer settled.
+run and the runs below it, and `unresolved` says how much of the total no answer settled.
 
 ## Consequences
 

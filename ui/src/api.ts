@@ -16,8 +16,11 @@ export interface Hello {
   backends?: HelloBackend[];
   /** Why the backends' readiness could not be read, when it could not. */
   backends_error?: string;
-  /** The allowance of the newest reset, what is spent and held since it, and what is left. */
-  allowance?: { allowance: number; left: number; spent?: number; since?: string };
+  /**
+   * The allowance of the newest reset; what was spent since it, and what runs still going
+   * hold beyond that; whether that count is exact (else it is at least that); what is left.
+   */
+  allowance?: { allowance: number; left: number; spent?: number; held?: number; exactly?: boolean; since?: string };
 }
 
 export interface HelloKit {
@@ -334,6 +337,16 @@ export function retryPause(random: () => number = Math.random): number {
   return 250 + Math.floor(random() * 250);
 }
 
+/** How a poll is paced. */
+export interface PollOptions {
+  /**
+   * Whether an answer that brought no new event doubles the wait (true, the default: a
+   * run's events). False keeps every ask 250 ms after the last answer: what an install's
+   * progress needs, which has no events to count.
+   */
+  backoff?: boolean;
+}
+
 export interface ClientOptions {
   token: string | null;
   fetch?: typeof fetch;
@@ -362,11 +375,12 @@ export interface Client {
   /**
    * Ask with the events after the last the page has, until `next` says the run is done or
    * the poll is stopped: 250 ms after an answer that brought new events, and twice the last
-   * wait, up to a second, after one that brought none. A refusal (4xx) other than 429 stops
+   * wait, up to a second, after one that brought none (unless `options.backoff` is false,
+   * when every ask is 250 ms after the last answer). A refusal (4xx) other than 429 stops
    * it; a 503 (the host stopping) or a 429 doubles the wait, up to 4 s; any other failure
    * keeps the pace.
    */
-  poll<T>(path: (after: number) => string, next: (answer: T) => { after: number; done: boolean }, onError?: (error: ApiError) => void): () => void;
+  poll<T>(path: (after: number) => string, next: (answer: T) => { after: number; done: boolean }, onError?: (error: ApiError) => void, options?: PollOptions): () => void;
   /** Prepare a call: readiness per choice, each need's bound, a handle when it is ready. */
   prepare(action: string, args: Record<string, unknown>): Promise<Prepared>;
   /**
@@ -634,7 +648,8 @@ export function createClient(options: ClientOptions): Client {
         });
       });
     },
-    poll: <T>(path: (after: number) => string, next: (answer: T) => { after: number; done: boolean }, onError?: (error: ApiError) => void) => {
+    poll: <T>(path: (after: number) => string, next: (answer: T) => { after: number; done: boolean }, onError?: (error: ApiError) => void, options?: PollOptions) => {
+      const backoff = options?.backoff !== false;
       let after = 0;
       let stopped = false;
       let wait = POLL_MS;
@@ -646,7 +661,7 @@ export function createClient(options: ClientOptions): Client {
           if (stopped) return;
           const said = next(answer);
           // New events: asked again soon. None: the wait doubles, up to once a second.
-          wait = said.after !== after ? POLL_MS : Math.min(POLL_IDLE_MS, wait * 2);
+          wait = !backoff || said.after !== after ? POLL_MS : Math.min(POLL_IDLE_MS, wait * 2);
           after = said.after;
           if (said.done) return;
         } catch (error) {

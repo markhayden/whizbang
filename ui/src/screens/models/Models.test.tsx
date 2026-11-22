@@ -44,7 +44,7 @@ function hosted() {
     if (method === "POST" || method === "DELETE") return Promise.resolve({});
     return Promise.reject(new Error(`unexpected ${method} ${path}`));
   });
-  const poll = vi.fn((_: (after: number) => string, next: (answer: unknown) => unknown) => {
+  const poll = vi.fn((_: (after: number) => string, next: (answer: unknown) => unknown, _onError?: unknown, _options?: unknown) => {
     void Promise.resolve().then(() => next(MODELS));
     return () => undefined;
   });
@@ -90,9 +90,11 @@ describe("the models screen", () => {
   });
 
   it("gets, cancels and removes through the host", async () => {
-    const { client, request } = hosted();
+    const { client, request, poll } = hosted();
     const view = render(<Models client={client} />);
     await settle();
+    // An install's progress is asked every 250 ms, with no back-off.
+    expect(poll.mock.calls[0]?.[3]).toEqual({ backoff: false });
     const button = (words: string) => view.all<HTMLButtonElement>(".model-row button").find((b) => b.textContent === words)!;
     click(button("Get"));
     click(button("Cancel"));

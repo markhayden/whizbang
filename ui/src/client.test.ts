@@ -221,6 +221,26 @@ describe("a run followed on screen", () => {
     }
   });
 
+  it("keeps an install's poll at 250 ms when told not to back off", async () => {
+    vi.useFakeTimers();
+    try {
+      const at: number[] = [];
+      const fetch = () => {
+        at.push(Date.now());
+        return Promise.resolve(new Response(JSON.stringify({ models: [] }), { status: 200 }));
+      };
+      const client = createClient({ token: "t", fetch: fetch as unknown as typeof globalThis.fetch });
+      const stop = client.poll(() => "/api/models", () => ({ after: 0, done: false }), undefined, { backoff: false });
+      await vi.advanceTimersByTimeAsync(2_000);
+      stop();
+      const gaps = at.slice(1).map((one, index) => one - at[index]!);
+      expect(gaps.length).toBeGreaterThan(5);
+      expect(new Set(gaps)).toEqual(new Set([POLL_MS]));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("says the books may have changed once it has ended", async () => {
     const fetch = () => Promise.resolve(new Response(JSON.stringify({ run: "r", state: "ended", outcome: "completed", events: [], next: 0, skipped: 0 }), { status: 200 }));
     const client = createClient({ token: "t", fetch: fetch as unknown as typeof globalThis.fetch });
