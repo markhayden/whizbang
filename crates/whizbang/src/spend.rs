@@ -117,40 +117,10 @@ fn counted(counted: Counted) -> String {
     }
 }
 
-/// The allowance a caller typed, in US dollars: digits, and at most six more after
-/// a point. Anything else is refused, and so is the largest number there is, which
-/// is no amount.
+/// The allowance a caller typed, in US dollars: the playground's reset reads it the same
+/// way (`whizbang::play_models::allowance`).
 fn allowance(text: &str) -> Result<Amount, String> {
-    let refuse = |why: &str| {
-        Err(format!(
-            "{} is no allowance: {why}. Give US dollars as digits, with at most six \
-             after a point, as in 20 or 12.50",
-            shown(text)
-        ))
-    };
-    let (whole, part) = match text.split_once('.') {
-        Some((whole, part)) => (whole, Some(part)),
-        None => (text, None),
-    };
-    let digits = |text: &str| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit());
-    if !digits(whole) || part.is_some_and(|part| !digits(part)) {
-        return refuse("it is not a number of dollars");
-    }
-    let part = part.unwrap_or("0");
-    if part.len() > 6 {
-        return refuse("a millionth of a dollar is the least that is counted");
-    }
-    let micros = whole.parse::<u64>().ok().and_then(|whole| {
-        let part = format!("{part:0<6}").parse::<u64>().ok()?;
-        whole.checked_mul(1_000_000)?.checked_add(part)
-    });
-    let Some(micros) = micros else {
-        return refuse("it is more than can be counted");
-    };
-    match Amount::new(micros) {
-        Some(amount) => Ok(amount),
-        None => refuse("it is the largest number there is, which is no amount"),
-    }
+    whizbang::play_models::allowance(text)
 }
 
 fn reset(root: &Path, asked: &str, recovery: Recovery) -> Result<String, String> {

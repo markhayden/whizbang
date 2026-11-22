@@ -3,7 +3,8 @@
 A local model is a set of files whizbang downloads once and keeps in a folder of its
 own, the models directory. `whizbang models` lists the models this build knows, gets
 one, and removes one. Why it is built this way is in
-`docs/adr/0017-the-models-directory.md`.
+`docs/adr/0017-the-models-directory.md`. The playground's Models screen does the same from
+the page (`docs/guides/playground.md`, "Models and keys").
 
 **Today the catalogue holds two models, SAM 3** (`sam3`) **and Tiny** (`tiny`: OWLv2
 finds boxes for a phrase and SAM 2.1 Hiera-Tiny draws each mask). The catalogue is the

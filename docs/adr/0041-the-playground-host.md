@@ -69,8 +69,8 @@ page carries the content security policy of the plan ("The playground API").
 workers; one keeper, which holds each run's stated time and the grace of a quit; one
 canceller, which calls `Executor::cancel`, the one call of the executor that can wait. Each is
 made by the host's own counted spawner (`play::threads`), the fifth place in the workspace
-that makes threads (`clippy.toml`), which refuses the 43rd live thread it would make in a
-process: two hosts' nineteen each, and room for the binary's readers of its signals and its
+that makes threads (`clippy.toml`), which refuses the 45th live thread it would make in a
+process: two hosts' twenty each (the twentieth is a host's one install, plan m5, task M1), and room for the binary's readers of its signals and its
 input and the waiter of a Chrome started on Linux. At most two
 uploads hold a worker at once: a third is answered 429 as soon as its headers are read. Every
 other request is a short read and a short answer, so polls, Stop and Quit find a free worker. A

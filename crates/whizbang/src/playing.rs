@@ -51,6 +51,8 @@ pub struct Playground {
     /// The binary's map from a run to its command line (plan m5, task W2, item 5), when
     /// it gave one: the commands' parser lives in the binary.
     commands: Option<Commands>,
+    /// The Models screen's door (plan m5, task M1), when the host offers it.
+    models: Option<crate::play_models::PlayModels>,
 }
 
 /// The binary's map from what a run asked to the words of the command that asks it
@@ -121,6 +123,7 @@ impl Playground {
             kept: Mutex::new(Remembered::default()),
             made: std::sync::atomic::AtomicU64::new(0),
             commands: None,
+            models: None,
         }
     }
 
@@ -135,6 +138,14 @@ impl Playground {
             descriptors: &self.descriptors,
             kits: &self.kits,
         }
+    }
+
+    /// The same, with the Models screen's door, over this playground's wiring and the
+    /// store given by [`Playground::with_store`] before this (plan m5, task M1).
+    pub fn with_models(mut self, models: crate::play_models::PlayModels) -> Playground {
+        let store = self.store.get_mut().ok().and_then(|store| store.clone());
+        self.models = Some(models.over(self.over.clone(), store));
+        self
     }
 
     /// The same, with the store the executor writes, open to write, at `root`.
@@ -459,6 +470,12 @@ impl Play for Playground {
         (admission.request() == Some(id)).then(|| admission.run().clone())
     }
 
+    fn models(&self) -> Option<&dyn whizbang_serve::play::models::Models> {
+        self.models
+            .as_ref()
+            .map(|models| models as &dyn whizbang_serve::play::models::Models)
+    }
+
     fn closing(&self) {
         // The store's writer goes with the executor's: the host has let that go.
         self.store
@@ -466,6 +483,9 @@ impl Play for Playground {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
         *self.remembered() = Remembered::default();
+        if let Some(models) = &self.models {
+            models.closing();
+        }
         if let Some(worker) = &self.worker {
             worker.kill();
         }

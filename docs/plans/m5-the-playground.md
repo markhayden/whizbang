@@ -1104,7 +1104,7 @@ interface. Row 5.
 5. **The guide's part on models and keys**, in `docs/guides/playground.md`, linked from "How
    to add".
 
-- [ ] Done when: row 5's four Chrome cases pass in both `e2e` jobs;
+- [x] Done when: row 5's four Chrome cases pass in both `e2e` jobs;
   `play::no_response_of_any_route_holds_a_key_a_sign_in_or_the_token` (every route's answer
   scanned for the env file's values),
   `play::a_second_get_attaches_to_the_running_install`,
@@ -1112,6 +1112,26 @@ interface. Row 5.
   `play::status_cancel_and_quit_answer_with_four_runs_and_an_install_going`,
   `play::a_reset_from_the_page_needs_the_amount_and_the_word_and_closes_the_books`,
   `play::models_lists_only_the_catalogues_models_and_the_configs_backends`.
+
+**As built (M1).** The tests are `play_models::…` (`crates/whizbang/tests/it/play_models.rs`)
+under the names above, beside
+`play_models::a_removal_of_a_model_in_use_answers_busy_and_the_model_stays`; and a fifth
+Chrome case, `models.spec.ts: a reset needs the amount and the word reset, and the
+allowance is then what is spent since it`. The routes are `play/models.rs`, registered in
+`play/routes.rs` by one line, behind a trait the door implements
+(`whizbang_serve::play::models::Models`, `whizbang::play_models::PlayModels`); the
+allowance is read by `GET /api/spend`, a row the plan's table did not name. An install runs
+on a thread of the host's counted spawner, so a host makes twenty threads and a process at
+most 44 (ADR 0041). A removal holds its connection for the drain's wait, five seconds, one
+removal at a time. The fixture host's catalogue adds the test kit's `pocket`
+(`whizbang_testkit::playmodels`), whose files a fake serves; its filler has a made-up key in
+an env file of its own. Chrome's cancel case shows the earlier state (not installed) kept;
+an earlier installation of another revision kept is the Rust case's, since the fixture's
+catalogue has one revision. The top bar's allowance is the one `hello` read when the page
+opened, until the page is opened again. The playground does not read the Hub's
+command-line sign-in (only `main.rs` names where it is, `scripts/tests/test-sign-in.sh`):
+a model's token is taken from the env file, and a config that names the sign-in is told to
+use `whizbang models get`.
 
 ## E1. The loop by hand in the playground, and the guide (medium; the orchestrator's runs)
 
