@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
-import { ApiError, type Client, type Hello } from "./api";
+import { ApiError, backendsOf, tasksOf, type Client, type Hello, type Picture } from "./api";
 import { Breadcrumb } from "./components/Breadcrumb";
 import { KitSwitcher } from "./components/KitSwitcher";
 import { kitTone } from "./components/kitTone";
@@ -68,14 +68,30 @@ export function App(props: AppProps) {
     };
   }, [asked]);
 
-  const kits = hello?.kits ?? [];
-  const entries = useMemo<SearchEntry[]>(
-    () =>
-      kits.flatMap((kit) =>
-        (kit.tasks ?? []).map((task) => ({ key: hrefOf({ name: "kit", kit: kit.id, task: task.name }), kind: "task" as const, label: task.title ?? task.name, detail: kit.name ?? kit.id })),
-      ),
-    [hello],
-  );
+  const kits = Array.isArray(hello?.kits) ? hello.kits : [];
+  const [pictures, setPictures] = useState<Picture[]>([]);
+  useEffect(() => {
+    if (!searching || typeof props.client.listPictures !== "function") return;
+    let live = true;
+    props.client.listPictures().then(
+      (found) => live && setPictures(found),
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [searching]);
+  const entries = useMemo<SearchEntry[]>(() => {
+    const kitName = (id: string | null | undefined) => kits.find((kit) => kit.id === id)?.name ?? id ?? "";
+    const tasks = tasksOf(hello).map((task) => ({
+      key: hrefOf({ name: "kit", kit: task.kit ?? "tools", task: task.name }),
+      kind: task.kind === "primitive" ? ("tool" as const) : ("task" as const),
+      label: task.title ?? task.name,
+      detail: task.kind === "primitive" ? `tool${task.kit ? ` · ${kitName(task.kit)}` : ""}` : kitName(task.kit),
+    }));
+    const shown = pictures.map((picture) => ({ key: `#/?picture=${picture.id}`, kind: "picture" as const, label: picture.name, detail: "picture" }));
+    return [...tasks, ...shown];
+  }, [hello, pictures]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -100,7 +116,7 @@ export function App(props: AppProps) {
       <Breadcrumb
         kit={kits[kitIndex]?.name ?? route.kit}
         tone={kitTone(Math.max(0, kitIndex))}
-        task={route.task}
+        task={route.task ? (tasksOf(hello).find((task) => task.name === route.task)?.title ?? route.task) : undefined}
         onKit={() => setSwitching((open) => !open)}
         onSearch={() => setSearching(true)}
       />
@@ -141,11 +157,14 @@ export function App(props: AppProps) {
           {problem}
         </div>
       ) : null}
-      <div class="shell__screen">{screenOf(route, hello)}</div>
+      <div class="shell__screen">{screenOf(route, hello, props.client, props.go)}</div>
       <StatusBar
         ready={hello !== null && problem === null}
         store={hello?.store}
-        backends={(hello?.backends ?? []).map((backend) => ({ name: backend.name, ready: backend.ready, why: backend.why }))}
+        backends={[
+          ...backendsOf(hello).map((backend) => ({ name: backend.name, ready: backend.ready, why: backend.ready ? undefined : (backend.missing ?? "not ready").replace(/_/g, " ") })),
+          ...(typeof hello?.backends_error === "string" ? [{ name: "backends", ready: false, why: hello.backends_error }] : []),
+        ]}
         version={hello?.version}
         problem={problem ?? undefined}
       />
@@ -163,14 +182,14 @@ export function App(props: AppProps) {
   );
 }
 
-function screenOf(route: Route, hello: Hello | null) {
+function screenOf(route: Route, hello: Hello | null, client: Client, go: (hash: string) => void) {
   switch (route.name) {
     case "home":
-      return <Home hello={hello} />;
+      return <Home hello={hello} client={client} go={go} />;
     case "kit":
-      return <Workspace kit={route.kit} task={route.task} />;
+      return <Workspace kit={route.kit} task={route.task} hello={hello} client={client} go={go} />;
     case "run":
-      return <Run id={route.id} />;
+      return <Run id={route.id} hello={hello} client={client} />;
     case "history":
       return <History />;
     case "models":

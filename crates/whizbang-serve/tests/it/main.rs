@@ -110,6 +110,10 @@ pub fn actions(released: Arc<AtomicBool>) -> Vec<Arc<dyn Action>> {
 /// The door of the tests: each action by its descriptor, as the stdio server's tools.
 pub struct TestPlay {
     descriptors: Vec<ActionDescriptor>,
+    /// A picture asked for is held until this is set, the test's own release.
+    released: Arc<AtomicBool>,
+    /// How many pictures were asked for.
+    asked: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl Play for TestPlay {
@@ -129,6 +133,23 @@ impl Play for TestPlay {
         said.insert("backends".to_owned(), json!([]));
         said
     }
+
+    /// Every artifact is a few bytes, given once the test releases it, 10 seconds at
+    /// most: what holds a worker as a slow picture would.
+    fn artifact(
+        &self,
+        _id: &str,
+        _edge: Option<u32>,
+    ) -> Result<(&'static str, Vec<u8>), whizbang_serve::play::Refused> {
+        self.asked.fetch_add(1, Ordering::SeqCst);
+        for _ in 0..2000 {
+            if self.released.load(Ordering::SeqCst) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        Ok(("image/png", b"picture".to_vec()))
+    }
 }
 
 /// A host over a store of its own, and what a test needs to call it.
@@ -139,6 +160,8 @@ pub struct Running {
     pub token: Token,
     pub executor: Arc<Engine>,
     pub released: Arc<AtomicBool>,
+    /// How many artifacts the door was asked for.
+    pub asked: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl Running {
@@ -170,13 +193,18 @@ impl Running {
             store,
             Digest::of_bytes(b""),
         ));
+        let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let mut settings = Settings::new(root);
         settings.port = 0;
         tune(&mut settings);
         let token = Token::new().unwrap();
         let host = Host::start(
             executor.clone(),
-            Arc::new(TestPlay { descriptors }),
+            Arc::new(TestPlay {
+                descriptors,
+                released: released.clone(),
+                asked: asked.clone(),
+            }),
             settings,
             token.clone(),
         )
@@ -188,6 +216,7 @@ impl Running {
             token,
             executor,
             released,
+            asked,
         }
     }
 

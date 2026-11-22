@@ -164,6 +164,18 @@ pub fn holds_anywhere(generation: &Generation, artifact: ArtifactType, id: Artif
     holds(&everywhere(generation.clone()), artifact, id)
 }
 
+/// The type of the artifact of this identity that [`get_anywhere`] would read, when the
+/// generation holds one: looked for outside runs first, then, once, among the names every
+/// first run keeps for its tree. For a door that is given an identity and not its type.
+pub fn type_anywhere(generation: &Generation, id: ArtifactId) -> Option<ArtifactType> {
+    let of = |generation: &Generation| {
+        ArtifactType::ALL
+            .into_iter()
+            .find(|kind| holds(generation, *kind, id))
+    };
+    of(generation).or_else(|| of(&everywhere(generation.clone())))
+}
+
 /// A generation with the names every first run keeps for its tree added outside runs.
 fn everywhere(generation: Generation) -> Generation {
     let runs: Vec<String> = generation.runs().keys().cloned().collect();

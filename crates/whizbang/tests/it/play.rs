@@ -894,3 +894,839 @@ fn send(address: SocketAddr, bytes: &[u8]) -> Answer {
         body: answer[end + 4..].to_vec(),
     }
 }
+
+// Running a task (plan m5, task W1): the host over the binary's registry and wiring, with
+// the test kit's `playkit` backends under a config of the test's, in a store with an
+// allowance; the same as the fixture host of the Chrome cases.
+
+/// The config of the kit's backends: a segmenter that costs nothing, a filler and a
+/// judge at addresses of the reserved `.example` domain, and a judge whose key is named
+/// and not set. `fill_model` names the filler's model, so a test can change the config.
+fn kit_config(fill_model: &str) -> String {
+    let kind = whizbang_testkit::playkit::KIND;
+    format!(
+        "[backends.segment]\nkind = \"{kind}\"\nmodel = \"seg\"\nurl = \"https://segment.example.org/v1\"\n\n\
+         [backends.fill]\nkind = \"{kind}\"\nmodel = \"{fill_model}\"\nurl = \"https://fill.example.org/v1\"\n\n\
+         [backends.judge]\ndefault = \"cloud-judge\"\n\n\
+         [backends.judge.cloud-judge]\nkind = \"{kind}\"\nmodel = \"judge\"\nurl = \"https://judge.example.org/v1\"\n\n\
+         [backends.judge.keyless-judge]\nkind = \"{kind}\"\nmodel = \"keyless\"\n\
+         url = \"https://judge.example.org/v2\"\nkey_env = \"PLAYKIT_TEST_KEY\"\n\n\
+         [egress.recipients.segment]\norigin = \"https://segment.example.org\"\nclasses = [\"prompts\", \"source_images\"]\n\n\
+         [egress.recipients.fill]\norigin = \"https://fill.example.org\"\nclasses = [\"source_images\", \"derived_images\"]\n\n\
+         [egress.recipients.judge]\norigin = \"https://judge.example.org\"\n\
+         classes = [\"prompts\", \"source_images\", \"derived_images\", \"evidence\"]\n"
+    )
+}
+
+/// An action of the tests' whose one progress message holds an escape sequence, and
+/// that takes some words, which it does nothing with: a call that is quick to run.
+fn shouting() -> Arc<dyn Action> {
+    let draft = ActionDescriptor::draft("shout", "1.0.0", Kind::Primitive, "A test action.")
+        .argument(whizbang_core::contract::Argument::optional(
+            "words",
+            "Some words.",
+            whizbang_core::contract::ValueType::Text,
+        ));
+    Arc::new(Scripted(
+        draft.build().unwrap(),
+        Box::new(|context: &Context| {
+            context.events().progress("\u{1b}[2Jcleared \u{7} and rung");
+            Ok(Produced::nothing())
+        }),
+    ))
+}
+
+/// The host over the kit, in a store of its own with ten dollars to spend.
+struct Kitted {
+    scratch: Scratch,
+    door: Arc<Playground>,
+    kit: Arc<whizbang_testkit::playkit::PlayKit>,
+    host: Option<Host>,
+    address: SocketAddr,
+    token: Token,
+}
+
+impl Kitted {
+    fn new(label: &str) -> Kitted {
+        Kitted::over(Scratch::new(label), true)
+    }
+
+    /// A host over the store and config in `scratch`; a new store gets its allowance.
+    fn over(scratch: Scratch, new: bool) -> Kitted {
+        let root = scratch.path().join("store");
+        let config = scratch.path().join("whizbang.toml");
+        if new {
+            std::fs::write(&config, kit_config("fill")).unwrap();
+        }
+        let kit = whizbang_testkit::playkit::PlayKit::new();
+        let mut kinds = wiring::kinds(&whizbang::pack::OneWorker::installed());
+        kinds.register(kit.kind()).unwrap();
+        let over = Over::nothing().config(Some(&config)).kinds(kinds);
+        // The real disk without its syncs, which these tests do not test.
+        let store = Arc::new(Store::open(&root, Arc::new(crate::checked::Unsynced)).unwrap());
+        if new {
+            let ten = whizbang_core::spend::Amount::new(10_000_000).unwrap();
+            whizbang_core::spend::reset(&store, ten, 1).unwrap();
+        }
+        let mut registry = wiring::registry_over(&over, false).unwrap();
+        registry.register(shouting()).unwrap();
+        // Says one message more than a run keeps.
+        registry
+            .register(scripted("chatty", |context| {
+                let most = whizbang_core::contract::MESSAGES_KEPT_LIMIT;
+                for at in 0..most + 3 {
+                    context.events().progress(&format!("message {at}"));
+                }
+                Ok(Produced::nothing())
+            }))
+            .unwrap();
+        registry
+            .register(scripted("waits", |context| {
+                context.events().progress("waiting for a stop");
+                wait_for_stop(context)
+            }))
+            .unwrap();
+        let descriptors = registry.descriptors().cloned().collect();
+        let runner = wiring::runner(registry, store.clone(), &over).unwrap();
+        let play = Arc::new(Playground::new(descriptors, Arc::new(over)).with_store(store, &root));
+        let mut settings = Settings::new(root);
+        settings.port = 0;
+        settings.grace = Duration::from_millis(400);
+        let token = Token::new().unwrap();
+        let host = Host::start(Arc::new(runner), play.clone(), settings, token.clone()).unwrap();
+        Kitted {
+            address: host.address(),
+            scratch,
+            door: play,
+            kit,
+            host: Some(host),
+            token,
+        }
+    }
+
+    /// Stops the host and starts another over the same store and config.
+    fn restarted(mut self) -> Kitted {
+        let host = self.host.take().unwrap();
+        host.stopper().quit();
+        host.wait();
+        let scratch = std::mem::replace(&mut self.scratch, Scratch::new("play-spent"));
+        Kitted::over(scratch, false)
+    }
+
+    fn root(&self) -> PathBuf {
+        self.scratch.path().join("store")
+    }
+
+    fn api(&self, method: &str, path: &str, body: Option<&Json>) -> Answer {
+        let origin = format!("http://127.0.0.1:{}", self.address.port());
+        let origin = (method != "GET").then_some(origin.as_str());
+        let bytes = request(self.address, &self.token.hex(), method, path, origin, body);
+        send(self.address, &bytes)
+    }
+
+    /// A picture sent as the page sends one.
+    fn upload(&self, png: &[u8], name: &str) -> Answer {
+        let mut head = format!(
+            "POST /api/pictures?name={name} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+             Authorization: Bearer {token}\r\nOrigin: http://127.0.0.1:{port}\r\n\
+             Content-Type: image/png\r\nContent-Length: {}\r\n\r\n",
+            png.len(),
+            port = self.address.port(),
+            token = self.token.hex(),
+        )
+        .into_bytes();
+        head.extend_from_slice(png);
+        send(self.address, &head)
+    }
+
+    /// A picture of the store, by its identity.
+    fn picture(&self, shade: u8) -> String {
+        let sent = self.upload(&png(64, 48, shade), "porch.png");
+        assert_eq!(sent.status, 201, "{}", sent.text());
+        sent.json()["id"].as_str().unwrap().to_owned()
+    }
+
+    fn prepare(&self, action: &str, arguments: &Json) -> Json {
+        let body = json!({"action": action, "arguments": arguments});
+        let prepared = self.api("POST", "/api/prepare", Some(&body));
+        assert_eq!(prepared.status, 200, "{}", prepared.text());
+        prepared.json()
+    }
+
+    fn begin(&self, action: &str, arguments: &Json, handle: &Json, id: &str) -> Answer {
+        let body = json!({"action": action, "arguments": arguments, "handle": handle,
+                          "request_id": id});
+        self.api("POST", "/api/runs", Some(&body))
+    }
+
+    fn until_ended(&self, run: &str) -> Json {
+        for _ in 0..4000 {
+            let polled = self.api("GET", &format!("/api/runs/{run}?after=0"), None);
+            assert_eq!(polled.status, 200, "{}", polled.text());
+            if polled.json()["state"] == "ended" {
+                return polled.json();
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("the run never ended");
+    }
+
+    /// The store's generation as a reader of its own sees it.
+    fn generation(&self) -> whizbang_core::store::Generation {
+        let reader = whizbang_core::store::Reader::open(&self.root(), Arc::new(RealFs)).unwrap();
+        reader.snapshot().unwrap()
+    }
+}
+
+impl Drop for Kitted {
+    fn drop(&mut self) {
+        let _ = self.kit.set("reset");
+        if let Some(host) = self.host.take() {
+            let stopper = host.stopper();
+            stopper.quit();
+            stopper.quit();
+            host.wait();
+        }
+    }
+}
+
+/// A PNG of this size, one shade.
+fn png(width: u32, height: u32, shade: u8) -> Vec<u8> {
+    use image::ImageEncoder;
+    let rgb: Vec<u8> = (0..width * height)
+        .flat_map(|at| [shade, (at % 251) as u8, 90])
+        .collect();
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(&rgb, width, height, image::ExtendedColorType::Rgb8)
+        .unwrap();
+    png
+}
+
+/// The arguments of `shout`.
+fn words(words: &str) -> Json {
+    json!({ "words": words })
+}
+
+#[test]
+fn a_start_without_a_matching_fresh_preparation_is_refused_as_stale() {
+    let kitted = Kitted::new("play-w1-stale");
+    let prepared = kitted.prepare("shout", &words("these"));
+    assert_eq!(prepared["ready"], true, "{prepared}");
+    let before = kitted.generation().runs().len();
+    // Other arguments under this handle, and no handle: each refused before admission.
+    for (arguments, handle) in [
+        (words("others"), prepared["handle"].clone()),
+        (words("these"), Json::Null),
+    ] {
+        let refused = kitted.begin("shout", &arguments, &handle, &fresh_id());
+        assert_eq!(refused.status, 409, "{}", refused.text());
+        assert_eq!(refused.json()["kind"], "stale", "{}", refused.text());
+    }
+    assert_eq!(kitted.generation().runs().len(), before);
+}
+
+#[test]
+fn a_start_sent_twice_with_one_request_id_answers_one_run() {
+    let kitted = Kitted::new("play-w1-twice");
+    let arguments = words("twice");
+    let prepared = kitted.prepare("shout", &arguments);
+    let first = kitted.begin("shout", &arguments, &prepared["handle"], "page-twice");
+    assert_eq!(first.status, 201, "{}", first.text());
+    let again = kitted.begin("shout", &arguments, &prepared["handle"], "page-twice");
+    assert_eq!(again.status, 200, "{}", again.text());
+    assert_eq!(again.json()["run"], first.json()["run"]);
+    assert_eq!(again.json()["repeat"], true);
+    let ended = kitted.until_ended(first.json()["run"].as_str().unwrap());
+    assert_eq!(ended["outcome"], "completed", "{ended}");
+    assert_eq!(ended["action"], "shout");
+    assert_eq!(ended["arguments"], arguments);
+}
+
+#[test]
+fn a_repeat_after_the_handle_expired_or_the_host_restarted_answers_its_run() {
+    let kitted = Kitted::new("play-w1-restart");
+    let arguments = words("kept");
+    let prepared = kitted.prepare("shout", &arguments);
+    let first = kitted.begin("shout", &arguments, &prepared["handle"], "page-kept");
+    assert_eq!(first.status, 201, "{}", first.text());
+    kitted.until_ended(first.json()["run"].as_str().unwrap());
+    // A new host, which holds neither the handle nor the id: the executor answers it.
+    let kitted = kitted.restarted();
+    let again = kitted.begin("shout", &arguments, &prepared["handle"], "page-kept");
+    assert_eq!(again.status, 200, "{}", again.text());
+    assert_eq!(again.json()["run"], first.json()["run"]);
+}
+
+#[test]
+fn a_conflicting_request_under_one_id_is_refused_as_a_conflict() {
+    let kitted = Kitted::new("play-w1-conflict");
+    let arguments = words("one");
+    let prepared = kitted.prepare("shout", &arguments);
+    let first = kitted.begin("shout", &arguments, &prepared["handle"], "page-one");
+    assert_eq!(first.status, 201, "{}", first.text());
+    let other = words("another");
+    let handle = kitted.prepare("shout", &other)["handle"].clone();
+    let conflict = kitted.begin("shout", &other, &handle, "page-one");
+    assert_eq!(conflict.status, 409, "{}", conflict.text());
+    assert_eq!(conflict.json()["kind"], "conflict");
+    // After a restart the host holds no copy of what was asked: the id the store holds
+    // is answered with its run, whatever is sent under it (ADR 0041, "Runs belong to
+    // the host").
+    kitted.until_ended(first.json()["run"].as_str().unwrap());
+    let kitted = kitted.restarted();
+    let answered = kitted.begin("shout", &other, &Json::Null, "page-one");
+    assert_eq!(answered.status, 200, "{}", answered.text());
+    assert_eq!(answered.json()["run"], first.json()["run"]);
+}
+
+#[test]
+fn a_repeat_is_answered_while_four_runs_are_going() {
+    let kitted = Kitted::new("play-w1-four");
+    let arguments = json!({});
+    let mut runs = Vec::new();
+    for at in 0..4 {
+        let prepared = kitted.prepare("waits", &arguments);
+        let started = kitted.begin(
+            "waits",
+            &arguments,
+            &prepared["handle"],
+            &format!("page-four-{at}"),
+        );
+        assert_eq!(started.status, 201, "{}", started.text());
+        runs.push(started.json()["run"].clone());
+    }
+    let prepared = kitted.prepare("waits", &arguments);
+    let repeat = kitted.begin("waits", &arguments, &prepared["handle"], "page-four-0");
+    assert_eq!(repeat.status, 200, "{}", repeat.text());
+    assert_eq!(repeat.json()["run"], runs[0]);
+    let fifth = kitted.begin("waits", &arguments, &prepared["handle"], "page-four-5");
+    assert_eq!(fifth.status, 429, "{}", fifth.text());
+    // Stop each: the quit at the end waits for none.
+    for run in &runs {
+        let path = format!("/api/runs/{}/cancel", run.as_str().unwrap());
+        assert_eq!(kitted.api("POST", &path, None).status, 202);
+    }
+}
+
+#[test]
+fn a_preparation_made_under_another_config_is_refused_as_stale() {
+    let kitted = Kitted::new("play-w1-config");
+    let arguments = json!({"image": kitted.picture(15), "prompt": "the hose"});
+    let prepared = kitted.prepare("remove_prompt", &arguments);
+    assert_eq!(prepared["ready"], true, "{prepared}");
+    // The config changes between the preparation and the start: the filler's model.
+    let config = kitted.scratch.path().join("whizbang.toml");
+    std::fs::write(&config, kit_config("other-fill")).unwrap();
+    let refused = kitted.begin(
+        "remove_prompt",
+        &arguments,
+        &prepared["handle"],
+        &fresh_id(),
+    );
+    assert_eq!(refused.status, 409, "{}", refused.text());
+    assert_eq!(refused.json()["kind"], "stale", "{}", refused.text());
+    assert_eq!(kitted.kit.requests(), 0);
+}
+
+#[test]
+fn the_first_import_into_a_new_store_keeps_the_picture_and_its_name_in_one_publication() {
+    let kitted = Kitted::new("play-w1-import");
+    let before = kitted.generation().number();
+    let sent = kitted.upload(&png(64, 48, 16), "kitchen%20wide.png");
+    assert_eq!(sent.status, 201, "{}", sent.text());
+    let id = sent.json()["id"].as_str().unwrap().to_owned();
+    assert_eq!(sent.json()["name"], "kitchen wide.png");
+    assert_eq!(
+        (sent.json()["width"].clone(), sent.json()["height"].clone()),
+        (json!(64), json!(48))
+    );
+    let generation = kitted.generation();
+    assert_eq!(generation.number(), before + 1, "one publication");
+    let hex = id.trim_start_matches("sha256:");
+    let named = generation
+        .entries()
+        .keys()
+        .any(|name| name == &format!("play/pictures/{hex}"));
+    let held = generation
+        .entries()
+        .keys()
+        .any(|name| name.contains(hex) && name.starts_with("artifacts/"));
+    assert!(
+        named && held,
+        "{:?}",
+        generation.entries().keys().collect::<Vec<_>>()
+    );
+    let listed = kitted.api("GET", "/api/pictures", None).json();
+    assert_eq!(listed["pictures"][0]["id"], id.as_str());
+    assert_eq!(listed["pictures"][0]["name"], "kitchen wide.png");
+    // The picture is the import's: its canonical pixels as a PNG.
+    let shown = kitted.api("GET", &format!("/api/artifacts/{id}"), None);
+    assert_eq!(shown.status, 200);
+    assert!(shown.body.starts_with(b"\x89PNG"));
+    let thumb = kitted.api("GET", &format!("/api/artifacts/{id}/thumb?edge=16"), None);
+    assert_eq!(thumb.status, 200, "{}", thumb.text());
+}
+
+#[test]
+fn a_picture_that_fails_to_decode_leaves_nothing_in_the_store() {
+    let kitted = Kitted::new("play-w1-undecoded");
+    let before = kitted.generation();
+    // A PNG whose header says a small size and whose data is cut short.
+    let mut broken = png(64, 48, 17);
+    broken.truncate(60);
+    let refused = kitted.upload(&broken, "broken.png");
+    assert_eq!(refused.status, 400, "{}", refused.text());
+    let after = kitted.generation();
+    assert_eq!(after.number(), before.number());
+    assert_eq!(after.entries().len(), before.entries().len());
+    let staging = kitted.root().join("staging");
+    let staged = std::fs::read_dir(&staging).map_or(0, |dir| dir.count());
+    assert_eq!(staged, 0);
+}
+
+#[test]
+fn a_drawn_shape_is_committed_as_a_location_bound_to_its_picture() {
+    let kitted = Kitted::new("play-w1-drawn");
+    let picture = kitted.picture(18);
+    let drawn = json!({"picture": picture,
+                       "shape": {"kind": "box", "left": 4, "top": 6, "right": 20, "bottom": 30}});
+    let made = kitted.api("POST", "/api/locations", Some(&drawn));
+    assert_eq!(made.status, 201, "{}", made.text());
+    let id = made.json()["id"].as_str().unwrap().to_owned();
+    let shown = kitted
+        .api("GET", &format!("/api/artifacts/{id}"), None)
+        .json();
+    assert_eq!(
+        shown,
+        json!({"kind": "box", "left": 4.0, "top": 6.0, "right": 20.0, "bottom": 30.0})
+    );
+    // Bound to the picture: a removal at it prepares, ready.
+    let prepared = kitted.prepare("remove", &json!({"image": picture, "location": id}));
+    assert_eq!(prepared["ready"], true, "{prepared}");
+    // A stroke; a polygon of more than 64 points; a shape outside the picture.
+    let stroke = json!({"picture": picture,
+                        "shape": {"kind": "stroke", "points": [[2, 2], [30, 20]], "radius": 3}});
+    assert_eq!(
+        kitted.api("POST", "/api/locations", Some(&stroke)).status,
+        201
+    );
+    let many: Vec<Json> = (0..65).map(|at| json!([at % 60, at % 40])).collect();
+    let polygon = json!({"picture": picture, "shape": {"kind": "polygon", "points": many}});
+    assert_eq!(
+        kitted.api("POST", "/api/locations", Some(&polygon)).status,
+        400
+    );
+    let outside = json!({"picture": picture,
+                         "shape": {"kind": "box", "left": 4, "top": 6, "right": 900, "bottom": 30}});
+    assert_eq!(
+        kitted.api("POST", "/api/locations", Some(&outside)).status,
+        400
+    );
+}
+
+#[test]
+fn each_choice_is_prepared_and_answered_with_its_readiness_kind() {
+    let kitted = Kitted::new("play-w1-choices");
+    let candidate = kitted.picture(19);
+    let prepared = kitted.prepare("reality-checks", &json!({"candidate": candidate}));
+    assert_eq!(prepared["ready"], true, "{prepared}");
+    let judges = prepared["choices"]["judge"].as_array().unwrap().clone();
+    let kind_of = |name: &str| {
+        judges
+            .iter()
+            .find(|choice| choice["value"] == name)
+            .map(|choice| (choice["ready"].clone(), choice["kind"].clone()))
+    };
+    assert_eq!(kind_of("cloud-judge"), Some((json!(true), json!("ready"))));
+    assert_eq!(
+        kind_of("keyless-judge"),
+        Some((json!(false), json!("no_key")))
+    );
+    // Each need's bound: sixteen turns of a fifth of a cent.
+    let need = &prepared["needs"][0];
+    assert_eq!(
+        (need["capability"].clone(), need["requests"].clone()),
+        (json!("judge"), json!(16))
+    );
+    assert!(
+        (prepared["bound"].as_f64().unwrap() - 0.032).abs() < 1e-9,
+        "{prepared}"
+    );
+    // The judge that is not ready, picked: not ready, with what is missing, and no handle.
+    let picked = kitted.prepare(
+        "reality-checks",
+        &json!({"candidate": candidate, "judge": "keyless-judge"}),
+    );
+    assert_eq!(picked["ready"], false, "{picked}");
+    assert_eq!(picked["handle"], Json::Null);
+    assert_eq!(picked["missing"][0]["kind"], "no_key", "{picked}");
+}
+
+#[test]
+fn an_event_message_with_an_escape_sequence_is_answered_escaped() {
+    let kitted = Kitted::new("play-w1-escaped");
+    let prepared = kitted.prepare("shout", &json!({}));
+    let started = kitted.begin("shout", &json!({}), &prepared["handle"], &fresh_id());
+    assert_eq!(started.status, 201, "{}", started.text());
+    // The run ends at once: its events come from its journal, escaped as a live one's.
+    let ended = kitted.until_ended(started.json()["run"].as_str().unwrap());
+    let said: Vec<&str> = ended["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|event| event["message"].as_str())
+        .collect();
+    let shout = said
+        .iter()
+        .find(|message| message.contains("cleared"))
+        .unwrap();
+    assert!(
+        !shout.contains('\u{1b}') && !shout.contains('\u{7}'),
+        "{shout:?}"
+    );
+    assert!(shout.contains("\\u{1b}"), "{shout:?}");
+}
+
+#[test]
+fn hello_lists_the_kits_and_says_why_beside_an_empty_list_of_backends() {
+    let scratch = Scratch::new("play-w1-hello");
+    let config = scratch.path().join("whizbang.toml");
+    std::fs::write(&config, "[backends.fill]\nkind = 3\n").unwrap();
+    let over = Over::nothing().config(Some(&config));
+    let registry = wiring::registry().unwrap();
+    let play = Playground::new(registry.descriptors().cloned().collect(), Arc::new(over));
+    let hello = whizbang_serve::play::Play::hello(&play);
+    assert_eq!(hello["backends"], json!([]));
+    assert!(
+        hello["backends_error"]
+            .as_str()
+            .is_some_and(|why| !why.is_empty())
+    );
+    let kits: Vec<&str> = hello["kits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|kit| kit["id"].as_str())
+        .collect();
+    assert_eq!(kits, ["rascal", "squint"]);
+    let loop_ = hello["kits"][0]["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|task| task["name"] == "remove_checked")
+        .unwrap();
+    assert_eq!(
+        (loop_["title"].clone(), loop_["uses"].clone()),
+        (json!("Remove, checked"), json!("squint"))
+    );
+}
+
+/// The raw request of the page, with one header more.
+fn with_header(kitted: &Kitted, path: &str, header: &str) -> Answer {
+    let request = format!(
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {token}\r\n{header}\r\n\r\n",
+        port = kitted.address.port(),
+        token = kitted.token.hex(),
+    );
+    send(kitted.address, request.as_bytes())
+}
+
+#[test]
+fn a_request_with_the_fixture_script_header_is_refused_400_by_the_real_host() {
+    let kitted = Kitted::new("play-w1-script");
+    let before = kitted.generation().number();
+    for path in ["/api/hello", "/api/pictures", "/"] {
+        let refused = with_header(&kitted, path, "x-fixture-script: hold");
+        assert_eq!(refused.status, 400, "{path}: {}", refused.text());
+    }
+    // Nothing changed: the store, and the kit's script, which the real door never sets.
+    assert_eq!(kitted.generation().number(), before);
+    let prepared = kitted.prepare("shout", &words("free"));
+    let started = kitted.begin("shout", &words("free"), &prepared["handle"], &fresh_id());
+    let ended = kitted.until_ended(started.json()["run"].as_str().unwrap());
+    assert_eq!(ended["outcome"], "completed");
+}
+
+/// Polls an ended run from this place.
+fn poll_from(kitted: &Kitted, run: &str, after: u64) -> Json {
+    kitted
+        .api("GET", &format!("/api/runs/{run}?after={after}"), None)
+        .json()
+}
+
+#[test]
+fn an_ended_run_polled_from_a_place_is_answered_from_its_journal_from_there() {
+    let kitted = Kitted::new("play-w1-after");
+    let prepared = kitted.prepare("chatty", &json!({}));
+    let started = kitted.begin("chatty", &json!({}), &prepared["handle"], &fresh_id());
+    let run = started.json()["run"].as_str().unwrap().to_owned();
+    let whole = kitted.until_ended(&run);
+    let next = whole["next"].as_u64().unwrap();
+    let later = poll_from(&kitted, &run, 10);
+    let seqs: Vec<u64> = (later["events"].as_array().unwrap().iter())
+        .filter_map(|event| event["seq"].as_u64())
+        .collect();
+    assert_eq!(seqs.first(), Some(&10), "{}", later["next"]);
+    assert!(seqs.iter().all(|seq| *seq >= 10));
+    assert_eq!(later["next"], next);
+    let past = poll_from(&kitted, &run, next);
+    assert_eq!(past["events"], json!([]));
+    assert_eq!(
+        (past["next"].clone(), past["skipped"].clone()),
+        (json!(next), json!(0))
+    );
+}
+
+#[test]
+fn an_ended_run_past_its_kept_messages_is_polled_with_the_count_skipped() {
+    let kitted = Kitted::new("play-w1-skipped");
+    let prepared = kitted.prepare("chatty", &json!({}));
+    let started = kitted.begin("chatty", &json!({}), &prepared["handle"], &fresh_id());
+    let run = started.json()["run"].as_str().unwrap().to_owned();
+    kitted.until_ended(&run);
+    let kept = whizbang_core::contract::MESSAGES_KEPT_LIMIT as u64;
+    // From near the end of what was kept: the last kept events, then the places of
+    // those not kept counted as skipped.
+    let tail = poll_from(&kitted, &run, kept - 2);
+    let skipped = tail["skipped"].as_u64().unwrap();
+    assert!(skipped >= 3, "{}", tail["skipped"]);
+    let next = tail["next"].as_u64().unwrap();
+    let shown = tail["events"].as_array().unwrap().len() as u64;
+    assert_eq!(next - (kept - 2), shown + skipped, "{tail}");
+}
+
+#[test]
+fn a_repeat_after_a_restart_is_answered_while_every_place_is_taken() {
+    let kitted = Kitted::new("play-w1-full");
+    let prepared = kitted.prepare("shout", &words("first"));
+    let first = kitted.begin("shout", &words("first"), &prepared["handle"], "page-first");
+    kitted.until_ended(first.json()["run"].as_str().unwrap());
+    let kitted = kitted.restarted();
+    let mut runs = Vec::new();
+    for _ in 0..4 {
+        let handle = kitted.prepare("waits", &json!({}))["handle"].clone();
+        let started = kitted.begin("waits", &json!({}), &handle, &fresh_id());
+        assert_eq!(started.status, 201, "{}", started.text());
+        runs.push(started.json()["run"].as_str().unwrap().to_owned());
+    }
+    let repeat = kitted.begin("shout", &words("first"), &Json::Null, "page-first");
+    assert_eq!(repeat.status, 200, "{}", repeat.text());
+    assert_eq!(repeat.json()["run"], first.json()["run"]);
+    // Under a config changed since, the same id is still its run's.
+    let config = kitted.scratch.path().join("whizbang.toml");
+    std::fs::write(&config, kit_config("other-fill")).unwrap();
+    let again = kitted.begin("shout", &words("first"), &Json::Null, "page-first");
+    assert_eq!(again.json()["run"], first.json()["run"], "{}", again.text());
+    for run in &runs {
+        kitted.api("POST", &format!("/api/runs/{run}/cancel"), None);
+    }
+}
+
+#[test]
+fn a_paid_run_says_what_the_ledger_settled_of_what_it_reserved() {
+    let kitted = Kitted::new("play-w1-spend");
+    let arguments = json!({"image": kitted.picture(30), "prompt": "the hose"});
+    let prepared = kitted.prepare("remove_prompt", &arguments);
+    // The config's name of the backend that answers: a lone table is named `default`.
+    assert_eq!(prepared["needs"][1]["backend"], "default", "{prepared}");
+    let bound = prepared["bound"].as_f64().unwrap();
+    let started = kitted.begin(
+        "remove_prompt",
+        &arguments,
+        &prepared["handle"],
+        &fresh_id(),
+    );
+    let ended = kitted.until_ended(started.json()["run"].as_str().unwrap());
+    assert_eq!(ended["outcome"], "completed", "{ended}");
+    // One fill of four cents, settled, under a reservation of the preparation's bound.
+    assert!(
+        (ended["spent"].as_f64().unwrap() - 0.04).abs() < 1e-9,
+        "{ended}"
+    );
+    assert!(
+        (ended["reserved"].as_f64().unwrap() - bound).abs() < 1e-9,
+        "{ended}"
+    );
+}
+
+#[test]
+fn the_artifact_route_shows_each_type_it_can_and_refuses_the_rest() {
+    let kitted = Kitted::new("play-w1-artifacts");
+    let picture = kitted.picture(31);
+    for id in [
+        "not-an-id",
+        "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    ] {
+        assert_eq!(
+            kitted
+                .api("GET", &format!("/api/artifacts/{id}"), None)
+                .status,
+            404,
+            "{id}"
+        );
+    }
+    // A mask, made by a task that needs no model, shown as a grey picture.
+    let arguments = json!({"image": picture, "box": "4 4 20 20"});
+    let handle = kitted.prepare("mask_rect", &arguments)["handle"].clone();
+    let started = kitted.begin("mask_rect", &arguments, &handle, &fresh_id());
+    let ended = kitted.until_ended(started.json()["run"].as_str().unwrap());
+    let mask = (ended["outputs"].as_array().unwrap().iter())
+        .find(|output| output["type"] == "mask")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let shown = kitted.api("GET", &format!("/api/artifacts/{mask}"), None);
+    assert_eq!(shown.status, 200);
+    // The PNG's colour type, in its header: 0, grey.
+    assert_eq!(shown.body[25], 0, "a grey picture");
+    // A series, which has no picture to show.
+    let inputs = json!({"mask": mask, "image": picture});
+    let handle = kitted.prepare("inspect", &inputs)["handle"].clone();
+    let started = kitted.begin("inspect", &inputs, &handle, &fresh_id());
+    let ended = kitted.until_ended(started.json()["run"].as_str().unwrap());
+    let series = (ended["outputs"].as_array().unwrap().iter())
+        .find(|output| output["type"] == "series")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(
+        kitted
+            .api("GET", &format!("/api/artifacts/{series}"), None)
+            .status,
+        415
+    );
+    // Thumbnails: an edge from 8 to 2048, and the picture no larger than it.
+    for edge in [7, 2049] {
+        let path = format!("/api/artifacts/{picture}/thumb?edge={edge}");
+        assert_eq!(kitted.api("GET", &path, None).status, 400, "{edge}");
+    }
+    let thumb = kitted.api(
+        "GET",
+        &format!("/api/artifacts/{picture}/thumb?edge=16"),
+        None,
+    );
+    assert_eq!(thumb.status, 200);
+    let size = image::load_from_memory(&thumb.body).unwrap();
+    assert!(size.width() <= 16 && size.height() <= 16);
+    // Asked again: the same bytes, kept.
+    let again = kitted.api(
+        "GET",
+        &format!("/api/artifacts/{picture}/thumb?edge=16"),
+        None,
+    );
+    assert_eq!(again.body, thumb.body);
+}
+
+#[test]
+fn the_pictures_are_paged_newest_first_and_a_picture_sent_again_keeps_its_newest_name() {
+    let kitted = Kitted::new("play-w1-paging");
+    let ids: Vec<String> = (40..43).map(|shade| kitted.picture(shade)).collect();
+    let first = kitted.api("GET", "/api/pictures?limit=2", None).json();
+    let listed: Vec<&str> = (first["pictures"].as_array().unwrap().iter())
+        .filter_map(|p| p["id"].as_str())
+        .collect();
+    assert_eq!(listed, [ids[2].as_str(), ids[1].as_str()]);
+    let rest = kitted
+        .api(
+            "GET",
+            &format!("/api/pictures?limit=2&after={}", ids[1]),
+            None,
+        )
+        .json();
+    assert_eq!(rest["pictures"].as_array().unwrap().len(), 1);
+    assert_eq!(rest["pictures"][0]["id"], ids[0].as_str());
+    let unknown = format!("/api/pictures?after=sha256:{}", "1".repeat(64));
+    assert_eq!(kitted.api("GET", &unknown, None).status, 400);
+    // The oldest sent again under another name: one entry, the newest name, first.
+    let again = kitted.upload(&png(64, 48, 40), "renamed.png");
+    assert_eq!(again.json()["id"], ids[0].as_str());
+    let all = kitted.api("GET", "/api/pictures", None).json();
+    assert_eq!(all["pictures"].as_array().unwrap().len(), 3);
+    assert_eq!(all["pictures"][0]["name"], "renamed.png");
+}
+
+#[test]
+fn a_line_is_drawn_and_a_path_or_polygon_past_its_points_is_refused() {
+    let kitted = Kitted::new("play-w1-lines");
+    let picture = kitted.picture(50);
+    let line = json!({"picture": picture,
+                      "shape": {"kind": "line", "points": [[2, 2], [40, 30]], "width": 4}});
+    let made = kitted.api("POST", "/api/locations", Some(&line));
+    assert_eq!(made.status, 201, "{}", made.text());
+    let id = made.json()["id"].as_str().unwrap().to_owned();
+    let shown = kitted
+        .api("GET", &format!("/api/artifacts/{id}"), None)
+        .json();
+    assert_eq!(shown["kind"], "line");
+    let long: Vec<Json> = (0..513).map(|at| json!([at % 60, at % 40])).collect();
+    for kind in ["stroke", "line"] {
+        let shape = json!({"picture": picture,
+                           "shape": {"kind": kind, "points": long, "radius": 3, "width": 3}});
+        let mut shape = shape;
+        if kind == "stroke" {
+            shape["shape"].as_object_mut().unwrap().remove("width");
+        } else {
+            shape["shape"].as_object_mut().unwrap().remove("radius");
+        }
+        assert_eq!(
+            kitted.api("POST", "/api/locations", Some(&shape)).status,
+            400,
+            "{kind}"
+        );
+    }
+    let most: Vec<Json> = (0..512).map(|at| json!([at % 60, at % 40])).collect();
+    let stroke =
+        json!({"picture": picture, "shape": {"kind": "stroke", "points": most, "radius": 3}});
+    assert_eq!(
+        kitted.api("POST", "/api/locations", Some(&stroke)).status,
+        201
+    );
+}
+
+#[test]
+fn two_pictures_sent_at_once_are_both_kept() {
+    let kitted = Arc::new(Kitted::new("play-w1-two"));
+    let sent: Vec<_> = (0..2u8)
+        .map(|at| {
+            let kitted = kitted.clone();
+            whizbang_testkit::threads::spawn(move || {
+                kitted.upload(&png(64, 48, 60 + at), "both.png")
+            })
+        })
+        .collect();
+    let ids: Vec<String> = sent
+        .into_iter()
+        .map(|handle| {
+            let answer = handle.join().unwrap();
+            assert_eq!(answer.status, 201, "{}", answer.text());
+            answer.json()["id"].as_str().unwrap().to_owned()
+        })
+        .collect();
+    assert_ne!(ids[0], ids[1]);
+    let listed = kitted.api("GET", "/api/pictures", None).json();
+    assert_eq!(listed["pictures"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn a_thumbnail_asked_for_again_is_the_one_kept_and_not_made_twice() {
+    let kitted = Kitted::new("play-w1-kept-thumb");
+    let picture = kitted.picture(70);
+    let path = format!("/api/artifacts/{picture}/thumb?edge=24");
+    let first = kitted.api("GET", &path, None);
+    assert_eq!(first.status, 200);
+    assert_eq!(kitted.door.thumbnails_made(), 1);
+    let again = kitted.api("GET", &path, None);
+    assert_eq!(again.body, first.body);
+    assert_eq!(kitted.door.thumbnails_made(), 1, "taken from those kept");
+    // Another edge is another thumbnail.
+    let other = kitted.api(
+        "GET",
+        &format!("/api/artifacts/{picture}/thumb?edge=12"),
+        None,
+    );
+    assert_eq!(other.status, 200);
+    assert_eq!(kitted.door.thumbnails_made(), 2);
+}

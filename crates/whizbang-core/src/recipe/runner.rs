@@ -129,6 +129,21 @@ pub struct RecipeAction {
 }
 
 impl RecipeAction {
+    /// The same action, naming the kit it belongs to and its title, whatever its file
+    /// says of them: how a build titles a recipe it ships without changing its text,
+    /// whose digest what was measured of it names (plan m5, task W1, item 2).
+    pub fn titled(mut self, kit: &str, title: &str) -> Result<RecipeAction, RecipeError> {
+        self.descriptor = self
+            .descriptor
+            .titled(kit, title)
+            .map_err(|error| RecipeError {
+                recipe: error.action,
+                step: "-".to_owned(),
+                why: error.why,
+            })?;
+        Ok(self)
+    }
+
     /// The action of this recipe, checked against `registry`, whose text was `text`.
     pub fn new(
         recipe: Checked,
@@ -150,6 +165,12 @@ impl RecipeAction {
         let mut draft =
             ActionDescriptor::draft(&recipe.name, VERSION, Kind::Recipe, &recipe.purpose)
                 .use_when(&recipe.when);
+        if let Some(kit) = &recipe.kit {
+            draft = draft.kit(kit);
+        }
+        if let Some(title) = &recipe.title {
+            draft = draft.title(title);
+        }
         for (name, input) in &recipe.inputs {
             let purpose = format!("The input {name} of the recipe.");
             if let Declared::Artifact(artifact) = input.declared

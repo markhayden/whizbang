@@ -106,9 +106,13 @@ names, when the host still holds it (at most 64, each for an hour). A quit that 
 start is being admitted trips its cancellation too, and a run that admission then makes is
 cancelled and waited for as the others are. Two limits of the repeat's look-up, accepted: the host remembers the ids
 of the runs it started (the newest 4,096, by the action and a digest of the arguments as the
-page sent them); an id of an earlier launch is answered by the executor only once a place is
-free, so while every place is taken it is answered 429 like any start. And the host compares
-the arguments as sent, not as filled in, so a retry that writes out a default the first
+page sent them); an id it does not remember that the store holds an admission under (one
+of an earlier launch) is answered with the run that admission names, by the id alone,
+before a place is taken and whatever is running (plan m5, task W1, its review): the host
+holds no copy of what was asked then, and making the call again under a config changed
+since would not give the call the id was given for, so another call sent under such an id
+is answered with that run too, not as a conflict. And the host compares the arguments as
+sent, not as filled in, so a retry in the same launch that writes out a default the first
 request left out is answered as a conflict.
 
 **A run's stated time.** Each run the host starts has a stated time, one hour unless
@@ -137,6 +141,10 @@ run that has not ended by then is left to be ended as interrupted by the next wr
 exit says how many. A second signal, or a second quit, during the grace ends the grace at
 once, and the same steps follow.
 
+**A fixture's script.** A request carrying `x-fixture-script` is refused, 400, by the
+real host (the door's `Play::script`); the fixture host of the Chrome cases reads it to
+steer its fake backends (plan m5, tasks U1 and W1). No page of the playground sends it.
+
 **Reconnecting.** The host writes `<store>/play.json` when it starts, readable by its owner
 only, with its port, its process id and the token, and removes it when it stops. A second
 `whizbang play` on a store held by a live host reads it, asks that host's `/api/hello` with
@@ -151,12 +159,16 @@ registered in `play/routes.rs` by one line.
 | `GET /` and the interface's files | The built interface, embedded (`play/assets.rs`) | H1, U1 |
 | `GET /api/hello` | Version, the store's folder, the backends' readiness (no probe), the allowance and what is left | H1, then W1 adds the kits |
 | `POST /api/quit` | Stop, as above | H1 |
-| `POST /api/prepare` | A preparation of a call, kept under a handle; its readiness | H1 (the handle), W1 (per choice, needs, plan) |
+| `POST /api/prepare` | A preparation of a call, kept under a handle when it is ready; its readiness and what is missing by kind, each need's bound, a loop's attempts, and each choice of a backend prepared on its own | H1 (the handle), W1 (per choice, needs, plan) |
 | `POST /api/runs` | Start a call with its handle and a request id | H1, W1 |
-| `GET /api/runs/{id}?after=<n>` | The run's state and its events after the `n`th | H1, W1 |
+| `GET /api/runs/{id}?after=<n>` | The run's state and its events after the `n`th, every text escaped (from its journal once it has ended), what was asked, what it spent of what it reserved, its outputs and its verdict | H1, W1 |
 | `POST /api/runs/{id}/cancel` | Stop a run | H1 |
 | `GET /api/runs?open=1` | The runs the host started that are still going | H1, then W3 adds history |
-| the rest of the plan's table | Pictures, locations, artifacts, records, reports, models, backends, stats, spend | W1, W2, W3, M1 |
+| `POST /api/pictures?name=` | A picture's bytes, decoded once, decoded within `DecodeLimits` by the route (the guard reads only its header's size) and kept as `store import --picture` keeps one, through the host's writer, with its name beside it under `play/pictures/` in the same publication | W1 |
+| `GET /api/pictures?after=&limit=` | The pictures the playground kept, newest first, with their names | W1 |
+| `POST /api/locations` | A box, a polygon (at most 64 points), a stroke or a line drawn on a picture, committed as a location bound to it | W1 |
+| `GET /api/artifacts/{id}` and `…/thumb?edge=` | An artifact for display: a picture as its PNG, a mask as a grey picture, a location as JSON; a thumbnail made on request; at most two thumbnails and two whole artifacts made at once (one more is answered 429 with `Retry-After`, which the page waits out), the newest 64 thumbnails kept in memory | W1 |
+| the rest of the plan's table | Records, reports, models, backends, stats, spend | W2, W3, M1 |
 
 No route takes a file path.
 

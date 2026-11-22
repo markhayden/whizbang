@@ -17,6 +17,8 @@
 //! purpose = "Makes the mask to remove what a phrase names."
 //! use = "To remove a thing you can name in words."
 //! use_case = "remove"                     # rascal's; read and kept
+//! kit = "rascal"                          # the kit it belongs to; may be left out
+//! title = "Remove what you name"          # its title as a person reads it; may be left out
 //!
 //! [inputs]                                # artifact types, or Text
 //! image = { type = "Image" }
@@ -182,6 +184,11 @@ pub struct Recipe {
     pub purpose: Option<String>,
     pub when: Option<String>,
     pub use_case: Option<String>,
+    /// The kit it belongs to (plan m5, task W1, item 2): a name, held to the rule of an
+    /// action's name. Every shipped recipe says it; a user's may not.
+    pub kit: Option<String>,
+    /// Its title, as a person reads it, held to the rule of a title.
+    pub title: Option<String>,
     pub projection: Option<String>,
     pub inputs: BTreeMap<String, Input>,
     pub steps: Vec<Step>,
@@ -240,6 +247,8 @@ impl Recipe {
         let purpose = text_of("purpose")?;
         let when = text_of("use")?;
         let use_case = text_of("use_case")?;
+        let kit = text_of("kit")?;
+        let title = text_of("title")?;
         let projection = text_of("projection")?;
 
         let mut inputs = BTreeMap::new();
@@ -305,6 +314,8 @@ impl Recipe {
             purpose,
             when,
             use_case,
+            kit,
+            title,
             projection,
             inputs,
             steps,
@@ -377,6 +388,12 @@ impl Recipe {
             .as_deref()
             .ok_or_else(|| refuse("-", "it says no `use`: when to use it".to_owned()))?;
         text::plain_line("use", when).map_err(|why| refuse("-", why))?;
+        if let Some(kit) = &self.kit {
+            text::action_name(kit).map_err(|why| refuse("-", format!("its kit: {why}")))?;
+        }
+        if let Some(title) = &self.title {
+            text::title(title).map_err(|why| refuse("-", why))?;
+        }
         if self.steps.is_empty() || self.steps.len() > STEPS_MAX {
             return Err(refuse(
                 "-",
@@ -628,6 +645,8 @@ impl Recipe {
             name: self.name.clone(),
             purpose: purpose.to_owned(),
             when: when.to_owned(),
+            kit: self.kit.clone(),
+            title: self.title.clone(),
             inputs: self.inputs.clone(),
             steps: checked,
             outputs,
@@ -860,6 +879,8 @@ pub struct Checked {
     pub name: String,
     pub purpose: String,
     pub when: String,
+    pub kit: Option<String>,
+    pub title: Option<String>,
     pub inputs: BTreeMap<String, Input>,
     pub steps: Vec<CheckedStep>,
     pub outputs: Vec<Output>,

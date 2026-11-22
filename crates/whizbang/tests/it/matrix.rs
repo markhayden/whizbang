@@ -807,3 +807,83 @@ fn arm_c_is_check_as_it_ships() {
         String::from_utf8_lossy(&by_door[0].1)
     );
 }
+
+#[test]
+fn the_submission_round_is_1320_cells_forecast_within_its_store_and_capped_by_its_dearest_check() {
+    // Plan e1, task F2, item 1, and "Prices and caps": the committed matrix of the format
+    // round, its cells over the sets as committed, the forecast `eval matrix` sets against
+    // the evaluation store's 70 dollars, and the cap of one call the round needs: the
+    // largest bound of one check among its judges, plus a cent. Nothing is run or sent.
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let text = std::fs::read_to_string(repo.join("matrices/e-submission.toml")).unwrap();
+    let matrix = Matrix::parse(&text).unwrap();
+    assert_eq!(matrix.matrix.name, "e-submission");
+    let arms: Vec<String> = matrix.matrix.arms.iter().map(ToString::to_string).collect();
+    assert_eq!(arms, ["C;submission=v1", "C;submission=v2"]);
+    for arm in &matrix.matrix.arms {
+        // Arm C: nothing measured first, view and align offered, no second look.
+        assert_eq!(arm.details(), "none");
+        assert_eq!(arm.offered(), "view,align");
+        assert!(!arm.looks());
+    }
+    let judges: Vec<(&str, &str)> = (matrix.matrix.judges.iter())
+        .map(|j| (j.backend.as_str(), j.model.as_str()))
+        .collect();
+    assert_eq!(
+        judges,
+        [
+            ("claude-haiku-5-5", "claude-haiku-5-5"),
+            ("gemini-3-8-flash", "gemini-3.8-flash"),
+            ("gpt-6-1-terra", "gpt-6.1-terra"),
+        ]
+    );
+    // Each judge is a judge of the evaluation config, of the model it names.
+    let config = std::fs::read(repo.join("labs/e-loop/config.toml")).unwrap();
+    let config =
+        whizbang_core::config::Config::parse(&config, &whizbang_core::contract::Secrets::none())
+            .unwrap();
+    let offered: Vec<(&str, Option<&str>)> = (config
+        .backends(whizbang_core::contract::Capability::Judge))
+    .map(|(name, backend)| (name, backend.model()))
+    .collect();
+    for (backend, model) in &judges {
+        assert!(offered.contains(&(*backend, Some(*model))), "{backend}");
+    }
+    // The ten dev sets, 110 items, each with its own labels.
+    let mut items = Vec::new();
+    for id in &matrix.matrix.sets {
+        let set = whizbang_eval::sets::find(&repo.join("evalsets"), id).unwrap();
+        assert_eq!(set.manifest.set.split.to_string(), "dev", "{id}");
+        assert!(set.manifest.set.labels.is_some(), "{id}");
+        items.push((
+            id.clone(),
+            set.jobs.iter().map(|(i, _)| i.clone()).collect(),
+        ));
+    }
+    let cells = matrix.cells(&items);
+    assert_eq!(items.iter().map(|(_, i)| i.len()).sum::<usize>(), 110);
+    assert_eq!(cells.len(), 1_320);
+    // The forecast: each cell at its model's settled cost of a decision under arm C, the
+    // whole doubled; under the 69.97 dollars the store has left.
+    let forecast = whizbang_eval::matrix::forecast(&cells).unwrap();
+    assert_eq!(forecast, 2 * 2 * 2 * 110 * (3_293 + 22_752 + 17_233));
+    assert_eq!(forecast, 38_084_640);
+    assert!(forecast <= 69_970_000);
+    // The cap: the bound of one check is sixteen requests at the judge's ceilings, under
+    // either format and with the second look or without (the turns are the budget's);
+    // the dearest of the three is Terra's.
+    use whizbang_backends::service::spend::{DEFAULT_CEILINGS, bound_micros};
+    let check = |model: &str| -> u64 {
+        let prices = (whizbang_backends::anthropic::spend::prices_of(model))
+            .or_else(|| whizbang_backends::google::spend::prices_of(model))
+            .or_else(|| whizbang_backends::openai::spend::prices_of(model))
+            .unwrap_or_else(|| panic!("{model} has no price"));
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let request = bound_micros(DEFAULT_CEILINGS, prices).round() as u64;
+        request * whizbang_squint::check::TURNS_LIMIT as u64
+    };
+    let bounds: Vec<u64> = judges.iter().map(|(_, model)| check(model)).collect();
+    assert_eq!(bounds, [112_768, 725_760, 967_680]);
+    let cap = bounds.iter().max().unwrap() + 10_000;
+    assert_eq!(cap, 977_680);
+}

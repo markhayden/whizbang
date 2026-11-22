@@ -108,8 +108,9 @@ one whose last attempt failed is reported as failed and not run again, so no lat
 replaces a failure; one whose last attempt was interrupted is run as its next attempt.
 
 `matrices/` holds squint's study matrices, ported, with the models of the Google and OpenAI
-judges named, and the matrix of E1's evidence. `whizbang runs stats` and `runs export` report
-on the runs a matrix made (`--matrix <name>`).
+judges named, the matrix of E1's evidence, and the matrix of plan e1's format round
+(`e-submission.toml`: v1 against v2 under arm C, each arm naming its format).
+`whizbang runs stats` and `runs export` report on the runs a matrix made (`--matrix <name>`).
 
 ## Scoring judges
 

@@ -1,13 +1,27 @@
 {
-  "description_version": 10,
+  "description_version": 11,
   "name": "whizbang",
   "version": "0.1.0",
+  "kits": [
+    {
+      "name": "rascal",
+      "title": "Rascal",
+      "line": "edit pictures"
+    },
+    {
+      "name": "squint",
+      "title": "Squint",
+      "line": "check pictures"
+    }
+  ],
   "actions": [
     {
       "name": "check",
       "version": "1.8.0",
       "kind": "recipe",
       "purpose": "Has a judge look at images through evidence tools and conclude: pass, fail or unsure.",
+      "kit": "squint",
+      "title": "Check by a job",
       "arguments": [
         {
           "name": "tools",
@@ -195,6 +209,8 @@
       "kind": "recipe",
       "purpose": "Removes what a phrase names: its mask found, grown, closed, plugged, kept off protect and feathered, then filled.",
       "use": "To remove a thing you can name in words from a picture; give protect to keep what the mask would reach; until feather gives the mask alone.",
+      "kit": "rascal",
+      "title": "Remove what you name",
       "arguments": [
         {
           "name": "backend",
@@ -529,6 +545,8 @@
       "kind": "recipe",
       "purpose": "Removes the thing at a location: the mask grown, closed, plugged, kept off protect and feathered, then filled.",
       "use": "To remove a thing whose place you know, as a box, a polygon or a stroke; give protect to keep what the mask would reach.",
+      "kit": "rascal",
+      "title": "Remove at a place",
       "arguments": [
         {
           "name": "backend",
@@ -818,6 +836,8 @@
       "kind": "recipe",
       "purpose": "Repairs a stain or a spot at a location: the box or polygon as drawn, feathered, then filled.",
       "use": "To repaint a small area whose place you know, keeping its edges as drawn.",
+      "kit": "rascal",
+      "title": "Repair a spot",
       "arguments": [
         {
           "name": "backend",
@@ -989,6 +1009,8 @@
       "kind": "recipe",
       "purpose": "Makes a rectangle on an image a mask: the box's pixels the core, no blend and nothing protected.",
       "use": "To mask a known box, such as a caller's coordinates or a detector's box, with no model.",
+      "kit": "rascal",
+      "title": "Mask a rectangle",
       "arguments": [
         {
           "name": "box",
@@ -1097,6 +1119,8 @@
       "kind": "recipe",
       "purpose": "Makes the mask for a second pass: what the first mask reached is protected, the rest of the image the core.",
       "use": "After a fill, to edit the rest of its composite while keeping the first edit; give the mask the fill handed back.",
+      "kit": "rascal",
+      "title": "Protect a first edit",
       "arguments": [
         {
           "name": "set",
@@ -1154,6 +1178,8 @@
       "kind": "recipe",
       "purpose": "Repairs a scratch or a tear along a stroke: the stroke tightened to the defect's edges, feathered, then filled.",
       "use": "To repaint a thin defect a person marked roughly with a brush.",
+      "kit": "rascal",
+      "title": "Repair a scratch",
       "arguments": [
         {
           "name": "backend",
@@ -1325,6 +1351,8 @@
       "kind": "recipe",
       "purpose": "Heals the wrap edge of a panorama: the band along the seam measured, its tone step ramped, then filled and put back.",
       "use": "On a complete panorama whose left and right edges do not meet; give backend to choose the filler.",
+      "kit": "rascal",
+      "title": "Heal a panorama seam",
       "arguments": [
         {
           "name": "backend",
@@ -1694,6 +1722,8 @@
       "kind": "recipe",
       "purpose": "Checks whether an edit kept what mattered in its source: the judge looks, and calls view and align as it needs.",
       "use": "To hold an edited picture to the picture it was edited from.",
+      "kit": "squint",
+      "title": "Check an edit",
       "arguments": [
         {
           "name": "job",
@@ -1814,6 +1844,8 @@
       "kind": "recipe",
       "purpose": "Checks whether a subject of the references appears faithfully: the judge looks, and calls view and align as it needs.",
       "use": "To hold a picture to one to eight references of the same subject.",
+      "kit": "squint",
+      "title": "Check against references",
       "arguments": [
         {
           "name": "job",
@@ -1934,6 +1966,8 @@
       "kind": "recipe",
       "purpose": "Checks a picture for mistakes no real photograph would make: the judge looks, and calls view to look closer as it needs.",
       "use": "To look for the marks of a made or edited picture with no other picture to hold it to.",
+      "kit": "squint",
+      "title": "Reality check",
       "arguments": [
         {
           "name": "job",
@@ -2054,6 +2088,8 @@
       "kind": "recipe",
       "purpose": "Checks whether a picture holds what its brief asked for and nothing it forbade: the judge looks, and calls view and align as it needs.",
       "use": "To hold a picture to a brief in words, with or without references.",
+      "kit": "squint",
+      "title": "Check against a brief",
       "arguments": [
         {
           "name": "job",
@@ -2174,6 +2210,8 @@
       "kind": "recipe",
       "purpose": "Checks whether a product shot keeps the exact product of its references: the judge looks, and calls view and align as it needs.",
       "use": "To hold a product shot to references of the product.",
+      "kit": "squint",
+      "title": "Check a product shot",
       "arguments": [
         {
           "name": "job",
@@ -2294,6 +2332,9 @@
       "kind": "loop",
       "purpose": "Removes what a phrase names, has the result checked against its source, and tries again a bounded number of times.",
       "use": "To remove a thing you can name in words and know whether the result was checked; it hands back its best attempt with the verdict, and says when it was not checked.",
+      "kit": "rascal",
+      "title": "Remove, checked",
+      "uses": "squint",
       "arguments": [
         {
           "name": "prompt",

@@ -80,6 +80,9 @@ describe("ProgressBar, SpendMeter, AllowanceBar, CostTable", () => {
     expect(view.get("[role=meter]").getAttribute("aria-valuenow")).toBe("33");
     view.rerender(<SpendMeter spent={0} reserved={0} />);
     expect(view.get("[role=meter]").getAttribute("aria-valuenow")).toBe("0");
+    view.rerender(<SpendMeter title="Settled so far" spent={0.04} reserved={0.14} />);
+    expect(view.text()).toBe("Settled so far$0.040 of up to $0.140");
+    expect(view.get("[role=meter]").getAttribute("aria-label")).toBe("Settled so far");
   });
   it("says the allowance since the last reset and what is left", () => {
     const view = render(<AllowanceBar allowance={10} spent={2.48} since="since 2026-11-02" />);
