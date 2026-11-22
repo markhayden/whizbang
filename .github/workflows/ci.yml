@@ -78,10 +78,11 @@ jobs:
         run: |
           df -h /dev/shm
           echo "TMPDIR=/dev/shm" >>"$GITHUB_ENV"
-      # `just ci` without the script tests, which take a runner three to six minutes, and
-      # without the release smoke, the example that must not compile and the secrets scan:
-      # the jobs `scripts` and `release` below run those beside this one, on the same runner.
-      - name: Fast tier and advisories, without the script tests, release smoke and secrets scan
+      # `just ci` without the script tests, which take a runner three to six minutes,
+      # without the release smoke, the example that must not compile and the secrets scan,
+      # and with the fast tests but the sweeps (`timing-fast`): the jobs `scripts`,
+      # `release` and `sweeps` below run those beside this one, on the same runner.
+      - name: Fast tier and advisories, without the script tests, release smoke, secrets scan and sweeps
         run: just ci-without-scripts
       # 30 seconds, on the runner where git grep on several threads lost matches: the
       # scan's search, on one thread, must give its known output every time.
@@ -251,6 +252,61 @@ jobs:
           path: target/e2e/
           retention-days: 14
 
+  # The other part of the fast tests on each runner, which `check` leaves out: the sweeps
+  # (the test group `crash-sweeps` of .config/nextest.toml, which runs two at a time, and
+  # squint's check of every use case), under the same limit of 300 seconds of test time
+  # (`just timing-sweeps`, scripts/timing.sh). With them in `check (macos-15)` its test
+  # time came to 225 to 271 seconds of the 300 (November 2026); the sweeps alone were 233
+  # seconds of the tests' summed durations there. Set up as `check` is; it needs neither
+  # Node nor the pack's Python. On Linux its scratch folders are in memory as in `check`.
+  sweeps:
+    name: sweeps (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Rust toolchain
+        run: rustup show
+      # The cache holds the pack's pinned Python too (the folder uv installs it in, set by
+      # the step that installs it), keyed by the pin and by the pinned tools (uv among
+      # them), so that it is downloaded once for each pin and runner and not on every run.
+      # The key holds the workspace's Cargo.toml as well, where the profiles are: the
+      # cache's own key reads the crates' manifests and Cargo.lock and not that file, so
+      # when the profile of the dependencies changed the old key still matched in full, the
+      # cache was never saved again, and every run built every dependency afresh. It is
+      # saved when a step fails or the job is cancelled too, so that a job stopped at its
+      # limit still leaves its build behind.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: python-${{ hashFiles('Cargo.toml', 'pack/.python-version', 'scripts/tool-versions.txt') }}
+          cache-directories: ${{ runner.temp }}/uv-python
+          cache-on-failure: true
+      # Pinned to a commit (v2.90.5). Each tool is downloaded from its maker's GitHub
+      # releases and checked against the hash the action holds; with no fallback, a tool the
+      # action does not list fails the step instead of being built from crates.io.
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519
+        with:
+          fallback: none
+          tool: just@1.59.0,cargo-nextest@0.9.148,cargo-deny@0.20.2,uv@0.12.23
+      # On Linux the tests' scratch folders are made in memory (/dev/shm), not on the
+      # runner's disk: the stores the tests open sync every file and folder they publish,
+      # and waiting for a disk to finish a sync is nothing a test can observe (on a Mac it
+      # was three fifths of the test time). The same calls are made; only the wait is gone. The macOS runner keeps
+      # its disk, so a real sync of every kind is still run on every push.
+      - name: Scratch folders in memory on Linux
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          df -h /dev/shm
+          echo "TMPDIR=/dev/shm" >>"$GITHUB_ENV"
+      - name: The sweeps of the fast tests
+        run: just timing-sweeps
+
   # The secrets scan and the attribution check over every commit, in a job of its own
   # beside the others: on a branch that adds many files it takes minutes, and in the
   # `check` job it took that job past its limit. One runner is enough: it reads commits,
@@ -285,7 +341,7 @@ jobs:
   ci:
     name: ci
     if: always()
-    needs: [check, scripts, release, e2e, secrets]
+    needs: [check, scripts, release, e2e, sweeps, secrets]
     runs-on: ubuntu-22.04
     steps:
       - name: Every job passed
@@ -294,4 +350,5 @@ jobs:
           test "${{ needs.scripts.result }}" = "success"
           test "${{ needs.release.result }}" = "success"
           test "${{ needs.e2e.result }}" = "success"
+          test "${{ needs.sweeps.result }}" = "success"
           test "${{ needs.secrets.result }}" = "success"

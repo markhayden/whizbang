@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the fast tests and prints seconds per test suite (SPEC.md section 13).
 #
-#   scripts/timing.sh [--limit SECONDS] [--junit FILE]
+#   scripts/timing.sh [--limit SECONDS] [--junit FILE] [--part fast|sweeps]
 #
 # Fails when a test fails, and when test time exceeds the limit. The limit is --limit, else
 # WHIZBANG_TIMING_LIMIT, else 300 seconds everywhere: on GitHub's hosted runners, on a
@@ -28,6 +28,17 @@
 # When it did, each suite is a row of the table, their seconds join the total, and the two
 # files are removed, so a later run without `ui-check` does not count them again. --ui DIR
 # reads the two files from DIR instead (scripts/tests/test-timing.sh).
+#
+# --part fast|sweeps runs one of two parts of the fast tests, each under the same limit;
+# without it every fast test runs, which is what `just check` does. CI runs the two parts
+# in jobs of their own on each runner (`check` and `sweeps`, .github/workflows/ci.yml),
+# because the hosted macOS runner's test time for the whole came to 225 to 271 seconds of
+# the 300 in November 2026, most of it the sweeps two at a time. `sweeps` is the tests
+# that $SWEEPS below names: the test group `crash-sweeps` of .config/nextest.toml (a test
+# joins it by its name) and squint's check of every use case through its recipe; `fast`
+# is every other test, `not` the same expression, so the two parts are the whole by
+# construction. The interface's unit tests are counted in `fast` and in the whole, never
+# in `sweeps`. The line with the total names the part.
 # The whole script is one function, read before any of it runs, so a change to this file
 # during a run does not change the run: see `main` in scripts/scan.sh.
 main() {
@@ -43,17 +54,29 @@ if [ -n "${WHIZBANG_TIMING_LIMIT:-}" ]; then
 fi
 junit=""
 ui=""
+part=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --limit) limit=$2; why="from --limit"; shift 2 ;;
     --junit) junit=$2; shift 2 ;;
     --ui) ui=$2; shift 2 ;;
+    --part) part=$2; shift 2 ;;
     *) echo "timing: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+# The one place the split is named. `group()` is not allowed in a profile's default
+# filter, so the expression is given to nextest here, with -E.
+SWEEPS='group(crash-sweeps) | (package(whizbang-squint) & test(/^check::each_use_case_/))'
+case "$part" in
+  "") filter=(); what="every fast test" ;;
+  fast) filter=(-E "not ($SWEEPS)"); what="the part fast, every fast test but the sweeps" ;;
+  sweeps) filter=(-E "$SWEEPS"); what="the part sweeps: $SWEEPS" ;;
+  *) echo "timing: the part must be fast or sweeps: $part" >&2; exit 2 ;;
+esac
 # The interface's seconds are read from target/ui on a real run, and with a saved result
-# file only from the folder --ui names.
+# file only from the folder --ui names; never in the part sweeps.
 [ -n "$junit" ] || [ -n "$ui" ] || ui=target/ui
+[ "$part" != sweeps ] || ui=""
 # A plain number of seconds: digits, with an optional fraction. Anything else (NaN, 1e3,
 # 1.5.2) would be compared as text and could pass by accident.
 is_seconds() { echo "$1" | grep -E '^[0-9]+(\.[0-9]+)?$' >/dev/null; }
@@ -68,7 +91,7 @@ if [ -z "$junit" ]; then
   target=$(cargo metadata --format-version 1 --no-deps | jq -r .target_directory)
   junit="$target/nextest/default/junit.xml"
   rm -f "$junit"
-  scripts/thread-guard.sh cargo nextest run --workspace --profile default || test_status=$?
+  scripts/thread-guard.sh cargo nextest run --workspace --profile default ${filter[@]+"${filter[@]}"} || test_status=$?
 fi
 
 if [ ! -r "$junit" ]; then
@@ -124,6 +147,7 @@ if [ -n "$ui" ] && [ -r "$ui/unit-seconds" ] && [ -r "$ui/unit-junit.xml" ]; the
   total=$(awk -v a="$total" -v b="$ui_seconds" 'BEGIN { printf "%.3f", a + b }')
   rm -f "$ui/unit-seconds" "$ui/unit-junit.xml"
 fi
+echo "tests run: ${what}"
 echo "test time ${total}s, limit ${limit}s: ${why} (compilation not counted)"
 
 if [ "$test_status" -ne 0 ]; then

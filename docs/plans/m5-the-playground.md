@@ -223,6 +223,12 @@ all: the UI's unit tests at most 10, the Rust tests at most 15 (about 2 a pull r
 for H1 and K1). Each pull request reports its `just check` and CI test times by suite, and
 stops and says so if a run passes about 250 seconds; then coverage is reviewed first, as
 section 13 says, and the limit is not raised without the owner.
+*Later (November 2026):* the hosted macOS runner's test time for the whole reached 225 to
+271 seconds, so CI now runs the fast tests in two parts, each under the same 300 seconds:
+the sweeps (the test group `crash-sweeps` and squint's check of every use case) in the jobs
+`sweeps (macos-15)` and `sweeps (ubuntu-22.04)`, which the aggregate `ci` needs, and the rest,
+with the UI's unit tests, in `check`. `just check` still runs them all at once. A pull
+request reports both jobs' test times.
 `scripts/tests/test-ci-jobs.sh` gains cases that a type error and a stale `ui/dist/` each
 fail `ci-without-scripts`.
 
