@@ -1,18 +1,19 @@
 // The shell in Chrome (plan m5, task U1, item 7).
 import { expect, test } from "./fixtures";
+import { READY } from "./play";
 
 test("the page loads with the token, removes it from the address and shows Home", async ({ page, host }) => {
   const hello = page.waitForResponse((response) => response.url() === `${host.address}api/hello`);
   await page.goto(host.opening);
   expect((await hello).status()).toBe(200);
   await expect(page.getByRole("heading", { name: /Home/ })).toBeVisible();
-  await expect(page.getByRole("status")).toContainText("ready");
+  await expect(page.getByRole("status")).toContainText(READY);
   expect(page.url()).toBe(`${host.address}#/`);
   expect(page.url()).not.toContain(host.token);
   // The token is kept for this tab: a reload of the same tab, without it in the address,
   // still works; another tab is not given it.
   await page.reload();
-  await expect(page.getByRole("status")).toContainText("ready");
+  await expect(page.getByRole("status")).toContainText(READY);
   await expect(page.getByRole("alert")).toHaveCount(0);
   const other = await page.context().newPage();
   await other.goto(host.address);
@@ -53,7 +54,7 @@ test("the page loads nothing from any origin but its host", async ({ page, host 
   page.on("request", (request) => asked.push(request.url()));
   const response = await page.goto(host.opening);
   expect(response?.headers()["content-security-policy"]).toContain("default-src 'self'");
-  await expect(page.getByRole("status")).toContainText("ready");
+  await expect(page.getByRole("status")).toContainText(READY);
   await page.evaluate(async () => {
     await document.fonts.ready;
   });

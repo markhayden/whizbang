@@ -20,6 +20,7 @@ if (root) {
       client={client}
       hasToken={token !== null}
       initialHash={window.location.hash}
+      hashNow={() => window.location.hash}
       subscribeHash={(listener) => {
         const on = () => listener(window.location.hash);
         window.addEventListener("hashchange", on);

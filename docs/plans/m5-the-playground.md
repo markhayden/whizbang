@@ -1183,6 +1183,12 @@ from a result) is offered first as "given to this draft". The in-memory list of 
 `play::history_lists_the_runs_that_made_an_output_of_a_type_with_their_outputs`, and
 `inputs.spec.ts: a picture picked in search starts a task, whose mask port lists the store's
 masks after a reload, and a task shows its earlier runs with their mask and result`.
+A flake of `history.spec.ts` on macOS (the page left on Home after `#/history`) had two
+causes, both fixed: the cases waited for the status bar to say "ready", which its first
+paint's "not ready" holds, so a case moved on before the page listened to the address; and
+the page followed the address only from when it subscribed, after its first paint, so a
+change made before then was lost. The page now reads the address once it listens
+(`hashNow`), and the cases wait for "ready" not preceded by "not".
 
 ## E1. The loop by hand in the playground, and the guide (medium; the orchestrator's runs)
 

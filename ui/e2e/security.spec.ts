@@ -3,6 +3,7 @@
 import { request as http } from "node:http";
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
+import { READY } from "./play";
 import { largePng } from "./png";
 
 /** What a page's fetch came to: its status, or that the browser refused to hand it over. */
@@ -119,7 +120,7 @@ test("a request to the host under another name that resolves to loopback is refu
 
 test("an upload of a picture over the pixel limit is refused, naming the limit", async ({ page, host }) => {
   await page.goto(host.opening);
-  await expect(page.getByRole("status")).toContainText("ready");
+  await expect(page.getByRole("status")).toContainText(READY);
   const picture = largePng().toString("base64");
   const outcome = await page.evaluate(
     async ({ picture, token }) => {

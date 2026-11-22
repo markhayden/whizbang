@@ -34,11 +34,11 @@ async function settle() {
   });
 }
 
-function mount(hash: string, hello: Promise<Hello>, hasToken = true, takeToken: () => Taken = () => ({ token: null, offered: false, fresh: false })) {
+function mount(hash: string, hello: Promise<Hello>, hasToken = true, takeToken: () => Taken = () => ({ token: null, offered: false, fresh: false }), hashNow?: () => string) {
   const listeners: Array<(hash: string) => void> = [];
   const go = vi.fn((next: string) => listeners.forEach((listener) => listener(next)));
   const view = render(
-    <App client={clientAnswering(hello)} hasToken={hasToken} initialHash={hash} subscribeHash={(l) => (listeners.push(l), () => undefined)} go={go} takeToken={takeToken} />,
+    <App client={clientAnswering(hello)} hasToken={hasToken} initialHash={hash} subscribeHash={(l) => (listeners.push(l), () => undefined)} go={go} takeToken={takeToken} hashNow={hashNow} />,
   );
   return { view, go };
 }
@@ -186,6 +186,14 @@ describe("the shell", () => {
     click(view.get("[role=alertdialog] .button--danger"));
     await settle();
     expect(view.get("[role=alertdialog] [role=alert]").textContent).toContain("not answering");
+  });
+
+  it("follows an address changed before it subscribed to the address's changes", async () => {
+    // The address moves on while the page is starting: no event reaches a listener that
+    // is not there yet, so the page reads the address once it listens.
+    const { view } = mount("#/", Promise.resolve(HELLO), true, undefined, () => "#/history");
+    await settle();
+    expect(view.get("h1").textContent).toContain("History");
   });
 
   it("follows the address, and the keys open search, Home and a kit", async () => {

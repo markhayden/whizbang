@@ -26,6 +26,13 @@ export interface AppProps {
   /** The address's hash and a way to follow it; the page passes `location`. */
   initialHash: string;
   subscribeHash: (listener: (hash: string) => void) => () => void;
+  /**
+   * The address's hash now. The page follows hash changes from when it subscribes, after
+   * its first paint; a change before then (a link followed, or an address typed, while the
+   * page was still starting) is caught up with this once subscribed. The page passes
+   * `location.hash`.
+   */
+  hashNow?: () => string;
   go: (hash: string) => void;
   /**
    * Reads a `#k=` the address carries now, takes it out of the bar and keeps it
@@ -67,19 +74,22 @@ export function App(props: AppProps) {
   };
 
   const [asked, setAsked] = useState(0);
-  useEffect(
-    () =>
-      props.subscribeHash((hash) => {
-        const taken = props.takeToken();
-        if (taken.fresh) {
-          props.client.setToken(taken.token);
-          setProblem(null);
-          setAsked((n) => n + 1);
-        }
-        setRoute(parseRoute(taken.offered ? "#/" : hash));
-      }),
-    [],
-  );
+  useEffect(() => {
+    const follow = (hash: string) => {
+      const taken = props.takeToken();
+      if (taken.fresh) {
+        props.client.setToken(taken.token);
+        setProblem(null);
+        setAsked((n) => n + 1);
+      }
+      setRoute(parseRoute(taken.offered ? "#/" : hash));
+    };
+    const stop = props.subscribeHash(follow);
+    // A change made between the first render and now fired no event this page heard.
+    const now = props.hashNow?.();
+    if (now !== undefined && now !== props.initialHash) follow(now);
+    return stop;
+  }, []);
   useEffect(() => {
     let live = true;
     props.client.hello().then(
