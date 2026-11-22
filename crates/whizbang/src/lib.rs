@@ -23,6 +23,7 @@ pub mod play_form;
 pub mod play_history;
 pub mod play_kept;
 pub mod play_models;
+pub mod play_result;
 pub mod playing;
 pub mod report;
 pub mod serving;

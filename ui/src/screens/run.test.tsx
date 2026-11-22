@@ -10,9 +10,26 @@ const HELLO: Hello = {
   kits: [{ id: "rascal", name: "Rascal", tasks: [{ name: "remove_prompt", title: "Remove what you name", kind: "recipe", tools: ["segment", "fill"], fields: [{ name: "prompt", kind: "text", label: "What to remove" }] }] }],
 };
 
-function following() {
+/** A run's record as the host answers it, ended as `outcome` with this verdict. */
+function recorded(run: string, outcome: string, verdict: string | null) {
+  return {
+    run,
+    action: "remove_prompt",
+    outcome,
+    arguments: [{ name: "prompt", value: "the hose" }],
+    inputs: [],
+    outputs: [],
+    verdict: verdict ? { word: verdict, why: "", reasons: [], places: [] } : null,
+    cost: { lines: [], total: 0 },
+    send_to: [],
+    again: null,
+  };
+}
+
+function following(outcome = "cancelled", verdict: string | null = null) {
   let answer: (polled: Polled) => void = () => undefined;
   const made = {
+    request: vi.fn((_: string, path: string) => Promise.resolve(recorded(path.split("/")[3] ?? "", outcome, verdict))),
     pollRun: vi.fn((_: string, on: (polled: Polled) => void) => {
       answer = on;
       return () => undefined;
@@ -24,7 +41,7 @@ function following() {
 }
 
 describe("a run", () => {
-  it("shows its steps as they start, its spend, and stops when asked", () => {
+  it("shows its steps as they start, its spend, and stops when asked", async () => {
     const { made, say } = following();
     const view = render(<Run id="r-1" hello={HELLO} client={made} />);
     say({
@@ -48,17 +65,22 @@ describe("a run", () => {
     expect(made.cancelRun).toHaveBeenCalledWith("r-1");
     expect(view.text()).toContain("Stopping…");
     say({ run: "r-1", state: "ended", outcome: "cancelled", events: [], next: 1, skipped: 0 });
+    // The result opens: its record read from the host.
+    await act(async () => undefined);
+    expect(made.request).toHaveBeenCalledWith("GET", "/api/runs/r-1/record");
     expect(view.text()).toContain("CANCELLED");
     expect(view.all(".button--danger")).toHaveLength(0);
-    expect(view.get("a.screen__link").getAttribute("href")).toBe("#/k/rascal/remove_prompt");
+    expect(view.text()).toContain("Run again");
     view.unmount();
   });
 
-  it("tags a check that ended by its verdict", () => {
-    const { made, say } = following();
+  it("tags a check that ended by its verdict", async () => {
+    const { made, say } = following("completed", "fail");
     const view = render(<Run id="r-2" hello={HELLO} client={made} />);
     say({ run: "r-2", state: "ended", outcome: "completed", verdict: "fail", events: [], next: 0, skipped: 0 });
+    await act(async () => undefined);
     expect(view.text()).toContain("FAIL");
+    expect(view.text()).toContain("The check failed");
     view.unmount();
   });
 });

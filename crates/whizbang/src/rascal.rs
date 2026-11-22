@@ -52,6 +52,25 @@ pub struct Under {
     models_dir: Option<PathBuf>,
 }
 
+/// Kinds of backend beside the build's, for a command run by the playground's fixture host
+/// (plan m5, task W2, item 5): its fake backends, given before it runs a copied command
+/// through [`crate::run`]. The shipped binary never sets it, so every command it runs
+/// builds over the build's kinds alone.
+pub(crate) static MORE_KINDS: std::sync::OnceLock<
+    Vec<std::sync::Arc<dyn whizbang_core::config::Kind>>,
+> = std::sync::OnceLock::new();
+
+/// The kinds a command of this build is built over, with [`MORE_KINDS`]: what a test of
+/// the copied command builds its door over, as the command it copies does.
+#[cfg(test)]
+pub(crate) fn kinds_of_a_command() -> whizbang_core::config::Kinds {
+    let mut kinds = wiring::kinds(&OneWorker::installed());
+    for kind in MORE_KINDS.get().into_iter().flatten() {
+        let _ = kinds.register(kind.clone());
+    }
+    kinds
+}
+
 impl Under {
     /// The config and the env file, as the models commands take them.
     pub fn asked(&self) -> whizbang::model_commands::Under<'_> {
@@ -80,10 +99,16 @@ impl Under {
     /// and no path; then a models directory that is not used, in the opening's.
     pub fn over(&self, platform: Option<Platform>, uses: Uses<'_>) -> Result<Over, String> {
         let worker = OneWorker::installed();
+        let mut kinds = wiring::kinds(&worker);
+        for kind in MORE_KINDS.get().into_iter().flatten() {
+            kinds
+                .register(kind.clone())
+                .map_err(|error| error.to_string())?;
+        }
         let over = Over::nothing()
             .config(self.config.as_deref())
             .env_file(self.env_file.as_deref())
-            .kinds(wiring::kinds(&worker))
+            .kinds(kinds)
             .pack(worker);
         wiring::env_file_asked(&over, uses)?;
         wiring::loaded(&over)?;
@@ -574,6 +599,55 @@ impl<T: Args + Asked> Op<T> {
     }
 }
 
+impl<T: Args + Asked> Op<T> {
+    fn said(&self) -> Said {
+        let asked = &self.asked;
+        let inputs = (asked.inputs().into_iter())
+            .map(|(port, _, id)| (port, id.to_owned()))
+            .collect();
+        (asked.action(), asked.arguments(), inputs)
+    }
+}
+
+/// What an operation's command asks: its action, its arguments and its inputs by port.
+pub(crate) type Said = (
+    &'static str,
+    Vec<(&'static str, Value)>,
+    Vec<(&'static str, String)>,
+);
+
+/// What the command of one of rascal's operations asks, as its own parse reads it: what
+/// the playground's copied command is held to (`command_of.rs`). None for a command that
+/// is no operation's.
+pub(crate) fn operation_of(command: &Command) -> Option<Said> {
+    match command {
+        Command::Plug(op) => Some(op.said()),
+        Command::Feather(op) => Some(op.said()),
+        Command::Render(op) => Some(op.said()),
+        Command::Close(op) => Some(op.said()),
+        Command::Subtract(op) => Some(op.said()),
+        Command::Line(op) => Some(op.said()),
+        Command::Rect(op) => Some(op.said()),
+        Command::Stroke(op) => Some(op.said()),
+        Command::Rasterize(op) => Some(op.said()),
+        Command::Shrink(op) => Some(op.said()),
+        Command::Invert(op) => Some(op.said()),
+        Command::Carry(op) => Some(op.said()),
+        Command::Cut(op) => Some(op.said()),
+        Command::Put(op) => Some(op.said()),
+        Command::Window(op) => Some(op.said()),
+        Command::Unwindow(op) => Some(op.said()),
+        Command::Apply(op) => Some(op.said()),
+        Command::Tighten(op) => Some(op.said()),
+        Command::Inspect(op) => Some(op.said()),
+        Command::Fan(op) => Some(op.said()),
+        Command::Profile(op) => Some(op.said()),
+        Command::Ramp(op) => Some(op.said()),
+        Command::Measure(op) => Some(op.said()),
+        _ => None,
+    }
+}
+
 /// What every operation's command takes besides its own: the store, the config, and the
 /// request's id.
 #[derive(Args)]
@@ -939,10 +1013,14 @@ fn run_at(
                 }
             }
             arguments.extend(steps.arguments());
-            let over = common
-                .under
-                .over(platform, Uses::Every)?
-                .recipe(text.clone());
+            let over = common.under.over(platform, Uses::Every)?;
+            // A recipe the config already lists is registered once, as the config's: the
+            // command the playground copies of such a run names its file (plan m5, task
+            // W2, item 5).
+            let over = match over.recipe_files()?.contains(&text) {
+                true => over,
+                false => over.recipe(text.clone()),
+            };
             let executor = built(&common.at, &over, recovery, false)?;
             let asked = OperationAsked {
                 action: &read.name,

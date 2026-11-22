@@ -90,7 +90,8 @@ pub fn run(args: &Args, platform: Platform) -> Result<String, String> {
     let play = Arc::new(
         Playground::new(descriptors, Arc::new(over))
             .with_store(store, root)
-            .with_models(models),
+            .with_models(models)
+            .with_commands(Arc::new(super::command_of::words)),
     );
     let token = Token::new().map_err(|error| error.to_string())?;
     let mut settings = Settings::new(root.to_path_buf());
