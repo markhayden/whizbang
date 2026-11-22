@@ -505,6 +505,10 @@ impl RemoveChecked {
         .use_when(
             "To remove a thing you can name in words and know whether the result was checked; it hands back its best attempt with the verdict, and says when it was not checked.",
         )
+        // A task of rascal's that uses squint (ADR 0040; plan m5, task W1, item 2).
+        .kit(crate::recipes::KIT)
+        .title("Remove, checked")
+        .uses("squint")
         .argument(Argument::required(
             "prompt",
             "What to remove, in words.",

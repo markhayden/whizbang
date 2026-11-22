@@ -25,7 +25,7 @@ fn indented_description() -> &'static str {
 /// `check`, the recipe.
 fn compact_start() -> String {
     format!(
-        "{{\"description_version\":10,\"name\":\"whizbang\",\"version\":\"{}\",\"actions\":[{{\"name\":\"check\",\"version\":\"1.8.0\",\"kind\":\"recipe\",\"purpose\":\"",
+        "{{\"description_version\":11,\"name\":\"whizbang\",\"version\":\"{}\",\"kits\":[{{\"name\":\"rascal\",\"title\":\"Rascal\",\"line\":\"edit pictures\"}},{{\"name\":\"squint\",\"title\":\"Squint\",\"line\":\"check pictures\"}}],\"actions\":[{{\"name\":\"check\",\"version\":\"1.8.0\",\"kind\":\"recipe\",\"purpose\":\"",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -101,7 +101,7 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
     assert!(ok);
     let doc: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
     assert_eq!(doc["name"], "whizbang");
-    assert_eq!(doc["description_version"], 10);
+    assert_eq!(doc["description_version"], 11);
     assert_eq!(doc["version"], env!("CARGO_PKG_VERSION"));
     let names: Vec<&str> = doc["actions"]
         .as_array()
@@ -350,7 +350,7 @@ fn a_test_adds_echo_to_the_registry_the_binary_builds() {
 fn describe_json_pretty_starts_and_ends_with_these_bytes() {
     let (_, pretty) = whizbang(&["describe", "--json", "--pretty"]);
     let start = format!(
-        "{{\n  \"description_version\": 10,\n  \"name\": \"whizbang\",\n  \"version\": \"{}\",\n  \"actions\": [\n    {{\n      \"name\": \"check\",\n",
+        "{{\n  \"description_version\": 11,\n  \"name\": \"whizbang\",\n  \"version\": \"{}\",\n  \"kits\": [\n    {{\n      \"name\": \"rascal\",\n      \"title\": \"Rascal\",\n      \"line\": \"edit pictures\"\n    }},\n    {{\n      \"name\": \"squint\",\n      \"title\": \"Squint\",\n      \"line\": \"check pictures\"\n    }}\n  ],\n  \"actions\": [\n    {{\n      \"name\": \"check\",\n",
         env!("CARGO_PKG_VERSION")
     );
     let types = r#"    {
@@ -791,4 +791,70 @@ fn the_loop_is_listed_after_the_recipes_and_before_the_primitives() {
     assert_eq!(needs, ["segment", "fill", "judge"]);
     // And the words say when to reach for it.
     assert!(text.contains("To remove a thing you can name in words and know whether"));
+}
+
+/// Plan m5, task W1, item 2 (ADR 0040): every recipe and loop of the build names its kit,
+/// one the description lists, and a title held to the rule of a title; the loop names the
+/// kit it uses. A tool names none.
+#[test]
+fn each_recipe_and_loop_names_its_kit_and_a_title_held_to_the_rule() {
+    // The binary's own description, in process.
+    let registry = whizbang::wiring::registry().unwrap();
+    let doc = serde_json::to_value(whizbang::wiring::description(&registry)).unwrap();
+    let kits: Vec<&str> = (doc["kits"].as_array().unwrap().iter())
+        .filter_map(|kit| kit["name"].as_str())
+        .collect();
+    assert_eq!(kits, ["rascal", "squint"]);
+    let mut titles = std::collections::BTreeSet::new();
+    for action in doc["actions"].as_array().unwrap() {
+        let name = action["name"].as_str().unwrap();
+        if action["kind"] == "primitive" {
+            assert!(action.get("kit").is_none(), "{name}");
+            continue;
+        }
+        let kit = action["kit"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{name} names no kit"));
+        assert!(kits.contains(&kit), "{name}: {kit}");
+        let title = action["title"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{name} has no title"));
+        whizbang_core::contract::text::title(title).unwrap();
+        assert!(titles.insert(title.to_owned()), "{title} twice");
+    }
+    let looped = (doc["actions"].as_array().unwrap().iter())
+        .find(|action| action["kind"] == "loop")
+        .unwrap();
+    assert_eq!(looped["kit"], "rascal");
+    assert_eq!(looped["title"], "Remove, checked");
+    assert_eq!(looped["uses"], "squint");
+    // A title that breaks the rule is refused where a descriptor is made.
+    for bad in [
+        "<b>Remove</b>",
+        "Remove what you name in a very long sentence of words",
+        " Lead",
+    ] {
+        assert!(whizbang_core::contract::text::title(bad).is_err(), "{bad}");
+    }
+}
+
+/// The description is static: the same bytes, kits and titles among them, from one run
+/// to the next and as the reference holds them.
+#[test]
+fn the_description_is_static_with_kits_and_titles() {
+    // In process, twice, over two registries the build makes; the binary's own bytes
+    // are held to the reference by `describe_json_pretty_prints_the_bytes_the_reference_holds`.
+    let made = || {
+        let registry = whizbang::wiring::registry().unwrap();
+        serde_json::to_string_pretty(&whizbang::wiring::description(&registry)).unwrap() + "\n"
+    };
+    let plain = made();
+    assert_eq!(plain, made());
+    assert_eq!(plain, indented_description());
+    let doc: serde_json::Value = serde_json::from_str(&plain).unwrap();
+    let titled = (doc["actions"].as_array().unwrap().iter())
+        .find(|action| action["name"] == "source-fidelity")
+        .unwrap();
+    assert_eq!(titled["kit"], "squint");
+    assert_eq!(titled["title"], "Check an edit");
 }

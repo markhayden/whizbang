@@ -5,12 +5,17 @@
 // polls, Stop and Quit. A run open on screen is polled every 250 ms with the events after
 // the last one the page has.
 
-/** What `GET /api/hello` answers. Fields that later tasks add are optional here. */
+/** What `GET /api/hello` answers (plan m5, task W1, item 2). */
 export interface Hello {
   version: string;
   store?: string;
   kits?: HelloKit[];
+  /** The tools (primitives), each with the kit its tasks use it in, or none. */
+  tools?: Task[];
+  /** Always an array from the host; read through `backendsOf`, which holds to that. */
   backends?: HelloBackend[];
+  /** Why the backends' readiness could not be read, when it could not. */
+  backends_error?: string;
   allowance?: { allowance: number; left: number; since?: string };
 }
 
@@ -18,21 +23,183 @@ export interface HelloKit {
   id: string;
   name?: string;
   line?: string;
-  tasks?: Array<{ name: string; title?: string; shape?: string; uses?: string }>;
+  /** How many tools the kit's tasks use. */
+  tools?: number;
+  tasks?: Task[];
+}
+
+/** A task (a recipe or a loop) or a tool (a primitive), with the form that runs it. */
+export interface Task {
+  name: string;
+  kit?: string | null;
+  title?: string;
+  kind?: "recipe" | "loop" | "primitive";
+  purpose?: string;
+  use?: string | null;
+  /** The other kit a loop uses, by its id. */
+  uses?: string | null;
+  shape?: string;
+  /** The actions its steps call, in order. */
+  tools?: string[];
+  fields?: TaskField[];
+  outputs?: Array<{ name: string; type: string }>;
+  plans?: boolean;
+}
+
+export type FieldKind = "text" | "number" | "integer" | "boolean" | "choice" | "backend" | "picture" | "pictures" | "artifact";
+
+/** One input of a task's form, from its descriptor (or, for squint's use cases, the host's form). */
+export interface TaskField {
+  name: string;
+  label?: string;
+  purpose?: string;
+  kind: FieldKind;
+  required?: boolean;
+  default?: unknown;
+  min?: number | null;
+  max?: number | null;
+  choices?: string[] | null;
+  /** For a backend field: the capability it chooses for. */
+  capability?: string | null;
+  /** For a picture, pictures or artifact field: the artifact type it takes. */
+  artifact?: string | null;
+  count?: { min: number; max: number | null } | null;
+  /** For a location: what may be drawn on the canvas. */
+  draw?: Array<"box" | "polygon" | "stroke" | "line"> | null;
+  /** The picture field it is drawn on. */
+  on?: string | null;
+  /** `point_or_box`: segment's query, filled from a click or a drag on the canvas. */
+  canvas?: "point_or_box" | null;
 }
 
 export interface HelloBackend {
   name: string;
   ready: boolean;
+  capability?: string;
+  kind?: string;
+  model?: string | null;
+  default?: boolean;
+  missing?: string | null;
   why?: string;
+  size?: number | null;
 }
+
+/** The backends hello lists: an empty list for anything that is not an array. */
+export function backendsOf(hello: Hello | null | undefined): HelloBackend[] {
+  return Array.isArray(hello?.backends) ? hello.backends : [];
+}
+
+/** Every task and tool hello lists, with the kit each is under (a tool's may be none). */
+export function tasksOf(hello: Hello | null | undefined): Task[] {
+  const kits = Array.isArray(hello?.kits) ? hello.kits : [];
+  const tasks = kits.flatMap((kit) => (Array.isArray(kit.tasks) ? kit.tasks.map((task) => ({ ...task, kit: task.kit ?? kit.id })) : []));
+  const tools = Array.isArray(hello?.tools) ? hello.tools : [];
+  return [...tasks, ...tools];
+}
+
+/** One need of a preparation, as the plan block shows it. */
+export interface PreparedNeed {
+  capability: string;
+  backend: string;
+  model?: string | null;
+  requests: number;
+  each: number;
+  bound: number;
+  local?: boolean;
+}
+
+/** One choice of a backend field, prepared alone. */
+export interface PreparedChoice {
+  value: string;
+  ready: boolean;
+  kind: string;
+  why?: string | null;
+  size?: number | null;
+}
+
+/** What `POST /api/prepare` answers. */
+export interface Prepared {
+  ready: boolean;
+  handle?: string | null;
+  refused?: boolean;
+  kind?: string | null;
+  why?: string | null;
+  missing?: Array<{ capability: string; kind: string; why: string }>;
+  needs?: PreparedNeed[];
+  bound?: number;
+  attempts?: { asked: number; allowed: number } | null;
+  choices?: Record<string, PreparedChoice[]>;
+}
+
+/** A typed event beside a journal line's message (K1). */
+export type RunEvent =
+  | { kind: "step_started"; step: string; action: string; attempt?: number }
+  | { kind: "step_ended"; step: string; outcome: string; run: string; attempt?: number }
+  | { kind: "attempt_started"; number: number; changed?: string }
+  | { kind: "answered"; capability: string; backend: string; model: string; ms: number; ended: string };
+
+export interface JournalLine {
+  seq: number;
+  at_ms: number;
+  message: string;
+  event?: RunEvent | null;
+}
+
+export interface RunOutput {
+  port: string;
+  type: string;
+  id: string;
+}
+
+/** What `GET /api/runs/{id}?after=` answers. */
+export interface Polled {
+  run: string;
+  state: "running" | "stopping" | "ended" | "not_here" | "abandoned" | "removed";
+  outcome?: string;
+  events: JournalLine[];
+  next: number;
+  skipped: number;
+  action?: string | null;
+  arguments?: Record<string, unknown> | null;
+  spent?: number;
+  reserved?: number;
+  outputs?: RunOutput[];
+  verdict?: "pass" | "fail" | "unsure" | null;
+}
+
+/** One run still going, as `GET /api/runs?open=1` lists it. */
+export interface OpenRun {
+  run: string;
+  action: string;
+  started_ms: number;
+  state: string;
+}
+
+/** A picture the store holds, as the playground imported it. */
+export interface Picture {
+  id: string;
+  name: string;
+  width?: number;
+  height?: number;
+  at_ms?: number;
+}
+
+/** A shape drawn on the canvas, in the picture's pixels, as `POST /api/locations` takes it. */
+export type DrawnShape =
+  | { kind: "box"; left: number; top: number; right: number; bottom: number }
+  | { kind: "polygon"; points: Array<[number, number]> }
+  | { kind: "stroke"; points: Array<[number, number]>; radius: number }
+  | { kind: "line"; points: Array<[number, number]>; width: number };
 
 /** A refusal or a failure, with the sentence the page shows. */
 export class ApiError extends Error {
   readonly status: number;
-  constructor(status: number, sentence: string) {
+  /** The kind of refusal the host named (`stale`, `conflict`, …), when it named one. */
+  readonly kind: string | undefined;
+  constructor(status: number, sentence: string, kind?: string) {
     super(sentence);
     this.status = status;
+    this.kind = kind;
     this.name = "ApiError";
   }
 }
@@ -114,6 +281,34 @@ export function newRequestId(random: () => string = () => globalThis.crypto.rand
 /** How often a start whose answer was lost is sent again, with the same request id. */
 export const START_TRIES = 3;
 
+/** The most artifacts and thumbnails the page fetches at once. */
+export const ARTIFACTS_AT_ONCE = 2;
+/**
+ * How many `blob:` addresses the page keeps; past it the oldest that no mounted picture
+ * holds is revoked.
+ */
+export const BLOBS_KEPT = 64;
+/** How often an artifact the host answered 429 is asked for, in all. */
+export const ARTIFACT_TRIES = 4;
+/** The longest wait before an artifact is asked for again. */
+export const ARTIFACT_RETRY_MAX_MS = 4000;
+
+/**
+ * The wait before an artifact the host answered 429 is asked for again: its `Retry-After`
+ * seconds (1 when it says none), doubled for each try after the first, at most 4 s. The
+ * host makes at most two at once for every tab, and each tab fetches two.
+ */
+export function artifactRetryMs(retryAfter: string | null, attempt: number): number {
+  const said = Number(retryAfter);
+  const base = Number.isFinite(said) && said > 0 ? said * 1000 : 1000;
+  return Math.min(ARTIFACT_RETRY_MAX_MS, base * 2 ** Math.max(0, attempt - 1));
+}
+
+/** A file's name as sent with it: at most 200 characters, cut between code points. */
+export function nameOf(file: { name: string }, most = 200): string {
+  return Array.from(file.name).slice(0, most).join("");
+}
+
 /** The most uploads the page sends at once (plan m5, "Who may call"). */
 export const UPLOADS_AT_ONCE = 2;
 /** How often a run open on screen is asked for (plan m5, "Live progress is polled"). */
@@ -129,6 +324,8 @@ export function retryPause(random: () => number = Math.random): number {
 export interface ClientOptions {
   token: string | null;
   fetch?: typeof fetch;
+  /** Makes and revokes `blob:` addresses; a test passes its own. */
+  blobs?: { make: (blob: Blob) => string; revoke: (url: string) => void };
   /** Called once a call is refused 401, so the page can say to run `whizbang play` again. */
   onUnauthorized?: (error: ApiError) => void;
   /** Waits that many milliseconds; a test passes one that does not wait. */
@@ -155,17 +352,43 @@ export interface Client {
    * stopping) or a 429 doubles the wait, up to 4 s; any other failure keeps the pace.
    */
   poll<T>(path: (after: number) => string, next: (answer: T) => { after: number; done: boolean }, onError?: (error: ApiError) => void): () => void;
+  /** Prepare a call: readiness per choice, each need's bound, a handle when it is ready. */
+  prepare(action: string, args: Record<string, unknown>): Promise<Prepared>;
+  /** Follow a run: every 250 ms, the events after the last the page has, until it ends. */
+  pollRun(run: string, onAnswer: (answer: Polled) => void, onError?: (error: ApiError) => void): () => void;
+  /** Stop a run: the host answers "stopping" at once. */
+  cancelRun(run: string): Promise<{ run: string; state: string }>;
+  /** The runs this host started that are still going. */
+  openRuns(): Promise<OpenRun[]>;
+  /** Send a picture's bytes with its file name; at most two at once, the rest queued. */
+  uploadPicture(file: File): Promise<Picture>;
+  /** The pictures the playground imported, newest first: at most `limit`, after the picture `after` names. */
+  listPictures(limit?: number, after?: string): Promise<Picture[]>;
+  /** A shape drawn on a picture, committed as a location: its identity. */
+  commitLocation(picture: string, shape: DrawnShape): Promise<{ id: string }>;
+  /**
+   * An address the page can show bytes of the API from (`<img>` sends no token). At most
+   * two are fetched at once, the rest queued, so of Chrome's six connections to the host at
+   * least four stay free for polls, Stop and Quit while uploads run too. A fetch is shared by
+   * everyone who asks for the same path, and aborted once every one of them has given up
+   * (`signal`). Until that signal aborts, its address is held and never revoked; past
+   * [`BLOBS_KEPT`] the oldest that nobody holds is revoked. A 429 is asked again after
+   * its `Retry-After` ([`artifactRetryMs`]), the fetch keeping its place meanwhile.
+   */
+  blobUrl(path: string, signal?: AbortSignal): Promise<string>;
 }
 
 async function refusal(response: Response): Promise<ApiError> {
   let sentence = sentenceFor(response.status);
+  let kind: string | undefined;
   try {
-    const body = (await response.json()) as { error?: unknown };
+    const body = (await response.json()) as { error?: unknown; kind?: unknown };
     if (typeof body.error === "string" && body.error.length > 0 && response.status !== 401) sentence = body.error;
+    if (typeof body.kind === "string") kind = body.kind;
   } catch {
     // No JSON body: the sentence for the status stands.
   }
-  return new ApiError(response.status, sentence);
+  return new ApiError(response.status, sentence, kind);
 }
 
 export function createClient(options: ClientOptions): Client {
@@ -198,6 +421,52 @@ export function createClient(options: ClientOptions): Client {
       throw new ApiError(0, sentenceFor(0));
     }
   };
+  const artifacts = new Limiter(ARTIFACTS_AT_ONCE);
+  const made = options.blobs ?? { make: (blob: Blob) => URL.createObjectURL(blob), revoke: (url: string) => URL.revokeObjectURL(url) };
+  /**
+   * Each path's fetch: shared, and kept (newest last) once it has an address. `users`
+   * counts those that asked with a signal and have not given up: while one waits, the
+   * fetch goes on; while one holds the address (a mounted picture), it is not revoked.
+   */
+  interface Fetched {
+    promise: Promise<string>;
+    controller: AbortController;
+    users: number;
+    url?: string;
+  }
+  const blobs = new Map<string, Fetched>();
+  /** Past [`BLOBS_KEPT`] addresses, the oldest that nobody holds are let go and revoked. */
+  const prune = () => {
+    const settled = [...blobs.entries()].filter(([, one]) => one.url !== undefined);
+    let over = settled.length - BLOBS_KEPT;
+    for (const [old, one] of settled) {
+      if (over <= 0) break;
+      if (one.users > 0) continue;
+      blobs.delete(old);
+      if (one.url) made.revoke(one.url);
+      over -= 1;
+    }
+  };
+  const keep = (path: string, entry: Fetched) => {
+    blobs.delete(path);
+    blobs.set(path, entry);
+    prune();
+  };
+  /** One fetch of an artifact, sent again after a 429 while it holds its place. */
+  const fetchArtifact = async (path: string, controller: AbortController): Promise<Response> => {
+    const given = () => new ApiError(0, "The picture was not wanted any more.");
+    for (let attempt = 1; ; attempt += 1) {
+      if (controller.signal.aborted) throw given();
+      let response: Response;
+      try {
+        response = await call(path, { method: "GET", headers: headers({}), cache: "no-store", credentials: "omit", redirect: "error", signal: controller.signal });
+      } catch {
+        throw controller.signal.aborted ? given() : new ApiError(0, sentenceFor(0));
+      }
+      if (response.status !== 429 || attempt >= ARTIFACT_TRIES) return response;
+      await pause(artifactRetryMs(response.headers.get("Retry-After"), attempt));
+    }
+  };
   const client: Client = {
     setToken: (next) => {
       token = next;
@@ -217,6 +486,79 @@ export function createClient(options: ClientOptions): Client {
       }
     },
     upload: <T>(path: string, file: Blob) => uploads.run(() => send<T>("POST", path, file, file.type || "application/octet-stream")),
+    prepare: (action, args) => client.request<Prepared>("POST", "/api/prepare", { action, arguments: args }),
+    pollRun: (run, onAnswer, onError) =>
+      client.poll<Polled>(
+        (after) => `/api/runs/${encodeURIComponent(run)}?after=${after}`,
+        (answer) => {
+          onAnswer(answer);
+          return { after: answer.next, done: answer.state !== "running" && answer.state !== "stopping" };
+        },
+        onError,
+      ),
+    cancelRun: (run) => client.request("POST", `/api/runs/${encodeURIComponent(run)}/cancel`),
+    openRuns: async () => {
+      const answer = await client.request<{ runs?: OpenRun[] } | undefined>("GET", "/api/runs?open=1");
+      return Array.isArray(answer?.runs) ? answer.runs : [];
+    },
+    uploadPicture: (file) => client.upload<Picture>(`/api/pictures?name=${encodeURIComponent(nameOf(file))}`, file),
+    listPictures: async (limit = 48, after) => {
+      const from = after ? `&after=${encodeURIComponent(after)}` : "";
+      const answer = await client.request<{ pictures?: Picture[] } | undefined>("GET", `/api/pictures?limit=${limit}${from}`);
+      return Array.isArray(answer?.pictures) ? answer.pictures : [];
+    },
+    commitLocation: (picture, shape) => client.request<{ id: string }>("POST", "/api/locations", { picture, shape }),
+    blobUrl: (path, signal) => {
+      let entry = blobs.get(path);
+      if (!entry) {
+        const controller = new AbortController();
+        const fresh: Fetched = { controller, users: 0, promise: Promise.resolve("") };
+        fresh.promise = artifacts.run(async () => {
+          const response = await fetchArtifact(path, controller);
+          if (!response.ok) throw await refusal(response);
+          const url = made.make(await response.blob());
+          fresh.url = url;
+          if (blobs.get(path) === fresh) keep(path, fresh);
+          else made.revoke(url);
+          return url;
+        });
+        fresh.promise.catch(() => {
+          if (blobs.get(path) === fresh) blobs.delete(path);
+        });
+        blobs.set(path, fresh);
+        entry = fresh;
+      } else if (entry.url !== undefined) {
+        keep(path, entry);
+      }
+      const shared = entry;
+      // Asked with no signal, nobody holds the address: it may be revoked when it is old.
+      if (!signal) return shared.promise;
+      shared.users += 1;
+      const release = () => {
+        shared.users -= 1;
+        if (shared.users > 0) return;
+        if (shared.url === undefined) {
+          shared.controller.abort();
+          if (blobs.get(path) === shared) blobs.delete(path);
+        } else prune();
+      };
+      return new Promise<string>((resolve, reject) => {
+        const giveUp = () => {
+          const waiting = shared.url === undefined;
+          release();
+          if (waiting) reject(new ApiError(0, "The picture was not wanted any more."));
+        };
+        if (signal.aborted) return giveUp();
+        // The signal is the holder's: until it aborts (the picture unmounts), the address
+        // is held, and not revoked.
+        signal.addEventListener("abort", giveUp, { once: true });
+        shared.promise.then(resolve, (error: unknown) => {
+          signal.removeEventListener("abort", giveUp);
+          if (shared.users > 0) shared.users -= 1;
+          reject(error);
+        });
+      });
+    },
     poll: <T>(path: (after: number) => string, next: (answer: T) => { after: number; done: boolean }, onError?: (error: ApiError) => void) => {
       let after = 0;
       let stopped = false;
@@ -248,4 +590,13 @@ export function createClient(options: ClientOptions): Client {
     },
   };
   return client;
+}
+
+/** An artifact's identity as the host writes it. */
+export const IDENTITY = /^sha256:[0-9a-f]{64}$/;
+
+/** Where the page reads an artifact's bytes, or its thumbnail at most `edge` pixels. */
+export function artifactPath(id: string, edge?: number): string {
+  if (!IDENTITY.test(id)) throw new Error("not an artifact identity");
+  return edge === undefined ? `/api/artifacts/${id}` : `/api/artifacts/${id}/thumb?edge=${Math.round(edge)}`;
 }

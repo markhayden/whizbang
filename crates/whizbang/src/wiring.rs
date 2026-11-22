@@ -19,7 +19,7 @@ use whizbang_core::contract::{
     Action, Capability, ConfigSource, Engine, Interrupted, Opening, Place, Recovery, Registry,
     Secrets, Snapshot, SystemClock,
 };
-use whizbang_core::description::Description;
+use whizbang_core::description::{Description, Kit};
 use whizbang_core::egress::{DispatchPolicy, Ways};
 use whizbang_core::spend::{CallCap, Meter, PreparationAge, StoreLedger};
 use whizbang_core::store::fs::RealFs;
@@ -140,19 +140,21 @@ fn registry_of(
             against.register(action.clone()).map_err(|e| said(&e))?;
         }
     }
-    let shipped = whizbang_rascal::recipes::SHIPPED
-        .iter()
-        .map(|text| (*text, false))
-        // Squint's use cases as recipes (plan m3, task Q1).
-        .chain(
-            whizbang_squint::recipes::SHIPPED
-                .iter()
-                .map(|(_, text)| (*text, false)),
-        );
     let mut registry = Registry::new();
     registry.register(check).map_err(|e| said(&e))?;
-    for (text, _) in shipped {
-        let action = whizbang_rascal::recipes::action_of(text, &against).map_err(|e| said(&e))?;
+    for text in whizbang_rascal::recipes::SHIPPED {
+        let action =
+            whizbang_rascal::recipes::shipped_action(text, &against).map_err(|e| said(&e))?;
+        registry.register(Arc::new(action)).map_err(|e| said(&e))?;
+    }
+    // Squint's use cases as recipes (plan m3, task Q1), each with its kit and its title.
+    for ((_, text), (_, title)) in whizbang_squint::recipes::SHIPPED
+        .iter()
+        .zip(whizbang_squint::recipes::TITLES)
+    {
+        let action = whizbang_rascal::recipes::action_of(text, &against)
+            .and_then(|action| action.titled(whizbang_squint::recipes::KIT, title))
+            .map_err(|e| said(&e))?;
         registry.register(Arc::new(action)).map_err(|e| said(&e))?;
     }
     // The loop (plan m4, task L1): built over the shipped recipes it calls. A user's
@@ -1321,11 +1323,25 @@ pub fn not_opened(error: &store::Error) -> String {
     }
 }
 
+/// The kits this build ships, in the order a door lists them (ADR 0040; plan m5, task
+/// W1, item 2): each by its name, its title and its line. A task names its kit by name.
+pub fn kits() -> Vec<Kit> {
+    [
+        ("rascal", "Rascal", "edit pictures"),
+        ("squint", "Squint", "check pictures"),
+    ]
+    .into_iter()
+    .filter_map(|(name, title, line)| Kit::new(name, title, line).ok())
+    .collect()
+}
+
 /// The static description of a build of this crate's version that holds this registry.
 pub fn description(registry: &Registry) -> Description {
     let marks = whizbang_squint::marks::all();
     let marks = marks.iter().map(|(tool, mark)| (*tool, mark.word()));
-    Description::new(env!("CARGO_PKG_VERSION"), registry).with_marks(marks)
+    Description::new(env!("CARGO_PKG_VERSION"), registry)
+        .with_kits(&kits())
+        .with_marks(marks)
 }
 
 /// The description as `whizbang describe` prints it for a person: the build, then each
