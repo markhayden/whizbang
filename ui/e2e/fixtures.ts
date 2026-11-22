@@ -17,6 +17,9 @@ export interface Host {
   token: string;
   /** The page's address with the token, as `whizbang play` opens it. */
   opening: string;
+  /** The store's folder, and when the host's process has exited (task W2's command case). */
+  store: string;
+  exited: Promise<void>;
 }
 
 export interface OtherOrigin {
@@ -25,10 +28,11 @@ export interface OtherOrigin {
 }
 
 /** The fixture host's binary: `scripts/e2e.sh` builds it and names it here. */
-const BINARY = process.env.WHIZBANG_PLAY_FIXTURE ?? "../target/debug/examples/play_fixture";
+export const BINARY = process.env.WHIZBANG_PLAY_FIXTURE ?? "../target/debug/examples/play_fixture";
 
 async function startHost(store: string, more: string[] = []): Promise<{ host: Host; child: ChildProcess }> {
   const child = spawn(BINARY, ["--store", store, "--stdin-quit", ...more], { stdio: ["pipe", "pipe", "inherit"] });
+  const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
   const line = await new Promise<string>((resolve, reject) => {
     const lines = createInterface({ input: child.stdout! });
     lines.once("line", (first) => {
@@ -44,7 +48,7 @@ async function startHost(store: string, more: string[] = []): Promise<{ host: Ho
   const [, address, port, token] = said as unknown as [string, string, string, string];
   return {
     child,
-    host: { address, origin: address.replace(/\/$/, ""), port: Number(port), token, opening: `${address}#k=${token}` },
+    host: { address, origin: address.replace(/\/$/, ""), port: Number(port), token, opening: `${address}#k=${token}`, store, exited },
   };
 }
 

@@ -14,16 +14,19 @@ import { NumberField } from "../../components/NumberField";
 import { PictureField } from "../../components/PictureField";
 import { PlanBlock } from "../../components/PlanBlock";
 import { Segmented } from "../../components/Segmented";
+import { SentFromBanner } from "../../components/SentFromBanner";
 import { TextField } from "../../components/TextField";
 import { dropDraft, draftOf, localStore, saveDraft } from "../../drafts";
 import { argumentsOf, choicesFor, displayed, fieldsOf, given, labelOf, planNeeds, seeded, segmentQuery, shapeOf, whyNotRun, type Values } from "../../form";
 import { ago, dollars } from "../../format";
-import { PICTURES_PAGE, useArtifact } from "../../hooks";
+import { PICTURES_PAGE, useArtifact, useImageSize } from "../../hooks";
 import { actionOf } from "../../keyboard";
 import { seenOutputs } from "../../outputs";
 import { createPreparer, type Preparer } from "../../preparer";
 import { hrefOf } from "../../routes";
 import { EmptyScreen } from "../Empty";
+import "../result/result.css";
+import { toneOf } from "../result/record";
 import { Library } from "../shared";
 
 export interface WorkspaceProps {
@@ -147,9 +150,19 @@ function Draft(props: DraftProps) {
   const [starting, setStarting] = useState(false);
   const [open, setOpen] = useState<OpenRun[]>([]);
   const preparer = useRef<Preparer | null>(null);
+  // A draft Send to opened (plan m5, task W2, item 3): where it came from, the fields it
+  // filled, tagged until changed, and the run whose job a check takes, until the brief
+  // is changed. A check run again keeps its run's job the same way (item 4).
+  const sent = kept?.sent;
+  const [fromFields, setFromFields] = useState<string[]>(sent?.fields ?? []);
+  const [jobOf, setJobOf] = useState<string | null>(sent?.jobOf ?? kept?.jobOf ?? null);
 
-  const set = (name: string, value: unknown) => setValues((now) => ({ ...now, [name]: value }));
-  const args = argumentsOf(task, values);
+  const set = (name: string, value: unknown) => {
+    setValues((now) => ({ ...now, [name]: value }));
+    setFromFields((now) => now.filter((field) => field !== name));
+    if (name === "brief") setJobOf(null);
+  };
+  const args = withJob(argumentsOf(task, values), jobOf);
   const argsKey = JSON.stringify(args);
 
   useEffect(() => {
@@ -167,7 +180,10 @@ function Draft(props: DraftProps) {
     preparer.current?.change(task.name, args);
     // A draft is what the person gave: what every field shows of itself alone is none.
     const shownAlone = JSON.stringify(argumentsOf(task, seeded(task, {}, backends)));
-    if (Object.keys(args).length > 0 && argsKey !== shownAlone) saveDraft(store, { kit: props.kit, task: task.name, values, pictures, at: Date.now() });
+    if (Object.keys(args).length > 0 && argsKey !== shownAlone) {
+      const from = sent ? { sent: { ...sent, fields: fromFields, jobOf: jobOf ?? undefined } } : jobOf ? { jobOf } : {};
+      saveDraft(store, { kit: props.kit, task: task.name, values, pictures, at: Date.now(), ...from });
+    }
   }, [argsKey]);
 
   useEffect(() => {
@@ -214,6 +230,9 @@ function Draft(props: DraftProps) {
   const shownId = shown ? firstId(values[shown.name]) : null;
   const shownPicture = shownId ? pictures[shownId] : undefined;
   const shownSrc = useArtifact(client, shownId);
+  // A picture a result sent comes with no size: it is read from the picture.
+  const loadedSize = useImageSize(shownPicture?.width ? undefined : shownSrc);
+  const shownSize = shownPicture?.width && shownPicture.height ? { width: shownPicture.width, height: shownPicture.height } : loadedSize;
   const current = tools.find((one) => one.value === tool) ?? tools[0];
 
   const onDraw = (mark: Mark) => {
@@ -275,8 +294,21 @@ function Draft(props: DraftProps) {
   }, []);
 
   const marks = Object.values(drawn);
+  const kits = Array.isArray(props.hello?.kits) ? props.hello.kits : [];
+  const sentKit = sent ? kits.find((kit) => kit.name === sent.kit || kit.id === sent.kit) : undefined;
+  const fromWords = sent ? `FROM ${sent.kit.toUpperCase()}` : undefined;
   return (
-    <main class="workspace" aria-labelledby="task-title">
+    <main class={sent ? "workspace workspace--sent" : "workspace"} aria-labelledby="task-title">
+      {sent ? (
+        <div class="workspace__banner">
+          <SentFromBanner
+            title={`Sent from ${sent.kit} · ${sent.title}`}
+            line={`run ${sent.run} · ${ago(sent.at, Date.now())} · ${fromFields.length > 0 ? `${fromFields.join(", ")} came with it` : "nothing it sent is left unchanged"}`}
+            tone={toneOf(kits, sentKit?.id)}
+            onBack={() => props.go(hrefOf({ name: "run", id: sent.run }))}
+          />
+        </div>
+      ) : null}
       <section class="workspace__left">
         <header class="workspace__head">
           <h1 id="task-title" class="workspace__title">
@@ -297,6 +329,7 @@ function Draft(props: DraftProps) {
               picking={picking === field.name}
               library={library}
               drawn={Boolean(drawn[field.name])}
+              from={fromFields.includes(field.name) ? fromWords : undefined}
               onChange={(value) => set(field.name, value)}
               onClear={() => {
                 set(field.name, undefined);
@@ -336,8 +369,8 @@ function Draft(props: DraftProps) {
           <Segmented label="View" segments={[{ value: "original", label: "Original" }]} value="original" />
           {tools.length > 0 ? <Segmented label="Draw" segments={tools.map((one) => ({ value: one.value, label: one.label }))} value={current?.value ?? ""} onChange={setTool} /> : null}
         </div>
-        {shownId && shownSrc && shownPicture?.width && shownPicture.height ? (
-          <Canvas src={shownSrc} name={shownPicture.name} width={shownPicture.width} height={shownPicture.height} marks={marks} zoom={zoom} tool={current?.tool ?? null} onDraw={onDraw} onZoom={setZoom} />
+        {shownId && shownSrc && shownSize ? (
+          <Canvas src={shownSrc} name={shownPicture?.name ?? "the picture"} width={shownSize.width} height={shownSize.height} marks={marks} zoom={zoom} tool={current?.tool ?? null} onDraw={onDraw} onZoom={setZoom} />
         ) : (
           <p class="empty workspace__nothing">{shown ? "Give the task a picture to see it here." : "This task takes no picture."}</p>
         )}
@@ -375,6 +408,8 @@ interface InputProps {
   /** The library's next page, when the last was full. */
   onMoreLibrary?: () => void;
   onPicked: (picture: Picture) => void;
+  /** FROM <KIT>, when the value came from another run (plan m5, task W2). */
+  from?: string;
 }
 
 /** One field of the form, by its kind. */
@@ -386,7 +421,7 @@ function Input(props: InputProps) {
   const help = field.purpose;
   switch (field.kind) {
     case "text":
-      return <TextField id={id} label={label} value={typeof props.value === "string" ? props.value : ""} optional={optional} help={help} onInput={props.onChange} />;
+      return <TextField id={id} label={label} value={typeof props.value === "string" ? props.value : ""} optional={optional} help={help} from={props.from} onInput={props.onChange} />;
     case "number":
     case "integer": {
       const integer = field.kind === "integer";
@@ -447,7 +482,7 @@ function Input(props: InputProps) {
     case "artifact": {
       const drawable = field.artifact === "location" && Array.isArray(field.draw) && field.draw.length > 0;
       return (
-        <Field id={id} label={label} optional={optional} help={help}>
+        <Field id={id} label={label} optional={optional} help={help} from={props.from}>
           {drawable ? (
             <div class="workspace__drawn">
               <span class="mono">{props.drawn || given(props.value) ? "drawn on the picture" : `draw a ${(field.draw ?? []).join(" or ")} on the picture`}</span>
@@ -476,6 +511,7 @@ function PictureInput(props: InputProps & { id: string; label: string }) {
         label={props.label}
         optional={!props.field.required}
         help={props.field.purpose}
+        from={props.from}
         picture={id ? { id, src: src ?? "", name: known?.name ?? id, width: known?.width, height: known?.height } : null}
         onDrop={(files) => {
           void props.onUpload(files.slice(0, 1)).then((made) => {
@@ -545,4 +581,12 @@ function PicturesInput(props: InputProps & { id: string; label: string }) {
       ) : null}
     </div>
   );
+}
+
+/** The call's arguments with the job a check takes from a run, and no brief beside it. */
+export function withJob(args: Record<string, unknown>, jobOf: string | null): Record<string, unknown> {
+  if (!jobOf) return args;
+  const next: Record<string, unknown> = { ...args, job_of: jobOf };
+  delete next.brief;
+  return next;
 }

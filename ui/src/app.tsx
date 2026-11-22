@@ -189,7 +189,7 @@ function screenOf(route: Route, hello: Hello | null, client: Client, go: (hash: 
     case "kit":
       return <Workspace kit={route.kit} task={route.task} hello={hello} client={client} go={go} />;
     case "run":
-      return <Run id={route.id} hello={hello} client={client} />;
+      return <Run id={route.id} hello={hello} client={client} go={go} />;
     case "history":
       return <History />;
     case "models":

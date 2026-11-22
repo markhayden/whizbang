@@ -1,0 +1,314 @@
+import { useEffect, useRef, useState } from "preact/hooks";
+import { ApiError, artifactPath, tasksOf, type Client, type Hello } from "../../api";
+import { Button } from "../../components/Button";
+import { Canvas } from "../../components/Canvas";
+import { Compare, type CompareMode } from "../../components/Compare";
+import { CostTable } from "../../components/CostTable";
+import { Segmented } from "../../components/Segmented";
+import { SendToMenu } from "../../components/SendToMenu";
+import { StepList, type StepListEntry } from "../../components/StepList";
+import { Tag } from "../../components/Tag";
+import { VerdictCard } from "../../components/VerdictCard";
+import { localStore, saveDraft } from "../../drafts";
+import { endTag, fieldsOf, labelOf, taskOf } from "../../form";
+import { dollars, elapsed, middle } from "../../format";
+import { useArtifact, useImageSize } from "../../hooks";
+import { actionOf } from "../../keyboard";
+import { hrefOf } from "../../routes";
+import { StoredPicture } from "../shared";
+import "./result.css";
+import { attemptWords, costLines, draftFrom, fetchCommand, fetchRecord, flagsOf, targetsOf, verdictOf, verdictTitle, type CommandView, type OpenDraft, type RunRecordView } from "./record";
+
+export interface ResultProps {
+  id: string;
+  hello: Hello | null;
+  client: Client;
+  go: (hash: string) => void;
+  /** The run's steps, as its events said them while it was followed. */
+  steps?: StepListEntry[];
+}
+
+const IDENTITY = /^sha256:[0-9a-f]{64}$/;
+
+/**
+ * A run that ended (plan m5, task W2): its outcome or verdict, before and after, the
+ * verdict card, how it got there, its cost, and what to do with it next: Save picture,
+ * Send to, Run again, Copy command.
+ */
+export function Result(props: ResultProps) {
+  const [record, setRecord] = useState<RunRecordView | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [view, setView] = useState<string | null>(null);
+  const [mode, setMode] = useState<CompareMode>("side");
+  const [zoom, setZoom] = useState<number | "fit">("fit");
+  const [sending, setSending] = useState(false);
+  const [command, setCommand] = useState<CommandView | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    fetchRecord(props.client, props.id).then(
+      (answer) => live && setRecord(answer),
+      (error: unknown) => live && setProblem(error instanceof ApiError ? error.message : String(error)),
+    );
+    return () => {
+      live = false;
+    };
+  }, [props.id]);
+
+  const kits = Array.isArray(props.hello?.kits) ? props.hello.kits : [];
+  const task = taskOf(tasksOf(props.hello), record?.action);
+  const inputPicture = record?.inputs.find((one) => one.type === "image" && (one.port === "image" || one.port === "source"))?.id ?? record?.inputs.find((one) => one.type === "image")?.id ?? null;
+  const resultPicture = record?.outputs.find((one) => one.type === "image")?.id ?? null;
+  const mask = record?.outputs.find((one) => one.type === "mask")?.id ?? null;
+  const attempts = record?.attempts?.list ?? [];
+  const views = [
+    ...(inputPicture ? [{ value: "original", label: "Original" }] : []),
+    ...(inputPicture && resultPicture ? [{ value: "compare", label: "Compare" }] : []),
+    ...(resultPicture ? [{ value: "result", label: "Result" }] : []),
+    ...(mask ? [{ value: "mask", label: "Mask" }] : []),
+    ...attempts.filter((attempt) => attempt.picture).map((attempt) => ({ value: `attempt-${attempt.attempt}`, label: `Attempt ${attempt.attempt}` })),
+  ];
+  const chosen = views.find((one) => one.value === view)?.value ?? (resultPicture ? "result" : (views[0]?.value ?? "original"));
+  const attemptShown = attempts.find((attempt) => `attempt-${attempt.attempt}` === chosen);
+  const shownId = chosen === "result" || chosen === "mask" ? resultPicture : attemptShown ? attemptShown.picture : chosen === "original" ? inputPicture : null;
+
+  const save = () => {
+    if (!resultPicture) return;
+    props.client.blobUrl(artifactPath(resultPicture)).then(
+      (url) => {
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `${props.id}-result.png`;
+        link.click();
+      },
+      (error: unknown) => setProblem(error instanceof ApiError ? error.message : String(error)),
+    );
+  };
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (actionOf(event)?.kind !== "save") return;
+      event.preventDefault();
+      saveRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const open = (draft: OpenDraft, sent: boolean) => {
+    if (!record) return;
+    saveDraft(localStore(), draftFrom(draft, record, kits, sent, Date.now()));
+    props.go(hrefOf({ name: "kit", kit: draft.kit ?? "rascal", task: draft.task }));
+  };
+  const copy = () => {
+    setProblem(null);
+    fetchCommand(props.client, props.id).then(
+      (answer) => {
+        setCommand(answer);
+        const clipboard = typeof navigator !== "undefined" ? navigator.clipboard : undefined;
+        const wrote = clipboard?.writeText ? clipboard.writeText(answer.command) : Promise.reject(new Error("no clipboard"));
+        wrote.then(
+          () => setCopied("Copied. It runs against this store once the playground has quit."),
+          () => setCopied("Select the command and copy it: the page could not reach the clipboard."),
+        );
+      },
+      (error: unknown) => setProblem(error instanceof ApiError ? error.message : String(error)),
+    );
+  };
+
+  if (!record) {
+    return (
+      <main class="workspace" aria-labelledby="result-title">
+        <section class="workspace__left">
+          <header class="workspace__head">
+            <h1 id="result-title" class="workspace__title">
+              {task?.title ?? "Result"}
+            </h1>
+            <p class="workspace__purpose mono">run {props.id}</p>
+          </header>
+          <p class={problem ? "field__error result__pad" : "empty result__pad"} role={problem ? "alert" : undefined}>
+            {problem ?? "Reading the run's record…"}
+          </p>
+        </section>
+      </main>
+    );
+  }
+
+  const verdict = verdictOf(record.verdict?.word);
+  const tag = endTag(record.outcome, record.verdict?.word);
+  const took = record.start_ms && record.end_ms ? elapsed(record.end_ms - record.start_ms) : null;
+  const total = record.cost?.total ?? 0;
+  const meta = [`run ${middle(record.run, 18)}`, took, total > 0 || (record.reserved ?? 0) > 0 ? `${dollars(total)}${record.reserved ? ` of up to ${dollars(record.reserved)}` : ""}` : "free"].filter(Boolean).join(" · ");
+  const fields = fieldsOf(task);
+  const targets = Array.isArray(record.send_to) ? record.send_to : [];
+
+  return (
+    <main class="workspace" aria-labelledby="result-title">
+      <section class="workspace__left">
+        <header class="workspace__head">
+          <div class="workspace__title-row">
+            <h1 id="result-title" class="workspace__title">
+              {record.title ?? task?.title ?? record.action ?? "Result"}
+            </h1>
+            <Tag kind={tag} />
+          </div>
+          <p class="workspace__purpose mono">{meta}</p>
+        </header>
+        <dl class="run__inputs" aria-label="Inputs">
+          {record.arguments.map((argument) => {
+            const field = fields.find((one) => one.name === argument.name);
+            return (
+              <div class="run__input" key={`a-${argument.name}`}>
+                <dt class="field__label">{field ? labelOf(field) : argument.name}</dt>
+                <dd class="run__value">{typeof argument.value === "string" || typeof argument.value === "number" || typeof argument.value === "boolean" ? String(argument.value) : ""}</dd>
+              </div>
+            );
+          })}
+          {record.inputs.map((input, index) => {
+            const field = fields.find((one) => one.name === input.port);
+            return (
+              <div class="run__input" key={`i-${index}`}>
+                <dt class="field__label">{field ? labelOf(field) : input.port}</dt>
+                <dd class="run__value">{input.type === "image" && IDENTITY.test(input.id) ? <StoredPicture client={props.client} picture={{ id: input.id, name: middle(input.id, 20) }} /> : <span class="mono">{middle(input.id, 24)}</span>}</dd>
+              </div>
+            );
+          })}
+          <p class="workspace__purpose">Change anything and run again; this run stays in the store.</p>
+        </dl>
+        <footer class="workspace__foot">
+          {problem ? (
+            <p class="field__error" role="alert">
+              {problem}
+            </p>
+          ) : null}
+          {command ? (
+            <div class="result__command">
+              <pre class="result__command-text mono" aria-label="The command">
+                {command.command}
+              </pre>
+              {command.config_changed ? <p class="workspace__purpose">The config has changed since this run: the command runs under the config as it is now.</p> : null}
+              {copied ? <p class="workspace__purpose">{copied}</p> : null}
+            </div>
+          ) : null}
+          <div class="result__actions">
+            <Button variant="primary" hint="⌘S" disabled={!resultPicture} why={resultPicture ? undefined : "This run made no picture."} onClick={save}>
+              Save picture
+            </Button>
+            <div class="result__send">
+              <Button variant="secondary" onClick={() => setSending((now) => !now)}>
+                Send to ▾
+              </Button>
+              {sending ? (
+                <div class="result__menu">
+                  <SendToMenu
+                    targets={targetsOf(targets, kits)}
+                    onSend={(id) => {
+                      const target = targets.find((one) => one.task === id);
+                      if (target) open(target, true);
+                    }}
+                    onCopyCommand={() => {
+                      setSending(false);
+                      copy();
+                    }}
+                    onDownload={resultPicture ? save : undefined}
+                  />
+                </div>
+              ) : null}
+            </div>
+          </div>
+          <div class="result__actions">
+            <Button variant="quiet" disabled={!record.again} why={record.again ? undefined : "This build has no such task to run again."} onClick={() => record.again && open(record.again, false)}>
+              Run again
+            </Button>
+            <Button variant="quiet" onClick={copy}>
+              <span class="mono">{">_"}</span> Copy command
+            </Button>
+          </div>
+        </footer>
+      </section>
+      <section class="workspace__centre" aria-label="Canvas">
+        <div class="workspace__tabs">{views.length > 0 ? <Segmented label="View" segments={views} value={chosen} onChange={setView} /> : null}</div>
+        {chosen === "compare" && inputPicture && resultPicture ? (
+          <Compared client={props.client} before={inputPicture} after={resultPicture} mode={mode} onMode={setMode} />
+        ) : (
+          <Shown client={props.client} id={shownId} mask={chosen === "mask" ? mask : null} record={record} zoom={zoom} onZoom={setZoom} diagnostic={attemptShown ? `Attempt ${attemptShown.attempt}: a picture the loop made on the way, not its result` : null} />
+        )}
+      </section>
+      <aside class="workspace__right" aria-label="Report">
+        <h2 class="section-title">Report</h2>
+        {verdict ? <VerdictCard verdict={verdict} title={verdictTitle(verdict)} detail={record.attempts?.kept ? `attempt ${record.attempts.kept}` : undefined} reasons={record.verdict?.reasons ?? []} /> : null}
+        {record.error ? <p class="field__error">{`${record.error.kind}: ${record.error.message}`}</p> : null}
+        {record.invalid ? <p class="field__error">{record.invalid}</p> : null}
+        {attempts.length > 0 ? (
+          <section aria-label="How it got there">
+            <h2 class="section-title">How it got there</h2>
+            <ol class="result__attempts">
+              {attempts.map((attempt) => (
+                <li class="result__attempt" key={attempt.attempt} data-verdict={attempt.verdict ?? "unchecked"}>
+                  <span>
+                    Attempt {attempt.attempt}
+                    {attempt.changed ? ` · ${attempt.changed}` : ""}
+                    {record.attempts?.kept === attempt.attempt ? " · kept" : ""}
+                  </span>
+                  <span class="mono result__attempt-word">{attemptWords(attempt)}</span>
+                </li>
+              ))}
+            </ol>
+            {record.attempts?.ended ? <p class="workspace__purpose">{record.attempts.ended}</p> : null}
+          </section>
+        ) : null}
+        <section aria-label="Cost">
+          <h2 class="section-title">Cost</h2>
+          {costLines(record.cost).length > 0 ? <CostTable lines={costLines(record.cost)} /> : <p class="empty">Nothing was asked of a model: free.</p>}
+        </section>
+        {props.steps && props.steps.length > 0 ? (
+          <section aria-label="Steps">
+            <h2 class="section-title">Steps</h2>
+            <StepList entries={props.steps} />
+          </section>
+        ) : null}
+        <section aria-label="Recorded">
+          <h2 class="section-title">Recorded</h2>
+          <p class="workspace__tools mono result__run">run {record.run}</p>
+        </section>
+      </aside>
+    </main>
+  );
+}
+
+/** Before and after at one zoom: the two pictures fetched with the token, then compared. */
+function Compared(props: { client: Client; before: string; after: string; mode: CompareMode; onMode: (mode: CompareMode) => void }) {
+  const before = useArtifact(props.client, props.before);
+  const after = useArtifact(props.client, props.after);
+  const size = useImageSize(after);
+  if (!before || !after || !size) return <p class="empty workspace__nothing">Loading the pictures…</p>;
+  // One zoom for both, so the picture fits a half of the stage side by side.
+  const zoom = Math.min(4, Math.max(0.05, 480 / Math.max(size.width, size.height)));
+  return <Compare before={before} after={after} width={size.width} height={size.height} mode={props.mode} zoom={zoom} onMode={props.onMode} />;
+}
+
+/** One picture with its marks: the mask over the result, or the verdict's places. */
+function Shown(props: { client: Client; id: string | null; mask: string | null; record: RunRecordView; zoom: number | "fit"; onZoom: (zoom: number | "fit") => void; diagnostic: string | null }) {
+  const src = useArtifact(props.client, props.id);
+  const maskSrc = useArtifact(props.client, props.mask);
+  const size = useImageSize(src);
+  const note = props.diagnostic ? <p class="workspace__purpose result__diagnostic">{props.diagnostic}</p> : null;
+  if (!props.id) return <p class="empty workspace__nothing">This run made no picture to show.</p>;
+  if (!src || !size) {
+    return (
+      <>
+        {note}
+        <p class="empty workspace__nothing">Loading the picture…</p>
+      </>
+    );
+  }
+  const marks = maskSrc ? [{ kind: "mask" as const, src: maskSrc, label: "mask" }] : flagsOf(props.record.verdict?.places, props.id, size.width, size.height);
+  return (
+    <>
+      {note}
+      <Canvas src={src} name={props.diagnostic ?? "the picture"} width={size.width} height={size.height} marks={marks} zoom={props.zoom} onZoom={props.onZoom} />
+    </>
+  );
+}
