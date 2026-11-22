@@ -2719,3 +2719,310 @@ fn the_submission_record_holds_only_aggregates() {
         }
     }
 }
+
+/// The loop round's record (plan e1, task L2), the tallies `scripts/loop-evidence.sh`
+/// wrote beside it, and the scores `whizbang eval loop score` writes once the round is
+/// scored.
+const LOOP_ROUND_PAGE: &str = "docs/results/e-loop.md";
+const LOOP_ROUND_MANIFEST: &str = "labs/e-loop/segment-01.toml";
+/// The judges of the round, the loop's own first (ADR 0044), then milestone 4's first.
+const LOOP_ROUND_JUDGES: [&str; 2] = ["gemini-4-argon", "claude-haiku-5-5"];
+const LOOP_ROUND_REPETITIONS: [i64; 2] = [1, 2];
+/// Twice the plan's estimate of the round (plan e1, "Spend": a round that passes twice its
+/// estimate stops and is said).
+const LOOP_ROUND_MOST_MICROS: i64 = 10_000_000;
+/// The sections the scores fill, each a line `| Pending |` until they are in.
+const LOOP_ROUND_SCORED: [&str; 3] = [
+    "## Mask coverage across a retry",
+    "## The judge's `RQ1` answer against mask under-coverage",
+    "## The runs that ended under-covered, and why",
+];
+
+/// The integer field `name` of a table, or of the table `table` in it.
+fn integer(tally: &toml::Table, table: Option<&str>, name: &str) -> i64 {
+    let fields = match table {
+        Some(table) => tally[table].as_table().unwrap_or_else(|| panic!("{table}")),
+        None => tally,
+    };
+    fields[name]
+        .as_integer()
+        .unwrap_or_else(|| panic!("{table:?} {name}"))
+}
+
+/// Dollars of a count of micro-dollars, to the micro-dollar.
+fn dollars(micros: i64) -> String {
+    format!("{}.{:06}", micros / 1_000_000, micros % 1_000_000)
+}
+
+/// The rows of the page's table under `heading`, its header and divider left out, each row
+/// with as many columns as its header.
+fn rows_under<'a>(page: &'a str, heading: &str) -> Vec<&'a str> {
+    let section = page
+        .split(&format!("{heading}\n"))
+        .nth(1)
+        .and_then(|rest| rest.split("\n## ").next())
+        .unwrap_or_else(|| panic!("the page has no {heading}"));
+    let table: Vec<&str> = section.lines().filter(|l| l.starts_with('|')).collect();
+    assert!(table.len() >= 2, "{heading}: no table");
+    let columns = table[0].matches('|').count();
+    for line in &table {
+        assert_eq!(line.matches('|').count(), columns, "{heading}: {line}");
+    }
+    table[2..].to_vec()
+}
+
+#[test]
+fn the_loop_records_hold_only_aggregates_by_group() {
+    // Plan e1, task L2, items 1 and 3. The manifest the round ran: 20 entries in four
+    // groups.
+    let manifest_text = std::fs::read_to_string(repository().join(LOOP_ROUND_MANIFEST)).unwrap();
+    let manifest = whizbang::loop_score::Manifest::parse(&manifest_text).unwrap();
+    let groups = manifest.groups();
+    assert_eq!(manifest.item.len(), 20);
+    // In the manifest's order of groups.
+    let mut order: Vec<&str> = Vec::new();
+    for entry in &manifest.item {
+        if !order.contains(&entry.group.as_str()) {
+            order.push(&entry.group);
+        }
+    }
+    let page = std::fs::read_to_string(repository().join(LOOP_ROUND_PAGE))
+        .expect("the loop round's record is committed");
+    for held in [
+        "admits nothing",
+        "descriptive",
+        "not about the finished picture",
+    ] {
+        assert!(page.contains(held), "{held}");
+    }
+    let mut texts = vec![page.clone()];
+
+    // Each tally: of this tree, of the manifest, every entry accounted for, and each count
+    // adding up to the runs and attempts it counts.
+    let results = repository().join("docs/results");
+    let mut tallies: Vec<(&str, i64, toml::Table)> = Vec::new();
+    for judge in LOOP_ROUND_JUDGES {
+        for repetition in LOOP_ROUND_REPETITIONS {
+            let file = results.join(format!("e-loop-{judge}-{repetition}.toml"));
+            let text = std::fs::read_to_string(&file).expect("each tally is committed");
+            let tally: toml::Table = text.parse().expect("a tally is TOML");
+            let named = format!("{judge} {repetition}");
+            assert_eq!(tally["schema"].as_str(), Some("loop-evidence/1"));
+            assert!(is_ancestor(tally["commit"].as_str().unwrap()), "{named}");
+            assert_eq!(tally["whizbang"].as_str(), Some(LOOP_MEASURED_BY));
+            assert_eq!(tally["judge"].as_str(), Some(judge));
+            assert_eq!(tally["kind"].as_str(), Some("segment-01"));
+            assert_eq!(integer(&tally, None, "repetition"), repetition);
+            assert!(tally["judge_model"].as_str().unwrap().contains(judge));
+            assert_eq!(
+                tally["manifest_sha256"].as_str(),
+                Some(digest_of(LOOP_ROUND_MANIFEST).as_str())
+            );
+            let runs = integer(&tally, None, "runs");
+            assert_eq!(integer(&tally, None, "entries"), 20);
+            assert_eq!(runs + integer(&tally, None, "not_run"), 20, "{named}");
+            let sum = |name: &str| -> i64 {
+                let fields = tally[name].as_table().unwrap_or_else(|| panic!("{name}"));
+                fields.values().filter_map(toml::Value::as_integer).sum()
+            };
+            for counted in ["outcomes", "ended", "stopped_by_row", "stopped_by_reason"] {
+                assert_eq!(sum(counted), runs, "{named}: {counted}");
+            }
+            let attempts = integer(&tally, None, "attempts_made");
+            assert_eq!(sum("attempt_verdicts"), attempts, "{named}");
+            let made = |n: &str| integer(&tally, Some("runs_by_attempts_made"), n);
+            let (one, two, three) = (made("made_1"), made("made_2"), made("made_3"));
+            assert_eq!(one + 2 * two + 3 * three, attempts, "{named}");
+            assert_eq!(sum("retries"), two + 2 * three, "{named}");
+            // By group: the manifest's groups, whose runs and retried runs add up.
+            let by_group = tally["group"].as_table().expect("the tally by group");
+            assert_eq!(
+                by_group.keys().cloned().collect::<Vec<_>>(),
+                groups.keys().cloned().collect::<Vec<_>>()
+            );
+            let (mut group_runs, mut group_retried, mut group_attempts) = (0, 0, 0);
+            for (group, fields) in by_group {
+                let fields = fields.as_table().unwrap();
+                let field = |n: &str| fields[n].as_integer().unwrap();
+                assert_eq!(field("runs") as usize, groups[group], "{named} {group}");
+                group_runs += field("runs");
+                group_retried += field("retried");
+                group_attempts += field("attempts_made");
+            }
+            assert_eq!(group_runs, runs, "{named}");
+            assert_eq!(group_retried, two + three, "{named}");
+            assert_eq!(group_attempts, attempts, "{named}");
+            texts.push(text);
+            tallies.push((judge, repetition, tally));
+        }
+    }
+
+    // The page's tables are the tallies' numbers, row for row.
+    let of_judge = |judge: &str| -> Vec<&toml::Table> {
+        (tallies.iter())
+            .filter(|t| t.0 == judge)
+            .map(|t| &t.2)
+            .collect()
+    };
+    let pooled = |judge: &str, table: Option<&str>, name: &str| -> i64 {
+        (of_judge(judge).iter())
+            .map(|t| integer(t, table, name))
+            .sum()
+    };
+    let retried = |t: &toml::Table| {
+        integer(t, Some("runs_by_attempts_made"), "made_2")
+            + integer(t, Some("runs_by_attempts_made"), "made_3")
+    };
+    let wanted: Vec<String> = (tallies.iter())
+        .map(|(judge, repetition, t)| {
+            format!(
+                "| `{judge}` | {repetition} | {} | {} | {} | {} | {} |",
+                integer(t, None, "runs"),
+                retried(t),
+                integer(t, Some("retries"), "wider"),
+                integer(t, Some("retries"), "located"),
+                integer(t, None, "attempts_made"),
+            )
+        })
+        .collect();
+    assert_eq!(rows_under(&page, "## How many runs retried"), wanted);
+
+    let wanted: Vec<String> = (order.iter())
+        .map(|group| {
+            let in_group = |t: &toml::Table, name: &str| -> i64 {
+                t["group"][*group][name].as_integer().unwrap()
+            };
+            let runs: Vec<i64> = (LOOP_ROUND_JUDGES.iter())
+                .map(|j| of_judge(j).iter().map(|t| in_group(t, "runs")).sum())
+                .collect();
+            assert_eq!(runs[0], runs[1], "{group}");
+            let cells: Vec<String> = (LOOP_ROUND_JUDGES.iter())
+                .map(|j| {
+                    let r: i64 = of_judge(j).iter().map(|t| in_group(t, "retried")).sum();
+                    format!("{r} of {}", runs[0])
+                })
+                .collect();
+            format!("| {group} | {} | {} |", cells[0], cells[1])
+        })
+        .collect();
+    assert_eq!(rows_under(&page, "## Retried, by group"), wanted);
+
+    let wanted: Vec<String> = (LOOP_ROUND_JUDGES.iter())
+        .map(|judge| {
+            let ended = |n: &str| pooled(judge, Some("ended"), n);
+            format!(
+                "| `{judge}` | {} | {} | {} | {} | {} | {} |",
+                ended("passed_at_first"),
+                ended("passed_after_retry"),
+                ended("kept_unsure"),
+                ended("kept_fail"),
+                ended("unchecked"),
+                ended("error"),
+            )
+        })
+        .collect();
+    assert_eq!(rows_under(&page, "## How the runs ended"), wanted);
+
+    let reasons = tallies[0].2["stopped_by_reason"].as_table().unwrap();
+    let wanted: Vec<String> = (reasons.keys())
+        .filter_map(|reason| {
+            let counts: Vec<i64> = (LOOP_ROUND_JUDGES.iter())
+                .map(|j| pooled(j, Some("stopped_by_reason"), reason))
+                .collect();
+            (counts.iter().any(|&c| c > 0))
+                .then(|| format!("| `{reason}` | {} | {} |", counts[0], counts[1]))
+        })
+        .collect();
+    assert_eq!(rows_under(&page, "## Why the attempts stopped"), wanted);
+
+    let wanted: Vec<String> = (tallies.iter())
+        .map(|(judge, repetition, t)| {
+            format!(
+                "| `{judge}` | {repetition} | {} |",
+                dollars(integer(t, None, "settled_micros"))
+            )
+        })
+        .collect();
+    assert_eq!(rows_under(&page, "## Spend"), wanted);
+    let settled: i64 = (tallies.iter())
+        .map(|t| integer(&t.2, None, "settled_micros"))
+        .sum();
+    assert!(settled <= LOOP_ROUND_MOST_MICROS, "{settled}");
+    assert!(
+        page.contains(&format!("{} dollars settled in all", dollars(settled))),
+        "the page states the round's whole spend"
+    );
+
+    // The scores: either none yet, and each section they fill says so; or one for each
+    // judge, of this manifest, over both repetitions.
+    let scores: Vec<PathBuf> = (LOOP_ROUND_JUDGES.iter())
+        .map(|judge| results.join(format!("e-loop-score-{judge}.toml")))
+        .collect();
+    let scored = scores.iter().filter(|p| p.exists()).count();
+    assert!(
+        scored == 0 || scored == scores.len(),
+        "a score for every judge, or none"
+    );
+    for heading in LOOP_ROUND_SCORED {
+        let section = page
+            .split(&format!("{heading}\n"))
+            .nth(1)
+            .and_then(|rest| rest.split("\n## ").next())
+            .unwrap_or_else(|| panic!("the page has no {heading}"));
+        assert_eq!(
+            section.contains("| Pending |"),
+            scored == 0,
+            "{heading}: pending exactly while there is no score"
+        );
+    }
+    let mut marked = false;
+    for (judge, path) in LOOP_ROUND_JUDGES.iter().zip(&scores) {
+        if !path.exists() {
+            continue;
+        }
+        let text = std::fs::read_to_string(path).unwrap();
+        let score: toml::Table = text.parse().expect("a score is TOML");
+        assert_eq!(score["schema"].as_str(), Some("loop-score/1"));
+        assert_eq!(score["judge"].as_str(), Some(*judge));
+        assert_eq!(score["set"].as_str(), Some(manifest.set.as_str()));
+        assert_eq!(
+            score["images_rev"].as_str(),
+            Some(manifest.images_rev.as_str())
+        );
+        assert_eq!(score["entries"].as_integer(), Some(20));
+        assert_eq!(score["repetitions"].as_integer(), Some(2));
+        assert_eq!(score["all"]["requested"].as_integer(), Some(40));
+        let by_group = score["group"].as_table().expect("the score by group");
+        assert_eq!(
+            by_group.keys().cloned().collect::<Vec<_>>(),
+            groups.keys().cloned().collect::<Vec<_>>()
+        );
+        marked |= score["marked"].as_bool().unwrap();
+        texts.push(text);
+    }
+    // Without the owner's marks, nothing is said of the finished pictures.
+    if !marked {
+        assert!(page.contains("makes no claim about the finished pictures"));
+    }
+
+    // Aggregates only: no item, phrase or picture of the set, no path, no key.
+    for text in &texts {
+        for entry in &manifest.item {
+            for held in [&entry.id, &entry.phrase, &entry.image, &entry.truth] {
+                assert!(!text.contains(held.as_str()), "{held}");
+            }
+        }
+        for held in [
+            "/Users/",
+            "/home/",
+            "/private/",
+            "/tmp/",
+            "~/",
+            "API_KEY",
+            "_KEY=",
+            ".png",
+        ] {
+            assert!(!text.contains(held), "{held}");
+        }
+    }
+}
