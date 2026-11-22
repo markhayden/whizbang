@@ -277,7 +277,7 @@ single source for debugging, for audit and for metrics, so nothing below is opti
 | Egress | Every recipient that was sent data, and the class of data |
 | Steps | Every recipe step, tool call and nested call, in order, with its arguments and a reference to its result |
 | Judge runs | Every turn: what was sent and received, kept whole; token usage; repairs; excluded turns; the checklist and the verdict |
-| Diagnostics | Intermediate images, a failed turn's exchange, a worker's error output, and progress events |
+| Diagnostics | Intermediate images, a failed turn's exchange, a worker's error output, and progress events, kept up to a bound per run with a count of those not kept |
 
 Diagnostics are kept for failed and cancelled runs exactly as for completed ones. Secrets are
 redacted before anything is written. Records and diagnostics are removed only by the store's
@@ -316,7 +316,8 @@ table-manners is listed in section 6. It is versioned with whizbang.
 
 The browser calls a host API served by whizbang; the host runs tools through the executor
 inside its own process. The only other process is the optional Python worker. Chrome is the
-only supported browser.
+only supported browser. The host's API listens on loopback only, behind the guard of
+section 10; its routes and guard are in `docs/adr/0041-the-playground-host.md`.
 
 ## 4. Backends
 
@@ -894,7 +895,8 @@ that sleeps 31 seconds must fail by timeout.
 ```
 crates/                 the crates of section 3, and whizbang-testkit
 pack/                   the Python package: adapters, catalogue, worker, experimental tools
-ui/                     the playground interface
+ui/                     the playground interface; ui/dist/ is its build, built by
+                        `just ui-build` and committed, which the binary carries
 evalsets/               set manifests and public labels (images: github.com/markhayden/whizbang-evalsets)
 docs/
   adr/                  decisions that are costly to reverse, one new series from 0001
@@ -931,7 +933,7 @@ GitHub redirects; the old name must never be reused.
 |---|---|---|
 | Fast | Format check and lint; Rust and Python logic against fakes; the real pack speaking the real protocol with fake models; UI type checks and unit tests; a smoke of the release binary | Every change |
 | Model | Real models through the pack | When the pack or a model-using tool changes; before a release |
-| Slow | Chrome end to end; a live call to each provider; install from a release archive | Chrome on every pull request, from milestone 5, when the playground exists; the rest before a release |
+| Slow | Chrome end to end; a live call to each provider; install from a release archive | Chrome on every pull request, from milestone 5, in jobs of its own beside the fast tier's (`e2e (<runner>, shard <k>)`), outside its 300 s; the rest before a release |
 
 **Budgets.**
 
