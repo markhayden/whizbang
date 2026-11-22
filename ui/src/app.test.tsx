@@ -77,7 +77,7 @@ describe("the shell", () => {
       ["#/k/rascal", "This build has no kit of that name."],
       ["#/run/r-1", "Waiting for the first step."],
       ["#/history", "No runs yet."],
-      ["#/models", "does not list models"],
+      ["#/models", "Looking at the models directory"],
       ["#/nowhere", "no page at this address"],
     ]) {
       const { view } = mount(hash!, Promise.resolve({ version: "0.1.0" }));
@@ -109,10 +109,10 @@ describe("the shell", () => {
       const { view } = mount(hash, Promise.resolve(HELLO));
       await settle();
       expect(lastClient.hello, hash).toHaveBeenCalledTimes(1);
-      // Screens read (the runs still going, the pictures, a run's state): nothing else.
-      // History reads its runs and figures (plan m5, task W3): with GET, and only that.
-      const methods = (lastClient.request as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0]);
-      expect(methods.filter((method) => method !== "GET"), hash).toEqual([]);
+      // Screens read (the runs still going, the pictures, a run's state, the models):
+      // nothing else, and no request but a read.
+      const sent = vi.mocked(lastClient.request).mock.calls.filter(([method]) => method !== "GET");
+      expect(sent, hash).toEqual([]);
       expect(lastClient.upload, hash).not.toHaveBeenCalled();
       expect(lastClient.uploadPicture, hash).not.toHaveBeenCalled();
       expect(lastClient.start, hash).not.toHaveBeenCalled();

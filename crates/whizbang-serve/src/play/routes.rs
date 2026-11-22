@@ -141,7 +141,7 @@ pub(crate) const ROUTES: &[Route] = &[
 
 /// The tables: this one, then each later task's, one line each. The static files'
 /// route matches no path under `/api/`, so no route of a later table is hidden by it.
-const TABLES: &[&[Route]] = &[ROUTES, super::history::ROUTES];
+const TABLES: &[&[Route]] = &[ROUTES, super::history::ROUTES, super::models::ROUTES];
 
 /// The route of this method and path, with the parts of the path its pattern names: a
 /// path no route has is 404, and one whose route takes another method 405.

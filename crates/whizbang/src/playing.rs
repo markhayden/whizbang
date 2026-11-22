@@ -48,6 +48,8 @@ pub struct Playground {
     kept: Mutex<Remembered>,
     /// How many thumbnails were made, not taken from those kept.
     made: std::sync::atomic::AtomicU64,
+    /// The Models screen's door (plan m5, task M1), when the host offers it.
+    models: Option<crate::play_models::PlayModels>,
 }
 
 /// The most thumbnails kept in memory, and the most bytes of them.
@@ -112,7 +114,16 @@ impl Playground {
             root: None,
             kept: Mutex::new(Remembered::default()),
             made: std::sync::atomic::AtomicU64::new(0),
+            models: None,
         }
+    }
+
+    /// The same, with the Models screen's door, over this playground's wiring and the
+    /// store given by [`Playground::with_store`] before this (plan m5, task M1).
+    pub fn with_models(mut self, models: crate::play_models::PlayModels) -> Playground {
+        let store = self.store.get_mut().ok().and_then(|store| store.clone());
+        self.models = Some(models.over(self.over.clone(), store));
+        self
     }
 
     /// The same, with the store the executor writes, open to write, at `root`.
@@ -356,6 +367,12 @@ impl Play for Playground {
         Some(self)
     }
 
+    fn models(&self) -> Option<&dyn whizbang_serve::play::models::Models> {
+        self.models
+            .as_ref()
+            .map(|models| models as &dyn whizbang_serve::play::models::Models)
+    }
+
     fn closing(&self) {
         // The store's writer goes with the executor's: the host has let that go.
         self.store
@@ -363,6 +380,9 @@ impl Play for Playground {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
         *self.remembered() = Remembered::default();
+        if let Some(models) = &self.models {
+            models.closing();
+        }
         if let Some(worker) = &self.worker {
             worker.kill();
         }

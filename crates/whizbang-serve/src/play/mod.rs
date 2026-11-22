@@ -27,6 +27,7 @@ pub mod assets;
 pub mod guard;
 pub mod history;
 pub mod http;
+pub mod models;
 pub mod records;
 pub mod routes;
 pub mod threads;
@@ -159,6 +160,11 @@ pub trait Play: Send + Sync {
     /// The host has stopped and let its executor go: stop what the door holds (the
     /// pack's worker), and let the store go.
     fn closing(&self) {}
+    /// The Models screen's models, backends and allowance (plan m5, task M1), when the
+    /// door offers them.
+    fn models(&self) -> Option<&dyn models::Models> {
+        None
+    }
 }
 
 /// Why a [`Play`] did not do what the page asked: the status and fixed or escaped words.
@@ -351,6 +357,8 @@ pub(crate) struct Shared {
     /// How many times the executor is lent out now ([`Shared::executor`]).
     lent: std::sync::atomic::AtomicUsize,
     pub play: Arc<dyn Play>,
+    /// The one install, and the one removal, the host runs at a time (task M1).
+    pub(crate) installs: models::Installs,
     pub token: Token,
     pub settings: Settings,
     pub port: u16,
@@ -573,6 +581,7 @@ impl Host {
             executor: RwLock::new(Some(executor)),
             lent: std::sync::atomic::AtomicUsize::new(0),
             play,
+            installs: models::Installs::default(),
             token,
             port: address.port(),
             settings,
@@ -710,6 +719,7 @@ fn keep(shared: &Shared, address: SocketAddr) {
                     _ => now,
                 };
                 grace_end = Some(asked + settings.grace);
+                shared.installs.close();
                 for at in 0..state.runs.len() {
                     state.stop_held(at);
                 }
@@ -744,7 +754,8 @@ fn keep(shared: &Shared, address: SocketAddr) {
             let idle = shared
                 .executor()
                 .is_none_or(|executor| executor.on_threads() == 0);
-            let all_waited = state.unwaited.is_empty() && !admitting && idle;
+            let all_waited =
+                state.unwaited.is_empty() && !admitting && idle && shared.installs.idle();
             let hurried = state.quit == Quit::Hurried;
             if all_waited || hurried || Instant::now() >= end {
                 state.left = state.runs.len();

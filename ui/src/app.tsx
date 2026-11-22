@@ -210,7 +210,7 @@ function screenOf(route: Route, hello: Hello | null, client: Client, go: (hash: 
     case "record":
       return <Record name={route.record} hello={hello} client={client} />;
     case "models":
-      return <Models />;
+      return <Models client={client} />;
     case "unknown":
       return (
         <EmptyScreen title="Not a page" link={{ href: "#/", words: "Back to Home" }}>

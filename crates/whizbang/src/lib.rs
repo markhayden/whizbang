@@ -22,6 +22,7 @@ pub mod parity;
 pub mod play_form;
 pub mod play_history;
 pub mod play_kept;
+pub mod play_models;
 pub mod playing;
 pub mod report;
 pub mod serving;
