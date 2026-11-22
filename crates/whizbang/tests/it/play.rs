@@ -2058,7 +2058,7 @@ mod report {
     #[test]
     fn a_squint_report_holds_its_verdict_findings_places_and_turns_and_no_script() {
         let kitted = Kitted::new("play-w3-report-squint");
-        kitted.kit.set("fail").unwrap();
+        kitted.kit.set("fail,placed").unwrap();
         let run = kitted.ran("reality-checks", &json!({"candidate": kitted.picture(110)}));
         let html = kitted.report(&run);
         inert(&html);

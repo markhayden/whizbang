@@ -161,6 +161,9 @@ impl Play for Fixture {
     fn script(&self, words: &str) -> Result<(), String> {
         self.kit.set(words)
     }
+    fn shelf(&self) -> Option<&dyn whizbang_serve::play::history::Shelf> {
+        self.door.shelf()
+    }
     fn closing(&self) {
         self.door.closing();
     }

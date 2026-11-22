@@ -99,7 +99,7 @@ export function App(props: AppProps) {
     const records = tasksOf(hello).map((task) => ({
       key: hrefOf({ name: "record", record: task.name }),
       kind: "tool" as const,
-      label: `${task.title ?? task.name} · record`,
+      label: `record of ${task.name}`,
       detail: "what it does, its examples and limits",
     }));
     return [...tasks, ...shown, ...records];

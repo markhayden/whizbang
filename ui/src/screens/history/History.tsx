@@ -104,9 +104,11 @@ export function History(props: HistoryProps) {
     };
   }, [props.client, asked]);
 
-  // The address holds the filter: a change of it is a new address.
+  // The address holds the filter: a change of it is a new address, made from the address
+  // as it is now, so two changes made one after the other both stand.
   const set = (name: string, value: string) => {
-    const next = new URLSearchParams(query);
+    const now = typeof location !== "undefined" && location.hash.startsWith("#/history") ? location.hash.split("?")[1] : undefined;
+    const next = new URLSearchParams(now ?? query);
     if (value) next.set(name, value);
     else next.delete(name);
     props.go?.(hrefOf({ name: "history", query: next }));

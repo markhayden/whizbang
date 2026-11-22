@@ -17,8 +17,9 @@
 //! holds those that come after); `pass` and `fail` choose the judge's answer;
 //! `hold-pictures` holds every picture a host asks [`PlayKit::picture_asked`] about until
 //! `release`; `unsure` makes the judge say it cannot tell, tentatively, of the item a
-//! `fail` violates; `markup` puts markup into every reason the judge gives (plan m5, task
-//! W3: a report shows it as text); `reset` is `pass` and `release`, without markup. A test or the fixture host sets it; nothing else does.
+//! `fail` violates; `placed` makes a violation cite a place, a box over the middle half of
+//! the candidate; `markup` puts markup into every reason the judge gives (plan m5, task
+//! W3: a report shows them as text); `reset` is `pass` and `release`, without either. A test or the fixture host sets it; nothing else does.
 //!
 //! A table of the kind may name a credential (`key_env`) and an address (`url`): a
 //! backend whose credential is not set is not ready, as a real one is, and the address
@@ -71,6 +72,8 @@ struct Script {
     answer: Answer,
     /// Whether the judge's reasons hold markup.
     markup: bool,
+    /// Whether a violation cites a place.
+    placed: bool,
     /// How many times `release` was said: a request held lets go once it changes, so
     /// `release,hold` lets every request held go and holds those that come after.
     released: u64,
@@ -96,6 +99,7 @@ impl PlayKit {
                 hold_pictures: false,
                 answer: Answer::Pass,
                 markup: false,
+                placed: false,
                 released: 0,
             }),
             changed: Condvar::new(),
@@ -120,13 +124,14 @@ impl PlayKit {
                 "fail",
                 "unsure",
                 "markup",
+                "placed",
                 "reset",
             ]
             .contains(w)
         }) {
             let _ = unknown;
             return Err(
-                "a script is hold, hold-pictures, release, pass, fail, unsure, markup or reset"
+                "a script is hold, hold-pictures, release, pass, fail, unsure, markup, placed or reset"
                     .to_owned(),
             );
         }
@@ -144,8 +149,10 @@ impl PlayKit {
                 "fail" => script.answer = Answer::Fail,
                 "unsure" => script.answer = Answer::Unsure,
                 "markup" => script.markup = true,
+                "placed" => script.placed = true,
                 _ => {
                     script.markup = false;
+                    script.placed = false;
                     script.hold = false;
                     script.hold_pictures = false;
                     script.released += 1;
@@ -166,11 +173,12 @@ impl PlayKit {
     /// Counts a request, then holds it while the script says `hold`: until released,
     /// its run is cancelled, or [`HOLD_LIMIT`] has passed.
     fn arrive(&self, bounds: &Bounds) -> Result<Answer, Fault> {
-        self.arrive_saying(bounds).map(|(answer, _)| answer)
+        self.arrive_saying(bounds).map(|(answer, _, _)| answer)
     }
 
-    /// [`PlayKit::arrive`], and whether the judge's reasons hold markup.
-    fn arrive_saying(&self, bounds: &Bounds) -> Result<(Answer, bool), Fault> {
+    /// [`PlayKit::arrive`], and whether the judge's reasons hold markup and a violation
+    /// cites a place.
+    fn arrive_saying(&self, bounds: &Bounds) -> Result<(Answer, bool, bool), Fault> {
         self.requests.fetch_add(1, Ordering::SeqCst);
         let limit = Instant::now() + HOLD_LIMIT;
         let mut script = lock(&self.script);
@@ -192,7 +200,7 @@ impl PlayKit {
         if bounds.is_cancelled() {
             return Err(Fault::new(FaultKind::Cancelled, "the run was cancelled").unresolved());
         }
-        Ok((script.answer, script.markup))
+        Ok((script.answer, script.markup, script.placed))
     }
 
     /// Holds a picture the page asked for while the script says `hold-pictures`: until
@@ -374,8 +382,14 @@ fn checklist(request: &JudgeRequest) -> Vec<String> {
     ids
 }
 
-/// Where a violation is: the middle half of the candidate, where the segmenter finds
-/// anything, as a box in fractions of the picture, so that its finding has a place.
+/// Where a violation is: the whole candidate, which cites no place.
+fn whole() -> Json {
+    json!({"kind": "whole_image", "frame": "raw:candidate", "bbox": null, "polygon": null,
+           "yaw": null, "pitch": null, "fov": null})
+}
+
+/// Where a violation is under `placed`: the middle half of the candidate, where the
+/// segmenter finds anything, as a box in fractions of the picture.
 fn middle() -> Json {
     json!({"kind": "bbox", "frame": "raw:candidate", "bbox": [0.25, 0.25, 0.75, 0.75],
            "polygon": null, "yaw": null, "pitch": null, "fov": null})
@@ -387,7 +401,7 @@ impl Judge for PlayJudge {
     }
 
     fn send(&self, request: &JudgeRequest, bounds: &Bounds) -> Result<Turn, Fault> {
-        let (answer, markup) = self.kit.arrive_saying(bounds)?;
+        let (answer, markup, placed) = self.kit.arrive_saying(bounds)?;
         let reason = match markup {
             true => MARKUP_REASON,
             false => "The fixture's judge says so.",
@@ -408,8 +422,12 @@ impl Judge for PlayJudge {
                     _ => ("held", "confident"),
                 };
                 json!({"id": id, "disposition": disposition, "confidence": confidence,
-                       "reason": reason, "allowed_by": null,
-                       "evidence": [], "location": if failed { middle() } else { Json::Null }})
+                "reason": reason, "allowed_by": null,
+                "evidence": [], "location": match (failed, placed) {
+                    (true, true) => middle(),
+                    (true, false) => whole(),
+                    _ => Json::Null,
+                }})
             })
             .collect();
         let verdict = match answer {
