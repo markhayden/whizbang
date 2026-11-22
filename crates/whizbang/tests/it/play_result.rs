@@ -270,15 +270,10 @@ fn the_command_copied_from_a_mask_rect_run_makes_the_same_call_with_the_shipped_
     assert_eq!(code, Some(0), "{err}");
     let words: Vec<String> = serde_json::from_value(command.json()["words"].clone()).unwrap();
     assert_eq!(command_line(&words), text);
-    let mut binary = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"));
-    binary.args(&words[1..]);
-    let out = binary.output().unwrap();
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let printed = String::from_utf8_lossy(&out.stdout);
+    let words: Vec<&str> = words[1..].iter().map(String::as_str).collect();
+    let out = crate::wired::whizbang_storeless(&words);
+    assert_eq!(out.code, Some(0), "{}", out.err);
+    let printed = &out.out;
     let again = printed
         .lines()
         .find_map(|line| {
