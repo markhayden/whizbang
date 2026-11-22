@@ -40,7 +40,7 @@ If the verdict names no commit, or a short one, ask the reviewer for the full co
       is reviewed again.
 - [ ] 5. CI is green for the head: the jobs `check (macos-15)`, `scripts (macos-15)`,
       `release (macos-15)`, `check (ubuntu-22.04)`, `scripts (ubuntu-22.04)`,
-      `release (ubuntu-22.04)`, `e2e (macos-15)`, `e2e (ubuntu-22.04)`, `secrets` and the aggregate `ci`, in a run whose commit is the head. If a job was rerun, note
+      `release (ubuntu-22.04)`, `e2e (macos-15)`, `e2e (ubuntu-22.04)`, `sweeps (macos-15)`, `sweeps (ubuntu-22.04)`, `secrets` and the aggregate `ci`, in a run whose commit is the head. If a job was rerun, note
       the job and the reason; a rerun with no stated reason is a refusal.
 - [ ] 6. With `WHIZBANG_WORDLIST` set, `just scan-range <base> <head>` passes: secrets,
       attribution and the clean-room scan, over every commit in the range and the tree of
@@ -184,7 +184,8 @@ Verified
 - Merged result: <the head contains main | just check passed on the merge with main at <commit>>
 - CI on the head: check (macos-15) <result>, scripts (macos-15) <result>, release (macos-15) <result>,
   check (ubuntu-22.04) <result>, scripts (ubuntu-22.04) <result>, release (ubuntu-22.04) <result>,
-  e2e (macos-15) <result>, e2e (ubuntu-22.04) <result>, secrets <result>, ci <result>
+  e2e (macos-15) <result>, e2e (ubuntu-22.04) <result>, sweeps (macos-15) <result>,
+  sweeps (ubuntu-22.04) <result>, secrets <result>, ci <result>
   <any rerun: the job and the reason; otherwise "no rerun">
 - just scan-range <base> <head>: secrets <result>, attribution <result>, clean-room <result>
 - Title and body: scanned and read; <accurate | corrected by the orchestrator: what was

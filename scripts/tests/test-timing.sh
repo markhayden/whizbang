@@ -115,6 +115,52 @@ put_ui NaN
 expect_fail "seconds that are not a number" "are not a number" "$timing" --junit "$tmp/junit.xml" --ui "$tmp/ui"
 rm -f "$tmp/ui/unit-seconds" "$tmp/ui/unit-junit.xml"
 
+# The two parts CI runs in jobs of their own (`--part`), against a cargo that only records
+# what nextest was asked and leaves the recorded result file: `sweeps` is one expression,
+# `fast` is exactly `not` of it, so the two are the whole; without a part nothing is
+# filtered; the interface's seconds are counted in `fast` and never in `sweeps`. Each run
+# names a folder of its own for those seconds, so the real target/ui is never read.
+mkdir -p "$tmp/fake" "$tmp/target/nextest/default" "$tmp/fake-ui"
+cat >"$tmp/fake/cargo" <<SH
+#!/usr/bin/env bash
+case "\$1" in
+  metadata) echo '{"target_directory":"$tmp/target"}' ;;
+  nextest) printf '%s\n' "\$@" >"$tmp/asked"; cp "$tmp/junit.xml" "$tmp/target/nextest/default/junit.xml" ;;
+  *) exit 9 ;;
+esac
+SH
+chmod +x "$tmp/fake/cargo"
+fake() { env PATH="$tmp/fake:$PATH" "$@" --ui "$tmp/fake-ui"; }
+asked() { tr '\n' ' ' <"$tmp/asked"; }
+lines() { wc -l <"$tmp/asked" | tr -d ' '; }
+expect_pass "every fast test" fake "$timing"
+[ "$(asked)" = "nextest run --workspace --profile default " ] || fail "the whole is not filtered: $(asked)"
+grep -q -x -F 'tests run: every fast test' "$tmp/out" || { cat "$tmp/out"; fail "the whole names itself"; }
+expect_pass "the part sweeps" fake "$timing" --part sweeps
+sweeps=$(sed -n '7p' "$tmp/asked")
+[ "$(sed -n '6p' "$tmp/asked")" = "-E" ] && [ "$(lines)" = 7 ] &&
+  case "$sweeps" in *'group(crash-sweeps)'*) true ;; *) false ;; esac ||
+  fail "sweeps is one expression with the group crash-sweeps: $(asked)"
+grep -q -x -F "tests run: the part sweeps: $sweeps" "$tmp/out" || { cat "$tmp/out"; fail "the part sweeps names its expression"; }
+expect_pass "the part fast" fake "$timing" --part fast
+[ "$(sed -n '6p' "$tmp/asked")" = "-E" ] && [ "$(sed -n '7p' "$tmp/asked")" = "not ($sweeps)" ] && [ "$(lines)" = 7 ] ||
+  fail "fast is exactly not (the sweeps): $(asked)"
+# The interface's seconds: left alone by sweeps, counted once by fast.
+printf '1.250\n' >"$tmp/fake-ui/unit-seconds"
+cat >"$tmp/fake-ui/unit-junit.xml" <<'XML'
+<testsuites name="vitest tests" tests="1" failures="0" errors="0" time="0.010">
+    <testsuite name="src/app.test.tsx" tests="1" failures="0" errors="0" skipped="0" time="0.010">
+    </testsuite>
+</testsuites>
+XML
+expect_pass "sweeps without the interface" fake "$timing" --part sweeps
+grep -q -F 'test time 2.500s,' "$tmp/out" && [ -e "$tmp/fake-ui/unit-seconds" ] ||
+  { cat "$tmp/out"; fail "sweeps neither counts nor removes the interface's seconds"; }
+expect_pass "fast with the interface" fake "$timing" --part fast
+grep -q -F 'test time 3.750s,' "$tmp/out" && [ ! -e "$tmp/fake-ui/unit-seconds" ] ||
+  { cat "$tmp/out"; fail "fast counts the interface's seconds once"; }
+expect_fail "a part that is not there" "the part must be fast or sweeps" fake "$timing" --part slow
+
 # The real run, opt-in because it runs the whole fast tier a second time: the fast tests,
 # with a limit no run can meet.
 if [ "${WHIZBANG_SLOW_TESTS:-}" = "1" ]; then

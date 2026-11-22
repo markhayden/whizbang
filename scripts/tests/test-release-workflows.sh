@@ -160,7 +160,7 @@ expect_pass "release" check_release "$release"
 [ "$(top .github/workflows/ci.yml on)" = "  pull_request:
   push:
     branches: [main]" ] || fail "ci runs on a pull request and a push to main, and on no tag"
-[ "$(jobs .github/workflows/ci.yml)" = "check scripts release secrets ci " ] || fail "ci's jobs keep their names"
+[ "$(jobs .github/workflows/ci.yml)" = "check scripts release sweeps secrets ci " ] || fail "ci's jobs keep their names"
 # The scripts the workflows run are there and can be run.
 for name in tag-version install-prereqs install-check release-publish release-gate package; do
   [ -x "scripts/$name.sh" ] || fail "scripts/$name.sh is run by a workflow and must be there"

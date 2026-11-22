@@ -26,6 +26,11 @@ path = "junit.xml"
 #
 # A new sweep joins by its name: `a_crash_at_any_event`, `crashed_inside_its`,
 # `refused_and_then_a_crash` or `each_step_of_the_file_system_refused`.
+#
+# In CI the group runs in jobs of its own, `sweeps (<runner>)`, beside `check`, each part
+# under the limit of 300 seconds; `just check` still runs every test at once. The split
+# is named once, in scripts/timing.sh (`--part`), as `group(crash-sweeps)` and one test of
+# squint: a profile's default filter may not name a group.
 [test-groups]
 crash-sweeps = { max-threads = 2 }
 pack-workers = { max-threads = 2 }

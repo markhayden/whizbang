@@ -945,6 +945,13 @@ GitHub redirects; the old name must never be reused.
   then 180 s, by the owner's decision of 2026-11-19, answering "raise local (and Linux)
   from 180 to 300 seconds?" with "that is ok also i think". One test stays limited to
   30 s (`.config/nextest.toml`).
+- In CI the fast tests run in two parts, each in a job of its own on both runners and each
+  held to the same 300 s: the sweeps (the test group `crash-sweeps`, which runs two at a
+  time, and squint's check of every use case; named once in `scripts/timing.sh`) in
+  `sweeps (<runner>)`, and every other fast test in `check (<runner>)`. With all of them
+  in one job the hosted macOS runner's test time came to 225 to 271 s of its 300 in
+  November 2026, most of it the sweeps. Nothing is dropped: both parts run on every pull
+  request, and `just check` still runs every fast test at once, under the same limit.
 
 These are targets, not measurements: squint's Rust tests alone took about 3 minutes a pass.
 Each milestone's note includes a timing report by suite. When a budget is exceeded, coverage
@@ -1019,7 +1026,7 @@ spends.
 
 | Workflow | Runs | Contains |
 |---|---|---|
-| `ci` | Every pull request | Fast tier on both targets; Chrome end to end, from milestone 5, when the playground exists; reference check; secrets scan; the secrets scan and attribution check over every commit |
+| `ci` | Every pull request | Fast tier on both targets, its tests in two parts side by side (the sweeps in jobs of their own, section 13, so that neither part nears the 300 s); Chrome end to end, from milestone 5, when the playground exists; reference check; secrets scan; the secrets scan and attribution check over every commit |
 | `prerelease` | On a release candidate tag | The archive built, and installed from it, on both targets. The model tier and a live call to each provider are not GitHub's: they are the local leg, run on the owner's Mac against the candidate's own archive, whose receipt is attached to the candidate. A release is refused unless both passed on the same commit |
 | `release` | On a version tag | The candidate's two archives, one for each target, the pack inside the binary, and their `SHA256SUMS`, published as they are; nothing is built again |
 
