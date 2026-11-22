@@ -168,7 +168,9 @@ registered in `play/routes.rs` by one line.
 | `GET /api/pictures?after=&limit=` | The pictures the playground kept, newest first, with their names | W1 |
 | `POST /api/locations` | A box, a polygon (at most 64 points), a stroke or a line drawn on a picture, committed as a location bound to it | W1 |
 | `GET /api/artifacts/{id}` and `…/thumb?edge=` | An artifact for display: a picture as its PNG, a mask as a grey picture, a location as JSON; a thumbnail made on request; at most two thumbnails and two whole artifacts made at once (one more is answered 429 with `Retry-After`, which the page waits out), the newest 64 thumbnails kept in memory | W1 |
-| the rest of the plan's table | Records, reports, models, backends, stats, spend | W2, W3, M1 |
+| `GET /api/runs/{id}/record` | A run that ended, as the result screen reads it: outcome, verdict with its reasons and places, a loop's attempts with each one's picture (a diagnostic), the cost of the run and every run it called by capability and the config's name of the backend (free local work said as free), its inputs and outputs, the drafts Send to opens and the draft Run again opens; every text escaped; 404 for no run, 409 for one with no record yet | W2 |
+| `GET /api/runs/{id}/command` | The `whizbang` command that makes the same call, from the binary's map beside its commands (`command_of.rs`): inputs by identity, files by path, defaults written out, every word quoted for a POSIX shell, and a comment line when the config's digest is no longer the run's; 422 when no command line says the call | W2 |
+| the rest of the plan's table | Reports, models, backends, stats, spend | W3, M1 |
 
 No route takes a file path.
 
