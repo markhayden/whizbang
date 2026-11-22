@@ -119,15 +119,19 @@ impl Playground {
     }
 
     /// The same, with the Models screen's door, over this playground's wiring and the
-    /// store given by [`Playground::with_store`] before this (plan m5, task M1).
+    /// store [`Playground::with_store`] gives, before this or after it (plan m5, task M1).
     pub fn with_models(mut self, models: crate::play_models::PlayModels) -> Playground {
         let store = self.store.get_mut().ok().and_then(|store| store.clone());
         self.models = Some(models.over(self.over.clone(), store));
         self
     }
 
-    /// The same, with the store the executor writes, open to write, at `root`.
+    /// The same, with the store the executor writes, open to write, at `root`: the Models
+    /// screen's door, when it was given first, is given it too.
     pub fn with_store(mut self, store: Arc<Store>, root: &Path) -> Playground {
+        if let Some(models) = self.models.take() {
+            self.models = Some(models.over(self.over.clone(), Some(store.clone())));
+        }
         self.store = Mutex::new(Some(store));
         self.root = Some(root.to_path_buf());
         self
