@@ -20,25 +20,29 @@ milestone E's.
 ```toml
 commit = "d62a2182137dac635014d6437b1df4a9ac2f2bb1"
 whizbang = "0.1.0"
-runs = 4
-settled_micros = 136000
+runs = 5
+settled_micros = 176000
 unresolved_micros = 40000
 ```
 
-Four runs were made, and one more case started none. They settled 0.136 dollars, and 0.04
-dollars more is booked as unresolved: the bound of the fill a quit cut off (below).
+Five runs were made, and one more case started none. They settled 0.176 dollars, and 0.04
+dollars more is booked as unresolved: the bound of the fill a quit cut off (below). The
+store's books show no reservation left open.
 
 ## The cases by hand
 
 The cases of the carry-over list: `pass`, a clean pass, or a retry then a pass; `vague`, a
-prompt that names nothing in the picture, showing how it ends; `no-key`, an env file without
-the keys. Beside them, `fail`, the first run made, kept because it shows the loop's stop.
+prompt that names nothing in the picture, showing how it ends; and an unset key, in two
+forms: `unchecked`, no judge's key with the filler's set, which runs unchecked and says why,
+and `no-key`, an env file with no key at all, which is refused before a run starts. Beside
+them, `fail`, the first run made, kept because it shows the loop's stop.
 
 ### `fail`
 
 ```toml
 case = "fail"
 run = "1795342659824-1"
+outcome = "completed"
 verdict = "fail"
 attempts = 1
 seconds = 77
@@ -58,10 +62,12 @@ question of the judge for milestone E, not of the playground.
 ```toml
 case = "pass"
 run = "1795342796956-18"
+outcome = "completed"
 verdict = "pass"
 attempts = 1
 seconds = 79
 settled_micros = 70000
+reserved_micros = 5930000
 ```
 
 The same task on another picture of the set, picked from the library, passed on its first
@@ -75,15 +81,38 @@ round's finding that Argon passes runs whose mask left part of the object
 ```toml
 case = "vague"
 run = "1795342910635-35"
+outcome = "error"
 checked = false
 seconds = 1.4
 sent = "nothing"
 settled_micros = 0
+reserved_micros = 5930000
 ```
 
 The prompt "the thing" on the same picture: the segmenter found nothing, so the run stopped
-in 1.4 seconds with nothing sent off the machine and nothing spent. The page said so in
+in 1.4 seconds with nothing sent off the machine and nothing spent, its 5.93 dollars held
+released. It ended as an error, its child `remove_prompt` invalid. The page said so in
 words a person does not use, and its canvas stayed loading (both found live, below).
+
+### `unchecked`
+
+```toml
+case = "unchecked"
+run = "1795345304261-1"
+outcome = "completed"
+checked = false
+attempts = 1
+seconds = 74
+settled_micros = 40000
+reserved_micros = 40000
+```
+
+The same store and binary, under a copy of the config that pointed every judge at a key
+variable the env file does not set, so the filler had its key and no judge did. The plan
+showed one unchecked fill held at 0.040 dollars, and Run was offered. The run ended DONE, not
+PASS, in 1 minute 14 seconds, at 0.040 dollars of 0.040, the fill alone. Its summary says
+"one unchecked pass: no judge is ready", with the reason: the run left unchecked, saying
+why, that the carry-over list asked for.
 
 ### `no-key`
 
@@ -98,9 +127,7 @@ A second playground on a new store, with an empty env file. The status bar said 
 for the filler and for every judge, and Run stayed unavailable with the reason beside it, so
 no run was started and nothing was sent. Quit, with nothing running, stopped it. The
 playground refuses a call it cannot make before it starts a run, so the form "a run left
-unchecked, saying why" that the command line shows (`docs/results/m4-loop.md`, `no-key`) is
-not reached this way: a judge's key missing with the filler's set would reach it, and that
-case was not run.
+unchecked, saying why" is reached only with the filler's key set, as in `unchecked` above.
 
 ## A quit during a paid fill
 
@@ -143,6 +170,8 @@ Each was found in these runs and is fixed by the pull request of the branch
 - The rows of the picker of what to keep out cannot be told apart.
 - An upload answered 429 is not tried again.
 - The run's page asks for news about four times a second.
+- A run left unchecked gives its reason in the code's words, twice, and its result still
+  names the judge though no judge ran.
 
 A follow-up, not fixed: Home's library lists only the pictures given through the
 playground, so a store filled from the command line shows "No pictures yet".

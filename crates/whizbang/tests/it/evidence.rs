@@ -2724,13 +2724,41 @@ fn the_submission_record_holds_only_aggregates() {
 const PLAYGROUND_PAGE: &str = "docs/results/m5-playground.md";
 
 /// The cases of the playground's record, each with the fields it holds and no other.
-const PLAYGROUND_CASES: [(&str, &[&str]); 5] = [
+const PLAYGROUND_CASES: [(&str, &[&str]); 6] = [
     (
         "fail",
-        &["attempts", "reserved_micros", "seconds", "verdict"],
+        &[
+            "attempts",
+            "outcome",
+            "reserved_micros",
+            "seconds",
+            "verdict",
+        ],
     ),
-    ("pass", &["attempts", "seconds", "verdict"]),
-    ("vague", &["checked", "seconds", "sent"]),
+    (
+        "pass",
+        &[
+            "attempts",
+            "outcome",
+            "reserved_micros",
+            "seconds",
+            "verdict",
+        ],
+    ),
+    (
+        "vague",
+        &["checked", "outcome", "reserved_micros", "seconds", "sent"],
+    ),
+    (
+        "unchecked",
+        &[
+            "attempts",
+            "checked",
+            "outcome",
+            "reserved_micros",
+            "seconds",
+        ],
+    ),
     ("no-key", &["sent"]),
     (
         "quit",
@@ -2798,11 +2826,20 @@ fn the_playgrounds_record_holds_only_aggregates_and_run_ids() {
         }
         match case {
             "fail" | "pass" => {
+                assert_eq!(fields["outcome"].as_str(), Some("completed"));
                 assert_eq!(fields["verdict"].as_str(), Some(case));
                 assert!((1..=3).contains(&whole(&fields, "attempts")), "{case}");
             }
+            "unchecked" => {
+                // No judge ready: one fill, not checked, and the run completed.
+                assert_eq!(fields["outcome"].as_str(), Some("completed"));
+                assert_eq!(fields["checked"].as_bool(), Some(false));
+                assert_eq!(whole(&fields, "attempts"), 1);
+                assert!(spent > 0, "the fill was paid for");
+            }
             "vague" => {
                 // Found nothing: not checked, nothing sent, nothing spent.
+                assert_eq!(fields["outcome"].as_str(), Some("error"));
                 assert_eq!(fields["checked"].as_bool(), Some(false));
                 assert_eq!(fields["sent"].as_str(), Some("nothing"));
                 assert_eq!(spent, 0);
