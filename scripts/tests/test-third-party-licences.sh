@@ -93,7 +93,7 @@ for heading in 'The package marked' 'The package preact' 'The font geist' 'The f
 done
 grep -F '| package preact | 10.29.8 | MIT | npm preact@10.29.8 |' "$tmp/made.md" >/dev/null || fail "Preact has its row, at the version the lock file pins"
 grep -F '| font geist | 5.3.0 | OFL-1.1 | npm @fontsource/geist-sans@5.3.0 |' "$tmp/made.md" >/dev/null || fail "a font's row names where its files came from"
-grep -F '| package marked | 18.1.3 | MIT | npm marked@18.1.3 |' "$tmp/made.md" >/dev/null || fail "marked has its row, at the version the lock file pins (task W3)"
+grep -F '| package marked | 18.1.3 | MIT AND BSD-3-Clause | npm marked@18.1.3 |' "$tmp/made.md" >/dev/null || fail "marked has its row, at the version the lock file pins (task W3)"
 grep -F 'SIL OPEN FONT LICENSE Version 1.1' "$tmp/made.md" >/dev/null || fail "the fonts' licence is printed"
 grep -F '| outlined roboto-slab | 2.002 | Apache-2.0 | github google/fonts@' "$tmp/made.md" | grep -F '| wordmark.svg |' >/dev/null ||
   fail "the wordmark's font has its row, with where it came from and the file drawn from it"

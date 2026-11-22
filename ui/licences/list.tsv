@@ -8,7 +8,7 @@
 # the files it is. Each font file's SHA-256 is in fonts.sha256 beside this, which the script
 # holds the files to. A row of the kind `outlined` is a font drawn as outlines into the files
 # of ui/public/brand/ it names (the wordmark); no file of the font itself ships.
-package	marked	18.1.3	MIT	marked.txt	npm marked@18.1.3	
+package	marked	18.1.3	MIT AND BSD-3-Clause	marked.txt	npm marked@18.1.3	
 package	preact	10.29.8	MIT	preact.txt	npm preact@10.29.8	
 font	geist	5.3.0	OFL-1.1	geist.txt	npm @fontsource/geist-sans@5.3.0	geist-400.woff2 geist-500.woff2 geist-600.woff2 geist-700.woff2
 font	geist-mono	5.3.0	OFL-1.1	geist-mono.txt	npm @fontsource/geist-mono@5.3.0	geist-mono-400.woff2 geist-mono-600.woff2

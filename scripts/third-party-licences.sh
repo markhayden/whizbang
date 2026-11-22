@@ -272,9 +272,16 @@ while IFS=$'\037' read -r kind name version licence text source files; do
     package)
       pinned=$(jq -r --arg at "node_modules/$name" '.packages[$at].version // ""' ui/package-lock.json)
       [ "$pinned" = "$version" ] || die "ui/licences/list.tsv says $name $version, and ui/package-lock.json pins ${pinned:-nothing}"
-      printf '%s\n' "$allowed" | grep -x -F -e "$licence" >/dev/null ||
-        die "the package $name is under $licence, which deny.toml does not allow"
-      phrase=$(marker "$licence") || die "the package $name is under $licence, whose text this script cannot tell"
+      # A package under several licences at once (`A AND B`, marked's MIT and the BSD
+      # licence of the Markdown it is drawn from) has the text of each in its file.
+      parts=${licence// AND /$'\n'}
+      while IFS= read -r part; do
+        printf '%s\n' "$allowed" | grep -x -F -e "$part" >/dev/null ||
+          die "the package $name is under $part, which deny.toml does not allow"
+        phrase=$(marker "$part") || die "the package $name is under $part, whose text this script cannot tell"
+        tr -s '[:space:]' ' ' <"ui/licences/$text" | grep -i -F -e "$phrase" >/dev/null ||
+          die "ui/licences/$text is not a text of $part"
+      done <<<"$parts"
       ;;
     font)
       [ "$licence" = OFL-1.1 ] || die "the font $name is under $licence; a font is under OFL-1.1 only"
