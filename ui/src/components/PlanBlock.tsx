@@ -12,6 +12,10 @@ export interface PlanNeed {
   /** The bound of all of them. */
   total: number;
   local?: boolean;
+  /** False when its backend is not ready: then it is neither local nor free. */
+  ready?: boolean;
+  /** Why not, in words. */
+  why?: string;
 }
 
 export interface PlanBlockProps {
@@ -22,12 +26,22 @@ export interface PlanBlockProps {
   attempts?: { asked: number; allowed: number };
   /** The preparation is being made again, after a change. */
   stale?: boolean;
+  /** False when the call cannot run as prepared: nothing is held, and nothing is free. */
+  ready?: boolean;
 }
 
 /** The words of one need's figures: "17 req · local", "3 × $0.040", "3 × ≤ $1.020". */
 export function needFigures(need: PlanNeed): string {
+  if (need.ready === false) return "not ready";
   if (need.local || need.each === 0) return `${need.requests} req · local`;
   return `${need.requests} × ${need.requests > 1 ? "≤ " : ""}${dollars(need.each)}`;
+}
+
+/** A loop's attempts: as many as asked, or how many of those asked the allowance lets run. */
+export function attemptWords(attempts: { asked: number; allowed: number }, ready: boolean): string {
+  if (!ready) return `${attempts.asked} asked`;
+  if (attempts.allowed >= attempts.asked) return `${attempts.asked}`;
+  return `${attempts.allowed} of the ${attempts.asked} asked`;
 }
 
 /** What the call needs, by capability, and the most it may cost before Run. */
@@ -44,20 +58,21 @@ export function PlanBlock(props: PlanBlockProps) {
               {need.model ? ` ${need.model}` : ""}
             </span>
           </span>
-          <span class="plan-block__figures mono">{needFigures(need)}</span>
+          <span class="plan-block__figures mono" title={need.why}>
+            {needFigures(need)}
+          </span>
+          {need.ready === false && need.why ? <span class="plan-block__why">{need.why}</span> : null}
         </div>
       ))}
       {props.attempts ? (
         <div class="plan-block__row">
           <span class="plan-block__name mono">attempts</span>
-          <span class="plan-block__figures mono">
-            {props.attempts.asked} of at most {props.attempts.allowed}
-          </span>
+          <span class="plan-block__figures mono">{attemptWords(props.attempts, props.ready !== false)}</span>
         </div>
       ) : null}
       <div class="plan-block__row plan-block__row--total">
         <span class="plan-block__name mono">held while running</span>
-        <span class="plan-block__total mono">{props.bound === 0 ? "free" : `up to ${dollars(props.bound)}`}</span>
+        <span class="plan-block__total mono">{props.ready === false ? "not ready" : props.bound === 0 ? "free" : `up to ${dollars(props.bound)}`}</span>
       </div>
     </section>
   );

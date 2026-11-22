@@ -154,8 +154,7 @@ write straight after, in under a tenth of a second, and the command exited 0.
 
 ## Found live
 
-Each was found in these runs and is fixed by the pull request of the branch
-`m5-live-fixes`:
+Each was found in these runs and is fixed by #282 (the branch `m5-live-fixes`):
 
 - The top bar shows what is left as if it were spent, never reads it again, and is missing
   on a new store.

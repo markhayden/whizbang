@@ -20,10 +20,11 @@ it:
   with the test kit's fakes for every model, named here as `play::…`, `play_result::…`,
   `play_models::…` and `play_guard::…`; and the interface's own unit tests. Nothing is sent
   anywhere.
-- **The Chrome tier** (`just e2e`, and the CI jobs `e2e (<runner>)`): cases in `ui/e2e/`, run
-  in Google Chrome against the fixture host, the host and the interface as they ship with a
-  fake segmenter, a scripted fill and a scripted judge in place of real models. Each is named
-  here as `<file>: <title>`. Nothing is sent anywhere.
+- **The Chrome tier** (`just e2e`): cases in `ui/e2e/`, run in Google Chrome against the
+  fixture host, the host and the interface as they ship with a fake segmenter, a scripted
+  fill and a scripted judge in place of real models, held to 180 seconds of test time in
+  all. CI runs it in two shards on each runner, `e2e (<runner>, shard <k>)`, each held to 90
+  seconds. Each case is named here as `<file>: <title>`. Nothing is sent anywhere.
 - **By hand**: the loop's three cases and a quit during a paid fill, run live in the
   playground with real models on the owner's Mac (plan m5, task E1). Their run ids and
   settled spend are in `docs/results/m5-playground.md`, aggregates only.
@@ -39,8 +40,10 @@ not in the tree.
   its last folder alone, for you only. A store whose folder is another user's, or that its
   group or anyone may write, is refused (`chmod go-w` on the folder mends the second).
 - **A config that names a key, and no env file,** still opens: the backend whose key is
-  missing is shown as not ready (no key), and work that needs no key runs. Nothing on the
-  page asks for a key.
+  missing is shown as not ready (no key), with the variable to set named ("the filler needs
+  FAL_KEY in your env file"; a name that does not look like one, short upper-case words joined by
+  underscores, is not said back), and work that needs no key runs. Nothing on the page asks
+  for a key.
 - **The port** is 7341 unless `--port` says otherwise. It stays the same from one launch to
   the next, so that the page keeps what it saved for you (its drafts). A port in use is
   refused, and the sentence names `--port`. The playground listens on `127.0.0.1` only;
@@ -133,8 +136,8 @@ Held by `play::a_run_past_its_stated_time_is_cancelled_with_its_children` and
 ## Around every screen
 
 - **The top bar** holds the wordmark (back to Home), where you are (Home, or a kit and its
-  task), search, **History**, **Models**, what is left of the store's allowance beside the
-  allowance (as `hello` read it when the page opened), and **Quit**. Clicking the kit's name in a
+  task), search, **History**, **Models**, the store's allowance ("$X spent · $Y held of $Z",
+  "Models and keys" below), and **Quit**. Clicking the kit's name in a
   task's breadcrumb opens the kit switcher.
 - **The status bar** at the foot says whether the host answered, the store's folder, each
   backend's readiness in a word or two (no key, not installed), and the version. When the
@@ -205,7 +208,8 @@ left, the canvas in the middle, and the task's runs and tools on the right.
   them), committed to the store when it is drawn, with Clear to take it off; for `segment`, a
   click on the canvas is its point and a drag its box;
 - **another artifact** (a mask, a location, a profile) from the outputs of that type in the
-  store's history, newest first, by pages. The list is the store's, so it is the same after
+  store's history, newest first, by pages, each row with its thumbnail, what its run was
+  asked and its task, so two runs of one task can be told apart. The list is the store's, so it is the same after
   a reload or a restart, and it is read again when a run of the task ends;
 - **a backend**, where the task lets you choose one: each choice the config offers with its
   state, READY, NO KEY, GET · its size (a model not installed), UPDATE, DAMAGED or NOT READY.
@@ -217,8 +221,10 @@ writes the job from them. A job file is not taken from the page.
 
 **The plan** under the inputs is the call prepared again at each change: each need by its
 capability, with the backend and model that will answer it, how many requests it may send
-and the most each may cost ("3 × ≤ $0.040"; local work says "local"); a loop's attempts as
-asked and as allowed; and what is held while it runs, "up to $X", or "free". Beside Run the
+and the most each may cost ("3 × ≤ $0.040"; local work says "local"; a need whose backend is
+not ready says "not ready" and why, and is neither local nor free); a loop's attempts as
+asked, or how many of them the allowance lets run; and what is held while it runs, "up to
+$X", "free", or "not ready" when the call cannot run as prepared. Beside Run the
 same bound is shown before you press it.
 
 **Run** (⌘↵) is offered only on a call prepared and ready; otherwise it says why (an input
@@ -300,7 +306,8 @@ When a run ends, its screen is the result:
   ERROR; with its id, how long it took, and what it spent of what it reserved, or "free";
 - **the inputs** it was given, and **Report**, the link to its report (below);
 - **the canvas**, with views as the run has them: Original; Compare, the picture it was
-  given and the one it made, side by side, swiped or as their difference, at one zoom;
+  given and the one it made, side by side, swiped or as their difference, at one zoom,
+  which by default fits both pictures to the space there is;
   Result; Mask, the mask over the result; and, for a loop, each attempt's picture, marked as
   a picture made on the way and not the result. A check's places are drawn on its picture;
 - **the verdict card**: the verdict in words ("Check passed", "The check failed", "Not
@@ -315,7 +322,10 @@ The verdict card, How it got there, Cost, the steps and Recorded are in the righ
 under **Summary**.
 
 A run whose judge had no key is shown done, with each attempt "not checked" and the reason
-the record gives.
+the record gives, once; among its inputs the judge it named is marked "not used", with "no key" or "not ready".
+A run whose prompt found nothing is tagged with "nothing found" and says so plainly
+('Nothing in the picture matched "the thing". Name what to remove more exactly.'), with
+the record's own words beside it, smaller.
 
 Held by `play_result::the_record_route_splits_cost_by_capability_and_backend_and_names_free_local_work`
 and `play_result::the_record_of_a_run_that_has_not_ended_is_refused_409` (fast tier);
@@ -470,7 +480,10 @@ allowance in dollars and for the word `reset` typed again, and only then resets 
 `whizbang spend reset --allowance` does: the books close, what was spent before stops
 counting, and the new allowance starts with nothing spent. Runs already admitted keep what
 they reserved, under the books they were admitted under. There is no monthly allowance. The
-top bar's figure is the one read when the page opened, until it is opened again.
+top bar says the same figure, what is spent since the last reset of the allowance and what
+runs still going hold ("$7.07 spent · $5.93 held of $25.00"; "at least" when the books
+cannot say exactly; "no allowance" before any reset), and reads it again when a run ends or
+the allowance is reset.
 
 Held by `play_models::models_lists_only_the_catalogues_models_and_the_configs_backends`,
 `play_models::a_second_get_attaches_to_the_running_install`,

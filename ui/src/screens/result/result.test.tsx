@@ -6,8 +6,8 @@ import { DRAFTS_KEY, readDrafts } from "../../drafts";
 import type { Heard } from "../../form";
 import { HOSTILE, click, expectShownAsText, render } from "../../test/render";
 import { withJob } from "../workspace/Workspace";
-import { checksEnded, costLines, draftFrom, flagsOf, targetsOf, verdictTitle, type RunRecordView } from "./record";
-import { Result } from "./Result";
+import { checksEnded, costLines, draftFrom, flagsOf, nothingFound, targetsOf, verdictTitle, type RunRecordView } from "./record";
+import { Result, unusedWhy } from "./Result";
 
 const A = `sha256:${"a".repeat(64)}`;
 const B = `sha256:${"b".repeat(64)}`;
@@ -65,6 +65,26 @@ function client(): Client {
 }
 
 describe("what the page makes of a record", () => {
+  it("says a judge no key let run was not used, and nothing of one that ran", () => {
+    const unchecked: RunRecordView = {
+      ...RECORD,
+      verdict: null,
+      cost: { lines: [{ capability: "fill", backend: "cloud-fill", model: "fill", requests: 1, cost: 0.04, free: false }], total: 0.04 },
+      attempts: { list: [{ attempt: 1, verdict: null, unchecked: "no judge is ready: the judge needs GEMINI_KEY in your env file", changed: null, cost: 0.04, picture: B, diagnostic: true }], kept: 1, ended: "one unchecked pass: no judge is ready: the judge needs GEMINI_KEY in your env file" },
+    };
+    expect(unusedWhy(unchecked, "judge")).toBe("no key");
+    expect(unusedWhy(unchecked, "fill")).toBeNull();
+    expect(unusedWhy(RECORD, "judge")).toBeNull();
+  });
+
+  it("says plainly that nothing matched a prompt, and nothing for any other end", () => {
+    const invalid = { invalid: null, error: { kind: "invalid", message: "the step segment (segment) found nothing, so the step select (select) had no mask to take" }, arguments: [{ name: "prompt", value: "the thing" }] };
+    expect(nothingFound(invalid)).toBe('Nothing in the picture matched "the thing". Name what to remove more exactly.');
+    expect(nothingFound({ ...invalid, arguments: [] })).toContain("Nothing was found in the picture");
+    expect(nothingFound({ invalid: null, error: { kind: "failed", message: "the filler timed out" }, arguments: [] })).toBeNull();
+    expect(nothingFound({ invalid: null, error: null, arguments: [] })).toBeNull();
+  });
+
   it("says the cost by capability and backend, free local work as free", () => {
     expect(costLines(RECORD.cost)).toEqual([
       { what: "segment", backend: "local-seg local", cost: 0 },
@@ -119,6 +139,24 @@ describe("what the page makes of a record", () => {
 });
 
 describe("the result screen", () => {
+  it("says once, plainly, why a run was not checked, and that its judge was not used", async () => {
+    const why = "no judge is ready: the judge needs GEMINI_KEY in your env file";
+    const unchecked: RunRecordView = {
+      ...RECORD,
+      verdict: null,
+      arguments: [{ name: "prompt", value: "the hose" }, { name: "judge", value: "gemini-4-argon" }],
+      cost: { lines: [{ capability: "fill", backend: "cloud-fill", model: "fill", requests: 1, cost: 0.04, free: false }], total: 0.04 },
+      attempts: { list: [{ attempt: 1, verdict: null, unchecked: why, changed: null, cost: 0.04, picture: B, diagnostic: true }], kept: 1, ended: `one unchecked pass: ${why}` },
+    };
+    const hello: Hello = { ...HELLO, kits: [{ ...HELLO.kits![0]!, tasks: [{ ...HELLO.kits![0]!.tasks![0]!, fields: [...HELLO.kits![0]!.tasks![0]!.fields!, { name: "judge", kind: "backend", capability: "judge" }] }] }, HELLO.kits![1]!] };
+    const made = { request: vi.fn(() => Promise.resolve(unchecked)), blobUrl: vi.fn(() => new Promise(() => undefined)) } as unknown as Client;
+    const view = render(<Result id="1795-1" hello={hello} client={made} go={() => undefined} />);
+    await act(async () => undefined);
+    expect(view.text().split("needs GEMINI_KEY in your env file")).toHaveLength(2);
+    expect(view.text()).not.toContain("key_env");
+    expect(view.text()).toContain("gemini-4-argon · not used (no key)");
+  });
+
   it("shows the verdict, how it got there, the cost, and every text of the run as text", async () => {
     const made = client();
     const view = render(<Result id="1795-1" hello={HELLO} client={made} go={() => undefined} />);

@@ -110,3 +110,31 @@ test("stop ends the run as cancelled and nothing is committed", async ({ page, r
   expect(ended.outputs ?? []).toEqual([]);
   await expect(page.getByRole("tab", { name: "Result" })).toHaveCount(0);
 });
+
+test("a prompt that matches nothing says so plainly, shows the original, and the run keeps its outcome", async ({ page, request, host }) => {
+  await script(request, host, "nothing");
+  await openAt(page, host, "#/k/rascal/remove_prompt");
+  await give(page, "image", file("vague.png", 61));
+  await page.locator("#field-prompt").fill("the thing");
+  await runWhenReady(page);
+  await expect(page.locator(".result__nothing")).toHaveText('Nothing in the picture matched "the thing". Name what to remove more exactly.');
+  await expect(page.locator(".workspace__title-row .tag")).toHaveText("ERROR · NOTHING FOUND");
+  await expect(page.locator(".canvas__picture")).toBeVisible();
+  // Presentation only: the record says what it said.
+  const ended = await api<{ outcome: string }>(request, host, `/api/runs/${runOf(page)}/record`);
+  expect(ended.outcome).toBe("invalid");
+});
+
+test("the top bar says what is spent of the allowance, and says it again once a paid run ends", async ({ page, host }) => {
+  await openAt(page, host, "#/k/rascal/remove_prompt");
+  const allowance = page.locator(".top-bar__allowance");
+  await expect(allowance).toContainText("spent of $");
+  const before = await allowance.textContent();
+  await give(page, "image", file("spent.png", 63));
+  await page.locator("#field-prompt").fill("the hose");
+  await runWhenReady(page);
+  await expect(page.locator(".workspace__title-row .tag", { hasText: "DONE" })).toBeVisible();
+  // Four cents more, with no reload.
+  const spent = (text: string | null) => Number(/\$([0-9.]+) spent/.exec(text ?? "")?.[1]);
+  await expect.poll(async () => spent(await allowance.textContent()) - spent(before)).toBeCloseTo(0.04, 5);
+});

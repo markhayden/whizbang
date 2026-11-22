@@ -7,8 +7,14 @@ import type { Taken } from "./token";
 import { HOSTILE, click, render } from "./test/render";
 
 let lastClient: Client;
+let settledListeners: Array<() => void> = [];
 function clientAnswering(hello: Promise<Hello>): Client {
+  settledListeners = [];
   lastClient = {
+    onSettled: vi.fn((listener: () => void) => {
+      settledListeners.push(listener);
+      return () => undefined;
+    }),
     hello: vi.fn(() => hello),
     setToken: vi.fn(),
     request: vi.fn(),
@@ -62,9 +68,35 @@ describe("the shell", () => {
     expect(view.all(".kit-panel h2").map((h) => h.textContent)).toEqual(["Rascal", "Squint"]);
     expect(view.text()).toContain("store /data/store");
     expect(view.text()).toContain("whizbang 0.1.0");
-    expect(view.get(".top-bar__allowance").textContent).toBe("$7.61 / 10.00");
+    // What is spent since the last reset, of the allowance: not what is left.
+    expect(view.get(".top-bar__allowance").textContent).toBe("$2.39 spent of $10.00");
     expect(view.root.querySelector("img[onerror]")).toBeNull();
     expect(view.text()).toContain(HOSTILE);
+  });
+
+  it("reads the allowance again when a run the page followed ends, and says a store with none has none", async () => {
+    const { view } = mount("#/", Promise.resolve({ ...HELLO, allowance: undefined }));
+    await settle();
+    expect(view.get(".top-bar__allowance").textContent).toBe("no allowance");
+    expect(settledListeners.length).toBeGreaterThan(0);
+    // The run ends (or a reset is made): the top bar asks hello again, without a reload.
+    (lastClient.hello as ReturnType<typeof vi.fn>).mockImplementation(() => Promise.resolve({ ...HELLO, allowance: { allowance: 25, left: 17.93, spent: 7.07 } }));
+    settledListeners.forEach((listener) => listener());
+    await settle();
+    expect(view.get(".top-bar__allowance").textContent).toBe("$7.07 spent of $25.00");
+  });
+
+  it("never lets a slow first hello put back an older allowance than a later one", async () => {
+    let answerFirst: (hello: Hello) => void = () => undefined;
+    const { view } = mount("#/", new Promise<Hello>((resolve) => (answerFirst = resolve)));
+    await settle();
+    (lastClient.hello as ReturnType<typeof vi.fn>).mockImplementation(() => Promise.resolve({ ...HELLO, allowance: { allowance: 25, left: 15, spent: 10, held: 0 } }));
+    settledListeners.forEach((listener) => listener());
+    await settle();
+    expect(view.get(".top-bar__allowance").textContent).toBe("$10.00 spent of $25.00");
+    answerFirst({ ...HELLO, allowance: { allowance: 25, left: 25, spent: 0 } });
+    await settle();
+    expect(view.get(".top-bar__allowance").textContent).toBe("$10.00 spent of $25.00");
   });
 
   it("has an empty state for Home, a kit, a run, History, Models and an unknown address", async () => {

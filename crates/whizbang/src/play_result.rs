@@ -157,6 +157,11 @@ pub fn cost(records: &[RunRecord], resolve: &Resolve<'_>) -> Json {
             }
         }
     }
+    let unresolved: u64 = records
+        .iter()
+        .flat_map(|record| record.spend().requests.iter())
+        .map(|paid| paid.unresolved_micros())
+        .sum();
     let total: u64 = lines.iter().map(|line| line.micros).sum();
     let shown: Vec<Json> = lines
         .iter()
@@ -166,7 +171,7 @@ pub fn cost(records: &[RunRecord], resolve: &Resolve<'_>) -> Json {
                    "cost": dollars(line.micros), "free": !line.paid})
         })
         .collect();
-    json!({"lines": shown, "total": dollars(total)})
+    json!({"lines": shown, "total": dollars(total), "unresolved": dollars(unresolved)})
 }
 
 /// What names a backend by the config's name for it, from what a record says of a

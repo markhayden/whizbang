@@ -67,7 +67,7 @@ export interface RunRecordView {
   outputs: Artifact[];
   verdict?: { word: string; why: string; reasons: string[]; places: Place[] } | null;
   attempts?: { list: Attempt[]; kept: number | null; ended: string } | null;
-  cost?: { lines: Array<{ capability: string; backend: string; model: string; requests: number; cost: number; free: boolean }>; total: number };
+  cost?: { lines: Array<{ capability: string; backend: string; model: string; requests: number; cost: number; free: boolean }>; total: number; unresolved?: number };
   reserved?: number | null;
   send_to?: OpenDraft[];
   again?: OpenDraft | null;
@@ -222,4 +222,20 @@ export function checksEnded(heard: Heard, checks: ReadonlySet<string>): string[]
     }
   }
   return runs;
+}
+
+/** The core's words for a step that found nothing (`recipe::runner`): its name and action. */
+const FOUND_NOTHING = /the step (\S+) \((\S+)\) found nothing/;
+
+/**
+ * A run that ended because a step found nothing, said plainly (presentation only: the
+ * record's outcome stays what it is): "Nothing in the picture matched "the thing". Name
+ * what to remove more exactly." Null for any other end.
+ */
+export function nothingFound(record: Pick<RunRecordView, "invalid" | "error" | "arguments">): string | null {
+  const said = [record.invalid, record.error?.message].find((words) => typeof words === "string" && FOUND_NOTHING.test(words));
+  if (!said) return null;
+  const asked = record.arguments.find((one) => ["prompt", "words", "phrase", "query"].includes(one.name) && typeof one.value === "string" && one.value.trim() !== "");
+  if (typeof asked?.value === "string") return `Nothing in the picture matched "${asked.value.trim()}". Name what to remove more exactly.`;
+  return "Nothing was found in the picture where the task looked. Point at it more exactly, or name it.";
 }

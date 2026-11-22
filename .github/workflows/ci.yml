@@ -197,13 +197,18 @@ jobs:
   # built, then Playwright's cases in ui/e2e/ against it, in the Google Chrome each hosted
   # image carries, held to 180 seconds of test time (`just e2e`, scripts/e2e.sh). In jobs
   # of their own beside the others, so the fast tier's 300 seconds are untouched. Set up
-  # as `check` is, with Node. When a case fails, the report is kept for two weeks.
+  # as `check` is, with Node. When a case fails, the report is kept for two weeks. The cases
+  # are split in two shards on each runner (WHIZBANG_E2E_SHARD, Playwright's --shard), each
+  # held to 90 seconds for its own test time, half of the owner's 180 for the whole tier, so
+  # the two together stay within it: the whole tier came to 165.5 of the 180 seconds on
+  # macos-15 in one job (November 2026).
   e2e:
-    name: e2e (${{ matrix.os }})
+    name: e2e (${{ matrix.os }}, shard ${{ matrix.shard }})
     strategy:
       fail-fast: false
       matrix:
         os: [macos-15, ubuntu-22.04]
+        shard: [1, 2]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
@@ -242,13 +247,15 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
       - name: The Chrome tier
+        env:
+          WHIZBANG_E2E_SHARD: ${{ matrix.shard }}/2
         run: just e2e
       # Pinned to a commit (v7.0.2).
       - name: The Playwright report of a failed run
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: playwright-report-${{ matrix.os }}
+          name: playwright-report-${{ matrix.os }}-shard-${{ matrix.shard }}
           path: target/e2e/
           retention-days: 14
 
