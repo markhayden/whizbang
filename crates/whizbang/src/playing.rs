@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as Json, json};
-use whizbang_core::contract::{ActionDescriptor, Call, RequestId, RunId};
+use whizbang_core::contract::{ActionDescriptor, Call, RequestId, RunId, Value};
 use whizbang_core::description::Kit;
 use whizbang_core::store::Store;
 use whizbang_core::store::fs::{Fs, RealFs};
@@ -255,11 +255,24 @@ impl Play for Playground {
                 None | Some(Json::Null) => None,
                 Some(Json::String(run)) => {
                     let store = self.store().map_err(|refused| refused.why)?;
-                    Some(crate::play_result::job_of(&store, run, descriptor.name())?)
+                    Some(crate::play_result::job_and_measuring_of(
+                        &store,
+                        run,
+                        descriptor.name(),
+                    )?)
                 }
                 Some(_) => return Err("job_of names a run by its id".to_owned()),
             };
+            let (job, measuring) = match job {
+                Some((job, measuring)) => (Some(job), measuring),
+                None => (None, None),
+            };
+            // A check run again keeps what it measured first and offered its judge.
             return crate::play_form::use_case_call(descriptor.name(), arguments, job.as_ref())
+                .map(|call| match measuring {
+                    Some(set) => call.argument(whizbang_core::recipe::SET, Value::text(&set)),
+                    None => call,
+                })
                 .map(|call| (call, None));
         }
         tools::call_of(descriptor, arguments)
@@ -402,35 +415,48 @@ impl Play for Playground {
             |capability: &str, kind: &str, model: &str| resolved(&rows, capability, kind, model);
         let mut commanded =
             crate::play_result::commanded(&records, descriptor, &resolve, &default_of)?;
+        // Every path absolute, so the command runs from any folder.
+        let absolute =
+            |path: &Path| std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
         let (config, env_file, models_dir) = self.over.files_named();
-        commanded.store = root;
-        commanded.config = config.map(Path::to_path_buf);
-        commanded.env_file = env_file.map(Path::to_path_buf);
-        commanded.models_dir = models_dir.map(Path::to_path_buf);
+        commanded.store = absolute(&root);
+        commanded.config = config.map(absolute);
+        commanded.env_file = env_file.map(absolute);
+        commanded.models_dir = models_dir.map(absolute);
         let shipped = whizbang_rascal::recipes::TITLES
             .iter()
             .any(|(name, _)| *name == action);
+        let mut recipe_changed = None;
         if descriptor.is_some_and(|d| d.kind() == whizbang_core::contract::Kind::Recipe)
             && !shipped
             && !crate::play_form::is_use_case(&action)
         {
-            commanded.recipe_file = self.over.recipe_file_named(&action);
+            commanded.recipe_file = self
+                .over
+                .recipe_file_named(&action)
+                .map(|path| absolute(&path));
+            // The file as it is now against the digest of the text the run ran.
+            let ran = records[0].asked().settings.iter().find_map(|setting| {
+                match (setting.name(), setting.value()) {
+                    (
+                        whizbang_core::recipe::runner::DIGEST_SETTING,
+                        whizbang_core::contract::record::ArgumentValue::Text(text),
+                    ) => Some(text.clone()),
+                    _ => None,
+                }
+            });
+            let now = (commanded.recipe_file.as_deref())
+                .and_then(|path| wiring::recipe_file(path).ok())
+                .map(|text| whizbang_core::identity::Digest::of_bytes(text.as_bytes()).to_string());
+            if let (Some(ran), Some(now)) = (ran, now)
+                && ran != now
+            {
+                recipe_changed = Some((ran, now));
+            }
         }
         let words = commands(&commanded)
             .map_err(|why| Refused::new(422, &whizbang_serve::escaped(&why)))?;
-        // A new line or a tab stays as it is inside a word's quotes, which a shell keeps;
-        // any other control character is said by no command line a person can paste
-        // safely into a terminal.
-        let unsafe_word = |word: &String| {
-            word.chars()
-                .any(|c| c.is_control() && c != '\n' && c != '\t')
-        };
-        if words.iter().any(unsafe_word) {
-            return Err(Refused::new(
-                422,
-                "the run's words hold a control character that no command line says safely",
-            ));
-        }
+        crate::play_result::said_safely(&words)?;
         let now = self.over.config_digest();
         let changed = match (recorded, now) {
             (Some(recorded), Some(now)) => recorded != now,
@@ -438,10 +464,16 @@ impl Play for Playground {
         };
         let mut text = String::new();
         if changed && let (Some(recorded), Some(now)) = (recorded, now) {
-            text.push_str(&format!(
-                "# the config has changed since this run: it ran under {recorded}, and this \
-                 command runs under the config as it is now, {now}\n"
-            ));
+            text.push_str(&crate::play_result::said_line(&format!(
+                "the config has changed since this run: it ran under {recorded}, and this \
+                 command runs under the config as it is now, {now}"
+            )));
+        }
+        if let Some((ran, now)) = &recipe_changed {
+            text.push_str(&crate::play_result::said_line(&format!(
+                "the recipe file has changed since this run: it ran the text {ran}, and this \
+                 command runs the file as it is now, {now}"
+            )));
         }
         text.push_str(&crate::play_result::command_line(&words));
         Ok(json!({
@@ -450,6 +482,7 @@ impl Play for Playground {
             "config_changed": changed,
             "recorded_config": recorded.map(|digest| digest.to_string()),
             "config": now.map(|digest| digest.to_string()),
+            "recipe_changed": recipe_changed.is_some(),
         }))
     }
 

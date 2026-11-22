@@ -640,12 +640,22 @@ pub fn shorthand(asked: &CheckAsked<'_>) -> Result<(Job, Vec<ArtifactId>), Strin
 
 /// A job of the contract `job/1` given as JSON, as a stored run holds it, and its images
 /// by their identities in the job's order (`squint check --job-json`; plan m5, task W2,
-/// item 5): of the use case typed, with one identity for each of its images.
+/// item 5): of the use case typed, with one identity for each of its images, held as a
+/// job file is (`--job`): at most [`JOB_FILE_LIMIT`] bytes, no picture given inline, and
+/// a picture whose SHA-256 the job pins is one the store at `root` imported from a file
+/// of that SHA-256, as the identity given for it. A path the job names is not read: the
+/// picture is the store's, by identity.
 pub fn job_json(
     text: &str,
     images: &[String],
     use_case: &str,
+    root: &Path,
 ) -> Result<(Job, Vec<ArtifactId>), String> {
+    if text.len() as u64 > JOB_FILE_LIMIT {
+        return Err(format!(
+            "--job-json is at most {JOB_FILE_LIMIT} bytes, as a job file is"
+        ));
+    }
     let job = Job::from_json(text).map_err(|why| format!("--job-json: {}", printable(&why)))?;
     if job.use_case != use_case {
         return Err(format!(
@@ -664,6 +674,33 @@ pub fn job_json(
         .iter()
         .map(|id| identity("image", id))
         .collect::<Result<Vec<_>, _>>()?;
+    let mut imported = None;
+    for (image, id) in job.images.iter().zip(&images) {
+        let source = image.source.as_ref();
+        if source.is_some_and(|source| source.base64.is_some()) {
+            return Err(format!(
+                "--job-json: image {} is given inline: a picture given inline is not taken",
+                printable(&image.id)
+            ));
+        }
+        let Some(pin) = source.and_then(|source| source.sha256.as_deref()) else {
+            continue;
+        };
+        let pinned = format!("sha256:{}", pin.trim_start_matches("sha256:"))
+            .parse::<Digest>()
+            .map_err(|_| format!("--job-json: image {} pins no SHA-256", printable(&image.id)))?;
+        if imported.is_none() {
+            imported = Some(crate::import::pictures_by_file(root)?);
+        }
+        let held = imported.as_ref().and_then(|files| files.get(&pinned));
+        if held != Some(id) {
+            return Err(format!(
+                "--job-json: image {} pins a SHA-256 that is not the file the store imported \
+                 the picture given for it from",
+                printable(&image.id)
+            ));
+        }
+    }
     Ok((job, images))
 }
 

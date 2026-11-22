@@ -88,11 +88,18 @@ and every run it called, by capability and backend, local work shown as free.
 - **Run again** opens a new draft of the same task with the run's inputs and the backends it
   used written out. Changing it changes nothing of the run.
 - **Copy command** gives the `whizbang` command that makes the same call: every input by its
-  identity in the store; the store, config, env file and models directory by their paths;
-  each backend the run took from the config's default named explicitly; every word quoted
-  for a POSIX shell. When the config has changed since the run, a comment line above the
-  command says so, and the command runs under the config as it is now. Run it once the
-  playground has quit: the store takes one writer.
+  identity in the store; the store, config, env file, models directory and a recipe file by
+  their absolute paths; each backend the run took from the config's default named
+  explicitly; each flag with its value as one word (`--prompt=-a hose`), so a value that
+  begins with `-` is never read as a flag; every word quoted for a POSIX shell. When the
+  config, or a recipe file the run ran, has changed since the run, a line above the command
+  says so (`: '…'`, which a shell runs as nothing), and the command runs what is there now.
+  A run whose words hold a control or format character other than a new line or a tab gives
+  no command: no pasted line says it safely. Run it once the playground has quit: the store
+  takes one writer.
+
+Send to and Run again replace a draft of the same task you have not run only once you say
+so.
 
 ## What the playground holds while it runs
 

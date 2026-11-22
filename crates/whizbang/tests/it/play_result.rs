@@ -8,7 +8,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::{Value as Json, json};
-use whizbang::play_result::{command_line, quoted};
+use whizbang::play_result::{command_line, quoted, said_safely};
 use whizbang_core::store::Reader;
 use whizbang_core::store::fs::RealFs;
 use whizbang_testkit::scratch::Scratch;
@@ -174,6 +174,9 @@ fn the_command_quotes_every_argument_for_a_posix_shell() {
     .to_vec();
     assert_eq!(quoted("plain-word_1.2:3"), "plain-word_1.2:3");
     assert_eq!(quoted("it's"), r"'it'\''s'");
+    // A word that begins with `=`, which zsh would expand as a command's path.
+    assert_eq!(quoted("=ls"), "'=ls'");
+    assert_eq!(quoted("--box=1"), "--box=1");
     // A POSIX shell reads each word back as it was: printf prints each on a line of its
     // own, closed by a NUL so a word's own new line is kept.
     let line = command_line(&words[1..]);
@@ -186,7 +189,6 @@ fn the_command_quotes_every_argument_for_a_posix_shell() {
     let read: Vec<String> = String::from_utf8(out.stdout)
         .unwrap()
         .split('\0')
-        .filter(|_| true)
         .map(str::to_owned)
         .collect();
     assert_eq!(read[..read.len() - 1], words[1..]);
@@ -290,4 +292,28 @@ fn the_command_copied_from_a_mask_rect_run_makes_the_same_call_with_the_shipped_
     assert_eq!(first.asked().settings, second.asked().settings);
     assert_eq!(first.asked().config, second.asked().config);
     assert_eq!(first.inputs(), second.inputs());
+}
+
+#[test]
+fn words_holding_an_escape_sequence_a_nul_or_a_format_character_are_refused_422() {
+    let said = |word: &str| said_safely(&["whizbang".to_owned(), format!("--prompt={word}")]);
+    for word in ["the \u{1b}[2Jhose", "the\0hose", "the hose\u{202e}esoh"] {
+        let refused = said(word).unwrap_err();
+        assert_eq!(refused.status, 422, "{word:?}");
+    }
+    // A new line and a tab stay as they are inside the quotes.
+    assert!(said("two\nlines\tand a tab").is_ok());
+}
+
+#[test]
+fn the_record_of_a_run_that_has_not_ended_is_refused_409() {
+    let kitted = Kitted::new("result-going");
+    let prepared = kitted.prepare("waits", &json!({}));
+    let started = kitted.begin("waits", &json!({}), &prepared["handle"], &fresh_id());
+    assert_eq!(started.status, 201, "{}", started.text());
+    let run = started.json()["run"].as_str().unwrap().to_owned();
+    let answer = kitted.api("GET", &format!("/api/runs/{run}/record"), None);
+    assert_eq!(answer.status, 409, "{}", answer.text());
+    let stopped = kitted.api("POST", &format!("/api/runs/{run}/cancel"), None);
+    assert_eq!(stopped.status, 202);
 }

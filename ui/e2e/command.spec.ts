@@ -96,5 +96,5 @@ test("the command of a check sent from a removal carries its whole job", async (
   expect(text).toContain("squint check source-fidelity");
   expect(text).toContain("--job-json");
   for (const requirement of ["RQ1", "RQ2", "RQ3", "the hose reel"]) expect(text).toContain(requirement);
-  expect(text.match(/--image sha256:[0-9a-f]{64}/g)).toHaveLength(2);
+  expect(text.match(/--image=sha256:[0-9a-f]{64}/g)).toHaveLength(2);
 });

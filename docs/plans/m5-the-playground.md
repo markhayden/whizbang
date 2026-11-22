@@ -972,7 +972,16 @@ read by the host from the run's record (a removal's phrase through `checked::job
 check's own job when it is run again), never a job sent by the page; a brief given beside it
 is refused. Draft values (Send to, Run again) are the run's own, unescaped, and put in as
 text; what the record shows is escaped. Copy command refuses a run whose words hold a
-control character other than a new line or a tab, which no pasted line says safely. The map
+control or format (Cf) character other than a new line or a tab, which no pasted line says
+safely; writes each flag with its value as one word (`--flag=value`), so a value that begins
+with `-` is not read as a flag; gives every path absolute; quotes a word that begins with
+`=`; holds every command to the command line's own parser; and says a changed config or
+recipe file in a line `: '…'`, which an interactive zsh runs as nothing where it would
+refuse a `#` comment. `--job-json` is held as `--job` is: its size, no inline picture, and a
+pinned SHA-256 that must be the file the store imported that picture from
+(`import::pictures_by_file`). A check run again keeps its run's `set` (what it measured first
+and offered its judge). Send to and Run again replace an unrun draft of the same task only
+once the person says so, in the page, with no dialog. The map
 from an action to its command (`command_of.rs`) is a table for the shipped recipes, the loop
 and three operations of their own form (`fill`, `paste`, `grow`), `segment` by its query's
 kind, `squint check --job-json` for a use case, `rascal run <file>` for a recipe file the

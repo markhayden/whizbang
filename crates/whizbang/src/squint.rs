@@ -71,7 +71,9 @@ pub enum Command {
         /// `job` of a check's record): its brief, its requirements and its images by role,
         /// whose pictures are given by --image, by their identities in the store, once
         /// each in the job's order. The command the playground copies from a check says
-        /// its whole job this way.
+        /// its whole job this way. Held as a job file is: at most 1 MiB, no picture given
+        /// inline, and a pinned SHA-256 must be the file the store imported that picture
+        /// from.
         #[arg(long, value_name = "JSON", requires = "images")]
         job_json: Option<String>,
         /// With --job-json: each of the job's images, by its identity in the store, in
@@ -179,7 +181,7 @@ fn run_at(
             // pictures brought in, before anything runs.
             let (job, images) = match (job, job_json) {
                 (Some(file), _) => door::job_file(file, use_case, &root, &recovery)?,
-                (None, Some(text)) => door::job_json(text, images, use_case)?,
+                (None, Some(text)) => door::job_json(text, images, use_case, &root)?,
                 (None, None) => {
                     let references: Vec<&str> = references.iter().map(String::as_str).collect();
                     door::shorthand(&CheckAsked {

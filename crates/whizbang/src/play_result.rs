@@ -240,6 +240,16 @@ fn decision_word(decision: Decision) -> &'static str {
 /// `job_of`): the job a check of that use case was given, or the job the loop writes from
 /// the phrase of a removal. Never a job from the page.
 pub fn job_of(store: &Store, run: &str, use_case: &str) -> Result<Job, String> {
+    job_and_measuring_of(store, run, use_case).map(|(job, _)| job)
+}
+
+/// The same, and what a check of a use case measured first and offered its judge (its
+/// argument `set`), which a check run again keeps; none for a removal's job.
+pub fn job_and_measuring_of(
+    store: &Store,
+    run: &str,
+    use_case: &str,
+) -> Result<(Job, Option<String>), String> {
     let run = RunId::parse(run).map_err(|_| "job_of names no run".to_owned())?;
     let record = record_of(store, &run).map_err(|refused| refused.why)?;
     let action = record.asked().action.clone().unwrap_or_default();
@@ -260,7 +270,10 @@ pub fn job_of(store: &Store, run: &str, use_case: &str) -> Result<Job, String> {
             "that run's job is of another use case than {use_case}"
         ));
     }
-    Ok(job)
+    let measuring = play_form::is_use_case(&action)
+        .then(|| text_argument(&record, whizbang_core::recipe::SET).map(str::to_owned))
+        .flatten();
+    Ok((job, measuring))
 }
 
 /// A use case run's pictures by their role, from its job and its images in order: the
@@ -743,9 +756,11 @@ pub fn commanded(
 
 /// A word quoted for a POSIX shell: as it is when it holds nothing a shell reads, else
 /// in single quotes, a single quote in it written `'\''`. A new line stays a new line
-/// inside the quotes, which a shell keeps.
+/// inside the quotes, which a shell keeps. A word that begins with `=` is quoted too,
+/// which zsh would otherwise expand as a command's path.
 pub fn quoted(word: &str) -> String {
     let plain = !word.is_empty()
+        && !word.starts_with('=')
         && word
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"-_./:=,@%+".contains(&b));
@@ -753,6 +768,37 @@ pub fn quoted(word: &str) -> String {
         return word.to_owned();
     }
     format!("'{}'", word.replace('\'', r"'\''"))
+}
+
+/// Whether a character is of Unicode's category Cf (format): invisible, and able to
+/// make a pasted line read otherwise than it shows (bidirectional controls among them).
+pub fn is_format(c: char) -> bool {
+    matches!(c as u32,
+        0x00AD | 0x0600..=0x0605 | 0x061C | 0x06DD | 0x070F | 0x0890..=0x0891 | 0x08E2
+        | 0x180E | 0x200B..=0x200F | 0x202A..=0x202E | 0x2060..=0x2064 | 0x2066..=0x206F
+        | 0xFEFF | 0xFFF9..=0xFFFB | 0x110BD | 0x110CD | 0x13430..=0x1343F
+        | 0x1BCA0..=0x1BCA3 | 0x1D173..=0x1D17A | 0xE0001 | 0xE0020..=0xE007F)
+}
+
+/// Words a person can paste into a terminal safely: none holds a control character but a
+/// new line or a tab (each kept as it is inside its quotes), nor a format character.
+/// Otherwise 422: no command line says them safely.
+pub fn said_safely(words: &[String]) -> Result<(), Refused> {
+    let unsafe_char = |c: char| (c.is_control() && c != '\n' && c != '\t') || is_format(c);
+    if words.iter().any(|word| word.chars().any(unsafe_char)) {
+        return Err(Refused::new(
+            422,
+            "the run's words hold a control or format character that no command line says \
+             safely",
+        ));
+    }
+    Ok(())
+}
+
+/// A line a shell runs as nothing, saying `words`: `: '…'`, which an interactive zsh
+/// takes as it takes any command, where it would refuse a `#` comment.
+pub fn said_line(words: &str) -> String {
+    format!(": {}\n", quoted(words))
 }
 
 /// A command line of these words, each quoted for a POSIX shell.

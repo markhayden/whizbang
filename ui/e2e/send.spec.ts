@@ -63,13 +63,23 @@ test("back to the run returns to the sending result", async ({ page, host }) => 
 test("run again opens a draft whose changes do not touch the result it came from", async ({ page, request, host }) => {
   await openAt(page, host, "#/");
   const run = await removed(page, "remove_prompt", 43, "the bucket");
+  const before = await api<Recorded>(request, host, `/api/runs/${run}/record`);
   await page.getByRole("button", { name: "Run again" }).click();
   await expect(page).toHaveURL(/#\/k\/rascal\/remove_prompt$/);
+  // The draft is the run's: its picture and its words.
   await expect(page.locator("#field-prompt")).toHaveValue("the bucket");
+  await expect(page.locator(".field:has(#field-image) .picture-field__name")).toContainText("its picture");
+  // Changed and run, it makes a run of its own, with the new words and the same picture.
   await page.locator("#field-prompt").fill("the ladder");
+  await runWhenReady(page);
+  await expect(page.locator(".workspace__title-row .tag", { hasText: "DONE" })).toBeVisible();
+  const again = await api<Recorded>(request, host, `/api/runs/${runOf(page)}/record`);
+  expect(runOf(page)).not.toBe(run);
+  expect(again.arguments.find((argument) => argument.name === "prompt")?.value).toBe("the ladder");
+  expect(again.inputs).toEqual(before.inputs);
   // The run it came from is as it was, in the store and on its screen.
-  const record = await api<Recorded>(request, host, `/api/runs/${run}/record`);
-  expect(record.arguments.find((argument) => argument.name === "prompt")?.value).toBe("the bucket");
+  const after = await api<Recorded>(request, host, `/api/runs/${run}/record`);
+  expect(after).toEqual(before);
   await page.goto(`${host.address}#/run/${run}`);
   await expect(page.locator(".run__inputs")).toContainText("the bucket");
   await expect(page.locator(".run__inputs")).not.toContainText("the ladder");

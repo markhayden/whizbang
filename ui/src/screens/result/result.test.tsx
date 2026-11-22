@@ -153,6 +153,16 @@ describe("the result screen", () => {
     click(again);
     expect(go).toHaveBeenLastCalledWith("#/k/rascal/remove_checked");
     expect(readDrafts(localStorage).find((one) => one.task === "remove_checked")?.sent).toBeUndefined();
+    // A draft of the same task the person has not run is replaced only when they say so.
+    go.mockClear();
+    click(again);
+    expect(go).not.toHaveBeenCalled();
+    expect(view.get(".result__replacing").textContent).toContain("Remove, checked");
+    click(view.all<HTMLElement>(".result__replacing .button").find((one) => one.textContent?.includes("Keep my draft"))!);
+    expect(view.all(".result__replacing")).toHaveLength(0);
+    click(again);
+    click(view.all<HTMLElement>(".result__replacing .button").find((one) => one.textContent?.includes("Replace it"))!);
+    expect(go).toHaveBeenCalledWith("#/k/rascal/remove_checked");
     const copy = view.all<HTMLElement>(".button--quiet").find((one) => one.textContent?.includes("Copy command"))!;
     click(copy);
     await act(async () => undefined);

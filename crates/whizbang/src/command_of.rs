@@ -14,9 +14,11 @@
 //!   --job-json` with each of its images by `--image`, in the job's order.
 //! - A recipe the build does not ship, from a file the config lists, is `whizbang rascal
 //!   run <file>` with its inputs as `NAME=VALUE`.
-//! - One of rascal's operations is said by its own flags, and held to its own parse: the
-//!   words are parsed back by the command's parser, and what that asks must be what the
-//!   run asked, or no command is said.
+//! - Every flag that takes a value is written with it as one word, `--flag=value`, so a
+//!   value that begins with `-` (a prompt, a path) is never read as a flag. Every command
+//!   is parsed back by the command line's own parser before it is said.
+//! - One of rascal's operations is said by its own flags, and held to its own parse: what
+//!   the parse asks must be what the run asked, or no command is said.
 
 use std::collections::BTreeMap;
 
@@ -137,6 +139,12 @@ pub(crate) const ENTRIES: &[Entry] = &[
     },
 ];
 
+/// A flag and its value as one word, `--flag=value`: a value that begins with `-` (a
+/// prompt, a path) is then never read as a flag of its own.
+fn flag_value(flag: impl AsRef<str>, value: impl AsRef<str>) -> String {
+    format!("{}={}", flag.as_ref(), value.as_ref())
+}
+
 /// A value as a command line types it.
 fn typed(value: &Value) -> String {
     match value {
@@ -153,15 +161,15 @@ fn path(path: &std::path::Path) -> String {
 
 /// The flags every command that runs an action takes: the store, then the files.
 fn common(asked: &Commanded) -> Vec<String> {
-    let mut words = vec!["--store".to_owned(), path(&asked.store)];
+    let mut words = vec![flag_value("--store", path(&asked.store))];
     if let Some(config) = &asked.config {
-        words.extend(["--config".to_owned(), path(config)]);
+        words.push(flag_value("--config", path(config)));
     }
     if let Some(env) = &asked.env_file {
-        words.extend(["--env-file".to_owned(), path(env)]);
+        words.push(flag_value("--env-file", path(env)));
     }
     if let Some(models) = &asked.models_dir {
-        words.extend(["--models-dir".to_owned(), path(models)]);
+        words.push(flag_value("--models-dir", path(models)));
     }
     words
 }
@@ -179,10 +187,10 @@ fn arguments_and_choices(asked: &Commanded) -> Vec<(String, Value)> {
 /// the argument was one of them.
 fn steps_of(name: &str, value: &Value, words: &mut Vec<String>) -> bool {
     match (name, value) {
-        (UNTIL, Value::Text(step)) => words.extend(["--until".to_owned(), step.clone()]),
+        (UNTIL, Value::Text(step)) => words.push(flag_value("--until", step)),
         (SET, Value::Text(set)) => {
             for line in set.lines().filter(|line| !line.trim().is_empty()) {
-                words.extend(["--set".to_owned(), line.to_owned()]);
+                words.push(flag_value("--set", line));
             }
         }
         _ => return false,
@@ -205,7 +213,7 @@ fn by_entry(entry: &Entry, asked: &Commanded) -> Result<Vec<String>, String> {
         let Some((_, flag)) = entry.ports.iter().find(|(name, _)| name == port) else {
             return Err(not_said(entry.action, &format!("input {port}")));
         };
-        words.extend([(*flag).to_owned(), id.clone()]);
+        words.push(flag_value(*flag, id));
     }
     for (name, value) in arguments_and_choices(asked) {
         if entry.steps && steps_of(&name, &value, &mut words) {
@@ -218,7 +226,7 @@ fn by_entry(entry: &Entry, asked: &Commanded) -> Result<Vec<String>, String> {
         else {
             return Err(not_said(entry.action, &format!("argument {name}")));
         };
-        words.extend([(*flag).to_owned(), typed(&value)]);
+        words.push(flag_value(*flag, typed(&value)));
     }
     words.extend(common(asked));
     Ok(words)
@@ -231,7 +239,7 @@ fn segment(asked: &Commanded) -> Result<Vec<String>, String> {
         if port != "image" {
             return Err(not_said("segment", &format!("input {port}")));
         }
-        words.extend(["--image".to_owned(), id.clone()]);
+        words.push(flag_value("--image", id));
     }
     let all = arguments_and_choices(asked);
     let kind = all
@@ -252,7 +260,7 @@ fn segment(asked: &Commanded) -> Result<Vec<String>, String> {
             "backend" => "--backend",
             _ => return Err(not_said("segment", &format!("argument {name}"))),
         };
-        words.extend([flag.to_owned(), typed(value)]);
+        words.push(flag_value(flag, typed(value)));
     }
     words.extend(common(asked));
     Ok(words)
@@ -271,18 +279,18 @@ fn use_case(asked: &Commanded) -> Result<Vec<String>, String> {
     for (name, value) in arguments_and_choices(asked) {
         match (name.as_str(), value) {
             ("job", Value::Text(text)) => job = Some(text),
-            ("judge", value) => words.extend(["--judge".to_owned(), typed(&value)]),
+            ("judge", value) => words.push(flag_value("--judge", typed(&value))),
             (SET, Value::Text(text)) => set = Some(text),
             _ => return Err(not_said(&asked.action, &format!("argument {name}"))),
         }
     }
     let job = job.ok_or_else(|| not_said(&asked.action, "job"))?;
-    words.extend(["--job-json".to_owned(), job]);
+    words.push(flag_value("--job-json", job));
     for (port, id) in &asked.inputs {
         if port != "images" {
             return Err(not_said(&asked.action, &format!("input {port}")));
         }
-        words.extend(["--image".to_owned(), id.clone()]);
+        words.push(flag_value("--image", id));
     }
     if let Some(set) = set {
         words.extend(measuring(&asked.action, &set)?);
@@ -309,10 +317,10 @@ fn measuring(action: &str, set: &str) -> Result<Vec<String>, String> {
     let details =
         Details::stated(Some(&details_name)).ok_or_else(|| not_said(action, "details"))?;
     if details != Details::DEFAULT {
-        words.extend(["--details".to_owned(), details_name]);
+        words.push(flag_value("--details", details_name));
     }
     if let Some(detail) = take(format!("{DETAILS_STEP}.detail")) {
-        words.extend(["--detail".to_owned(), detail]);
+        words.push(flag_value("--detail", detail));
     }
     let offered = take(format!("{JUDGE_STEP}.tools")).unwrap_or_default();
     let (base, _) = details.tools_and_name();
@@ -320,20 +328,20 @@ fn measuring(action: &str, set: &str) -> Result<Vec<String>, String> {
         .strip_prefix(base)
         .ok_or_else(|| not_said(action, "tools"))?;
     for tool in extra.split(',').filter(|tool| !tool.is_empty()) {
-        words.extend(["--tool".to_owned(), tool.to_owned()]);
+        words.push(flag_value("--tool", tool));
     }
     if let Some(projection) = take(format!("{JUDGE_STEP}.projection"))
         && projection != details.projection()
     {
-        words.extend(["--projection".to_owned(), projection]);
+        words.push(flag_value("--projection", projection));
     }
     if let Some(second) = take(format!("{JUDGE_STEP}.second_look"))
         && second != "off"
     {
-        words.extend(["--second-look".to_owned(), second]);
+        words.push(flag_value("--second-look", second));
     }
     if let Some(submission) = take(format!("{JUDGE_STEP}.submission")) {
-        words.extend(["--submission".to_owned(), submission]);
+        words.push(flag_value("--submission", submission));
     }
     if let Some(name) = said.keys().next() {
         return Err(not_said(action, &format!("setting {name}")));
@@ -346,14 +354,14 @@ fn measuring(action: &str, set: &str) -> Result<Vec<String>, String> {
 fn recipe_file(asked: &Commanded, file: &std::path::Path) -> Result<Vec<String>, String> {
     let mut words = vec!["rascal".to_owned(), "run".to_owned(), path(file)];
     for (port, id) in &asked.inputs {
-        words.extend(["--input".to_owned(), format!("{port}={id}")]);
+        words.push(flag_value("--input", format!("{port}={id}")));
     }
     for (name, value) in arguments_and_choices(asked) {
         if steps_of(&name, &value, &mut words) {
             continue;
         }
         match value {
-            Value::Text(text) => words.extend(["--input".to_owned(), format!("{name}={text}")]),
+            Value::Text(text) => words.push(flag_value("--input", format!("{name}={text}"))),
             _ => return Err(not_said(&asked.action, &format!("argument {name}"))),
         }
     }
@@ -366,7 +374,10 @@ fn recipe_file(asked: &Commanded, file: &std::path::Path) -> Result<Vec<String>,
 fn operation(asked: &Commanded) -> Result<Vec<String>, String> {
     let mut words = vec!["rascal".to_owned(), asked.action.replace('_', "-")];
     for (port, id) in &asked.inputs {
-        words.extend([format!("--{}", port.replace('_', "-")), id.clone()]);
+        words.push(flag_value(
+            format!("--{}", port.replace('_', "-")),
+            id.clone(),
+        ));
     }
     let wanted = arguments_and_choices(asked);
     for (name, value) in &wanted {
@@ -374,7 +385,7 @@ fn operation(asked: &Commanded) -> Result<Vec<String>, String> {
         match value {
             Value::Boolean(true) => words.push(flag),
             Value::Boolean(false) => {}
-            value => words.extend([flag, typed(value)]),
+            value => words.push(flag_value(flag, typed(value))),
         }
     }
     words.extend(common(asked));
@@ -438,6 +449,14 @@ pub(crate) fn words(asked: &Commanded) -> Result<Vec<String>, String> {
         return Err(format!("no command line runs {}", asked.action));
     };
     words.insert(0, "whizbang".to_owned());
+    // Every command, whatever made it, is held to the command line's own parser before it
+    // is said: what it cannot read is not a command.
+    if super::Cli::try_parse_from(&words).is_err() {
+        return Err(format!(
+            "no command line says this call of {}: its words do not parse",
+            asked.action
+        ));
+    }
     Ok(words)
 }
 
@@ -529,8 +548,9 @@ mod tests {
             bench
         }
 
+        /// A folder whose name begins with `-`, as a flag's would.
         fn root(&self) -> PathBuf {
-            self.scratch.path().join("store")
+            self.scratch.path().join("-store")
         }
 
         fn config(&self) -> PathBuf {
@@ -719,16 +739,45 @@ mod tests {
         let drawn = mask(&first).unwrap();
         made.push((first, command));
         made.push(bench.ran("protect", json!({"image": picture, "mask": drawn})));
-        let phrase = "the 'hose'\nby the $DOOR and `its` \"reel\"";
+        let phrase = "-a hose: the 'hose'\nby the $DOOR and `its` \"reel\"";
         let (removal, command) = bench.ran(
             "remove_checked",
             json!({"image": picture, "prompt": phrase, "attempts": 1}),
+        );
+        // A value that begins with `-` is said with its flag, as one word.
+        let words: Vec<String> = serde_json::from_value(command["words"].clone()).unwrap();
+        assert!(words.contains(&format!("--prompt={phrase}")), "{command}");
+        let store = words
+            .iter()
+            .find(|word| word.starts_with("--store="))
+            .unwrap();
+        assert!(
+            store.ends_with("/-store") && store.starts_with("--store=/"),
+            "{store}"
         );
         made.push((removal.clone(), command));
         for (first, command) in &made {
             let second = bench.again(command, first);
             bench.same_call(first, &second);
         }
+        // The user's recipe file edited since its run: the command says so, as it says a
+        // changed config.
+        let recipe = bench.scratch.path().join("my_rect.toml");
+        std::fs::write(
+            &recipe,
+            MY_RECT.replace("as a user's own", "as a user's edited"),
+        )
+        .unwrap();
+        let (_, door) = bench.door();
+        let edited = door.command(&made[1].0).unwrap();
+        door.closing();
+        assert_eq!(edited["recipe_changed"], true, "{edited}");
+        let text = edited["command"].as_str().unwrap();
+        assert!(
+            text.starts_with(": 'the recipe file has changed since this run"),
+            "{text}"
+        );
+        assert_eq!(made[0].1["recipe_changed"], false);
         // A check of an edit sent from the removal: the job the loop writes, whole, with
         // its requirements.
         let record = bench.record(&removal);
@@ -754,10 +803,12 @@ mod tests {
         // A fill that names no filler: the config's default answered, and is named.
         let (first, command) = bench.ran("fill", json!({"image": picture, "mask": mask}));
         let words: Vec<String> = serde_json::from_value(command["words"].clone()).unwrap();
-        let at = words.iter().position(|word| word == "--backend").unwrap();
-        assert_eq!(words[at + 1], "cloud-fill", "{command}");
+        assert!(
+            words.contains(&"--backend=cloud-fill".to_owned()),
+            "{command}"
+        );
         assert_eq!(command["config_changed"], false);
-        assert!(!command["command"].as_str().unwrap().starts_with('#'));
+        assert!(!command["command"].as_str().unwrap().starts_with(':'));
         // The config's default changes: the command still calls the backend the run did,
         // and says the config is another than the run's.
         bench.configure("other-fill");
@@ -767,15 +818,31 @@ mod tests {
         assert_eq!(changed["config_changed"], true, "{changed}");
         let text = changed["command"].as_str().unwrap();
         let (comment, rest) = text.split_once('\n').unwrap();
+        // A line a shell runs as nothing, which an interactive zsh takes too.
         assert!(
-            comment.starts_with("# the config has changed since this run"),
+            comment.starts_with(": 'the config has changed since this run"),
             "{comment}"
         );
         assert!(comment.contains(changed["recorded_config"].as_str().unwrap()));
         assert!(comment.contains(changed["config"].as_str().unwrap()));
-        assert!(rest.contains("--backend cloud-fill"), "{rest}");
+        assert!(rest.contains("--backend=cloud-fill"), "{rest}");
         let second = bench.again(&changed, &first);
         bench.same_call_under(&first, &second, false);
+        // A recipe file of the same name as the config's, and another text, is still
+        // refused by `rascal run`: one recipe of a name is registered.
+        let other = bench.scratch.path().join("other_rect.toml");
+        std::fs::write(&other, MY_RECT.replace("Makes a box", "Makes another box")).unwrap();
+        let refused = crate::run([
+            "whizbang".to_owned(),
+            "rascal".to_owned(),
+            "run".to_owned(),
+            other.display().to_string(),
+            format!("--input=image={picture}"),
+            "--input=box=1 1 4 4".to_owned(),
+            format!("--store={}", bench.root().display()),
+            format!("--config={}", bench.config().display()),
+        ]);
+        assert_eq!(format!("{refused:?}"), format!("{:?}", ExitCode::from(1)));
     }
 
     #[test]
@@ -797,7 +864,9 @@ mod tests {
             words.extend(["--config".to_owned(), config.display().to_string()]);
             words
         };
-        let ok = crate::run(line(&[&candidate, &source], "source-fidelity"));
+        let mut measured = line(&[&candidate, &source], "source-fidelity");
+        measured.push("--details=first".to_owned());
+        let ok = crate::run(measured);
         assert_eq!(format!("{ok:?}"), format!("{:?}", ExitCode::SUCCESS));
         // The run holds the job whole, requirements and all, and its images in order.
         let reader = Reader::open(&store, Arc::new(RealFs)).unwrap();
@@ -821,6 +890,36 @@ mod tests {
         };
         let held = whizbang_squint::job::Job::from_json(held).unwrap();
         assert_eq!(held, whizbang_squint::job::Job::from_json(&job).unwrap());
+        // Run again of it keeps what it measured first and offered its judge.
+        let set = (record.asked().arguments.iter())
+            .find(|a| a.name == "set")
+            .unwrap();
+        let whizbang_core::contract::record::ArgumentValue::Text(set) = &set.value else {
+            panic!("set is text");
+        };
+        assert!(set.contains("details.details=first"), "{set}");
+        let (_, door) = bench.door();
+        let again = json!({"candidate": candidate, "source": source,
+                           "job_of": record.identity().run});
+        let (call, _) = door
+            .call("source-fidelity", again.as_object().unwrap())
+            .unwrap();
+        door.closing();
+        assert_eq!(
+            call.arguments()["set"],
+            whizbang_core::contract::Value::text(set)
+        );
+        // A job that gives a picture inline, and one whose pin is no file the store
+        // imported the picture from, are each refused.
+        let mut inline: Json = serde_json::from_str(&job).unwrap();
+        inline["images"][0]["source"] = json!({"base64": "AAAA"});
+        let mut pinned: Json = serde_json::from_str(&job).unwrap();
+        pinned["images"][0]["source"] = json!({"sha256": "b".repeat(64)});
+        for text in [inline.to_string(), pinned.to_string()] {
+            let given = [candidate.clone(), source.clone()];
+            let refused = whizbang::door::job_json(&text, &given, "source-fidelity", &store);
+            assert!(refused.is_err(), "{text}");
+        }
         let images: Vec<String> = record
             .inputs()
             .iter()

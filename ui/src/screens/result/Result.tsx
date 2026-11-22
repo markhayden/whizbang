@@ -9,7 +9,7 @@ import { SendToMenu } from "../../components/SendToMenu";
 import { StepList, type StepListEntry } from "../../components/StepList";
 import { Tag } from "../../components/Tag";
 import { VerdictCard } from "../../components/VerdictCard";
-import { localStore, saveDraft } from "../../drafts";
+import { draftOf, localStore, saveDraft } from "../../drafts";
 import { endTag, fieldsOf, labelOf, taskOf } from "../../form";
 import { dollars, elapsed, middle } from "../../format";
 import { useArtifact, useImageSize } from "../../hooks";
@@ -44,6 +44,8 @@ export function Result(props: ResultProps) {
   const [sending, setSending] = useState(false);
   const [command, setCommand] = useState<CommandView | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  // A draft Send to or Run again would put in place of one the person has not run yet.
+  const [replacing, setReplacing] = useState<{ draft: OpenDraft; sent: boolean } | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -97,9 +99,16 @@ export function Result(props: ResultProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const open = (draft: OpenDraft, sent: boolean) => {
+  const open = (draft: OpenDraft, sent: boolean, sure = false) => {
     if (!record) return;
-    saveDraft(localStore(), draftFrom(draft, record, kits, sent, Date.now()));
+    const store = localStore();
+    if (!sure && draftOf(store, draft.task)) {
+      setSending(false);
+      setReplacing({ draft, sent });
+      return;
+    }
+    setReplacing(null);
+    saveDraft(store, draftFrom(draft, record, kits, sent, Date.now()));
     props.go(hrefOf({ name: "kit", kit: draft.kit ?? "rascal", task: draft.task }));
   };
   const copy = () => {
@@ -182,6 +191,19 @@ export function Result(props: ResultProps) {
             <p class="field__error" role="alert">
               {problem}
             </p>
+          ) : null}
+          {replacing ? (
+            <div class="result__replacing" role="alert">
+              <p class="workspace__purpose">{`This replaces the draft of ${replacing.draft.title} you have not run yet.`}</p>
+              <div class="result__actions">
+                <Button variant="secondary" onClick={() => open(replacing.draft, replacing.sent, true)}>
+                  Replace it
+                </Button>
+                <Button variant="quiet" onClick={() => setReplacing(null)}>
+                  Keep my draft
+                </Button>
+              </div>
+            </div>
           ) : null}
           {command ? (
             <div class="result__command">

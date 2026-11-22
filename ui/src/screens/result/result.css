@@ -17,3 +17,4 @@
 /* A draft Send to opened: the banner across the workspace, over its three columns. */
 .workspace--sent { grid-template-rows: auto minmax(0, 1fr); }
 .workspace__banner { grid-column: 1 / -1; padding: var(--spacing-2) var(--spacing-3); background: var(--color-panel); border-bottom: 1px solid var(--color-line); }
+.result__replacing { display: flex; flex-direction: column; gap: var(--spacing-1-5); }
