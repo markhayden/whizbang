@@ -96,8 +96,10 @@ models get` does, into the models directory the playground was started with
 catalogue names and no other. The install runs in the playground's process on a thread of
 its own, one at a time: Get on a model that is being installed follows that install, and Get
 on another model waits until it ends. Its progress is counted in files, not bytes ("1 of 3
-files"). **Cancel** stops it, and whatever was installed before stays as it was. Quitting
-the playground cancels an install that is going, the same way. **Remove** removes a model as
+files"). **Cancel** stops it, and whatever was installed before stays as it was; a Get
+while it is stopping is refused until it has. An install another whizbang runs shows its
+progress too, with no Cancel; a Get follows it, and Cancel then only stops following it. Quitting
+the playground cancels an install that is going, the same way. **Remove** asks first, then removes a model as
 `whizbang models remove` does: it waits five seconds for the runs that use it, and if they
 have not let it go, it says the model is busy and removes nothing.
 
@@ -123,7 +125,8 @@ with the reset's date, and what is left; and the config's cap of one call (`[spe
 call_cap_usd`), which the page shows and does not change. **Reset…** asks for the new
 allowance in dollars and for the word `reset` typed again, and only then resets it, as
 `whizbang spend reset --allowance` does: the books close, what was spent before stops
-counting, and the new allowance starts with nothing spent. There is no monthly allowance.
+counting, and the new allowance starts with nothing spent. Runs already admitted keep what
+they reserved, under the books they were admitted under. There is no monthly allowance.
 
 A store on a network file system is not supported: the store's locks may not hold there,
 and the playground holds a store for as long as it runs.

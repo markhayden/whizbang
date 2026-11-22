@@ -22,7 +22,7 @@ export interface ModelInfo {
   sign_in?: string;
   /** This host's install of it: `installing` or `stopping`. */
   install?: string;
-  /** How this host's last install of it ended. */
+  /** How this host's last install of it ended: `installed`, `cancelled`, `detached` or `failed`. */
   last?: { ended: string; why?: string | null };
 }
 
@@ -77,6 +77,11 @@ export function backendsOf(answer: unknown): BackendInfo[] {
 }
 
 /** Whether an install is going for this model, here. */
+/** Whether this host's own install of the model goes: the one Cancel stops. */
+export function cancellable(model: ModelInfo): boolean {
+  return model.install === "installing";
+}
+
 export function installing(model: ModelInfo): boolean {
   return model.install === "installing" || model.install === "stopping" || typeof model.files_done === "number";
 }
@@ -103,7 +108,9 @@ export function lineOf(model: ModelInfo, usedBy: string[]): string {
   if (model.title) parts.push(model.title);
   if (usedBy.length > 0) parts.push(`used by ${usedBy.join(", ")}`);
   if (installing(model)) {
-    parts.push(model.install === "stopping" ? "cancelling" : "installing: counted in files, not bytes");
+    if (model.install === "stopping") parts.push("cancelling");
+    else if (model.install === "installing") parts.push("installing: counted in files, not bytes");
+    else parts.push("being installed by another whizbang: counted in files, not bytes");
   } else if (model.sign_in === "not_named") {
     parts.push("its download needs a sign-in the config does not name");
   } else if (model.sign_in === "not_here") {

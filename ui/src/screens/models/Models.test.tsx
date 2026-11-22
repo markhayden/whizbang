@@ -98,6 +98,11 @@ describe("the models screen", () => {
     click(button("Cancel"));
     click(button("Remove"));
     await settle();
+    // Remove asks first, and only the confirmation sends it.
+    expect(request.mock.calls.some(([method]) => method === "DELETE")).toBe(false);
+    expect(view.get(".models__confirm").textContent).toContain("Remove tiny?");
+    click(view.get(".models__confirm .button--danger"));
+    await settle();
     const asked = request.mock.calls.map(([method, path]) => `${method} ${path}`);
     expect(asked).toContain("POST /api/models/pocket/get");
     expect(asked).toContain("POST /api/models/depth/cancel");
@@ -123,6 +128,7 @@ describe("the models screen", () => {
     await settle();
     click(view.all<HTMLButtonElement>("button").find((b) => b.textContent === "Reset…")!);
     expect(view.text()).toContain("A reset closes the books");
+    expect(view.text()).toContain("Runs already admitted keep what they reserved");
     const reset = () => view.get<HTMLButtonElement>(".models__reset .button--danger");
     expect(reset().disabled).toBe(true);
     input(view.get<HTMLInputElement>("#reset-amount"), "20");
@@ -141,6 +147,22 @@ describe("the models screen", () => {
     expect(request).toHaveBeenCalledWith("POST", "/api/spend/reset", { allowance: "20", confirm: "reset" });
     expect(view.text()).toContain("The books are closed: the allowance is $20.00 from now on.");
     expect(view.all(".models__reset")).toHaveLength(0);
+    view.unmount();
+  });
+
+  it("offers Cancel only for this host's own install, not one another whizbang runs", async () => {
+    const { client } = hosted();
+    const theirs = { ...MODELS, models: [{ name: "pocket", title: "Pocket", bytes: 5596, files: 3, state: "not_installed", files_done: 1, sign_in: "none" }] };
+    vi.mocked(client.poll).mockImplementation((_: unknown, next: (answer: unknown) => unknown) => {
+      void Promise.resolve().then(() => next(theirs));
+      return () => undefined;
+    });
+    const view = render(<Models client={client} />);
+    await settle();
+    const row = view.get(".models__panel .model-row");
+    expect(row.textContent).toContain("1 of 3 files");
+    expect(row.textContent).toContain("being installed by another whizbang");
+    expect(row.querySelectorAll("button")).toHaveLength(0);
     view.unmount();
   });
 

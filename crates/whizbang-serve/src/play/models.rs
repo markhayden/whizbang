@@ -57,7 +57,7 @@ pub trait Models: Send + Sync {
     /// Installs the model, or attaches to an install of it another process runs: on
     /// the install's own thread, until it ends or `cancellation` is tripped. What was
     /// installed, or why not, in words that hold no secret.
-    fn install(&self, model: &str, cancellation: &Cancellation) -> Result<String, String>;
+    fn install(&self, model: &str, cancellation: &Cancellation) -> Result<String, NotInstalled>;
     /// Removes the model, waiting for the runs that hold it for the door's short wait;
     /// past it, busy (409), and the model is as it was.
     fn remove(&self, model: &str) -> Result<Json, Refused>;
@@ -116,10 +116,21 @@ pub(crate) const ROUTES: &[Route] = &[
     },
 ];
 
+/// Why an install the host ran did not install its model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotInstalled {
+    /// The host's request had attached to an install another process runs, and left it
+    /// when it was cancelled: that install goes on, there.
+    pub left: bool,
+    /// Why, in words that hold no secret.
+    pub why: String,
+}
+
 /// How an install the host ran ended, as the page is told it beside the model's row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Ended {
-    /// `installed`, `cancelled` or `failed`.
+    /// `installed`, `cancelled`, `detached` (the host stopped following an install
+    /// another process runs, which goes on) or `failed`.
     word: &'static str,
     why: Option<String>,
 }
@@ -130,6 +141,10 @@ struct Going {
     signal: Cancellation,
 }
 
+/// What the install's thread tells when it ends: the state to change, and whom to wake.
+#[derive(Default)]
+struct Waking(std::sync::OnceLock<std::sync::Weak<Shared>>);
+
 #[derive(Default)]
 struct InstallState {
     going: Option<Going>,
@@ -139,17 +154,26 @@ struct InstallState {
     closed: bool,
     /// A removal is waiting for its drain.
     removing: bool,
+    /// The thread of the last install, which a new install waits for before it is made,
+    /// so that the host never holds two install threads at once.
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 /// The host's one install at a time, and its one removal at a time.
 #[derive(Clone, Default)]
-pub(crate) struct Installs(Arc<Mutex<InstallState>>);
+pub(crate) struct Installs(Arc<Mutex<InstallState>>, Arc<Waking>);
 
 impl Installs {
     fn state(&self) -> MutexGuard<'_, InstallState> {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The host these installs are of, woken when an install ends, so that a quit's
+    /// grace sees it at once (set once, when the host starts).
+    pub fn wakes(&self, shared: &Arc<Shared>) {
+        let _ = self.1.0.set(Arc::downgrade(shared));
     }
 
     /// A quit: the install going is cancelled, and none starts after.
@@ -166,7 +190,7 @@ impl Installs {
         self.state().going.is_none()
     }
 
-    fn finished(&self, model: &str, outcome: Result<String, String>, cancelled: bool) {
+    fn finished(&self, model: &str, outcome: Result<String, NotInstalled>, cancelled: bool) {
         let mut state = self.state();
         state.going = None;
         let ended = match outcome {
@@ -174,18 +198,30 @@ impl Installs {
                 word: "installed",
                 why: None,
             },
+            Err(NotInstalled { left: true, .. }) => Ended {
+                word: "detached",
+                why: Some(
+                    "the playground stopped following the install another process runs; it \
+                     goes on there"
+                        .to_owned(),
+                ),
+            },
             Err(_) if cancelled => Ended {
                 word: "cancelled",
                 why: Some(
                     "the install was cancelled; what was installed before is as it was".to_owned(),
                 ),
             },
-            Err(why) => Ended {
+            Err(NotInstalled { why, .. }) => Ended {
                 word: "failed",
                 why: Some(escaped(&why)),
             },
         };
         state.ended.insert(model.to_owned(), ended);
+        drop(state);
+        if let Some(shared) = self.1.0.get().and_then(std::sync::Weak::upgrade) {
+            shared.notify();
+        }
     }
 }
 
@@ -265,6 +301,33 @@ fn list(shared: &Shared, _: &Guarded<'_>) -> Response {
     Response::json(200, &said)
 }
 
+/// What a Get of `model` is answered with as things stand, when it is not to start an
+/// install: the host is stopping; an install of it goes (attached) or is stopping; another
+/// model's install goes; a removal goes.
+fn not_now(state: &InstallState, model: &str) -> Option<Response> {
+    if state.closed {
+        return Some(Response::refused(503, "the playground is stopping"));
+    }
+    match &state.going {
+        Some(going) if going.model == model && going.signal.is_cancelled() => Some(
+            Response::refused(409, "the install is stopping; try again after it"),
+        ),
+        Some(going) if going.model == model => Some(Response::json(
+            200,
+            &json!({"model": model, "state": "installing", "attached": true}),
+        )),
+        Some(_) => Some(Response::refused(
+            409,
+            "another model is being installed; the playground installs one at a time",
+        )),
+        None if state.removing => Some(Response::refused(
+            409,
+            "a model is being removed; try again after it",
+        )),
+        None => None,
+    }
+}
+
 fn get(shared: &Shared, guarded: &Guarded<'_>) -> Response {
     let model = match model_of(guarded) {
         Ok(model) => model,
@@ -275,50 +338,22 @@ fn get(shared: &Shared, guarded: &Guarded<'_>) -> Response {
         Err(response) => return response,
     };
     let installs = shared.installs.clone();
-    {
-        let state = installs.state();
-        if state.closed {
-            return Response::refused(503, "the playground is stopping");
-        }
-        match &state.going {
-            Some(going) if going.model == model => {
-                return Response::json(
-                    200,
-                    &json!({"model": model, "state": "installing", "attached": true}),
-                );
-            }
-            Some(_) => {
-                return Response::refused(
-                    409,
-                    "another model is being installed; the playground installs one at a time",
-                );
-            }
-            None if state.removing => {
-                return Response::refused(409, "a model is being removed; try again after it");
-            }
-            None => {}
-        }
+    if let Some(answer) = not_now(&installs.state(), &model) {
+        return answer;
     }
     if let Err(why) = models.installable(&model) {
         return refused(&why);
     }
-    // The checks again under the lock, now that the door has looked: another Get may
-    // have started an install meanwhile.
+    // The checks again under the lock, now that the door has looked: another Get, or a
+    // removal, may have started meanwhile.
     let mut state = installs.state();
-    if state.closed {
-        return Response::refused(503, "the playground is stopping");
+    if let Some(answer) = not_now(&state, &model) {
+        return answer;
     }
-    if let Some(going) = &state.going {
-        return match going.model == model {
-            true => Response::json(
-                200,
-                &json!({"model": model, "state": "installing", "attached": true}),
-            ),
-            false => Response::refused(
-                409,
-                "another model is being installed; the playground installs one at a time",
-            ),
-        };
+    // The last install's thread has said it ended; it is let finish before another is
+    // made, so the host never holds two (it is past its work, so this is a moment).
+    if let Some(ended) = state.thread.take() {
+        let _ = ended.join();
     }
     let signal = Cancellation::new();
     state.going = Some(Going {
@@ -335,17 +370,28 @@ fn get(shared: &Shared, guarded: &Guarded<'_>) -> Response {
             let outcome =
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match play.models() {
                     Some(models) => models.install(&named, &signal),
-                    None => Err("this build installs no model from the playground".to_owned()),
+                    None => Err(NotInstalled {
+                        left: false,
+                        why: "this build installs no model from the playground".to_owned(),
+                    }),
                 }))
-                .unwrap_or_else(|_| Err("the install stopped on a fault of whizbang's".to_owned()));
+                .unwrap_or_else(|_| {
+                    Err(NotInstalled {
+                        left: false,
+                        why: "the install stopped on a fault of whizbang's".to_owned(),
+                    })
+                });
             ending.finished(&named, outcome, signal.is_cancelled());
         }),
     );
     match made {
-        Ok(_) => Response::json(
-            202,
-            &json!({"model": model, "state": "installing", "attached": false}),
-        ),
+        Ok(thread) => {
+            installs.state().thread = Some(thread);
+            Response::json(
+                202,
+                &json!({"model": model, "state": "installing", "attached": false}),
+            )
+        }
         Err(_) => {
             installs.state().going = None;
             Response::refused(503, "the host cannot start an install now; try again")
