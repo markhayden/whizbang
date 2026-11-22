@@ -4,11 +4,12 @@
 // other, to write markup.
 //
 // - Raw HTML in the Markdown is shown as its characters: the `html` renderer escapes it.
-// - A link or an image keeps its address only when it is http:, https:, a `#` fragment or
-//   relative; anything else (javascript:, data:, vbscript:, a `//` address) is dropped,
-//   and the words are kept. A relative image is shown only from a `data:` address the
-//   page made of its bytes (fetched through the API with the token), never fetched by the
-//   frame.
+// - A link keeps its address only when it is http:, https:, a `#` fragment or relative;
+//   anything else (javascript:, data:, vbscript:, an address that starts with two of `/`
+//   and `\`, one holding `&` or a backslash) is dropped, and the words are kept.
+// - An image is shown only from a `data:` address the page made of a relative picture's
+//   bytes (fetched through the API with the token); any other, an https one included, is
+//   shown as its words, so the frame fetches nothing.
 // - The frame is `<iframe sandbox="">`: no `allow-scripts` and no `allow-same-origin`, so
 //   its document has an origin of its own, runs nothing, and can reach neither the page,
 //   its storage (where the launch token is) nor the API (SPEC.md section 10).
@@ -26,19 +27,21 @@ export function escapeHtml(text: string): string {
 const SCHEMES = new Set(["http:", "https:"]);
 
 /**
- * The address as given when it is http:, https:, a fragment or relative, else null. An
- * address with a control character or a space in its scheme, or one that starts `//`
- * (another host, whatever the scheme), is refused.
+ * The address as given when it is http:, https:, a fragment or relative, else null.
+ * Refused: a control character anywhere; two of `/` and `\` at its start (another host,
+ * whatever the browser makes of them); a backslash or an `&` anywhere, which a browser
+ * or an entity could turn into another scheme; and a `:` in a relative address.
  */
 export function safeHref(href: string | null | undefined): string | null {
   if (typeof href !== "string") return null;
   const given = href.trim();
   if (given === "" || /[\u0000-\u001f\u007f]/.test(given)) return null;
+  if (/^[/\\]{2}/.test(given)) return null;
   if (given.startsWith("#")) return given;
-  if (given.startsWith("//") || given.startsWith("\\")) return null;
-  const scheme = /^([^/?#]*?):/.exec(given);
+  if (/[\\&]/.test(given)) return null;
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(given);
   if (scheme) return SCHEMES.has(`${scheme[1]!.toLowerCase()}:`) ? given : null;
-  return given;
+  return given.includes(":") ? null : given;
 }
 
 /** Whether an address is relative: no scheme, no host, no fragment alone. */
@@ -83,8 +86,9 @@ export function renderMarkdown(markdown: string, pictures: ReadonlyMap<string, s
       },
       image({ href, title, text }) {
         const safe = safeHref(href);
-        const source = safe === null ? null : relative(safe) ? (pictures.get(safe) ?? null) : safe;
-        if (source === null || (relative(safe ?? "") && !PICTURE.test(source))) return escapeHtml(text);
+        // Only a picture the page made: an absolute address, https too, is its words.
+        const source = safe !== null && relative(safe) ? (pictures.get(safe) ?? null) : null;
+        if (source === null || !PICTURE.test(source)) return escapeHtml(text);
         const titled = title ? ` title="${escapeHtml(title)}"` : "";
         return `<img src="${escapeHtml(source)}" alt="${escapeHtml(text)}"${titled}>`;
       },

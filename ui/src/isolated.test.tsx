@@ -39,6 +39,21 @@ describe("the markdown wrapper", () => {
     expect(Array.from(doc.querySelectorAll("a")).map((a) => a.getAttribute("href"))).toEqual(["https://example.org/a", "http://example.org/b", "#limits", "view.md"]);
   });
 
+  it("refuses /\\x, javascript\\: and an entity that spells javascript, in a link", () => {
+    for (const href of ["/\\x", "javascript\\:alert(1)", "&#106;avascript:alert(1)"]) {
+      const doc = parsed(renderMarkdown(`[x](${href})`));
+      const links = Array.from(doc.querySelectorAll("a")).map((a) => a.getAttribute("href") ?? "");
+      expect(links, href).toEqual([]);
+      expect(doc.body.textContent, href).toContain("x");
+    }
+  });
+
+  it("shows an absolute picture, https too, as its words", () => {
+    const doc = parsed(renderMarkdown("![Far](https://x.example/a.png) ![Near](http://x.example/b.png)"));
+    expect(doc.querySelectorAll("img")).toHaveLength(0);
+    expect(doc.body.textContent).toContain("Far");
+  });
+
   it("shows a relative picture only from the data address the page made of it", () => {
     const made = "data:image/png;base64,iVBORw0KGgo=";
     const markdown = "![The scene](view/scene.png) ![Missing](view/none.png) ![Bad](javascript:alert(1)) ![Data](data:image/png;base64,AAAA)";
@@ -59,6 +74,9 @@ describe("the markdown wrapper", () => {
     expect(safeHref("javascript:alert(1)")).toBeNull();
     expect(safeHref("data:image/png;base64,AAAA")).toBeNull();
     expect(safeHref("//x.example/a.png")).toBeNull();
+    for (const href of ["/\\x", "\\/x", "\\\\x", "javascript\\:alert(1)", "&#106;avascript:alert(1)", "a:b"]) {
+      expect(safeHref(href), href).toBeNull();
+    }
   });
 
   it("makes a record a document of its own policy", () => {

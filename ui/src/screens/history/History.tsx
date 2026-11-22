@@ -2,7 +2,7 @@
 // pages, under the filter the address carries (kit, result and words on screen; every
 // filter of `runs stats` beside them), with the figures `runs stats` gives for the same
 // filter. Opening a row opens its result.
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { ApiError, type Client, type Hello } from "../../api";
 import { Button } from "../../components/Button";
 import { HistoryRow } from "../../components/HistoryRow";
@@ -50,7 +50,7 @@ function FiguresOf(props: { figures: Figures }) {
   const v = f.verdicts ?? { pass: 0, fail: 0, unsure: 0 };
   const judged = v.pass + v.fail + v.unsure;
   const lines: Array<[string, string]> = [
-    ["runs", String(f.runs)],
+    ["runs, steps included", String(f.runs)],
     ["completed", String(f.ended?.completed ?? 0)],
     ["cancelled", String(f.ended?.cancelled ?? 0)],
     ["error", String((f.ended?.error ?? 0) + (f.ended?.invalid ?? 0))],
@@ -85,15 +85,21 @@ export function History(props: HistoryProps) {
   const [problem, setProblem] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [words, setWords] = useState(query.get("words") ?? "");
+  // Which asking of the list an answer belongs to: a page asked before the filter changed
+  // is not added to the new list.
+  const asking = useRef(0);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     const client = props.client;
     if (!client) return;
     let live = true;
+    const mine = (asking.current += 1);
+    setLoading(false);
     setProblem(null);
     const said = (error: unknown) => live && setProblem(error instanceof ApiError ? error.message : String(error));
     listRuns(client, query).then((page) => {
-      if (!live) return;
+      if (!live || mine !== asking.current) return;
       setRuns(page.runs);
       setMore(page.more);
       setLoaded(true);
@@ -121,13 +127,21 @@ export function History(props: HistoryProps) {
 
   const later = () => {
     const last = runs[runs.length - 1];
-    if (!props.client || !last) return;
+    if (!props.client || !last || loading) return;
+    const mine = asking.current;
+    setLoading(true);
     listRuns(props.client, query, last.run).then(
       (page) => {
-        setRuns((now) => [...now, ...page.runs]);
+        if (mine !== asking.current) return;
+        setRuns((now) => [...now, ...page.runs.filter((one) => !now.some((seen) => seen.run === one.run))]);
         setMore(page.more);
+        setLoading(false);
       },
-      (error: unknown) => setProblem(error instanceof ApiError ? error.message : String(error)),
+      (error: unknown) => {
+        if (mine !== asking.current) return;
+        setLoading(false);
+        setProblem(error instanceof ApiError ? error.message : String(error));
+      },
     );
   };
 
@@ -183,7 +197,7 @@ export function History(props: HistoryProps) {
       )}
       {more ? (
         <div class="history__more">
-          <Button variant="quiet" onClick={later}>
+          <Button variant="quiet" disabled={loading} why={loading ? "Asking for the next runs." : undefined} onClick={later}>
             More runs
           </Button>
         </div>

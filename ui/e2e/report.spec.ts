@@ -105,14 +105,23 @@ test("model and tool text holding markup shows as text and runs nothing", async 
 
 test("the report frame cannot read the page's storage or call the api", async ({ page, host }) => {
   const run = await removal(page, host, "frame-porch.png", 47);
+  // Every request a frame of the page makes, from the moment the report opens.
+  const fromFrame: string[] = [];
+  page.on("request", (one) => {
+    if (one.frame() !== page.mainFrame() && !one.url().startsWith("data:")) fromFrame.push(one.url());
+  });
   await openReport(page, host, run);
+  // Opened with its pictures inline: the frame itself asked for nothing.
+  expect(fromFrame).toEqual([]);
   const iframe = page.locator("iframe.isolated-frame");
   // Sandboxed with nothing allowed: no scripts, and no origin of the page's.
   expect(await iframe.getAttribute("sandbox")).toBe("");
   expect(await page.evaluate(() => typeof sessionStorage.getItem("whizbang.token") === "string" || sessionStorage.length > 0)).toBe(true);
   const frame = page.frames().find((one) => one !== page.mainFrame());
   if (!frame) throw new Error("no frame");
-  // What its document would reach, tried from inside it.
+  // What its document would reach, tried from inside it (by the test's own script: the
+  // document runs none). A fetch of the API from its origin of none is refused, or its
+  // answer cannot be read; and it holds no token to send.
   const tried = await frame.evaluate(async () => {
     const said: Record<string, string> = { origin: String(self.origin) };
     try {
@@ -137,6 +146,4 @@ test("the report frame cannot read the page's storage or call the api", async ({
   expect(tried.storage).toBe("refused");
   expect(tried.parent).toBe("refused");
   expect(tried.api).not.toBe("200");
-  // And nothing it holds asked the host for anything.
-  await expect(page.frameLocator("iframe.isolated-frame").locator("h1")).toBeVisible();
 });
