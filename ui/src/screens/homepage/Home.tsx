@@ -77,10 +77,10 @@ export function Home(props: HomeProps) {
       <section class="home__intro">
         <div class="home__lead">
           <div class="home__brand">
-            <BrandArt kind="emblem" alt="" />
+            <BrandArt kind="emblem" src="brand/emblem.webp" alt="" />
             <div class="home__words">
               <h1 id="home-title" class="home__title">
-                <Wordmark size="home" />
+                <Wordmark size="home" src="brand/wordmark.svg" />
                 <span class="visually-hidden"> · Home</span>
               </h1>
               <p class="home__line">Edit pictures and check the result, with models on your Mac or in the cloud.</p>
@@ -98,7 +98,7 @@ export function Home(props: HomeProps) {
           </ol>
         </div>
         <div class="home__art">
-          <BrandArt kind="crew" alt="" />
+          <BrandArt kind="crew" src="brand/crew.webp" alt="The whizbang crew at their machine" />
         </div>
       </section>
 

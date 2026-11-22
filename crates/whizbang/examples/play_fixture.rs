@@ -276,6 +276,9 @@ impl Play for Fixture {
             _ => self.kit.set(words),
         }
     }
+    fn shelf(&self) -> Option<&dyn whizbang_serve::play::history::Shelf> {
+        self.door.shelf()
+    }
     fn closing(&self) {
         self.downloads.release();
         self.door.closing();

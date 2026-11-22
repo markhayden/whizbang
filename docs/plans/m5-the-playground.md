@@ -1036,7 +1036,7 @@ squint's can be taken away as a document. Rows 6, 7 and 11, and `SPEC.md` sectio
    localisation of `metrics.rs` are dropped with a line (no report needs them); an artifact
    type's preview is answered by the canvas's marks.
 
-- [ ] Done when: row 6's, row 7's and row 11's Chrome cases pass in both `e2e` jobs;
+- [x] Done when: row 6's, row 7's and row 11's Chrome cases pass in both `e2e` jobs;
   `report::a_squint_report_holds_its_verdict_findings_places_and_turns_and_no_script`,
   `report::every_text_from_a_model_or_a_person_is_escaped`,
   `report::the_document_opens_alone_with_its_pictures_inline`,
@@ -1050,6 +1050,22 @@ squint's can be taken away as a document. Rows 6, 7 and 11, and `SPEC.md` sectio
   its pictures decoded and its styles applied`,
   `play::the_embedded_records_are_the_reference_folder`, `just docs` regenerated
   with the arguments, ports and needs, and the rows closed with their lines.
+
+**As built (W3).** The tests named above are at `play::report::…`, `play::stats::…` and
+`capability::written::…` (the report's and the figures' beside the host's harness); the
+measurement of stored exchanges is `check::a_check_at_its_full_budget_of_turns_stores_its_exchanges_within_a_runs_bound`.
+`stats` moved from the binary to the library, and `runs stats` and `runs export` take the
+page's `--kit`, `--result` and `--words`. The embedded records are a fixed list in
+`play/records.rs` held to the folder by its test, as `assets.rs` is held to `ui/dist/`, not
+a list `just docs` writes. The archive of "Export run" is a tar file (`record.json`,
+`report.html`, each output's canonical file and a PNG of each picture or mask). The result
+screen is W2's: W3 adds the route `#/run/<id>/report` and a Report link on an ended run,
+and W2's Report tab shows the same `IsolatedFrame`. Records link from the workspace and
+from search; the kit panel's rows still open the workspace. The fixture's judge says which
+model answered (so a repeated check is answered from the decision cache) and takes three
+script words more: `unsure`, `markup` and `placed`. `describe` gains no field for a
+preview: the carry-over row is dropped with a line. The wordmark is outlined at weight 900,
+as the owner asked, where the Paper file sets it at 700.
 
 ## M1. Models: install, readiness, keys and the allowance (medium)
 

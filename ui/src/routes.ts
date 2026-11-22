@@ -1,5 +1,6 @@
 // The page's routes, by the address's hash (plan m5, task U1, item 4): `#/`,
-// `#/k/<kit>/<task>`, `#/run/<id>`, `#/history`, `#/models`. A hash keeps every route on
+// `#/k/<kit>/<task>`, `#/run/<id>`, `#/history`, `#/models`; and task W3's
+// `#/run/<id>/report` and `#/record/<name>`. A hash keeps every route on
 // the one page the host serves, so a reload or a copied address finds the same screen.
 
 export type Route =
@@ -8,6 +9,8 @@ export type Route =
   | { name: "run"; id: string }
   | { name: "history"; query: URLSearchParams }
   | { name: "models" }
+  | { name: "report"; id: string }
+  | { name: "record"; record: string }
   | { name: "unknown"; hash: string };
 
 /** A name in an address: lower-case letters, digits, `_` and `-` (the rule for names). */
@@ -33,6 +36,8 @@ export function parseRoute(hash: string): Route {
     if (NAME.test(b)) return { name: "kit", kit: a, task: b };
   }
   if (head === "run" && a && RUN.test(a) && parts.length === 2) return { name: "run", id: a };
+  if (head === "run" && a && RUN.test(a) && b === "report" && parts.length === 3) return { name: "report", id: a };
+  if (head === "record" && a && NAME.test(a) && parts.length === 2) return { name: "record", record: a };
   if (head === "history" && parts.length === 1) return { name: "history", query: new URLSearchParams(search) };
   if (head === "models" && parts.length === 1) return { name: "models" };
   return { name: "unknown", hash };
@@ -52,6 +57,10 @@ export function hrefOf(route: Route): string {
     }
     case "models":
       return "#/models";
+    case "report":
+      return `#/run/${encodeURIComponent(route.id)}/report`;
+    case "record":
+      return `#/record/${encodeURIComponent(route.record)}`;
     case "unknown":
       return route.hash || "#/";
   }
