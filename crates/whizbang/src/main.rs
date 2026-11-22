@@ -22,7 +22,6 @@ pub(crate) mod spend;
 #[cfg(test)]
 mod spending;
 pub(crate) mod squint;
-pub(crate) mod stats;
 pub(crate) mod store;
 pub(crate) mod tool_try;
 

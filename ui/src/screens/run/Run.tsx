@@ -154,6 +154,11 @@ function Following(props: { id: string; hello: Hello | null; client: Client; go:
             {tag ? <Tag kind={tag} /> : <Tag kind="running" detail={last?.state === "stopping" || stopping ? "stopping" : undefined} />}
           </div>
           <p class="workspace__purpose mono">run {props.id}</p>
+          {ended ? (
+            <a class="run__report" href={hrefOf({ name: "report", id: props.id })}>
+              Report
+            </a>
+          ) : null}
         </header>
         <dl class="run__inputs" aria-label="Inputs">
           {Object.entries(args).map(([name, value]) => {

@@ -30,7 +30,7 @@ export interface OtherOrigin {
 /** The fixture host's binary: `scripts/e2e.sh` builds it and names it here. */
 export const BINARY = process.env.WHIZBANG_PLAY_FIXTURE ?? "../target/debug/examples/play_fixture";
 
-async function startHost(store: string, more: string[] = []): Promise<{ host: Host; child: ChildProcess }> {
+export async function startHost(store: string, more: string[] = []): Promise<{ host: Host; child: ChildProcess }> {
   const child = spawn(BINARY, ["--store", store, "--stdin-quit", ...more], { stdio: ["pipe", "pipe", "inherit"] });
   const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
   const line = await new Promise<string>((resolve, reject) => {
@@ -52,7 +52,7 @@ async function startHost(store: string, more: string[] = []): Promise<{ host: Ho
   };
 }
 
-async function stopHost(child: ChildProcess): Promise<void> {
+export async function stopHost(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null) return;
   const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
   child.stdin?.end();

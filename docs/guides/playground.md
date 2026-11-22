@@ -101,6 +101,24 @@ and every run it called, by capability and backend, local work shown as free.
 Send to and Run again replace a draft of the same task you have not run only once you say
 so.
 
+## History, reports and records
+
+- **History** lists every run of the store, newest first, by pages, and keeps them across
+  restarts: the store holds them, not the page. Filter by kit, result and words (what was
+  asked, and the names your pictures came with); the address carries every filter of
+  `whizbang runs stats` too (`#/history?action=check&since=2026-11-01`). Below the list
+  are the same figures `whizbang runs stats` prints for that filter, cache hits among them.
+- **A run's report** (Report, on a run that has ended) is one HTML document the host makes
+  from the run's record: what was asked, the pictures given and made, each mask over its
+  picture, the steps, a loop's attempts, a check's verdict, reasons, checklist, findings
+  with their places drawn, each judge turn, and the cost. It is shown in a frame that runs
+  nothing and has an origin of its own, so it can reach neither the page nor its key.
+  **Export** saves it as one file that opens alone, offline, with its pictures inside;
+  **Export run** saves the run's record, its report and its outputs as one tar archive.
+- **A tool's record**, the page `docs/reference/tools/<name>.md`, opens from the workspace
+  (Read this task's record, and each tool the task uses) and from search, shown the same
+  way.
+
 ## What the playground holds while it runs
 
 - **The store, to write.** While `whizbang play` runs, other commands that write the store

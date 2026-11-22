@@ -53,10 +53,11 @@ pub enum Command {
     },
     /// Aggregate the runs a filter admits: how many; how they ended; for runs that
     /// judged, their verdicts and the unsure rate; retries and repairs; time as the
-    /// median and the 95th percentile; and cost.
+    /// median and the 95th percentile; cost; and the runs answered from the decision
+    /// cache. The playground shows the same figures.
     Stats {
         #[command(flatten)]
-        filter: crate::stats::Filter,
+        filter: whizbang::stats::Filter,
         #[command(flatten)]
         at: Where,
         /// Count the unsure verdicts by what made each unsure: `rule`, the rule of each
@@ -75,7 +76,7 @@ pub enum Command {
     /// line, for analysis outside whizbang. A record holds no label of an evaluation set.
     Export {
         #[command(flatten)]
-        filter: crate::stats::Filter,
+        filter: whizbang::stats::Filter,
         #[command(flatten)]
         at: Where,
     },
@@ -97,16 +98,17 @@ pub fn run(command: &Command) -> Result<Vec<u8>, String> {
             unsure_by,
             rejections,
         } => {
-            let mut text = crate::stats::stats(at.root(), filter)?;
+            let figures = whizbang::stats::figures(at.root(), filter)?;
+            let mut text = figures.text();
             if unsure_by.is_some() {
-                text.push_str(&crate::stats::unsure_by_rule(at.root(), filter)?);
+                text.push_str(&figures.unsure_text());
             }
             if *rejections {
-                text.push_str(&crate::stats::rejections(at.root(), filter)?);
+                text.push_str(&whizbang::stats::rejections(at.root(), filter)?);
             }
             Ok(text.into_bytes())
         }
-        Command::Export { filter, at } => crate::stats::export(at.root(), filter),
+        Command::Export { filter, at } => whizbang::stats::export(at.root(), filter),
     }
 }
 

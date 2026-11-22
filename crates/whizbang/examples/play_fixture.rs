@@ -45,7 +45,7 @@
 mod binary;
 // The commands name one another from the crate's root, as they do in the binary.
 #[allow(unused_imports)]
-use binary::{COMMIT, eval, export, rascal, runs, spend, stats, store};
+use binary::{COMMIT, eval, export, rascal, runs, spend, store};
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -290,6 +290,9 @@ impl Play for Fixture {
             }
             _ => self.kit.set(words),
         }
+    }
+    fn shelf(&self) -> Option<&dyn whizbang_serve::play::history::Shelf> {
+        self.door.shelf()
     }
     fn closing(&self) {
         self.downloads.release();

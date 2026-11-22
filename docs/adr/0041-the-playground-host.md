@@ -153,8 +153,8 @@ only, with its port, its process id and the token, and removes it when it stops.
 its token, and on an answer naming the same store opens (or prints) its address and exits 0;
 on a store held by anything else it is refused as today, naming the holder.
 
-**Routes.** JSON unless said. H1 serves the first six; each later task adds its own rows,
-registered in `play/routes.rs` by one line.
+**Routes.** JSON unless said. H1 serves the first six; each later task adds its own rows in
+a module of its own, whose table `play/routes.rs` lists by one line (`TABLES`).
 
 | Route | What | Task |
 |---|---|---|
@@ -165,14 +165,19 @@ registered in `play/routes.rs` by one line.
 | `POST /api/runs` | Start a call with its handle and a request id | H1, W1 |
 | `GET /api/runs/{id}?after=<n>` | The run's state and its events after the `n`th, every text escaped (from its journal once it has ended), what was asked, what it spent of what it reserved, its outputs and its verdict | H1, W1 |
 | `POST /api/runs/{id}/cancel` | Stop a run | H1 |
-| `GET /api/runs?open=1` | The runs the host started that are still going | H1, then W3 adds history |
+| `GET /api/runs?open=1` | The runs the host started that are still going | H1 |
+| `GET /api/runs?kit=&task=&result=&words=&action=&model=&backend=&use_case=&matrix=&since=&until=&before=&limit=` | History: the runs of the store that nothing nested, newest first, at most 200 a page after the run `before` names, under `runs stats`'s filter and the page's; each with its task, words, pictures' names, result, models, time, cost, start and a picture. Read from the store's records once a generation, kept, and read again only when the store has published since (`play/history.rs`) | W3 |
+| `GET /api/stats?` the same filter | The figures of `runs stats` (`stats::Figures`, the one aggregation the command prints) as JSON, with the command's text | W3 |
+| `GET /api/runs/{id}/report` | The run's report: one HTML document with its pictures inline as `data:` and no script, served as a download (`Content-Disposition: attachment`) under `Content-Security-Policy: default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; sandbox`, which its own `<meta>` repeats but for `sandbox`; the page shows it in `<iframe sandbox="">` by `srcdoc` | W3 |
+| `GET /api/runs/{id}/export` | The run's archive, a tar file: its record, its report, each output's canonical file and a PNG of each picture or mask, under the same headers | W3 |
+| `GET /api/records`, `/api/records/{name}`, `/api/records/{name}/{file}` | The names of the tool records, a record's Markdown, and its pictures: `docs/reference/tools/` embedded from a fixed list held to the folder by a test (`play/records.rs`) | W3 |
 | `POST /api/pictures?name=` | A picture's bytes, decoded once, decoded within `DecodeLimits` by the route (the guard reads only its header's size) and kept as `store import --picture` keeps one, through the host's writer, with its name beside it under `play/pictures/` in the same publication | W1 |
 | `GET /api/pictures?after=&limit=` | The pictures the playground kept, newest first, with their names | W1 |
 | `POST /api/locations` | A box, a polygon (at most 64 points), a stroke or a line drawn on a picture, committed as a location bound to it | W1 |
 | `GET /api/artifacts/{id}` and `…/thumb?edge=` | An artifact for display: a picture as its PNG, a mask as a grey picture, a location as JSON; a thumbnail made on request; at most two thumbnails and two whole artifacts made at once (one more is answered 429 with `Retry-After`, which the page waits out), the newest 64 thumbnails kept in memory | W1 |
 | `GET /api/runs/{id}/record` | A run that ended, as the result screen reads it: outcome, verdict with its reasons and places, a loop's attempts with each one's picture (a diagnostic), the cost of the run and every run it called by capability and the config's name of the backend (free local work said as free), its inputs and outputs, the drafts Send to opens and the draft Run again opens; every text escaped; 404 for no run, 409 for one with no record yet | W2 |
 | `GET /api/runs/{id}/command` | The `whizbang` command that makes the same call, from the binary's map beside its commands (`command_of.rs`): inputs by identity, files by absolute path, defaults written out, each flag with its value as one word, held to the command line's own parser, every word quoted for a POSIX shell, and a line `: '…'` when the config's digest, or a recipe file's, is no longer the run's; 422 when no command line says the call, or its words hold a control or format character other than a new line or a tab | W2 |
-| the rest of the plan's table | Reports, models, backends, stats, spend | W3, M1 |
+| the rest of the plan's table | Models, backends, spend | M1 |
 
 No route takes a file path.
 

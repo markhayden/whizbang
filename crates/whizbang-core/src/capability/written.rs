@@ -33,7 +33,7 @@ use crate::identity::{Digest, PixelDigest};
 
 use super::{
     Controls, Fault, FaultKind, JudgeRequest, Message, Opaque, Part, Picture, REQUESTS_LIMIT, Role,
-    StopReason, ToolCall, ToolDefinition, ToolResult, Turn, Unfit, Usage,
+    StopReason, TEXT_LIMIT, ToolCall, ToolDefinition, ToolResult, Turn, Unfit, Usage,
 };
 
 /// The kind and version of a script.
@@ -725,5 +725,197 @@ pub fn read_exchange(
         place: read.place,
         request,
         answer: answer_in(read.answer, last)?,
+    })
+}
+
+/// One part of a stored exchange, as it is shown to a person (plan m5, task W3, item 3):
+/// never made into a part of a conversation that could be sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Shown {
+    /// A text, whole up to [`TEXT_LIMIT`] bytes; `cut` is how many bytes past it were
+    /// left out.
+    Text { text: String, cut: u64 },
+    /// A picture by its digest and size, and whether the caller has its pixels.
+    Picture {
+        width: u32,
+        height: u32,
+        pixels: PixelDigest,
+        found: bool,
+    },
+    /// An opaque part kept without its body: its place among its message's parts, from
+    /// 0, its adapter and the length of its body.
+    Withheld {
+        at: usize,
+        adapter: String,
+        bytes: u64,
+    },
+    /// An opaque part kept whole: its adapter and the length of its body, which is not
+    /// shown.
+    Opaque { adapter: String, bytes: u64 },
+    /// A call of a tool: its name and its arguments as JSON.
+    Call { name: String, arguments: ShownText },
+    /// What a tool answered: its text, whether it was an error, and its pictures.
+    Answered {
+        text: ShownText,
+        error: bool,
+        pictures: Vec<Shown>,
+    },
+}
+
+/// A text of a call or a tool's answer, whole up to [`TEXT_LIMIT`] bytes, and how many
+/// bytes past it were left out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShownText {
+    pub text: String,
+    pub cut: u64,
+}
+
+/// One message of a stored exchange, as it is shown: who said it, and its parts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShownMessage {
+    /// `user`, `assistant` or `system`.
+    pub role: &'static str,
+    pub parts: Vec<Shown>,
+}
+
+/// What came back, as it is shown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShownAnswer {
+    /// A turn: its parts, why it stopped, and the tokens its provider counted (input,
+    /// output) when it reported them.
+    Turn {
+        parts: Vec<Shown>,
+        stop: String,
+        tokens: Option<(u64, u64)>,
+    },
+    /// A turn that was not kept: how many parts it had and how many bytes of text, and
+    /// why it stopped.
+    Withheld {
+        parts: u64,
+        bytes: u64,
+        stop: String,
+    },
+    /// A failed turn: its kind and its sentence.
+    Failed { kind: String, sentence: String },
+}
+
+/// A stored exchange, read for display.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Displayed {
+    /// Its place among its run's requests, from 0.
+    pub place: u64,
+    pub system: ShownText,
+    pub messages: Vec<ShownMessage>,
+    pub answer: ShownAnswer,
+}
+
+/// A text, cut at [`TEXT_LIMIT`] bytes on a character's boundary.
+fn bounded(text: String) -> ShownText {
+    if text.len() <= TEXT_LIMIT {
+        return ShownText { text, cut: 0 };
+    }
+    let mut end = TEXT_LIMIT;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    ShownText {
+        cut: (text.len() - end) as u64,
+        text: text[..end].to_owned(),
+    }
+}
+
+fn stop_word(stop: StopWire) -> String {
+    match stop {
+        StopWire::EndTurn => "end_turn".to_owned(),
+        StopWire::ToolUse => "tool_use".to_owned(),
+        StopWire::MaxTokens => "max_tokens".to_owned(),
+        StopWire::Refusal => "refusal".to_owned(),
+        StopWire::Other(word) => bounded(word).text,
+    }
+}
+
+fn shown_parts(parts: Vec<PartWire>, found: &dyn Fn(PixelDigest) -> bool) -> Vec<Shown> {
+    let picture = |image: ImageWire| Shown::Picture {
+        width: image.width,
+        height: image.height,
+        pixels: image.pixels,
+        found: found(image.pixels),
+    };
+    let shown = |(at, part): (usize, PartWire)| match part {
+        PartWire::Text(text) => {
+            let ShownText { text, cut } = bounded(text);
+            Shown::Text { text, cut }
+        }
+        PartWire::Image(image) => picture(image),
+        PartWire::ToolCall {
+            name, arguments, ..
+        } => Shown::Call {
+            name: bounded(name).text,
+            arguments: bounded(arguments.to_string()),
+        },
+        PartWire::ToolResult {
+            text,
+            error,
+            images,
+            ..
+        } => Shown::Answered {
+            text: bounded(text),
+            error,
+            pictures: images.into_iter().map(picture).collect(),
+        },
+        PartWire::Opaque { adapter, body } => Shown::Opaque {
+            adapter: bounded(adapter).text,
+            bytes: body.len() as u64,
+        },
+        PartWire::OpaqueWithheld { adapter, bytes, .. } => Shown::Withheld {
+            at,
+            adapter: bounded(adapter).text,
+            bytes,
+        },
+    };
+    parts.into_iter().enumerate().map(shown).collect()
+}
+
+/// Reads a stored exchange for display (plan m5, task W3, item 3): every message's parts
+/// in order, each text whole up to [`TEXT_LIMIT`], each opaque part kept without its body
+/// said as such with its place, adapter and length, each picture by its digest with
+/// whether `found` has its pixels; then the answer, a turn, a turn not kept, or a failed
+/// turn. Unlike [`read_exchange`] it does not stop at a withheld part or a missing
+/// picture, and it builds no request: nothing read here can be sent. It refuses only
+/// what is not an exchange of this kind and version, or is over
+/// [`EXCHANGE_MAX_BYTES`].
+pub fn for_display(bytes: &[u8], found: &dyn Fn(PixelDigest) -> bool) -> Result<Displayed, Unread> {
+    let read: ExchangeWire = document(bytes, EXCHANGE_MAX_BYTES, "exchange", EXCHANGE)?;
+    let messages = read.messages.into_iter().map(|message| ShownMessage {
+        role: match message.role {
+            RoleWire::User => "user",
+            RoleWire::Assistant => "assistant",
+            RoleWire::System => "system",
+        },
+        parts: shown_parts(message.parts, found),
+    });
+    let answer = match read.answer {
+        AnswerWire::Turn(turn) => ShownAnswer::Turn {
+            parts: shown_parts(turn.parts, found),
+            stop: stop_word(turn.stop),
+            tokens: turn.usage.map(|u| (u.input_tokens, u.output_tokens)),
+        },
+        AnswerWire::TurnWithheld {
+            parts, bytes, stop, ..
+        } => ShownAnswer::Withheld {
+            parts,
+            bytes,
+            stop: stop_word(stop),
+        },
+        AnswerWire::Fault(fault) => ShownAnswer::Failed {
+            kind: bounded(fault.kind).text,
+            sentence: bounded(fault.sentence).text,
+        },
+    };
+    Ok(Displayed {
+        place: read.place,
+        system: bounded(read.system),
+        messages: messages.collect(),
+        answer,
     })
 }

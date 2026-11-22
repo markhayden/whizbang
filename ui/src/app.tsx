@@ -13,6 +13,8 @@ import type { Taken } from "./token";
 import { History } from "./screens/history/History";
 import { Home } from "./screens/homepage/Home";
 import { Models } from "./screens/models/Models";
+import { Record } from "./screens/record/Record";
+import { Report } from "./screens/report/Report";
 import { Run } from "./screens/run/Run";
 import { Workspace } from "./screens/workspace/Workspace";
 
@@ -31,6 +33,9 @@ export interface AppProps {
    */
   takeToken: () => Taken;
 }
+
+/** The outlined wordmark, the owner's art (plan m5, task W3, item 6). */
+export const WORDMARK = "brand/wordmark.svg";
 
 /** The sentence when the page holds no token at all. */
 export const NO_TOKEN = "This page was opened without its key. Run whizbang play again, which opens the page with a new one.";
@@ -90,7 +95,14 @@ export function App(props: AppProps) {
       detail: task.kind === "primitive" ? `tool${task.kit ? ` · ${kitName(task.kit)}` : ""}` : kitName(task.kit),
     }));
     const shown = pictures.map((picture) => ({ key: `#/?picture=${picture.id}`, kind: "picture" as const, label: picture.name, detail: "picture" }));
-    return [...tasks, ...shown];
+    // Each task's and tool's record (plan m5, task W3, item 7).
+    const records = tasksOf(hello).map((task) => ({
+      key: hrefOf({ name: "record", record: task.name }),
+      kind: "tool" as const,
+      label: `record of ${task.name}`,
+      detail: "what it does, its examples and limits",
+    }));
+    return [...tasks, ...shown, ...records];
   }, [hello, pictures]);
 
   useEffect(() => {
@@ -132,6 +144,7 @@ export function App(props: AppProps) {
         allowance={hello?.allowance?.allowance}
         current={route.name === "history" ? "history" : route.name === "models" ? "models" : undefined}
         homeHref={hrefOf({ name: "home" })}
+        wordmark={WORDMARK}
         historyHref={hrefOf({ name: "history", query: new URLSearchParams() })}
         modelsHref={hrefOf({ name: "models" })}
         onSearch={() => setSearching(true)}
@@ -191,7 +204,11 @@ function screenOf(route: Route, hello: Hello | null, client: Client, go: (hash: 
     case "run":
       return <Run id={route.id} hello={hello} client={client} go={go} />;
     case "history":
-      return <History />;
+      return <History hello={hello} client={client} query={route.query} go={go} />;
+    case "report":
+      return <Report id={route.id} hello={hello} client={client} />;
+    case "record":
+      return <Record name={route.record} hello={hello} client={client} />;
     case "models":
       return <Models client={client} />;
     case "unknown":

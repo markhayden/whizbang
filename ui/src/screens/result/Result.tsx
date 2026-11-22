@@ -164,6 +164,9 @@ export function Result(props: ResultProps) {
             <Tag kind={tag} />
           </div>
           <p class="workspace__purpose mono">{meta}</p>
+          <a class="run__report" href={hrefOf({ name: "report", id: props.id })}>
+            Report
+          </a>
         </header>
         <dl class="run__inputs" aria-label="Inputs">
           {record.arguments.map((argument) => {

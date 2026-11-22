@@ -64,3 +64,24 @@
 .run__value .picture-tile { width: 88px; height: 60px; }
 .run__steps-head { display: flex; align-items: baseline; justify-content: space-between; }
 .run__attempt { color: var(--color-muted); font-size: var(--text-xs); }
+
+/* History, a report and a record (plan m5, task W3). */
+.history__head, .report__head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--spacing-4); flex-wrap: wrap; }
+.history__line { margin: var(--spacing-1) 0 0; color: var(--color-muted); font-size: var(--text-md); }
+.history__filters { display: flex; align-items: flex-end; gap: var(--spacing-2); }
+.history__words { width: 220px; }
+.history__words .field__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.history__list { display: flex; flex-direction: column; border-radius: var(--radius-md); background: var(--color-panel); overflow: clip; }
+.history__problem, .report__problem { margin: 0; color: var(--color-lacquer); font-size: var(--text-md); }
+.history__more { display: flex; justify-content: center; }
+.history__foot { color: var(--color-muted); font-size: var(--text-xs); }
+.history__figures { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--spacing-2) var(--spacing-4); margin: 0; padding: var(--spacing-4); border-radius: var(--radius-md); background: var(--color-panel); }
+.history__figure { display: flex; flex-direction: column; gap: 2px; }
+.history__figure dt { color: var(--color-muted); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: var(--tracking-caps); }
+.history__figure dd { margin: 0; color: var(--color-ink); font-size: var(--text-md); }
+.report__run { margin: var(--spacing-1) 0 0; color: var(--color-muted); font-size: var(--text-sm); }
+.report__actions { display: flex; align-items: center; gap: var(--spacing-3); }
+.isolated-frame { width: 100%; min-height: 70vh; border: 1px solid var(--color-line); border-radius: var(--radius-md); background: var(--color-panel); }
+.workspace__tools a { color: var(--color-ink-2); }
+.workspace__record { font-size: var(--text-sm); }
+.run__report { color: var(--color-ink); font-size: var(--text-sm); }
