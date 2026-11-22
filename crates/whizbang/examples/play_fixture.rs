@@ -323,7 +323,7 @@ fn config_path(store: &Path) -> PathBuf {
 
 /// The mode `cli`: the binary's own parse and dispatch of the words after `cli`, as
 /// `whizbang` would run them, over the fixture's fake backends (plan m5, task W2, item 5).
-/// The config and the models directory are the host's, written again beside the store
+/// The config, its env file and the models directory are the host's, written again beside the store
 /// the words name, so a command the host copied runs under the same config.
 fn cli(words: Vec<String>) -> std::process::ExitCode {
     let store = words
@@ -336,17 +336,22 @@ fn cli(words: Vec<String>) -> std::process::ExitCode {
     };
     let config = config_path(&store);
     std::fs::write(&config, config_text()).unwrap_or_else(|error| fail(&error.to_string()));
+    let env = env_path(&store);
+    std::fs::write(&env, format!("PLAYKIT_FILL_KEY={}\n", made_up_key()))
+        .unwrap_or_else(|error| fail(&error.to_string()));
     let models = config.with_extension("models");
     let _ = std::fs::create_dir(&models);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&env, std::fs::Permissions::from_mode(0o600));
         let _ = std::fs::set_permissions(&models, std::fs::Permissions::from_mode(0o700));
     }
     let kit = PlayKit::new();
     let _ = rascal::MORE_KINDS.set(vec![kit.kind()]);
     let code = binary::run(std::iter::once("whizbang".to_owned()).chain(words));
     let _ = std::fs::remove_file(&config);
+    let _ = std::fs::remove_file(&env);
     let _ = std::fs::remove_dir_all(&models);
     code
 }
