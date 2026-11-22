@@ -90,12 +90,17 @@ it in Continue and opens its result` (Chrome tier).
 
 Three ways, which do the same:
 
+- **Quit** in the top bar;
 - **Ctrl-C** in the terminal (or a hang-up, or `SIGTERM`);
-- under `--stdin-quit`, the end of the standard input, for a script that starts it;
-- the host's quit route (`POST /api/quit`), for a script that holds the token.
+- under `--stdin-quit`, the end of the standard input, for a script that starts it.
 
-The page has no Quit button of its own in this build: closing the tab leaves the playground
-running, so stop it from the terminal.
+**Quit** asks first ("Quit the playground?"). It says how many runs are going and that each
+is cancelled; that each cancelled run's record says cancelled, with every request it sent
+accounted for in the ledger, so nothing stays reserved; that a run not ended within ten
+seconds is ended as interrupted the next time the store is opened; and that your pictures,
+history and drafts stay. **Keep playing** closes it; **Quit** quits, and the page then says
+the playground has quit and asks nothing more until you run `whizbang play` again. Closing
+the tab is not quitting: the playground keeps running.
 
 The playground stops taking requests, cancels every run it started, and waits up to ten
 seconds for each to end, so that each run's record says it was cancelled and what it spent
@@ -108,7 +113,10 @@ Held by `play::a_quit_cancels_every_run_waits_and_releases_the_store`,
 `play::two_interrupts_and_an_interrupt_with_every_worker_stalled_each_quit`,
 `play::a_second_quit_ends_the_grace_at_once` and
 `play::a_run_that_outlives_the_grace_is_counted_and_ended_as_interrupted_by_the_next_writer`
-(fast tier); a quit during a paid fill, by hand (`docs/results/m5-playground.md`).
+(fast tier); `quit.spec.ts: quit with a run going cancels it, its record says cancelled, the
+ledger has no open reservation, and the store takes a writer at once` and `quit.spec.ts: an
+interrupt from the terminal does the same` (Chrome tier); a quit during a paid fill, by hand
+(`docs/results/m5-playground.md`).
 
 ## A run's stated time
 
@@ -124,14 +132,15 @@ Held by `play::a_run_past_its_stated_time_is_cancelled_with_its_children` and
 ## Around every screen
 
 - **The top bar** holds the wordmark (back to Home), where you are (Home, or a kit and its
-  task), search, **History**, **Models**, and what is left of the store's allowance beside
-  the allowance, as `hello` read it when the page opened. Clicking the kit's name in a
+  task), search, **History**, **Models**, what is left of the store's allowance beside the
+  allowance (as `hello` read it when the page opened), and **Quit**. Clicking the kit's name in a
   task's breadcrumb opens the kit switcher.
 - **The status bar** at the foot says whether the host answered, the store's folder, each
   backend's readiness in a word or two (no key, not installed), and the version. When the
   host cannot be reached or refused the page, it says why there instead.
 - **Search** (⌘K, or the top bar's search) finds tasks, tools, the pictures the playground
-  imported, and each task's and tool's record, by every word typed.
+  imported, and each task's and tool's record, by every word typed. A picture picked there
+  starts a task from it, as on Home.
 - **Keys.** ⌘K search, ⌘↵ Run, ⌘S Save picture, ⌘1 to ⌘9 the kits in their order, ⌘0 Home.
   On Linux, Control does what ⌘ does.
 - **Every text a run hands the page** (a reason, an event's message, a name) is shown as
@@ -158,6 +167,9 @@ Home (`#/`) is where the page opens.
   shows here with no change to the page.
 - **Pictures**: every picture the playground has imported into the store, newest first, by
   pages of 48, under the name it came with; and a place to drop up to eight at once.
+  Clicking a picture opens a panel of every task that takes a picture; picking one opens its
+  draft with the picture given. An unrun draft of that task is replaced only once you
+  confirm.
 
 **Drafts** are a task with its inputs given and not yet run. They are kept in Chrome's own
 storage for the playground's address, one a task and the twelve newest in all, and are a
@@ -190,8 +202,9 @@ left, the canvas in the middle, and the task's runs and tools on the right.
 - **a location drawn on the canvas** (a box, a polygon, a line or a stroke, as the task takes
   them), committed to the store when it is drawn, with Clear to take it off; for `segment`, a
   click on the canvas is its point and a drag its box;
-- **another artifact** (a mask, a location, a profile) from the outputs of runs this tab saw
-  end, of that type, newest first. They are remembered for as long as the tab is open;
+- **another artifact** (a mask, a location, a profile) from the outputs of that type in the
+  store's history, newest first, by pages. The list is the store's, so it is the same after
+  a reload or a restart;
 - **a backend**, where the task lets you choose one: each choice the config offers with its
   state, READY, NO KEY, GET · its size (a model not installed), UPDATE, DAMAGED or NOT READY.
   A choice that is not ready can still be picked, and Run then says what is missing.
@@ -213,8 +226,14 @@ press Run once more. Every run goes through the same preparation, admission, spe
 as from the command line.
 
 **The canvas** shows the task's picture at fit or at a zoom you choose, with what you drew
-on it. **The right column** lists the runs of this task still going, the tools it uses (each
-a link to its record), and "Read this task's record".
+on it, under three tabs where the task has them: **Original**, the picture given; **Mask**,
+the draft's own mask, or else the last run's mask over that run's picture; and **Result**,
+the last run's picture. **The right column** lists the runs of this task still going and,
+under "Earlier runs", its runs from history, ten at a time; the tools it uses (each a link
+to its record); and "Read this task's record".
+
+A draft has no command of its own: a command is made from a saved run, so use Copy command
+on a result.
 
 Held by `play::a_start_without_a_matching_fresh_preparation_is_refused_as_stale`,
 `play::a_start_sent_twice_with_one_request_id_answers_one_run`,
@@ -232,7 +251,10 @@ result as they were`,
 is not ready can be picked and Run says what is missing`,
 `readiness.spec.ts: a paid run shows each need's bound and the total before Run, and Run is
 refused once the preparation is stale` and
-`run.spec.ts: each of the five squint use cases runs from its form` (Chrome tier).
+`run.spec.ts: each of the five squint use cases runs from its form` and
+`inputs.spec.ts: a picture picked in search starts a task, whose mask port lists the store's
+masks after a reload, and a task shows its earlier runs with their mask and result` (Chrome
+tier).
 
 A picture is held to 64 MiB and to 50,000,000 pixels, and at most two are sent at once; a
 picture over either limit is refused with the limit named
@@ -273,7 +295,7 @@ When a run ends, its screen is the result:
 
 - **its tag**: PASS, FAIL or UNSURE for a check's verdict; otherwise DONE, CANCELLED or
   ERROR; with its id, how long it took, and what it spent of what it reserved, or "free";
-- **the inputs** it was given, and **Report**, its report (below);
+- **the inputs** it was given, and **Report**, the link to its report (below);
 - **the canvas**, with views as the run has them: Original; Compare, the picture it was
   given and the one it made, side by side, swiped or as their difference, at one zoom;
   Result; Mask, the mask over the result; and, for a loop, each attempt's picture, marked as
@@ -285,6 +307,9 @@ When a run ends, its screen is the result:
 - **Cost**: each capability with how often it was asked and its backend, local work shown
   as free, and the total of the run and every run it called;
 - **the steps**, as the run said them, and **Recorded**, the run's whole id.
+
+The verdict card, How it got there, Cost, the steps and Recorded are in the right column,
+under **Summary**.
 
 A run whose judge had no key is shown done, with each attempt "not checked" and the reason
 the record gives.
