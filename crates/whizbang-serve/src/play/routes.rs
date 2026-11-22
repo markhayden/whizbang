@@ -141,7 +141,12 @@ pub(crate) const ROUTES: &[Route] = &[
 
 /// The tables: this one, then each later task's, one line each. The static files'
 /// route matches no path under `/api/`, so no route of a later table is hidden by it.
-const TABLES: &[&[Route]] = &[ROUTES, super::history::ROUTES, super::models::ROUTES];
+const TABLES: &[&[Route]] = &[
+    ROUTES,
+    super::history::ROUTES,
+    super::models::ROUTES,
+    super::result::ROUTES,
+];
 
 /// The route of this method and path, with the parts of the path its pattern names: a
 /// path no route has is 404, and one whose route takes another method 405.
@@ -675,7 +680,7 @@ fn from_journal(lines: &[Json], not_kept: u64, after: u64) -> (Vec<Json>, u64, u
     (events, end.max(after), skipped)
 }
 
-fn run_of(guarded: &Guarded<'_>) -> Result<RunId, Response> {
+pub(crate) fn run_of(guarded: &Guarded<'_>) -> Result<RunId, Response> {
     let text = guarded
         .params
         .first()
@@ -796,7 +801,7 @@ fn kept_arguments(arguments: &Map<String, Json>) -> Json {
     }
 }
 
-fn refused_by_play(refused: &super::Refused) -> Response {
+pub(crate) fn refused_by_play(refused: &super::Refused) -> Response {
     Response::refused(refused.status, &escaped(&refused.why))
 }
 

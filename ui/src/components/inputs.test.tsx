@@ -72,6 +72,13 @@ describe("TextField", () => {
     expect(view.get<HTMLInputElement>("input").disabled).toBe(true);
     expect(view.text()).toContain("· optional");
   });
+  it("tags a value that came from another run beside its label, and none otherwise", () => {
+    const view = render(<TextField id="brief" label="What should have changed" value="the hose" from="FROM RASCAL" />);
+    expect(view.get(".field__head .field__from").textContent).toBe("FROM RASCAL");
+    view.rerender(<TextField id="brief" label="What should have changed" value="the hose" />);
+    expect(view.all(".field__from")).toHaveLength(0);
+    view.unmount();
+  });
   it("shows a value from a run as text", () => {
     const view = render(<TextField id="what" label={HOSTILE} value={HOSTILE} help={HOSTILE} />);
     expectShownAsText(view);

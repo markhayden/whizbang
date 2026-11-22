@@ -429,8 +429,23 @@ fn identity_of(value: &Json, what: &str) -> Result<ArtifactId, String> {
 /// The call of a use case from its form, as `whizbang squint check` makes it from its
 /// shorthand: the candidate, the source, the references in order, the brief and the
 /// judge. A field the form does not have is refused.
-pub fn use_case_call(use_case: &str, arguments: &Map<String, Json>) -> Result<Call, String> {
-    const FIELDS: [&str; 5] = ["candidate", "source", "references", "brief", "judge"];
+///
+/// With `job`, the job a run of the store gives (`job_of`, plan m5, task W2, item 3:
+/// the job the loop writes from a removal's phrase, or a check's own job run again), the
+/// pictures fill its images by their roles, in its order, and no brief is taken beside it.
+pub fn use_case_call(
+    use_case: &str,
+    arguments: &Map<String, Json>,
+    job: Option<&whizbang_squint::job::Job>,
+) -> Result<Call, String> {
+    const FIELDS: [&str; 6] = [
+        "candidate",
+        "source",
+        "references",
+        "brief",
+        "judge",
+        "job_of",
+    ];
     if let Some(other) = arguments
         .keys()
         .find(|name| !FIELDS.contains(&name.as_str()))
@@ -462,6 +477,34 @@ pub fn use_case_call(use_case: &str, arguments: &Map<String, Json>) -> Result<Ca
     };
     let brief = text("brief")?;
     let judge = text("judge")?;
+    if let Some(job) = job {
+        if brief.is_some() {
+            return Err("a check given a run's job takes no brief beside it".to_owned());
+        }
+        let mut references = references.iter();
+        let mut images = Vec::new();
+        for image in &job.images {
+            let given = match image.role {
+                Role::Candidate => Some(candidate),
+                Role::Source => source,
+                Role::Reference => references.next().copied(),
+            };
+            let Some(given) = given else {
+                return Err(format!(
+                    "the job names a {} picture, and none was given for it",
+                    image.role.word()
+                ));
+            };
+            images.push(given);
+        }
+        if references.next().is_some()
+            || (source.is_some() && !job.images.iter().any(|i| i.role == Role::Source))
+        {
+            return Err("more pictures were given than the job names".to_owned());
+        }
+        let measuring = door::Measuring::stated(None, None)?;
+        return Ok(door::check_call(job, &images, judge.as_deref(), &measuring));
+    }
     let candidate = candidate.to_string();
     let source = source.map(|id| id.to_string());
     let references: Vec<String> = references.iter().map(ToString::to_string).collect();
