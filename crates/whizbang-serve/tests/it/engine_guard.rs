@@ -479,7 +479,11 @@ fn a_fifth_new_run_is_answered_429_and_a_repeat_run_routes_and_downloads_are_sti
 
 #[test]
 fn a_third_upload_is_answered_429_after_its_headers() {
-    let engined = Engined::start("eg-third-upload", |_| {});
+    // A stalled body is held to its time from the connection's acceptance: longer here, so
+    // that the two hold their places for as long as a busy runner takes to send the third.
+    let engined = Engined::start("eg-third-upload", |settings| {
+        settings.times.head = Duration::from_secs(20);
+    });
     let host = engined.host_header();
     let bearer = format!("Bearer {TOKEN}");
     let head = format!(
