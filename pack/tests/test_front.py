@@ -22,6 +22,12 @@ import kit
 from whizbang_pack import fakes, front, proto
 
 
+def tearDownModule():
+    import shutil
+
+    shutil.rmtree(fk._CACHE, True)
+
+
 def setup(test, limits=None, module="whizbang_pack.worker", more=(), secrets=(), front_limits=None):
     models = fk.Models(test)
     side = fk.Recording(fk.local_side(test, models, limits, module, more, secrets=secrets))
@@ -211,14 +217,14 @@ class Supervision(unittest.TestCase):
         began = time.monotonic()
         self.assertEqual(fk.post_cancel(port, dispatch), 204)
         _, _, document, _ = fk.answer_of(sock, load, request)
-        self.assertGreaterEqual(time.monotonic() - began, 0.15)
+        self.assertGreaterEqual(time.monotonic() - began, 0.05)
         self.assertEqual((document["kind"], document["stage"], document["ended"]), ("cancelled", "unresolved", "killed"))
         sock, load, request = fk.post_request(port, "fake-ok", models.identity["fake-ok"])
         self.assertEqual(fk.answer_of(sock, load, request)[2]["outcome"], "complete")
         self.assertEqual(side.spawns.count, 2)
 
     def test_a_hung_load_is_ended_at_its_deadline_and_the_worker_restarted(self):
-        limits = fk.small_limits(load=0.15)
+        limits = fk.small_limits(load=0.05)
         models, side, _, port = setup(self, limits, module="whizbang_pack.fakes", more=("--fake-fault", "slow-load"))
         for round in (1, 2):
             sock, load, request = fk.post_request(port, "fake-ok", models.identity["fake-ok"])
@@ -289,7 +295,7 @@ class Supervision(unittest.TestCase):
     def test_three_workers_in_a_row_that_answered_nothing_pause_the_next_start(self):
         # As the local supervisor's `STARTS_FAILED_MOST` and `RESTART_PAUSE`: a worker that
         # never says hello is ended at the hello's limit; after the third, none is started.
-        limits = fk.small_limits(hello=0.1)
+        limits = fk.small_limits(hello=0.05)
         models, side, _, port = setup(self, limits, module="whizbang_pack.fakes", more=("--fake-fault", "no-hello"))
         for round in range(front.STARTS_FAILED_MOST + 1):
             sock, load, request = fk.post_request(port, "fake-ok", models.identity["fake-ok"])
@@ -514,7 +520,7 @@ class Tls(unittest.TestCase):
 
 class Deadlines(unittest.TestCase):
     def test_incomplete_headers_a_trickling_body_a_stalled_handshake_and_a_client_that_reads_nothing_are_each_closed(self):
-        limits = fk.small_limits(classify=0.15, body_grace=0.1, body_rate=1000, write=0.15)
+        limits = fk.small_limits(classify=0.05, body_grace=0.05, body_rate=1000, write=0.1)
         models, side, made, port = setup(self, front_limits=limits)
 
         def closed(sock):
@@ -544,9 +550,9 @@ class Deadlines(unittest.TestCase):
         self.assertLess(closed(sock), 2.0)
         sock.close()
         # A client that reads nothing of a big answer: closed at the write's limit.
-        width = height = 512
+        width = height = 256
         dispatch = fk.dispatch()
-        points = [{"point": [float(n), 1.0]} for n in range(16)]
+        points = [{"point": [float(n), 1.0]} for n in range(64)]
         data, load, request = fk.body("fake-ok", models.identity["fake-ok"], width=width, height=height, image=bytes(4 * width * height), queries=points)
         sock = fk.connect(port, buffer=4096)
         sock.sendall(fk.head("/pack/1/request", dispatch, len(data)) + data)
@@ -629,7 +635,7 @@ class Start(unittest.TestCase):
         side.side.check = held
         sock, load, request = fk.post_request(port, "fake-ok", models.identity["fake-ok"])
         self.assertTrue(checking.wait(kit.WAIT_SECONDS))
-        sock.settimeout(0.1)
+        sock.settimeout(0.05)
         with self.assertRaises(socket.timeout):
             sock.recv(1)
         sock.settimeout(kit.WAIT_SECONDS)

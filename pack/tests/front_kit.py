@@ -29,7 +29,7 @@ SAY_WORKER = "say_worker"
 
 def small_limits(**given):
     """Deadlines short enough for the pack's ten seconds, the others the front's own."""
-    values = {"cancel": 0.15, "end": 2.0, "hello": kit.WAIT_SECONDS, "load": kit.WAIT_SECONDS, "call": kit.WAIT_SECONDS}
+    values = {"cancel": 0.05, "end": 2.0, "hello": kit.WAIT_SECONDS, "load": kit.WAIT_SECONDS, "call": kit.WAIT_SECONDS}
     values.update(given)
     return front.Limits(**values)
 
@@ -84,13 +84,19 @@ class Models:
         return os.path.join(self.dir, "models", model, "installations", identity, "files", name)
 
 
+# One cache of bytecode for every worker the tests start, in place of the `-B` of a worker
+# the front starts, so each start does not compile the pack again. Nothing is written under
+# the pack; `test_front` removes the cache when its tests are done (`tearDownModule`).
+_CACHE = tempfile.mkdtemp(prefix="front-pycache-")
+
+
 class Spawns:
     """The spawner of a side, counting each worker it starts."""
 
     def __init__(self, models_dir, module="whizbang_pack.worker", more=()):
         self.count = 0
         self.pids = []
-        self._spawn = front.spawner(models_dir, module, more, environment=kit.child_environment(), sources=(kit.SRC, kit.HERE))
+        self._spawn = front.spawner(models_dir, module, more, environment=kit.child_environment(), sources=(kit.SRC, kit.HERE), flags=("-I", "-X", "pycache_prefix=" + _CACHE))
 
     def __call__(self):
         self.count += 1

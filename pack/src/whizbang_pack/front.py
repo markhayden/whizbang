@@ -273,9 +273,10 @@ SET = {
 }
 
 
-def spawner(models_dir, module="whizbang_pack.worker", more=(), environment=None, lifetime_s=86_400, sources=(_SRC,)):
+def spawner(models_dir, module="whizbang_pack.worker", more=(), environment=None, lifetime_s=86_400, sources=(_SRC,), flags=("-I", "-B")):
     """What starts a worker process: the pack's interpreter, isolated, with its source (and
-    any other folder a test names) on the path and its three standard streams pipes."""
+    any other folder a test names) on the path and its three standard streams pipes. It
+    writes no bytecode (`-B`); a test may give a cache of its own in place of that."""
 
     def spawn():
         if environment is None:
@@ -283,7 +284,7 @@ def spawner(models_dir, module="whizbang_pack.worker", more=(), environment=None
             env.update(SET)
         else:
             env = dict(environment)
-        command = [sys.executable, "-I", "-B", "-c", BOOT, os.pathsep.join(sources), module]
+        command = [sys.executable] + list(flags) + ["-c", BOOT, os.pathsep.join(sources), module]
         command += ["--models-dir", models_dir, "--max-lifetime-s", str(lifetime_s)] + list(more)
         return subprocess.Popen(
             command,
