@@ -2713,8 +2713,9 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   - into an empty directory, reopened by an install of the same identity, which
     finds what the crash left under `installations/` and points to it or replaces
     it
-    (`crashes::a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_1_of_4`
-    to `…part_4_of_4`);
+    (`crashes::a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_01_of_96`
+    to `…part_96_of_96`: in four parts until milestone 6's entry check, where a part of
+    four was ended at the limit of 30 seconds inside full checks on a busy Mac);
   - over another installation, reopened by an install of a third identity, which
     deletes what the crash left and what was superseded: the first three rows
     (`crashes::a_crash_at_any_event_of_an_install_leaves_the_previous_or_the_new_whole_part_1_of_4`
@@ -2732,8 +2733,8 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
     its first two of four had come near the limit on one test's time, and in 96, about
     one event under one tail each, since plan m4's task A1, where a part of eight was
     ended at that limit inside a full check,
-    `crashes::a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_1_of_4`
-    to `…part_4_of_4`,
+    `crashes::a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_01_of_96`
+    to `…part_96_of_96`, in 96 since milestone 6's entry check for the same reason,
     `crashes::a_crash_at_any_event_after_a_refused_step_of_a_repair_leaves_it_as_it_was_not_installed_or_whole_part_1_of_4`
     to `…part_4_of_4`).
     A publication refused after its folder was renamed in leaves that folder whole,

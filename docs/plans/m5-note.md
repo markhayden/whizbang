@@ -283,9 +283,13 @@ moved here.
   could be read.
 - Opened, each with its owner: `choice_json`'s `Err(_)` fallback, and Home's library listing
   only the playground's pictures (the next change to the playground, at the latest milestone
-  7); the 30-second timeouts under load of
-  `models::crashes::a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_3_of_4`
-  and `contract::execute::many_runs_from_two_executors_at_one_instant_are_all_kept`, and the
+  7); the 30-second timeouts under load of the third of four parts of the sweep of a first
+  install's crashes and of the test of many runs from two executors at one instant (split
+  since by the entry check of milestone 6:
+  `models::crashes::a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_01_of_96`
+  to `…part_96_of_96`, and
+  `contract::execute::many_runs_from_two_executors_at_one_instant_are_all_kept_part_1_of_5`
+  to `…part_5_of_5`), and the
   one failure on `main` of `compare.spec.ts: two pictures wider than half the canvas both fit
   side by side, at one zoom` (the entry check of milestone 6, or the first pull request whose
   CI meets one); the macOS shard 1 near its 90 seconds, and `scripts (macos-15)` over the 10

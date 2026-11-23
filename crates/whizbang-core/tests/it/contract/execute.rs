@@ -1192,10 +1192,22 @@ fn two_executors_over_one_store_never_give_two_runs_one_id() {
     }
 }
 
-#[test]
-fn many_runs_from_two_executors_at_one_instant_are_all_kept() {
-    // Eight threads, two executors, one store, a clock that does not move: two hundred
-    // submits. Every reported run is in the store under an id of its own.
+/// The submits from each thread in one part of [`many_runs_from_two_executors_at_one_instant`].
+const SUBMITS_A_THREAD: usize = 5;
+
+/// Eight threads, two executors, one store, a clock that does not move: forty submits,
+/// [`SUBMITS_A_THREAD`] from each thread. Every reported run is in the store under an id
+/// of its own.
+///
+/// Two hundred submits are made in all, in five parts of forty, each part on a store of
+/// its own. Until milestone 6's entry check they were one test of two hundred on one
+/// store, under two seconds alone and from 10 seconds to past the limit of 30 inside full
+/// checks on a busy Mac: every publication writes the whole generation again, so the work
+/// on one store grows with the square of its runs, and a store of forty runs costs about
+/// a twenty-fifth of one of two hundred. The contention is the same in each part: eight
+/// threads over two executors, naming their runs at one instant and publishing against
+/// each other.
+fn many_runs_from_two_executors_at_one_instant(part: usize) {
     let world = World::new();
     let store = world.store();
     let engines = [
@@ -1207,9 +1219,9 @@ fn many_runs_from_two_executors_at_one_instant_are_all_kept() {
             .map(|thread| {
                 let engine = &engines[thread % 2];
                 scope.spawn(move || {
-                    (0..25)
+                    (0..SUBMITS_A_THREAD)
                         .map(|n| {
-                            let finished = engine.submit(&echo(&format!("{thread}-{n}")));
+                            let finished = engine.submit(&echo(&format!("{part}-{thread}-{n}")));
                             finished.unwrap().run().as_str().to_owned()
                         })
                         .collect::<Vec<_>>()
@@ -1221,12 +1233,38 @@ fn many_runs_from_two_executors_at_one_instant_are_all_kept() {
             .flat_map(|thread| thread.join().unwrap())
             .collect()
     });
-    assert_eq!(reported.len(), 200);
+    let all = 8 * SUBMITS_A_THREAD;
+    assert_eq!(reported.len(), all);
     let distinct: std::collections::BTreeSet<&String> = reported.iter().collect();
-    assert_eq!(distinct.len(), 200);
+    assert_eq!(distinct.len(), all);
     let runs = runs_of(&world.root(), world.fs.clone());
-    assert_eq!(runs.len(), 200);
+    assert_eq!(runs.len(), all);
     assert!(runs.iter().all(|(_, names)| *names == 4), "{runs:?}");
+}
+
+#[test]
+fn many_runs_from_two_executors_at_one_instant_are_all_kept_part_1_of_5() {
+    many_runs_from_two_executors_at_one_instant(1);
+}
+
+#[test]
+fn many_runs_from_two_executors_at_one_instant_are_all_kept_part_2_of_5() {
+    many_runs_from_two_executors_at_one_instant(2);
+}
+
+#[test]
+fn many_runs_from_two_executors_at_one_instant_are_all_kept_part_3_of_5() {
+    many_runs_from_two_executors_at_one_instant(3);
+}
+
+#[test]
+fn many_runs_from_two_executors_at_one_instant_are_all_kept_part_4_of_5() {
+    many_runs_from_two_executors_at_one_instant(4);
+}
+
+#[test]
+fn many_runs_from_two_executors_at_one_instant_are_all_kept_part_5_of_5() {
+    many_runs_from_two_executors_at_one_instant(5);
 }
 
 #[test]

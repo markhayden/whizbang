@@ -55,10 +55,27 @@ test("two pictures wider than half the canvas both fit side by side, at one zoom
   await page.getByRole("tab", { name: "Compare" }).click();
   const figures = page.locator(".compare__side .compare__figure");
   await expect(figures).toHaveCount(2);
-  const stage = (await page.locator(".compare__stage").boundingBox())!;
-  const [before, after] = [(await figures.nth(0).boundingBox())!, (await figures.nth(1).boundingBox())!];
-  expect(before.width).toBe(after.width);
-  expect(before.width).toBeGreaterThan(100);
-  expect(after.x + after.width).toBeLessThanOrEqual(stage.x + stage.width + 0.5);
-  expect(before.y + before.height).toBeLessThanOrEqual(stage.y + stage.height + 0.5);
+  // The zoom follows the stage as it is measured, so the stage and the two pictures are
+  // read in one look, in the page, and looked at again until both pictures are decoded and
+  // laid out at one zoom inside the stage. Read one box at a time, the first was once taken
+  // at a zoom the next layout changed (397 and 479 pixels wide, run 45027669412). The look
+  // says which part does not hold yet, and a failure names it. Polled, never timed.
+  await expect
+    .poll(() =>
+      page.locator(".compare__stage").evaluate((stage) => {
+        const figures = [...stage.querySelectorAll(".compare__side .compare__figure")];
+        const images = figures.map((figure) => figure.querySelector("img"));
+        if (figures.length !== 2) return ["two pictures"];
+        const room = stage.getBoundingClientRect();
+        const [before, after] = figures.map((figure) => figure.getBoundingClientRect()) as [DOMRect, DOMRect];
+        const unmet: string[] = [];
+        if (!images.every((img) => img !== null && img.complete && img.naturalWidth > 0)) unmet.push("both decoded");
+        if (before.width !== after.width) unmet.push(`one width (${before.width} and ${after.width})`);
+        if (before.width <= 100) unmet.push(`wider than 100 (${before.width})`);
+        if (after.right > room.right + 0.5) unmet.push(`inside the stage's width (${after.right} past ${room.right})`);
+        if (before.bottom > room.bottom + 0.5) unmet.push(`inside the stage's height (${before.bottom} past ${room.bottom})`);
+        return unmet;
+      }),
+    )
+    .toEqual([]);
 });
