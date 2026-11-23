@@ -7,6 +7,7 @@
 #
 #   scripts/candidate.sh export <folder>
 #   scripts/candidate.sh pack-matches <tree folder> <models directory>
+#   scripts/candidate.sh copy-models <models directory> <candidate's models directory>
 #   scripts/candidate.sh prepare <folder>
 #
 # `export`, run inside a checkout: refuses unstaged changes and untracked files under `pack/`
@@ -19,11 +20,19 @@
 # file, the tree's (`pack/src/whizbang_pack/`): the same names, and each the same SHA-256.
 # Prints a line `<name> sha256:<digest>` for each, and refuses any difference.
 #
+# `copy-models`: SAM 3's and Tiny's folders (`models/sam3`, `models/tiny`) of the first models
+# directory copied into the second, each a real folder: the model store refuses a folder of
+# a model's layout that is a link, and calls such a model damaged (ADR 0017, "A folder of
+# the layout that is a link"; `models::Directory::unlinked`), so a link would leave the
+# candidate with no model ready. On APFS the copy is a clone (`cp -c`), which takes no room
+# until a file of it changes; elsewhere it is an ordinary copy. Refuses a source that holds
+# either model through a link, and a destination that holds either already.
+#
 # `prepare`, the whole candidate, on the owner's Mac (heavy; through scripts/heavy.sh):
 # `export` into <folder>; the binary built from the exported tree, into <folder>/target;
 # that tree's pack installed with it (`whizbang setup --extra torch`) into a new models
-# directory <folder>/models; the installed SAM 3 and Tiny linked in from the models
-# directory WHIZBANG_MODELS_DIR names, which `whizbang models verify` has checked; and
+# directory <folder>/models; the installed SAM 3 and Tiny copied in (`copy-models`) from the
+# models directory WHIZBANG_MODELS_DIR names, which `whizbang models verify` has checked; and
 # `pack-matches` on the two. It writes <folder>/tree-id and prints the folder's parts.
 # This script sets no `EXIT` trap, so its own syntax error is a failure; parse it first all
 # the same: see the top of scripts/scan.sh.
@@ -80,6 +89,24 @@ pack_matches() {
   done
 }
 
+copy_models() {
+  local from=$1 to=$2 model
+  for model in sam3 tiny; do
+    [ -d "$from/models/$model" ] && [ ! -L "$from/models/$model" ] ||
+      refuse "$from holds no installed $model in a folder of its own"
+    [ ! -e "$to/models/$model" ] && [ ! -L "$to/models/$model" ] ||
+      refuse "$to holds $model already"
+  done
+  mkdir -p "$to/models"
+  for model in sam3 tiny; do
+    # A clone where the file system makes one; an ordinary copy where it does not.
+    if ! cp -c -R "$from/models/$model" "$to/models/$model" 2>/dev/null; then
+      rm -rf "$to/models/$model"
+      cp -R "$from/models/$model" "$to/models/$model"
+    fi
+  done
+}
+
 prepare() {
   local folder=$1
   local source=${WHIZBANG_MODELS_DIR:-}
@@ -96,9 +123,7 @@ prepare() {
   rm -rf "$folder/models"
   mkdir -p "$folder/models"
   "$bin" setup --extra torch --models-dir "$folder/models"
-  mkdir -p "$folder/models/models"
-  ln -s "$source/models/sam3" "$folder/models/models/sam3"
-  ln -s "$source/models/tiny" "$folder/models/models/tiny"
+  copy_models "$source" "$folder/models"
   pack_matches "$folder/tree" "$folder/models" >"$folder/pack-sources"
   echo "candidate: tree $(cat "$folder/tree-id"), in $folder/tree; binary $bin; models $folder/models"
 }
@@ -112,11 +137,15 @@ case "${1-}" in
     [ "$#" = 3 ] || refuse "pack-matches takes a tree folder and a models directory"
     pack_matches "$2" "$3"
     ;;
+  copy-models)
+    [ "$#" = 3 ] || refuse "copy-models takes a models directory and the candidate's"
+    copy_models "$2" "$3"
+    ;;
   prepare)
     [ "$#" = 2 ] || refuse "prepare takes one folder"
     prepare "$2"
     ;;
-  *) refuse "the first argument is export, pack-matches or prepare" ;;
+  *) refuse "the first argument is export, pack-matches, copy-models or prepare" ;;
 esac
 }
 main "$@"; exit

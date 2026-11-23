@@ -11,8 +11,6 @@ import os
 import signal
 import socket
 import ssl
-import subprocess
-import tempfile
 import threading
 import time
 import unittest
@@ -376,6 +374,40 @@ class Bridge(unittest.TestCase):
         sock, load, request = fk.post_request(port, "fake-ok", models.identity["fake-ok"])
         self.assertEqual(fk.answer_of(sock, load, request)[2]["admission"], "not_after")
 
+    def test_a_cancel_that_comes_during_the_claim_ends_the_request_cancelled_not_sent_with_no_model_work(self):
+        # The claim is a round trip on a host's store: a cancel made while it is out is kept.
+        models = fk.Models(self)
+        inside, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+
+        class Slow(front.Claims):
+            def claim(self, dispatch):
+                inside.set()
+                release.wait(kit.WAIT_SECONDS)
+                return super().claim(dispatch)
+
+        side = fk.Recording(fk.local_side(self, models, claims=Slow()))
+        _, port = fk.serve(self, side, models.dir)
+        dispatch = fk.dispatch()
+        sock, load, request = fk.post_request(port, "fake-ok", models.identity["fake-ok"], dispatch)
+        self.assertTrue(inside.wait(kit.WAIT_SECONDS))
+        self.assertEqual(fk.post_cancel(port, dispatch), 204)
+        release.set()
+        answer, frames, document, _ = fk.answer_of(sock, load, request)
+        self.assertEqual(answer.headers.get("whizbang-unverified"), "failure")
+        self.assertEqual((frames, document["kind"], document["stage"]), ([], "cancelled", "not_sent"))
+        self.assertEqual((list(side.journal), side.spawns.count), ([], 0))
+        # And a cancel that reaches the worker's side before its call does, as a control
+        # input that overtook the call's input on a host, is found when the call begins.
+        early = fk.dispatch()
+        self.assertFalse(side.cancel(early))
+        data, _, _ = fk.body("fake-ok", models.identity["fake-ok"])
+        frames_only = data[len(proto.encode(fk.messages("fake-ok", models.identity["fake-ok"])[0])) :]
+        ends = []
+        side.side.call({"dispatch": early, "not_after": time.time() + 60, "frames": frames_only}, ends.append)
+        self.assertEqual((ends[-1][1]["kind"], ends[-1][1]["stage"]), ("cancelled", "not_sent"))
+        self.assertEqual((list(side.journal), side.spawns.count), ([], 0))
+
     def test_an_unreachable_claim_store_refuses_the_request_before_any_model_work(self):
         models = fk.Models(self)
 
@@ -497,16 +529,7 @@ class Cancel(unittest.TestCase):
 
 class Tls(unittest.TestCase):
     def test_the_front_serves_https_with_the_cert_it_is_given(self):
-        folder = tempfile.mkdtemp(prefix="front-tls-")
-        self.addCleanup(__import__("shutil").rmtree, folder, True)
-        key, cert = os.path.join(folder, "key.pem"), os.path.join(folder, "cert.pem")
-        env = kit.child_environment()
-        subprocess.run(["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", key], check=True, env=env, timeout=kit.WAIT_SECONDS, capture_output=True)
-        subprocess.run(["openssl", "req", "-new", "-x509", "-key", key, "-out", cert, "-days", "1", "-subj", "/CN=localhost"], check=True, env=env, timeout=kit.WAIT_SECONDS, capture_output=True)
-        server = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        server.load_cert_chain(cert, key)
-        client = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        client.load_verify_locations(cert)
+        server, client = fk.tls(self)
         models = fk.Models(self)
         side = fk.local_side(self, models)
         _, port = fk.serve(self, side, models.dir, tls=server)
@@ -518,34 +541,58 @@ class Tls(unittest.TestCase):
             fk.connect(port, ssl.create_default_context())
 
 
+def closed(sock):
+    """Reads until the front closes the connection: how long that took."""
+    sock.settimeout(kit.WAIT_SECONDS)
+    began = time.monotonic()
+    try:
+        while sock.recv(65536):
+            pass
+    except (ConnectionError, OSError):
+        pass
+    return time.monotonic() - began
+
+
 class Deadlines(unittest.TestCase):
     def test_incomplete_headers_a_trickling_body_a_stalled_handshake_and_a_client_that_reads_nothing_are_each_closed(self):
         limits = fk.small_limits(classify=0.05, body_grace=0.05, body_rate=1000, write=0.1)
         models, side, made, port = setup(self, front_limits=limits)
-
-        def closed(sock):
-            sock.settimeout(kit.WAIT_SECONDS)
-            began = time.monotonic()
-            try:
-                while sock.recv(65536):
-                    pass
-            except (ConnectionError, OSError):
-                pass
-            return time.monotonic() - began
-
         sock = fk.connect(port)
         sock.sendall(b"POST /pack/1/request HTTP/1.1\r\nHost: front")
         self.assertLess(closed(sock), 2.0)
         sock.close()
+        # A body that keeps coming, a byte every 10 ms, under the 1,000 bytes a second its
+        # front asks for after the first 50 ms: answered 400 and closed long before its end.
         data, _, _ = fk.body("fake-ok", models.identity["fake-ok"])
         sock = fk.connect(port)
-        sock.sendall(fk.head("/pack/1/request", fk.dispatch(), len(data)) + data[:10])
+        sock.sendall(fk.head("/pack/1/request", fk.dispatch(), len(data)))
+        sent = [0]
+        stop = threading.Event()
+
+        def trickle():
+            for byte in data[:300]:
+                if stop.wait(0.01):
+                    return
+                try:
+                    sock.sendall(bytes((byte,)))
+                except OSError:
+                    return
+                sent[0] += 1
+
+        trickler = threading.Thread(target=trickle, daemon=True)
+        began = time.monotonic()
+        trickler.start()
         answer = fk.Answer(sock)
         self.assertEqual(answer.status, 400)
-        sock.close()
+        self.assertLess(time.monotonic() - began, 2.0)
+        stop.set()
+        trickler.join(kit.WAIT_SECONDS)
+        self.assertGreater(sent[0], 0)
+        self.assertLess(sent[0], 300)
+        answer.close()
         # A handshake that never comes, on a front that speaks TLS.
-        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        _, tls_port = fk.serve(self, side, models.dir, limits, tls=tls)
+        server, _ = fk.tls(self)
+        _, tls_port = fk.serve(self, side, models.dir, limits, tls=server)
         sock = fk.connect(tls_port)
         self.assertLess(closed(sock), 2.0)
         sock.close()
@@ -561,27 +608,36 @@ class Deadlines(unittest.TestCase):
         self.assertLess(closed(sock), kit.WAIT_SECONDS)
         sock.close()
 
-    def test_with_six_requests_running_and_sixty_four_connections_stalled_in_their_handshake_or_headers_a_cancel_made_after_them_is_answered_within_2_seconds_of_its_acceptance(self):
-        models, side, made, port = setup(self)
+    def test_with_every_request_handler_taken_and_sixty_four_connections_stalled_in_their_handshake_or_headers_a_cancel_made_after_them_is_answered_within_2_seconds_of_its_acceptance(self):
+        # On a front that speaks TLS: the six request handlers taken (one request with the
+        # worker, three queued, two whose bodies stall), then 64 connections, half stalled
+        # in their handshake and half in their headers after it.
+        server, client = fk.tls(self)
+        models = fk.Models(self)
+        side = fk.Recording(fk.local_side(self, models))
+        made, port = fk.serve(self, side, models.dir, tls=server)
         held = []
         running = fk.dispatch()
-        held.append(fk.post_request(port, "fake-wait", models.identity["fake-wait"], running))
+        held.append(fk.post_request(port, "fake-wait", models.identity["fake-wait"], running, tls=client))
         side.began(running)
         for _ in range(3):
-            held.append(fk.post_request(port, "fake-ok", models.identity["fake-ok"]))
+            held.append(fk.post_request(port, "fake-ok", models.identity["fake-ok"], tls=client))
         stalled_bodies = []
         for _ in range(2):
-            sock = fk.connect(port)
+            sock = fk.connect(port, client)
             sock.sendall(fk.head("/pack/1/request", fk.dispatch(), 1000))
             stalled_bodies.append(sock)
         fk.wait_until(lambda: made._request_free._value == 0)
         stalled = []
         for n in range(front.WAITING_MOST):
-            sock = fk.connect(port)
-            sock.sendall(b"POST /pack/1/cancel HTTP/1.1\r\n" if n % 2 else b"")
+            if n % 2:
+                sock = fk.connect(port, client)
+                sock.sendall(b"POST /pack/1/cancel HTTP/1.1\r\n")
+            else:
+                sock = fk.connect(port)
             stalled.append(sock)
         began = time.monotonic()
-        self.assertEqual(fk.post_cancel(port, running), 204)
+        self.assertEqual(fk.post_cancel(port, running, tls=client), 204)
         self.assertLess(time.monotonic() - began, 2.0)
         self.assertEqual(side.outcome(running)["kind"], "cancelled")
         for sock in stalled + stalled_bodies:

@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import socket
+import ssl
 import tempfile
 import threading
 import time
@@ -168,6 +169,34 @@ def serve(test, side, models_dir, limits=None, tls=None, host_limit_s=600, clock
     made.start(listener)
     test.addCleanup(made.close)
     return made, listener.getsockname()[1]
+
+
+_TLS = {}
+
+
+def tls(test):
+    """A server's context with a cert made for the run, and a client's that trusts it: one
+    pair for every test, made by `openssl` once, its files removed at once."""
+    if not _TLS:
+        import subprocess
+
+        folder = tempfile.mkdtemp(prefix="front-tls-")
+        try:
+            key, cert = os.path.join(folder, "key.pem"), os.path.join(folder, "cert.pem")
+            env = kit.child_environment()
+            for command in (
+                ["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", key],
+                ["openssl", "req", "-new", "-x509", "-key", key, "-out", cert, "-days", "1", "-subj", "/CN=localhost"],
+            ):
+                subprocess.run(command, check=True, env=env, timeout=kit.WAIT_SECONDS, capture_output=True)
+            server = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            server.load_cert_chain(cert, key)
+            client = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            client.load_verify_locations(cert)
+        finally:
+            shutil.rmtree(folder, True)
+        _TLS["pair"] = (server, client)
+    return _TLS["pair"]
 
 
 def dispatch():

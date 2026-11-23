@@ -299,8 +299,8 @@ of the queue, so no other caller's load comes between; one request at a time; se
 restarts the worker; on the worker's death or restart, fails the request in flight and every
 queued one with a clear error, and replays nothing; and verifies the installation's files
 against the hashes of its record before each load, as `Supervisor::call_checked` does. The
-pack gains no dependency (`dependencies = []` stays: `http.server`, `subprocess`, `hmac`,
-`hashlib`). `--worker local` runs the child on the same machine; `--worker <module:function>`
+pack gains no dependency (`dependencies = []` stays: `socket`, `selectors`, `ssl`,
+`subprocess`, `hmac`, `hashlib`; as built, ADR 0046). `--worker local` runs the child on the same machine; `--worker <module:function>`
 names a callable that runs it elsewhere and carries the same frames, which is how D1's Modal
 deployment keeps the front on a machine with no card and the worker on one with a card.
 The front speaks HTTPS itself when given `--tls-cert` and `--tls-key` (the standard library's
@@ -586,8 +586,9 @@ an NVIDIA card where there is one.
    above); the section says so, and `SPEC.md` section 6 is amended with it. It names what it leaves: Tiny on a remote host (its
    entry works there unchanged; nothing asks for it yet), a remote fill or judge (milestone 8),
    several models resident on a host (section 4, deferred).
-2. **The front** (`pack/src/whizbang_pack/front.py`), on `http.server`, a thread per connection
-   held to 8: the three routes; the bearer token read once from the variable named and compared
+2. **The front** (`pack/src/whizbang_pack/front.py`), on the standard library's `socket` and
+   `selectors` (as built: a classifier thread reads every new connection, then 8 handler
+   threads, 6 for requests and 2 for control, take them, ADR 0046): the three routes; the bearer token read once from the variable named and compared
    with `hmac.compare_digest`; a body is parsed as it is read, through `pack/1`'s own reader
    (`proto.py`) over a stream held to the body's `Content-Length` and to its deadline, so each
    frame's header length and each payload's length is checked before their bytes are read, as
@@ -599,8 +600,8 @@ an NVIDIA card where there is one.
    request; the identity header; the
    health document, which reads the volume's installation records and the hashes they hold,
    and starts no worker. **Every phase of a connection has its deadline**, as the playground's
-   host has (`play/http.rs`): a TLS handshake within 5 seconds, the line and headers within 5
-   seconds and 16 KiB, a body at no less than 1 MiB a second after its first 5, each frame of
+   host has (`play/http.rs`): a TLS handshake and the line and headers (at most 16 KiB) within
+   2 seconds of the connection's acceptance in all (as built; the classifier below), a body at no less than 1 MiB a second after its first 5, each frame of
    an answer taken within 30 seconds, and the connection closed at any of them. **Reading a
    request is apart from serving it, and never waits on a stalled peer**: one classifier
    thread holds every new connection in non-blocking mode under the standard library's
@@ -704,7 +705,7 @@ an NVIDIA card where there is one.
    `test_front.Bridge.test_a_cancel_reaches_a_call_blocked_in_the_bridge_through_its_control_input_and_an_ignored_one_restarts_the_worker_at_its_deadline`,
    `test_front.Tls.test_the_front_serves_https_with_the_cert_it_is_given`,
    `test_front.Deadlines.test_incomplete_headers_a_trickling_body_a_stalled_handshake_and_a_client_that_reads_nothing_are_each_closed`,
-   `test_front.Deadlines.test_with_six_requests_running_and_sixty_four_connections_stalled_in_their_handshake_or_headers_a_cancel_made_after_them_is_answered_within_2_seconds_of_its_acceptance`,
+   `test_front.Deadlines.test_with_every_request_handler_taken_and_sixty_four_connections_stalled_in_their_handshake_or_headers_a_cancel_made_after_them_is_answered_within_2_seconds_of_its_acceptance`,
    `test_front.Deadlines.test_a_ready_connection_is_read_while_others_are_stalled`,
    `test_front.Deadlines.test_two_cancels_stalled_in_their_bodies_leave_a_whole_third_cancel_to_reach_the_worker_within_2_seconds`,
    `test_front.Start.test_the_headers_follow_the_check_of_the_files_and_a_failed_check_is_an_error_answer_with_no_frame`,

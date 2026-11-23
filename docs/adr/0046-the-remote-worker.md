@@ -95,7 +95,10 @@ declared allowance of attempts, the residual recorded in that host's record.
   id, the not-after time, and the bytes of the `load` and the request frames), so it crosses to
   another machine as it is.
 - **The queue.** At most **4** requests are held by a front, the one with the worker's side
-  among them; a fifth is refused `busy` before anything of it is handed on. A turn is the
+  among them; a fifth is refused `busy` before anything of it is handed on. Each is held
+  whole in memory: a request's image may be up to 200 MB (50,000,000 pixels of four bytes),
+  so a full queue can hold a few GB beside the answer of the call in the worker, which is an
+  input to the size of the front's container (task D1). A turn is the
   front of the queue; one request at a time is handed to the worker's side.
 - **A request is taken whole:** whizbang's hello, the `load` frame (model, installation,
   settings) and the request frame, as the local supervisor's queue holds a request
@@ -137,8 +140,15 @@ declared allowance of attempts, the residual recorded in that host's record.
   No worker is started by itself: the next request starts one; after 3 workers in a row that
   ended before they answered anything, none is started for 60 seconds, as the local
   supervisor's rule. A front whose queue another front's request shares with the same
-  worker's side fails only its own waiting requests. A cancel that comes before a request's
-  frame is written ends it `cancelled`, not sent, and leaves the worker as it is.
+  worker's side fails only its own waiting requests. A worker that dies between calls is
+  replaced at the next call, which then runs, and the queue is not failed; only a death
+  during a call fails the call and the queue. A cancel that comes before a request's
+  frame is written ends it `cancelled`, not sent, and leaves the worker as it is: the
+  worker's side takes the call as its dispatch's before the claim, so a cancel during the
+  claim's round trip is kept; it keeps the last 64 cancels of a dispatch not running there
+  yet, so one that reaches it before its call does is found when the call begins; and it
+  hands a request to the worker's writer under the lock a cancel reads, so a `cancel` frame
+  never goes ahead of its request.
 - **Error output.** The worker's error output is read line by line by a thread of the worker's
   side, never left in the pipe; each line is cut to 4,096 bytes after the front's token and
   every value of a `--redact-env` variable is taken out of it (each read at up to 8,192 bytes,
@@ -188,7 +198,9 @@ and a sixty-fifth closes the one that has waited longest. Once read, a connectio
 by its route: a request to one of **6** request handlers (a seventh answered `503`), a cancel
 or a probe to one of **2** control handlers kept for them alone, whose answers are a few bytes.
 So a cancel is answered within 2 seconds of its acceptance whatever else is stalled, inside the
-client's control send of 5 seconds. A request's body is read at no less than 1 MiB a second
+client's control send of 5 seconds. A probe of the health route shares the 2 control handlers
+with cancels, so a burst of probes can briefly answer a cancel `503`; the client's control send
+treats that as a lost cancel, and the request is charged at its bound as for any other. A request's body is read at no less than 1 MiB a second
 after its first 5 seconds, frame by frame through `pack/1`'s own reader, so each header's
 length and each payload's length is checked before their bytes are read and a frame over its
 bound closes the connection with the rest unread. Each write of an answer must be taken within

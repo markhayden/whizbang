@@ -479,6 +479,10 @@ class LocalSide:
         self._running = None  # the dispatch of the running call
         self._exchange = None  # (worker, own id) of the frame in the worker
         self._cancel_at = None
+        # Cancels of a dispatch that is not running here yet, the last 64: a cancel that
+        # comes while its call is on its way (on Modal, a control input that overtook the
+        # call's input) is found when the call begins, and the call ends before any work.
+        self._early = collections.OrderedDict()
         self._count = 0
         self._failed_starts = 0
         self._paused_until = 0.0
@@ -503,7 +507,12 @@ class LocalSide:
         """Cancels the running call when it is `dispatch`, and touches nothing otherwise:
         writes `cancel` on the worker's pipe at once, and sets the cancel's deadline."""
         with self._state:
-            if dispatch is None or self._running != dispatch:
+            if dispatch is None:
+                return False
+            if self._running != dispatch:
+                self._early[dispatch] = True
+                while len(self._early) > 64:
+                    self._early.popitem(last=False)
                 return False
             if self._cancel_at is None:
                 self._cancel_at = time.monotonic() + self._limits.cancel
@@ -534,6 +543,12 @@ class LocalSide:
         if self._clock() > job["not_after"]:
             emit(outcome("failed", "timed_out", admission="not_after"))
             return
+        # The call is this dispatch's from here, so a cancel that comes during the claim,
+        # which is a round trip on a host's store, is kept and not lost.
+        with self._state:
+            self._running = dispatch
+            if self._early.pop(dispatch, None) and self._cancel_at is None:
+                self._cancel_at = time.monotonic() + self._limits.cancel
         try:
             claimed = self._claims.claim(dispatch)
         except Unreachable:
@@ -542,8 +557,9 @@ class LocalSide:
         if not claimed:
             emit(outcome("failed", "rejected", admission="replay"))
             return
-        with self._state:
-            self._running = dispatch
+        if self._cancelled():
+            emit(outcome("failed", "cancelled"))
+            return
         try:
             load, request = _job_frames(job["frames"])
         except proto.Refused:
@@ -663,15 +679,18 @@ class LocalSide:
         except (proto.Refused, ValueError):
             raise _Ended("malformed", "not_sent") from None
         worker.open[own] = proto.awaiting(mine)
+        settings = message.get("settings")
+        # The request is handed to the writer under the same lock a cancel reads the
+        # exchange under, so a `cancel` frame is never queued ahead of its request.
         with self._state:
-            self._exchange = (worker, own)
             cancel_at = self._cancel_at
+            if cancel_at is None:
+                self._exchange = (worker, own)
+                self.journal.append((worker.pid, message["kind"], message["model"], None if settings is None else dict(settings)))
+                write = worker.write(chunks)
         if cancel_at is not None:
             worker.open.pop(own, None)
             raise _NotSent()
-        settings = message.get("settings")
-        self.journal.append((worker.pid, message["kind"], message["model"], None if settings is None else dict(settings)))
-        write = worker.write(chunks)
         began = time.monotonic()
         deadline = began + limit
         while True:
@@ -746,6 +765,7 @@ class _Entry:
         self.job = job
         self.state = "waiting"
         self.mail = queue.SimpleQueue()
+        self.cancelled = False
         self.wake_r, self.wake_w = os.pipe()
         self._lock = threading.Lock()
         self._closed = False
@@ -900,6 +920,8 @@ class Front:
                 entry.state = "done"
                 entry.put(outcome("failed", "cancelled"))
                 return
+            if entry is not None:
+                entry.cancelled = True
         self.side.cancel(dispatch)
 
     def _run_queue(self):
@@ -911,6 +933,7 @@ class Front:
                     return
                 entry = next(e for e in self._queue if e.state == "waiting")
                 entry.state = "running"
+                cancelled = entry.cancelled
             ended = [False]
 
             def emit(item, entry=entry, ended=ended):
@@ -919,7 +942,10 @@ class Front:
                 entry.put(item)
 
             try:
-                self.side.call(entry.job, emit)
+                if cancelled:
+                    entry.put(outcome("failed", "cancelled"))
+                else:
+                    self.side.call(entry.job, emit)
             except Exception:
                 entry.put(outcome("failed", "unavailable", stage="unresolved"))
             with self._cond:
@@ -1205,14 +1231,14 @@ class Front:
         request when the client is gone."""
         opened = {load["id"]: proto.awaiting(load), call["id"]: proto.awaiting(call)}
         verified = False
+        ended = False
         selector = selectors.DefaultSelector()
-        selector.register(entry.wake_r, selectors.EVENT_READ, "mail")
-        selector.register(conn, selectors.EVENT_READ, "conn")
         try:
+            selector.register(entry.wake_r, selectors.EVENT_READ, "mail")
+            selector.register(conn, selectors.EVENT_READ, "conn")
             while True:
                 for key, _ in selector.select():
                     if key.data == "conn" and self._gone(conn):
-                        self.cancel(entry.dispatch)
                         return
                     if key.data == "mail":
                         os.read(entry.wake_r, 4096)
@@ -1237,6 +1263,7 @@ class Front:
                             conn.sendall(_chunk(item[1]))
                         else:
                             data = record_bytes(item[1], item[2])
+                            ended = True
                             if verified:
                                 conn.sendall(_chunk(data) + b"0\r\n\r\n")
                             else:
@@ -1245,10 +1272,13 @@ class Front:
                     except (OSError, ssl.SSLError, proto.Refused):
                         # A client that takes nothing within the write's limit, or is gone, or
                         # a frame from the worker's side that breaks `pack/1`.
-                        self.cancel(entry.dispatch)
                         return
         finally:
             selector.close()
+            if not ended:
+                # Whatever ended the answer before its outcome, the request is cancelled:
+                # no entry is left queued with nobody to answer.
+                self.cancel(entry.dispatch)
 
     def _gone(self, conn):
         """True when the client closed its end, or sent what no request of this route has."""
