@@ -97,6 +97,12 @@ fn cancel(shared: &Shared, id: &str) -> Response {
     if matches!(state, RunState::NotEnded { here: true }) && shared.stop(&run) {
         return Response::json(202, &json!({"run": run.as_str(), "state": "stopping"}));
     }
+    // A run that has ended is answered with its end, whoever started it: a cancel of it
+    // changes nothing, and a run this server started and no longer remembers is so
+    // answered from the store.
+    if matches!(state, RunState::Ended(_)) {
+        return Response::json(200, &said(shared, &run, &state));
+    }
     if !shared.started_here(&run) {
         return Response::refused(
             409,

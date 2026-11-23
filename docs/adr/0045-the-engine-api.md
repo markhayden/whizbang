@@ -57,7 +57,7 @@ definition of the actions serves both, as section 3 asks.
 | `POST /v1/uploads` | A picture's bytes, `image/png` or `image/jpeg`; or a mask as a grey PNG with `?mask_of=<image identity>` | `{"image": "sha256:…"}` or `{"mask": "sha256:…"}`, imported as `whizbang store import` imports one, the file's metadata not kept |
 | `GET /v1/artifacts/<identity>` | Nothing | A picture as PNG, a mask as its grey PNG; 404 for one the store does not hold |
 | `GET /v1/runs/<run id>` | Nothing | The run's state, and once it has ended its outcome and its outputs' identities, whether it ran here or not |
-| `POST /v1/runs/<run id>/cancel` | Nothing | 202 and `stopping`; 200 and its end when it has ended; 409 for a run this server did not start, since one process owns every run it starts (ADR 0031); 404 for a run the store does not hold |
+| `POST /v1/runs/<run id>/cancel` | Nothing | 202 and `stopping`; 200 and its end when it has ended, whoever started it, since a cancel then changes nothing (so a run this server started and no longer remembers is answered from the store); 409 for a run going that this server did not start, since one process owns every run it starts (ADR 0031); 404 for a run the store does not hold |
 
 A call names its pictures by identity, as over stdio. No path is taken anywhere: any string in
 any argument of any tool that reads as a path (`/` or `~` first, a drive letter, `file:`, a
@@ -74,9 +74,9 @@ handlers given what it returns, as ADR 0041's does.
 | `Authorization: Bearer <token>`, compared in constant time | 401, naming nothing |
 | An `Origin`, when sent, is one listed by `--allow-origin`; none is listed by default; a request with no `Origin`, a server's own client, is taken | 403, with no allow-origin header |
 | The path is a route; no field in the address but `mask_of`; JSON at most 1 MiB and 16 deep; a picture at most 64 MiB, of one of the two types | 404, 405, 400, 413 or 415 |
-| A picture is inside the pixel limit (25,000,000 by default, `--pixel-limit`), read from its header first; a mask is exactly its image's size | 413, naming the limit; 400 |
+| A picture's bytes are of the type it was sent as (a PNG's signature, a JPEG's start; a mask a PNG); it is inside the pixel limit (25,000,000 by default, `--pixel-limit`), read from its header first; a mask is exactly its image's size | 415; 413, naming the limit; 400 |
 | No string argument reads as a path; every artifact argument is an identity | 400 |
-| A new run is started only while fewer than 4 run (`--calls`); at most 2 uploads are read at once | 429, after the headers |
+| A new run is started only while fewer than 4 run (`--calls`, 1 to 4: each run has a stream handler of its own, so the server refuses more at start); at most 2 uploads are read at once | 429, after the headers |
 | A body arrives at no less than 1 MiB a second after the headers' 2 seconds; a plain answer is taken within 10 seconds; a stream's next piece within 30 | closed |
 
 The browser's `Sec-Fetch-Site` rule of the playground is not applied: the caller is a
@@ -100,6 +100,8 @@ reader, by the executor's durable, fingerprinted lookup, before any handler or p
 - an id admitted under another request is a conflict, answered at once;
 - a repeat of a run that has ended is answered as one JSON body, by a short handler, with the
   result the run's own call was given;
+- a repeat that arrives while its run is being started waits, within the head's time, for
+  the handler that starts it, and follows it as below; it is never told the run was given up;
 - a repeat of a run going here takes over that run's stream: the older connection is closed,
   the run is not touched, and the new one is sent the rest of its progress and its result;
   so 4 stream handlers are never more than the 4 runs, and an app that reconnects at
@@ -156,6 +158,12 @@ bound.
 playground does: its executor's writer, through which uploads are imported too.
 
 ## What it leaves
+
+- **A start in progress at a stop.** A second signal ends the grace at once, but a handler
+  that is inside `Executor::start` finishes that start (its preparation and the durable
+  publication of its admission, bounded by the store's own writing) before the server's
+  threads are joined; the run it makes is cancelled with the rest. Nothing waits on a run's
+  action.
 
 - **A flood of new connections before any token is shown.** More than 16 connections in
   2 seconds that never finish their headers keep each other from being read. Off loopback the

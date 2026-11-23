@@ -64,9 +64,10 @@ pub struct Args {
     /// With --http: the file that holds the engine's token, its owner's alone.
     #[arg(long, value_name = "FILE", requires = "http")]
     token_file: Option<PathBuf>,
-    /// With --http: the most runs started here that go at once (4 by default).
+    /// With --http: the most runs started here that go at once, 1 to 4 (4 by default):
+    /// each has a handler of its own that follows it.
     #[arg(long, value_name = "N", requires = "http",
-          value_parser = clap::value_parser!(u64).range(1..=16))]
+          value_parser = clap::value_parser!(u64).range(1..=4))]
     calls: Option<u64>,
     /// With --http: the most pixels of a picture or a mask that arrives (25000000 by
     /// default).

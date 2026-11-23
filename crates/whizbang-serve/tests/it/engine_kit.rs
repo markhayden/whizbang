@@ -37,7 +37,7 @@ pub struct Gate {
 }
 
 impl Gate {
-    fn enter_and_wait(&self) {
+    pub fn enter_and_wait(&self) {
         let mut state = self.state.lock().unwrap();
         state.0 = true;
         self.changed.notify_all();
@@ -182,6 +182,7 @@ impl Hosted for TestHosted {
 /// An engine over a store of its own, and what a test needs to call it.
 pub struct Engined {
     pub scratch: Scratch,
+    pub fs: Arc<ShimFs>,
     pub host: Option<Host>,
     pub address: SocketAddr,
     pub executor: Arc<Engine>,
@@ -220,6 +221,19 @@ impl Engined {
                 counted();
                 context.events().progress("waiting for a stop");
                 wait_for_stop(context)
+            }))
+            .unwrap();
+        // Heeds its cancellation alone, and not its deadline: it ends only when the host
+        // stops it, 30 seconds at most.
+        registry
+            .register(scripted(plain("heeds"), |context| {
+                for _ in 0..6000 {
+                    if context.cancellation().is_cancelled() {
+                        return Err(Failure::error("stopped", "the run was cancelled"));
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Ok(Produced::nothing())
             }))
             .unwrap();
         let deaf = released.clone();
@@ -277,12 +291,20 @@ impl Engined {
         Engined {
             address: host.address(),
             scratch,
+            fs,
             host: Some(host),
             executor,
             released,
             gate,
             ran,
         }
+    }
+
+    /// The store's next change to the disk waits at the gate until the test lets it go.
+    pub fn hold_next_publication(&self) {
+        let gate = self.gate.clone();
+        self.fs
+            .pause_before(self.fs.events().len(), move || gate.enter_and_wait());
     }
 
     pub fn host_header(&self) -> String {
@@ -379,7 +401,7 @@ pub struct Opened {
 }
 
 impl Opened {
-    fn read_head(mut conn: TcpStream) -> Opened {
+    pub fn read_head(mut conn: TcpStream) -> Opened {
         conn.set_read_timeout(Some(Duration::from_secs(20)))
             .unwrap();
         let mut bytes = Vec::new();

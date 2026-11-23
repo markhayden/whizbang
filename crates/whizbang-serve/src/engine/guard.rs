@@ -275,7 +275,7 @@ pub(crate) fn serve(shared: &Arc<Shared>, mut conn: TcpStream, since: Instant, h
                 token,
                 held: Some(held),
             };
-            match shared.attach(&run, follower) {
+            match shared.attach_waiting(&run, follower) {
                 Ok(()) => return,
                 Err(back) => {
                     let Follower {

@@ -99,9 +99,15 @@ fn repeated(shared: &Shared, mut conn: TcpStream, id: &Json, tool: &str, run: &R
                 let said = shared.hosted.said(tool, run, outcome);
                 (said.text, said.error)
             }
-            RunState::NotEnded { here: true } => (
+            RunState::NotEnded { here: true } if shared.given_up(run) => (
                 format!(
                     "run {shown} is still going here; it was given up on at its stated time, and was cancelled"
+                ),
+                true,
+            ),
+            RunState::NotEnded { here: true } => (
+                format!(
+                    "run {shown} was made by this request before and is still going here; nothing ran again; ask GET /v1/runs/{shown} for its end"
                 ),
                 true,
             ),
@@ -273,7 +279,7 @@ pub(crate) fn stream(shared: &Arc<Shared>, guarded: Guarded) {
                 token,
                 held: Some(held),
             };
-            if let Err(back) = shared.attach(&run, follower) {
+            if let Err(back) = shared.attach_waiting(&run, follower) {
                 repeated(shared, back.conn, &back.id, &tool, &run);
             }
         }
@@ -282,6 +288,17 @@ pub(crate) fn stream(shared: &Arc<Shared>, guarded: Guarded) {
             let answer = tool_answer(&id, &refused.to_string(), true, None);
             send_json(shared, &mut conn, &answer, None);
         }
+    }
+}
+
+/// Ends the caller's stream with this result, and answers with it the request that
+/// followed the run again and was not yet taken over, if one was waiting.
+fn end_both(shared: &Shared, run: &RunId, out: Out, follower: Option<Follower>, result: &Json) {
+    out.end(shared, result.clone());
+    if let Some(follower) = follower {
+        let mut next = Out::of(follower);
+        next.begin(shared, run);
+        next.end(shared, result.clone());
     }
 }
 
@@ -311,8 +328,9 @@ fn follow(shared: &Arc<Shared>, run: &RunId, tool: &str, out: Out, until: Instan
         let watched = match watched {
             Ok(watched) => watched,
             Err(refused) => {
-                shared.ended(run);
-                return out.end(shared, tool_result(&refused.to_string(), true, Some(run)));
+                let follower = shared.ended(run);
+                let result = tool_result(&refused.to_string(), true, Some(run));
+                return end_both(shared, run, out, follower, &result);
             }
         };
         for event in watched.events() {
@@ -362,24 +380,26 @@ fn follow(shared: &Arc<Shared>, run: &RunId, tool: &str, out: Out, until: Instan
                     gave_up = Some(now);
                 }
                 Some(at) if now.duration_since(at) >= shared.settings.grace => {
-                    shared.unfollow(run);
+                    let follower = shared.unfollow(run);
                     let text = format!(
                         "gave up on run {} after its stated time of {wait_s} s; it was cancelled and has not ended",
                         run.as_str()
                     );
-                    return out.end(shared, tool_result(&text, true, Some(run)));
+                    let result = tool_result(&text, true, Some(run));
+                    return end_both(shared, run, out, follower, &result);
                 }
                 _ => {}
             },
             other => {
-                shared.ended(run);
+                let follower = shared.ended(run);
                 let why = match other {
                     RunState::Removed { .. } => "is no longer in the store",
                     RunState::Abandoned { .. } => "was admitted and will not end here",
                     _ => "is not running in this process",
                 };
                 let text = format!("run {} {why}", run.as_str());
-                return out.end(shared, tool_result(&text, true, Some(run)));
+                let result = tool_result(&text, true, Some(run));
+                return end_both(shared, run, out, follower, &result);
             }
         }
         let state = shared.state();

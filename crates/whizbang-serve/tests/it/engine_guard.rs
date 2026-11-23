@@ -277,8 +277,13 @@ fn an_upload_of_webp_or_another_type_is_refused_415() {
         ("image/gif", b"GIF89a".to_vec()),
         ("text/plain", b"hello".to_vec()),
         ("application/json", b"{}".to_vec()),
-        // Named a PNG, and none.
+        // Named a PNG, and none; named a JPEG, and a PNG; named a PNG, and a JPEG.
         ("image/png", webp),
+        ("image/jpeg", small_png()),
+        (
+            "image/png",
+            vec![0xff, 0xd8, 0xff, 0xc0, 0, 17, 8, 0, 2, 0, 2],
+        ),
     ] {
         let answer = send(
             engined.address,
@@ -514,6 +519,18 @@ fn a_third_upload_is_answered_429_after_its_headers() {
     };
     assert_eq!(answer.status, 429, "{}", answer.whole());
     assert!(answer.header("retry-after").is_some());
+    // Now that the two hold their places, a third sent as its headers alone is refused at
+    // once: nothing of its body is waited for.
+    let started = Instant::now();
+    let mut conn = TcpStream::connect(engined.address).unwrap();
+    conn.write_all(head.as_bytes()).unwrap();
+    let answer = read_answer(&mut conn);
+    assert_eq!(answer.status, 429, "{}", answer.whole());
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        started.elapsed()
+    );
     // A JSON request is still answered.
     assert_eq!(engined.mcp(&ping()).status, 200);
     drop(stalled);
@@ -785,7 +802,10 @@ fn no_local_control_is_listed_callable_or_routed() {
     let names: Vec<String> = (listed.json()["result"]["tools"].as_array().unwrap().iter())
         .map(|tool| tool["name"].as_str().unwrap().to_owned())
         .collect();
-    assert_eq!(names, ["quick", "waits", "deaf", "held", "described"]);
+    assert_eq!(
+        names,
+        ["quick", "waits", "heeds", "deaf", "held", "described"]
+    );
     for tool in [
         "models_get",
         "models_remove",
@@ -864,18 +884,24 @@ fn a_request_with_no_protocol_version_another_one_or_a_batch_is_refused_400() {
 #[test]
 fn a_cancel_of_a_run_this_server_did_not_start_is_answered_409() {
     let engined = Engined::start("eg-409", |_| {});
-    // A run of this process that the server did not start.
+    // A run of this process that the server did not start, going.
     let elsewhere = engined
         .executor
-        .start(&Request::new(Call::new("quick")))
+        .start(&Request::new(Call::new("waits")))
         .unwrap();
     let run = match elsewhere {
         whizbang_core::contract::Answer::Started(run) => run,
         other => panic!("{other:?}"),
     };
-    let _ = engined.executor.wait(&run);
     let answer = engined.api("POST", &format!("/v1/runs/{}/cancel", run.as_str()), None);
     assert_eq!(answer.status, 409, "{}", answer.whole());
+    // Nothing was done to it: it is cancelled by whoever started it.
+    let _ = engined.executor.cancel(&run);
+    let _ = engined.executor.wait(&run);
+    // Once it has ended, any cancel is answered with its end, which it does not change.
+    let answer = engined.api("POST", &format!("/v1/runs/{}/cancel", run.as_str()), None);
+    assert_eq!(answer.status, 200, "{}", answer.whole());
+    assert_eq!(answer.json()["outcome"], "cancelled");
     // One it started, ended: its end.
     let mine = engined.open_call("quick", json!({}));
     let run = mine.run();
@@ -899,7 +925,9 @@ fn a_run_held_in_its_final_publication_leaves_repeated_cancels_another_runs_stat
     });
     // Another run first, which waits to be stopped: its stated time comes while the held
     // run's publication waits.
-    let other = engined.open_call("waits", json!({}));
+    // It heeds its cancellation alone, not its deadline: whatever stops it is the host's
+    // watch of its stated time.
+    let other = engined.open_call("heeds", json!({}));
     let other_run = other.run();
     engined.until_state(&other_run, "running");
     let held = engined.open_call("held", json!({}));
@@ -991,4 +1019,74 @@ fn the_token_is_in_no_answer_log_event_record_or_error() {
     // The token's own type prints nothing.
     let secret = Secret::new(TOKEN).unwrap();
     assert!(!format!("{secret:?}{secret}").contains(TOKEN));
+}
+
+#[test]
+fn calls_are_held_to_the_stream_handlers_and_at_their_most_each_run_has_its_stream() {
+    // More calls than stream handlers would leave a run admitted with nobody to follow it:
+    // refused at start, and nothing is left running.
+    let executor = Engined::start("eg-calls-refused", |_| {}).executor.clone();
+    let before = threads::live();
+    for calls in [0, 5, 16] {
+        let mut settings =
+            whizbang_serve::engine::Settings::new(SocketAddr::from(([127, 0, 0, 1], 0)));
+        settings.calls = calls;
+        let refused = whizbang_serve::engine::Host::start(
+            executor.clone(),
+            std::sync::Arc::new(NoTools),
+            settings,
+            Secret::new(TOKEN).unwrap(),
+        );
+        assert!(refused.is_err(), "{calls}");
+    }
+    // Refused before a thread is made.
+    assert!(threads::live() <= before);
+    // At its most, four: each run's stream is answered at once with its head, and a fifth
+    // is refused.
+    let engined = Engined::start("eg-calls-most", |settings| {
+        settings.calls = whizbang_serve::engine::STREAMS;
+    });
+    let started = Instant::now();
+    let streams = four_streams(&engined);
+    assert!(started.elapsed() < Duration::from_secs(5));
+    let runs: std::collections::BTreeSet<String> =
+        streams.iter().map(|(opened, _)| opened.run()).collect();
+    assert_eq!(runs.len(), 4);
+    let fifth = engined.mcp(&call("waits", json!({})));
+    assert_eq!(fifth.status, 429, "{}", fifth.whole());
+}
+
+#[test]
+fn a_repeat_while_its_run_is_being_started_follows_it_and_is_never_told_it_was_given_up() {
+    let engined = Engined::start("eg-repeat-starting", |_| {});
+    let id = fresh_id();
+    let message = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                         "params": {"name": "waits", "arguments": {"request_id": id}}});
+    let bytes = engined.bytes("POST", "/mcp", Some(&message));
+    // The start's admission waits at the gate, before it is on the disk.
+    engined.hold_next_publication();
+    let mut first = TcpStream::connect(engined.address).unwrap();
+    first.write_all(&bytes).unwrap();
+    engined.gate.entered();
+    // The same request again, while the first is being started.
+    let mut second = TcpStream::connect(engined.address).unwrap();
+    second.write_all(&bytes).unwrap();
+    engined.gate.release();
+    let first = Opened::read_head(first);
+    let second = Opened::read_head(second);
+    assert_eq!(first.status, 200, "{}", first.head);
+    assert_eq!(second.status, 200, "{}", second.head);
+    let run = first.run();
+    assert_eq!(second.run(), run);
+    engined.until_state(&run, "running");
+    assert_eq!(engined.ran("waits"), 1);
+    let cancel = engined.api("POST", &format!("/v1/runs/{run}/cancel"), None);
+    assert_eq!(cancel.status, 202);
+    let said = format!("{}{}", first.rest(), second.rest());
+    assert!(!said.contains("given up"), "{said}");
+    assert!(
+        said.contains(&format!("\"whizbang/run\":\"{run}\"")),
+        "{said}"
+    );
+    assert_eq!(engined.ran("waits"), 1);
 }

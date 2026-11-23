@@ -80,7 +80,7 @@ A call names its pictures by the identity its upload was answered with
 path is taken: any argument that reads as one (`/` or `~` first, a drive letter, `file:`, a
 `..` part) is refused 400 (`engine_guard::a_path_in_any_argument_of_any_tool_is_refused_400`,
 fast tier). A picture is at most 64 MiB and 25,000,000 pixels (`--pixel-limit`), checked
-from its header before it is decoded; a type other than PNG or JPEG is refused 415
+from its header before it is decoded; a type other than PNG or JPEG, or bytes that are not of the type sent, are refused 415
 (`engine_guard::an_upload_over_64_mib_is_refused_413_before_it_is_read_whole`,
 `engine_guard::an_upload_over_the_pixel_limit_is_refused_413_naming_the_limit`,
 `engine_guard::an_upload_of_webp_or_another_type_is_refused_415`, fast tier). A picture's
@@ -108,7 +108,7 @@ fast tier). For the user story's hosted editor, the calls are: an upload, then
 the click as `query` and `max_instances` 1, then `fill` with the picture and that mask; then
 a download of the result.
 
-At most four runs started here go at once (`--calls`); a fifth new one is answered 429, and
+At most four runs started here go at once (`--calls` lowers it; each run has a handler of its own, so it is 1 to 4); a fifth new one is answered 429, and
 nothing is admitted or reserved for it
 (`engine_guard::a_fifth_new_run_is_answered_429_and_a_repeat_run_routes_and_downloads_are_still_answered`,
 fast tier).

@@ -112,7 +112,8 @@ pub struct Settings {
     pub host_names: Vec<String>,
     /// The origins a request may name; none by default.
     pub allow_origins: Vec<String>,
-    /// The most runs started here that are going at once.
+    /// The most runs started here that are going at once: 1 to [`STREAMS`], since each has
+    /// a stream handler of its own.
     pub calls: usize,
     /// The most pixels of a picture or a mask that arrives.
     pub pixel_limit: u64,
@@ -237,6 +238,8 @@ pub(crate) struct State {
     ended_set: BTreeSet<String>,
     /// Every run started here that the canceller has not waited for yet.
     unwaited: BTreeSet<String>,
+    /// The runs going here whose handler gave up on them at their stated time.
+    given_up: BTreeSet<String>,
     jobs: VecDeque<Job>,
     pub uploads: usize,
     open: BTreeMap<u64, Open>,
@@ -492,6 +495,7 @@ impl Shared {
             .iter()
             .position(|p| p.run.as_ref() == Some(run));
         let follower = at.and_then(|at| state.places.remove(at).follower);
+        state.given_up.remove(run.as_str());
         state.remember_ended(run);
         state.jobs.push_back(Job::Wait(run.clone()));
         drop(state);
@@ -552,17 +556,40 @@ impl Shared {
     }
 
     /// The handler that followed `run` lets it go: it gave up on it at its stated time.
-    pub fn unfollow(&self, run: &RunId) {
+    /// A request that followed the run again and was not yet taken over comes back, to be
+    /// answered as the caller was.
+    pub fn unfollow(&self, run: &RunId) -> Option<Follower> {
         let mut state = self.state();
+        state.given_up.insert(run.as_str().to_owned());
         let place = (state.places.iter_mut()).find(|p| p.run.as_ref() == Some(run));
-        let follower = place.and_then(|place| {
+        place.and_then(|place| {
             place.followed = false;
             place.follower.take()
-        });
-        // Let go of outside the lock: its place among the connections takes the lock.
-        drop(state);
-        if let Some(follower) = follower {
-            let _ = follower.conn.shutdown(Shutdown::Both);
+        })
+    }
+
+    /// Whether the handler of this run, going here, gave up on it at its stated time.
+    pub fn given_up(&self, run: &RunId) -> bool {
+        self.state().given_up.contains(run.as_str())
+    }
+
+    /// As [`Shared::attach`], waiting while a start is being admitted: a repeat that comes
+    /// after its run was recorded and before the handler that started it follows it is
+    /// handed to that handler once it does, within the head's time at most.
+    pub fn attach_waiting(&self, run: &RunId, follower: Follower) -> Result<(), Follower> {
+        let until = Instant::now() + self.settings.times.head;
+        let mut follower = follower;
+        loop {
+            match self.attach(run, follower) {
+                Ok(()) => return Ok(()),
+                Err(back) => follower = back,
+            }
+            let state = self.state();
+            let admitting = state.places.iter().any(|place| place.run.is_none());
+            if !admitting || state.done || Instant::now() >= until {
+                return Err(follower);
+            }
+            drop(self.wait_a_look(state));
         }
     }
 
@@ -704,6 +731,13 @@ impl Host {
         settings: Settings,
         token: Secret,
     ) -> io::Result<Host> {
+        // Each run started here has a stream handler of its own: never more runs than them.
+        if settings.calls == 0 || settings.calls > STREAMS {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("the engine runs 1 to {STREAMS} calls at once"),
+            ));
+        }
         let listener = TcpListener::bind(settings.listen)?;
         let address = listener.local_addr()?;
         let names = guard::names(&settings, address);
@@ -725,6 +759,7 @@ impl Host {
                 ended: VecDeque::new(),
                 ended_set: BTreeSet::new(),
                 unwaited: BTreeSet::new(),
+                given_up: BTreeSet::new(),
                 jobs: VecDeque::new(),
                 uploads: 0,
                 open: BTreeMap::new(),

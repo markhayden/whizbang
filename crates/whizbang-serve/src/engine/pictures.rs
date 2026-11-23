@@ -32,13 +32,28 @@ pub(crate) fn upload(shared: &Arc<Shared>, guarded: Guarded) {
         Err(Unread::Answer(response)) => return response.send(&mut conn, &deadlines(shared)),
         Err(Unread::Close) => return,
     };
-    let response = taken(shared, &body, mask_of.as_deref());
+    let declared = head.header("content-type").map(|value| {
+        let kind = value.split(';').next().unwrap_or_default();
+        kind.trim().to_ascii_lowercase()
+    });
+    let response = taken(shared, &body, declared.as_deref(), mask_of.as_deref());
     drop(_place);
     response.send(&mut conn, &deadlines(shared));
 }
 
 /// What an upload's body comes to.
-fn taken(shared: &Shared, body: &[u8], mask_of: Option<&str>) -> Response {
+fn taken(shared: &Shared, body: &[u8], declared: Option<&str>, mask_of: Option<&str>) -> Response {
+    // Its bytes are of the type it was sent as: a PNG's signature, or a JPEG's start.
+    let png = body.starts_with(b"\x89PNG\r\n\x1a\n");
+    let jpeg = body.starts_with(&[0xff, 0xd8, 0xff]);
+    let of_its_type = match declared {
+        Some("image/png") => png,
+        Some("image/jpeg") => jpeg && mask_of.is_none(),
+        _ => false,
+    };
+    if !of_its_type {
+        return Response::refused(415, "the body is not of the type it was sent as");
+    }
     // Its size, from its header alone, before anything is decoded.
     let Some((width, height)) = dimensions(body) else {
         return Response::refused(415, "the body is not a PNG or JPEG");

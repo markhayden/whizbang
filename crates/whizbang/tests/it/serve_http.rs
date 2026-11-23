@@ -653,10 +653,13 @@ fn an_upload_is_named_by_a_call_and_its_result_is_downloaded() {
     assert_eq!(engined.client.api("GET", &none).status, 404);
 }
 
+/// Two halves. In process, through the same stop a signal asks for (the binary's reader of
+/// signals calls it): a paid run that waits is cancelled and waited for, its reservation
+/// released, and the store let go; this half proves the cancel. On the shipped binary,
+/// which holds no fake backend to keep a run going: a hang-up stops it with no run going,
+/// it exits 0, and the store is free; this half proves the signal is taken.
 #[test]
 fn a_signal_cancels_every_run_accounts_the_ledger_and_releases_the_store() {
-    // In process, through the same stop a signal asks for: a paid run that waits is
-    // cancelled and waited for, and the store is let go.
     let mut engined = Engined::start("sh-stop", |settings| {
         settings.grace = Duration::from_secs(10);
     });
@@ -851,8 +854,22 @@ fn an_address_off_loopback_is_refused_without_off_loopback_and_a_host_name() {
     }
     // Nothing was made: the refusal comes before the store is opened.
     assert!(!scratch.path().join("store").exists());
-    // A flag of the engine without --http is refused by the parser.
+    // A flag of the engine without --http is refused by the parser, and so are more calls
+    // at once than the engine has stream handlers for.
     let (code, err) = refused(&["serve", "--store", store, "--off-loopback"], &[]);
+    assert_eq!(code, Some(2), "{err}");
+    let (code, err) = refused(
+        &[
+            "serve",
+            "--store",
+            store,
+            "--http",
+            "127.0.0.1:0",
+            "--calls",
+            "5",
+        ],
+        &token,
+    );
     assert_eq!(code, Some(2), "{err}");
 }
 
