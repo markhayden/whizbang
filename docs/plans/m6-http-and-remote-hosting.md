@@ -549,7 +549,7 @@ or fail at random at the end of milestone 5").
    takes the step out before the review.
 3. **The timing report** of the pull request names each suite's seconds before and after.
 
-- [ ] Done when: no part of either fast test passes 10 seconds alone or under a full `just
+- [x] Done when: no part of either fast test passes 10 seconds alone or under a full `just
   check` on the owner's Mac in five runs, with no limit raised; the Chrome case passed 20 runs
   in a row on `macos-15` (the run named); the carry-over row is closed with the numbers.
 

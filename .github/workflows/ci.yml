@@ -257,22 +257,6 @@ jobs:
         env:
           WHIZBANG_E2E_SHARD: ${{ matrix.shard }}/2
         run: just e2e
-      # Plan m6, task A0, item 2: for one run of the pull request, and taken out by its next
-      # commit. On macos-15, shard 1 only, the compare case that failed once on `main` runs
-      # alone 20 times in a row with no retry against the fixture host `just e2e` built, and
-      # its own report is held to the 120 seconds of a shard.
-      - name: The compare case 20 times in a row
-        env:
-          RUNNER: ${{ matrix.os }}
-          SHARD: ${{ matrix.shard }}
-        run: |
-          if [ "$RUNNER" = macos-15 ] && [ "$SHARD" = 1 ]; then
-            fixture=$(cargo metadata --format-version 1 --no-deps | jq -r .target_directory)/debug/examples/play_fixture
-            (cd ui && WHIZBANG_PLAY_FIXTURE="$fixture" ../scripts/thread-guard.sh node_modules/.bin/playwright test e2e/compare.spec.ts -g "two pictures wider than half the canvas both fit side by side" --repeat-each 20 --retries 0)
-            scripts/e2e.sh --report target/e2e/report.json --limit 120
-          else
-            echo "the repeated case runs on macos-15, shard 1"
-          fi
       # Pinned to a commit (v7.0.2).
       - name: The Playwright report of a failed run
         if: failure()
