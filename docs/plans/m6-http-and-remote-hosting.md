@@ -716,7 +716,7 @@ an NVIDIA card where there is one.
    `test_adapter_device.Device.test_cpu_forces_the_cpu_where_cuda_is_there`,
    `test_adapter_device.Device.test_on_cuda_tf32_is_off_and_the_card_is_reported`.
 
-- [ ] Done when: those tests pass under `just test-pack`, with the pack's other tests
+- [x] Done when: those tests pass under `just test-pack`, with the pack's other tests
   unchanged; the evidence records and fixtures of item 5 are written again by their runners and
   the fast tests that hold them pass; ADR 0046 is merged, its section on Modal's bound ending
   in one of its two sentences, with its client's section marked as R1's.
