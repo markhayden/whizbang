@@ -27,6 +27,8 @@ and no reason changed. Added: "The worker", under "Decision".
 Amended: 2026-11-17, by task P6a (the kind `pack`). No byte and no reason changed. Added,
 under "The worker": what a caller gives with a request beside its cancellation and its
 deadline, the kind's limit for a call and the lifetime of a worker it starts.
+Amended: 2026-11-23, by task P1 of plan m6 (ADR 0046). No byte and no reason of `pack/1`
+changed. "The HTTP codec, on paper" gains a note: it is built, as ADR 0046 records it.
 
 ## Context
 
@@ -504,6 +506,13 @@ bytes.
 
 The behavioural half of the conformance suite (task P3b) is written against a transport,
 so that milestone 6 runs it again over this one.
+
+**As built** (task P1 of plan m6; ADR 0046, "ADR 0020, 'The HTTP codec, on paper', as
+built"): the same frames, with the request taken whole, so the body holds the `load` frame
+between the hello and the request and the answer holds the `load`'s answer before the
+request's; the dispatch id, the identity of the files and the outcome record are around
+the frames, not in them; and a cancel names the dispatch, never the frame's id. The pack's
+side is `pack/src/whizbang_pack/front.py`; whizbang's client is task R1's.
 
 ### What `pack/2` would mean
 

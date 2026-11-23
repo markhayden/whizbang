@@ -486,7 +486,9 @@ production.
   attempt.
 - **GPU time** on a self-hosted backend has a configured price per second. Its bound must
   come from a limit the host itself enforces, or a fixed maximum charge; a timeout on
-  whizbang's side is not a bound.
+  whizbang's side is not a bound. Where the host bounds one attempt and not the number of
+  attempts, the bound may be per attempt times a declared allowance of attempts, and the
+  residual (attempts past the allowance) is recorded in that host's ADR (ADR 0046).
 
 Tested at checkpoint 1B, with fakes, one ordinary test or a few for each: nested retries,
 simultaneous calls, cancellation after dispatch, a store left by a process that died between

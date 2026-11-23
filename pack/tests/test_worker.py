@@ -861,6 +861,7 @@ class Imports(unittest.TestCase):
                 "conformance.py",
                 "fake_models.py",
                 "fakes.py",
+                "front.py",
                 "installed.py",
                 "owlv2_sam2.py",
                 "proto.py",

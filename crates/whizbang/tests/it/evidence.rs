@@ -63,6 +63,27 @@ fn field<'a>(fields: &'a [(String, String)], name: &str) -> &'a str {
         .unwrap_or_else(|| panic!("the record has no {name}"))
 }
 
+/// A record of the model tier was taken on a clean head (`tree = "clean"`), or on the staged
+/// tree `scripts/model-evidence.sh --candidate` exported and named (`tree = "candidate"`
+/// and its id, `candidate_tree`), whose sources the record's digests hold the commit to
+/// (plan m6, task P1, item 5).
+fn taken_on_a_named_tree(fields: &[(String, String)]) {
+    let is_object_id = |text: &str| {
+        text.len() == 40
+            && text
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    };
+    match field(fields, "tree") {
+        "clean" => assert!(!fields.iter().any(|(name, _)| name == "candidate_tree")),
+        "candidate" => {
+            let tree = field(fields, "candidate_tree");
+            assert!(is_object_id(tree), "{tree}");
+        }
+        other => panic!("a record is taken on a clean head or a candidate, not {other}"),
+    }
+}
+
 #[test]
 fn the_committed_record_names_the_adapters_revision_and_the_lock_the_tree_has() {
     let (top, rounds) = record();
@@ -103,8 +124,9 @@ fn the_committed_record_names_the_adapters_revision_and_the_lock_the_tree_has() 
     assert_eq!(field(&top, "device"), "mps");
     assert_eq!(field(&top, "fallback"), "off");
     assert_eq!(field(&top, "hosts_contacted"), "none");
-    // Taken on a clean head (plan 2A, task R1): the commit it names is the tree that ran.
-    assert_eq!(field(&top, "tree"), "clean");
+    // Taken on a clean head (plan 2A, task R1): the commit it names is the tree that ran;
+    // or on the staged tree of that commit, by the candidate mode (plan m6, task P1).
+    taken_on_a_named_tree(&top);
     assert_eq!(rounds.len(), 3);
     for round in &rounds {
         assert_eq!(field(round, "phrase_device"), "mps");
@@ -595,7 +617,7 @@ fn the_coverage_record_names_a_commit_of_this_tree_and_every_timing() {
                 .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()),
         "{commit}"
     );
-    assert_eq!(field(&fields, "tree"), "clean");
+    taken_on_a_named_tree(&fields);
     assert_eq!(field(&fields, "device"), "mps");
     // Of this tree's models and adapters: the catalogue's revisions, the binary's
     // table, and the adapters' sources by their digests.
