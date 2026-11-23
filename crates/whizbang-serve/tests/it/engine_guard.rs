@@ -493,16 +493,20 @@ fn a_third_upload_is_answered_429_after_its_headers() {
         conn.write_all(head.as_bytes()).unwrap();
         stalled.push(conn);
     }
-    // The third is refused as soon as its headers are read; the two may still be on
-    // their readers for a moment, so it is asked until they hold their places.
+    // The third is refused as soon as its headers are read. The two may still be on their
+    // readers for a moment, so it is sent whole, which never stalls, until they hold their
+    // places: then it is refused without its body being read.
+    let whole = small_png();
     let limit = Instant::now() + Duration::from_secs(10);
     let answer = loop {
-        let mut conn = TcpStream::connect(engined.address).unwrap();
-        conn.write_all(head.as_bytes()).unwrap();
-        let answer = read_answer(&mut conn);
+        let answer = send(
+            engined.address,
+            &upload_bytes(&engined, "image/png", &whole, ""),
+        );
         if answer.status == 429 || Instant::now() > limit {
             break answer;
         }
+        assert_eq!(answer.status, 201, "{}", answer.whole());
     };
     assert_eq!(answer.status, 429, "{}", answer.whole());
     assert!(answer.header("retry-after").is_some());
@@ -883,8 +887,11 @@ fn a_cancel_of_a_run_this_server_did_not_start_is_answered_409() {
 #[test]
 fn a_run_held_in_its_final_publication_leaves_repeated_cancels_another_runs_status_and_deadline_and_a_signals_grace_answered()
  {
+    // The stated time is long enough that the other run's own ending cannot come before
+    // the held run's publication takes the gate: the gate holds whichever publication
+    // comes next after the held run's action.
     let mut engined = Engined::start("eg-held", |settings| {
-        settings.wait = Duration::from_millis(600);
+        settings.wait = Duration::from_secs(3);
     });
     // Another run first, which waits to be stopped: its stated time comes while the held
     // run's publication waits.
