@@ -109,16 +109,17 @@ If one is missing, ask the orchestrator. Do not guess.
       (`a. `, `Note: `, `<p>`), which it only lists. It lists each line that says
       "co-authored-by" or "generated with" and is not refused: go through those. Then
       open the pull request against `main`.
-- [ ] 11. Wait for CI on the head: the jobs `check (macos-15)`, `scripts (macos-15)`,
-      `release (macos-15)`, `check (ubuntu-22.04)`, `scripts (ubuntu-22.04)`,
-      `release (ubuntu-22.04)`, `e2e (macos-15)`, `e2e (ubuntu-22.04)`, `sweeps (macos-15)`, `sweeps (ubuntu-22.04)`, `secrets` and the aggregate `ci`. Each runner has five jobs
-      side by side: `scripts` runs the script tests, `release` the release build, the
+- [ ] 11. Wait for CI on the head: the jobs `check (macos-15)`, `scripts (macos-15, shard 1)`, `scripts (macos-15, shard 2)`,
+      `release (macos-15)`, `check (ubuntu-22.04)`, `scripts (ubuntu-22.04, shard 1)`, `scripts (ubuntu-22.04, shard 2)`,
+      `release (ubuntu-22.04)`, `e2e (macos-15, shard 1)`, `e2e (macos-15, shard 2)`, `e2e (ubuntu-22.04, shard 1)`,
+      `e2e (ubuntu-22.04, shard 2)`, `sweeps (macos-15)`, `sweeps (ubuntu-22.04)`, `secrets` and the aggregate `ci`. Each runner has seven jobs
+      side by side: `scripts` runs the script tests in two shards, `release` the release build, the
       example that must not compile and the secrets scan of the tree, `e2e` the Chrome
-      tier, `sweeps` the fast tests' sweeps, and `check` everything else; `secrets` scans every commit. `ci` is listed only once the other eleven have finished: each
+      tier in two shards, `sweeps` the fast tests' sweeps, and `check` everything else; `secrets` scans every commit. `ci` is listed only once the other fifteen have finished: each
       job takes several minutes. Straight after
       the pull request is opened, `gh pr checks` exits 1 and
       says "no checks reported"; after a second push it shows the run before for a moment.
-      So ask until a run whose commit is the head lists all twelve (the loop below), then
+      So ask until a run whose commit is the head lists all sixteen (the loop below), then
       watch. The loop outlasts one shell call of the usual length:
       give the call a longer time limit, or enter the loop again. It gives up after 20
       minutes: hand back then, saying that CI did not start. A pull request that conflicts
@@ -197,18 +198,18 @@ gh pr create --base main --head <slug> --title "$(cat "$text/title.txt")" --body
 gh pr edit <number> --title "$(cat "$text/title.txt")" --body-file "$text/body.md"
 rm -rf "$text"
 
-# 11: ask every 20 seconds until the run for the head lists eleven jobs, for 20 minutes
+# 11: ask every 20 seconds until the run for the head lists fifteen jobs, for 20 minutes
 # at most. Each job takes several minutes: give the shell call a longer time limit,
 # or enter the loop again.
 head=$(git rev-parse HEAD)
 tries=0
 until run=$(gh run list --commit "$head" --json databaseId --jq '.[0].databaseId // empty') &&
-  [ -n "$run" ] && [ "$(gh run view "$run" --json jobs --jq '.jobs | length')" -ge 11 ]; do
+  [ -n "$run" ] && [ "$(gh run view "$run" --json jobs --jq '.jobs | length')" -ge 15 ]; do
   tries=$((tries + 1))
-  [ "$tries" -le 60 ] || { echo "no run with eleven jobs for $head after 20 minutes"; break; }
+  [ "$tries" -le 60 ] || { echo "no run with fifteen jobs for $head after 20 minutes"; break; }
   sleep 20
 done
-gh pr checks <number> --watch                  # check, scripts, release, e2e and sweeps on macos-15 and ubuntu-22.04, secrets, ci
+gh pr checks <number> --watch                  # check, scripts (two shards), release, e2e (two shards) and sweeps on macos-15 and ubuntu-22.04, secrets, ci
 
 # 12
 git rev-parse HEAD                             # the head you hand back
@@ -228,9 +229,11 @@ Pull request: #<number> <url>
 Branch: <slug>
 Base: <full commit of origin/main the branch started from>
 Head: <full commit; the pull request shows the same>
-CI: check (macos-15) <result>, scripts (macos-15) <result>, release (macos-15) <result>,
-    check (ubuntu-22.04) <result>, scripts (ubuntu-22.04) <result>, release (ubuntu-22.04) <result>,
-    e2e (macos-15) <result>, e2e (ubuntu-22.04) <result>, sweeps (macos-15) <result>,
+CI: check (macos-15) <result>, scripts (macos-15, shard 1) <result>,
+    scripts (macos-15, shard 2) <result>, release (macos-15) <result>, check (ubuntu-22.04) <result>,
+    scripts (ubuntu-22.04, shard 1) <result>, scripts (ubuntu-22.04, shard 2) <result>,
+    release (ubuntu-22.04) <result>, e2e (macos-15, shard 1) <result>, e2e (macos-15, shard 2) <result>,
+    e2e (ubuntu-22.04, shard 1) <result>, e2e (ubuntu-22.04, shard 2) <result>, sweeps (macos-15) <result>,
     sweeps (ubuntu-22.04) <result>, secrets <result>, ci <result>
     <any rerun: the job and the reason; otherwise "no rerun">
 Local: just check <result>, just scan <result>, on the head

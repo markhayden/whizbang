@@ -1283,7 +1283,7 @@ the guide finished.
    repo is changed and no repo is deleted (`SPEC.md` sections 15 and 16). `docs/sources.toml`
    is unchanged. Success criterion 9 is then met and the note's last line says so.
 
-- [ ] Done when: the note is merged, `m5` is tagged, and each of the four repos shows as
+- [x] Done when: the note is merged, `m5` is tagged, and each of the four repos shows as
   archived with the pointer (or the owner's no is recorded in the note).
 
 **As built (N1).** The note is `docs/plans/m5-note.md`; `scripts/tests/test-notes.sh` now

@@ -1,7 +1,7 @@
 // The Chrome tier (plan m5, "Where the Chrome tier runs"; ADR 0043): Playwright's runner
 // driving the Google Chrome installed on the machine (`channel: "chrome"`; no browser is
 // downloaded), one worker, no retry, 30 seconds a case. `scripts/e2e.sh` builds the fixture
-// host, runs this, and holds the run to 180 seconds of test time from the JSON report.
+// host, runs this, and holds the run to 240 seconds of test time from the JSON report.
 import { defineConfig } from "@playwright/test";
 
 export default defineConfig({

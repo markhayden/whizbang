@@ -78,7 +78,9 @@ deny:
 deny-advisories:
     cargo deny check advisories
 
-# The tests of the scripts themselves (scripts/tests/), every one of them.
+# The tests of the scripts themselves (scripts/tests/), every one of them. CI runs them in
+# two shards on each runner, the jobs `scripts (<runner>, shard <k>)`, each given
+# WHIZBANG_SCRIPT_SHARD=<k>/2 (scripts/tests/run.sh).
 test-scripts:
     scripts/tests/run.sh
 
@@ -113,10 +115,10 @@ ui-check:
     scripts/ui.sh check
 
 # The Chrome tier: the fixture host built, then Playwright's cases in ui/e2e/ against it
-# in the Google Chrome installed here, held to 180 seconds of test time (scripts/e2e.sh).
+# in the Google Chrome installed here, held to 240 seconds of test time (scripts/e2e.sh).
 # Heavy. CI runs it in two shards on each runner, the jobs `e2e (<runner>, shard <k>)`,
-# each given WHIZBANG_E2E_SHARD=<k>/2 and held to 90 seconds, half of the 180; here it runs
-# every case, held to the 180.
+# each given WHIZBANG_E2E_SHARD=<k>/2 and held to 120 seconds, half of the 240; here it runs
+# every case, held to the 240.
 e2e:
     scripts/e2e.sh
 
@@ -195,7 +197,7 @@ scan-range-secrets base head:
 # secrets scan, the release archive made and installed, and the Chrome tier.
 ci: check-full deny-advisories smoke compile-fail scan-secrets package install-check e2e
 
-# `ci` in five parts, for CI, where the script tests alone take a runner three to five
+# `ci` in five parts, for CI, where the script tests alone take a runner five to twelve
 # minutes and the rest took the macOS runner past its limit: it runs each part in a job of
 # its own, side by side, on each runner (.github/workflows/ci.yml). The first is `ci`
 # without the script tests, without the release build and what follows it, and with

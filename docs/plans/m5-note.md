@@ -315,3 +315,7 @@ No row is owned by milestone 5.
 `main` at the end of milestone 5: a fourth door, the playground, every kept row of section 7
 held by its Chrome cases on both runners, its guard by seventeen negative tests, and the loop
 run in it by hand.
+
+The tag `m5` was made at 9a2d397f, and rascal, squint, wafflery and table-manners were archived
+on 2026-11-22, on the owner's yes: the row's last clause, "old repos archived", is met, and so
+is success criterion 9.
