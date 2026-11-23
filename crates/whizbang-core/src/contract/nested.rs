@@ -125,7 +125,9 @@ impl Added {
             let pending: Vec<String> = held.pending.iter().cloned().collect();
             (resolved, pending)
         };
-        generation.entries.extend(resolved);
+        for (name, entry) in resolved {
+            generation.insert_entry(name, entry);
+        }
         if pending.is_empty() {
             return Ok(generation);
         }
@@ -134,7 +136,7 @@ impl Added {
             if generation.get(&name).is_none()
                 && let Some(entry) = current.get(&name)
             {
-                generation.entries.insert(name, entry.clone());
+                generation.insert_entry(name, entry.clone());
             }
         }
         Ok(generation)

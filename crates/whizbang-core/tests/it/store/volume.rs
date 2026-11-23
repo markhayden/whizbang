@@ -147,7 +147,8 @@ fn a_run_of_many_nested_calls_publishes_within_the_measured_bound() {
     // Eight, under a second on the owner's Mac: what CI can spend on it.
     let (took, bytes) = nested("nested-8", 8);
     assert!(took <= 8 * NESTED_MS_EACH, "{took} ms");
-    assert!(bytes <= 9 * NESTED_BYTES_EACH, "{bytes} bytes");
+    // The generation file holds the 256 digests of buckets, and not the runs (ADR 0047).
+    assert!(bytes <= 20_000, "{bytes} bytes");
 }
 
 /// Run by hand, its numbers recorded in ADR 0033: `scripts/heavy.sh nested
@@ -234,4 +235,105 @@ fn ten_thousand_runs_publish_within_the_measured_bound() {
     let (bytes, took) = runs_measured("volume-runs", 10_000);
     assert!(bytes <= 10_001 * BYTES_PER_RUN, "{bytes} bytes");
     assert!(took <= MS_AT_TEN_THOUSAND_RUNS, "{took} ms");
+}
+
+/// What one publication of one more run costs in a store of `runs` runs as the engine
+/// API leaves them (plan m6, task S1, item 1): each with its request id's two records,
+/// an upload marked as imported, its record, journal and output, and a paid attempt's
+/// names in the ledger. Made in one publication, so that the measurement is of the store
+/// at that size. The time of that publication in milliseconds, the bytes it wrote (its
+/// generation file and its pack), and the size of its generation file.
+fn engine_runs_measured(label: &str, runs: usize) -> (u128, u64, u64) {
+    let scratch = Scratch::new(label);
+    let root = scratch.path().join("store");
+    let store = Store::open(&root, std::sync::Arc::new(RealFs)).unwrap();
+    let made = |publication: &mut whizbang_core::store::Publication<'_>, at: usize| {
+        let run = format!("1795275290505-{at}");
+        publication.create_run(&run).unwrap();
+        for (name, kind) in [
+            ("record.json", Kind::Diagnostic),
+            ("journal.jsonl", Kind::Diagnostic),
+            ("outputs/mask/0", Kind::Output),
+        ] {
+            let bytes = format!("{name} of {run}");
+            publication
+                .put_in(&run, name, kind, bytes.as_bytes())
+                .unwrap();
+        }
+        let upload = format!(
+            "artifacts/image/{}",
+            whizbang_core::store::Digest::of_bytes(run.as_bytes()).hex()
+        );
+        publication.put(&upload, b"content").unwrap();
+        publication.mark_imported(&upload).unwrap();
+        for name in [
+            format!("requests/app-{at:06}/admitted"),
+            format!("requests/app-{at:06}/ended"),
+            format!("spend/reservations/{run}"),
+            format!("spend/held/1/{run}/180000"),
+            format!("spend/turn/1/{}", 2 * at + 1),
+            format!("spend/place/{run}/1"),
+            format!("spend/dispatched/{run}/1/segment/180000"),
+            format!("spend/settling/{run}/1"),
+            format!("spend/settled/{run}/1/answered/120000"),
+            format!("spend/closed/{run}/released"),
+            format!("spend/turn/1/{}", 2 * at + 2),
+        ] {
+            publication
+                .create(&name, Kind::Diagnostic, b"content")
+                .unwrap();
+        }
+    };
+    let mut publication = store.begin().unwrap();
+    for at in 0..runs {
+        made(&mut publication, at);
+    }
+    publication.publish().unwrap();
+    let before: std::collections::BTreeSet<_> =
+        store.snapshot().unwrap().bucket_digests().collect();
+    let started = Instant::now();
+    let mut publication = store.begin().unwrap();
+    made(&mut publication, runs);
+    let published = publication.publish().unwrap();
+    let took = started.elapsed().as_millis();
+    let file = root
+        .join("generations")
+        .join(format!("{}.json", published.generation));
+    let root_bytes = std::fs::metadata(file).unwrap().len();
+    let packs: u64 = (store.snapshot().unwrap().bucket_digests())
+        .filter(|digest| !before.contains(digest))
+        .map(|digest| {
+            let pack = root
+                .join("generations")
+                .join(format!("{}.pack", digest.hex()));
+            std::fs::metadata(pack).unwrap().len()
+        })
+        .sum();
+    let written = root_bytes + packs;
+    eprintln!(
+        "{runs} runs as the engine API leaves them: one publication in {took} ms, writing \
+         {written} bytes, a generation file of {root_bytes} bytes"
+    );
+    (took, written, root_bytes)
+}
+
+/// Run by hand, its numbers recorded in the carry-over row on every publication writing
+/// the whole generation (plan m6, task S1): `scripts/heavy.sh volume
+/// scripts/thread-guard.sh cargo nextest run -p whizbang-core --run-ignored only -E
+/// 'test(a_hundred_thousand_runs)' --no-capture`, or, past the limit of one test, its
+/// binary under the same two scripts with `--ignored --exact` and its name. The generation file is the same size at
+/// both, and what one publication writes does not grow with the runs as the whole file
+/// did: the buckets a run changes, a few of 256, and the generation file. Measured on the
+/// owner's Mac in the tests' build: 75 ms and 742,071 bytes at 10,000 runs, 380 ms and
+/// 6,941,317 bytes at 100,000, a generation file of 16,451 bytes at both.
+#[test]
+#[ignore = "half an hour in the tests' build and 2 GB of disk; run by hand, its numbers in docs/carry-over.md"]
+fn a_hundred_thousand_runs_publish_within_the_measured_bound() {
+    let (took_10k, written_10k, root_10k) = engine_runs_measured("volume-10k", 10_000);
+    let (took_100k, written_100k, root_100k) = engine_runs_measured("volume-100k", 100_000);
+    assert_eq!(root_10k, root_100k);
+    // A pack holds a few buckets of 256: under a twentieth of the store at 100,000.
+    assert!(written_100k < 10_000_000, "{written_100k} bytes");
+    assert!(took_100k <= 2_000, "{took_100k} ms");
+    let _ = (took_10k, written_10k);
 }

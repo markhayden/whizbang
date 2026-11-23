@@ -578,7 +578,9 @@ fn a_diagnostic_under_the_artifacts_name_is_not_the_artifact_and_import_brings_i
 
     // By hand: the reference under the mask's name is made a diagnostic. No reader is
     // given the mask from it, so it is not "already there".
-    let generation = store.join("generations/1.json");
+    // The whole store in its one file, as the format before buckets wrote it, so that a
+    // name of it can be changed by hand (ADR 0047).
+    let generation = whizbang_testkit::stored::whole(&store);
     let text = std::fs::read_to_string(&generation).expect("a generation");
     // The mask's name, and the mark the import left on it, which holds the same file.
     assert_eq!(text.matches("\"kind\": \"output\"").count(), 2);

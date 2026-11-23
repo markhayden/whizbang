@@ -859,6 +859,11 @@ a store" is answered as its "Done when" asks, or narrowed with a line.
   test pass; ADR
   0047 is merged; each row is closed or narrowed with its line.
 
+  S1 lands in two pull requests: the first holds items 1 and 4 to 8, the store's half that
+  H1 and D1 build on (its tests above pass in it, `store::buckets::*`, `store::collect::*`,
+  the four of item 4, item 6's two and item 8's); the second holds items 2 and 3, the
+  executor's, and ticks this box. The rows of items 2 and 3 say so.
+
 ## H1. The engine API: `whizbang serve --http` (large)
 
 ### Goal

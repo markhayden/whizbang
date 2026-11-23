@@ -1,0 +1,270 @@
+{
+  "format": 4,
+  "number": 8,
+  "entries": {
+    "artifacts/image/2cea274d0bedc39ec4ab6ba9e59ec889e3ed6fb56a1cf088a64d9b383378dc97": {
+      "digest": "9beaf1854319a8359b8434c9488e187b954af65b083fde4851aea53b5bc8fa41",
+      "bytes": 28,
+      "kind": "output"
+    },
+    "artifacts/mask/22d78be08e2f92c4d6e6f78021e3460576edf841239a32a018a720fed504ef5e": {
+      "digest": "ac1f590254f9ce516c43f637644b1f8f61cf20f5d1b93bb14c9b88e37f14e79d",
+      "bytes": 17,
+      "kind": "output"
+    },
+    "artifacts/mask/3a75276e1d1d1dc2e888d3a2eb1ebbf422cb544ebe95f609367c0a8ebc8b0c38": {
+      "digest": "4f3a869b085039b29d1de38f0d9d7796ce970aaaf83412457ec776263d1f8b6c",
+      "bytes": 17,
+      "kind": "output"
+    },
+    "artifacts/mask/464513982f86657328e7f1ff8316325016b400b89b2010c85a1f65ee54f4f6b1": {
+      "digest": "b31c61c1aef90c67997afa61fa9497c48d2f013a96cf8857e8f143e67768e33e",
+      "bytes": 17,
+      "kind": "output"
+    },
+    "imported/artifacts/image/2cea274d0bedc39ec4ab6ba9e59ec889e3ed6fb56a1cf088a64d9b383378dc97": {
+      "digest": "9beaf1854319a8359b8434c9488e187b954af65b083fde4851aea53b5bc8fa41",
+      "bytes": 28,
+      "kind": "output"
+    },
+    "requests/fixture-request-0/admitted": {
+      "digest": "bc507c0308fe18429d931056ca12a59b1ecb29e93e43bfab0ca9b403e12b6800",
+      "bytes": 35,
+      "kind": "diagnostic"
+    },
+    "requests/fixture-request-0/ended": {
+      "digest": "95f6b5a2e8f71b5e58321bda982e4783b7e16b097c649a89fb2b7715773af5d1",
+      "bytes": 32,
+      "kind": "diagnostic"
+    },
+    "requests/fixture-request-1/admitted": {
+      "digest": "e67080bd392ced999f88733587a65fdfa12ea3bc541aacf8951c21be0fe06905",
+      "bytes": 35,
+      "kind": "diagnostic"
+    },
+    "requests/fixture-request-1/ended": {
+      "digest": "723c1fe7bb6caf9b49a52052a96e60b15378f1075c23227b38b88e2b93670dd9",
+      "bytes": 32,
+      "kind": "diagnostic"
+    },
+    "requests/fixture-request-2/admitted": {
+      "digest": "754ea9981267fe2d8e1bae860ab906a0fe874fb5f3ef062166ca3dfc9692a17e",
+      "bytes": 35,
+      "kind": "diagnostic"
+    },
+    "requests/fixture-request-2/ended": {
+      "digest": "a5621b22a0035482c920d0f9b3209debe744a143c9436c2941eb430388d1afa1",
+      "bytes": 32,
+      "kind": "diagnostic"
+    },
+    "spend/closed/1795275290505-0/released": {
+      "digest": "ee52142662506db6c1fc8b9feca2461ab31474fac7630ed58595347a1be3e662",
+      "bytes": 37,
+      "kind": "diagnostic"
+    },
+    "spend/closed/1795275290505-1/released": {
+      "digest": "245638f6bfa1faa95afdb494b02ae06630d880bd3b0cd818be9e4aa391e1954d",
+      "bytes": 37,
+      "kind": "diagnostic"
+    },
+    "spend/closed/1795275290505-2/released": {
+      "digest": "183ee9ba6bf5bc5edf6af437972dff612d4e94517051ef4f585fd9ba407546c0",
+      "bytes": 37,
+      "kind": "diagnostic"
+    },
+    "spend/dispatched/1795275290505-0/1/segment/180000": {
+      "digest": "4cd3f983f5682173dd6e72f3f12abe428332f69c899b9f32610acd8fa26a97aa",
+      "bytes": 49,
+      "kind": "diagnostic"
+    },
+    "spend/dispatched/1795275290505-1/1/segment/180000": {
+      "digest": "33004b437a704469fd6c7777415e0e811241545bf4e42bbbffc3d64964518e5c",
+      "bytes": 49,
+      "kind": "diagnostic"
+    },
+    "spend/dispatched/1795275290505-2/1/segment/180000": {
+      "digest": "5f273a588a4ca7844bfdb967a510fa833daaf05fd593d1aadafe9fb12e6dfa9d",
+      "bytes": 49,
+      "kind": "diagnostic"
+    },
+    "spend/epoch/1": {
+      "digest": "dd83f7f20bede48e321087c6dec23a573bdc4938b77899d17d0b84586aff0412",
+      "bytes": 13,
+      "kind": "diagnostic"
+    },
+    "spend/held/1/1795275290505-0/180000": {
+      "digest": "a183057bcf0f2b9618e78b8e0099b7e779f3fc6f0c029511b5b7bf031833a060",
+      "bytes": 35,
+      "kind": "diagnostic"
+    },
+    "spend/held/1/1795275290505-1/180000": {
+      "digest": "96b6b6d448b21a2b0a495a7df3a7035903e4ca8bbcb8aa7d682c4d73528eaae4",
+      "bytes": 35,
+      "kind": "diagnostic"
+    },
+    "spend/held/1/1795275290505-2/180000": {
+      "digest": "d49362ba8ecba6d08aadfc4d0d8c2679d2f904384110ac431eadf4a6672f3475",
+      "bytes": 35,
+      "kind": "diagnostic"
+    },
+    "spend/place/1795275290505-0/1": {
+      "digest": "35b8ee7ae1a9851ede0086e470056463abe1d69ea44028cd9946f7e0467ff1da",
+      "bytes": 29,
+      "kind": "diagnostic"
+    },
+    "spend/place/1795275290505-1/1": {
+      "digest": "e25304ca1738845fc84de5861d48b9bebf9017cdcde48f1f961425cbcb0de745",
+      "bytes": 29,
+      "kind": "diagnostic"
+    },
+    "spend/place/1795275290505-2/1": {
+      "digest": "ee7af17e91b77cf0cc38ed6e844432733aa490c8539e18f7c5bb2364776b4755",
+      "bytes": 29,
+      "kind": "diagnostic"
+    },
+    "spend/reservations/1795275290505-0": {
+      "digest": "83b4fb4a6afd6bba9f7b97770e8191cdf56a11003f98db5ccd274345e44c1793",
+      "bytes": 34,
+      "kind": "diagnostic"
+    },
+    "spend/reservations/1795275290505-1": {
+      "digest": "393f319d553d0c332a45974b60cb34a39ac7b3d090a54f77bd43428db2803f88",
+      "bytes": 34,
+      "kind": "diagnostic"
+    },
+    "spend/reservations/1795275290505-2": {
+      "digest": "96384f40ab6b693486fbcd05a4d7091d0d81710ac6138f325f8fd973b6e75b25",
+      "bytes": 34,
+      "kind": "diagnostic"
+    },
+    "spend/reset/1/100000000": {
+      "digest": "c95cc51193207150400f2fd2143abb1036a980e1f208a2d04b26d3bd3e524cd7",
+      "bytes": 23,
+      "kind": "diagnostic"
+    },
+    "spend/settled/1795275290505-0/1/answered/120000": {
+      "digest": "8261a241bc0facab267b0d458a7a812334553532261b09af7fbef3ff87d42667",
+      "bytes": 47,
+      "kind": "diagnostic"
+    },
+    "spend/settled/1795275290505-1/1/answered/120000": {
+      "digest": "e35d3ae0d8a15b627ef1cf3401fc5ee2ed06ad906e07215705d66a8d98c0e9e5",
+      "bytes": 47,
+      "kind": "diagnostic"
+    },
+    "spend/settled/1795275290505-2/1/answered/120000": {
+      "digest": "c4b630c2c0c9898c776ae1ddb1300840adfa27d6160769adfdb178b10d3267b7",
+      "bytes": 47,
+      "kind": "diagnostic"
+    },
+    "spend/settling/1795275290505-0/1": {
+      "digest": "b04a38ec0d93255433d729a5aab447bdff1c7bff250282f0424c74966959ef57",
+      "bytes": 32,
+      "kind": "diagnostic"
+    },
+    "spend/settling/1795275290505-1/1": {
+      "digest": "4916cdc72ef9e14fd342fb9675af2fef58054e1558292b72460f13706bec9008",
+      "bytes": 32,
+      "kind": "diagnostic"
+    },
+    "spend/settling/1795275290505-2/1": {
+      "digest": "3fdc8ca507243747d616367c8d97336cd33b99a591f406aeba0964e797209aab",
+      "bytes": 32,
+      "kind": "diagnostic"
+    },
+    "spend/turn/1/1": {
+      "digest": "d802d7bab2ff113173b55954bc87024a2041146cfd0f31f44256eb7fa5a55526",
+      "bytes": 14,
+      "kind": "diagnostic"
+    },
+    "spend/turn/1/2": {
+      "digest": "281c7567d96722d2e6cea836429f150574bf7f63d5fe8508033c689e2a015ed3",
+      "bytes": 14,
+      "kind": "diagnostic"
+    },
+    "spend/turn/1/3": {
+      "digest": "3734df982efe1865b61f9de5b4724c1b666a641b76c6f2822d990cacf73b39cc",
+      "bytes": 14,
+      "kind": "diagnostic"
+    },
+    "spend/turn/1/4": {
+      "digest": "4b680be242c853ddbc8815f7e6ddb21e120ba56734149836c0440e2c040fd272",
+      "bytes": 14,
+      "kind": "diagnostic"
+    }
+  },
+  "runs": {
+    "1795275290505-0": {
+      "entries": {
+        "admitted": {
+          "digest": "a51441f5da63c26bce4e74ecf12ce0c08f2ffc3898aeb226fa04f3d3796d876a",
+          "bytes": 15,
+          "kind": "diagnostic"
+        },
+        "holds/artifacts/mask/3a75276e1d1d1dc2e888d3a2eb1ebbf422cb544ebe95f609367c0a8ebc8b0c38": {
+          "digest": "4f3a869b085039b29d1de38f0d9d7796ce970aaaf83412457ec776263d1f8b6c",
+          "bytes": 17,
+          "kind": "output"
+        },
+        "outputs/mask": {
+          "digest": "4f3a869b085039b29d1de38f0d9d7796ce970aaaf83412457ec776263d1f8b6c",
+          "bytes": 17,
+          "kind": "output"
+        },
+        "record.json": {
+          "digest": "a51441f5da63c26bce4e74ecf12ce0c08f2ffc3898aeb226fa04f3d3796d876a",
+          "bytes": 15,
+          "kind": "diagnostic"
+        }
+      }
+    },
+    "1795275290505-1": {
+      "entries": {
+        "admitted": {
+          "digest": "ffb9b327303453840eae4d54e3807c50f04840e66eead82bd88efad875a03f97",
+          "bytes": 15,
+          "kind": "diagnostic"
+        },
+        "holds/artifacts/mask/22d78be08e2f92c4d6e6f78021e3460576edf841239a32a018a720fed504ef5e": {
+          "digest": "ac1f590254f9ce516c43f637644b1f8f61cf20f5d1b93bb14c9b88e37f14e79d",
+          "bytes": 17,
+          "kind": "output"
+        },
+        "outputs/mask": {
+          "digest": "ac1f590254f9ce516c43f637644b1f8f61cf20f5d1b93bb14c9b88e37f14e79d",
+          "bytes": 17,
+          "kind": "output"
+        },
+        "record.json": {
+          "digest": "ffb9b327303453840eae4d54e3807c50f04840e66eead82bd88efad875a03f97",
+          "bytes": 15,
+          "kind": "diagnostic"
+        }
+      }
+    },
+    "1795275290505-2": {
+      "entries": {
+        "admitted": {
+          "digest": "7d71d4400fc407cdf695de93ad512fbfe248950ad2e862bdfb75956d0e3c5e9d",
+          "bytes": 15,
+          "kind": "diagnostic"
+        },
+        "holds/artifacts/mask/464513982f86657328e7f1ff8316325016b400b89b2010c85a1f65ee54f4f6b1": {
+          "digest": "b31c61c1aef90c67997afa61fa9497c48d2f013a96cf8857e8f143e67768e33e",
+          "bytes": 17,
+          "kind": "output"
+        },
+        "outputs/mask": {
+          "digest": "b31c61c1aef90c67997afa61fa9497c48d2f013a96cf8857e8f143e67768e33e",
+          "bytes": 17,
+          "kind": "output"
+        },
+        "record.json": {
+          "digest": "7d71d4400fc407cdf695de93ad512fbfe248950ad2e862bdfb75956d0e3c5e9d",
+          "bytes": 15,
+          "kind": "diagnostic"
+        }
+      }
+    }
+  }
+}

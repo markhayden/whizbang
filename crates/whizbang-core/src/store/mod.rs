@@ -10,8 +10,11 @@
 //! <root>/
 //!   CURRENT               the pointer: the current generation's number and a newline
 //!   LOCK                  the writer lock; it holds one line saying who the writer is
-//!   generations/<n>.json  generation n: every name it holds, outside runs and by run,
-//!                         with the digest of its content and the kind of the reference
+//!   generations/<n>.json  generation n: the store's few fixed names, each with the
+//!                         digest of its content and the kind of the reference, and the
+//!                         digest of the pack that holds each of its 256 buckets
+//!   generations/<sha-256>.pack
+//!                         a pack of buckets, named by the digest of its bytes
 //!   objects/<sha-256>     stored content, each file named by the digest of its bytes
 //!   staging/<token>/      the files of one publication on their way in
 //! ```
@@ -27,6 +30,19 @@
 //! for its owner only (0600): the root when the store makes it, the directories above the
 //! root that it has to make, staging, stored content, generations, the pointer and the
 //! lock file.
+//!
+//! # Buckets
+//!
+//! Every name of a namespace that grows with use (the names of runs, of request ids,
+//! of the ledger, of imports and of artifacts) is in one of 256 buckets, each a file
+//! of the store's content named by its digest, held in packs; the generation file holds the few fixed
+//! names (those with no `/`) and the 256 digests, and so does not grow with the store
+//! (ADR 0047; [`buckets`] has the rule for which bucket a name is in). A publication
+//! writes the buckets it changed, in one pack beside the generation files (several for
+//! many large buckets), and the generation file. A generation file of format 4,
+//! the whole store in one file, is read as it is, and the first publication onto it
+//! writes every bucket and format 5. A bucket is read once by a writer or a reader:
+//! those of the last generation it read are kept in memory by their digest.
 //!
 //! # What a store is
 //!
@@ -154,7 +170,7 @@
 //! # Prune
 //!
 //! Deleting unnames; [`Store::prune`] removes: the files of generations older than the
-//! current one, and stored content that no generation left names. Two things are left
+//! current one, and stored content, buckets among it, that no generation left names. Two things are left
 //! though nothing current names them. A generation that a reader still holds, with all
 //! it names: a reader shares the file of the generation of its latest snapshot, and prune
 //! removes only a generation file that it can take alone. The writer holds a generation
@@ -182,16 +198,19 @@
 //!    every publication that names content, whether or not it staged any: content that was
 //!    already there may have arrived by a rename that no sync has made durable yet.
 //! 3. The new generation (the one current at this step with this publication's names
-//!    applied, numbered one higher) is written to staging and synced, renamed into
-//!    `generations/`, and `generations/` is synced. From here to the end, one publication
-//!    of a process runs at a time.
+//!    applied, numbered one higher) is written: the pack of the buckets it changed,
+//!    when it changed any, under its digest in `generations/`, synced; then its
+//!    generation file to staging, synced, renamed into `generations/`, and `generations/`
+//!    synced, which makes both durable. From here to the end, one publication of a process runs at a time.
 //! 4. The new pointer is written to staging and synced, and renamed over `CURRENT`.
 //! 5. The root is synced.
 //! 6. The file of every generation older than the new one that nobody holds is removed,
 //!    each once it is taken alone, as prune removes it; their directory is not synced,
 //!    since a removal a crash undoes leaves an older file that the next publication or
-//!    prune removes again. Nothing here can fail the publication: it is durable already,
-//!    and what is not removed now is removed later. Content is left for prune.
+//!    prune removes again. Then every bucket this writer has superseded that neither the
+//!    new generation nor a generation file still there names is removed (ADR 0047).
+//!    Nothing here can fail the publication: it is durable already, and what is not
+//!    removed now is removed later. Other content is left for prune.
 //!
 //! There are two guarantees, and they are reached at different steps:
 //!
@@ -225,10 +244,12 @@
 //! generation names can remain under `objects/`; it is complete, it is harmless, and the
 //! next prune removes it.
 
+pub mod buckets;
 mod digest;
 mod error;
 pub mod fs;
 mod generation;
+pub mod mounts;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
@@ -238,7 +259,11 @@ use std::sync::{Arc, Mutex, TryLockError};
 
 pub use digest::Digest;
 pub use error::Error;
-pub use generation::{Entry, GENERATION_FORMAT, Generation, Kind, Run, SCOPED_PREFIX};
+pub use generation::{
+    Entry, GENERATION_FORMAT, Generation, Imported, Kind, Run, SCOPED_PREFIX, WHOLE_FORMAT,
+};
+
+use generation::{Bucket, Packed};
 
 use fs::{Fs, Held, LockFile};
 
@@ -266,6 +291,10 @@ impl Layout {
     }
     fn object(&self, digest: &Digest) -> PathBuf {
         self.objects().join(digest.hex())
+    }
+    /// A pack of buckets, beside the generation files that name it (ADR 0047).
+    fn pack(&self, digest: &Digest) -> PathBuf {
+        self.generations().join(format!("{}.pack", digest.hex()))
     }
     fn staging(&self) -> PathBuf {
         self.root.join("staging")
@@ -299,6 +328,10 @@ fn parent_of(dir: &Path) -> &Path {
 struct Files {
     fs: Arc<dyn Fs>,
     layout: Layout,
+    /// The packs of the last generation read or written, by digest, with the buckets of
+    /// each that generation named: a pack is immutable and named by its digest, so one
+    /// read is not read again while it is here.
+    packs: Arc<Mutex<BTreeMap<Digest, Packed>>>,
 }
 
 impl Files {
@@ -392,6 +425,34 @@ impl Files {
         Ok((removed, in_use))
     }
 
+    /// Removes each bucket in `superseded` that neither `current` nor any generation in
+    /// `in_use` (those whose files a reader or a hold shares) names, and takes it out of
+    /// `superseded`; one that is still named stays there, for a later publication. A
+    /// held generation that cannot be read keeps every bucket. Only the writer calls
+    /// this, as the last step of a publication, with the publishing step held.
+    fn remove_superseded(
+        &self,
+        current: &Generation,
+        in_use: &[u64],
+        superseded: &mut BTreeSet<Digest>,
+    ) -> Result<()> {
+        let mut named: BTreeSet<Digest> = current.bucket_digests().collect();
+        for &number in in_use {
+            named.extend(self.bucket_digests_of(number)?);
+        }
+        let gone: Vec<Digest> = superseded.difference(&named).copied().collect();
+        for digest in gone {
+            let path = self.layout.pack(&digest);
+            match self.fs.remove_all(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(Error::io("remove", &path)(error)),
+            }
+            superseded.remove(&digest);
+        }
+        Ok(())
+    }
+
     /// The pointer names a generation that has no file.
     fn no_file(&self, number: u64) -> Error {
         Error::corrupt(
@@ -455,17 +516,35 @@ impl Files {
         struct Format {
             format: u32,
         }
-        if let Ok(Format { format }) = serde_json::from_slice(&bytes)
-            && format != GENERATION_FORMAT
-        {
-            return Err(Error::OtherFormat {
-                path,
-                format,
-                reads: GENERATION_FORMAT,
-            });
-        }
-        let generation: Generation =
-            serde_json::from_slice(&bytes).map_err(|e| Error::corrupt(&path, e.to_string()))?;
+        let generation = match serde_json::from_slice(&bytes) {
+            Ok(Format {
+                format: WHOLE_FORMAT,
+            }) => {
+                // The format before buckets: the whole store in this one file.
+                #[derive(serde::Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct Whole {
+                    #[allow(dead_code)]
+                    format: u32,
+                    number: u64,
+                    #[serde(deserialize_with = "generation::unique")]
+                    entries: BTreeMap<String, Entry>,
+                    #[serde(deserialize_with = "generation::unique")]
+                    runs: BTreeMap<String, Run>,
+                }
+                let whole: Whole = serde_json::from_slice(&bytes)
+                    .map_err(|e| Error::corrupt(&path, e.to_string()))?;
+                Generation::from_whole(whole.number, whole.entries, whole.runs)
+            }
+            Ok(Format { format }) if format != GENERATION_FORMAT => {
+                return Err(Error::OtherFormat {
+                    path,
+                    format,
+                    reads: GENERATION_FORMAT,
+                });
+            }
+            _ => self.bucketed(&path, &bytes)?,
+        };
         if generation.number != number {
             return Err(Error::corrupt(
                 &path,
@@ -473,6 +552,128 @@ impl Files {
             ));
         }
         Ok(generation)
+    }
+
+    /// A generation from its file of format 5, with the buckets it names: from this
+    /// value's memory where it holds them, and from their packs' files where it does not.
+    fn bucketed(&self, path: &Path, bytes: &[u8]) -> Result<Generation> {
+        let root: buckets::RootFile =
+            serde_json::from_slice(bytes).map_err(|e| Error::corrupt(path, e.to_string()))?;
+        let digests = buckets::digests(&root).map_err(|why| Error::corrupt(path, why))?;
+        buckets::check_fixed(&root.entries).map_err(|why| Error::corrupt(path, why))?;
+        let known = self.packs.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let mut read: BTreeMap<Digest, Packed> = BTreeMap::new();
+        let mut found = Vec::with_capacity(buckets::BUCKETS);
+        for (at, digest) in (0..=u8::MAX).zip(&digests) {
+            let Some(digest) = digest else {
+                found.push(Arc::new(Bucket::default()));
+                continue;
+            };
+            let in_memory = [read.get(digest), known.get(digest)]
+                .into_iter()
+                .flatten()
+                .find(|packed| packed.buckets.contains_key(&at))
+                .cloned();
+            let packed = match in_memory {
+                Some(packed) => packed,
+                None => self.pack(digest)?,
+            };
+            let bucket = packed.buckets.get(&at).cloned().ok_or_else(|| {
+                let pack = self.layout.pack(digest);
+                Error::corrupt(&pack, format!("the pack {digest} holds no bucket {at}"))
+            })?;
+            read.insert(*digest, packed);
+            found.push(bucket);
+        }
+        let sizes = read.iter().map(|(digest, p)| (*digest, p.total)).collect();
+        *self.packs.lock().unwrap_or_else(|e| e.into_inner()) = read;
+        Ok(Generation::from_buckets(
+            root.number,
+            root.entries,
+            found,
+            digests,
+            sizes,
+        ))
+    }
+
+    /// The pack of this digest, from its file, checked against its digest.
+    fn pack(&self, digest: &Digest) -> Result<Packed> {
+        let path = self.layout.pack(digest);
+        let most = GENERATION_MAX_BYTES + 1;
+        let bytes = self.fs.read_at_most(&path, most).map_err(|source| {
+            if source.kind() == io::ErrorKind::NotFound {
+                Error::corrupt(&path, format!("the pack {digest} is missing"))
+            } else {
+                Error::io("read", &path)(source)
+            }
+        })?;
+        if bytes.len() as u64 > GENERATION_MAX_BYTES {
+            return Err(Error::corrupt(
+                &path,
+                format!("the pack {digest} is more than {GENERATION_MAX_BYTES} bytes"),
+            ));
+        }
+        let found = Digest::of_bytes(&bytes);
+        if found != *digest {
+            return Err(Error::corrupt(
+                &path,
+                format!("the pack {digest} has the digest {found} here"),
+            ));
+        }
+        let buckets = buckets::pack_from(&bytes).map_err(|why| Error::corrupt(&path, why))?;
+        let total = buckets.len();
+        Ok(Packed {
+            buckets: Arc::new(buckets),
+            total,
+        })
+    }
+
+    /// Writes a pack's file under its digest, unless a whole one is there: a file there
+    /// that is not whole (cut short by a crash as it was written, so named by no
+    /// generation) is written again.
+    fn place_pack(&self, text: &[u8], digest: &Digest) -> Result<()> {
+        let path = self.layout.pack(digest);
+        if self.exists(&path)? {
+            let most = text.len() as u64 + 1;
+            match self.fs.read_at_most(&path, most) {
+                Ok(there) if there == text => return Ok(()),
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(Error::io("read", &path)(error)),
+            }
+            self.fs
+                .remove_all(&path)
+                .map_err(Error::io("remove", &path))?;
+        }
+        self.fs
+            .write_new(&path, text)
+            .map_err(Error::io("write", &path))
+    }
+
+    /// The digests of the buckets generation `number` names, from its file alone; none
+    /// for a file of the format before buckets.
+    fn bucket_digests_of(&self, number: u64) -> Result<Vec<Digest>> {
+        let path = self.layout.generation(number);
+        let most = GENERATION_MAX_BYTES + 1;
+        let bytes = self
+            .fs
+            .read_at_most(&path, most)
+            .map_err(Error::io("read", &path))?;
+        #[derive(serde::Deserialize)]
+        struct Format {
+            format: u32,
+        }
+        match serde_json::from_slice(&bytes) {
+            Ok(Format {
+                format: WHOLE_FORMAT,
+            }) => Ok(Vec::new()),
+            _ => {
+                let root: buckets::RootFile = serde_json::from_slice(&bytes)
+                    .map_err(|e| Error::corrupt(&path, e.to_string()))?;
+                let digests = buckets::digests(&root).map_err(|why| Error::corrupt(&path, why))?;
+                Ok(digests.into_iter().flatten().collect())
+            }
+        }
     }
 
     fn read(&self, entry: &Entry) -> Result<Vec<u8>> {
@@ -556,6 +757,27 @@ impl Files {
                 Ok(())
             }
             Err(error) => Err(Error::io("look at", root)(error)),
+        }
+    }
+
+    /// Whether the store's folder is on a local file system, as the system's table of
+    /// mounts says (plan m6, task S1, item 4): one of a network type is refused
+    /// ([`Error::NetworkFileSystem`]); a table that cannot be read refuses a writer
+    /// ([`Error::MountsUnknown`]) and not a reader. A file system that does not say,
+    /// as the test kit's do, is not asked.
+    fn local(&self, writer: bool) -> Result<()> {
+        let root = &self.layout.root;
+        match self.fs.file_system_type(root) {
+            Ok(Some(kind)) if mounts::is_network(&kind) => Err(Error::NetworkFileSystem {
+                root: root.clone(),
+                kind,
+            }),
+            Ok(_) => Ok(()),
+            Err(why) if writer => Err(Error::MountsUnknown {
+                root: root.clone(),
+                why: why.to_string(),
+            }),
+            Err(_) => Ok(()),
         }
     }
 
@@ -713,8 +935,10 @@ impl Reader {
             layout: Layout {
                 root: root.to_path_buf(),
             },
+            packs: Arc::new(Mutex::new(BTreeMap::new())),
         };
         files.whose()?;
+        files.local(false)?;
         if !files.exists(root)? {
             return Err(Error::Missing {
                 root: root.to_path_buf(),
@@ -787,6 +1011,9 @@ pub struct Store {
     /// The most bytes a generation file this value writes may be:
     /// [`GENERATION_MAX_BYTES`], unless a test lowered it.
     generation_max: std::sync::atomic::AtomicU64,
+    /// The buckets this writer superseded and has not yet removed, because a generation
+    /// that a reader or a hold shares still named them (ADR 0047).
+    superseded: Mutex<BTreeSet<Digest>>,
     /// Whether the open that gave this value made the store.
     created: bool,
     /// The writer lock, held for as long as this value lives.
@@ -936,9 +1163,10 @@ impl Store {
         self.created
     }
 
-    /// For tests: from here on this value writes no generation file of more than this
-    /// many bytes, in place of [`GENERATION_MAX_BYTES`]. It is never more than that,
-    /// and it changes nothing of what is read: a file up to the real limit is read.
+    /// For tests: from here on this value publishes no generation whose names take more
+    /// than this many bytes written ([`Generation::names_bytes`]: its generation file and
+    /// each of its buckets), in place of [`GENERATION_MAX_BYTES`], which holds each file
+    /// alone. It is never more than that, and it changes nothing of what is read.
     #[doc(hidden)]
     pub fn limit_generations_to(&self, bytes: u64) {
         let bytes = bytes.min(GENERATION_MAX_BYTES);
@@ -1027,8 +1255,10 @@ impl Store {
             layout: Layout {
                 root: root.to_path_buf(),
             },
+            packs: Arc::new(Mutex::new(BTreeMap::new())),
         };
         files.whose()?;
+        files.local(true)?;
         let fs = files.fs.as_ref();
         let layout = &files.layout;
         let lock_path = layout.lock();
@@ -1060,6 +1290,17 @@ impl Store {
                 holder: files.holder(),
             });
         };
+        // The same lock, asked through a second opening of its file, is refused where
+        // locks hold; granted, a second writer would be admitted beside this one (plan
+        // m6, task S1, item 4). Nothing has been changed yet.
+        if fs
+            .second_lock_granted(&lock_path)
+            .map_err(Error::io("lock", &lock_path))?
+        {
+            return Err(Error::LocksDoNotHold {
+                root: root.to_path_buf(),
+            });
+        }
 
         // The lock is held: no other writer is at work, and none can start. Everything is
         // read again, and this reading is the one that counts: a refusal here is of the
@@ -1117,6 +1358,7 @@ impl Store {
             made_runs: Arc::new(Mutex::new(BTreeMap::new())),
             started: Arc::new(AtomicUsize::new(0)),
             generation_max: std::sync::atomic::AtomicU64::new(GENERATION_MAX_BYTES),
+            superseded: Mutex::new(BTreeSet::new()),
             created,
             lock,
         })
@@ -1200,7 +1442,8 @@ impl Store {
             when_deleted: BTreeMap::new(),
             held_in: BTreeMap::new(),
             kept_in: BTreeMap::new(),
-            marked: BTreeSet::new(),
+            marked: BTreeMap::new(),
+            collecting: None,
         })
     }
 
@@ -1215,6 +1458,26 @@ impl Store {
         let mut publication = self.begin()?;
         publication.deleted = runs.iter().map(|run| run.to_string()).collect();
         publication.publish()
+    }
+
+    /// Lets go of every import that no run took and that is older than `older_than_ms`
+    /// at `now_ms` (plan m6, task S1, item 7): each artifact an import brought in and
+    /// marked ([`Publication::mark_imported`]) whose mark is that old and that no run
+    /// holds, with its mark and the names that came in with it, in one publication. A
+    /// run's admission holds what it takes, and both are decided in the publishing
+    /// step, so an import a run takes stays: the run that is admitted first holds it,
+    /// and one admitted after the collection gives the name back with its hold. A mark
+    /// with no time (one written before marks had one) is never let go. The content
+    /// stays on disk until [`Store::prune`]. What comes back is the publication, and
+    /// how many names it let go.
+    pub fn collect_unused_imports(&self, older_than_ms: u64, now_ms: u64) -> Result<Collected> {
+        let mut publication = self.begin()?;
+        let counted = publication.collect(older_than_ms, now_ms);
+        let published = publication.publish()?;
+        Ok(Collected {
+            generation: published.generation,
+            names: counted.load(Ordering::SeqCst),
+        })
     }
 
     /// Removes what nothing needs: the files of generations older than the current one,
@@ -1238,6 +1501,7 @@ impl Store {
         let _held = self.publishing.lock().unwrap_or_else(|e| e.into_inner());
         let current = files.snapshot()?;
         let mut named: BTreeSet<Digest> = current.references().map(|entry| entry.digest).collect();
+        named.extend(current.bucket_digests());
         let mut pruned = Pruned::default();
 
         let generations = layout.generations();
@@ -1245,6 +1509,7 @@ impl Store {
         for &number in &in_use {
             let held = files.generation(number)?;
             named.extend(held.references().map(|entry| entry.digest));
+            named.extend(held.bucket_digests());
         }
         pruned.generations_removed = removed;
         pruned.generations_in_use = in_use;
@@ -1272,6 +1537,25 @@ impl Store {
         if pruned.objects_removed > 0 {
             fs.sync_dir(&objects).map_err(Error::io("sync", &objects))?;
         }
+        // The packs no generation left names, a crash's among them (ADR 0047).
+        let mut superseded = self.superseded.lock().unwrap_or_else(|e| e.into_inner());
+        for file in fs
+            .list(&generations)
+            .map_err(Error::io("list", &generations))?
+        {
+            let Some(digest) = pack_digest(&file) else {
+                continue;
+            };
+            if !named.contains(&digest) {
+                fs.remove_all(&file).map_err(Error::io("remove", &file))?;
+                superseded.remove(&digest);
+                pruned.buckets_removed += 1;
+            }
+        }
+        if pruned.buckets_removed > 0 {
+            fs.sync_dir(&generations)
+                .map_err(Error::io("sync", &generations))?;
+        }
         Ok(pruned)
     }
 }
@@ -1298,8 +1582,17 @@ pub struct Pruned {
     /// The older generations left because a reader holds them, in order. Everything they
     /// name was left too.
     pub generations_in_use: Vec<u64>,
-    /// How many files of stored content were removed.
+    /// How many files of stored content were removed: what names referenced.
     pub objects_removed: u64,
+    /// How many packs of buckets were removed: those no generation left names (ADR
+    /// 0047).
+    pub buckets_removed: u64,
+}
+
+/// The digest of a pack, from its file's name under `generations/`.
+fn pack_digest(file: &Path) -> Option<Digest> {
+    let name = file.file_name()?.to_str()?.strip_suffix(".pack")?;
+    Digest::from_hex(name)
 }
 
 /// The number of a generation file, from its name.
@@ -1334,6 +1627,52 @@ fn create_durably(fs: &dyn Fs, dir: &Path, parents: bool) -> Result<()> {
         Err(error) => return Err(Error::io("create", dir)(error)),
     }
     fs.sync_dir(parent).map_err(Error::io("sync", parent))
+}
+
+/// What a collection of unused imports did ([`Store::collect_unused_imports`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Collected {
+    /// The generation it published.
+    pub generation: u64,
+    /// How many names it let go: the imports, their marks and the names that came in
+    /// with them.
+    pub names: u64,
+}
+
+/// The names an unused-import collection lets go in this generation, and the imports
+/// whose marks it lets go: each name a mark names whose import is older than
+/// `older_than_ms` at `now_ms` and that no run holds, with its mark and the names that
+/// came in with it. A mark that says nothing of its import is left, with what it marks.
+fn unused_imports(
+    generation: &Generation,
+    older_than_ms: u64,
+    now_ms: u64,
+) -> (Vec<String>, Vec<String>) {
+    let held: BTreeSet<&str> = (generation.runs().values())
+        .flat_map(|run| run.entries.keys())
+        .filter_map(|name| name.strip_prefix(HOLDS_PREFIX))
+        .collect();
+    let marks = (generation.entries().range(IMPORTED_PREFIX.to_owned()..))
+        .take_while(|(name, _)| name.starts_with(IMPORTED_PREFIX));
+    let (mut gone, mut imports) = (Vec::new(), Vec::new());
+    for (mark, _) in marks {
+        let name = &mark[IMPORTED_PREFIX.len()..];
+        let Some(imported) = generation.imported(name) else {
+            continue;
+        };
+        if held.contains(name) || imported.at_ms.saturating_add(older_than_ms) > now_ms {
+            continue;
+        }
+        gone.push(name.to_owned());
+        gone.push(mark.clone());
+        let with = imported.with.iter();
+        gone.extend(
+            with.filter(|beside| !held.contains(beside.as_str()))
+                .cloned(),
+        );
+        imports.push(name.to_owned());
+    }
+    (gone, imports)
 }
 
 /// A publication that succeeded: the generation is visible and durable.
@@ -1380,8 +1719,11 @@ pub struct Publication<'s> {
     held_in: BTreeMap<String, BTreeMap<String, Entry>>,
     /// The names it keeps in runs, by run.
     kept_in: BTreeMap<String, BTreeMap<String, Entry>>,
-    /// The names outside runs it marks as imported.
-    marked: BTreeSet<String>,
+    /// The names outside runs it marks as imported, each with what its mark says.
+    marked: BTreeMap<String, Imported>,
+    /// The age and the time of a collection of unused imports, when it is one, and
+    /// where it counts the names it lets go.
+    collecting: Option<(u64, u64, Arc<AtomicU64>)>,
 }
 
 /// What the names that are made and never put start with: the records of request ids
@@ -1609,15 +1951,43 @@ impl Publication<'_> {
         Ok(digest)
     }
 
-    /// Marks `name`, a name outside runs, as brought in by an import: the name
-    /// `imported/<name>` is given what `name` holds when this is published, and a
-    /// deletion never removes a name that is marked. A name under [`MADE_PREFIXES`] is
-    /// refused ([`Error::MadeOnly`]). Where the generation does not hold `name` then,
-    /// nothing is marked.
+    /// Marks `name`, a name outside runs, as brought in by an import now: the name
+    /// `imported/<name>` is given what `name` holds, and the mark says when the import
+    /// was made ([`Generation::imported`]), and a deletion
+    /// never removes a name that is marked. A name under [`MADE_PREFIXES`] is refused
+    /// ([`Error::MadeOnly`]). Where the generation does not hold `name` then, nothing
+    /// is marked. An import that no run took is let go by the store's collection once it
+    /// is older than an age ([`Store::collect_unused_imports`]).
     pub fn mark_imported(&mut self, name: &str) -> Result<()> {
+        self.mark_imported_with(name, &[])
+    }
+
+    /// As [`Publication::mark_imported`], with the names outside runs that came in with
+    /// the import (a picture's name of the file it came from, the playground's record of
+    /// it): the collection that lets the import go lets them go with it.
+    pub fn mark_imported_with(&mut self, name: &str, with: &[String]) -> Result<()> {
         made_only(name)?;
-        self.marked.insert(name.to_string());
+        for beside in with {
+            made_only(beside)?;
+        }
+        let at_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_millis() as u64);
+        let imported = Imported {
+            at_ms,
+            with: with.to_vec(),
+        };
+        self.marked.insert(name.to_string(), imported);
         Ok(())
+    }
+
+    /// Lets go, in this publication, of every import that no run took and that is older
+    /// than `older_than_ms` at `now_ms`: its name, its mark and the names that came in
+    /// with it ([`Store::collect_unused_imports`]).
+    fn collect(&mut self, older_than_ms: u64, now_ms: u64) -> Arc<AtomicU64> {
+        let counted = Arc::new(AtomicU64::new(0));
+        self.collecting = Some((older_than_ms, now_ms, counted.clone()));
+        counted
     }
 
     /// Stages the bytes unless the store or this publication already holds them.
@@ -1724,7 +2094,7 @@ impl Publication<'_> {
         // step unless a run that is left holds it or an import marked it.
         let mut released = BTreeSet::new();
         for run in &self.deleted {
-            let Some(gone) = generation.runs.remove(run) else {
+            let Some(gone) = generation.remove_run(run) else {
                 return Err(Error::NoSuchRun { run: run.clone() });
             };
             let held = gone.entries.into_keys();
@@ -1736,38 +2106,36 @@ impl Publication<'_> {
         if let Some(run) = self
             .created
             .iter()
-            .find(|run| generation.runs.contains_key(*run))
+            .find(|run| generation.run(run).is_some())
         {
             return Err(Error::RunExists { run: run.clone() });
         }
         if let Some(run) = self
             .extended
             .iter()
-            .find(|run| !generation.runs.contains_key(*run))
+            .find(|run| generation.run(run).is_none())
         {
             return Err(Error::NoSuchRun { run: run.clone() });
         }
-        if let Some(name) = self
-            .made
-            .iter()
-            .find(|name| generation.entries.contains_key(*name))
-        {
+        if let Some(name) = self.made.iter().find(|name| generation.get(name).is_some()) {
             return Err(Error::NameExists { name: name.clone() });
         }
-        generation.entries.extend(self.names.clone());
+        for (name, entry) in &self.names {
+            generation.insert_entry(name.clone(), entry.clone());
+        }
         for (name, entry) in &self.kept {
-            let held = generation.entries.get(name);
+            let held = generation.get(name);
             if held.is_none_or(|held| held.kind != Kind::Output) {
-                generation.entries.insert(name.clone(), entry.clone());
+                generation.insert_entry(name.clone(), entry.clone());
             }
         }
         for (run, names) in &self.run_names {
-            let run = generation.runs.entry(run.clone()).or_default();
+            let run = generation.run_mut(run);
             run.entries.extend(names.clone());
         }
         for (run, names) in &self.kept_in {
             // Only into a run that is there: a deleted run is not made again.
-            let Some(run) = generation.runs.get_mut(run) else {
+            let Some(run) = generation.existing_run_mut(run) else {
                 continue;
             };
             for (name, entry) in names {
@@ -1779,24 +2147,33 @@ impl Publication<'_> {
         }
         for (run, names) in &self.held_in {
             for (name, read) in names {
-                let entry = match generation.entries.get(name) {
+                let entry = match generation.get(name) {
                     Some(held) if held.kind == Kind::Output => held.clone(),
                     // Removed since it was read: given back, as it was read.
                     _ => {
-                        generation.entries.insert(name.clone(), read.clone());
+                        generation.insert_entry(name.clone(), read.clone());
                         read.clone()
                     }
                 };
-                let run = generation.runs.entry(run.clone()).or_default();
+                let run = generation.run_mut(run);
                 run.entries.insert(format!("{HOLDS_PREFIX}{name}"), entry);
             }
         }
-        for name in &self.marked {
-            if let Some(entry) = generation.entries.get(name).cloned() {
-                generation
-                    .entries
-                    .insert(format!("{IMPORTED_PREFIX}{name}"), entry);
+        for (name, imported) in &self.marked {
+            if let Some(entry) = generation.get(name).cloned() {
+                generation.insert_entry(format!("{IMPORTED_PREFIX}{name}"), entry);
+                generation.set_imported(name, imported.clone());
             }
+        }
+        if let Some((older_than_ms, now_ms, counted)) = &self.collecting {
+            let (gone, imports) = unused_imports(&generation, *older_than_ms, *now_ms);
+            for name in &gone {
+                generation.remove_entry(name);
+            }
+            for name in &imports {
+                generation.remove_imported(name);
+            }
+            counted.store(gone.len() as u64, Ordering::SeqCst);
         }
         // What the deleted runs held and nothing holds now. Decided from this generation
         // alone: the holds of the runs left and the marks of imports. That is the whole
@@ -1806,27 +2183,27 @@ impl Publication<'_> {
         // ([`GENERATION_FORMAT`]).
         for name in released {
             let hold = format!("{HOLDS_PREFIX}{name}");
-            let still_held = generation
-                .runs
-                .values()
-                .any(|run| run.entries.contains_key(&hold));
+            let still_held = generation.any_run_has(&hold);
             let marked = format!("{IMPORTED_PREFIX}{name}");
-            if !still_held && !generation.entries.contains_key(&marked) && made_only(&name).is_ok()
-            {
-                generation.entries.remove(&name);
+            if !still_held && generation.get(&marked).is_none() && made_only(&name).is_ok() {
+                generation.remove_entry(&name);
             }
         }
-        let mut text = serde_json::to_vec_pretty(&generation)
-            .map_err(|e| Error::corrupt(&layout.generation(number), e.to_string()))?;
-        text.push(b'\n');
         // What a reader would refuse is not written: nothing of this is visible yet.
         let limit = self.store.generation_max.load(Ordering::SeqCst);
-        if text.len() as u64 > limit {
-            return Err(Error::GenerationTooLarge {
-                bytes: text.len() as u64,
-                limit,
-            });
+        let encoded = generation
+            .encode(limit)
+            .map_err(|(bytes, limit)| Error::GenerationTooLarge { bytes, limit })?;
+        // The pack of the buckets it changed, written under its digest beside the
+        // generation files and synced, before the generation file that names it; the
+        // sync of their folder below makes both durable. It is written in place, not
+        // staged: no generation that became visible names a pack that is not whole and
+        // durable, so a file a crash cut short is named by nothing, and is written again
+        // (ADR 0047).
+        for (text, digest) in &encoded.packs {
+            files.place_pack(text, digest)?;
         }
+        let text = encoded.root;
         let staged = self.dir.join("generation.json");
         fs.write_new(&staged, &text)
             .map_err(Error::io("write", &staged))?;
@@ -1903,7 +2280,31 @@ impl Publication<'_> {
         // 6. The files of older generations that nobody holds (ADR 0036). Content stays
         // for prune. The new generation is durable by now, so this is clearing up: a
         // failure here removes less and reports nothing, and prune still does it all.
-        let _ = files.remove_older_generations(number);
+        let held = files.remove_older_generations(number);
+        // The packs this generation names are kept in memory, for the next snapshot; and
+        // those it superseded go, once nothing left names them.
+        *files.packs.lock().unwrap_or_else(|e| e.into_inner()) = generation.kept_packs();
+        let mut superseded = self
+            .store
+            .superseded
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        superseded.extend(encoded.superseded);
+        if let Ok((_, in_use)) = held {
+            // Content another publication of this process is bringing in is kept too,
+            // whatever it is.
+            let bringing: BTreeSet<Digest> = (self.store.in_progress.lock())
+                .unwrap_or_else(|e| e.into_inner())
+                .values()
+                .flatten()
+                .copied()
+                .collect();
+            let mut candidates: BTreeSet<Digest> =
+                superseded.difference(&bringing).copied().collect();
+            let _ = files.remove_superseded(&generation, &in_use, &mut candidates);
+            // What was not removed is looked at again by a later publication.
+            superseded.retain(|digest| candidates.contains(digest) || bringing.contains(digest));
+        }
         Ok(Published { generation: number })
     }
 }

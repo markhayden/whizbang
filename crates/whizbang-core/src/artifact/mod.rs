@@ -35,7 +35,8 @@ pub use picture::{Image, ImageRole};
 pub use plan::Plan;
 pub use series::Series;
 pub use stored::{
-    Contents, commit, get, get_anywhere, holds, holds_anywhere, import, name, put, type_anywhere,
+    Contents, commit, get, get_anywhere, holds, holds_anywhere, import, import_with, name, put,
+    type_anywhere,
 };
 
 use wire::{Reader, Writer};

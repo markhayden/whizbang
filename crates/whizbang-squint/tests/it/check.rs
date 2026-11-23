@@ -819,9 +819,12 @@ fn a_check_whose_end_is_refused_at_any_step_is_not_reported_as_completed_a_sweep
         let executor = world.engine(marking.clone(), Secrets::none());
         executor.submit(&world.check()).unwrap();
         let start = *marking.2.lock().unwrap();
-        (start, world.fs.events().len() - start)
+        let events = world.fs.events();
+        // The calls after the end is durable, which can fail without failing it.
+        let tidying = whizbang_testkit::stored::after_durable(&events, &world.root());
+        (start, events.len() - start, tidying)
     };
-    let (start, steps) = count;
+    let (start, steps, tidying) = count;
     assert!((5..40).contains(&steps), "{steps} calls");
     let mut seen = std::collections::BTreeSet::new();
     for step in 0..steps {
@@ -846,7 +849,7 @@ fn a_check_whose_end_is_refused_at_any_step_is_not_reported_as_completed_a_sweep
             // Removing the older generation's file (ADR 0036) and clearing the staging
             // away, after the end is durable, can fail without failing the run.
             Ok(finished) => {
-                assert!(step >= steps - 2, "step {step} of {steps}");
+                assert!(step >= steps - tidying, "step {step} of {steps}");
                 assert_eq!(finished.outcome().name(), "completed");
                 assert!(left.record().verdict().is_some());
             }

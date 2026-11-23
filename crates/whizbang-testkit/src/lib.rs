@@ -21,5 +21,6 @@ pub mod scratch;
 pub mod sending;
 pub mod source;
 pub mod spend;
+pub mod stored;
 pub mod threads;
 pub mod worker;

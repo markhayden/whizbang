@@ -716,13 +716,9 @@ fn a_refusal_is_the_error_and_not_its_own_cause() {
 
 /// The current generation's file, edited as JSON.
 fn edit_generation(world: &World, edit: impl FnOnce(&mut serde_json::Value)) {
-    let reader = Reader::open(&world.root, world.fs.clone()).unwrap();
-    let number = reader.snapshot().unwrap().number();
-    drop(reader);
-    let file = world
-        .root
-        .join("generations")
-        .join(format!("{number}.json"));
+    // The whole store in its one file, as the format before buckets wrote it, so that
+    // a name of it can be changed by hand (ADR 0047).
+    let file = whizbang_testkit::stored::whole(&world.root);
     let mut generation: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
     edit(&mut generation);

@@ -289,8 +289,14 @@ impl Offers {
     /// The backends that were made are as they were: a run is handed the one under
     /// the name its call resolved, declaring the identity it was admitted under
     /// (ADR 0015, "The backend a run is handed, and the lease's place").
-    pub fn over(mut self, inventory: Arc<dyn Inventory>) -> Offers {
-        self.installed = Some(InstalledRoster::over(self.roster.clone(), inventory));
+    ///
+    /// The inventory is told `secrets`, the secrets of the snapshot these offers were
+    /// read in, at every ask: a model's name that holds one is not looked up, whether
+    /// the key was given at the start or added to the env file since (plan m6, task S1,
+    /// item 6).
+    pub fn over(mut self, inventory: Arc<dyn Inventory>, secrets: &Secrets) -> Offers {
+        let installed = InstalledRoster::over(self.roster.clone(), inventory);
+        self.installed = Some(installed.knowing(secrets.clone()));
         self
     }
 

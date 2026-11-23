@@ -339,9 +339,9 @@ fn a_part_that_does_not_keep_to_a_name_made_once_fails_the_recovery() {
 
 /// How many events an open of the left store takes, how many more its recovery by
 /// two parts, and which of those is the last sync of the recovery's publication: the
-/// sync of the root after the pointer was replaced. Two events follow it, the removal
-/// of the older generation's file (ADR 0036) and of the publication's staging, which
-/// change no outcome.
+/// sync of the root after the pointer was replaced. The events that follow it, the
+/// removal of the older generation's file (ADR 0036), of the packs it alone named (ADR
+/// 0047) and of the publication's staging, change no outcome.
 fn events_of_a_recovery() -> (usize, usize, usize) {
     let world = World::left();
     let fs = Arc::new(ShimFs::new());
@@ -352,7 +352,15 @@ fn events_of_a_recovery() -> (usize, usize, usize) {
     let root = Event::SyncDir(world.root());
     assert_eq!(events[0], root, "the confirming sync comes first");
     let last_sync = events.iter().rposition(|event| *event == root).unwrap();
-    assert_eq!(last_sync, events.len() - 3, "{events:?}");
+    // What follows it only removes: older generations' files, the packs they alone
+    // named (ADR 0047), and the publication's staging.
+    assert!(
+        events[last_sync + 1..]
+            .iter()
+            .all(|event| matches!(event, Event::Remove(_) | Event::Read(_))),
+        "{events:?}"
+    );
+    assert!(events.len() - last_sync >= 3, "{events:?}");
     (opened, events.len(), last_sync)
 }
 
@@ -670,8 +678,10 @@ fn with_the_limit_set_low_a_recovery_that_cannot_be_published_leaves_deleting_an
     let part = marking("one");
     // The generation file as it is, and room for one name more: less than the three
     // names this recovery adds, and enough for the two it adds once a run is deleted.
-    let generation = world.root().join("generations").join("2.json");
-    let limit = std::fs::metadata(generation).unwrap().len() + 200;
+    // What the generation's names take, written: its file and each bucket (ADR 0047).
+    let held = Reader::open(&world.root(), Arc::new(ShimFs::new())).unwrap();
+    let limit = held.snapshot().unwrap().names_bytes() + 200;
+    drop(held);
     let limited = || with(&[&part]).limiting_generations_to(limit);
     let opening = world.open(&Arc::new(ShimFs::new()), limited());
     // No writer for anything that adds names: an executor cannot be built over

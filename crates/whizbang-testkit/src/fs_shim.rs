@@ -955,6 +955,13 @@ impl Fs for ShimFs {
         let _state = self.alive()?;
         self.real.exists(path)
     }
+    /// Asked of the disk beneath, and no event: a look that changes nothing a crash
+    /// could undo (plan m6, task S1, item 4).
+    fn second_lock_granted(&self, path: &Path) -> io::Result<bool> {
+        let _state = self.alive()?;
+        Ok(self.real.hold_lock_file(path, false)?.is_some())
+    }
+
     fn hold_lock_file(&self, path: &Path, create: bool) -> io::Result<Option<Box<dyn LockFile>>> {
         let event = Event::Lock(path.to_path_buf());
         let mut state = self.next_event(&event)?;

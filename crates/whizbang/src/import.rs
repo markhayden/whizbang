@@ -735,7 +735,13 @@ pub fn commit_to(
         return Ok(true);
     }
     let mut publication = store.begin().map_err(|error| error.to_string())?;
-    artifact::import(&mut publication, artifact, held).map_err(|error| error.to_string())?;
+    // The names that came in with it go with it when the store's collection lets an
+    // import that no run took go (plan m6, task S1, item 7).
+    let with: Vec<String> = (named.iter().cloned())
+        .chain(beside.iter().map(|(name, _)| name.clone()))
+        .collect();
+    artifact::import_with(&mut publication, artifact, held, &with)
+        .map_err(|error| error.to_string())?;
     if let Some(name) = unnamed {
         publication
             .put(name, id.to_string().as_bytes())

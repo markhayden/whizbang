@@ -9,7 +9,7 @@ use whizbang_core::store::{Digest, Error, Kind, Reader, Store};
 use whizbang_testkit::fs_shim::{Lost, ShimFs};
 use whizbang_testkit::scratch::Scratch;
 
-use super::{B, C, after_restart, contents, for_every_loss, losses, root};
+use super::{B, C, after_restart, contents, for_every_loss, losses, payloads, root};
 
 pub(super) const MASK: &[u8] = b"a mask two runs share";
 pub(super) const EXCHANGE: &[u8] = b"the exchange of a turn that failed";
@@ -75,7 +75,7 @@ fn a_run_holds_its_references_under_names_of_its_own() {
     let two = generation.run("two").unwrap().get("mask").unwrap();
     assert_eq!(one, two);
     assert_eq!(reader.read_output(one).unwrap(), MASK);
-    assert_eq!(std::fs::read_dir(root.join("objects")).unwrap().count(), 5);
+    assert_eq!(payloads(&root).len(), 5);
     // Outside any run.
     assert_eq!(generation.entries().keys().collect::<Vec<_>>(), ["notes/1"]);
     assert_eq!(generation.get("notes/1").unwrap().kind, Kind::Output);
@@ -130,9 +130,48 @@ fn a_generation_file_says_the_kind_of_each_reference_and_the_run_it_belongs_to()
         .unwrap();
     publication.publish().unwrap();
     let (b, c) = (Digest::of_bytes(B).hex(), Digest::of_bytes(C).hex());
+    // The run is in its bucket (ADR 0047), which the publication wrote in its pack: a
+    // file beside the generation files, named by its digest, which the generation file
+    // names in the bucket's place among the 256.
+    let at = whizbang_core::store::buckets::of_run("r");
+    let bucket = format!(
+        r#"{{
+  "format": 5,
+  "buckets": {{
+    "{at}": {{
+      "entries": {{}},
+      "runs": {{
+        "r": {{
+          "entries": {{
+            "journal": {{
+              "digest": "{c}",
+              "bytes": {},
+              "kind": "diagnostic"
+            }}
+          }}
+        }}
+      }}
+    }}
+  }}
+}}
+"#,
+        C.len()
+    );
+    let in_bucket = Digest::of_bytes(bucket.as_bytes()).hex();
+    assert_eq!(
+        std::fs::read_to_string(root.join("generations").join(format!("{in_bucket}.pack")))
+            .unwrap(),
+        bucket
+    );
+    let digests: String = (0..=u8::MAX)
+        .map(|place| match place == at {
+            true => in_bucket.clone(),
+            false => "0".repeat(64),
+        })
+        .collect();
     let expected = format!(
         r#"{{
-  "format": 4,
+  "format": 5,
   "number": 1,
   "entries": {{
     "a": {{
@@ -141,21 +180,10 @@ fn a_generation_file_says_the_kind_of_each_reference_and_the_run_it_belongs_to()
       "kind": "output"
     }}
   }},
-  "runs": {{
-    "r": {{
-      "entries": {{
-        "journal": {{
-          "digest": "{c}",
-          "bytes": {},
-          "kind": "diagnostic"
-        }}
-      }}
-    }}
-  }}
+  "buckets": "{digests}"
 }}
 "#,
-        B.len(),
-        C.len()
+        B.len()
     );
     assert_eq!(
         std::fs::read_to_string(root.join("generations/1.json")).unwrap(),
@@ -372,7 +400,7 @@ fn a_name_that_was_made_under_requests_or_spend_cannot_be_replaced_by_put() {
     publication.put("notes/a", b"first").unwrap();
     publication.publish().unwrap();
     let before = store.snapshot().unwrap();
-    let objects = std::fs::read_dir(root.join("objects")).unwrap().count();
+    let objects = payloads(&root).len();
 
     let mut publication = store.begin().unwrap();
     for name in [
@@ -414,8 +442,7 @@ fn a_name_that_was_made_under_requests_or_spend_cannot_be_replaced_by_put() {
         b"other"
     );
     // One content more is in the store: what the two puts elsewhere share.
-    let after = std::fs::read_dir(root.join("objects")).unwrap().count();
-    assert_eq!(after, objects + 1);
+    assert_eq!(payloads(&root).len(), objects + 1);
 }
 
 #[test]
@@ -1072,14 +1099,14 @@ fn a_generation_file_of_another_format_is_refused_as_another_format_not_as_damag
                 Error::OtherFormat {
                     path,
                     format: found,
-                    reads: 4,
+                    reads: 5,
                 } if *found == format => assert_eq!(*path, root.join("generations/1.json")),
                 other => panic!("{other:?}"),
             }
             let message = error.to_string();
             assert!(
                 message.ends_with(&format!(
-                    "is of another format: {format}, and this build reads format 4"
+                    "is of another format: {format}, and this build reads formats 4 and 5"
                 )),
                 "{message}"
             );

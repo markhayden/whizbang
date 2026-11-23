@@ -735,6 +735,18 @@ pub enum Answer {
     Started(RunId),
 }
 
+/// What a request's id finds, looked up and nothing more ([`super::Executor::look_up`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LookedUp {
+    /// No request was admitted under the id.
+    Missing,
+    /// This request was admitted under the id before: the run it made, and where that
+    /// run is now.
+    Repeat(Earlier),
+    /// Another request was admitted under the id, and made this run.
+    Conflict { run: RunId },
+}
+
 impl Answer {
     /// The run: the one this request made, or the one the first request made.
     pub fn run(&self) -> &RunId {
