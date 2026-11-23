@@ -912,9 +912,22 @@ fn a_run_held_in_its_final_publication_leaves_repeated_cancels_another_runs_stat
         assert_eq!(answer.status, 202, "{}", answer.whole());
         assert!(started.elapsed() < Duration::from_secs(2));
     }
-    // The other run's status is answered, and its stated time stops it.
-    let stopping = engined.until_state(&other_run, "stopping");
-    assert_eq!(stopping["run"], other_run.as_str());
+    // The other run's status is answered, and its stated time stops it: it says stopping,
+    // or, where its action saw the cancellation and its end became visible first, ended.
+    let limit = Instant::now() + Duration::from_secs(10);
+    let state = loop {
+        let polled = engined.api("GET", &format!("/v1/runs/{other_run}"), None);
+        assert_eq!(polled.status, 200, "{}", polled.whole());
+        let state = polled.json()["state"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        if state != "running" || Instant::now() > limit {
+            break state;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert!(state == "stopping" || state == "ended", "{state}");
     // A signal's stop ends at the end of its grace, with the held run left (the other,
     // cancelled, may have ended by then or not).
     let started = Instant::now();
