@@ -569,6 +569,30 @@ rm -r "$tmp/tests/parts"
 expect_pass "the folder passes again" "$run" "$tmp/tests"
 expect_fail "a folder with no test" "no test" "$run" "$tmp/found"
 
+# --- run.sh in shards (WHIZBANG_SCRIPT_SHARD=<k>/<n>, CI's jobs `scripts (<runner>, shard
+# <k>)`): the tests in their order, dealt to the shards forth and back, so that the shards
+# together run each test once; the variable is not handed to the tests.
+mkdir "$tmp/sharded"
+for name in a b c d e; do
+  printf 'source "%s/scripts/tests/lib.sh"\n[ -z "${WHIZBANG_SCRIPT_SHARD:-}" ] || fail "the shard reached the test"\nfinished\n' "$root" >"$tmp/sharded/test-$name.sh"
+done
+ran_in() { grep -E '^ok +' "$tmp/out" | sed "s|^ok *$tmp/sharded/test-||; s|\.sh\$||" | tr -d '\n'; }
+expect_pass "shard 1 of 2" env WHIZBANG_SCRIPT_SHARD=1/2 "$run" "$tmp/sharded"
+[ "$(ran_in)" = ade ] || { cat "$tmp/out" >&2; fail "shard 1 of 2 runs the first, fourth and fifth of five tests"; }
+grep -q -F "shard 1/2: 3 of 5 tests" "$tmp/out" || { cat "$tmp/out" >&2; fail "a shard says which it is and how many it runs"; }
+expect_pass "shard 2 of 2" env WHIZBANG_SCRIPT_SHARD=2/2 "$run" "$tmp/sharded"
+[ "$(ran_in)" = bc ] || { cat "$tmp/out" >&2; fail "shard 2 of 2 runs the second and third of five tests"; }
+expect_pass "shard 3 of 3" env WHIZBANG_SCRIPT_SHARD=3/3 "$run" "$tmp/sharded"
+[ "$(ran_in)" = cd ] || { cat "$tmp/out" >&2; fail "shard 3 of 3 runs the third and fourth of five tests"; }
+expect_pass "no shard" env -u WHIZBANG_SCRIPT_SHARD "$run" "$tmp/sharded"
+[ "$(ran_in)" = abcde ] || { cat "$tmp/out" >&2; fail "without a shard every test runs"; }
+expect_fail "a shard that is not k/n" "must be <k>/<n>" env WHIZBANG_SCRIPT_SHARD=half "$run" "$tmp/sharded"
+expect_fail "a shard past the last" "past the last" env WHIZBANG_SCRIPT_SHARD=3/2 "$run" "$tmp/sharded"
+expect_fail "a shard with no test" "no test under $tmp/sharded in shard 7/7" env WHIZBANG_SCRIPT_SHARD=7/7 "$run" "$tmp/sharded"
+printf 'echo "a part"\nif true; then\n' >"$tmp/sharded/broken.sh"
+expect_fail "a shard after a syntax error" "no test was run" env WHIZBANG_SCRIPT_SHARD=2/2 "$run" "$tmp/sharded"
+rm "$tmp/sharded/broken.sh"
+
 # --- The scan tests run their parts as files of their own, and hold them to the same rule.
 mkdir "$tmp/parts"
 printf 'source "%s/scripts/tests/lib.sh"\necho "a passing part"\nfinished\n' "$root" >"$tmp/parts/a.sh"

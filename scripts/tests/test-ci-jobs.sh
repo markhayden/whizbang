@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The jobs of CI (.github/workflows/ci.yml) and the recipes they run.
 #
-# On the macOS runner the script tests alone take three to five and a half minutes, which
+# On the macOS runner the script tests alone took three to five and a half minutes, which
 # put the one job over its budget of ten (docs/plans/m1c-local-pack.md, tasks C0 and C0b),
 # and the Linux runner's one job was over it too (docs/plans/m2b-checkpoint-1d.md, task
 # F1, item 5). So each runner runs `just ci` as jobs side by side: `check (<runner>)`
@@ -38,7 +38,11 @@
 #   `sweeps (<runner>)` run the rest, `timing-sweeps`, set up as `check` is, with no
 #   condition but the one that puts Linux's scratch folders in memory. `check` and
 #   `check-full` still run `timing`, every test. That the two parts are the whole is held
-#   by scripts/tests/test-timing.sh, where the split is named (scripts/timing.sh).
+#   by scripts/tests/test-timing.sh, where the split is named (scripts/timing.sh);
+# - since 2026-11-22: the script tests are split in two shards on each runner, the jobs
+#   `scripts (<runner>, shard <k>)`, each handed WHIZBANG_SCRIPT_SHARD=<k>/2
+#   (scripts/tests/run.sh), because with all of them in `scripts (macos-15)` that job took
+#   11 to 12.5 minutes of pull-request CI's 10 (SPEC.md section 13).
 #
 # Every rule is shown to fail on a copy with one thing changed. Nothing here runs a recipe.
 source "$(dirname "$0")/lib.sh"
@@ -188,6 +192,11 @@ check_workflow() { # <workflow>
   grep -x -F '        os: [macos-15, ubuntu-22.04]' <<<"$scripts" >/dev/null &&
     grep -x -F '    runs-on: ${{ matrix.os }}' <<<"$scripts" >/dev/null ||
     { echo "CI: scripts must run on macos-15 and ubuntu-22.04"; return 1; }
+  # In two shards on each runner, each named by the job and handed to the script tests.
+  grep -x -F '        shard: [1, 2]' <<<"$scripts" >/dev/null &&
+    grep -x -F '          WHIZBANG_SCRIPT_SHARD: ${{ matrix.shard }}/2' <<<"$scripts" >/dev/null &&
+    grep -x -F '    name: scripts (${{ matrix.os }}, shard ${{ matrix.shard }})' <<<"$scripts" >/dev/null ||
+    { echo "CI: scripts must run in two shards on each runner, each handed WHIZBANG_SCRIPT_SHARD"; return 1; }
   [ "$(grep -c -E '^ +run: just ' <<<"$scripts")" = 1 ] && grep -E '^ +run: just ci-scripts$' <<<"$scripts" >/dev/null ||
     { echo "CI: scripts must run exactly: just ci-scripts"; return 1; }
   if grep -E '^ +if:' <<<"$scripts" >/dev/null; then
@@ -297,11 +306,11 @@ check_rules() { # <AGENTS.md>
   row=$(grep -F '| `just ci-without-scripts`, `just ci-release`, `just ci-scripts`, `just timing-sweeps` |' "$1" || true)
   for text in '`check (macos-15)` and `check (ubuntu-22.04)` run the first' \
     '`release (macos-15)` and `release (ubuntu-22.04)` run the second' \
-    '`scripts (macos-15)` and `scripts (ubuntu-22.04)` run the third' \
+    '`scripts (macos-15, shard 1)`, `scripts (macos-15, shard 2)`, `scripts (ubuntu-22.04, shard 1)` and `scripts (ubuntu-22.04, shard 2)` run the third' \
     'The job `secrets` runs the secrets scan and the attribution check over every commit' \
     '`e2e (macos-15, shard 1)`, `e2e (macos-15, shard 2)`, `e2e (ubuntu-22.04, shard 1)` and `e2e (ubuntu-22.04, shard 2)` run the fourth, `just e2e`' \
     '`sweeps (macos-15)` and `sweeps (ubuntu-22.04)` run the fifth, `just timing-sweeps`' \
-    'the aggregate `ci`, which needs all thirteen'; do
+    'the aggregate `ci`, which needs all fifteen'; do
     case "$row" in *"$text"*) ;; *) echo "AGENTS.md: the row of the three parts must say: $text"; return 1 ;; esac
   done
 }
@@ -364,10 +373,10 @@ changed check_justfile justfile 's/^    scripts\/tests\/run.sh$/    true/' "test
 changed check_justfile justfile 's/^ci-scripts: deny test-scripts$/&\
     true/' "run nothing of their own"
 
-changed check_rules AGENTS.md 's/`scripts (macos-15)` and `scripts (ubuntu-22.04)` run the third/the other jobs run the third/' "must say: \`scripts (macos-15)\`"
+changed check_rules AGENTS.md 's/ and `scripts (ubuntu-22.04, shard 2)` run the third/ run the third/' "must say: \`scripts (macos-15, shard 1)\`"
 changed check_rules AGENTS.md 's/`release (macos-15)` and `release (ubuntu-22.04)` run the second/the other jobs run the second/' "must say: \`release (macos-15)\`"
 changed check_rules AGENTS.md 's/ and `check (ubuntu-22.04)` run the first/ runs the first/' "must say: \`check (macos-15)\`"
-changed check_rules AGENTS.md 's/, which needs all thirteen/, which needs nine/' "must say: the aggregate"
+changed check_rules AGENTS.md 's/, which needs all fifteen/, which needs thirteen/' "must say: the aggregate"
 changed check_rules AGENTS.md 's/`sweeps (macos-15)` and `sweeps (ubuntu-22.04)` run the fifth/the sweeps run the fifth/' "must say: \`sweeps (macos-15)\`"
 changed check_rules AGENTS.md 's/and `e2e (ubuntu-22.04, shard 2)` run the fourth/run the fourth/' "must say: \`e2e (macos-15, shard 1)\`"
 changed check_rules AGENTS.md 's/The job `secrets` runs/A job runs/' "must say: The job"
@@ -377,8 +386,22 @@ changed check_rules AGENTS.md 's/The job `secrets` runs/A job runs/' "must say: 
 changed check_workflow "$workflow" 's/^    needs: \[check, scripts, release, e2e, sweeps, secrets\]$/    needs: [check, scripts, release, sweeps, secrets]/' "must need: [check, scripts, release, e2e, sweeps, secrets]"
 changed check_workflow "$workflow" 's/^    needs: \[check, scripts, release, e2e, sweeps, secrets\]$/    needs: [check, scripts, release, e2e, secrets]/' "must need: [check, scripts, release, e2e, sweeps, secrets]"
 changed check_workflow "$workflow" '/needs\.sweeps\.result/d' "must fail unless sweeps succeeded"
-changed check_workflow "$workflow" 's/^        shard: \[1, 2\]$/        shard: [1]/' "e2e must run in two shards"
+# injob <job> <line> <replacement, or delete> <expected text>: that line of that job alone
+# changed, and the workflow must fail.
+injob() {
+  awk -v head="  $1:" -v line="$2" -v repl="$3" '/^  [a-z][a-z0-9-]*:$/ { on = ($0 == head) }
+    on && $0 == line { if (repl == "delete") next; $0 = repl } { print }' "$workflow" >"$tmp/injob"
+  cmp -s "$workflow" "$tmp/injob" && fail "the edit changed nothing in $1: $2"
+  expect_fail "$1 after: $2 -> $3" "$4" check_workflow "$tmp/injob"
+}
+injob e2e '        shard: [1, 2]' '        shard: [1]' "e2e must run in two shards"
 changed check_workflow "$workflow" '/WHIZBANG_E2E_SHARD: /d' "e2e must run in two shards"
+injob e2e '    name: e2e (${{ matrix.os }}, shard ${{ matrix.shard }})' '    name: e2e (${{ matrix.os }})' "e2e must run in two shards"
+# The script tests in one job on a runner again, or a shard not handed to them.
+injob scripts '        shard: [1, 2]' '        shard: [1]' "scripts must run in two shards"
+injob scripts '        shard: [1, 2]' delete "scripts must run in two shards"
+changed check_workflow "$workflow" '/WHIZBANG_SCRIPT_SHARD: /d' "scripts must run in two shards"
+injob scripts '    name: scripts (${{ matrix.os }}, shard ${{ matrix.shard }})' '    name: scripts (${{ matrix.os }})' "scripts must run in two shards"
 changed check_workflow "$workflow" '/needs\.e2e\.result/d' "must fail unless e2e succeeded"
 changed check_workflow "$workflow" '/needs\.release\.result/d' "must fail unless release succeeded"
 changed check_workflow "$workflow" '/needs\.secrets\.result/d' "must fail unless secrets succeeded"

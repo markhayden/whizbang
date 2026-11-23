@@ -22,8 +22,8 @@ it:
   anywhere.
 - **The Chrome tier** (`just e2e`): cases in `ui/e2e/`, run in Google Chrome against the
   fixture host, the host and the interface as they ship with a fake segmenter, a scripted
-  fill and a scripted judge in place of real models, held to 180 seconds of test time in
-  all. CI runs it in two shards on each runner, `e2e (<runner>, shard <k>)`, each held to 90
+  fill and a scripted judge in place of real models, held to 240 seconds of test time in
+  all. CI runs it in two shards on each runner, `e2e (<runner>, shard <k>)`, each held to 120
   seconds. Each case is named here as `<file>: <title>`. Nothing is sent anywhere.
 - **By hand**: the loop's three cases and a quit during a paid fill, run live in the
   playground with real models on the owner's Mac (plan m5, task E1). Their run ids and

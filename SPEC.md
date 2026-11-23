@@ -954,6 +954,13 @@ GitHub redirects; the old name must never be reused.
   in one job the hosted macOS runner's test time came to 225 to 271 s of its 300 in
   November 2026, most of it the sweeps. Nothing is dropped: both parts run on every pull
   request, and `just check` still runs every fast test at once, under the same limit.
+- Chrome tier's limit (`scripts/e2e.sh`): 240 s of test time for the whole tier, by the
+  owner's decision of 2026-11-22 (until then 180 s). In CI it runs in two shards on each
+  runner, `e2e (<runner>, shard <k>)`, each held to 120 s, half of the 240.
+- In CI the script tests (`scripts/tests/`) run in two shards on each runner,
+  `scripts (<runner>, shard <k>)`, so that no job passes the 10 minutes: in one job the
+  hosted macOS runner took 11 to 12.5 minutes in November 2026. `just test-scripts` still
+  runs them all.
 
 These are targets, not measurements: squint's Rust tests alone took about 3 minutes a pass.
 Each milestone's note includes a timing report by suite. When a budget is exceeded, coverage
