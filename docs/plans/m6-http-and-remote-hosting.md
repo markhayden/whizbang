@@ -2,7 +2,8 @@
 
 Draft 27, 2026-11-23, written from `main` at 9a2d397f (the tag `m5`, the merge of #283, the
 note of milestone 5) and brought up to 77bc1597 (the merge of #284, CI's limits as the owner
-decided on 2026-11-22), with the owner's answers of 2026-11-23 to its four questions, after twenty-five outside review rounds ("Review rounds", at the end).
+decided on 2026-11-22), with the owner's answers of 2026-11-23 to its four questions, after twenty-five outside review rounds ("Review rounds", at the end); amended the same day
+for the owner's later decision 5, which replaces its yes to hosting SAM 3's files.
 Milestone 6 is `SPEC.md` section 16, row 6, "HTTP and remote hosting": "User story 1 runs:
 the engine API with its negative tests, SAM 3 on a GPU host with parity inside the 1D
 tolerance, Bria through fal". Beside the row it takes section 7's "MCP over HTTP" (new,
@@ -68,15 +69,16 @@ Milestone E keeps running beside this milestone, as decided on 2026-11-20
    release archive, not in the Mac's lock, and no local Linux models for users (D1, item 1).
 4. **SAM 3's files copied from the owner's Mac into a Modal volume: yes** (2026-11-23). The
    host needs no Hugging Face sign-in, and the owner's token never leaves the Mac (D1, item 3).
-5. **SAM 3's files hosted for customers: yes** (2026-11-23). Whizbang hosts them on Hugging
-   Face under a whizbang account (huggingface.co, already approved), public and ungated, with
-   the licence file beside them and its forbidden uses shown before every download, so a
-   customer needs no account (W1). The orchestrator recommended waiting for a lawyer's read of
-   "permitting others to use"; the owner chose yes. The licence's requirements stand as the
-   carry-over row's reading has them (the copy that travels, the forbidden uses named before a
-   download, the acknowledgement, the catalogue's revision watched for a changed licence), and
-   that reading stays in `docs/carry-over.md`. The account and the upload are the owner's: no
-   agent holds a Hugging Face token or runs `hf` (W1, item 2).
+5. **SAM 3's files hosted for customers: no, for now** (the owner's decision of 2026-11-23,
+   which replaces the yes given earlier the same day). Whizbang hosts no copy of SAM 3's files.
+   A customer who runs SAM 3 locally downloads it from the maker's page on Hugging Face, as
+   today, with their own sign-in. A copy of whizbang's own may be added later if that becomes
+   a barrier: the carry-over row "Hosting the model's files for customers" stays open, with no
+   milestone yet. The owner considers the licence and distribution question settled and does
+   not reopen it. A customer who does not want to run SAM 3 locally hosts their own with the
+   repo's GPU-host deployment (D1) and points the kind `remote` at it; whizbang's own Modal
+   deployment (decisions 1, 2 and 4) is for testing. No whizbang account on Hugging Face, no
+   upload, and no change to SAM 3's catalogue entry (W1).
 
 ## What the spec says, and where it is silent
 
@@ -160,8 +162,8 @@ plan makes", is a task's item, or is an open question; none is settled silently.
    A host's image is not a user's install, and it pulls NVIDIA's packages. Decision 3;
    D1.
 9. Where the host's copy of SAM 3's files comes from. The owner's Hugging Face sign-in is for
-   testing only, and the owner wants the weights hosted for customers. Decisions 4 and 5;
-   D1 and W1.
+   testing only; whizbang hosts no copy for customers, who download from the maker or host
+   their own. Decisions 4 and 5; D1.
 10. What a store held by a server for months needs. The carry-over rows say: a generation file
    that reaches 64 MiB at about 39,000 runs, a table of abandoned runs with no bound, a
    parent's wait with no bound, file systems on which locks do not hold, uploads no run took.
@@ -460,8 +462,8 @@ milestone 3's rate (about 2,500 for a large one); generated reference and lock f
 | H1 | The engine API: `whizbang serve --http`, its guard, its routes, its negative tests; ADR 0045 | A0; merged after S1 | Large: about 2,500 (shared HTTP 300, guard 400, MCP over HTTP 600, routes 350, lifecycle 250, tests 600) |
 | R1 | Whizbang's side: the client's frames way, the kind `remote`, its identity and price, the probe with a body, the real prober, the conformance suite over HTTP | P1 | Large: about 2,300 (client 450, kind 650, probe and prober 350, tests 850) |
 | D1 | The GPU host's deployment and lock, the hourly collection, user story 1 on fakes, the guides | R1, H1, S1 | Medium: about 1,600 |
-| W1 | Weights hosted for customers (decision 5); Tiny's licence text; the catalogue's revisions and the fixtures they stale | P1 | Medium: about 800 |
-| L1 | The orchestrator's live round: the host up, parity, user story 1 | D1, W1, and the owner's setup of decision 2 | Medium: about 600 |
+| W1 | Tiny's licence text; the catalogue's revisions and the fixtures they stale | P1 | Small: about 400 |
+| L1 | The orchestrator's live round: the host up, parity, user story 1 | D1, and the owner's setup of decision 2 | Medium: about 600 |
 | N1 | The note, the boxes, the carry-over rows, the spec's wording owed | L1, and W1's box | Small: about 500, no code |
 
 **Waves.** Each from `main` once what it builds on has landed.
@@ -475,12 +477,12 @@ milestone 3's rate (about 2,500 for a large one); generated reference and lock f
    `contract/`) and the binary's `store.rs`. H1 is `whizbang-serve` and the binary's
    `serve.rs`, `serving.rs` and `main.rs`; its tests use the test kit's fake segmenter.
 3. **R1 and W1**, when P1 has landed (W1 needs P1's candidate mode and comes after P1's
-   fixtures). R1: `whizbang-backends` (`net/`, a new `remote/`), the core's
+   fixtures; it may land later, at any time before N1). R1: `whizbang-backends` (`net/`, a new `remote/`), the core's
    `egress/ways.rs` and `egress/chains.rs` (the probe's body), and in the binary only
    `wiring.rs`'s `kinds()` and `backend_status.rs`.
 4. **D1**, when R1, H1 and S1 have landed.
-5. **L1**, when D1 and W1 have landed and the owner's setup of decision 2 is done, so that every
-   change to the catalogue and the fixtures is in before the live parity measures against them.
+5. **L1**, when D1 has landed and the owner's setup of decision 2 is done. W1 changes `tiny`'s
+   entry and fixtures alone, not SAM 3's, which L1's parity measures against.
 6. **N1**.
 
 **Shared files, each with one owner in a wave.** `docs/carry-over.md`: each task changes only
@@ -512,15 +514,16 @@ becomes terminal before its children; H1, the guard's order, that no route is re
 that no local control is reachable, and that the token is in nothing the server writes; R1,
 that the token goes to the backend's origin alone, that an answer is held to `pack/1`'s bounds
 before it is held in memory, that no identity means no cached answer, and that no price means
-no run; D1, that no secret, account name or private path is in a tracked file; W1, that sizes
-and hashes are unchanged.
+no run; D1, that no secret, account name or private path is in a tracked file; W1, that
+`tiny`'s licence file is pinned by the hash of the text the binary carries and that its
+fixtures and evidence moved with its revision.
 
 **Live runs are the orchestrator's.** No builder makes a provider call, loads a real model, or
 deploys to a host. The orchestrator makes two kinds: P1's model tier on the owner's Mac, which
 spends nothing (item 5 there), and L1's.
 
 **Spend.** The allowance is 100 US dollars; milestone 6 has spent nothing. Its live runs come
-to about 9 dollars ("Spend"), Modal's among them.
+to about 8.50 dollars ("Spend"), Modal's among them.
 
 ## A0. The entry check (small)
 
@@ -1199,11 +1202,15 @@ tested without an account; nothing in it is a secret, an account name or a priva
    `--uploads-kept-h` gives;
    `serve_http::an_upload_no_run_took_is_collected_after_its_age_and_one_a_run_took_stays`, on a
    controlled clock.
-6. **The guides**: `docs/guides/gpu-host.md`, new, listed in `docs/guides/README.md`: the front
-   and the worker, a host of one's own (the front with `--worker local` on any Linux machine
-   with a card and the requirements), Modal's deployment, the price and what `host_limit_s`
-   must cover, the token, the probe, and what a customer is told of SAM 3's licence before its
-   files are used; `docs/guides/engine-api.md` finished with user story 1 as its worked example,
+6. **The guides**: `docs/guides/gpu-host.md`, new, listed in `docs/guides/README.md`, written
+   for a customer who deploys a host of their own, with their own Modal account (or another
+   machine) and their own tokens, and points the kind `remote` at it (decision 5), not only for
+   whizbang's testing deployment: the front and the worker, a host of one's own (the front with
+   `--worker local` on any Linux machine with a card and the requirements), Modal's deployment
+   under the reader's own workspace, secret and config, the price and what `host_limit_s` must
+   cover, the token, the probe, where the host's copy of SAM 3's files comes from (the reader's
+   own download from the maker's page with their own sign-in, copied to the host as `weights`
+   does), and what a customer is told of SAM 3's licence before its files are used; `docs/guides/engine-api.md` finished with user story 1 as its worked example,
    in `curl`, marked by tier. `README.md` names the engine API among the doors; `AGENTS.md`
    gains `scripts/gpu-host.sh` (the orchestrator's alone) and `parity-remote`. The remote
    parity module (empty of runs until L1) and its selector are D1's, with their script test.
@@ -1220,51 +1227,37 @@ tested without an account; nothing in it is a secret, an account name or a priva
   the guides are in;
   a scan of the tree finds no secret, account or private path in `deploy/`.
 
-## W1. Weights hosted for customers; Tiny's licence text (medium)
+## W1. Tiny's licence text, and the catalogue's revisions (small)
 
 ### Goal
 
-A customer installs SAM 3 with no Hugging Face account of their own, from a host whizbang
-names, and Tiny's installation carries its licence's text (carry-over, "Hosting the model's
-files for customers" and "The Apache-2.0 licence text itself").
+Tiny's installation carries its licence's text (carry-over, "The Apache-2.0 licence text
+itself"). SAM 3's files are not hosted by whizbang (decision 5): its catalogue entry, its origin
+and its download from the maker with the customer's own sign-in stay as they are.
 
 1. **Tiny's licence text**: the catalogue's entry for `tiny` gains a
    `LICENSE` file whose text is the Apache-2.0 text the binary carries (whizbang's own `LICENSE`
    is that licence, byte for byte), pinned by its hash, written by the installer beside the
    model's files. No origin is added; the row's "from an approved origin" is changed, with a
    line, to "from the binary", which needs none.
-2. **Hosting, on the owner's yes of 2026-11-23 (decision 5)**, in the row's order: the host is approved by name
-   as an origin for downloads; the catalogue's entry for `sam3` names it as the origin of each
-   file, with the sizes and hashes unchanged
-   (`catalogue::sam3s_files_keep_their_sizes_and_hashes_at_the_new_origin`); the refusals of
-   1C's task N4 that say to sign in, or to ask the maker for access, say what is true of
-   whizbang's host; `whizbang models get sam3` names the licence and its forbidden uses before
-   the download starts, and keeps the copy beside the files; and `docs/guides/models.md` no
-   longer sends a customer to the Hub for a sign-in. The files are put on the host by the
-   owner, from the Mac's checked installation (`whizbang models verify sam3` first), with the
-   licence file beside them, into a public, ungated repository of the whizbang account: no
-   agent holds a Hugging Face token or runs `hf`, so W1 hands the owner the exact steps and
-   the list of files with their sizes and hashes, and the catalogue's switch waits until the
-   owner says the files are up. Built and tested against a download fake first; the switch is
-   the last commit.
-3. **What a customer is told** keeps the carry-over row's reading of the licence: the licence's
-   name and its forbidden uses before every download, the copy beside the files, and in
-   `docs/guides/models.md` the acknowledgement a publication owes; a changed catalogue
-   revision has the licence read again.
-4. **The catalogue's revisions, and what they stale.** Each change to an entry moves its
+2. **What a customer is told** of SAM 3's licence: its terms are accepted on the maker's page,
+   with the customer's own sign-in, before the download, as today, and the copy the catalogue
+   pins (`LICENSE`) is kept beside the files; `docs/guides/models.md` gains the acknowledgement
+   a publication owes (the carry-over row's reading, section 1.b.ii).
+3. **The catalogue's revisions, and what they stale.** Each change to an entry moves its
    revision (`models/catalogue.rs`), and a moved revision stales the parity fixtures of that
    model (`parity::the_committed_fixtures_name_the_revisions_the_catalogue_holds`; ADR 0027) and
-   any evidence record that names it. So item 1 moves `tiny`'s revision and item 2 `sam3`'s,
-   and before each commit that moves one the orchestrator installs the entry so changed on the
-   owner's Mac, runs the model tier's `parity` and the evidence runner for that model in P1's
-   candidate mode, which installs the candidate's own pack and binary first, and hands the builder the files, which go in the same commit as the entry;
-   the tolerance measured again must be ADR 0027's or better. No spend: the Mac's GPU.
+   any evidence record that names it. So item 1 moves `tiny`'s revision, and SAM 3's is
+   unchanged. Before the commit that moves it, the orchestrator installs the entry so changed on
+   the owner's Mac, runs the model tier's `parity` and the evidence runner for `tiny` in P1's
+   candidate mode, which installs the candidate's own pack and binary first, and hands the
+   builder the files, which go in the same commit as the entry; the tolerance measured again
+   must be ADR 0027's or better. No spend: the Mac's GPU.
 
 - [ ] Done when: Tiny's installation holds its licence's text, pinned
   (`models::tiny_installs_its_licence_text_from_the_binary_pinned_by_its_hash`), with its
-  revision moved and its fixtures and evidence written again in the same commit; and SAM 3
-  installs from whizbang's host with no sign-in, shown through the installer with the download
-  fake, and once live by the orchestrator once the owner has put the files up.
+  revision moved and its fixtures and evidence written again in the same commit; SAM 3's
+  catalogue entry is unchanged; and `docs/guides/models.md` names the acknowledgement.
 
 ## L1. The live round: SAM 3 on the GPU host, parity, user story 1 (medium; the orchestrator's)
 
@@ -1314,9 +1307,7 @@ The row's live clauses, made from the owner's Mac against Modal and fal, with th
    it holds, and repeated probes allocate no card (Modal's usage page shows none for them); with
    the host down (`gpu-host.sh down`), a call of user story 1 ends as an error naming the host,
    and nothing falls back to another backend (section 10).
-7. **If the owner said yes to hosting** (W1): `whizbang models get sam3` in a new home with no
-   sign-in installs from whizbang's host, once.
-8. **Then `gpu-host.sh down`**, so that nothing bills between rounds.
+7. **Then `gpu-host.sh down`**, so that nothing bills between rounds.
 
 - [ ] Done when: both records are merged with their runs; parity is inside the tolerance on
   every fixture in each of three rounds, every answer on `cuda`; the six removals of user story 1 (nine runs of actions)
@@ -1337,7 +1328,7 @@ The row's live clauses, made from the owner's Mac against Modal and fal, with th
    section 11's `whizbang serve [--http <addr>]` gains the flags H1 built. Each brings the spec
    in line with reviewed pull requests.
 3. **The tag `m6`**, by the orchestrator, on the note's merge, and only when L1's and W1's
-   boxes are ticked.
+   boxes are ticked. Neither waits on an upload: whizbang hosts no files (decision 5).
 
 - [ ] Done when: the note is merged and `m6` is tagged.
 
@@ -1356,7 +1347,7 @@ The row's live clauses, made from the owner's Mac against Modal and fal, with th
 | Where the models directory is, read once | S1, item 6: kept with a line and a test |
 | A drawn location or a picture that no run took | S1, item 7, and D1, item 5 |
 | Two things of a squint job file: a picture given inline, and `expect` | H1, closed with a line: the engine API takes pictures as uploads alone, so a job names them by identity and one byte bound governs every picture that arrives; `expect` guards a file a caller read itself, and an upload's identity is what the server answered, so there is nothing to expect. Neither is taken, by `squint check --job` either |
-| Hosting the model's files for customers | W1: the owner said yes on 2026-11-23 (decision 5) |
+| Hosting the model's files for customers | Not taken: re-owned by this plan's amendment to no milestone yet, open until local download from the maker becomes a barrier (decision 5, 2026-11-23) |
 | The Apache-2.0 licence text itself, with Tiny's installation | W1, item 1 |
 | Linux runtime extra (deferred by the owner) | D1, item 7: narrowed with a line |
 | The Google rows of prices are introductory | L1, item 1, if its run is on or after a row's date and the row is still open |
@@ -1368,7 +1359,8 @@ The row's live clauses, made from the owner's Mac against Modal and fal, with th
   "Written" in `docs/guides/README.md`.
 - `docs/guides/backends.md` and `docs/guides/config.md`: the kind `remote`, its settings and its
   egress (R1); `docs/guides/serve.md`: a line pointing to the engine API's guide (H1).
-- `docs/guides/models.md`: on hosting, W1, item 2.
+- `docs/guides/models.md`: the acknowledgement a publication owes, W1, item 2; nothing on
+  hosting (decision 5).
 - `docs/adr/0045-the-engine-api.md` (H1), `docs/adr/0046-the-remote-worker.md` (P1 and R1, with
   the amendments to ADR 0020 and ADR 0024), `docs/adr/0047-the-generation-in-buckets.md` (S1).
 - `docs/reference/`: regenerated if the description changes (not expected).
@@ -1401,7 +1393,7 @@ The row's live clauses, made from the owner's Mac against Modal and fal, with th
 | S1 | Revert with care: a store a writer of S1 has published is in the new format, which a build before S1 refuses by its version. So a revert keeps the reader and writer of buckets and drops the rest, or such a store is exported and imported. ADR 0047 says this |
 | H1 | Revert the merge after D1: `serve --http` is gone; the stdio server and the playground are as at `m5`, the shared HTTP reader back in `play/` |
 | R1 | Revert the merge after D1: the kind `remote` and the prober are gone, `NoProber` is back, the probe has no body; a config naming `remote` is refused as an unknown kind |
-| D1, W1 | Revert the merge; the deployment, the lock and the guides go. W1's catalogue switch is its own commit and reverts alone |
+| D1, W1 | Revert the merge; the deployment, the lock and the guides go. W1's revert takes `tiny`'s licence file back with its revision and its fixtures |
 | L1, N1 | Records and a note. The host is stopped by `gpu-host.sh down`, and the app deleted in Modal's console by the owner |
 
 ## Spend
@@ -1420,9 +1412,8 @@ the front's CPU together, about 1.10 an hour. A request's bound at the example's
 | L1, item 4: user story 1 | 6 removals (9 runs of actions), each a segment on the host and a fill at 0.04 through fal | 1.00 |
 | Getting the host right | Cold starts, failed tries and reruns, up to 3 hours of card time | 3.50 |
 | A second parity round after a fix, if one is needed | As item 3 | 1.00 |
-| L1, item 6, if hosting is approved | One download | 0.50 |
 | The owner's own tries of the engine API | About thirty runs | 2.00 |
-| | **Total** | **about 9 dollars, of the 100** |
+| | **Total** | **about 8.50 dollars, of the 100** |
 
 If the live spend passes 40 dollars, the orchestrator stops, says why in the record and tells
 the owner. Nothing else is built to hold spend.
@@ -1431,11 +1422,11 @@ the owner. Nothing else is built to hold spend.
 
 ```
 A0 ──┬──► P1 ──┬──► R1 ──┐
-     │         └──► W1 ──┼──────────────┐
-     ├──► S1 ──┬─────────┤              ▼
-     │         ▼         ├──► D1 ──► L1 ──► N1
-     └──► H1 (merges after S1) ──┘        ▲
-              owner's setup of decision 2 ─┘
+     │         └──► W1 ──┼─────────────────────┐
+     ├──► S1 ──┬─────────┤                     ▼
+     │         ▼         ├──► D1 ──► L1 ─────► N1
+     └──► H1 (merges after S1) ──┘   ▲
+              owner's setup of decision 2
 ```
 
 - A0 before everything: the fast tier's flakes are fixed before wide pull requests measure
@@ -1445,12 +1436,11 @@ A0 ──┬──► P1 ──┬──► R1 ──┐
   whose locks do not hold.
 - R1, H1 and S1 before D1: user story 1 on fakes needs the kind and the engine API, and the
   hourly collection needs S1's API.
-- P1 before W1: W1 changes the catalogue's entries, which stales the parity fixtures and the
+- P1 before W1: W1 changes `tiny`'s catalogue entry, which stales the parity fixtures and the
   evidence P1 wrote again; it writes them again itself, by P1's candidate mode.
-- L1 after D1, W1 and the owner's setup of decision 2. W1 merges before L1, its catalogue's
-  switch to whizbang's host in it once the owner has put the files up; if the files go up only
-  after L1, the switch is a pull request of its own and L1's parity is run again on the
-  fixtures it writes. N1 waits for W1's box.
+- L1 after D1 and the owner's setup of decision 2. L1 does not wait for W1: W1 moves `tiny`'s
+  revision and fixtures alone, and SAM 3's entry, which L1's parity measures against, is
+  unchanged (decision 5). N1 waits for W1's box and L1's; nothing waits on an upload.
 
 ## Risks
 
@@ -1479,10 +1469,10 @@ A0 ──┬──► P1 ──┬──► R1 ──┐
 7. **NVIDIA's packages in the host's image.** Under NVIDIA's own licences; built on the host's
    side, from the host's lock; nothing of it ships in whizbang's archive. The owner decides
    (decision 3).
-8. **The licence of SAM 3 and hosting it.** The carry-over row's reading is not legal advice;
-   whether "permitting others to use" asks more of a host that hands the files to anyone is the
-   question a lawyer's read would answer. The owner chose to host without waiting for one
-   (decision 5); the reading and its requirements stand.
+8. **The licence of SAM 3.** Whizbang hosts no copy of its files (decision 5): a customer
+   downloads them from the maker's page with their own sign-in, or hosts their own SAM 3 on a
+   GPU host of their own. The owner considers the licence and distribution question settled;
+   the carry-over row's reading stays where it is, for when hosting is taken up.
 9. **The fast tier's time.** P1, R1 and H1 add real processes and a server. Each pull request
    reports its seconds by suite and stops past about 250 of the 300; then coverage is reviewed
    first, as section 13 says.
@@ -1503,17 +1493,16 @@ the orchestrator says when.
 1. Before L1: the Modal workspace and its payment method, `modal token new` on the Mac, and
    `SEGMENT_TOKEN` in the env file with the same value as Modal's secret `whizbang-front`
    (decision 2).
-2. Before W1's switch: the whizbang account on Hugging Face and SAM 3's files put up in its
-   public repository with the licence beside them, by the steps W1 hands over (decision 5).
 
 ## What the owner is told, not asked
 
 - **Modal is the GPU host**, as you decided on 2026-11-22; the origins it brings are in "What
   the owner decided", and its spend counts against this milestone's 100 dollars. Your four
-  answers of 2026-11-23 are decisions 2 to 5 there.
+  answers of 2026-11-23 are decisions 2 to 5 there, decision 5 as you changed it later that
+  day: whizbang hosts no copy of SAM 3's files for now.
 - **Nine pull requests**, four of them large; P1, S1 and H1 run side by side after the entry
   check.
-- **About 9 dollars of live spend**, with a stop at 40.
+- **About 8.50 dollars of live spend**, with a stop at 40.
 - **The engine API is stateless MCP over HTTP** with plain routes for pictures and runs; it
   takes no path, offers no local control, and needs a token on loopback too.
 - **No Python and no GPU on the app's server**: shown in the fast tier and live.
