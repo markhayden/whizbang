@@ -152,7 +152,7 @@ pub const EXTRA_HOST: Host = Host {
 };
 
 /// The files of the pack this build carries, by their place in the pack's folder.
-const CARRIED: [(&str, &[u8]); 15] = [
+const CARRIED: [(&str, &[u8]); 16] = [
     (
         "pyproject.toml",
         include_bytes!("../../../pack/pyproject.toml"),
@@ -181,6 +181,12 @@ const CARRIED: [(&str, &[u8]); 15] = [
     (
         "src/whizbang_pack/fakes.py",
         include_bytes!("../../../pack/src/whizbang_pack/fakes.py"),
+    ),
+    // The front of a GPU host (plan m6, task P1; ADR 0046): carried as every module of the
+    // pack is, so that a host of one's own can run it from an installed pack.
+    (
+        "src/whizbang_pack/front.py",
+        include_bytes!("../../../pack/src/whizbang_pack/front.py"),
     ),
     (
         "src/whizbang_pack/installed.py",

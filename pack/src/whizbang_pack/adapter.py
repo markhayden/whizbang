@@ -22,11 +22,14 @@ the name of the exception's type and nothing of its text.
 
 import os
 import re
+import sys
 
 FEATURES = ("phrase", "point", "box")
 # Where a model's adapter places it, by the setting `device` (plan 1D, task V1): `auto`, the
 # GPU where its runtime has one and the CPU otherwise, which is the default; or `cpu`.
 DEVICES = ("auto", "cpu")
+# The most characters of a card's name a load's diagnostics say.
+CARD_NAME_MOST = 64
 _FILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+-]{0,127}\Z")
 
 
@@ -39,11 +42,35 @@ def device_of(settings):
 
 
 def device_name(torch, device):
-    """The name of the device to ask PyTorch for, by the setting `device`: the Apple GPU
-    (`mps`) under `auto` where the runtime has it, and the CPU otherwise."""
-    if device == "auto" and torch.backends.mps.is_available():
-        return "mps"
+    """The name of the device to ask PyTorch for, by the setting `device`: under `auto`, an
+    NVIDIA card (`cuda`) where the runtime has one, then the Apple GPU (`mps`), then the CPU;
+    under `cpu`, the CPU whatever the runtime has (ADR 0046, "Its device").
+
+    On CUDA the model runs in full precision with TF32 off, set here before the model is
+    placed, so that its answers are held to the tolerance measured on the Mac (ADR 0027)."""
+    if device == "auto":
+        cuda = getattr(torch, "cuda", None)
+        if cuda is not None and cuda.is_available():
+            torch.backends.cuda.matmul.allow_tf32 = False
+            torch.backends.cudnn.allow_tf32 = False
+            return "cuda"
+        if torch.backends.mps.is_available():
+            return "mps"
     return "cpu"
+
+
+def card_name(torch=None):
+    """The name of the NVIDIA card the runtime placed work on, cut to `CARD_NAME_MOST`; `None`
+    where there is none. The runtime is the one the worker's adapter imported: the pack's
+    core imports none (D10)."""
+    torch = sys.modules.get("torch") if torch is None else torch
+    cuda = getattr(torch, "cuda", None)
+    try:
+        if cuda is None or not cuda.is_available():
+            return None
+        return str(cuda.get_device_name(cuda.current_device()))[:CARD_NAME_MOST]
+    except Exception:
+        return None
 
 
 class Cancelled(Exception):

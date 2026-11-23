@@ -19,6 +19,12 @@
 # the CPU, plan 1D, task V1) or `coverage` (the timings of plan 1D, task V1); with none, all
 # three run. Any other argument is refused before anything runs.
 #
+# `--candidate` as the first argument measures the staged tree, not the checkout (plan m6,
+# task P1, item 5): scripts/candidate.sh prepares it under `<target>/tmp/candidate` (the
+# index exported, its binary built, its pack installed into a models directory of its own
+# with SAM 3 and Tiny linked in from WHIZBANG_MODELS_DIR, and that pack's sources held to the
+# tree's), and the exported tree's own copy of this script runs the tier against it. Heavy.
+#
 # `--list` as the first argument runs no test: it prints the names of the tests the filter
 # names, one a line, as `cargo nextest list` gives them, and needs no models directory.
 # The local leg of a release (scripts/prerelease-local.sh) lists them before the run and
@@ -49,6 +55,11 @@ refuse() {
   exit 2
 }
 
+candidate=0
+if [ "${1-}" = --candidate ]; then
+  candidate=1
+  shift
+fi
 list=0
 if [ "${1-}" = --list ]; then
   list=1
@@ -60,6 +71,7 @@ case "${1-}" in
   *) refuse "the one argument names a part of the tier: model_tier, parity or coverage" ;;
 esac
 [ "$#" -le 1 ] || refuse "the one argument names a part of the tier: model_tier, parity or coverage"
+[ "$candidate" = 0 ] || [ "$list" = 0 ] || refuse "--candidate and --list are not given together"
 
 if [ "$list" = 1 ]; then
   cd "$root"
@@ -86,6 +98,13 @@ case "$target" in
   /*) ;;
   *) target=$root/$target ;;
 esac
+if [ "$candidate" = 1 ]; then
+  work=$target/tmp/candidate
+  rm -rf "$work"
+  mkdir -p "$work"
+  "$root/scripts/candidate.sh" prepare "$work"
+  exec env CARGO_TARGET_DIR="$work/target" WHIZBANG_MODELS_DIR="$work/models" "$work/tree/scripts/test-models.sh" "$@"
+fi
 shared=$target/tmp/model-tier
 mkdir -p "$shared/out"
 rm -f "$shared/out/phrase.txt" "$shared/out/second.txt" "$shared/out/places.txt" "$shared/out/tiny.txt" \
