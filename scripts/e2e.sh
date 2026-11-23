@@ -11,15 +11,15 @@
 # one worker, no retry, 30 seconds a case (ui/playwright.config.ts), under
 # scripts/thread-guard.sh. Then it reads the run's own JSON report, prints the seconds by
 # file, and fails when a case failed or when the whole run took more than the limit of
-# test time: 180 seconds, or --limit, or WHIZBANG_E2E_LIMIT. The limit is the Chrome
+# test time: 240 seconds, or --limit, or WHIZBANG_E2E_LIMIT. The limit is the Chrome
 # tier's own, apart from the fast tier's 300 (SPEC.md section 13); it is not raised
-# without the owner.
+# without the owner, who raised it from 180 to 240 on 2026-11-22.
 #
 # WHIZBANG_E2E_SHARD=<k>/<n> runs only the k-th of n shards of the cases (Playwright's
 # --shard), as CI's jobs `e2e (<runner>, shard <k>)` do, so that no one job comes near the
-# limit; a shard's own test time is then held to 90 seconds, the limit of one shard: half
-# of the owner's 180 for the whole tier, so two shards together stay within it. Unset, as
-# `just e2e` runs locally, every case runs and all of them are held to the 180.
+# limit; a shard's own test time is then held to 120 seconds, the limit of one shard: half
+# of the owner's 240 for the whole tier, so two shards together stay within it. Unset, as
+# `just e2e` runs locally, every case runs and all of them are held to the 240.
 #
 # The packages are installed as scripts/ui.sh installs them. The report is kept in
 # target/e2e/ (report.json, and html/ for a person), where CI keeps it when a case fails.
@@ -35,15 +35,15 @@ die() {
   echo "e2e: $*" >&2
   exit 1
 }
-limit=180
+limit=240
 why="the Chrome tier's limit (plan m5)"
 shard=${WHIZBANG_E2E_SHARD:-}
 if [ -n "$shard" ]; then
   echo "$shard" | grep -E '^[1-9][0-9]*/[1-9][0-9]*$' >/dev/null ||
     die "WHIZBANG_E2E_SHARD must be <k>/<n>, as 1/2: $shard"
   [ "${shard%/*}" -le "${shard#*/}" ] || die "WHIZBANG_E2E_SHARD names a shard past the last: $shard"
-  # Half of the owner's 180 for the whole tier, which is not raised by sharding it.
-  limit=90
+  # Half of the owner's 240 for the whole tier, which is not raised by sharding it.
+  limit=120
   why="the Chrome tier's limit for one shard (plan m5), shard $shard"
 fi
 if [ -n "${WHIZBANG_E2E_LIMIT:-}" ]; then

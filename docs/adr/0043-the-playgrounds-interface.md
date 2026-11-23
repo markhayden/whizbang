@@ -81,6 +81,13 @@ one worker, no retry, 30 seconds a case, the whole run held to 180 seconds of te
 `scripts/e2e.sh`, in the CI jobs `e2e (macos-15)` and `e2e (ubuntu-22.04)` beside the
 others, so the fast tier's 300 seconds are untouched.
 
+**Amended 2026-11-22, by the owner's decision at the end of milestone 5.** The Chrome tier
+is held to 240 seconds of test time in all, raised from the 180 above. Since the live fixes
+of milestone 5 (#282) CI runs it in two shards on each runner, the jobs
+`e2e (<runner>, shard <k>)`, and each shard is held to 120 seconds of its own test time, half
+of the 240 (until now 90, half of the 180): the macOS shard 1 had come to 88.9 seconds of its
+90. A local `just e2e` runs every case, held to the 240.
+
 ## Consequences
 
 - Every machine that runs `just check` needs the pinned Node, and npm's registry is an

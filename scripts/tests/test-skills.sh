@@ -134,9 +134,9 @@ check_kickoff() {
     'cat "$text/title.txt" "$text/body.md"          # read first' \
     'gh pr edit <number> --title "$(cat "$text/title.txt")" --body-file "$text/body.md"' \
     'until run=$(gh run list --commit "$head" --json databaseId' \
-    '.jobs | length'"'"')" -ge 11 ]; do' '[ "$tries" -le 60 ] ||' \
+    '.jobs | length'"'"')" -ge 15 ]; do' '[ "$tries" -le 60 ] ||' \
     'git merge --no-ff --no-edit origin/main' 'git status --short' 'git merge --abort' \
-    'gh pr checks <number> --watch                  # check, scripts, release, e2e and sweeps on macos-15 and ubuntu-22.04, secrets, ci'; do
+    'gh pr checks <number> --watch                  # check, scripts (two shards), release, e2e (two shards) and sweeps on macos-15 and ubuntu-22.04, secrets, ci'; do
     says "$1" Commands "$text" || return 1
   done
   pr_scan_alone "$1" || return 1
@@ -172,17 +172,21 @@ check_kickoff() {
     'After any edit to either file, read and scan again.' \
     "or a model's name that it knows (but for the folder \`.claude\` and the file" \
     '`CLAUDE.md` of this repo, named as paths)' \
-    '`check (macos-15)`, `scripts (macos-15)`,' '`release (macos-15)`, `check (ubuntu-22.04)`, `scripts (ubuntu-22.04)`,' \
-    '`release (ubuntu-22.04)`, `e2e (macos-15)`, `e2e (ubuntu-22.04)`, `sweeps (macos-15)`, `sweeps (ubuntu-22.04)`, `secrets` and the aggregate `ci`' \
-    '`ci` is listed only once the other eleven have finished' 'says "no checks reported"' \
-    'a run whose commit is the head lists all twelve' \
+    '`check (macos-15)`, `scripts (macos-15, shard 1)`, `scripts (macos-15, shard 2)`,' \
+    '`release (macos-15)`, `check (ubuntu-22.04)`, `scripts (ubuntu-22.04, shard 1)`, `scripts (ubuntu-22.04, shard 2)`,' \
+    '`release (ubuntu-22.04)`, `e2e (macos-15, shard 1)`, `e2e (macos-15, shard 2)`, `e2e (ubuntu-22.04, shard 1)`,' \
+    '`e2e (ubuntu-22.04, shard 2)`, `sweeps (macos-15)`, `sweeps (ubuntu-22.04)`, `secrets` and the aggregate `ci`' \
+    '`ci` is listed only once the other fifteen have finished' 'says "no checks reported"' \
+    'a run whose commit is the head lists all sixteen' \
     'go back to step 4' 'hand back again with the new commit'; do
     says "$1" Checklist "$text" || return 1
   done
   for text in 'Pull request:' 'Head:' 'Acceptance' 'Decisions' 'Doubts' 'Deferred' 'Refused push:' \
-    'CI: check (macos-15) <result>, scripts (macos-15) <result>, release (macos-15) <result>,' \
-    '    check (ubuntu-22.04) <result>, scripts (ubuntu-22.04) <result>, release (ubuntu-22.04) <result>,' \
-    '    e2e (macos-15) <result>, e2e (ubuntu-22.04) <result>, sweeps (macos-15) <result>,' \
+    'CI: check (macos-15) <result>, scripts (macos-15, shard 1) <result>,' \
+    '    scripts (macos-15, shard 2) <result>, release (macos-15) <result>, check (ubuntu-22.04) <result>,' \
+    '    scripts (ubuntu-22.04, shard 1) <result>, scripts (ubuntu-22.04, shard 2) <result>,' \
+    '    release (ubuntu-22.04) <result>, e2e (macos-15, shard 1) <result>, e2e (macos-15, shard 2) <result>,' \
+    '    e2e (ubuntu-22.04, shard 1) <result>, e2e (ubuntu-22.04, shard 2) <result>, sweeps (macos-15) <result>,' \
     '    sweeps (ubuntu-22.04) <result>, secrets <result>, ci <result>'; do
     says "$1" "Hand-back format" "$text" || return 1
   done
@@ -196,9 +200,11 @@ check_review_merge() {
   done
   for text in 'Reviewed head:' 'Base:' 'Merge commit:' 'Verified' 'Read:' 'Follow-ups' \
     '- Verdict: may merge at the reviewed head; no finding that blocks the merge is open' \
-    'check (macos-15) <result>, scripts (macos-15) <result>, release (macos-15) <result>,' \
-    'check (ubuntu-22.04) <result>, scripts (ubuntu-22.04) <result>, release (ubuntu-22.04) <result>,' \
-    '  e2e (macos-15) <result>, e2e (ubuntu-22.04) <result>, sweeps (macos-15) <result>,' \
+    '- CI on the head: check (macos-15) <result>, scripts (macos-15, shard 1) <result>,' \
+    '  scripts (macos-15, shard 2) <result>, release (macos-15) <result>, check (ubuntu-22.04) <result>,' \
+    '  scripts (ubuntu-22.04, shard 1) <result>, scripts (ubuntu-22.04, shard 2) <result>,' \
+    '  release (ubuntu-22.04) <result>, e2e (macos-15, shard 1) <result>, e2e (macos-15, shard 2) <result>,' \
+    '  e2e (ubuntu-22.04, shard 1) <result>, e2e (ubuntu-22.04, shard 2) <result>, sweeps (macos-15) <result>,' \
     '  sweeps (ubuntu-22.04) <result>, secrets <result>, ci <result>' \
     'corrected by the orchestrator' 'pull request of mine that adds its row to docs/carry-over.md'; do
     says "$1" "Hand-back format" "$text" || return 1
@@ -215,8 +221,10 @@ check_review_merge() {
     '- [ ] 9. Follow-ups are recorded by you; the reviewer only names them.' \
     'a new head that is reviewed again' 'Nothing is left only in a verdict.' \
     'The corrected files get every check of this step again' \
-    '`check (macos-15)`, `scripts (macos-15)`,' '`release (macos-15)`, `check (ubuntu-22.04)`, `scripts (ubuntu-22.04)`,' \
-    '`release (ubuntu-22.04)`, `e2e (macos-15)`, `e2e (ubuntu-22.04)`, `sweeps (macos-15)`, `sweeps (ubuntu-22.04)`, `secrets` and the aggregate `ci`' \
+    '`check (macos-15)`, `scripts (macos-15, shard 1)`, `scripts (macos-15, shard 2)`,' \
+    '`release (macos-15)`, `check (ubuntu-22.04)`, `scripts (ubuntu-22.04, shard 1)`, `scripts (ubuntu-22.04, shard 2)`,' \
+    '`release (ubuntu-22.04)`, `e2e (macos-15, shard 1)`, `e2e (macos-15, shard 2)`, `e2e (ubuntu-22.04, shard 1)`,' \
+    '`e2e (ubuntu-22.04, shard 2)`, `sweeps (macos-15)`, `sweeps (ubuntu-22.04)`, `secrets` and the aggregate `ci`' \
     'You may correct the title or body yourself' \
     'A correction that changes a claim about the code goes back to the builder.' \
     'never past a failing check' \
@@ -444,8 +452,9 @@ changed check_kickoff "$f" 's/Never open, print, quote or copy the word list, an
 changed check_kickoff "$f" 's/The path may be given to another agent working in this repo\.//' "must say: The path may be given"
 changed check_kickoff "$f" 's/, which stays untracked/, which is committed/' "must say: \`.claude/settings.local.json\`, which stays untracked"
 changed check_kickoff "$f" 's/check (macos-15)/check (macOS)/g' "must say:"
-changed check_kickoff "$f" 's/^CI: check (macos-15) <result>, scripts (macos-15) <result>/CI: check <result>/' "must say: CI: check (macos-15)"
-changed check_kickoff "$f" 's/scripts (macos-15)/scripts/g' "must say:"
+changed check_kickoff "$f" 's/^CI: check (macos-15) <result>, scripts (macos-15, shard 1) <result>/CI: check <result>/' "must say: CI: check (macos-15)"
+changed check_kickoff "$f" 's/scripts (macos-15, shard 2)/scripts (macos-15)/g' "must say:"
+changed check_kickoff "$f" 's/e2e (ubuntu-22.04, shard 1)/e2e (ubuntu-22.04)/g' "must say:"
 changed check_kickoff "$f" 's/release (macos-15)/release/g' "must say:"
 changed check_kickoff "$f" 's/release (ubuntu-22.04)/release/g' "must say:"
 changed check_kickoff "$f" '/^scripts\/scan.sh --pr-text /d' "must say: scripts/scan.sh --pr-text"
@@ -467,7 +476,7 @@ changed check_kickoff "$f" 's/and is not refused: go through those\. Then$/and i
 changed check_kickoff "$f" 's/^gh pr edit <number> /gh pr comment <number> /' "must say: gh pr edit <number>"
 changed check_kickoff "$f" 's/Never retry around the hook, and never use `--no-verify`\.//' "must say: Never retry around the hook"
 changed check_kickoff "$f" '/^until run=/d' "must say: until run="
-changed check_kickoff "$f" 's/ -ge 11 \]; do$/ -ge 5 ]; do/' "must say: .jobs | length"
+changed check_kickoff "$f" 's/ -ge 15 \]; do$/ -ge 11 ]; do/' "must say: .jobs | length"
 changed check_kickoff "$f" '/"$tries" -le 60/d' 'must say: [ "$tries" -le 60 ]'
 changed check_kickoff "$f" 's/has passed on exactly the tree being pushed/has passed/' "must say: has passed on exactly the tree being pushed"
 changed check_kickoff "$f" 's/owner at once and is rotated/owner/' "must say: owner at once and is rotated"
@@ -522,7 +531,8 @@ changed check_review_merge "$f" 's/; and any file under `scripts\/`\././' 'must 
 changed check_review_merge "$f" 's/goes back to the builder/is made by the orchestrator too/' "must say: A correction that changes a claim about the code goes back to the builder."
 changed check_review_merge "$f" 's/, never past a failing check//' "must say: never past a failing check"
 changed check_review_merge "$f" 's/check (macos-15)/check (macOS)/g' "must say:"
-changed check_review_merge "$f" 's/scripts (macos-15)/scripts/g' "must say:"
+changed check_review_merge "$f" 's/scripts (macos-15, shard 2)/scripts (macos-15)/g' "must say:"
+changed check_review_merge "$f" 's/e2e (ubuntu-22.04, shard 1)/e2e (ubuntu-22.04)/g' "must say:"
 changed check_review_merge "$f" 's/release (macos-15)/release/g' "must say:"
 changed check_review_merge "$f" 's/release (ubuntu-22.04)/release/g' "must say:"
 changed check_review_merge "$f" 's/^- \[ \] 8\. Files that grant permissions or check the pull request\./- [ ] 8. Files./' "must say: - [ ] 8."

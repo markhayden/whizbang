@@ -78,7 +78,7 @@ jobs:
         run: |
           df -h /dev/shm
           echo "TMPDIR=/dev/shm" >>"$GITHUB_ENV"
-      # `just ci` without the script tests, which take a runner three to six minutes,
+      # `just ci` without the script tests, which take a runner five to twelve minutes,
       # without the release smoke, the example that must not compile and the secrets scan,
       # and with the fast tests but the sweeps (`timing-fast`): the jobs `scripts`,
       # `release` and `sweeps` below run those beside this one, on the same runner.
@@ -97,13 +97,17 @@ jobs:
 
   # The script tests on each runner, which `check` leaves out: the other half of `just ci`.
   # Set up as `check` is, because some of them run cargo, clippy and cargo-deny: the
-  # toolchain, the cache, and the same pinned tools.
+  # toolchain, the cache, and the same pinned tools. The tests are split in two shards on
+  # each runner (WHIZBANG_SCRIPT_SHARD, scripts/tests/run.sh), dealt forth and back in
+  # their order: in one job on macos-15 they took it to 11 to 12.5 minutes, past
+  # pull-request CI's budget of 10 (SPEC.md section 13; November 2026).
   scripts:
-    name: scripts (${{ matrix.os }})
+    name: scripts (${{ matrix.os }}, shard ${{ matrix.shard }})
     strategy:
       fail-fast: false
       matrix:
         os: [macos-15, ubuntu-22.04]
+        shard: [1, 2]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
@@ -142,6 +146,8 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
       - name: The script tests, after the crates they read are in cargo's home
+        env:
+          WHIZBANG_SCRIPT_SHARD: ${{ matrix.shard }}/2
         run: just ci-scripts
 
   # The release build and what follows it on each runner, which `check` leaves out: a
@@ -195,13 +201,14 @@ jobs:
 
   # The Chrome tier (plan m5, "Where the Chrome tier runs"; task U1): the fixture host
   # built, then Playwright's cases in ui/e2e/ against it, in the Google Chrome each hosted
-  # image carries, held to 180 seconds of test time (`just e2e`, scripts/e2e.sh). In jobs
+  # image carries, held to 240 seconds of test time (`just e2e`, scripts/e2e.sh). In jobs
   # of their own beside the others, so the fast tier's 300 seconds are untouched. Set up
   # as `check` is, with Node. When a case fails, the report is kept for two weeks. The cases
   # are split in two shards on each runner (WHIZBANG_E2E_SHARD, Playwright's --shard), each
-  # held to 90 seconds for its own test time, half of the owner's 180 for the whole tier, so
-  # the two together stay within it: the whole tier came to 165.5 of the 180 seconds on
-  # macos-15 in one job (November 2026).
+  # held to 120 seconds for its own test time, half of the owner's 240 for the whole tier, so
+  # the two together stay within it: the whole tier came to 165.5 of the 180 seconds it was
+  # held to then on macos-15 in one job, and a shard to 88.9 of its 90 (November 2026); the
+  # owner raised the tier to 240 on 2026-11-22.
   e2e:
     name: e2e (${{ matrix.os }}, shard ${{ matrix.shard }})
     strategy:
