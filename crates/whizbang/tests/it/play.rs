@@ -529,6 +529,21 @@ impl Hosted {
         panic!("the run never said {state}");
     }
 
+    /// The run's poll once its first event is there. A run says it is running when its
+    /// action starts, before the action has said anything: a poll that saw it running
+    /// may hold no event yet.
+    fn until_first_event(&self, run: &str) -> Json {
+        for _ in 0..4000 {
+            let polled = self.api("GET", &format!("/api/runs/{run}"), None);
+            assert_eq!(polled.status, 200, "{}", polled.text());
+            if !polled.json()["events"][0].is_null() {
+                return polled.json();
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("the run never said anything");
+    }
+
     fn wait(&mut self) -> Stopped {
         self.host.take().unwrap().wait()
     }
@@ -614,7 +629,10 @@ fn a_run_started_by_the_host_is_found_by_its_id_after_its_caller_is_gone() {
     assert_eq!(listed.as_array().unwrap().len(), 1);
     assert_eq!(listed[0]["run"], run.as_str());
     assert_eq!(listed[0]["action"], "waits");
-    let polled = hosted.until_state(&run, "running");
+    hosted.until_state(&run, "running");
+    // Running is said before the action's first event, which comes after: waited for.
+    let polled = hosted.until_first_event(&run);
+    assert_eq!(polled["state"], "running");
     assert_eq!(polled["events"][0]["message"], "waiting for a stop");
     // A poll after the first event is answered with what is newer alone.
     let next = polled["next"].as_u64().unwrap();
