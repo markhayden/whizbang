@@ -1,7 +1,8 @@
 # Plan: milestone 6, HTTP and remote hosting
 
 Draft 26, 2026-11-23, written from `main` at 9a2d397f (the tag `m5`, the merge of #283, the
-note of milestone 5), after twenty-five outside review rounds ("Review rounds", at the end).
+note of milestone 5) and brought up to 77bc1597 (the merge of #284, CI's limits as the owner
+decided on 2026-11-22), after twenty-five outside review rounds ("Review rounds", at the end).
 Milestone 6 is `SPEC.md` section 16, row 6, "HTTP and remote hosting": "User story 1 runs:
 the engine API with its negative tests, SAM 3 on a GPU host with parity inside the 1D
 tolerance, Bria through fal". Beside the row it takes section 7's "MCP over HTTP" (new,
@@ -521,7 +522,8 @@ or fail at random at the end of milestone 5").
    side by side, at one zoom` waits until both pictures are decoded and laid out, by
    Playwright's polling `expect`, never a time. It is then run 20 times in a row on the macOS
    runner: one commit adds a step to `e2e (macos-15, shard 1)` that runs that case alone with
-   `--repeat-each 20` and no retry, its run is named in the pull request, and the next commit
+   `--repeat-each 20` and no retry, inside that shard's 120 seconds (the Chrome tier's limit is
+   240 in all and 120 a shard in CI, the owner's decision of 2026-11-22, `scripts/e2e.sh`), its run is named in the pull request, and the next commit
    takes the step out before the review.
 3. **The timing report** of the pull request names each suite's seconds before and after.
 
@@ -1349,7 +1351,9 @@ The row's live clauses, made from the owner's Mac against Modal and fal, with th
 
 - One task is one branch and one pull request, tests first, reviewed whole by a reviewer that
   did not write it, merged by the orchestrator with a merge commit once `ci` and both scans
-  pass. A builder pushes once, when the whole task is done, after one full `just check` on the
+  pass (the sixteen jobs: `check`, `sweeps` and `release` on each runner, `scripts` and `e2e` in
+  two shards on each, `secrets`, and the aggregate `ci` that needs the other fifteen). A builder pushes once,
+  when the whole task is done, after one full `just check` on the
   finished tree, and `just e2e` where it touches the playground's host (H1, item 2). A0 pushes
   twice, by design (item 2).
 - An ADR is in the pull request of the task that names it, its first commit.
@@ -1500,9 +1504,12 @@ Modal token, the front's token or the Hugging Face sign-in.
 - **No Python and no GPU on the app's server**: shown in the fast tier and live.
 - **The store's format changes** (S1) so that a server can hold it for months; older builds
   refuse a store a newer one has written.
-- **Still waiting on you from milestone 5**: the Chrome tier's limit for one shard, `scripts
-  (macos-15)` over the 10 minutes, and the job names in `.claude/skills/kickoff` and
-  `review-merge` (`docs/carry-over.md`). This plan changes none of them.
+- **CI as you decided on 2026-11-22, and as #284 made it**, is what every pull request of this
+  plan meets: the Chrome tier held to 240 seconds in all and 120 a shard; the script tests in
+  two shards on each runner, under the unchanged budget of 10 minutes; sixteen jobs in all,
+  fifteen and the aggregate `ci` that needs them, which the skills `kickoff` and `review-merge`
+  name. This
+  plan changes none of them; a task that would pass a limit stops and says so.
 - **The tags `m6-engine` and `m6`** are made by the orchestrator as above.
 
 ## Review rounds
