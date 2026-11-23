@@ -121,3 +121,39 @@ fn the_playgrounds_guide_names_only_cases_that_exist() {
     let index = include_str!("../../../../docs/guides/README.md");
     assert!(index.contains("[The playground](playground.md)"));
 }
+
+#[test]
+fn the_engine_apis_guide_names_only_cases_that_exist() {
+    // Plan m6, task H1, item 9: each example of the engine API's guide is marked by the
+    // tier that holds it, and names its case `<module>::<test>`; each must be in the tree.
+    let guide = include_str!("../../../../docs/guides/engine-api.md");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let read = |path: &str| {
+        std::fs::read_to_string(root.join(path)).unwrap_or_else(|_| panic!("{path} is read"))
+    };
+    let modules = [
+        ("serve_http", "crates/whizbang/tests/it/serve_http.rs"),
+        (
+            "engine_guard",
+            "crates/whizbang-serve/tests/it/engine_guard.rs",
+        ),
+    ];
+    let mut named = 0;
+    for span in spans(guide) {
+        let Some((module, test)) = span.split_once("::") else {
+            continue;
+        };
+        let Some((_, path)) = modules.iter().find(|(name, _)| *name == module) else {
+            continue;
+        };
+        assert!(
+            read(path).contains(&format!("fn {test}()")),
+            "the guide names a case that is not there: {span}"
+        );
+        named += 1;
+    }
+    assert!(named >= 20, "{named} cases named");
+    assert!(guide.contains("fast tier"));
+    let index = include_str!("../../../../docs/guides/README.md");
+    assert!(index.contains("[The engine API](engine-api.md)"));
+}

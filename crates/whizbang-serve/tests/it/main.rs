@@ -6,6 +6,8 @@
 // Test helpers outside `#[test]` functions may unwrap; a failure there is a test failure.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+mod engine_guard;
+mod engine_kit;
 mod play_guard;
 mod play_runs;
 

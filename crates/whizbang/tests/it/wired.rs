@@ -2277,8 +2277,9 @@ fn only_main_reads_where_the_platforms_data_folder_is() {
     // `models::the_real_binary_started_with_a_temporary_home_reads_the_sign_in_there_and_no_other`).
     // And `setup`'s two (task Y1): `PATH` by `env::var_os`, counted twice, and the
     // whole environment by `env::vars_os`, counted as `env::var` and as `env::vars`,
-    // from which `uv`'s own is chosen.
-    assert_eq!(reads, ["main.rs"; 16], "the environment is read elsewhere");
+    // from which `uv`'s own is chosen. And `serve --http`'s one (plan m6, task H1): the
+    // variable `--token-env` names, by `env::var_os`, counted twice.
+    assert_eq!(reads, ["main.rs"; 18], "the environment is read elsewhere");
     // The function's definition, and the seven places it is handed on: to the two
     // commands that build an executor (`rascal`, and `squint`, plan 2A's task S2), to
     // the models commands (task N3b), to `setup` (task Y1) and to `backends status`
@@ -2299,7 +2300,7 @@ fn only_main_reads_where_the_platforms_data_folder_is() {
         format!("setup::run(&args,{platform},"),
         format!("backends::run(&command,{platform})"),
         format!("lab::run(&command,{platform})"),
-        format!("serve::run(&args,{platform})"),
+        format!("serve::run(&args,{platform},engine_token_variable)"),
         format!("play::run(&args,{platform})"),
     ] {
         assert_eq!(main.matches(&handed).count(), 1, "{handed}");

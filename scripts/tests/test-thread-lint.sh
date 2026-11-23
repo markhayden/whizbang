@@ -26,15 +26,20 @@ grep -q -F "whizbang_testkit::threads" "$tmp/out" || { cat "$tmp/out" >&2; fail 
 # The same crate without its test file is clean: what failed above is the test file.
 expect_pass "the fixture's library alone" lint --lib
 
-# The lint is allowed in five files, and nothing else in the workspace mentions it: the
+# The lint is allowed in six files, and nothing else in the workspace mentions it: the
 # executor's spawner, once; the spawner of the pack's supervisors, once, which holds a
 # process to two workers' three threads (the model's and the tool worker, ADR 0032); the spawner of the MCP server's reader, once,
 # which holds a process to two (plan 2C, task M1); the playground host's spawner, once,
-# which holds a process to 44 (plan m5, task H1; ADR 0041); and the test kit's helper,
-# for a thread, a scope and a thread of a scope.
+# which holds a process to 44 (plan m5, task H1; ADR 0041); the engine API's spawner,
+# once, which holds a process to 32 (plan m6, task H1; ADR 0045); and the test kit's
+# helper, for a thread, a scope and a thread of a scope.
 allowed=$(grep -r -l -F 'disallowed_methods' crates --include='*.rs' | sort | tr '\n' ' ')
-[ "$allowed" = "crates/whizbang-backends/src/pack/threads.rs crates/whizbang-core/src/contract/engine.rs crates/whizbang-serve/src/play/threads.rs crates/whizbang-serve/src/threads.rs crates/whizbang-testkit/src/threads.rs " ] ||
-  fail "clippy::disallowed_methods is allowed in the executor's spawner, the pack supervisor's spawner, the server reader's spawner, the playground host's spawner and the test kit's helper only (found in: $allowed)"
+[ "$allowed" = "crates/whizbang-backends/src/pack/threads.rs crates/whizbang-core/src/contract/engine.rs crates/whizbang-serve/src/engine/threads.rs crates/whizbang-serve/src/play/threads.rs crates/whizbang-serve/src/threads.rs crates/whizbang-testkit/src/threads.rs " ] ||
+  fail "clippy::disallowed_methods is allowed in the executor's spawner, the pack supervisor's spawner, the server reader's spawner, the playground host's spawner, the engine API's spawner and the test kit's helper only (found in: $allowed)"
+[ "$(grep -c -F 'allow(clippy::disallowed_methods)' crates/whizbang-serve/src/engine/threads.rs)" = 1 ] ||
+  fail "the engine API allows the lint once, on its spawner"
+grep -F 'pub const THREADS_LIMIT: usize = 32;' crates/whizbang-serve/src/engine/threads.rs >/dev/null ||
+  fail "the engine API's spawner holds a process to 32 threads"
 [ "$(grep -c -F 'allow(clippy::disallowed_methods)' crates/whizbang-serve/src/play/threads.rs)" = 1 ] ||
   fail "the playground host allows the lint once, on its spawner"
 grep -F 'pub const THREADS_LIMIT: usize = 44;' crates/whizbang-serve/src/play/threads.rs >/dev/null ||

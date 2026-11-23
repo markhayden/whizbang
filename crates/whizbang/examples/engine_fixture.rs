@@ -1,0 +1,173 @@
+//! The engine fixture (plan m6, task H1, item 8): the engine API as it ships
+//! (`whizbang_serve::engine::Host`, with the binary's wiring and the door the binary hands
+//! it, `whizbang::engining::Served`), over the test kit's fakes, in one process. It is an
+//! example target, so the binary never holds it, nor any fake. The tests of what the
+//! engine does (`crates/whizbang/tests/it/serve_http.rs`) start it in their own process
+//! through [`start`]; run as a program, it serves until its input ends.
+//!
+//! **Its backends** are the test kit's `playkit` (`whizbang_testkit::playkit`), under a
+//! config it writes beside the store: a segmenter that costs nothing, `local-seg`, and a
+//! filler, `cloud-fill`, at an address of the reserved `.example` domain, which nothing
+//! contacts, its key a made-up one in an env file written beside the store. The store's
+//! allowance is set to ten dollars. Nothing a test does reaches a model or leaves the
+//! machine. Plan m6, task D1 adds the kind `remote` to it.
+//!
+//! It prints one line first, the address it listens on, `http://127.0.0.1:<port>`; its
+//! token is [`TOKEN`]. Options: `--store <folder>` (made if missing, its last folder
+//! alone), `--port <n>` (0, the default, takes a free port).
+
+use std::io::Write;
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use whizbang::engining::Served;
+use whizbang::pack::OneWorker;
+use whizbang::serving::Actions;
+use whizbang::wiring::{self, Make, Over};
+use whizbang_core::spend::Amount;
+use whizbang_serve::engine::{Host, Secret, Settings};
+use whizbang_testkit::playkit::{KIND, PlayKit};
+
+/// The fixture's token: made up, and long enough.
+pub const TOKEN: &str = "made-up-fixture-engine-token-0123456789";
+
+/// The variable the filler's made-up key is under.
+pub const FILL_KEY: &str = "PLAYKIT_FILL_KEY";
+
+/// The config of the fixture's backends.
+pub fn config_text() -> String {
+    format!(
+        "[backends.segment]\ndefault = \"local-seg\"\n\n\
+         [backends.segment.local-seg]\nkind = \"{KIND}\"\nmodel = \"local-seg\"\n\
+         url = \"https://segment.example.org/v1\"\n\n\
+         [backends.fill]\ndefault = \"cloud-fill\"\n\n\
+         [backends.fill.cloud-fill]\nkind = \"{KIND}\"\nmodel = \"fill\"\n\
+         url = \"https://fill.example.org/v1\"\nkey_env = \"{FILL_KEY}\"\n\n\
+         [egress.recipients.segment]\norigin = \"https://segment.example.org\"\n\
+         classes = [\"prompts\", \"source_images\"]\n\n\
+         [egress.recipients.fill]\norigin = \"https://fill.example.org\"\n\
+         classes = [\"source_images\", \"derived_images\"]\n"
+    )
+}
+
+/// The made-up key of `cloud-fill`, assembled so that no scan of this file finds one.
+pub fn made_up_key() -> String {
+    ["made", "up", "engine", "fixture", "key", "0123456789"].join("-")
+}
+
+/// A file beside the store, named after it.
+fn beside(store: &Path, suffix: &str) -> PathBuf {
+    let mut name = store.file_name().unwrap_or_default().to_os_string();
+    name.push(suffix);
+    store.with_file_name(name)
+}
+
+/// The config's file, beside the store.
+pub fn config_path(store: &Path) -> PathBuf {
+    beside(store, ".engine.toml")
+}
+
+/// The env file, beside the store.
+pub fn env_path(store: &Path) -> PathBuf {
+    beside(store, ".engine.env")
+}
+
+/// A running fixture: the host, and the kit whose script steers its backends.
+pub struct Fixture {
+    pub host: Host,
+    pub kit: Arc<PlayKit>,
+}
+
+/// Writes the config, and the env file with the filler's key when `keyed`, beside the
+/// store, unless they are there.
+pub fn write_files(store: &Path, keyed: bool) -> Result<(), String> {
+    let config = config_path(store);
+    let env = env_path(store);
+    std::fs::write(&config, config_text()).map_err(|error| error.to_string())?;
+    let key = match keyed {
+        true => format!("{FILL_KEY}={}\n", made_up_key()),
+        false => String::new(),
+    };
+    std::fs::write(&env, key).map_err(|error| error.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&env, std::fs::Permissions::from_mode(0o600))
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+/// Starts the engine over the store at `store`, under the config and env file beside it
+/// (written by [`write_files`]), with these settings.
+pub fn start(store: &Path, settings: Settings) -> Result<Fixture, String> {
+    let config = config_path(store);
+    let env = env_path(store);
+    let kit = PlayKit::new();
+    let mut kinds = wiring::kinds(&OneWorker::installed());
+    kinds
+        .register(kit.kind())
+        .map_err(|error| error.to_string())?;
+    let over = Over::nothing()
+        .config(Some(&config))
+        .env_file(Some(&env))
+        .kinds(kinds);
+    let opening = wiring::opening(store, Make::TheRoot, wiring::recovery())
+        .map_err(|error| wiring::not_opened(&error))?;
+    let writer = opening.writer().map_err(|why| why.to_string())?;
+    // Ten dollars to spend, in a new store; a store opened again keeps its books.
+    let held = writer.snapshot().map_err(|error| error.to_string())?;
+    if held.runs().is_empty()
+        && let Some(ten) = Amount::new(10_000_000)
+    {
+        let _ = whizbang_core::spend::reset(&writer, ten, 1);
+    }
+    let registry = wiring::registry_over(&over, false)?;
+    let descriptors = registry.descriptors().cloned().collect();
+    let executor = wiring::runner(registry, writer.clone(), &over)?;
+    let actions = Actions::new(descriptors, store.to_path_buf(), over.worker().cloned());
+    let door = Served::new(actions, writer);
+    let token = Secret::new(TOKEN)?;
+    let host = Host::start(Arc::new(executor), Arc::new(door), settings, token)
+        .map_err(|error| format!("cannot listen: {error}"))?;
+    Ok(Fixture { host, kit })
+}
+
+fn main() {
+    let mut store = std::env::temp_dir().join("whizbang-engine-fixture");
+    let mut port: u16 = 0;
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--store" => store = args.next().map(PathBuf::from).unwrap_or(store),
+            "--port" => port = args.next().and_then(|p| p.parse().ok()).unwrap_or(0),
+            other => {
+                eprintln!("engine_fixture: unknown argument {other}");
+                std::process::exit(2);
+            }
+        }
+    }
+    let started = write_files(&store, true).and_then(|()| {
+        start(
+            &store,
+            Settings::new(SocketAddr::from(([127, 0, 0, 1], port))),
+        )
+    });
+    let fixture = match started {
+        Ok(fixture) => fixture,
+        Err(why) => {
+            eprintln!("engine_fixture: {why}");
+            std::process::exit(2);
+        }
+    };
+    let mut out = std::io::stdout();
+    let _ = writeln!(out, "http://{}", fixture.host.address());
+    let _ = out.flush();
+    let _ = std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink());
+    let stopper = fixture.host.stopper();
+    stopper.quit();
+    fixture.host.wait();
+    let _ = std::fs::remove_file(config_path(&store));
+    let _ = std::fs::remove_file(env_path(&store));
+}

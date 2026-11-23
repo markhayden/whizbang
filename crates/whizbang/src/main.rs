@@ -127,7 +127,8 @@ enum Command {
     Try(tool_try::Args),
     /// Serve: the MCP server over stdio, for a local agent. Each action is a tool; a
     /// call runs through admission, spend and the egress gate as the command line's
-    /// do. It ends when its input does.
+    /// do. It ends when its input does. With --http, the same tools over HTTP for a
+    /// hosted app (the engine API), until a signal stops it.
     Serve(serve::Args),
     /// Play: the playground, a page in Chrome served by this process on 127.0.0.1. A
     /// run started there runs through admission, spend and the egress gate as the
@@ -215,6 +216,13 @@ fn answered_by_the_parser(error: &clap::Error) -> ExitCode {
         eprintln!("{}", door::printable(line));
     }
     ExitCode::from(2)
+}
+
+/// The variable of this process's environment that `whizbang serve --http --token-env`
+/// names, which holds the engine API's token (plan m6, task H1; ADR 0045): read once, at
+/// start, and handed to the engine as a value that prints nothing.
+fn engine_token_variable(name: &str) -> Option<std::ffi::OsString> {
+    std::env::var_os(name)
 }
 
 /// The models directory in this machine's data folder for whizbang, from the
@@ -337,8 +345,14 @@ where
         // Setup reads two things more of this process's environment: `PATH`, where
         // `uv` is looked for when `--uv` names none, and the variables `uv`'s own
         // environment is chosen from (the locale, and where `uv` keeps its Pythons).
+        // Serve over HTTP reads one variable more, when `--token-env` names it: the
+        // engine API's token (plan m6, task H1).
         Command::Serve(args) => {
-            match serve::run(&args, std::sync::Arc::new(platforms_models_dir)) {
+            match serve::run(
+                &args,
+                std::sync::Arc::new(platforms_models_dir),
+                engine_token_variable,
+            ) {
                 Ok(text) => emit(text.as_bytes()),
                 Err(complaint) => complain_in_lines(&complaint),
             }
