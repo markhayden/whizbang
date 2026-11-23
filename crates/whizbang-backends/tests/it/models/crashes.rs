@@ -101,6 +101,38 @@ fn part_of(clean: &[Event], part: usize, parts: usize) -> Vec<(usize, Tail)> {
     cut
 }
 
+/// The parts a sweep is cut in where four parts were not enough: about one event under one
+/// tail to a part (a clean first install, or an install over another, is about a hundred
+/// of them), the finest a sweep is cut without cutting inside one. [`part_of`] fails a
+/// part left with none.
+const FINE_PARTS: usize = 96;
+
+/// One test for each part of a sweep cut in [`FINE_PARTS`], named by its part, with the
+/// part it runs from 0, and one test that holds that every part has its test, once: none
+/// of the sweep is left out or run twice. Each part is written `fn name() = part;`, so that
+/// a test is found by its name where it is defined, as any other
+/// (`scripts/tests/test-notes.sh` looks for one so).
+macro_rules! in_fine_parts {
+    ($sweep:ident($kind:expr), every part: $every:ident, $(fn $name:ident() = $part:expr;)*) => {
+        $(
+            #[test]
+            fn $name() {
+                $sweep($kind, $part, FINE_PARTS);
+            }
+        )*
+        #[test]
+        fn $every() {
+            let mut parts = vec![$($part),*];
+            parts.sort_unstable();
+            assert_eq!(parts, (0..FINE_PARTS).collect::<Vec<usize>>());
+            $(assert!(stringify!($name).ends_with(&format!(
+                "_part_{:02}_of_{FINE_PARTS}",
+                $part + 1
+            )));)*
+        }
+    };
+}
+
 /// A list of events with the directory they happened in taken out of every path, so
 /// that the events of two installs in two scratch folders can be compared.
 fn shape(events: &[Event], root: &Path) -> Vec<String> {
@@ -231,24 +263,108 @@ fn crashed_at_each_event(sweep: Sweep, part: usize, parts: usize) {
     }
 }
 
-#[test]
-fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_1_of_4() {
-    crashed_at_each_event(Sweep::First, 0, 4);
-}
-
-#[test]
-fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_2_of_4() {
-    crashed_at_each_event(Sweep::First, 1, 4);
-}
-
-#[test]
-fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_3_of_4() {
-    crashed_at_each_event(Sweep::First, 2, 4);
-}
-
-#[test]
-fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_4_of_4() {
-    crashed_at_each_event(Sweep::First, 3, 4);
+// In 96 parts, as the sweep after a refused step of a first install below, and for the same
+// reason: see the note there. Until milestone 6's entry check this sweep was in four, and a
+// part of four was ended at the limit of 30 seconds inside full checks on a busy Mac.
+in_fine_parts! {
+    crashed_at_each_event(Sweep::First),
+    every part: the_sweep_of_a_first_install_has_a_test_for_each_of_its_parts,
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_01_of_96() = 0;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_02_of_96() = 1;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_03_of_96() = 2;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_04_of_96() = 3;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_05_of_96() = 4;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_06_of_96() = 5;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_07_of_96() = 6;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_08_of_96() = 7;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_09_of_96() = 8;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_10_of_96() = 9;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_11_of_96() = 10;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_12_of_96() = 11;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_13_of_96() = 12;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_14_of_96() = 13;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_15_of_96() = 14;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_16_of_96() = 15;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_17_of_96() = 16;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_18_of_96() = 17;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_19_of_96() = 18;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_20_of_96() = 19;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_21_of_96() = 20;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_22_of_96() = 21;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_23_of_96() = 22;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_24_of_96() = 23;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_25_of_96() = 24;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_26_of_96() = 25;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_27_of_96() = 26;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_28_of_96() = 27;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_29_of_96() = 28;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_30_of_96() = 29;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_31_of_96() = 30;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_32_of_96() = 31;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_33_of_96() = 32;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_34_of_96() = 33;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_35_of_96() = 34;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_36_of_96() = 35;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_37_of_96() = 36;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_38_of_96() = 37;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_39_of_96() = 38;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_40_of_96() = 39;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_41_of_96() = 40;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_42_of_96() = 41;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_43_of_96() = 42;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_44_of_96() = 43;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_45_of_96() = 44;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_46_of_96() = 45;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_47_of_96() = 46;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_48_of_96() = 47;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_49_of_96() = 48;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_50_of_96() = 49;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_51_of_96() = 50;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_52_of_96() = 51;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_53_of_96() = 52;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_54_of_96() = 53;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_55_of_96() = 54;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_56_of_96() = 55;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_57_of_96() = 56;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_58_of_96() = 57;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_59_of_96() = 58;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_60_of_96() = 59;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_61_of_96() = 60;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_62_of_96() = 61;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_63_of_96() = 62;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_64_of_96() = 63;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_65_of_96() = 64;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_66_of_96() = 65;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_67_of_96() = 66;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_68_of_96() = 67;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_69_of_96() = 68;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_70_of_96() = 69;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_71_of_96() = 70;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_72_of_96() = 71;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_73_of_96() = 72;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_74_of_96() = 73;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_75_of_96() = 74;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_76_of_96() = 75;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_77_of_96() = 76;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_78_of_96() = 77;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_79_of_96() = 78;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_80_of_96() = 79;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_81_of_96() = 80;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_82_of_96() = 81;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_83_of_96() = 82;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_84_of_96() = 83;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_85_of_96() = 84;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_86_of_96() = 85;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_87_of_96() = 86;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_88_of_96() = 87;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_89_of_96() = 88;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_90_of_96() = 89;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_91_of_96() = 90;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_92_of_96() = 91;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_93_of_96() = 92;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_94_of_96() = 93;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_95_of_96() = 94;
+    fn a_crash_at_any_event_of_a_first_install_leaves_it_not_installed_or_whole_part_96_of_96() = 95;
 }
 
 #[test]
@@ -374,36 +490,6 @@ fn crashed_after_each_refused_step(sweep: Sweep, part: usize, parts: usize) {
     }
 }
 
-/// The parts the sweep after a refused step of a first install is cut in: about one event
-/// under one tail to a part (a clean first install is about a hundred of them), the finest
-/// the sweep is cut without cutting inside one. [`part_of`] fails a part left with none.
-const FIRST_PARTS: usize = 96;
-
-/// One test for each part of that sweep, named by its part, with the part it runs from 0.
-/// Each is written `fn name() = part;`, so that a test is found by its name where it is
-/// defined, as any other (`scripts/tests/test-notes.sh` looks for one so).
-macro_rules! after_a_refused_step_of_a_first_install {
-    ($(fn $name:ident() = $part:expr;)*) => {
-        $(
-            #[test]
-            fn $name() {
-                crashed_after_each_refused_step(Sweep::First, $part, FIRST_PARTS);
-            }
-        )*
-        /// Every part has its test, once: none of the sweep is left out or run twice.
-        #[test]
-        fn the_sweep_after_a_refused_step_of_a_first_install_has_a_test_for_each_of_its_parts() {
-            let mut parts = vec![$($part),*];
-            parts.sort_unstable();
-            assert_eq!(parts, (0..FIRST_PARTS).collect::<Vec<usize>>());
-            $(assert!(stringify!($name).ends_with(&format!(
-                "_part_{:02}_of_{FIRST_PARTS}",
-                $part + 1
-            )));)*
-        }
-    };
-}
-
 // In 96 parts where the two sweeps after it are in four. The sweeps run two at a time
 // (`.config/nextest.toml`, `crash-sweeps`), and this one is the first of them by its name,
 // so its parts are the ones that run beside the rest of a full check; the sweeps after it
@@ -420,7 +506,9 @@ macro_rules! after_a_refused_step_of_a_first_install {
 // rest 3 at most. So a part is as small as the sweep allows, and does in those seconds what
 // it must and no more. Together the parts are still every event under each of its tails,
 // once ([`part_of`]), and the test the macro adds holds that each part has its test.
-after_a_refused_step_of_a_first_install! {
+in_fine_parts! {
+    crashed_after_each_refused_step(Sweep::First),
+    every part: the_sweep_after_a_refused_step_of_a_first_install_has_a_test_for_each_of_its_parts,
     fn a_crash_at_any_event_after_a_refused_step_of_a_first_install_leaves_it_not_installed_or_whole_part_01_of_96() = 0;
     fn a_crash_at_any_event_after_a_refused_step_of_a_first_install_leaves_it_not_installed_or_whole_part_02_of_96() = 1;
     fn a_crash_at_any_event_after_a_refused_step_of_a_first_install_leaves_it_not_installed_or_whole_part_03_of_96() = 2;
@@ -519,28 +607,108 @@ after_a_refused_step_of_a_first_install! {
     fn a_crash_at_any_event_after_a_refused_step_of_a_first_install_leaves_it_not_installed_or_whole_part_96_of_96() = 95;
 }
 
-#[test]
-fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_1_of_4()
- {
-    crashed_after_each_refused_step(Sweep::Over, 0, 4);
-}
-
-#[test]
-fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_2_of_4()
- {
-    crashed_after_each_refused_step(Sweep::Over, 1, 4);
-}
-
-#[test]
-fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_3_of_4()
- {
-    crashed_after_each_refused_step(Sweep::Over, 2, 4);
-}
-
-#[test]
-fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_4_of_4()
- {
-    crashed_after_each_refused_step(Sweep::Over, 3, 4);
+// In 96 parts, as the sweep after a refused step of a first install above, and for the same
+// reason. Until milestone 6's entry check it was in four, and a part of four was ended at the
+// limit of 30 seconds inside a full check on a busy Mac (plan e1).
+in_fine_parts! {
+    crashed_after_each_refused_step(Sweep::Over),
+    every part: the_sweep_after_a_refused_step_of_an_install_has_a_test_for_each_of_its_parts,
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_01_of_96() = 0;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_02_of_96() = 1;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_03_of_96() = 2;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_04_of_96() = 3;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_05_of_96() = 4;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_06_of_96() = 5;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_07_of_96() = 6;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_08_of_96() = 7;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_09_of_96() = 8;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_10_of_96() = 9;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_11_of_96() = 10;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_12_of_96() = 11;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_13_of_96() = 12;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_14_of_96() = 13;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_15_of_96() = 14;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_16_of_96() = 15;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_17_of_96() = 16;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_18_of_96() = 17;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_19_of_96() = 18;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_20_of_96() = 19;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_21_of_96() = 20;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_22_of_96() = 21;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_23_of_96() = 22;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_24_of_96() = 23;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_25_of_96() = 24;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_26_of_96() = 25;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_27_of_96() = 26;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_28_of_96() = 27;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_29_of_96() = 28;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_30_of_96() = 29;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_31_of_96() = 30;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_32_of_96() = 31;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_33_of_96() = 32;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_34_of_96() = 33;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_35_of_96() = 34;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_36_of_96() = 35;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_37_of_96() = 36;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_38_of_96() = 37;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_39_of_96() = 38;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_40_of_96() = 39;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_41_of_96() = 40;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_42_of_96() = 41;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_43_of_96() = 42;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_44_of_96() = 43;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_45_of_96() = 44;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_46_of_96() = 45;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_47_of_96() = 46;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_48_of_96() = 47;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_49_of_96() = 48;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_50_of_96() = 49;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_51_of_96() = 50;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_52_of_96() = 51;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_53_of_96() = 52;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_54_of_96() = 53;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_55_of_96() = 54;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_56_of_96() = 55;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_57_of_96() = 56;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_58_of_96() = 57;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_59_of_96() = 58;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_60_of_96() = 59;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_61_of_96() = 60;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_62_of_96() = 61;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_63_of_96() = 62;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_64_of_96() = 63;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_65_of_96() = 64;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_66_of_96() = 65;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_67_of_96() = 66;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_68_of_96() = 67;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_69_of_96() = 68;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_70_of_96() = 69;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_71_of_96() = 70;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_72_of_96() = 71;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_73_of_96() = 72;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_74_of_96() = 73;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_75_of_96() = 74;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_76_of_96() = 75;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_77_of_96() = 76;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_78_of_96() = 77;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_79_of_96() = 78;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_80_of_96() = 79;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_81_of_96() = 80;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_82_of_96() = 81;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_83_of_96() = 82;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_84_of_96() = 83;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_85_of_96() = 84;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_86_of_96() = 85;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_87_of_96() = 86;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_88_of_96() = 87;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_89_of_96() = 88;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_90_of_96() = 89;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_91_of_96() = 90;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_92_of_96() = 91;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_93_of_96() = 92;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_94_of_96() = 93;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_95_of_96() = 94;
+    fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_96_of_96() = 95;
 }
 
 #[test]
