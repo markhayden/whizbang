@@ -1283,8 +1283,10 @@ the guide finished.
    repo is changed and no repo is deleted (`SPEC.md` sections 15 and 16). `docs/sources.toml`
    is unchanged. Success criterion 9 is then met and the note's last line says so.
 
-- [x] Done when: the note is merged, `m5` is tagged, and each of the four repos shows as
+- [ ] Done when: the note is merged, `m5` is tagged, and each of the four repos shows as
   archived with the pointer (or the owner's no is recorded in the note).
+
+The four repos are archived without a pointer, by the owner's decision of 2026-11-23 ("No, leave as is").
 
 **As built (N1).** The note is `docs/plans/m5-note.md`; `scripts/tests/test-notes.sh` now
 also fails when a note names a Chrome case (`<file>.spec.ts: <title>`) that `ui/e2e/` does
