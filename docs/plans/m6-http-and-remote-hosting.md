@@ -318,6 +318,8 @@ the pack (the front must run on any host).
 | `POST /pack/1/cancel` | whizbang's hello, then a `cancel` frame, with the header `Whizbang-Dispatch` naming the request to cancel | 204. The front cancels the request of that dispatch id alone, whether queued in its own queue or running beside the worker (which is asked when the front holds no entry, as after the front was replaced); one that has ended, or was never seen, touches nothing. The `pack/1` id in the frame is never used to find it |
 | `GET /pack/1/health` | None | 200 and a small JSON document, `pack-host/1`: the protocol, the models the volume holds with each file's SHA-256 as verified, the device the worker last reported. Needs no token, starts no worker and wakes no card |
 
+*Changed by L1, item 2b: the headers come at once and the identity is a record in the body, before the first frame (ADR 0046, "The headers at once").*
+
 **The outcome record.** What the local supervisor knows beside the frames (why a call
 failed, the stage it reached, a worker's end and its exit status, and the worker's last lines
 of error output, which are outside the frames, ADR 0020) is told over HTTP by one record after
@@ -349,7 +351,7 @@ the host is charged at its bound whatever the record says (the host may have sta
 and billed it), and only a request refused before anything left (the client's own refusals,
 which are `NotSent` today) is settled at nothing.
 
-**Its identity.** The hello of `pack/1` is not changed (a new field would be `pack/2`); the
+**Its identity.** *Changed by L1, item 2b: the headers come at once and the identity is a record in the body, before the first frame (ADR 0046, "The headers at once").* The hello of `pack/1` is not changed (a new field would be `pack/2`); the
 identity is in the HTTP around the frames, which ADR 0020 lets this record add. The front
 answers each request with `Whizbang-Model-Files: sha256:<digest>`, the digest of the sorted
 list of the model's file names and hashes it verified before the load that answered; the kind
@@ -595,7 +597,8 @@ an NVIDIA card where there is one.
    ADR 0020 asks over HTTP too, and a frame over its bound closes the connection with the rest
    unread; the answer streamed in chunks, flushed
    after each frame; the answer's status and headers sent once the request's turn has come and
-   its files are verified, and nothing added to the worker's frames, so `pack/1`'s budgets of
+   its files are verified (changed by L1, item 2b: at once, the identity then a record in the
+   body; ADR 0046, "The headers at once"), and nothing added to the worker's frames, so `pack/1`'s budgets of
    events and diagnostics are the worker's alone; a client gone mid-answer cancels its
    request; the identity header; the
    health document, which reads the volume's installation records and the hashes they hold,
@@ -708,7 +711,9 @@ an NVIDIA card where there is one.
    `test_front.Deadlines.test_with_every_request_handler_taken_and_sixty_four_connections_stalled_in_their_handshake_or_headers_a_cancel_made_after_them_is_answered_within_2_seconds_of_its_acceptance`,
    `test_front.Deadlines.test_a_ready_connection_is_read_while_others_are_stalled`,
    `test_front.Deadlines.test_two_cancels_stalled_in_their_bodies_leave_a_whole_third_cancel_to_reach_the_worker_within_2_seconds`,
-   `test_front.Start.test_the_headers_follow_the_check_of_the_files_and_a_failed_check_is_an_error_answer_with_no_frame`,
+   `test_front.Start.test_the_headers_come_before_the_check_of_the_files_and_the_identity_follows_it` and
+   `test_front.Start.test_a_failed_check_is_a_record_with_no_identity_and_no_frame` (L1, item 2b, in
+   place of `test_the_headers_follow_the_check_of_the_files_and_a_failed_check_is_an_error_answer_with_no_frame`),
    `test_front.Framing.test_a_frame_header_over_its_bound_inside_a_permitted_body_is_refused_with_the_rest_unread`,
    `test_front.Framing.test_a_payload_length_that_disagrees_with_its_header_is_refused_before_its_samples_are_read`,
    `test_front.Bridge.test_a_gpu_worker_replaced_under_a_front_that_stays_loads_again_for_the_next_request_and_replays_nothing`,

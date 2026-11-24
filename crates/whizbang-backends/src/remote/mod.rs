@@ -20,10 +20,18 @@
 //!
 //! **Its identity** is the files the catalogue's entry names, as the installation of
 //! this build's adapter records them: the digest of `<name> sha256:<hex>\n` lines sorted
-//! by the bytes of the name ([`files_digest`]), which the front names in
-//! `Whizbang-Model-Files` of every answer it verified before its load. An answer that
-//! names none, a malformed one or another is refused whole before anything of it is
-//! used, and never kept. The backend declares its model at that digest, as its version
+//! by the bytes of the name ([`files_digest`]), which the front names in the identity
+//! record of every answer it verified before its load, ahead of its first frame (ADR
+//! 0046, "The headers at once"). An answer whose frames come with no identity
+//! record before them, or whose record names a malformed digest or another, is refused
+//! whole before anything of it is used, and never kept.
+//!
+//! **Its wait.** The front sends an answer's headers at once and a keep-alive after
+//! every 10 seconds of nothing else, so a host that is slow to start its card keeps the
+//! answer alive; the wait for the head and between two reads of the answer is the
+//! request's own, `host_limit_s` (never past the run's deadline), which holds many
+//! keep-alives; and the whole answer is over by that wait and 30 seconds from the
+//! request's start, however it is kept alive. The backend declares its model at that digest, as its version
 //! (`files-` and its hex digits, [`version_of`]), so a run's record names the files asked; the answer's own digest, the
 //! request's dispatch id and its device are said beside the response.
 //!
@@ -74,10 +82,6 @@ pub const HEALTH_ROUTE: &str = "/pack/1/health";
 
 /// The field that names a request's dispatch id.
 pub const DISPATCH_FIELD: &str = "Whizbang-Dispatch";
-/// The field of an answer that names the digest of the files it came from.
-pub const FILES_FIELD: &str = "Whizbang-Model-Files";
-/// The field of an answer that failed before its files were verified.
-pub const UNVERIFIED_FIELD: &str = "Whizbang-Unverified";
 /// The header the token is carried in, as `Bearer` and the token.
 pub const TOKEN_HEADER: &str = "Authorization";
 
@@ -115,7 +119,7 @@ struct Hosted {
     features: Vec<String>,
 }
 
-/// The digest an answer names in `Whizbang-Model-Files` (ADR 0046, "The identity"):
+/// The digest an answer names in its identity record (ADR 0046, "The identity"):
 /// `sha256:` and the SHA-256, in lower-case hex, of a line `<name> sha256:<hex>\n` for
 /// each file, in the order of the bytes of the name.
 pub fn files_digest<'a>(files: impl IntoIterator<Item = (&'a str, String)>) -> String {

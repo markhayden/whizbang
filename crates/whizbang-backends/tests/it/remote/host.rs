@@ -106,16 +106,27 @@ impl Host {
 
     /// The same, the front told this host limit of one attempt.
     pub fn with_limit(models: &[String], host_limit_s: u32) -> Host {
-        Host::started(models, host_limit_s, None)
+        Host::started(models, host_limit_s, None, None)
     }
 
     /// The same, its side's limit of a call this many seconds in place of its short one:
     /// for a test whose request ends on whizbang's side first.
     pub fn with_call_limit(models: &[String], call_s: u32) -> Host {
-        Host::started(models, 600, Some(call_s))
+        Host::started(models, 600, Some(call_s), None)
     }
 
-    fn started(models: &[String], host_limit_s: u32, call_s: Option<u32>) -> Host {
+    /// The same, a cold host: its side waits `slow` before each request, as a card that
+    /// is starting, and the front sends a keep-alive after every `keep_alive` of nothing.
+    pub fn cold(models: &[String], slow: Duration, keep_alive: Duration) -> Host {
+        Host::started(models, 600, None, Some((slow, keep_alive)))
+    }
+
+    fn started(
+        models: &[String],
+        host_limit_s: u32,
+        call_s: Option<u32>,
+        cold: Option<(Duration, Duration)>,
+    ) -> Host {
         let pki = Arc::new(Pki::loopback());
         let tls = Scratch::new("remote-tls");
         pki.write_pem(tls.path());
@@ -144,6 +155,9 @@ impl Host {
         if let Some(call_s) = call_s {
             command.env("WHIZBANG_FAKE_HOST_CALL_S", call_s.to_string());
         }
+        if let Some((slow, _)) = cold {
+            command.env("WHIZBANG_FAKE_HOST_SLOW_MS", slow.as_millis().to_string());
+        }
         for name in ["HOME", "TMPDIR", "LANG"] {
             if let Some(value) = std::env::var_os(name) {
                 command.env(name, value);
@@ -167,6 +181,9 @@ impl Host {
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
+        if let Some((_, keep_alive)) = cold {
+            command.args(["--keep-alive-ms", &keep_alive.as_millis().to_string()]);
+        }
         let mut child = command.spawn().expect("the front starts");
         let input = child.stdin.take();
         let errors = child.stderr.take().expect("its error output is piped");

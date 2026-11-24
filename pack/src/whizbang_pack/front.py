@@ -3,8 +3,8 @@ docs/plans/m6-http-and-remote-hosting.md, task P1).
 
     python -m whizbang_pack.front --listen <host:port> --models-dir <folder>
         --token-env <NAME> [--worker local | --worker <module:function>]
-        [--host-limit-s <seconds>] [--tls-cert <file> --tls-key <file>]
-        [--redact-env <NAME>]...
+        [--host-limit-s <seconds>] [--keep-alive-ms <ms>]
+        [--tls-cert <file> --tls-key <file>] [--redact-env <NAME>]...
 
 It does on a GPU host what whizbang's Rust supervisor does on the Mac (ADR 0020, "The
 worker"), in two parts:
@@ -21,6 +21,17 @@ worker"), in two parts:
 
 The standard library only, as the rest of the pack (`dependencies = []`). Every wait is
 finite, and every phase of a connection has its deadline (`Limits`).
+
+**An answer's headers come at once** (ADR 0046, "The headers at once"): once the
+token is checked and the request read whole, before anything waits on the worker's side, so
+that a host's proxy that gives up on an answer whose headers are late (Modal's, at 150
+seconds) never sees one. What is known only later comes in the body: the identity of the
+files in an identity record, a failure in the outcome record, and a keep-alive whenever
+nothing else was written for `Limits.keep_alive` seconds.
+
+**What the front logs** to its error output, one line each and never a token, an image or a
+prompt: each cancel it is given and where it went, each cancel frame written to a worker and
+how long after it the call ended, and each worker started and ended (`say`).
 """
 
 import collections
@@ -69,6 +80,14 @@ LINE_READ_BYTES = 2 * LINE_BYTES
 STARTS_FAILED_MOST = 3
 # The host's limit of one attempt when none is given (ADR 0046): the plan's example.
 HOST_LIMIT_DEFAULT = 600
+# How long an answer stays silent at most before a keep-alive: a third of the client's
+# shortest limit between two reads of any answer (whizbang's `BETWEEN_READS_LIMIT`, 30
+# seconds); the limit between two reads of an answer of frames is the request's own, its
+# host's limit (600 seconds on Modal), so either way three keep-alives fit in it.
+KEEP_ALIVE_S = 10.0
+# The bounds of `--keep-alive-ms`.
+KEEP_ALIVE_MS_LEAST = 1
+KEEP_ALIVE_MS_MOST = 20_000
 # A token of the front is at least this long, of printable ASCII.
 TOKEN_LEAST = 32
 # Installations the health document names at most.
@@ -99,10 +118,28 @@ class Limits:
         self.cancel = 5.0
         self.end = 5.0
         self.restart_pause = 60.0
+        # The longest the front writes nothing on a request's answer before a keep-alive:
+        # well under the client's limit between two reads (ADR 0046, "The headers at
+        # once").
+        self.keep_alive = KEEP_ALIVE_S
+        # How long past a request's `not_after` the front waits for its outcome before it
+        # answers `timed_out` itself and cancels it: keep-alives never hold an answer open
+        # past its host's limit.
+        self.overrun = 5.0
         for name, value in given.items():
             if not hasattr(self, name):
                 raise TypeError("no limit is named " + name)
             setattr(self, name, float(value))
+
+
+def say(line):
+    """One line of the front's log on its error output, flushed at once, so a host's log
+    shows it as it happens. A caller never passes a token, an image or a prompt."""
+    try:
+        sys.stderr.write("whizbang_pack.front: %s\n" % line)
+        sys.stderr.flush()
+    except (OSError, ValueError):
+        pass
 
 
 class Usage(Exception):
@@ -183,11 +220,24 @@ def read_record(stream, marked=False):
     return document, lines
 
 
+# A keep-alive: the mark and a length of 0, which no record has. A reader passes over it.
+KEEP_ALIVE = RECORD_MARK + b"\0\0\0\0"
+
+
+def identity_bytes(digest):
+    """The identity record (ADR 0046, "The headers at once"): the mark, four bytes of
+    length and the document `{"files": <digest>, "format": "pack-host/1"}`. It comes before
+    the first frame of every answer whose files were checked, and never in one whose were
+    not."""
+    head = json.dumps({"files": digest, "format": FORMAT}, separators=(",", ":"), sort_keys=True).encode("ascii")
+    return RECORD_MARK + len(head).to_bytes(4, "big") + head
+
+
 # --- the identity of the files ---------------------------------------------------------------
 
 
 def files_digest(files):
-    """The digest an answer names in `Whizbang-Model-Files` (ADR 0046, "The identity"): the
+    """The digest an answer names in its identity record (ADR 0046, "The identity"): the
     SHA-256 of `<name> <sha256>` lines, one for each file, in the order of the name's bytes."""
     lines = sorted((file["name"].encode("ascii"), file["sha256"].encode("ascii")) for file in files)
     hashed = hashlib.sha256()
@@ -465,8 +515,9 @@ class LocalSide:
     `("outcome", document, lines)`. A failure before the files were checked hands on its
     outcome alone. `cancel(dispatch)` is the control input."""
 
-    def __init__(self, models_dir, spawn=None, claims=None, limits=None, secrets=(), clock=time.time):
+    def __init__(self, models_dir, spawn=None, claims=None, limits=None, secrets=(), clock=time.time, log=say):
         self.models_dir = models_dir
+        self._log = log
         self._spawn = spawn or spawner(models_dir)
         self._claims = claims or Claims()
         self._limits = limits or Limits()
@@ -479,6 +530,7 @@ class LocalSide:
         self._running = None  # the dispatch of the running call
         self._exchange = None  # (worker, own id) of the frame in the worker
         self._cancel_at = None
+        self._cancel_said = None  # when the running call's cancel came, on the clock
         # Cancels of a dispatch that is not running here yet, the last 64: a cancel that
         # comes while its call is on its way (on Modal, a control input that overtook the
         # call's input) is found when the call begins, and the call ends before any work.
@@ -513,14 +565,19 @@ class LocalSide:
                 self._early[dispatch] = True
                 while len(self._early) > 64:
                     self._early.popitem(last=False)
+                self._log("cancel %s: no call of it runs here; kept for its call" % dispatch)
                 return False
             if self._cancel_at is None:
-                self._cancel_at = time.monotonic() + self._limits.cancel
+                self._cancel_said = time.monotonic()
+                self._cancel_at = self._cancel_said + self._limits.cancel
             exchange = self._exchange
         if exchange is not None:
             worker, own = exchange
             worker.write(proto.chunks({"type": "cancel", "id": own}))
             worker.frames.put(("wake",))
+            self._log("cancel %s: cancel frame written to worker %d" % (dispatch, worker.pid))
+        else:
+            self._log("cancel %s: its call is before the worker; it ends there" % dispatch)
         return True
 
     # one call
@@ -529,13 +586,29 @@ class LocalSide:
         if not self._calls.acquire(blocking=False):
             emit(outcome("failed", "unavailable", admission="busy"))
             return
+        ended = []
+
+        def told(item):
+            if item[0] == "outcome":
+                ended.append(item[1])
+            emit(item)
+
         try:
-            self._call(job, emit)
+            self._call(job, told)
         finally:
             with self._state:
+                said = self._cancel_said
                 self._running = None
                 self._exchange = None
                 self._cancel_at = None
+                self._cancel_said = None
+            if said is not None:
+                if ended:
+                    came = ended[-1]["kind"] or "complete"
+                    how = _how(ended[-1]["ended"])
+                else:
+                    came, how = "no outcome", "unknown"
+                self._log("cancel %s: the call ended %.3f s after its cancel, %s, the worker %s" % (job["dispatch"], time.monotonic() - said, came, how))
             self._calls.release()
 
     def _call(self, job, emit):
@@ -548,7 +621,8 @@ class LocalSide:
         with self._state:
             self._running = dispatch
             if self._early.pop(dispatch, None) and self._cancel_at is None:
-                self._cancel_at = time.monotonic() + self._limits.cancel
+                self._cancel_said = time.monotonic()
+                self._cancel_at = self._cancel_said + self._limits.cancel
         try:
             claimed = self._claims.claim(dispatch)
         except Unreachable:
@@ -636,6 +710,7 @@ class LocalSide:
             raise _Ended("unavailable", "not_sent") from None
         worker = _Process(process, self._secrets)
         self._worker = worker
+        self._log("worker %d started" % worker.pid)
         conversation = "front.%d" % os.getpid()
         worker.write(proto.chunks({"type": "hello", "id": conversation, "version": proto.VERSION, "role": "whizbang"}))
         try:
@@ -663,7 +738,9 @@ class LocalSide:
             return None
         if not worker.answered:
             self._start_failed()
-        return worker.end(self._limits)
+        how = worker.end(self._limits)
+        self._log("worker %d ended: %s; the next call starts another" % (worker.pid, _how(how)))
+        return how
 
     def _send(self, worker, message, limit, emit):
         """One request in the worker, under an id of this side's own: written, and waited for
@@ -729,6 +806,15 @@ class LocalSide:
                 emit(("frame", proto.encode(dict(said, id=theirs))))
             if said["type"] != "event":
                 return said
+
+
+def _how(ended):
+    """How a worker ended, as a line of the log says it."""
+    if ended is None:
+        return "lives on"
+    if isinstance(ended, dict):
+        return "exited %d" % ended["exited"]
+    return ended
 
 
 def _job_frames(frames):
@@ -968,8 +1054,9 @@ class _Body(io.RawIOBase):
 class Front:
     """The routes, the classifier, the handlers and the queue of 4 (ADR 0046)."""
 
-    def __init__(self, side, models_dir, token, limits=None, host_limit_s=HOST_LIMIT_DEFAULT, tls=None, clock=time.time):
+    def __init__(self, side, models_dir, token, limits=None, host_limit_s=HOST_LIMIT_DEFAULT, tls=None, clock=time.time, log=say):
         self.side = side
+        self._log = log
         self.models_dir = models_dir
         self.token = token.encode("ascii")
         self.limits = limits or Limits()
@@ -1040,9 +1127,11 @@ class Front:
                 del self._by_dispatch[dispatch]
                 entry.state = "done"
                 entry.put(outcome("failed", "cancelled"))
+                self._log("cancel %s: taken off the queue before its turn" % dispatch)
                 return
             if entry is not None:
                 entry.cancelled = True
+        self._log("cancel %s: handed to the worker's side" % dispatch)
         self.side.cancel(dispatch)
 
     def _run_queue(self):
@@ -1068,6 +1157,10 @@ class Front:
             try:
                 if cancelled:
                     entry.put(outcome("failed", "cancelled"))
+                elif self.clock() > entry.job["not_after"]:
+                    # It waited in the queue past its host's limit: answered here, and the
+                    # worker's side (on a host, a card) is never woken for it.
+                    entry.put(outcome("failed", "timed_out", admission="not_after"))
                 else:
                     self.side.call(entry.job, emit)
             except Exception:
@@ -1343,8 +1436,9 @@ class Front:
         conn.settimeout(self.limits.write)
         entry = self.admit(dispatch, job)
         if entry is None:
+            # Decided at once: the headers, and the outcome record alone.
             _, document, lines = outcome("failed", "unavailable", admission="busy")
-            conn.sendall(_unverified(record_bytes(document, lines)))
+            conn.sendall(STREAMED + _chunk(record_bytes(document, lines)) + LAST_CHUNK)
             return
         try:
             self._follow(conn, entry, hello["id"], load, call)
@@ -1352,30 +1446,53 @@ class Front:
             entry.close()
 
     def _follow(self, conn, entry, conversation, load, call):
-        """Hands what the worker's side makes on to the client as it comes, and cancels the
-        request when the client is gone."""
+        """Sends the answer's headers and a first keep-alive at once, then hands what the
+        worker's side makes on to the client as it comes, with a keep-alive whenever nothing
+        was written for `Limits.keep_alive`; and cancels the request when the client is
+        gone."""
         opened = {load["id"]: proto.awaiting(load), call["id"]: proto.awaiting(call)}
-        verified = False
         ended = False
         selector = selectors.DefaultSelector()
         try:
             selector.register(entry.wake_r, selectors.EVENT_READ, "mail")
             selector.register(conn, selectors.EVENT_READ, "conn")
+            try:
+                # The headers wait for nothing of the worker's side; the first keep-alive
+                # is a byte of the body, so a proxy that holds the headers until the body
+                # begins passes them on.
+                conn.sendall(STREAMED + _chunk(KEEP_ALIVE))
+            except (OSError, ssl.SSLError):
+                return
+            quiet_until = time.monotonic() + self.limits.keep_alive
+            # The latest the outcome may come: the request's `not_after` and the overrun.
+            give_up = time.monotonic() + max(0.0, entry.job["not_after"] - self.clock()) + self.limits.overrun
             while True:
-                for key, _ in selector.select():
+                now = time.monotonic()
+                if now >= give_up:
+                    # The worker's side has not ended it by its limit: it is ended here, as
+                    # timed out, and cancelled on the side.
+                    _, document, lines = outcome("failed", "timed_out", stage="unresolved")
+                    try:
+                        conn.sendall(_chunk(record_bytes(document, lines)) + LAST_CHUNK)
+                    except (OSError, ssl.SSLError):
+                        pass
+                    self._log("request %s: no outcome by its limit; answered timed_out and cancelled" % entry.dispatch)
+                    return
+                for key, _ in selector.select(max(0.0, min(quiet_until, give_up) - now)):
                     if key.data == "conn" and self._gone(conn):
                         return
                     if key.data == "mail":
                         os.read(entry.wake_r, 4096)
+                wrote = False
                 while True:
                     try:
                         item = entry.mail.get_nowait()
                     except queue.Empty:
                         break
+                    wrote = True
                     try:
                         if item[0] == "verified":
-                            verified = True
-                            conn.sendall(_streamed(item[1]))
+                            conn.sendall(_chunk(identity_bytes(item[1])))
                         elif item[0] == "hello":
                             frame = proto.encode(
                                 {"type": "hello", "id": conversation, "version": proto.VERSION, "role": "worker", "device": item[1], "threads": item[2]}
@@ -1387,17 +1504,22 @@ class Front:
                                 self.device = message["device"]
                             conn.sendall(_chunk(item[1]))
                         else:
-                            data = record_bytes(item[1], item[2])
                             ended = True
-                            if verified:
-                                conn.sendall(_chunk(data) + b"0\r\n\r\n")
-                            else:
-                                conn.sendall(_unverified(data))
+                            conn.sendall(_chunk(record_bytes(item[1], item[2])) + LAST_CHUNK)
                             return
                     except (OSError, ssl.SSLError, proto.Refused):
                         # A client that takes nothing within the write's limit, or is gone, or
                         # a frame from the worker's side that breaks `pack/1`.
                         return
+                now = time.monotonic()
+                if wrote:
+                    quiet_until = now + self.limits.keep_alive
+                elif now >= quiet_until:
+                    try:
+                        conn.sendall(_chunk(KEEP_ALIVE))
+                    except (OSError, ssl.SSLError):
+                        return
+                    quiet_until = now + self.limits.keep_alive
         finally:
             selector.close()
             if not ended:
@@ -1519,18 +1641,13 @@ def _plain(status, body=b"", kind=b"text/plain"):
     return head + b"\r\n" + body
 
 
-def _unverified(record):
-    return (
-        b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: application/octet-stream\r\n"
-        b"Whizbang-Unverified: failure\r\nContent-Length: %d\r\n\r\n" % len(record)
-    ) + record
-
-
-def _streamed(digest):
-    return (
-        b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: application/octet-stream\r\n"
-        b"Transfer-Encoding: chunked\r\nWhizbang-Model-Files: " + digest.encode("ascii") + b"\r\n\r\n"
-    )
+# The headers of every answer of the request route that was read whole: the same for each,
+# so they wait for nothing. Whatever they once named that is known only later is in the body.
+STREAMED = (
+    b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: application/octet-stream\r\n"
+    b"Transfer-Encoding: chunked\r\n\r\n"
+)
+LAST_CHUNK = b"0\r\n\r\n"
 
 
 def _chunk(data):
@@ -1555,6 +1672,7 @@ def parse(argv):
         "--token-env": "token_env",
         "--worker": "worker",
         "--host-limit-s": "host_limit_s",
+        "--keep-alive-ms": "keep_alive_ms",
         "--tls-cert": "tls_cert",
         "--tls-key": "tls_key",
     }
@@ -1586,6 +1704,10 @@ def parse(argv):
     if not (limit.isascii() and limit.isdigit() and 1 <= int(limit) <= 86_400):
         raise Usage("--host-limit-s is whole seconds from 1 to 86400")
     given["host_limit_s"] = int(limit)
+    every = given.get("keep_alive_ms", str(int(KEEP_ALIVE_S * 1000)))
+    if not (every.isascii() and every.isdigit() and KEEP_ALIVE_MS_LEAST <= int(every) <= KEEP_ALIVE_MS_MOST):
+        raise Usage("--keep-alive-ms is whole milliseconds from %d to %d" % (KEEP_ALIVE_MS_LEAST, KEEP_ALIVE_MS_MOST))
+    given["keep_alive_ms"] = int(every)
     if ("tls_cert" in given) != ("tls_key" in given):
         raise Usage("--tls-cert and --tls-key are given together")
     given.setdefault("worker", "local")
@@ -1637,7 +1759,8 @@ def main(argv=None, environ=None):
         tls.load_cert_chain(options["tls_cert"], options["tls_key"])
     host, port = options["listen"]
     listener = socket.create_server((host, port), family=socket.AF_INET6 if ":" in host else socket.AF_INET)
-    front = Front(side, options["models_dir"], token, host_limit_s=options["host_limit_s"], tls=tls)
+    limits = Limits(keep_alive=options["keep_alive_ms"] / 1000.0)
+    front = Front(side, options["models_dir"], token, limits=limits, host_limit_s=options["host_limit_s"], tls=tls)
     front.start(listener)
     sys.stderr.write("whizbang_pack.front: listening on %s:%d\n" % listener.getsockname()[:2])
     sys.stderr.flush()

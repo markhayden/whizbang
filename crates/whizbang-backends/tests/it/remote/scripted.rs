@@ -225,13 +225,32 @@ pub fn chunked(pieces: &[&[u8]]) -> Vec<u8> {
     bytes
 }
 
-/// A verified answer's head, naming this digest, before its chunks.
-pub fn verified_head(digest: &str) -> Vec<u8> {
-    format!(
-        "HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\
-         Whizbang-Model-Files: {digest}\r\n\r\n"
+/// An answer's head, as the front sends it at once: chunked, naming nothing it learns
+/// later.
+pub fn head() -> Vec<u8> {
+    b"HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec()
+}
+
+/// A keep-alive: the mark and a length of 0.
+pub fn keep_alive() -> Vec<u8> {
+    vec![0; 8]
+}
+
+/// The identity record naming this digest.
+pub fn identity(digest: &str) -> Vec<u8> {
+    record(
+        &serde_json::json!({"format": "pack-host/1", "files": digest}),
+        &[],
     )
-    .into_bytes()
+}
+
+/// A verified answer's head and its first chunks, a keep-alive and the identity record
+/// naming this digest, before its other chunks.
+pub fn verified_head(digest: &str) -> Vec<u8> {
+    let mut bytes = head();
+    bytes.extend(chunk(&keep_alive()));
+    bytes.extend(chunk(&identity(digest)));
+    bytes
 }
 
 /// One chunk of these bytes.
@@ -249,14 +268,10 @@ pub fn verified(digest: &str, body: &[u8]) -> Vec<u8> {
     bytes
 }
 
-/// An answer of a failure before the files were verified: its record alone.
+/// An answer of a failure before the files were verified: a keep-alive, then its
+/// record alone.
 pub fn unverified(record: &[u8]) -> Vec<u8> {
-    let mut bytes = format!(
-        "HTTP/1.1 200 OK\r\nConnection: close\r\nWhizbang-Unverified: failure\r\n\
-         Content-Length: {}\r\n\r\n",
-        record.len()
-    )
-    .into_bytes();
-    bytes.extend(record);
+    let mut bytes = head();
+    bytes.extend(chunked(&[&keep_alive(), record]));
     bytes
 }

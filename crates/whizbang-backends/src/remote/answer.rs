@@ -1,8 +1,11 @@
 //! How an answer of the front is read (ADR 0046, "Its routes", "The outcome record",
-//! "The identity"): its head first, then its frames through `pack/1`'s own codec under
-//! the bounds of the requests they answer, then its outcome record under its own
-//! bounds. Every length is read and checked before its bytes, and nothing of an answer
-//! is used before its identity is held to the catalogue's.
+//! "The identity", "The headers at once"): its head first, which waits for nothing on
+//! the host; then its body, where keep-alives are passed over, the
+//! identity record names the files the front checked, the frames follow it through
+//! `pack/1`'s own codec under the bounds of the requests they answer, and the outcome
+//! record ends it under its own bounds. Every length is read and checked before its
+//! bytes, and nothing of an answer is used before its identity is held to the
+//! catalogue's: a frame before the identity record refuses the answer whole.
 
 use std::io::Read;
 
@@ -11,7 +14,7 @@ use whizbang_core::capability::{Fault, FaultKind};
 use whizbang_core::contract::Secrets;
 use whizbang_core::egress::Head;
 
-use super::{Body, FILES_FIELD, UNVERIFIED_FIELD};
+use super::Body;
 use crate::pack::proto::{self, Answer, Awaited, Heard, Message, Open, Reason, Role};
 use crate::pack::{Called, Ended, Failed};
 
@@ -26,6 +29,10 @@ pub const RECORD_MAX_BYTES: u32 = 4 * 1024;
 /// The most lines of error output a record holds, and the most bytes of one.
 pub const LINES_MOST: u32 = 256;
 pub const LINE_MAX_BYTES: u32 = 4_096;
+/// The most keep-alives one answer holds: the front sends one after 10 seconds of
+/// nothing else, so this is more than 11 hours of them, far past any host's limit; it
+/// bounds an answer that is kept alive and never ends, whatever the run's deadline.
+pub const KEEP_ALIVES_MOST: u32 = 4_096;
 
 pub const TRUNCATED: &str = "the front's answer ended before its outcome record, or a length \
                              in it is over its bound: it is truncated";
@@ -35,12 +42,14 @@ pub const REDIRECTED: &str = "the front pointed the request elsewhere, which is 
 pub const CREDENTIAL: &str = "the front refused the request's token: 401 or 403";
 pub const BUSY: &str = "the front could not take the request now: 503";
 pub const STATUS: &str = "the front answered with a status the kind does not act on";
-pub const NO_IDENTITY: &str = "the front's answer names no digest of the files it came from, \
-                               or a malformed one, and is refused whole";
+pub const NO_IDENTITY: &str = "the front's identity record names no digest of the files it \
+                               came from, or a malformed one, and the answer is refused whole";
 pub const OTHER_IDENTITY: &str = "the front's answer names the files of another model than the \
                                   catalogue's, and is refused whole";
-pub const FRAMES_UNVERIFIED: &str = "the front's answer holds frames and no verified identity, \
-                                     and is refused whole";
+pub const FRAMES_UNVERIFIED: &str = "the front's answer holds a frame before its identity \
+                                     record, and is refused whole";
+pub const KEPT_ALIVE: &str = "the front's answer holds more keep-alives than an answer may, \
+                              and is refused";
 pub const MALFORMED_RECORD: &str = "the front's outcome record is not one of pack-host/1";
 pub const OUT_OF_PLACE: &str = "the front's answer holds a frame that has no place in it";
 
@@ -148,30 +157,51 @@ pub(crate) fn read(
             return Err(malformed(&format!("{STATUS}: {status}")));
         }
     }
-    if head.has(UNVERIFIED_FIELD) {
-        // A failure before the files were verified: its record alone, never a frame.
-        if head.has(FILES_FIELD) || head.field(UNVERIFIED_FIELD) != Some("failure") {
-            return Err(malformed(FRAMES_UNVERIFIED));
-        }
-        return match next_four(input)? {
-            Some(MARK) => {
-                let record = record(input, secrets)?;
-                record.failed(None).map(Came::Failed)
+    frames(input, digest, body, secrets)
+}
+
+/// What follows a mark.
+enum Marked {
+    /// A keep-alive: the mark and a length of 0.
+    KeepAlive,
+    /// The identity record, its digest held to the catalogue's.
+    Identity,
+    /// The outcome record, read to the end of the answer.
+    Outcome(Record),
+}
+
+/// What a mark begins, its length read and held to its bound before its document is
+/// read; an identity record's digest held to `digest`.
+fn marked(input: &mut dyn Read, digest: &str, secrets: &Secrets) -> Result<Marked, Fault> {
+    let size = length(input)?;
+    if size == 0 {
+        return Ok(Marked::KeepAlive);
+    }
+    if size > RECORD_MAX_BYTES {
+        return Err(truncated());
+    }
+    let document = exactly(input, size as usize)?;
+    let document: Value =
+        serde_json::from_slice(&document).map_err(|_| malformed(MALFORMED_RECORD))?;
+    if document.get("files").is_some() {
+        let named = match &document {
+            Value::Object(fields)
+                if fields.len() == 2
+                    && fields.get("format").and_then(Value::as_str) == Some("pack-host/1") =>
+            {
+                fields.get("files").and_then(Value::as_str)
             }
-            Some(_) => Err(malformed(FRAMES_UNVERIFIED)),
-            None => Err(truncated()),
+            _ => None,
         };
+        let named = named
+            .filter(|named| is_digest(named))
+            .ok_or_else(|| malformed(NO_IDENTITY))?;
+        if named != digest {
+            return Err(Fault::new(FaultKind::Rejected, OTHER_IDENTITY).unresolved());
+        }
+        return Ok(Marked::Identity);
     }
-    let named = head
-        .field(FILES_FIELD)
-        .ok_or_else(|| malformed(NO_IDENTITY))?;
-    if !is_digest(named) {
-        return Err(malformed(NO_IDENTITY));
-    }
-    if named != digest {
-        return Err(Fault::new(FaultKind::Rejected, OTHER_IDENTITY).unresolved());
-    }
-    frames(input, body, secrets)
+    record(&document, input, secrets).map(Marked::Outcome)
 }
 
 /// Where the reading of the frames is.
@@ -183,14 +213,22 @@ enum At {
     Done,
 }
 
-/// The frames of a verified answer, then its record.
-fn frames(input: &mut dyn Read, body: &Body, secrets: &Secrets) -> Result<Came, Fault> {
+/// The body of an answer: its keep-alives, its identity record and its frames, then its
+/// outcome record.
+fn frames(
+    input: &mut dyn Read,
+    digest: &str,
+    body: &Body,
+    secrets: &Secrets,
+) -> Result<Came, Fault> {
     let mut open = Open::new();
     open.expect(LOAD_ID, Awaited::of(&body.load))
         .map_err(|_| malformed(OUT_OF_PLACE))?;
     open.expect(CALL_ID, Awaited::of(&body.call))
         .map_err(|_| malformed(OUT_OF_PLACE))?;
     let mut at = At::Hello;
+    let mut verified = false;
+    let mut kept_alive: u32 = 0;
     let mut events = Vec::new();
     let mut ended: Option<Result<Called, (FaultKind, String)>> = None;
     loop {
@@ -198,7 +236,22 @@ fn frames(input: &mut dyn Read, body: &Body, secrets: &Secrets) -> Result<Came, 
             return Err(truncated());
         };
         if first == MARK {
-            let record = record(input, secrets)?;
+            let record = match marked(input, digest, secrets)? {
+                Marked::KeepAlive => {
+                    kept_alive += 1;
+                    if kept_alive > KEEP_ALIVES_MOST {
+                        return Err(malformed(KEPT_ALIVE));
+                    }
+                    continue;
+                }
+                // One identity, before any frame.
+                Marked::Identity if !verified && at == At::Hello => {
+                    verified = true;
+                    continue;
+                }
+                Marked::Identity => return Err(malformed(OUT_OF_PLACE)),
+                Marked::Outcome(record) => record,
+            };
             return match ended {
                 Some(Ok(called)) if record.complete => Ok(Came::Called(called)),
                 Some(Ok(_)) => Err(malformed(MALFORMED_RECORD)),
@@ -210,6 +263,9 @@ fn frames(input: &mut dyn Read, body: &Body, secrets: &Secrets) -> Result<Came, 
                 None if !record.complete => record.failed(None).map(Came::Failed),
                 None => Err(malformed(NO_RESULT)),
             };
+        }
+        if !verified {
+            return Err(malformed(FRAMES_UNVERIFIED));
         }
         if at == At::Done {
             return Err(malformed(OUT_OF_PLACE));
@@ -338,16 +394,9 @@ fn length(input: &mut dyn Read) -> Result<u32, Fault> {
     Ok(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
 }
 
-/// The outcome record, after its mark: its document and its lines, each length read
-/// and held to its bound before its bytes are; and then the end of the answer.
-fn record(input: &mut dyn Read, secrets: &Secrets) -> Result<Record, Fault> {
-    let size = length(input)?;
-    if size == 0 || size > RECORD_MAX_BYTES {
-        return Err(truncated());
-    }
-    let document = exactly(input, size as usize)?;
-    let document: Value =
-        serde_json::from_slice(&document).map_err(|_| malformed(MALFORMED_RECORD))?;
+/// The outcome record, after its mark and its document: its lines, each length read and
+/// held to its bound before its bytes are; and then the end of the answer.
+fn record(document: &Value, input: &mut dyn Read, secrets: &Secrets) -> Result<Record, Fault> {
     let text = |key: &str| document.get(key).and_then(Value::as_str);
     if text("format") != Some("pack-host/1") {
         return Err(malformed(MALFORMED_RECORD));

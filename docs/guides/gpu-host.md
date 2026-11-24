@@ -133,13 +133,27 @@ scripts/gpu-host.sh down
 ### Modal's limits that matter
 
 A web endpoint on Modal answers a request for at most 150 seconds, then redirects. Whizbang
-follows no redirect: such a call ends as an error and is charged at its bound. The front
-sends its answer's headers only once the card's side has its files checked, which on a cold
-call comes after the GPU container has started, the claim is made and the worker has said
-hello; with the bridge's idle window of 60 seconds, a call after an idle minute is cold.
-**How long a cold call takes to its headers is not measured yet**: whizbang's live round
-(plan m6, task L1) measures it and decides then whether the headers go earlier or the idle
-window changes. Until then, a first call after a pause may fail this way.
+follows no redirect: such a call ends as an error and is charged at its bound. What counts is
+how long the answer's headers take, so the front sends them at once, once it has checked the
+token and read the request, before anything waits on the card: the GPU container's start, the
+claim and the worker's hello come after them. The identity of the files the card's side
+checked follows in the body, ahead of the first frame, and a failure in the outcome record, as
+before. While the card starts, the front sends a keep-alive (eight zero bytes, which the
+client passes over) after every 10 seconds of nothing else, under the client's limit between
+two reads: for a call, `host_limit_s` (600 seconds on Modal), and 30 seconds for any other
+answer the client reads. Its first keep-alive goes with the headers, so a proxy that
+holds headers until the body begins passes them on at once.
+
+Measured on an A10G in the live round of plan m6 (task L1), with the headers sent once the
+files were checked, as the front did then: a whole call took 22 to 52 seconds cold as a rule
+and 2.6 seconds warm; the first call after a new image took 161 seconds; and one cold start
+took about 5 minutes, in which two calls in a row failed at 150.8 seconds on the redirect and
+the third took 129 seconds. With the headers at once, a cold call no longer meets the 150
+seconds whatever its start takes, up to the bridge's `startup_timeout` of 300 seconds.
+
+The front logs each cancel and where it went, each cancel frame written to a worker and how
+long after it the call ended, and each worker started and ended, a line each in `modal app
+logs`, naming the dispatch id and never a token, an image or a prompt.
 
 ## The config
 

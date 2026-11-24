@@ -12,7 +12,9 @@ of "Rules" on the pack's Python tests (docs/plans/m1c-local-pack.md):
   outside the process is needed for that.
 - A thread a test starts is a daemon thread. One that is not, still running when the tests
   are done, fails the run; and the run ends by `os._exit`, so no thread keeps it alive.
-- The whole run has 10 seconds; over that, it fails and says how long it took.
+- The whole run has 12 seconds; over that, it fails and says how long it took. It was 10
+  until the front's tests of its early headers and keep-alives (plan m6, task L1, item 2b)
+  took the hosted macOS runner to 10.5.
 
 It uses the standard library only (D10), and runs on Python 3.9 and later, so that the
 script tests can run it with the runner's own `python3`.
@@ -26,7 +28,7 @@ import time
 import unittest
 
 LIMIT_DEFAULT = 60
-BUDGET_SECONDS = 10
+BUDGET_SECONDS = 12
 
 
 def limit_from_environment():

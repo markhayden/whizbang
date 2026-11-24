@@ -389,6 +389,11 @@ impl Downloader for Client {
     }
 }
 
+/// How long past a request of frames' own wait its whole answer may last: the host ends
+/// a request at its limit and answers it within seconds (the pack's front, 5), so this is
+/// what is left for the bytes to come.
+pub(crate) const WHOLE_ANSWER_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// What the sender says of an answer whose body is over [`REPLY_MAX_BYTES`].
 pub(crate) const REPLY_TOO_LARGE: &str = "the answer's body is over the most a reply holds";
 /// What it says of a send whose run's deadline has passed before anything left.
@@ -464,8 +469,9 @@ impl Sender for Client {
     /// handshake and the writing of the body keep the client's own limits
     /// ([`super::CONNECT_LIMIT`], [`super::BETWEEN_READS_LIMIT`]); the wait for the
     /// answer's first byte and between two of its bytes is the request's own
-    /// ([`CheckedFrames::answer_within`]), and nothing is waited for past the run's
-    /// deadline. Nothing is followed: a redirect is an answer like any other, whose
+    /// ([`CheckedFrames::answer_within`]), the whole answer is over by that wait and
+    /// [`WHOLE_ANSWER_GRACE`] from the request's start however it is kept alive, and
+    /// nothing is waited for past the run's deadline. Nothing is followed: a redirect is an answer like any other, whose
     /// head `take` is handed. Once the socket connected, what it reached is named, so
     /// that a control send can follow the request.
     fn stream(&self, frames: &CheckedFrames, bounds: &Bounds, take: &mut Take<'_>) -> Sent {
@@ -473,6 +479,9 @@ impl Sender for Client {
         let mut answer_within = frames.answer_within();
         let mut timing = self.timing;
         timing.between_reads = super::BETWEEN_READS_LIMIT;
+        // The whole answer is over by its own wait and a grace, whatever keeps it alive in
+        // between: a host's keep-alives reset the wait between two reads, never this.
+        timing.until = now.checked_add(answer_within.saturating_add(WHOLE_ANSWER_GRACE));
         if let Some(deadline) = bounds.deadline() {
             let left = deadline.saturating_duration_since(now);
             if left.is_zero() {
@@ -481,7 +490,11 @@ impl Sender for Client {
             timing.connect = timing.connect.min(left);
             timing.between_reads = timing.between_reads.min(left);
             answer_within = answer_within.min(left);
-            timing.until = Some(now + left);
+            timing.until = Some(
+                timing
+                    .until
+                    .map_or(now + left, |until| until.min(now + left)),
+            );
         }
         let address = frames.to();
         let fields: Vec<(&str, &str)> = frames
