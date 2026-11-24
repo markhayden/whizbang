@@ -6,6 +6,7 @@ pub mod baseline;
 pub mod baseline_live;
 pub mod door;
 pub mod edits;
+pub mod engining;
 pub mod evaluation;
 pub mod gating;
 pub mod harness;

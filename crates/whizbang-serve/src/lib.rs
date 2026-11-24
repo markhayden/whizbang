@@ -11,8 +11,13 @@
 //!   time for each run, cancellation, and the end of the input.
 //! - [`play`]: the playground host over loopback HTTP (plan m5, task H1; ADR 0041): its
 //!   guard, its routes, the runs it started, and stopping.
+//! - [`engine`]: the engine API, MCP over HTTP with plain routes for pictures and runs
+//!   (plan m6, task H1; ADR 0045): its guard, its readers and handlers, its runs, stopping.
+//! - [`http`]: the HTTP/1.1 both surfaces read and write.
 
+pub mod engine;
 pub mod frame;
+pub mod http;
 pub mod play;
 mod server;
 mod threads;

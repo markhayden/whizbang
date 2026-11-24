@@ -443,7 +443,7 @@ pub fn import_mask(
 }
 
 /// The mask these grey pixels draw on `image`, whose size they must be.
-fn mask_of(
+pub(crate) fn mask_of(
     pixels: &CanonicalPixels,
     (width, height): (u32, u32),
     image: &Image,
