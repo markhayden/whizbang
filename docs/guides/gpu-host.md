@@ -153,7 +153,10 @@ seconds whatever its start takes, up to the bridge's `startup_timeout` of 300 se
 
 The front logs each cancel and where it went, each cancel frame written to a worker and how
 long after it the call ended, and each worker started and ended, a line each in `modal app
-logs`, naming the dispatch id and never a token, an image or a prompt.
+logs`, naming the dispatch id and never a token, an image or a prompt. On the front's
+container, a cancel the bridge did not send to the card says why: no call of it was open
+there (it is kept, and a request of that dispatch that comes after it ends `cancelled`
+without waking the card), or the card's cancel raised, named by the exception's type alone.
 
 ## The config
 

@@ -539,8 +539,8 @@ class Bridge(unittest.TestCase):
         side = fk.Recording(fk.local_side(self, models, limits=fk.small_limits(call=0.5)))
         card = Card(side)
         old = Consumer(card)
-        old_front, old_port = fk.serve(self, front.Bridged(old.call, old.cancel), models.dir)
-        _, new_port = fk.serve(self, front.Bridged(card.call, card.cancel), models.dir)
+        old_front, old_port = fk.serve(self, front.Bridged(old.call, old.cancel, log=fk.Log()), models.dir)
+        _, new_port = fk.serve(self, front.Bridged(card.call, card.cancel, log=fk.Log()), models.dir)
         blocked = fk.dispatch()
         sock, _, _ = fk.post_request(old_port, "fake-wait", models.identity["fake-wait"], blocked)
         side.began(blocked)
@@ -563,7 +563,7 @@ class Bridge(unittest.TestCase):
         for inputs, kind in ((2, "cancelled"), (1, "timed_out")):
             side = fk.Recording(fk.local_side(self, models, limits=fk.small_limits(call=0.6)))
             card = Card(side, inputs=inputs)
-            _, port = fk.serve(self, front.Bridged(card.call, card.cancel), models.dir)
+            _, port = fk.serve(self, front.Bridged(card.call, card.cancel, log=fk.Log()), models.dir)
             blocked = fk.dispatch()
             sock, load, request = fk.post_request(port, "fake-wait", models.identity["fake-wait"], blocked)
             side.began(blocked)
@@ -620,7 +620,7 @@ class Bridge(unittest.TestCase):
         models = fk.Models(self)
         side = fk.Recording(fk.local_side(self, models))
         card = Card(side)
-        _, port = fk.serve(self, front.Bridged(card.call, card.cancel), models.dir)
+        _, port = fk.serve(self, front.Bridged(card.call, card.cancel, log=fk.Log()), models.dir)
         # Never seen: answered by the front, the card's control input never asked.
         self.assertEqual(fk.post_cancel(port, fk.dispatch()), 204)
         # Seen and ended: the same.
@@ -637,6 +637,96 @@ class Bridge(unittest.TestCase):
         self.assertEqual(fk.answer_of(sock, load, request)[2]["kind"], "cancelled")
         self.assertEqual(card.cancels, [(blocked, True)])
 
+    # L1, item 5: on the host, a cancel never reached the card, and the front's side said
+    # nothing of why. Each cancel is now a line of the front's log.
+
+    def test_a_hosts_cancel_that_raises_is_logged_by_its_type_alone_and_found_nothing(self):
+        models = fk.Models(self)
+        log = fk.Log()
+        opened, release = threading.Event(), threading.Event()
+
+        def call_remote(job):
+            opened.set()
+            release.wait(kit.WAIT_SECONDS)
+            yield outcome_item("cancelled")
+
+        def cancel_remote(dispatch):
+            raise ConnectionError("https://host.invalid/a-name")
+
+        side = front.Bridged(call_remote, cancel_remote, log=log)
+        job = job_of(models, "fake-ok")
+        thread = threading.Thread(target=side.call, args=(job, lambda item: None), daemon=True)
+        thread.start()
+        self.assertTrue(opened.wait(kit.WAIT_SECONDS))
+        self.assertFalse(side.cancel(job["dispatch"]))
+        release.set()
+        thread.join(kit.WAIT_SECONDS)
+        self.assertEqual(log.said(), ["cancel %s: the host's cancel raised ConnectionError" % job["dispatch"]])
+
+    def test_a_cancel_during_a_call_iterating_on_another_thread_reaches_the_hosts_cancel(self):
+        models = fk.Models(self)
+        log = fk.Log()
+        opened, cancelled = threading.Event(), threading.Event()
+        cancels = []
+
+        def call_remote(job):
+            yield ("verified", "d" * 64)
+            opened.set()
+            # As the host's call: its items stop until the card ends the call.
+            cancelled.wait(kit.WAIT_SECONDS)
+            yield outcome_item("cancelled")
+
+        def cancel_remote(dispatch):
+            cancels.append((dispatch, threading.current_thread().name))
+            cancelled.set()
+            return True
+
+        side = front.Bridged(call_remote, cancel_remote, log=log)
+        job = job_of(models, "fake-ok")
+        items = []
+        # The front's queue runs the call on a thread of its own; the cancel comes on
+        # another, a control handler's.
+        thread = threading.Thread(target=side.call, args=(job, items.append), name="front-queue", daemon=True)
+        thread.start()
+        self.assertTrue(opened.wait(kit.WAIT_SECONDS))
+        self.assertTrue(side.cancel(job["dispatch"]))
+        thread.join(kit.WAIT_SECONDS)
+        self.assertEqual(cancels, [(job["dispatch"], threading.current_thread().name)])
+        self.assertEqual([i[1]["kind"] for i in items if i[0] == "outcome"], ["cancelled"])
+        self.assertEqual(log.said(), ["cancel %s: handed to the host's control input, which cancelled its call" % job["dispatch"]])
+        # Ended: a cancel now asks nothing of the host.
+        self.assertFalse(side.cancel(job["dispatch"]))
+        self.assertEqual(len(cancels), 1)
+
+    def test_a_cancel_that_overtakes_its_request_ends_the_call_before_the_card_is_asked(self):
+        # Through the host's proxy the cancel's few bytes can reach the front before the
+        # request's body is read whole: the front holds no entry, and its side no open call.
+        models = fk.Models(self)
+        side = fk.Recording(fk.local_side(self, models))
+        card = Card(side)
+        log = fk.Log()
+        bridged = front.Bridged(card.call, card.cancel, log=log)
+        _, port = fk.serve(self, bridged, models.dir)
+        dispatch = fk.dispatch()
+        self.assertEqual(fk.post_cancel(port, dispatch), 204)
+        self.assertEqual(card.cancels, [])
+        sock, load, request = fk.post_request(port, "fake-ok", models.identity["fake-ok"], dispatch)
+        document = fk.answer_of(sock, load, request)[2]
+        self.assertEqual((document["kind"], document["stage"]), ("cancelled", "not_sent"))
+        # The card was never asked: not for the call, and not for the cancel.
+        self.assertEqual((card.cancels, card.most), ([], 0))
+        self.assertEqual(
+            log.said(),
+            [
+                "cancel %s: not open here; the host is not asked, and the cancel is kept for its call" % dispatch,
+                "cancel %s: kept from before its call, which ends here before the host is called" % dispatch,
+            ],
+        )
+        # Kept once: another request is called as ever.
+        sock, load, request = fk.post_request(port, "fake-ok", models.identity["fake-ok"])
+        self.assertEqual(fk.answer_of(sock, load, request)[2]["outcome"], "complete")
+        self.assertEqual(card.most, 1)
+
     def test_a_claim_store_that_fails_is_unreachable_and_a_key_there_is_a_replay(self):
         store = ClaimStore()
         claims = front.StoreClaims(store.put)
@@ -650,6 +740,11 @@ class Bridge(unittest.TestCase):
             front.StoreClaims(away).claim(dispatch)
         # A store that answers anything but True has not taken the key.
         self.assertFalse(front.StoreClaims(lambda key, value: None).claim(fk.dispatch()))
+
+
+def outcome_item(kind):
+    """The last item of a host's call, as `relay` yields it."""
+    return front.outcome("failed", kind)
 
 
 def job_of(models, model, dispatch=None):
