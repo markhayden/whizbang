@@ -18,8 +18,8 @@ action asks for the segment capability.
 
 | Field | Value |
 |---|---|
-| Measured | 2026-11-19 |
-| Commit measured | `4dd4a7b2e798f2818a25b36815b749b9b0b35432` (clean) |
+| Measured | 2026-11-23 |
+| Commit measured | The staged tree `d9a725806dcc679eaf8a45baa12ccc3a27dfd076` on `c6e0ed37d199edc334940a6172489c37ef5fef8a` (candidate) |
 | Lock file | `sha256:b844779adf5bf884fef63e33cc315db267ed61c3f67368922f5e8aef2d5f9215` |
 | Adapter | `sam3`, revision `2`, source `sha256:0c83e562d8c5a402b64fd891d61b6ea762a3c4c4a6e889822f5c274d54403945` |
 | Installation | `sha256:4c1428553b40dcc493f53221fb1134c487432e43f3a39b5a8a5ab5c60f3ed652` |
@@ -31,41 +31,41 @@ action asks for the segment capability.
 
 | Each run | 1 | 2 | 3 |
 |---|---|---|---|
-| Run of the phrase test | 1795062629744-1 | 1795062663409-1 | 1795062697166-1 |
+| Run of the phrase test | 1795472312825-1 | 1795472401357-1 | 1795472486098-1 |
 | Instances | 1 | 1 | 1 |
 | Best instance's score | 0.946 | 0.946 | 0.946 |
 | Its box (left top right bottom) | 330.0 110.0 510.0 290.0 | 330.0 110.0 510.0 290.0 | 330.0 110.0 510.0 290.0 |
 | Its mask | sha256:c49dcca1141934019bc00fec7875e866488bcf3c9413b723afa46b2b21f17028 | sha256:c49dcca1141934019bc00fec7875e866488bcf3c9413b723afa46b2b21f17028 | sha256:c49dcca1141934019bc00fec7875e866488bcf3c9413b723afa46b2b21f17028 |
 | Pixels on | 25410 | 25410 | 25410 |
-| Start of the first request to the load written, s | 0.06 | 0.07 | 0.06 |
-| Load, s | 2.94 | 2.90 | 2.94 |
-| Start of the first request to the model loaded, s | 3.00 | 2.96 | 3.00 |
+| Start of the first request to the load written, s | 0.04 | 0.04 | 0.04 |
+| Load, s | 5.66 | 5.44 | 5.47 |
+| Start of the first request to the model loaded, s | 5.70 | 5.48 | 5.51 |
 | A full check's record found before the first load | yes | yes | yes |
-| First request after the load, s | 0.92 | 0.94 | 0.93 |
-| Second request, s | 0.72 | 0.72 | 0.72 |
+| First request after the load, s | 0.87 | 0.88 | 1.06 |
+| Second request, s | 0.67 | 0.68 | 1.47 |
 | Loads for two requests | 1 | 1 | 1 |
-| Run of the point and the box (plan 1D, task Q1) | 1795062633789-1 | 1795062667518-1 | 1795062701265-1 |
-| Point and box in one request, s | 4.26 | 4.30 | 4.46 |
+| Run of the point and the box (plan 1D, task Q1) | 1795472319509-1 | 1795472407877-1 | 1795472492644-1 |
+| Point and box in one request, s | 6.88 | 6.72 | 6.70 |
 | Point at 420 200: candidates | 3 | 3 | 3 |
 | Its best predicted IoU | 0.992 | 0.992 | 0.992 |
 | Its box | 330.0 110.0 510.0 290.0 | 330.0 110.0 510.0 290.0 | 330.0 110.0 510.0 290.0 |
 | Box 300 80 540 320: candidates | 3 | 3 | 3 |
 | Its best predicted IoU | 0.774 | 0.774 | 0.774 |
 | Its box | 330.0 107.0 510.0 293.0 | 330.0 107.0 510.0 293.0 | 330.0 107.0 510.0 293.0 |
-| Run of Tiny's phrase (plan 1D, task T1) | 1795062638277-1 | 1795062672042-1 | 1795062705954-1 |
+| Run of Tiny's phrase (plan 1D, task T1) | 1795472335596-1 | 1795472422517-1 | 1795472507341-1 |
 | Tiny's device | mps | mps | mps |
 | Tiny's phrase: instances | 1 | 1 | 1 |
-| Its phrase's request, s | 2.87 | 2.96 | 2.89 |
+| Its phrase's request, s | 5.61 | 5.45 | 5.53 |
 | Best instance's score | 0.741 | 0.741 | 0.741 |
 | Its box | 330.0 110.0 510.0 290.0 | 330.0 110.0 510.0 290.0 | 330.0 110.0 510.0 290.0 |
-| Tiny's point and box in one request, s | 0.11 | 0.12 | 0.12 |
+| Tiny's point and box in one request, s | 0.11 | 0.10 | 0.11 |
 | Point at 420 200: candidates | 3 | 3 | 3 |
 | Its best predicted IoU | 0.989 | 0.989 | 0.989 |
 | Its box | 330.0 110.0 510.0 290.0 | 330.0 110.0 510.0 290.0 | 330.0 110.0 510.0 290.0 |
 | Box 300 80 540 320: candidates | 3 | 3 | 3 |
 | Its best predicted IoU | 0.990 | 0.990 | 0.990 |
 | Its box | 330.0 110.0 510.0 290.0 | 330.0 110.0 510.0 290.0 | 330.0 110.0 510.0 290.0 |
-| Peak resident memory of the tree, KiB | 701600 | 703376 | 695712 |
+| Peak resident memory of the tree, KiB | 745968 | 734352 | 737232 |
 | Most threads in one process | 17 | 17 | 17 |
 | Processes left running after | 0 | 0 | 0 |
 

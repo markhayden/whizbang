@@ -1220,8 +1220,8 @@ fn admissions_crashed(part: usize) {
         over(store, paint, ledger)
     };
     // The calls that change the disk during one admission are found by running one.
-    let (opened, steps) = {
-        let (_dir, fs, store) = scratch(ShimFs::new());
+    let (opened, steps, after) = {
+        let (dir, fs, store) = scratch(ShimFs::new());
         let opened = fs.events().len();
         let started = Arc::new(AtomicU64::new(0));
         let noting = {
@@ -1233,7 +1233,12 @@ fn admissions_crashed(part: usize) {
             })
         };
         ran(over(store, noting, &Counted::new()).request(&asked("order-17")));
-        (opened, started.load(Ordering::SeqCst) as usize - opened)
+        let started = started.load(Ordering::SeqCst) as usize;
+        // The events of the admission after it was durable: the removal of the older
+        // generation's file and of the buckets it superseded, and of its staging.
+        let root = dir.path().join("store");
+        let after = whizbang_testkit::stored::after_durable(&fs.events()[..started], &root);
+        (opened, started - opened, after)
     };
     assert!(steps > 8, "{steps}");
 
@@ -1268,10 +1273,10 @@ fn admissions_crashed(part: usize) {
                 most_names = most_names.max(names);
             }
             // The action started only where the admission was whole and durable, and
-            // was confirmed: the last call of the step clears its staging away.
+            // was confirmed: the calls after that sync only tidy up.
             let ran_here = runs.load(Ordering::SeqCst);
             assert!(
-                ran_here == 0 || (ran_here == 1 && step >= steps - 1),
+                ran_here == 0 || (ran_here == 1 && step >= steps - after),
                 "{at}"
             );
             drop(engine);

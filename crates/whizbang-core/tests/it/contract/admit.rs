@@ -14,10 +14,11 @@ use whizbang_core::contract::request::{StoredAdmissionError, admitted};
 use whizbang_core::contract::{
     ADMITTED_NAME, Action, ActionDescriptor, Admission, Answer, Argument, Backends, Call,
     CallError, Capability, Clock, Closing, Context, Declined, Ending, Engine, Estimate, Executor,
-    Failure, Kind, Ledger, MadeName, ModelIdentity, NOT_CONFIRMED_KIND, NoBackends, NotJudged,
-    Outcome, PreparedCall, Produced, REQUEST_ID_LIMIT, REQUEST_RECORD_MAX_BYTES, Refusal, Registry,
-    Request, RequestId, RequestRecordError, Requirement, Reread, Reservation, RunState, Secrets,
-    Settled, Step, Unavailable, Value, ValueType, request_fingerprint, reservations,
+    Failure, Kind, Ledger, LookedUp, MadeName, ModelIdentity, NOT_CONFIRMED_KIND, NoBackends,
+    NotJudged, Outcome, PreparedCall, Produced, REQUEST_ID_LIMIT, REQUEST_RECORD_MAX_BYTES,
+    Refusal, Registry, Request, RequestId, RequestRecordError, Requirement, Reread, Reservation,
+    RunState, Secrets, Settled, Step, Unavailable, Value, ValueType, request_fingerprint,
+    reservations,
 };
 use whizbang_core::contract::{
     ConfigSource, InputFault, InputPort, Readiness, Snapshot, SourceRefused, Stale,
@@ -2324,8 +2325,7 @@ fn admission_reserves_the_estimate_in_the_step_that_makes_the_run_and_the_ids_re
     // admission alone, and every name but the one the end made, the ending. This
     // shop's ledger leaves its reservations open (`Counted::left_open`), so the end
     // made no other: what the real ledger's closing makes is `spend::close::`.
-    let third = std::fs::read(shop.world.root().join("generations").join("3.json")).unwrap();
-    let third: serde_json::Value = serde_json::from_slice(&third).unwrap();
+    let third = whizbang_testkit::stored::generation_at(&shop.world.root(), 3);
     for name in names
         .iter()
         .filter(|name| **name != "requests/order-17/ended")
@@ -2335,8 +2335,7 @@ fn admission_reserves_the_estimate_in_the_step_that_makes_the_run_and_the_ids_re
     assert!(third["entries"].get(names[1]).is_none(), "{third}");
     // Generation 2 is the owner's reset, with its three names and none of the
     // admission's; and the first had none of them.
-    let second = std::fs::read(shop.world.root().join("generations").join("2.json")).unwrap();
-    let second: serde_json::Value = serde_json::from_slice(&second).unwrap();
+    let second = whizbang_testkit::stored::generation_at(&shop.world.root(), 2);
     for name in [names[2], names[5], names[6]] {
         assert!(second["entries"].get(name).is_some(), "{name}: {second}");
     }
@@ -3735,4 +3734,76 @@ fn an_unmarked_call_without_a_preparation_is_prepared_and_admitted_as_before() {
     let finished = ran(engine.request(&request));
     assert_eq!(*finished.outcome(), completed());
     assert_eq!(world.ran(), 1);
+}
+
+// --- a lookup that admits nothing (plan m6, task S1, item 8) -----------------------------
+
+#[test]
+fn look_up_admits_nothing_and_answers_missing_repeat_and_conflict_after_a_restart_and_a_prune() {
+    let world = World::new();
+    let store = world.store();
+    let engine = world.engine(store.clone());
+    let fresh = asked("hello", "order-1");
+    // An id no request was given: missing, and nothing is admitted, reserved, written
+    // or started, at the bound on started runs or under it.
+    let events = world.fs.events().len();
+    assert_eq!(
+        engine.look_up(&id("order-1"), &fresh).unwrap(),
+        LookedUp::Missing
+    );
+    let bounded = world.engine(store.clone()).with_started_bound(1).unwrap();
+    let place = store.start_place(1).unwrap();
+    assert_eq!(
+        bounded.look_up(&id("order-1"), &fresh).unwrap(),
+        LookedUp::Missing
+    );
+    drop((place, bounded));
+    assert_eq!(world.fs.events().len(), events, "nothing is written");
+    assert_eq!(world.ran(), 0);
+    assert!(store.snapshot().unwrap().runs().is_empty());
+
+    let finished = ran(engine.request(&fresh));
+    let other = asked("other", "order-1");
+    let answers = |engine: &Engine| {
+        let LookedUp::Repeat(earlier) = engine.look_up(&id("order-1"), &fresh).unwrap() else {
+            panic!("not a repeat");
+        };
+        assert_eq!(earlier.run(), finished.run());
+        assert_eq!(
+            engine.look_up(&id("order-1"), &other).unwrap(),
+            LookedUp::Conflict {
+                run: finished.run().clone()
+            }
+        );
+        earlier
+    };
+    assert_eq!(answers(&engine).state(), &RunState::Ended(completed()));
+
+    // After a restart.
+    drop(engine);
+    drop(store);
+    let store = world.store();
+    let engine = world.engine(store.clone());
+    answers(&engine);
+    // After the run was deleted and the store pruned: from the id's records.
+    store.delete(&[finished.run().as_str()]).unwrap();
+    store.prune().unwrap();
+    let events = world.fs.events().len();
+    let earlier = answers(&engine);
+    assert_eq!(
+        earlier.state(),
+        &RunState::Removed {
+            ended: Some(Status::Completed)
+        }
+    );
+    assert_eq!(world.fs.events().len(), events, "nothing is written");
+    assert_eq!(world.ran(), 1);
+    // An id that holds a key the executor knows is refused without being shown.
+    let key = made_up_key("lookup");
+    let keyed = engine.with_secrets(Secrets::new([key.clone()]).unwrap());
+    let refused = keyed.look_up(&id(&key), &fresh).unwrap_err();
+    assert!(
+        matches!(refused, CallError::Refused(Refusal::SecretInRequestId)),
+        "{refused:?}"
+    );
 }

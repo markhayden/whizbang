@@ -159,7 +159,7 @@ impl ConfigSource for Files {
         )
         .map_err(|_| SourceRefused::because(NO_ROSTER))?;
         let offers = match &self.inventory {
-            Some(inventory) => offers.over(inventory.clone()),
+            Some(inventory) => offers.over(inventory.clone(), &known),
             None => offers,
         };
         // The config's approvals are the whole policy: a config that names no

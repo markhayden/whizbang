@@ -1049,3 +1049,37 @@ fn a_run_under_a_snapshot_is_handed_the_backend_the_executors_own_match_would_ha
         }
     }
 }
+
+// --- the secrets of a snapshot, told to the inventory (plan m6, task S1, item 6) ------------
+
+#[test]
+fn a_roster_told_the_snapshots_secrets_never_asks_the_inventory_for_a_model_named_by_one() {
+    // A model's name that is a secret the snapshot knows, and that no config reader saw:
+    // only the roster's own look stands between it and the inventory.
+    let key = "a-plain-value-that-the-env-file-holds";
+    let roster = || {
+        Roster::new()
+            .offer(Capability::Judge, "here", local(key, &[]))
+            .unwrap()
+            .default_for(Capability::Judge, "here")
+            .unwrap()
+    };
+    let secrets = Secrets::new([key.to_owned()]).unwrap();
+    let inventory = Arc::new(FakeInventory::new());
+    inventory.install(key, b"installed under that name");
+    // Told the secrets: not ready, as not in the catalogue, the name said nowhere, and the
+    // inventory never asked.
+    let told = InstalledRoster::over(roster(), inventory.clone()).knowing(secrets);
+    let refused = told.resolve(Capability::Judge, None, &[]).unwrap_err();
+    assert!(
+        refused.why().contains("not in the catalogue"),
+        "{}",
+        refused.why()
+    );
+    assert!(!refused.why().contains(key), "{}", refused.why());
+    assert!(inventory.asked().is_empty(), "{:?}", inventory.asked());
+    // Not told: the inventory is asked, and the model is ready.
+    let untold = InstalledRoster::over(roster(), inventory.clone());
+    assert!(untold.resolve(Capability::Judge, None, &[]).is_ok());
+    assert_eq!(inventory.asked(), [key.to_owned()]);
+}

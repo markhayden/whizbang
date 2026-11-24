@@ -852,8 +852,13 @@ fn a_run_that_failed_on_a_store_failure_it_was_handed_holds_no_path_in_its_recor
         artifact::put(&mut publication, &Artifact::from(image.clone())).unwrap();
         publication.publish().unwrap();
     }
+    // Every file of content, and not the buckets that hold the names (ADR 0047).
+    let buckets = whizbang_testkit::stored::buckets(&broken.root());
     for entry in std::fs::read_dir(broken.root().join("objects")).unwrap() {
-        std::fs::remove_file(entry.unwrap().path()).unwrap();
+        let entry = entry.unwrap();
+        if !buckets.contains(&*entry.file_name().to_string_lossy()) {
+            std::fs::remove_file(entry.path()).unwrap();
+        }
     }
     let draft = ActionDescriptor::draft("look", "1.0.0", Kind::Primitive, "Looks.").input(
         InputPort::required("image", ArtifactType::Image, "The image."),
@@ -910,9 +915,15 @@ fn an_action_is_handed_the_stores_failures_without_a_path_however_it_quotes_them
     }
     let (objects, id) = (world.root().join("objects"), image.id());
     let engine = world.engine_with(vec![scripted("reads", move |_, context| {
-        // The file goes missing while the action runs.
+        // The file goes missing while the action runs; the packs that hold the names
+        // stay (ADR 0047).
+        let packs = whizbang_testkit::stored::buckets(objects.parent().unwrap());
         for entry in std::fs::read_dir(&objects).unwrap() {
-            std::fs::remove_file(entry.unwrap().path()).unwrap();
+            let entry = entry.unwrap();
+            if packs.contains(&*entry.file_name().to_string_lossy()) {
+                continue;
+            }
+            std::fs::remove_file(entry.path()).unwrap();
         }
         let limits = whizbang_core::identity::DecodeLimits::default();
         let error = artifact::get(context.store(), ArtifactType::Image, id, &limits).unwrap_err();

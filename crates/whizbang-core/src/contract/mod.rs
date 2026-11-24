@@ -116,8 +116,8 @@ pub use registry::{
 };
 pub use request::{
     ADMISSION_RECORD, ADMITTED_NAME, Admission, Answer, Cancel, ENDING_RECORD, Earlier, Ending,
-    REQUEST_ID_LIMIT, REQUEST_RECORD_MAX_BYTES, REQUESTS_PREFIX, RESERVED_REQUEST_PREFIX, Request,
-    RequestId, RequestRecordError, RunState, Watched, request_fingerprint,
+    LookedUp, REQUEST_ID_LIMIT, REQUEST_RECORD_MAX_BYTES, REQUESTS_PREFIX, RESERVED_REQUEST_PREFIX,
+    Request, RequestId, RequestRecordError, RunState, Watched, request_fingerprint,
 };
 pub use run::{Committed, Finished, MESSAGE_LIMIT, Outcome, RUN_ID_LIMIT, RunId};
 pub use snapshot::{

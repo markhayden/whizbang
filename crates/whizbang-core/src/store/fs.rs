@@ -278,6 +278,31 @@ pub trait Fs: Send + Sync {
     /// Takes the file at `path` alone, without waiting: `None` when anyone shares it.
     /// Writes and creates nothing.
     fn try_alone(&self, path: &Path) -> io::Result<Option<Box<dyn Held>>>;
+    /// Makes the content of the file at `path`, which is there already, durable: for a
+    /// file that may have been written whole by a call whose sync failed, or by a
+    /// process that died before it synced (ADR 0047). A file system that cannot answers
+    /// [`io::ErrorKind::Unsupported`].
+    fn sync_file(&self, path: &Path) -> io::Result<()> {
+        let _ = path;
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "this file system syncs no file it did not write",
+        ))
+    }
+    /// The type of the file system that holds `path`, as the system's table of mounts
+    /// names it (plan m6, task S1, item 4): `Ok(None)` from a file system that does not
+    /// say, as the test kit's do, which is not asked; an error when the table cannot be
+    /// read. `path` need not exist: the nearest folder above it that does is looked up.
+    fn file_system_type(&self, path: &Path) -> io::Result<Option<String>> {
+        let _ = path;
+        Ok(None)
+    }
+    /// Whether a second opening of the lock file at `path`, whose lock this process
+    /// holds, is granted the lock too: never, on a file system whose locks hold. What
+    /// it is granted is let go at once.
+    fn second_lock_granted(&self, path: &Path) -> io::Result<bool> {
+        Ok(self.hold_lock_file(path, false)?.is_some())
+    }
     /// Creates an empty file to be written piece by piece, which may grow to `most`
     /// bytes and no further. The name is taken as [`Fs::write_new`] takes one: it fails
     /// when the name is taken, by a file, a directory or a link, and follows no link
@@ -801,6 +826,10 @@ impl Fs for RealFs {
         file.sync_all()
     }
 
+    fn sync_file(&self, path: &Path) -> io::Result<()> {
+        std::fs::File::open(path)?.sync_all()
+    }
+
     fn sync_dir(&self, path: &Path) -> io::Result<()> {
         std::fs::File::open(path)?.sync_all()
     }
@@ -849,6 +878,24 @@ impl Fs for RealFs {
 
     fn try_alone(&self, path: &Path) -> io::Result<Option<Box<dyn Held>>> {
         Ok(try_alone(path)?.map(|file| Box::new(file) as Box<dyn Held>))
+    }
+
+    fn file_system_type(&self, path: &Path) -> io::Result<Option<String>> {
+        // The nearest folder that is there, as the system names it: a link on the way
+        // is followed, as the store's files are reached through it.
+        let mut at = path;
+        let found = loop {
+            match std::fs::canonicalize(at) {
+                Ok(found) => break found,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => match at.parent() {
+                    Some(parent) if !parent.as_os_str().is_empty() => at = parent,
+                    _ => break std::env::current_dir()?,
+                },
+                Err(error) => return Err(error),
+            }
+        };
+        let mounts = super::mounts::this_system().map_err(io::Error::other)?;
+        Ok(super::mounts::type_of(&mounts, &found))
     }
 
     fn begin_new(&self, path: &Path, most: u64) -> io::Result<Box<dyn NewFile>> {

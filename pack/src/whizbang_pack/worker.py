@@ -34,7 +34,7 @@ import sys
 import threading
 
 from whizbang_pack import fake_models, installed, owlv2_sam2, proto, sam3
-from whizbang_pack.adapter import Cancelled, Fault, Installation, Stopped, runtime_device
+from whizbang_pack.adapter import Cancelled, Fault, Installation, Stopped, card_name, runtime_device
 
 END_CODE = 0
 REFUSED_CODE = 2
@@ -433,6 +433,11 @@ class Worker:
         self.resident = Resident(model, identity, installation, adapter)
         if diagnostics:
             said.append(str(diagnostics))
+        if adapter.device == "cuda":
+            # The card's name, beside the device a result names (ADR 0046, "Its device").
+            card = card_name()
+            if card:
+                said.append("card " + card)
         return "; ".join(said)
 
     def _unload(self, call):
