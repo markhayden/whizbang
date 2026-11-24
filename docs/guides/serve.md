@@ -30,3 +30,5 @@ whizbang serve --store <dir> [--config <file> [--env-file <file>]] [--models-dir
 With `[cache]` in the config, a check asked again unchanged is answered from the run that
 answered it first ([the config file](config.md)). The decisions behind the server are in
 ADR 0031.
+
+The same tools over HTTP, for a hosted app, are `whizbang serve --http`: [the engine API](engine-api.md).

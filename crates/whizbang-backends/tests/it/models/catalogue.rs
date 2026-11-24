@@ -4,7 +4,7 @@
 
 use serde_json::{Value, json};
 use whizbang_backends::models::{
-    CATALOGUE_MAX_BYTES, Catalogue, CatalogueFile, Entry, FEATURES_LIMIT, FILE_MAX_BYTES,
+    CATALOGUE_MAX_BYTES, Carried, Catalogue, CatalogueFile, Entry, FEATURES_LIMIT, FILE_MAX_BYTES,
     FILES_LIMIT, InstallationRecord, MODELS_LIMIT, ORIGINS_LIMIT, PLATFORMS_LIMIT, Platform,
     Refused, Rule, TITLE_LIMIT, Title, What,
 };
@@ -89,10 +89,10 @@ fn a_catalogue_is_read_as_its_models_and_their_files() {
     assert_eq!(graph.size(), 3);
     assert_eq!(graph.sha256(), hash(b"abc"));
     assert_eq!(
-        graph.from().origin(),
+        graph.from().unwrap().origin(),
         &origin("https://weights.example.org")
     );
-    assert_eq!(graph.from().rest(), "/files/graph.onnx");
+    assert_eq!(graph.from().unwrap().rest(), "/files/graph.onnx");
     assert_eq!(tiny.origins(), [origin("https://weights.example.org")]);
     assert_eq!(tiny.bytes(), 8);
     assert!(catalogue.entry("sam3").is_none());
@@ -333,6 +333,135 @@ fn an_entry_may_say_that_a_download_from_one_of_its_origins_needs_a_token() {
             .needing_a_token_at(origin("https://elsewhere.example.org"))
             .is_err()
     );
+}
+
+#[test]
+fn a_file_may_name_a_text_the_binary_carries_in_place_of_an_address() {
+    // Plan m6, task W1: `carried` names a text the binary carries, and the file then has
+    // no address and needs no origin. Its size and hash are pinned as any file's are.
+    let terms = Carried::Apache2.bytes();
+    let mut value = written();
+    value["models"][0]["files"][1] = json!({
+        "name": "LICENSE",
+        "size": terms.len(),
+        "sha256": hash(terms).to_string(),
+        "carried": "apache-2.0"
+    });
+    let catalogue = read(&value).unwrap();
+    let tiny = catalogue.entry("tiny").unwrap();
+    let licence = tiny
+        .files()
+        .iter()
+        .find(|file| file.name().as_str() == "LICENSE")
+        .unwrap();
+    assert_eq!(licence.carried(), Some(Carried::Apache2));
+    assert_eq!(licence.from(), None);
+    assert_eq!(licence.size(), terms.len() as u64);
+    assert_eq!(licence.sha256(), hash(terms));
+    let graph = tiny
+        .files()
+        .iter()
+        .find(|file| file.name().as_str() == "graph.onnx")
+        .unwrap();
+    assert_eq!(graph.carried(), None);
+    assert!(graph.from().is_some());
+    // Written with `carried` in the place of `from`, and read back the same.
+    let bytes = String::from_utf8(catalogue.to_bytes()).unwrap();
+    assert!(
+        bytes.contains(&format!(
+            "{{\"name\":\"LICENSE\",\"size\":{},\"sha256\":\"{}\",\"carried\":\"apache-2.0\"}}",
+            terms.len(),
+            hash(terms)
+        )),
+        "{bytes}"
+    );
+    assert_eq!(
+        Catalogue::parse(&catalogue.to_bytes(), &none()).unwrap(),
+        catalogue
+    );
+    // An entry whose every file is carried names no origin, and is made.
+    let mut parts = parts("tiny");
+    parts.origins = Vec::new();
+    parts.files = vec![
+        CatalogueFile::from_binary(
+            file_name("LICENSE"),
+            terms.len() as u64,
+            hash(terms),
+            Carried::Apache2,
+        )
+        .unwrap(),
+    ];
+    let alone = Entry::new(parts, &none()).unwrap();
+    assert_eq!(alone.files()[0].carried(), Some(Carried::Apache2));
+    // The one carried text is named `apache-2.0`, and no other name is one.
+    assert_eq!(Carried::named("apache-2.0"), Some(Carried::Apache2));
+    assert_eq!(Carried::Apache2.name(), "apache-2.0");
+    for other in ["Apache-2.0", "apache", "mit", ""] {
+        assert_eq!(Carried::named(other), None, "{other}");
+    }
+    let refused = refusal_after(|value| {
+        value["models"][0]["files"][1]["carried"] = json!("mit");
+        value["models"][0]["files"][1]
+            .as_object_mut()
+            .unwrap()
+            .remove("from");
+    });
+    assert_eq!(
+        refused,
+        value_refused("models[0].files[1].carried", Rule::Carried)
+    );
+    // Both, or neither: a file comes from one place.
+    let refused = refusal_after(|value| {
+        value["models"][0]["files"][1]["carried"] = json!("apache-2.0");
+    });
+    assert_eq!(
+        refused,
+        value_refused("models[0].files[1]", Rule::TwoSources)
+    );
+    let refused = refusal_after(|value| {
+        value["models"][0]["files"][1]
+            .as_object_mut()
+            .unwrap()
+            .remove("from");
+    });
+    assert_eq!(
+        refused,
+        value_refused("models[0].files[1].from", Rule::Missing)
+    );
+    let refused = refusal_after(|value| {
+        value["models"][0]["files"][1]["carried"] = json!(7);
+        value["models"][0]["files"][1]
+            .as_object_mut()
+            .unwrap()
+            .remove("from");
+    });
+    assert_eq!(
+        refused,
+        value_refused("models[0].files[1].carried", Rule::Kind)
+    );
+    // A carried file's size is held to its rule as any file's is.
+    assert_eq!(
+        CatalogueFile::from_binary(file_name("LICENSE"), 0, hash(terms), Carried::Apache2)
+            .unwrap_err(),
+        Refused::Value {
+            at: String::new(),
+            rule: Rule::Size
+        }
+    );
+}
+
+#[test]
+fn the_apache_text_the_binary_carries_is_the_terms_of_whizbangs_own_licence() {
+    // Whizbang's `LICENSE` from its first line to the end of the terms, and not the
+    // appendix, which names whizbang's own licensor.
+    let licence = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../../LICENSE")).unwrap();
+    let terms = Carried::Apache2.bytes();
+    assert!(licence.starts_with(terms));
+    assert!(terms.starts_with(b"Apache License\nVersion 2.0, January 2004\n"));
+    assert!(terms.ends_with(b"\nEND OF TERMS AND CONDITIONS\n"));
+    let text = String::from_utf8(terms.to_vec()).unwrap();
+    assert!(!text.contains("APPENDIX") && !text.contains("Copyright 2"));
+    assert_eq!(text.matches("END OF TERMS AND CONDITIONS").count(), 1);
 }
 
 #[test]

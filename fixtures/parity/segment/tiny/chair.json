@@ -84,7 +84,7 @@
   "height": 320,
   "max_instances": 3,
   "model": "tiny",
-  "model_revision": "2026-11.1",
+  "model_revision": "2026-11.2",
   "phrase": "chair",
   "picture": "chair",
   "picture_digest": "sha256:40e657ddd81ee448c90cdc287a376980c9e14f56583997049c6c0447d9c37242",

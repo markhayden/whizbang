@@ -185,11 +185,12 @@ fn is_a_link_refusal(error: &io::Error) -> bool {
 }
 
 /// Whether every file of the entry is held by an installation of the directory, by its
-/// record: what an install would link, and so download nothing for. Read without a lock;
-/// what it says may be out of date by the time an install looks again, under its locks.
+/// record, or is one the binary carries: what an install would link or write from the
+/// binary, and so download nothing for. Read without a lock; what it says may be out of
+/// date by the time an install looks again, under its locks.
 pub fn all_held(dir: &ModelsDir, entry: &Entry, secrets: &Secrets) -> io::Result<bool> {
     for file in entry.files() {
-        if held(dir, file.size(), file.sha256(), secrets)?.is_empty() {
+        if file.carried().is_none() && held(dir, file.size(), file.sha256(), secrets)?.is_empty() {
             return Ok(false);
         }
     }

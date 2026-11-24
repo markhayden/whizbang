@@ -121,7 +121,7 @@ fn serving(entries: &[Entry]) -> FakeDownloader {
     for entry in entries {
         for file in entry.files() {
             let content = bytes_of(entry.name().as_str(), file.name().as_str());
-            fake = fake.serving(file.from(), content);
+            fake = fake.serving(file.from().unwrap(), content);
         }
     }
     fake
@@ -353,7 +353,7 @@ fn a_download_moved_to_another_origin_is_asked_there_with_no_credential() {
     // One file, at the Hub, which answers that it moved to the other origin, and
     // from there back to the Hub.
     let model = entry("moving", &[(HUB, "model.bin")], &[CDN], Some(HUB));
-    let first = model.files()[0].from().clone();
+    let first = model.files()[0].from().unwrap().clone();
     let away = address(CDN, "stored/model.bin");
     let back = address(HUB, "again/model.bin");
     let bytes = bytes_of("moving", "model.bin");
@@ -528,10 +528,10 @@ fn the_token_is_in_no_status_record_no_refusal_and_nothing_get_prints() {
     let short = entry("short", &[(HUB, "model.bin")], &[], Some(HUB));
     let fake = serving(std::slice::from_ref(&model))
         .failing(
-            broken.files()[0].from(),
+            broken.files()[0].from().unwrap(),
             Fault::new(FaultKind::Unavailable, &format!("busy for {token}")),
         )
-        .serving(short.files()[0].from(), b"short".to_vec());
+        .serving(short.files()[0].from().unwrap(), b"short".to_vec());
     let fake = Arc::new(fake);
     let told = Told::default();
     let tools = bench.tools(&[model, broken, short], &fake, &told);
@@ -586,9 +586,9 @@ fn an_origin_that_answers_that_access_is_refused_ends_the_install_with_a_sentenc
     let model = gated();
     // The Hub answers 403, as the client says a refused credential. The files are in
     // the order of their names: the second is the Hub's.
-    assert_eq!(model.files()[1].from().origin(), &origin(HUB));
+    assert_eq!(model.files()[1].from().unwrap().origin(), &origin(HUB));
     let fake = serving(std::slice::from_ref(&model)).failing(
-        model.files()[1].from(),
+        model.files()[1].from().unwrap(),
         Fault::new(FaultKind::Credential, "the server refused the request"),
     );
     let fake = Arc::new(fake);
@@ -926,7 +926,7 @@ fn a_token_of_the_sign_in_is_redacted_from_a_fault_made_after_it_was_read() {
     let config = bench.config(SIGNED_IN, None);
     let model = gated();
     let fake = serving(std::slice::from_ref(&model)).failing(
-        model.files()[1].from(),
+        model.files()[1].from().unwrap(),
         Fault::new(FaultKind::Malformed, &format!("answered {token} back")),
     );
     let fake = Arc::new(fake);

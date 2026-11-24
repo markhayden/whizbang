@@ -995,7 +995,7 @@ server holds its store and its runs as the stdio server does, for as long as it 
    `docs/guides/README.md`): starting it, the token, off loopback behind a proxy, the routes,
    calling a tool, reconnecting, cancelling, stopping; each example marked with its tier.
 
-- [ ] Done when: the twenty-four negative tests and the four of the start pass; the thirteen of
+- [x] Done when: the twenty-four negative tests and the four of the start pass; the thirteen of
   item 8 pass; the playground's seventeen and the stdio server's tests pass unchanged; ADR 0045
   is merged; the guide's first part is in.
 
@@ -1268,7 +1268,7 @@ and its download from the maker with the customer's own sign-in stay as they are
    builder the files, which go in the same commit as the entry; the tolerance measured again
    must be ADR 0027's or better. No spend: the Mac's GPU.
 
-- [ ] Done when: Tiny's installation holds its licence's text, pinned
+- [x] Done when: Tiny's installation holds its licence's text, pinned
   (`models::tiny_installs_its_licence_text_from_the_binary_pinned_by_its_hash`), with its
   revision moved and its fixtures and evidence written again in the same commit; SAM 3's
   catalogue entry is unchanged; and `docs/guides/models.md` names the acknowledgement.

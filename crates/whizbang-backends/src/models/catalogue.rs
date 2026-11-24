@@ -14,6 +14,7 @@ use whizbang_core::contract::{Secrets, text};
 use whizbang_core::egress::{Address, NotAllowed, Origin};
 use whizbang_core::identity::Digest;
 
+use super::carried::Carried;
 use super::json::{self, Json, Object};
 use super::name::{files_named, holds_secret};
 use super::{
@@ -64,14 +65,24 @@ fn written(address: &Address) -> String {
     format!("{}{}", address.origin(), address.rest())
 }
 
-/// One file of a model: its name, its size, its hash, and the address it is first
-/// asked for at.
+/// One file of a model: its name, its size, its hash, and where it comes from: the
+/// address it is first asked for at, or a text the binary carries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CatalogueFile {
     name: FileName,
     size: u64,
     sha256: Digest,
-    from: Address,
+    source: Source,
+}
+
+/// Where a file comes from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Source {
+    /// Downloaded, first from this address.
+    At(Address),
+    /// Written from a text the binary carries (plan m6, task W1): nothing is asked of
+    /// any address for it.
+    Carried(Carried),
 }
 
 impl CatalogueFile {
@@ -95,7 +106,25 @@ impl CatalogueFile {
             name,
             size: sized(size)?,
             sha256,
-            from,
+            source: Source::At(from),
+        })
+    }
+
+    /// A file of this name, size and hash, written from a text the binary carries in
+    /// place of a download. The size is 1 to [`FILE_MAX_BYTES`]. The size and the hash
+    /// pin the text as they pin a download: an install holds the text to them, and
+    /// refuses a text that is not what they state.
+    pub fn from_binary(
+        name: FileName,
+        size: u64,
+        sha256: Digest,
+        carried: Carried,
+    ) -> Result<CatalogueFile, Refused> {
+        Ok(CatalogueFile {
+            name,
+            size: sized(size)?,
+            sha256,
+            source: Source::Carried(carried),
         })
     }
 
@@ -113,9 +142,20 @@ impl CatalogueFile {
         self.sha256
     }
 
-    /// The address the file is first asked for at.
-    pub fn from(&self) -> &Address {
-        &self.from
+    /// The address the file is first asked for at; none for a file the binary carries.
+    pub fn from(&self) -> Option<&Address> {
+        match &self.source {
+            Source::At(address) => Some(address),
+            Source::Carried(_) => None,
+        }
+    }
+
+    /// The text the binary carries that the file is written from, when it is one.
+    pub fn carried(&self) -> Option<Carried> {
+        match self.source {
+            Source::Carried(carried) => Some(carried),
+            Source::At(_) => None,
+        }
     }
 }
 
@@ -185,7 +225,7 @@ impl Entry {
     /// - At most [`ORIGINS_LIMIT`] origins, each named once.
     /// - 1 to [`FILES_LIMIT`] files, no two of one name, where names that differ only
     ///   in the case of their letters are one; and each file's address is at one of
-    ///   the origins.
+    ///   the origins. A file the binary carries has no address, and needs no origin.
     ///
     /// Platforms, features, origins and files are kept in the order of their texts,
     /// whatever order they were given in. A refusal's place counts them as they were given.
@@ -252,7 +292,10 @@ impl Entry {
         }
         files_named(files.iter().map(CatalogueFile::name), FILES_LIMIT)?;
         for (at, file) in files.iter().enumerate() {
-            if !origins.contains(file.from.origin()) {
+            // A file the binary carries is at no origin, and needs none.
+            if let Some(from) = file.from()
+                && !origins.contains(from.origin())
+            {
                 return Err(Refused::at(&format!("files[{at}].from"), Rule::Elsewhere));
             }
         }
@@ -346,7 +389,8 @@ impl Entry {
         &self.files
     }
 
-    /// The bytes of all the files together: what installing the model downloads.
+    /// The bytes of all the files together: what installing the model downloads, and
+    /// writes from the binary.
     pub fn bytes(&self) -> u64 {
         self.files.iter().map(CatalogueFile::size).sum()
     }
@@ -384,7 +428,10 @@ struct WrittenFile<'a> {
     name: &'a str,
     size: u64,
     sha256: String,
-    from: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    from: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    carried: Option<&'static str>,
 }
 
 impl Catalogue {
@@ -470,7 +517,8 @@ impl Catalogue {
                         name: file.name.as_str(),
                         size: file.size,
                         sha256: file.sha256.to_string(),
-                        from: written(&file.from),
+                        from: file.from().map(written),
+                        carried: file.carried().map(Carried::name),
                     })
                     .collect(),
                 needs_token: entry.needs_token.as_ref().map(Origin::to_string),
@@ -597,9 +645,26 @@ fn catalogue_file(json: Json, at: &str, secrets: &Secrets) -> Result<CatalogueFi
     let name = FileName::new(&object.text("name")?, secrets).map_err(|r| under("name", r))?;
     let size = sized(object.whole("size")?).map_err(|r| under("size", r))?;
     let sha256 = hash_of(&object.text("sha256")?).map_err(|r| under("sha256", r))?;
-    let place = format!("{at}.from");
-    let from = Address::of(&object.text("from")?, secrets)
-        .map_err(|why| not_allowed(why, &place, Rule::Address))?;
+    // A file comes from an address, or from a text the binary carries: one of the two.
+    let from = object.text_if_there("from")?;
+    let carried = object.text_if_there("carried")?;
     object.done()?;
-    CatalogueFile::new(name, size, sha256, from, secrets)
+    match (from, carried) {
+        (Some(_), Some(_)) => Err(Refused::at(at, Rule::TwoSources)),
+        (None, None) => Err(Refused::at(&format!("{at}.from"), Rule::Missing)),
+        (Some(from), None) => {
+            let place = format!("{at}.from");
+            let from = Address::of(&from, secrets)
+                .map_err(|why| not_allowed(why, &place, Rule::Address))?;
+            CatalogueFile::new(name, size, sha256, from, secrets)
+        }
+        (None, Some(carried)) => {
+            if holds_secret(&carried, secrets) {
+                return Err(Refused::HoldsSecret);
+            }
+            let carried = Carried::named(&carried)
+                .ok_or(Refused::at(&format!("{at}.carried"), Rule::Carried))?;
+            CatalogueFile::from_binary(name, size, sha256, carried)
+        }
+    }
 }
