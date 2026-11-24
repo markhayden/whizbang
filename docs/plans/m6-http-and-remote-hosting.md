@@ -1304,6 +1304,18 @@ The row's live clauses, made from the owner's Mac against Modal and fal, with th
    outside the repo, with the front's exact
    origin approved in its `egress` table (`source_images`, `prompts`, `probe = true`). Every
    address Modal's client used is named in the record.
+2b. **A cold call against Modal's 150 seconds** (found by the review of D1): a web endpoint
+   answers a request for at most 150 seconds, then redirects, which the kind `remote` refuses;
+   the front sends its headers only once the card's side has checked the files, which on a
+   cold call follows the GPU container's start, the claim and the worker's hello, and with a
+   `scaledown_window` of 60 most calls after an idle minute are cold. Before parity, the
+   time from the request to the answer's headers is measured on three cold calls (after the
+   idle window has passed) and three warm ones, and written in the record; then the
+   orchestrator decides from it: leave it, send the headers earlier (a change to the front,
+   its own pull request with its test, where the identity header then follows in the outcome
+   record), or lengthen the idle window (which changes `LIMITS`, `host_limit_s` and the
+   price's bound with it). The carry-over row "A cold call to the GPU host on Modal" closes
+   with that decision.
 3. **Parity, three times** (a module of its own, `crates/whizbang/tests/it/remote_parity.rs`,
    `remote_parity::sam3_answers_each_fixture_inside_the_tolerance_from_a_remote_worker`, ignored
    in the fast tier and selected only by `scripts/test-models.sh parity-remote`, which refuses

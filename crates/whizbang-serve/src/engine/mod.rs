@@ -388,6 +388,8 @@ pub(crate) struct Shared {
     /// The `Host` values a request may name.
     pub names: Vec<String>,
     pub stopping: AtomicBool,
+    /// How many collections of uploads no run took have been made.
+    collections: std::sync::atomic::AtomicU64,
     state: Mutex<State>,
     changed: Condvar,
     queues: Mutex<Option<Queues>>,
@@ -829,6 +831,7 @@ impl Host {
             settings,
             names,
             stopping: AtomicBool::new(false),
+            collections: std::sync::atomic::AtomicU64::new(0),
             state: Mutex::new(State {
                 places: Vec::new(),
                 next_place: 0,
@@ -936,6 +939,12 @@ impl Host {
                 .0;
         }
         true
+    }
+
+    /// How many collections of uploads no run took it has made: one at its start, then
+    /// one each [`Collection::every`] by its clock.
+    pub fn collections(&self) -> u64 {
+        self.shared.collections.load(Ordering::SeqCst)
     }
 
     /// What asks it to stop.
@@ -1057,6 +1066,8 @@ fn collect(shared: &Arc<Shared>) {
         if now >= next {
             let _ = shared.hosted.collect_unused(kept, now);
             next = now.saturating_add(every.max(1));
+            shared.collections.fetch_add(1, Ordering::SeqCst);
+            shared.notify();
         }
         let state = shared.state();
         if state.quitting() || state.done {

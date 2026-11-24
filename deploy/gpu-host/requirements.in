@@ -1,7 +1,7 @@
 # The GPU host's runtime (docs/plans/m6-http-and-remote-hosting.md, task D1, item 1): the
 # pack's extra `torch` at the versions `pack/pyproject.toml` pins for the Mac, here for Linux
 # on x86-64, whose `torch` from the index is the CUDA build. Locked into requirements.txt by
-# deploy/gpu-host/lock.sh; nothing else reads this file.
+# `scripts/gpu-host.sh lock`; nothing else reads this file.
 torch==2.15.0
 torchvision==0.29.2
 transformers==5.23.0

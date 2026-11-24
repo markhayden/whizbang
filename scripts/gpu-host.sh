@@ -32,13 +32,17 @@
 #
 # It prints no token and no account, reads no env file itself (it hands --env-file to
 # whizbang), and never reads Modal's token file: Modal's client reads its own. `modal`,
-# `whizbang` and `uv` are found on the PATH.
+# `whizbang` and `uv` are found on the PATH. Modal's client is at least MODAL_LEAST (its JSON
+# keys, `startup_timeout` and `Dict.put(..., skip_if_exists=True)` answering whether it put
+# were read from that version's source); an older one is refused before it is asked anything.
 # This script sets no `EXIT` trap, so its own syntax error is a failure; parse it first all
 # the same: see the top of scripts/scan.sh.
 "$BASH" -n "${BASH_SOURCE[0]}" || { echo "gpu-host: ${BASH_SOURCE[0]} has a syntax error; refusing to run" >&2; exit 2; }
 # The whole script is one function, read before any of it runs: see `main` in scripts/scan.sh.
 main() {
 set -euo pipefail
+# No word this script splits is a pattern: app ids are never globbed.
+set -f
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 deployment=deploy/modal/sam3_host.py
@@ -47,10 +51,24 @@ volume=whizbang-models
 model=sam3
 # The lock's newest file: a lock made again gives the same files.
 exclude_newer=2026-11-16T00:00:00Z
+MODAL_LEAST=1.6.1
 
 refuse() {
   echo "gpu-host: $1" >&2
   exit 2
+}
+
+# Modal's client, at least MODAL_LEAST: `modal --version` says `modal client version: X.Y.Z`.
+modal_recent() {
+  local said version
+  said=$(modal --version 2>/dev/null) || refuse "Modal's client cannot be asked its version: install it (docs/guides/gpu-host.md)"
+  version=$(printf '%s\n' "$said" | sed -n 's/^modal client version: \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*$/\1/p' | head -n 1)
+  [ -n "$version" ] || refuse "Modal's client did not say its version"
+  printf '%s\n%s\n' "$version" "$MODAL_LEAST" | python3 -I -c '
+import sys
+have, least = (tuple(int(p) for p in line.split(".")) for line in sys.stdin.read().split())
+sys.exit(0 if have >= least else 1)
+' || refuse "Modal's client is $version; this deployment needs $MODAL_LEAST or later"
 }
 
 usage="deploy <commit> --config <file> --endpoint-file <file>, weights --models-dir <dir>, probe --config <file> --env-file <file>, down, or lock"
@@ -97,10 +115,13 @@ try:
     assert isinstance(apps, list)
     for app in apps:
         assert isinstance(app, dict)
-        ident, said, state = app["App ID"], app["Description"], app["State"]
-        assert all(isinstance(v, str) and v and " " not in v for v in (ident, state))
+        ident, said, state = app["app_id"], app["description"], app["state"]
+        assert all(isinstance(v, str) for v in (ident, said, state))
         if said == name:
-            print(ident, state)
+            # The state is printed with its spaces made underscores: "stopping..." and
+            # "ephemeral (detached)" are states too.
+            assert ident and " " not in ident and state
+            print(ident, state.replace(" ", "_"))
 except (ValueError, AssertionError, KeyError, TypeError):
     sys.exit(1)
 ' "$app" || refuse "Modal's list of apps cannot be read whole: deploy nothing"
@@ -118,8 +139,8 @@ try:
     assert isinstance(found, list)
     count = 0
     for container in found:
-        assert isinstance(container, dict) and isinstance(container["App ID"], str)
-        count += container["App ID"] in ids
+        assert isinstance(container, dict) and isinstance(container["app_id"], str)
+        count += container["app_id"] in ids
     print(count)
 except (ValueError, AssertionError, KeyError, TypeError):
     sys.exit(1)
@@ -191,6 +212,7 @@ case "$command" in
       /*) ;;
       *) refuse "--endpoint-file must be an absolute path" ;;
     esac
+    [ ! -L "$endpoint_file" ] || refuse "--endpoint-file is a link: name the file itself"
     at=$(cd "$(dirname "$endpoint_file")" 2>/dev/null && pwd -P) || refuse "the folder of --endpoint-file is not there"
     case "$at/" in
       "$root"/*) refuse "--endpoint-file must be outside the repo: the endpoint names the workspace" ;;
@@ -198,6 +220,11 @@ case "$command" in
     cd "$root"
     [ -z "$(git status --porcelain)" ] || refuse "the checkout has changes: deploy only from a clean checkout"
     [ "$(git rev-parse HEAD)" = "$commit" ] || refuse "the checkout is not at $commit"
+    # What the deployment uploads holds nothing git ignores: no cache, no file of a test.
+    ignored=$(git status --porcelain --ignored -- pack/src/whizbang_pack deploy | grep -c '^!!' || true)
+    [ "$ignored" = 0 ] ||
+      refuse "$ignored path(s) git ignores are under pack/src/whizbang_pack or deploy: remove them (git clean -fdX -- pack/src deploy)"
+    modal_recent
     total=$(limits_sum "$deployment" 2>&1) || refuse "in the deployment: ${total:-its limits cannot be read}"
     wanted=$(config_limit "$config")
     [ -n "$wanted" ] || refuse "the config's host_limit_s is not a whole number"
@@ -214,7 +241,9 @@ case "$command" in
       [ "$left" = 0 ] || refuse "the app $app is stopped and $left container(s) of it are left: wait, and run down again"
     fi
     said=$(modal deploy "$deployment" 2>&1) || {
-      printf '%s\n' "$said" | sed -E 's#https://[A-Za-z0-9.-]+\.modal\.run#<endpoint>#g' >&2
+      # Its last lines, with every address that names the workspace masked.
+      printf '%s\n' "$said" | tail -n 20 |
+        sed -E -e 's#https://[A-Za-z0-9.-]+\.modal\.run#<endpoint>#g' -e 's#https://modal\.com/(apps|id|settings)/[^ ]*#<modal page>#g' >&2
       refuse "the deploy failed"
     }
     endpoint=$(printf '%s\n' "$said" | grep -o -E "https://[A-Za-z0-9-]+--$app-front[A-Za-z0-9-]*\.modal\.run" | head -n 1 || true)
@@ -230,6 +259,7 @@ case "$command" in
       /*) ;;
       *) refuse "--models-dir must be an absolute path" ;;
     esac
+    modal_recent
     said=$(whizbang models verify "$model" --models-dir "$models_dir") || refuse "whizbang models verify $model refused: copy nothing"
     identity=$(printf '%s\n' "$said" | sed -E -n "s/^whole $model: sha256:([0-9a-f]{64})\$/\\1/p")
     [ -n "$identity" ] || refuse "whizbang models verify $model did not say the installation is whole"
@@ -250,6 +280,7 @@ case "$command" in
     case "$look$within" in
       *[!0-9]* | "") refuse "WHIZBANG_GPU_HOST_LOOK_S and WHIZBANG_GPU_HOST_DOWN_S are whole seconds" ;;
     esac
+    modal_recent
     listed=$(apps_of_the_name)
     [ -n "$listed" ] || refuse "Modal lists no app $app"
     if printf '%s\n' "$listed" | awk '$2 != "stopped"' | grep . >/dev/null; then

@@ -3,7 +3,8 @@ task D1, item 2; ADR 0046; docs/guides/gpu-host.md).
 
 The only file in the repo that names Modal. It is deployed by `scripts/gpu-host.sh deploy`,
 from a clean checkout of a named commit, into the workspace of whoever's Modal token the
-command-line client holds: no workspace, token or endpoint is written here.
+command-line client holds: no workspace, token or endpoint is written here. It needs Modal's
+client 1.6.1 or later.
 
 - **The image**: Modal's Debian image with the pack's Python, the host's lock
   (`deploy/gpu-host/requirements.txt`: PyTorch's Linux CUDA build, its NVIDIA packages,
@@ -97,7 +98,9 @@ image = (
             "DO_NOT_TRACK": "1",
         }
     )
-    .add_local_dir(_SOURCES, PACK + "/whizbang_pack")
+    # Caches are never uploaded; `scripts/gpu-host.sh deploy` refuses a tree with any file
+    # git ignores there.
+    .add_local_dir(_SOURCES, PACK + "/whizbang_pack", ignore=["**/__pycache__", "**/*.pyc"])
 )
 
 

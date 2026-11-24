@@ -65,11 +65,15 @@ fn an_import_a_run_took_stays_and_one_none_took_past_its_age_goes() {
     publication.put("notes/a", b"a note").unwrap();
     publication.publish().unwrap();
 
-    // Not yet of age: nothing goes, and the publication is made all the same.
+    // Not yet of age: nothing goes, and no generation is published for nothing (plan m6,
+    // task D1: a server collects every hour).
+    let before = store.snapshot().unwrap().number();
     let collected = store
         .collect_unused_imports(24 * HOUR_MS, now_ms())
         .unwrap();
     assert_eq!(collected.names, 0);
+    assert_eq!(collected.generation, before);
+    assert_eq!(store.snapshot().unwrap().number(), before);
     let names = |store: &Store| -> Vec<String> {
         store
             .snapshot()

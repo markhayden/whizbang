@@ -616,6 +616,27 @@ class Bridge(unittest.TestCase):
         self.assertEqual((list(new.side.journal), new.side.spawns.count), ([], 0))
         self.assertEqual([i[1]["outcome"] for i in new.call(job_of(models, "fake-ok")) if i[0] == "outcome"], ["complete"])
 
+    def test_a_cancel_of_a_dispatch_the_front_never_handed_on_or_saw_end_starts_nothing_on_the_card(self):
+        models = fk.Models(self)
+        side = fk.Recording(fk.local_side(self, models))
+        card = Card(side)
+        _, port = fk.serve(self, front.Bridged(card.call, card.cancel), models.dir)
+        # Never seen: answered by the front, the card's control input never asked.
+        self.assertEqual(fk.post_cancel(port, fk.dispatch()), 204)
+        # Seen and ended: the same.
+        dispatch = fk.dispatch()
+        sock, load, request = fk.post_request(port, "fake-ok", models.identity["fake-ok"], dispatch)
+        self.assertEqual(fk.answer_of(sock, load, request)[2]["outcome"], "complete")
+        self.assertEqual(fk.post_cancel(port, dispatch), 204)
+        self.assertEqual((card.cancels, card.most), ([], 1))
+        # Handed on and not ended: the cancel reaches the card.
+        blocked = fk.dispatch()
+        sock, load, request = fk.post_request(port, "fake-wait", models.identity["fake-wait"], blocked)
+        side.began(blocked)
+        self.assertEqual(fk.post_cancel(port, blocked), 204)
+        self.assertEqual(fk.answer_of(sock, load, request)[2]["kind"], "cancelled")
+        self.assertEqual(card.cancels, [(blocked, True)])
+
     def test_a_claim_store_that_fails_is_unreachable_and_a_key_there_is_a_replay(self):
         store = ClaimStore()
         claims = front.StoreClaims(store.put)

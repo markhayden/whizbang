@@ -78,8 +78,12 @@ and
 
 1. **A Modal workspace with a payment method.** Its spend counts on your bill, not
    whizbang's.
-2. **Modal's token on your machine:** run `modal token new` once. Modal's client keeps it in
-   its own file; `scripts/gpu-host.sh` never reads it.
+2. **Modal's client and its token on your machine.** Install the client, version 1.6.1 or
+   later (`scripts/gpu-host.sh` refuses an older one: it reads the client's JSON as 1.6.1
+   prints it, and the bridge's claim needs `Dict.put` to say whether it put), for example
+   with `uv tool install modal==1.6.1` or `pip install modal==1.6.1`. Then run
+   `modal token new` once. The client keeps the token in its own file;
+   `scripts/gpu-host.sh` never reads it.
 3. **The front's token:** make a random token of at least 32 printable characters, for
    example with `openssl rand -hex 32`. Put it in whizbang's env file as
    `SEGMENT_TOKEN=<token>`, and give the same value to Modal as the secret `whizbang-front`,
@@ -110,7 +114,9 @@ scripts/gpu-host.sh down
   run at once. The front's endpoint, which names your workspace, is written to the
   endpoint file, outside the repo, and not printed: put it in the config as `url`.
 - **`weights`** checks SAM 3's installation with `whizbang models verify sam3` and copies it
-  into the volume at the same place.
+  into the volume at the same place. A container already running when the files arrive does
+  not see them until it starts again: run `weights` straight after the first deploy, before
+  any probe or call, or run `down` and deploy again after it.
 - **`probe`** is `whizbang backends status --probe`: it asks the front's health, with no
   token and no user data, and says whether the host holds the model the config asks.
 - **`down`** stops the app, then waits until Modal lists no container of it, and fails if
@@ -119,8 +125,13 @@ scripts/gpu-host.sh down
 ### Modal's limits that matter
 
 A web endpoint on Modal answers a request for at most 150 seconds, then redirects. Whizbang
-follows no redirect: such a call ends as an error and is charged at its bound. A warm call
-takes far less; a cold start that loads SAM 3 takes longer.
+follows no redirect: such a call ends as an error and is charged at its bound. The front
+sends its answer's headers only once the card's side has its files checked, which on a cold
+call comes after the GPU container has started, the claim is made and the worker has said
+hello; with the bridge's idle window of 60 seconds, a call after an idle minute is cold.
+**How long a cold call takes to its headers is not measured yet**: whizbang's live round
+(plan m6, task L1) measures it and decides then whether the headers go earlier or the idle
+window changes. Until then, a first call after a pause may fail this way.
 
 ## The config
 

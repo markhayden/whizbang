@@ -679,33 +679,37 @@ fn an_upload_no_run_took_is_collected_after_its_age_and_one_a_run_took_stays() {
         let reader = Reader::open(&engined.root(), Arc::new(RealFs)).unwrap();
         reader.snapshot().unwrap().number()
     };
+    let collections = || engined.fixture.as_ref().unwrap().host.collections();
+    let until = |made: u64| {
+        let mut looked = 0;
+        while collections() < made {
+            looked += 1;
+            assert!(looked < 4000, "no collection {made} was made");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
     let status = |id: &str| {
         engined
             .client
             .api("GET", &format!("/v1/artifacts/{id}"))
             .status
     };
+    // The collection at the start, of a store that holds nothing to let go.
+    until(1);
     let taken = engined.picture(16, 16);
     let untaken = engined.picture(20, 20);
     mask_of(&engined, &taken);
-    // A collection at the time each is younger than its age lets nothing go.
+    // At the hour, each is younger than its age: nothing goes, and no generation is
+    // published for nothing.
     let before = generation();
     now.store(start + 23 * HOUR_MS, Ordering::SeqCst);
-    let mut looked = 0;
-    while generation() == before {
-        looked += 1;
-        assert!(looked < 4000, "no collection was made at the hour");
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    until(2);
     assert_eq!((status(&taken), status(&untaken)), (200, 200));
+    assert_eq!(generation(), before);
     // Past its age, the upload no run took goes at the next hour; the one a run took stays.
     now.store(start + 25 * HOUR_MS, Ordering::SeqCst);
-    let mut looked = 0;
-    while status(&untaken) != 404 {
-        looked += 1;
-        assert!(looked < 4000, "the upload no run took was not collected");
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    until(3);
+    assert_eq!(status(&untaken), 404);
     assert_eq!(status(&taken), 200);
 }
 

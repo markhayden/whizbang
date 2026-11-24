@@ -820,11 +820,17 @@ class Bridged:
     elsewhere. `call_remote(job)` is the host's call of the card's function, an iterable of
     what `relay` yields there; `cancel_remote(dispatch)` is its control input. A call whose
     items end before its outcome, or whose host call fails, ends `unavailable` and
-    unresolved: the job may have begun there, and whizbang charges it at its bound."""
+    unresolved: the job may have begun there, and whizbang charges it at its bound.
+
+    A cancel is handed to the card's control input only for a dispatch this side has handed
+    on and not yet seen end: any other is answered here, as touching nothing, so a cancel can
+    never start the card's container, whose time no attempt's bound holds."""
 
     def __init__(self, call_remote, cancel_remote):
         self._call = call_remote
         self._cancel = cancel_remote
+        self._open = set()
+        self._lock = threading.Lock()
         self.checked = {}
         self.device = None
 
@@ -834,6 +840,15 @@ class Bridged:
         except proto.Refused:
             emit(outcome("failed", "malformed"))
             return
+        with self._lock:
+            self._open.add(job["dispatch"])
+        try:
+            self._relayed(job, installation, emit)
+        finally:
+            with self._lock:
+                self._open.discard(job["dispatch"])
+
+    def _relayed(self, job, installation, emit):
         try:
             for item in self._call(job):
                 if item[0] == "verified":
@@ -848,6 +863,9 @@ class Bridged:
         emit(outcome("failed", "unavailable", stage="unresolved"))
 
     def cancel(self, dispatch):
+        with self._lock:
+            if dispatch not in self._open:
+                return False
         try:
             return bool(self._cancel(dispatch))
         except Exception:
