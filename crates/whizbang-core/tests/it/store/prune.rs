@@ -14,10 +14,13 @@ use super::runs::{EXCHANGE, LEDGER, MASK, ONLY_ONE, object, runs, with_runs};
 use super::{A2, B, C, Hooked, When, points, publish_new, root, with_old};
 
 /// The names in a directory of the store.
+/// The files of a folder of the store: the packs beside the generation files are not
+/// counted among them (ADR 0047).
 fn names(root: &Path, dir: &str) -> BTreeSet<String> {
     std::fs::read_dir(root.join(dir))
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| !name.ends_with(".pack"))
         .collect()
 }
 
@@ -72,7 +75,7 @@ fn assert_pruned(root: &Path, case: &str) {
         "{case}"
     );
     assert_eq!(
-        names(root, "objects"),
+        super::payloads(root),
         digests(&[LEDGER, EXCHANGE, B]),
         "{case}"
     );
@@ -88,7 +91,7 @@ fn a_prune_removes_older_generations_and_content_that_nothing_names() {
     let dead = Arc::new(ShimFs::new().crash_before(points.pointer, Lost::ContentOnly));
     assert!(publish_new(&root, dead).is_err());
     assert_eq!(
-        names(&root, "objects").len(),
+        super::payloads(&root).len(),
         4,
         "a1, b, and the dead a2 and c"
     );
@@ -106,13 +109,14 @@ fn a_prune_removes_older_generations_and_content_that_nothing_names() {
     assert_eq!(
         pruned,
         Pruned {
+            buckets_removed: 0,
             generations_removed: vec![1],
             generations_in_use: vec![],
             objects_removed: 3,
         }
     );
     assert_eq!(names(&root, "generations"), ["2.json".to_string()].into());
-    assert_eq!(names(&root, "objects"), digests(&[B]));
+    assert_eq!(super::payloads(&root), digests(&[B]));
 
     // Names are removed, then their directory is synced: generations, then content.
     let events = &fs.events()[before..];
@@ -198,7 +202,7 @@ fn a_failed_runs_diagnostics_are_read_after_reopening_and_after_other_runs_are_p
         store.read(generation.get("notes/1").unwrap()).unwrap(),
         LEDGER
     );
-    assert_eq!(names(&root, "objects"), digests(&[LEDGER]));
+    assert_eq!(super::payloads(&root), digests(&[LEDGER]));
 }
 
 #[test]
@@ -234,6 +238,7 @@ fn a_reader_goes_on_reading_its_generation_through_a_prune_at_every_step_of_it()
         assert_eq!(
             pruned,
             Pruned {
+                buckets_removed: 0,
                 generations_removed: vec![2],
                 generations_in_use: vec![1],
                 objects_removed: 0,
@@ -254,6 +259,7 @@ fn a_reader_goes_on_reading_its_generation_through_a_prune_at_every_step_of_it()
         assert_eq!(
             pruned,
             Pruned {
+                buckets_removed: 0,
                 generations_removed: vec![1],
                 generations_in_use: vec![],
                 objects_removed: 2,
@@ -547,7 +553,7 @@ fn a_prune_keeps_what_a_publication_in_progress_has_named() {
         store.prune().unwrap().generations_removed,
         Vec::<u64>::new()
     );
-    assert_eq!(names(&root, "objects").len(), 5);
+    assert_eq!(super::payloads(&root).len(), 5);
 }
 
 #[test]

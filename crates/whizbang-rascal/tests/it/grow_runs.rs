@@ -260,7 +260,7 @@ fn after_a_reopen_the_mask_and_the_completed_status_are_both_present() {
 
 /// How many calls that change the disk a run of `grow` makes before `grow` comes back,
 /// and how many after: the second number is its commit.
-fn the_calls_of_a_commit() -> (usize, usize) {
+fn the_calls_of_a_commit() -> (usize, usize, usize) {
     let world = World::new();
     let input = world.import(&fixture());
     let came_back = Arc::new(AtomicUsize::new(0));
@@ -274,7 +274,10 @@ fn the_calls_of_a_commit() -> (usize, usize) {
     let engine = engine_over(world.store(), Arc::new(noting));
     engine.submit(&call(input, 2.5, Some(3.0))).unwrap();
     let start = came_back.load(Ordering::SeqCst);
-    (start, world.fs.events().len() - start)
+    let events = world.fs.events();
+    // The calls after the commit is durable, which can fail without failing it.
+    let tidying = whizbang_testkit::stored::after_durable(&events, &world.root());
+    (start, events.len() - start, tidying)
 }
 
 /// A world in which the fixture is imported, on this file system.
@@ -292,7 +295,7 @@ fn a_grow_crashed_inside_its_commit_is_not_reported_before_its_publication_is_du
     // and every choice of the names outside `staging/`. Whatever survives is the run as
     // it was admitted, with no mask and no status, or the mask with the completed
     // status; and the run was reported only where both survive.
-    let (start, steps) = the_calls_of_a_commit();
+    let (start, steps, _) = the_calls_of_a_commit();
     assert!(steps > 8, "{steps}");
     let made = expected().id();
     let mut outcomes = BTreeSet::new();
@@ -389,7 +392,7 @@ fn a_commit_of_grow_that_the_store_refuses_publishes_no_mask_and_no_status_or_bo
     // the commit became visible and its last sync failed, all of it. A run whose commit
     // the store refused has no terminal status: it is admitted and not ended, as ADR
     // 0008 says of a run whose end could not be written, and nothing of it is committed.
-    let (start, steps) = the_calls_of_a_commit();
+    let (start, steps, tidying) = the_calls_of_a_commit();
     let made = expected().id();
     let mut seen = BTreeSet::new();
     for step in 0..steps {
@@ -417,7 +420,7 @@ fn a_commit_of_grow_that_the_store_refuses_publishes_no_mask_and_no_status_or_bo
             // Removing the older generation's file (ADR 0036) and clearing the staging
             // away, after the commit is durable, can fail without failing the run.
             Ok(finished) => {
-                assert!(step >= steps - 2, "step {step} of {steps}");
+                assert!(step >= steps - tidying, "step {step} of {steps}");
                 assert_eq!(finished.outcome().outputs()[0].id(), made);
                 assert!(has && run.record.is_some());
             }

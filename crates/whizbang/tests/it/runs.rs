@@ -372,12 +372,12 @@ fn runs_that_other_hands_made_are_listed_and_shown_as_they_are() {
             b"\x1b[31mnot a record\n",
         );
         put("stolen", "record", Kind::Diagnostic, &json.out);
-        let published = publication.publish().unwrap();
+        publication.publish().unwrap();
         // The store refuses an id with a control character; a generation file that
-        // other hands wrote can still hold one. This one is edited to.
-        let file = root
-            .join("generations")
-            .join(format!("{}.json", published.generation));
+        // other hands wrote can still hold one. This one is edited to, written again
+        // as the whole store in one file first (ADR 0047).
+        drop(store);
+        let file = whizbang_testkit::stored::whole(&root);
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(text.contains(r#""Loose Run""#));
         let text = text.replace(r#""Loose Run""#, r#""Loose \u001b[2J Run""#);
@@ -461,10 +461,11 @@ fn every_listed_run_can_be_shown_from_its_listed_line() {
                 .put_in(id, "record", kind, record.as_bytes())
                 .unwrap();
         }
-        let published = publication.publish().unwrap();
-        let file = root
-            .join("generations")
-            .join(format!("{}.json", published.generation));
+        publication.publish().unwrap();
+        // Written again as the whole store in one file, so that a run's id can be
+        // changed by hand (ADR 0047).
+        drop(store);
+        let file = whizbang_testkit::stored::whole(&root);
         let text = std::fs::read_to_string(&file).unwrap();
         let text = text.replace(r#""Loose Run""#, r#""Loose \u001b[2J Run""#);
         std::fs::remove_file(&file).unwrap();

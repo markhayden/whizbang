@@ -27,7 +27,7 @@ use super::record::{
     RunRecord, StoredRecordError,
 };
 use super::registry::MEASUREMENTS_MAX_BYTES;
-use super::request::{Found, look_up, outcome_of};
+use super::request::{Found, LookedUp, look_up, outcome_of};
 use super::snapshot::Known;
 use super::{
     ADMITTED_NAME, Action, ActionDescriptor, Admission, AdmissionPart, Allowance, Answer, Backends,
@@ -118,6 +118,22 @@ pub trait Executor: Send + Sync {
     /// text that holds one without showing any of it. An id that starts
     /// [`super::RESERVED_REQUEST_PREFIX`] is refused: those are a lab's cells'.
     fn request_id(&self, text: &str) -> Result<RequestId, CallError>;
+
+    /// What the id `id` finds for `request`, looked up as [`Executor::start`] and
+    /// [`Executor::request`] look it up first, through the store's durable records of
+    /// request ids and the request's fingerprint, with the same checks of secrets: no
+    /// request under the id ([`LookedUp::Missing`]), this request ([`LookedUp::Repeat`],
+    /// with its run), or another ([`LookedUp::Conflict`]). It admits, reserves, starts
+    /// and writes nothing, whatever the executor's bound on started runs: a door asks
+    /// it before it gives a request a place (plan m6, task S1, item 8). An executor
+    /// that keeps no request ids refuses it.
+    fn look_up(&self, id: &RequestId, request: &Request) -> Result<LookedUp, CallError> {
+        let _ = (id, request);
+        Err(Refusal::NotARequestId {
+            why: "this executor keeps no request ids".to_owned(),
+        }
+        .into())
+    }
 
     /// How many runs this executor started on threads of their own, a run called from
     /// inside an action among them, whose thread has not yet let go of everything it
@@ -615,6 +631,21 @@ impl Executor for Engine {
         self.launch(admitted, place)
     }
 
+    fn look_up(&self, id: &RequestId, request: &Request) -> Result<LookedUp, CallError> {
+        if self.secrets.now().redact(id.as_str()) != id.as_str() {
+            return Err(Refusal::SecretInRequestId.into());
+        }
+        match self.find_request(id, request.fingerprint())? {
+            Found::Nothing => Ok(LookedUp::Missing),
+            Found::Same(earlier) => Ok(LookedUp::Repeat(earlier)),
+            // As in `begin`: the id is looked at once more before an answer names it.
+            Found::Other { .. } if self.secrets.now().redact(id.as_str()) != id.as_str() => {
+                Err(Refusal::SecretInRequestId.into())
+            }
+            Found::Other { run } => Ok(LookedUp::Conflict { run }),
+        }
+    }
+
     fn status(&self, run: &RunId) -> Result<Watched, CallError> {
         self.watch(run, false, None, 0)
     }
@@ -682,7 +713,7 @@ impl Engine {
         if self.secrets.now().redact(id.as_str()) != id.as_str() {
             return Err(Refusal::SecretInRequestId.into());
         }
-        match self.look_up(id, request.fingerprint())? {
+        match self.find_request(id, request.fingerprint())? {
             Found::Nothing => Err(refused.into()),
             Found::Same(earlier) => Ok(Answer::Repeat(earlier)),
             // As in `begin`: the id is looked at once more before an answer names it.
@@ -747,7 +778,7 @@ impl Engine {
                 run,
             }))),
         };
-        if let Some(answered) = answer(self.look_up(id, fingerprint)?) {
+        if let Some(answered) = answer(self.find_request(id, fingerprint)?) {
             return answered;
         }
         if let Some(refused) = unprepared() {
@@ -762,14 +793,14 @@ impl Engine {
             // admitted. The id is looked up once more, and what it says is the
             // answer; a refusal stands only when the id is still not taken.
             Err(Stopped::Refused(error @ CallError::Refused(_))) => {
-                answer(self.look_up(id, fingerprint)?).unwrap_or(Err(error))
+                answer(self.find_request(id, fingerprint)?).unwrap_or(Err(error))
             }
             Err(Stopped::Refused(error)) => Err(error),
             // Another request was admitted under the id between the look and the
             // admission, and the store refused this one. Nothing of this request was
             // published and its action did not run: it is answered as the look would
             // have answered it a moment later.
-            Err(Stopped::Taken(error)) => answer(self.look_up(id, fingerprint)?)
+            Err(Stopped::Taken(error)) => answer(self.find_request(id, fingerprint)?)
                 .unwrap_or_else(|| Err(CallError::Store(StoreFailure::new(error)))),
         }
     }
@@ -1032,7 +1063,7 @@ impl From<CallError> for Stopped {
 }
 
 impl Engine {
-    fn look_up(&self, id: &RequestId, fingerprint: Digest) -> Result<Found, CallError> {
+    fn find_request(&self, id: &RequestId, fingerprint: Digest) -> Result<Found, CallError> {
         let made_here = |run: &str| self.store.as_ref().is_some_and(|s| s.made_here(run));
         let found = look_up(self.contents.as_ref(), id, fingerprint, made_here)?;
         // The snapshot is taken before the store is asked whether it made the run. A

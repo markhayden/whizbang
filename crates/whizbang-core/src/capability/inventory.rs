@@ -275,13 +275,30 @@ impl Inventory for NoInventory {
 pub struct InstalledRoster {
     roster: Roster,
     inventory: Arc<dyn Inventory>,
+    /// The secrets of the snapshot the roster was made from, when it was told them: a
+    /// model's name that holds one is not looked up.
+    secrets: Option<crate::contract::Secrets>,
 }
 
 impl InstalledRoster {
     /// This roster, with the models of its local backends looked up in this
     /// inventory.
     pub fn over(roster: Roster, inventory: Arc<dyn Inventory>) -> InstalledRoster {
-        InstalledRoster { roster, inventory }
+        InstalledRoster {
+            roster,
+            inventory,
+            secrets: None,
+        }
+    }
+
+    /// The same, told these secrets: a local backend whose model's name holds one is
+    /// answered as not in the catalogue, and its name goes to no inventory, as the
+    /// inventory answers a name that holds a secret it was told (plan m6, task S1, item
+    /// 6). The secrets of each snapshot are told so, a key added to the env file after
+    /// the start among them.
+    pub fn knowing(mut self, secrets: crate::contract::Secrets) -> InstalledRoster {
+        self.secrets = Some(secrets);
+        self
     }
 
     /// The roster, as it was given.
@@ -306,7 +323,13 @@ impl Backends for InstalledRoster {
             away_under_an_identity(capability, resolved.name(), resolved.declaration())?;
             return Ok(declared.clone());
         }
-        match self.inventory.look(declared.model()) {
+        let holds_a_secret = (self.secrets.as_ref())
+            .is_some_and(|secrets| secrets.redact(declared.model()) != declared.model());
+        let installed = match holds_a_secret {
+            true => Installed::NotReady(Unready::NotInCatalogue),
+            false => self.inventory.look(declared.model()),
+        };
+        match installed {
             Installed::Ready(installation) => Ok(ModelIdentity::new(
                 declared.backend(),
                 declared.model(),

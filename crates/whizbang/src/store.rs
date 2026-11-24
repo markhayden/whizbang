@@ -61,9 +61,15 @@ pub enum Command {
         runs: Vec<String>,
     },
     /// Remove what nothing references: older generations and unreferenced content.
+    /// With `--unused-imports-older-than`, first let go of every imported picture,
+    /// location and upload that no run took and that was imported longer ago than that
+    /// many hours, in one publication, with the names that came in with it.
     Prune {
         #[command(flatten)]
         at: Where,
+        /// Let go of the imports no run took that are older than this many hours.
+        #[arg(long, value_name = "HOURS")]
+        unused_imports_older_than: Option<u64>,
     },
     /// Bring a canonical artifact file into a store, under its type and identity (as
     /// `store export ID --to` writes one); with `--picture`, a PNG or JPEG picture as an
@@ -205,10 +211,28 @@ pub fn run_with(command: &Command, recovery: Recovery) -> Result<String, String>
             }
             _ => Err("import takes an artifact file, --picture, or --mask and --onto".to_owned()),
         },
-        Command::Prune { at } => {
-            let pruned = remover(&at.store, recovery)?;
-            let pruned = pruned.prune().map_err(|e| e.to_string())?;
-            Ok(report(&pruned))
+        Command::Prune {
+            at,
+            unused_imports_older_than,
+        } => {
+            let remover = remover(&at.store, recovery)?;
+            let mut text = String::new();
+            if let Some(hours) = unused_imports_older_than {
+                let older_than_ms = hours.saturating_mul(3_600_000);
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |since| since.as_millis() as u64);
+                let collected = remover
+                    .collect_unused_imports(older_than_ms, now_ms)
+                    .map_err(|e| e.to_string())?;
+                text.push_str(&format!(
+                    "unused import names let go: {}\n",
+                    collected.names
+                ));
+            }
+            let pruned = remover.prune().map_err(|e| e.to_string())?;
+            text.push_str(&report(&pruned));
+            Ok(text)
         }
     }
 }
@@ -301,6 +325,9 @@ fn report(pruned: &Pruned) -> String {
         pruned.generations_removed.len(),
         pruned.objects_removed
     );
+    if pruned.buckets_removed > 0 {
+        text.push_str(&format!("buckets removed: {}\n", pruned.buckets_removed));
+    }
     if !pruned.generations_in_use.is_empty() {
         text.push_str(&format!(
             "generations left for a reader that still holds them: {} (prune again once it has finished)\n",

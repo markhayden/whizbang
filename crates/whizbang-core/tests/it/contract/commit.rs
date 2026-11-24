@@ -614,7 +614,7 @@ fn an_output_the_store_already_holds_keeps_the_file_it_has() {
 /// The calls that change the disk from the moment `pair` hands back its two artifacts
 /// to the moment its run is reported: where the first is among all the calls made on a
 /// new store, and how many there are.
-fn the_calls_of_a_commit() -> (usize, usize) {
+fn the_calls_of_a_commit() -> (usize, usize, usize) {
     let world = World::new();
     let started = Arc::new(AtomicU64::new(0));
     let noting = {
@@ -627,7 +627,9 @@ fn the_calls_of_a_commit() -> (usize, usize) {
     let engine = world.engine(vec![noting]);
     engine.submit(&Call::new("pair")).unwrap();
     let start = started.load(Ordering::SeqCst) as usize;
-    (start, world.fs.events().len() - start)
+    let events = world.fs.events();
+    let tidying = whizbang_testkit::stored::after_durable(&events, &world.root());
+    (start, events.len() - start, tidying)
 }
 
 #[test]
@@ -637,7 +639,7 @@ fn a_run_crashed_inside_its_commit_reopens_with_neither_output_nor_status_or_wit
     // yet durable: every name undone, every name kept, and every choice of which
     // directories, and of which names, lose theirs. A wrong commit would write the two
     // outputs, or the outputs and the status, in steps that a crash can separate.
-    let (start, steps) = the_calls_of_a_commit();
+    let (start, steps, tidying) = the_calls_of_a_commit();
     assert!(steps > 10, "{steps}");
     let mut outcomes = BTreeSet::new();
     let (mut crashes, mut reported, mut most) = (0, 0, 0);
@@ -711,12 +713,13 @@ fn a_run_crashed_inside_its_commit_reopens_with_neither_output_nor_status_or_wit
                     // run's hold on each.
                     assert_eq!(*names, 7, "{at}");
                     outcomes.insert("all");
-                    // Reported only where the calls left were the removal of the older
-                    // generation's file and the clearing of the staging, which nothing
-                    // depends on.
+                    // Reported only where the calls left were those after the commit was
+                    // durable: the removal of the older generation's file and of the
+                    // buckets it superseded, and the clearing of the staging, which
+                    // nothing depends on.
                     if let Ok(finished) = &answer {
                         assert_eq!(finished.outcome().outputs(), committed(), "{at}");
-                        assert!(step >= steps - 2, "{at}");
+                        assert!(step >= steps - tidying, "{at}");
                         reported += 1;
                     }
                 }
@@ -737,7 +740,7 @@ fn a_commit_that_the_store_refuses_at_any_step_publishes_no_output_and_no_status
     // is the store's failure; what a reader then sees is the run as it was admitted and
     // neither output, or, where the commit became visible and its last sync failed,
     // all of it.
-    let (start, steps) = the_calls_of_a_commit();
+    let (start, steps, tidying) = the_calls_of_a_commit();
     let mut seen = BTreeSet::new();
     for step in 0..steps {
         let world = World::new();
@@ -758,10 +761,11 @@ fn a_commit_that_the_store_refuses_at_any_step_publishes_no_output_and_no_status
                 assert_eq!(after.outputs.len(), if unconfirmed { 2 } else { 0 });
                 seen.insert(unconfirmed);
             }
-            // Removing the older generation's file and clearing the staging away, the two
-            // steps after the commit is durable, can fail without failing the run.
+            // Removing the older generation's file and the buckets it superseded, and
+            // clearing the staging away, the steps after the commit is durable, can fail
+            // without failing the run.
             Ok(finished) => {
-                assert!(step >= steps - 2, "step {step} of {steps}");
+                assert!(step >= steps - tidying, "step {step} of {steps}");
                 assert_eq!(finished.outcome().outputs(), committed());
                 assert!(after.mask && after.place && stored.is_some());
             }

@@ -106,6 +106,7 @@ fn delete(root: &Path, run: &str) -> store::Command {
 fn prune(root: &Path) -> store::Command {
     store::Command::Prune {
         at: Where::at(root),
+        unused_imports_older_than: None,
     }
 }
 
@@ -361,8 +362,11 @@ fn at_the_generation_limit_store_delete_and_prune_work_and_every_other_writing_c
     let (root, file, mask) = left(&dir);
     let found = held(&root).0;
     // Room for one name more than the store holds: less than a recovery adds.
-    let generation = root.join("generations").join(format!("{found}.json"));
-    let limit = std::fs::metadata(generation).unwrap().len() + 200;
+    // What the generation's names take, written: its file and each bucket (ADR 0047).
+    let reader = whizbang_core::store::Reader::open(&root, Arc::new(RealFs)).unwrap();
+    let names = reader.snapshot().unwrap();
+    assert_eq!(names.number(), found);
+    let limit = names.names_bytes() + 200;
     let part = marking();
     let limited = || with(&part).limiting_generations_to(limit);
     let told = |answered: Result<String, String>| {

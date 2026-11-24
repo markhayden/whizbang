@@ -920,21 +920,59 @@ fn through_a_store(history: &model::History) -> Result<u64, String> {
     }
 }
 
-#[test]
-fn every_named_history_written_into_a_store_folds_to_what_the_model_gives_and_to_what_it_must() {
+/// How many parts the histories written into a store are taken in: each part is a test of
+/// its own, so that each finishes well inside the limit of one test in a full check on a
+/// busy machine (plan m6, task S1; the carry-over row on a fast test that comes to its
+/// limit).
+const HISTORY_PARTS: usize = 4;
+
+/// The histories of one part, `part` of [`HISTORY_PARTS`], written into a store: each
+/// folds to what the model gives and to what it must. What comes back is how many of the
+/// things a history must give the fold answered.
+fn histories_through_a_store(part: usize) -> u64 {
     let table = model::histories();
     assert!(table.len() >= 89, "{}", table.len());
     let mut asked = 0;
     let mut broken = Vec::new();
-    for history in &table {
+    for history in table.iter().skip(part).step_by(HISTORY_PARTS) {
         match through_a_store(history) {
             Ok(count) => asked += count,
             Err(why) => broken.push(why),
         }
     }
     assert!(broken.is_empty(), "{}", broken.join("\n"));
-    // What the histories must give is, for the most part, the fold's to answer.
-    assert!(asked > 400, "{asked}");
+    asked
+}
+
+// What the histories must give is, for the most part, the fold's to answer: over 400 of
+// it in all, and each part a share of that.
+
+#[test]
+fn every_named_history_written_into_a_store_folds_to_what_the_model_gives_and_to_what_it_must_part_1_of_4()
+ {
+    let asked = histories_through_a_store(0);
+    assert!(asked > 80, "{asked}");
+}
+
+#[test]
+fn every_named_history_written_into_a_store_folds_to_what_the_model_gives_and_to_what_it_must_part_2_of_4()
+ {
+    let asked = histories_through_a_store(1);
+    assert!(asked > 80, "{asked}");
+}
+
+#[test]
+fn every_named_history_written_into_a_store_folds_to_what_the_model_gives_and_to_what_it_must_part_3_of_4()
+ {
+    let asked = histories_through_a_store(2);
+    assert!(asked > 80, "{asked}");
+}
+
+#[test]
+fn every_named_history_written_into_a_store_folds_to_what_the_model_gives_and_to_what_it_must_part_4_of_4()
+ {
+    let asked = histories_through_a_store(3);
+    assert!(asked > 80, "{asked}");
 }
 
 /// These names, none damaged, folded.
