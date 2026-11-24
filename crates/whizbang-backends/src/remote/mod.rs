@@ -35,7 +35,9 @@
 //! (`files-` and its hex digits, [`version_of`]), so a run's record names the files asked; the answer's own digest, the
 //! request's dispatch id and its device are said beside the response.
 //!
-//! **What is charged.** A request refused before anything left is settled at nothing.
+//! **What is charged.** A request refused before anything left is settled at nothing, and
+//! so is one whose connection failed before the first byte of the request was written to it
+//! (the sender says so, [`whizbang_core::egress::Sent::left`]): the host was handed nothing.
 //! Every other ends unresolved, and is charged at its bound, whatever its outcome record
 //! says of its stage: the stage is the worker's, kept as a diagnostic, and the host may
 //! have started a machine for the request and billed it.
@@ -530,16 +532,18 @@ impl Remote {
         let read = read.take();
         // A request whizbang gave up on, at its signal or its deadline, before its answer
         // was read whole, is told to stop, through a control send of its own. One whose
-        // host answered it whole, a cancelled or timed-out end included, has ended there.
+        // host answered it whole, a cancelled or timed-out end included, has ended there;
+        // one of which no byte left has nothing at the host to stop.
         let answered_whole = matches!(read, Some(Ok(_)));
         if let (Err(fault), Some(dispatched)) = (&ended, &sent.dispatched)
             && matches!(fault.kind(), FaultKind::Cancelled | FaultKind::TimedOut)
             && !answered_whole
+            && sent.left
         {
             self.cancel(sender, bounds, dispatched, &dispatch, &body.conversation);
         }
         if let Err(fault) = &ended
-            && sent.dispatched.is_some()
+            && sent.left
         {
             // Whatever came of a request that left, it is charged at its bound.
             ended = Err(unresolved(fault.clone()));

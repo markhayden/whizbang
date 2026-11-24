@@ -45,6 +45,12 @@ pub enum Step {
     Mute,
     /// Accepts the connection and says nothing at all, not even TLS's handshake.
     Silent,
+    /// Accepts the connection and closes it at once, before TLS's handshake: a host
+    /// whose door shuts on whoever knocks.
+    Closed,
+    /// Reads the request's head and closes the connection, answering nothing: a request
+    /// cut after its first byte.
+    CutAfterHead,
 }
 
 /// A piece of a paced answer, made of the request.
@@ -81,6 +87,10 @@ pub fn scripted(pki: &Arc<Pki>, steps: Vec<Step>) -> Scripted {
 }
 
 fn serve(pki: &Pki, stream: TcpStream, step: Step, seen: &Mutex<Vec<Seen>>) {
+    if let Step::Closed = step {
+        drop(stream);
+        return;
+    }
     if let Step::Silent = step {
         let mut stream = stream;
         let mut byte = [0u8; 1];
@@ -88,6 +98,21 @@ fn serve(pki: &Pki, stream: TcpStream, step: Step, seen: &Mutex<Vec<Seen>>) {
         return;
     }
     let mut tls = pki.accept(stream);
+    if let Step::CutAfterHead = step {
+        let mut head = Vec::new();
+        let mut byte = [0u8; 1];
+        while !head.ends_with(b"\r\n\r\n") {
+            match tls.read(&mut byte) {
+                Ok(1) => head.push(byte[0]),
+                _ => return,
+            }
+        }
+        seen.lock().unwrap().push(Seen {
+            head: String::from_utf8_lossy(&head).into_owned(),
+            ..Seen::default()
+        });
+        return;
+    }
     let Some(request) = read_request(&mut tls) else {
         return;
     };
@@ -117,7 +142,7 @@ fn serve(pki: &Pki, stream: TcpStream, step: Step, seen: &Mutex<Vec<Seen>>) {
             true
         }
         Step::Mute => true,
-        Step::Silent => false,
+        Step::Silent | Step::Closed | Step::CutAfterHead => false,
     };
     if hold {
         let mut byte = [0u8; 1];

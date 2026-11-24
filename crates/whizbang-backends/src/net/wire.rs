@@ -156,6 +156,11 @@ pub(crate) struct Wire<'a> {
     rate: Rate,
     /// The socket's other side ended it.
     ended: bool,
+    /// The request is being written ([`Wire::send`]): what TLS writes from here on holds
+    /// bytes of it, where the handshake's records held none.
+    sending: bool,
+    /// A byte of the request was written to the socket.
+    request_left: bool,
 }
 
 impl<'a> Wire<'a> {
@@ -186,6 +191,8 @@ impl<'a> Wire<'a> {
             unanswered: 0,
             rate: Rate::new(now, timing.least_bytes_per_second),
             ended: false,
+            sending: false,
+            request_left: false,
         })
     }
 
@@ -232,7 +239,10 @@ impl<'a> Wire<'a> {
             self.look()?;
             match self.tls.write_tls(&mut self.socket) {
                 Ok(0) => return Err(unresolved(FaultKind::Unavailable, CUT)),
-                Ok(_) => self.moved(0),
+                Ok(_) => {
+                    self.request_left |= self.sending;
+                    self.moved(0);
+                }
                 Err(error) if waited(&error) => self.quiet += 1,
                 Err(_) => return Err(unresolved(FaultKind::Unavailable, BROKEN)),
             }
@@ -290,6 +300,9 @@ impl<'a> Wire<'a> {
     /// default), so a larger request is handed over in turns, what TLS holds written
     /// to the socket between them, each wait bounded as every other is.
     pub(crate) fn send(&mut self, bytes: &[u8]) -> Result<(), Fault> {
+        // What TLS still holds of the handshake goes first, before a byte of the request.
+        self.flush()?;
+        self.sending = true;
         let mut rest = bytes;
         while !rest.is_empty() {
             match self.tls.writer().write(rest) {
@@ -299,6 +312,12 @@ impl<'a> Wire<'a> {
             }
         }
         self.flush()
+    }
+
+    /// Whether any byte of the request was written to the socket: before it, a failure
+    /// handed the host nothing of the request.
+    pub(crate) fn request_left(&self) -> bool {
+        self.request_left
     }
 
     /// From here on, the wait from the request's last byte to the answer's first and
