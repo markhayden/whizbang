@@ -1250,10 +1250,21 @@ tested without an account; nothing in it is a secret, an account name or a priva
    removal is shaped as a named one is; opened in `docs/carry-over.md` with milestone E as its
    owner, built only if E's evaluation of clicked removals asks for it.
 
-- [ ] Done when: the story's test, the collection's test and `scripts/tests/test-gpu-host.sh`
-  pass; the setup test of the Mac's extra passes unchanged; the deployment and the lock are in
-  the guides are in;
-  a scan of the tree finds no secret, account or private path in `deploy/`.
+**As built** (D1's pull request): the card is an `A10G`; `LIMITS` is 300, 240 and 60 seconds,
+600 in all, the example's `host_limit_s`. Modal's command-line client prints no function's
+limits, so `deploy` reads the three back from the deployment's own table in the tree it
+deploys, which the GPU class takes whole (`**LIMITS`), and refuses a deployment that sets one
+of them apart or asks for a retry. The front's endpoint names the workspace, so `deploy`
+writes it to a file given by `--endpoint-file`, outside the repo, and prints it nowhere. The
+bridge's pieces that name no host are the pack's (`front.Bridged`, `front.relay`,
+`front.StoreClaims`); only `deploy/modal/sam3_host.py` names Modal. `scripts/gpu-host.sh lock`
+makes the host's lock again. The parity selector also takes `WHIZBANG_REMOTE_ENV_FILE`, the env
+file of the front's token.
+
+- [x] Done when: the story's test, the collection's test and `scripts/tests/test-gpu-host.sh`
+  pass; the setup test of the Mac's extra passes unchanged; the deployment and the lock are in,
+  and the guides are in; a scan of the tree finds no secret, account or private path in
+  `deploy/`.
 
 ## W1. Tiny's licence text, and the catalogue's revisions (small)
 
@@ -1304,6 +1315,18 @@ The row's live clauses, made from the owner's Mac against Modal and fal, with th
    outside the repo, with the front's exact
    origin approved in its `egress` table (`source_images`, `prompts`, `probe = true`). Every
    address Modal's client used is named in the record.
+2b. **A cold call against Modal's 150 seconds** (found by the review of D1): a web endpoint
+   answers a request for at most 150 seconds, then redirects, which the kind `remote` refuses;
+   the front sends its headers only once the card's side has checked the files, which on a
+   cold call follows the GPU container's start, the claim and the worker's hello, and with a
+   `scaledown_window` of 60 most calls after an idle minute are cold. Before parity, the
+   time from the request to the answer's headers is measured on three cold calls (after the
+   idle window has passed) and three warm ones, and written in the record; then the
+   orchestrator decides from it: leave it, send the headers earlier (a change to the front,
+   its own pull request with its test, where the identity header then follows in the outcome
+   record), or lengthen the idle window (which changes `LIMITS`, `host_limit_s` and the
+   price's bound with it). The carry-over row "A cold call to the GPU host on Modal" closes
+   with that decision.
 3. **Parity, three times** (a module of its own, `crates/whizbang/tests/it/remote_parity.rs`,
    `remote_parity::sam3_answers_each_fixture_inside_the_tolerance_from_a_remote_worker`, ignored
    in the fast tier and selected only by `scripts/test-models.sh parity-remote`, which refuses
@@ -1520,12 +1543,24 @@ token or a Hugging Face token.
 Not questions: steps the owner has agreed to take, each before the task that needs it, and
 the orchestrator says when.
 
-1. Before L1: the Modal workspace and its payment method, `modal token new` on the Mac, and
-   `SEGMENT_TOKEN` in the env file with the same value as Modal's secret `whizbang-front`
-   (decision 2).
-2. At D1's setup, with the workspace: a spend limit on the Modal workspace, suggested at 50
-   dollars a month, the backstop for the residual ADR 0046 records (restarts past the
-   allowance of 2 attempts), and a line of `docs/guides/gpu-host.md` (D1).
+Before L1, once (decision 2; `docs/guides/gpu-host.md`, "What you set up once", says the same
+to a customer):
+
+1. A Modal workspace for whizbang, with a payment method.
+2. `modal token new`, run once on the Mac; Modal's client keeps the token in its own file,
+   which no agent opens.
+3. A random token of at least 32 printable characters (`openssl rand -hex 32`), put in the
+   whizbang env file as `SEGMENT_TOKEN=<token>`, and the same value given to Modal as the
+   secret `whizbang-front`, key `SEGMENT_TOKEN`, typed by the owner in Modal's dashboard
+   (Secrets, a custom secret).
+4. A spend limit on the Modal workspace, suggested at 50 dollars a month: the backstop for the
+   residual ADR 0046 records (restarts past the allowance of 2 attempts), which Modal does
+   not bound per request.
+5. SAM 3's files copied from the Mac to the host's volume: once the orchestrator's first
+   `scripts/gpu-host.sh deploy` has made the app and its volume, `scripts/gpu-host.sh weights
+   --models-dir <the Mac's models directory>`, which checks every file first; the host never
+   signs in to Hugging Face. The orchestrator may run it for the owner, since it uses only
+   Modal's token through Modal's client.
 
 ## What the owner is told, not asked
 

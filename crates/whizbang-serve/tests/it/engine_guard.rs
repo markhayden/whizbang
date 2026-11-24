@@ -709,9 +709,9 @@ fn a_repeat_of_an_ended_run_at_capacity_is_answered_as_one_body() {
 #[test]
 fn the_whole_engine_saturated_holds_no_more_than_its_32_threads() {
     let engined = Engined::start("eg-threads", |_| {});
-    // One engine is thirty threads: the acceptor, sixteen readers, twelve handlers and
-    // the canceller. Saturated, it makes no more.
-    assert_eq!(threads::live(), 30);
+    // One engine is thirty-one threads: the acceptor, sixteen readers, twelve handlers,
+    // the canceller and the collector of uploads no run took. Saturated, it makes no more.
+    assert_eq!(threads::live(), 31);
     let _streams = four_streams(&engined);
     let host = engined.host_header();
     let bearer = format!("Bearer {TOKEN}");
@@ -731,7 +731,7 @@ fn the_whole_engine_saturated_holds_no_more_than_its_32_threads() {
         held.push(conn);
     }
     assert_eq!(engined.api("GET", "/v1/runs/x", None).status, 404);
-    assert_eq!(threads::live(), 30);
+    assert_eq!(threads::live(), 31);
     assert!(threads::live() <= threads::THREADS_LIMIT);
     // A second engine in the same process is refused, and leaves nothing behind.
     let other = whizbang_serve::engine::Host::start(
@@ -741,7 +741,7 @@ fn the_whole_engine_saturated_holds_no_more_than_its_32_threads() {
         Secret::new(TOKEN).unwrap(),
     );
     assert!(other.is_err());
-    assert_eq!(threads::live(), 30);
+    assert_eq!(threads::live(), 31);
     drop(held);
 }
 

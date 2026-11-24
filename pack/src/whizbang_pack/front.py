@@ -754,6 +754,127 @@ def _hold_to_shape(load, request):
         raise proto.Refused("unexpected", "the load and the request share an id")
 
 
+# --- a worker's side on another machine: the bridge (task D1) ------------------------------
+#
+# A host that puts the card on another machine than the front (on Modal, a GPU function
+# beside a CPU one) runs a `LocalSide` there and carries each job across as plain data. The
+# three pieces below name no host: `deploy/modal/sam3_host.py` hands them the host's calls.
+
+
+class StoreClaims:
+    """Claims kept in a host's own store, which outlives a container and a deploy:
+    `put_if_absent(key, value)` is an atomic put that answers True when the key was new. Any
+    failure of the store is `Unreachable`, so the claim fails closed."""
+
+    def __init__(self, put_if_absent, clock=time.time):
+        self._put = put_if_absent
+        self._clock = clock
+
+    def claim(self, dispatch):
+        try:
+            added = self._put(dispatch, int(self._clock()))
+        except Exception:
+            raise Unreachable() from None
+        return added is True
+
+
+# How long the card's side waits for the next item of a call it relays before it looks
+# again whether the call's thread is still alive.
+RELAY_LOOK_S = 1.0
+
+
+def relay(side, job):
+    """On the card's side: runs one job on `side` and yields what it hands on, in order, as
+    plain data, ending with its outcome. The call runs on a thread of its own, so a consumer
+    that goes away (a front replaced in the middle of a call) leaves the call to end at its
+    own limits; what it makes after that is dropped."""
+    items = queue.SimpleQueue()
+
+    def run():
+        try:
+            side.call(job, items.put)
+        except Exception:
+            items.put(outcome("failed", "unavailable", stage="unresolved"))
+        finally:
+            items.put(None)
+
+    thread = threading.Thread(target=run, name="front-relay", daemon=True)
+    thread.start()
+    while True:
+        try:
+            item = items.get(timeout=RELAY_LOOK_S)
+        except queue.Empty:
+            if thread.is_alive():
+                continue
+            item = None
+        if item is None:
+            yield outcome("failed", "unavailable", stage="unresolved")
+            return
+        yield item
+        if item[0] == "outcome":
+            return
+
+
+class Bridged:
+    """On the front's side: the worker's side the front is given when the card is
+    elsewhere. `call_remote(job)` is the host's call of the card's function, an iterable of
+    what `relay` yields there; `cancel_remote(dispatch)` is its control input. A call whose
+    items end before its outcome, or whose host call fails, ends `unavailable` and
+    unresolved: the job may have begun there, and whizbang charges it at its bound.
+
+    A cancel is handed to the card's control input only for a dispatch this side has handed
+    on and not yet seen end: any other is answered here, as touching nothing, so a cancel can
+    never start the card's container, whose time no attempt's bound holds."""
+
+    def __init__(self, call_remote, cancel_remote):
+        self._call = call_remote
+        self._cancel = cancel_remote
+        self._open = set()
+        self._lock = threading.Lock()
+        self.checked = {}
+        self.device = None
+
+    def call(self, job, emit):
+        try:
+            installation = _job_frames(job["frames"])[0]["installation"]
+        except proto.Refused:
+            emit(outcome("failed", "malformed"))
+            return
+        with self._lock:
+            self._open.add(job["dispatch"])
+        try:
+            self._relayed(job, installation, emit)
+        finally:
+            with self._lock:
+                self._open.discard(job["dispatch"])
+
+    def _relayed(self, job, installation, emit):
+        try:
+            for item in self._call(job):
+                if item[0] == "verified":
+                    self.checked[installation] = True
+                elif item[0] == "hello":
+                    self.device = item[1]
+                emit(item)
+                if item[0] == "outcome":
+                    return
+        except Exception:
+            pass
+        emit(outcome("failed", "unavailable", stage="unresolved"))
+
+    def cancel(self, dispatch):
+        with self._lock:
+            if dispatch not in self._open:
+                return False
+        try:
+            return bool(self._cancel(dispatch))
+        except Exception:
+            return False
+
+    def close(self):
+        pass
+
+
 # --- the front ------------------------------------------------------------------------------
 
 

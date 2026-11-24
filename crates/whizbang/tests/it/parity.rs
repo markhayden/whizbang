@@ -81,7 +81,7 @@ const MODELS: [&str; 2] = ["sam3", "tiny"];
 /// The most instances each query is asked for: the tracker's three candidates.
 const MOST: u32 = 3;
 /// How many times each fixture is asked on each device.
-const TIMES: usize = 3;
+pub(crate) const TIMES: usize = 3;
 /// The queries' names, in the order of a request.
 const QUERIES: [&str; 3] = ["phrase", "point", "box"];
 
@@ -105,7 +105,7 @@ fn digest_of(path: &Path) -> String {
 
 /// One instance as an answer gave it.
 #[derive(Debug, Clone)]
-struct Given {
+pub(crate) struct Given {
     score: f64,
     bounds: [f64; 4],
     iou: Option<f64>,
@@ -114,14 +114,14 @@ struct Given {
 
 /// An answer, query by query, of a picture of this size.
 #[derive(Debug, Clone)]
-struct Answer {
+pub(crate) struct Answer {
     width: u32,
     height: u32,
     queries: Vec<Vec<Given>>,
 }
 
 impl Answer {
-    fn found(&self) -> Vec<Vec<Found>> {
+    pub(crate) fn found(&self) -> Vec<Vec<Found>> {
         self.queries
             .iter()
             .map(|query| {
@@ -139,7 +139,7 @@ impl Answer {
 
 /// The committed fixture of a model and a picture: its fields, and its answer with each
 /// plane read from its PNG.
-fn committed(model: &str, fixture: &Fixture) -> (serde_json::Value, Answer) {
+pub(crate) fn committed(model: &str, fixture: &Fixture) -> (serde_json::Value, Answer) {
     let folder = fixtures().join(model);
     let path = folder.join(format!("{}.json", fixture.name));
     let text = std::fs::read_to_string(&path)
@@ -402,11 +402,11 @@ fn the_committed_fixtures_name_the_revisions_the_catalogue_holds() {
 // --- the model tier ----------------------------------------------------------------------------
 
 /// What the action was answered, by the picture asked: the answer, kept in order.
-type Kept = Arc<Mutex<Vec<Answer>>>;
+pub(crate) type Kept = Arc<Mutex<Vec<Answer>>>;
 
 /// An action that asks the segmenter, in one request, the phrase, the point and the box
 /// of the picture its argument `picture` names, and keeps what it answered.
-fn asks(kept: &Kept) -> Arc<dyn Action> {
+pub(crate) fn asks(kept: &Kept) -> Arc<dyn Action> {
     struct Asks(ActionDescriptor, Kept);
     impl Action for Asks {
         fn descriptor(&self) -> &ActionDescriptor {

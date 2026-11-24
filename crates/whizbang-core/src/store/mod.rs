@@ -1533,8 +1533,28 @@ impl Store {
     /// last import was made and every name that came in with any. A mark with no time
     /// (one written before marks had one) is never let go. The content
     /// stays on disk until [`Store::prune`]. What comes back is the publication, and
-    /// how many names it let go.
+    /// how many names it let go. When the current generation holds nothing to let go,
+    /// nothing is published, and what comes back is that generation and no name: what
+    /// can go only grows less while runs take more, so a look that finds nothing is
+    /// never wrong to skip (plan m6, task D1: a server that collects every hour makes no
+    /// generation of nothing).
     pub fn collect_unused_imports(&self, older_than_ms: u64, now_ms: u64) -> Result<Collected> {
+        let current = self.snapshot()?;
+        let taking: BTreeSet<String> = (self.holding.lock())
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .flatten()
+            .cloned()
+            .collect();
+        if unused_imports(&current, &taking, older_than_ms, now_ms)
+            .0
+            .is_empty()
+        {
+            return Ok(Collected {
+                generation: current.number(),
+                names: 0,
+            });
+        }
         let mut publication = self.begin()?;
         let counted = publication.collect(older_than_ms, now_ms);
         let published = publication.publish()?;

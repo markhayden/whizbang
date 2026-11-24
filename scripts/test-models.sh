@@ -19,6 +19,13 @@
 # the CPU, plan 1D, task V1) or `coverage` (the timings of plan 1D, task V1); with none, all
 # three run. Any other argument is refused before anything runs.
 #
+# `parity-remote` (plan m6, task D1; run by task L1) selects SAM 3's parity fixtures asked of a
+# remote worker, `remote_parity::`, and nothing else; no other selection names it, the local
+# leg of a release's among them. It needs no models directory: it refuses unless
+# WHIZBANG_REMOTE_CONFIG names, by an absolute path, a config whose segment is of the kind
+# `remote`; WHIZBANG_REMOTE_ENV_FILE, when set, names the env file that holds its token. Both
+# reach the test as files of cargo's folder for tests' scratch, as the models directory does.
+#
 # `--candidate` as the first argument measures the staged tree, not the checkout (plan m6,
 # task P1, item 5): scripts/candidate.sh prepares it under `<target>/tmp/candidate` (the
 # index exported, its binary built, its pack installed into a models directory of its own
@@ -65,18 +72,66 @@ if [ "${1-}" = --list ]; then
   list=1
   shift
 fi
+remote=0
 case "${1-}" in
   "") filter='test(/^(model_tier|parity|coverage)::/)' ;;
   model_tier | parity | coverage) filter="test(/^$1::/)" ;;
-  *) refuse "the one argument names a part of the tier: model_tier, parity or coverage" ;;
+  parity-remote) filter='test(/^remote_parity::/)' remote=1 ;;
+  *) refuse "the one argument names a part of the tier: model_tier, parity, coverage or parity-remote" ;;
 esac
-[ "$#" -le 1 ] || refuse "the one argument names a part of the tier: model_tier, parity or coverage"
+[ "$#" -le 1 ] || refuse "the one argument names a part of the tier: model_tier, parity, coverage or parity-remote"
 [ "$candidate" = 0 ] || [ "$list" = 0 ] || refuse "--candidate and --list are not given together"
+[ "$candidate" = 0 ] || [ "$remote" = 0 ] || refuse "--candidate and parity-remote are not given together"
 
 if [ "$list" = 1 ]; then
   cd "$root"
   scripts/thread-guard.sh cargo nextest list --profile model-tier -p whizbang --test it --run-ignored only \
     --message-format oneline -E "$filter"
+  exit
+fi
+
+# A remote config: an absolute file, one of whose tables of segment is of the kind remote.
+if [ "$remote" = 1 ]; then
+  config=${WHIZBANG_REMOTE_CONFIG:-}
+  [ -n "$config" ] || refuse "parity-remote needs WHIZBANG_REMOTE_CONFIG, the config whose segment is remote"
+  case "$config" in
+    /*) ;;
+    *) refuse "WHIZBANG_REMOTE_CONFIG must be an absolute path" ;;
+  esac
+  case "$config" in
+    *$'\n'*) refuse "WHIZBANG_REMOTE_CONFIG holds a line break" ;;
+  esac
+  [ -f "$config" ] || refuse "WHIZBANG_REMOTE_CONFIG names no file"
+  awk '
+    /^[[:space:]]*\[/ { segment = ($0 ~ /^[[:space:]]*\[backends\.segment(\.[A-Za-z0-9_-]+)?\][[:space:]]*(#.*)?$/) }
+    segment && /^[[:space:]]*kind[[:space:]]*=[[:space:]]*"remote"[[:space:]]*(#.*)?$/ { found = 1 }
+    END { exit found ? 0 : 1 }
+  ' "$config" || refuse "WHIZBANG_REMOTE_CONFIG names a config whose segment is not of the kind remote"
+  env_file=${WHIZBANG_REMOTE_ENV_FILE:-}
+  if [ -n "$env_file" ]; then
+    case "$env_file" in
+      /*) ;;
+      *) refuse "WHIZBANG_REMOTE_ENV_FILE must be an absolute path" ;;
+    esac
+    case "$env_file" in
+      *$'\n'*) refuse "WHIZBANG_REMOTE_ENV_FILE holds a line break" ;;
+    esac
+    [ -f "$env_file" ] || refuse "WHIZBANG_REMOTE_ENV_FILE names no file"
+  fi
+  target=${CARGO_TARGET_DIR:-$root/target}
+  case "$target" in
+    /*) ;;
+    *) target=$root/$target ;;
+  esac
+  shared=$target/tmp/model-tier
+  mkdir -p "$shared/out"
+  rm -f "$shared/out/remote-parity.txt" "$shared/remote-env-file"
+  printf '%s\n' "$config" >"$shared/remote-config"
+  [ -z "$env_file" ] || printf '%s\n' "$env_file" >"$shared/remote-env-file"
+  cd "$root"
+  scripts/thread-guard.sh cargo nextest run --profile model-tier -p whizbang --test it --no-run
+  scripts/thread-guard.sh cargo nextest run --profile model-tier -p whizbang --test it \
+    --run-ignored only --test-threads 1 --no-fail-fast --no-capture -E "$filter"
   exit
 fi
 

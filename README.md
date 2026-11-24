@@ -12,7 +12,10 @@ line, as a stdio server for agents, and in a browser:
   squint check the result, trying again when it fails.
 - `whizbang squint check` has a judge look at an edit through evidence tools and conclude
   pass, fail or unsure, under five use cases.
-- `whizbang serve` offers both to an agent over stdio ([docs/guides/serve.md](docs/guides/serve.md)).
+- `whizbang serve` offers both to an agent over stdio ([docs/guides/serve.md](docs/guides/serve.md)),
+  and `whizbang serve --http` to a hosted app as its engine, the engine API, with SAM 3 on a
+  GPU host of your own ([docs/guides/engine-api.md](docs/guides/engine-api.md),
+  [docs/guides/gpu-host.md](docs/guides/gpu-host.md)).
 - `whizbang play` opens the playground in Chrome: run a task from a picture and words,
   watch it, read its report, and find every run again in History
   ([docs/guides/playground.md](docs/guides/playground.md)).

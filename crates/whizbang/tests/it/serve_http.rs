@@ -6,7 +6,7 @@
 
 #[path = "../../examples/engine_fixture.rs"]
 #[allow(dead_code)]
-mod engine_fixture;
+pub(crate) mod engine_fixture;
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -651,6 +651,66 @@ fn an_upload_is_named_by_a_call_and_its_result_is_downloaded() {
     // An identity the store does not hold.
     let none = format!("/v1/artifacts/sha256:{}", "0".repeat(64));
     assert_eq!(engined.client.api("GET", &none).status, 404);
+}
+
+/// The hourly collection (plan m6, task D1, item 5), on a clock of the test's: at its
+/// start and once an hour after by that clock, the engine lets go of each upload no run
+/// took that is older than `--uploads-kept-h` (24 by default), through the store's
+/// collection; one a run took stays, and so does one younger than the age.
+#[test]
+fn an_upload_no_run_took_is_collected_after_its_age_and_one_a_run_took_stays() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use whizbang_core::store::Reader;
+    use whizbang_core::store::fs::RealFs;
+    use whizbang_serve::engine::Clock;
+    const HOUR_MS: u64 = 3_600_000;
+    let start = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let now = Arc::new(AtomicU64::new(start));
+    let read = now.clone();
+    let engined = Engined::start("sh-collect", move |settings| {
+        let read = read.clone();
+        settings.collection.clock = Clock::reading(Arc::new(move || read.load(Ordering::SeqCst)));
+    });
+    let generation = || {
+        let reader = Reader::open(&engined.root(), Arc::new(RealFs)).unwrap();
+        reader.snapshot().unwrap().number()
+    };
+    let collections = || engined.fixture.as_ref().unwrap().host.collections();
+    let until = |made: u64| {
+        let mut looked = 0;
+        while collections() < made {
+            looked += 1;
+            assert!(looked < 4000, "no collection {made} was made");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    let status = |id: &str| {
+        engined
+            .client
+            .api("GET", &format!("/v1/artifacts/{id}"))
+            .status
+    };
+    // The collection at the start, of a store that holds nothing to let go.
+    until(1);
+    let taken = engined.picture(16, 16);
+    let untaken = engined.picture(20, 20);
+    mask_of(&engined, &taken);
+    // At the hour, each is younger than its age: nothing goes, and no generation is
+    // published for nothing.
+    let before = generation();
+    now.store(start + 23 * HOUR_MS, Ordering::SeqCst);
+    until(2);
+    assert_eq!((status(&taken), status(&untaken)), (200, 200));
+    assert_eq!(generation(), before);
+    // Past its age, the upload no run took goes at the next hour; the one a run took stays.
+    now.store(start + 25 * HOUR_MS, Ordering::SeqCst);
+    until(3);
+    assert_eq!(status(&untaken), 404);
+    assert_eq!(status(&taken), 200);
 }
 
 /// Two halves. In process, through the same stop a signal asks for (the binary's reader of

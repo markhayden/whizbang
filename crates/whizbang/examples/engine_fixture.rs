@@ -10,7 +10,10 @@
 //! filler, `cloud-fill`, at an address of the reserved `.example` domain, which nothing
 //! contacts, its key a made-up one in an env file written beside the store. The store's
 //! allowance is set to ten dollars. Nothing a test does reaches a model or leaves the
-//! machine. Plan m6, task D1 adds the kind `remote` to it.
+//! machine. **User story 1** (plan m6, task D1, item 4) starts it with backends of the
+//! test's own instead ([`start_with`]): a config, an env file, the kinds that serve it (the
+//! kind `remote` at the fake host, and fal's filler at a server on loopback) and the root
+//! their certificates are of.
 //!
 //! It prints one line first, the address it listens on, `http://127.0.0.1:<port>`; its
 //! token is [`TOKEN`]. Options: `--store <folder>` (made if missing, its last folder
@@ -25,6 +28,8 @@ use whizbang::engining::Served;
 use whizbang::pack::OneWorker;
 use whizbang::serving::Actions;
 use whizbang::wiring::{self, Over};
+use whizbang_backends::net::testing::Pki;
+use whizbang_core::config::Kinds;
 use whizbang_core::contract::Opening;
 use whizbang_core::spend::Amount;
 use whizbang_core::store::fs::{Fs, RealFs};
@@ -84,10 +89,22 @@ pub fn env_path(store: &Path) -> PathBuf {
     beside(store, ".engine.env")
 }
 
-/// A running fixture: the host, and the kit whose script steers its backends.
+/// A running fixture: the host, the kit whose script steers its backends, and the one
+/// worker of the pack its wiring was handed, which no request has started while its
+/// `status` is none.
 pub struct Fixture {
     pub host: Host,
     pub kit: Arc<PlayKit>,
+    pub worker: Arc<OneWorker>,
+}
+
+/// Backends of a test's own, in place of the kit's: the config's text, the env file's,
+/// the kinds that serve them, and the root their servers' certificates are of.
+pub struct Backends {
+    pub config: String,
+    pub env: String,
+    pub kinds: Kinds,
+    pub trusting: Arc<Pki>,
 }
 
 /// Writes the config, with a models directory when one is given, and the env file with
@@ -119,18 +136,58 @@ pub fn start(store: &Path, settings: Settings) -> Result<Fixture, String> {
 /// The same, with the store on this file system: the store is opened, and refused, before
 /// anything listens, as `whizbang serve --http` opens it (`crates/whizbang/src/serve.rs`).
 pub fn start_on(store: &Path, fs: Arc<dyn Fs>, settings: Settings) -> Result<Fixture, String> {
-    let config = config_path(store);
-    let env = env_path(store);
     let kit = PlayKit::new();
-    let mut kinds = wiring::kinds(&OneWorker::installed());
+    let worker = OneWorker::installed();
+    let mut kinds = wiring::kinds(&worker);
     kinds
         .register(kit.kind())
         .map_err(|error| error.to_string())?;
     let over = Over::nothing()
+        .config(Some(&config_path(store)))
+        .env_file(Some(&env_path(store)))
+        .kinds(kinds);
+    serve(store, fs, settings, over, kit, worker)
+}
+
+/// Starts the engine over the store at `store` with these backends, their config and env
+/// file written beside it: as `whizbang serve --http` serves, with the binary's one worker
+/// handed to the wiring, and nothing of the kit's.
+pub fn start_with(store: &Path, settings: Settings, backends: Backends) -> Result<Fixture, String> {
+    let (config, env) = (config_path(store), env_path(store));
+    std::fs::write(&config, &backends.config).map_err(|error| error.to_string())?;
+    std::fs::write(&env, &backends.env).map_err(|error| error.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&env, std::fs::Permissions::from_mode(0o600))
+            .map_err(|error| error.to_string())?;
+    }
+    let worker = OneWorker::installed();
+    let over = Over::nothing()
         .config(Some(&config))
         .env_file(Some(&env))
-        .kinds(kinds)
-        .installed(wiring::Models::shipped()?)?;
+        .kinds(backends.kinds)
+        .pack(worker.clone())
+        .trusting(backends.trusting);
+    serve(
+        store,
+        Arc::new(RealFs),
+        settings,
+        over,
+        PlayKit::new(),
+        worker,
+    )
+}
+
+fn serve(
+    store: &Path,
+    fs: Arc<dyn Fs>,
+    settings: Settings,
+    over: Over,
+    kit: Arc<PlayKit>,
+    worker: Arc<OneWorker>,
+) -> Result<Fixture, String> {
+    let over = over.installed(wiring::Models::shipped()?)?;
     let opening = Opening::open_in_existing_parent(store, fs, wiring::recovery())
         .map_err(|error| wiring::not_opened(&error))?;
     let writer = opening.writer().map_err(|why| why.to_string())?;
@@ -149,7 +206,7 @@ pub fn start_on(store: &Path, fs: Arc<dyn Fs>, settings: Settings) -> Result<Fix
     let token = Secret::new(TOKEN)?;
     let host = Host::start(Arc::new(executor), Arc::new(door), settings, token)
         .map_err(|error| format!("cannot listen: {error}"))?;
-    Ok(Fixture { host, kit })
+    Ok(Fixture { host, kit, worker })
 }
 
 fn main() {

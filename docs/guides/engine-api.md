@@ -6,11 +6,12 @@ plain routes beside it for pictures in and out and for a run by its id. The app'
 calls it; it holds no model code, and needs no GPU and no Python unless a backend it uses
 runs a model locally. The decisions behind it are in ADR 0045.
 
-This is the guide's first part: starting the server, its token, off loopback, the routes,
-calling a tool, reconnecting, cancelling and stopping. Each example names the test that
-holds it, and its tier: **the fast tier** (`just check`), Rust tests on a real loopback
-socket with no client library, against the engine's own code and the binary's wiring over
-the test kit's fakes, or against the shipped binary where only a process shows it.
+It covers starting the server, its token, off loopback, the routes, calling a tool,
+reconnecting, cancelling, the uploads it keeps and stopping, then user story 1 end to end as
+a worked example. Each example names the test that holds it, and its tier: **the fast
+tier** (`just check`), Rust tests on a real loopback socket with no client library, against
+the engine's own code and the binary's wiring over fakes, or against the shipped binary
+where only a process shows it; or **live**, against real providers, which spends.
 
 ## Starting it
 
@@ -138,6 +139,16 @@ run still going at its stated time (`--wait-s`, 900 seconds by default) is cance
 its call is answered that the server gave up on it: once it has ended, or after a grace of
 ten seconds if it has not.
 
+## The uploads it keeps
+
+An upload that no run took is let go once it is older than `--uploads-kept-h` hours (24 by
+default): the server collects such uploads when it starts and once an hour after, through
+the store's collection, and one a run took stays
+(`serve_http::an_upload_no_run_took_is_collected_after_its_age_and_one_a_run_took_stays`,
+fast tier). An upload sent again is marked again at most once an hour. What is let go is no
+longer named by the store, and answers 404; its bytes stay on disk until `whizbang store
+prune` runs on a store no server holds.
+
 ## Stopping
 
 `SIGTERM`, `SIGINT` (Ctrl-C) or `SIGHUP` stops the server: it takes nothing new, cancels every
@@ -146,3 +157,75 @@ second signal ends the wait at once
 (`serve_http::a_signal_cancels_every_run_accounts_the_ledger_and_releases_the_store`, fast
 tier). A run that outlived the wait is ended as interrupted the next time the store is
 opened to write.
+
+## User story 1, end to end
+
+A hosted editor lets people upload a picture, name or click a thing to remove, and download
+the result. Its server runs `whizbang serve --http` with no GPU and no Python; segmentation
+runs on SAM 3 on [a GPU host of your own](gpu-host.md), the fill on Bria through fal. The app
+calls two or three actions and writes no model code.
+
+**The config** names the remote segmenter and fal's filler, each origin approved for what it
+is sent; the env file holds `SEGMENT_TOKEN` and fal's key:
+
+```toml
+[backends.segment]
+kind = "remote"
+url = "https://<the front's endpoint>"
+token_env = "SEGMENT_TOKEN"
+model = "sam3"
+
+[backends.segment.settings]
+price_microusd_per_second = 300
+host_limit_s = 600
+
+[backends.fill]
+kind = "service"
+provider = "fal"
+model = "bria-eraser"
+key_env = "FAL_KEY"
+
+[egress.recipients.gpu]
+origin = "https://<the front's endpoint>"
+classes = ["source_images", "prompts"]
+probe = true
+
+[egress.recipients.fal]
+origin = "https://fal.run"
+classes = ["source_images", "derived_images"]
+```
+
+**The calls**, in `curl` (live); `$E` is the engine's address, `$T` its token, and every
+call but an upload and a download names `MCP-Protocol-Version: 2025-06-18`:
+
+```text
+# Named: an upload, remove_prompt with the words, a download.
+curl -s -H "Authorization: Bearer $T" -H "Content-Type: image/png" \
+     --data-binary @photo.png "$E/v1/uploads"
+# -> {"image": "sha256:…"}
+curl -sN -H "Authorization: Bearer $T" -H "MCP-Protocol-Version: 2025-06-18" \
+     -H "Content-Type: application/json" "$E/mcp" -d '{"jsonrpc": "2.0", "id": 1,
+     "method": "tools/call", "params": {"name": "remove_prompt", "arguments":
+     {"image": "sha256:…", "prompt": "the lamp", "request_id": "edit-1"}}}'
+# -> an event stream; the result's text names the line "image sha256:…"
+curl -s -H "Authorization: Bearer $T" -o result.png "$E/v1/artifacts/sha256:…"
+
+# Clicked: segment the point for one instance, fill with its mask, a download.
+curl -sN … "$E/mcp" -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params":
+     {"name": "segment", "arguments": {"image": "sha256:…", "kind": "point",
+     "query": "412,230", "max_instances": 1, "request_id": "edit-2"}}}'
+# -> its text names the line "mask sha256:…"
+curl -sN … "$E/mcp" -d '{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params":
+     {"name": "fill", "arguments": {"image": "sha256:…", "mask": "sha256:…",
+     "request_id": "edit-3"}}}'
+curl -s -H "Authorization: Bearer $T" -o result.png "$E/v1/artifacts/sha256:…"
+```
+
+The same exchange runs in the fast tier, the engine's segmenter of the kind `remote` at the
+pack's own front on loopback with a fake model behind it and its filler at a server that
+answers as fal does
+(`story::a_hosted_editor_uploads_names_and_clicks_and_downloads_with_no_local_worker`, fast
+tier): whizbang starts no pack worker; each run's record names the front for `segment` and
+fal for `fill`, with the classes each was sent; the ledger books each segment at its bound,
+0.36 dollars with the example, and each fill at fal's price. `fill` paints the mask as
+`segment` found it; `remove_prompt` grows and feathers its mask first.

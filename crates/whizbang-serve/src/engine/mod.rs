@@ -102,6 +102,74 @@ impl Default for Times {
     }
 }
 
+/// How long an upload no run took is kept, unless told otherwise (`--uploads-kept-h`).
+pub const UPLOADS_KEPT_DEFAULT: Duration = Duration::from_secs(24 * 3600);
+/// How often the host lets go of the uploads no run took (plan m6, task D1, item 5).
+pub const COLLECT_EVERY: Duration = Duration::from_secs(3600);
+
+/// The time the host's collection reads, in milliseconds since the Unix epoch: the
+/// system's, or a test's.
+#[derive(Clone)]
+pub struct Clock(Arc<dyn Fn() -> u64 + Send + Sync>);
+
+impl Clock {
+    /// The system's clock.
+    pub fn system() -> Clock {
+        Clock(Arc::new(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |since| {
+                    u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+                })
+        }))
+    }
+
+    /// A clock that reads this.
+    pub fn reading(read: Arc<dyn Fn() -> u64 + Send + Sync>) -> Clock {
+        Clock(read)
+    }
+
+    /// The time now, in milliseconds since the Unix epoch.
+    pub fn now_ms(&self) -> u64 {
+        (self.0)()
+    }
+}
+
+impl std::fmt::Debug for Clock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Clock")
+    }
+}
+
+impl PartialEq for Clock {
+    fn eq(&self, other: &Clock) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for Clock {}
+
+/// The hourly collection of uploads that no run took (plan m6, task D1, item 5): at the
+/// start, then every [`Collection::every`] by [`Collection::clock`], each import no run
+/// took that is older than [`Collection::kept`] is let go, through the store's collection
+/// ([`Hosted::collect_unused`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Collection {
+    pub kept: Duration,
+    pub every: Duration,
+    pub clock: Clock,
+}
+
+impl Default for Collection {
+    fn default() -> Collection {
+        Collection {
+            kept: UPLOADS_KEPT_DEFAULT,
+            every: COLLECT_EVERY,
+            clock: Clock::system(),
+        }
+    }
+}
+
 /// What the host is started with.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
@@ -123,6 +191,8 @@ pub struct Settings {
     /// How often a run is looked at.
     pub look: Duration,
     pub times: Times,
+    /// The collection of uploads no run took.
+    pub collection: Collection,
 }
 
 impl Settings {
@@ -138,6 +208,7 @@ impl Settings {
             grace: GRACE,
             look: Duration::from_millis(50),
             times: Times::default(),
+            collection: Collection::default(),
         }
     }
 }
@@ -171,6 +242,11 @@ pub trait Hosted: Door {
     /// The record of a run that has ended, as `whizbang runs show --json` gives it.
     fn record(&self, _run: &RunId) -> Option<Json> {
         None
+    }
+    /// Lets go of every upload no run took that is older than `older_than_ms` at
+    /// `now_ms`, through the store's collection: how many names were let go.
+    fn collect_unused(&self, _older_than_ms: u64, _now_ms: u64) -> Result<u64, String> {
+        Ok(0)
     }
 }
 
@@ -312,6 +388,8 @@ pub(crate) struct Shared {
     /// The `Host` values a request may name.
     pub names: Vec<String>,
     pub stopping: AtomicBool,
+    /// How many collections of uploads no run took have been made.
+    collections: std::sync::atomic::AtomicU64,
     state: Mutex<State>,
     changed: Condvar,
     queues: Mutex<Option<Queues>>,
@@ -753,6 +831,7 @@ impl Host {
             settings,
             names,
             stopping: AtomicBool::new(false),
+            collections: std::sync::atomic::AtomicU64::new(0),
             state: Mutex::new(State {
                 places: Vec::new(),
                 next_place: 0,
@@ -805,6 +884,11 @@ impl Host {
             // ignores its cancellation, and it ends once that wait returns.
             let cancelling = shared.clone();
             threads::spawn("canceller", Box::new(move || cancel(&cancelling)))?;
+            let collecting = shared.clone();
+            threads.push(threads::spawn(
+                "collector",
+                Box::new(move || collect(&collecting)),
+            )?);
             let accepting = shared.clone();
             threads.push(threads::spawn(
                 "acceptor",
@@ -855,6 +939,12 @@ impl Host {
                 .0;
         }
         true
+    }
+
+    /// How many collections of uploads no run took it has made: one at its start, then
+    /// one each [`Collection::every`] by its clock.
+    pub fn collections(&self) -> u64 {
+        self.shared.collections.load(Ordering::SeqCst)
     }
 
     /// What asks it to stop.
@@ -953,6 +1043,37 @@ impl Host {
         for thread in self.threads {
             let _ = thread.join();
         }
+    }
+}
+
+/// The collector (plan m6, task D1, item 5): at the start and then every
+/// [`Collection::every`] by its clock, the uploads no run took that are older than
+/// [`Collection::kept`] are let go. It looks at its clock every [`Settings::look`], and
+/// ends when the host begins to stop. A collection that fails is tried at the next one.
+fn collect(shared: &Arc<Shared>) {
+    let collection = shared.settings.collection.clone();
+    let kept = u64::try_from(collection.kept.as_millis()).unwrap_or(u64::MAX);
+    let every = u64::try_from(collection.every.as_millis()).unwrap_or(u64::MAX);
+    let mut next = 0u64;
+    loop {
+        {
+            let state = shared.state();
+            if state.quitting() || state.done {
+                return;
+            }
+        }
+        let now = collection.clock.now_ms();
+        if now >= next {
+            let _ = shared.hosted.collect_unused(kept, now);
+            next = now.saturating_add(every.max(1));
+            shared.collections.fetch_add(1, Ordering::SeqCst);
+            shared.notify();
+        }
+        let state = shared.state();
+        if state.quitting() || state.done {
+            return;
+        }
+        drop(shared.wait_a_look(state));
     }
 }
 

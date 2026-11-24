@@ -126,7 +126,15 @@ declared allowance of attempts, the residual recorded in that host's record.
   passed (the front stamps it at receipt: the receipt plus `--host-limit-s`), then claims its
   dispatch id in its claim store by an atomic put that fails when the key is there. A claim
   that fails is a replay; a store that cannot be reached refuses the request (failing closed).
-  `--worker local` keeps its claims in the process; task D1's bridge uses a Modal `Dict`.
+  `--worker local` keeps its claims in the process; task D1's bridge uses a Modal `Dict`,
+  through `front.StoreClaims`, whose put fails when the key is there and whose store, when it
+  fails, is `Unreachable`.
+- **A worker's side on another machine** (task D1): on the card's machine `front.relay` runs a
+  job on a `LocalSide` on a thread of its own and yields what it hands on, so a front that
+  goes away in the middle of a call leaves the call to end at its own limits; on the front's,
+  `front.Bridged` is the side the front is given, over the host's call of the card's function
+  and its control input, and a call whose items end before its outcome ends `unavailable`
+  and unresolved. Neither names a host; `deploy/modal/sam3_host.py` hands them Modal's.
 - **The cancel.** A cancel names a dispatch. The front looks in its own queue first: a waiting
   request is taken off and ended `cancelled`, not sent. When the front holds no entry for it,
   or the request is with the worker's side, the cancel goes to the worker's side, which writes

@@ -1,6 +1,6 @@
 //! The threads of the engine API (ADR 0045, "Threads"): its acceptor, its sixteen readers,
-//! its twelve handlers, its canceller, and the binary's reader of signals, with one place
-//! kept for the hourly collection of uploads no run took (plan m6, task D1).
+//! its twelve handlers, its canceller, its collector of the uploads no run took (plan m6,
+//! task D1, item 5), and the binary's reader of signals.
 //!
 //! This is the sixth place in the workspace that makes a thread, beside the executor's
 //! spawner, the spawner of the pack's supervisor, the stdio server's reader, the
@@ -11,9 +11,9 @@ use std::io;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::JoinHandle;
 
-/// How many threads made here one process holds at once: one engine's thirty (the
-/// acceptor, sixteen readers, twelve handlers and the canceller), the binary's reader of
-/// signals, and the place kept for the hourly collection.
+/// How many threads made here one process holds at once: one engine's thirty-one (the
+/// acceptor, sixteen readers, twelve handlers, the canceller and the collector) and the
+/// binary's reader of signals.
 pub const THREADS_LIMIT: usize = 32;
 
 static LIVE: AtomicUsize = AtomicUsize::new(0);

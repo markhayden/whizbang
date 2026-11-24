@@ -209,4 +209,16 @@ impl Hosted for Served {
         let entry = generation.run(run.as_str())?.get(RECORD_NAME)?.clone();
         serde_json::from_slice(&store.read(&entry).ok()?).ok()
     }
+
+    /// Through the store's collection, by the writer the executor holds (plan m6, task D1,
+    /// item 5): an upload a run took, or a run's admission in progress holds, stays.
+    fn collect_unused(&self, older_than_ms: u64, now_ms: u64) -> Result<u64, String> {
+        let store = self
+            .store()
+            .map_err(|_| "the engine is stopping".to_owned())?;
+        store
+            .collect_unused_imports(older_than_ms, now_ms)
+            .map(|collected| collected.names)
+            .map_err(|error| error.to_string())
+    }
 }

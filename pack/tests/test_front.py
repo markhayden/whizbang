@@ -8,6 +8,7 @@ classifier's, which the tests that wait for them give shorter."""
 
 import io
 import os
+import queue
 import signal
 import socket
 import ssl
@@ -528,6 +529,273 @@ class Bridge(unittest.TestCase):
         for wrong in ("whizbang_pack.front", ":x", "whizbang_pack.front:FORMAT"):
             with self.assertRaises(front.Usage):
                 front.side_of(wrong, "/models", {})
+
+    # Task D1: the bridge as `deploy/modal/sam3_host.py` builds it, the front's side
+    # (`front.Bridged`) over a stand-in for the host's GPU function (`Card`, `App`), which
+    # runs the pack's `front.relay` of a `LocalSide` in its one container.
+
+    def test_a_front_replaced_mid_call_leaves_the_bridges_call_to_end_at_its_limit(self):
+        models = fk.Models(self)
+        side = fk.Recording(fk.local_side(self, models, limits=fk.small_limits(call=0.5)))
+        card = Card(side)
+        old = Consumer(card)
+        old_front, old_port = fk.serve(self, front.Bridged(old.call, old.cancel), models.dir)
+        _, new_port = fk.serve(self, front.Bridged(card.call, card.cancel), models.dir)
+        blocked = fk.dispatch()
+        sock, _, _ = fk.post_request(old_port, "fake-wait", models.identity["fake-wait"], blocked)
+        side.began(blocked)
+        began = time.monotonic()
+        # The old front's process is gone: it takes nothing more of the call, and no cancel
+        # of it reaches the card.
+        old.sever()
+        old_front.close()
+        sock.close()
+        document = side.outcome(blocked)
+        self.assertGreaterEqual(time.monotonic() - began, 0.4)
+        self.assertEqual((document["kind"], document["stage"], document["ended"]), ("timed_out", "unresolved", "killed"))
+        self.assertEqual(card.cancels, [])
+        sock, load, request = fk.post_request(new_port, "fake-ok", models.identity["fake-ok"])
+        self.assertEqual(fk.answer_of(sock, load, request)[2]["outcome"], "complete")
+        self.assertEqual(card.most, 1)
+
+    def test_under_one_call_and_one_control_input_at_a_time_a_cancel_is_not_queued_behind_the_call(self):
+        models = fk.Models(self)
+        for inputs, kind in ((2, "cancelled"), (1, "timed_out")):
+            side = fk.Recording(fk.local_side(self, models, limits=fk.small_limits(call=0.6)))
+            card = Card(side, inputs=inputs)
+            _, port = fk.serve(self, front.Bridged(card.call, card.cancel), models.dir)
+            blocked = fk.dispatch()
+            sock, load, request = fk.post_request(port, "fake-wait", models.identity["fake-wait"], blocked)
+            side.began(blocked)
+            began = time.monotonic()
+            self.assertEqual(fk.post_cancel(port, blocked), 204)
+            _, _, document, _ = fk.answer_of(sock, load, request)
+            took = time.monotonic() - began
+            self.assertEqual(document["kind"], kind)
+            self.assertLessEqual(card.most, inputs)
+            if inputs == 2:
+                # The control input took the second place at once, beside the call.
+                self.assertLess(took, 0.5)
+                self.assertEqual(card.most, 2)
+                self.assertEqual(card.cancels, [(blocked, True)])
+            else:
+                # The stand-in with one place shows what the second is for: the cancel
+                # waits behind the call, which ends at its limit, and finds nothing running.
+                self.assertGreaterEqual(took, 0.5)
+                fk.wait_until(lambda: card.cancels == [(blocked, False)])
+
+    def test_two_generations_never_overlap_a_deploy_waits_for_the_old_one_to_stop_and_a_redelivery_after_it_finds_its_claim(self):
+        models = fk.Models(self)
+        store = ClaimStore()
+        app = App(self, models, store)
+        old = app.deploy()
+        blocked = fk.dispatch()
+        job = job_of(models, "fake-wait", blocked)
+        ends = []
+        thread = threading.Thread(target=lambda: ends.extend(i for i in old.call(job) if i[0] == "outcome"), daemon=True)
+        thread.start()
+        old.side.began(blocked)
+        # A deploy while the old generation is deployed, or stopped with its container
+        # left, is refused: new traffic never reaches a second generation beside it.
+        self.assertIsNone(app.deploy())
+        app.stop()
+        self.assertEqual(list(old.call(job_of(models, "fake-ok"))), [])
+        self.assertIsNone(app.deploy())
+        # The old call ends (here at its limit) and its container goes: only then a deploy.
+        thread.join(kit.WAIT_SECONDS)
+        fk.wait_until(lambda: old.containers == 0)
+        new = app.deploy()
+        self.assertIsNotNone(new)
+        self.assertIsNot(new.side, old.side)
+        self.assertEqual(ends[0][1]["kind"], "timed_out")
+        # The claim store is outside the app, so the host's redelivery of the old dispatch
+        # to the new generation is answered from its claim and runs no model.
+        self.assertIn(blocked, store.held)
+        items = list(new.call(job))
+        self.assertEqual([(i[1]["admission"], i[1]["stage"]) for i in items], [("replay", "not_sent")])
+        self.assertEqual((list(new.side.journal), new.side.spawns.count), ([], 0))
+        self.assertEqual([i[1]["outcome"] for i in new.call(job_of(models, "fake-ok")) if i[0] == "outcome"], ["complete"])
+
+    def test_a_cancel_of_a_dispatch_the_front_never_handed_on_or_saw_end_starts_nothing_on_the_card(self):
+        models = fk.Models(self)
+        side = fk.Recording(fk.local_side(self, models))
+        card = Card(side)
+        _, port = fk.serve(self, front.Bridged(card.call, card.cancel), models.dir)
+        # Never seen: answered by the front, the card's control input never asked.
+        self.assertEqual(fk.post_cancel(port, fk.dispatch()), 204)
+        # Seen and ended: the same.
+        dispatch = fk.dispatch()
+        sock, load, request = fk.post_request(port, "fake-ok", models.identity["fake-ok"], dispatch)
+        self.assertEqual(fk.answer_of(sock, load, request)[2]["outcome"], "complete")
+        self.assertEqual(fk.post_cancel(port, dispatch), 204)
+        self.assertEqual((card.cancels, card.most), ([], 1))
+        # Handed on and not ended: the cancel reaches the card.
+        blocked = fk.dispatch()
+        sock, load, request = fk.post_request(port, "fake-wait", models.identity["fake-wait"], blocked)
+        side.began(blocked)
+        self.assertEqual(fk.post_cancel(port, blocked), 204)
+        self.assertEqual(fk.answer_of(sock, load, request)[2]["kind"], "cancelled")
+        self.assertEqual(card.cancels, [(blocked, True)])
+
+    def test_a_claim_store_that_fails_is_unreachable_and_a_key_there_is_a_replay(self):
+        store = ClaimStore()
+        claims = front.StoreClaims(store.put)
+        dispatch = fk.dispatch()
+        self.assertEqual((claims.claim(dispatch), claims.claim(dispatch)), (True, False))
+
+        def away(key, value):
+            raise ConnectionError("the store is away")
+
+        with self.assertRaises(front.Unreachable):
+            front.StoreClaims(away).claim(dispatch)
+        # A store that answers anything but True has not taken the key.
+        self.assertFalse(front.StoreClaims(lambda key, value: None).claim(fk.dispatch()))
+
+
+def job_of(models, model, dispatch=None):
+    """A job as the front makes one: the dispatch, its not-after, the `load` and the
+    request's frames."""
+    data, _, _ = fk.body(model, models.identity[model])
+    frames = data[len(proto.encode(fk.messages(model, models.identity[model])[0])) :]
+    return {"dispatch": dispatch or fk.dispatch(), "not_after": time.time() + 60, "frames": frames}
+
+
+class Card:
+    """A stand-in for the host's GPU function as the deployment sets it: one container that
+    takes at most `inputs` inputs at once (the deployment's two: the call and a control
+    input), each further one waiting for a place, as the host queues an input. A call is
+    run there to its end whoever reads it, as the host runs an input; `most` is the most
+    inputs it held at once, and `cancels` what each control input found."""
+
+    def __init__(self, side, inputs=2):
+        self.side = side
+        self._places = threading.Semaphore(inputs)
+        self._lock = threading.Lock()
+        self._held = 0
+        self.most = 0
+        self.cancels = []
+
+    def _take(self):
+        if not self._places.acquire(timeout=kit.WAIT_SECONDS):
+            raise AssertionError("an input waited for a place past the tests' limit")
+        with self._lock:
+            self._held += 1
+            self.most = max(self.most, self._held)
+
+    def _give(self):
+        with self._lock:
+            self._held -= 1
+        self._places.release()
+
+    def call(self, job):
+        """The host's call of the card's function: what its input yields, as it comes."""
+        self._take()
+        items = queue.SimpleQueue()
+
+        def run():
+            try:
+                for item in front.relay(self.side, job):
+                    items.put(item)
+            finally:
+                items.put(None)
+                self._give()
+
+        threading.Thread(target=run, daemon=True).start()
+        while True:
+            item = items.get(timeout=kit.WAIT_SECONDS)
+            if item is None:
+                return
+            yield item
+
+    def cancel(self, dispatch):
+        """The control input."""
+        self._take()
+        try:
+            found = self.side.cancel(dispatch)
+            self.cancels.append((dispatch, found))
+            return found
+        finally:
+            self._give()
+
+
+class Consumer:
+    """One front's use of the card, which can be severed as a front's process that is gone
+    is: it reads nothing more of a call, and sends no cancel."""
+
+    def __init__(self, card):
+        self.card = card
+        self.severed = threading.Event()
+
+    def sever(self):
+        self.severed.set()
+
+    def call(self, job):
+        for item in self.card.call(job):
+            if self.severed.is_set():
+                raise ConnectionError("the front is gone")
+            yield item
+
+    def cancel(self, dispatch):
+        if self.severed.is_set():
+            return False
+        return self.card.cancel(dispatch)
+
+
+class ClaimStore:
+    """A stand-in for the host's named store outside the app (on Modal, a `Dict`), whose
+    put is atomic and refuses a key that is there."""
+
+    def __init__(self):
+        self.held = {}
+        self._lock = threading.Lock()
+
+    def put(self, key, value):
+        with self._lock:
+            if key in self.held:
+                return False
+            self.held[key] = value
+            return True
+
+
+class Generation:
+    """One deploy of the app: its card's side, which takes no new input once the app is
+    stopped, and how many of its containers are left (one while an input runs)."""
+
+    def __init__(self, test, models, store):
+        self.side = fk.Recording(fk.local_side(test, models, limits=fk.small_limits(call=0.5), claims=front.StoreClaims(store.put)))
+        self.stopped = False
+        self.containers = 0
+        self._lock = threading.Lock()
+
+    def call(self, job):
+        with self._lock:
+            if self.stopped:
+                return
+            self.containers += 1
+        try:
+            yield from front.relay(self.side, job)
+        finally:
+            with self._lock:
+                self.containers -= 1
+
+
+class App:
+    """A stand-in for the host's list of apps, as `scripts/gpu-host.sh` reads it: a deploy is
+    made only when no generation was deployed, or the last is stopped with no container
+    left; `stop` is `modal app stop`."""
+
+    def __init__(self, test, models, store):
+        self._test, self._models, self._store = test, models, store
+        self.current = None
+
+    def deploy(self):
+        if self.current is not None and not (self.current.stopped and self.current.containers == 0):
+            return None
+        self.current = Generation(self._test, self._models, self._store)
+        return self.current
+
+    def stop(self):
+        self.current.stopped = True
 
 
 class Cancel(unittest.TestCase):
