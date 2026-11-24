@@ -1,7 +1,7 @@
 # Plan: milestone 7, bundles and replay
 
 Draft 5, 2026-11-24, written from `main` at 6c75b6e3 (the tag `m6`, the merge of #300, the
-note of milestone 6), after four outside review rounds ("Review rounds", at the end). Milestone 7 is `SPEC.md` section 16, row 7, "Bundles and replay":
+note of milestone 6), after five outside review rounds, the last of which approved it ("Review rounds", at the end). Milestone 7 is `SPEC.md` section 16, row 7, "Bundles and replay":
 "Invocation bundles and journal replay; saved-run comparisons, saved examples and guided
 chain replay in the playground". Beside the row it takes section 6's control "Invocation
 bundles | Deferred to milestone 7", section 7's rascal row "Replay from a journal; invocation
@@ -844,7 +844,7 @@ abandoned.
   `replay::every_run_of_a_replayed_family_names_it_and_stats_leaves_the_family_out_by_default`,
   `replay::a_replay_in_a_held_store_is_cancelled_waited_for_and_counted_like_any_run`,
   `runs_bundle::a_bundle_imports_into_an_empty_store_and_survives_its_archive_and_first_store_gone_a_restart_and_a_prune`
-  (its replay completed here: the chain replayed offline and reproduced), and item 9's three
+  (its replay completed here: the chain replayed offline and reproduced), and item 9's five
   pass; ADR 0049 is merged; the three rows closed with their lines.
 
 ## U1. The playground: saved-run comparisons and saved examples (large)
@@ -1262,4 +1262,10 @@ against the code; all were right and taken.
    computed as a stream and the import made only after the lookup finds no repeat; a test of
    a repeat after the archive and the entry are gone.
 4. **Minor: B1, item 4 still named an import mark.** Right. Taken.
+
+### Review round 5
+
+On draft 5. Verdict: approve. Round 4's four fixes held, and no earlier finding was
+reopened. One finding, a minor: R1's box counted item 9's tests as three where it names
+five. Right, and taken.
 
