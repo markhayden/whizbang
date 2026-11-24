@@ -93,12 +93,23 @@ pub fn import(
     artifact: &Artifact,
     held: bool,
 ) -> Result<ArtifactId> {
+    import_with(publication, artifact, held, &[])
+}
+
+/// As [`import`], with the names outside runs that come in with the import: the store's
+/// collection of unused imports lets them go with it ([`Publication::mark_imported_with`]).
+pub fn import_with(
+    publication: &mut Publication<'_>,
+    artifact: &Artifact,
+    held: bool,
+    with: &[String],
+) -> Result<ArtifactId> {
     let id = artifact.id();
     let name = name(artifact.artifact_type(), id);
     if !held {
         publication.put(&name, &artifact.to_bytes())?;
     }
-    publication.mark_imported(&name)?;
+    publication.mark_imported_with(&name, with)?;
     Ok(id)
 }
 

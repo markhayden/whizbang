@@ -519,7 +519,15 @@ Held by `play::a_hosting_file_that_others_could_have_written_is_not_trusted` and
 (fast tier); the quit's release of the store, by hand (`docs/results/m5-playground.md`).
 
 A store on a network file system is not supported: the store's locks may not hold there,
-and the playground holds a store for as long as it runs.
+and the playground holds a store for as long as it runs. A store on a mount of a network
+type (NFS, SMB, AFP, WebDAV, 9p, Ceph, GlusterFS, a FUSE mount such as sshfs) is refused when
+it is opened, naming the type, and so is one on a file system that grants its writer's lock
+twice.
+
+The pictures you send and the shapes you draw are kept until you let them go:
+`whizbang store prune --unused-imports-older-than <hours>` removes each one that no run
+took and that was sent longer ago than that, with the names the playground keeps beside it,
+and then prunes. One a run took stays as long as the run does.
 
 The decisions behind the playground's host are in ADR 0041, and those behind its interface
 in ADR 0043.

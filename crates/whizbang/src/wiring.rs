@@ -1078,10 +1078,10 @@ impl Over {
             .load()
             .map_err(|refused| format!("the config cannot be used: {refused}"))?;
         let inventory = self.inventory();
+        let secrets = self.secrets.joined(&loaded.kept_out());
         let offers = Offers::of(loaded.config(), loaded.credentials(), &self.kinds)
             .map_err(|refused| format!("the config cannot be used: {refused}"))?
-            .over(inventory.clone());
-        let secrets = self.secrets.joined(&loaded.kept_out());
+            .over(inventory.clone(), &secrets.joined(loaded.secrets()));
         Ok(Some(Configured {
             loaded,
             offers,
@@ -1123,7 +1123,7 @@ impl Over {
         let empty = Config::empty();
         let offers = Offers::of(&empty, &Credentials::none(), &self.kinds)
             .map_err(|error| error.to_string())?
-            .over(self.inventory());
+            .over(self.inventory(), &self.secrets);
         let snapshot = Snapshot::of(empty.digest())
             .offering(Arc::new(offers))
             .sending_under(DispatchPolicy::none())

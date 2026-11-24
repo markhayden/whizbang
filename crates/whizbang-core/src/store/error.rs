@@ -49,10 +49,22 @@ pub enum Error {
     /// replaced while this writer held it, so another writer may be admitted beside it.
     /// Nothing was published, and nothing more will be by this writer (plan m5, task H1).
     LockReplaced { root: PathBuf },
+    /// The store's folder is on a file system of a network type, on which its locks may
+    /// hold on one machine alone: refused when it is opened, before its lock is asked
+    /// (plan m6, task S1, item 4). `kind` is the type the system's table of mounts gives.
+    NetworkFileSystem { root: PathBuf, kind: String },
+    /// The system's table of mounts could not be read, so the file system the store is
+    /// on is not known: refused to a writer, saying so. A reader is not refused.
+    MountsUnknown { root: PathBuf, why: String },
+    /// The writer's lock was granted to a second opening of `LOCK` while this writer
+    /// held it: on this file system the locks do not hold, and a second writer would be
+    /// admitted beside the first. Refused, with nothing changed.
+    LocksDoNotHold { root: PathBuf },
     /// This cannot be the id of a run: it is empty, or it holds a control character.
     InvalidRun { run: String },
-    /// A generation file says it is of a format this build does not read. A store written
-    /// by other code is not migrated.
+    /// A generation file says it is of a format this build does not read: this build
+    /// reads [`super::WHOLE_FORMAT`] and `reads`, the format it writes. A store written by
+    /// other code is not migrated.
     OtherFormat {
         path: PathBuf,
         format: u32,
@@ -94,6 +106,15 @@ pub enum Error {
     /// durable did not succeed. It may or may not survive a crash. This is not a success,
     /// and it is not a publication that did not happen either.
     Unacknowledged { generation: u64, source: Box<Error> },
+}
+
+/// The formats a build that writes `reads` reads: that one, and the format before
+/// buckets when it is later (ADR 0047).
+fn reads_formats(reads: u32) -> String {
+    match reads > super::WHOLE_FORMAT {
+        true => format!("formats {} and {reads}", super::WHOLE_FORMAT),
+        false => format!("format {reads}"),
+    }
 }
 
 impl Error {
@@ -147,6 +168,16 @@ impl Error {
             Error::Missing { .. } | Error::NoParent { .. } => "there is no store".to_owned(),
             Error::NotAStore { .. } => "what was opened is not a store".to_owned(),
             Error::Held { .. } => "the store is being written by another process".to_owned(),
+            Error::NetworkFileSystem { kind, .. } => format!(
+                "the store is on a file system of type {kind}, a network one, where its \
+                 locks may not hold"
+            ),
+            Error::MountsUnknown { .. } => {
+                "the file system the store is on could not be told".to_owned()
+            }
+            Error::LocksDoNotHold { .. } => {
+                "the store's file system does not hold its writer's lock".to_owned()
+            }
             Error::NotOwn { .. } => "the store's folder is another user's".to_owned(),
             Error::OthersMayWrite { .. } => {
                 "the store's folder may be written by others than its owner".to_owned()
@@ -160,9 +191,9 @@ impl Error {
                 format,
                 reads,
             } => format!(
-                "the store's file {} is of another format: {format}, and this build reads \
-                 format {reads}",
-                file(path)
+                "the store's file {} is of another format: {format}, and this build reads {}",
+                file(path),
+                reads_formats(*reads)
             ),
             Error::NoSuchRun { .. } => "the store does not hold that run".to_owned(),
             Error::RunExists { .. } => "the store already holds a run of that id".to_owned(),
@@ -229,6 +260,25 @@ impl fmt::Display for Error {
                 root.display(),
                 holder.as_deref().unwrap_or("another process")
             ),
+            Error::NetworkFileSystem { root, kind } => write!(
+                f,
+                "the store at {} is on a file system of type {kind}, a network one, where \
+                 its locks may hold on one machine alone; a store lives on a local file \
+                 system",
+                root.display()
+            ),
+            Error::MountsUnknown { root, why } => write!(
+                f,
+                "the store at {} is not opened to write: the file system it is on could \
+                 not be told ({why}), and a store lives on a local file system",
+                root.display()
+            ),
+            Error::LocksDoNotHold { root } => write!(
+                f,
+                "the store at {} is on a file system that granted its writer's lock twice, \
+                 so its locks do not hold there; a store lives on a local file system",
+                root.display()
+            ),
             Error::NotOwn { root } => write!(
                 f,
                 "the store at {} is another user's folder, and is not opened: use a folder \
@@ -258,8 +308,9 @@ impl fmt::Display for Error {
                 reads,
             } => write!(
                 f,
-                "{} is of another format: {format}, and this build reads format {reads}",
-                path.display()
+                "{} is of another format: {format}, and this build reads {}",
+                path.display(),
+                reads_formats(*reads)
             ),
             Error::NoSuchRun { run } => write!(f, "the store holds no run {run:?}"),
             Error::RunExists { run } => write!(
@@ -315,6 +366,9 @@ impl std::error::Error for Error {
             | Error::NotOwn { .. }
             | Error::OthersMayWrite { .. }
             | Error::LockReplaced { .. }
+            | Error::NetworkFileSystem { .. }
+            | Error::MountsUnknown { .. }
+            | Error::LocksDoNotHold { .. }
             | Error::NoSuchRun { .. }
             | Error::RunExists { .. }
             | Error::NameExists { .. }

@@ -14,13 +14,14 @@ use whizbang_testkit::scratch::Scratch;
 use super::runs::{MASK, with_runs};
 use super::{Hooked, When, for_every_loss, losses, root};
 
-/// The numbers of the generation files on disk.
+/// The numbers of the generation files on disk; the packs beside them are not counted
+/// (ADR 0047).
 fn generation_files(root: &Path) -> BTreeSet<u64> {
     std::fs::read_dir(root.join("generations"))
         .unwrap()
-        .map(|entry| {
+        .filter_map(|entry| {
             let name = entry.unwrap().file_name().to_string_lossy().into_owned();
-            name.strip_suffix(".json").unwrap().parse().unwrap()
+            Some(name.strip_suffix(".json")?.parse().unwrap())
         })
         .collect()
 }

@@ -25,7 +25,9 @@ path = "junit.xml"
 # every thread is busy, are the slow ones.
 #
 # A new sweep joins by its name: `a_crash_at_any_event`, `crashed_inside_its`,
-# `refused_and_then_a_crash` or `each_step_of_the_file_system_refused`.
+# `refused_and_then_a_crash` or `each_step_of_the_file_system_refused`. The thousand
+# publications of the store's buckets (plan m6, task S1) join them too: 3 seconds alone,
+# and past 30 beside every other test inside a full check.
 #
 # In CI the group runs in jobs of its own, `sweeps (<runner>)`, beside `check`, each part
 # under the limit of 300 seconds; `just check` still runs every test at once. The split
@@ -36,7 +38,7 @@ crash-sweeps = { max-threads = 2 }
 pack-workers = { max-threads = 2 }
 
 [[profile.default.overrides]]
-filter = 'test(a_crash_inside_the_admission_step) | test(a_crash_at_any_event) | test(crashed_inside_its) | test(random_runs_of_publications) | test(refused_and_then_a_crash) | test(each_step_of_the_file_system_refused)'
+filter = 'test(a_crash_inside_the_admission_step) | test(a_crash_at_any_event) | test(crashed_inside_its) | test(random_runs_of_publications) | test(a_thousand_publications) | test(refused_and_then_a_crash) | test(each_step_of_the_file_system_refused)'
 test-group = 'crash-sweeps'
 
 # The tests that start the pack's worker, a Python process each, through the test kit's

@@ -829,6 +829,20 @@ impl Fs for ShimFs {
         Ok(())
     }
 
+    fn sync_file(&self, path: &Path) -> io::Result<()> {
+        let event = Event::SyncFile(path.to_path_buf());
+        let mut state = self.next_event(&event)?;
+        if !std::fs::metadata(path)?.is_file() {
+            return Err(io::Error::other(format!(
+                "{} is not a file",
+                path.display()
+            )));
+        }
+        state.unsynced.remove(path);
+        state.events.push(event);
+        Ok(())
+    }
+
     fn sync_dir(&self, path: &Path) -> io::Result<()> {
         let event = Event::SyncDir(path.to_path_buf());
         let mut state = self.next_event(&event)?;
@@ -955,6 +969,13 @@ impl Fs for ShimFs {
         let _state = self.alive()?;
         self.real.exists(path)
     }
+    /// Asked of the disk beneath, and no event: a look that changes nothing a crash
+    /// could undo (plan m6, task S1, item 4).
+    fn second_lock_granted(&self, path: &Path) -> io::Result<bool> {
+        let _state = self.alive()?;
+        Ok(self.real.hold_lock_file(path, false)?.is_some())
+    }
+
     fn hold_lock_file(&self, path: &Path, create: bool) -> io::Result<Option<Box<dyn LockFile>>> {
         let event = Event::Lock(path.to_path_buf());
         let mut state = self.next_event(&event)?;

@@ -833,11 +833,9 @@ fn a_reset_after_the_largest_epoch_and_one_at_the_generation_limit_are_refused_a
     let world = World::new("spend-limit");
     world.reset("1").unwrap();
     let before = world.held();
-    let generation = world
-        .root
-        .join("generations")
-        .join(format!("{}.json", before.0));
-    let limit = std::fs::metadata(generation).unwrap().len() + 100;
+    // What the generation's names take, written: its file and each bucket (ADR 0047).
+    let reader = whizbang_core::store::Reader::open(&world.root, Arc::new(RealFs)).unwrap();
+    let limit = reader.snapshot().unwrap().names_bytes() + 100;
     let limited = Recovery::none().limiting_generations_to(limit);
     let why = spend::run_with(&reset(&world.root, "2"), limited).unwrap_err();
     assert!(

@@ -321,7 +321,7 @@ impl Loaded {
 
     /// What the run `id` kept among its diagnostics under `name`, when it kept it.
     pub fn diagnostic(&self, id: &str, name: &str) -> Option<Vec<u8>> {
-        let held = self.generation.runs().get(id)?;
+        let held = self.generation.run(id)?;
         let entry = held.get(&format!("{DIAGNOSTICS_PREFIX}{name}"))?;
         match entry.kind == whizbang_core::store::Kind::Diagnostic {
             true => self.reader.read(entry).ok(),

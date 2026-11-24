@@ -1642,7 +1642,7 @@ fn attempts_of(
         let wall_ms = time
             .start_ms
             .map_or(0, |start| time.end_ms.saturating_sub(start));
-        let entry = (generation.runs().get(id))
+        let entry = (generation.run(id))
             .and_then(|held| held.get(&format!("{DIAGNOSTICS_PREFIX}{REJECTIONS}")));
         let submissions = match entry {
             Some(entry) if entry.kind == Kind::Diagnostic => reader

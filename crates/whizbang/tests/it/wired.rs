@@ -2525,3 +2525,89 @@ fn a_recipient_with_upstreams_is_sent_to_and_one_without_is_refused_naming_upstr
         "{text}"
     );
 }
+
+// --- the secrets told to the inventory at every ask (plan m6, task S1, item 6) ----------------
+
+/// A world whose model is named by a made-up key, installed, with a config whose default
+/// fill is that local model and whose other fill backend names the variable `FAKE_KEY`
+/// of the env file, which holds `env`: what a command is built over, or why not.
+fn a_model_named_by_a_key(world: &World, key: &str, env: &str) -> Result<Over, String> {
+    let none = Secrets::none();
+    let (named, downloads) = entry_named(key, "2026-11.1");
+    let dir = ModelsDir::at(Arc::new(RealFs), &world.models_dir());
+    install(
+        &dir,
+        &named,
+        &adapter(),
+        &downloads,
+        &Cancellation::new(),
+        &none,
+    )
+    .unwrap();
+    let adapters = vec![(named.adapter().clone(), adapter())];
+    let models = Models::of(Catalogue::new(vec![named], &none).unwrap(), adapters)
+        .flag(Some(&world.models_dir()));
+    let text = format!(
+        "[backends.fill]\ndefault = \"local\"\n\n[backends.fill.local]\nkind = \"fake\"\n\
+         model = \"{key}\"\n\n[backends.fill.paid]\nkind = \"fake\"\nkey_env = \"FAKE_KEY\"\n"
+    );
+    std::fs::write(world.config_path(), text).unwrap();
+    std::fs::write(world.env_path(), format!("FAKE_KEY={env}\n")).unwrap();
+    world
+        .named()
+        .env_file(Some(&world.env_path()))
+        .installed(models)
+        .map_err(|refused| refused.to_string())
+}
+
+/// Why the call is not prepared ready, when it is not: its refusal, or its reason.
+fn not_ready_why(executor: &Engine) -> Option<String> {
+    match executor.prepare(&Call::new("paints")) {
+        Err(refused) => Some(refused.to_string()),
+        Ok(prepared) => match prepared.readiness() {
+            Readiness::Ready => None,
+            Readiness::NotReady(missing) => Some(missing[0].why().to_owned()),
+        },
+    }
+}
+
+#[test]
+fn a_key_given_at_the_start_is_refused_as_a_models_name() {
+    let world = World::new("wired-key-at-start");
+    let key = made_up_key("start");
+    // The env file holds the key from the start. The command is built (no env file is
+    // read to build it); the call that would use the model the key names is refused
+    // when it is prepared and when it is sent, nothing of the key is said, and nothing
+    // runs. (`contract::inventory::a_roster_told_the_snapshots_secrets_never_asks_…`
+    // holds the inventory's own part, where no config reader stands before it.)
+    let over = a_model_named_by_a_key(&world, &key, &key).unwrap();
+    let executor = world.runner(&over);
+    let why = not_ready_why(&executor).expect("not ready");
+    assert!(!why.contains(&key), "{why}");
+    let refused = executor
+        .submit(&Call::new("paints"))
+        .map(|_| ())
+        .unwrap_err();
+    assert!(!refused.to_string().contains(&key), "{refused}");
+    assert_eq!(world.ran(), 0);
+}
+
+#[test]
+fn a_key_added_to_the_env_file_after_the_start_is_refused_as_a_models_name_at_the_next_ask() {
+    let world = World::new("wired-key-added");
+    let key = made_up_key("added");
+    let other = made_up_key("other");
+    // At the start the env file holds another key: the model is found, and ready.
+    let over = a_model_named_by_a_key(&world, &key, &other).unwrap();
+    let executor = world.runner(&over);
+    assert_eq!(not_ready_why(&executor), None);
+    // The key is added to the env file. At the next ask the snapshot knows it, and the
+    // call is refused: the config that names it is, and the inventory is told it with
+    // the snapshot's other secrets, so the name goes to no model either way. Nothing
+    // of the key is said, and nothing runs.
+    std::fs::write(world.env_path(), format!("FAKE_KEY={key}\n")).unwrap();
+    let why = not_ready_why(&executor).expect("not ready");
+    assert!(!why.contains(&key), "{why}");
+    assert!(executor.submit(&Call::new("paints")).is_err());
+    assert_eq!(world.ran(), 0);
+}

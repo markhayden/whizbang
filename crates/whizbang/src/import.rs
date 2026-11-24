@@ -110,7 +110,7 @@ use whizbang_core::contract::Recovery;
 use whizbang_core::identity::{
     CanonicalPixels, DecodeLimits, Digest, Projection, Topology, identify,
 };
-use whizbang_core::store::{Error, IMPORTED_PREFIX};
+use whizbang_core::store::Error;
 
 /// The step a picture's origin names.
 const PICTURE_STEP: &str = "import-picture";
@@ -708,6 +708,10 @@ fn commit(
     Ok(printed)
 }
 
+/// How old an import's mark is before an import of the same artifact makes it again: an
+/// hour, in milliseconds.
+const REMARKED_AFTER_MS: u64 = 3_600_000;
+
 /// Commits an artifact that has been read and checked into a store open to write, as
 /// `store import` does: marked as imported, with a picture's name of where it came from,
 /// and with these names beside it in the same publication, so that all are there or
@@ -728,14 +732,30 @@ pub fn commit_to(
     let held = artifact::holds(&generation, kind, id);
     // An import marks what it brought in, so that no deletion of a run removes it; an
     // artifact a run committed is marked when it is imported too (ADR 0008, "What
-    // deleting a run removes").
-    let marked = format!("{IMPORTED_PREFIX}{}", artifact::name(kind, id));
-    let marked = generation.get(&marked).is_some();
-    if held && marked && unnamed.is_none() && beside.is_empty() {
+    // deleting a run removes"). An artifact imported again is marked again, so that its
+    // mark says when it was last brought in (plan m6, task S1, item 7): unless its mark
+    // is under an hour old and already names every name that comes in with it, so that
+    // a picture sent many times over makes a publication an hour at most.
+    let name = artifact::name(kind, id);
+    let marked = generation.imported(&name).filter(|imported| {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_millis() as u64);
+        let names = named.iter().chain(beside.iter().map(|(name, _)| name));
+        now_ms.saturating_sub(imported.at_ms) < REMARKED_AFTER_MS
+            && names.into_iter().all(|name| imported.with.contains(name))
+    });
+    if held && marked.is_some() && unnamed.is_none() && beside.is_empty() {
         return Ok(true);
     }
     let mut publication = store.begin().map_err(|error| error.to_string())?;
-    artifact::import(&mut publication, artifact, held).map_err(|error| error.to_string())?;
+    // The names that came in with it go with it when the store's collection lets an
+    // import that no run took go (plan m6, task S1, item 7).
+    let with: Vec<String> = (named.iter().cloned())
+        .chain(beside.iter().map(|(name, _)| name.clone()))
+        .collect();
+    artifact::import_with(&mut publication, artifact, held, &with)
+        .map_err(|error| error.to_string())?;
     if let Some(name) = unnamed {
         publication
             .put(name, id.to_string().as_bytes())
