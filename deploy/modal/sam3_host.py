@@ -76,13 +76,24 @@ if sum(LIMITS.values()) != HOST_LIMIT_S:
 app = modal.App(APP)
 volume = modal.Volume.from_name(VOLUME, create_if_missing=True)
 
-# The image is built from the deployer's checkout; in a container its definition is read
-# again but not built, and the checkout is not there.
-if modal.is_local():
-    _ROOT = pathlib.Path(__file__).resolve().parents[2]
+# The image is built from the deployer's checkout, which holds this file at
+# deploy/modal/sam3_host.py beside the pack and the host's lock. In a container the file is
+# /root/sam3_host.py, imported by Modal's entrypoint and again by the front's own process
+# (`--worker sam3_host:side`), where `modal.is_local()` is True: there the definition is read
+# again but not built, and the checkout is not there. So the checkout decides, by its files
+# being there, and nothing here reads a file outside it.
+_HERE = pathlib.Path(__file__).resolve()
+_ROOT = _HERE.parent.parent.parent
+_CHECKOUT = (
+    _HERE == _ROOT / "deploy" / "modal" / "sam3_host.py"
+    and (_ROOT / "pack" / ".python-version").is_file()
+    and (_ROOT / "deploy" / "gpu-host" / "requirements.txt").is_file()
+    and (_ROOT / "pack" / "src" / "whizbang_pack").is_dir()
+)
+if _CHECKOUT:
     _PYTHON = ".".join((_ROOT / "pack" / ".python-version").read_text().strip().split(".")[:2])
 else:
-    _ROOT = pathlib.Path("/whizbang-checkout-is-not-in-the-container")
+    _ROOT = pathlib.Path("/whizbang-checkout-is-not-here")
     _PYTHON = "3.12"
 _REQUIREMENTS = str(_ROOT / "deploy" / "gpu-host" / "requirements.txt")
 _SOURCES = str(_ROOT / "pack" / "src" / "whizbang_pack")

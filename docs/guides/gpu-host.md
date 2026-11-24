@@ -73,6 +73,9 @@ The bridge's parts are shown against a stand-in for Modal in the pack's tests, f
 `test_front.Bridge.test_a_front_replaced_mid_call_leaves_the_bridges_call_to_end_at_its_limit`
 and
 `test_front.Bridge.test_two_generations_never_overlap_a_deploy_waits_for_the_old_one_to_stop_and_a_redelivery_after_it_finds_its_claim`.
+The deployment itself is imported with Modal's client faked, as the container imports it,
+from `/root` with no checkout above it, and as the deployer's checkout does
+(`pack/tests/test_sam3_host.py`, fast tier).
 
 ### What you set up once
 
@@ -112,7 +115,12 @@ scripts/gpu-host.sh down
   left, or lists none of that name: an app that is deployed, even with no container running,
   is not stopped. So run `down` before every deploy after the first; two deployments never
   run at once. The front's endpoint, which names your workspace, is written to the
-  endpoint file, outside the repo, and not printed: put it in the config as `url`.
+  endpoint file, outside the repo, and not printed: put it in the config as `url`. It
+  deploys with Modal's image builder 2025.06 (`MODAL_IMAGE_BUILDER_VERSION`), one that the
+  client 1.6.1 supports, whatever your workspace's default is, and with Python writing no
+  bytecode beside the deployment, so the next deploy finds no cache to refuse.
+- **The Modal environment** is the client's active one. If you keep an environment for
+  whizbang, set `MODAL_ENVIRONMENT` to its name for every command of the script.
 - **`weights`** checks SAM 3's installation with `whizbang models verify sam3` and copies it
   into the volume at the same place. A container already running when the files arrive does
   not see them until it starts again: run `weights` straight after the first deploy, before

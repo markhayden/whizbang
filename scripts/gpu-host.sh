@@ -19,7 +19,9 @@
 #   stopped and Modal lists no container of it, or, for the first deploy, holds no app of the
 #   name. An app deployed with no container running is not stopped: run `down` first. So two
 #   generations never run at once. The front's endpoint (which names the workspace) is
-#   written to the endpoint file, outside the repo, and not printed.
+#   written to the endpoint file, outside the repo, and not printed. Modal's client deploys
+#   with the image builder MODAL_IMAGE_BUILDER, not the workspace's default, and writes no
+#   bytecode. Every command uses the client's active Modal environment, or MODAL_ENVIRONMENT.
 # - `weights` checks SAM 3's installation in the models directory with `whizbang models verify
 #   sam3`, every file read whole against the catalogue, then copies that installation's
 #   folder into the volume at the same place. No Hugging Face sign-in is used on the host.
@@ -52,6 +54,10 @@ model=sam3
 # The lock's newest file: a lock made again gives the same files.
 exclude_newer=2026-11-16T00:00:00Z
 MODAL_LEAST=1.6.1
+# The image builder the deploy asks for, whatever the workspace's default: one that
+# MODAL_LEAST supports (1.6.1 takes 2023.12, 2024.04, 2024.10 and 2025.06), so a workspace
+# whose default is newer than the client knows deploys all the same.
+MODAL_IMAGE_BUILDER=2025.06
 
 refuse() {
   echo "gpu-host: $1" >&2
@@ -240,14 +246,16 @@ case "$command" in
       left=$(containers_of $ids)
       [ "$left" = 0 ] || refuse "the app $app is stopped and $left container(s) of it are left: wait, and run down again"
     fi
-    said=$(modal deploy "$deployment" 2>&1) || {
+    # Python writes no bytecode beside the deployment as Modal's client imports it: a cache
+    # left in deploy/ would be refused by the next deploy, above.
+    said=$(PYTHONDONTWRITEBYTECODE=1 MODAL_IMAGE_BUILDER_VERSION=$MODAL_IMAGE_BUILDER modal deploy "$deployment" 2>&1) || {
       # Its last lines, with every address that names the workspace masked.
       printf '%s\n' "$said" | tail -n 20 |
         sed -E -e 's#https://[A-Za-z0-9.-]+\.modal\.run[^ ]*#<endpoint>#g' -e 's#https://modal\.com/[^ ]*#<modal page>#g' \
           -e 's#https://[^ /]*--[^ ]*#<endpoint>#g' >&2
       refuse "the deploy failed"
     }
-    endpoint=$(printf '%s\n' "$said" | grep -o -E "https://[A-Za-z0-9-]+--$app-front[A-Za-z0-9-]*\.modal\.run" | head -n 1 || true)
+    endpoint=$(printf '%s\n' "$said" | grep -o -E "https://[A-Za-z0-9-]+--$app-front[A-Za-z0-9-]*(\.[A-Za-z0-9-]+)*\.modal\.run" | head -n 1 || true)
     [ -n "$endpoint" ] || refuse "the deploy named no endpoint of the front"
     umask 077
     printf '%s\n' "$endpoint" >"$endpoint_file"
