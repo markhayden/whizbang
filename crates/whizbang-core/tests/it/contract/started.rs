@@ -14,9 +14,9 @@ use std::time::{Duration, Instant};
 
 use whizbang_core::contract::{
     Action, ActionDescriptor, Answer, Backends, BoundRefused, Call, CallError, Capability, Clock,
-    Context, Executor, Failure, Kind, MESSAGE_LIMIT, ModelIdentity, Outcome, PreparedCall,
-    Produced, Refusal, Request, RequestId, Requirement, RunId, RunState, STARTED_RUNS_CEILING,
-    STARTED_RUNS_DEFAULT, Secrets, Unavailable, Watched, read_journal,
+    Context, Executor, Failure, Kind, MESSAGE_LIMIT, ModelIdentity, Outcome, PANICKED_KIND,
+    PreparedCall, Produced, Refusal, Request, RequestId, Requirement, RunId, RunState,
+    STARTED_RUNS_CEILING, STARTED_RUNS_DEFAULT, Secrets, Unavailable, Watched, read_journal,
 };
 use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{Reader, Store};
@@ -508,12 +508,13 @@ impl Clock for PanicsOnceArmed {
 }
 
 #[test]
-fn a_started_run_whose_executor_panics_outside_its_action_is_abandoned_only_when_its_thread_holds_nothing_of_the_store()
+fn a_started_run_whose_executor_panics_outside_its_action_ends_as_panicked_only_when_its_thread_holds_nothing_of_the_store()
  {
     // The executor asks its clock the time when a run's action has come back, to end
-    // the run. A clock that panics there is a panic outside the action, which nothing
-    // catches: the run's thread unwinds, and the run is abandoned. Whoever waits is
-    // answered so, and may drop its writer and open the store again, as after any
+    // the run. A clock that panics there is a panic outside the action, which the
+    // executor's own boundary catches (plan m6, task S1, item 2): nothing of the end
+    // was visible, so the run ends as an error of the kind `panicked`. Whoever waits
+    // is answered so, and may drop its writer and open the store again, as after any
     // other answer. So the thread lets its executor go before the run's place is
     // given back in a panic too, and the backends, which are dropped with the
     // thread's executor, see the place still taken.
@@ -542,8 +543,11 @@ fn a_started_run_whose_executor_panics_outside_its_action_is_abandoned_only_when
         move || asking.wait(&run)
     });
     let waited = waited.unwrap();
-    let abandoned = matches!(waited.state(), RunState::Abandoned { failure: None });
-    assert!(abandoned, "{:?}", waited.state());
+    let panicked = matches!(
+        waited.state(),
+        RunState::Ended(Outcome::Error { kind, .. }) if kind == PANICKED_KIND
+    );
+    assert!(panicked, "{:?}", waited.state());
     assert!(!clock.0.load(Ordering::SeqCst), "the clock was not asked");
 
     assert_eq!(
@@ -553,7 +557,7 @@ fn a_started_run_whose_executor_panics_outside_its_action_is_abandoned_only_when
          go, or the thread let it go after the run's place was given back"
     );
     let Ok(store) = Arc::try_unwrap(store) else {
-        panic!("something of the abandoned run still holds the store's writer");
+        panic!("something of the run still holds the store's writer");
     };
     drop(store);
     Store::open(&root, Arc::new(ShimFs::new())).unwrap();

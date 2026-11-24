@@ -240,3 +240,82 @@ impl NotTold<'_> {
 pub(super) fn of(attached: Attached) -> Option<Arc<LiveRun>> {
     attached.downcast::<LiveRun>().ok()
 }
+
+/// What stands in the store's table of open runs for a run the executor abandoned, once
+/// its live state, its events and what it kept of its calls are let go (plan m6, task
+/// S1, item 3): the store's failure it was abandoned with, and whether its ending, and
+/// not only its admission, had become visible.
+pub(super) struct Marker {
+    failure: Option<StoreFailure>,
+    ending: bool,
+}
+
+impl Marker {
+    /// Whether it is the ending of the run that became visible and was not confirmed,
+    /// and not its admission alone.
+    pub(super) fn of_an_ending(&self) -> bool {
+        self.ending
+    }
+}
+
+/// The marker of an abandoned run, to attach in the place of its live state.
+pub(super) fn marker(failure: Option<StoreFailure>, ending: bool) -> Attached {
+    Arc::new(Marker { failure, ending })
+}
+
+/// What the table of open runs holds of a run this process has open: its live state,
+/// or, once it was abandoned, its marker. A wait, a status and a cancel answer by it.
+pub(super) enum Open {
+    Live(Arc<LiveRun>),
+    Marked(Arc<Marker>),
+}
+
+/// What is attached to a run of the store, when an executor attached its live state or
+/// put its marker there.
+pub(super) fn open_of(attached: Attached) -> Option<Open> {
+    match attached.downcast::<LiveRun>() {
+        Ok(live) => Some(Open::Live(live)),
+        Err(other) => other.downcast::<Marker>().ok().map(Open::Marked),
+    }
+}
+
+impl Open {
+    /// As [`LiveRun::cancel`]; a marked run is over, so a cancel is too late.
+    pub(super) fn cancel(&self) -> Told {
+        match self {
+            Open::Live(live) => live.cancel(),
+            Open::Marked(_) => Told::TooLate,
+        }
+    }
+
+    /// As [`LiveRun::abandoned`]; a marked run was abandoned, with its failure.
+    pub(super) fn abandoned(&self) -> Option<Option<StoreFailure>> {
+        match self {
+            Open::Live(live) => live.abandoned(),
+            Open::Marked(marker) => Some(marker.failure.clone()),
+        }
+    }
+
+    /// As [`LiveRun::events`]; a marked run kept none.
+    pub(super) fn events(&self, seen: u64) -> Heard {
+        match self {
+            Open::Live(live) => live.events(seen),
+            Open::Marked(_) => Heard::default(),
+        }
+    }
+
+    /// As [`LiveRun::wait_until_over`]; a marked run is over.
+    pub(super) fn wait_until_over(&self) {
+        if let Open::Live(live) = self {
+            live.wait_until_over();
+        }
+    }
+
+    /// As [`LiveRun::wait_until_over_unless`]; a marked run is over.
+    pub(super) fn wait_until_over_unless(&self, signal: &Cancellation) -> bool {
+        match self {
+            Open::Live(live) => live.wait_until_over_unless(signal),
+            Open::Marked(_) => !signal.is_cancelled(),
+        }
+    }
+}

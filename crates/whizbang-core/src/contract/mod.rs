@@ -68,8 +68,8 @@ pub use descriptor::{
     OutputPort, PortRef, Requirement, ResultKind, Value, ValueType, When,
 };
 pub use engine::{
-    BoundRefused, Engine, Executor, NOT_CONFIRMED_KIND, STARTED_RUNS_CEILING, STARTED_RUNS_DEFAULT,
-    Spawn, WHIZBANG_VERSION,
+    BoundRefused, Engine, Executor, NOT_CONFIRMED_KIND, PANICKED_KIND, PanicAt, PanicHook,
+    STARTED_RUNS_CEILING, STARTED_RUNS_DEFAULT, Spawn, WHIZBANG_VERSION,
 };
 pub use facts::RunFacts;
 pub use findings::{

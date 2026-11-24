@@ -2,6 +2,7 @@
 //! hands to whatever runs actions.
 
 use std::any::Any;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -24,7 +25,7 @@ use super::part::{self, Asking, PartDeclined, PartStep};
 use super::prepare::prepare;
 use super::record::{
     Diagnostic, Facts, Inside, OUTPUTS_PREFIX, RECORD_KIND, RECORD_MAX_BYTES, RECORD_NAME, Ran,
-    RunRecord, StoredRecordError,
+    RunRecord, Status, StoredRecordError,
 };
 use super::registry::MEASUREMENTS_MAX_BYTES;
 use super::request::{Found, LookedUp, look_up, outcome_of};
@@ -196,7 +197,75 @@ pub struct Engine {
     started_bound: usize,
     /// What makes the thread of a started run.
     spawn: Spawn,
+    /// For tests: what is done at each place where a panic of the executor's own code
+    /// is caught and told apart ([`Engine::with_panic_at`]).
+    panic_at: Option<PanicHook>,
 }
+
+/// What a test has done at a place in the ending of a run: the run's action, and the
+/// place ([`Engine::with_panic_at`]).
+pub type PanicHook = Arc<dyn Fn(&str, PanicAt) + Send + Sync>;
+
+/// A place in the ending of a run at which a panic of the executor's own code is told
+/// apart (plan m6, task S1, item 2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanicAt {
+    /// The action has come back and its outcome is made; nothing of the run's end is
+    /// visible.
+    BeforeTheEnd,
+    /// The run's end is visible, and was not confirmed durable.
+    Visible,
+    /// The run's end is durable; its parent and its waiters are not told yet.
+    Durable,
+}
+
+/// A run's end once it is durable: how it finished, its status, and when it started and
+/// ended, which is what is left to tell its parent.
+type Durable = (Finished, Status, (u64, u64));
+
+/// How far the ending of a run has got, which a catch of a panic goes by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reached {
+    Running,
+    Visible,
+    Durable,
+}
+
+/// What a run's end is made of, once its action has come back.
+struct Pre {
+    facts: RunFacts,
+    outcome: Outcome,
+    outputs: Vec<(Committed, Artifact)>,
+    verdict: Option<Verdict>,
+    measurements: Option<serde_json::Value>,
+    findings: Option<Findings>,
+}
+
+impl Pre {
+    /// The end of a run whose executor's own code panicked before its end was visible:
+    /// an error of the kind `panicked`, with nothing committed.
+    fn panicked(live: &Arc<LiveRun>, secrets: &Secrets, text: &str) -> Pre {
+        let refusing = live.clone();
+        Pre {
+            facts: RunFacts::of_a_run(
+                secrets.clone(),
+                Box::new(move |refused| refusing.nest().refused(refused)),
+            ),
+            outcome: Outcome::Error {
+                kind: PANICKED_KIND.to_owned(),
+                message: said(secrets, text),
+            },
+            outputs: Vec::new(),
+            verdict: None,
+            measurements: None,
+            findings: None,
+        }
+    }
+}
+
+/// The kind of the error a run ends with when the executor's own code panicked before
+/// its end was visible (plan m6, task S1, item 2).
+pub const PANICKED_KIND: &str = "panicked";
 
 /// How many runs an executor starts and has live at once, each on a thread of its own,
 /// unless it is told otherwise ([`Engine::with_started_bound`]).
@@ -315,6 +384,7 @@ impl Engine {
             before_watch: None,
             started_bound: STARTED_RUNS_DEFAULT,
             spawn: spawn_thread,
+            panic_at: None,
         }
     }
 
@@ -430,11 +500,39 @@ impl Engine {
         self
     }
 
+    /// For tests: the same executor, doing this at each place in the ending of a run
+    /// where a panic of its own code is told apart ([`PanicAt`]); a hook that panics
+    /// there stands for such a panic.
+    #[doc(hidden)]
+    pub fn with_panic_at(mut self, hook: PanicHook) -> Engine {
+        self.panic_at = Some(hook);
+        self
+    }
+
+    /// What a test does at this place in the ending of a run of this action.
+    fn panicking(&self, action: &str, at: PanicAt) {
+        if let Some(hook) = &self.panic_at {
+            hook(action, at);
+        }
+    }
+
     /// For tests: how many callers are waiting, now, for the run to be over.
     #[doc(hidden)]
     pub fn waiting_for(&self, run: &RunId) -> usize {
         let attached = self.store.as_ref().and_then(|s| s.attached(run.as_str()));
         attached.and_then(live::of).map_or(0, |live| live.waiting())
+    }
+
+    /// For tests: when this process keeps the run as abandoned, by its marker, whether
+    /// it was its ending (`true`) or its admission alone (`false`) that became visible
+    /// and was not confirmed (plan m6, task S1, item 3).
+    #[doc(hidden)]
+    pub fn marked_abandoned(&self, run: &RunId) -> Option<bool> {
+        let attached = self.store.as_ref().and_then(|s| s.attached(run.as_str()))?;
+        match live::open_of(attached)? {
+            live::Open::Marked(marker) => Some(marker.of_an_ending()),
+            live::Open::Live(_) => None,
+        }
     }
 
     /// For tests: what holds the run open, now, when this process has it open.
@@ -672,7 +770,7 @@ impl Executor for Engine {
         let mut open = RunState::NotEnded { here: false };
         if let Some(attached) = attached {
             open = RunState::NotEnded { here: true };
-            if let Some(live) = live::of(attached) {
+            if let Some(live) = live::open_of(attached) {
                 if live.cancel() == Told::Accepted {
                     return Ok(Cancel::Accepted);
                 }
@@ -1043,7 +1141,14 @@ impl Drop for Over {
         if let (true, Some(kept)) = (self.ended, &self.kept) {
             kept.let_go();
         }
-        self.live.over(self.ended, self.failure.take());
+        let failure = self.failure.take();
+        self.live.over(self.ended, failure.clone());
+        // Abandoned: a marker takes the place of its live state in the table, so that
+        // what a long-lived process keeps of such runs is small (plan m6, task S1, item
+        // 3). Whoever waits holds the live state until it is told, which it is above.
+        if let (false, Some(kept)) = (self.ended, &self.kept) {
+            kept.abandon(|ending| live::marker(failure, ending));
+        }
     }
 }
 
@@ -1084,7 +1189,7 @@ impl Engine {
         let open_here = |found: &Found| match found {
             Found::Same(earlier) if earlier.state() == &RunState::NotEnded { here: true } => {
                 let attached = self.store.as_ref()?.attached(earlier.run().as_str());
-                live::of(attached?)?.abandoned()
+                live::open_of(attached?)?.abandoned()
             }
             _ => None,
         };
@@ -1765,414 +1870,534 @@ impl Engine {
         // admitted against, and handles that the context binds to that signal and
         // that deadline itself.
         // The executor in it admits a call under this run (ADR 0008, "Nested calls").
-        let offer = Offer::of(live.clone(), secrets.clone(), family.offer.clone());
-        let offer = Arc::new(offer);
-        let under = Under {
-            run: run.clone(),
-            live: live.clone(),
-            stack: family.stack.clone(),
-            above: family.above_with(&run),
-            tree: family.tree.clone(),
-            allowance: family.allowance.clone(),
-            deadline,
-            inputs: Arc::new(prepared.inputs().iter().map(|input| input.id()).collect()),
-            offer: offer.clone(),
-        };
-        // The run's place for facts (ADR 0013): what another module notes of the run
-        // while it executes. A refusal of a request goes with the run's other
-        // refusals, in one order and within one bound.
-        let facts = RunFacts::of_a_run(secrets.clone(), {
-            let live = live.clone();
-            Box::new(move |refused| live.nest().refused(refused))
-        });
-        // The settings the run ran under, which its snapshot gave at admission and
-        // which were held there to what a record takes, with these same secrets. One
-        // that is not taken all the same is not left out in silence: the action is
-        // not run, and the run ends as an error that says so.
-        let recorded = held
-            .settings
-            .iter()
-            .all(|(n, value)| facts.setting(n, value));
-        let unrecorded = "a setting the run was admitted with could not be noted for its \
-                          record, so its action was not run";
-        let unstarted = match (unstarted, recorded) {
-            (None, false) => Some(("start", unrecorded)),
-            (unstarted, _) => unstarted,
-        };
-        // The backends of the run's snapshot that its call resolved, and the ways out
-        // under that snapshot's policy, with its credentials: those of the admission,
-        // whatever the source answers now. A snapshot that holds neither leaves the
-        // run what the executor was built with.
-        let capabilities = match held.handed {
-            Some(handed) => handed,
-            None => self.capabilities.resolved_for(&prepared),
-        };
-        let ways = held.snapshot.ways(&self.ways);
-        // What stands between each handle and its backend, for this run: the three
-        // places as the executor was given them, with the gate of this run's policy
-        // where the gate's place was given nothing. Each wrapper is told the run,
-        // the run at the root of its tree, the run's allowance and its place for
-        // facts.
-        let places = match self.places.at(Place::Gate) {
-            Some(_) => self.places.clone(),
-            None => self.places.clone().with(Place::Gate, ways.gate()),
-        };
-        let above = family.above_with(&run);
-        let around = Wrappers {
-            run: run.clone(),
-            root: above.first().cloned().unwrap_or_else(|| run.clone()),
-            places,
-            allowance: family.allowance.clone(),
-            facts: facts.clone(),
-        };
-        let context = Context::new(
-            live.signal().clone(),
-            deadline,
-            kept.clone(),
-            family.allowance.clone(),
-            view,
-            // The backends the call resolved, and no other (ADR 0009), with the
-            // executor's clock for their deadline.
-            capabilities
-                .timed_by(self.clock.clone())
-                // And a way out for each, checked, which notes what it hands over in
-                // the run's place for facts (ADR 0015).
-                .sending_through(ways, facts.clone())
-                // And the wrappers, between each handle's tally and its backend.
-                .wrapped(around),
-            // The executor in the context is under the run's snapshot: what the run
-            // calls is prepared and admitted under it.
-            Arc::new(Nested::new(
-                self.under(&held.snapshot),
-                under,
-                secrets.clone(),
-            )),
-        )
-        .with_diagnostics(kept.clone())
-        .recording(kept.clone(), self.requests, self.exchanges)
-        .noting(facts.clone())
-        .offering(offer)
-        .placed(above.clone());
-        live.nest().watch(context.requests().clone());
-        // A panic in the action is caught: its run ends as any other does, with its
-        // record and what it wrote, and the executor goes on (ADR 0008). The context
-        // and what it shares are not left broken by one: what a run keeps is behind
-        // locks that are taken whatever a panic did to them.
-        // A run that was cancelled before its action started does not run it. Neither
-        // does a run that has no thread to run it on: it is handed the failure.
-        // A run whose admission was not confirmed ends as that whether or not it was
-        // cancelled meanwhile (ADR 0016; ADR 0013): it never was a run that could
-        // execute, and its caller is told so, so its record says the same.
-        let not_confirmed = unstarted.is_some_and(|(kind, _)| kind == NOT_CONFIRMED_KIND);
-        let handed = (not_confirmed || !live.signal().is_cancelled()).then(|| match unstarted {
-            None => catch_unwind(AssertUnwindSafe(|| action.run(&prepared, &context))),
-            Some((kind, why)) => Ok(Err(Failure::Error {
-                kind: kind.to_owned(),
-                message: why.to_owned(),
-            })),
-        });
-        // The action has come back. No call and no capability request is taken from
-        // here on, and the run waits for those there are: every run it called is over,
-        // and every request its handles sent is accounted for, before it ends (ADR
-        // 0008, "Nested calls"). A cancellation is still accepted while it waits, and
-        // reaches them.
-        live.nest().settle();
-        // A request of the run that could not be accounted for: a wrapper failed
-        // once its backend had been called, or its backend panicked under a wrapper
-        // (ADR 0015). Whatever the action handed back, the run is not ended: no end
-        // is published, its reservation is not closed and nothing of it is
-        // released. It is abandoned here, with the failure (ADR 0008, "A run with
-        // nothing behind it"), and the next recovery ends it.
-        if let Some(why) = context.requests().failed() {
-            return Err(CallError::Abandoned {
-                run,
-                why: said(secrets, &why),
+        // How far the run's ending has got, kept where a panic in the executor's own code
+        // cannot lose it: what a catch below does depends on it (plan m6, task S1, item
+        // 2). Both ways of running an admitted run come through here: `end`, which a
+        // child called from inside a parent's action takes, and `execute_and_let_go`.
+        let reached = Cell::new(Reached::Running);
+        let action_name = prepared.action().to_owned();
+        // The generation the run was admitted against stays held through its end, as
+        // the context held it, whatever is let go before (ADR 0008, "The generation a
+        // run reads").
+        let _view = view.clone();
+        let pre = catch_unwind(AssertUnwindSafe(|| -> Result<Pre, CallError> {
+            let offer = Offer::of(live.clone(), secrets.clone(), family.offer.clone());
+            let offer = Arc::new(offer);
+            let under = Under {
+                run: run.clone(),
+                live: live.clone(),
+                stack: family.stack.clone(),
+                above: family.above_with(&run),
+                tree: family.tree.clone(),
+                allowance: family.allowance.clone(),
+                deadline,
+                inputs: Arc::new(prepared.inputs().iter().map(|input| input.id()).collect()),
+                offer: offer.clone(),
+            };
+            // The run's place for facts (ADR 0013): what another module notes of the run
+            // while it executes. A refusal of a request goes with the run's other
+            // refusals, in one order and within one bound.
+            let facts = RunFacts::of_a_run(secrets.clone(), {
+                let live = live.clone();
+                Box::new(move |refused| live.nest().refused(refused))
             });
-        }
-        // The entry to the commit step (ADR 0008, "Cancellation"): the action has come
-        // back, with whatever it came back with, and nothing it started is left. From
-        // here on a cancellation is too late. One that was accepted before this was
-        // set under the lock this reads under: the run ends as cancelled, and nothing
-        // it handed back is committed.
-        let cancelled = live.begin_end();
-        // What is given back to the run's allowance from here on is dropped: its
-        // reservation is closed by its own settlements (ADR 0016).
-        family.allowance.close();
-        // The outcome is made here, from what the action handed back, with the secrets
-        // taken out: what is reported holds none, as what is written holds none. And
-        // each of its texts is cut to a length a record can hold ([`MESSAGE_LIMIT`]).
-        let said = |text: &str| said(secrets, text);
-        let error = |kind: &str, message: &str| Outcome::Error {
-            kind: said(kind),
-            message: said(message),
+            // The settings the run ran under, which its snapshot gave at admission and
+            // which were held there to what a record takes, with these same secrets. One
+            // that is not taken all the same is not left out in silence: the action is
+            // not run, and the run ends as an error that says so.
+            let recorded = held
+                .settings
+                .iter()
+                .all(|(n, value)| facts.setting(n, value));
+            let unrecorded = "a setting the run was admitted with could not be noted for its \
+                              record, so its action was not run";
+            let unstarted = match (unstarted, recorded) {
+                (None, false) => Some(("start", unrecorded)),
+                (unstarted, _) => unstarted,
+            };
+            // The backends of the run's snapshot that its call resolved, and the ways out
+            // under that snapshot's policy, with its credentials: those of the admission,
+            // whatever the source answers now. A snapshot that holds neither leaves the
+            // run what the executor was built with.
+            let capabilities = match held.handed {
+                Some(handed) => handed,
+                None => self.capabilities.resolved_for(&prepared),
+            };
+            let ways = held.snapshot.ways(&self.ways);
+            // What stands between each handle and its backend, for this run: the three
+            // places as the executor was given them, with the gate of this run's policy
+            // where the gate's place was given nothing. Each wrapper is told the run,
+            // the run at the root of its tree, the run's allowance and its place for
+            // facts.
+            let places = match self.places.at(Place::Gate) {
+                Some(_) => self.places.clone(),
+                None => self.places.clone().with(Place::Gate, ways.gate()),
+            };
+            let above = family.above_with(&run);
+            let around = Wrappers {
+                run: run.clone(),
+                root: above.first().cloned().unwrap_or_else(|| run.clone()),
+                places,
+                allowance: family.allowance.clone(),
+                facts: facts.clone(),
+            };
+            let context = Context::new(
+                live.signal().clone(),
+                deadline,
+                kept.clone(),
+                family.allowance.clone(),
+                view,
+                // The backends the call resolved, and no other (ADR 0009), with the
+                // executor's clock for their deadline.
+                capabilities
+                    .timed_by(self.clock.clone())
+                    // And a way out for each, checked, which notes what it hands over in
+                    // the run's place for facts (ADR 0015).
+                    .sending_through(ways, facts.clone())
+                    // And the wrappers, between each handle's tally and its backend.
+                    .wrapped(around),
+                // The executor in the context is under the run's snapshot: what the run
+                // calls is prepared and admitted under it.
+                Arc::new(Nested::new(
+                    self.under(&held.snapshot),
+                    under,
+                    secrets.clone(),
+                )),
+            )
+            .with_diagnostics(kept.clone())
+            .recording(kept.clone(), self.requests, self.exchanges)
+            .noting(facts.clone())
+            .offering(offer)
+            .placed(above.clone());
+            live.nest().watch(context.requests().clone());
+            // A panic in the action is caught: its run ends as any other does, with its
+            // record and what it wrote, and the executor goes on (ADR 0008). The context
+            // and what it shares are not left broken by one: what a run keeps is behind
+            // locks that are taken whatever a panic did to them.
+            // A run that was cancelled before its action started does not run it. Neither
+            // does a run that has no thread to run it on: it is handed the failure.
+            // A run whose admission was not confirmed ends as that whether or not it was
+            // cancelled meanwhile (ADR 0016; ADR 0013): it never was a run that could
+            // execute, and its caller is told so, so its record says the same.
+            let not_confirmed = unstarted.is_some_and(|(kind, _)| kind == NOT_CONFIRMED_KIND);
+            let handed =
+                (not_confirmed || !live.signal().is_cancelled()).then(|| match unstarted {
+                    None => catch_unwind(AssertUnwindSafe(|| action.run(&prepared, &context))),
+                    Some((kind, why)) => Ok(Err(Failure::Error {
+                        kind: kind.to_owned(),
+                        message: why.to_owned(),
+                    })),
+                });
+            // The action has come back. No call and no capability request is taken from
+            // here on, and the run waits for those there are: every run it called is over,
+            // and every request its handles sent is accounted for, before it ends (ADR
+            // 0008, "Nested calls"). A cancellation is still accepted while it waits, and
+            // reaches them.
+            live.nest().settle();
+            // A request of the run that could not be accounted for: a wrapper failed
+            // once its backend had been called, or its backend panicked under a wrapper
+            // (ADR 0015). Whatever the action handed back, the run is not ended: no end
+            // is published, its reservation is not closed and nothing of it is
+            // released. It is abandoned here, with the failure (ADR 0008, "A run with
+            // nothing behind it"), and the next recovery ends it.
+            if let Some(why) = context.requests().failed() {
+                return Err(CallError::Abandoned {
+                    run: run.clone(),
+                    why: said(secrets, &why),
+                });
+            }
+            // The entry to the commit step (ADR 0008, "Cancellation"): the action has come
+            // back, with whatever it came back with, and nothing it started is left. From
+            // here on a cancellation is too late. One that was accepted before this was
+            // set under the lock this reads under: the run ends as cancelled, and nothing
+            // it handed back is committed.
+            let cancelled = live.begin_end();
+            // What is given back to the run's allowance from here on is dropped: its
+            // reservation is closed by its own settlements (ADR 0016).
+            family.allowance.close();
+            // The outcome is made here, from what the action handed back, with the secrets
+            // taken out: what is reported holds none, as what is written holds none. And
+            // each of its texts is cut to a length a record can hold ([`MESSAGE_LIMIT`]).
+            let said = |text: &str| said(secrets, text);
+            let error = |kind: &str, message: &str| Outcome::Error {
+                kind: said(kind),
+                message: said(message),
+            };
+            let mut outputs = Vec::new();
+            let mut verdict = None;
+            let mut measurements = None;
+            let mut findings = None;
+            let mut outcome = match handed {
+                None => Outcome::Cancelled,
+                Some(Ok(Ok(produced))) => {
+                    verdict = produced.verdict().cloned();
+                    measurements = produced.measurements().cloned();
+                    // What is handed back beside the artifacts is held to the kinds the
+                    // descriptor declares (ADR 0035), and findings to their schema.
+                    let undeclared = held_to_results(action.descriptor(), &produced);
+                    let undeclared = undeclared.map(|read| findings = read);
+                    let held = undeclared
+                        .and_then(|()| {
+                            held_to_ports(&prepared, action.descriptor(), produced, secrets)
+                        })
+                        .and_then(|held| {
+                            let store = context.store();
+                            super::outputs::held_to_relations(
+                                &prepared,
+                                action.descriptor(),
+                                &held,
+                                store,
+                                &self.limits,
+                                &|id| live.nest().committed(id),
+                            )
+                            .map(|()| held)
+                        });
+                    match held {
+                        Ok(held) => {
+                            outputs = held;
+                            Outcome::Completed {
+                                outputs: outputs.iter().map(|(output, _)| output.clone()).collect(),
+                            }
+                        }
+                        Err(why) => error("output", &why),
+                    }
+                }
+                Some(Ok(Err(Failure::Error { kind, message }))) => error(&kind, &message),
+                Some(Ok(Err(Failure::Invalid { why }))) => Outcome::Invalid { why: said(&why) },
+                Some(Err(panic)) => error("panic", &panic_text(panic)),
+            };
+            if cancelled && !not_confirmed {
+                outputs.clear();
+                outcome = Outcome::Cancelled;
+            }
+            self.panicking(&action_name, PanicAt::BeforeTheEnd);
+            Ok(Pre {
+                facts,
+                outcome,
+                outputs,
+                verdict,
+                measurements,
+                findings,
+            })
+        }));
+        // A panic before the end: the run's descendants are cancelled and waited for, and
+        // its requests accounted, as for any failed run; it then ends as an error of the
+        // kind `panicked`, with its record, and only then does its parent see it.
+        let panicked = |panic: Box<dyn Any + Send>| {
+            live.signal().set();
+            live.signal().tell();
+            live.nest().settle();
+            live.begin_end();
+            family.allowance.close();
+            Pre::panicked(&live, secrets, &panic_text(panic))
         };
-        let mut outputs = Vec::new();
-        let mut verdict = None;
-        let mut measurements = None;
-        let mut findings = None;
-        let mut outcome = match handed {
-            None => Outcome::Cancelled,
-            Some(Ok(Ok(produced))) => {
-                verdict = produced.verdict().cloned();
-                measurements = produced.measurements().cloned();
-                // What is handed back beside the artifacts is held to the kinds the
-                // descriptor declares (ADR 0035), and findings to their schema.
-                let undeclared = held_to_results(action.descriptor(), &produced);
-                let undeclared = undeclared.map(|read| findings = read);
-                let held = undeclared
-                    .and_then(|()| held_to_ports(&prepared, action.descriptor(), produced, secrets))
-                    .and_then(|held| {
-                        let store = context.store();
-                        super::outputs::held_to_relations(
-                            &prepared,
-                            action.descriptor(),
-                            &held,
-                            store,
-                            &self.limits,
-                            &|id| live.nest().committed(id),
-                        )
-                        .map(|()| held)
-                    });
-                match held {
-                    Ok(held) => {
-                        outputs = held;
-                        Outcome::Completed {
-                            outputs: outputs.iter().map(|(output, _)| output.clone()).collect(),
+        let pre = match pre {
+            Ok(Ok(pre)) => pre,
+            Ok(Err(error)) => return Err(error),
+            Err(panic) => panicked(panic),
+        };
+        let told = Cell::new(false);
+        let visible: RefCell<Option<StoreFailure>> = RefCell::new(None);
+        let durable: RefCell<Option<Durable>> = RefCell::new(None);
+        let end = |pre: Pre| -> Result<Finished, CallError> {
+            let Pre {
+                facts,
+                mut outcome,
+                mut outputs,
+                verdict,
+                measurements,
+                findings,
+            } = pre;
+            let said = |text: &str| said(secrets, text);
+            let end_ms = self.clock.now_ms().max(start_ms);
+
+            // The end: one publication adds the journal, every diagnostic and the record to
+            // the run, and, for a request with an id, makes the id's ending outside runs.
+            // For a run that completed it is the commit step (ADR 0008): the same
+            // publication gives every output its name, so the outputs and the completed
+            // status become visible together or not at all, and `outputs` holds something
+            // only then. The run must still be there: one that was deleted while it
+            // executed is not made again from its last names. The run is reported after
+            // this is durable.
+            let (journal, written) = kept.take();
+            let kept: Vec<(Diagnostic, Vec<u8>)> =
+                std::iter::once(Diagnostic::whole_journal(&journal))
+                    .chain(written)
+                    .collect();
+            // What the run's record says of the calls its action made: they are all over.
+            let parent = family.parent.as_ref().map(|(run, _)| run.clone());
+            // A verdict is written only in the record of a run that completed: the record
+            // drops it for any other (ADR 0009).
+            // The run's end begins here for what is noted of it too: no note is taken from
+            // now on, and what was noted is in the record or was answered no.
+            let mut noted = facts.close();
+            let mut inside = live.nest().inside(parent);
+            // The caller is given the verdict with the outcome, as the record keeps it.
+            let handed_verdict =
+                (verdict.as_ref()).map(|v| Verdict::new(v.decision(), &said(v.why())));
+            inside.verdict = verdict;
+            // Findings are data and hold no text: they are kept as they were read.
+            inside.findings = findings.clone();
+            // A record lists what a request cost only for a request it lists. What was
+            // noted for a request the run did not send cannot be written, and leaving it
+            // out in silence would be a record that says less was spent than was noted:
+            // the run ends as an error that says so, whatever its action handed back, and
+            // commits nothing.
+            if let Some(request) = noted.unlisted_paid(inside.asked.len()) {
+                let (_, all, _) = noted.counts();
+                let left_out = noted.drop_unlisted_paid(inside.asked.len());
+                outputs.clear();
+                inside.verdict = None;
+                outcome = Outcome::Error {
+                    kind: "record".to_owned(),
+                    message: format!(
+                        "what a request cost was noted for request {request}, and the run sent \
+                         {} capability requests: a record lists what a request cost only for \
+                         a request it lists, so {left_out} of the {all} that were noted is not \
+                         in this record",
+                        inside.asked.len()
+                    ),
+                };
+            }
+            let record_of = |outcome: &Outcome, inside: &Inside, noted: &Facts| {
+                RunRecord::of(
+                    Ran {
+                        run: run.as_str(),
+                        request,
+                        whizbang: WHIZBANG_VERSION,
+                        prepared: &prepared,
+                        reserved_micros: reserved,
+                        outcome,
+                        start_ms,
+                        end_ms,
+                        diagnostics: kept.iter().map(|(d, _)| d.clone()).collect(),
+                        inside: inside.clone(),
+                        facts: noted.clone(),
+                    },
+                    secrets,
+                )
+            };
+            let mut record = record_of(&outcome, &inside, &noted);
+            // A record over the limit is refused on reading, so it is not published as it
+            // is. What makes it too large is left out in two stages, the outputs first.
+            //
+            // First (ADR 0005): a run whose outputs make such a record commits none of
+            // them. It ends as an error of the type `output`, with a record that lists no
+            // output and keeps everything else: what the run sent, what it paid and where
+            // its data went are not what was too large, and a run that paid never has a
+            // record that says nothing was spent because it handed back too much.
+            let is_at_most = format!("a record is at most {} bytes", self.record_max);
+            let mut handed_back = None;
+            let mut bytes = record.to_bytes().len() as u64;
+            if bytes > self.record_max && !outputs.is_empty() {
+                handed_back = Some(outputs.len());
+                outcome = Outcome::Error {
+                    kind: "output".to_owned(),
+                    message: format!(
+                        "the action handed back {} artifacts, and the record that lists \
+                         them would be {bytes} bytes: {is_at_most}",
+                        outputs.len()
+                    ),
+                };
+                outputs.clear();
+                inside.verdict = None;
+                record = record_of(&outcome, &inside, &noted);
+                bytes = record.to_bytes().len() as u64;
+            }
+            // Then (ADR 0009, ADR 0013): a record that is over the limit with no output in
+            // it leaves out what it would have said of the run's capability requests and
+            // what was noted of the run, and says so: how many there were of each, and
+            // that none of them is listed. The run ends as an error of the type `record`.
+            // Everything else a record lists is bounded where it comes in, and the sum of
+            // it all is under the limit (ADR 0008, "What a call and a run may hold"), so
+            // only a limit that a test lowered reaches this, and the record that is
+            // written here is one that is read back.
+            if bytes > self.record_max {
+                let (settings, paid, went) = noted.counts();
+                let before = handed_back.map_or_else(String::new, |count| {
+                    format!("the action handed back {count} artifacts, which are not committed; ")
+                });
+                outcome = Outcome::Error {
+                    kind: "record".to_owned(),
+                    message: format!(
+                        "{before}the run sent {} capability requests, and what was noted of \
+                         it is {settings} settings, {paid} paid requests and {went} entries \
+                         of where data went: the record that lists them would be {bytes} \
+                         bytes, and {is_at_most}, so none of them is listed in this record",
+                        inside.asked.len()
+                    ),
+                };
+                inside.asked.clear();
+                inside.timed.clear();
+                inside.verdict = None;
+                // What was noted of the run is left out with the requests it is about.
+                noted = Facts::none();
+                record = record_of(&outcome, &inside, &noted);
+            }
+            // The reservation of a run nothing called is closed in the same publication:
+            // the ledger is asked inside it, with a step as at admission, and a failure
+            // of it is a failure of the publication (ADR 0016, "What the second part
+            // builds"). A closing takes its reservation's next place and its epoch's next
+            // turn; where another publication took one meanwhile the store refuses this
+            // one whole, and it is made again on the store as it is then.
+            // A run that reserved nothing has no reservation to close, and the ledger is
+            // not asked: nothing of the books is read for it.
+            let closing = match (&self.ledger, reserved, &family.parent) {
+                (Some(ledger), Some(micros), None) if micros > 0 => Some((ledger, micros)),
+                _ => None,
+            };
+            let mut attempts = 0;
+            loop {
+                attempts += 1;
+                let mut publication = store.begin().map_err(failed)?;
+                publication.close_run(run.as_str()).map_err(failed)?;
+                // The run stays in the store's table of open runs after its end is
+                // visible, until this function has let go of everything: a `wait` that
+                // finds the end in the store finds the run there too, and waits for that.
+                publication.keep_until_let_go(run.as_str());
+                let mut place = 0;
+                for (at, (output, artifact)) in outputs.iter().enumerate() {
+                    // The outputs of one port are together, in the order they were handed
+                    // back.
+                    let first = at == 0 || outputs[at - 1].0.port() != output.port();
+                    place = if first { 0 } else { place + 1 };
+                    let reference = format!("{OUTPUTS_PREFIX}{}/{place}", output.port());
+                    let first = family.first().map(RunId::as_str);
+                    artifact::commit(&mut publication, run.as_str(), first, &reference, artifact)
+                        .map_err(failed)?;
+                }
+                for (diagnostic, bytes) in &kept {
+                    publication
+                        .put_in(run.as_str(), diagnostic.name(), RECORD_KIND, bytes)
+                        .map_err(failed)?;
+                }
+                publication
+                    .put_in(run.as_str(), RECORD_NAME, RECORD_KIND, &record.to_bytes())
+                    .map_err(failed)?;
+                if let Some(id) = request {
+                    let ending =
+                        Ending::new(run.clone(), id.clone(), record.outcome().status, end_ms);
+                    publication
+                        .create(&id.ending_name(), RECORD_KIND, &ending.to_bytes())
+                        .map_err(failed)?;
+                }
+                let mut ledgers = Vec::new();
+                if let Some((ledger, micros)) = closing {
+                    let generation = store.snapshot().map_err(failed)?;
+                    let mut step =
+                        Step::new(&mut publication, &generation, store.as_ref(), secrets);
+                    let asked = Closing {
+                        run: &run,
+                        reserved_micros: micros,
+                        at_ms: end_ms,
+                    };
+                    let refused = |why: &str| CallError::Ledger {
+                        why: part::sentence(secrets, why),
+                    };
+                    match ledger.settle(&asked, &mut step) {
+                        Ok(Settled::Nothing) => {}
+                        Ok(Settled::Closed(made)) if step.made_here(&made) => {}
+                        Ok(Settled::Closed(_)) => {
+                            return Err(refused(
+                                "it handed back a name that it did not make in this attempt \
+                                 at the run's end",
+                            ));
+                        }
+                        Err(failure) => {
+                            return Err(failure.into_error(
+                                |why| part::sentence(secrets, why),
+                                |why| CallError::Ledger { why },
+                            ));
                         }
                     }
-                    Err(why) => error("output", &why),
+                    ledgers = step.into_made();
+                }
+                match publication.publish() {
+                    Ok(_) => break,
+                    Err(store::Error::NameExists { name })
+                        if ledgers.contains(&name) && attempts < MAX_SETTLINGS => {}
+                    Err(error @ store::Error::Unacknowledged { .. }) => {
+                        // Visible, and not confirmed durable: left as such an ending is,
+                        // whatever comes after, and never told as confirmed.
+                        let failure = StoreFailure::new(error);
+                        *visible.borrow_mut() = Some(failure.clone());
+                        reached.set(Reached::Visible);
+                        self.panicking(&action_name, PanicAt::Visible);
+                        return Err(CallError::Store(failure));
+                    }
+                    Err(error) => return Err(failed(error)),
                 }
             }
-            Some(Ok(Err(Failure::Error { kind, message }))) => error(&kind, &message),
-            Some(Ok(Err(Failure::Invalid { why }))) => Outcome::Invalid { why: said(&why) },
-            Some(Err(panic)) => error("panic", &panic_text(panic)),
-        };
-        if cancelled && !not_confirmed {
-            outputs.clear();
-            outcome = Outcome::Cancelled;
-        }
-        let end_ms = self.clock.now_ms().max(start_ms);
-
-        // The end: one publication adds the journal, every diagnostic and the record to
-        // the run, and, for a request with an id, makes the id's ending outside runs.
-        // For a run that completed it is the commit step (ADR 0008): the same
-        // publication gives every output its name, so the outputs and the completed
-        // status become visible together or not at all, and `outputs` holds something
-        // only then. The run must still be there: one that was deleted while it
-        // executed is not made again from its last names. The run is reported after
-        // this is durable.
-        let (journal, written) = kept.take();
-        let kept: Vec<(Diagnostic, Vec<u8>)> = std::iter::once(Diagnostic::whole_journal(&journal))
-            .chain(written)
-            .collect();
-        // What the run's record says of the calls its action made: they are all over.
-        let parent = family.parent.as_ref().map(|(run, _)| run.clone());
-        // A verdict is written only in the record of a run that completed: the record
-        // drops it for any other (ADR 0009).
-        // The run's end begins here for what is noted of it too: no note is taken from
-        // now on, and what was noted is in the record or was answered no.
-        let mut noted = facts.close();
-        let mut inside = live.nest().inside(parent);
-        // The caller is given the verdict with the outcome, as the record keeps it.
-        let handed_verdict = (verdict.as_ref()).map(|v| Verdict::new(v.decision(), &said(v.why())));
-        inside.verdict = verdict;
-        // Findings are data and hold no text: they are kept as they were read.
-        inside.findings = findings.clone();
-        // A record lists what a request cost only for a request it lists. What was
-        // noted for a request the run did not send cannot be written, and leaving it
-        // out in silence would be a record that says less was spent than was noted:
-        // the run ends as an error that says so, whatever its action handed back, and
-        // commits nothing.
-        if let Some(request) = noted.unlisted_paid(inside.asked.len()) {
-            let (_, all, _) = noted.counts();
-            let left_out = noted.drop_unlisted_paid(inside.asked.len());
-            outputs.clear();
-            inside.verdict = None;
-            outcome = Outcome::Error {
-                kind: "record".to_owned(),
-                message: format!(
-                    "what a request cost was noted for request {request}, and the run sent \
-                     {} capability requests: a record lists what a request cost only for \
-                     a request it lists, so {left_out} of the {all} that were noted is not \
-                     in this record",
-                    inside.asked.len()
-                ),
-            };
-        }
-        let record_of = |outcome: &Outcome, inside: &Inside, noted: &Facts| {
-            RunRecord::of(
-                Ran {
-                    run: run.as_str(),
-                    request,
-                    whizbang: WHIZBANG_VERSION,
-                    prepared: &prepared,
-                    reserved_micros: reserved,
-                    outcome,
-                    start_ms,
-                    end_ms,
-                    diagnostics: kept.iter().map(|(d, _)| d.clone()).collect(),
-                    inside: inside.clone(),
-                    facts: noted.clone(),
-                },
-                secrets,
-            )
-        };
-        let mut record = record_of(&outcome, &inside, &noted);
-        // A record over the limit is refused on reading, so it is not published as it
-        // is. What makes it too large is left out in two stages, the outputs first.
-        //
-        // First (ADR 0005): a run whose outputs make such a record commits none of
-        // them. It ends as an error of the type `output`, with a record that lists no
-        // output and keeps everything else: what the run sent, what it paid and where
-        // its data went are not what was too large, and a run that paid never has a
-        // record that says nothing was spent because it handed back too much.
-        let is_at_most = format!("a record is at most {} bytes", self.record_max);
-        let mut handed_back = None;
-        let mut bytes = record.to_bytes().len() as u64;
-        if bytes > self.record_max && !outputs.is_empty() {
-            handed_back = Some(outputs.len());
-            outcome = Outcome::Error {
-                kind: "output".to_owned(),
-                message: format!(
-                    "the action handed back {} artifacts, and the record that lists \
-                     them would be {bytes} bytes: {is_at_most}",
-                    outputs.len()
-                ),
-            };
-            outputs.clear();
-            inside.verdict = None;
-            record = record_of(&outcome, &inside, &noted);
-            bytes = record.to_bytes().len() as u64;
-        }
-        // Then (ADR 0009, ADR 0013): a record that is over the limit with no output in
-        // it leaves out what it would have said of the run's capability requests and
-        // what was noted of the run, and says so: how many there were of each, and
-        // that none of them is listed. The run ends as an error of the type `record`.
-        // Everything else a record lists is bounded where it comes in, and the sum of
-        // it all is under the limit (ADR 0008, "What a call and a run may hold"), so
-        // only a limit that a test lowered reaches this, and the record that is
-        // written here is one that is read back.
-        if bytes > self.record_max {
-            let (settings, paid, went) = noted.counts();
-            let before = handed_back.map_or_else(String::new, |count| {
-                format!("the action handed back {count} artifacts, which are not committed; ")
-            });
-            outcome = Outcome::Error {
-                kind: "record".to_owned(),
-                message: format!(
-                    "{before}the run sent {} capability requests, and what was noted of \
-                     it is {settings} settings, {paid} paid requests and {went} entries \
-                     of where data went: the record that lists them would be {bytes} \
-                     bytes, and {is_at_most}, so none of them is listed in this record",
-                    inside.asked.len()
-                ),
-            };
-            inside.asked.clear();
-            inside.timed.clear();
-            inside.verdict = None;
-            // What was noted of the run is left out with the requests it is about.
-            noted = Facts::none();
-            record = record_of(&outcome, &inside, &noted);
-        }
-        // The reservation of a run nothing called is closed in the same publication:
-        // the ledger is asked inside it, with a step as at admission, and a failure
-        // of it is a failure of the publication (ADR 0016, "What the second part
-        // builds"). A closing takes its reservation's next place and its epoch's next
-        // turn; where another publication took one meanwhile the store refuses this
-        // one whole, and it is made again on the store as it is then.
-        // A run that reserved nothing has no reservation to close, and the ledger is
-        // not asked: nothing of the books is read for it.
-        let closing = match (&self.ledger, reserved, &family.parent) {
-            (Some(ledger), Some(micros), None) if micros > 0 => Some((ledger, micros)),
-            _ => None,
-        };
-        let mut attempts = 0;
-        loop {
-            attempts += 1;
-            let mut publication = store.begin().map_err(failed)?;
-            publication.close_run(run.as_str()).map_err(failed)?;
-            // The run stays in the store's table of open runs after its end is
-            // visible, until this function has let go of everything: a `wait` that
-            // finds the end in the store finds the run there too, and waits for that.
-            publication.keep_until_let_go(run.as_str());
-            let mut place = 0;
-            for (at, (output, artifact)) in outputs.iter().enumerate() {
-                // The outputs of one port are together, in the order they were handed
-                // back.
-                let first = at == 0 || outputs[at - 1].0.port() != output.port();
-                place = if first { 0 } else { place + 1 };
-                let reference = format!("{OUTPUTS_PREFIX}{}/{place}", output.port());
-                let first = family.first().map(RunId::as_str);
-                artifact::commit(&mut publication, run.as_str(), first, &reference, artifact)
-                    .map_err(failed)?;
-            }
-            for (diagnostic, bytes) in &kept {
-                publication
-                    .put_in(run.as_str(), diagnostic.name(), RECORD_KIND, bytes)
-                    .map_err(failed)?;
-            }
-            publication
-                .put_in(run.as_str(), RECORD_NAME, RECORD_KIND, &record.to_bytes())
-                .map_err(failed)?;
-            if let Some(id) = request {
-                let ending = Ending::new(run.clone(), id.clone(), record.outcome().status, end_ms);
-                publication
-                    .create(&id.ending_name(), RECORD_KIND, &ending.to_bytes())
-                    .map_err(failed)?;
-            }
-            let mut ledgers = Vec::new();
-            if let Some((ledger, micros)) = closing {
-                let generation = store.snapshot().map_err(failed)?;
-                let mut step = Step::new(&mut publication, &generation, store.as_ref(), secrets);
-                let asked = Closing {
-                    run: &run,
-                    reserved_micros: micros,
-                    at_ms: end_ms,
-                };
-                let refused = |why: &str| CallError::Ledger {
-                    why: part::sentence(secrets, why),
-                };
-                match ledger.settle(&asked, &mut step) {
-                    Ok(Settled::Nothing) => {}
-                    Ok(Settled::Closed(made)) if step.made_here(&made) => {}
-                    Ok(Settled::Closed(_)) => {
-                        return Err(refused(
-                            "it handed back a name that it did not make in this attempt \
-                             at the run's end",
-                        ));
-                    }
-                    Err(failure) => {
-                        return Err(failure.into_error(
-                            |why| part::sentence(secrets, why),
-                            |why| CallError::Ledger { why },
-                        ));
-                    }
-                }
-                ledgers = step.into_made();
-            }
-            match publication.publish() {
-                Ok(_) => break,
-                Err(store::Error::NameExists { name })
-                    if ledgers.contains(&name) && attempts < MAX_SETTLINGS => {}
-                Err(error) => return Err(failed(error)),
-            }
-        }
-        // The run's end is durable: what it did not use of its share goes back to
-        // the run that called it, while that run still executes (ADR 0016).
-        if family.parent.is_some() {
-            family.allowance.hand_up();
-        }
-        // The run that called this one is told how it ended, and from here on reads
-        // what it committed: before this run is over, which is what its caller waits
-        // for.
-        if let Some((_, parent)) = &family.parent {
-            let times = (start_ms, end_ms);
+            // Durable: the committed outcome stands, and what is left is only to be
+            // finished, once.
             let status = record.outcome().status;
-            parent
-                .nest()
-                .ended(&run, status, outcome.outputs(), times, &store);
+            let finished = Finished::new(run.clone(), outcome).with_results(
+                handed_verdict,
+                measurements,
+                findings,
+            );
+            *durable.borrow_mut() = Some((finished.clone(), status, (start_ms, end_ms)));
+            reached.set(Reached::Durable);
+            self.panicking(&action_name, PanicAt::Durable);
+            // The run's end is durable: what it did not use of its share goes back to
+            // the run that called it, while that run still executes (ADR 0016).
+            if family.parent.is_some() {
+                family.allowance.hand_up();
+            }
+            // The run that called this one is told how it ended, and from here on reads
+            // what it committed: before this run is over, which is what its caller waits
+            // for.
+            if let Some((_, parent)) = &family.parent {
+                let times = (start_ms, end_ms);
+                told.set(true);
+                parent
+                    .nest()
+                    .ended(&run, status, finished.outcome().outputs(), times, &store);
+            }
+            Ok(finished)
+        };
+        match catch_unwind(AssertUnwindSafe(|| end(pre))) {
+            Ok(ended) => ended,
+            Err(panic) => match reached.get() {
+                // Nothing of the end is visible: it is made again, as `panicked`.
+                Reached::Running => {
+                    let again = panicked(panic);
+                    match catch_unwind(AssertUnwindSafe(|| end(again))) {
+                        Ok(ended) => ended,
+                        Err(_) => Err(CallError::Abandoned {
+                            run: run.clone(),
+                            why: "the executor's own code panicked twice as it ended the run"
+                                .to_owned(),
+                        }),
+                    }
+                }
+                // Visible and not confirmed: left so, with the store's failure.
+                Reached::Visible => Err(match visible.take() {
+                    Some(failure) => CallError::Store(failure),
+                    None => CallError::Abandoned {
+                        run: run.clone(),
+                        why: "the executor's own code panicked as it ended the run".to_owned(),
+                    },
+                }),
+                // Durable: what was left is finished, once; nothing is settled again.
+                Reached::Durable => {
+                    let Some((finished, status, times)) = durable.take() else {
+                        return Err(CallError::Abandoned {
+                            run: run.clone(),
+                            why: "the executor's own code panicked as it ended the run".to_owned(),
+                        });
+                    };
+                    if family.parent.is_some() {
+                        family.allowance.hand_up();
+                    }
+                    if let (false, Some((_, parent))) = (told.get(), &family.parent) {
+                        let outputs = finished.outcome().outputs();
+                        parent.nest().ended(&run, status, outputs, times, &store);
+                    }
+                    Ok(finished)
+                }
+            },
         }
-        Ok(Finished::new(run, outcome).with_results(handed_verdict, measurements, findings))
     }
 }
 
@@ -2393,7 +2618,7 @@ impl Engine {
         seen: u64,
     ) -> Result<Watched, CallError> {
         let unknown = || CallError::Refused(Refusal::NoSuchRun { run: run.clone() });
-        let wait_for = |live: &Arc<LiveRun>| match unless {
+        let wait_for = |live: &live::Open| match unless {
             None => {
                 live.wait_until_over();
                 Ok(())
@@ -2420,7 +2645,7 @@ impl Engine {
                 // found there it is waited for, and not found there it is done.
                 if wait {
                     let attached = self.store.as_ref().and_then(|s| s.attached(run.as_str()));
-                    if let Some(live) = attached.and_then(live::of) {
+                    if let Some(live) = attached.and_then(live::open_of) {
                         wait_for(&live)?;
                         // An end the executor did not confirm is not said to be one.
                         if let Some(failure) = live.abandoned() {
@@ -2437,7 +2662,7 @@ impl Engine {
         // is, and the executor is done with it: found there, it is open here.
         let attached = self.store.as_ref().and_then(|s| s.attached(run.as_str()));
         if let Some(attached) = attached {
-            let Some(live) = live::of(attached) else {
+            let Some(live) = live::open_of(attached) else {
                 return watched(RunState::NotEnded { here: true }, Heard::default());
             };
             if wait {

@@ -847,12 +847,12 @@ a store" is answered as its "Done when" asks, or narrowed with a line.
    checks of secrets, and admits, reserves and starts nothing. H1 calls it before it takes a
    handler. `request::look_up_admits_nothing_and_answers_missing_repeat_and_conflict_after_a_restart_and_a_prune`.
 
-- [ ] Done when: `store::buckets::a_store_of_the_old_format_reads_and_its_first_publication_writes_the_new`,
+- [x] Done when: `store::buckets::a_store_of_the_old_format_reads_and_its_first_publication_writes_the_new`,
   `store::buckets::a_publication_writes_only_the_buckets_it_changed`,
   `store::buckets::the_generation_file_is_the_same_size_at_100_and_at_2000_paid_runs`,
   `store::buckets::a_thousand_publications_leave_only_the_current_and_held_generations_buckets`,
   `store::buckets::a_build_before_buckets_refuses_the_new_format_by_its_version`,
-  `store::buckets::a_crash_at_any_step_of_the_first_bucket_publication_leaves_one_whole_generation`
+  `store::buckets::a_crash_at_any_event_of_the_first_bucket_publication_leaves_one_whole_generation`
   (a committed fixture of the present format, written by the present build before S1 and kept
   under `fixtures/store/`, holding artifacts, request ids and ledger names, not one made by the
   new writer; the crash swept through every step of the first publication, the pointer's and the

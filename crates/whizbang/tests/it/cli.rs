@@ -3049,7 +3049,27 @@ fn lab_run_runs_a_three_image_round_under_a_scripted_filler_and_resumes() {
 }
 
 #[test]
-fn lab_run_pairs_and_decode_remove_prompt_against_a_reference_arm_under_a_scripted_filler() {
+fn lab_run_pairs_and_decode_remove_prompt_against_a_reference_arm_under_a_scripted_filler_part_1_of_3()
+ {
+    remove_prompt_against_a_reference_arm(0);
+}
+
+#[test]
+fn lab_run_pairs_and_decode_remove_prompt_against_a_reference_arm_under_a_scripted_filler_part_2_of_3()
+ {
+    remove_prompt_against_a_reference_arm(1);
+}
+
+#[test]
+fn lab_run_pairs_and_decode_remove_prompt_against_a_reference_arm_under_a_scripted_filler_part_3_of_3()
+ {
+    remove_prompt_against_a_reference_arm(2);
+}
+
+/// The lab of `remove_prompt` against a reference arm, for the one picture `at` of the
+/// three (`a`, `b`, `c`): its round, its pair and the decode of a pick against it. It is
+/// one picture a test, each well inside the limit of one test (plan m6, task S1).
+fn remove_prompt_against_a_reference_arm(at: usize) {
     use crate::lab::{FOUND_AND_CLEAN, corpus_text, picture, protocol_text};
     use crate::recipe::{COLLAR, FILLED, PAINT, over};
     use whizbang::harness::Running;
@@ -3060,7 +3080,8 @@ fn lab_run_pairs_and_decode_remove_prompt_against_a_reference_arm_under_a_script
     // `remove_prompt`, its phrase given by a text binding, against the reference arm
     // `clean` handing back each picture's clean twin. Three pictures of 64 by 64; the
     // segmenter is the fake that finds `collar`, the filler the fake that paints one
-    // colour over the mask's support; nothing is contacted.
+    // colour over the mask's support; nothing is contacted. Each test takes one of the
+    // pictures, as its own round.
     let dir = Scratch::new("cli-lab-remove-prompt");
     let root = dir.path().join("store");
     let corpus = dir.path().join("corpus");
@@ -3070,9 +3091,9 @@ fn lab_run_pairs_and_decode_remove_prompt_against_a_reference_arm_under_a_script
     let dollar = whizbang_core::spend::Amount::new(1_000_000).unwrap();
     whizbang_core::spend::reset(&store, dollar, 1).unwrap();
     drop((store, made));
-    let ids = ["a", "b", "c"];
+    let ids = [["a", "b", "c"][at]];
     let mut files: Vec<(String, Vec<u8>, Option<&str>)> = Vec::new();
-    for (at, id) in ids.iter().enumerate() {
+    for id in &ids {
         let seed = 60 * at as u8;
         files.push(((*id).to_owned(), picture(seed), Some("all")));
         files.push((format!("{id}-clean"), picture(seed + 30), None));
@@ -3088,7 +3109,7 @@ fn lab_run_pairs_and_decode_remove_prompt_against_a_reference_arm_under_a_script
     std::fs::write(lab.join("corpus.toml"), corpus_text(&listed)).unwrap();
     std::fs::write(
         lab.join("protocol.toml"),
-        protocol_text(["found", "clean"], &ids, 3),
+        protocol_text(["found", "clean"], &ids, 1),
     )
     .unwrap();
     let mut matrix = "version = 1\nname = \"tiny-lab\"\ncorpus = \"corpus.toml\"\n\
@@ -3113,8 +3134,8 @@ fn lab_run_pairs_and_decode_remove_prompt_against_a_reference_arm_under_a_script
         recovery: wiring::recovery(),
     };
 
-    // The round, as `lab run` runs it: three recipe cells, each its eight steps, and three
-    // handed back by the reference arm without a run.
+    // The round, as `lab run` runs it: one recipe cell, its eight steps, and one handed
+    // back by the reference arm without a run.
     let prepared = laboratory::prepare(&asked).unwrap();
     let store = Arc::new(Store::open(&root, Arc::new(RealFs)).unwrap());
     let registry = wiring::registry_over(&over, false).unwrap();
@@ -3128,7 +3149,7 @@ fn lab_run_pairs_and_decode_remove_prompt_against_a_reference_arm_under_a_script
     let report = laboratory::round(&prepared, &running).unwrap();
     assert_eq!(
         report.text(),
-        "cells: 6\nhanded back by a reference arm: 3\nstarted now: 3\ncompleted: 3\n\
+        "cells: 2\nhanded back by a reference arm: 1\nstarted now: 1\ncompleted: 1\n\
          failed: 0\ninterrupted: 0\nnot run: 0\n"
     );
     drop(executor);
@@ -3151,7 +3172,7 @@ fn lab_run_pairs_and_decode_remove_prompt_against_a_reference_arm_under_a_script
     let digest = whizbang_eval::lab::digest_of(&assignment_bytes);
     assert!(
         written.text().starts_with(&format!(
-            "pairs: 3 of the round's 3\nassignment: {digest}\n"
+            "pairs: 1 of the round's 1\nassignment: {digest}\n"
         )),
         "{}",
         written.text()
@@ -3182,15 +3203,14 @@ fn lab_run_pairs_and_decode_remove_prompt_against_a_reference_arm_under_a_script
         assert_eq!(painted.get_pixel(63, 63), file("source").get_pixel(63, 63));
     }
 
-    // The picks: arm a's side on one pair, b's on two, so a loses to the clean picture;
-    // then the real binary's decode.
-    let pick: Vec<String> = (assignment.pair.iter().enumerate())
-        .map(|(n, p)| {
-            let (a, b) = match p.a_side {
-                Side::Left => ("left", "right"),
-                Side::Right => ("right", "left"),
+    // The pick: arm b's side, so a loses to the clean picture; then the real binary's
+    // decode.
+    let pick: Vec<String> = (assignment.pair.iter())
+        .map(|p| {
+            let side = match p.a_side {
+                Side::Left => "right",
+                Side::Right => "left",
             };
-            let side = if n == 0 { a } else { b };
             format!("{{\"pair\": \"{}\", \"pick\": \"{side}\"}}", p.id)
         })
         .collect();
@@ -3216,7 +3236,7 @@ fn lab_run_pairs_and_decode_remove_prompt_against_a_reference_arm_under_a_script
     assert_eq!(decoded.code, Some(0), "{}", decoded.err);
     assert_eq!(
         decoded.out,
-        "arms: found against clean\ngroup all: pairs 3, decided 3, wins 1, losses 2, same 0, \
+        "arms: found against clean\ngroup all: pairs 1, decided 1, wins 0, losses 1, same 0, \
          neither 0: worse\n"
     );
 }

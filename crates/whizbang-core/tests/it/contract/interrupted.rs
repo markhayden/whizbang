@@ -60,7 +60,7 @@ impl Backends for Priced {
 }
 
 /// An executor over this store, with a ledger, whose clock says 7000.
-pub(super) fn engine(store: Arc<Store>, actions: Vec<Arc<dyn Action>>) -> Engine {
+pub(crate) fn engine(store: Arc<Store>, actions: Vec<Arc<dyn Action>>) -> Engine {
     let mut registry = Registry::new();
     for action in actions {
         registry.register(action).unwrap();
@@ -70,7 +70,7 @@ pub(super) fn engine(store: Arc<Store>, actions: Vec<Arc<dyn Action>>) -> Engine
         .with_ledger(Arc::new(FakeLedger::new()))
 }
 
-fn paid() -> Vec<Requirement> {
+pub(crate) fn paid() -> Vec<Requirement> {
     vec![Requirement::new(Capability::Fill)]
 }
 
@@ -92,7 +92,7 @@ pub(super) fn recovery() -> Recovery {
 }
 
 /// Opens the world's store again, as the next process does, and recovers it.
-pub(super) fn reopened(world: &World) -> (Opening, Arc<Store>, Arc<ShimFs>) {
+pub(crate) fn reopened(world: &World) -> (Opening, Arc<Store>, Arc<ShimFs>) {
     let fs = Arc::new(ShimFs::new());
     let opening = Opening::open(&world.root(), fs.clone(), recovery()).unwrap();
     let store = opening.writer().unwrap();
@@ -126,7 +126,7 @@ fn held(world: &World) -> (u64, Names, BTreeMap<String, Names>) {
 }
 
 /// The run's record as the store holds it, held to the schema of `run/3`.
-pub(super) fn record_of(world: &World, run: &str) -> Option<RunRecord> {
+pub(crate) fn record_of(world: &World, run: &str) -> Option<RunRecord> {
     let reader = Reader::open(&world.root(), Arc::new(ShimFs::new())).unwrap();
     let generation = reader.snapshot().unwrap();
     match record::stored(&generation, run, |entry| reader.read(entry))? {
@@ -141,7 +141,7 @@ pub(super) fn record_of(world: &World, run: &str) -> Option<RunRecord> {
 }
 
 /// The record's error, and what it has lost.
-fn ended_as(record: &RunRecord) -> (Status, &str, &[Lost]) {
+pub(crate) fn ended_as(record: &RunRecord) -> (Status, &str, &[Lost]) {
     let outcome = record.outcome();
     let kind = outcome
         .error
@@ -150,7 +150,7 @@ fn ended_as(record: &RunRecord) -> (Status, &str, &[Lost]) {
     (outcome.status, kind, outcome.lost.as_slice())
 }
 
-fn interrupted() -> (Status, &'static str, &'static [Lost]) {
+pub(crate) fn interrupted() -> (Status, &'static str, &'static [Lost]) {
     (Status::Error, INTERRUPTED, Lost::but_the_admission())
 }
 
@@ -913,4 +913,50 @@ fn a_crash_at_any_event_of_the_recovery_of_an_interrupted_run_followed_by_anothe
 fn a_crash_at_any_event_of_the_recovery_of_an_interrupted_run_followed_by_another_open_ends_the_run_once_part_4_of_4()
  {
     crashes_inside_the_recovery_of_an_interrupted_run(3, 4);
+}
+
+#[test]
+fn after_a_marker_the_next_open_reads_what_the_store_holds() {
+    // Both kinds of marker: an ending that became visible and was not confirmed, and an
+    // admission alone. The process lets the run go; the next open reads the store as it
+    // is: an ending that is there stands, an admission alone is ended as interrupted.
+    for ending in [true, false] {
+        let world = World::new();
+        let ran = Arc::new(std::sync::atomic::AtomicBool::new(!ending));
+        let arming = ran.clone();
+        let paint = action("paint", paid(), move |_, _| {
+            arming.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(Produced::nothing())
+        });
+        let engine = engine(world.store(), vec![paint]);
+        let root = world.root();
+        let synced = std::sync::atomic::AtomicBool::new(false);
+        world.fs.refuse_matching_times(0, usize::MAX, move |event| {
+            use std::sync::atomic::Ordering::SeqCst;
+            let at_root = matches!(event, Event::SyncDir(dir) if *dir == root);
+            match ending {
+                true => ran.load(SeqCst) && at_root,
+                false => synced.load(SeqCst) || (at_root && !synced.swap(true, SeqCst)),
+            }
+        });
+        let asked = Request::new(Call::new("paint")).with_id(id("order-17"));
+        assert!(engine.request(&asked).is_err());
+        let Ok(Answer::Repeat(earlier)) = engine.request(&asked) else {
+            panic!("not answered as a repeat");
+        };
+        let run = earlier.run().clone();
+        let waited = engine.wait(&run).unwrap();
+        assert!(
+            matches!(waited.state(), RunState::Abandoned { .. }),
+            "{:?}",
+            waited.state()
+        );
+        drop(engine);
+        let (_opening, _store, _fs) = reopened(&world);
+        let record = record_of(&world, run.as_str()).unwrap();
+        match ending {
+            true => assert_eq!(record.outcome().status, Status::Completed),
+            false => assert_eq!(ended_as(&record), interrupted()),
+        }
+    }
 }

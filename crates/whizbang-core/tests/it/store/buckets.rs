@@ -627,3 +627,94 @@ fn a_pack_whose_sync_failed_is_synced_before_a_publication_names_it() {
     let record = generation.run("run-1").unwrap().get("record.json").unwrap();
     assert_eq!(store.read(record).unwrap(), b"a record");
 }
+
+/// The real file system, which syncs no file it did not write.
+struct SyncsNoFoundFile;
+
+impl whizbang_core::store::fs::Fs for SyncsNoFoundFile {
+    fn create_dir(&self, path: &Path) -> std::io::Result<()> {
+        RealFs.create_dir(path)
+    }
+    fn write_new(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+        RealFs.write_new(path, bytes)
+    }
+    fn sync_dir(&self, path: &Path) -> std::io::Result<()> {
+        RealFs.sync_dir(path)
+    }
+    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+        RealFs.rename(from, to)
+    }
+    fn remove_all(&self, path: &Path) -> std::io::Result<()> {
+        RealFs.remove_all(path)
+    }
+    fn read_at_most(&self, path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
+        RealFs.read_at_most(path, limit)
+    }
+    fn list(&self, path: &Path) -> std::io::Result<Vec<PathBuf>> {
+        RealFs.list(path)
+    }
+    fn exists(&self, path: &Path) -> std::io::Result<bool> {
+        RealFs.exists(path)
+    }
+    fn hold_lock_file(
+        &self,
+        path: &Path,
+        create: bool,
+    ) -> std::io::Result<Option<Box<dyn whizbang_core::store::fs::LockFile>>> {
+        RealFs.hold_lock_file(path, create)
+    }
+    fn share(&self, path: &Path) -> std::io::Result<Box<dyn whizbang_core::store::fs::Held>> {
+        RealFs.share(path)
+    }
+    fn try_alone(
+        &self,
+        path: &Path,
+    ) -> std::io::Result<Option<Box<dyn whizbang_core::store::fs::Held>>> {
+        RealFs.try_alone(path)
+    }
+}
+
+#[test]
+fn on_a_file_system_that_syncs_no_found_file_a_whole_pack_is_written_again_beside_and_renamed_over()
+{
+    // A pack a held generation names is found whole by a later publication that writes
+    // the same bucket again. The file system cannot sync a file it did not write: the
+    // pack is written again beside it and renamed over it, so the held generation finds
+    // it whole throughout, and nothing is left beside it.
+    let dir = Scratch::new("buckets-no-sync");
+    let root = dir.path().join("store");
+    let store = Store::open(&root, Arc::new(SyncsNoFoundFile)).unwrap();
+    let publish = |store: &Store| {
+        let mut publication = store.begin().unwrap();
+        publication
+            .put_in("run-1", "record.json", Kind::Diagnostic, b"a record")
+            .unwrap();
+        publication.publish().unwrap()
+    };
+    publish(&store);
+    let held = store.hold().unwrap();
+    let pack = held.generation().bucket_digests().next().unwrap().hex();
+    store.delete(&["run-1"]).unwrap();
+    publish(&store);
+    assert_eq!(
+        store
+            .snapshot()
+            .unwrap()
+            .bucket_digests()
+            .next()
+            .unwrap()
+            .hex(),
+        pack
+    );
+    for entry in held.generation().references() {
+        store.read(entry).unwrap();
+    }
+    let reader = Reader::open(&root, Arc::new(RealFs)).unwrap();
+    reader.snapshot().unwrap();
+    let beside: Vec<String> = std::fs::read_dir(root.join("generations"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".new"))
+        .collect();
+    assert!(beside.is_empty(), "{beside:?}");
+}

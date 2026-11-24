@@ -60,6 +60,11 @@ pub enum Error {
     /// held it: on this file system the locks do not hold, and a second writer would be
     /// admitted beside the first. Refused, with nothing changed.
     LocksDoNotHold { root: PathBuf },
+    /// This writer keeps as many runs abandoned as it may ([`super::ABANDONED_LIMIT`]):
+    /// their ends, or their admissions, became visible and were not confirmed. It admits
+    /// no more runs; the process is to be started again, and the next open of the store
+    /// ends them.
+    TooManyAbandoned { abandoned: usize },
     /// This cannot be the id of a run: it is empty, or it holds a control character.
     InvalidRun { run: String },
     /// A generation file says it is of a format this build does not read: this build
@@ -178,6 +183,7 @@ impl Error {
             Error::LocksDoNotHold { .. } => {
                 "the store's file system does not hold its writer's lock".to_owned()
             }
+            Error::TooManyAbandoned { .. } => self.to_string(),
             Error::NotOwn { .. } => "the store's folder is another user's".to_owned(),
             Error::OthersMayWrite { .. } => {
                 "the store's folder may be written by others than its owner".to_owned()
@@ -279,6 +285,12 @@ impl fmt::Display for Error {
                  so its locks do not hold there; a store lives on a local file system",
                 root.display()
             ),
+            Error::TooManyAbandoned { abandoned } => write!(
+                f,
+                "the store's writes failed for {abandoned} runs whose ends or admissions \
+                 this process could not confirm, and it admits no more: start it again, \
+                 and the next open of the store ends them"
+            ),
             Error::NotOwn { root } => write!(
                 f,
                 "the store at {} is another user's folder, and is not opened: use a folder \
@@ -369,6 +381,7 @@ impl std::error::Error for Error {
             | Error::NetworkFileSystem { .. }
             | Error::MountsUnknown { .. }
             | Error::LocksDoNotHold { .. }
+            | Error::TooManyAbandoned { .. }
             | Error::NoSuchRun { .. }
             | Error::RunExists { .. }
             | Error::NameExists { .. }
