@@ -17,9 +17,11 @@ use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, RootCertStore};
 use whizbang_core::capability::{Bounds, Fault, FaultKind};
 use whizbang_core::contract::{Cancellation, Clock, Secrets};
+use whizbang_core::egress::Dispatched;
 use whizbang_core::egress::{
-    Address, DownloadRequest, Downloaded, Downloader, NotAllowed, Outgoing, REPLY_MAX_BYTES, Reply,
-    Sender,
+    Address, CheckedFrames, Control, DownloadRequest, Downloaded, Downloader, Head, NotAllowed,
+    Outgoing, PROBE_BODY_MAX_BYTES, ProbeRequest, Probed, Prober, REPLY_MAX_BYTES, Reply, Sender,
+    Sent, Take,
 };
 
 use super::http;
@@ -34,6 +36,10 @@ pub(crate) const PIECE_MAX_BYTES: usize = 64 * 1024;
 /// How a socket is connected: to one address, within a limit. The real one is
 /// `TcpStream::connect_timeout`; a test may hand another.
 pub(crate) type Dial = Arc<dyn Fn(&SocketAddr, Duration) -> io::Result<TcpStream> + Send + Sync>;
+
+/// How a host's name is resolved to its addresses. The real one is the system's
+/// (`ToSocketAddrs`); a test may hand another, to show what does not resolve.
+pub(crate) type Resolve = Arc<dyn Fn(&str, u16) -> io::Result<Vec<SocketAddr>> + Send + Sync>;
 
 pub(crate) const NOT_HTTPS: &str = "the address is not https, and the client speaks https only";
 pub(crate) const NO_NAME: &str = "the address's host is not a name a certificate can be checked \
@@ -62,6 +68,7 @@ pub(crate) struct Client {
     clock: Arc<dyn Clock>,
     secrets: Secrets,
     dial: Dial,
+    resolve: Resolve,
 }
 
 impl std::fmt::Debug for Client {
@@ -96,6 +103,15 @@ fn real_dial() -> Dial {
     Arc::new(TcpStream::connect_timeout)
 }
 
+fn real_resolve() -> Resolve {
+    Arc::new(|host: &str, port: u16| {
+        Ok((host, port)
+            .to_socket_addrs()?
+            .take(ADDRESSES_LIMIT)
+            .collect())
+    })
+}
+
 impl Client {
     /// The client a download is made with: the compiled roots, the machine's clock, and
     /// the socket's own connect.
@@ -106,6 +122,7 @@ impl Client {
             clock,
             secrets,
             dial: real_dial(),
+            resolve: real_resolve(),
         }
     }
 
@@ -128,7 +145,16 @@ impl Client {
             clock,
             secrets,
             dial: dial.unwrap_or_else(real_dial),
+            resolve: real_resolve(),
         }
+    }
+
+    /// The same, resolving names by `resolve`: for the tests that show what a control
+    /// send never asks of the resolver.
+    #[cfg(any(test, feature = "fakes"))]
+    pub(crate) fn resolving(mut self, resolve: Resolve) -> Client {
+        self.resolve = resolve;
+        self
     }
 
     /// Connects to one of the host's addresses, within the limit to connect for them
@@ -141,9 +167,9 @@ impl Client {
     ) -> Result<TcpStream, Fault> {
         let origin = address.origin();
         let not_sent = |kind, why| Fault::new(kind, why).not_sent();
-        let addresses: Vec<SocketAddr> = (origin.host(), origin.port())
-            .to_socket_addrs()
+        let addresses: Vec<SocketAddr> = (self.resolve)(origin.host(), origin.port())
             .map_err(|_| not_sent(FaultKind::Unavailable, UNRESOLVED))?
+            .into_iter()
             .take(ADDRESSES_LIMIT)
             .collect();
         if addresses.is_empty() {
@@ -228,8 +254,28 @@ impl Client {
         cancellation: &'a Cancellation,
     ) -> Result<Answered<'a>, Fault> {
         let mut request = Zeroed(request);
+        let tls = self.before_connecting(address, cancellation)?;
+        let socket = self.connect(address, timing, cancellation)?;
+
+        // From here a byte may have left: every fault is unresolved.
+        let mut wire = Wire::new(socket, tls, &*self.clock, timing, cancellation)?;
+        wire.handshake()?;
+        wire.send(&request.0)?;
+        request.0.fill(0);
+        let (head, rest) = answer_head(&mut wire)?;
+        Ok(Answered { wire, head, rest })
+    }
+
+    /// What is looked at before the socket connects, when nothing has left, so each
+    /// fault says so: the address is `https`, the request is not cancelled, the TLS was
+    /// set up, and the host is a name a certificate is checked against. The connection's
+    /// TLS, for that name and nothing else.
+    fn before_connecting(
+        &self,
+        address: &Address,
+        cancellation: &Cancellation,
+    ) -> Result<ClientConnection, Fault> {
         let origin = address.origin();
-        // Before the socket connects nothing has left, so each fault says so.
         if origin.scheme() != "https" {
             return Err(Fault::new(FaultKind::Rejected, NOT_HTTPS).not_sent());
         }
@@ -244,17 +290,15 @@ impl Client {
         let Ok(name) = ServerName::try_from(origin.host().to_owned()) else {
             return Err(Fault::new(FaultKind::Rejected, NO_NAME).not_sent());
         };
-        let Ok(tls) = ClientConnection::new(config.clone(), name) else {
-            return Err(Fault::new(FaultKind::Unavailable, NO_TLS).not_sent());
-        };
-        let socket = self.connect(address, timing, cancellation)?;
+        ClientConnection::new(config.clone(), name)
+            .map_err(|_| Fault::new(FaultKind::Unavailable, NO_TLS).not_sent())
+    }
+}
 
-        // From here a byte may have left: every fault is unresolved.
-        let mut wire = Wire::new(socket, tls, &*self.clock, timing, cancellation)?;
-        wire.handshake()?;
-        wire.send(&request.0)?;
-        request.0.fill(0);
-
+/// The head of an answer, read off the wire up to its empty line, and the bytes of the
+/// body that came with it.
+fn answer_head(wire: &mut Wire<'_>) -> Result<(http::Head, Vec<u8>), Fault> {
+    {
         let mut buffer = vec![0; PIECE_MAX_BYTES];
         let mut head = Vec::new();
         // How much of the head was looked at for its end already.
@@ -272,7 +316,7 @@ impl Client {
         };
         let rest = head.split_off(end);
         let head = http::head(&head)?;
-        Ok(Answered { wire, head, rest })
+        Ok((head, rest))
     }
 }
 
@@ -413,4 +457,299 @@ impl Sender for Client {
         Reply::answered(answer.status, body)
             .map_err(|_| Fault::new(FaultKind::TooLarge, REPLY_TOO_LARGE).unresolved())
     }
+
+    /// One request of frames (ADR 0046, "The kind `remote`"): a `POST` of the checked
+    /// bytes with the request's fields and its credential, then its answer's head and a
+    /// reader of its body, a piece at a time, handed to `take`. The connect, the
+    /// handshake and the writing of the body keep the client's own limits
+    /// ([`super::CONNECT_LIMIT`], [`super::BETWEEN_READS_LIMIT`]); the wait for the
+    /// answer's first byte and between two of its bytes is the request's own
+    /// ([`CheckedFrames::answer_within`]), and nothing is waited for past the run's
+    /// deadline. Nothing is followed: a redirect is an answer like any other, whose
+    /// head `take` is handed. Once the socket connected, what it reached is named, so
+    /// that a control send can follow the request.
+    fn stream(&self, frames: &CheckedFrames, bounds: &Bounds, take: &mut Take<'_>) -> Sent {
+        let now = self.clock.now();
+        let mut answer_within = frames.answer_within();
+        let mut timing = self.timing;
+        timing.between_reads = super::BETWEEN_READS_LIMIT;
+        if let Some(deadline) = bounds.deadline() {
+            let left = deadline.saturating_duration_since(now);
+            if left.is_zero() {
+                return Sent::refused(Fault::new(FaultKind::TimedOut, PAST_DEADLINE).not_sent());
+            }
+            timing.connect = timing.connect.min(left);
+            timing.between_reads = timing.between_reads.min(left);
+            answer_within = answer_within.min(left);
+            timing.until = Some(now + left);
+        }
+        let address = frames.to();
+        let fields: Vec<(&str, &str)> = frames
+            .fields()
+            .iter()
+            .map(|(name, value)| (*name, value.as_str()))
+            .collect();
+        let request = Zeroed(http::post_bytes(
+            address,
+            &fields,
+            frames.credential(),
+            frames.bytes(),
+        ));
+        let cancellation = bounds.cancellation();
+        let tls = match self.before_connecting(address, cancellation) {
+            Ok(tls) => tls,
+            Err(fault) => return Sent::refused(fault),
+        };
+        let socket = match self.connect(address, timing, cancellation) {
+            Ok(socket) => socket,
+            Err(fault) => return Sent::refused(fault),
+        };
+        let dispatched = socket
+            .peer_addr()
+            .ok()
+            .map(|peer| Dispatched::reached(address.origin().clone(), peer));
+        let ended = self.streamed(
+            socket,
+            tls,
+            timing,
+            answer_within,
+            request,
+            cancellation,
+            take,
+        );
+        Sent { dispatched, ended }
+    }
+
+    /// A control send, to the address the request it follows reached: no name is
+    /// resolved. The certificate is checked against the host of the control's own
+    /// address, which is the request's origin. Its bounds' deadline holds from the
+    /// connect to the last byte. The status of its answer, whose body is not read.
+    fn control(
+        &self,
+        dispatched: &Dispatched,
+        control: &Control,
+        bounds: &Bounds,
+    ) -> Result<u16, Fault> {
+        let address = control.to();
+        if address.origin() != dispatched.origin() {
+            return Err(Fault::new(FaultKind::Rejected, ELSEWHERE).not_sent());
+        }
+        let now = self.clock.now();
+        let Some(deadline) = bounds.deadline() else {
+            return Err(Fault::new(FaultKind::Rejected, NO_DEADLINE).not_sent());
+        };
+        let left = deadline.saturating_duration_since(now);
+        if left.is_zero() {
+            return Err(Fault::new(FaultKind::TimedOut, PAST_DEADLINE).not_sent());
+        }
+        let timing = Timing {
+            connect: self.timing.connect.min(left),
+            between_reads: left,
+            least_bytes_per_second: 0,
+            poll: self.timing.poll,
+            until: Some(now + left),
+        };
+        let fields: Vec<(&str, &str)> = control
+            .fields()
+            .iter()
+            .map(|(name, value)| (*name, value.as_str()))
+            .collect();
+        let mut request = Zeroed(http::post_bytes(
+            address,
+            &fields,
+            control.credential(),
+            control.body(),
+        ));
+        let cancellation = bounds.cancellation();
+        let tls = self.before_connecting(address, cancellation)?;
+        let socket = (self.dial)(&dispatched.peer(), timing.connect).map_err(|error| {
+            let kind = match error.kind() {
+                io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock => FaultKind::TimedOut,
+                _ => FaultKind::Unavailable,
+            };
+            Fault::new(kind, NOT_CONNECTED).not_sent()
+        })?;
+        let mut wire = Wire::new(socket, tls, &*self.clock, timing, cancellation)?;
+        wire.handshake()?;
+        wire.send(&request.0)?;
+        request.0.fill(0);
+        let (head, _) = answer_head(&mut wire)?;
+        Ok(head.status)
+    }
 }
+
+/// What a control send answers when its address is at another origin than the request
+/// it follows.
+pub(crate) const ELSEWHERE: &str = "a control send goes only to the origin of the request it \
+                                    follows";
+/// What it answers when it was given no deadline: its bounds are made for it.
+pub(crate) const NO_DEADLINE: &str = "a control send is made under bounds of its own, with a \
+                                      deadline, and these have none";
+
+impl Client {
+    /// The rest of a request of frames, once its socket connected: the handshake, the
+    /// request, the answer's head and its body, handed to `take`. A fault of the wire
+    /// under `take` is the request's end, whatever `take` answered.
+    #[allow(clippy::too_many_arguments)]
+    fn streamed(
+        &self,
+        socket: TcpStream,
+        tls: ClientConnection,
+        timing: Timing,
+        answer_within: Duration,
+        mut request: Zeroed,
+        cancellation: &Cancellation,
+        take: &mut Take<'_>,
+    ) -> Result<(), Fault> {
+        let mut wire = Wire::new(socket, tls, &*self.clock, timing, cancellation)?;
+        wire.handshake()?;
+        wire.send(&request.0)?;
+        request.0.fill(0);
+        wire.waiting_for_answers(answer_within);
+        let (head, rest) = answer_head(&mut wire)?;
+        let framing = match head.framing() {
+            Ok(framing) => framing,
+            // An answer whose body is framed in no way the client reads is handed on
+            // with no body: its head is what its caller acts on.
+            Err(_) => http::Framing::Length(0),
+        };
+        let handed = Head::new(head.status, head.fields().to_vec());
+        let mut body = BodyReader {
+            wire: &mut wire,
+            framing: match framing {
+                http::Framing::Chunked => Framing::Chunked(http::Dechunk::new(rest)),
+                http::Framing::Length(length) => Framing::Length {
+                    held: rest,
+                    at: 0,
+                    left: length,
+                },
+            },
+            fault: None,
+        };
+        let taken = take(&handed, &mut body);
+        match body.fault.take() {
+            Some(fault) => Err(fault),
+            None => taken,
+        }
+    }
+}
+
+/// How a body being read is framed.
+enum Framing {
+    Chunked(http::Dechunk),
+    Length { held: Vec<u8>, at: usize, left: u64 },
+}
+
+/// The body of an answer to a request of frames, read off the wire as its reader asks:
+/// never ahead of it. A fault of the wire is kept, and the read answers an error that
+/// says nothing more; the request then ends in the fault kept.
+struct BodyReader<'w, 'a> {
+    wire: &'w mut Wire<'a>,
+    framing: Framing,
+    fault: Option<Fault>,
+}
+
+impl io::Read for BodyReader<'_, '_> {
+    fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
+        if self.fault.is_some() {
+            return Err(io::Error::other("the connection failed"));
+        }
+        let wire = &mut *self.wire;
+        let read = match &mut self.framing {
+            Framing::Chunked(chunks) => {
+                let mut more = |buffer: &mut [u8]| wire.read(buffer);
+                chunks.read(into, &mut more)
+            }
+            Framing::Length { held, at, left } => {
+                if *left == 0 || into.is_empty() {
+                    Ok(0)
+                } else if *at < held.len() {
+                    let most = usize::try_from(*left).unwrap_or(usize::MAX);
+                    let here = (held.len() - *at).min(into.len()).min(most);
+                    into[..here].copy_from_slice(&held[*at..*at + here]);
+                    *at += here;
+                    *left -= here as u64;
+                    Ok(here)
+                } else {
+                    let most = usize::try_from(*left).unwrap_or(usize::MAX).min(into.len());
+                    match wire.read(&mut into[..most]) {
+                        Ok(0) => {
+                            Err(Fault::new(FaultKind::Malformed, super::wire::CUT).unresolved())
+                        }
+                        Ok(read) => {
+                            *left -= read as u64;
+                            Ok(read)
+                        }
+                        Err(fault) => Err(fault),
+                    }
+                }
+            }
+        };
+        read.map_err(|fault| {
+            self.fault = Some(fault);
+            io::Error::other("the connection failed")
+        })
+    }
+}
+
+impl Prober for Client {
+    /// A probe: a `GET` of the address with no credential, no body and no user data,
+    /// answered with its status and the start of its body, at most one byte more than
+    /// [`PROBE_BODY_MAX_BYTES`], which the checked prober refuses whole. Nothing is
+    /// followed: an answer that points elsewhere comes back as the address, not asked.
+    fn probe(&self, request: &ProbeRequest, cancellation: &Cancellation) -> Result<Probed, Fault> {
+        if request.credential().is_some() {
+            return Err(Fault::new(FaultKind::Rejected, PROBE_CREDENTIAL).not_sent());
+        }
+        let address = request.to();
+        let written = http::request(address, None);
+        let Answered {
+            mut wire,
+            head,
+            rest,
+        } = self.exchange(address, written, self.timing, cancellation)?;
+        if matches!(head.status, 301 | 302 | 303 | 307 | 308) {
+            return Ok(Probed::Moved(self.moved_to(address, head.location()?)?));
+        }
+        let most = PROBE_BODY_MAX_BYTES + 1;
+        let mut body = Vec::new();
+        let mut buffer = vec![0; PIECE_MAX_BYTES];
+        match head.framing() {
+            Ok(http::Framing::Length(length)) => {
+                let wanted = usize::try_from(length).unwrap_or(usize::MAX).min(most);
+                body = rest;
+                body.truncate(wanted);
+                while body.len() < wanted {
+                    let read = wire.read(&mut buffer)?;
+                    if read == 0 {
+                        return Err(Fault::new(FaultKind::Malformed, super::wire::CUT).unresolved());
+                    }
+                    let room = wanted - body.len();
+                    body.extend_from_slice(&buffer[..read.min(room)]);
+                }
+            }
+            Ok(http::Framing::Chunked) => {
+                let mut chunks = http::Dechunk::new(rest);
+                let mut more = |into: &mut [u8]| wire.read(into);
+                while body.len() < most {
+                    let room = most - body.len();
+                    let read = chunks.read(&mut buffer[..room.min(PIECE_MAX_BYTES)], &mut more)?;
+                    if read == 0 {
+                        break;
+                    }
+                    body.extend_from_slice(&buffer[..read]);
+                }
+            }
+            // A head that frames no body the client reads is reached with none.
+            Err(_) => {}
+        }
+        Ok(Probed::Reached {
+            status: head.status,
+            body,
+        })
+    }
+}
+
+/// What a probe that came with a credential is refused with: a probe carries none.
+pub(crate) const PROBE_CREDENTIAL: &str = "a probe carries no credential, and this one came \
+                                           with one";

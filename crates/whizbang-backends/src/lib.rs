@@ -7,10 +7,11 @@
 //! protocol's codec and its worker (ADR 0020); [`net`], the download client and the
 //! sender (ADR 0024); and the judge of a service, the kind [`service`] and its three
 //! providers' adapters, [`anthropic`], [`google`] and [`openai`]; and, under the same
-//! kind, the filler of [`fal`]. It depends on the
+//! kind, the filler of [`fal`]; and the kind [`remote`], a segmenter answered by the
+//! pack's front on a GPU host (ADR 0046). It depends on the
 //! core and on nothing else in the workspace, and, of crates outside it, on `rustls`
-//! and `webpki-roots` for the download client's TLS, and `image` to scale what fal's
-//! filler sends and is answered.
+//! and `webpki-roots` for the download client's TLS, `image` to scale what fal's
+//! filler sends and is answered, and `getrandom` for the kind `remote`'s dispatch ids.
 
 pub mod anthropic;
 pub mod fal;
@@ -19,4 +20,5 @@ pub mod models;
 pub mod net;
 pub mod openai;
 pub mod pack;
+pub mod remote;
 pub mod service;

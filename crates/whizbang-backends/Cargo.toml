@@ -24,6 +24,10 @@ webpki-roots.workspace = true
 # Scaling a picture to the side fal's filler is sent at, and its answer back: the version
 # and the features the core decodes with, so the lock gains nothing.
 image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }
+# The dispatch id of a request of the kind `remote`: 128 bits from the system's
+# randomness (ADR 0046; plan m6, task R1). The version the lock file already holds, no
+# feature, so the lock gains nothing.
+getrandom = { version = "=0.3.4", default-features = false }
 
 [features]
 # What only a test may build: `Launch::testing`, a launch of the pack's fakes. Only the

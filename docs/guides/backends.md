@@ -1,7 +1,7 @@
 # Backends
 
-A backend is what answers a capability: a local model the pack's worker runs, or, from
-milestone 2, a provider somewhere else. The config file names them (`docs/guides/config.md`).
+A backend is what answers a capability: a local model the pack's worker runs, a model on
+a GPU host of your own (the kind `remote`, below), or a provider somewhere else. The config file names them (`docs/guides/config.md`).
 `whizbang backends status` says, for each one the config offers, whether it is ready, and
 with `--probe` checks that it answers. The playground's Models screen shows the same list
 without a probe, with whether each key is set (`docs/guides/playground.md`, "Models and
@@ -43,9 +43,13 @@ After the list, one line for each backend: `probe <capability> <name>: …`.
   pack installed by `whizbang setup`; without it the line says to run that.
 - **A remote backend that is ready:** probed only when the config approves probing its
   recipient (`probe = true` in its table under `[egress.recipients]`); otherwise the line
-  says it is not approved, and nothing is asked. A probe carries no key and no data.
-  **This build has no network client,** so even an approved probe contacts nothing: the
-  line says so. Milestone 2 brings the first remote kind, and with it a real probe.
+  says it is not approved, and nothing is asked. A probe is a `GET` that carries no key, no
+  token and no data, and follows no redirect; the line is the status it was answered
+  with. A backend of the kind `remote` is probed at its front's health,
+  `<url>/pack/1/health`, which needs no token and wakes no card, and the line says whether
+  the host holds the model the config asks, by the catalogue's hashes:
+  `reached: the host holds sam3 by the catalogue's hashes, installation sha256:…, checked
+  by the front`, or `reached: the host does not hold sam3 by the catalogue's hashes`.
 - **A remote backend that is not ready** is not probed.
 
 ```text
@@ -61,4 +65,52 @@ complaint says why; 2 the command line was not understood; 3 what was to be prin
 not be written.
 
 The fast tests show each case with the pack's fake models and a stand-in for the prober
-(`crates/whizbang/tests/it/backends.rs`); nothing in them leaves the machine.
+(`crates/whizbang/tests/it/backends.rs`), and the probe of a remote backend against the
+pack's own front on loopback (`crates/whizbang/tests/it/remote.rs`); nothing in them
+leaves the machine.
+
+## The kind `remote`
+
+SAM 3 on a GPU host: the pack's front (`python -m whizbang_pack.front`, ADR 0046) runs on
+the host beside the card, and whizbang asks it over HTTPS for each segment, under the
+gate, the ledger and the run's record exactly as it asks the local worker. The app's
+server needs no GPU and no Python.
+
+```toml
+[backends.segment]
+kind = "remote"
+url = "https://gpu-host.example"
+token_env = "SEGMENT_TOKEN"
+model = "sam3"
+
+[backends.segment.settings]
+price_microusd_per_second = 300
+host_limit_s = 600
+```
+
+- **`url`** is the front's base address, `https` only; whizbang adds `/pack/1/request`,
+  `/pack/1/cancel` and `/pack/1/health` to it.
+- **`token_env`** names the variable the front's token is in. **The token is a secret of
+  both sides:** the front is started with the same value (`--token-env`), and whizbang
+  sends it as `Authorization: Bearer …` to the url's origin and to nowhere else.
+- **`model`** is a model of the catalogue. The host must hold the installation of it that
+  `whizbang models get` would make: every answer names the digest of the files it came
+  from, and an answer of other files is refused whole.
+- **The price is required.** `price_microusd_per_second` is what the host charges a second,
+  in millionths of a dollar, and `host_limit_s` the most one attempt may be billed for (on
+  Modal, the GPU function's startup limit, its timeout and its idle window added up). A
+  call is charged at most `price × host_limit_s × 2`: the attempt whizbang makes and one
+  restart of the host's. With the example, 0.36 dollars. **Without both settings every
+  call is refused:** a backend that sends data and states no price has no bound. One
+  without the other, or a zero, is refused when the config is read.
+- **Its settings** may also be the model's own, as the kind `pack` takes them:
+  `threshold`, `pad`, `min_cover`, `outline` and `device`, each sent in the model's
+  `load`.
+- **What it sends:** the picture's pixels and the words, point or box of each query. Its
+  origin must be approved for `source_images` and `prompts` (`docs/guides/config.md`, "Who
+  may receive data"); `probe = true` lets `--probe` ask its health.
+- **What is charged:** a call refused before anything left costs nothing; every call that
+  left is charged at its bound, an answered one too, since the host's bill is not known.
+- **Cancelling:** when a run is cancelled or its time runs out, whizbang closes the stream
+  and sends the host a `cancel` naming the request; a host that does not answer it within
+  5 seconds is let go of.

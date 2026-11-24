@@ -33,10 +33,11 @@
 //!   (`1xx`); a head over its bounds; a carriage return or a line feed that is not a
 //!   line's ending; a folded line; a field that is not a name, a colon and a value; no
 //!   `Content-Length`, two of them, or one that is not digits alone; any
-//!   `Transfer-Encoding`, `chunked` included (chunked bodies are not handled); a
-//!   `Content-Encoding` but `identity`; and a status the client does not act on. A
-//!   connection that ends before the stated length is cut. Trailers cannot come: there
-//!   is no chunked body.
+//!   `Transfer-Encoding` of a download (a send, a request of frames and a probe read a
+//!   body of `chunked` alone, under the rules of `http::Chunks`, trailers counted and
+//!   not read); a `Content-Encoding` but `identity`; and a status the client does not
+//!   act on. A connection that ends before the stated length, or before the last chunk,
+//!   is cut.
 //! - The statuses it acts on: `200`, whose body goes to the sink; `301`, `302`, `303`,
 //!   `307` and `308`, whose one `Location`, a whole `http` or `https` address or a path
 //!   at the same origin, comes back as
@@ -51,6 +52,18 @@
 //!   not asked. Its wait for the answer is [`ANSWER_WAIT_LIMIT`], since a model
 //!   answers once it has written the whole turn, and no later than the run's
 //!   deadline; and it has no least rate.
+//! - **A request of frames** (ADR 0046, "The kind `remote`"; ADR 0024 as amended there)
+//!   is a `POST` of the bytes a check let through (`CheckedFrames`), with its own fields
+//!   and its credential; its answer's head and a reader of its body are handed to the
+//!   caller, a piece at a time, as they arrive. The connect, the handshake and the
+//!   writing of the body keep the limits below; the wait for the answer and between its
+//!   bytes is the request's own, which the kind `remote` sets from its host's limit, and
+//!   never past the run's deadline. Once the socket connected, the address it reached is
+//!   named, and **a control send** that follows the request (its `cancel`) connects to
+//!   that address, resolving no name, with the same name checked in its certificate,
+//!   within its own deadline from the connect to its last byte.
+//! - **A probe** is a `GET` with no credential, no body and no user data, answered with
+//!   its status and at most 4 KiB and one byte of its body; nothing is followed.
 //!
 //! **TLS.** 1.3 and 1.2, nothing older. The server's certificate is checked by `rustls`
 //! against the roots compiled in from `webpki-roots` and against the host of the
@@ -98,7 +111,7 @@ use std::time::Duration;
 
 use whizbang_core::config::DOWNLOAD_LEAST_KIB_LIMIT;
 use whizbang_core::contract::{Secrets, SystemClock};
-use whizbang_core::egress::{CheckedDownloader, NotAllowed, Origin, SendCheck, Ways};
+use whizbang_core::egress::{CheckedDownloader, NotAllowed, Origin, Prober, SendCheck, Ways};
 
 use client::Client;
 use wire::Timing;
@@ -160,6 +173,30 @@ pub fn downloader(
 pub fn ways(store_root: &Path, secrets: &Secrets) -> Result<Ways, NotAllowed> {
     let client = Client::new(sender_timing(), Arc::new(SystemClock), secrets.clone());
     ways_over(Arc::new(client), store_root)
+}
+
+/// The prober of the network (ADR 0019, "A download and a probe"; plan m6, task R1): a
+/// `GET` with no credential, no body and no user data, which follows nothing and hands
+/// on its status and the start of its body. It stands behind a checked prober, which
+/// asks the policy before anything is asked of an address. The one public way to the
+/// client as a prober.
+pub fn prober(secrets: &Secrets) -> Arc<dyn Prober> {
+    Arc::new(Client::new(
+        prober_timing(),
+        Arc::new(SystemClock),
+        secrets.clone(),
+    ))
+}
+
+/// A probe's limits: the client's own, and no least rate.
+fn prober_timing() -> Timing {
+    Timing {
+        connect: CONNECT_LIMIT,
+        between_reads: BETWEEN_READS_LIMIT,
+        least_bytes_per_second: 0,
+        poll: POLL,
+        until: None,
+    }
 }
 
 /// A send's limits: [`ANSWER_WAIT_LIMIT`] and no least rate.

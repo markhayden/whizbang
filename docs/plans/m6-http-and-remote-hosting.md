@@ -1081,7 +1081,7 @@ host whether it is there without sending it anything.
    `docs/guides/config.md` its table and an `egress` example; both say that the token is a
    secret of both sides and that a missing price refuses every call.
 
-- [ ] Done when: every case of the conformance suite's behavioural half passes over the local
+- [x] Done when: every case of the conformance suite's behavioural half passes over the local
   pipe and over HTTP against the fake host (`conformance::*_over_http`);
   `remote::a_call_is_sent_through_the_gate_with_its_token_bound_to_its_origin`,
   `remote::a_remote_backend_without_both_price_settings_has_no_bound_and_is_refused`,

@@ -2,11 +2,10 @@
 //! function (`whizbang::backend_status`), which says what it reads and what it starts
 //! (plan 1C, task P7b; `docs/guides/backends.md`). It replaces the stub of task C1a.
 
-use std::sync::Arc;
-
 use clap::Subcommand;
-use whizbang::backend_status::{self, Asked, NoProber};
+use whizbang::backend_status::{self, Asked};
 use whizbang::wiring::{Platform, Uses};
+use whizbang_core::contract::Secrets;
 
 use crate::rascal::Under;
 
@@ -24,7 +23,8 @@ pub enum Command {
     Status {
         /// Then probe each: start the pack's worker for a local backend and print its
         /// hello, and ask a remote one the config approves for probing whether it is
-        /// reachable. This build has no network client, so no host is contacted.
+        /// reachable, with no credential and no user data; a backend of the kind
+        /// remote at its front's health, saying whether it holds the model.
         #[arg(long)]
         probe: bool,
         #[command(flatten)]
@@ -35,14 +35,15 @@ pub enum Command {
 /// Runs a backends command: what to print on success, or the complaint. `platform`
 /// says where the models directory in this machine's data folder is; it is `main`'s
 /// reading of the environment, and is asked only if a models directory is to be
-/// opened and nothing else named one. A remote backend is probed by nothing that
-/// reaches a host: this build has none ([`NoProber`]).
+/// opened and nothing else named one. A remote backend is probed through the
+/// network's prober, behind the checked prober of the config's approvals.
 pub fn run(command: &Command, platform: Platform) -> Result<String, String> {
     match command {
         Command::Status { probe, under } => {
             let over = under.over(Some(platform), Uses::Every)?;
             let asked = Asked { probe: *probe };
-            backend_status::status(&over, asked, Arc::new(NoProber))
+            let prober = whizbang_backends::net::prober(&Secrets::none());
+            backend_status::status(&over, asked, prober)
         }
     }
 }

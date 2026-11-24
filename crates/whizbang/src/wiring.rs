@@ -27,6 +27,7 @@ use whizbang_core::store::{self, Store};
 
 use crate::pack::{OneWorker, PackKind};
 use crate::tool_file::Files as ToolFiles;
+use whizbang_backends::remote::RemoteKind;
 use whizbang_backends::service::ServiceKind;
 
 /// Every action this build ships, registered in the order a door lists them: the
@@ -182,15 +183,29 @@ fn registry_of(
 /// The kinds of backend this build has (ADR 0011, "Kinds"): `pack`, a local segmenter
 /// over the one worker of the process (plan 1C, task P6a; [`crate::pack`]), which is
 /// this; and `service`, a judge whose provider is `anthropic` (plan 2A, task S1),
-/// `google` or `openai` (plan m2c, task P1; `whizbang_backends::service`). Whoever builds the executor makes the one worker
+/// `google` or `openai` (plan m2c, task P1; `whizbang_backends::service`); and `remote`,
+/// a segmenter answered by the pack's front on a GPU host (plan m6, task R1;
+/// `whizbang_backends::remote`), over the catalogue this build ships under its table of
+/// adapters, which say the files a host is held to. Whoever builds the executor makes the one worker
 /// once, and gives the same to the wiring ([`Over::pack`]), which tells it the models
 /// directory it opened. A backend of any other kind is of a kind this build does not
 /// have, and is not ready. A test registers a fake beside them.
 pub fn kinds(worker: &Arc<OneWorker>) -> Kinds {
     let mut kinds = Kinds::new();
-    // Two kinds, under names of the rule, in kinds that hold none: each is taken.
+    // Three kinds, under names of the rule, in kinds that hold none: each is taken.
     let _ = kinds.register(Arc::new(PackKind::over(worker.clone())));
     let _ = kinds.register(Arc::new(ServiceKind::new()));
+    let adapters: Vec<(ModelName, Revision)> = adapters()
+        .into_iter()
+        .map(|adapter| (adapter.name, adapter.revision))
+        .collect();
+    // The shipped catalogue is read by its own test; one that could not be read leaves
+    // the kind with no model, and every table of it is refused for its model.
+    let remote = match catalogue() {
+        Ok(catalogue) => RemoteKind::over(&catalogue, &adapters, &Secrets::none()),
+        Err(_) => RemoteKind::default(),
+    };
+    let _ = kinds.register(Arc::new(remote));
     kinds
 }
 

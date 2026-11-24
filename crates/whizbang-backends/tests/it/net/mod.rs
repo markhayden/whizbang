@@ -3,4 +3,5 @@
 //! server on loopback are inside the crate (`src/net/tests/`), where a root of a
 //! test's own can be handed to it; these hold what is public.
 
+mod prober;
 mod public;

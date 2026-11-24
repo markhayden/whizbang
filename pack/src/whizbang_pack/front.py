@@ -934,11 +934,14 @@ class Front:
                 entry = next(e for e in self._queue if e.state == "waiting")
                 entry.state = "running"
                 cancelled = entry.cancelled
-            ended = [False]
+            # The requests waiting when the worker's end was told: a restart fails these,
+            # and not one that came after it, which the next worker answers.
+            ended = []
 
             def emit(item, entry=entry, ended=ended):
                 if item[0] == "outcome" and item[1]["ended"] is not None:
-                    ended[0] = True
+                    with self._cond:
+                        ended[:] = [e for e in self._queue if e.state == "waiting"]
                 entry.put(item)
 
             try:
@@ -952,9 +955,10 @@ class Front:
                 self._queue.remove(entry)
                 self._by_dispatch.pop(entry.dispatch, None)
                 entry.state = "done"
-                if ended[0]:
-                    # A restart fails every request waiting here, and replays nothing.
-                    for waiting in list(self._queue):
+                # A restart fails every request that was waiting here when it was told,
+                # and replays nothing.
+                for waiting in ended:
+                    if waiting in self._queue and waiting.state == "waiting":
                         self._queue.remove(waiting)
                         self._by_dispatch.pop(waiting.dispatch, None)
                         waiting.state = "done"

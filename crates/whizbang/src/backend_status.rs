@@ -19,9 +19,14 @@
 //!   `CheckedProber` (ADR 0019, "A download and a probe") under the policy the config's
 //!   approvals make, for the recipient the backend declares. So a recipient the config
 //!   does not approve for probing is not probed, and the prober behind is not asked. The
-//!   probe carries no credential and no user data. **The binary has no prober** until
-//!   something remote is built (milestone 2): what it hands is [`NoProber`], which
-//!   contacts nothing and says so. A test hands the test kit's.
+//!   probe carries no credential and no user data, and follows no redirect itself. The
+//!   binary hands the network's prober (`whizbang_backends::net::prober`, plan m6, task
+//!   R1); a test hands the test kit's, or the network's trusting a root of its own.
+//!   **A backend of the kind `remote`** is probed at its front's health document,
+//!   `<url>/pack/1/health` (ADR 0046), which needs no token and wakes no card: the
+//!   document of `pack-host/1` is read, and the line says whether the host holds the
+//!   model the config asks, by the catalogue's hashes: an installation of that model
+//!   whose files' digest is the one the backend declares its model under.
 //! - **a remote backend that is not ready** is not probed: there is nothing to ask.
 //!
 //! Every text that came from the config (a backend's name, its kind, its model) is
@@ -32,6 +37,7 @@ use std::sync::Arc;
 
 use whizbang_backends::pack::Said;
 use whizbang_backends::pack::proto::VERSION;
+use whizbang_backends::remote;
 use whizbang_core::capability::{Fault, FaultKind, Installed};
 use whizbang_core::config::Backend;
 use whizbang_core::config::NotReady;
@@ -46,12 +52,13 @@ use crate::wiring::{Configured, Over};
 /// The order the capabilities are listed in: the config's.
 const CAPABILITIES: [Capability; 3] = [Capability::Fill, Capability::Judge, Capability::Segment];
 
-/// What a probe of a remote backend says in a build with no network client.
-pub const NO_PROBER: &str = "this build has no network client, so nothing was sent; a remote backend is probed from milestone 2";
+/// What a probe through [`NoProber`] says.
+pub const NO_PROBER: &str = "this prober has no network client, so nothing was sent";
 
-/// The prober of a build that has no network client: it contacts nothing, and answers
-/// every probe with [`NO_PROBER`], never sent. It stands behind the checked prober, so
-/// what the config does not approve is refused for that before it is reached.
+/// A prober with no network client: it contacts nothing, and answers every probe with
+/// [`NO_PROBER`], never sent. A test hands it where nothing may be probed; the binary
+/// hands the network's. It stands behind the checked prober, so what the config does
+/// not approve is refused for that before it is reached.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoProber;
 
@@ -75,6 +82,9 @@ struct Listed<'a> {
     backend: &'a Backend,
     /// The recipient it declares, when it is ready and sends to one.
     recipient: Option<Recipient>,
+    /// The version it declares its model at, when it is ready: for the kind `remote`,
+    /// the digest of the files a host is held to.
+    declared: Option<String>,
 }
 
 /// Runs `whizbang backends status` over what the wiring was given: the list, and with
@@ -92,6 +102,12 @@ pub fn status(over: &Over, asked: Asked, prober: Arc<dyn Prober>) -> Result<Stri
     for capability in CAPABILITIES {
         for (name, backend) in config.backends(capability) {
             let (state, recipient) = state_of(&configured, capability, name);
+            let declared = configured
+                .offers
+                .roster()
+                .resolve(capability, Some(name), &[])
+                .ok()
+                .map(|resolved| resolved.declaration().model().version().to_owned());
             let default = match config.default_of(capability) == Some(name) {
                 true => "\tdefault",
                 false => "",
@@ -111,6 +127,7 @@ pub fn status(over: &Over, asked: Asked, prober: Arc<dyn Prober>) -> Result<Stri
                 name,
                 backend,
                 recipient,
+                declared,
             });
         }
     }
@@ -261,9 +278,27 @@ fn probes(configured: &Configured, listed: &[Listed<'_>], prober: Arc<dyn Prober
                 (Some(recipient), Some(address)) => {
                     let checked =
                         CheckedProber::new(prober.clone(), policy.clone(), recipient.clone());
-                    let request = ProbeRequest::new(address.clone());
+                    let remote = one.backend.kind() == remote::KIND;
+                    let asked = match remote {
+                        true => remote::health_of(address, &configured.secrets),
+                        false => Ok(address.clone()),
+                    };
+                    let Ok(asked) = asked else {
+                        out.push_str(&format!(
+                            "probe {} {}: not probed: its health's address is not one\n",
+                            one.capability.name(),
+                            one.name.escape_debug()
+                        ));
+                        continue;
+                    };
+                    let request = ProbeRequest::new(asked);
                     match checked.probe(&request, &Cancellation::new()) {
-                        Ok(Probed::Reached { status }) => {
+                        Ok(Probed::Reached { status, body }) if remote => {
+                            let declared = one.declared.as_deref().unwrap_or_default();
+                            let model = one.backend.model().unwrap_or_default();
+                            holds(status, &body, model, declared)
+                        }
+                        Ok(Probed::Reached { status, .. }) => {
                             format!("reached: it answered with status {status}")
                         }
                         Ok(Probed::Moved(_)) => "not reached: it was pointed elsewhere".to_owned(),
@@ -280,6 +315,76 @@ fn probes(configured: &Configured, listed: &[Listed<'_>], prober: Arc<dyn Prober
         ));
     }
     out
+}
+
+/// What a front's health document says of the model a config asks, by the digest of
+/// the files the backend declares its model under (ADR 0046, "The identity"): whether an
+/// installation of the model the document lists holds those files, and whether the
+/// front has checked it. Nothing of the document is printed but the installation's
+/// identity, held to the shape of one.
+fn holds(status: u16, body: &[u8], model: &str, declared: &str) -> String {
+    if status != 200 {
+        return format!("reached: its health answered with status {status}");
+    }
+    let Ok(document) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return "reached: its health is not a document of pack-host/1".to_owned();
+    };
+    if document.get("format").and_then(|f| f.as_str()) != Some("pack-host/1") {
+        return "reached: its health is not a document of pack-host/1".to_owned();
+    }
+    let listed = document
+        .get("models")
+        .and_then(|models| models.as_array())
+        .cloned()
+        .unwrap_or_default();
+    for installation in listed {
+        if installation.get("model").and_then(|m| m.as_str()) != Some(model) {
+            continue;
+        }
+        let files = installation
+            .get("files")
+            .and_then(|files| files.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let named: Option<Vec<(String, String)>> = files
+            .iter()
+            .map(|file| {
+                Some((
+                    file.get("name")?.as_str()?.to_owned(),
+                    file.get("sha256")?.as_str()?.to_owned(),
+                ))
+            })
+            .collect();
+        let Some(named) = named else {
+            continue;
+        };
+        let digest =
+            remote::files_digest(named.iter().map(|(name, sha)| (name.as_str(), sha.clone())));
+        if remote::version_of(&digest) != declared {
+            continue;
+        }
+        let identity = installation
+            .get("installation")
+            .and_then(|i| i.as_str())
+            .filter(|identity| {
+                identity.strip_prefix("sha256:").is_some_and(|hex| {
+                    hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit())
+                })
+            })
+            .unwrap_or("not named");
+        let checked = match installation.get("checked").and_then(|c| c.as_bool()) {
+            Some(true) => "checked by the front",
+            _ => "not yet checked by the front",
+        };
+        return format!(
+            "reached: the host holds {} by the catalogue's hashes, installation {identity}, {checked}",
+            model.escape_debug()
+        );
+    }
+    format!(
+        "reached: the host does not hold {} by the catalogue's hashes",
+        model.escape_debug()
+    )
 }
 
 /// What the worker said in its hello, in words, or why it said none.

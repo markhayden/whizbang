@@ -158,6 +158,7 @@ fn status_with_probe_asks_a_prober_of_a_remote_backend_only_when_the_config_appr
     // Listed, each ready and sending to its recipient; nothing is asked.
     let prober = Arc::new(FakeProber::scripted(vec![Ok(Probed::Reached {
         status: 204,
+        body: Vec::new(),
     })]));
     let text = backend_status::status(&over, Asked::default(), prober.clone()).unwrap();
     has_line(
@@ -187,8 +188,8 @@ fn status_with_probe_asks_a_prober_of_a_remote_backend_only_when_the_config_appr
     let address = Address::of("https://fill.example.org/v1", &none).unwrap();
     assert_eq!(probes[0].to(), &address);
     assert!(probes[0].request().credential().is_none());
-    // The binary's prober contacts nothing, and says so; what the config does not
-    // approve is refused before it.
+    // A prober with no network client contacts nothing, and says so; what the config
+    // does not approve is refused before it.
     let nothing: Arc<dyn Prober> = Arc::new(NoProber);
     let text = backend_status::status(&over, asked, nothing).unwrap();
     has_line(

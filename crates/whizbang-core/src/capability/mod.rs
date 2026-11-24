@@ -15,7 +15,7 @@
 //! it. What does not pass is [`Unfit`].
 
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::contract::{Cancellation, Capability, Clock, ModelIdentity};
 use crate::egress::{Classes, NoWayOut, Sender};
@@ -690,6 +690,25 @@ impl Bounds {
             moved: Arc::default(),
             installation,
             removals: given.removals,
+            ..self.clone()
+        }
+    }
+
+    /// The bounds of a short piece of cleaning up after this request, which its own
+    /// bounds no longer allow (ADR 0046, "The kind `remote`"): a cancellation signal of
+    /// its own, never set, and a deadline `within` from now by the run's clock, with the
+    /// same way out and the same record. The one place a backend is given bounds that
+    /// are not its run's: a control send that tells a host to stop a request the run
+    /// has given up on, after the run's signal is set or its deadline has passed, since
+    /// the checked sender refuses to send under either.
+    pub fn for_cleanup(&self, within: Duration) -> Bounds {
+        let now = self
+            .clock
+            .as_ref()
+            .map_or_else(Instant::now, |clock| clock.now());
+        Bounds {
+            cancellation: Cancellation::new(),
+            deadline: now.checked_add(within),
             ..self.clone()
         }
     }

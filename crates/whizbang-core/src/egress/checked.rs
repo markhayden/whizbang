@@ -10,13 +10,15 @@
 //! was given, and the check is the egress strand's. The default of each refuses.
 
 use std::borrow::Cow;
+use std::collections::VecDeque;
 use std::fmt;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
+use super::frames::CheckedFrames;
 use super::{
-    Address, Classes, Credential, DispatchPolicy, NotAllowed, Origin, Outgoing, Piece, Recipient,
-    Reply, Sender,
+    Address, Classes, Control, Credential, DispatchPolicy, Dispatched, Frames, NotAllowed, Origin,
+    Outgoing, Piece, Recipient, Reply, Sender, Sent, Take,
 };
 use crate::capability::{
     Around, Bounds, Declaration, Fault, FaultKind, Nothing, Open, Stage, Stop, Wrapped,
@@ -279,9 +281,55 @@ impl Ways {
             facts,
             moves: AtomicU32::new(0),
             total: AtomicU32::new(0),
+            dispatched: Mutex::new(VecDeque::new()),
+            marks: AtomicU64::new(0),
         })
     }
 }
+
+/// The questions every address of a request is asked before anything of it is handed
+/// over, after the backend named its recipient: the address is at the recipient's
+/// origin or one of its upstreams, the policy approves the recipient for every class
+/// the request holds, and the check, shown the parts and the fields, lets it through.
+/// Why not, in fixed words; the request of frames is made only past these
+/// ([`CheckedFrames::checked`]).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn check_parts(
+    recipient: &Recipient,
+    to: &Address,
+    pieces: &[Piece],
+    fields: &[(&str, &str)],
+    needs: Classes,
+    policy: &DispatchPolicy,
+    check: &dyn HopCheck,
+    request_moves: u32,
+) -> Result<(), &'static str> {
+    if !recipient.reaches(to.origin()) {
+        return Err(NOT_REACHED);
+    }
+    if let Some(not) = policy.why_not(recipient, needs) {
+        return Err(not.why());
+    }
+    let hop = Hop {
+        recipient,
+        to,
+        pieces,
+        fields,
+        needs,
+        policy,
+        moves: 0,
+        total: 0,
+        request: request_moves,
+    };
+    check.look(&hop).map_err(|denied| denied.why())
+}
+
+/// What a request to an origin the recipient does not reach is refused with.
+const NOT_REACHED: &str = "the origin is neither the recipient's own nor one of its upstreams";
+
+/// How many requests of frames a checked sender remembers having dispatched, for the
+/// control sends that may follow them: the last ones.
+const DISPATCHED_KEPT: usize = 64;
 
 impl Ways {
     /// What stands in the gate's place for a run under these ways (ADR 0015, "A
@@ -395,6 +443,11 @@ struct Checked {
     moves: AtomicU32,
     /// How many answers pointed elsewhere, up to now. It never goes back.
     total: AtomicU32,
+    /// The requests of frames this sender dispatched, the last [`DISPATCHED_KEPT`], each
+    /// with the credential it carried: a control send is allowed to these alone.
+    dispatched: Mutex<VecDeque<(Dispatched, Option<Credential>)>>,
+    /// The count each dispatched request is marked with.
+    marks: AtomicU64,
 }
 
 /// What a send that cannot be listed is refused with.
@@ -433,7 +486,176 @@ impl Checked {
     }
 }
 
+impl Checked {
+    /// The questions of a request of frames, before anything is handed over: what
+    /// [`Sender::send_frames`] asks, the refusal noted as a send's is.
+    fn frames_checked(&self, frames: &Frames, bounds: &Bounds) -> Result<CheckedFrames, Fault> {
+        let to = frames.to();
+        let origin = to.origin();
+        let pieces = frames.parts();
+        let needs = Classes::needed_for(pieces.iter().map(Piece::class));
+        let Some(recipient) = &self.recipient else {
+            return Err(self.refuse(
+                origin,
+                needs,
+                "the backend names no recipient, so nothing it is asked leaves the machine",
+            ));
+        };
+        let fields: Vec<(&str, &str)> = frames
+            .fields()
+            .iter()
+            .map(|(name, value)| (*name, value.as_str()))
+            .collect();
+        if let Err(why) = check_parts(
+            recipient,
+            to,
+            &pieces,
+            &fields,
+            needs,
+            &self.policy,
+            &*self.check,
+            bounds.moved(),
+        ) {
+            return Err(self.refuse(origin, needs, why));
+        }
+        let held = self.credentials.iter().find(|c| c.origin() == origin);
+        CheckedFrames::written(frames, needs, held.cloned())
+    }
+
+    /// The request of frames this sender dispatched that `dispatched` names, by its mark
+    /// and its origin, with the credential it carried.
+    fn dispatched(&self, dispatched: &Dispatched) -> Option<Option<Credential>> {
+        let kept = self
+            .dispatched
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        kept.iter()
+            .find(|(held, _)| held == dispatched)
+            .map(|(_, credential)| credential.clone())
+    }
+}
+
+/// What a control send is refused with when it follows no request this sender
+/// dispatched, or goes to another origin than that request's.
+const NOT_DISPATCHED: &str = "a control send follows only a request this way out dispatched, \
+                              to that request's origin";
+
 impl Sender for Checked {
+    /// One request of frames: the same questions as a send's of every part, the policy
+    /// asked about every class the parts hold and the check shown them; the parts then
+    /// written once into [`CheckedFrames`], which the sender behind is handed with the
+    /// credential of the origin. The request is in the run's record before anything
+    /// leaves, as a send's is, and is taken back only when nothing left.
+    fn send_frames(&self, frames: &Frames, bounds: &Bounds, take: &mut Take<'_>) -> Sent {
+        let checked = match self.frames_checked(frames, bounds) {
+            Ok(checked) => checked,
+            Err(fault) => return Sent::refused(fault),
+        };
+        let origin = frames.to().origin();
+        let needs = checked.needs();
+        let Some(sender) = &self.sender else {
+            return Sent::refused(
+                Fault::new(
+                    FaultKind::Unavailable,
+                    "the executor was given no sender, and sends nothing",
+                )
+                .not_sent(),
+            );
+        };
+        let account = self.recipient.as_ref().and_then(|r| r.account());
+        let Some(note) = self.facts.sending(origin, account, needs) else {
+            return Sent::refused(self.refuse(origin, needs, NOT_LISTED));
+        };
+        let credential = checked.credential().cloned();
+        let sent = sender.stream(&checked, bounds, take);
+        if let Err(fault) = &sent.ended
+            && fault.stage() == Stage::NotSent
+            && sent.dispatched.is_none()
+        {
+            note.take_back();
+        }
+        let dispatched = sent.dispatched.map(|dispatched| {
+            let mark = self.marks.fetch_add(1, Ordering::SeqCst) + 1;
+            let dispatched = dispatched.marked(mark);
+            let mut kept = self
+                .dispatched
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            kept.push_back((dispatched.clone(), credential));
+            while kept.len() > DISPATCHED_KEPT {
+                kept.pop_front();
+            }
+            dispatched
+        });
+        Sent {
+            dispatched,
+            ended: sent.ended,
+        }
+    }
+
+    /// A control send: allowed only to the origin of a request of frames this sender
+    /// dispatched, with the credential that request carried and no user data, under the
+    /// check of its address and fields; noted in the run's record as a send of no class.
+    fn control(
+        &self,
+        dispatched: &Dispatched,
+        control: &Control,
+        bounds: &Bounds,
+    ) -> Result<u16, Fault> {
+        let to = control.to();
+        let origin = to.origin();
+        let none = Classes::none();
+        let Some(recipient) = &self.recipient else {
+            return Err(self.refuse(origin, none, NOT_DISPATCHED));
+        };
+        if control.credential().is_some() {
+            return Err(self.refuse(
+                origin,
+                none,
+                "the request came with a credential, and a backend holds none",
+            ));
+        }
+        let credential = match self.dispatched(dispatched) {
+            Some(credential) if dispatched.origin() == origin => credential,
+            _ => return Err(self.refuse(origin, none, NOT_DISPATCHED)),
+        };
+        let fields: Vec<(&str, &str)> = control
+            .fields()
+            .iter()
+            .map(|(name, value)| (*name, value.as_str()))
+            .collect();
+        if let Err(why) = check_parts(
+            recipient,
+            to,
+            &[],
+            &fields,
+            none,
+            &self.policy,
+            &*self.check,
+            0,
+        ) {
+            return Err(self.refuse(origin, none, why));
+        }
+        let Some(sender) = &self.sender else {
+            return Err(Fault::new(
+                FaultKind::Unavailable,
+                "the executor was given no sender, and sends nothing",
+            )
+            .not_sent());
+        };
+        let Some(note) = self.facts.sending(origin, recipient.account(), none) else {
+            return Err(self.refuse(origin, none, NOT_LISTED));
+        };
+        let carried = control.clone().carrying(credential);
+        let answered = sender.control(dispatched, &carried, bounds);
+        if let Err(fault) = &answered
+            && fault.stage() == Stage::NotSent
+        {
+            note.take_back();
+        }
+        answered
+    }
+
     fn send(&self, outgoing: &Outgoing, bounds: &Bounds) -> Result<Reply, Fault> {
         let (to, needs) = (outgoing.to(), outgoing.needs());
         let origin = to.origin();
@@ -454,11 +676,7 @@ impl Sender for Checked {
             ));
         }
         if !recipient.reaches(origin) {
-            return Err(self.refuse(
-                origin,
-                needs,
-                "the origin is neither the recipient's own nor one of its upstreams",
-            ));
+            return Err(self.refuse(origin, needs, NOT_REACHED));
         }
         if let Some(not) = self.policy.why_not(recipient, needs) {
             return Err(self.refuse(origin, needs, not.why()));

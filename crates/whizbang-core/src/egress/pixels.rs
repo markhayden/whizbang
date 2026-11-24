@@ -269,6 +269,15 @@ impl Piece {
             .map(|bytes| Piece::of_picture(class, bytes))
             .ok_or(NotAllowed::TooLong)
     }
+
+    /// A piece of this class that is the picture's canonical pixels as they are, four
+    /// samples a pixel, row by row from the top left: what a request of frames carries
+    /// a picture as (`pack/1`, ADR 0020). It is made from a picture and from nothing
+    /// else, so it holds no metadata, no name and no path; the check behind a send
+    /// passes it as pixels, as it passes what the encoder writes.
+    pub fn pixels(class: DataClass, picture: &Picture) -> Piece {
+        Piece::of_pixels(class, picture.rgba().to_vec())
+    }
 }
 
 #[cfg(test)]
