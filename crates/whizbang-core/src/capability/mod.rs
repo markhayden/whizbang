@@ -15,7 +15,7 @@
 //! it. What does not pass is [`Unfit`].
 
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::contract::{Cancellation, Capability, Clock, ModelIdentity};
 use crate::egress::{Classes, NoWayOut, Sender};
@@ -259,6 +259,9 @@ pub struct Bounds {
     /// The model's count of removals that the lease's hold read for this one request
     /// (ADR 0015, "A wrapper around each request"). Set for one request.
     removals: Option<u64>,
+    /// Whether these are the bounds of a piece of cleaning up ([`Bounds::for_cleanup`]):
+    /// a control send is all the checked sender sends under them.
+    cleanup: bool,
 }
 
 impl std::fmt::Debug for Bounds {
@@ -673,6 +676,7 @@ impl Bounds {
             around: None,
             installation: None,
             removals: None,
+            cleanup: false,
         }
     }
 
@@ -692,6 +696,36 @@ impl Bounds {
             removals: given.removals,
             ..self.clone()
         }
+    }
+
+    /// The bounds of a short piece of cleaning up after this request, which its own
+    /// bounds no longer allow (ADR 0046, "The kind `remote`"): a cancellation signal of
+    /// its own, never set, and a deadline `within` from now by the run's clock, with the
+    /// same way out and the same record. The one place a backend is given bounds that
+    /// are not its run's: a control send that tells a host to stop a request the run
+    /// has given up on, after the run's signal is set or its deadline has passed, since
+    /// the checked sender refuses to send under either.
+    ///
+    /// They are for a control send alone: the checked sender refuses a send and a
+    /// request of frames under them, so nothing of the run's data escapes its signal or
+    /// its deadline through them. A `within` past what the clock holds is taken as no
+    /// time at all, never as no deadline.
+    pub fn for_cleanup(&self, within: Duration) -> Bounds {
+        let now = self
+            .clock
+            .as_ref()
+            .map_or_else(Instant::now, |clock| clock.now());
+        Bounds {
+            cancellation: Cancellation::new(),
+            deadline: Some(now.checked_add(within).unwrap_or(now)),
+            cleanup: true,
+            ..self.clone()
+        }
+    }
+
+    /// Whether these are the bounds of a piece of cleaning up ([`Bounds::for_cleanup`]).
+    pub fn is_cleanup(&self) -> bool {
+        self.cleanup
     }
 
     /// The installation of a local model that this request's run was handed its

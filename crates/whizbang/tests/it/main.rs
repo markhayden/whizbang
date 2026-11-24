@@ -48,6 +48,7 @@ mod rascal;
 mod recipe;
 mod record;
 mod release;
+mod remote;
 mod runner;
 mod runs;
 mod segment;

@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-mod conformance;
+pub(crate) mod conformance;
 mod proto;
 mod queue;
 mod removal;

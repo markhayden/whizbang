@@ -19,8 +19,12 @@ use std::sync::Arc;
 
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use rustls::{RootCertStore, ServerConfig, ServerConnection, StreamOwned};
+use whizbang_core::capability::{Bounds, Fault, FaultKind};
 use whizbang_core::contract::{Secrets, SystemClock};
-use whizbang_core::egress::{NotAllowed, Ways};
+use whizbang_core::egress::{
+    CheckedFrames, Classes, Control, Credential, DispatchPolicy, Frames, NotAllowed, Outgoing,
+    Recipient, Reply, SendCheck, Sender, Sent, Take, Ways,
+};
 
 use super::client::Client;
 
@@ -206,6 +210,159 @@ pub fn ways_trusting(pki: &Pki, store_root: &Path, secrets: &Secrets) -> Result<
         None,
     );
     super::ways_over(Arc::new(client), store_root)
+}
+
+/// The prober of the network ([`super::prober`]), trusting the root of `pki` and no
+/// other.
+pub fn prober_trusting(pki: &Pki) -> Arc<dyn whizbang_core::egress::Prober> {
+    Arc::new(Client::trusting(
+        pki.roots(),
+        super::prober_timing(),
+        Arc::new(SystemClock),
+        Secrets::none(),
+        None,
+    ))
+}
+
+/// The client as a sender of frames trusting the root of `pki`, that resolves names by
+/// `resolve` when one is given: what a test hands a backend of the kind `remote` in the
+/// place of the checked sender, with [`Checking`] around it.
+pub fn frames_client(pki: &Pki, resolve: Option<Resolve>) -> Arc<dyn Sender> {
+    frames_client_on(pki, Arc::new(SystemClock), resolve, None)
+}
+
+/// The same, on this clock, resolving by `resolve` and connecting by `dial` when they
+/// are given: what a test that moves time by hand or stalls a connect hands.
+pub fn frames_client_on(
+    pki: &Pki,
+    clock: Arc<dyn whizbang_core::contract::Clock>,
+    resolve: Option<Resolve>,
+    dial: Option<Dial>,
+) -> Arc<dyn Sender> {
+    let mut timing = super::sender_timing();
+    timing.poll = std::time::Duration::from_millis(10);
+    let client = Client::trusting(pki.roots(), timing, clock, Secrets::none(), dial);
+    match resolve {
+        Some(resolve) => Arc::new(client.resolving(resolve)),
+        None => Arc::new(client),
+    }
+}
+
+/// How a test's client resolves a name.
+pub type Resolve = super::client::Resolve;
+
+/// How a test's client connects a socket.
+pub type Dial = super::client::Dial;
+
+/// A sender of frames for a test with no executor: it holds each request of frames to
+/// a check, the send check of the store's root it is given, under a policy that
+/// approves its recipient for every class, as the checked sender does
+/// ([`CheckedFrames::checked`]), attaches its credential, and streams it through the
+/// client behind; and it allows a control send only to a request it dispatched. It
+/// notes nothing: a run's record is the checked sender's, which the binary's tests
+/// show.
+pub struct Checking {
+    client: Arc<dyn Sender>,
+    recipient: Recipient,
+    credential: Option<Credential>,
+    check: SendCheck,
+    dispatched: std::sync::Mutex<Vec<whizbang_core::egress::Dispatched>>,
+}
+
+impl Checking {
+    pub fn new(
+        client: Arc<dyn Sender>,
+        recipient: Recipient,
+        credential: Option<Credential>,
+        check: SendCheck,
+    ) -> Checking {
+        Checking {
+            client,
+            recipient,
+            credential,
+            check,
+            dispatched: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    fn policy(&self) -> DispatchPolicy {
+        DispatchPolicy::none()
+            .approving(self.recipient.clone(), Classes::all())
+            .unwrap()
+    }
+}
+
+impl Sender for Checking {
+    fn send(&self, _: &Outgoing, _: &Bounds) -> Result<Reply, Fault> {
+        Err(Fault::new(
+            FaultKind::Rejected,
+            "a test's sender of frames sends no pieces",
+        )
+        .not_sent())
+    }
+
+    fn send_frames(&self, frames: &Frames, bounds: &Bounds, take: &mut Take<'_>) -> Sent {
+        let checked = CheckedFrames::checked(
+            frames,
+            &self.recipient,
+            &self.policy(),
+            &self.check,
+            self.credential.clone(),
+        );
+        let checked = match checked {
+            Ok(checked) => checked,
+            Err(fault) => return Sent::refused(fault),
+        };
+        let sent = self.client.stream(&checked, bounds, take);
+        if let Some(dispatched) = &sent.dispatched {
+            self.dispatched.lock().unwrap().push(dispatched.clone());
+        }
+        sent
+    }
+
+    fn control(
+        &self,
+        dispatched: &whizbang_core::egress::Dispatched,
+        control: &Control,
+        bounds: &Bounds,
+    ) -> Result<u16, Fault> {
+        let known = self.dispatched.lock().unwrap().contains(dispatched);
+        if !known || control.credential().is_some() || control.to().origin() != dispatched.origin()
+        {
+            return Err(
+                Fault::new(FaultKind::Rejected, "not a request this sender dispatched").not_sent(),
+            );
+        }
+        let carried = control.clone().carrying(self.credential.clone());
+        self.client.control(dispatched, &carried, bounds)
+    }
+}
+
+impl Pki {
+    /// The root's certificate and the server's certificate and key, as PEM files in
+    /// `folder` (`root.pem`, `cert.pem`, `key.pem`): what a server of another program,
+    /// the pack's front, is started with.
+    pub fn write_pem(&self, folder: &Path) {
+        let pem = |label: &str, der: &[u8]| {
+            let mut text = format!("-----BEGIN {label}-----\n");
+            let mut base64 = Vec::new();
+            super::http::base64_onto(der, &mut base64);
+            for line in base64.chunks(64) {
+                text.push_str(std::str::from_utf8(line).unwrap());
+                text.push('\n');
+            }
+            text.push_str(&format!("-----END {label}-----\n"));
+            text
+        };
+        std::fs::write(folder.join("root.pem"), pem("CERTIFICATE", &self.root)).unwrap();
+        std::fs::write(folder.join("cert.pem"), pem("CERTIFICATE", &self.leaf)).unwrap();
+        let key = key(self.leaf_seed);
+        std::fs::write(
+            folder.join("key.pem"),
+            pem("PRIVATE KEY", key.secret_pkcs8_der()),
+        )
+        .unwrap();
+    }
 }
 
 /// The client as a bare sender trusting the root of `pki`: for the crate's own tests

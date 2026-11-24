@@ -867,7 +867,13 @@ fn a_download_hands_its_bytes_to_a_sink_that_can_stop_it_and_a_probe_says_what_i
         .probe(&ProbeRequest::new(from.clone()), &Cancellation::new())
         .unwrap();
     assert_eq!(probed, Probed::Moved(from));
-    assert_ne!(probed, Probed::Reached { status: 200 });
+    assert_ne!(
+        probed,
+        Probed::Reached {
+            status: 200,
+            body: Vec::new()
+        }
+    );
 }
 
 // --- a backend's declaration ----------------------------------------------------------------

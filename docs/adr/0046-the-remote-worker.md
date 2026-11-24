@@ -7,8 +7,9 @@ one call at a time behind a bounded queue; cooperative cancellation; a restart f
 in flight and replays nothing; the device chosen at runtime), section 5 (segment, self-hosted,
 milestone 6), section 6 ("Spend": GPU time on a self-hosted backend, as amended by this record),
 section 9 (a remote backend reports the model files it runs by hash); plan
-`docs/plans/m6-http-and-remote-hosting.md`, "The remote worker" and task P1 (task R1 fills the
-client's section). Amends ADR 0020, "The HTTP codec, on paper", to "as built".
+`docs/plans/m6-http-and-remote-hosting.md`, "The remote worker", task P1 and task R1 (the
+client's section, "The kind `remote`"). Amends ADR 0020, "The HTTP codec, on paper", to "as built", and ADR 0024
+with the client's way of frames, its control send and the prober.
 
 ## Context
 
@@ -136,7 +137,11 @@ declared allowance of attempts, the residual recorded in that host's record.
   seconds, an `unload` within 30, a `load` within 120, a call within 120, a cancel within 5,
   an end within 5. Past one the worker is killed.
 - **A restart** is the end of the worker, by any cause. It fails the request in flight and
-  every request waiting in that front's queue (`unavailable`, not sent), and replays nothing.
+  every request waiting in that front's queue when the end is told (`unavailable`, not
+  sent), and replays nothing; a request that reaches the queue after that is answered by
+  the next worker (task R1 found that one which came while the failed turn was being
+  cleaned up was failed with the queue, and fixed it,
+  `test_front.Supervision.test_a_request_that_comes_after_a_restart_was_told_is_answered_and_not_failed_with_the_queue`).
   No worker is started by itself: the next request starts one; after 3 workers in a row that
   ended before they answered anything, none is started for 60 seconds, as the local
   supervisor's rule. A front whose queue another front's request shares with the same
@@ -229,9 +234,158 @@ those adapters' sources are as they were.
 
 ### The kind `remote`
 
-Task R1 fills this section: the client's way of frames, the kind's config, its identity check,
-its price from `host_limit_s` and the attempt allowance, the probe with a body, and the
-conformance suite over HTTP.
+Built by task R1. Whizbang's side of the front: the client's way of frames, the kind and
+its config, its identity check, its price, the probe with a body, and the conformance
+suite over HTTP.
+
+**The client's way of frames** (`whizbang_core::egress`, `frames.rs`; the network's in
+`whizbang_backends::net`; ADR 0024 as amended). A backend sends a request whose body is
+frames through the sender its bounds hand it (`Sender::send_frames`), as it sends pieces.
+
+- **The check sees typed parts, not opaque bytes.** The request (`Frames`) holds a body of
+  the backend's (`FrameBody`), which states what it is made of, each text as a piece of
+  its class and the picture as its canonical pixels (`Piece::pixels`), and writes its
+  bytes from that same value. The kind `remote`'s body is whizbang's hello, the `load` and
+  the call, written by `pack/1`'s own codec; its texts are the conversation's id, the
+  model, the installation, each setting and each query, as prompts, and its picture is
+  the call's image as source images. A call whose image is not a picture of the core (a
+  raster whose samples are not its size's) is refused before anything leaves, never sent
+  with the image left out of the parts. The checked sender asks of the parts what it asks
+  of a send's pieces (the recipient's origin and upstreams, the policy for every class
+  they hold, the check of every part and field); a picture's pixels are passed as
+  pixels, whatever their bytes spell, as the encoder's PNG is. Only then are the bytes
+  written, once, into `CheckedFrames`, which only a check makes (`CheckedFrames::checked`,
+  and the checked sender's own) and which is all the network's sender of frames takes.
+  The request is in the run's record before anything leaves, taken back only when
+  nothing did.
+- **The answer is read as it arrives.** The network's sender writes a `POST` of the checked
+  bytes with the request's own fields (the kind's `Whizbang-Dispatch`) and its credential,
+  and hands the caller the answer's head and a reader of its body, chunked or of a stated
+  length, which reads off the wire only as the caller asks: the kind reads it through
+  `pack/1`'s codec, so every length is checked before its bytes, and no answer is held
+  whole by the client. A fault of the wire under the reader (a timeout, a cancel, a cut)
+  is the request's end, whatever the reader made of it.
+- **Two limits, not one.** The connect, the handshake and the writing of the body keep the
+  client's own limits (`CONNECT_LIMIT`, `BETWEEN_READS_LIMIT`); the wait for the answer's
+  first byte and between two of its bytes is the request's own, which the kind sets to
+  `host_limit_s`, one attempt, and never past the run's deadline. A host that stalls is
+  found then, and is charged at its bound either way. No heartbeat is added.
+- **It follows nothing.** A redirect is an answer like another; the kind refuses it, and
+  nothing is asked of the address it names.
+- **The control send.** Once its socket connected, a request of frames names what it
+  reached (`Dispatched`: the origin and the address of its peer), and the checked sender
+  keeps the last 64 it dispatched, each with the credential it carried. A control send
+  (`Sender::control`, a `Control` of at most 4 KiB) is allowed only to the origin of one of
+  them, carries that request's credential and none a backend brings, holds no user data,
+  is held to the check of its address and fields, and is noted in the run's record with no
+  class. It is made under bounds of its own, `Bounds::for_cleanup` (a cancellation signal
+  of its own and a deadline of 5 seconds from now, the run's way out and record), the one
+  place a backend is given bounds that are not its run's, since the run's signal is set
+  or its deadline spent and the checked sender refuses to send under either. The network
+  connects it to the peer the request reached, resolving no name, checks the same name in
+  the certificate, and holds it to its deadline from the connect to the last byte of the
+  answer's head; the body of the answer is not read. The check is shown the control's
+  body as a part of no class, and its fields. Under those bounds the checked sender sends a
+  control and nothing else: a send or a request of frames under them is refused, so no data
+  of the run escapes its signal or its deadline through them; and a time past what the clock
+  holds is no time, never no deadline.
+
+**The kind's config** (`whizbang_backends::remote`), under `[backends.segment]` alone: a
+remote fill or a remote judge is refused, naming the capability (milestone 8). `url` is
+the front's base address and is `https`, else refused; the routes are appended to it.
+`token_env` names the front's token, which goes as `Authorization: Bearer <token>`, bound to
+the url's origin; a `key_env` or a `provider` is refused. `model` is a model the catalogue
+holds, under an adapter of this build. Settings: `price_microusd_per_second` and
+`host_limit_s`, whole numbers from 1, both or neither; and the model's own settings the
+kind `pack` takes (`threshold`, `pad`, `min_cover`, `outline`, `device`), each sent in the
+`load`. The binary registers the kind over the catalogue it ships and its table of
+adapters.
+
+**Its price.** `Price::by_time(price_microusd_per_second, TimeLimit::of_host(ms))` with `ms`
+`host_limit_s` × 1,000 × 2 (the allowance of attempts above), the multiplications checked:
+one setting without the other, a zero, or a product that does not fit is refused when the
+config is read, naming the setting. The plan's example is 300 × 600 × 2 = 360,000
+millionths, 0.36 dollars. A table that names neither makes a backend with no price; it
+names a recipient, so it has no bound, and every call to it is refused before anything is
+sent (ADR 0012). A request refused before anything left is settled at nothing; every
+other ends unresolved and is charged at its bound, whatever the outcome record says of
+its stage.
+
+**Its identity.** The kind works out the digest above from the files of the installation
+`whizbang models get` would make of the catalogue's entry under this build's adapter, and
+holds the answer to it before anything of the answer is used: a `Whizbang-Model-Files`
+missing, malformed or of another digest refuses the answer whole, and nothing of it is
+kept. An answer of `Whizbang-Unverified: failure` is read as its outcome record alone, and
+a frame in it refuses it whole. The backend declares its model at the version `files-` and
+the digest's 64 hex digits: not the digest's own text, which a version is taken for an
+installation's identity in, and a local model's. So a run's record names the model of the
+kind `remote` at the files asked, and the device the worker named, never from a cache; the
+digest the answer reported and the request's dispatch id are said beside the response, in
+the run's diagnostic of `segment`. The record's version is unchanged.
+
+**Its dispatch id** is 128 bits of the system's randomness (`getrandom`), as 32 lower-case
+hex digits, new for each request: whizbang retries none itself. Every failure of a request
+leads its sentence with it (`dispatch <id>: …`), and the action `segment` keeps a failure's
+kind and sentence in its run's diagnostic (`failed <kind>: …`), so a request charged at its
+bound and ended by a timeout or a cancel, whose run keeps no reason, is still found by its id
+at the host.
+
+**Its cancel.** When the run's signal is set or the request's wait or deadline passes
+before the answer was read whole, the stream is closed (which the front takes as a cancel
+too) and whizbang's hello and a `cancel` of the call follow it to `/pack/1/cancel`, naming
+the dispatch, through the control send. A host that does not answer it is let go of at its
+deadline. A request whose answer was read whole, a cancelled one among them, is not
+followed.
+
+**The probe with a body.** `Probed::Reached` carries the start of the answer's body, at most
+4 KiB, which the checked prober holds to that bound before it hands it on, refusing a
+longer one whole. The network's prober is a `GET` with no credential (a request that
+brings one is refused), no body and no user data, which follows nothing; the binary hands
+it to `whizbang backends status --probe` in place of the prober that contacted nothing.
+For a backend of the kind `remote` it probes `<url>/pack/1/health` and says whether the
+host holds the model the config asks: an installation of that model whose files' digest
+is the version the backend declares. A backend whose approval does not say `probe = true`
+is not probed.
+
+**The conformance suite over HTTP.** The behavioural half is restated over an atomic
+request, a `load` and its call together: the local transport sends each through the
+supervisor's queue as a `Request`, and the transport over HTTP through the kind's own
+production HTTPS client to the fake host, the pack's own front (`python -m
+whizbang_pack.front`, the same Python and the same bytes) serving HTTPS on `127.0.0.1:0`
+with a certificate of the net client's test PKI. Its worker's side is named by
+`--worker fake_host:side` (`crates/whizbang-backends/tests/it/remote/fake_host.py`): the
+pack's own `LocalSide`, one for each fake fault a request's model names
+(`<fault>--<fake model>`), each starting the pack's fakes with that fault and with limits
+the fast tier can wait for. `--worker local` starts only the pack's worker, which takes
+no fault: the faults need a side of the test's, made as task D1's Modal bridge makes its
+own. A case that observes the worker observes it through what the front reports: the
+error the request is answered with, and the outcome record (the end and the error
+output). Every case, its local form and its form over HTTP:
+
+| Case | Local form | Form over HTTP |
+|---|---|---|
+| A result names the device of the model that answered it | `conformance::a_result_names_the_device_of_the_model_that_answered_it_and_the_hello_the_workers_own` | `conformance::the_cases_of_the_fake_models_pass_over_http`: `fake-mps` answers `mps` |
+| A segment request is answered with the masks the request determines | `conformance::the_real_pack_with_a_fake_model_answers_a_segment_request_whose_masks_are_those_the_request_determines` | `conformance::the_cases_of_the_fake_models_pass_over_http`: the same masks, in the fixed order |
+| A result over its request's bound is refused, as too_large | `conformance::a_result_over_the_bound_its_request_gives_is_refused_before_it_is_built_and_the_call_ends_as_too_large` | `conformance::the_cases_of_the_fake_models_pass_over_http`: the front refuses it, ends the worker and says `too_large`; the codec's half, refused before the planes are read, is the same codec on both sides |
+| A payload whose length disagrees with its entry ends the call as malformed, and the next call starts another worker | `conformance::a_malformed_payload_ends_the_call_as_malformed_and_the_worker_is_restarted` | `conformance::the_cases_of_the_fake_models_pass_over_http`: `malformed`, the worker's end in the record, the next request answered |
+| A worker that ends inside a call ends it as unavailable and unresolved | `worker::a_request_that_could_not_be_written_is_not_sent_and_one_written_and_unanswered_is_unresolved` | `conformance::the_cases_of_the_fake_models_pass_over_http`: `unavailable`, unresolved, exit code 4 in the record |
+| A fault made from a worker's failure quotes nothing of its error output, which is handed on whole | `worker::a_fault_made_from_a_workers_failure_holds_none_of_the_marker_the_host_and_the_token_its_error_output_held` | `conformance::the_cases_of_the_workers_faults_pass_over_http`: the lines cross in the record, the front's secrets taken out (`--redact-env`), and the fault quotes none |
+| A request from the worker is answered unsupported before its payload is read | `worker::a_request_from_the_worker_is_refused_before_its_payload_is_read_and_answered_as_unsupported` | `conformance::the_cases_of_the_workers_faults_pass_over_http`: the call ends and the worker is killed, nothing of its request crossing; the front waits for the payload and ends the call at its limit, where the local supervisor refuses before reading it (a row of `docs/carry-over.md`) |
+| A refusal whizbang sends is a text the worker's reader takes | `worker::a_text_whizbang_sends_is_cleaned_as_a_text_of_the_protocol_and_the_worker_takes_it` | `conformance::the_cases_of_the_workers_faults_pass_over_http`: the front refuses the worker of another version at its hello, `malformed`, and kills it |
+| A request the worker does not read ends at the call's limit as timed_out | `worker::a_request_the_worker_does_not_read_ends_at_the_calls_limit_as_timed_out_and_leaves_nothing_behind` | `conformance::the_cases_of_the_workers_faults_pass_over_http`: `timed_out` at the front's limit of a call, the worker killed |
+| A word whizbang writes behind a full input waits no longer than its limit | `worker::a_word_to_a_worker_whose_input_is_full_waits_no_longer_than_its_limit` | `conformance::the_cases_of_the_workers_faults_pass_over_http`: the frame the front refuses ends the request at once, `malformed`, the worker killed |
+| A worker of another version is refused at its hello | `worker::a_worker_of_another_protocol_version_is_refused_at_the_hello_and_is_not_left_running` | `conformance::the_cases_of_the_workers_faults_pass_over_http`: `malformed`, killed |
+| A worker that says no hello is killed at its limit | `worker::a_worker_that_says_no_hello_within_its_limit_is_killed_and_the_request_ends_as_unavailable` | `conformance::the_cases_of_the_workers_faults_pass_over_http`: killed at the front's limit of a hello; the front says `timed_out` where the local supervisor says `unavailable` |
+| A worker that does not end at the end of its input is killed at the deadline | `worker::a_worker_that_does_not_end_at_the_end_of_its_input_is_killed_at_the_deadline_and_waited_for` | `conformance::the_cases_of_the_workers_faults_pass_over_http`: its end is in the record, and the next request is answered |
+| A process the worker started keeps neither stop nor drop waiting | `worker::a_process_the_worker_started_that_holds_its_streams_open_keeps_neither_stop_nor_drop_waiting` | `conformance::the_cases_of_the_workers_faults_pass_over_http`: the request ends within the front's limit, and the next is answered |
+| A cancelled call that stops ends as cancelled | `queue::a_cancelled_call_that_stops_ends_as_cancelled_and_the_worker_lives_on` | `conformance::the_cases_of_cancels_and_limits_pass_over_http`: the run's signal closes the stream and sends the cancel; `cancelled`, charged at its bound |
+| A cancelled call that does not stop has its worker restarted | `queue::a_cancelled_call_that_has_not_stopped_at_its_deadline_has_its_worker_restarted` | `conformance::the_cases_of_cancels_and_limits_pass_over_http`: `cancelled`; once the front's side has ended the call, the next request starts another worker, which answers |
+| A worker that floods events has its call ended | `queue::a_worker_that_floods_events_has_its_call_ended_as_malformed_and_is_restarted` | `conformance::the_cases_of_the_workers_faults_pass_over_http`: ended and killed; the front says `too_large` of the event over its bound where the local supervisor says `malformed` |
+| A load or an unload past its limit has its worker killed | `queue::a_load_or_an_unload_that_does_not_end_within_its_limit_has_its_worker_killed` | `conformance::the_cases_of_cancels_and_limits_pass_over_http`: `timed_out`, killed, for a load and for the unload a second model's load makes |
+| A worker that exits inside a call fails what was in flight, and the next request starts another | `queue::a_worker_that_exits_inside_a_call_fails_what_was_in_flight_and_the_next_request_starts_another` | `conformance::the_cases_of_the_fake_models_pass_over_http`: as the case of a worker that ends inside a call, and the next request answered |
+
+None is dropped, and none passes by a load made up for it. The three tests over HTTP share
+a host each and take about 6 seconds of the fast tier's 300 together.
 
 ### What this record leaves
 

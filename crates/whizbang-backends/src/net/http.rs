@@ -24,7 +24,21 @@ pub(crate) const FIELDS_LIMIT: usize = 100;
 /// copied once, into what is returned, and into no buffer that grew and was let go:
 /// whoever writes it overwrites it then (`client.rs`).
 pub(crate) fn request(address: &Address, credential: Option<&Credential>) -> Vec<u8> {
-    written(b"GET ", address, &[], credential, None)
+    written(b"GET ", address, &[], credential, Body::None)
+}
+
+/// The request that sends a body of bytes the caller wrote (a request of frames, or a
+/// control send): a `POST` of the address's path and query, with the same fixed fields
+/// as a `GET`, the request's own fields, its credential's field, a `Content-Length` of
+/// the body, and the body as it is. Made in one allocation of its exact size, as
+/// [`request`] is.
+pub(crate) fn post_bytes(
+    address: &Address,
+    fields: &[(&str, &str)],
+    credential: Option<&Credential>,
+    body: &[u8],
+) -> Vec<u8> {
+    written(b"POST ", address, fields, credential, Body::Bytes(body))
 }
 
 /// The request that sends `outgoing`: a `POST` of the address's path and query, with
@@ -42,8 +56,16 @@ pub(crate) fn post(outgoing: &Outgoing) -> Vec<u8> {
         outgoing.to(),
         outgoing.fields(),
         outgoing.credential(),
-        Some(outgoing.pieces()),
+        Body::Pieces(outgoing.pieces()),
     )
+}
+
+/// What a request's body is.
+#[derive(Clone, Copy)]
+enum Body<'a> {
+    None,
+    Pieces(&'a [Piece]),
+    Bytes(&'a [u8]),
 }
 
 /// How many bytes the base64 of `bytes` bytes is, with its padding.
@@ -76,7 +98,7 @@ fn written(
     address: &Address,
     fields: &[(&str, &str)],
     credential: Option<&Credential>,
-    body: Option<&[Piece]>,
+    body: Body<'_>,
 ) -> Vec<u8> {
     let rest = match address.rest() {
         "" => "/",
@@ -95,10 +117,15 @@ fn written(
             piece.bytes().len()
         }
     };
-    let length = body.map(|pieces| {
-        let length: usize = pieces.iter().map(piece_len).sum();
-        format!("Content-Length: {length}\r\n")
-    });
+    let body_length: usize = match body {
+        Body::None => 0,
+        Body::Pieces(pieces) => pieces.iter().map(piece_len).sum(),
+        Body::Bytes(bytes) => bytes.len(),
+    };
+    let length = match body {
+        Body::None => None,
+        _ => Some(format!("Content-Length: {body_length}\r\n")),
+    };
     let parts: [&[u8]; 6] = [
         method,
         rest.as_bytes(),
@@ -128,18 +155,23 @@ fn written(
             .chain(carried)
             .chain(end)
     };
-    let body_length: usize = body.map_or(0, |pieces| pieces.iter().map(piece_len).sum());
     let length = head().map(<[u8]>::len).sum::<usize>() + body_length;
     let mut text = Vec::with_capacity(length);
     for part in head() {
         text.extend_from_slice(part);
     }
-    for piece in body.unwrap_or_default() {
-        if piece.is_picture() {
-            base64_onto(piece.bytes(), &mut text);
-        } else {
-            text.extend_from_slice(piece.bytes());
+    match body {
+        Body::None => {}
+        Body::Pieces(pieces) => {
+            for piece in pieces {
+                if piece.is_picture() {
+                    base64_onto(piece.bytes(), &mut text);
+                } else {
+                    text.extend_from_slice(piece.bytes());
+                }
+            }
         }
+        Body::Bytes(bytes) => text.extend_from_slice(bytes),
     }
     text
 }
@@ -152,6 +184,11 @@ pub(crate) struct Head {
 }
 
 impl Head {
+    /// Every field, as it came, in order.
+    pub(crate) fn fields(&self) -> &[(String, String)] {
+        &self.fields
+    }
+
     /// The values of every field of this name, in order. Names are compared without
     /// regard to case.
     fn all(&self, name: &str) -> impl Iterator<Item = &str> {
@@ -353,6 +390,154 @@ impl<'a> Chunks<'a> {
             }
         }
         Err(malformed(TRAILERS))
+    }
+}
+
+/// A chunked body read as it comes, a piece at a time ([`Dechunk::read`]): the same
+/// rules as [`Chunks::body`], without holding the body. The size of each chunk is
+/// held to nothing but its hex digits: whoever reads the body bounds what it takes.
+pub(crate) struct Dechunk {
+    held: Vec<u8>,
+    at: usize,
+    state: Chunked,
+}
+
+/// Where a chunked body is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Chunked {
+    /// Before a chunk's size line.
+    Size,
+    /// Inside a chunk, with this many of its bytes still to come.
+    Data(usize),
+    /// After a chunk's bytes, before its line ending.
+    DataEnd,
+    /// In the trailer, after this many of its lines.
+    Trailer(usize),
+    /// After the trailer's empty line: the body is whole.
+    Done,
+}
+
+impl Dechunk {
+    /// A body whose first bytes came with the head.
+    pub(crate) fn new(start: Vec<u8>) -> Dechunk {
+        Dechunk {
+            held: start,
+            at: 0,
+            state: Chunked::Size,
+        }
+    }
+
+    /// Reads some of the body into `into`, what is held first and then what `more`
+    /// reads: how many bytes, and none only once the body is whole. A connection that
+    /// ends before that is cut.
+    pub(crate) fn read(
+        &mut self,
+        into: &mut [u8],
+        more: &mut dyn FnMut(&mut [u8]) -> Result<usize, Fault>,
+    ) -> Result<usize, Fault> {
+        if into.is_empty() {
+            return Ok(0);
+        }
+        loop {
+            match self.state {
+                Chunked::Done => return Ok(0),
+                Chunked::Size => {
+                    let line = self.line(CHUNK_LINE_MAX_BYTES, CHUNK_LINE, more)?;
+                    let digits = line.split(|&b| b == b';').next().unwrap_or_default();
+                    let hex = !digits.is_empty()
+                        && digits.len() <= 8
+                        && digits.iter().all(u8::is_ascii_hexdigit);
+                    if !hex {
+                        return Err(malformed(CHUNK_LINE));
+                    }
+                    let size = digits.iter().fold(0usize, |size, &digit| {
+                        size * 16 + char::from(digit).to_digit(16).unwrap_or(0) as usize
+                    });
+                    self.state = match size {
+                        0 => Chunked::Trailer(0),
+                        size => Chunked::Data(size),
+                    };
+                }
+                Chunked::Data(left) => {
+                    if self.at == self.held.len() {
+                        self.fill(more)?;
+                    }
+                    let here = (self.held.len() - self.at).min(left).min(into.len());
+                    into[..here].copy_from_slice(&self.held[self.at..self.at + here]);
+                    self.at += here;
+                    self.state = match left - here {
+                        0 => Chunked::DataEnd,
+                        left => Chunked::Data(left),
+                    };
+                    return Ok(here);
+                }
+                Chunked::DataEnd => {
+                    while self.held.len() - self.at < 2 {
+                        self.fill(more)?;
+                    }
+                    if &self.held[self.at..self.at + 2] != b"\r\n" {
+                        return Err(malformed(CHUNK_END));
+                    }
+                    self.at += 2;
+                    self.state = Chunked::Size;
+                }
+                Chunked::Trailer(lines) => {
+                    if lines > TRAILERS_LIMIT {
+                        return Err(malformed(TRAILERS));
+                    }
+                    let line = self.line(LINE_MAX_BYTES, TRAILERS, more)?;
+                    self.state = match line.is_empty() {
+                        true => Chunked::Done,
+                        false => Chunked::Trailer(lines + 1),
+                    };
+                }
+            }
+        }
+    }
+
+    /// Reads on, once; a connection that ends here ends the body before it is whole.
+    fn fill(
+        &mut self,
+        more: &mut dyn FnMut(&mut [u8]) -> Result<usize, Fault>,
+    ) -> Result<(), Fault> {
+        if self.at > 0 {
+            self.held.drain(..self.at);
+            self.at = 0;
+        }
+        let mut buffer = [0u8; 16 * 1024];
+        let read = more(&mut buffer)?;
+        if read == 0 {
+            return Err(Fault::new(FaultKind::Malformed, super::wire::CUT).unresolved());
+        }
+        self.held.extend_from_slice(&buffer[..read]);
+        Ok(())
+    }
+
+    /// One line, without its ending, of at most `most` bytes with the ending.
+    fn line(
+        &mut self,
+        most: usize,
+        why: &'static str,
+        more: &mut dyn FnMut(&mut [u8]) -> Result<usize, Fault>,
+    ) -> Result<Vec<u8>, Fault> {
+        loop {
+            let left = &self.held[self.at..];
+            if let Some(end) = left.windows(2).position(|pair| pair == b"\r\n") {
+                if end + 2 > most {
+                    return Err(malformed(why));
+                }
+                let line = left[..end].to_vec();
+                if line.iter().any(|&b| b == b'\r' || b == b'\n') {
+                    return Err(malformed(BARE_ENDING));
+                }
+                self.at += end + 2;
+                return Ok(line);
+            }
+            if left.len() >= most {
+                return Err(malformed(why));
+            }
+            self.fill(more)?;
+        }
     }
 }
 

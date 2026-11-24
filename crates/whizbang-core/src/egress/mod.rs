@@ -18,6 +18,7 @@ mod approvals;
 mod chains;
 mod checked;
 mod classes;
+mod frames;
 mod hops;
 mod pixels;
 mod policy;
@@ -29,6 +30,10 @@ pub use chains::{CheckedDownloader, CheckedProber, DOWNLOAD_ORIGINS_LIMIT};
 pub(crate) use checked::NoWayOut;
 pub use checked::{CREDENTIALS_LIMIT, Denied, Hop, HopCheck, MOVED_SECRET, NoHop, Ways};
 pub use classes::{Classes, DataClass};
+pub use frames::{
+    CONTROL_MAX_BYTES, CONTROL_WITHIN, CheckedFrames, Control, Dispatched, FRAME_FIELDS_LIMIT,
+    FrameBody, Frames, Head, Sent, Take,
+};
 pub use hops::{KEPT_OUT_LIMIT, MOVES_LIMIT, SendCheck};
 pub use policy::{APPROVED_LIMIT, DispatchPolicy, NotApproved};
 pub use prepared::{JPEG_QUALITY, fitted, is_plain_jpeg};
@@ -37,8 +42,8 @@ pub use recipient::{
     UPSTREAM_LIMIT,
 };
 pub use ways::{
-    DownloadRequest, Downloaded, Downloader, FIELDS_LIMIT, Outgoing, PIECES_LIMIT, Piece,
-    ProbeRequest, Probed, Prober, REPLY_MAX_BYTES, Reply, Sender,
+    DownloadRequest, Downloaded, Downloader, FIELDS_LIMIT, Outgoing, PIECES_LIMIT,
+    PROBE_BODY_MAX_BYTES, Piece, ProbeRequest, Probed, Prober, REPLY_MAX_BYTES, Reply, Sender,
 };
 
 /// Why something that names a way out could not be made. Each is a kind and a sentence

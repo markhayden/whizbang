@@ -8,8 +8,11 @@
 
 use std::fmt;
 
-use super::{Address, Classes, Credential, DataClass, NotAllowed};
-use crate::capability::{Bounds, Fault};
+use super::{
+    Address, CheckedFrames, Classes, Control, Credential, DataClass, Dispatched, Frames,
+    NotAllowed, Sent, Take,
+};
+use crate::capability::{Bounds, Fault, FaultKind};
 use crate::contract::Cancellation;
 
 /// The most pieces one request holds.
@@ -20,6 +23,11 @@ pub const REPLY_MAX_BYTES: usize = 16 << 20;
 
 /// The most fields of its own a request names ([`Outgoing::with_fields`]).
 pub const FIELDS_LIMIT: usize = 8;
+
+/// The most bytes of a probe's body that are handed on ([`Probed::Reached`]): a host's
+/// small document of its health (ADR 0046, `pack-host/1`). The checked prober refuses
+/// a body over it before it is handed on.
+pub const PROBE_BODY_MAX_BYTES: usize = 4 * 1024;
 
 /// The fields a sender writes itself, and those that carry a credential, which only
 /// the executor attaches: a request may name none of them. Compared without regard to
@@ -49,6 +57,7 @@ pub struct Piece {
     class: Option<DataClass>,
     bytes: Vec<u8>,
     picture: bool,
+    pixels: bool,
 }
 
 impl Piece {
@@ -58,6 +67,18 @@ impl Piece {
             class: Some(class),
             bytes,
             picture: false,
+            pixels: false,
+        }
+    }
+
+    /// A piece of this class that is a picture's canonical pixels as they are, four
+    /// samples a pixel ([`Piece::pixels`]): made from a picture and nothing else.
+    pub(super) fn of_pixels(class: DataClass, bytes: Vec<u8>) -> Piece {
+        Piece {
+            class: Some(class),
+            bytes,
+            picture: false,
+            pixels: true,
         }
     }
 
@@ -68,6 +89,7 @@ impl Piece {
             class: Some(class),
             bytes,
             picture: true,
+            pixels: false,
         }
     }
 
@@ -78,6 +100,7 @@ impl Piece {
             class: None,
             bytes,
             picture: false,
+            pixels: false,
         }
     }
 
@@ -86,6 +109,13 @@ impl Piece {
     /// exactly those, and every other piece as it is.
     pub fn is_picture(&self) -> bool {
         self.picture
+    }
+
+    /// Whether the piece is a picture's canonical pixels ([`Piece::pixels`]): what a
+    /// request of frames carries a picture as. The check behind a send passes it as
+    /// pixels, and reads no word in it.
+    pub fn is_pixels(&self) -> bool {
+        self.pixels
     }
 
     /// The class that was stated, when one was.
@@ -101,7 +131,11 @@ impl Piece {
 impl fmt::Debug for Piece {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let class = self.class.map_or("no class", DataClass::name);
-        let picture = if self.picture { ", a picture" } else { "" };
+        let picture = match (self.picture, self.pixels) {
+            (true, _) => ", a picture",
+            (_, true) => ", pixels",
+            _ => "",
+        };
         write!(f, "Piece({class}, {} bytes{picture})", self.bytes.len())
     }
 }
@@ -115,6 +149,14 @@ pub struct Outgoing {
     pieces: Vec<Piece>,
     fields: &'static [(&'static str, &'static str)],
     credential: Option<Credential>,
+}
+
+/// Whether this name is one a sender writes itself or one that carries a credential:
+/// no request names such a field of its own.
+pub(super) fn is_senders_field(name: &str) -> bool {
+    SENDERS_FIELDS
+        .iter()
+        .any(|own| own.eq_ignore_ascii_case(name))
 }
 
 /// Whether a field's name is 1 to 64 letters, digits and hyphens.
@@ -298,7 +340,43 @@ impl fmt::Debug for Reply {
 /// cancelled. It does not follow a redirect.
 pub trait Sender: Send + Sync {
     fn send(&self, outgoing: &Outgoing, bounds: &Bounds) -> Result<Reply, Fault>;
+
+    /// One request whose body is frames, its answer handed to `take` as it arrives
+    /// (ADR 0046, "The kind `remote`"). What a backend calls on the sender its bounds
+    /// hand it: the checked sender holds the parts to the recipient, the policy and
+    /// the check, writes them into [`CheckedFrames`], and hands those to the sender
+    /// behind it ([`Sender::stream`]). A sender that sends no frames refuses, and
+    /// nothing leaves.
+    fn send_frames(&self, frames: &Frames, bounds: &Bounds, take: &mut Take<'_>) -> Sent {
+        let _ = (frames, bounds, take);
+        Sent::refused(Fault::new(FaultKind::Rejected, NO_FRAMES).not_sent())
+    }
+
+    /// The same, for frames a check let through: what a sender of the network writes.
+    /// Refused by a sender that sends no frames.
+    fn stream(&self, frames: &CheckedFrames, bounds: &Bounds, take: &mut Take<'_>) -> Sent {
+        let _ = (frames, bounds, take);
+        Sent::refused(Fault::new(FaultKind::Rejected, NO_FRAMES).not_sent())
+    }
+
+    /// A control send ([`Control`]) to the origin of a request of frames this sender
+    /// already dispatched: the status of its answer. The checked sender allows it only
+    /// for a request it dispatched, at that request's origin, with that request's
+    /// credential, and notes it in the run's record. Refused by a sender that sends no
+    /// frames.
+    fn control(
+        &self,
+        dispatched: &Dispatched,
+        control: &Control,
+        bounds: &Bounds,
+    ) -> Result<u16, Fault> {
+        let _ = (dispatched, control, bounds);
+        Err(Fault::new(FaultKind::Rejected, NO_FRAMES).not_sent())
+    }
 }
+
+/// What a sender that sends no frames answers.
+const NO_FRAMES: &str = "this way out sends no frames, so nothing was sent";
 
 /// What a download asks for: an address, the most bytes wanted, and a credential bound
 /// to the address's origin. It has no place for a body, a picture or a prompt: a
@@ -414,8 +492,9 @@ impl ProbeRequest {
 /// How one probe ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Probed {
-    /// The address answered, with this status.
-    Reached { status: u16 },
+    /// The address answered, with this status and the start of its body: at most
+    /// [`PROBE_BODY_MAX_BYTES`] and one byte, which the checked prober refuses whole.
+    Reached { status: u16, body: Vec<u8> },
     /// The probe was pointed to this address. Nothing has been asked of it.
     Moved(Address),
 }
