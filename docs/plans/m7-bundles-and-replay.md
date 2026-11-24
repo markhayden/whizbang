@@ -1,7 +1,7 @@
 # Plan: milestone 7, bundles and replay
 
-Draft 1, 2026-11-24, written from `main` at 6c75b6e3 (the tag `m6`, the merge of #300, the
-note of milestone 6). Milestone 7 is `SPEC.md` section 16, row 7, "Bundles and replay":
+Draft 2, 2026-11-24, written from `main` at 6c75b6e3 (the tag `m6`, the merge of #300, the
+note of milestone 6), after one outside review round ("Review rounds", at the end). Milestone 7 is `SPEC.md` section 16, row 7, "Bundles and replay":
 "Invocation bundles and journal replay; saved-run comparisons, saved examples and guided
 chain replay in the playground". Beside the row it takes section 6's control "Invocation
 bundles | Deferred to milestone 7", section 7's rascal row "Replay from a journal; invocation
@@ -121,7 +121,8 @@ plan makes", is a task's item, or is an open question; none is settled silently.
 3. **Where a replay gets each model's answer.** A segmenter's answer is in its run: the
    masks are committed outputs, and the diagnostic `segment.txt` holds each mask's score and
    box (`crates/whizbang-rascal/src/segment.rs`, `DIAGNOSTIC`, `line_of`). A fill's answer is
-   its run's committed image. A judge's turns are kept whole as diagnostics
+   not kept: the run commits the painted picture composited under the mask
+   (`crates/whizbang-rascal/src/fill.rs`, `pasted`), which cannot be undone. A judge's turns are kept whole as diagnostics
    (`contract/journal.rs`, `EXCHANGE_PREFIX`), except an opaque part, whose body is never
    stored (ADR 0009; `docs/carry-over.md`, "A run cannot be sent again from what the store
    holds of it"), and a picture, stored as a digest. The carry-over row asks that "whatever
@@ -153,54 +154,90 @@ host", amended by U1 and U2 for their routes.
 **One file, `bundle/1`, an uncompressed ustar that equal contents make byte for byte.**
 Each member's header is fixed (mode 0644, uid and gid 0, no names of users, mtime 0),
 `bundle.json` comes first and every other member follows in the order of its name's bytes,
-so the archive's SHA-256 names it, as table-manners' did. The playground's existing tar
-writer (`report.rs`, `tar_file`) is moved to the core's `bundle` module and made to write
-those fixed headers; its one caller keeps its output.
+so the archive's SHA-256 names it, as table-manners' did. The playground's tar writer
+(`crates/whizbang/src/report.rs`, `tar_file`) cuts a name at 100 bytes and writes no
+`prefix`; a bundle's names can be longer (a run id and a diagnostic's name may each be 64
+characters, `contract/run.rs`, `contract/record.rs`, `DIAGNOSTIC_NAME_LIMIT`). So the core's
+`bundle` module has a writer of its own that splits a name between ustar's `prefix` (155
+bytes) and `name` (100) at a `/`, and refuses a name it cannot so write; and a reader that
+joins them. "Export run" moves to the same writer, whose output for its short names is the
+same bytes (B1, item 2).
 
 | Member | Holds |
 |---|---|
 | `bundle.json` | The manifest (below), at most 1 MiB |
 | `runs/<run id>/record` | Each step's run record and each of its descendants', as the store holds it, byte for byte |
 | `runs/<run id>/journal` | Its journal, as stored |
-| `runs/<run id>/diagnostics/<name>` | Each diagnostic it kept (its judge's exchanges and `segment.txt` among them) |
+| `runs/<run id>/diagnostics/<name>` | Each diagnostic it kept: its judge's exchanges, `segment.txt`, and a fill's answer (below) among them |
 | `artifacts/sha256-<hex>` | The canonical file (ADR 0002) of every input, every output and every artifact a kept diagnostic or exchange names, once each, whatever runs share it |
 
 **The manifest.** `{"bundle": 1, "whizbang": <version>, "steps": [...], "artifacts":
 [...], "withheld": [...]}`:
 
-- `steps`, one or more, in the order they ran: each names its run id, its action and its
-  version, the digest of the config its settings came from, and, for each input port, either
-  the artifact's identity or **the earlier step's output it took** (`{"step": <index>,
-  "port": <name>, "place": <n>}`) when its identity is one an earlier step made. A step
-  never names a path.
+- `steps`, one or more, in the order they ran, each a **root run** (a run nothing nested;
+  a child travels inside its root's family and is never a step of its own): its run id, its
+  action and its version, the digest of the config its settings came from, whether it is
+  replayable by a build of this action set and why not (below), and, for each input port,
+  either the artifact's identity or **the earlier step's output it took** (`{"step":
+  <index>, "port": <name>, "place": <n>}`) when its identity is one an earlier step made. A
+  step never names a path.
 - `artifacts`: each member's identity, type and SHA-256 of its file.
 - `withheld`: what the bundle does not carry and why, each with a sentence: an opaque part
   of a judge's exchange (its adapter, digest and length, as ADR 0009 keeps it); a picture a
-  stored exchange names that the store does not hold; a diagnostic the store let go of.
-  A bundle with anything withheld still bundles; its offline replay says, before it starts,
-  which step cannot be answered and why (R1).
+  stored exchange names that the store does not hold; a diagnostic the store let go of; a
+  fill whose answer was not kept (a run made before B1); a check answered from the decision
+  cache, whose originating turns are another run's. A bundle with anything withheld still
+  bundles; its offline replay says, before it starts, which step cannot be answered and why
+  (R1).
+
+**What a bundle may hold, and what replays.** A bundle carries data, never code. A step
+whose action is one this build ships (`whizbang describe`) is replayable. A step of a user's
+recipe file or of an experimental tool file (`crates/whizbang/src/wiring.rs`, the actions
+that come from configured files; `tool_file.rs`, which runs a tool in the pack's worker) is
+carried as evidence, marked `not replayable` with its reason, and refused by replay: the
+importing store never takes the recipe or the tool from the bundle, and nothing a bundle
+holds is ever run as code.
 
 No secret is in a bundle: every member is a file the store already holds with its secrets
 taken out (section 3), and B1 adds nothing but the manifest, which holds no value of the env
 file, no path and no account. The bundle is not encrypted and holds the person's pictures
 and words: the guides say so.
 
-**Reading one trusts nothing.** A bundle is read whole before anything acts on it: at most
-256 MiB in all, 4,096 members, a manifest of 1 MiB; every member the manifest names is
-there and no other is; every artifact's SHA-256 is checked and its canonical file decoded
-under the core's limits (ADR 0001, ADR 0002); every record is read by the record's own
-strict reader (`contract/record.rs`) and every journal by the journal's; a member name that
-is absolute, holds `..`, a link, a device or any type but a plain file is refused; an
-unknown manifest version is refused naming it. A refusal names the first fault and says
-that nothing was imported and nothing ran.
+**Reading one trusts nothing.** A bundle is read before anything acts on it, and every check
+below passes before the first publication:
 
-**Importing one** brings its artifacts into a store through the store's import path, in one
-publication, with the import mark S1 gave imports (`whizbang store prune
---unused-imports-older-than`), and the bundle itself as a small entry, `bundles/<digest>`,
-which names its artifacts and holds its manifest and its runs' records. A bundle's runs are
-never made runs of the importing store: their records are evidence of another store, read
-by replay and shown by the playground, and no history, stats or ledger counts them. An
-import of a bundle already held changes nothing.
+- *Bounds*: at most 256 MiB in all, 4,096 members, a manifest of 1 MiB, a member's header
+  read and its size checked before its bytes; artifacts decoded one at a time under the
+  core's limits (ADR 0001, ADR 0002), so the memory held is one artifact's and the manifest.
+- *Names*: each member a plain file, its name relative, with no `..`, no empty part and
+  none of a link's or a device's type; no name twice; every member the manifest names there
+  and no other.
+- *Artifacts*: each file's SHA-256 is the manifest's; its canonical file decodes; the
+  identity it decodes to is the identity it is named by.
+- *Records and journals*: each read by its own strict reader (`contract/record.rs`, the
+  journal's); each diagnostic's bytes match what its record says of it (its digest and
+  length) where the record says.
+- *The whole*: each step's record agrees with the manifest (run id, action, version, inputs
+  and outputs); each record's parent is in the bundle and the families are trees with one
+  root each, the steps' roots; every input and output a record names is a member or listed
+  as withheld; every link names an earlier step's output that its record committed, at that
+  port and place, with the identity the later step's record took.
+- *Version*: an unknown manifest version is refused, naming it.
+
+A refusal names the first fault and says that nothing was imported and nothing ran. Each
+rule has an adversarial test (B1, item 3).
+
+**Importing one** brings it into a store in one publication: its artifacts through the
+store's import path, with the import mark S1 gave imports; and **every other member as an
+object of the store named under the bundle's entry**, `bundles/<digest>/manifest`,
+`bundles/<digest>/runs/<run id>/record`, `…/journal` and `…/diagnostics/<name>`, so the
+store's names hold each one (`store/generation.rs`, a generation names what it keeps) and a
+prune keeps them while the entry is there. A bundle's runs are never made runs of the
+importing store: no history, stats or ledger counts them, and replay reads them from the
+entry. A second import of a bundle already held changes nothing. **A bundle is deleted** by
+`whizbang bundle delete <digest>` or from the playground, which removes the entry's names
+in one publication; its artifacts stay while a run, an example or another bundle names
+them, and a prune removes the rest.
 
 **Which doors.** The command line and the playground. Not the engine API: a bundle carries
 a store's files out and brings files in that name runs of another store, which is the kind
@@ -214,100 +251,156 @@ action. A door is not added (section 15, "Ask first").
 0005): `run/6` with two things after it.
 
 - **A model's card**: beside `device`, the card the worker named on its load, at most 64
-  printable characters, or null (the carry-over row on the card; the adapter already names
-  it, `pack/src/whizbang_pack/adapter.py`, `CARD_NAME_MOST`). The pack's protocol is not
-  changed for it: the worker's load diagnostics already carry the card, and the supervisor
-  and the kind `remote` read it from there (B1, item 6).
-- **`replayed`**: the run this run replays (its id, and the bundle's digest when it came
-  from one), whether offline or live, and the step's index in a chain.
+  printable characters, or null (the carry-over row on the card; the adapter names it,
+  `pack/src/whizbang_pack/adapter.py`, `CARD_NAME_MOST`). B1 reads where the card reaches
+  the supervisor and the kind `remote` today and carries it into the answer's `Served`
+  (`capability/served.rs`); if it reaches neither, ADR 0048 says what of `pack/1` carries it
+  (a section around the frames, as ADR 0020 allows, never a new field of the hello).
+- **`replayed`**: the run this run replays (its id, and the bundle's digest and step when it
+  came from one), and whether offline or live. Every run of a replayed family carries it, a
+  child as its root does, so a figure over runs can leave the whole family out.
 
 Every older version reads as it did; nothing in a store is migrated.
 
 ### What the store keeps for replay
 
-- **A run keeps everything replay needs** already: its record, journal, diagnostics and
-  outputs are removed only by `store delete` and `prune` (section 3). Nothing new is kept.
+- **A run keeps what replay needs, but for a fill's answer.** A segmenter's answer is
+  rebuilt from its run's committed masks and `segment.txt`, and a judge's from its
+  exchanges; B1 shows each with a test that rebuilds the answer the fake gave and compares
+  it whole. A fill's is not: `fill` composites the painted picture under the mask
+  (`crates/whizbang-rascal/src/fill.rs`, `pasted`; `composite.rs`) and commits the composite,
+  and a rounded blend cannot be undone. So from B1 on, a fill run keeps the painted picture
+  it was answered with as a diagnostic, `fill-answer.png`, written as a canonical image's
+  PNG, at most the image's size; a fill run made before B1 has none, and its offline replay
+  is `unanswerable`, naming that. If B1's test of the segmenter's answer finds anything not
+  rebuilt whole, the segmenter's answer is kept the same way.
 - **A bundle's entry and a saved example** each name what they hold, so `store delete` and
   `prune` keep those artifacts, and the uploads' collection does not let them go.
 - **The engine API's collected uploads** (the carry-over row): the hourly collection now
   ends in the store's own prune of what no name holds, run through the writer the server
   holds, under the readers' holds the store already honours (ADR 0036): an upload's bytes
   go with its name. B1, item 7.
+- **Rolling back.** The store's names take any text (`store/buckets.rs`), so a build
+  before B1 opening a store with `bundles/` or `examples/` names reads the store and leaves
+  those names alone; it refuses a `run/7` record when it reads one, by its version. ADR 0048
+  says what a build before it does with each.
 
 ### Replay
 
+**What is replayed.** A root run of an action this build ships that ended (completed,
+cancelled, error or invalid; not `interrupted`, and not one whose record lost its
+admission), from the store it is in or from a bundle imported into it. A child is replayed
+as part of its root, never alone: a child's action may need its place in its recipe (a
+`check` given measurements holds them to the runs of its own recipe,
+`crates/whizbang-squint/src/measured.rs`, `held_to_their_runs`). Anything else is refused
+before it is prepared, naming why.
+
+**The call.** A replay's call is made from the record: its action, its arguments as the
+record holds them (defaults applied), and its inputs by identity. A record whose argument
+or setting was cut when it was written (a text past `SETTING_TEXT_LIMIT`,
+`contract/record.rs`) cannot say the call, and is refused naming it. Each capability's
+backend and model are taken from the record's models group and named explicitly, as "Copy
+command" does (`crates/whizbang/src/command_of.rs`).
+
 **Offline replay is the default, and calls nothing.** `whizbang runs replay <run id>` (or
-`--bundle <file> [--step <n>]`) makes a new run of the same call, with the same arguments,
-settings and inputs, through the same executor, with **recorded capability handles** in
-place of the configured backends: each capability request the replayed run makes is
-answered from the original run's record, in the order the original made them, and from
-nothing else:
+`--bundle <file> [--step <n>]`) makes a new run of that call through the store's executor,
+with **recorded capability handles** given to that one run in place of the configured
+backends (R1, item 2): each capability request the replayed run makes is answered from the
+original family, in the order the original made them, and from nothing else:
 
 | Capability | Answered from |
 |---|---|
 | `segment` | The original `segment` run's committed masks, with each one's score, box and predicted IoU from its `segment.txt` |
-| `fill` | The original `fill` run's committed image |
+| `fill` | The painted picture the original `fill` run kept (`fill-answer.png`, from B1 on) |
 | `judge` | Its stored exchanges, turn by turn: each request the replay makes is compared with the one recorded, and the recorded answer given |
+
+The recorded handles are offered as the record's backend and model, so preparation finds
+the choices the record names; they name no recipient and no price, so egress has nothing to
+send and the ledger nothing to reserve. Nothing of the config is read for a backend, no key
+is read and no worker is started. **The decision cache is neither read nor written by a
+replay**, offline or live: offline, a check would otherwise be answered by the entry its own
+original wrote (`crates/whizbang-squint/src/check.rs`, `cache::find`, before the judge is
+asked); live, each repetition is "a fresh trial" (section 9). A check the original answered
+from the cache is `unanswerable` offline (its turns are another run's), and asks the judge
+afresh live.
 
 A request the original did not make, or made otherwise (another model, another request, a
 request past the last recorded), is answered with an error of its own kind, `diverged`,
 which ends the replayed run there and is reported as the first place the two differ. An
 answer the store cannot give (an opaque part withheld, a picture not held, a diagnostic
-gone) ends it before that request as `unanswerable`, naming what is missing: the carry-over
-row's "says where it gets an opaque part from, or that it cannot". Pixel work runs for real:
-every operation and every step of a recipe is computed again. Offline replay sends nothing
-anywhere, spends nothing (its records hold no paid request), needs no key and no worker.
-The replayed run is a run of the store, marked `replayed` (`run/7`), so it is listed,
-stored and deletable like any other; its runs are never in a stats figure as ordinary ones
-(R1, item 6).
+gone, a fill with no kept answer) ends it before that request as `unanswerable`, naming what
+is missing: the carry-over row's "says where it gets an opaque part from, or that it
+cannot". Pixel work runs for real: every operation and every step of a recipe is computed
+again.
 
-**What it compares**, once the replayed run has ended: its outcome, its committed outputs by
+**What it compares**, once the replayed run has ended, family against family: the runs are
+matched by their place (a root to a root, each child to the child at the same place among
+its parent's steps, a loop's attempt to the attempt of the same number), and a reference to
+a run inside what is compared (a step's run, a measurement's producing run) is compared
+through that match, never by its id. Then: each run's outcome, its committed outputs by
 identity, port and place, each step's action and arguments, a check's checklist and
-verdict, and a loop's attempts. The report is one of **reproduced** (all the same),
-**differs** (each difference by place, first first), **diverged** or **unanswerable** (as
-above). A replay of an `interrupted` run, or one whose record lost its admission, is refused
-before it starts.
+verdict, and a loop's attempts. Times, run ids and request ids are not compared. The report
+is one of **reproduced** (all the same), **differs** (each difference by place, first
+first, at most 256 with a count of the rest), **diverged** or **unanswerable** (as above).
 
 **Live replay** (`--live`) makes the call again with the configured backends, as a new run
-under preparation, admission and the allowance, with its own request id when one is given:
-no recorded answer is used, and what it spends is in its record and the ledger like any
-run's. It is compared as offline replay is, and a difference is reported, never an error:
-"A live judgment (a model's verdict) is not promised to repeat; only the call is" (the old
-contract's words); nor are a model's pixels. A live replay of a step whose input is withheld
-is refused before it is prepared.
+under preparation, admission and the allowance: the store's current config, credentials,
+egress approvals and prices govern it, and nothing in a record or a bundle is authority for
+them. A backend the record names that the config no longer offers refuses the replay,
+naming it; a resolved setting that differs from the record's is reported beside the
+comparison. What it spends is in its record and the ledger like any run's. It is compared as
+offline replay is, and a difference is reported, never an error: "A live judgment (a
+model's verdict) is not promised to repeat; only the call is" (the old contract's words);
+nor are a model's pixels. A live replay of a step whose input is withheld is refused before
+it is prepared.
 
-**Where a replay may run.** In the store its run is in, or in any store a bundle is imported
-into: replay reads the bundle's runs from its entry, never as that store's own. It is one
-more call of an action, so it takes the store's one writer (section 3): from the command
-line while nothing holds the store, and from the playground through its host.
+**Its request id and its provenance.** A replay may be given a request id like any call.
+What a replay is (offline or live, and its source: the run's id, or the bundle's digest and
+step) is part of the request's fingerprint (`contract/request.rs`), so the same id under an
+ordinary call, another mode or another source is a conflict, and the same replay asked again
+returns its run. `replayed` is written with the run's admission and in its record at its
+end, in the publications that write them today, never added afterwards.
+
+**Where a replay runs.** It is one more run of the store's one executor (section 3, "One
+writer"): from the command line while nothing holds the store, and from the playground
+through its host, under the same bound on started runs, the same stated time, the same
+status, cancel and Quit as any run there. The executor takes the recorded handles for that
+one run at its start (`Executor::start_replay`, R1, item 2), so no second way of running is
+made and no other run sees them.
 
 **Not built.** Resuming a run a dead process left (section 6: nothing dispatched is replayed
 automatically, and a replay is a new run, never the old one carried on); replay over the
-engine API or the stdio server ("Which doors"); a replay that reconstructs a missing input.
+engine API or the stdio server ("Which doors"); a replay that reconstructs a missing input;
+a replay of a user's recipe or tool file from a bundle.
 
 ### Saved examples
 
 An example is the store's: a small entry `examples/<id>` (a random id of 16 hex digits),
 `example/1`, holding a name of at most 80 characters and notes of at most 2,000 that a
-person gave, the task, its arguments, its settings as the run resolved them, each input by
-its identity, and the run it was saved from. It names its inputs, so they outlive the run's
-deletion. Opening one fills a draft and runs nothing, and readiness is asked again as for
-any draft; a later run from it is an ordinary run. Examples are made, renamed and deleted in
-the playground; `whizbang store list` names them, and `store delete --example <id>` removes
-one. At most 1,000 in a store. No examples ship with the binary: a tool record's worked
-examples stay in its record (`docs/reference/tools/`).
+person gave, the task, its arguments as the run's record holds them, the backends and models
+it named, each input by its identity, and the run it was saved from. It names its inputs,
+so they outlive the run's deletion. A run whose record cut an argument cannot be saved as an
+example (as for replay). Opening one fills a draft and runs nothing; the draft's choices are
+the example's where the current config offers them, and readiness is asked again as for any
+draft; a later run from it is an ordinary run under the current config. Examples are made,
+renamed and deleted in the playground; `whizbang store list` names them, and `store delete
+--example <id>` removes one. At most 1,000 in a store. No examples ship with the binary: a
+tool record's worked examples stay in its record (`docs/reference/tools/`).
 
 ### Saved-run comparisons
 
-Two ended runs of one task (the same action), one pinned as the baseline. The host answers
-the comparison from the two records (`GET /api/compare/{id}/{id}`): what each was asked,
-arguments and settings side by side with each difference marked, inputs by identity with a
-changed one marked, outputs by port, outcome, time and cost, the models each used. The
-pictures are shown with the result's compare component (`ui/src/components/Compare.tsx`),
-labelled Baseline and Attempt, side by side, and swiped or as a difference only when both
-are the same size. The pin is in the page's address (`#/compare/<baseline>/<attempt>`) and
-in the browser's storage for that address, so a reload keeps it; the store holds no pin.
-The comparison claims no winner and computes no score.
+Two ended root runs of one task (the same action), one pinned as the baseline. The host
+answers the comparison from the two **families** (`GET /api/compare/{id}/{id}`), as the
+result screen reads a run (`crates/whizbang/src/play_result.rs`, which reads the family for
+its cost): what each was asked, arguments and settings side by side with each difference
+marked, inputs by identity with a changed one marked, outputs by port, outcome, time, and
+cost and models over the whole family, with unresolved spend and a family not wholly read
+said as such. The pictures are shown with the result's compare component
+(`ui/src/components/Compare.tsx`), labelled Baseline and Attempt, side by side, and swiped
+or as a difference only when both are the same size. The pin is in the page's address
+(`#/compare/<baseline>/<attempt>`) and in the browser's storage for that address, so a
+reload keeps it; the store holds no pin. The comparison claims no winner and computes no
+score.
 
 ### Guided chain replay
 
@@ -361,8 +454,8 @@ what U1 or U2 builds beyond that table is a change of this plan, with its review
 
 | Clause | Task | Shown by |
 |---|---|---|
-| Invocation bundles | B1, U2 | `bundle::*` (fast tier): written byte for byte the same twice, read back whole, every refusal of the reader; `runs_bundle::a_bundle_of_a_rascal_chain_imports_into_an_empty_store_and_replays_with_the_first_store_gone`; `send.spec.ts`'s new case `bundle this run downloads one file that imports into another playground` (Chrome) |
-| Journal replay | R1 | `replay::*` (fast tier): an offline replay of a recipe, a loop and a check reproduces each with no backend configured and nothing spent; a divergence and an unanswerable opaque part each reported; `replay::a_live_replay_spends_as_a_run_and_reports_a_changed_verdict_as_a_difference` |
+| Invocation bundles | B1, U2 | `bundle::*` (fast tier): written byte for byte the same twice, read back whole, every refusal of the reader; `runs_bundle::a_bundle_imports_into_an_empty_store_and_survives_its_archive_and_first_store_gone_a_restart_and_a_prune`; `send.spec.ts`'s new case `bundle this run downloads one file that imports into another playground` (Chrome) |
+| Journal replay | B1, R1 | `replay::*` (fast tier): an offline replay of a recipe, a loop, a check and a fill through a feathered mask reproduces each with no backend configured, no cache read and nothing spent; a divergence and an unanswerable opaque part each reported; `replay::a_live_replay_spends_as_a_run_and_reports_a_changed_verdict_as_a_difference` |
 | Saved-run comparisons in the playground | U1 | `play_compare::*` (fast tier); `compare.spec.ts: a pinned baseline and an attempt of the same task show their pictures, settings and cost side by side, and the pin survives a reload` (Chrome) |
 | Saved examples in the playground | U1 | `play_examples::*` (fast tier); `examples.spec.ts: an example saved from a result opens as a draft that runs nothing, after a restart and after its run was deleted` (Chrome) |
 | Guided chain replay in the playground | U2 | `play_chain::*` (fast tier); `chain.spec.ts: a chain of a removal and its check replays one ordinary run a step, binds the new output and shows its changed identity` (Chrome) |
@@ -381,8 +474,8 @@ and lock files apart.
 |---|---|---|---|
 | A0 | The entry check: the fast tier's time, the pack's budget, the Chrome case that timed out once, a request that never connected | `main` | Small: about 500 |
 | G1 | The designs, in Paper, approved by the owner; the table of what the engine lacks | `main` (the orchestrator's, beside A0) | No code; a plan amendment of about 100 |
-| B1 | Invocation bundles: `bundle/1`, `run/7`, writing, reading, importing; the card in the record; what the store keeps; ADR 0048 | A0 | Large: about 2,400 (format and writer 500, reader 600, import and entry 350, `run/7` and the card 350, store keeping 200, tests 400 more) |
-| R1 | Replay: recorded handles, offline and live, the comparison, `whizbang runs replay`; the run's end moves its journal; a panic at `Publishing`; ADR 0049 | B1 | Large: about 2,400 (handles 600, comparison 450, command 250, the end's two rows 300, tests 800) |
+| B1 | Invocation bundles: `bundle/1`, `run/7`, writing, reading, importing, deleting; the card in the record; a fill's kept answer; what the store keeps; ADR 0048 | A0 | Large, in two pull requests: about 1,000 (items 1, 6 and 7: ADR 0048, `run/7`, the card, the fill's answer, the store's keeping), then about 2,300 (format and writer 450, reader with its whole-bundle rules 750, import, entry and deletion 400, commands 250, tests 450 more) |
+| R1 | Replay: recorded handles given to one run, offline and live, the cache, the comparison by run match, provenance, `whizbang runs replay`; the run's end shares what it kept; a panic at `Publishing`; ADR 0049 | B1 | Large, in two pull requests: about 1,100 (items 1, 2 and 9: ADR 0049, `Executor::start_replay` and the recorded handles, the end's two rows), then about 2,200 (cache 150, comparison 550, live 250, command 250, provenance 200, tests 800) |
 | U1 | The playground: saved-run comparisons, saved examples, Home's library and the choice's refusal; their routes and Chrome cases | G1, B1 | Large: about 2,300 (host 600, screens 1,000, tests and Chrome 700) |
 | U2 | The playground: bundles, guided chain replay, replay of a run; their routes and Chrome cases | G1, R1, U1 | Large: about 2,300 (host 550, screens 1,000, tests and Chrome 750) |
 | N1 | The orchestrator's pass by hand; the note, the boxes, the carry-over rows, the spec's wording owed | U2 | Small: about 500, no code |
@@ -407,10 +500,9 @@ R1 alone. `crates/whizbang-serve/src/play/routes.rs` and `ui/`: U1 in wave 3, U2
 `docs/reference/`: whoever changes the description runs `just docs`. This plan's own file: a
 task changes only its own section and box; G1 adds its table.
 
-**Seams.** Each task names where it splits if it passes about 2,500 changed lines: B1, the
-card in the record (item 6) and what the store keeps (item 7), which then land first; R1, the
-end's two rows (item 7), which then land first; U1, saved examples (item 2); U2, replay of
-one run (item 4). A split is said in the hand-back and the owner is told the count. Nothing
+**Seams.** B1 and R1 land in two pull requests each, as the table says, the first of each
+merged before the second is reviewed. U1 and U2 name where they split if either passes about
+2,500 changed lines: U1, saved examples (item 2); U2, replay of one run (item 3). A split is said in the hand-back and the owner is told the count. Nothing
 of a row is dropped to keep the count.
 
 **Review rule.** Every pull request is reviewed whole by a reviewer that did not write it, and
@@ -438,20 +530,25 @@ right.
 1. **The fast tier's time on the owner's Mac** (carry-over, "The fast tier's time on the
    owner's Mac near its limit"). Five full `just check` runs on the owner's Mac, by the
    orchestrator under `scripts/heavy.sh`, each suite's seconds recorded. If any run passes
-   250 seconds, `just check` runs the fast tests in the two parts CI runs, the sweeps and the
-   rest, one after the other, each held to the 300 seconds by `scripts/timing.sh` (the row's
-   second remedy): `scripts/tests/test-ci-jobs.sh` gains the case that `check` runs both parts
-   and fails when either passes its limit. No limit is raised. The record of the five runs
-   and the change go in the pull request; the row closes with the numbers.
+   250 seconds, coverage is reviewed first and the slowest tests are sped up, moved to
+   another tier or removed where what they guard is covered elsewhere, as section 13 says,
+   until five runs are under 250 with no limit raised. The row's second remedy, running the
+   tier locally in CI's two parts, is not taken by A0: `SPEC.md` section 13 holds one full
+   local run to 300 seconds, and two parts of 300 each would raise that budget, which only
+   the owner may do. If the tier cannot be brought under 250 without testing less, A0 stops
+   and asks the owner ("Open questions"). The record of the five runs goes in the pull
+   request; the row closes with the numbers.
 2. **The pack's budget** (carry-over, "The pack's tests' budget"). The pack's run on the
    macOS runner measured over five runs from CI's reports, each test's time listed; the
    slowest cut (a fake's waits, a front's deadlines taken from a test clock where they are
    not), so that the run is under 10 seconds on `macos-15` in five runs. If it cannot be
    without testing less, A0 asks the owner for the budget, with the measurements, as the
    row says.
-3. **The Chrome case that timed out once** (carry-over, the row on `run.spec.ts`). `run.spec.ts:
-   each of the five squint use cases runs from its form` waits on what the page shows (the
-   result's tag) rather than on the address within a fixed time; then run 20 times in a row
+3. **The Chrome case that timed out once** (carry-over, the row on `run.spec.ts`). The case
+   itself already waits on the result's tag (`ui/e2e/run.spec.ts`, the `lane`); the
+   `toHaveURL` that timed out is in the helper it calls after each Run, `runWhenReady`
+   (`ui/e2e/play.ts`, its wait for `#/run/`), under two tabs and two runs at once. The helper
+   waits instead on what the running screen shows, with the address checked after; every other caller of the helper keeps passing. Then it is run 20 times in a row
    alone on the macOS runner, as milestone 6's A0 did: one commit adds a step to `e2e
    (macos-15, shard 2)` that runs the case with `--repeat-each 20` and no retry, inside the
    shard's 120 seconds, its run named in the pull request, and the next commit takes it out.
@@ -464,8 +561,8 @@ right.
    `remote::wire::a_request_whose_connection_was_refused_settles_at_nothing` and
    `remote::wire::a_request_cut_after_its_first_byte_is_still_charged_at_its_bound`.
 
-- [ ] Done when: five full checks on the owner's Mac each under 250 seconds of test time, or
-  `just check` runs the two parts with the script test; the pack's run under 10 seconds on
+- [ ] Done when: five full checks on the owner's Mac each under 250 seconds of test time,
+  or the owner's word on the budget; the pack's run under 10 seconds on
   `macos-15` in five runs, or the owner's word on its budget; the Chrome case passed 20 runs
   in a row (the run named); item 4's tests pass; the four rows closed with their lines.
 
@@ -501,53 +598,68 @@ model ran.
    the old contract's bundle named as reference and each difference from it said
    (`reference_only` becomes `withheld`; no `unportable`, since every artifact type has a
    canonical file, ADR 0002).
-2. **The writer** (`crates/whizbang-core/src/bundle/`): a run's family and, for a chain, each
-   step's, read through one snapshot of the store; links found by identity (an input whose
-   identity an earlier step's output has; two such outputs refuse the chain, naming the step
-   and port); the members and the manifest; the ustar with fixed headers. `report.rs`'s tar
-   writer moves here and keeps its output for "Export run"
-   (`play::export_run_is_the_same_bytes_after_the_writer_moved`).
-3. **The reader**: every bound and refusal of "Reading one trusts nothing", each with a test,
-   on bundles built in the test (no committed binary fixture but one, below).
-4. **The import**: one publication of the artifacts with their import mark and the entry
-   `bundles/<digest>`; a second import changes nothing; a bundle's runs are not the store's
-   own (`runs list`, `runs stats` and the ledger do not see them).
-5. **The commands**: `whizbang runs bundle <run id>... --to <file>` (one run, or a chain in
-   the order given, at most 16), written as `store export` writes (not over a file without
+2. **The writer** (`crates/whizbang-core/src/bundle/`): a root run's family and, for a
+   chain, each step's, read through one snapshot of the store; links found by identity (an
+   input whose identity an earlier step's output has; two such outputs refuse the chain,
+   naming the step and port; a child run named as a step is refused, naming its root); each
+   step marked replayable or not ("What a bundle may hold"); the members and the manifest;
+   the ustar with fixed headers, names split between `prefix` and `name` and a name that
+   cannot be so written refused. "Export run" (`report.rs`, `tar_file`) moves to this writer
+   and keeps its bytes (`play::export_run_is_the_same_bytes_after_the_writer_moved`).
+3. **The reader**: every bound and rule of "Reading one trusts nothing", each with an
+   adversarial test, on bundles built in the test (no committed binary fixture but one,
+   below); nothing is published until every rule has passed.
+4. **The import and the deletion**: one publication of the artifacts with their import mark
+   and every other member under `bundles/<digest>/`; a second import changes nothing; a
+   bundle's runs are not the store's own (`runs list`, `runs stats` and the ledger do not see
+   them); a deletion removes the entry's names in one publication, its artifacts staying
+   while anything else names them.
+5. **The commands**: `whizbang runs bundle <run id>... --to <file>` (one root run, or a chain
+   in the order given, at most 16), written as `store export` writes (not over a file without
    `--overwrite`, not through a link, not inside the store, `crates/whizbang/src/export.rs`);
    `whizbang bundle import <file> --store <dir> [--create]`; `whizbang bundle show <file>`
-   (the manifest, its steps and links and what it withholds, reading nothing into a store).
+   (the manifest, its steps and links and what it withholds, reading nothing into a store);
+   `whizbang bundle list|delete <digest> --store <dir>`.
 6. **`run/7`, and the card** (carry-over, "The run record of a request to a GPU host names
    `device cuda` alone"): the record type gains the card and `replayed`, written only where
-   present; the local supervisor (`whizbang-backends/src/pack/`) and the kind `remote` read
-   the card from the worker's load diagnostics, held to 64 printable characters, secrets out;
-   the schema `run-7.json`; every older record reads as before.
-   `remote::the_run_records_the_card_the_fake_host_named`,
+   present; the card read where the worker names it, as "The record a bundle carries" says,
+   held to 64 printable characters, secrets out; the schema `run-7.json`; every older record
+   reads as before. `remote::the_run_records_the_card_the_fake_host_named`,
    `record::a_record_with_a_card_is_run_7_and_one_without_is_written_as_before`.
 7. **What the store keeps** (carry-over, "The engine API's hourly collection lets go of the
-   names of the uploads"): `Store::prune`, run by the writer that holds the store, after the
-   engine API's hourly collection, so an upload's bytes go with its name; a bundle's entry
-   and (for U1) an example's are names that keep what they hold from `delete`, `prune` and
-   the collection. `store::collect::the_hourly_collection_ends_in_a_prune_and_an_uploads_bytes_go_with_its_name`,
+   names of the uploads"; "What the store keeps for replay"): a fill run keeps its painted
+   answer as `fill-answer.png`; `Store::prune` is run by the writer that holds the store
+   after the engine API's hourly collection, so an upload's bytes go with its name; a
+   bundle's entry and (for U1) an example's are names that keep what they hold from
+   `delete`, `prune` and the collection.
+   `fill::a_fill_run_keeps_the_painted_answer_that_a_feathered_mask_was_composited_from`,
+   `segment::the_answer_rebuilt_from_a_runs_masks_and_its_diagnostic_is_the_answer_it_was_given`,
+   `store::collect::the_hourly_collection_ends_in_a_prune_and_an_uploads_bytes_go_with_its_name`,
    `store::collect::a_run_going_keeps_every_file_a_held_reader_reads`,
-   `store::collect::a_bundles_entry_keeps_its_artifacts_from_delete_prune_and_the_collection`.
+   `store::collect::a_bundles_entry_keeps_its_artifacts_from_delete_prune_and_the_collection`,
+   `store::collect::a_deleted_bundles_artifacts_go_at_the_next_prune_unless_a_run_names_them`.
 8. **A committed fixture**: `fixtures/bundle/remove-then-check.tar`, a chain of a removal
-   and its check made by the fixture kit with fake models, read by the tests of this build
-   and every later one, so a later change of format must keep reading it.
+   and its check made by the fixture kit with fake models, after item 7 (so its fill keeps
+   its answer), read by the tests of this build and every later one, so a later change of
+   format must keep reading it.
 
 - [ ] Done when: `bundle::the_same_runs_make_the_same_bytes_twice`,
   `bundle::a_bundle_reads_back_whole_with_every_member_checked`,
-  `bundle::a_member_named_absolutely_with_dot_dot_or_as_a_link_is_refused_and_nothing_imported`,
+  `bundle::a_member_named_absolutely_with_dot_dot_twice_or_as_a_link_is_refused_and_nothing_imported`,
   `bundle::a_member_not_named_by_the_manifest_or_a_named_one_missing_is_refused`,
-  `bundle::an_artifact_whose_digest_differs_is_refused`,
+  `bundle::an_artifact_whose_file_digest_or_decoded_identity_differs_is_refused`,
+  `bundle::a_diagnostic_whose_bytes_differ_from_its_record_is_refused`,
+  `bundle::a_manifest_that_contradicts_a_record_or_a_link_that_contradicts_both_is_refused`,
+  `bundle::a_family_with_a_missing_parent_a_cycle_or_two_roots_is_refused`,
   `bundle::an_unknown_version_is_refused_naming_it`,
   `bundle::a_bundle_over_its_bounds_is_refused_before_it_is_read_whole`,
-  `bundle::an_opaque_part_and_a_missing_picture_are_listed_as_withheld`,
+  `bundle::a_long_member_name_round_trips_through_prefix_and_name_and_one_too_long_is_refused`,
+  `bundle::an_opaque_part_a_missing_picture_and_a_cached_check_are_listed_as_withheld`,
+  `bundle::a_step_of_a_recipe_or_tool_file_is_carried_as_not_replayable`,
   `bundle::the_manifest_holds_no_path_and_no_secret`,
   `bundle::a_chain_links_an_input_to_the_earlier_output_it_took`,
   `bundle::an_input_two_earlier_outputs_could_be_refuses_the_chain`,
-  `runs_bundle::a_bundle_of_a_rascal_chain_imports_into_an_empty_store_and_replays_with_the_first_store_gone`
-  (its replay is R1's; B1 lands it with the import alone, and R1 completes it),
+  `runs_bundle::a_bundle_imports_into_an_empty_store_and_survives_its_archive_and_first_store_gone_a_restart_and_a_prune`,
   `runs_bundle::a_second_import_changes_nothing_and_its_runs_are_not_the_stores_own`,
   `runs_bundle::the_committed_fixture_reads`, and items 6 and 7's tests pass; ADR 0048 is
   merged; the two rows closed with their lines.
@@ -563,31 +675,46 @@ abandoned.
 
 1. **ADR 0049, "Replay"**, written first: "Replay" of "Choices this plan makes" whole, with
    rascal's `inspect --replay` and its replay of a heal named as reference.
-2. **Recorded capability handles** (`crates/whizbang-core/src/capability/recorded.rs`): one
-   for each capability, built from a run's family as the store or a bundle holds it, which
-   answer the replayed run's requests in their order from the table in "Replay", and
-   `diverged` or `unanswerable` otherwise. They name no recipient and no price, so egress has
-   nothing to send and the ledger nothing to reserve. The binary builds them in place of the
-   inventory's for an offline replay (`crates/whizbang/src/wiring.rs`): no configured backend
-   is built, no worker started, no key read.
-3. **An opaque part** (carry-over, "A run cannot be sent again from what the store holds of
+2. **Recorded capability handles, given to one run** (`crates/whizbang-core/src/capability/
+   recorded.rs`): one for each capability, built from a root's family as the store or an
+   imported bundle holds it, offered as the record's backend and model, which answer the
+   replayed run's requests in their order from the table in "Replay", and `diverged` or
+   `unanswerable` otherwise. They name no recipient and no price. **The executor takes them
+   for that one run**: `Executor::start_replay(source, mode, request id)` makes the call from
+   the record ("The call"), prepares and admits it with the recorded handles in place of the
+   snapshot's for that run and its descendants alone (`contract/engine.rs`, where admission
+   takes the handles from the snapshot), and starts it like any run: the same table of
+   started runs and its bound, the same status, cancel, stated time and shutdown. No other
+   run sees the handles, and nothing of the config is read for a backend.
+3. **The decision cache and the call's limits.** A replay neither reads nor writes the
+   decision cache (`crates/whizbang-squint/src/check.rs`, `cache::find`), through a flag the
+   run's context carries; a check answered from the cache is `unanswerable` offline. Only a
+   root of an action this build ships is replayed; a child, a user's recipe or tool file, an
+   `interrupted` run and a record whose argument was cut are refused, each naming why.
+4. **An opaque part** (carry-over, "A run cannot be sent again from what the store holds of
    it"): a judge turn that held one is `unanswerable` offline, naming the part's adapter and
    length; live, the run is made from its call, not from its exchanges, so no part is needed;
    the row closes with that line.
-4. **The comparison** (`crates/whizbang-core/src/contract/replay.rs`): of "What it compares",
-   by place, first difference first, bounded to 256 differences with a count of the rest.
-5. **The command**: `whizbang runs replay <run id> | --bundle <file> [--step <n>] [--live]
+5. **The comparison** (`crates/whizbang-core/src/contract/replay.rs`): of "What it compares",
+   family against family, runs matched by place, references to runs compared through the
+   match, first difference first, at most 256 with a count of the rest.
+6. **Live replay**: the current config's backends, credentials, egress and prices; a backend
+   the record names that the config does not offer refuses it; settings that differ from the
+   record's reported.
+7. **The command**: `whizbang runs replay <run id> | --bundle <file> [--step <n>] [--live]
    [--request-id <id>] [--json]`, against a store (`--store`), the report printed, and the
    exit code 0 for reproduced, 3 for differs, diverged or unanswerable, 1 for a refusal. A
    bundle's replay imports it first (B1, item 4).
-6. **The replayed run's record** carries `replayed` (`run/7`). `runs stats` counts replayed
-   runs apart (`--replayed include|exclude|only`, excluded by default), so the figures of
-   ordinary use are not changed by replays.
-7. **The end's two rows.** (a) *What a run kept is moved into its end* (carry-over, "every
+8. **Provenance and request ids**: `replayed` is part of the request's fingerprint
+   (`contract/request.rs`) and written with the admission and the record, for every run of
+   the family; `runs stats` leaves replayed families out by default
+   (`--replayed include|exclude|only`), so the figures of ordinary use are not changed by
+   replays (`crates/whizbang/src/stats.rs`).
+9. **The end's two rows.** (a) *What a run kept is moved into its end* (carry-over, "every
    run's end clones what the run kept"): `taken` (`contract/engine.rs`, the end's
-   publication, where it is cloned at each attempt) is moved into the first end and kept for
-   a second only when a panic needs one: the end holds a shared, immutable copy (`Arc`)
-   rather than a clone of the bytes.
+   publication, where it is cloned at each attempt) is held once, shared and immutable
+   (`Arc`), so the end and a second end after a panic read the same bytes and none is
+   copied.
    `execute::an_end_holds_one_copy_of_what_the_run_kept_and_a_second_end_after_a_panic_writes_it_whole`.
    (b) *A panic at `Publishing`* (carry-over, "a panic in the executor's code while a run's
    end is at `Reached::Publishing`"): the catch asks the store, through a fresh snapshot,
@@ -597,18 +724,26 @@ abandoned.
    and `execute::a_panic_at_publishing_before_the_end_was_durable_answers_as_before`.
 
 - [ ] Done when: `replay::an_offline_replay_of_remove_prompt_reproduces_it_with_no_backend_configured`,
-  `replay::an_offline_replay_of_remove_checked_reproduces_its_attempts_and_verdict`,
+  `replay::an_offline_replay_of_remove_checked_reproduces_its_attempts_and_verdict_through_the_run_match`,
   `replay::an_offline_replay_of_a_check_reproduces_its_turns_checklist_and_verdict`,
-  `replay::an_offline_replay_sends_nothing_reserves_nothing_and_starts_no_worker`,
+  `replay::an_offline_replay_of_a_recipe_whose_check_takes_measurements_reproduces_it`,
+  `replay::an_offline_replay_of_a_fill_through_a_feathered_mask_reproduces_its_picture`,
+  `replay::an_offline_replay_sends_nothing_reserves_nothing_reads_no_key_and_starts_no_worker`,
+  `replay::a_replay_neither_reads_nor_writes_the_decision_cache`,
+  `replay::a_check_answered_from_the_cache_is_unanswerable_offline_and_asks_afresh_live`,
+  `replay::a_fill_run_made_before_its_answer_was_kept_is_unanswerable_naming_it`,
   `replay::a_changed_operation_is_reported_as_a_difference_at_its_step`,
   `replay::a_request_the_original_did_not_make_is_diverged_and_nothing_is_called`,
   `replay::a_turn_that_held_an_opaque_part_is_unanswerable_naming_it`,
-  `replay::a_replay_of_an_interrupted_run_is_refused_before_it_starts`,
+  `replay::a_child_an_interrupted_run_a_tool_files_run_and_a_cut_argument_are_each_refused`,
   `replay::a_live_replay_spends_as_a_run_and_reports_a_changed_verdict_as_a_difference`,
-  `replay::a_replayed_run_names_what_it_replays_and_stats_leaves_it_out_by_default`,
-  `runs_bundle::a_bundle_of_a_rascal_chain_imports_into_an_empty_store_and_replays_with_the_first_store_gone`
-  (completed here), and item 7's three pass; ADR 0049 is merged; the three rows closed with
-  their lines.
+  `replay::a_live_replay_whose_backend_the_config_no_longer_offers_is_refused`,
+  `replay::a_request_id_under_another_mode_or_source_is_a_conflict_and_the_same_replay_returns_its_run`,
+  `replay::every_run_of_a_replayed_family_names_it_and_stats_leaves_the_family_out_by_default`,
+  `replay::a_replay_in_a_held_store_is_cancelled_waited_for_and_counted_like_any_run`,
+  `runs_bundle::a_bundle_imports_into_an_empty_store_and_survives_its_archive_and_first_store_gone_a_restart_and_a_prune`
+  (its replay completed here: the chain replayed offline and reproduced), and item 9's three
+  pass; ADR 0049 is merged; the three rows closed with their lines.
 
 ## U1. The playground: saved-run comparisons and saved examples (large)
 
@@ -618,8 +753,10 @@ A person pins one run as a baseline and compares another of the same task with i
 saves a run's inputs and settings as a named example that opens as a draft; built as G1's
 designs show.
 
-1. **Saved-run comparisons**: the host's `GET /api/compare/{id}/{id}`, from the two records
-   ("Saved-run comparisons"), refused 422 for two tasks and 409 for a run that has not ended;
+1. **Saved-run comparisons**: the host's `GET /api/compare/{id}/{id}`, from the two families
+   ("Saved-run comparisons"), reading them as the result screen does
+   (`crates/whizbang/src/play_result.rs`), refused 422 for two tasks or a child run and 409
+   for a run that has not ended;
    the screen at `#/compare/<baseline>/<attempt>`; "Compare with…" on a result and "Pin as
    baseline" in History; the pin in the address and the browser's storage.
 2. **Saved examples**: the entry `example/1` written through the host's writer
@@ -637,6 +774,7 @@ designs show.
 6. **The guide**: `docs/guides/playground.md`, "Comparing two runs" and "Saved examples".
 
 - [ ] Done when: `play_compare::two_runs_of_one_task_compare_by_settings_inputs_outputs_time_and_cost`,
+  `play_compare::two_paid_loops_compare_cost_and_models_over_their_families_with_unresolved_spend_said`,
   `play_compare::two_tasks_are_refused_422_and_a_run_not_ended_409`,
   `play_examples::an_example_keeps_its_inputs_after_its_run_is_deleted_and_pruned`,
   `play_examples::opening_an_example_starts_no_run`,
@@ -658,16 +796,25 @@ step, and replays one run offline or live with its report; built as G1's designs
 1. **Bundles in the host**: `GET /api/runs/{id}/bundle` (one run, a download);
    `POST /api/bundles/chain` (run ids in order, at most 16; the chain's file, a download);
    `POST /api/bundles` (a bundle's bytes, at most 256 MiB, read and imported by B1's reader;
-   no path); `GET /api/bundles` and `GET /api/bundles/{digest}` (its manifest, steps, links
-   and what it withholds). The upload bound joins the guard's table (ADR 0041, amended).
+   no path); `GET /api/bundles`, `GET /api/bundles/{digest}` (its manifest, steps, links
+   and what it withholds) and `DELETE /api/bundles/{digest}`. **A bundle's upload takes one
+   of the host's two upload places**, as a picture's does (`play/guard.rs`, where only
+   `Body::Picture` takes one today), refused 429 after its headers when both are taken, and
+   **one bundle is read and imported at a time**, the reader's memory held to one artifact
+   and the manifest; so at most two of the host's workers are ever held by uploads, and
+   polling, Stop and Quit stay answered (ADR 0041, amended, with the bound in the guard's
+   table).
 2. **Guided chain replay**: "Start the chain", each step opened as a draft from the bundle's
    step, Continue, Stop; a linked input bound to the new run's output by port and place, a
    changed identity shown; a missing or doubled output stops the chain; the run started from
    a step carries `replayed` with the bundle's digest and the step (the start route takes an
-   optional `replay` object, checked against the bundle's entry); the chain's place in the
+   optional `replay` object, checked against the bundle's entry, and part of the request's
+   fingerprint as R1, item 8, makes it); the chain's place in the
    browser's storage.
 3. **Replay of a run**: "Replay" on a result, offline through `POST /api/runs/{id}/replay`,
-   and live with the cost reviewed first as any paid run; the report as a screen.
+   which calls `Executor::start_replay` (R1, item 2) on the host's one executor, so the run is
+   polled, stopped and counted as any run there; and live with the cost reviewed first as any
+   paid run; the report as a screen.
 4. **What G1's table assigns to U2**, each with its test.
 5. **The guide**: `docs/guides/playground.md`, "Bundles", "Replaying a chain", "Replaying a
    run".
@@ -677,6 +824,8 @@ step, and replays one run offline or live with its report; built as G1's designs
   `play_chain::a_run_started_from_a_step_records_the_bundle_and_the_step`,
   `play_bundles::a_bundle_uploaded_is_read_whole_before_anything_is_imported`,
   `play_bundles::a_bundle_over_256_mib_is_refused_413_before_it_is_read_whole`,
+  `play_bundles::with_two_bundle_uploads_stalled_a_third_is_refused_429_and_polling_and_stop_are_answered`,
+  `play_bundles::a_deleted_bundle_leaves_the_artifacts_a_run_names`,
   `play_bundles::no_bundle_route_takes_a_path`,
   `play_replay::an_offline_replay_from_the_page_spends_nothing_and_shows_reproduced`, and
   the Chrome cases
@@ -764,7 +913,7 @@ wording (the next release); hosting the model's files (no milestone).
 | Tasks | To undo |
 |---|---|
 | A0 | Revert the merge: `just check` runs one part again; the remote charge goes back to its bound |
-| B1 | Revert with care: a store that imported a bundle holds `bundles/` entries and `run/7` records, which a build before B1 refuses by name and version. ADR 0048 says this; a revert keeps the readers and drops the writers |
+| B1 | Revert with care: a store written by B1's build may hold `run/7` records, which a build before B1 refuses by version when it reads one, and `bundles/` and `examples/` names, which it leaves alone (the store's names take any text, `store/buckets.rs`). ADR 0048 says this; a revert keeps the record's reader and drops the writers |
 | R1 | Revert the merge after U2: replay is gone; replayed runs stay readable as `run/7` records, by B1's reader |
 | U1, U2 | Revert the merge: the screens and routes go; examples and bundle entries in a store stay, read by B1's reader and listed by `store list` |
 | N1 | A note and the spec's wording |
@@ -815,17 +964,29 @@ G1 ─────┴──► U1 ───────► U2 ──► N1
    each later task reports its seconds and stops past about 250.
 6. **The designs may ask more than the engine has.** G1's table names each element and its
    fate; a change of structure is a change of this plan.
-7. **A new record version and two new store entries.** Older builds refuse them by version
-   and name; the revert notes say so.
+7. **A new record version and two new store entries.** Older builds refuse a `run/7`
+   record by its version and leave the new names alone; the revert notes say so.
+8. **Replay touches the executor.** A run's handles chosen at its start, and the decision
+   cache bypassed, are new seams in the core. R1's first pull request carries them alone with
+   the end's two rows, and its reviewer reads that no ordinary run can be given recorded
+   handles and that no replay can reach a configured backend.
+9. **A fill's answer doubles what a fill keeps.** Each fill run keeps one more picture of its
+   image's size, as a diagnostic under the run's bound; a store's growth from it is said in
+   the guide.
 
 ## Open questions
 
-None.
+None now. One may arise in A0: if the fast tier cannot be brought under 250 seconds on the
+owner's Mac without testing less, A0 stops and the owner is asked, "I need a yes or no: may
+`just check` run the fast tests in CI's two parts, each held to 300 seconds?" (which raises
+the local budget of `SPEC.md` section 13, and so is the owner's).
 
 ## What the owner still does
 
 - **G1**: draws and approves the new surfaces in Paper with the orchestrator, and says which
   of the six to leave out, if any. U1 and U2 wait for it; B1 and R1 do not.
+- **A0, item 1**: only if the fast tier cannot come under 250 seconds without testing
+  less, the owner's yes or no ("Open questions").
 - **A0, item 2**: only if the pack's tests cannot come under 10 seconds on the macOS runner
   without testing less, the owner's word on their budget, with the measurements.
 
@@ -838,10 +999,75 @@ None.
   server.
 - **Replay is offline by default**: it calls nothing and spends nothing, answering every
   model from what the run recorded, and says where it differs or what it cannot answer.
-  `--live` makes the call again and spends as any run.
+  `--live` makes the call again under today's config and spends as any run. Neither reads
+  the decision cache. A fill run now keeps the picture the filler painted, so that its
+  replay can be answered; fills made before this milestone cannot be replayed offline.
 - **Saved examples live in the store** and keep their pictures after their run is deleted;
   a comparison's pin lives in the page's address.
 - **The run record gains `run/7`**: the card a model ran on, and what a run replays.
 - **The tags `m7-core` and `m7`** are made by the orchestrator as above.
 
 ## Review rounds
+
+### Review round 1
+
+On draft 1. Verdict: revise. Sixteen findings: 1 blocker, 13 majors, 2 minors. Each was
+checked against the code; fifteen were right and taken, one was right in part.
+
+1. **Blocker: a fill's committed image is not its answer.** Right: `fill` composites the
+   painted picture under the mask (`crates/whizbang-rascal/src/fill.rs`, `pasted`), and a
+   rounded blend cannot be undone. Taken: a fill run keeps its painted answer as a
+   diagnostic from B1 on, before the fixture is made; an older fill is `unanswerable`
+   offline; a test through a feathered mask; and a test that the segmenter's answer is
+   rebuilt whole, or kept the same way.
+2. **Major: recorded settings are not a config.** Right (`contract/call.rs`; settings cut at
+   256 characters, `contract/record.rs`). Taken: "The call" says what a replay is made from;
+   a cut argument refuses it; offline the recorded handles are offered as the record's
+   backend and model; live, the current config, credentials, egress and prices govern, and
+   nothing in a record or a bundle is authority for them.
+3. **Major: a bundle carries no recipe or tool file.** Right (`wiring.rs`, `tool_file.rs`).
+   Taken: a bundle carries data, never code; a step of a recipe or tool file is carried as
+   `not replayable` and refused by replay.
+4. **Major: the decision cache.** Right (`check.rs`, `cache::find` before the judge). Taken:
+   no replay reads or writes the cache; a cached check is `unanswerable` offline and asked
+   afresh live; tests of both.
+5. **Major: a child's replay and run ids in what is compared.** Right
+   (`measured.rs`, `held_to_their_runs`). Taken: only roots are replayed; families are
+   compared with runs matched by place and references to runs compared through the match.
+6. **Major: the playground has one executor and no seam for recorded handles.** Right
+   (`play/mod.rs`; admission takes handles from the snapshot, `engine.rs`). Taken:
+   `Executor::start_replay` gives one run and its descendants the recorded handles and starts
+   it like any run, under the same bound, status, cancel, stated time and shutdown; the
+   playground's route calls it.
+7. **Major: provenance and request ids.** Right (`request.rs`; `stats.rs` selects records).
+   Taken: `replayed` is part of the fingerprint, written with the admission and the record,
+   on every run of the family; stats leaves replayed families out by default.
+8. **Major: where an imported bundle's journals and diagnostics live.** Right. Taken: every
+   member is an object named under `bundles/<digest>/`; a test of import, the archive and
+   first store gone, a restart, a prune, then replay.
+9. **Major: no whole-bundle checks.** Right. Taken: the reader's rules now hold the
+   artifacts' decoded identities, diagnostics against their records, the manifest against
+   the records, the families as trees and the links against both, with adversarial tests.
+10. **Major: the tar writer cuts names at 100 bytes.** Right (`report.rs`, `tar_file`).
+    Taken: names split between `prefix` and `name`, one that cannot be written refused,
+    round-trip tests.
+11. **Major: a bundle's upload and the host's workers.** Right (`play/guard.rs`, only
+    `Body::Picture` takes an upload place). Taken: a bundle's upload takes one of the two
+    places, one bundle is imported at a time with bounded memory, and a saturation test.
+12. **Major: a bundle cannot be deleted.** Right. Taken: `whizbang bundle delete` and
+    `DELETE /api/bundles/{digest}`, with a test that what a run names stays.
+13. **Major: cost and models are over a family.** Right (`play_result.rs`). Taken: the
+    comparison reads both families, with unresolved spend and an unread family said, and a
+    test of two paid loops.
+14. **Major: A0's split would raise the local budget.** Right (`SPEC.md` section 13). Taken:
+    A0 cuts test time first; the split is the owner's to allow, asked only if needed.
+15. **Minor: the Chrome case already waits on the tag.** Right in part: the case does, but
+    the `toHaveURL` that timed out is in its helper, `runWhenReady` (`ui/e2e/play.ts`).
+    Taken: A0 changes the helper.
+16. **Minor: older builds do not refuse the new names.** Right (`store/buckets.rs`). Taken:
+    the revert notes and risk 7 say an older build leaves the names alone and refuses a
+    `run/7` record by its version.
+
+The review found every milestone-7 carry-over row placed in a task. B1 and R1 are now two
+pull requests each, the executor's seam in R1's first.
+
