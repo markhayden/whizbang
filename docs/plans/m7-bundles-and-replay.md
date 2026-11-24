@@ -1,7 +1,7 @@
 # Plan: milestone 7, bundles and replay
 
-Draft 2, 2026-11-24, written from `main` at 6c75b6e3 (the tag `m6`, the merge of #300, the
-note of milestone 6), after one outside review round ("Review rounds", at the end). Milestone 7 is `SPEC.md` section 16, row 7, "Bundles and replay":
+Draft 3, 2026-11-24, written from `main` at 6c75b6e3 (the tag `m6`, the merge of #300, the
+note of milestone 6), after two outside review rounds ("Review rounds", at the end). Milestone 7 is `SPEC.md` section 16, row 7, "Bundles and replay":
 "Invocation bundles and journal replay; saved-run comparisons, saved examples and guided
 chain replay in the playground". Beside the row it takes section 6's control "Invocation
 bundles | Deferred to milestone 7", section 7's rascal row "Replay from a journal; invocation
@@ -152,7 +152,9 @@ host", amended by U1 and U2 for their routes.
 ### Bundles
 
 **One file, `bundle/1`, an uncompressed ustar that equal contents make byte for byte.**
-Each member's header is fixed (mode 0644, uid and gid 0, no names of users, mtime 0),
+Each member's header is fixed (mode 0644, uid and gid 0, no names of users, mtime 0; the
+writer takes the time as a parameter, 0 for a bundle and the run's end for "Export run", as
+`report.rs` gives it today),
 `bundle.json` comes first and every other member follows in the order of its name's bytes,
 so the archive's SHA-256 names it, as table-manners' did. The playground's tar writer
 (`crates/whizbang/src/report.rs`, `tar_file`) cuts a name at 100 bytes and writes no
@@ -228,16 +230,20 @@ A refusal names the first fault and says that nothing was imported and nothing r
 rule has an adversarial test (B1, item 3).
 
 **Importing one** brings it into a store in one publication: its artifacts through the
-store's import path, with the import mark S1 gave imports; and **every other member as an
-object of the store named under the bundle's entry**, `bundles/<digest>/manifest`,
+store's import path but **named under the bundle's entry alone**,
+`bundles/<digest>/artifacts/<identity>`, never with an ordinary import's name or mark, so
+that a bundle's artifacts are the bundle's and an independent import keeps its own name
+(`artifact/stored.rs`); and **every other member as an object of the store named under the
+bundle's entry**, `bundles/<digest>/manifest`,
 `bundles/<digest>/runs/<run id>/record`, `…/journal` and `…/diagnostics/<name>`, so the
 store's names hold each one (`store/generation.rs`, a generation names what it keeps) and a
 prune keeps them while the entry is there. A bundle's runs are never made runs of the
 importing store: no history, stats or ledger counts them, and replay reads them from the
-entry. A second import of a bundle already held changes nothing. **A bundle is deleted** by
-`whizbang bundle delete <digest>` or from the playground, which removes the entry's names
-in one publication; its artifacts stay while a run, an example or another bundle names
-them, and a prune removes the rest.
+entry. A second import of a bundle already held changes nothing. A run started from a bundle (a replay, a chain's
+step) names its inputs as any run does, so what it used outlives the bundle. **A bundle is
+deleted** by `whizbang bundle delete <digest>` or from the playground, which removes the
+entry's names in one publication; its artifacts stay while a run, an example, an ordinary
+import or another bundle names them, and a prune removes the rest.
 
 **Which doors.** The command line and the playground. Not the engine API: a bundle carries
 a store's files out and brings files in that name runs of another store, which is the kind
@@ -296,11 +302,19 @@ as part of its root, never alone: a child's action may need its place in its rec
 before it is prepared, naming why.
 
 **The call.** A replay's call is made from the record: its action, its arguments as the
-record holds them (defaults applied), and its inputs by identity. A record whose argument
-or setting was cut when it was written (a text past `SETTING_TEXT_LIMIT`,
-`contract/record.rs`) cannot say the call, and is refused naming it. Each capability's
-backend and model are taken from the record's models group and named explicitly, as "Copy
-command" does (`crates/whizbang/src/command_of.rs`).
+record holds them (defaults applied; arguments are kept whole, with secrets taken out), and
+its inputs by identity. Settings are cut at `SETTING_TEXT_LIMIT` with no mark
+(`contract/record.rs`, `Setting::new`), so a setting whose text is exactly that long may
+have been cut, and a replay that depends on it is refused naming it. **The choices.** A
+call names its backends by the config's choice names (aliases), which preparation resolves
+(`contract/snapshot.rs`), while a record's models group names each backend's declared
+identity (`contract/record.rs`, `Model.backend`), which two aliases may share. So each
+choice is taken from the record's resolved settings, whose names hold the alias
+(`backends.<capability>.<alias>.…`, `config/settings.rs`), and a choice the run took from
+the config's default is written explicitly; a record whose settings do not name exactly one
+alias for a capability it asked (an older record, or two aliases offering it) is refused
+for live replay naming the capability, and offline replay offers the recorded handles under
+the alias the settings name, or under the declared identity when they name none.
 
 **Offline replay is the default, and calls nothing.** `whizbang runs replay <run id>` (or
 `--bundle <file> [--step <n>]`) makes a new run of that call through the store's executor,
@@ -314,8 +328,7 @@ original family, in the order the original made them, and from nothing else:
 | `fill` | The painted picture the original `fill` run kept (`fill-answer.png`, from B1 on) |
 | `judge` | Its stored exchanges, turn by turn: each request the replay makes is compared with the one recorded, and the recorded answer given |
 
-The recorded handles are offered as the record's backend and model, so preparation finds
-the choices the record names; they name no recipient and no price, so egress has nothing to
+The recorded handles are offered under the choices so found, so preparation finds them; they name no recipient and no price, so egress has nothing to
 send and the ledger nothing to reserve. Nothing of the config is read for a backend, no key
 is read and no worker is started. **The decision cache is neither read nor written by a
 replay**, offline or live: offline, a check would otherwise be answered by the entry its own
@@ -325,8 +338,26 @@ from the cache is `unanswerable` offline (its turns are another run's), and asks
 afresh live.
 
 A request the original did not make, or made otherwise (another model, another request, a
-request past the last recorded), is answered with an error of its own kind, `diverged`,
-which ends the replayed run there and is reported as the first place the two differ. An
+request past the last recorded), is answered with an error of its own kind, `diverged`. An
+action may handle a capability error and go on (a check's second look leaves the earlier
+verdict standing, `crates/whizbang-squint/src/check.rs`; the loop turns a failed check into
+an unchecked attempt, `crates/whizbang-rascal/src/checked.rs`), so **divergence is the
+replay's, not the action's**: the first `diverged` or `unanswerable` answer is noted on the
+replay itself, every later request of the family is refused the same way, and the report
+is `diverged` (or `unanswerable`) at that first place whatever the actions made of it.
+
+**Judge turns and what they carry.** A stored exchange keeps a turn's text, but not every
+fact of its answer that the loop acts on: a turn's output ceiling, which decides whether a
+cut answer is tried again (`crates/whizbang-squint/src/check.rs`, `output_ceiling`), is not
+written (`crates/whizbang-core/src/capability/written.rs`). From B1 on, an exchange keeps
+it; an older exchange whose answer was cut at a ceiling it did not keep is `unanswerable`
+offline, naming that.
+
+**Tool files.** A check may call a tool file the config names (`check.rs`,
+`dispatch_file`), noted among its settings as `tool_file:<name>` with the file's digest. A
+tool file is code, and a replay never takes it from a record or a bundle: offline, a run
+whose settings name one is refused before it starts, naming the file; live, it is replayed
+only when the current config names a file of that name with the same digest. An
 answer the store cannot give (an opaque part withheld, a picture not held, a diagnostic
 gone, a fill with no kept answer) ends it before that request as `unanswerable`, naming what
 is missing: the carry-over row's "says where it gets an opaque part from, or that it
@@ -338,8 +369,11 @@ matched by their place (a root to a root, each child to the child at the same pl
 its parent's steps, a loop's attempt to the attempt of the same number), and a reference to
 a run inside what is compared (a step's run, a measurement's producing run) is compared
 through that match, never by its id. Then: each run's outcome, its committed outputs by
-identity, port and place, each step's action and arguments, a check's checklist and
-verdict, and a loop's attempts. Times, run ids and request ids are not compared. The report
+identity, port and place, each step's action and arguments, its measurements (an action
+such as `edge_similarity` commits no artifact and its result is its measurements,
+`crates/whizbang-squint/src/compare.rs`) and findings, a check's checklist and verdict, and
+a loop's attempts. Numbers are compared exactly: a replay runs the same build on the same
+pixels, and a number that differs is a difference. Times, run ids and request ids are not compared. The report
 is one of **reproduced** (all the same), **differs** (each difference by place, first
 first, at most 256 with a count of the rest), **diverged** or **unanswerable** (as above).
 
@@ -604,8 +638,9 @@ model ran.
    naming the step and port; a child run named as a step is refused, naming its root); each
    step marked replayable or not ("What a bundle may hold"); the members and the manifest;
    the ustar with fixed headers, names split between `prefix` and `name` and a name that
-   cannot be so written refused. "Export run" (`report.rs`, `tar_file`) moves to this writer
-   and keeps its bytes (`play::export_run_is_the_same_bytes_after_the_writer_moved`).
+   cannot be so written refused; the time a parameter. "Export run" (`report.rs`,
+   `tar_file`) moves to this writer, passing the run's end as today, and keeps its bytes
+   (`play::export_run_is_the_same_bytes_after_the_writer_moved`).
 3. **The reader**: every bound and rule of "Reading one trusts nothing", each with an
    adversarial test, on bundles built in the test (no committed binary fixture but one,
    below); nothing is published until every rule has passed.
@@ -628,7 +663,8 @@ model ran.
    `record::a_record_with_a_card_is_run_7_and_one_without_is_written_as_before`.
 7. **What the store keeps** (carry-over, "The engine API's hourly collection lets go of the
    names of the uploads"; "What the store keeps for replay"): a fill run keeps its painted
-   answer as `fill-answer.png`; `Store::prune` is run by the writer that holds the store
+   answer as `fill-answer.png`; a judge's exchange keeps its turn's output ceiling
+   (`capability/written.rs`, read back as none for an older exchange); `Store::prune` is run by the writer that holds the store
    after the engine API's hourly collection, so an upload's bytes go with its name; a
    bundle's entry and (for U1) an example's are names that keep what they hold from
    `delete`, `prune` and the collection.
@@ -637,7 +673,16 @@ model ran.
    `store::collect::the_hourly_collection_ends_in_a_prune_and_an_uploads_bytes_go_with_its_name`,
    `store::collect::a_run_going_keeps_every_file_a_held_reader_reads`,
    `store::collect::a_bundles_entry_keeps_its_artifacts_from_delete_prune_and_the_collection`,
-   `store::collect::a_deleted_bundles_artifacts_go_at_the_next_prune_unless_a_run_names_them`.
+   `store::collect::a_deleted_bundles_artifacts_go_at_the_next_prune_unless_a_run_names_them`,
+   `store::collect::an_artifact_two_bundles_share_stays_until_both_are_deleted`,
+   `store::collect::an_ordinary_import_before_or_after_a_bundle_keeps_its_artifact_when_the_bundle_goes`,
+   `capability::written::an_exchange_keeps_its_turns_output_ceiling_and_an_older_one_reads_as_none`.
+   **The model tier, by the orchestrator, before B1's first pull request merges** (no spend:
+   the Mac's GPU): item 7 changes `fill` and item 6 may change what the pack's worker or the
+   kind `remote` report, so `scripts/test-models.sh` runs on the branch on the owner's Mac
+   under `scripts/heavy.sh`, and where a changed source is one whose digest committed
+   evidence holds (`crates/whizbang/tests/it/evidence.rs`), the record is written again by
+   its runner's candidate mode (milestone 6, P1, item 5) and committed with the source.
 8. **A committed fixture**: `fixtures/bundle/remove-then-check.tar`, a chain of a removal
    and its check made by the fixture kit with fake models, after item 7 (so its fill keeps
    its answer), read by the tests of this build and every later one, so a later change of
@@ -679,7 +724,9 @@ abandoned.
    recorded.rs`): one for each capability, built from a root's family as the store or an
    imported bundle holds it, offered as the record's backend and model, which answer the
    replayed run's requests in their order from the table in "Replay", and `diverged` or
-   `unanswerable` otherwise. They name no recipient and no price. **The executor takes them
+   `unanswerable` otherwise, the first such answer noted on the replay and every later
+   request refused the same way ("Replay", divergence). They name no recipient and no price.
+   **The executor takes them
    for that one run**: `Executor::start_replay(source, mode, request id)` makes the call from
    the record ("The call"), prepares and admits it with the recorded handles in place of the
    snapshot's for that run and its descendants alone (`contract/engine.rs`, where admission
@@ -690,14 +737,16 @@ abandoned.
    decision cache (`crates/whizbang-squint/src/check.rs`, `cache::find`), through a flag the
    run's context carries; a check answered from the cache is `unanswerable` offline. Only a
    root of an action this build ships is replayed; a child, a user's recipe or tool file, an
-   `interrupted` run and a record whose argument was cut are refused, each naming why.
+   `interrupted` run, a setting that may have been cut and (offline) a tool file are
+   refused, each naming why; the choices are found from the settings' aliases ("The
+   call").
 4. **An opaque part** (carry-over, "A run cannot be sent again from what the store holds of
    it"): a judge turn that held one is `unanswerable` offline, naming the part's adapter and
    length; live, the run is made from its call, not from its exchanges, so no part is needed;
    the row closes with that line.
 5. **The comparison** (`crates/whizbang-core/src/contract/replay.rs`): of "What it compares",
    family against family, runs matched by place, references to runs compared through the
-   match, first difference first, at most 256 with a count of the rest.
+   match, measurements and findings among what is compared, first difference first, at most 256 with a count of the rest.
 6. **Live replay**: the current config's backends, credentials, egress and prices; a backend
    the record names that the config does not offer refuses it; settings that differ from the
    record's reported.
@@ -717,11 +766,16 @@ abandoned.
    copied.
    `execute::an_end_holds_one_copy_of_what_the_run_kept_and_a_second_end_after_a_panic_writes_it_whole`.
    (b) *A panic at `Publishing`* (carry-over, "a panic in the executor's code while a run's
-   end is at `Reached::Publishing`"): the catch asks the store, through a fresh snapshot,
-   whether the run's end became durable, and when it did answers as a durable end does
-   (finishing what is left once, as the `Durable` arm does), and otherwise as today.
-   `execute::a_panic_at_publishing_after_the_end_became_durable_answers_the_durable_end`
-   and `execute::a_panic_at_publishing_before_the_end_was_durable_answers_as_before`.
+   end is at `Reached::Publishing`"): readable is not durable (a publication makes the new
+   pointer visible by a rename before the root folder is synced, `store/mod.rs`, the
+   module's steps 4 and 5), so a snapshot cannot tell. The store gains
+   `Store::confirm(generation)`, which syncs the root folder and answers whether `CURRENT`
+   names that generation or one after it: then the end is durable. The catch calls it; when
+   it answers yes, the run is answered as a durable end is (finishing what is left once, as
+   the `Durable` arm does); when it answers no or fails, as today.
+   `execute::a_panic_after_the_pointer_was_renamed_and_before_the_sync_is_confirmed_by_a_sync_and_answers_the_durable_end`,
+   `execute::a_panic_after_the_sync_answers_the_durable_end` and
+   `execute::a_panic_at_publishing_before_the_pointer_was_renamed_answers_as_before`.
 
 - [ ] Done when: `replay::an_offline_replay_of_remove_prompt_reproduces_it_with_no_backend_configured`,
   `replay::an_offline_replay_of_remove_checked_reproduces_its_attempts_and_verdict_through_the_run_match`,
@@ -735,7 +789,12 @@ abandoned.
   `replay::a_changed_operation_is_reported_as_a_difference_at_its_step`,
   `replay::a_request_the_original_did_not_make_is_diverged_and_nothing_is_called`,
   `replay::a_turn_that_held_an_opaque_part_is_unanswerable_naming_it`,
-  `replay::a_child_an_interrupted_run_a_tool_files_run_and_a_cut_argument_are_each_refused`,
+  `replay::a_child_an_interrupted_run_a_recipe_files_run_and_a_setting_at_its_limit_are_each_refused`,
+  `replay::a_check_that_called_a_tool_file_is_refused_offline_and_replayed_live_only_with_the_same_digest`,
+  `replay::choices_are_found_by_alias_for_an_explicit_choice_a_default_and_two_aliases_of_one_model`,
+  `replay::a_changed_measurement_of_an_action_with_no_artifact_output_is_a_difference`,
+  `replay::a_divergence_in_a_second_look_or_a_loops_check_is_the_replays_report_whatever_the_action_made_of_it`,
+  `replay::an_answer_cut_at_its_ceiling_replays_as_it_ran`,
   `replay::a_live_replay_spends_as_a_run_and_reports_a_changed_verdict_as_a_difference`,
   `replay::a_live_replay_whose_backend_the_config_no_longer_offers_is_refused`,
   `replay::a_request_id_under_another_mode_or_source_is_a_conflict_and_the_same_replay_returns_its_run`,
@@ -862,13 +921,13 @@ step, and replays one run offline or live with its report; built as G1's designs
 
 | Row (by its subject in `docs/carry-over.md`) | What happens to it |
 |---|---|
-| A run cannot be sent again from what the store holds of it | R1, item 3 |
+| A run cannot be sent again from what the store holds of it | R1, item 4 |
 | The engine API's hourly collection lets go of the names of the uploads no run took | B1, item 7 |
 | The Google rows of prices are introductory | N1, item 4: re-owned to E with a line, since no live judge run happens |
 | `choice_json`'s `Err(_)` arm | U1, item 4 |
 | Home's library lists only the pictures given through the playground | U1, item 3 |
-| Every run's end clones what the run kept | R1, item 7 (a) |
-| A panic at `Reached::Publishing` is answered as abandoned | R1, item 7 (b) |
+| Every run's end clones what the run kept | R1, item 9 (a) |
+| A panic at `Reached::Publishing` is answered as abandoned | R1, item 9 (b) |
 | The Chrome case `run.spec.ts: each of the five squint use cases runs from its form` | A0, item 3 |
 | The fast tier's time on the owner's Mac near its limit | A0, item 1 |
 | The run record of a request to a GPU host names `device cuda` alone | B1, item 6 |
@@ -1070,4 +1129,44 @@ checked against the code; fifteen were right and taken, one was right in part.
 
 The review found every milestone-7 carry-over row placed in a task. B1 and R1 are now two
 pull requests each, the executor's seam in R1's first.
+
+### Review round 2
+
+On draft 2. Verdict: revise. Round 1's fixes held, but for findings 2, 3 and 12, which
+were completed by this round's findings 2, 3 and 7. Eleven findings: 1 blocker, 7 majors, 3
+minors. Each was checked against the code; all were right and taken.
+
+1. **Blocker: a snapshot cannot tell that an end is durable.** Right: the pointer is renamed
+   before the root is synced (`store/mod.rs`, the module's steps 4 and 5). Taken:
+   `Store::confirm` syncs the root and answers whether `CURRENT` names the generation; the
+   catch at `Publishing` calls it; tests before the rename, between it and the sync, and
+   after.
+2. **Major: a backend's identity is not its choice name.** Right (`Model.backend` against
+   `snapshot.rs`'s aliases; Copy command resolves them in `play_result.rs`). Taken: choices
+   are found from the resolved settings' alias names, a default written explicitly, an
+   ambiguous or older record refused for live replay; tests of an explicit choice, a default
+   and two aliases of one model.
+3. **Major: a shipped check runs tool files.** Right (`check.rs`, `dispatch_file`). Taken: a
+   run whose settings name a tool file is refused offline, and replayed live only with a file
+   of the same digest; a test.
+4. **Major: an exchange does not keep its output ceiling.** Right (`written.rs`;
+   `check.rs` acts on it). Taken: from B1 on an exchange keeps it; an older exchange cut at a
+   ceiling it did not keep is unanswerable; tests.
+5. **Major: measurements were not compared.** Right (`edge_similarity` commits no artifact,
+   `compare.rs`). Taken: measurements and findings are compared, numbers exactly; a test.
+6. **Major: an action may handle a divergence and go on.** Right (`check.rs`'s second look;
+   `checked.rs`'s unchecked attempt). Taken: the first divergence is noted on the replay,
+   later requests refused, and the report is the replay's; a test of both cases.
+7. **Major: a bundle's artifacts under ordinary import marks cannot be released.** Right
+   (`artifact/stored.rs`; prune keeps every named object). Taken: a bundle's artifacts are
+   named under its entry alone; tests of two bundles sharing one, and an ordinary import
+   before and after.
+8. **Major: the model tier.** Right (`SPEC.md` section 13). Taken: the orchestrator runs it
+   on B1's first pull request, with evidence written again by candidate mode where a source's
+   digest is held.
+9. **Minor: arguments are not cut; settings are cut with no mark.** Right. Taken: "The
+   call" says so; a setting exactly at its limit is taken as possibly cut.
+10. **Minor: Export run's time.** Right (`report.rs`). Taken: the writer takes the time as a
+    parameter.
+11. **Minor: three stale references in the carry-over table.** Right. Taken.
 
