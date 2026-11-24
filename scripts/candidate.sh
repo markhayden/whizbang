@@ -27,6 +27,13 @@
 # candidate with no model ready. On APFS the copy is a clone (`cp -c`), which takes no room
 # until a file of it changes; elsewhere it is an ordinary copy. Refuses a source that holds
 # either model through a link, and a destination that holds either already.
+# It copies the two models' folders and nothing else: not the pack (`pack/`), which `prepare`
+# installs into the candidate's directory from the tree itself. So the second directory is
+# not one the model tier accepts as WHIZBANG_MODELS_DIR until a pack is installed in it
+# (`whizbang setup --extra torch --models-dir <it>`). To measure a changed catalogue entry
+# (plan m6, task W1), install the entry so changed into such a directory with the staged
+# tree's binary (`whizbang models get <model> --models-dir <it>`), install the pack there,
+# and name it as WHIZBANG_MODELS_DIR for `prepare`, which copies the models again from it.
 #
 # `prepare`, the whole candidate, on the owner's Mac (heavy; through scripts/heavy.sh):
 # `export` into <folder>; the binary built from the exported tree, into <folder>/target;

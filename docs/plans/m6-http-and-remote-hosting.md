@@ -1268,7 +1268,7 @@ and its download from the maker with the customer's own sign-in stay as they are
    builder the files, which go in the same commit as the entry; the tolerance measured again
    must be ADR 0027's or better. No spend: the Mac's GPU.
 
-- [ ] Done when: Tiny's installation holds its licence's text, pinned
+- [x] Done when: Tiny's installation holds its licence's text, pinned
   (`models::tiny_installs_its_licence_text_from_the_binary_pinned_by_its_hash`), with its
   revision moved and its fixtures and evidence written again in the same commit; SAM 3's
   catalogue entry is unchanged; and `docs/guides/models.md` names the acknowledgement.

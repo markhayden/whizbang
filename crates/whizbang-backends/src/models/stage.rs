@@ -406,6 +406,14 @@ fn stage_file(
     if let Some(stopped) = stop.asked() {
         return Err(stopped);
     }
+    // A file the binary carries is written from it, held to the size and the hash the
+    // entry pins as a download is, and nothing is asked of any address (plan m6, task
+    // W1).
+    let from = match (file.from(), file.carried()) {
+        (Some(from), _) => from.clone(),
+        (None, Some(carried)) => return write_carried(dir, carried.bytes(), file, &target),
+        (None, None) => return Err(refused(FileRefused::Download(FaultKind::Malformed))),
+    };
     // The file may hold its size and no more: the file system holds it to that.
     let mut received = Received {
         file: dir.fs().begin_new(&target, size)?,
@@ -415,7 +423,7 @@ fn stage_file(
         beyond: false,
         disk: None,
     };
-    let mut from = file.from().clone();
+    let mut from = from;
     let mut moves = 0;
     loop {
         // One byte more than the size: a file that is too long is then seen to be,
@@ -472,6 +480,39 @@ fn stage_file(
     }
     received.file.sync()?;
     if received.file.finish()? != size {
+        return Err(StageRefused::Disk(io::ErrorKind::InvalidData));
+    }
+    Ok(())
+}
+
+/// Writes a file the binary carries to `target`: refused, before anything is written,
+/// when the text is not of the size or the hash the entry pins, as a download that is
+/// not is refused.
+fn write_carried(
+    dir: &ModelsDir,
+    text: &[u8],
+    file: &CatalogueFile,
+    target: &Path,
+) -> Result<(), StageRefused> {
+    let refused = |why: FileRefused| StageRefused::File {
+        name: file.name().shown(),
+        why,
+    };
+    let size = file.size();
+    match (text.len() as u64).cmp(&size) {
+        std::cmp::Ordering::Less => return Err(refused(FileRefused::TooShort)),
+        std::cmp::Ordering::Greater => return Err(refused(FileRefused::TooLong)),
+        std::cmp::Ordering::Equal => {}
+    }
+    if Digest::of_bytes(text) != file.sha256() {
+        return Err(refused(FileRefused::WrongHash));
+    }
+    let mut written = dir.fs().begin_new(target, size)?;
+    for part in text.chunks(PIECE_MAX_BYTES) {
+        written.append(part)?;
+    }
+    written.sync()?;
+    if written.finish()? != size {
         return Err(StageRefused::Disk(io::ErrorKind::InvalidData));
     }
     Ok(())
