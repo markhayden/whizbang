@@ -910,7 +910,10 @@ the features `phrase`, `point` and `box`, on `macos-arm64` alone.
   network off, never from a folder the library would look up.
 - **The licence** is Apache-2.0 for both. Neither repository holds a licence file; each
   model card states it (`license: apache-2.0`), and the two cards are installed as
-  `owlv2.README.md` and `sam2.README.md`.
+  `owlv2.README.md` and `sam2.README.md`. Since plan m6, task W1, the entry also names
+  `LICENSE`, the licence's terms, which the binary carries ("The catalogue": a file the
+  binary carries), 9,294 bytes pinned by its hash, at the entry's revision `2026-11.2`:
+  14 files, 777.5 MB.
 - **No token**: the repositories are public, so the entry has no `needs_token`. The
   origins are those of `sam3`, the Hub and `us.aws.cdn.hf.co`, where the Hub moved both
   large files' downloads when they were pinned; the owner approved that host for the

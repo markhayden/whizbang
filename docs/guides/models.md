@@ -18,7 +18,7 @@ $ whizbang models list
 models: 2
 directory: the one in this machine's data folder for whizbang, not made yet
 sam3	SAM 3	SAM License	3.4 GB	macos-arm64	not installed
-tiny	Tiny (OWLv2 and SAM 2.1 Hiera-Tiny)	Apache-2.0	777.4 MB	macos-arm64	not installed
+tiny	Tiny (OWLv2 and SAM 2.1 Hiera-Tiny)	Apache-2.0	777.5 MB	macos-arm64	not installed
 ```
 
 **SAM 3 installs, and is ready once installed.** `get` installs its files, and `list` then
@@ -251,7 +251,10 @@ keeps the masks whose core holds a pixel, in place of `--pick`.
   `get` keeps the copy of the licence the catalogue pins, `LICENSE`, beside the weights,
   held to its size and hash like every file.
 - **Tiny** is under Apache-2.0, which each model card states; the two cards are
-  installed as `owlv2.README.md` and `sam2.README.md`.
+  installed as `owlv2.README.md` and `sam2.README.md`. Neither of its repositories holds
+  a licence file, so the binary carries the licence's text and `get` writes it as
+  `LICENSE` beside the model's files, held to the size and the hash the catalogue pins;
+  nothing is downloaded for it.
 
 **What a publication owes.** SAM 3's licence asks whoever submits for publication the
 results of research done on, with or in connection with the model to acknowledge its use

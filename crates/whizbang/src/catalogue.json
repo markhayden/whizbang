@@ -71,13 +71,19 @@
     {
       "name": "tiny",
       "title": "Tiny (OWLv2 and SAM 2.1 Hiera-Tiny)",
-      "revision": "2026-11.1",
+      "revision": "2026-11.2",
       "adapter": "owlv2-sam2",
       "licence": "Apache-2.0",
       "platforms": ["macos-arm64"],
       "features": ["phrase", "point", "box"],
       "origins": ["https://huggingface.co", "https://us.aws.cdn.hf.co"],
       "files": [
+        {
+          "name": "LICENSE",
+          "size": 9294,
+          "sha256": "sha256:498fe4f613463ddd7e51ade5140261d652a7f68c41d0e37a3c837c687b563be5",
+          "carried": "apache-2.0"
+        },
         {
           "name": "owlv2.README.md",
           "size": 5510,
