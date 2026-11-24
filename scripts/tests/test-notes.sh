@@ -108,4 +108,9 @@ done
 [ "$(cited docs/plans/m5-note.md | wc -l | tr -d ' ')" -ge 50 ] ||
   fail "docs/plans/m5-note.md cites fewer than 50 tests: its table of clauses is gone or is no longer read"
 
+# And the note of milestone 6 (plan m6, task N1), for its row: the engine API, its negative
+# tests, the kind remote, the story and the records of the live round.
+[ "$(cited docs/plans/m6-note.md | wc -l | tr -d ' ')" -ge 45 ] ||
+  fail "docs/plans/m6-note.md cites fewer than 45 tests: its table of clauses is gone or is no longer read"
+
 finished

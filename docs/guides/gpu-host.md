@@ -149,7 +149,10 @@ files were checked, as the front did then: a whole call took 22 to 52 seconds co
 and 2.6 seconds warm; the first call after a new image took 161 seconds; and one cold start
 took about 5 minutes, in which two calls in a row failed at 150.8 seconds on the redirect and
 the third took 129 seconds. With the headers at once, a cold call no longer meets the 150
-seconds whatever its start takes, up to the bridge's `startup_timeout` of 300 seconds.
+seconds whatever its start takes, up to the bridge's `startup_timeout` of 300 seconds. The
+measurements, the parity of SAM 3 on that card, a cancel that reached the card's worker and
+the spend are in `docs/results/m6-remote-sam3.md`; user story 1 run live against that host
+is in `docs/results/m6-user-story-1.md`.
 
 The front logs each cancel and where it went, each cancel frame written to a worker and how
 long after it the call ended, and each worker started and ended, a line each in `modal app
@@ -190,7 +193,9 @@ longest one attempt may be billed for. On Modal it is the bridge's `startup_time
 differs. Whizbang charges each call at most `price × host_limit_s × 2`, an attempt of its own
 and one restart of the host's: 0.36 dollars with the example. A call that left is charged
 at that bound whatever it came to; the ledger then holds at least what Modal billed for it,
-but for the residual below.
+but for the residual below. On an A10G at Modal's prices of 2026-11-24 the price came to 350,
+so 0.42 dollars a call. That day's whole round counted about 13 dollars in whizbang's ledgers,
+against 0.56 that Modal metered (`docs/results/m6-remote-sam3.md`, "Spend").
 
 **What whizbang does not bound.** Modal gives no bound for one request: it restarts a
 container that crashed, without end, and an input whose container was preempted, with no

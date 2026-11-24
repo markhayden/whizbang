@@ -3,9 +3,10 @@
 One toolkit for working on images with models: finding and editing things in an image
 (`rascal`), judging an image against rules (`squint`), and a playground for both.
 
-**State:** milestones 1 to 5 are done (their notes are in [docs/plans/](docs/plans/)): the
-last of them, the playground, is available as `whizbang play`. Whizbang runs on the command
-line, as a stdio server for agents, and in a browser:
+**State:** milestones 1 to 6 are done (their notes are in [docs/plans/](docs/plans/)): the
+last of them, the engine API with SAM 3 on a GPU host, is available as `whizbang serve
+--http`. Milestones 7, E and 8 come next, in that order. Whizbang runs on the command line,
+as a stdio server for agents, as an engine for a hosted app, and in a browser:
 
 - `whizbang rascal …` finds what a phrase names, removes it and repairs a spot, with SAM 3
   on the Mac and a filler in the cloud; `whizbang rascal remove-checked` removes and has
