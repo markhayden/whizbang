@@ -1,6 +1,7 @@
 //! `public::…`: the two ways to the client from outside the crate are a checked
 //! downloader (ADR 0024) and ways out whose sender has the check behind a send over it
-//! (plan 2A, task S1).
+//! (plan 2A, task S1); and the prober (plan m6, task R1), which a checked prober is put
+//! around before anything is asked.
 
 use std::net::{Ipv4Addr, TcpListener};
 
@@ -75,6 +76,7 @@ fn the_only_public_way_to_the_client_is_a_checked_downloader() {
             "mod.rs: pub const ANSWER_WAIT_LIMIT",
             "mod.rs: pub fn downloader",
             "mod.rs: pub fn ways",
+            "mod.rs: pub fn prober",
         ]
     );
     let lib = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs")).unwrap();

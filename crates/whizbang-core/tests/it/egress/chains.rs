@@ -440,7 +440,10 @@ fn prober(fake: &Arc<FakeProber>, policy: DispatchPolicy, recipient: Recipient) 
 }
 
 fn reached() -> Result<Probed, Fault> {
-    Ok(Probed::Reached { status: 204 })
+    Ok(Probed::Reached {
+        status: 204,
+        body: Vec::new(),
+    })
 }
 
 fn pointed(to: &str) -> Result<Probed, Fault> {
@@ -473,7 +476,10 @@ fn a_probe_is_refused_by_default_and_sent_when_approved_and_carries_no_user_data
         .unwrap();
     assert_eq!(
         probe(&through, health).unwrap(),
-        Probed::Reached { status: 204 }
+        Probed::Reached {
+            status: 204,
+            body: Vec::new()
+        }
     );
     // What was handed over is the address and the credential of its origin, which is
     // all a probe has a place for.
@@ -565,7 +571,10 @@ fn a_probes_redirect_within_the_recipient_is_followed_with_the_credential_of_eac
         .unwrap();
     assert_eq!(
         probe(&through, "https://api.example.com/health").unwrap(),
-        Probed::Reached { status: 204 }
+        Probed::Reached {
+            status: 204,
+            body: Vec::new()
+        }
     );
     let key = vec![("x-api-key".to_owned(), made_up_key("a"))];
     let headers: Vec<_> = fake.probes().iter().map(|probe| probe.headers()).collect();
@@ -602,7 +611,10 @@ fn a_probe_pointed_elsewhere_more_often_than_the_limit_is_refused_and_each_probe
     for round in 1..=2 {
         assert_eq!(
             probe(&through, "https://api.example.com/health").unwrap(),
-            Probed::Reached { status: 204 }
+            Probed::Reached {
+                status: 204,
+                body: Vec::new()
+            }
         );
         assert_eq!(fake.requests(), round * 6);
     }

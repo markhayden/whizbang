@@ -301,6 +301,16 @@ impl<'a> Wire<'a> {
         self.flush()
     }
 
+    /// From here on, the wait from the request's last byte to the answer's first and
+    /// between two bytes of the answer is `between`: a request of frames waits as long
+    /// as its model may work (ADR 0046), once its own bytes have left within the
+    /// client's limits.
+    pub(crate) fn waiting_for_answers(&mut self, between: Duration) {
+        self.timing.between_reads = between;
+        self.last = self.clock.now();
+        self.quiet = 0;
+    }
+
     /// Reads some of the answer into `into`: how many bytes, and none only when the
     /// server closed its side as TLS says to. A connection that ends otherwise is cut.
     pub(crate) fn read(&mut self, into: &mut [u8]) -> Result<usize, Fault> {

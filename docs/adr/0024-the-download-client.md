@@ -16,6 +16,13 @@ review of the first. Added to "The sender": chunked answers, bounded; the run's 
 held over the whole request; a request larger than TLS takes at once. Changed in "How a
 test reaches a server on loopback": the test root and the client that trusts it are
 compiled under the feature `fakes` too, for the tests of the crates that turn it on.
+Amended: 2026-11-23, by plan m6, task R1 (ADR 0046, "The kind `remote`", "The client's way
+of frames"). Added: a request of frames, a `POST` of the bytes a check let through whose
+answer's head and body are handed to the caller as they arrive, its wait for the answer
+the request's own; a control send that follows it to the address its connection reached,
+resolving no name, within a deadline of its own; and the prober, a `GET` with no
+credential that hands on its status and the start of its body. Chunked bodies are read
+by a send, a request of frames and a probe; a download still refuses them.
 Spec: section 10, "Egress"
 
 ## Context

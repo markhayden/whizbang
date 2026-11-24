@@ -1071,8 +1071,11 @@ host whether it is there without sending it anything.
    local`, the pack's fake models, serving HTTPS on `127.0.0.1:0` with a certificate of the test
    PKI the net client's tests already use, `net/testing.rs`, whose root the test hands the
    client), through the production HTTPS path. The
-   front runs under `scripts/thread-guard.sh` as the pack's other real-process tests do, and its
-   seconds count under the fast tier's 300 (at most 8 in all; the cases share one host).
+   front is a child of the test process, so the thread guard that every run of the tests goes
+   through (`just check` and `just test-only`, `scripts/thread-guard.sh`) watches it with its
+   workers, as it watches the pack's other real processes; no test starts it under the guard
+   itself (as built). Its tests are of the group `pack-workers`, and their seconds count under
+   the fast tier's 300 (at most 8 in all; each test of the cases shares one host, as built).
 5. **The probe's body, and the real prober** (carry-over, "The real network client and the
    shipped catalogue", what is left). `Probed::Reached` gains a body of at most 4 KiB, held to
    that bound by the checked prober before it is handed on (`egress/ways.rs`,
@@ -1086,7 +1089,7 @@ host whether it is there without sending it anything.
    `docs/guides/config.md` its table and an `egress` example; both say that the token is a
    secret of both sides and that a missing price refuses every call.
 
-- [ ] Done when: every case of the conformance suite's behavioural half passes over the local
+- [x] Done when: every case of the conformance suite's behavioural half passes over the local
   pipe and over HTTP against the fake host (`conformance::*_over_http`);
   `remote::a_call_is_sent_through_the_gate_with_its_token_bound_to_its_origin`,
   `remote::a_remote_backend_without_both_price_settings_has_no_bound_and_is_refused`,

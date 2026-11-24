@@ -63,6 +63,28 @@ tiled = true
 rendering = "grey"
 ```
 
+The kind `remote` is SAM 3 on a GPU host of your own: its `url` is the host's front, its
+`token_env` the variable of the front's token, which is a secret of both sides, and its
+settings must give its price, `price_microusd_per_second` and `host_limit_s`, or every
+call to it is refused (`docs/guides/backends.md`, "The kind `remote`").
+
+```toml
+[backends.segment]
+kind = "remote"
+url = "https://gpu-host.example"
+token_env = "SEGMENT_TOKEN"
+model = "sam3"
+
+[backends.segment.settings]
+price_microusd_per_second = 300
+host_limit_s = 600
+
+[egress.recipients.gpu-host]
+origin = "https://gpu-host.example"
+classes = ["source_images", "prompts"]
+probe = true
+```
+
 A call chooses `bria` or `local` by name. Leave `default` out and a call must choose: no
 backend is picked for it, however few there are. A name is a lower-case letter, then
 lower-case letters, digits, `_` or `-`. Eight names are taken, since they are the keys of

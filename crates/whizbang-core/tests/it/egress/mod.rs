@@ -3,11 +3,13 @@
 //! far: each task adds its module here.
 
 mod chains;
+mod checked;
 mod gate;
 mod hops;
 mod jpeg;
 mod pixels;
 mod prepare;
 mod recipients;
+mod remote;
 mod support;
 mod ways_out;

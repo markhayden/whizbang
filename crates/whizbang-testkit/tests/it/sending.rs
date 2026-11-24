@@ -237,7 +237,10 @@ fn the_probing_fake_plays_its_script_and_keeps_each_request_with_its_address_and
         Ok(Probed::Moved(address(
             "https://eu.example.net/health?zone=1",
         ))),
-        Ok(Probed::Reached { status: 204 }),
+        Ok(Probed::Reached {
+            status: 204,
+            body: Vec::new(),
+        }),
         Err(unreachable.clone()),
     ]);
     let run = Cancellation::new();
@@ -251,7 +254,10 @@ fn the_probing_fake_plays_its_script_and_keeps_each_request_with_its_address_and
     assert_eq!((prober.requests(), prober.remaining()), (1, 2));
     assert_eq!(
         prober.probe(&second, &run).unwrap(),
-        Probed::Reached { status: 204 }
+        Probed::Reached {
+            status: 204,
+            body: Vec::new()
+        }
     );
     // A fault is played where the script has one, and the request is kept.
     assert_eq!(prober.probe(&first, &run).unwrap_err(), unreachable);
@@ -308,7 +314,10 @@ fn the_probing_fake_past_the_end_of_its_script_fails_and_does_not_panic() {
 
 #[test]
 fn what_is_printed_of_the_probing_fake_and_of_a_probe_holds_no_credential() {
-    let prober = FakeProber::scripted(vec![Ok(Probed::Reached { status: 200 })]);
+    let prober = FakeProber::scripted(vec![Ok(Probed::Reached {
+        status: 200,
+        body: Vec::new(),
+    })]);
     let request = probe_of("https://api.example.com/health?token=abc");
     prober.probe(&request, &Cancellation::new()).unwrap();
     let shown = format!("{prober:?} {:?}", prober.probes());

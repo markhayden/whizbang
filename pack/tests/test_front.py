@@ -248,6 +248,40 @@ class Supervision(unittest.TestCase):
         self.assertEqual(kinds(side), [("load", "fake-wait"), ("segment", "fake-wait")])
         self.assertEqual(side.spawns.count, 1)
 
+    def test_a_request_that_comes_after_a_restart_was_told_is_answered_and_not_failed_with_the_queue(self):
+        # Found by plan m6, task R1, over HTTP: a client that read the outcome of a request
+        # whose worker ended, and asked again at once, could be failed with the requests
+        # that waited at the restart. Here the second request reaches the queue after the
+        # first's outcome was told and before its turn was cleaned up.
+        models = fk.Models(self)
+        inner = fk.local_side(self, models)
+        told = threading.Event()
+        go_on = threading.Event()
+
+        class Holding:
+            def __getattr__(self, name):
+                return getattr(inner, name)
+
+            def call(self, job, emit):
+                def held(item):
+                    emit(item)
+                    if item[0] == "outcome" and item[1]["ended"] is not None:
+                        told.set()
+                        go_on.wait(kit.WAIT_SECONDS)
+
+                inner.call(job, held)
+
+        made, port = fk.serve(self, Holding(), models.dir)
+        first = fk.post_request(port, "fake-exit", models.identity["fake-exit"])
+        self.assertEqual(fk.answer_of(*first)[2]["ended"], {"exited": 4})
+        self.assertTrue(told.wait(kit.WAIT_SECONDS))
+        second = fk.post_request(port, "fake-ok", models.identity["fake-ok"])
+        fk.wait_until(lambda: len(made._queue) == 2)
+        go_on.set()
+        _, frames, document, _ = fk.answer_of(*second)
+        self.assertEqual(document["outcome"], "complete")
+        self.assertEqual(len(frames[-1]["instances"]), 1)
+
     def test_after_a_restart_the_next_request_is_answered(self):
         models, side, _, port = setup(self)
         sock, load, request = fk.post_request(port, "fake-exit", models.identity["fake-exit"])

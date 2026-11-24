@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use super::{
     Address, Credential, DispatchPolicy, DownloadRequest, Downloaded, Downloader, MOVES_LIMIT,
-    NotAllowed, Origin, ProbeRequest, Probed, Prober, Recipient,
+    NotAllowed, Origin, PROBE_BODY_MAX_BYTES, ProbeRequest, Probed, Prober, Recipient,
 };
 use crate::capability::{Fault, FaultKind};
 use crate::contract::Cancellation;
@@ -55,6 +55,10 @@ const PROBE_MOVED: &str = "the probe was pointed elsewhere more than 5 times, an
                            followed further";
 
 const PROBE_CANCELLED: &str = "the probe was cancelled";
+
+/// What it answers of an answer whose body is over the bound a probe's is held to.
+const PROBE_TOO_LARGE: &str = "the probe's answer has a body over 4 KiB, the most a probe's is \
+                               handed on with";
 
 /// A refusal. Before anything was asked of any address it says that nothing was sent;
 /// after an answer that pointed elsewhere it states no stage, since the address that
@@ -283,7 +287,13 @@ impl Prober for CheckedProber {
                     .map_err(|_| Fault::new(FaultKind::Malformed, "the probe could not be made"))?,
             };
             match self.prober.probe(&probe, cancellation)? {
-                Probed::Reached { status } => return Ok(Probed::Reached { status }),
+                Probed::Reached { status, body } => {
+                    // The body is held to its bound before it is handed on.
+                    if body.len() > PROBE_BODY_MAX_BYTES {
+                        return Err(Fault::new(FaultKind::TooLarge, PROBE_TOO_LARGE).unresolved());
+                    }
+                    return Ok(Probed::Reached { status, body });
+                }
                 Probed::Moved(next) => to = next,
             }
             moves += 1;

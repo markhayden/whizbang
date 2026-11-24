@@ -553,16 +553,18 @@ fn with_no_config_the_binarys_executor_is_under_the_empty_config_and_a_call_with
 #[test]
 fn a_backend_of_a_kind_this_build_does_not_have_is_not_ready_through_the_binarys_wiring_and_says_why()
  {
-    // The build registers two kinds, `pack` (`wiring::kinds`, task P6a of plan 1C)
-    // and `service` (plan 2A, task S1), so a backend of any other kind a config names
+    // The build registers three kinds, `pack` (`wiring::kinds`, task P6a of plan 1C),
+    // `service` (plan 2A, task S1) and `remote` (plan m6, task R1), so a backend of any
+    // other kind a config names
     // is offered and is not ready, with the reason; nothing answers in its place.
     let world = World::new("wired-no-kind");
     let config = "[backends.fill]\nkind = \"fake\"\nmodel = \"paint-1\"\n";
     std::fs::write(world.config_path(), config).unwrap();
     let worker = OneWorker::installed();
     let kinds = wiring::kinds(&worker);
-    assert_eq!(kinds.len(), 2);
+    assert_eq!(kinds.len(), 3);
     assert!(kinds.get("pack").is_some() && kinds.get("service").is_some());
+    assert!(kinds.get("remote").is_some());
     assert!(kinds.get("fake").is_none());
     let over = Over::nothing()
         .config(Some(&world.config_path()))

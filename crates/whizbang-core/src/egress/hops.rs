@@ -216,8 +216,10 @@ impl HopCheck for SendCheck {
         if self.keeps_out(hop.to().rest().as_bytes()) {
             return Err(Denied::because(KEPT_OUT));
         }
+        // A picture's canonical pixels are pixels, whatever their bytes spell.
         hop.pieces()
             .iter()
+            .filter(|piece| !piece.is_pixels())
             .try_for_each(|piece| self.part(piece.bytes()))?;
         // A request's own fields are constants of the code that sends; they are
         // looked at all the same, as words.
