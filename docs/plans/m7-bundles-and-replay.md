@@ -1,7 +1,7 @@
 # Plan: milestone 7, bundles and replay
 
-Draft 4, 2026-11-24, written from `main` at 6c75b6e3 (the tag `m6`, the merge of #300, the
-note of milestone 6), after three outside review rounds ("Review rounds", at the end). Milestone 7 is `SPEC.md` section 16, row 7, "Bundles and replay":
+Draft 5, 2026-11-24, written from `main` at 6c75b6e3 (the tag `m6`, the merge of #300, the
+note of milestone 6), after four outside review rounds ("Review rounds", at the end). Milestone 7 is `SPEC.md` section 16, row 7, "Bundles and replay":
 "Invocation bundles and journal replay; saved-run comparisons, saved examples and guided
 chain replay in the playground". Beside the row it takes section 6's control "Invocation
 bundles | Deferred to milestone 7", section 7's rascal row "Replay from a journal; invocation
@@ -228,7 +228,11 @@ below passes before the first publication:
   a family agree: every step a record lists as a child run is a record of the bundle whose
   parent is that record, with the same action and an ending that agrees with what the parent
   noted; every record with a parent is listed by that parent once; no run is the child of
-  two.
+  two. Two cases of a recovered family are evidence and are kept, not refused: a record
+  ended `interrupted` that declares its steps lost (`contract/record.rs`,
+  `RunRecord::interrupted`) is not held to list its children, and a parent's step whose
+  ending it noted as not known (null) agrees with a child recovered as `interrupted`. Such a
+  family is carried whole; its offline replay is refused, naming the lost steps.
 - *Version*: an unknown manifest version is refused, naming it.
 
 A refusal names the first fault and says that nothing was imported and nothing ran. Each
@@ -236,9 +240,11 @@ rule has an adversarial test (B1, item 3).
 
 **Importing one** brings it into a store in one publication: its artifacts through the
 store's import path but **named under the bundle's entry alone**,
-`bundles/<digest>/artifacts/<identity>`, never with an ordinary import's name or mark, so
-that a bundle's artifacts are the bundle's and an independent import keeps its own name
-(`artifact/stored.rs`); and **every other member as an object of the store named under the
+`bundles/<digest>/files/<file digest>`, one name for each file member, never with an
+ordinary import's name or mark, so that a bundle's files are the bundle's, two files of one
+identity with other origins are both kept byte for byte, and an independent import keeps
+its own name (`artifact/stored.rs`); the manifest's map from each file to its runs and
+ports is what a lookup through the bundle reads; and **every other member as an object of the store named under the
 bundle's entry**, `bundles/<digest>/manifest`,
 `bundles/<digest>/runs/<run id>/record`, `…/journal` and `…/diagnostics/<name>`, so the
 store's names hold each one (`store/generation.rs`, a generation names what it keeps) and a
@@ -664,8 +670,9 @@ model ran.
 3. **The reader**: every bound and rule of "Reading one trusts nothing", each with an
    adversarial test, on bundles built in the test (no committed binary fixture but one,
    below); nothing is published until every rule has passed.
-4. **The import and the deletion**: one publication of the artifacts with their import mark
-   and every other member under `bundles/<digest>/`; a second import changes nothing; a
+4. **The import and the deletion**: one publication of every member under
+   `bundles/<digest>/`, the files by their file digest and with no ordinary import's name
+   or mark; a second import changes nothing; a
    bundle's runs are not the store's own (`runs list`, `runs stats` and the ledger do not see
    them); a deletion removes the entry's names in one publication, its artifacts staying
    while anything else names them.
@@ -717,7 +724,8 @@ model ran.
   `bundle::a_manifest_that_contradicts_a_record_or_a_link_that_contradicts_both_is_refused`,
   `bundle::a_family_with_a_missing_parent_a_cycle_or_two_roots_is_refused`,
   `bundle::a_child_listed_by_one_parent_and_naming_another_or_listed_twice_is_refused`,
-  `bundle::two_files_of_one_identity_with_other_origins_travel_and_each_run_keeps_its_own`,
+  `bundle::an_interrupted_parent_with_lost_steps_and_a_null_ending_of_a_recovered_child_are_kept`,
+  `runs_bundle::two_files_of_one_identity_with_other_origins_survive_import_a_restart_and_a_prune_byte_for_byte`,
   `bundle::an_unknown_version_is_refused_naming_it`,
   `bundle::a_bundle_over_its_bounds_is_refused_before_it_is_read_whole`,
   `bundle::a_long_member_name_round_trips_through_prefix_and_name_and_one_too_long_is_refused`,
@@ -772,10 +780,14 @@ abandoned.
 6. **Live replay**: the current config's backends, credentials, egress and prices; a backend
    the record names that the config does not offer refuses it; settings that differ from the
    record's reported.
-7. **The command**: `whizbang runs replay <run id> | --bundle <file> [--step <n>] [--live]
-   [--request-id <id>] [--json]`, against a store (`--store`), the report printed, and the
-   exit code 0 for reproduced, 3 for differs, diverged or unanswerable, 1 for a refusal. A
-   bundle's replay imports it first (B1, item 4).
+7. **The command**: `whizbang runs replay <run id> | --bundle-digest <digest> --step <n> |
+   --bundle <file> [--step <n>]` with `[--live] [--request-id <id>] [--json]`, against a store
+   (`--store`), the report printed, and the exit code 0 for reproduced, 3 for differs,
+   diverged or unanswerable, 1 for a refusal. **A request id is looked up first**, before
+   any source is read or imported: with `--bundle-digest` the fingerprint needs no file;
+   with `--bundle <file>`, the file's SHA-256 is computed by reading it as a stream and
+   nothing else, and only when the id is not a repeat is the bundle imported (B1, item 4),
+   so a repeat publishes nothing and recreates no deleted entry.
 8. **Provenance and request ids**: `replayed` is part of the request's fingerprint
    (`contract/request.rs`) and written with the admission and the record, for every run of
    the family; `runs stats` leaves replayed families out by default
@@ -828,6 +840,7 @@ abandoned.
   `replay::a_live_replay_whose_backend_the_config_no_longer_offers_is_refused`,
   `replay::a_request_id_under_another_mode_or_source_is_a_conflict_and_the_same_replay_returns_its_run`,
   `replay::a_repeated_replay_is_answered_after_its_source_was_deleted_and_after_the_config_changed`,
+  `replay::a_repeat_by_bundle_digest_after_the_archive_and_the_entry_are_gone_publishes_nothing`,
   `replay::every_run_of_a_replayed_family_names_it_and_stats_leaves_the_family_out_by_default`,
   `replay::a_replay_in_a_held_store_is_cancelled_waited_for_and_counted_like_any_run`,
   `runs_bundle::a_bundle_imports_into_an_empty_store_and_survives_its_archive_and_first_store_gone_a_restart_and_a_prune`
@@ -1230,4 +1243,23 @@ Each was checked against the code; all were right and taken.
    is made from the replay request, not the rebuilt call; a test after the source was deleted
    and after the config changed.
 7. **Minor: saved examples still said arguments are cut.** Right. Taken.
+
+### Review round 4
+
+On draft 4. Verdict: revise. Round 3's fixes 1, 2, 3 and 7 held; 4, 5 and 6 had gaps,
+which are this round's findings 1 to 3. Four findings: 3 majors, 1 minor. Each was checked
+against the code; all were right and taken.
+
+1. **Major: the import named a bundle's artifacts by identity.** Right: two files of one
+   identity would compete for one name. Taken: a bundle's files are named by file digest,
+   `bundles/<digest>/files/<file digest>`, with the manifest's map read by lookup; the test
+   runs through import, a restart and a prune.
+2. **Major: recovered families would be refused.** Right (`RunRecord::interrupted`
+   declares its steps lost; a parent may note a child's ending as null). Taken: both are
+   kept as evidence, and their offline replay is refused naming the lost steps; a test.
+3. **Major: `--bundle <file>` read the source before the lookup.** Right. Taken:
+   `--bundle-digest` replays an imported bundle by its digest; with a file, its digest is
+   computed as a stream and the import made only after the lookup finds no repeat; a test of
+   a repeat after the archive and the entry are gone.
+4. **Minor: B1, item 4 still named an import mark.** Right. Taken.
 
