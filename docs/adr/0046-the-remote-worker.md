@@ -230,7 +230,18 @@ known only later is in the body: the files' identity in the identity record, bef
 frame, and every failure in the outcome record, as before. The statuses decided before any
 wait stay statuses (`400`, `401`, `404`, `405`, `411`, `413`, `431`, and `503` when the
 request handlers are taken); a full queue is decided at once too, and is answered with the
-headers and its outcome record (`busy`) as before. No fault changed its kind or its form.
+headers and its outcome record (`busy`), now chunked as every other answer of the route,
+where it had a `Content-Length`. No fault changed its kind, and every failure is still told
+by its outcome record.
+
+Keep-alives hold the client's wait between two reads open, so neither side lets them hold
+an answer open for ever. The front answers a request whose outcome has not come by its
+`not_after` and 5 seconds more (`Limits.overrun`) as `timed_out`, unresolved, itself, and
+cancels it on the worker's side; and a request that waited in the queue past its `not_after`
+is answered `timed_out` (`admission: "not_after"`) without the worker's side, so a card is
+never woken for it. The client ends the whole answer of a request at its own wait
+(`host_limit_s`) and 30 seconds more from the request's start, whatever keeps it alive, and
+never past the run's deadline.
 
 While nothing else is written, the front writes a keep-alive after every `keep_alive` seconds,
 10 by default (`--keep-alive-ms`, 1 to 20,000, for a test): under the client's limit between

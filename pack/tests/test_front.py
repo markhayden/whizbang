@@ -990,10 +990,12 @@ class Slow:
         self.items = items
         self.gate = threading.Event()
         self.cancelled = []
+        self.calls = []
         self.checked = {}
         self.device = None
 
     def call(self, job, emit):
+        self.calls.append(job["dispatch"])
         if not self.gate.wait(kit.WAIT_SECONDS):
             raise AssertionError("the test never let the slow side go on")
         for item in self.items:
@@ -1012,11 +1014,11 @@ DIGEST = "sha256:" + "ab" * 32
 HEADERS_WITHIN = 0.5
 
 
-def slow_front(test, items, **limits):
+def slow_front(test, items, host_limit_s=600, clock=time.time, **limits):
     models = fk.Models(test)
     side = Slow(items)
     test.addCleanup(side.gate.set)
-    made, port = fk.serve(test, side, models.dir, fk.small_limits(**limits))
+    made, port = fk.serve(test, side, models.dir, fk.small_limits(**limits), host_limit_s=host_limit_s, clock=clock)
     return models, side, made, port
 
 
@@ -1094,6 +1096,31 @@ class Start(unittest.TestCase):
             answer.close()
             self.assertEqual((answer.files, frames), (None, []))
             self.assertEqual((document, lines), (made[1], made[2]))
+
+    def test_a_side_held_past_its_not_after_is_answered_timed_out_by_the_front_and_cancelled(self):
+        # Keep-alives hold the client's wait open, so the front ends what its side does not.
+        models, side, _, port = slow_front(self, [("verified", DIGEST)], host_limit_s=0.1, overrun=0.05)
+        dispatch = fk.dispatch()
+        sock, load, request = fk.post_request(port, "fake-ok", models.identity["fake-ok"], dispatch)
+        answer, frames, document, _ = fk.answer_of(sock, load, request)
+        self.assertEqual((answer.files, frames), (None, []))
+        self.assertEqual((document["kind"], document["stage"], document["admission"]), ("timed_out", "unresolved", None))
+        fk.wait_until(lambda: dispatch in side.cancelled)
+        self.assertEqual(side.calls, [dispatch])
+
+    def test_a_request_that_waited_in_the_queue_past_its_not_after_never_reaches_the_side(self):
+        now = [1_000_000.0]
+        models, side, made, port = slow_front(self, [front.outcome("failed", "cancelled")], clock=lambda: now[0])
+        first = fk.post_request(port, "fake-ok", models.identity["fake-ok"])
+        fk.wait_until(lambda: len(side.calls) == 1)
+        second = fk.post_request(port, "fake-ok", models.identity["fake-ok"])
+        fk.wait_until(lambda: len(made._queue) == 2)
+        now[0] += 10_000
+        side.gate.set()
+        _, frames, document, _ = fk.answer_of(*second)
+        self.assertEqual((frames, document["kind"], document["admission"]), ([], "timed_out", "not_after"))
+        self.assertEqual(fk.answer_of(*first)[2]["kind"], "cancelled")
+        self.assertEqual(len(side.calls), 1)
 
     def test_a_failed_check_is_a_record_with_no_identity_and_no_frame(self):
         models, side, _, port = setup(self)

@@ -122,6 +122,10 @@ class Limits:
         # well under the client's limit between two reads (ADR 0046, "The headers at
         # once").
         self.keep_alive = KEEP_ALIVE_S
+        # How long past a request's `not_after` the front waits for its outcome before it
+        # answers `timed_out` itself and cancels it: keep-alives never hold an answer open
+        # past its host's limit.
+        self.overrun = 5.0
         for name, value in given.items():
             if not hasattr(self, name):
                 raise TypeError("no limit is named " + name)
@@ -599,12 +603,12 @@ class LocalSide:
                 self._cancel_at = None
                 self._cancel_said = None
             if said is not None:
-                document = ended[-1] if ended else {"kind": None, "ended": None}
-                how = document["ended"]
-                self._log(
-                    "cancel %s: the call ended %.3f s after its cancel, %s, the worker %s"
-                    % (job["dispatch"], time.monotonic() - said, document["kind"] or "complete", _how(how))
-                )
+                if ended:
+                    came = ended[-1]["kind"] or "complete"
+                    how = _how(ended[-1]["ended"])
+                else:
+                    came, how = "no outcome", "unknown"
+                self._log("cancel %s: the call ended %.3f s after its cancel, %s, the worker %s" % (job["dispatch"], time.monotonic() - said, came, how))
             self._calls.release()
 
     def _call(self, job, emit):
@@ -1153,6 +1157,10 @@ class Front:
             try:
                 if cancelled:
                     entry.put(outcome("failed", "cancelled"))
+                elif self.clock() > entry.job["not_after"]:
+                    # It waited in the queue past its host's limit: answered here, and the
+                    # worker's side (on a host, a card) is never woken for it.
+                    entry.put(outcome("failed", "timed_out", admission="not_after"))
                 else:
                     self.side.call(entry.job, emit)
             except Exception:
@@ -1456,8 +1464,21 @@ class Front:
             except (OSError, ssl.SSLError):
                 return
             quiet_until = time.monotonic() + self.limits.keep_alive
+            # The latest the outcome may come: the request's `not_after` and the overrun.
+            give_up = time.monotonic() + max(0.0, entry.job["not_after"] - self.clock()) + self.limits.overrun
             while True:
-                for key, _ in selector.select(max(0.0, quiet_until - time.monotonic())):
+                now = time.monotonic()
+                if now >= give_up:
+                    # The worker's side has not ended it by its limit: it is ended here, as
+                    # timed out, and cancelled on the side.
+                    _, document, lines = outcome("failed", "timed_out", stage="unresolved")
+                    try:
+                        conn.sendall(_chunk(record_bytes(document, lines)) + LAST_CHUNK)
+                    except (OSError, ssl.SSLError):
+                        pass
+                    self._log("request %s: no outcome by its limit; answered timed_out and cancelled" % entry.dispatch)
+                    return
+                for key, _ in selector.select(max(0.0, min(quiet_until, give_up) - now)):
                     if key.data == "conn" and self._gone(conn):
                         return
                     if key.data == "mail":

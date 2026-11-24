@@ -30,7 +30,8 @@
 //! every 10 seconds of nothing else, so a host that is slow to start its card keeps the
 //! answer alive; the wait for the head and between two reads of the answer is the
 //! request's own, `host_limit_s` (never past the run's deadline), which holds many
-//! keep-alives. The backend declares its model at that digest, as its version
+//! keep-alives; and the whole answer is over by that wait and 30 seconds from the
+//! request's start, however it is kept alive. The backend declares its model at that digest, as its version
 //! (`files-` and its hex digits, [`version_of`]), so a run's record names the files asked; the answer's own digest, the
 //! request's dispatch id and its device are said beside the response.
 //!
