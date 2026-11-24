@@ -54,6 +54,7 @@ mod runs;
 mod segment;
 mod select;
 mod serve;
+mod serve_http;
 mod setup;
 mod spend;
 mod stats;

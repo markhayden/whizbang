@@ -995,7 +995,7 @@ server holds its store and its runs as the stdio server does, for as long as it 
    `docs/guides/README.md`): starting it, the token, off loopback behind a proxy, the routes,
    calling a tool, reconnecting, cancelling, stopping; each example marked with its tier.
 
-- [ ] Done when: the twenty-four negative tests and the four of the start pass; the thirteen of
+- [x] Done when: the twenty-four negative tests and the four of the start pass; the thirteen of
   item 8 pass; the playground's seventeen and the stdio server's tests pass unchanged; ADR 0045
   is merged; the guide's first part is in.
 
