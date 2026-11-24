@@ -23,6 +23,7 @@
 //! ([`Refused`]) is fixed words, a place in a record and numbers: it quotes nothing of
 //! what was refused, and holds no path.
 
+mod carried;
 mod catalogue;
 mod checked;
 mod directory;
@@ -40,6 +41,7 @@ mod shared;
 mod stage;
 mod status;
 
+pub use carried::Carried;
 pub use catalogue::{
     CATALOGUE_FORMAT, CATALOGUE_MAX_BYTES, Catalogue, CatalogueFile, Entry, EntryParts,
     FEATURES_LIMIT, FILES_LIMIT, MODELS_LIMIT, ORIGINS_LIMIT, PLATFORMS_LIMIT,

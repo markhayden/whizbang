@@ -96,7 +96,7 @@
   "height": 480,
   "max_instances": 3,
   "model": "tiny",
-  "model_revision": "2026-11.1",
+  "model_revision": "2026-11.2",
   "phrase": "circle",
   "picture": "circle",
   "picture_digest": "sha256:89eb6949f38a93f7a4b157ee81e204d5119da4d9575f5887ff11fa445bfe3a02",

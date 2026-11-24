@@ -728,7 +728,7 @@ one model:
 | `platforms` | The platforms the model runs on: 1 to 8 (`PLATFORMS_LIMIT`), each named once, each a `Platform`. There are two, the platforms of `SPEC.md` section 1 under the names rascal's catalogue gave them: `macos-arm64` and `linux-x86_64` |
 | `features` | The features the adapter gives with this model: at most 16 (`FEATURES_LIMIT`), each a feature's name as a backend declares one (ADR 0006), each stated once |
 | `origins` | The origins a download of the files may reach: at most 8 (`ORIGINS_LIMIT`), each named once |
-| `files` | 1 to 64 files (`FILES_LIMIT`), each with its `name`, its `size` in bytes, its `sha256`, and `from`, the address it is first asked for at |
+| `files` | 1 to 64 files (`FILES_LIMIT`), each with its `name`, its `size` in bytes, its `sha256`, and `from`, the address it is first asked for at; or, in place of `from`, `carried`, a text the binary carries (plan m6, task W1: "A file the binary carries", below) |
 | `needs_token` | May be left out. One of the entry's `origins`, written as an origin, whose downloads need a token (task N4, D12; `catalogue::an_entry_may_say_that_a_download_from_one_of_its_origins_needs_a_token`). The token itself is never in a catalogue: where it is, is the config's (ADR 0011, "A download's token"), and which requests carry it is ADR 0012's, "A download's token". It is no part of an installation's identity: it changes no byte that is installed |
 
 (`catalogue::a_catalogue_is_read_as_its_models_and_their_files`,
@@ -755,6 +755,29 @@ prints of it is its names and three counts
   address it is moved to (task M2). An origin is written as an origin, with no path
   after it
   (`catalogue::an_entry_names_a_bounded_count_of_origins_once_each_and_every_file_comes_from_one_of_them`).
+- **A file the binary carries** (added by plan m6, task W1, an optional field of
+  `catalogue/2` as `needs_token` is). A file may name, in place of `from`, `carried`: a
+  text the binary carries, by its name. There is one, `apache-2.0`, the terms of the
+  Apache License, Version 2.0, as whizbang's own `LICENSE` holds them, from its first
+  line through `END OF TERMS AND CONDITIONS` and the line break after it; the appendix
+  after that is how a licensor applies the licence to its own work, and names
+  whizbang's licensor, so it is not carried (`models::Carried`;
+  `catalogue::the_apache_text_the_binary_carries_is_the_terms_of_whizbangs_own_licence`).
+  Such a file has no address and needs no origin. Its `size` and `sha256` pin the text
+  as they pin a download: the install writes it from the binary, as a stream, synced
+  and finished as a download is, and refuses it, before anything of it is written,
+  when the text is not of that size or hash; nothing is asked of any address for it
+  (`staging::a_file_the_binary_carries_is_written_from_it_and_nothing_is_asked_for_it`,
+  `staging::a_carried_text_that_is_not_what_the_entry_pins_is_refused_and_nothing_is_kept`).
+  It counts as held when an install asks whether it would download anything, so a
+  token is not asked for on its account, and `pin` answers its size and hash from the
+  binary and fetches nothing
+  (`models::a_file_the_binary_carries_is_installed_from_it_and_counts_as_held_and_pin_fetches_nothing_for_it`).
+  A file that names both, or neither, is refused, and so is a name the build does not
+  carry (`catalogue::a_file_may_name_a_text_the_binary_carries_in_place_of_an_address`).
+  The installation's record is unchanged: it holds a file's name, size and hash, and
+  nothing of where the file came from. Tiny's `LICENSE` is the first such file: its
+  repositories hold no licence file ("The shipped catalogue", below).
 - **A title and the platforms are in the entry and not in an installation.** An
   installation's record and its identity are made from the entry's name, its
   revision, its adapter and its files ("An installation and its record"), as
@@ -887,7 +910,10 @@ the features `phrase`, `point` and `box`, on `macos-arm64` alone.
   network off, never from a folder the library would look up.
 - **The licence** is Apache-2.0 for both. Neither repository holds a licence file; each
   model card states it (`license: apache-2.0`), and the two cards are installed as
-  `owlv2.README.md` and `sam2.README.md`.
+  `owlv2.README.md` and `sam2.README.md`. Since plan m6, task W1, the entry also names
+  `LICENSE`, the licence's terms, which the binary carries ("The catalogue": a file the
+  binary carries), 9,294 bytes pinned by its hash, at the entry's revision `2026-11.2`:
+  14 files, 777.5 MB.
 - **No token**: the repositories are public, so the entry has no `needs_token`. The
   origins are those of `sam3`, the Hub and `us.aws.cdn.hf.co`, where the Hub moved both
   large files' downloads when they were pinned; the owner approved that host for the

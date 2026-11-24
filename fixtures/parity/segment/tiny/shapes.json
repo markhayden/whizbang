@@ -96,7 +96,7 @@
   "height": 320,
   "max_instances": 3,
   "model": "tiny",
-  "model_revision": "2026-11.1",
+  "model_revision": "2026-11.2",
   "phrase": "triangle",
   "picture": "shapes",
   "picture_digest": "sha256:8c355a79ce966b81b71894161b34977ae4ab2c509bd3f873c12be2121f613cfa",

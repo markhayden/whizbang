@@ -18,7 +18,7 @@ $ whizbang models list
 models: 2
 directory: the one in this machine's data folder for whizbang, not made yet
 sam3	SAM 3	SAM License	3.4 GB	macos-arm64	not installed
-tiny	Tiny (OWLv2 and SAM 2.1 Hiera-Tiny)	Apache-2.0	777.4 MB	macos-arm64	not installed
+tiny	Tiny (OWLv2 and SAM 2.1 Hiera-Tiny)	Apache-2.0	777.5 MB	macos-arm64	not installed
 ```
 
 **SAM 3 installs, and is ready once installed.** `get` installs its files, and `list` then
@@ -240,6 +240,28 @@ $ whizbang rascal render --mask sha256:… --profile alpha --image sha256:… --
 
 `--box "L T R B"` asks for the thing in a box in the same way, and `select --at "X Y"`
 keeps the masks whose core holds a pixel, in place of `--pick`.
+
+### The licences, and what a publication owes
+
+`list` names each model's licence, and `get` installs its text beside the model's files.
+
+- **SAM 3** is under the SAM License, which its maker publishes. You accept its terms on
+  the model's page on Hugging Face, with your own sign-in, before its files can be
+  downloaded ("A model whose files need a token", above); whizbang hosts no copy of them.
+  `get` keeps the copy of the licence the catalogue pins, `LICENSE`, beside the weights,
+  held to its size and hash like every file.
+- **Tiny** is under Apache-2.0, which each model card states; the two cards are
+  installed as `owlv2.README.md` and `sam2.README.md`. Neither of its repositories holds
+  a licence file, so the binary carries the licence's text and `get` writes it as
+  `LICENSE` beside the model's files, held to the size and the hash the catalogue pins;
+  nothing is downloaded for it.
+
+**What a publication owes.** SAM 3's licence asks whoever submits for publication the
+results of research done on, with or in connection with the model to acknowledge its use
+in that publication (section 1.b.ii). That falls on whoever publishes, not on whizbang: a
+run's record names the model of each request it made (its `models` list), which is
+where to find what to cite. The copy in `LICENSE` holds the rest of its terms;
+this guide is not legal advice.
 
 ### `remove`
 
