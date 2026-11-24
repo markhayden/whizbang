@@ -36,8 +36,21 @@ case "$1 $2" in
     if [ -f "$FAKE_STATE/draining" ]; then echo '[]' >"$FAKE_STATE/containers.json"; fi ;;
   "app stop") ;;
   "deploy deploy/modal/sam3_host.py")
+    # What the deploy was run with, and, as Python does when it may, the bytecode of the
+    # deployment it imported, left beside it.
+    echo "builder=${MODAL_IMAGE_BUILDER_VERSION:-unset} bytecode=${PYTHONDONTWRITEBYTECODE:-unset}" >>"$FAKE_STATE/deploy-env.log"
+    if [ -z "${PYTHONDONTWRITEBYTECODE:-}" ]; then
+      mkdir -p deploy/modal/__pycache__ && touch deploy/modal/__pycache__/sam3_host.cpython-312.pyc
+    fi
+    # Without a builder this client supports, it is refused, as 1.6.1 refuses a workspace's
+    # newer default.
+    case "${MODAL_IMAGE_BUILDER_VERSION:-}" in
+      2023.12 | 2024.04 | 2024.10 | 2025.06) ;;
+      *) echo "Image builder version 2026.10 is not supported"; exit 1 ;;
+    esac
     echo "Initialized. View run at https://modal.com/apps/made-up-workspace/main/ap-123"
-    echo "Created web function front => https://made-up-workspace--whizbang-sam3-front.modal.run"
+    # Modal's endpoints may name a region before modal.run.
+    echo "Created web function front => https://made-up-workspace--whizbang-sam3-front$(cat "$FAKE_STATE/region" 2>/dev/null).modal.run"
     if [ -f "$FAKE_STATE/deploy-fails" ]; then
       echo "Secret 'whizbang-front' not found in https://modal.com/secrets/made-up-workspace/main"
       echo "Endpoint https://made-up-workspace-dev--whizbang-sam3-front.example.net/x refused"
@@ -67,7 +80,7 @@ out=$tmp/endpoint
 apps() { printf '%s\n' "$1" >"$state/apps.json"; }
 containers() { printf '%s\n' "$1" >"$state/containers.json"; }
 deployed() { grep -F -x "deploy deploy/modal/sam3_host.py" "$state/modal.log" >/dev/null 2>&1; }
-fresh() { rm -f "$state"/*.log "$state/draining" "$state/deploy-fails" "$state/version" "$out"; }
+fresh() { rm -f "$state"/*.log "$state/draining" "$state/deploy-fails" "$state/version" "$state/region" "$out"; }
 
 # Arguments.
 expect_fail "nothing to do" "say what to do" run
@@ -88,6 +101,21 @@ deployed || fail "the first deploy deployed"
 grep -F "made-up-workspace" "$tmp/out" >/dev/null && fail "the deploy printed the endpoint, which names the workspace"
 [ "$(cat "$out")" = "https://made-up-workspace--whizbang-sam3-front.modal.run" ] || fail "the endpoint is written to its file"
 grep -E -i "dict|secret|token" "$state/modal.log" >/dev/null && fail "deploy asks nothing of the claim store, a secret or a token"
+# The deploy pins the image builder, whatever the workspace's default, and writes no bytecode.
+grep -F -x "builder=2025.06 bytecode=1" "$state/deploy-env.log" >/dev/null ||
+  fail "the deploy runs Modal's client with the image builder pinned and no bytecode written"
+# So the next deploy finds nothing git ignores beside the deployment.
+apps '[{"app_id": "ap-0", "description": "whizbang-sam3", "state": "stopped"}]'
+fresh
+expect_pass "a deploy after a deploy" run deploy "$commit" --config "$config" --endpoint-file "$out"
+# An endpoint that names a region before modal.run is found, and not printed.
+apps '[]'
+fresh
+echo .us-east >"$state/region"
+expect_pass "a deploy whose endpoint names a region" run deploy "$commit" --config "$config" --endpoint-file "$out"
+[ "$(cat "$out")" = "https://made-up-workspace--whizbang-sam3-front.us-east.modal.run" ] ||
+  fail "an endpoint with a region is written to its file"
+grep -F "made-up-workspace" "$tmp/out" >/dev/null && fail "the deploy printed an endpoint with a region"
 
 # Another app's state, whatever its words, does not matter; an app of the name that is
 # ephemeral or stopping is not stopped.
@@ -114,6 +142,11 @@ grep -F "made-up-workspace" "$tmp/out" >/dev/null && fail "a failed deploy print
 grep -F "App aborted" "$tmp/out" >/dev/null || fail "a failed deploy shows its last lines"
 grep -F "Secret 'whizbang-front' not found in <modal page>" "$tmp/out" >/dev/null ||
   fail "a server's message that names a page of Modal is shown with the page masked"
+fresh
+touch "$state/deploy-fails"
+echo .us-east >"$state/region"
+expect_fail "a failed deploy with a region" "the deploy failed" run deploy "$commit" --config "$config" --endpoint-file "$out"
+grep -F "made-up-workspace" "$tmp/out" >/dev/null && fail "a failed deploy printed an endpoint with a region"
 # An endpoint file that is a link is refused.
 ln -s "$tmp/elsewhere" "$tmp/linked"
 fresh
