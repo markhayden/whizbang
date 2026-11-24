@@ -597,14 +597,18 @@ class Deadlines(unittest.TestCase):
         sock.close()
         # A body that keeps coming, a byte every 10 ms, under the 1,000 bytes a second its
         # front asks for after the first 50 ms: answered 400 and closed long before its end.
+        # Its first byte goes with the head, from this thread, so the body has begun before
+        # the front's grace can end however late the trickling thread is first run: on a
+        # loaded runner it once was not run before the front had closed, and nothing of the
+        # body was sent.
         data, _, _ = fk.body("fake-ok", models.identity["fake-ok"])
         sock = fk.connect(port)
-        sock.sendall(fk.head("/pack/1/request", fk.dispatch(), len(data)))
-        sent = [0]
+        sock.sendall(fk.head("/pack/1/request", fk.dispatch(), len(data)) + data[:1])
+        sent = [1]
         stop = threading.Event()
 
         def trickle():
-            for byte in data[:300]:
+            for byte in data[1:300]:
                 if stop.wait(0.01):
                     return
                 try:
