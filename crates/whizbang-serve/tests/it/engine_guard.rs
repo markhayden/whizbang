@@ -50,14 +50,24 @@ fn call(tool: &str, arguments: Json) -> Json {
 /// Starts four runs of `waits`, each under a request id of its own, their streams held
 /// open: the streams, and the ids.
 fn four_streams(engined: &Engined) -> Vec<(Opened, String)> {
-    (0..4)
+    let before = engined.ran("waits");
+    let streams = (0..4)
         .map(|_| {
             let id = fresh_id();
             let opened = engined.open_call("waits", json!({"request_id": id}));
             assert_eq!(opened.status, 200, "{}", opened.head);
             (opened, id)
         })
-        .collect()
+        .collect();
+    // A stream's headers come before its run's action begins: the four have begun only
+    // when the action counts them, which a test that counts runs after this waits for.
+    for _ in 0..4000 {
+        if engined.ran("waits") >= before + 4 {
+            return streams;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    panic!("the four runs never began");
 }
 
 /// A picture to upload: a real PNG, 2 by 2.

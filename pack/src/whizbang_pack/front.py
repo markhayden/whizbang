@@ -910,29 +910,43 @@ class Bridged:
 
     A cancel is handed to the card's control input only for a dispatch this side has handed
     on and not yet seen end: any other is answered here, as touching nothing, so a cancel can
-    never start the card's container, whose time no attempt's bound holds."""
+    never start the card's container, whose time no attempt's bound holds. Such a cancel is
+    kept, the last 64, as `LocalSide` keeps one: through a host's proxy a cancel's few bytes
+    can reach the front before its request's body is read whole, and that request, when it
+    comes, ends `cancelled` here before the host is called. Each cancel is a line of the
+    log: what became of it, and for one the host's control input raised, the exception's
+    type alone, since its message may name the host's account or an address."""
 
-    def __init__(self, call_remote, cancel_remote):
+    def __init__(self, call_remote, cancel_remote, log=say):
         self._call = call_remote
         self._cancel = cancel_remote
+        self._log = log
         self._open = set()
+        self._early = collections.OrderedDict()
         self._lock = threading.Lock()
         self.checked = {}
         self.device = None
 
     def call(self, job, emit):
+        dispatch = job["dispatch"]
         try:
             installation = _job_frames(job["frames"])[0]["installation"]
         except proto.Refused:
             emit(outcome("failed", "malformed"))
             return
         with self._lock:
-            self._open.add(job["dispatch"])
+            early = self._early.pop(dispatch, None)
+            if not early:
+                self._open.add(dispatch)
+        if early:
+            self._log("cancel %s: kept from before its call, which ends here before the host is called" % dispatch)
+            emit(outcome("failed", "cancelled"))
+            return
         try:
             self._relayed(job, installation, emit)
         finally:
             with self._lock:
-                self._open.discard(job["dispatch"])
+                self._open.discard(dispatch)
 
     def _relayed(self, job, installation, emit):
         try:
@@ -949,13 +963,22 @@ class Bridged:
         emit(outcome("failed", "unavailable", stage="unresolved"))
 
     def cancel(self, dispatch):
+        if dispatch is None:
+            return False
         with self._lock:
             if dispatch not in self._open:
+                self._early[dispatch] = True
+                while len(self._early) > 64:
+                    self._early.popitem(last=False)
+                self._log("cancel %s: not open here; the host is not asked, and the cancel is kept for its call" % dispatch)
                 return False
         try:
-            return bool(self._cancel(dispatch))
-        except Exception:
+            found = bool(self._cancel(dispatch))
+        except Exception as error:
+            self._log("cancel %s: the host's cancel raised %s" % (dispatch, type(error).__name__))
             return False
+        self._log("cancel %s: handed to the host's control input, which %s" % (dispatch, "cancelled its call" if found else "found no call of it running"))
+        return found
 
     def close(self):
         pass

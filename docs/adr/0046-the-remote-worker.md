@@ -147,7 +147,14 @@ declared allowance of attempts, the residual recorded in that host's record.
   or the request is with the worker's side, the cancel goes to the worker's side, which writes
   `cancel` on the worker's pipe at once only if its running call is that dispatch; a late one
   touches nothing and starts no model work. At the cancel's deadline, 5 seconds, the worker's
-  side kills the worker; the call ends `cancelled`.
+  side kills the worker; the call ends `cancelled`. Task L1 found, on Modal, that a cancel sent
+  early in a call never reached the card and nothing said why; the likeliest cause, read from
+  the code and Modal's client, is a cancel that overtook its own request through the host's
+  proxy, while the front held no entry yet and `front.Bridged` no open call, which dropped it
+  without a word. `front.Bridged` now keeps such a cancel (the last 64, as `LocalSide`
+  does), never sending it to the card, and ends the request that comes after it `cancelled`
+  before the card is called; it logs what became of every cancel
+  (`test_front.Bridge.test_a_cancel_that_overtakes_its_request_ends_the_call_before_the_card_is_asked`).
 - **Limits of each call,** as the local supervisor's (`pack/worker.rs`): a hello within 60
   seconds, an `unload` within 30, a `load` within 120, a call within 120, a cancel within 5,
   an end within 5. Past one the worker is killed.
