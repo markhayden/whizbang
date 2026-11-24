@@ -2573,15 +2573,20 @@ fn not_ready_why(executor: &Engine) -> Option<String> {
 fn a_key_given_at_the_start_is_refused_as_a_models_name() {
     let world = World::new("wired-key-at-start");
     let key = made_up_key("start");
-    // The env file holds the key from the start: the call that would use the model it
-    // names is refused, whether the command is refused when it is built or the call
-    // when it is prepared; nothing of the key is said, and nothing runs.
-    if let Ok(over) = a_model_named_by_a_key(&world, &key, &key) {
-        let executor = world.runner(&over);
-        let why = not_ready_why(&executor).expect("not ready");
-        assert!(!why.contains(&key), "{why}");
-        assert!(executor.submit(&Call::new("paints")).is_err());
-    }
+    // The env file holds the key from the start. The command is built (no env file is
+    // read to build it); the call that would use the model the key names is refused
+    // when it is prepared and when it is sent, nothing of the key is said, and nothing
+    // runs. (`contract::inventory::a_roster_told_the_snapshots_secrets_never_asks_…`
+    // holds the inventory's own part, where no config reader stands before it.)
+    let over = a_model_named_by_a_key(&world, &key, &key).unwrap();
+    let executor = world.runner(&over);
+    let why = not_ready_why(&executor).expect("not ready");
+    assert!(!why.contains(&key), "{why}");
+    let refused = executor
+        .submit(&Call::new("paints"))
+        .map(|_| ())
+        .unwrap_err();
+    assert!(!refused.to_string().contains(&key), "{refused}");
     assert_eq!(world.ran(), 0);
 }
 

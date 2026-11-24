@@ -38,8 +38,9 @@ an app runs: thousands of runs a day.
 2. **The generation file keeps the fixed names and 256 digests.** Format 5: `format`,
    `number`, the fixed names, and `buckets`, one string of 256 digests of 64 hex digits,
    one for each bucket in order: the digest of the pack that holds that bucket, or 64 zeros
-   for an empty bucket, which is held nowhere. So the generation file no longer grows with the store: it is about 16.5 KB, and its
-   size changes only with the digits of its number and with the fixed names.
+   for an empty bucket, which is held nowhere. So the generation file no longer grows with
+   the store: it is about 16.5 KB, and its size changes only with the digits of its number
+   and with the fixed names.
 3. **A publication writes the buckets it changed in one file, a pack.** A pack is a file
    beside the generation files, `generations/<sha-256>.pack`, named by the SHA-256 of its
    bytes: `format` and `buckets`, each bucket it holds under its index, with its names
@@ -68,10 +69,13 @@ an app runs: thousands of runs a day.
    carried at most once a pack, so this adds at most a constant factor to what is written.
 5. **A pack is written in place, and before the generation file.** It is written under its
    digest and synced before the generation file that names it is renamed into place, and
-   the one sync of `generations/` after that makes both durable (step 3 of a publication). It is not staged: no generation that became visible
-   names a pack that is not whole and durable, so a file a crash cut short is named by
-   nothing, and the next publication that needs that pack finds it not whole and writes it
-   again. A pack that is there and whole is not written again.
+   the one sync of `generations/` after that makes both durable (step 3 of a
+   publication). It is not staged: no generation that became visible names a pack that is
+   not whole and durable, so a file a crash cut short is named by nothing, and the next
+   publication that needs that pack finds it not whole and writes it again. A pack that is
+   there and whole is not written again, and is synced before it is named: it may have
+   been written whole by a publication whose sync failed, or by a process that died before
+   its sync (`store::buckets::a_pack_whose_sync_failed_is_synced_before_a_publication_names_it`).
 6. **The present format is read as it is.** A generation file of format 4, the whole store
    in one file, is read as before and its names sorted into buckets in memory; the first
    publication by a writer of this build writes every bucket that holds anything in one pack
@@ -116,3 +120,24 @@ an app runs: thousands of runs a day.
 - A test that changes a generation by hand writes it again as format 4 first
   (`whizbang_testkit::stored::whole`), since a pack is named by its digest and a change to
   it is damage.
+
+## What is left, recorded
+
+- **Dead space is bounded by buckets, not bytes.** A pack is carried over once fewer than
+  half of the buckets it was written with are named; a pack whose one large bucket is still
+  named and whose small ones are not is kept whole. In use a run's buckets are of a size, so
+  the bound holds roughly in bytes too; a bound by bytes is not built.
+- **A pack superseded while a reader held its generation goes at a prune, or with a later
+  publication of the same writer.** The writer remembers what it superseded only while it
+  lives: a pack a reader of another process held when the writer ended is removed by the
+  next prune, not by the next writer's publications.
+- **`Generation::entries()` and `Generation::runs()` gather the whole store** into one map
+  the first time either is asked of a generation, as the whole generation file was read
+  before buckets. A caller that wants one run asks `Generation::run(id)`, which reads its
+  bucket alone, as the four that read one run's diagnostic now do (`door.rs`, `report.rs`,
+  `stats.rs`, `judges.rs`); the callers that list every run or every name (`store list`,
+  `runs`, the report's listing, the stats) still gather all of it, which is their work.
+- **The refusal of format 5 by a build before it is shown by a proxy**
+  (`store::buckets::a_build_before_buckets_refuses_the_new_format_by_its_version`): the
+  test holds that the generation file says 5 first, which is the one thing the earlier
+  build reads before it refuses any format but 4; no binary of that build is run.

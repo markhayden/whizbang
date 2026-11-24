@@ -589,3 +589,41 @@ fn a_crash_at_any_event_of_the_first_bucket_publication_leaves_one_whole_generat
         }
     }
 }
+
+#[test]
+fn a_pack_whose_sync_failed_is_synced_before_a_publication_names_it() {
+    // The sync of a pack fails after its bytes were written whole: the publication is
+    // refused. The same publication again finds the whole file under the pack's digest,
+    // and syncs it before the generation that names it is written; so a crash that
+    // keeps the names and loses unsynced content leaves a store that opens and reads.
+    use whizbang_testkit::fs_shim::Event;
+    let dir = Scratch::new("buckets-unsynced");
+    let root = dir.path().join("store");
+    let fs = Arc::new(ShimFs::new());
+    let store = Store::open(&root, fs.clone()).unwrap();
+    let is_pack_sync = |event: &Event| matches!(event, Event::SyncFile(path) if path.extension().is_some_and(|e| e == "pack"));
+    fs.refuse_matching(0, is_pack_sync);
+    let publish = || {
+        let mut publication = store.begin().unwrap();
+        publication
+            .put_in("run-1", "record.json", Kind::Diagnostic, b"a record")
+            .unwrap();
+        publication.publish()
+    };
+    assert!(publish().is_err(), "the pack's sync was refused");
+    assert_eq!(publish().unwrap().generation, 1);
+    let synced = fs
+        .events()
+        .into_iter()
+        .filter(|event| is_pack_sync(event))
+        .count();
+    // The refused call is not recorded: the one sync is the second publication's, of
+    // the whole pack it found.
+    assert_eq!(synced, 1, "the second publication synced the pack it found");
+    drop(store);
+    fs.crash(Lost::ContentOnly);
+    let store = Store::open(&root, Arc::new(ShimFs::new())).unwrap();
+    let generation = store.snapshot().unwrap();
+    let record = generation.run("run-1").unwrap().get("record.json").unwrap();
+    assert_eq!(store.read(record).unwrap(), b"a record");
+}

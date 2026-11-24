@@ -391,7 +391,7 @@ pub fn picked(masks: &[String], picks: &[u32]) -> Result<Vec<String>, String> {
 pub fn diagnostic(root: &Path, run: &RunId, name: &str) -> Result<Vec<u8>, String> {
     let reader = Reader::open(root, Arc::new(RealFs)).map_err(|e| e.to_string())?;
     let generation = reader.snapshot().map_err(|e| e.to_string())?;
-    let held = generation.runs().get(run.as_str());
+    let held = generation.run(run.as_str());
     let entry = held.and_then(|held| held.get(&format!("{DIAGNOSTICS_PREFIX}{name}")));
     match entry {
         Some(entry) if entry.kind == Kind::Diagnostic => {

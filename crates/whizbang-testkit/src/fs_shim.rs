@@ -829,6 +829,20 @@ impl Fs for ShimFs {
         Ok(())
     }
 
+    fn sync_file(&self, path: &Path) -> io::Result<()> {
+        let event = Event::SyncFile(path.to_path_buf());
+        let mut state = self.next_event(&event)?;
+        if !std::fs::metadata(path)?.is_file() {
+            return Err(io::Error::other(format!(
+                "{} is not a file",
+                path.display()
+            )));
+        }
+        state.unsynced.remove(path);
+        state.events.push(event);
+        Ok(())
+    }
+
     fn sync_dir(&self, path: &Path) -> io::Result<()> {
         let event = Event::SyncDir(path.to_path_buf());
         let mut state = self.next_event(&event)?;

@@ -20,8 +20,9 @@
 //! ```
 //!
 //! Every file is written in staging, with its content synced through the handle that wrote
-//! it, and arrives under `objects/`, under `generations/` or at `CURRENT` by a rename. None
-//! is written again. Staging is inside the root, so it is on the store's file system; a
+//! it, and arrives under `objects/`, under `generations/` or at `CURRENT` by a rename,
+//! but a pack, which is written in place under its digest (ADR 0047). None is written
+//! again. Staging is inside the root, so it is on the store's file system; a
 //! staging that is not (a mount point, a link) is refused at the first rename, with
 //! [`Error::OtherFileSystem`], before anything is visible. The lock file is the one file
 //! written in place, and nothing depends on what it holds.
@@ -34,15 +35,16 @@
 //! # Buckets
 //!
 //! Every name of a namespace that grows with use (the names of runs, of request ids,
-//! of the ledger, of imports and of artifacts) is in one of 256 buckets, each a file
-//! of the store's content named by its digest, held in packs; the generation file holds the few fixed
-//! names (those with no `/`) and the 256 digests, and so does not grow with the store
+//! of the ledger, of imports and of artifacts) is in one of 256 buckets, held in packs:
+//! files beside the generation files, `generations/<sha-256>.pack`, each named by the
+//! digest of its bytes. The generation file holds the few fixed names (those with no
+//! `/`) and the digest of each bucket's pack, and so does not grow with the store
 //! (ADR 0047; [`buckets`] has the rule for which bucket a name is in). A publication
 //! writes the buckets it changed, in one pack beside the generation files (several for
 //! many large buckets), and the generation file. A generation file of format 4,
 //! the whole store in one file, is read as it is, and the first publication onto it
-//! writes every bucket and format 5. A bucket is read once by a writer or a reader:
-//! those of the last generation it read are kept in memory by their digest.
+//! writes every bucket and format 5. A pack is read once by a writer or a reader: those
+//! of the last generation it read are kept in memory by their digest.
 //!
 //! # What a store is
 //!
@@ -628,15 +630,22 @@ impl Files {
         })
     }
 
-    /// Writes a pack's file under its digest, unless a whole one is there: a file there
-    /// that is not whole (cut short by a crash as it was written, so named by no
-    /// generation) is written again.
+    /// Writes a pack's file under its digest and syncs it, unless a whole one is there,
+    /// which is synced: a whole file may have been written by a publication whose sync
+    /// failed, or by a process that died before it synced, and nothing names a pack
+    /// before its content is durable (ADR 0047). A file there that is not whole (cut
+    /// short by a crash as it was written, so named by no generation) is written again,
+    /// and so is a whole one on a file system that syncs no file it did not write.
     fn place_pack(&self, text: &[u8], digest: &Digest) -> Result<()> {
         let path = self.layout.pack(digest);
         if self.exists(&path)? {
             let most = text.len() as u64 + 1;
             match self.fs.read_at_most(&path, most) {
-                Ok(there) if there == text => return Ok(()),
+                Ok(there) if there == text => match self.fs.sync_file(&path) {
+                    Ok(()) => return Ok(()),
+                    Err(error) if error.kind() == io::ErrorKind::Unsupported => {}
+                    Err(error) => return Err(Error::io("sync", &path)(error)),
+                },
                 Ok(_) => {}
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
                 Err(error) => return Err(Error::io("read", &path)(error)),
@@ -993,6 +1002,10 @@ pub struct Store {
     /// prune keeps it, though no generation names it yet. A prune holds this while it
     /// removes content, and a publication takes it before it looks for content.
     in_progress: Mutex<BTreeMap<u64, BTreeSet<Digest>>>,
+    /// The names outside runs each publication in progress holds for a run
+    /// ([`Publication::hold_in`]), by the publication's number: a collection of unused
+    /// imports leaves them, since a run is taking them.
+    holding: Mutex<BTreeMap<u64, BTreeSet<String>>>,
     /// How many publications are waiting for `publishing` now.
     waiting: AtomicUsize,
     /// The runs this value made and has open, each by a publication that became
@@ -1354,6 +1367,7 @@ impl Store {
             next_token: AtomicU64::new(0),
             publishing: Mutex::new(()),
             in_progress: Mutex::new(BTreeMap::new()),
+            holding: Mutex::new(BTreeMap::new()),
             waiting: AtomicUsize::new(0),
             made_runs: Arc::new(Mutex::new(BTreeMap::new())),
             started: Arc::new(AtomicUsize::new(0)),
@@ -1465,9 +1479,13 @@ impl Store {
     /// marked ([`Publication::mark_imported`]) whose mark is that old and that no run
     /// holds, with its mark and the names that came in with it, in one publication. A
     /// run's admission holds what it takes, and both are decided in the publishing
-    /// step, so an import a run takes stays: the run that is admitted first holds it,
-    /// and one admitted after the collection gives the name back with its hold. A mark
-    /// with no time (one written before marks had one) is never let go. The content
+    /// step, so an import a run takes stays: one held by a run, or by an admission whose
+    /// publication is in progress, is left whole, with its mark and the names beside
+    /// it. Only an admission that read the import before the collection and asks to
+    /// hold it after the collection was published gives the name back alone, with its
+    /// hold, and not its mark or the names beside it. A mark made again says when the
+    /// last import was made and every name that came in with any. A mark with no time
+    /// (one written before marks had one) is never let go. The content
     /// stays on disk until [`Store::prune`]. What comes back is the publication, and
     /// how many names it let go.
     pub fn collect_unused_imports(&self, older_than_ms: u64, now_ms: u64) -> Result<Collected> {
@@ -1645,13 +1663,15 @@ pub struct Collected {
 /// came in with it. A mark that says nothing of its import is left, with what it marks.
 fn unused_imports(
     generation: &Generation,
+    taking: &BTreeSet<String>,
     older_than_ms: u64,
     now_ms: u64,
 ) -> (Vec<String>, Vec<String>) {
-    let held: BTreeSet<&str> = (generation.runs().values())
+    let mut held: BTreeSet<&str> = (generation.runs().values())
         .flat_map(|run| run.entries.keys())
         .filter_map(|name| name.strip_prefix(HOLDS_PREFIX))
         .collect();
+    held.extend(taking.iter().map(String::as_str));
     let marks = (generation.entries().range(IMPORTED_PREFIX.to_owned()..))
         .take_while(|(name, _)| name.starts_with(IMPORTED_PREFIX));
     let (mut gone, mut imports) = (Vec::new(), Vec::new());
@@ -1925,6 +1945,13 @@ impl Publication<'_> {
             .entry(self.number)
             .or_default()
             .insert(entry.digest);
+        self.store
+            .holding
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(self.number)
+            .or_default()
+            .insert(name.to_string());
         self.held_in
             .entry(run.to_string())
             .or_default()
@@ -2162,11 +2189,25 @@ impl Publication<'_> {
         for (name, imported) in &self.marked {
             if let Some(entry) = generation.get(name).cloned() {
                 generation.insert_entry(format!("{IMPORTED_PREFIX}{name}"), entry);
-                generation.set_imported(name, imported.clone());
+                // A mark made again says when the last import was made, and every name
+                // that came in with any of them.
+                let mut imported = imported.clone();
+                if let Some(earlier) = generation.imported(name) {
+                    let mut with: BTreeSet<String> = earlier.with.iter().cloned().collect();
+                    with.extend(imported.with);
+                    imported.with = with.into_iter().collect();
+                }
+                generation.set_imported(name, imported);
             }
         }
         if let Some((older_than_ms, now_ms, counted)) = &self.collecting {
-            let (gone, imports) = unused_imports(&generation, *older_than_ms, *now_ms);
+            let taking: BTreeSet<String> = (self.store.holding.lock())
+                .unwrap_or_else(|e| e.into_inner())
+                .values()
+                .flatten()
+                .cloned()
+                .collect();
+            let (gone, imports) = unused_imports(&generation, &taking, *older_than_ms, *now_ms);
             for name in &gone {
                 generation.remove_entry(name);
             }
@@ -2317,6 +2358,11 @@ impl Drop for Publication<'_> {
         // Published, its content is named by a generation; discarded, by nothing.
         self.store
             .in_progress
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.number);
+        self.store
+            .holding
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(&self.number);

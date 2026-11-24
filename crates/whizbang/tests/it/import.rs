@@ -192,7 +192,9 @@ fn a_canonical_mask_file_is_imported_and_reads_back_as_the_same_mask() {
     assert_eq!(read, Artifact::from(mask.clone()));
     assert_eq!(read.origin(), mask.origin());
 
-    // A second import of the same artifact publishes nothing.
+    // A second import of the same artifact within the hour publishes nothing: its mark
+    // is that young (plan m6, task S1: an upload's age is from its last import, made
+    // again once its mark is an hour old).
     let generation = |store: &Path| {
         Reader::open(store, Arc::new(RealFs))
             .expect("a store")

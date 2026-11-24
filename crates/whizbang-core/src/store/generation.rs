@@ -304,7 +304,8 @@ impl Generation {
     }
 
     /// The digests of the packs that hold this generation's buckets, as it was read or
-    /// written: the files under `objects/` it names beside its references (ADR 0047).
+    /// written: the packs beside the generation files, `generations/<digest>.pack`, that
+    /// it names beside its references (ADR 0047).
     /// None for one read from a file of the format before buckets, until a publication
     /// writes them.
     pub fn bucket_digests(&self) -> impl Iterator<Item = Digest> + '_ {

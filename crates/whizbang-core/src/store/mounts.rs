@@ -13,10 +13,11 @@ use std::path::{Path, PathBuf};
 /// The types of a network file system, as the two tables name them. Any `fuse.` type
 /// (Linux) or `fuse` one (macOS) is refused too: the table names the program behind it,
 /// not whether its locks hold.
-pub const NETWORK_TYPES: [&str; 10] = [
+pub const NETWORK_TYPES: [&str; 11] = [
     "nfs",
     "nfs4",
     "cifs",
+    "smb3",
     "smbfs",
     "afpfs",
     "webdav",
@@ -26,9 +27,15 @@ pub const NETWORK_TYPES: [&str; 10] = [
     "fuse.sshfs",
 ];
 
-/// Whether a file system of this type is a network one, by its name.
+/// What [`of_mount_output`] adds to the type of a macOS mount that does not say it is
+/// local.
+pub const NOT_LOCAL: &str = ", not local";
+
+/// Whether a file system of this type is a network one, by its name, or by the macOS
+/// table's own word that it is not local.
 pub fn is_network(kind: &str) -> bool {
     NETWORK_TYPES.contains(&kind)
+        || kind.ends_with(NOT_LOCAL)
         || kind.starts_with("fuse.")
         || kind == "fuse"
         || kind.starts_with("macfuse")
@@ -51,7 +58,10 @@ pub fn of_mountinfo(table: &str) -> Vec<(PathBuf, String)> {
 }
 
 /// The mounts of a macOS table (the output of `/sbin/mount`), each as its mount point and
-/// its type: `<device> on <point> (<type>, <options>...)`.
+/// its type: `<device> on <point> (<type>, <options>...)`. The table says `local` of a
+/// local mount; a mount that does not, of a type no list here names, is given its type
+/// with [`NOT_LOCAL`] after it, and is taken for a network one: the table's own word is
+/// preferred to a list of types.
 pub fn of_mount_output(table: &str) -> Vec<(PathBuf, String)> {
     table
         .lines()
@@ -59,8 +69,14 @@ pub fn of_mount_output(table: &str) -> Vec<(PathBuf, String)> {
             let (_, rest) = line.split_once(" on ")?;
             let open = rest.rfind(" (")?;
             let (point, options) = (&rest[..open], &rest[open + 2..]);
-            let kind = options.split([',', ')']).next()?.trim();
-            Some((PathBuf::from(point), kind.to_owned()))
+            let mut words = options.trim_end_matches(')').split(',').map(str::trim);
+            let kind = words.next()?.to_owned();
+            let local = words.any(|word| word == "local");
+            let kind = match local || is_network(&kind) {
+                true => kind,
+                false => format!("{kind}{NOT_LOCAL}"),
+            };
+            Some((PathBuf::from(point), kind))
         })
         .collect()
 }
@@ -98,12 +114,16 @@ fn unescape(point: &str) -> String {
     out
 }
 
-/// This system's table of mounts, read once a process: a mount made or unmade after the
-/// first store this process opened is not seen. Why it could not be read, otherwise.
+/// This system's table of mounts, read once a process once it was read: a mount made or
+/// unmade after the first store this process opened is not seen. Why it could not be
+/// read, otherwise; a table that could not be read is read again at the next open.
 pub(super) fn this_system() -> Result<Vec<(PathBuf, String)>, String> {
-    static READ: std::sync::OnceLock<Result<Vec<(PathBuf, String)>, String>> =
-        std::sync::OnceLock::new();
-    READ.get_or_init(read_table).clone()
+    static READ: std::sync::OnceLock<Vec<(PathBuf, String)>> = std::sync::OnceLock::new();
+    if let Some(read) = READ.get() {
+        return Ok(read.clone());
+    }
+    let read = read_table()?;
+    Ok(READ.get_or_init(|| read).clone())
 }
 
 #[cfg(target_os = "linux")]

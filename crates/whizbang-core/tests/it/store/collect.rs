@@ -127,23 +127,22 @@ fn an_import_taken_by_a_run_started_during_the_collection_stays() {
     let picture = import(&store, "artifacts/image/p", b"picture", "play/pictures/p");
     // A run is admitted with the picture: its admission read it, and holds it when it
     // is published. The collection is published first, while the admission is on its
-    // way.
+    // way: it leaves the picture whole, with its mark and the name beside it.
     let mut admission = store.begin().unwrap();
     admission.create_run("run-1").unwrap();
     admission
         .hold_in("run-1", "artifacts/image/p", picture.clone())
         .unwrap();
     let collected = store.collect_unused_imports(0, now_ms() + HOUR_MS).unwrap();
-    assert_eq!(collected.names, 3);
-    assert!(store.snapshot().unwrap().get("artifacts/image/p").is_none());
-    // A prune now keeps what the admission on its way names.
-    store.prune().unwrap();
+    assert_eq!(collected.names, 0);
     admission.publish().unwrap();
-    // The run took it: the name is given back with the run's hold, and read whole.
     let generation = store.snapshot().unwrap();
     let held = generation.get("artifacts/image/p").unwrap();
     assert_eq!(held, &picture);
     assert_eq!(store.read(held).unwrap(), b"picture");
+    for kept in ["imported/artifacts/image/p", "play/pictures/p"] {
+        assert!(generation.get(kept).is_some(), "{kept}");
+    }
     assert!(
         generation
             .run("run-1")
@@ -151,6 +150,25 @@ fn an_import_taken_by_a_run_started_during_the_collection_stays() {
             .get("holds/artifacts/image/p")
             .is_some()
     );
+    // An admission that read the picture before the collection and holds it only after
+    // the collection was published gives the name back, with its hold, and reads it.
+    let late = import(
+        &store,
+        "artifacts/image/late",
+        b"late",
+        "play/pictures/late",
+    );
+    let collected = store.collect_unused_imports(0, now_ms() + HOUR_MS).unwrap();
+    assert_eq!(collected.names, 3);
+    let mut admission = store.begin().unwrap();
+    admission.create_run("run-3").unwrap();
+    admission
+        .hold_in("run-3", "artifacts/image/late", late)
+        .unwrap();
+    admission.publish().unwrap();
+    let generation = store.snapshot().unwrap();
+    let held = generation.get("artifacts/image/late").unwrap();
+    assert_eq!(store.read(held).unwrap(), b"late");
     // And a later collection leaves it: a run holds it.
     let collected = store
         .collect_unused_imports(0, now_ms() + 2 * HOUR_MS)
@@ -169,4 +187,60 @@ fn an_import_taken_by_a_run_started_during_the_collection_stays() {
         .unwrap();
     assert_eq!(collected.names, 0);
     assert!(store.snapshot().unwrap().get("artifacts/image/q").is_some());
+}
+
+#[test]
+fn an_import_made_again_is_younger_and_keeps_every_name_that_came_in_with_it() {
+    let dir = Scratch::new("store-collect");
+    let store = Store::open(&dir.path().join("store"), Arc::new(RealFs)).unwrap();
+    import(
+        &store,
+        "artifacts/image/p",
+        b"picture",
+        "imports/picture/first",
+    );
+    let first = store
+        .snapshot()
+        .unwrap()
+        .imported("artifacts/image/p")
+        .unwrap()
+        .clone();
+    let mut publication = store.begin().unwrap();
+    publication
+        .put("imports/picture/second", b"the same picture again")
+        .unwrap();
+    publication
+        .mark_imported_with("artifacts/image/p", &["imports/picture/second".to_owned()])
+        .unwrap();
+    publication.publish().unwrap();
+    let again = store
+        .snapshot()
+        .unwrap()
+        .imported("artifacts/image/p")
+        .unwrap()
+        .clone();
+    assert!(again.at_ms >= first.at_ms);
+    assert_eq!(
+        again.with,
+        ["imports/picture/first", "imports/picture/second"]
+    );
+    // Its age is from the second import: a collection of what is older than an hour
+    // at the first import's time and a half hour on leaves it.
+    let collected = store
+        .collect_unused_imports(HOUR_MS, again.at_ms + HOUR_MS / 2)
+        .unwrap();
+    assert_eq!(collected.names, 0);
+    // And past it, every name that came in with either import goes with it.
+    let collected = store
+        .collect_unused_imports(HOUR_MS, again.at_ms + 2 * HOUR_MS)
+        .unwrap();
+    assert_eq!(collected.names, 4);
+    let generation = store.snapshot().unwrap();
+    for gone in [
+        "imports/picture/first",
+        "imports/picture/second",
+        "artifacts/image/p",
+    ] {
+        assert!(generation.get(gone).is_none(), "{gone}");
+    }
 }

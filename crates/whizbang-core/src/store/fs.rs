@@ -278,6 +278,17 @@ pub trait Fs: Send + Sync {
     /// Takes the file at `path` alone, without waiting: `None` when anyone shares it.
     /// Writes and creates nothing.
     fn try_alone(&self, path: &Path) -> io::Result<Option<Box<dyn Held>>>;
+    /// Makes the content of the file at `path`, which is there already, durable: for a
+    /// file that may have been written whole by a call whose sync failed, or by a
+    /// process that died before it synced (ADR 0047). A file system that cannot answers
+    /// [`io::ErrorKind::Unsupported`].
+    fn sync_file(&self, path: &Path) -> io::Result<()> {
+        let _ = path;
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "this file system syncs no file it did not write",
+        ))
+    }
     /// The type of the file system that holds `path`, as the system's table of mounts
     /// names it (plan m6, task S1, item 4): `Ok(None)` from a file system that does not
     /// say, as the test kit's do, which is not asked; an error when the table cannot be
@@ -813,6 +824,10 @@ impl Fs for RealFs {
         // Through the handle that wrote: a sync on a handle opened afterwards can miss a
         // write error the system already reported, or dropped, before that handle existed.
         file.sync_all()
+    }
+
+    fn sync_file(&self, path: &Path) -> io::Result<()> {
+        std::fs::File::open(path)?.sync_all()
     }
 
     fn sync_dir(&self, path: &Path) -> io::Result<()> {

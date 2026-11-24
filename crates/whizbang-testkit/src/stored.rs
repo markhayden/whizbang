@@ -128,6 +128,9 @@ impl Fs for Placed {
     fn sync_dir(&self, path: &Path) -> std::io::Result<()> {
         RealFs.sync_dir(path)
     }
+    fn sync_file(&self, path: &Path) -> std::io::Result<()> {
+        RealFs.sync_file(path)
+    }
     fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
         RealFs.rename(from, to)
     }
@@ -188,6 +191,9 @@ impl Fs for Unsynced {
         file.write_all(bytes)
     }
     fn sync_dir(&self, _: &Path) -> std::io::Result<()> {
+        Ok(())
+    }
+    fn sync_file(&self, _: &Path) -> std::io::Result<()> {
         Ok(())
     }
     fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {

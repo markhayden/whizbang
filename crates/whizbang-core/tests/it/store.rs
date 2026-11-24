@@ -104,8 +104,9 @@ fn after_restart(root: &Path) -> (u64, Contents) {
     seen(root, fs)
 }
 
-/// The files under `objects/` that are content a name references: every file there but
-/// the buckets of the current generation (ADR 0047).
+/// The files under `objects/`: the content names reference. Packs of buckets are not
+/// there but beside the generation files (ADR 0047); a digest the current generation
+/// names as a pack is left out all the same.
 fn payloads(root: &Path) -> std::collections::BTreeSet<String> {
     let reader = Reader::open(root, Arc::new(RealFs)).unwrap();
     let buckets: std::collections::BTreeSet<String> = (reader.snapshot().unwrap())
@@ -2104,6 +2105,7 @@ const MOUNTINFO: &str = "\
 22 1 259:2 / / rw,relatime shared:1 - ext4 /dev/nvme0n1p2 rw
 36 22 0:32 / /mnt/share rw,relatime shared:2 - nfs4 server:/export rw,vers=4.2
 37 22 0:33 / /mnt/smb rw,relatime shared:3 - cifs //server/share rw
+44 22 0:40 / /mnt/smb3 rw,relatime shared:10 - smb3 //server/other rw
 38 22 0:34 / /mnt/ssh rw,nosuid shared:4 - fuse.sshfs me@host:/ rw
 39 22 0:35 / /mnt/other\\040fuse rw shared:5 - fuse.rclone remote: rw
 40 22 0:36 / /mnt/nine rw shared:6 - 9p host rw
@@ -2120,6 +2122,7 @@ server:/export on /Volumes/nfs (nfs, nodev, nosuid, mounted by me)
 afp_x@server on /Volumes/afp (afpfs, nodev, nosuid, mounted by me)
 https://dav.example on /Volumes/dav (webdav, nodev, nosuid, mounted by me)
 me@host:/ on /Volumes/ssh (macfuse, nodev, nosuid, synchronous, mounted by me)
+other@host:/ on /Volumes/other (somefs, nodev, nosuid, mounted by me)
 ";
 
 #[test]
@@ -2131,6 +2134,7 @@ fn a_store_on_a_mount_of_a_network_type_is_refused_naming_the_type() {
         (&linux, "/mnt/share/stores/a", "nfs4"),
         (&linux, "/mnt/plain/a", "nfs"),
         (&linux, "/mnt/smb/a", "cifs"),
+        (&linux, "/mnt/smb3/a", "smb3"),
         (&linux, "/mnt/ssh/a", "fuse.sshfs"),
         (&linux, "/mnt/other fuse/a", "fuse.rclone"),
         (&linux, "/mnt/nine/a", "9p"),
@@ -2141,6 +2145,7 @@ fn a_store_on_a_mount_of_a_network_type_is_refused_naming_the_type() {
         (&macos, "/Volumes/afp/a", "afpfs"),
         (&macos, "/Volumes/dav/a", "webdav"),
         (&macos, "/Volumes/ssh/a", "macfuse"),
+        (&macos, "/Volumes/other/a", "somefs, not local"),
     ] {
         let found = mounts::type_of(mounts_of, Path::new(folder));
         assert_eq!(found.as_deref(), Some(kind), "{folder}");
