@@ -8,7 +8,7 @@
 // The fake host of the backends' tests, shared whole: these tests use some of it.
 #[allow(dead_code)]
 #[path = "../../../whizbang-backends/tests/it/remote/host.rs"]
-mod host;
+pub(crate) mod host;
 
 use std::path::Path;
 use std::sync::Arc;

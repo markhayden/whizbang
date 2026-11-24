@@ -74,7 +74,8 @@ leaves the machine.
 SAM 3 on a GPU host: the pack's front (`python -m whizbang_pack.front`, ADR 0046) runs on
 the host beside the card, and whizbang asks it over HTTPS for each segment, under the
 gate, the ledger and the run's record exactly as it asks the local worker. The app's
-server needs no GPU and no Python.
+server needs no GPU and no Python. Deploying such a host, on a machine of your own or on
+Modal, is [its own guide](gpu-host.md).
 
 ```toml
 [backends.segment]

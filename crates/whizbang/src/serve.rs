@@ -76,8 +76,8 @@ pub struct Args {
     pixel_limit: Option<u64>,
     /// With --http: about how long an upload that no run took is kept, in hours (24 by
     /// default): an upload sent again is marked again at most once an hour, so it is kept at
-    /// least an hour less than this after its last upload. The hourly collection that
-    /// removes one comes with plan m6, task D1.
+    /// least an hour less than this after its last upload. The server lets go of each such
+    /// upload at its start and once an hour after.
     #[arg(long, value_name = "HOURS", requires = "http",
           value_parser = clap::value_parser!(u64).range(1..=8_760))]
     uploads_kept_h: Option<u64>,
@@ -215,6 +215,9 @@ fn http(
     }
     if let Some(pixels) = args.pixel_limit {
         settings.pixel_limit = pixels;
+    }
+    if let Some(hours) = args.uploads_kept_h {
+        settings.collection.kept = Duration::from_secs(hours.saturating_mul(3600));
     }
     let host = Host::start(Arc::new(executor), Arc::new(door), settings, token)
         .map_err(|error| format!("the engine API could not listen at {address}: {error}"))?;

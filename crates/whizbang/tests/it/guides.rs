@@ -137,6 +137,7 @@ fn the_engine_apis_guide_names_only_cases_that_exist() {
             "engine_guard",
             "crates/whizbang-serve/tests/it/engine_guard.rs",
         ),
+        ("story", "crates/whizbang/tests/it/story.rs"),
     ];
     let mut named = 0;
     for span in spans(guide) {

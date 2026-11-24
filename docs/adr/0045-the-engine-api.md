@@ -149,8 +149,9 @@ now handles a signal under two commands, `play` and `serve --http`.
 **Threads.** The engine's own counted spawner (`engine::threads`, threads named
 `whizbang-engine-*`), the sixth place in the workspace that makes threads, refuses the 33rd
 live thread it would make in a process: the acceptor, 16 readers, 12 handlers, the
-canceller, the binary's reader of signals, and one place kept for the hourly collection of
-uploads no run took (plan m6, task D1). The stdio server's spawner and the playground's are
+canceller, the collector of uploads no run took (plan m6, task D1, item 5: at the start and
+then once an hour, each older than `--uploads-kept-h` is let go through the store's
+collection), and the binary's reader of signals. The stdio server's spawner and the playground's are
 unchanged. A test that starts the engine in its own process stays far inside the test kit's
 bound.
 

@@ -16,14 +16,14 @@ then. Milestones are those of `SPEC.md` section 16.
 | [Install](install.md) | Installing from a release archive: download, the SHA-256 check, what the Python pack needs first, what each platform can do, and why a Mac downloads with `curl`. The archive carries this page as its `README.md` | 4 |
 | [The loop: remove, check, retry](loop.md) | `whizbang rascal remove-checked`: what an attempt is, when it tries again, the plan said before anything runs, what three attempts reserve with each judge, what it prints and hands back when every attempt fails, and its exit codes | 4 |
 | [The playground](playground.md) | `whizbang play`: starting it, the address and its token, reopening the page, stopping, a run's stated time, what it holds while it runs, and every screen: Home, a kit, the workspace, a run going, its result, History, a run's report, a tool's record, and Models | 5 |
-| [The engine API](engine-api.md) | `whizbang serve --http` for a hosted app: starting it, the token, off loopback behind a proxy, the routes, calling a tool, reconnecting, cancelling and stopping (its first part) | 6 |
+| [The engine API](engine-api.md) | `whizbang serve --http` for a hosted app: starting it, the token, off loopback behind a proxy, the routes, calling a tool, reconnecting, cancelling, the uploads it keeps, stopping, and user story 1 end to end in `curl` | 6 |
+| [A GPU host of your own](gpu-host.md) | SAM 3 on a GPU host you deploy with your own account and tokens, for the kind `remote`: the front and the worker, a machine of your own, Modal's deployment, the config, the price and what it does not bound, the spend limit, SAM 3's files and its licence, the token | 6 |
 
 ## Doors
 
 | Guide | Covers | Milestone |
 |---|---|---|
 | The command line | `whizbang` for a person and for scripts | Checkpoint 1A |
-| Remote hosting | A model on a GPU host, and the engine API's hosted app end to end | 6 |
 
 ## How to add
 
