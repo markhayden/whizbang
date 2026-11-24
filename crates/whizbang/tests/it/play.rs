@@ -448,7 +448,10 @@ impl Hosted {
             .unwrap();
         let deaf = released.clone();
         registry
-            .register(scripted("deaf", move |_| {
+            .register(scripted("deaf", move |context| {
+                // Said first, so that a test knows its action has started: a run is
+                // running from its admission, before that.
+                context.events().progress("deaf to a cancel");
                 for _ in 0..6000 {
                     if deaf.load(Ordering::SeqCst) {
                         break;
@@ -604,6 +607,9 @@ fn a_run_that_outlives_the_grace_is_counted_and_ended_as_interrupted_by_the_next
     let mut hosted = Hosted::start("play-outlives", |_| {});
     let run = hosted.run("deaf");
     hosted.until_state(&run, "running");
+    // Its action has started: a quit's cancel can no longer win before it, and end the
+    // run as cancelled at once.
+    hosted.until_first_event(&run);
     let started = Instant::now();
     hosted.host.as_ref().unwrap().stopper().quit();
     let stopped = hosted.wait();

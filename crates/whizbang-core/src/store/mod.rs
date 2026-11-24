@@ -1087,6 +1087,9 @@ impl Closer {
             return false;
         };
         open.0 = marker(open.1);
+        // What its maker had the store do on a deletion holds its live state too, and
+        // nothing works on the run to be told any more.
+        open.2 = None;
         open.3 = true;
         true
     }

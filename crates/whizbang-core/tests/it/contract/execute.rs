@@ -1588,6 +1588,14 @@ fn a_panic_in_the_executors_code_ends_the_run_as_panicked_after_its_children() {
         .with_panic_at(panics_at("parent", PanicAt::BeforeTheEnd));
     let finished = engine.submit(&Call::new("parent")).unwrap();
     assert!(panicked(finished.outcome()), "{:?}", finished.outcome());
+    // Said to be the executor's own panic, not the action's.
+    let Outcome::Error { message, .. } = finished.outcome() else {
+        unreachable!()
+    };
+    assert!(
+        message.starts_with("the executor's own code panicked: an injected panic"),
+        "{message}"
+    );
     // The child ended, completed, before its parent: the parent ended with its record,
     // as an error.
     let child = seen.lock().unwrap().clone().expect("the child ended");
@@ -1693,6 +1701,48 @@ fn a_panic_between_visible_and_durable_leaves_the_ending_unconfirmed() {
     }
 }
 
+/// A hook that panics the first time the ending of a run of this action is at this
+/// place, and counts every telling of a parent, those made again after a panic too.
+fn panics_once_at(
+    action: &'static str,
+    place: whizbang_core::contract::PanicAt,
+) -> (whizbang_core::contract::PanicHook, Arc<AtomicU64>) {
+    use whizbang_core::contract::PanicAt;
+    let tellings = Arc::new(AtomicU64::new(0));
+    let panicked = std::sync::atomic::AtomicBool::new(false);
+    let counting = tellings.clone();
+    let hook: whizbang_core::contract::PanicHook = Arc::new(move |of: &str, at| {
+        if of != action {
+            return;
+        }
+        if at == PanicAt::Told {
+            counting.fetch_add(1, Ordering::SeqCst);
+        }
+        if at == place && !panicked.swap(true, Ordering::SeqCst) {
+            panic!("an injected panic of the executor's code at {at:?}");
+        }
+    });
+    (hook, tellings)
+}
+
+/// The parent's record lists its one child once, completed.
+fn told_once(world: &World) {
+    let reader = Reader::open(&world.root(), world.fs.clone()).unwrap();
+    let generation = reader.snapshot().unwrap();
+    let parents: Vec<RunRecord> = (generation.runs().values())
+        .map(|run| {
+            RunRecord::from_bytes(&reader.read(run.get(record::RECORD_NAME).unwrap()).unwrap())
+                .unwrap()
+        })
+        .filter(|record| record.identity().parent.is_none())
+        .collect();
+    let [parent] = parents.as_slice() else {
+        panic!("{} parents", parents.len());
+    };
+    let steps: Vec<Option<Status>> = parent.steps().iter().map(|step| step.status()).collect();
+    assert_eq!(steps, [Some(Status::Completed)]);
+}
+
 #[test]
 fn a_panic_after_a_durable_ending_keeps_the_committed_outcome_and_tells_the_parent_once() {
     use whizbang_core::contract::{Answer, PanicAt, Request, RunState};
@@ -1700,12 +1750,14 @@ fn a_panic_after_a_durable_ending_keeps_the_committed_outcome_and_tells_the_pare
     // completed.
     let world = World::new();
     let seen = Arc::new(std::sync::Mutex::new(None));
-    let engine = (world.engine_with(vec![calling_echo(seen.clone())]))
-        .with_panic_at(panics_at("echo", PanicAt::Durable));
+    let (hook, tellings) = panics_once_at("echo", PanicAt::Durable);
+    let engine = (world.engine_with(vec![calling_echo(seen.clone())])).with_panic_at(hook);
     let finished = engine.submit(&Call::new("parent")).unwrap();
     assert_eq!(finished.outcome(), &done());
     let child = seen.lock().unwrap().clone().expect("the child ended");
     assert_eq!(child.outcome(), &done());
+    assert_eq!(tellings.load(Ordering::SeqCst), 1);
+    told_once(&world);
     let statuses: Vec<Status> = records(&world).into_iter().map(|(_, s, _)| s).collect();
     assert_eq!(statuses, [Status::Completed, Status::Completed]);
     // A run entered through `start`: its waiter is told it completed.
@@ -1719,6 +1771,60 @@ fn a_panic_after_a_durable_ending_keeps_the_committed_outcome_and_tells_the_pare
     let waited = engine.wait(&run).unwrap();
     assert!(matches!(waited.state(), RunState::Ended(outcome) if *outcome == done()));
     assert_eq!(engine.on_threads(), 0);
+}
+
+#[test]
+fn a_panic_once_the_parent_is_told_tells_it_again_whole_and_changes_nothing() {
+    use whizbang_core::contract::PanicAt;
+    // The telling was whole, and the panic came before that was noted: the parent is
+    // told again, which changes nothing of what it was told.
+    let world = World::new();
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    let (hook, tellings) = panics_once_at("echo", PanicAt::Told);
+    let engine = (world.engine_with(vec![calling_echo(seen.clone())])).with_panic_at(hook);
+    let finished = engine.submit(&Call::new("parent")).unwrap();
+    assert_eq!(finished.outcome(), &done());
+    assert_eq!(seen.lock().unwrap().clone().unwrap().outcome(), &done());
+    assert_eq!(tellings.load(Ordering::SeqCst), 2);
+    told_once(&world);
+}
+
+#[test]
+fn a_panic_inside_the_publication_of_an_end_leaves_the_committed_outcome_standing() {
+    use whizbang_core::contract::{Answer, PanicAt, Request};
+    // The end was published, and the panic came before the executor looked at what the
+    // publication answered: the run is never ended again, as `panicked` or otherwise.
+    // Through `submit` and through `start`.
+    for started in [false, true] {
+        let world = World::new();
+        let engine = world
+            .engine()
+            .with_panic_at(panics_at("echo", PanicAt::Published));
+        match started {
+            false => {
+                let refused = engine.submit(&echo("published")).unwrap_err();
+                assert!(
+                    matches!(refused, CallError::Abandoned { .. }),
+                    "{refused:?}"
+                );
+            }
+            true => {
+                let Answer::Started(run) = engine.start(&Request::new(echo("published"))).unwrap()
+                else {
+                    panic!("not started");
+                };
+                let _ = engine.wait(&run).unwrap();
+                assert_eq!(
+                    engine.marked_abandoned(&run),
+                    Some(true),
+                    "started {started}"
+                );
+            }
+        }
+        let statuses: Vec<Status> = records(&world).into_iter().map(|(_, s, _)| s).collect();
+        assert_eq!(statuses, [Status::Completed], "started {started}");
+        assert_eq!(engine.on_threads(), 0);
+    }
 }
 
 #[test]

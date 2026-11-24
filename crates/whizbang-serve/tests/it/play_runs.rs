@@ -141,3 +141,51 @@ fn two_thumbnails_being_made_make_a_third_answer_429_and_polls_go_on() {
     let again = running.api("GET", &format!("/api/artifacts/{id}/thumb?edge=64"), None);
     assert_eq!(again.status, 200);
 }
+
+#[test]
+fn a_start_past_the_bound_on_abandoned_runs_is_answered_that_the_playground_is_to_be_started_again()
+{
+    // The writer keeps as many abandoned runs as it may (plan m6, task S1, item 3): a
+    // start is refused with an answer of its own, not as a store that could not answer.
+    let running = Running::start_over(
+        "runs-too-many-abandoned",
+        |_| {},
+        |_, _| {},
+        |store| {
+            let mut publication = store.begin().unwrap();
+            for at in 0..whizbang_core::store::ABANDONED_LIMIT {
+                let run = format!("run-{at}");
+                publication.create_run(&run).unwrap();
+                publication.attach(&run, Arc::new(at));
+            }
+            publication.publish().unwrap();
+            for at in 0..whizbang_core::store::ABANDONED_LIMIT {
+                let marker: whizbang_core::store::Attached = Arc::new(());
+                assert!(store.closer(&format!("run-{at}")).abandon(|_| marker));
+            }
+        },
+    );
+    let prepared = running.api(
+        "POST",
+        "/api/prepare",
+        Some(&json!({"action": "counts", "arguments": {"n": 1}})),
+    );
+    let handle = prepared.json()["handle"].as_str().unwrap().to_owned();
+    let refused = running.api(
+        "POST",
+        "/api/runs",
+        Some(
+            &json!({"action": "counts", "arguments": {"n": 1}, "handle": handle,
+                     "request_id": fresh_id()}),
+        ),
+    );
+    assert_eq!(refused.status, 503, "{}", refused.text());
+    assert_eq!(
+        refused.json()["kind"],
+        "too_many_abandoned",
+        "{}",
+        refused.text()
+    );
+    let said = refused.json()["error"].as_str().unwrap().to_owned();
+    assert!(said.contains("start it again"), "{said}");
+}

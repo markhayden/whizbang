@@ -3239,6 +3239,80 @@ fn remove_prompt_against_a_reference_arm(at: usize) {
         "arms: found against clean\ngroup all: pairs 1, decided 1, wins 0, losses 1, same 0, \
          neither 0: worse\n"
     );
+    if at == 0 {
+        three_pairs_picked_on_both_sides_are_decoded(dir.path());
+    }
+}
+
+/// The real binary's decode of a round of three pairs, as the protocol's seed draws them,
+/// with arm a picked once and arm b twice, on both sides of the page.
+fn three_pairs_picked_on_both_sides_are_decoded(dir: &Path) {
+    use crate::lab::protocol_text;
+    use whizbang_eval::lab::decode::{Shown, Side};
+    use whizbang_eval::lab::pairs::{self, Candidate};
+    use whizbang_eval::lab::protocol::Protocol;
+    let three = dir.join("three");
+    std::fs::create_dir_all(&three).unwrap();
+    let protocol_bytes = protocol_text(["found", "clean"], &["a", "b", "c"], 1);
+    std::fs::write(three.join("protocol.toml"), &protocol_bytes).unwrap();
+    let (protocol, protocol_digest) = Protocol::parse(protocol_bytes.as_bytes()).unwrap();
+    let shown = |arm: &str, id: &str| Shown {
+        cell: format!("{arm}-{id}"),
+        attempt: 1,
+    };
+    let candidates: Vec<Candidate> = (["a", "b", "c"].iter())
+        .map(|id| Candidate {
+            image: (*id).to_owned(),
+            group: "all".to_owned(),
+            a: shown("found", id),
+            b: shown("clean", id),
+        })
+        .collect();
+    let assignment = pairs::draw(&protocol, &protocol_digest, &candidates, None);
+    let assignment_bytes = serde_json::to_vec_pretty(&assignment).unwrap();
+    std::fs::write(three.join("assignment.json"), &assignment_bytes).unwrap();
+    let digest = whizbang_eval::lab::digest_of(&assignment_bytes);
+    let mut sides = Vec::new();
+    let pick: Vec<String> = (assignment.pair.iter().enumerate())
+        .map(|(n, p)| {
+            let (a, b) = match p.a_side {
+                Side::Left => ("left", "right"),
+                Side::Right => ("right", "left"),
+            };
+            let side = if n == 0 { a } else { b };
+            sides.push(side);
+            format!("{{\"pair\": \"{}\", \"pick\": \"{side}\"}}", p.id)
+        })
+        .collect();
+    assert!(
+        sides.contains(&"left") && sides.contains(&"right"),
+        "{sides:?}"
+    );
+    let picks = three.join("picks.json");
+    std::fs::write(
+        &picks,
+        format!(
+            "{{\"picks_version\": 1, \"assignment_digest\": \"{digest}\", \"pick\": [{}]}}",
+            pick.join(", ")
+        ),
+    )
+    .unwrap();
+    let decoded = whizbang_storeless(&[
+        "lab",
+        "decode",
+        "--protocol",
+        three.join("protocol.toml").to_str().unwrap(),
+        "--assignment",
+        three.join("assignment.json").to_str().unwrap(),
+        "--picks",
+        picks.to_str().unwrap(),
+    ]);
+    assert_eq!(decoded.code, Some(0), "{}", decoded.err);
+    assert_eq!(
+        decoded.out,
+        "arms: found against clean\ngroup all: pairs 3, decided 3, wins 1, losses 2, same 0, \
+         neither 0: worse\n"
+    );
 }
 
 #[test]

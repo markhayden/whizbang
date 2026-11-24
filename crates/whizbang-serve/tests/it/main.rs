@@ -179,9 +179,20 @@ impl Running {
         tune: impl FnOnce(&mut Settings),
         before: impl FnOnce(&Scratch, &mut Registry),
     ) -> Running {
+        Running::start_over(label, tune, before, |_| {})
+    }
+
+    /// The same, with the store given to `over` before the executor is built.
+    pub fn start_over(
+        label: &str,
+        tune: impl FnOnce(&mut Settings),
+        before: impl FnOnce(&Scratch, &mut Registry),
+        over: impl FnOnce(&Store),
+    ) -> Running {
         let scratch = Scratch::new(label);
         let root = scratch.path().join("store");
         let store = Arc::new(Store::open(&root, Arc::new(RealFs)).unwrap());
+        over(&store);
         let released = Arc::new(AtomicBool::new(false));
         let mut registry = Registry::new();
         for action in actions(released.clone()) {

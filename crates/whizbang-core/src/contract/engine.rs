@@ -17,7 +17,7 @@ use crate::egress::Ways;
 use crate::identity::{DecodeLimits, Digest};
 use crate::store::{self, Store};
 
-use super::journal::{Heard, JournalBounds, Kept};
+use super::journal::{Heard, Journal, JournalBounds, Kept};
 use super::ledger::{Closing, Declined, Reread, Reservation, Settled, Step};
 use super::live::{self, LiveRun, Told};
 use super::nested::{Added, DESCENDANTS_LIMIT, Family, HeldOpen, Nested, Offer, Under};
@@ -210,23 +210,38 @@ pub type PanicHook = Arc<dyn Fn(&str, PanicAt) + Send + Sync>;
 /// apart (plan m6, task S1, item 2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanicAt {
+    /// The action has come back; what it called and what it sent may not be over.
+    ActionBack,
     /// The action has come back and its outcome is made; nothing of the run's end is
     /// visible.
     BeforeTheEnd,
+    /// The run's end is being made: what it kept and what was noted of it are taken,
+    /// and nothing of it is visible.
+    Ending,
+    /// The run's end was published, and what that answered is not yet looked at.
+    Published,
     /// The run's end is visible, and was not confirmed durable.
     Visible,
     /// The run's end is durable; its parent and its waiters are not told yet.
     Durable,
+    /// The run's parent was told how it ended, and that is not yet noted: once a
+    /// telling, including one made again after a panic.
+    Told,
 }
 
 /// A run's end once it is durable: how it finished, its status, and when it started and
 /// ended, which is what is left to tell its parent.
 type Durable = (Finished, Status, (u64, u64));
 
+/// What a run kept, taken for its end: its journal and its diagnostics.
+type TakenJournal = (Journal, Vec<(Diagnostic, Vec<u8>)>);
+
 /// How far the ending of a run has got, which a catch of a panic goes by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Reached {
     Running,
+    /// The end's publication is under way: its end may be visible.
+    Publishing,
     Visible,
     Durable,
 }
@@ -243,14 +258,11 @@ struct Pre {
 
 impl Pre {
     /// The end of a run whose executor's own code panicked before its end was visible:
-    /// an error of the kind `panicked`, with nothing committed.
-    fn panicked(live: &Arc<LiveRun>, secrets: &Secrets, text: &str) -> Pre {
-        let refusing = live.clone();
+    /// an error of the kind `panicked`, with nothing committed and what was noted of
+    /// the run kept.
+    fn panicked(facts: RunFacts, secrets: &Secrets, text: &str) -> Pre {
         Pre {
-            facts: RunFacts::of_a_run(
-                secrets.clone(),
-                Box::new(move |refused| refusing.nest().refused(refused)),
-            ),
+            facts,
             outcome: Outcome::Error {
                 kind: PANICKED_KIND.to_owned(),
                 message: said(secrets, text),
@@ -1597,8 +1609,14 @@ impl Engine {
                     {
                         taken.keep();
                     }
+                    let unconfirmed = matches!(error, store::Error::Unacknowledged { .. });
                     let failure = StoreFailure::new(error);
                     over.failure = Some(failure.clone());
+                    // Visible and not confirmed, it is in the table: it is abandoned
+                    // there, by its marker (plan m6, task S1, item 3).
+                    if unconfirmed {
+                        over.kept = Some(store.closer(run.as_str()));
+                    }
                     return Err(CallError::Store(failure).into());
                 }
             }
@@ -1880,6 +1898,15 @@ impl Engine {
         // the context held it, whatever is let go before (ADR 0008, "The generation a
         // run reads").
         let _view = view.clone();
+        // The run's place for facts (ADR 0013), made before anything that can panic, so
+        // that a run that ends as `panicked` keeps what was noted of it.
+        let run_facts = RunFacts::of_a_run(secrets.clone(), {
+            let live = live.clone();
+            Box::new(move |refused| live.nest().refused(refused))
+        });
+        // What the run kept, taken once: a second end, after a panic, writes it too.
+        let taken: RefCell<Option<TakenJournal>> = RefCell::new(None);
+        let noted_once: RefCell<Option<Facts>> = RefCell::new(None);
         let pre = catch_unwind(AssertUnwindSafe(|| -> Result<Pre, CallError> {
             let offer = Offer::of(live.clone(), secrets.clone(), family.offer.clone());
             let offer = Arc::new(offer);
@@ -1897,10 +1924,7 @@ impl Engine {
             // The run's place for facts (ADR 0013): what another module notes of the run
             // while it executes. A refusal of a request goes with the run's other
             // refusals, in one order and within one bound.
-            let facts = RunFacts::of_a_run(secrets.clone(), {
-                let live = live.clone();
-                Box::new(move |refused| live.nest().refused(refused))
-            });
+            let facts = run_facts.clone();
             // The settings the run ran under, which its snapshot gave at admission and
             // which were held there to what a record takes, with these same secrets. One
             // that is not taken all the same is not left out in silence: the action is
@@ -1993,6 +2017,7 @@ impl Engine {
             // and every request its handles sent is accounted for, before it ends (ADR
             // 0008, "Nested calls"). A cancellation is still accepted while it waits, and
             // reaches them.
+            self.panicking(&action_name, PanicAt::ActionBack);
             live.nest().settle();
             // A request of the run that could not be accounted for: a wrapper failed
             // once its backend had been called, or its backend panicked under a wrapper
@@ -2064,7 +2089,7 @@ impl Engine {
                 }
                 Some(Ok(Err(Failure::Error { kind, message }))) => error(&kind, &message),
                 Some(Ok(Err(Failure::Invalid { why }))) => Outcome::Invalid { why: said(&why) },
-                Some(Err(panic)) => error("panic", &panic_text(panic)),
+                Some(Err(panic)) => error("panic", &panic_text("the action", panic)),
             };
             if cancelled && !not_confirmed {
                 outputs.clear();
@@ -2089,7 +2114,11 @@ impl Engine {
             live.nest().settle();
             live.begin_end();
             family.allowance.close();
-            Pre::panicked(&live, secrets, &panic_text(panic))
+            Pre::panicked(
+                run_facts.clone(),
+                secrets,
+                &panic_text("the executor's own code", panic),
+            )
         };
         let pre = match pre {
             Ok(Ok(pre)) => pre,
@@ -2119,7 +2148,10 @@ impl Engine {
             // only then. The run must still be there: one that was deleted while it
             // executed is not made again from its last names. The run is reported after
             // this is durable.
-            let (journal, written) = kept.take();
+            let (journal, written) = taken
+                .borrow_mut()
+                .get_or_insert_with(|| kept.take())
+                .clone();
             let kept: Vec<(Diagnostic, Vec<u8>)> =
                 std::iter::once(Diagnostic::whole_journal(&journal))
                     .chain(written)
@@ -2130,7 +2162,11 @@ impl Engine {
             // drops it for any other (ADR 0009).
             // The run's end begins here for what is noted of it too: no note is taken from
             // now on, and what was noted is in the record or was answered no.
-            let mut noted = facts.close();
+            let mut noted = noted_once
+                .borrow_mut()
+                .get_or_insert_with(|| facts.close())
+                .clone();
+            self.panicking(&action_name, PanicAt::Ending);
             let mut inside = live.nest().inside(parent);
             // The caller is given the verdict with the outcome, as the record keeps it.
             let handed_verdict =
@@ -2246,6 +2282,14 @@ impl Engine {
                 (Some(ledger), Some(micros), None) if micros > 0 => Some((ledger, micros)),
                 _ => None,
             };
+            // What the run finished as, should its end be durable: made before the
+            // publication, so that nothing is left to make once it is.
+            let status = record.outcome().status;
+            let finished = Finished::new(run.clone(), outcome).with_results(
+                handed_verdict,
+                measurements,
+                findings,
+            );
             let mut attempts = 0;
             loop {
                 attempts += 1;
@@ -2312,10 +2356,23 @@ impl Engine {
                     }
                     ledgers = step.into_made();
                 }
-                match publication.publish() {
+                // From here a panic may come after the end became visible: it is never
+                // made again (plan m6, task S1, item 2).
+                reached.set(Reached::Publishing);
+                let published = publication.publish();
+                self.panicking(&action_name, PanicAt::Published);
+                if published.is_ok() {
+                    // Durable, first of all.
+                    *durable.borrow_mut() = Some((finished.clone(), status, (start_ms, end_ms)));
+                    reached.set(Reached::Durable);
+                }
+                match published {
                     Ok(_) => break,
                     Err(store::Error::NameExists { name })
-                        if ledgers.contains(&name) && attempts < MAX_SETTLINGS => {}
+                        if ledgers.contains(&name) && attempts < MAX_SETTLINGS =>
+                    {
+                        reached.set(Reached::Running);
+                    }
                     Err(error @ store::Error::Unacknowledged { .. }) => {
                         // Visible, and not confirmed durable: left as such an ending is,
                         // whatever comes after, and never told as confirmed.
@@ -2330,14 +2387,6 @@ impl Engine {
             }
             // Durable: the committed outcome stands, and what is left is only to be
             // finished, once.
-            let status = record.outcome().status;
-            let finished = Finished::new(run.clone(), outcome).with_results(
-                handed_verdict,
-                measurements,
-                findings,
-            );
-            *durable.borrow_mut() = Some((finished.clone(), status, (start_ms, end_ms)));
-            reached.set(Reached::Durable);
             self.panicking(&action_name, PanicAt::Durable);
             // The run's end is durable: what it did not use of its share goes back to
             // the run that called it, while that run still executes (ADR 0016).
@@ -2349,10 +2398,14 @@ impl Engine {
             // for.
             if let Some((_, parent)) = &family.parent {
                 let times = (start_ms, end_ms);
-                told.set(true);
+                // Told is set once the telling is whole: a telling a panic cut short is
+                // made again, whole, and telling the same end twice changes nothing (what
+                // was committed is a set; the child's status and times are the same).
                 parent
                     .nest()
                     .ended(&run, status, finished.outcome().outputs(), times, &store);
+                self.panicking(&action_name, PanicAt::Told);
+                told.set(true);
             }
             Ok(finished)
         };
@@ -2371,8 +2424,9 @@ impl Engine {
                         }),
                     }
                 }
-                // Visible and not confirmed: left so, with the store's failure.
-                Reached::Visible => Err(match visible.take() {
+                // In the publication, or visible and not confirmed: left so, with the
+                // store's failure when there was one; the next open reads the store.
+                Reached::Publishing | Reached::Visible => Err(match visible.take() {
                     Some(failure) => CallError::Store(failure),
                     None => CallError::Abandoned {
                         run: run.clone(),
@@ -2393,6 +2447,7 @@ impl Engine {
                     if let (false, Some((_, parent))) = (told.get(), &family.parent) {
                         let outputs = finished.outcome().outputs();
                         parent.nest().ended(&run, status, outputs, times, &store);
+                        self.panicking(&action_name, PanicAt::Told);
                     }
                     Ok(finished)
                 }
@@ -2535,7 +2590,7 @@ pub(super) fn cut_to(secrets: &Secrets, text: &str, limit: usize, more: &str) ->
 /// What the panic carried is dropped here, and a value can panic when it is dropped:
 /// that panic is caught too, so it does not leave the executor in place of the run's
 /// end. What that second panic carried is not dropped at all.
-fn panic_text(panic: Box<dyn Any + Send>) -> String {
+fn panic_text(who: &str, panic: Box<dyn Any + Send>) -> String {
     let text = panic
         .downcast_ref::<&str>()
         .map(|text| (*text).to_owned())
@@ -2544,8 +2599,8 @@ fn panic_text(panic: Box<dyn Any + Send>) -> String {
         std::mem::forget(second);
     }
     match text {
-        Some(text) => format!("the action panicked: {text}"),
-        None => "the action panicked, and its panic carried no text".to_owned(),
+        Some(text) => format!("{who} panicked: {text}"),
+        None => format!("{who} panicked, and its panic carried no text"),
     }
 }
 

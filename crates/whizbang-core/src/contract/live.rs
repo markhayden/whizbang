@@ -296,11 +296,17 @@ impl Open {
         }
     }
 
-    /// As [`LiveRun::events`]; a marked run kept none.
+    /// As [`LiveRun::events`]; a marked run kept none, and is answered from the place
+    /// asked for, so that a poll that follows it never goes back.
     pub(super) fn events(&self, seen: u64) -> Heard {
         match self {
             Open::Live(live) => live.events(seen),
-            Open::Marked(_) => Heard::default(),
+            Open::Marked(_) => Heard {
+                events: Vec::new(),
+                skipped: 0,
+                next: seen,
+                from: seen,
+            },
         }
     }
 

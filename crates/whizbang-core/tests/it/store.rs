@@ -2385,3 +2385,74 @@ fn past_4096_markers_new_admissions_are_refused_naming_the_cause() {
     assert!(matches!(refused, CallError::Store(_)), "{refused:?}");
     assert!(refused.to_string().contains("start it again"), "{refused}");
 }
+
+#[test]
+fn a_marker_lets_go_of_the_live_state_its_maker_attached_and_left_to_be_told() {
+    // What a maker attached to a run, and what it had the store do on a deletion, both
+    // hold its live state: once the run is abandoned to a marker, neither is kept.
+    let dir = Scratch::new("store-marker-lets-go");
+    let store = Store::open(&root(&dir), Arc::new(ShimFs::new())).unwrap();
+    let live = Arc::new("the live state");
+    let probe = Arc::downgrade(&live);
+    let mut publication = store.begin().unwrap();
+    publication.create_run("run-1").unwrap();
+    publication.attach("run-1", live.clone());
+    let telling = live.clone();
+    publication.tell_when_deleted(
+        "run-1",
+        Arc::new(move || {
+            let _ = &telling;
+        }),
+    );
+    publication.publish().unwrap();
+    drop(live);
+    assert!(probe.upgrade().is_some(), "held while the run is open");
+    let marker: whizbang_core::store::Attached = Arc::new(());
+    assert!(store.closer("run-1").abandon(|_| marker));
+    assert!(probe.upgrade().is_none(), "the live state is still held");
+    assert_eq!(store.abandoned_runs(), 1);
+}
+
+#[test]
+fn a_childs_admission_that_became_visible_and_was_not_confirmed_is_left_as_a_marker() {
+    use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+    // A run that another called, whose admission the store made visible and did not
+    // confirm: it is in the table, and is abandoned there to a marker of an admission.
+    let world = crate::contract::commit::World::new();
+    let root = world.root();
+    let fs = world.fs.clone();
+    let armed = Arc::new(AtomicBool::new(false));
+    let refused = Arc::new(std::sync::Mutex::new(None));
+    let parent = {
+        let (armed, refused) = (armed.clone(), refused.clone());
+        crate::contract::asked::action("parent", vec![], move |_, context| {
+            armed.store(true, SeqCst);
+            *refused.lock().unwrap() = context.executor().submit(&Call::new("child")).err();
+            Ok(Produced::nothing())
+        })
+    };
+    let child = crate::contract::asked::action("child", vec![], |_, _| Ok(Produced::nothing()));
+    let engine = crate::contract::interrupted::engine(world.store(), vec![parent, child]);
+    // The first sync of the store's root once the parent's action runs: the child's
+    // admission's.
+    fs.refuse_matching_times(0, 1, move |event| {
+        armed.load(SeqCst) && matches!(event, Event::SyncDir(dir) if *dir == root)
+    });
+    let finished = engine.submit(&Call::new("parent")).unwrap();
+    let said = refused
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("the child was refused");
+    assert!(said.to_string().contains("not confirmed durable"), "{said}");
+    let reader = Reader::open(&world.root(), Arc::new(RealFs)).unwrap();
+    let generation = reader.snapshot().unwrap();
+    let child = (generation.runs().keys())
+        .find(|run| *run != finished.run().as_str())
+        .expect("the child's admission is visible")
+        .clone();
+    let child = RunId::parse(&child).unwrap();
+    assert_eq!(engine.marked_abandoned(&child), Some(false));
+    assert!(engine.held_open(&child).is_none());
+    assert_eq!(engine.waiting_for(&child), 0);
+}
