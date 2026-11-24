@@ -184,7 +184,7 @@ impl Shelf {
     /// What the run kept among its diagnostics under `name`, with or without the
     /// prefix of a diagnostic's name (a record names an exchange with it).
     fn diagnostic(&self, run: &str, name: &str) -> Option<Vec<u8>> {
-        let held = self.generation.runs().get(run)?;
+        let held = self.generation.run(run)?;
         let name = match name.starts_with(DIAGNOSTICS_PREFIX) {
             true => name.to_owned(),
             false => format!("{DIAGNOSTICS_PREFIX}{name}"),

@@ -79,13 +79,6 @@ fn names(root: &Path) -> BTreeSet<String> {
 }
 
 /// The digests of every file under `objects/`.
-fn objects(root: &Path) -> BTreeSet<String> {
-    std::fs::read_dir(root.join("objects"))
-        .unwrap()
-        .map(|file| file.unwrap().file_name().to_string_lossy().into_owned())
-        .collect()
-}
-
 fn set(names: &[&str]) -> BTreeSet<String> {
     names.iter().map(|name| name.to_string()).collect()
 }
@@ -111,9 +104,11 @@ fn a_deletion_removes_what_no_run_and_no_import_holds() {
             "artifacts/shared"
         ]
     );
-    // The mark of an import is a name outside runs, with the content it marks.
+    // The mark of an import is a name outside runs, with the content it marks; and the
+    // mark says when the import was made (plan m6, task S1, item 7).
     let marked = format!("{IMPORTED_PREFIX}artifacts/imported");
     assert_eq!(generation.get(&marked), Some(&entry(IMPORTED)));
+    assert!(generation.imported("artifacts/imported").is_some());
     // A reader that holds the generation from before the deletion keeps it whole.
     let before = Reader::open(&root, Arc::new(RealFs)).unwrap();
     let kept = before.snapshot().unwrap();
@@ -153,9 +148,9 @@ fn a_deletion_removes_what_no_run_and_no_import_holds() {
     let named: BTreeSet<String> = (store.snapshot().unwrap().references())
         .map(|entry| entry.digest.hex())
         .collect();
-    assert_eq!(objects(&root), named);
+    assert_eq!(super::payloads(&root), named);
     for gone in [ONLY_ONE, SHARED] {
-        assert!(!objects(&root).contains(&Digest::of_bytes(gone).hex()));
+        assert!(!super::payloads(&root).contains(&Digest::of_bytes(gone).hex()));
     }
 }
 
@@ -298,7 +293,7 @@ fn a_crash_at_any_event_of_a_deletion_and_its_prune_leaves_it_done_or_undone_and
             let named: BTreeSet<String> = (store.snapshot().unwrap().references())
                 .map(|entry| entry.digest.hex())
                 .collect();
-            assert_eq!(objects(&root), named, "{case}");
+            assert_eq!(super::payloads(&root), named, "{case}");
             losses(&fs)
         });
     }

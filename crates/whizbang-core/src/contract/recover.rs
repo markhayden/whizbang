@@ -483,6 +483,16 @@ impl Remover {
         Ok((self.store.delete(&named)?, all))
     }
 
+    /// Lets go of every import no run took that is older than `older_than_ms` at
+    /// `now_ms`, in one publication ([`Store::collect_unused_imports`]).
+    pub fn collect_unused_imports(
+        &self,
+        older_than_ms: u64,
+        now_ms: u64,
+    ) -> store::Result<store::Collected> {
+        self.store.collect_unused_imports(older_than_ms, now_ms)
+    }
+
     /// Removes what nothing needs ([`Store::prune`]).
     pub fn prune(&self) -> store::Result<Pruned> {
         self.store.prune()

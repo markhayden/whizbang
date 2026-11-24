@@ -4,6 +4,8 @@
 //!
 //! The one writer, and what is and is not a store, are in `store/locking.rs` (task A3).
 
+mod buckets;
+mod collect;
 mod growth;
 mod holds;
 mod locking;
@@ -18,8 +20,8 @@ use std::sync::Arc;
 
 use whizbang_core::store::fs::{Fs, Held, LockFile, RealFs};
 use whizbang_core::store::{
-    Digest, Error, GENERATION_FORMAT, GENERATION_MAX_BYTES, LOCK_MAX_BYTES, POINTER_MAX_BYTES,
-    Published, Reader, Store,
+    Digest, Error, GENERATION_MAX_BYTES, LOCK_MAX_BYTES, POINTER_MAX_BYTES, Published, Reader,
+    Store, WHOLE_FORMAT,
 };
 use whizbang_testkit::fs_shim::{Event, Lost, ShimFs};
 use whizbang_testkit::scratch::Scratch;
@@ -100,6 +102,22 @@ fn after_restart(root: &Path) -> (u64, Contents) {
     );
     drop(store);
     seen(root, fs)
+}
+
+/// The files under `objects/`: the content names reference. Packs of buckets are not
+/// there but beside the generation files (ADR 0047); a digest the current generation
+/// names as a pack is left out all the same.
+fn payloads(root: &Path) -> std::collections::BTreeSet<String> {
+    let reader = Reader::open(root, Arc::new(RealFs)).unwrap();
+    let buckets: std::collections::BTreeSet<String> = (reader.snapshot().unwrap())
+        .bucket_digests()
+        .map(|digest| digest.hex())
+        .collect();
+    std::fs::read_dir(root.join("objects"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| !buckets.contains(name))
+        .collect()
 }
 
 fn position(events: &[Event], what: &str, matches: impl Fn(&Event) -> bool) -> usize {
@@ -513,8 +531,9 @@ fn a_publication_that_would_write_a_generation_file_over_the_limit_is_refused_un
     let output = whizbang_core::store::Kind::Output;
     publication.put_in("big", "mask", output, B).unwrap();
     assert_eq!(publication.publish().unwrap().generation, 2);
-    let full = std::fs::metadata(root.join("generations/2.json")).unwrap();
-    store.limit_generations_to(full.len() + 100);
+    // What the generation's names take, written: its file and each bucket (ADR 0047).
+    let full = store.snapshot().unwrap().names_bytes();
+    store.limit_generations_to(full + 100);
     let more = || {
         let mut publication = store.begin().unwrap();
         publication.put(&"n".repeat(200), B).unwrap();
@@ -524,7 +543,7 @@ fn a_publication_that_would_write_a_generation_file_over_the_limit_is_refused_un
     let Error::GenerationTooLarge { bytes, limit } = refused else {
         panic!("{refused:?}");
     };
-    assert!(bytes > limit && limit == full.len() + 100, "{bytes}");
+    assert!(bytes > limit && limit == full + 100, "{bytes}");
     assert_eq!(store.snapshot().unwrap().number(), 2);
     assert!(!root.join("generations/3.json").exists());
     // A file of exactly the limit is written.
@@ -1095,18 +1114,18 @@ fn a_pointer_or_a_generation_that_cannot_be_read_is_an_error_not_an_empty_store(
         (
             "another generation's number",
             "generations/1.json",
-            Some(generation(GENERATION_FORMAT, 5, &a)),
+            Some(generation(WHOLE_FORMAT, 5, &a)),
         ),
         (
             "a name twice",
             "generations/1.json",
-            Some(generation(GENERATION_FORMAT, 1, &format!("{a}, {a}"))),
+            Some(generation(WHOLE_FORMAT, 1, &format!("{a}, {a}"))),
         ),
         (
             "a digest in its own text, with the prefix a generation file leaves out",
             "generations/1.json",
             Some(generation(
-                GENERATION_FORMAT,
+                WHOLE_FORMAT,
                 1,
                 &a.replace("\"digest\": \"", "\"digest\": \"sha256:"),
             )),
@@ -1115,29 +1134,28 @@ fn a_pointer_or_a_generation_that_cannot_be_read_is_an_error_not_an_empty_store(
             "a field it does not know",
             "generations/1.json",
             Some(
-                generation(GENERATION_FORMAT, 1, &a)
-                    .replace("{\"format\"", "{\"more\": 1, \"format\""),
+                generation(WHOLE_FORMAT, 1, &a).replace("{\"format\"", "{\"more\": 1, \"format\""),
             ),
         ),
         (
             "an entry that does not say what kind of reference it is",
             "generations/1.json",
-            Some(generation(GENERATION_FORMAT, 1, &a).replace(", \"kind\": \"output\"", "")),
+            Some(generation(WHOLE_FORMAT, 1, &a).replace(", \"kind\": \"output\"", "")),
         ),
         (
             "a kind it does not know",
             "generations/1.json",
-            Some(generation(GENERATION_FORMAT, 1, &a).replace("\"output\"", "\"input\"")),
+            Some(generation(WHOLE_FORMAT, 1, &a).replace("\"output\"", "\"input\"")),
         ),
         (
             "no runs",
             "generations/1.json",
-            Some(generation(GENERATION_FORMAT, 1, &a).replace(", \"runs\": {}", "")),
+            Some(generation(WHOLE_FORMAT, 1, &a).replace(", \"runs\": {}", "")),
         ),
         (
             "a run twice",
             "generations/1.json",
-            Some(generation(GENERATION_FORMAT, 1, &a).replace(
+            Some(generation(WHOLE_FORMAT, 1, &a).replace(
                 "\"runs\": {}",
                 "\"runs\": {\"r\": {\"entries\": {}}, \"r\": {\"entries\": {}}}",
             )),
@@ -1176,7 +1194,7 @@ fn a_pointer_or_a_generation_that_cannot_be_read_is_an_error_not_an_empty_store(
     let root = with_old(&dir);
     std::fs::write(
         root.join("generations/1.json"),
-        generation(GENERATION_FORMAT, 1, &a),
+        generation(WHOLE_FORMAT, 1, &a),
     )
     .unwrap();
     assert_eq!(seen(&root, Arc::new(RealFs)), (1, contents(&[("a", A1)])));
@@ -2077,4 +2095,169 @@ fn a_store_owned_by_another_user_is_refused_to_a_reader_and_a_writer() {
         Reader::open(&missing, Asked::new(true)).err().unwrap(),
         Error::Missing { .. }
     ));
+}
+
+// Where a store may live (plan m6, task S1, item 4): on a local file system.
+
+/// A table of mounts of each system, as the system writes it, with a store's folder on
+/// each kind of file system: the line of the mount, and its type.
+const MOUNTINFO: &str = "\
+22 1 259:2 / / rw,relatime shared:1 - ext4 /dev/nvme0n1p2 rw
+36 22 0:32 / /mnt/share rw,relatime shared:2 - nfs4 server:/export rw,vers=4.2
+37 22 0:33 / /mnt/smb rw,relatime shared:3 - cifs //server/share rw
+44 22 0:40 / /mnt/smb3 rw,relatime shared:10 - smb3 //server/other rw
+38 22 0:34 / /mnt/ssh rw,nosuid shared:4 - fuse.sshfs me@host:/ rw
+39 22 0:35 / /mnt/other\\040fuse rw shared:5 - fuse.rclone remote: rw
+40 22 0:36 / /mnt/nine rw shared:6 - 9p host rw
+41 22 0:37 / /mnt/ceph rw shared:7 - ceph 10.0.0.1:/ rw
+42 22 0:38 / /mnt/gluster rw shared:8 - glusterfs server:/vol rw
+43 22 0:39 / /mnt/plain rw shared:9 - nfs server:/old rw
+";
+
+const MOUNT_OUTPUT: &str = "\
+/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)
+/dev/disk3s5 on /System/Volumes/Data (apfs, local, journaled, nobrowse, protect)
+server:/export on /Volumes/nfs (nfs, nodev, nosuid, mounted by me)
+//me@server/share on /Volumes/smb share (smbfs, nodev, nosuid, mounted by me)
+afp_x@server on /Volumes/afp (afpfs, nodev, nosuid, mounted by me)
+https://dav.example on /Volumes/dav (webdav, nodev, nosuid, mounted by me)
+me@host:/ on /Volumes/ssh (macfuse, nodev, nosuid, synchronous, mounted by me)
+other@host:/ on /Volumes/other (somefs, nodev, nosuid, mounted by me)
+";
+
+#[test]
+fn a_store_on_a_mount_of_a_network_type_is_refused_naming_the_type() {
+    use whizbang_core::store::mounts;
+    let linux = mounts::of_mountinfo(MOUNTINFO);
+    let macos = mounts::of_mount_output(MOUNT_OUTPUT);
+    for (mounts_of, folder, kind) in [
+        (&linux, "/mnt/share/stores/a", "nfs4"),
+        (&linux, "/mnt/plain/a", "nfs"),
+        (&linux, "/mnt/smb/a", "cifs"),
+        (&linux, "/mnt/smb3/a", "smb3"),
+        (&linux, "/mnt/ssh/a", "fuse.sshfs"),
+        (&linux, "/mnt/other fuse/a", "fuse.rclone"),
+        (&linux, "/mnt/nine/a", "9p"),
+        (&linux, "/mnt/ceph/a", "ceph"),
+        (&linux, "/mnt/gluster/a", "glusterfs"),
+        (&macos, "/Volumes/nfs/a", "nfs"),
+        (&macos, "/Volumes/smb share/a", "smbfs"),
+        (&macos, "/Volumes/afp/a", "afpfs"),
+        (&macos, "/Volumes/dav/a", "webdav"),
+        (&macos, "/Volumes/ssh/a", "macfuse"),
+        (&macos, "/Volumes/other/a", "somefs, not local"),
+    ] {
+        let found = mounts::type_of(mounts_of, Path::new(folder));
+        assert_eq!(found.as_deref(), Some(kind), "{folder}");
+        assert!(mounts::is_network(kind), "{kind}");
+        // A store there is refused, to a writer and to a reader, naming the type, and
+        // nothing is made or locked.
+        let dir = Scratch::new("store-network");
+        let root = dir.path().join("store");
+        let placed = || {
+            Arc::new(whizbang_testkit::stored::Placed {
+                grants_every_lock: false,
+                mounted: Some(Ok(kind.to_owned())),
+            })
+        };
+        let refused = Store::open(&root, placed()).map(|_| ()).unwrap_err();
+        assert!(
+            matches!(&refused, Error::NetworkFileSystem { kind: named, .. } if named == kind),
+            "{refused:?}"
+        );
+        assert!(
+            refused.to_string().contains(&format!("type {kind}")),
+            "{refused}"
+        );
+        assert!(refused.without_paths().contains(kind), "{refused}");
+        assert!(!root.exists(), "{folder}: nothing is made");
+        with_old(&dir);
+        let refused = Reader::open(&root, placed()).map(|_| ()).unwrap_err();
+        assert!(
+            matches!(refused, Error::NetworkFileSystem { .. }),
+            "{refused:?}"
+        );
+    }
+}
+
+#[test]
+fn a_local_mount_is_taken() {
+    use whizbang_core::store::mounts;
+    let linux = mounts::of_mountinfo(MOUNTINFO);
+    let macos = mounts::of_mount_output(MOUNT_OUTPUT);
+    for (mounts_of, folder, kind) in [
+        (&linux, "/srv/stores/one", "ext4"),
+        (&macos, "/System/Volumes/Data/srv/stores/one", "apfs"),
+        (&macos, "/opt/stores/one", "apfs"),
+    ] {
+        assert_eq!(
+            mounts::type_of(mounts_of, Path::new(folder)).as_deref(),
+            Some(kind)
+        );
+        assert!(!mounts::is_network(kind));
+        let dir = Scratch::new("store-local");
+        let root = dir.path().join("store");
+        let placed = Arc::new(whizbang_testkit::stored::Placed {
+            grants_every_lock: false,
+            mounted: Some(Ok(kind.to_owned())),
+        });
+        let store = Store::open(&root, placed.clone()).unwrap();
+        let mut publication = store.begin().unwrap();
+        publication.put("a", A1).unwrap();
+        assert_eq!(publication.publish().unwrap().generation, 1);
+        drop(store);
+        Reader::open(&root, placed).unwrap().snapshot().unwrap();
+    }
+    // And this machine's own table, where the tests' folders are.
+    let dir = Scratch::new("store-local");
+    let found = RealFs.file_system_type(dir.path()).unwrap().unwrap();
+    assert!(!mounts::is_network(&found), "{found}");
+    Store::open(&dir.path().join("store"), Arc::new(RealFs)).unwrap();
+}
+
+#[test]
+fn an_unreadable_mount_table_refuses_a_writer() {
+    let dir = Scratch::new("store-unknown");
+    let root = with_old(&dir);
+    let placed = Arc::new(whizbang_testkit::stored::Placed {
+        grants_every_lock: false,
+        mounted: Some(Err("the table could not be read".to_owned())),
+    });
+    let refused = Store::open(&root, placed.clone()).map(|_| ()).unwrap_err();
+    assert!(
+        matches!(refused, Error::MountsUnknown { .. }),
+        "{refused:?}"
+    );
+    assert!(
+        refused.to_string().contains("could not be told"),
+        "{refused}"
+    );
+    // A reader is not refused: it changes nothing, and takes no lock.
+    let reader = Reader::open(&root, placed).unwrap();
+    assert_eq!(reader.snapshot().unwrap().number(), 1);
+}
+
+#[test]
+fn a_file_system_that_grants_a_second_writers_lock_is_refused() {
+    let dir = Scratch::new("store-granting");
+    let root = with_old(&dir);
+    let before = tree(&root);
+    let granting = Arc::new(whizbang_testkit::stored::Placed {
+        grants_every_lock: true,
+        mounted: None,
+    });
+    let refused = Store::open(&root, granting).map(|_| ()).unwrap_err();
+    assert!(
+        matches!(refused, Error::LocksDoNotHold { .. }),
+        "{refused:?}"
+    );
+    assert!(
+        refused.to_string().contains("does not hold")
+            || refused.to_string().contains("do not hold")
+    );
+    // Refused before anything was changed: the lock file is as it was, and so is the
+    // rest.
+    assert_eq!(tree(&root), before);
+    // On the real file system the second opening is refused, and the store opens.
+    Store::open(&root, Arc::new(RealFs)).unwrap();
 }

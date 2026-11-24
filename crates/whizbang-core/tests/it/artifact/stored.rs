@@ -192,7 +192,9 @@ fn an_artifact_is_stored_as_an_output_and_a_diagnostic_of_its_name_is_not_taken_
 
     // The same reference, said to be a diagnostic: the same bytes under the same name.
     // It is read as a diagnostic is, and it is not an artifact to anyone who asks for one.
-    let file = root.join("generations/1.json");
+    // The whole store in its one file, as the format before buckets wrote it, so that
+    // a name of it can be changed by hand (ADR 0047).
+    let file = whizbang_testkit::stored::whole(&root);
     let text = std::fs::read_to_string(&file).unwrap();
     // The artifact's name, and the mark that holds the same file.
     assert_eq!(text.matches("\"kind\": \"output\"").count(), 2);
@@ -238,7 +240,9 @@ fn a_diagnostic_under_an_artifacts_name_is_not_found_as_an_artifact_of_another_t
         Err(ArtifactError::WrongType { .. })
     ));
     drop(store);
-    let file = root.join("generations/1.json");
+    // The whole store in its one file, as the format before buckets wrote it, so that
+    // a name of it can be changed by hand (ADR 0047).
+    let file = whizbang_testkit::stored::whole(&root);
     let text = std::fs::read_to_string(&file).unwrap();
     std::fs::write(
         &file,

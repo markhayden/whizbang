@@ -1020,7 +1020,7 @@ fn an_executing_run_that_is_deleted_is_told_to_stop() {
 /// The calls that change the disk from the moment `pair` has cancelled its own run and
 /// handed back to the moment its run is reported: where the first is among all the
 /// calls made on a new store, and how many there are.
-fn the_calls_of_a_cancelled_end() -> (usize, usize) {
+fn the_calls_of_a_cancelled_end() -> (usize, usize, usize) {
     let world = World::new();
     let started = Arc::new(AtomicU64::new(0));
     let noting = {
@@ -1035,7 +1035,9 @@ fn the_calls_of_a_cancelled_end() -> (usize, usize) {
     let engine = world.engine(vec![noting]);
     engine.request(&request("r-3")).unwrap();
     let start = started.load(Ordering::SeqCst) as usize;
-    (start, world.fs.events().len() - start)
+    let events = world.fs.events();
+    let tidying = whizbang_testkit::stored::after_durable(&events, &world.root());
+    (start, events.len() - start, tidying)
 }
 
 /// What a reader finds of a cancelled run with the request id `r-3` after its end was
@@ -1070,7 +1072,7 @@ fn none_or_all(world: &World, fs: Arc<dyn Fs>, at: &str) -> bool {
 
 #[test]
 fn a_cancelled_end_that_the_store_refuses_at_any_step_publishes_no_status_or_both() {
-    let (start, steps) = the_calls_of_a_cancelled_end();
+    let (start, steps, tidying) = the_calls_of_a_cancelled_end();
     assert!(steps > 8, "{steps}");
     let mut seen = BTreeSet::new();
     for step in 0..steps {
@@ -1089,10 +1091,11 @@ fn a_cancelled_end_that_the_store_refuses_at_any_step_publishes_no_status_or_bot
                 );
                 seen.insert(all);
             }
-            // The two steps after the end is durable, the removal of the older
-            // generation's file and the clearing of staging, can fail without failing it.
+            // The steps after the end is durable, the removal of the older generation's
+            // file and of the buckets it superseded and the clearing of staging, can
+            // fail without failing it.
             Ok(Answer::Ran(finished)) => {
-                assert!(step >= steps - 2, "step {step} of {steps}");
+                assert!(step >= steps - tidying, "step {step} of {steps}");
                 assert_eq!(finished.outcome(), &Outcome::Cancelled);
                 assert!(all);
             }
@@ -1108,7 +1111,7 @@ fn a_cancelled_run_crashed_inside_its_end_reopens_with_no_status_or_with_both() 
     // test kit's disk can lose what was not yet durable, as for a commit
     // (`commit::a_run_crashed_inside_its_commit_...`): the names inside `staging/` all
     // lost and all kept, and every choice of the others.
-    let (start, steps) = the_calls_of_a_cancelled_end();
+    let (start, steps, _) = the_calls_of_a_cancelled_end();
     let mut seen = BTreeSet::new();
     let (mut crashes, mut reported) = (0, 0);
     for step in 0..steps {
