@@ -11,7 +11,7 @@ use image::{ExtendedColorType, ImageEncoder};
 use serde_json::{Map, Value as Json, json};
 use whizbang_core::artifact::{self, Artifact, ArtifactId, ArtifactType};
 use whizbang_core::contract::record::RECORD_NAME;
-use whizbang_core::contract::{Admission, Call, JournalLine, Outcome, RequestId, RunId};
+use whizbang_core::contract::{Call, JournalLine, Outcome, RunId};
 use whizbang_core::identity::{DecodeLimits, Digest, IdentityError, Projection, identify};
 use whizbang_core::store::Store;
 use whizbang_serve::engine::{Hosted, Refused};
@@ -208,14 +208,5 @@ impl Hosted for Served {
         let generation = store.snapshot().ok()?;
         let entry = generation.run(run.as_str())?.get(RECORD_NAME)?.clone();
         serde_json::from_slice(&store.read(&entry).ok()?).ok()
-    }
-
-    fn admitted(&self, id: &RequestId) -> Option<(RunId, Digest)> {
-        let store = self.store().ok()?;
-        let generation = store.snapshot().ok()?;
-        let entry = generation.get(&id.admission_name())?.clone();
-        let admission = Admission::from_bytes(&store.read(&entry).ok()?).ok()?;
-        (admission.request() == Some(id))
-            .then(|| (admission.run().clone(), admission.fingerprint()))
     }
 }

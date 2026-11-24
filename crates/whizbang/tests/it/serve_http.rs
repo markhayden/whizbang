@@ -202,7 +202,7 @@ impl Engined {
     fn start(label: &str, tune: impl Fn(&mut Settings)) -> Engined {
         let scratch = Scratch::new(label);
         let root = scratch.path().join("store");
-        engine_fixture::write_files(&root, true).unwrap();
+        engine_fixture::write_files(&root, true, None).unwrap();
         let fixture = Engined::fixture(&root, &tune);
         let client = Client {
             address: fixture.host.address(),
@@ -507,7 +507,7 @@ fn a_repeat_is_answered_at_capacity_and_when_its_backend_is_no_longer_ready() {
     // The filler's key taken away: its backend is no longer ready, and the repeat is
     // still its run.
     engined.stop();
-    engine_fixture::write_files(&engined.root(), false).unwrap();
+    engine_fixture::write_files(&engined.root(), false, None).unwrap();
     engined.restart_after_stop();
     let unready = engined.client.call(json!(4), "fill", arguments, None);
     assert_eq!(unready.header("whizbang-run"), Some(run));
@@ -979,4 +979,98 @@ fn with_neither_token_flag_or_with_both_the_start_is_refused() {
     );
     assert_eq!(code, Some(1), "{err}");
     assert!(err.contains("is not set"), "{err}");
+}
+
+#[test]
+fn a_store_on_a_mount_of_a_network_type_is_refused_before_anything_listens() {
+    // The store is opened, and refused, before the engine listens or makes a thread: the
+    // fixture opens it as `whizbang serve --http` does, on a file system of the test kit's
+    // that says what the system's table of mounts would (plan m6, task S1, item 4).
+    use whizbang_testkit::stored::Placed;
+    let scratch = Scratch::new("sh-network");
+    let root = scratch.path().join("store");
+    engine_fixture::write_files(&root, true, None).unwrap();
+    let settings = || Settings::new(SocketAddr::from(([127, 0, 0, 1], 0)));
+    for (placed, said) in [
+        (
+            Placed {
+                grants_every_lock: false,
+                mounted: Some(Ok("nfs4".to_owned())),
+            },
+            "type nfs4, a network one",
+        ),
+        (
+            Placed {
+                grants_every_lock: false,
+                mounted: Some(Ok("smbfs".to_owned())),
+            },
+            "type smbfs, a network one",
+        ),
+        (
+            Placed {
+                grants_every_lock: false,
+                mounted: Some(Err("the table is not there".to_owned())),
+            },
+            "could not be told",
+        ),
+        (
+            Placed {
+                grants_every_lock: true,
+                mounted: None,
+            },
+            "its locks do not hold there",
+        ),
+    ] {
+        let refused = engine_fixture::start_on(&root, std::sync::Arc::new(placed), settings());
+        let why = refused.err().expect("refused");
+        assert!(why.contains(said), "{why}");
+        assert_eq!(whizbang_serve::engine::threads::live(), 0, "{said}");
+    }
+    // On the mount it is really on, it starts.
+    let fixture = engine_fixture::start(&root, settings()).unwrap();
+    assert!(whizbang_serve::engine::threads::live() > 0);
+    fixture.host.stopper().quit();
+    fixture.host.wait();
+}
+
+#[test]
+fn a_changed_models_dir_is_seen_after_a_restart_and_not_before() {
+    // The models directory is read once, when the engine starts (plan m6, task S1, item 6):
+    // the config names one, which the start opens and so makes; the config changed to
+    // name another is not seen while it runs, and is after a restart.
+    let scratch = Scratch::new("sh-models-dir");
+    let root = scratch.path().join("store");
+    let (first, second) = (
+        scratch.path().join("models-a"),
+        scratch.path().join("models-b"),
+    );
+    engine_fixture::write_files(&root, true, Some(&first)).unwrap();
+    let settings = || Settings::new(SocketAddr::from(([127, 0, 0, 1], 0)));
+    let fixture = engine_fixture::start(&root, settings()).unwrap();
+    assert!(first.is_dir());
+    let client = Client {
+        address: fixture.host.address(),
+        token: TOKEN.to_owned(),
+    };
+    engine_fixture::write_files(&root, true, Some(&second)).unwrap();
+    // Asked after the change: still the first directory's, and the second is not made.
+    let listed = client.mcp(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}));
+    assert_eq!(listed.status, 200);
+    let picture = client.upload(&png(16, 16), "");
+    let image = picture.json()["image"].as_str().unwrap().to_owned();
+    let called = client.call(
+        json!(2),
+        "segment",
+        json!({"image": image, "kind": "phrase", "query": "a cat", "backend": "sam3"}),
+        None,
+    );
+    assert_eq!(called.status, 200, "{}", called.text());
+    assert!(!second.exists());
+    fixture.host.stopper().quit();
+    fixture.host.wait();
+    // After a restart: the second.
+    let fixture = engine_fixture::start(&root, settings()).unwrap();
+    assert!(second.is_dir());
+    fixture.host.stopper().quit();
+    fixture.host.wait();
 }

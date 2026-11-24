@@ -787,12 +787,6 @@ impl whizbang_serve::engine::Hosted for NoTools {
     ) -> Result<(&'static str, Vec<u8>), whizbang_serve::engine::Refused> {
         Err(whizbang_serve::engine::Refused::new(404, "none"))
     }
-    fn admitted(
-        &self,
-        _: &whizbang_core::contract::RequestId,
-    ) -> Option<(RunId, whizbang_core::identity::Digest)> {
-        None
-    }
 }
 
 #[test]

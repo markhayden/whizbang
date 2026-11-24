@@ -40,8 +40,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use serde_json::Value as Json;
-use whizbang_core::contract::{Call, Cancellation, Executor, RequestId, RunId, RunState};
-use whizbang_core::identity::Digest;
+use whizbang_core::contract::{Call, Cancellation, Executor, LookedUp, RequestId, RunId, RunState};
 
 pub use crate::play::Refused;
 pub use guard::Secret;
@@ -173,9 +172,6 @@ pub trait Hosted: Door {
     fn record(&self, _run: &RunId) -> Option<Json> {
         None
     }
-    /// The run the store's admission under this request id names, with the fingerprint
-    /// of the request it was admitted for, when it holds one.
-    fn admitted(&self, id: &RequestId) -> Option<(RunId, Digest)>;
 }
 
 /// How a host ended: how many runs it started (or was admitting) had not ended at the end
@@ -1036,20 +1032,18 @@ fn cancel(shared: &Shared) {
     }
 }
 
-/// The request id's lookup: what the store's admission under it names, compared by the
-/// fingerprint of the request. Admits, reserves and starts nothing.
-///
-/// This is the one seam where the engine API looks a request up: the executor's own
-/// lookup (`Executor::look_up`, plan m6, task S1, item 8) takes its place once it is
-/// built, with the same answers.
-pub(crate) fn look_up(shared: &Shared, id: &RequestId, call: &Call) -> Lookup {
-    match shared.hosted.admitted(id) {
-        None => Lookup::Missing,
-        Some((run, fingerprint))
-            if fingerprint == whizbang_core::contract::request_fingerprint(call) =>
-        {
-            Lookup::Same(run)
-        }
-        Some((run, _)) => Lookup::Other(run),
-    }
+/// The request id's lookup, by the executor's own durable, fingerprinted lookup
+/// (`Executor::look_up`, plan m6, task S1, item 8): what the store's admission under it
+/// names. Admits, reserves and starts nothing, so it is asked before a place is taken.
+pub(crate) fn look_up(
+    executor: &dyn Executor,
+    id: &RequestId,
+    call: &Call,
+) -> Result<Lookup, whizbang_core::contract::CallError> {
+    let request = whizbang_core::contract::Request::new(call.clone());
+    Ok(match executor.look_up(id, &request)? {
+        LookedUp::Missing => Lookup::Missing,
+        LookedUp::Repeat(earlier) => Lookup::Same(earlier.run().clone()),
+        LookedUp::Conflict { run } => Lookup::Other(run),
+    })
 }

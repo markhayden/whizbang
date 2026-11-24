@@ -617,8 +617,15 @@ fn call(shared: &Arc<Shared>, id: Json, params: &Map<String, Json>) -> Result<As
                     return Err(answered(tool_answer(&id, &refusal.to_string(), true, None)));
                 }
             };
+            let looked = super::look_up(&*executor, &request, &call);
             drop(executor);
-            match super::look_up(shared, &request, &call) {
+            let looked = match looked {
+                Ok(looked) => looked,
+                Err(refusal) => {
+                    return Err(answered(tool_answer(&id, &refusal.to_string(), true, None)));
+                }
+            };
+            match looked {
                 Lookup::Missing => Some(request),
                 Lookup::Same(run) => {
                     return Ok(Asked::Repeat {

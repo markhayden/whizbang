@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 use serde_json::{Map, Value as Json, json};
 use whizbang_core::artifact::ArtifactType;
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Admission, Argument, Call, Context, Engine, Failure, InputPort, Kind,
-    NoBackends, Outcome, PreparedCall, Produced, Registry, RequestId, RunId, ValueType,
+    Action, ActionDescriptor, Argument, Call, Context, Engine, Failure, InputPort, Kind,
+    NoBackends, Outcome, PreparedCall, Produced, Registry, RunId, ValueType,
 };
 use whizbang_core::identity::Digest;
 use whizbang_core::store::Store;
@@ -110,7 +110,6 @@ fn wait_for_stop(context: &Context) -> Result<Produced, Failure> {
 /// kept in memory by the digest of their bytes.
 pub struct TestHosted {
     descriptors: Vec<ActionDescriptor>,
-    store: Arc<Store>,
     pictures: Mutex<BTreeMap<String, Kept>>,
 }
 
@@ -168,14 +167,6 @@ impl Hosted for TestHosted {
             .get(id)
             .ok_or(Refused::new(404, "no artifact has that identity"))?;
         Ok(("image/png", bytes.clone()))
-    }
-
-    fn admitted(&self, id: &RequestId) -> Option<(RunId, Digest)> {
-        let generation = self.store.snapshot().ok()?;
-        let entry = generation.get(&id.admission_name())?.clone();
-        let admission = Admission::from_bytes(&self.store.read(&entry).ok()?).ok()?;
-        (admission.request() == Some(id))
-            .then(|| (admission.run().clone(), admission.fingerprint()))
     }
 }
 
@@ -278,7 +269,6 @@ impl Engined {
         tune(&mut settings);
         let hosted = Arc::new(TestHosted {
             descriptors,
-            store,
             pictures: Mutex::new(BTreeMap::new()),
         });
         let host = Host::start(
