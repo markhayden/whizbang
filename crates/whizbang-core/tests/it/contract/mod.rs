@@ -9,9 +9,9 @@
 
 mod admit;
 mod around;
-mod asked;
+pub(crate) mod asked;
 mod cancel;
-mod commit;
+pub(crate) mod commit;
 mod context;
 mod describe;
 mod descriptor;
@@ -19,7 +19,7 @@ mod execute;
 mod facts;
 pub mod findings;
 mod fixtures;
-mod interrupted;
+pub(crate) mod interrupted;
 mod inventory;
 mod journal;
 mod ledger;

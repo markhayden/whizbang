@@ -260,8 +260,14 @@ fn waiting_for_a_run_that_no_process_will_end_returns_and_says_so() {
         let waited = executor.wait(&run).unwrap();
         let abandoned = matches!(waited.state(), RunState::Abandoned { failure: Some(_) });
         assert!(abandoned, "{:?}", waited.state());
-        assert_eq!(messages(&waited), ["the last thing it said"]);
+        // Its live state, and its events with it, were let go once it was abandoned: a
+        // marker stands in its place (plan m6, task S1, item 3).
+        assert!(messages(&waited).is_empty(), "{:?}", messages(&waited));
         assert_eq!(executor.status(&run).unwrap(), waited);
+        // A poll that had seen its first event is answered from there, never before.
+        let polled = executor.status_after(&run, 1).unwrap();
+        assert_eq!((polled.next(), polled.skipped()), (1, 0));
+        assert!(polled.events().is_empty());
         run
     };
     // That process is gone. The next one finds the run admitted and not ended, made

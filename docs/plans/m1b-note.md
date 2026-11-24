@@ -360,7 +360,8 @@ shown to fail on the change it is there for:
 `engine::tests::a_started_run_that_was_admitted_leaves_the_table_with_its_thread_holding_nothing_of_the_store`
 takes the hold that an admission makes on a run, where the unit test above builds one
 by hand; and
-`started::a_started_run_whose_executor_panics_outside_its_action_is_abandoned_only_when_its_thread_holds_nothing_of_the_store`
+`started::a_started_run_whose_executor_panics_outside_its_action_ends_as_panicked_only_when_its_thread_holds_nothing_of_the_store`
+(named so since plan m6, task S1, when a panic there came to end the run as `panicked`)
 has the executor's clock panic once the action has come back, so that the thread lets
 go by unwinding. ADR 0015
 says what is left ("One way to a writer, with recovery before it", limits): only a wait

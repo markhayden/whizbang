@@ -98,13 +98,13 @@ pub(super) fn both() -> Produced {
         .with("where", the_place())
 }
 
-pub(super) struct World {
+pub(crate) struct World {
     dir: Scratch,
-    pub(super) fs: Arc<ShimFs>,
+    pub(crate) fs: Arc<ShimFs>,
 }
 
 impl World {
-    pub(super) fn new() -> World {
+    pub(crate) fn new() -> World {
         World::on(ShimFs::new())
     }
 
@@ -115,11 +115,11 @@ impl World {
         }
     }
 
-    pub(super) fn root(&self) -> PathBuf {
+    pub(crate) fn root(&self) -> PathBuf {
         self.dir.path().join("store")
     }
 
-    pub(super) fn store(&self) -> Arc<Store> {
+    pub(crate) fn store(&self) -> Arc<Store> {
         Arc::new(Store::open(&self.root(), self.fs.clone()).unwrap())
     }
 

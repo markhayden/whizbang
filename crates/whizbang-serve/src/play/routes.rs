@@ -283,6 +283,20 @@ fn call_refused(error: &CallError) -> Response {
                 &json!({"error": escaped(&refusal.to_string()), "kind": kind_word(refusal)}),
             )
         }
+        // The writer keeps as many abandoned runs as it may, and admits no more: the
+        // page is told so, and that the playground is to be started again (plan m6,
+        // task S1, item 3).
+        CallError::Store(failure)
+            if matches!(
+                failure.cause(),
+                whizbang_core::store::Error::TooManyAbandoned { .. }
+            ) =>
+        {
+            Response::json(
+                503,
+                &json!({"error": escaped(&failure.to_string()), "kind": "too_many_abandoned"}),
+            )
+        }
         _ => Response::refused(500, "the store could not answer"),
     }
 }

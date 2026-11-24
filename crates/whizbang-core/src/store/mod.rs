@@ -634,8 +634,10 @@ impl Files {
     /// which is synced: a whole file may have been written by a publication whose sync
     /// failed, or by a process that died before it synced, and nothing names a pack
     /// before its content is durable (ADR 0047). A file there that is not whole (cut
-    /// short by a crash as it was written, so named by no generation) is written again,
-    /// and so is a whole one on a file system that syncs no file it did not write.
+    /// short by a crash as it was written, so named by no generation) is written again.
+    /// On a file system that syncs no file it did not write, a whole one is written again
+    /// beside it and renamed over it: a generation that names it, current or held, finds
+    /// it whole at every moment, and the rename is made durable with the generation file.
     fn place_pack(&self, text: &[u8], digest: &Digest) -> Result<()> {
         let path = self.layout.pack(digest);
         if self.exists(&path)? {
@@ -643,7 +645,18 @@ impl Files {
             match self.fs.read_at_most(&path, most) {
                 Ok(there) if there == text => match self.fs.sync_file(&path) {
                     Ok(()) => return Ok(()),
-                    Err(error) if error.kind() == io::ErrorKind::Unsupported => {}
+                    Err(error) if error.kind() == io::ErrorKind::Unsupported => {
+                        let beside = path.with_extension("pack.new");
+                        if self.exists(&beside)? {
+                            self.fs
+                                .remove_all(&beside)
+                                .map_err(Error::io("remove", &beside))?;
+                        }
+                        self.fs
+                            .write_new(&beside, text)
+                            .map_err(Error::io("write", &beside))?;
+                        return self.move_into_place(&beside, &path);
+                    }
                     Err(error) => return Err(Error::io("sync", &path)(error)),
                 },
                 Ok(_) => {}
@@ -1063,12 +1076,30 @@ pub struct Closer {
 }
 
 impl Closer {
+    /// Puts a marker in the place of what is attached to the run, which its maker has
+    /// given up on and whose end, or admission, became visible and was not confirmed
+    /// (plan m6, task S1, item 3): the heavy part is let go of, and the run stays in the
+    /// table of open runs, counted among the abandoned. `marker` is told whether the
+    /// run's closing is visible. Whether the run was in the table.
+    pub fn abandon(&self, marker: impl FnOnce(bool) -> Attached) -> bool {
+        let mut made = self.made_runs.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(open) = made.get_mut(&self.run) else {
+            return false;
+        };
+        open.0 = marker(open.1);
+        // What its maker had the store do on a deletion holds its live state too, and
+        // nothing works on the run to be told any more.
+        open.2 = None;
+        open.3 = true;
+        true
+    }
+
     /// Takes the run out of the table, when its closing is visible and it was kept
     /// there for its closer ([`Store::let_go`]). After the writer is gone it does
     /// nothing that anyone sees.
     pub fn let_go(&self) {
         let mut made = self.made_runs.lock().unwrap_or_else(|e| e.into_inner());
-        if made.get(&self.run).is_some_and(|(_, closed, _)| *closed) {
+        if made.get(&self.run).is_some_and(|(_, closed, _, _)| *closed) {
             made.remove(&self.run);
         }
     }
@@ -1081,7 +1112,13 @@ pub type Attached = Arc<dyn std::any::Any + Send + Sync>;
 
 /// One run in the table of open runs: what was attached to it, whether its closing is
 /// visible and it is kept for its closer, and what to do if it is deleted meanwhile.
-type OpenRun = (Attached, bool, Option<WhenDeleted>);
+/// The fourth says that the run was abandoned and what is attached is its marker
+/// ([`Closer::abandon`]).
+type OpenRun = (Attached, bool, Option<WhenDeleted>, bool);
+
+/// The most runs a writer keeps as abandoned, each by a marker, before it admits no more
+/// (plan m6, task S1, item 3): a store whose writes failed that often is not healthy.
+pub const ABANDONED_LIMIT: usize = 4096;
 
 /// What the maker of a run has the store do when the run is deleted while it is open
 /// ([`Publication::tell_when_deleted`]).
@@ -1222,6 +1259,15 @@ impl Store {
             .map(|_| Place(self.started.clone()))
     }
 
+    /// How many runs this writer keeps as abandoned, each by a marker
+    /// ([`Closer::abandon`]).
+    pub fn abandoned_runs(&self) -> usize {
+        let made = self.made_runs.lock().unwrap_or_else(|e| e.into_inner());
+        made.values()
+            .filter(|(_, _, _, abandoned)| *abandoned)
+            .count()
+    }
+
     /// How many places among the started runs are taken now ([`Store::start_place`]).
     pub fn started_places(&self) -> usize {
         self.started.load(Ordering::SeqCst)
@@ -1241,7 +1287,7 @@ impl Store {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get(run)
-            .map(|(attached, _, _)| attached.clone())
+            .map(|(attached, _, _, _)| attached.clone())
     }
 
     /// Takes out of the table of open runs a run whose closing is visible and that was
@@ -1561,6 +1607,14 @@ impl Store {
             .list(&generations)
             .map_err(Error::io("list", &generations))?
         {
+            // What a rename over a pack left behind when a crash came first.
+            let left = (file.file_name().and_then(|name| name.to_str()))
+                .is_some_and(|name| name.ends_with(".pack.new"));
+            if left {
+                fs.remove_all(&file).map_err(Error::io("remove", &file))?;
+                pruned.buckets_removed += 1;
+                continue;
+            }
             let Some(digest) = pack_digest(&file) else {
                 continue;
             };
@@ -1815,6 +1869,12 @@ impl Publication<'_> {
     /// exists, which is how names are added to a run that is already there.
     pub fn create_run(&mut self, run: &str) -> Result<()> {
         check_run_id(run)?;
+        // Past the bound on abandoned runs nothing more is admitted (plan m6, task S1,
+        // item 3): the process is to be started again.
+        let abandoned = self.store.abandoned_runs();
+        if abandoned >= ABANDONED_LIMIT {
+            return Err(Error::TooManyAbandoned { abandoned });
+        }
         self.created.insert(run.to_string());
         self.run_names.entry(run.to_string()).or_default();
         Ok(())
@@ -2275,7 +2335,7 @@ impl Publication<'_> {
                     let what = self.attached.get(run).cloned();
                     let what = what.unwrap_or_else(|| Arc::new(()));
                     let told = self.when_deleted.get(run).cloned();
-                    made.insert(run.clone(), (what, false, told));
+                    made.insert(run.clone(), (what, false, told, false));
                     added.push(run);
                 }
             }
@@ -2297,14 +2357,14 @@ impl Publication<'_> {
                 // Kept for its closer, a closed run is marked and stays; a deletion
                 // below takes it out all the same.
                 match made.get_mut(run) {
-                    Some((_, closed, _)) if self.held_closed.contains(run) => *closed = true,
+                    Some((_, closed, _, _)) if self.held_closed.contains(run) => *closed = true,
                     _ => drop(made.remove(run)),
                 }
             }
             for run in &self.deleted {
                 // A run that was open, or kept for its closer, and whose maker asked
                 // to be told: told below, with the table's lock let go.
-                if let Some((_, _, Some(told))) = made.remove(run) {
+                if let Some((_, _, Some(told), _)) = made.remove(run) {
                     deleted_open.push(told);
                 }
             }

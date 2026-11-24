@@ -68,7 +68,7 @@ impl Action for Scripted {
 /// An action of this name with these needs, whose run is whatever the test says. It
 /// takes an optional text, `judge`, which a need may name as the argument that chooses
 /// its backend.
-pub(super) fn action(
+pub(crate) fn action(
     name: &str,
     needs: Vec<Requirement>,
     body: impl Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync + 'static,
