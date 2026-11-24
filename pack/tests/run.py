@@ -15,6 +15,8 @@ of "Rules" on the pack's Python tests (docs/plans/m1c-local-pack.md):
 - The whole run has 12 seconds; over that, it fails and says how long it took. It was 10
   until the front's tests of its early headers and keep-alives (plan m6, task L1, item 2b)
   took the hosted macOS runner to 10.5.
+- After the run it lists every test's seconds, the slowest first, so that CI's report of a
+  run says where its time went (plan m7, task A0, item 2).
 
 It uses the standard library only (D10), and runs on Python 3.9 and later, so that the
 script tests can run it with the runner's own `python3`.
@@ -29,6 +31,32 @@ import unittest
 
 LIMIT_DEFAULT = 60
 BUDGET_SECONDS = 12
+
+
+class Timed(unittest.TextTestResult):
+    """A result that keeps each test's seconds, from its start to its end."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.seconds = []
+        self._began = None
+
+    def startTest(self, test):
+        self._began = time.monotonic()
+        super().startTest(test)
+
+    def stopTest(self, test):
+        super().stopTest(test)
+        if self._began is not None:
+            self.seconds.append((time.monotonic() - self._began, test.id()))
+            self._began = None
+
+
+def list_seconds(result, stream):
+    """Every test's seconds, the slowest first."""
+    print("run.py: seconds of each test, the slowest first", file=stream)
+    for seconds, name in sorted(result.seconds, key=lambda one: (-one[0], one[1])):
+        print("%8.3f  %s" % (seconds, name), file=stream)
 
 
 def limit_from_environment():
@@ -56,8 +84,10 @@ def main(argv):
 
     began = time.monotonic()
     suite = unittest.defaultTestLoader.discover(folder, pattern="test_*.py", top_level_dir=folder)
-    result = unittest.TextTestRunner(stream=sys.stderr, verbosity=2).run(suite)
+    runner = unittest.TextTestRunner(stream=sys.stderr, verbosity=2, resultclass=Timed)
+    result = runner.run(suite)
     took = time.monotonic() - began
+    list_seconds(result, sys.stderr)
 
     status = 0 if result.wasSuccessful() else 1
     if result.testsRun == 0:
