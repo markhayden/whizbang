@@ -106,6 +106,16 @@ impl Host {
 
     /// The same, the front told this host limit of one attempt.
     pub fn with_limit(models: &[String], host_limit_s: u32) -> Host {
+        Host::started(models, host_limit_s, None)
+    }
+
+    /// The same, its side's limit of a call this many seconds in place of its short one:
+    /// for a test whose request ends on whizbang's side first.
+    pub fn with_call_limit(models: &[String], call_s: u32) -> Host {
+        Host::started(models, 600, Some(call_s))
+    }
+
+    fn started(models: &[String], host_limit_s: u32, call_s: Option<u32>) -> Host {
         let pki = Arc::new(Pki::loopback());
         let tls = Scratch::new("remote-tls");
         pki.write_pem(tls.path());
@@ -131,6 +141,9 @@ impl Host {
             .env(TOKEN_VARIABLE, TOKEN)
             .env(FAKES_TOKEN_VARIABLE, FAKES_TOKEN)
             .env("PATH", "/usr/bin:/bin");
+        if let Some(call_s) = call_s {
+            command.env("WHIZBANG_FAKE_HOST_CALL_S", call_s.to_string());
+        }
         for name in ["HOME", "TMPDIR", "LANG"] {
             if let Some(value) = std::env::var_os(name) {
                 command.env(name, value);

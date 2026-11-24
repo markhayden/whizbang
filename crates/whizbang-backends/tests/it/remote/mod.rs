@@ -36,6 +36,8 @@ pub(crate) struct Through {
     pub(crate) model: ModelName,
     pub(crate) installation: whizbang_backends::models::InstallationId,
     pub(crate) kept: Mutex<Option<Result<Answered, Box<Failed>>>>,
+    /// A call made by the test's own hand, asked in place of the request's.
+    pub(crate) by_hand: Mutex<Option<Ask>>,
 }
 
 impl Segmenter for Through {
@@ -44,7 +46,8 @@ impl Segmenter for Through {
     }
 
     fn segment(&self, request: &SegmentRequest, bounds: &Bounds) -> Result<SegmentResponse, Fault> {
-        let call = Ask::segment(request, self.model.clone(), self.installation);
+        let made = Ask::segment(request, self.model.clone(), self.installation);
+        let call = self.by_hand.lock().unwrap().take().unwrap_or(made);
         let answered = self.remote.call(&*self.sender, bounds, call);
         let ended = match &answered {
             Ok(_) => Err(Fault::new(FaultKind::Malformed, "kept for the test")),
@@ -180,6 +183,7 @@ impl Asking {
             model: record.model().clone(),
             installation: record.identity(),
             kept: Mutex::new(None),
+            by_hand: Mutex::new(None),
         }
     }
 
@@ -191,7 +195,20 @@ impl Asking {
         cancellation: Cancellation,
         deadline: Option<Instant>,
     ) -> Result<Answered, Box<Failed>> {
+        self.ask_by_hand(model, request, cancellation, deadline, None)
+    }
+
+    /// The same, asking `by_hand` in place of the request's own call when it is given.
+    pub(crate) fn ask_by_hand(
+        &self,
+        model: &str,
+        request: &SegmentRequest,
+        cancellation: Cancellation,
+        deadline: Option<Instant>,
+        by_hand: Option<Ask>,
+    ) -> Result<Answered, Box<Failed>> {
         let through = Arc::new(self.through(model));
+        *through.by_hand.lock().unwrap() = by_hand;
         let mut handle = SegmentHandle::new(through.clone(), cancellation);
         if let Some(deadline) = deadline {
             handle = handle.until(deadline);

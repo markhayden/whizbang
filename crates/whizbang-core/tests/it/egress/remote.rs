@@ -97,21 +97,46 @@ impl Filler for Follows {
             SocketAddr::from(([127, 0, 0, 1], 4443)),
         );
         let mut ends = self.ends.lock().unwrap();
-        ends.push(bounds.sender().control(
-            &dispatched,
-            &cancel(&format!("{API}/pack/1/cancel")),
-            &cleanup,
-        ));
-        ends.push(bounds.sender().control(
-            &made_up,
-            &cancel(&format!("{API}/pack/1/cancel")),
-            &cleanup,
-        ));
+        let api = |path: &str| format!("{API}{path}");
+        ends.push(
+            bounds
+                .sender()
+                .control(&dispatched, &cancel(&api("/pack/1/cancel")), &cleanup),
+        );
+        ends.push(
+            bounds
+                .sender()
+                .control(&made_up, &cancel(&api("/pack/1/cancel")), &cleanup),
+        );
         ends.push(bounds.sender().control(
             &dispatched,
             &cancel(&format!("{ELSEWHERE}/pack/1/cancel")),
             &cleanup,
         ));
+        // A control whose body holds a path is shown to the check, and refused.
+        let spelt =
+            Control::new(address(&api("/pack/1/cancel")), b"x /tmp/a-file x".to_vec()).unwrap();
+        ends.push(bounds.sender().control(&dispatched, &spelt, &cleanup));
+        // Under the bounds of cleaning up, nothing of the run's data is sent: neither a
+        // request of frames nor a send.
+        let again = bounds
+            .sender()
+            .send_frames(&frames, &cleanup, &mut |_, _| Ok(()));
+        ends.push(again.ended.map(|()| 0));
+        let outgoing = Outgoing::new(
+            address(&api("/v1/words")),
+            vec![Piece::of(DataClass::Prompts, b"words".to_vec())],
+        )
+        .unwrap();
+        ends.push(bounds.sender().send(&outgoing, &cleanup).map(|_| 0));
+        // A cleanup's time past what the clock holds is no time, and never no deadline.
+        assert!(
+            bounds
+                .for_cleanup(std::time::Duration::MAX)
+                .deadline()
+                .is_some()
+        );
+        assert!(cleanup.is_cleanup() && !bounds.is_cleanup());
         let (width, height) = (request.image().width(), request.image().height());
         Ok(Painted::from_rgb(
             width,
@@ -155,7 +180,10 @@ fn the_control_send_is_refused_for_a_request_not_dispatched_or_another_origin() 
         *behind.controls.lock().unwrap(),
         [(API.to_owned(), Some("Authorization".to_owned()))]
     );
-    // The other two are refused before anything leaves.
+    // The others are refused before anything leaves: a request no checked sender
+    // dispatched, another origin, a body that holds a path, and the run's data under the
+    // bounds of cleaning up.
+    assert_eq!(ends.len(), 6);
     for refused in &ends[1..] {
         let fault = refused.as_ref().unwrap_err();
         assert_eq!(fault.kind(), FaultKind::Rejected, "{fault:?}");
@@ -173,5 +201,5 @@ fn the_control_send_is_refused_for_a_request_not_dispatched_or_another_origin() 
         )),
         "{went:?}"
     );
-    assert_eq!(ran.refused().len(), 2, "{:?}", ran.refused());
+    assert_eq!(ran.refused().len(), 5, "{:?}", ran.refused());
 }

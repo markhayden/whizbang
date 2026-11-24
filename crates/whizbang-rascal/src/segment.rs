@@ -43,6 +43,14 @@
 //! backend 1 instances on mps
 //! ```
 //!
+//! A request the backend failed leaves one line in the same diagnostic, `failed`, the
+//! fault's kind and its sentence, which a remote backend leads with the request's
+//! dispatch id (ADR 0046):
+//!
+//! ```text
+//! failed timed_out: dispatch <32 hex digits>: ...
+//! ```
+//!
 //! `whizbang runs show <run> --diagnostic diagnostics/segment.txt` prints it.
 
 use whizbang_core::artifact::{
@@ -274,9 +282,18 @@ impl Action for Segment {
             .map_err(|unfit| Failure::invalid(&unfit.to_string()))?;
         context.events().progress("segment: read the image");
 
-        let response = segment
-            .segment(&request)
-            .map_err(|fault| Failure::error("segment", fault.sentence()))?;
+        let response = match segment.segment(&request) {
+            Ok(response) => response,
+            Err(fault) => {
+                // What the backend's fault says is kept in the run's diagnostic too, so a
+                // run that was cancelled or out of time, whose end keeps no reason, still
+                // says it (plan m6, task R1: the dispatch id a remote request was charged
+                // under). It is best kept: the run ends in the fault either way.
+                let said = format!("failed {}: {}\n", fault.kind().name(), fault.sentence());
+                let _ = context.diagnostics().write(DIAGNOSTIC, said.as_bytes());
+                return Err(Failure::error("segment", fault.sentence()));
+            }
+        };
         let found = response.answers().first().map_or(&[][..], Vec::as_slice);
         // Each instance with its place in the answer, in the fixed order.
         let key = |at: usize| {

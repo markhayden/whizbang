@@ -45,7 +45,7 @@ use std::time::Duration;
 
 use sha2::{Digest as _, Sha256};
 use whizbang_core::capability::{
-    Bounds, Declaration, Device, Fault, FaultKind, Instance, Price, SegmentRequest,
+    Bounds, Declaration, Device, Fault, FaultKind, Instance, Picture, Price, SegmentRequest,
     SegmentResponse, Segmenter, Served, Stage, TimeLimit,
 };
 use whizbang_core::config::{Kind, KindRefused, Setting, Table};
@@ -54,6 +54,7 @@ use whizbang_core::egress::{
     Address, CONTROL_WITHIN, Control, Credential, DataClass, FrameBody, Frames, Piece, Recipient,
     Sender,
 };
+use whizbang_core::identity::CanonicalPixels;
 
 use crate::models::{Catalogue, InstallationId, InstallationRecord, ModelName, Revision};
 use crate::pack::proto::{self, Answer, Ask, Message, Role, Scalar};
@@ -476,15 +477,32 @@ impl Remote {
         call: Ask,
     ) -> Result<Answered, Box<Failed>> {
         let dispatch = dispatch_id().map_err(|fault| failed(fault, &self.secrets))?;
-        let body = Arc::new(Body {
-            conversation: format!("whizbang.{dispatch}"),
-            load: Ask::Load {
-                model: self.model.clone(),
-                installation: self.installation,
-                settings: self.settings.clone(),
-            },
-            call,
-        });
+        // Every failure names the request's dispatch id, which whizbang minted and which
+        // is no secret: a request charged at its bound is found by it at the host.
+        self.exchange(sender, bounds, call, &dispatch)
+            .map_err(|mut failed| {
+                failed.fault = naming(&failed.fault, &dispatch);
+                failed
+            })
+    }
+
+    /// One request under this dispatch id: [`Remote::call`] without the naming.
+    fn exchange(
+        &self,
+        sender: &dyn Sender,
+        bounds: &Bounds,
+        call: Ask,
+        dispatch: &str,
+    ) -> Result<Answered, Box<Failed>> {
+        let dispatch = dispatch.to_owned();
+        let load = Ask::Load {
+            model: self.model.clone(),
+            installation: self.installation,
+            settings: self.settings.clone(),
+        };
+        let body = Body::new(format!("whizbang.{dispatch}"), load, call)
+            .map_err(|fault| failed(fault, &self.secrets))?;
+        let body = Arc::new(body);
         let frames = Frames::new(self.request_to.clone(), body.clone(), self.host_limit)
             .with_field(DISPATCH_FIELD, &dispatch)
             .map_err(|_| {
@@ -580,6 +598,20 @@ fn unresolved(fault: Fault) -> Fault {
     }
 }
 
+/// The same fault, its sentence led by the request's dispatch id, and its kind, its stage
+/// and its charge kept.
+fn naming(fault: &Fault, dispatch: &str) -> Fault {
+    let named = Fault::new(
+        fault.kind(),
+        &format!("dispatch {dispatch}: {}", fault.sentence()),
+    );
+    match fault.stage() {
+        Stage::NotSent => named.not_sent(),
+        Stage::Unresolved => named.unresolved(),
+        Stage::Answered => named.answered(fault.charge()),
+    }
+}
+
 /// A failure with nothing beside its fault, whose sentence is fixed words.
 fn failed(fault: Fault, _secrets: &Secrets) -> Box<Failed> {
     Box::new(Failed {
@@ -619,9 +651,37 @@ pub(crate) struct Body {
     pub(crate) conversation: String,
     pub(crate) load: Ask,
     pub(crate) call: Ask,
+    /// The call's image as a picture, which the check is shown as pixels: made from the
+    /// raster the frames carry, so the two are one.
+    picture: Option<Picture>,
 }
 
+/// What a request whose image is not a picture of the core is refused with.
+pub const NOT_A_PICTURE: &str = "the request's image is not a picture the check can be shown, \
+                                 so nothing was sent";
+
 impl Body {
+    /// The body of these, refused, before anything leaves, when the call's image is
+    /// not a picture of the core: the check is shown every part, or nothing is sent.
+    fn new(conversation: String, load: Ask, call: Ask) -> Result<Body, Fault> {
+        let picture = match &call {
+            Ask::Segment { image, .. } => {
+                let refused = || Fault::new(FaultKind::Rejected, NOT_A_PICTURE).not_sent();
+                let pixels =
+                    CanonicalPixels::from_rgba(image.width, image.height, image.samples.clone())
+                        .map_err(|_| refused())?;
+                Some(Picture::new(pixels).map_err(|_| refused())?)
+            }
+            _ => None,
+        };
+        Ok(Body {
+            conversation,
+            load,
+            call,
+            picture,
+        })
+    }
+
     fn messages(&self) -> [Message; 3] {
         [
             Message::Hello {
@@ -695,15 +755,8 @@ impl FrameBody for Body {
         ));
         texts_of(&self.load, &mut parts);
         texts_of(&self.call, &mut parts);
-        if let Ask::Segment { image, .. } = &self.call
-            && let Ok(pixels) = whizbang_core::identity::CanonicalPixels::from_rgba(
-                image.width,
-                image.height,
-                image.samples.clone(),
-            )
-            && let Ok(picture) = whizbang_core::capability::Picture::new(pixels)
-        {
-            parts.push(Piece::pixels(DataClass::SourceImages, &picture));
+        if let Some(picture) = &self.picture {
+            parts.push(Piece::pixels(DataClass::SourceImages, picture));
         }
         parts
     }

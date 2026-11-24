@@ -193,11 +193,12 @@ fn a_cancel_sends_the_cancel_frame_and_closes_the_stream() {
 #[test]
 fn a_cancel_is_sent_after_the_runs_signal_is_set_and_after_its_deadline_has_passed() {
     let model = named(None, "fake-wait");
-    let host = Host::serving(std::slice::from_ref(&model));
+    // The host's side waits 30 seconds for a call, so each request ends on whizbang's
+    // side first.
+    let host = Host::with_call_limit(std::slice::from_ref(&model), 30);
     let asking = Asking::of(&host);
-    // At its deadline: the fake waits until it is cancelled, and the front's limit of a
-    // call is longer than the deadline.
-    let deadline = Instant::now() + Duration::from_millis(300);
+    // At its deadline: the fake waits until it is cancelled.
+    let deadline = Instant::now() + Duration::from_secs(1);
     let timed_out = failed(asking.ask_under(
         &model,
         &request(phrase(), 1),
@@ -212,8 +213,9 @@ fn a_cancel_is_sent_after_the_runs_signal_is_set_and_after_its_deadline_has_pass
         let signal = cancellation.clone();
         let host = &host;
         let watcher = scope.spawn(move || {
-            assert!(host.waits_for(|host| host.seen().len() == 2));
+            let began = host.waits_for(|host| host.seen().len() == 2);
             signal.cancel();
+            assert!(began, "the host's side began no second request");
         });
         let answered = asking.ask_under(&model, &request(phrase(), 1), cancellation.clone(), None);
         watcher.join().unwrap();
@@ -225,8 +227,18 @@ fn a_cancel_is_sent_after_the_runs_signal_is_set_and_after_its_deadline_has_pass
         "{cancelled:?}"
     );
     charged_at_its_bound(&cancelled);
-    // The front's side was handed a cancel of each request, by its dispatch id.
+    // The front's side was handed a cancel of each request, by its dispatch id; and each
+    // failure names its dispatch, as the host knows it.
     let seen: Vec<String> = host.seen().into_keys().collect();
+    for failure in [&timed_out, &cancelled] {
+        let named = seen.iter().any(|dispatch| {
+            failure
+                .fault
+                .sentence()
+                .contains(&format!("dispatch {dispatch}"))
+        });
+        assert!(named, "{failure:?} names none of {seen:?}");
+    }
     assert!(host.waits_for(|host| host.cancelled().len() == 2));
     assert_eq!(host.cancelled(), seen);
 }

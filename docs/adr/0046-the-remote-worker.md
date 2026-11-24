@@ -248,7 +248,9 @@ frames through the sender its bounds hand it (`Sender::send_frames`), as it send
   bytes from that same value. The kind `remote`'s body is whizbang's hello, the `load` and
   the call, written by `pack/1`'s own codec; its texts are the conversation's id, the
   model, the installation, each setting and each query, as prompts, and its picture is
-  the call's image as source images. The checked sender asks of the parts what it asks
+  the call's image as source images. A call whose image is not a picture of the core (a
+  raster whose samples are not its size's) is refused before anything leaves, never sent
+  with the image left out of the parts. The checked sender asks of the parts what it asks
   of a send's pieces (the recipient's origin and upstreams, the policy for every class
   they hold, the check of every part and field); a picture's pixels are passed as
   pixels, whatever their bytes spell, as the encoder's PNG is. Only then are the bytes
@@ -282,7 +284,11 @@ frames through the sender its bounds hand it (`Sender::send_frames`), as it send
   or its deadline spent and the checked sender refuses to send under either. The network
   connects it to the peer the request reached, resolving no name, checks the same name in
   the certificate, and holds it to its deadline from the connect to the last byte of the
-  answer's head; the body of the answer is not read.
+  answer's head; the body of the answer is not read. The check is shown the control's
+  body as a part of no class, and its fields. Under those bounds the checked sender sends a
+  control and nothing else: a send or a request of frames under them is refused, so no data
+  of the run escapes its signal or its deadline through them; and a time past what the clock
+  holds is no time, never no deadline.
 
 **The kind's config** (`whizbang_backends::remote`), under `[backends.segment]` alone: a
 remote fill or a remote judge is refused, naming the capability (milestone 8). `url` is
@@ -318,7 +324,11 @@ digest the answer reported and the request's dispatch id are said beside the res
 the run's diagnostic of `segment`. The record's version is unchanged.
 
 **Its dispatch id** is 128 bits of the system's randomness (`getrandom`), as 32 lower-case
-hex digits, new for each request: whizbang retries none itself.
+hex digits, new for each request: whizbang retries none itself. Every failure of a request
+leads its sentence with it (`dispatch <id>: …`), and the action `segment` keeps a failure's
+kind and sentence in its run's diagnostic (`failed <kind>: …`), so a request charged at its
+bound and ended by a timeout or a cancel, whose run keeps no reason, is still found by its id
+at the host.
 
 **Its cancel.** When the run's signal is set or the request's wait or deadline passes
 before the answer was read whole, the stream is closed (which the front takes as a cancel

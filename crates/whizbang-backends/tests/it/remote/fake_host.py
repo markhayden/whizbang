@@ -41,6 +41,11 @@ LIMITS = {
     "restart_pause": 0.5,
 }
 
+# A test may give the call a longer limit, for a request it cancels or lets time out on
+# its own side before the host's limit comes.
+if os.environ.get("WHIZBANG_FAKE_HOST_CALL_S"):
+    LIMITS["call"] = float(os.environ["WHIZBANG_FAKE_HOST_CALL_S"])
+
 # How a model's name says its fault and its fake model.
 SEPARATOR = "--"
 NO_FAULT = "none"

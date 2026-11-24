@@ -21,7 +21,9 @@ use whizbang_backends::remote::{
 };
 use whizbang_core::artifact::ArtifactId;
 use whizbang_core::config::Kinds;
-use whizbang_core::contract::{Call, Engine, Executor, Finished, Value};
+use whizbang_core::contract::{
+    Answer, Call, Cancellation, Engine, Executor, Finished, Request, Value,
+};
 use whizbang_core::identity::Digest;
 use whizbang_core::store::Store;
 use whizbang_core::store::fs::RealFs;
@@ -43,6 +45,11 @@ struct Remoted {
 
 impl Remoted {
     fn new(label: &str, models: &[&str]) -> Remoted {
+        Remoted::hosted(label, models, Host::serving)
+    }
+
+    /// The same, the host started by `start`.
+    fn hosted(label: &str, models: &[&str], start: impl Fn(&[String]) -> Host) -> Remoted {
         let world = World::new(label);
         let reset = whizbang(&["spend", "reset", "--allowance", "1"], &world.root);
         assert_eq!(reset.code, Some(0), "{}", reset.err);
@@ -54,7 +61,7 @@ impl Remoted {
         let models: Vec<String> = models.iter().map(|model| named(None, model)).collect();
         Remoted {
             world,
-            host: Host::serving(&models),
+            host: start(&models),
             image: ArtifactId(image),
         }
     }
@@ -366,4 +373,65 @@ fn status_with_probe_reads_the_hosts_document_and_names_the_model_it_holds() {
             named(None, "fake-ok")
         ),
     );
+}
+
+/// One `segment` of the picture under this request's deadline or its signal: the run.
+fn segment_under(executor: &Engine, request: Request) -> Finished {
+    match executor.request(&request) {
+        Ok(Answer::Ran(finished)) => finished,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_timeout_and_a_cancel_send_the_hosts_cancel_through_the_checked_sender_and_name_the_dispatch() {
+    // The host's side waits 30 seconds for a call, so each request ends on whizbang's side.
+    let remoted = Remoted::hosted("remote-cancel", &["fake-wait"], |models| {
+        Host::with_call_limit(models, 30)
+    });
+    let executor = remoted.runner(&remoted.priced("fake-wait"));
+    let call = || {
+        Call::new("segment")
+            .input("image", remoted.image)
+            .argument("query", Value::text("a red thing"))
+    };
+    // At its deadline: the fake waits until it is cancelled, and the host's limit of a
+    // call is longer than the deadline.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let timed_out = segment_under(&executor, Request::new(call()).until(deadline));
+    assert_ne!(timed_out.outcome().name(), "completed");
+    // At the run's signal, set once the host's side began the request.
+    let signal = Cancellation::new();
+    let cancelled = whizbang_testkit::threads::scope(|scope| {
+        let host = &remoted.host;
+        let cancel = signal.clone();
+        let before = host.seen().len();
+        let watcher = scope.spawn(move || {
+            let began = host.waits_for(|host| host.seen().len() > before);
+            cancel.cancel();
+            began
+        });
+        let ran = segment_under(&executor, Request::new(call()).cancelled_by(signal.clone()));
+        assert!(watcher.join().unwrap(), "the host's side began no request");
+        ran
+    });
+    assert_ne!(cancelled.outcome().name(), "completed");
+    drop(executor);
+    // The host's side was handed a cancel of each, sent through the production checked
+    // sender, by its dispatch id; and each run names its dispatch, and lists the cancel
+    // where its data went, with no class.
+    let seen: Vec<String> = remoted.host.seen().into_keys().collect();
+    assert!(remoted.host.waits_for(|host| host.cancelled().len() == 2));
+    assert_eq!(remoted.host.cancelled(), seen);
+    for ran in [&timed_out, &cancelled] {
+        let text = remoted.said(ran.run().as_str());
+        assert!(text.starts_with("failed "), "{text}");
+        let named = seen
+            .iter()
+            .any(|dispatch| text.contains(&format!("dispatch {dispatch}")));
+        assert!(named, "{text}");
+        let record = record_of(&remoted.world.root, ran.run().as_str());
+        let paid = &record["spend"]["requests"];
+        assert_eq!(paid[0]["settled_micros"], 360_000, "{paid}");
+    }
 }

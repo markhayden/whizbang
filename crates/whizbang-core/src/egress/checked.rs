@@ -537,6 +537,11 @@ impl Checked {
 
 /// What a control send is refused with when it follows no request this sender
 /// dispatched, or goes to another origin than that request's.
+/// What a send or a request of frames under the bounds of a piece of cleaning up is
+/// refused with: those bounds are for a control send alone.
+const CLEANUP: &str = "the bounds of a piece of cleaning up carry a control send alone, and \
+                       no data of the run";
+
 const NOT_DISPATCHED: &str = "a control send follows only a request this way out dispatched, \
                               to that request's origin";
 
@@ -547,6 +552,10 @@ impl Sender for Checked {
     /// credential of the origin. The request is in the run's record before anything
     /// leaves, as a send's is, and is taken back only when nothing left.
     fn send_frames(&self, frames: &Frames, bounds: &Bounds, take: &mut Take<'_>) -> Sent {
+        if bounds.is_cleanup() {
+            let needs = Classes::needed_for(frames.parts().iter().map(Piece::class));
+            return Sent::refused(self.refuse(frames.to().origin(), needs, CLEANUP));
+        }
         let checked = match self.frames_checked(frames, bounds) {
             Ok(checked) => checked,
             Err(fault) => return Sent::refused(fault),
@@ -624,10 +633,13 @@ impl Sender for Checked {
             .iter()
             .map(|(name, value)| (*name, value.as_str()))
             .collect();
+        // The body is shown to the check as it is, a part of no class, so that what it
+        // holds is looked at as every part is; the request holds no class of data.
+        let body = [Piece::unclassed(control.body().to_vec())];
         if let Err(why) = check_parts(
             recipient,
             to,
-            &[],
+            &body,
             &fields,
             none,
             &self.policy,
@@ -659,6 +671,9 @@ impl Sender for Checked {
     fn send(&self, outgoing: &Outgoing, bounds: &Bounds) -> Result<Reply, Fault> {
         let (to, needs) = (outgoing.to(), outgoing.needs());
         let origin = to.origin();
+        if bounds.is_cleanup() {
+            return Err(self.refuse(origin, needs, CLEANUP));
+        }
         let Some(recipient) = &self.recipient else {
             return Err(self.refuse(
                 origin,

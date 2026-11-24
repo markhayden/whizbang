@@ -594,6 +594,11 @@ fn the_stores_root_in_any_text_is_refused_before_anything_leaves() {
 
 // --- dispatch ids --------------------------------------------------------------------------------
 
+/// The plan's name for it. What it shows is narrower than its name: two backends, each
+/// made as a process with its own store makes its own, asking the one fake host at once
+/// from one test process, mint other dispatch ids and are both answered. The ids come
+/// from the system's randomness and not from a clock or a store, so two OS processes
+/// mint them as two backends of one process do; no second OS process is started here.
 #[test]
 fn two_processes_with_their_own_stores_at_one_clock_mint_other_dispatch_ids_and_both_run_against_the_fake_host()
  {
@@ -611,4 +616,36 @@ fn two_processes_with_their_own_stores_at_one_clock_mint_other_dispatch_ids_and_
     assert_ne!(first.dispatch, second.dispatch);
     let seen = host.seen();
     assert!(seen.contains_key(&first.dispatch) && seen.contains_key(&second.dispatch));
+}
+
+#[test]
+fn an_image_that_is_no_picture_is_refused_before_anything_leaves() {
+    // A call made by hand whose raster says one size and holds the samples of another:
+    // it is not a picture, so the check could not be shown it, and nothing is sent.
+    let model = named(None, "fake-ok");
+    let host = Host::serving(std::slice::from_ref(&model));
+    let asking = Asking::of(&host);
+    let through = asking.through(&model);
+    let mut call = whizbang_backends::pack::proto::Ask::segment(
+        &request(phrase(), 1),
+        through.model.clone(),
+        through.installation,
+    );
+    if let whizbang_backends::pack::proto::Ask::Segment { image, .. } = &mut call {
+        image.samples.truncate(4);
+    }
+    let refused = failed(asking.ask_by_hand(
+        &model,
+        &request(phrase(), 1),
+        whizbang_core::contract::Cancellation::new(),
+        None,
+        Some(call),
+    ));
+    assert_eq!(refused.fault.kind(), FaultKind::Rejected, "{refused:?}");
+    assert_eq!(refused.fault.stage(), Stage::NotSent);
+    assert!(
+        refused.fault.sentence().contains("not a picture"),
+        "{refused:?}"
+    );
+    assert!(host.seen().is_empty());
 }
