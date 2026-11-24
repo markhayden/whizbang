@@ -106,11 +106,29 @@ class Spawns:
         return process
 
 
+class Log:
+    """What a front or a side logs, kept in place of its error output: each line."""
+
+    def __init__(self):
+        self.lines = []
+        self._lock = threading.Lock()
+
+    def __call__(self, line):
+        with self._lock:
+            self.lines.append(line)
+
+    def said(self):
+        with self._lock:
+            return list(self.lines)
+
+
 def local_side(test, models, limits=None, module="whizbang_pack.worker", more=(), claims=None, secrets=()):
     spawns = Spawns(models.dir, module, more)
-    side = front.LocalSide(models.dir, spawn=spawns, claims=claims, limits=limits or small_limits(), secrets=secrets)
+    log = Log()
+    side = front.LocalSide(models.dir, spawn=spawns, claims=claims, limits=limits or small_limits(), secrets=secrets, log=log)
     test.addCleanup(side.close)
     side.spawns = spawns
+    side.log = log
     return side
 
 
@@ -163,9 +181,12 @@ class Recording:
 
 
 def serve(test, side, models_dir, limits=None, tls=None, host_limit_s=600, clock=time.time):
-    """A front on loopback, closed in the test's cleanup; the front and its port."""
+    """A front on loopback, closed in the test's cleanup; the front and its port. What it
+    logs is kept in `made.log`."""
     listener = socket.create_server(("127.0.0.1", 0))
-    made = front.Front(side, models_dir, TOKEN, limits or small_limits(), host_limit_s, tls, clock)
+    log = Log()
+    made = front.Front(side, models_dir, TOKEN, limits or small_limits(), host_limit_s, tls, clock, log=log)
+    made.log = log
     made.start(listener)
     test.addCleanup(made.close)
     return made, listener.getsockname()[1]
@@ -321,13 +342,32 @@ class _Chunked(io.RawIOBase):
         return len(data)
 
 
+class _Prefixed:
+    """These bytes, then the rest of a stream."""
+
+    def __init__(self, prefix, stream):
+        self.prefix = prefix
+        self.stream = stream
+
+    def read(self, count):
+        here, self.prefix = self.prefix[:count], self.prefix[count:]
+        if len(here) < count:
+            here += self.stream.read(count - len(here))
+        return here
+
+
 class Answer:
-    """An answer read as the kind `remote` reads one: its status and headers; then, when its
-    files were checked, the frames, each held to `pack/1` by a reader with the request's
-    ids open; and the outcome record."""
+    """An answer read as the kind `remote` reads one: its status and headers; then its body,
+    where keep-alives are passed over and counted, the identity record names the files
+    checked (`files`), the frames follow it, each held to `pack/1` by a reader with the
+    request's ids open, and the outcome record ends it."""
 
     def __init__(self, sock):
         self.sock = sock
+        self.files = None
+        self.keep_alives = 0
+        # What the body held, in order: "keep-alive", "identity", "frame" and "outcome".
+        self.order = []
         self.file = sock.makefile("rb")
         line = self.file.readline(4096)
         if not line:
@@ -355,16 +395,49 @@ class Answer:
     def reader(self, load, request):
         return proto.Reader(self.body, {load["id"]: proto.awaiting(load), request["id"]: proto.awaiting(request)})
 
+    def marked(self):
+        """After a mark, what it begins: `("keep-alive",)`, `("identity", digest)`, or
+        `("outcome", document, lines)`, the outcome record read to the end of the body."""
+        if self.body.read(4) != front.RECORD_MARK:
+            raise ValueError("no mark")
+        size = self.body.read(4)
+        if size == b"\0\0\0\0":
+            return ("keep-alive",)
+        length = int.from_bytes(size, "big")
+        if not 0 < length <= front.RECORD_MOST:
+            raise ValueError("a record over its bound")
+        head = self.body.read(length)
+        document = json.loads(head.decode("ascii"))
+        if "files" in document:
+            if sorted(document) != ["files", "format"] or document["format"] != front.FORMAT:
+                raise ValueError("not an identity record")
+            return ("identity", document["files"])
+        document, lines = front.read_record(_Prefixed(size + head, self.body), marked=True)
+        return ("outcome", document, lines)
+
     def whole(self, load, request):
         """Every frame, then the outcome record, which its mark tells from a frame:
-        `(frames, document, lines)`."""
+        `(frames, document, lines)`. A frame before the identity is refused, as the kind
+        `remote` refuses it."""
         frames = []
-        if "whizbang-model-files" in self.headers:
-            reader = self.reader(load, request)
-            while self.body.peek(4)[:4] != front.RECORD_MARK:
+        reader = self.reader(load, request)
+        while True:
+            if self.body.peek(4)[:4] != front.RECORD_MARK:
+                if self.files is None:
+                    raise ValueError("a frame before the identity record")
                 frames.append(reader.read())
-        document, lines = front.read_record(self.body)
-        return frames, document, lines
+                self.order.append("frame")
+                continue
+            item = self.marked()
+            self.order.append(item[0])
+            if item[0] == "keep-alive":
+                self.keep_alives += 1
+            elif item[0] == "identity":
+                if self.files is not None or frames:
+                    raise ValueError("an identity record out of place")
+                self.files = item[1]
+            else:
+                return frames, item[1], item[2]
 
 
 def answer_of(sock, load, request):

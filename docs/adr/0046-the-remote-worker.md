@@ -2,6 +2,13 @@
 
 Status: accepted.
 Date: 2026-11-23
+Amended: 2026-11-24, with plan m6, task L1, item 2b, after the live round on Modal. Changed: an
+answer of the request route sends its headers at once, before anything waits on the worker's
+side; the identity of the files moves from the header `Whizbang-Model-Files` to an identity
+record in the body, before the first frame; a failure before the check is the outcome record
+alone in the same chunked body, with no `Whizbang-Unverified`; and the front sends a
+keep-alive after every 10 seconds of nothing. Added: "The headers at once", with the
+measurement that decided it, and the front's log of cancels and workers.
 Spec: section 4 ("The model pack": one codec for the local worker and one for HTTP; one model,
 one call at a time behind a bounded queue; cooperative cancellation; a restart fails everything
 in flight and replays nothing; the device chosen at runtime), section 5 (segment, self-hosted,
@@ -171,7 +178,7 @@ declared allowance of attempts, the residual recorded in that host's record.
 
 | Route | Body | Answer |
 |---|---|---|
-| `POST /pack/1/request` | With `Content-Length` and `Whizbang-Dispatch`: whizbang's hello, then the `load` frame and the request frame, and nothing after | `200`. Once the request's turn has come and its files are checked: `Whizbang-Model-Files: sha256:<digest>`, then, chunked, the worker's hello under whizbang's conversation id, the `load`'s events and its result or error, the request's events and its result or error (none when the load failed), each frame flushed as it comes; then the outcome record. A failure before the files were checked: `Whizbang-Unverified: failure` and the outcome record alone |
+| `POST /pack/1/request` | With `Content-Length` and `Whizbang-Dispatch`: whizbang's hello, then the `load` frame and the request frame, and nothing after | `200` and chunked, at once once the request is read whole ("The headers at once"), and a keep-alive. Once the request's turn has come and its files are checked: the identity record, then the worker's hello under whizbang's conversation id, the `load`'s events and its result or error, the request's events and its result or error (none when the load failed), each flushed as it comes; then the outcome record. A failure before the files were checked: the outcome record alone. A keep-alive after every 10 seconds of nothing else, anywhere before the outcome record |
 | `POST /pack/1/cancel` | With `Content-Length` of at most 4 KiB and `Whizbang-Dispatch`: whizbang's hello, then a `cancel` frame | `204`, whether or not anything was found. The id in the frame is never used to find a request |
 | `GET /pack/1/health` | None | `200` and a JSON document of `pack-host/1`: the protocol, each installation in the models directory with each file's SHA-256 as its record states it and whether this front has checked it, the device the worker last reported. Needs no token, starts no worker and wakes no card |
 
@@ -194,12 +201,57 @@ the worker wrote during the request's turn, redacted. A body that ends without i
 record, or with a length over its bound, is `truncated`. The stage is the worker's and is a
 diagnostic: what is charged is never read from it (task R1).
 
-**The identity.** The digest of the `Whizbang-Model-Files` header is the SHA-256, as 64
+**The identity record** is marked as the outcome record is, then four bytes of length and the
+document `{"files": "sha256:<digest>", "format": "pack-host/1"}` and nothing else; **a
+keep-alive** is the mark and a length of 0, eight zero bytes, which no record has.
+
+**The identity.** The digest of the identity record is the SHA-256, as 64
 lower-case hex digits, of the lines `<file name> sha256:<64 hex digits>\n`, one for each file
 of the installation's record, sorted by the bytes of the name: the files the worker's side
 checked before the load that answered. A model that was resident answers with the digest of
 the check before its load. Task R1 works out the same digest from the catalogue's entry and
-refuses an answer whose header is missing, malformed or different.
+refuses an answer whose identity record is missing before a frame, malformed or different.
+
+### The headers at once
+
+Added by the amendment of 2026-11-24. A web endpoint on Modal answers a request for at most
+150 seconds, then redirects, and the kind follows no redirect. As first built, the front sent
+an answer's headers only once the card's side had checked the files, which on a cold call
+comes after the GPU container's start, the claim and the worker's hello. Measured in task L1
+on an A10G: a whole call took 22 to 52 seconds cold as a rule and 2.6 seconds warm, the first
+call after a new image 161 seconds, and one cold start about 5 minutes, in which two calls in
+a row failed at 150.8 seconds on the redirect and the third took 129 seconds.
+
+So the front sends the headers of every answer of the request route as soon as it has checked
+the token and read the request whole, the same headers for every answer, before it waits on
+anything of the worker's side; and with them a first keep-alive, a byte of the body, so a
+proxy that holds headers until the body begins passes them on. What the headers named that is
+known only later is in the body: the files' identity in the identity record, before the first
+frame, and every failure in the outcome record, as before. The statuses decided before any
+wait stay statuses (`400`, `401`, `404`, `405`, `411`, `413`, `431`, and `503` when the
+request handlers are taken); a full queue is decided at once too, and is answered with the
+headers and its outcome record (`busy`) as before. No fault changed its kind or its form.
+
+While nothing else is written, the front writes a keep-alive after every `keep_alive` seconds,
+10 by default (`--keep-alive-ms`, 1 to 20,000, for a test): under the client's limit between
+two reads of an answer of frames, which is the request's own wait, `host_limit_s` (600 on
+Modal) and never past the run's deadline, and under its 30 seconds for any other answer, so a
+cold start up to the bridge's `startup_timeout` of 300 seconds trips neither. The client
+passes over keep-alives anywhere before the outcome record, at most 4,096 of them in one
+answer. A write of a keep-alive that fails ends the answer as a client gone, and cancels the
+request. Tested by `pack/tests/test_front.py` (`Start`: the headers before a slow side, a
+keep-alive while it is quiet, each fault after the headers) and by
+`remote::wire::a_cold_host_keeps_its_answer_alive_past_the_clients_limit_between_two_reads`.
+
+An answer of a front as first built (its identity in a header, its frames with no identity
+record) is refused whole by this client, and an answer of this front by a client as first
+built: the front and the client are deployed from one commit.
+
+**The front's log.** On its error output, a line each, naming the dispatch id and never a
+token, an image or a prompt: each cancel it is given and where it went (off the queue, or to
+the worker's side); on the worker's side, each cancel frame written to a worker, and how long
+after it the call ended and how; each worker started, and each ended, with how. On Modal both
+sides' lines are in `modal app logs`, which is the evidence task L1, item 5 reads.
 
 ### Every phase of a connection has its deadline
 
@@ -321,10 +373,10 @@ its stage.
 
 **Its identity.** The kind works out the digest above from the files of the installation
 `whizbang models get` would make of the catalogue's entry under this build's adapter, and
-holds the answer to it before anything of the answer is used: a `Whizbang-Model-Files`
-missing, malformed or of another digest refuses the answer whole, and nothing of it is
-kept. An answer of `Whizbang-Unverified: failure` is read as its outcome record alone, and
-a frame in it refuses it whole. The backend declares its model at the version `files-` and
+holds the answer to it before anything of the answer is used: a frame before the identity
+record, or an identity record malformed, of another digest or out of its place, refuses the
+answer whole, and nothing of it is kept. An answer with no identity record is read as its
+outcome record alone, which must be a failure. The backend declares its model at the version `files-` and
 the digest's 64 hex digits: not the digest's own text, which a version is taken for an
 installation's identity in, and a local model's. So a run's record names the model of the
 kind `remote` at the files asked, and the device the worker named, never from a cache; the
@@ -405,8 +457,8 @@ or judge (milestone 8); several models resident on one host (section 4, deferred
 The frames are the same bytes, as decided, with two changes made by building it. The `POST`'s
 body holds the `load` frame between the hello and the request, since the request is taken
 whole; and the answer holds the `load`'s answer before the request's. Beside the frames, and
-outside them, are the dispatch id and identity headers and the outcome record, which ADR 0020
-lets a record add around the frames. A cancel is a second `POST` that names the dispatch; the
+outside them, are the dispatch id header, the identity record, the keep-alives and the
+outcome record, which ADR 0020 lets a record add around the frames. A cancel is a second `POST` that names the dispatch; the
 end of the first connection asks the same. No byte of `pack/1` changed, and its vectors are as
 they were.
 

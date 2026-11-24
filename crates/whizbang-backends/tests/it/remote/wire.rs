@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 use whizbang_backends::net::testing::Pki;
@@ -16,7 +17,8 @@ use whizbang_core::identity::CanonicalPixels;
 
 use super::host::{FAKES_TOKEN, TOKEN};
 use super::scripted::{
-    Step, chunked, frames, hello, outcome, record, scripted, unverified, verified, verified_head,
+    self, Step, chunk, chunked, frames, hello, identity, keep_alive, outcome, record, scripted,
+    unverified, verified, verified_head,
 };
 use super::{Asking, Host, named, phrase, request, scripted_digest};
 
@@ -54,10 +56,7 @@ fn an_answer_with_no_malformed_or_another_identity_is_refused_and_not_kept() {
         Step::Answer(Box::new(move |seen| {
             let mut head = match digest {
                 Some(digest) => verified_head(digest),
-                None => {
-                    b"HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n"
-                        .to_vec()
-                }
+                None => scripted::head(),
             };
             let body = [
                 hello(seen),
@@ -110,8 +109,132 @@ fn an_answer_with_frames_and_no_verified_identity_is_refused_whole() {
     let asking = Asking::scripted(&front, &pki);
     let failed = failed(asking.ask(&named(None, "fake-ok"), &request(phrase(), 1)));
     assert_eq!(failed.fault.kind(), FaultKind::Malformed, "{failed:?}");
-    assert!(failed.fault.sentence().contains("no verified identity"));
+    assert!(
+        failed
+            .fault
+            .sentence()
+            .contains("a frame before its identity record")
+    );
     charged_at_its_bound(&failed);
+}
+
+// --- an answer kept alive -----------------------------------------------------------------------
+
+#[test]
+fn a_cold_host_keeps_its_answer_alive_past_the_clients_limit_between_two_reads() {
+    // The pack's own front, its side as slow as a card that is starting: 700 ms before
+    // it checks the files and starts its worker, while the front sends a keep-alive after
+    // every 50 ms of nothing. The client's limit between two reads, the request's own
+    // wait, is 250 ms: the head and the keep-alives hold the answer open past it.
+    let model = named(None, "fake-ok");
+    let slow = Duration::from_millis(700);
+    let host = Host::cold(
+        std::slice::from_ref(&model),
+        slow,
+        Duration::from_millis(50),
+    );
+    let mut asking = Asking::of(&host);
+    asking.host_limit = Duration::from_millis(250);
+    let began = Instant::now();
+    let answered = asking.ask(&model, &request(phrase(), 1));
+    let answered = answered.unwrap_or_else(|failed| panic!("{failed:?}"));
+    assert!(began.elapsed() > slow, "{:?}", began.elapsed());
+    assert_eq!(answered.digest, asking.digest_of(&model));
+    assert_eq!(answered.called.device, "cpu");
+}
+
+#[test]
+fn keep_alives_anywhere_before_the_outcome_record_are_passed_over() {
+    let pki = Arc::new(Pki::loopback());
+    let front = scripted(
+        &pki,
+        vec![Step::Answer(Box::new(|seen| {
+            let error = Message::Error {
+                id: "r2".to_owned(),
+                fault: FaultKind::Rejected,
+                sentence: "the adapter refused the request".to_owned(),
+            };
+            let done = record(
+                &outcome("failed", Some("rejected"), "answered", json!(null), 0),
+                &[],
+            );
+            let mut bytes = scripted::head();
+            for piece in [
+                keep_alive(),
+                keep_alive(),
+                identity(&scripted_digest()),
+                keep_alive(),
+                hello(seen),
+                keep_alive(),
+                loaded(),
+                frames(&[error]),
+                keep_alive(),
+            ] {
+                bytes.extend(chunk(&piece));
+            }
+            bytes.extend(chunked(&[&done]));
+            bytes
+        }))],
+    );
+    let asking = Asking::scripted(&front, &pki);
+    let failed = failed(asking.ask(&named(None, "fake-ok"), &request(phrase(), 1)));
+    assert_eq!(failed.fault.kind(), FaultKind::Rejected, "{failed:?}");
+    assert_eq!(
+        failed.said.as_deref(),
+        Some("the adapter refused the request")
+    );
+    charged_at_its_bound(&failed);
+}
+
+#[test]
+fn an_identity_out_of_place_or_keep_alives_past_their_most_are_refused() {
+    let pki = Arc::new(Pki::loopback());
+    let answer = |pieces: fn(&super::scripted::Seen) -> Vec<Vec<u8>>| -> Step {
+        Step::Answer(Box::new(move |seen| {
+            let done = record(&outcome("complete", None, "answered", json!(null), 0), &[]);
+            let mut bytes = scripted::head();
+            for piece in pieces(seen) {
+                bytes.extend(chunk(&piece));
+            }
+            bytes.extend(chunked(&[&done]));
+            bytes
+        }))
+    };
+    let front = scripted(
+        &pki,
+        vec![
+            // Twice.
+            answer(|_| vec![identity(&scripted_digest()), identity(&scripted_digest())]),
+            // After a frame.
+            answer(|seen| {
+                vec![
+                    identity(&scripted_digest()),
+                    hello(seen),
+                    identity(&scripted_digest()),
+                ]
+            }),
+            // One keep-alive more than an answer holds.
+            answer(|_| vec![keep_alive().repeat(4_097)]),
+        ],
+    );
+    let asking = Asking::scripted(&front, &pki);
+    for (case, words) in [
+        ("twice", "no place"),
+        ("after a frame", "no place"),
+        ("kept alive", "more keep-alives"),
+    ] {
+        let failed = failed(asking.ask(&named(None, "fake-ok"), &request(phrase(), 1)));
+        assert_eq!(
+            failed.fault.kind(),
+            FaultKind::Malformed,
+            "{case}: {failed:?}"
+        );
+        assert!(
+            failed.fault.sentence().contains(words),
+            "{case}: {failed:?}"
+        );
+        charged_at_its_bound(&failed);
+    }
 }
 
 // --- what the fake host answers -----------------------------------------------------------------
@@ -281,16 +404,12 @@ fn a_worker_error_that_leaves_the_worker_alive_hands_back_its_error_output() {
     charged_at_its_bound(&failed);
 }
 
-/// An answer of a failure before the files were verified whose length says more than
-/// is sent: the front holds the rest back, so a reader that read past what it checked
-/// would wait for it.
+/// An answer of a failure before the files were verified whose chunk says more than is
+/// sent: the front holds the rest back, so a reader that read past what it checked would
+/// wait for it.
 fn unverified_open(bytes: &[u8]) -> Vec<u8> {
-    let mut answer = format!(
-        "HTTP/1.1 200 OK\r\nConnection: close\r\nWhizbang-Unverified: failure\r\n\
-         Content-Length: {}\r\n\r\n",
-        bytes.len() + 1_000_000
-    )
-    .into_bytes();
+    let mut answer = scripted::head();
+    answer.extend(format!("{:x}\r\n", bytes.len() + 1_000_000).into_bytes());
     answer.extend(bytes);
     answer
 }

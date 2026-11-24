@@ -52,7 +52,7 @@ class Routes(unittest.TestCase):
         sock, load, request = fk.post_request(port, "fake-say", models.identity["fake-say"])
         answer, frames, document, lines = fk.answer_of(sock, load, request)
         self.assertEqual(answer.status, 200)
-        self.assertEqual(answer.headers["whizbang-model-files"], front.files_digest(models.record["fake-say"]["files"]))
+        self.assertEqual(answer.files, front.files_digest(models.record["fake-say"]["files"]))
         hello = frames[0]
         self.assertEqual((hello["type"], hello["id"], hello["role"]), ("hello", "c1", "worker"))
         self.assertEqual([(m["type"], m["id"]) for m in frames[1:]], [("result", "r1"), ("event", "r2"), ("event", "r2"), ("result", "r2")])
@@ -113,6 +113,7 @@ class Routes(unittest.TestCase):
         dispatch = fk.dispatch()
         sock, load, request = fk.post_request(port, "fake-wait", models.identity["fake-wait"], dispatch)
         answer = fk.Answer(sock)
+        self.assertEqual([answer.marked()[0] for _ in range(2)], ["keep-alive", "identity"])
         reader = answer.reader(load, request)
         self.assertEqual([reader.read()["type"] for _ in range(3)], ["hello", "result", "event"])
         answer.close()
@@ -132,7 +133,7 @@ class Identity(unittest.TestCase):
             sock, load, request = fk.post_request(port, model, models.identity[model])
             answer, _, document, _ = fk.answer_of(sock, load, request)
             self.assertEqual(document["outcome"], "complete")
-            seen.append(answer.headers["whizbang-model-files"])
+            seen.append(answer.files)
         # Worked out apart from the front: the lines `<name> <sha256>`, in the order of names.
         import hashlib
 
@@ -191,7 +192,7 @@ class Supervision(unittest.TestCase):
         fk.wait_until(lambda: len(made._queue) == front.QUEUE_MOST)
         sock, load, request = fk.post_request(port, "fake-ok", models.identity["fake-ok"])
         answer, frames, document, _ = fk.answer_of(sock, load, request)
-        self.assertEqual(answer.headers.get("whizbang-unverified"), "failure")
+        self.assertIsNone(answer.files)
         self.assertEqual((frames, document["admission"], document["stage"]), ([], "busy", "not_sent"))
         self.assertEqual(fk.post_cancel(port, first), 204)
         for sock, load, request in held:
@@ -244,7 +245,7 @@ class Supervision(unittest.TestCase):
         self.assertEqual((document["kind"], document["stage"], document["ended"]), ("unavailable", "unresolved", "signalled"))
         for sock, load, request in queued:
             answer, frames, document, _ = fk.answer_of(sock, load, request)
-            self.assertEqual(answer.headers.get("whizbang-unverified"), "failure")
+            self.assertIsNone(answer.files)
             self.assertEqual((frames, document["kind"], document["stage"]), ([], "unavailable", "not_sent"))
         self.assertEqual(kinds(side), [("load", "fake-wait"), ("segment", "fake-wait")])
         self.assertEqual(side.spawns.count, 1)
@@ -301,8 +302,7 @@ class Supervision(unittest.TestCase):
             changed.write(b"!")
         sock, load, request = fk.post_request(port, "fake-ok", models.identity["fake-ok"], settings={"pad": 2})
         answer, frames, document, _ = fk.answer_of(sock, load, request)
-        self.assertEqual(answer.headers.get("whizbang-unverified"), "failure")
-        self.assertNotIn("whizbang-model-files", answer.headers)
+        self.assertIsNone(answer.files)
         self.assertEqual((frames, document["kind"], document["stage"]), ([], "rejected", "not_sent"))
         self.assertEqual(kinds(side), [("load", "fake-ok"), ("segment", "fake-ok")])
 
@@ -429,7 +429,7 @@ class Bridge(unittest.TestCase):
         self.assertEqual(fk.post_cancel(port, dispatch), 204)
         release.set()
         answer, frames, document, _ = fk.answer_of(sock, load, request)
-        self.assertEqual(answer.headers.get("whizbang-unverified"), "failure")
+        self.assertIsNone(answer.files)
         self.assertEqual((frames, document["kind"], document["stage"]), ([], "cancelled", "not_sent"))
         self.assertEqual((list(side.journal), side.spawns.count), ([], 0))
         # And a cancel that reaches the worker's side before its call does, as a control
@@ -454,7 +454,7 @@ class Bridge(unittest.TestCase):
         _, port = fk.serve(self, side, models.dir)
         sock, load, request = fk.post_request(port, "fake-ok", models.identity["fake-ok"])
         answer, frames, document, _ = fk.answer_of(sock, load, request)
-        self.assertEqual(answer.headers.get("whizbang-unverified"), "failure")
+        self.assertIsNone(answer.files)
         self.assertEqual((frames, document["admission"], document["stage"]), ([], "claim_unreachable", "not_sent"))
         self.assertEqual(side.spawns.count, 0)
 
@@ -982,8 +982,62 @@ class Deadlines(unittest.TestCase):
         held[0].close()
 
 
+class Slow:
+    """A worker's side of the test's own that starts no worker: its call waits for `gate`,
+    as a host's card that is still starting, then hands on `items`. It keeps each cancel."""
+
+    def __init__(self, items):
+        self.items = items
+        self.gate = threading.Event()
+        self.cancelled = []
+        self.checked = {}
+        self.device = None
+
+    def call(self, job, emit):
+        if not self.gate.wait(kit.WAIT_SECONDS):
+            raise AssertionError("the test never let the slow side go on")
+        for item in self.items:
+            emit(item)
+
+    def cancel(self, dispatch):
+        self.cancelled.append(dispatch)
+        return False
+
+    def close(self):
+        pass
+
+
+DIGEST = "sha256:" + "ab" * 32
+# The longest a test waits for the answer's headers, far under a slow side's start.
+HEADERS_WITHIN = 0.5
+
+
+def slow_front(test, items, **limits):
+    models = fk.Models(test)
+    side = Slow(items)
+    test.addCleanup(side.gate.set)
+    made, port = fk.serve(test, side, models.dir, fk.small_limits(**limits))
+    return models, side, made, port
+
+
 class Start(unittest.TestCase):
-    def test_the_headers_follow_the_check_of_the_files_and_a_failed_check_is_an_error_answer_with_no_frame(self):
+    def test_the_headers_and_a_first_keep_alive_come_before_a_slow_side_is_ready(self):
+        models, side, _, port = slow_front(self, [("verified", DIGEST), front.outcome("failed", "unavailable", stage="unresolved")])
+        sock, load, request = fk.post_request(port, "fake-ok", models.identity["fake-ok"])
+        # The side is held: the headers, and the first byte of the body, come anyway.
+        sock.settimeout(HEADERS_WITHIN)
+        answer = fk.Answer(sock)
+        self.assertEqual((answer.status, answer.headers.get("transfer-encoding")), (200, "chunked"))
+        self.assertEqual(answer.marked(), ("keep-alive",))
+        self.assertFalse(side.gate.is_set())
+        sock.settimeout(kit.WAIT_SECONDS)
+        side.gate.set()
+        frames, document, _ = answer.whole(load, request)
+        answer.close()
+        self.assertEqual((answer.files, frames, document["kind"]), (DIGEST, [], "unavailable"))
+        self.assertEqual(answer.order[0], "identity")
+
+    def test_the_headers_come_before_the_check_of_the_files_and_the_identity_follows_it(self):
         models, side, _, port = setup(self)
         gate = threading.Event()
         checking = threading.Event()
@@ -997,27 +1051,95 @@ class Start(unittest.TestCase):
         side.side.check = held
         sock, load, request = fk.post_request(port, "fake-ok", models.identity["fake-ok"])
         self.assertTrue(checking.wait(kit.WAIT_SECONDS))
-        sock.settimeout(0.05)
-        with self.assertRaises(socket.timeout):
-            sock.recv(1)
+        sock.settimeout(HEADERS_WITHIN)
+        answer = fk.Answer(sock)
+        self.assertEqual(answer.status, 200)
         sock.settimeout(kit.WAIT_SECONDS)
         gate.set()
-        answer, frames, document, _ = fk.answer_of(sock, load, request)
-        self.assertIn("whizbang-model-files", answer.headers)
-        self.assertEqual(document["outcome"], "complete")
-        side.side.check = real
+        frames, document, _ = answer.whole(load, request)
+        answer.close()
+        self.assertEqual(answer.files, front.files_digest(models.record["fake-ok"]["files"]))
+        self.assertEqual(answer.order[answer.order.index("identity") + 1], "frame")
+        self.assertEqual((frames[0]["type"], document["outcome"]), ("hello", "complete"))
+
+    def test_a_keep_alive_is_sent_whenever_the_answer_is_quiet(self):
+        models, side, _, port = slow_front(self, [("verified", DIGEST), front.outcome("failed", "cancelled")], keep_alive=0.02)
+        sock, load, request = fk.post_request(port, "fake-ok", models.identity["fake-ok"])
+        answer = fk.Answer(sock)
+        for _ in range(4):
+            self.assertEqual(answer.marked(), ("keep-alive",))
+        side.gate.set()
+        _, document, _ = answer.whole(load, request)
+        answer.close()
+        self.assertEqual(document["kind"], "cancelled")
+        self.assertEqual(answer.order[-2:], ["identity", "outcome"])
+
+    def test_a_fault_after_the_headers_reaches_the_client_in_its_outcome_record(self):
+        # Each a fault that once came before the headers, now after them and a keep-alive:
+        # the same record, with no identity and no frame.
+        for made in (
+            front.outcome("failed", "unavailable", admission="busy"),
+            front.outcome("failed", "rejected", admission="replay"),
+            front.outcome("failed", "unavailable", admission="claim_unreachable"),
+            front.outcome("failed", "timed_out", admission="not_after"),
+            front.outcome("failed", "rejected"),
+            front.outcome("failed", "unavailable", stage="not_sent", ended="killed", lines=[b"no hello"]),
+        ):
+            models, side, _, port = slow_front(self, [made])
+            sock, load, request = fk.post_request(port, "fake-ok", models.identity["fake-ok"])
+            answer = fk.Answer(sock)
+            self.assertEqual(answer.marked(), ("keep-alive",))
+            side.gate.set()
+            frames, document, lines = answer.whole(load, request)
+            answer.close()
+            self.assertEqual((answer.files, frames), (None, []))
+            self.assertEqual((document, lines), (made[1], made[2]))
+
+    def test_a_failed_check_is_a_record_with_no_identity_and_no_frame(self):
+        models, side, _, port = setup(self)
         os.remove(models.file("fake-mps"))
         sock, load, request = fk.post_request(port, "fake-mps", models.identity["fake-mps"])
         answer, frames, document, lines = fk.answer_of(sock, load, request)
-        self.assertEqual((answer.status, answer.headers.get("whizbang-unverified")), (200, "failure"))
-        self.assertNotIn("whizbang-model-files", answer.headers)
+        self.assertEqual((answer.status, answer.files), (200, None))
         self.assertEqual((frames, document["kind"], document["stage"], lines), ([], "rejected", "not_sent", []))
+
+
+class Log(unittest.TestCase):
+    def test_a_cancel_and_a_restart_are_each_a_line_of_the_log_naming_the_dispatch_and_no_secret(self):
+        models, side, made, port = setup(self)
+        dispatch = fk.dispatch()
+        sock, load, request = fk.post_request(port, "fake-wait", models.identity["fake-wait"], dispatch)
+        side.began(dispatch)
+        self.assertEqual(fk.post_cancel(port, dispatch), 204)
+        self.assertEqual(fk.answer_of(sock, load, request)[2]["kind"], "cancelled")
+        sock, load, request = fk.post_request(port, "fake-exit", models.identity["fake-exit"])
+        self.assertEqual(fk.answer_of(sock, load, request)[2]["ended"], {"exited": 4})
+        sock, load, request = fk.post_request(port, "fake-ok", models.identity["fake-ok"])
+        self.assertEqual(fk.answer_of(sock, load, request)[2]["outcome"], "complete")
+        first, second = side.spawns.pids
+        self.assertIn("cancel %s: handed to the worker's side" % dispatch, made.log.said())
+        said = side.log.said()
+        self.assertIn("cancel %s: cancel frame written to worker %d" % (dispatch, first), said)
+        ended = [line for line in said if line.startswith("cancel %s: the call ended " % dispatch)]
+        self.assertEqual(len(ended), 1)
+        self.assertTrue(ended[0].endswith(" s after its cancel, cancelled, the worker lives on"), ended[0])
+        self.assertLess(float(ended[0].split(" ")[5]), kit.WAIT_SECONDS)
+        restarts = [line for line in said if line.startswith("worker ")]
+        self.assertEqual(
+            restarts,
+            ["worker %d started" % first, "worker %d ended: exited 4; the next call starts another" % first, "worker %d started" % second],
+        )
+        for line in said + made.log.said():
+            self.assertNotIn(fk.TOKEN, line)
+            self.assertNotIn("thing", line)
 
 
 class CommandLine(unittest.TestCase):
     def test_the_front_takes_its_options_once_and_a_token_of_32_printable_characters(self):
         given = front.parse(["--listen", "127.0.0.1:8080", "--models-dir", "/models", "--token-env", "T", "--redact-env", "A", "--redact-env", "B"])
         self.assertEqual((given["listen"], given["worker"], given["host_limit_s"], given["redact_env"]), (("127.0.0.1", 8080), "local", 600, ["A", "B"]))
+        self.assertEqual(given["keep_alive_ms"], 10_000)
+        self.assertEqual(front.parse(["--listen", "h:1", "--models-dir", "/m", "--token-env", "T", "--keep-alive-ms", "50"])["keep_alive_ms"], 50)
         for wrong in (
             ["--listen", "127.0.0.1:8080", "--models-dir", "/models"],
             ["--listen", "8080", "--models-dir", "/models", "--token-env", "T"],
@@ -1026,6 +1148,8 @@ class CommandLine(unittest.TestCase):
             ["--listen", "127.0.0.1:8080", "--models-dir", "/models", "--token-env", "T", "--tls-cert", "c"],
             ["--listen", "127.0.0.1:8080", "--models-dir", "/models", "--token-env", "T", "--host-limit-s", "0"],
             ["--listen", "127.0.0.1:8080", "--models-dir", "/models", "--token-env", "T", "--other", "x"],
+            ["--listen", "127.0.0.1:8080", "--models-dir", "/models", "--token-env", "T", "--keep-alive-ms", "0"],
+            ["--listen", "127.0.0.1:8080", "--models-dir", "/models", "--token-env", "T", "--keep-alive-ms", "20001"],
         ):
             with self.assertRaises(front.Usage):
                 front.parse(wrong)

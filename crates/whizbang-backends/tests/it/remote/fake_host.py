@@ -26,6 +26,7 @@ import os
 import signal
 import sys
 import threading
+import time
 
 from whizbang_pack import front
 
@@ -45,6 +46,10 @@ LIMITS = {
 # its own side before the host's limit comes.
 if os.environ.get("WHIZBANG_FAKE_HOST_CALL_S"):
     LIMITS["call"] = float(os.environ["WHIZBANG_FAKE_HOST_CALL_S"])
+
+# A test may make the host cold: its side waits this long before each request, as a card
+# that is starting, while the front keeps the answer alive.
+SLOW_S = float(os.environ.get("WHIZBANG_FAKE_HOST_SLOW_MS", "0")) / 1000.0
 
 # How a model's name says its fault and its fake model.
 SEPARATOR = "--"
@@ -88,6 +93,8 @@ class Router:
             emit(front.outcome("failed", "malformed"))
             return
         _note(self.models_dir, "seen", job["dispatch"], {"model": load["model"], "settings": load["settings"]})
+        if SLOW_S:
+            time.sleep(SLOW_S)
         fault, separator, _ = load["model"].partition(SEPARATOR)
         side = self._side(fault) if separator else None
         if side is None:
