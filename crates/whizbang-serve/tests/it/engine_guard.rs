@@ -489,51 +489,52 @@ fn a_third_upload_is_answered_429_after_its_headers() {
     let engined = Engined::start("eg-third-upload", |settings| {
         settings.times.head = Duration::from_secs(20);
     });
+    let held = |count| {
+        let host = engined.host.as_ref().unwrap();
+        host.uploads_held(count, Duration::from_secs(10))
+    };
     let host = engined.host_header();
     let bearer = format!("Bearer {TOKEN}");
     let head = format!(
         "POST /v1/uploads HTTP/1.1\r\nHost: {host}\r\nAuthorization: {bearer}\r\n\
          Content-Type: image/png\r\nContent-Length: 1000\r\n\r\n"
     );
-    // Two uploads hold their handlers, their bodies stalled after the headers.
+    // Two uploads hold their places, their bodies stalled after the headers: each is seen
+    // to hold its place before anything else is sent, so nothing of the test's own takes a
+    // place first (a third sent too soon would take the second's place, and the second be
+    // refused in its stead).
     let mut stalled = Vec::new();
-    for _ in 0..2 {
+    for count in 1..=2 {
         let mut conn = TcpStream::connect(engined.address).unwrap();
         conn.write_all(head.as_bytes()).unwrap();
         stalled.push(conn);
+        assert!(held(count), "upload {count} never held its place");
     }
-    // The third is refused as soon as its headers are read. The two may still be on their
-    // readers for a moment, so it is sent whole, which never stalls, until they hold their
-    // places: then it is refused without its body being read.
-    let whole = small_png();
-    let limit = Instant::now() + Duration::from_secs(10);
-    let answer = loop {
-        let answer = send(
-            engined.address,
-            &upload_bytes(&engined, "image/png", &whole, ""),
-        );
-        if answer.status == 429 || Instant::now() > limit {
-            break answer;
-        }
-        assert_eq!(answer.status, 201, "{}", answer.whole());
-    };
-    assert_eq!(answer.status, 429, "{}", answer.whole());
-    assert!(answer.header("retry-after").is_some());
-    // Now that the two hold their places, a third sent as its headers alone is refused at
-    // once: nothing of its body is waited for.
+    // A third sent as its headers alone is refused at once: nothing of its body is waited
+    // for. And one sent whole is refused the same.
     let started = Instant::now();
     let mut conn = TcpStream::connect(engined.address).unwrap();
     conn.write_all(head.as_bytes()).unwrap();
     let answer = read_answer(&mut conn);
     assert_eq!(answer.status, 429, "{}", answer.whole());
+    assert!(answer.header("retry-after").is_some());
     assert!(
         started.elapsed() < Duration::from_secs(2),
         "{:?}",
         started.elapsed()
     );
+    let answer = send(
+        engined.address,
+        &upload_bytes(&engined, "image/png", &small_png(), ""),
+    );
+    assert_eq!(answer.status, 429, "{}", answer.whole());
+    // The two still hold theirs: what was refused was refused while they did.
+    assert!(held(2));
     // A JSON request is still answered.
     assert_eq!(engined.mcp(&ping()).status, 200);
+    // Once they go, their places are given back.
     drop(stalled);
+    assert!(held(0));
 }
 
 #[test]
