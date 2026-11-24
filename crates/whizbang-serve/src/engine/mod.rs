@@ -602,12 +602,16 @@ impl Shared {
             return false;
         }
         state.uploads += 1;
+        drop(state);
+        self.notify();
         true
     }
 
     pub fn give_upload(&self) {
         let mut state = self.state();
         state.uploads = state.uploads.saturating_sub(1);
+        drop(state);
+        self.notify();
     }
 
     /// Asks the host to stop: the first ask starts the grace, a later one ends it.
@@ -829,6 +833,28 @@ impl Host {
     /// The address it listens on.
     pub fn address(&self) -> SocketAddr {
         self.address
+    }
+
+    /// Waits, `within` at most, until exactly `count` uploads hold their places among the
+    /// [`UPLOADS`] (their headers read, their bodies not yet): whether they do. Each place
+    /// taken or given back wakes it, so a caller that must know an upload is held, as a
+    /// test does, waits on that and not on a time.
+    pub fn uploads_held(&self, count: usize, within: Duration) -> bool {
+        let until = Instant::now() + within;
+        let mut state = self.shared.state();
+        while state.uploads != count {
+            let left = until.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return false;
+            }
+            state = self
+                .shared
+                .changed
+                .wait_timeout(state, left)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
+        }
+        true
     }
 
     /// What asks it to stop.
