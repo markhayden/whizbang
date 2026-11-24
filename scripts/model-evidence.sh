@@ -29,6 +29,16 @@
 # run's full check of the installation's files leaves its record in the models directory
 # (plan 2A, task R1), so each round's first load is timed without the full hash, and each
 # round says whether it found that record (`check_record_before`).
+# `--candidate` as its one argument measures the staged tree instead (plan m6, task P1,
+# item 5): when the sources the records name change, the records cannot be committed after
+# them, since the fast tests fail on the sources until the records match. It refuses unstaged
+# changes and untracked files under `pack/` and `crates/`; scripts/candidate.sh prepares the
+# candidate once (the index exported, its binary built, its pack installed into a models
+# directory of its own and held to the tree's sources); each round runs the exported tree's
+# own scripts/test-models.sh against it; the digests are of the exported files; and the
+# records say `tree = "candidate"` and the tree's id, `candidate_tree`, beside the commit the
+# index was staged on. Before it writes, the index must still be that tree. The records are
+# then committed with exactly the staged sources, in one commit.
 # This script sets no `EXIT` trap, so its own syntax error is a failure; parse it first all
 # the same: see the top of scripts/scan.sh.
 "$BASH" -n "${BASH_SOURCE[0]}" || { echo "model-evidence: ${BASH_SOURCE[0]} has a syntax error; refusing to run" >&2; exit 2; }
@@ -39,6 +49,14 @@ set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 cd "$root"
+
+candidate=0
+case "${1-}" in
+  "") ;;
+  --candidate) candidate=1 ;;
+  *) echo "model-evidence: the one argument it takes is --candidate" >&2; exit 2 ;;
+esac
+[ "$#" -le 1 ] || { echo "model-evidence: the one argument it takes is --candidate" >&2; exit 2; }
 
 [ -n "${WHIZBANG_THREAD_GUARD:-}" ] || {
   echo "model-evidence: run it through scripts/heavy.sh, with WHIZBANG_THREAD_LIMIT=200" >&2
@@ -58,10 +76,24 @@ shared=$target/tmp/model-tier
 work=$target/tmp/model-evidence
 mkdir -p "$work"
 
-[ -z "$(git status --short)" ] || {
-  echo "model-evidence: the tree has changes not committed; commit them, then run it again" >&2
-  exit 2
-}
+# What is measured: this checkout, clean; or the staged tree, exported (see the top).
+src=$root
+tm=(scripts/test-models.sh)
+if [ "$candidate" = 1 ]; then
+  cand=$target/tmp/candidate
+  rm -rf "$cand"
+  mkdir -p "$cand"
+  scripts/candidate.sh prepare "$cand"
+  candidate_tree=$(cat "$cand/tree-id")
+  src=$cand/tree
+  shared=$cand/target/tmp/model-tier
+  tm=(env CARGO_TARGET_DIR="$cand/target" WHIZBANG_MODELS_DIR="$cand/models" "$cand/tree/scripts/test-models.sh")
+else
+  [ -z "$(git status --short)" ] || {
+    echo "model-evidence: the tree has changes not committed; commit them, then run it again" >&2
+    exit 2
+  }
+fi
 
 sha() { shasum -a 256 "$1" | awk '{ print "sha256:" $1 }'; }
 # value <file> <name>: the value of `name=value` in a file of the tests' or the watch's.
@@ -73,10 +105,10 @@ value() {
 }
 
 # The run kept from nothing: see the top.
-scripts/test-models.sh model_tier
+"${tm[@]}" model_tier
 for round in 1 2 3; do
   rm -f "$work/phrase-$round.txt" "$work/second-$round.txt" "$work/places-$round.txt" "$work/tiny-$round.txt" "$work/watch-$round.txt"
-  WHIZBANG_MEMORY_REPORT=$work/watch-$round.txt scripts/test-models.sh model_tier
+  WHIZBANG_MEMORY_REPORT=$work/watch-$round.txt "${tm[@]}" model_tier
   cp "$shared/out/phrase.txt" "$work/phrase-$round.txt"
   cp "$shared/out/second.txt" "$work/second-$round.txt"
   cp "$shared/out/places.txt" "$work/places-$round.txt"
@@ -85,22 +117,30 @@ done
 
 # The timings of checkpoint 1D (plan 1D, task V1): once, under the watch, after the rounds.
 rm -f "$work/coverage.txt" "$work/watch-coverage.txt"
-WHIZBANG_MEMORY_REPORT=$work/watch-coverage.txt scripts/test-models.sh coverage
+WHIZBANG_MEMORY_REPORT=$work/watch-coverage.txt "${tm[@]}" coverage
 cp "$shared/out/coverage.txt" "$work/coverage.txt"
 
 commit=$(git rev-parse HEAD)
-tree=clean
-[ -z "$(git status --short)" ] || {
-  echo "model-evidence: the tree changed while the model tier ran; nothing was written" >&2
-  exit 1
-}
-lock=$(sha pack/uv.lock)
-source=$(sha pack/src/whizbang_pack/sam3.py)
-fixture=$(sha docs/results/m1c-local-pack/circle.png)
-revision=$(sed -n 's/.*named("sam3", "\([^"]*\)", true).*/\1/p' crates/whizbang/src/wiring.rs)
+if [ "$candidate" = 1 ]; then
+  tree=candidate
+  { [ "$(git write-tree)" = "$candidate_tree" ] && git diff --quiet -- pack crates; } || {
+    echo "model-evidence: the index changed while the model tier ran; nothing was written" >&2
+    exit 1
+  }
+else
+  tree=clean
+  [ -z "$(git status --short)" ] || {
+    echo "model-evidence: the tree changed while the model tier ran; nothing was written" >&2
+    exit 1
+  }
+fi
+lock=$(sha "$src/pack/uv.lock")
+source=$(sha "$src/pack/src/whizbang_pack/sam3.py")
+fixture=$(sha "$src/docs/results/m1c-local-pack/circle.png")
+revision=$(sed -n 's/.*named("sam3", "\([^"]*\)", true).*/\1/p' "$src/crates/whizbang/src/wiring.rs")
 [ -n "$revision" ] || { echo "model-evidence: the binary's table names no shipped sam3" >&2; exit 1; }
-tiny_source=$(sha pack/src/whizbang_pack/owlv2_sam2.py)
-tiny_revision=$(sed -n 's/.*named("owlv2-sam2", "\([^"]*\)", true).*/\1/p' crates/whizbang/src/wiring.rs)
+tiny_source=$(sha "$src/pack/src/whizbang_pack/owlv2_sam2.py")
+tiny_revision=$(sed -n 's/.*named("owlv2-sam2", "\([^"]*\)", true).*/\1/p' "$src/crates/whizbang/src/wiring.rs")
 [ -n "$tiny_revision" ] || { echo "model-evidence: the binary's table names no shipped owlv2-sam2" >&2; exit 1; }
 tiny_installation=$(value "$work/tiny-1.txt" installation)
 p1=$work/phrase-1.txt
@@ -118,6 +158,7 @@ toml=docs/results/m1c-local-pack.toml
   echo "measured = \"$measured\""
   echo "commit = \"$commit\""
   echo "tree = \"$tree\""
+  [ "$candidate" = 0 ] || echo "candidate_tree = \"$candidate_tree\""
   echo "lock = \"$lock\""
   echo "adapter = \"sam3\""
   echo "adapter_revision = \"$revision\""
@@ -220,7 +261,11 @@ md=docs/results/m1c-local-pack.md
   echo "| Field | Value |"
   echo "|---|---|"
   echo "| Measured | $measured |"
-  echo "| Commit measured | \`$commit\` ($tree) |"
+  if [ "$candidate" = 1 ]; then
+    echo "| Commit measured | The staged tree \`$candidate_tree\` on \`$commit\` (candidate) |"
+  else
+    echo "| Commit measured | \`$commit\` ($tree) |"
+  fi
   echo "| Lock file | \`$lock\` |"
   echo "| Adapter | \`sam3\`, revision \`$revision\`, source \`$source\` |"
   echo "| Installation | \`$installation\` |"
@@ -298,8 +343,8 @@ md=docs/results/m1c-local-pack.md
 
 c=$work/coverage.txt
 cw=$work/watch-coverage.txt
-sam3_model=$(sed -n '/"name": "sam3"/,/"revision"/s/.*"revision": "\([^"]*\)".*/\1/p' crates/whizbang/src/catalogue.json | head -n 1)
-tiny_model=$(sed -n '/"name": "tiny"/,/"revision"/s/.*"revision": "\([^"]*\)".*/\1/p' crates/whizbang/src/catalogue.json | head -n 1)
+sam3_model=$(sed -n '/"name": "sam3"/,/"revision"/s/.*"revision": "\([^"]*\)".*/\1/p' "$src/crates/whizbang/src/catalogue.json" | head -n 1)
+tiny_model=$(sed -n '/"name": "tiny"/,/"revision"/s/.*"revision": "\([^"]*\)".*/\1/p' "$src/crates/whizbang/src/catalogue.json" | head -n 1)
 [ -n "$sam3_model" ] && [ -n "$tiny_model" ] || { echo "model-evidence: the catalogue names no revision of sam3 or tiny" >&2; exit 1; }
 coverage=docs/results/m1d-segment-coverage.md
 {
@@ -330,6 +375,7 @@ coverage=docs/results/m1d-segment-coverage.md
   echo "measured = \"$measured\""
   echo "commit = \"$commit\""
   echo "tree = \"$tree\""
+  [ "$candidate" = 0 ] || echo "candidate_tree = \"$candidate_tree\""
   echo "sam3_revision = \"$sam3_model\""
   echo "sam3_adapter_revision = \"$revision\""
   echo "sam3_adapter_source = \"$source\""

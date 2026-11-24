@@ -299,8 +299,8 @@ of the queue, so no other caller's load comes between; one request at a time; se
 restarts the worker; on the worker's death or restart, fails the request in flight and every
 queued one with a clear error, and replays nothing; and verifies the installation's files
 against the hashes of its record before each load, as `Supervisor::call_checked` does. The
-pack gains no dependency (`dependencies = []` stays: `http.server`, `subprocess`, `hmac`,
-`hashlib`). `--worker local` runs the child on the same machine; `--worker <module:function>`
+pack gains no dependency (`dependencies = []` stays: `socket`, `selectors`, `ssl`,
+`subprocess`, `hmac`, `hashlib`; as built, ADR 0046). `--worker local` runs the child on the same machine; `--worker <module:function>`
 names a callable that runs it elsewhere and carries the same frames, which is how D1's Modal
 deployment keeps the front on a machine with no card and the worker on one with a card.
 The front speaks HTTPS itself when given `--tls-cert` and `--tls-key` (the standard library's
@@ -390,25 +390,29 @@ host_limit_s = 600
   `source_images` and `prompts`; a point or a box is a prompt. The credential is the token,
   bound to that origin and sent nowhere else.
 - **Its price** is `Price::by_time(price_microusd_per_second, TimeLimit::of_host(ms))`, where
-  `ms` is `host_limit_s` times 1,000, converted with a checked multiplication: zero, or a value
-  that overflows, is refused when the config is read, naming the setting. With the example, a
-  request's bound is 300 × 600 = 180,000 millionths, 0.18 dollars
-  (`remote::the_examples_bound_is_180000_microusd_and_an_unknown_end_settles_at_it`).
-- **What `host_limit_s` must cover, and how it is known first.** It is the bound only if the
-  host itself stops billing by then, whatever happens on the host's side: a cold start (the
-  model's load among it), the execution, the time an idle machine is kept, and any run the host
-  makes again on its own, after a crash of its machine or a preemption. Whether Modal gives
-  that is settled **on paper, first**, before any code depends on it: ADR 0046's section "What
-  bounds a request's bill on Modal" (P1, item 1) cites, from Modal's own documentation, each
-  limit Modal enforces, whether it holds across Modal's own retries and preemptions (and
-  whether a card can be asked for that is not preempted), and the largest overrun Modal states
-  for each. Only limits so documented count; no margin is taken from a measurement. If every
-  phase that can bill has such a limit, `host_limit_s` is their sum, D1's deployment sets
-  them, and `scripts/gpu-host.sh deploy` reads the deployed limits back and refuses when their
-  sum differs from the config's. If one does not, the kind declares no bound for Modal and
-  every call is refused, as section 6 says; D1 and L1 stop, and the owner is asked (another
-  host, or a fixed maximum charge the host offers), while every other task goes on. A
-  timeout, a dropped stream or an unknown end is charged at the bound.
+  `ms` is `host_limit_s` times 1,000 times the attempt allowance of **2** (below), converted
+  with checked multiplications: zero, or a value that overflows, is refused when the config is
+  read, naming the setting. With the example, a request's bound is 300 × 600 × 2 = 360,000
+  millionths, 0.36 dollars
+  (`remote::the_examples_bound_is_360000_microusd_and_an_unknown_end_settles_at_it`).
+- **What `host_limit_s` must cover, and how it was settled.** ADR 0046's section "What bounds
+  a request's bill on Modal" (P1, item 1) read Modal's own documentation on paper, first, and
+  found that **Modal gives no bound for a request**: each attempt's startup, execution and idle
+  time have documented limits, but a GPU function can always be preempted and is then started
+  again on the same input with no stated count, and a crash of a deployed app is retried
+  without end. So, by the orchestrator's decision of 2026-11-23, under the owner's standing rule
+  that cost controls are a convenience guard and not a hard production control (keep work
+  running, record the limit), **whizbang bounds one attempt**: `host_limit_s` is the sum of the
+  GPU function's `startup_timeout`, `timeout` and `scaledown_window`, D1's deployment sets the
+  three, and `scripts/gpu-host.sh deploy` reads them back and refuses when any is missing or
+  their sum differs from the config's. The price covers **2 attempts** (whizbang's, and one
+  restart of the host's). The bridge asks for no retry (`retries` unset or 0) and claims its
+  dispatch id before any model work, so a delivery after the claim is answered from the claim
+  and runs no model. **The residual**, restarts after a crash or a preemption beyond the
+  allowance, crash loops at a container's start among them, is not bounded by whizbang; ADR 0046
+  records it as the known limit, and the owner's Modal workspace spend limit, set at D1's
+  setup (suggested 50 dollars a month), is the backstop. A timeout, a dropped stream or an
+  unknown end is charged at the bound.
 - **Nothing dispatched is replayed by the host.** The id of a `pack/1` request is unique only
   among one sender's open requests (ADR 0020; the supervisor's `r1`, `r2`), so it is not what
   the host keys on, and nor is a run's id, which is the time and a count of one process
@@ -575,13 +579,16 @@ an NVIDIA card where there is one.
    preemptions, whether a card that is not preempted can be asked for, and the overrun Modal
    states for each, each with its citation and the date it was read. It ends in one of two
    sentences: "a request's bill is bounded by the sum of these limits", with the deployment's
-   settings that make it so; or "Modal gives no bound for a request", naming the phase, after
-   which the kind declares no bound on Modal, D1's deployment and L1 wait, and the owner is
-   asked. It names what it leaves: Tiny on a remote host (its
+   settings that make it so; or "Modal gives no bound for a request", naming the phase. **It
+   ended in the second** (read 2026-11-23: restarts after a crash or a preemption have no
+   stated count), and the orchestrator decided the same day, in place of refusing every call,
+   that whizbang bounds one attempt, prices 2, and records the residual ("The kind `remote`",
+   above); the section says so, and `SPEC.md` section 6 is amended with it. It names what it leaves: Tiny on a remote host (its
    entry works there unchanged; nothing asks for it yet), a remote fill or judge (milestone 8),
    several models resident on a host (section 4, deferred).
-2. **The front** (`pack/src/whizbang_pack/front.py`), on `http.server`, a thread per connection
-   held to 8: the three routes; the bearer token read once from the variable named and compared
+2. **The front** (`pack/src/whizbang_pack/front.py`), on the standard library's `socket` and
+   `selectors` (as built: a classifier thread reads every new connection, then 8 handler
+   threads, 6 for requests and 2 for control, take them, ADR 0046): the three routes; the bearer token read once from the variable named and compared
    with `hmac.compare_digest`; a body is parsed as it is read, through `pack/1`'s own reader
    (`proto.py`) over a stream held to the body's `Content-Length` and to its deadline, so each
    frame's header length and each payload's length is checked before their bytes are read, as
@@ -593,8 +600,8 @@ an NVIDIA card where there is one.
    request; the identity header; the
    health document, which reads the volume's installation records and the hashes they hold,
    and starts no worker. **Every phase of a connection has its deadline**, as the playground's
-   host has (`play/http.rs`): a TLS handshake within 5 seconds, the line and headers within 5
-   seconds and 16 KiB, a body at no less than 1 MiB a second after its first 5, each frame of
+   host has (`play/http.rs`): a TLS handshake and the line and headers (at most 16 KiB) within
+   2 seconds of the connection's acceptance in all (as built; the classifier below), a body at no less than 1 MiB a second after its first 5, each frame of
    an answer taken within 30 seconds, and the connection closed at any of them. **Reading a
    request is apart from serving it, and never waits on a stalled peer**: one classifier
    thread holds every new connection in non-blocking mode under the standard library's
@@ -698,7 +705,7 @@ an NVIDIA card where there is one.
    `test_front.Bridge.test_a_cancel_reaches_a_call_blocked_in_the_bridge_through_its_control_input_and_an_ignored_one_restarts_the_worker_at_its_deadline`,
    `test_front.Tls.test_the_front_serves_https_with_the_cert_it_is_given`,
    `test_front.Deadlines.test_incomplete_headers_a_trickling_body_a_stalled_handshake_and_a_client_that_reads_nothing_are_each_closed`,
-   `test_front.Deadlines.test_with_six_requests_running_and_sixty_four_connections_stalled_in_their_handshake_or_headers_a_cancel_made_after_them_is_answered_within_2_seconds_of_its_acceptance`,
+   `test_front.Deadlines.test_with_every_request_handler_taken_and_sixty_four_connections_stalled_in_their_handshake_or_headers_a_cancel_made_after_them_is_answered_within_2_seconds_of_its_acceptance`,
    `test_front.Deadlines.test_a_ready_connection_is_read_while_others_are_stalled`,
    `test_front.Deadlines.test_two_cancels_stalled_in_their_bodies_leave_a_whole_third_cancel_to_reach_the_worker_within_2_seconds`,
    `test_front.Start.test_the_headers_follow_the_check_of_the_files_and_a_failed_check_is_an_error_answer_with_no_frame`,
@@ -709,7 +716,7 @@ an NVIDIA card where there is one.
    `test_adapter_device.Device.test_cpu_forces_the_cpu_where_cuda_is_there`,
    `test_adapter_device.Device.test_on_cuda_tf32_is_off_and_the_card_is_reported`.
 
-- [ ] Done when: those tests pass under `just test-pack`, with the pack's other tests
+- [x] Done when: those tests pass under `just test-pack`, with the pack's other tests
   unchanged; the evidence records and fixtures of item 5 are written again by their runners and
   the fast tests that hold them pass; ADR 0046 is merged, its section on Modal's bound ending
   in one of its two sentences, with its client's section marked as R1's.
@@ -1084,7 +1091,7 @@ host whether it is there without sending it anything.
   `remote::a_call_is_sent_through_the_gate_with_its_token_bound_to_its_origin`,
   `remote::a_remote_backend_without_both_price_settings_has_no_bound_and_is_refused`,
   `remote::a_zero_or_overflowing_host_limit_is_refused_when_the_config_is_read`,
-  `remote::the_examples_bound_is_180000_microusd_and_an_unknown_end_settles_at_it`,
+  `remote::the_examples_bound_is_360000_microusd_and_an_unknown_end_settles_at_it`,
   `remote::an_answer_with_no_malformed_or_another_identity_is_refused_and_not_kept` (three
   cases), `remote::a_stream_cut_before_its_result_is_truncated_and_charged_at_its_bound`,
   `remote::a_cold_start_a_silent_load_and_a_silent_call_past_30_seconds_complete_inside_the_requests_deadline`,
@@ -1146,9 +1153,10 @@ tested without an account; nothing in it is a secret, an account name or a priva
    worker in its container, keeps the model resident there between calls, claims each dispatch
    id in a Modal `Dict` before any model work, and carries frames in and out, with no retry, at
    most one container, which takes two inputs at once, the call and a control input for its
-   cancel (the worker still runs one call at a time), and its limits set from one table at the top of
-   the file whose sum is the config's `host_limit_s`, as ADR 0046's section on Modal's bound
-   says (no deployment is written if that section ends in "no bound"). **No two generations of
+   cancel (the worker still runs one call at a time), and its limits (`startup_timeout`,
+   `timeout` and `scaledown_window`, and no `retries`) set from one table at the top of the file
+   whose sum is the config's `host_limit_s`, the bound of one attempt, as ADR 0046's section on
+   Modal's bound says. **No two generations of
    the app run at once**: a host's rolling deploy keeps old containers on the inputs they hold
    while new traffic goes to new ones, so the bridge's lock and its running dispatch would be
    two; so a new deploy is only ever made from a stopped app (item 3: `deploy` proceeds only when
@@ -1183,7 +1191,8 @@ tested without an account; nothing in it is a secret, an account name or a priva
    workspace's environment holds no app of that name (an app deployed with no container
    running is not stopped; a list it cannot read whole refuses; it says to run `down`), which then
    reads the deployed
-   limits back and refuses when their sum differs from the config's `host_limit_s`;
+   limits back and refuses when any of the three is missing or their sum differs from the
+   config's `host_limit_s`;
    `weights`, which copies SAM 3's installed files from the models directory on the Mac into
    the host's volume after `whizbang models verify sam3` has checked every file against the
    catalogue, with no Hugging Face sign-in
@@ -1213,7 +1222,7 @@ tested without an account; nothing in it is a secret, an account name or a priva
    whizbang's testing deployment: the front and the worker, a host of one's own (the front with
    `--worker local` on any Linux machine with a card and the requirements), Modal's deployment
    under the reader's own workspace, secret and config, the price and what `host_limit_s` must
-   cover, the token, the probe, where the host's copy of SAM 3's files comes from (the reader's
+   cover, the workspace's spend limit as the backstop for ADR 0046's residual, the token, the probe, where the host's copy of SAM 3's files comes from (the reader's
    own download from the maker's page with their own sign-in, copied to the host as `weights`
    does), and what a customer is told of SAM 3's licence before its files are used; `docs/guides/engine-api.md` finished with user story 1 as its worked example,
    in `curl`, marked by tier. `README.md` names the engine API among the doors; `AGENTS.md`
@@ -1407,7 +1416,8 @@ All on approved recipients (Modal and fal), by the orchestrator, from the owner'
 run's settled spend in its results file and the total in the note. Modal's prices are an
 assumption until L1 reads them on the day: at most 0.0003 dollars a second for a 24 GB card and
 the front's CPU together, about 1.10 an hour. A request's bound at the example's 600 seconds is
-0.18 dollars; what is billed is less.
+0.18 dollars an attempt and 0.36 a call, at the allowance of 2 attempts (ADR 0046); what is
+billed is less, but for the residual ADR 0046 records (restarts past the allowance).
 
 | Step | What is called | Estimate |
 |---|---|---|
@@ -1453,12 +1463,13 @@ A0 ──┬──► P1 ──┬──► R1 ──┐
    devices. Full precision and TF32 off are used; if an answer is still outside, L1 fails and
    the fix is in the adapter, never the tolerance. This is the milestone's largest unknown, and
    it is met last.
-2. **A host's limits may not bound its bill.** Modal bills startup and idle time beside a call's
-   own time, and may run an input again after a crash or a preemption. Whether its documented
-   limits bound a request is settled on paper first (P1, item 1), before anything depends on
-   it; only documented limits count, the deploy refuses a mismatch, the bridge refuses a
-   replayed request, the record compares the ledger with Modal's bill, and a phase with no
-   documented limit means no bound and no run, and the owner is asked.
+2. **A host's limits do not bound its bill.** Modal bills startup and idle time beside a call's
+   own time, and runs an input again after a crash or a preemption with no stated count (P1,
+   item 1, settled on paper on 2026-11-23). Whizbang bounds one attempt from documented limits,
+   prices an allowance of 2, the deploy refuses a missing limit or a mismatch, the bridge asks
+   for no retry and answers a replayed request from its claim, and the record compares the
+   ledger with Modal's bill. The residual, restarts past the allowance, is recorded in ADR 0046
+   as the known limit; the owner's workspace spend limit is the backstop.
 3. **The host's own front may cut, buffer or redirect a long answer.** A redirect is refused and
    recorded; a buffered answer only delays the events; a cut answer is `truncated` and charged at
    its bound. L1 measures cold calls before user story 1.
@@ -1498,6 +1509,9 @@ the orchestrator says when.
 1. Before L1: the Modal workspace and its payment method, `modal token new` on the Mac, and
    `SEGMENT_TOKEN` in the env file with the same value as Modal's secret `whizbang-front`
    (decision 2).
+2. At D1's setup, with the workspace: a spend limit on the Modal workspace, suggested at 50
+   dollars a month, the backstop for the residual ADR 0046 records (restarts past the
+   allowance of 2 attempts), and a line of `docs/guides/gpu-host.md` (D1).
 
 ## What the owner is told, not asked
 
