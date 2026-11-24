@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use whizbang_backends::models::{
-    CatalogueFile, Entry, FileRefused, MOVES_LIMIT, ModelsDir, StageRefused, Staged, stage,
+    Carried, CatalogueFile, Entry, FileRefused, MOVES_LIMIT, ModelsDir, StageRefused, Staged, stage,
 };
 use whizbang_core::capability::{Fault, FaultKind};
 use whizbang_core::contract::Cancellation;
@@ -126,6 +126,87 @@ fn holds_no_path(refused: &StageRefused, root: &Path) {
     assert!(!printed.contains(&*root.to_string_lossy()), "{printed}");
     for part in ["staging", "incoming", "models/", "/files"] {
         assert!(!printed.contains(part), "{printed}");
+    }
+}
+
+// --- a file the binary carries ------------------------------------------------------------------
+
+/// `tiny` with `graph.onnx` downloaded and `LICENSE` written from the binary, stated at
+/// this size and hash.
+fn with_carried(size: u64, sha256: whizbang_core::identity::Digest) -> Entry {
+    let mut parts = parts("tiny");
+    parts.files = vec![
+        CatalogueFile::new(
+            file_name("graph.onnx"),
+            2500,
+            hash(&graph()),
+            at("graph.onnx"),
+            &none(),
+        )
+        .unwrap(),
+        CatalogueFile::from_binary(file_name("LICENSE"), size, sha256, Carried::Apache2).unwrap(),
+    ];
+    Entry::new(parts, &none()).unwrap()
+}
+
+#[test]
+fn a_file_the_binary_carries_is_written_from_it_and_nothing_is_asked_for_it() {
+    // Plan m6, task W1: the text is written as the entry pins it, and the one request
+    // made is the downloaded file's.
+    let scratch = Scratch::new("stage-carried");
+    let fs = Arc::new(ShimFs::new());
+    let terms = Carried::Apache2.bytes();
+    let fake = FakeDownloader::new().serving(&at("graph.onnx"), graph());
+    let entry = with_carried(terms.len() as u64, hash(terms));
+    let staged = staging(&fs, scratch.path(), &entry, &fake).unwrap();
+    let files: Vec<_> = staged
+        .files()
+        .iter()
+        .map(|file| (file.name().as_str().to_owned(), file.size(), file.sha256()))
+        .collect();
+    assert_eq!(
+        files,
+        [
+            ("LICENSE".to_owned(), terms.len() as u64, hash(terms)),
+            ("graph.onnx".to_owned(), 2500, hash(&graph())),
+        ]
+    );
+    assert_eq!(
+        on_disk(&staged_at(scratch.path(), "LICENSE")).unwrap(),
+        terms
+    );
+    assert_eq!(fake.requests().len(), 1);
+    assert_eq!(fake.asked(&at("graph.onnx")), 1);
+    // Written as a stream, synced and finished, as a download is.
+    let path = staged_at(scratch.path(), "LICENSE");
+    let of_file: Vec<Event> = fs
+        .events()
+        .into_iter()
+        .filter(|event| matches!(event, Event::Begin(p) | Event::Append(p) | Event::SyncFile(p) | Event::Finish(p) if *p == path))
+        .collect();
+    assert_eq!(of_file.first(), Some(&Event::Begin(path.clone())));
+    assert_eq!(of_file[of_file.len() - 2], Event::SyncFile(path.clone()));
+    assert_eq!(of_file.last(), Some(&Event::Finish(path.clone())));
+}
+
+#[test]
+fn a_carried_text_that_is_not_what_the_entry_pins_is_refused_and_nothing_is_kept() {
+    let scratch = Scratch::new("stage-carried-pinned");
+    let terms = Carried::Apache2.bytes();
+    let size = terms.len() as u64;
+    for (entry, why) in [
+        (with_carried(size, hash(b"other")), FileRefused::WrongHash),
+        (with_carried(size + 1, hash(terms)), FileRefused::TooShort),
+        (with_carried(size - 1, hash(terms)), FileRefused::TooLong),
+    ] {
+        let fs = Arc::new(ShimFs::new());
+        let fake = FakeDownloader::new().serving(&at("graph.onnx"), graph());
+        let refused = staging(&fs, scratch.path(), &entry, &fake).unwrap_err();
+        assert_eq!(refused, file_refused("LICENSE", why));
+        holds_no_path(&refused, scratch.path());
+        // Nothing of the staging is left, and nothing was written of the text.
+        assert_eq!(on_disk(&staged_at(scratch.path(), "LICENSE")), None);
+        assert!(!incoming(scratch.path()).exists());
     }
 }
 

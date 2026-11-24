@@ -15,8 +15,8 @@ use whizbang::model_commands::{self, Downloads, PAUSE, Tools, Under};
 use whizbang::pack as kind;
 use whizbang::wiring::{self, Models};
 use whizbang_backends::models::{
-    Catalogue, CatalogueFile, Entry, EntryParts, FileName, Installations, Licence, ModelName,
-    ModelsDir, Platform, Revision, Title, remove_unnamed_adapters,
+    Carried, Catalogue, CatalogueFile, Entry, EntryParts, FileName, Installations, Licence,
+    ModelName, ModelsDir, Platform, Revision, Title, remove_unnamed_adapters,
 };
 use whizbang_core::capability::{FaultKind, Installation, Installed, Inventory, Unready};
 use whizbang_core::config::DOWNLOAD_LEAST_KIB_PER_SECOND;
@@ -128,7 +128,7 @@ fn serving(entries: &[Entry]) -> FakeDownloader {
                 file.name().as_str(),
                 usize::try_from(file.size()).unwrap(),
             );
-            fake = fake.serving(file.from(), content);
+            fake = fake.serving(file.from().unwrap(), content);
         }
     }
     fake
@@ -589,7 +589,7 @@ fn get_installs_a_model_and_list_then_says_it_is_installed() {
     assert!(clock.pauses().is_empty(), "{:?}", clock.pauses());
     // Each file was asked for once, and only those of the model it was asked for.
     for file in alpha().files() {
-        assert_eq!(fake.asked(file.from()), 1);
+        assert_eq!(fake.asked(file.from().unwrap()), 1);
     }
     assert_eq!(fake.requests().len(), 2);
     // The installation is the one the inventory finds ready.
@@ -687,7 +687,7 @@ fn the_catalogues_tiny_is_pinned_licensed_and_needs_no_token() {
             .iter()
             .find(|(prefix, _)| name.starts_with(prefix))
             .unwrap_or_else(|| panic!("{name} is under no model's prefix"));
-        let from = file.from();
+        let from = file.from().unwrap();
         assert_eq!(from.origin().to_string(), "https://huggingface.co");
         assert_eq!(from.rest(), format!("{path}{}", &name[prefix.len()..]));
         names.push(name);
@@ -882,7 +882,7 @@ fn a_second_get_attaches_to_the_first_waits_by_the_clock_and_ends_with_the_same_
             .files()
             .iter()
             .find(|file| file.name().as_str() == name);
-        found.unwrap().from().clone()
+        found.unwrap().from().unwrap().clone()
     };
     assert_eq!(entry.files()[1].name().as_str(), "graph.onnx");
     let first = Arc::new(
@@ -930,13 +930,135 @@ fn a_second_get_attaches_to_the_first_waits_by_the_clock_and_ends_with_the_same_
     }
     assert!(second.requests().is_empty());
     for file in alpha().files() {
-        assert_eq!(first.asked(file.from()), 1);
+        assert_eq!(first.asked(file.from().unwrap()), 1);
     }
     let pauses = clock.pauses();
     assert!(!pauses.is_empty());
     assert!(pauses.iter().all(|span| *span == PAUSE), "{pauses:?}");
     assert_eq!(PAUSE, Duration::from_millis(250));
     assert_eq!(state_of(&list(&tools), "alpha"), "installed");
+}
+
+// --- a file the binary carries -------------------------------------------------------------------
+
+/// The files under the models directory of this name, whatever installation holds them.
+fn installed_files_named(models: &Path, name: &str) -> Vec<PathBuf> {
+    everything_under(models)
+        .into_iter()
+        .filter(|path| path.ends_with(&format!("/files/{name}")) && path.contains("installations/"))
+        .map(|path| models.join(path))
+        .collect()
+}
+
+#[test]
+fn a_file_the_binary_carries_is_installed_from_it_and_counts_as_held_and_pin_fetches_nothing_for_it()
+ {
+    // Plan m6, task W1: a file whose entry names a text the binary carries is written
+    // from the binary, held to the size and hash the entry pins. It needs no download,
+    // so an entry whose other files are all held asks for no token.
+    let shelf = Shelf::new("models-carried");
+    let clock = Hand::new();
+    let fake = Arc::new(serving(&[alpha()]));
+    let terms = Carried::Apache2.bytes();
+    let carried = CatalogueFile::from_binary(
+        FileName::new("LICENSE", &none()).unwrap(),
+        terms.len() as u64,
+        Digest::of_bytes(terms),
+        Carried::Apache2,
+    )
+    .unwrap();
+    let parts_of = |name: &str| {
+        let held = holding_alphas_files(name, &[]);
+        let mut files = held.files().to_vec();
+        files.push(carried.clone());
+        EntryParts {
+            name: held.name().clone(),
+            title: held.title().clone(),
+            revision: held.revision().clone(),
+            adapter: held.adapter().clone(),
+            licence: held.licence().clone(),
+            platforms: held.platforms().to_vec(),
+            features: Vec::new(),
+            origins: held.origins().to_vec(),
+            files,
+        }
+    };
+    let epsilon = Entry::new(parts_of("epsilon"), &none())
+        .unwrap()
+        .needing_a_token_at(Origin::of(ORIGIN, &none()).unwrap())
+        .unwrap();
+    let entries = [alpha(), epsilon];
+    let tools = shelf.tools(shelf.models(&entries), &clock, &fake);
+    get(&tools, "alpha").0.unwrap();
+    assert_eq!(fake.requests().len(), 2);
+    // No token is named, and none is needed: `alpha` holds every file but the licence,
+    // which the binary carries. Nothing more is downloaded.
+    let (got, _) = get(&tools, "epsilon");
+    let got = got.unwrap();
+    assert!(got.starts_with("installed epsilon: sha256:"), "{got}");
+    assert_eq!(fake.requests().len(), 2);
+    let written = installed_files_named(&shelf.models_dir(), "LICENSE");
+    assert_eq!(written.len(), 1, "{written:?}");
+    assert_eq!(std::fs::read(&written[0]).unwrap(), terms);
+    let installed = Installations::of(
+        ModelsDir::at(Arc::new(RealFs), &shelf.models_dir()),
+        Catalogue::new(entries.to_vec(), &none()).unwrap(),
+        adapters(),
+        none(),
+    );
+    assert_eq!(
+        installed
+            .ready("epsilon")
+            .unwrap()
+            .identity()
+            .digest()
+            .to_string(),
+        identity_in(&got, "epsilon")
+    );
+    // A text that is not what the entry pins is refused, and nothing is installed.
+    let mut wrong = parts_of("zeta");
+    let last = wrong.files.len() - 1;
+    wrong.files[last] = CatalogueFile::from_binary(
+        FileName::new("LICENSE", &none()).unwrap(),
+        terms.len() as u64,
+        Digest::of_bytes(b"other terms"),
+        Carried::Apache2,
+    )
+    .unwrap();
+    let zeta = Entry::new(wrong, &none()).unwrap();
+    let tools = shelf.tools(shelf.models(&[alpha(), zeta]), &clock, &fake);
+    let (refused, _) = get(&tools, "zeta");
+    let refused = refused.unwrap_err();
+    assert!(
+        refused.contains("`LICENSE` does not have the hash the catalogue states"),
+        "{refused}"
+    );
+    assert_eq!(state_of(&list(&tools), "zeta"), "not installed");
+    // `pin` answers a carried file's size and hash from the binary, and fetches nothing.
+    let path = shelf.path("draft.json");
+    std::fs::write(
+        &path,
+        draft(&[]).replace(
+            "\"files\":[]",
+            &format!(
+                "\"files\":[{{\"name\":\"LICENSE\",\"size\":20000,\"sha256\":\"sha256:{}\",\
+                 \"carried\":\"apache-2.0\"}}]",
+                "0".repeat(64)
+            ),
+        ),
+    )
+    .unwrap();
+    let asked = fake.requests().len();
+    let pinned = model_commands::pin(Under::default(), &path, &tools).unwrap();
+    assert_eq!(
+        pinned,
+        format!(
+            "pinned drafted: nothing was installed or written\nLICENSE\t{}\t{}\n",
+            terms.len(),
+            Digest::of_bytes(terms)
+        )
+    );
+    assert_eq!(fake.requests().len(), asked);
 }
 
 // --- pin -----------------------------------------------------------------------------------------

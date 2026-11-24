@@ -89,6 +89,10 @@ pub enum Rule {
     Address(NotAllowed),
     /// A file's address is at an origin its model does not name.
     Elsewhere,
+    /// Not the name of a text the binary carries.
+    Carried,
+    /// A file names both an address and a text the binary carries: it comes from one.
+    TwoSources,
     /// Not a state a status record gives.
     State,
     /// A status record counts more files staged than there are.
@@ -151,6 +155,10 @@ impl std::fmt::Display for Rule {
             }
             Rule::Address(why) => write!(f, "is not an address: {why}"),
             Rule::Elsewhere => f.write_str("is at an origin its model does not name"),
+            Rule::Carried => f.write_str("is not a text this build carries: apache-2.0"),
+            Rule::TwoSources => f.write_str(
+                "names both an address and a text the binary carries, and a file comes from one",
+            ),
             Rule::State => f.write_str("is not a state an install is in or ended in"),
             Rule::Progress => f.write_str("counts more files staged than there are"),
         }

@@ -54,8 +54,27 @@ pub fn pin_file(
     cancellation: &Cancellation,
 ) -> Result<Pinned, PinRefused> {
     let bound = file.size();
+    // A file the binary carries is pinned from the binary: nothing is fetched.
+    let mut from = match (file.from(), file.carried()) {
+        (Some(from), _) => from.clone(),
+        (None, Some(carried)) => {
+            let text = carried.bytes();
+            if text.len() as u64 > bound {
+                return Err(PinRefused::OverBound);
+            }
+            return Ok(Pinned {
+                size: text.len() as u64,
+                sha256: Digest::of_bytes(text),
+            });
+        }
+        (None, None) => {
+            return Err(PinRefused::Download(Fault::new(
+                whizbang_core::capability::FaultKind::Malformed,
+                "the file names no address",
+            )));
+        }
+    };
     let (mut kept, mut beyond, mut hash) = (0u64, false, Sha256::new());
-    let mut from = file.from().clone();
     let mut moves = 0;
     loop {
         let request = DownloadRequest::new(from, bound + 1)

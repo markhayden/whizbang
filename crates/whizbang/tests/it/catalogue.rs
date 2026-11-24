@@ -82,7 +82,7 @@ fn every_file_of_the_shipped_entry_is_at_an_origin_the_entry_names_and_at_one_pi
     );
     let mut revisions = Vec::new();
     for file in entry.files() {
-        let from = file.from();
+        let from = file.from().unwrap();
         assert!(entry.may_download_from(from.origin()));
         assert_eq!(from.origin().to_string(), "https://huggingface.co");
         let rest = from.rest();
@@ -115,7 +115,11 @@ fn the_shipped_entry_names_no_pickle() {
         for pickle in [".pt", ".pth", ".pkl", ".pickle", ".ckpt", ".bin"] {
             assert!(!name.ends_with(pickle), "{name}");
         }
-        assert!(!file.from().rest().to_ascii_lowercase().contains("sam3.pt"));
+        assert!(
+            !file
+                .from()
+                .is_some_and(|from| from.rest().to_ascii_lowercase().contains("sam3.pt"))
+        );
     }
 }
 
