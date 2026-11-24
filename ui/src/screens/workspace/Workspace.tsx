@@ -316,6 +316,10 @@ function Draft(props: DraftProps) {
   const bindings = useBindings(client, bindingTypes(fields), going.ended);
   const [view, setView] = useState("original");
   const preparer = useRef<Preparer | null>(null);
+  // The call the preparer was last told of. A render whose call differs comes before the
+  // effect that tells it, and its preparation is of another call: Run waits for it, or a
+  // click in that frame would start with the old handle and be refused as stale.
+  const changedFor = useRef<string | null>(null);
   // A draft Send to opened (plan m5, task W2, item 3): where it came from, the fields it
   // filled, tagged until changed, and the run whose job a check takes, until the brief
   // is changed. A check run again keeps its run's job the same way (item 4).
@@ -349,6 +353,7 @@ function Draft(props: DraftProps) {
   }, [client]);
 
   useEffect(() => {
+    changedFor.current = argsKey;
     preparer.current?.change(task.name, args);
     // A draft is what the person gave: what every field shows of itself alone is none.
     const shownAlone = JSON.stringify(argumentsOf(task, seeded(task, {}, backends)));
@@ -432,7 +437,7 @@ function Draft(props: DraftProps) {
     );
   };
 
-  const why = whyNotRun(task, values, prepared, preparing);
+  const why = whyNotRun(task, values, prepared, preparing || changedFor.current !== argsKey);
   const bound = prepared?.bound ?? 0;
   const run = () => {
     if (why !== null || starting || !prepared?.handle) return;
