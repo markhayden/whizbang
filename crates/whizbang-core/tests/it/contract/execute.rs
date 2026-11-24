@@ -1527,3 +1527,371 @@ fn the_reason_a_run_was_invalid_is_handed_back_without_a_secret() {
         }
     );
 }
+
+// --- a panic in the executor's own code (plan m6, task S1, item 2) -----------------------------
+
+/// A hook that panics at this place of the ending of a run of this action, and nowhere
+/// else: what stands for a panic of the executor's own code.
+fn panics_at(
+    action: &'static str,
+    place: whizbang_core::contract::PanicAt,
+) -> whizbang_core::contract::PanicHook {
+    Arc::new(move |of: &str, at| {
+        if of == action && at == place {
+            panic!("an injected panic of the executor's code at {at:?}");
+        }
+    })
+}
+
+/// A parent that calls `echo` once from inside its action and hands back what it saw.
+fn calling_echo(seen: Arc<std::sync::Mutex<Option<Finished>>>) -> Arc<dyn Action> {
+    scripted("parent", move |_, context| {
+        let child = context.executor().submit(&echo("from the parent"));
+        *seen.lock().unwrap() = child.ok();
+        Ok(Produced::nothing())
+    })
+}
+
+fn panicked(outcome: &Outcome) -> bool {
+    matches!(outcome, Outcome::Error { kind, .. } if kind == whizbang_core::contract::PANICKED_KIND)
+}
+
+/// What a run that completed with no output ends as.
+fn done() -> Outcome {
+    Outcome::Completed {
+        outputs: Vec::new(),
+    }
+}
+
+/// Every run's record in the store, by run, with its status.
+fn records(world: &World) -> Vec<(String, Status, ())> {
+    let reader = Reader::open(&world.root(), world.fs.clone()).unwrap();
+    let generation = reader.snapshot().unwrap();
+    (generation.runs().iter())
+        .map(|(id, run)| {
+            let entry = run
+                .get(record::RECORD_NAME)
+                .expect("every run has its record");
+            let bytes = reader.read(entry).unwrap();
+            let record = RunRecord::from_bytes(&bytes).unwrap();
+            (id.clone(), record.outcome().status, ())
+        })
+        .collect()
+}
+
+#[test]
+fn a_panic_in_the_executors_code_ends_the_run_as_panicked_after_its_children() {
+    use whizbang_core::contract::PanicAt;
+    let world = World::new();
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    let engine = (world.engine_with(vec![calling_echo(seen.clone())]))
+        .with_panic_at(panics_at("parent", PanicAt::BeforeTheEnd));
+    let finished = engine.submit(&Call::new("parent")).unwrap();
+    assert!(panicked(finished.outcome()), "{:?}", finished.outcome());
+    // Said to be the executor's own panic, not the action's.
+    let Outcome::Error { message, .. } = finished.outcome() else {
+        unreachable!()
+    };
+    assert!(
+        message.starts_with("the executor's own code panicked: an injected panic"),
+        "{message}"
+    );
+    // The child ended, completed, before its parent: the parent ended with its record,
+    // as an error.
+    let child = seen.lock().unwrap().clone().expect("the child ended");
+    assert_eq!(child.outcome(), &done());
+    let mut statuses: Vec<Status> = records(&world).into_iter().map(|(_, s, _)| s).collect();
+    statuses.sort_by_key(|status| format!("{status:?}"));
+    assert_eq!(statuses, [Status::Completed, Status::Error]);
+    assert_eq!(
+        engine.wait(finished.run()).unwrap().state(),
+        &whizbang_core::contract::RunState::Ended(finished.outcome().clone())
+    );
+}
+
+#[test]
+fn a_panic_outside_a_synchronous_childs_action_ends_the_child_as_panicked_before_its_parent_sees_it()
+ {
+    use whizbang_core::contract::PanicAt;
+    let world = World::new();
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    let engine = (world.engine_with(vec![calling_echo(seen.clone())]))
+        .with_panic_at(panics_at("echo", PanicAt::BeforeTheEnd));
+    let finished = engine.submit(&Call::new("parent")).unwrap();
+    // The panic was caught at the child's own boundary: the parent saw its child end as
+    // `panicked`, and completed itself.
+    let child = seen.lock().unwrap().clone().expect("the child ended");
+    assert!(panicked(child.outcome()), "{:?}", child.outcome());
+    assert_eq!(finished.outcome(), &done());
+}
+
+#[test]
+fn a_panic_in_a_run_entered_through_start_ends_it_as_panicked_with_its_children_and_requests_accounted_before_its_waiter_is_told()
+ {
+    use whizbang_core::contract::{Answer, PanicAt, Request, RunState};
+    let world = World::new();
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    let engine = (world.engine_with(vec![calling_echo(seen.clone())]))
+        .with_panic_at(panics_at("parent", PanicAt::BeforeTheEnd));
+    let Answer::Started(run) = engine.start(&Request::new(Call::new("parent"))).unwrap() else {
+        panic!("not started");
+    };
+    let waited = engine.wait(&run).unwrap();
+    let RunState::Ended(outcome) = waited.state() else {
+        panic!("{:?}", waited.state());
+    };
+    assert!(panicked(outcome), "{outcome:?}");
+    // Told only once the child was over and the run's place given back.
+    assert!(seen.lock().unwrap().is_some());
+    assert_eq!(engine.on_threads(), 0);
+    assert_eq!(records(&world).len(), 2);
+}
+
+/// Refuses every sync of the store's root once the action of a run has started, so that
+/// the run's ending becomes visible and is not confirmed.
+fn refusing_the_ending(world: &World) -> Arc<dyn Action> {
+    let fs = world.fs.clone();
+    let root = world.root();
+    scripted("ending", move |_, _| {
+        let root = root.clone();
+        fs.refuse_matching_times(
+            0,
+            usize::MAX,
+            move |event| matches!(event, Event::SyncDir(dir) if *dir == root),
+        );
+        Ok(Produced::nothing())
+    })
+}
+
+#[test]
+fn a_panic_between_visible_and_durable_leaves_the_ending_unconfirmed() {
+    use whizbang_core::contract::{Answer, PanicAt, Request, RunState};
+    // Through `submit`, the synchronous way, and through `start`.
+    for started in [false, true] {
+        let world = World::new();
+        let engine = (world.engine_with(vec![refusing_the_ending(&world)]))
+            .with_panic_at(panics_at("ending", PanicAt::Visible));
+        let run = match started {
+            false => {
+                let refused = engine.submit(&Call::new("ending")).unwrap_err();
+                assert!(matches!(refused, CallError::Store(_)), "{refused:?}");
+                let reader = Reader::open(&world.root(), Arc::new(RealFs)).unwrap();
+                let id = reader
+                    .snapshot()
+                    .unwrap()
+                    .runs()
+                    .keys()
+                    .next()
+                    .unwrap()
+                    .clone();
+                RunId::parse(&id).unwrap()
+            }
+            true => match engine.start(&Request::new(Call::new("ending"))).unwrap() {
+                Answer::Started(run) => run,
+                other => panic!("{other:?}"),
+            },
+        };
+        // Never told as confirmed: abandoned, with the store's failure.
+        let waited = engine.wait(&run).unwrap();
+        assert!(
+            matches!(waited.state(), RunState::Abandoned { failure: Some(_) }),
+            "started {started}: {:?}",
+            waited.state()
+        );
+    }
+}
+
+/// A hook that panics the first time the ending of a run of this action is at this
+/// place, and counts every telling of a parent, those made again after a panic too.
+fn panics_once_at(
+    action: &'static str,
+    place: whizbang_core::contract::PanicAt,
+) -> (whizbang_core::contract::PanicHook, Arc<AtomicU64>) {
+    use whizbang_core::contract::PanicAt;
+    let tellings = Arc::new(AtomicU64::new(0));
+    let panicked = std::sync::atomic::AtomicBool::new(false);
+    let counting = tellings.clone();
+    let hook: whizbang_core::contract::PanicHook = Arc::new(move |of: &str, at| {
+        if of != action {
+            return;
+        }
+        if at == PanicAt::Told {
+            counting.fetch_add(1, Ordering::SeqCst);
+        }
+        if at == place && !panicked.swap(true, Ordering::SeqCst) {
+            panic!("an injected panic of the executor's code at {at:?}");
+        }
+    });
+    (hook, tellings)
+}
+
+/// The parent's record lists its one child once, completed.
+fn told_once(world: &World) {
+    let reader = Reader::open(&world.root(), world.fs.clone()).unwrap();
+    let generation = reader.snapshot().unwrap();
+    let parents: Vec<RunRecord> = (generation.runs().values())
+        .map(|run| {
+            RunRecord::from_bytes(&reader.read(run.get(record::RECORD_NAME).unwrap()).unwrap())
+                .unwrap()
+        })
+        .filter(|record| record.identity().parent.is_none())
+        .collect();
+    let [parent] = parents.as_slice() else {
+        panic!("{} parents", parents.len());
+    };
+    let steps: Vec<Option<Status>> = parent.steps().iter().map(|step| step.status()).collect();
+    assert_eq!(steps, [Some(Status::Completed)]);
+}
+
+#[test]
+fn a_panic_after_a_durable_ending_keeps_the_committed_outcome_and_tells_the_parent_once() {
+    use whizbang_core::contract::{Answer, PanicAt, Request, RunState};
+    // A child, through the synchronous way: its parent is told, once, and sees it
+    // completed.
+    let world = World::new();
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    let (hook, tellings) = panics_once_at("echo", PanicAt::Durable);
+    let engine = (world.engine_with(vec![calling_echo(seen.clone())])).with_panic_at(hook);
+    let finished = engine.submit(&Call::new("parent")).unwrap();
+    assert_eq!(finished.outcome(), &done());
+    let child = seen.lock().unwrap().clone().expect("the child ended");
+    assert_eq!(child.outcome(), &done());
+    assert_eq!(tellings.load(Ordering::SeqCst), 1);
+    told_once(&world);
+    let statuses: Vec<Status> = records(&world).into_iter().map(|(_, s, _)| s).collect();
+    assert_eq!(statuses, [Status::Completed, Status::Completed]);
+    // A run entered through `start`: its waiter is told it completed.
+    let world = World::new();
+    let engine = world
+        .engine()
+        .with_panic_at(panics_at("echo", PanicAt::Durable));
+    let Answer::Started(run) = engine.start(&Request::new(echo("started"))).unwrap() else {
+        panic!("not started");
+    };
+    let waited = engine.wait(&run).unwrap();
+    assert!(matches!(waited.state(), RunState::Ended(outcome) if *outcome == done()));
+    assert_eq!(engine.on_threads(), 0);
+}
+
+#[test]
+fn a_panic_once_the_parent_is_told_tells_it_again_whole_and_changes_nothing() {
+    use whizbang_core::contract::PanicAt;
+    // The telling was whole, and the panic came before that was noted: the parent is
+    // told again, which changes nothing of what it was told.
+    let world = World::new();
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    let (hook, tellings) = panics_once_at("echo", PanicAt::Told);
+    let engine = (world.engine_with(vec![calling_echo(seen.clone())])).with_panic_at(hook);
+    let finished = engine.submit(&Call::new("parent")).unwrap();
+    assert_eq!(finished.outcome(), &done());
+    assert_eq!(seen.lock().unwrap().clone().unwrap().outcome(), &done());
+    assert_eq!(tellings.load(Ordering::SeqCst), 2);
+    told_once(&world);
+}
+
+#[test]
+fn a_panic_inside_the_publication_of_an_end_leaves_the_committed_outcome_standing() {
+    use whizbang_core::contract::{Answer, PanicAt, Request};
+    // The end was published, and the panic came before the executor looked at what the
+    // publication answered: the run is never ended again, as `panicked` or otherwise.
+    // Through `submit` and through `start`.
+    for started in [false, true] {
+        let world = World::new();
+        let engine = world
+            .engine()
+            .with_panic_at(panics_at("echo", PanicAt::Published));
+        match started {
+            false => {
+                let refused = engine.submit(&echo("published")).unwrap_err();
+                assert!(
+                    matches!(refused, CallError::Abandoned { .. }),
+                    "{refused:?}"
+                );
+            }
+            true => {
+                let Answer::Started(run) = engine.start(&Request::new(echo("published"))).unwrap()
+                else {
+                    panic!("not started");
+                };
+                let _ = engine.wait(&run).unwrap();
+                assert_eq!(
+                    engine.marked_abandoned(&run),
+                    Some(true),
+                    "started {started}"
+                );
+            }
+        }
+        let statuses: Vec<Status> = records(&world).into_iter().map(|(_, s, _)| s).collect();
+        assert_eq!(statuses, [Status::Completed], "started {started}");
+        assert_eq!(engine.on_threads(), 0);
+    }
+}
+
+#[test]
+fn a_server_whose_runs_never_return_refuses_new_starts_at_its_bound_and_grows_no_further() {
+    use whizbang_core::contract::{Answer, Refusal, Request};
+    // A parent's wait for a run it called is not given a time inside the core (plan m6,
+    // task S1, item 2): what keeps a long-lived server from growing is the bound on
+    // started runs. Runs whose actions never come back, cancelled or not, keep their
+    // places; a start past the bound is refused, with no run, and nothing more is made.
+    let world = World::new();
+    // How many actions have begun, and whether they may come back.
+    let gate = Arc::new((std::sync::Mutex::new((0, false)), std::sync::Condvar::new()));
+    let stuck = {
+        let gate = gate.clone();
+        scripted("stuck", move |_, _| {
+            let (state, changed) = &*gate;
+            let mut state = state.lock().unwrap();
+            state.0 += 1;
+            changed.notify_all();
+            while !state.1 {
+                state = changed.wait(state).unwrap();
+            }
+            Ok(Produced::nothing())
+        })
+    };
+    let engine = world
+        .engine_with(vec![stuck])
+        .with_started_bound(2)
+        .unwrap();
+    let mut started = Vec::new();
+    for at in 1..=2 {
+        let Answer::Started(run) = engine.start(&Request::new(Call::new("stuck"))).unwrap() else {
+            panic!("not started");
+        };
+        // Once its action has begun, cancelled: the action ignores it, and the run
+        // keeps its place.
+        let (state, changed) = &*gate;
+        let mut state = state.lock().unwrap();
+        while state.0 < at {
+            state = changed.wait(state).unwrap();
+        }
+        drop(state);
+        engine.cancel(&run).unwrap();
+        started.push(run);
+    }
+    for _ in 0..3 {
+        let refused = engine.start(&Request::new(Call::new("stuck"))).unwrap_err();
+        assert!(
+            matches!(
+                refused,
+                CallError::Refused(Refusal::TooManyStarted { bound: 2 })
+            ),
+            "{refused:?}"
+        );
+    }
+    assert_eq!(engine.on_threads(), 2);
+    let reader = Reader::open(&world.root(), Arc::new(RealFs)).unwrap();
+    assert_eq!(
+        reader.snapshot().unwrap().runs().len(),
+        2,
+        "no run more was made"
+    );
+    // Let go, they end, and their places come back.
+    gate.0.lock().unwrap().1 = true;
+    gate.1.notify_all();
+    for run in &started {
+        engine.wait(run).unwrap();
+    }
+    assert_eq!(engine.on_threads(), 0);
+}

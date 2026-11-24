@@ -789,6 +789,14 @@ a store" is answered as its "Done when" asks, or narrowed with a line.
    is confirmed (`execute::a_panic_between_visible_and_durable_leaves_the_ending_unconfirmed`)
    and after it is durable and before the parent is told
    (`execute::a_panic_after_a_durable_ending_keeps_the_committed_outcome_and_tells_the_parent_once`).
+   Beside them: a panic inside the end's publication
+   (`execute::a_panic_inside_the_publication_of_an_end_leaves_the_committed_outcome_standing`),
+   once the parent is told
+   (`execute::a_panic_once_the_parent_is_told_tells_it_again_whole_and_changes_nothing`), with a
+   child running and a paid request out
+   (`facts::a_panic_while_a_child_runs_and_a_paid_request_is_out_ends_the_run_once_both_are_over_keeping_its_facts`),
+   and once the end is being made
+   (`facts::a_panic_once_its_end_is_being_made_ends_the_run_as_panicked_with_what_it_noted_and_kept`).
 3. **Abandoned runs held to a bound** (carry-over, "A run whose end became visible and was not
    confirmed is not let go of"). The heavy part of such a run (its live state, its events, what
    it kept of its calls) is let go of once it is abandoned; a small marker is kept in its
@@ -799,7 +807,10 @@ a store" is answered as its "Done when" asks, or narrowed with a line.
    The next open of the store reads what the store holds, as today.
    `store::an_abandoned_runs_marker_answers_wait_and_cancel_as_unconfirmed_after_its_state_is_dropped`
    (both kinds), `store::past_4096_markers_new_admissions_are_refused_naming_the_cause`,
-   `interrupted::after_a_marker_the_next_open_reads_what_the_store_holds` (both kinds).
+   `interrupted::after_a_marker_the_next_open_reads_what_the_store_holds` (both kinds),
+   `store::a_marker_lets_go_of_the_live_state_its_maker_attached_and_left_to_be_told`,
+   `store::a_childs_admission_that_became_visible_and_was_not_confirmed_is_left_as_a_marker`,
+   `play_runs::a_start_past_the_bound_on_abandoned_runs_is_answered_that_the_playground_is_to_be_started_again`.
 4. **Locks that do not hold** (carry-over, "The writer lock and a reader's hold are file
    locks", the part left). **The policy:** a store, and a models directory, live on a local file
    system; a network one is not supported, since its locks may hold on one machine alone and
@@ -847,12 +858,12 @@ a store" is answered as its "Done when" asks, or narrowed with a line.
    checks of secrets, and admits, reserves and starts nothing. H1 calls it before it takes a
    handler. `request::look_up_admits_nothing_and_answers_missing_repeat_and_conflict_after_a_restart_and_a_prune`.
 
-- [ ] Done when: `store::buckets::a_store_of_the_old_format_reads_and_its_first_publication_writes_the_new`,
+- [x] Done when: `store::buckets::a_store_of_the_old_format_reads_and_its_first_publication_writes_the_new`,
   `store::buckets::a_publication_writes_only_the_buckets_it_changed`,
   `store::buckets::the_generation_file_is_the_same_size_at_100_and_at_2000_paid_runs`,
   `store::buckets::a_thousand_publications_leave_only_the_current_and_held_generations_buckets`,
   `store::buckets::a_build_before_buckets_refuses_the_new_format_by_its_version`,
-  `store::buckets::a_crash_at_any_step_of_the_first_bucket_publication_leaves_one_whole_generation`
+  `store::buckets::a_crash_at_any_event_of_the_first_bucket_publication_leaves_one_whole_generation`
   (a committed fixture of the present format, written by the present build before S1 and kept
   under `fixtures/store/`, holding artifacts, request ids and ledger names, not one made by the
   new writer; the crash swept through every step of the first publication, the pointer's and the

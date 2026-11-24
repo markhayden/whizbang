@@ -739,3 +739,152 @@ fn a_note_of_a_send_that_is_taken_back_leaves_an_entry_noted_before_it_with_its_
     assert_eq!(went.outcome(), Handed::Sent);
     assert_eq!(went.classes(), prompts());
 }
+
+// --- a panic in the executor's own code keeps what was noted (plan m6, task S1, item 2) -------
+
+/// A hook that panics the first time a run of this action is at this place of its end.
+fn panics_once(
+    action: &'static str,
+    place: whizbang_core::contract::PanicAt,
+) -> whizbang_core::contract::PanicHook {
+    let panicked = std::sync::atomic::AtomicBool::new(false);
+    Arc::new(move |of: &str, at| {
+        let first = || !panicked.swap(true, std::sync::atomic::Ordering::SeqCst);
+        if of == action && at == place && first() {
+            panic!("an injected panic of the executor's code at {at:?}");
+        }
+    })
+}
+
+fn is_panicked(record: &whizbang_core::contract::record::RunRecord) -> bool {
+    let error = record.outcome().error.as_ref();
+    error.is_some_and(|error| error.kind == whizbang_core::contract::PANICKED_KIND)
+}
+
+#[test]
+fn a_panic_while_a_child_runs_and_a_paid_request_is_out_ends_the_run_once_both_are_over_keeping_its_facts()
+ {
+    use whizbang_core::contract::{PanicAt, RunState};
+    use whizbang_testkit::barrier::Barriers;
+    // The action starts a child that runs until it is cancelled, sends a paid request
+    // the filler holds, notes the request, and comes back; the executor's own code
+    // panics there, with both still out. The run is not ended while they are: the child
+    // is cancelled and ends, the request is let go, and only then does the run end, as
+    // `panicked`, with the request it noted in its record.
+    let world = World::new();
+    let barriers = Barriers::new();
+    let price = Price::at_most(500.0).unwrap();
+    let filler = Arc::new(
+        FakeFiller::new(Paint::Inverse)
+            .priced(price)
+            .stopping_at(&barriers, "fill"),
+    );
+    let child = action("child", vec![], |_, context| {
+        while !context.cancellation().is_cancelled() {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        Ok(Produced::nothing())
+    });
+    let sends = {
+        let barriers = barriers.clone();
+        action(
+            "sends",
+            vec![Requirement::new(Capability::Fill)],
+            move |_, context| {
+                let started = context.executor().start(&Request::new(Call::new("child")));
+                assert!(matches!(started, Ok(Answer::Started(_))), "{started:?}");
+                let fill = context.capabilities().fill().unwrap().clone();
+                threads::spawn(move || drop(fill.fill(&fill_request())));
+                barriers.arrived("fill", 1);
+                assert!(context.facts().paid(Paid::unresolved(0, 500).unwrap()));
+                context
+                    .diagnostics()
+                    .write("before-the-panic", b"kept")
+                    .unwrap();
+                Ok(Produced::nothing())
+            },
+        )
+    };
+    let executor = engine(
+        &world,
+        roster(None, Some(filler.as_ref()), None),
+        Capabilities::none().with_fill(filler.clone()),
+        vec![sends, child],
+    )
+    .with_panic_at(panics_once("sends", PanicAt::ActionBack));
+    let Ok(Answer::Started(run)) = executor.start(&Request::new(Call::new("sends"))) else {
+        panic!("not started");
+    };
+    // Held open by the request; the child, cancelled by the panic, is over.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while executor
+        .held_open(&run)
+        .is_none_or(|held| held.children > 0)
+    {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "never held by the request alone"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert_eq!(
+        executor.status(&run).unwrap().state(),
+        &RunState::NotEnded { here: true }
+    );
+    barriers.release("fill");
+    let waited = executor.wait(&run).unwrap();
+    let RunState::Ended(outcome) = waited.state() else {
+        panic!("{:?}", waited.state());
+    };
+    assert!(
+        matches!(outcome, whizbang_core::contract::Outcome::Error { .. }),
+        "{outcome:?}"
+    );
+    let (record, diagnostics) = stored(&world, &run);
+    assert!(is_panicked(&record), "{:?}", record.outcome());
+    let listed: Vec<(u64, u64)> = (record.spend().requests.iter())
+        .map(|paid| (paid.request(), paid.unresolved_micros()))
+        .collect();
+    assert_eq!(listed, [(0, 500)]);
+    assert_eq!(diagnostics["diagnostics/before-the-panic"], b"kept");
+    assert_eq!(filler.requests(), 1);
+    assert_eq!(executor.on_threads(), 0);
+}
+
+#[test]
+fn a_panic_once_its_end_is_being_made_ends_the_run_as_panicked_with_what_it_noted_and_kept() {
+    use whizbang_core::contract::PanicAt;
+    // What the run kept and what was noted of it were taken for its end when the panic
+    // came: its end made again, as `panicked`, has them still.
+    let world = World::new();
+    let filler = filler();
+    let notes = action(
+        "notes",
+        vec![Requirement::new(Capability::Fill)],
+        |_, context| {
+            let fill = context.capabilities().fill().unwrap();
+            fill.fill(&fill_request()).unwrap();
+            assert!(context.facts().paid(Paid::answered(0, 500, 120).unwrap()));
+            context
+                .diagnostics()
+                .write("before-the-panic", b"kept")
+                .unwrap();
+            Ok(Produced::nothing())
+        },
+    );
+    let executor = engine(
+        &world,
+        roster(None, Some(filler.as_ref()), None),
+        Capabilities::none().with_fill(filler.clone()),
+        vec![notes],
+    )
+    .with_panic_at(panics_once("notes", PanicAt::Ending));
+    let finished = executor.submit(&Call::new("notes")).unwrap();
+    let (record, diagnostics) = stored(&world, finished.run());
+    assert!(is_panicked(&record), "{:?}", record.outcome());
+    let listed: Vec<(u64, u64)> = (record.spend().requests.iter())
+        .map(|paid| (paid.request(), paid.settled_micros()))
+        .collect();
+    assert_eq!(listed, [(0, 120)]);
+    assert_eq!(diagnostics["diagnostics/before-the-panic"], b"kept");
+}
