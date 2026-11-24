@@ -110,8 +110,9 @@ host_limit_s = 600
 - **What it sends:** the picture's pixels and the words, point or box of each query. Its
   origin must be approved for `source_images` and `prompts` (`docs/guides/config.md`, "Who
   may receive data"); `probe = true` lets `--probe` ask its health.
-- **What is charged:** a call refused before anything left costs nothing; every call that
-  left is charged at its bound, an answered one too, since the host's bill is not known.
+- **What is charged:** a call refused before anything left costs nothing, and so does one
+  whose connection failed before a byte of the request was sent; every call that left is
+  charged at its bound, an answered one too, since the host's bill is not known.
 - **Cancelling:** when a run is cancelled or its time runs out, whizbang closes the stream
   and sends the host a `cancel` naming the request; a host that does not answer it within
   5 seconds is let go of.

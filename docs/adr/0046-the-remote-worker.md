@@ -9,6 +9,9 @@ record in the body, before the first frame; a failure before the check is the ou
 alone in the same chunked body, with no `Whizbang-Unverified`; and the front sends a
 keep-alive after every 10 seconds of nothing. Added: "The headers at once", with the
 measurement that decided it, and the front's log of cancels and workers.
+Amended: 2026-11-24, with plan m7, task A0, item 4. Changed: a request whose connection failed
+before the first byte of the request was written to it is settled at nothing, as one refused
+before anything left; the checked sender says whether any byte left.
 Spec: section 4 ("The model pack": one codec for the local worker and one for HTTP; one model,
 one call at a time behind a bounded queue; cooperative cancellation; a restart fails everything
 in flight and replays nothing; the device chosen at runtime), section 5 (segment, self-hosted,
@@ -385,9 +388,11 @@ one setting without the other, a zero, or a product that does not fit is refused
 config is read, naming the setting. The plan's example is 300 × 600 × 2 = 360,000
 millionths, 0.36 dollars. A table that names neither makes a backend with no price; it
 names a recipient, so it has no bound, and every call to it is refused before anything is
-sent (ADR 0012). A request refused before anything left is settled at nothing; every
-other ends unresolved and is charged at its bound, whatever the outcome record says of
-its stage.
+sent (ADR 0012). A request refused before anything left is settled at nothing, and so is
+one whose connection failed before the first byte of the request was written to it (in its
+handshake, say): the checked sender says whether any byte left, and the host was handed
+nothing. Every other ends unresolved and is charged at its bound, whatever the outcome record
+says of its stage.
 
 **Its identity.** The kind works out the digest above from the files of the installation
 `whizbang models get` would make of the catalogue's entry under this build's adapter, and
