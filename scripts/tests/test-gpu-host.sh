@@ -38,7 +38,12 @@ case "$1 $2" in
   "deploy deploy/modal/sam3_host.py")
     echo "Initialized. View run at https://modal.com/apps/made-up-workspace/main/ap-123"
     echo "Created web function front => https://made-up-workspace--whizbang-sam3-front.modal.run"
-    if [ -f "$FAKE_STATE/deploy-fails" ]; then echo "App aborted. View run at https://modal.com/apps/made-up-workspace/main/ap-123"; exit 1; fi
+    if [ -f "$FAKE_STATE/deploy-fails" ]; then
+      echo "Secret 'whizbang-front' not found in https://modal.com/secrets/made-up-workspace/main"
+      echo "Endpoint https://made-up-workspace-dev--whizbang-sam3-front.example.net/x refused"
+      echo "App aborted. View run at https://modal.com/apps/made-up-workspace/main/ap-123"
+      exit 1
+    fi
     echo "View Deployment: https://modal.com/apps/made-up-workspace/main/deployed/whizbang-sam3" ;;
   "volume put") ;;
   *) echo "fake modal: not asked of it: $*" >&2; exit 9 ;;
@@ -107,6 +112,8 @@ touch "$state/deploy-fails"
 expect_fail "a failed deploy" "the deploy failed" run deploy "$commit" --config "$config" --endpoint-file "$out"
 grep -F "made-up-workspace" "$tmp/out" >/dev/null && fail "a failed deploy printed the workspace"
 grep -F "App aborted" "$tmp/out" >/dev/null || fail "a failed deploy shows its last lines"
+grep -F "Secret 'whizbang-front' not found in <modal page>" "$tmp/out" >/dev/null ||
+  fail "a server's message that names a page of Modal is shown with the page masked"
 # An endpoint file that is a link is refused.
 ln -s "$tmp/elsewhere" "$tmp/linked"
 fresh

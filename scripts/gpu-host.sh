@@ -243,7 +243,8 @@ case "$command" in
     said=$(modal deploy "$deployment" 2>&1) || {
       # Its last lines, with every address that names the workspace masked.
       printf '%s\n' "$said" | tail -n 20 |
-        sed -E -e 's#https://[A-Za-z0-9.-]+\.modal\.run#<endpoint>#g' -e 's#https://modal\.com/(apps|id|settings)/[^ ]*#<modal page>#g' >&2
+        sed -E -e 's#https://[A-Za-z0-9.-]+\.modal\.run[^ ]*#<endpoint>#g' -e 's#https://modal\.com/[^ ]*#<modal page>#g' \
+          -e 's#https://[^ /]*--[^ ]*#<endpoint>#g' >&2
       refuse "the deploy failed"
     }
     endpoint=$(printf '%s\n' "$said" | grep -o -E "https://[A-Za-z0-9-]+--$app-front[A-Za-z0-9-]*\.modal\.run" | head -n 1 || true)
