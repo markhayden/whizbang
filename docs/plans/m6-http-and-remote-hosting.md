@@ -455,6 +455,9 @@ host_limit_s = 600
 | User story 1 runs | D1, L1 | `story::a_hosted_editor_uploads_names_and_clicks_and_downloads_with_no_local_worker` (fast tier); the live run (`docs/results/m6-user-story-1.md`) |
 | Section 18, item 3 | R1, L1 | The conformance suite's behavioural half over HTTP; L1's parity |
 
+Every clause is shown at the end of the milestone: the fast-tier tests by name, and the live
+ones by L1's two records (`docs/plans/m6-note.md`, "The clauses of the spec's row").
+
 ## How the work is split
 
 Nine pull requests. Sizes are changed lines of source, tests and hand-written documents, by
@@ -1365,10 +1368,17 @@ The row's live clauses, made from the owner's Mac against Modal and fal, with th
    and nothing falls back to another backend (section 10).
 7. **Then `gpu-host.sh down`**, so that nothing bills between rounds.
 
-- [ ] Done when: both records are merged with their runs; parity is inside the tolerance on
+- [x] Done when: both records are merged with their runs; parity is inside the tolerance on
   every fixture in each of three rounds, every answer on `cuda`; the six removals of user story 1 (nine runs of actions)
   completed with no local worker; the cancel of item 5 reached the card's worker; the spend
   is in the records.
+
+  Done on 2026-11-24, recorded in `docs/results/m6-remote-sam3.md` and
+  `docs/results/m6-user-story-1.md` and held by
+  `evidence::the_records_of_milestone_6_hold_only_aggregates_and_run_ids`. Item 1 read no
+  price: the round ran before 2026-11-30. Item 2b's decision was to send the headers at once
+  (#298). Parity ran two rounds of three, before and after that change. The cancel's worker
+  was killed at the cancel's deadline. The live round's fixes are #297, #298 and #299.
 
 ## N1. The note (small)
 
@@ -1386,7 +1396,10 @@ The row's live clauses, made from the owner's Mac against Modal and fal, with th
 3. **The tag `m6`**, by the orchestrator, on the note's merge, and only when L1's and W1's
    boxes are ticked. Neither waits on an upload: whizbang hosts no files (decision 5).
 
-- [ ] Done when: the note is merged and `m6` is tagged.
+- [x] Done when: the note is merged and `m6` is tagged.
+
+  The note is `docs/plans/m6-note.md`, with the spec's wording of item 2. The tag `m6` is the
+  orchestrator's, made on this pull request's merge.
 
 ## Carry-over rows owned by milestone 6, and who takes each
 

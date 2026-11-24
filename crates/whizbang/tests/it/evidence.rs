@@ -3319,3 +3319,357 @@ fn the_loop_records_hold_only_aggregates_by_group() {
         }
     }
 }
+
+/// The records of milestone 6's live round (plan m6, task L1): SAM 3 on the GPU host, and
+/// user story 1 through the engine API.
+const M6_HOST_PAGE: &str = "docs/results/m6-remote-sam3.md";
+const M6_STORY_PAGE: &str = "docs/results/m6-user-story-1.md";
+/// ADR 0027's tolerance, checkpoint 1D's.
+const M6_LEAST_IOU: f64 = 0.99;
+const M6_WIDEST_SCORE_GAP: f64 = 0.01;
+
+/// Every TOML block of a page, in order.
+fn toml_blocks(page: &str) -> Vec<toml::Table> {
+    page.split("```toml\n")
+        .skip(1)
+        .map(|rest| {
+            rest.split("\n```")
+                .next()
+                .unwrap()
+                .parse()
+                .expect("a block is TOML")
+        })
+        .collect()
+}
+
+/// Why a record of milestone 6 holds more than aggregates and run ids, naming the first
+/// line that does, or None. `identities` are the `sha256:` identities a record may name;
+/// `pictures` the names of pictures it may not.
+fn m6_record_holds_more(text: &str, identities: &[String], pictures: &[String]) -> Option<String> {
+    for line in text.lines() {
+        let lower = line.to_ascii_lowercase();
+        // An endpoint, or anything under Modal's web-endpoint domain.
+        if line.contains("://") {
+            return Some(format!("an endpoint: {line}"));
+        }
+        if lower.contains("modal.run") {
+            return Some(format!("an address under modal.run: {line}"));
+        }
+        // A host named as Modal names a web endpoint, `<workspace>--<app>-<function>.<domain>`:
+        // a label with `--` inside it, followed by a dot and a letter.
+        let bytes = lower.as_bytes();
+        for at in line.match_indices("--").map(|(at, _)| at) {
+            if at == 0 || !bytes[at - 1].is_ascii_alphanumeric() {
+                continue;
+            }
+            let label = bytes[at + 2..]
+                .iter()
+                .take_while(|b| b.is_ascii_alphanumeric() || **b == b'-')
+                .count();
+            let after = at + 2 + label;
+            if label > 0
+                && bytes.get(after) == Some(&b'.')
+                && bytes.get(after + 1).is_some_and(u8::is_ascii_alphabetic)
+            {
+                return Some(format!("a workspace-like host: {line}"));
+            }
+        }
+        // A token-like run of hex: 64 characters or more, unless it is an identity allowed.
+        let mut start = 0;
+        while start < bytes.len() {
+            let run = bytes[start..]
+                .iter()
+                .take_while(|b| b.is_ascii_hexdigit())
+                .count();
+            if run >= 64 {
+                let named = line[..start].ends_with("sha256:")
+                    && run == 64
+                    && identities.contains(&format!("sha256:{}", &line[start..start + run]));
+                if !named {
+                    return Some(format!("a token-like run of hex: {line}"));
+                }
+            }
+            start += run.max(1);
+        }
+        // A private path.
+        for held in ["/Users/", "/private/", "/home/", "/tmp/", "~/"] {
+            if line.contains(held) {
+                return Some(format!("a path under {held}: {line}"));
+            }
+        }
+        // A picture: its content, its file or its name in the set.
+        for held in [
+            "data:image",
+            "base64,",
+            "ivborw0kggo",
+            "/9j/",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".webp",
+        ] {
+            if lower.contains(held) {
+                return Some(format!("a picture: {line}"));
+            }
+        }
+        let longest = line
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '='))
+            .map(str::len)
+            .max()
+            .unwrap_or(0);
+        if longest >= 100 {
+            return Some(format!("a picture's content: {line}"));
+        }
+        for name in pictures {
+            if line.contains(name.as_str()) {
+                return Some(format!("a picture of the set, {name}: {line}"));
+            }
+        }
+        // A key or a token, given.
+        for held in ["_KEY=", "_TOKEN=", "Bearer "] {
+            if line.contains(held) {
+                return Some(format!("a credential: {line}"));
+            }
+        }
+    }
+    None
+}
+
+#[test]
+fn the_records_of_milestone_6_hold_only_aggregates_and_run_ids() {
+    let host = std::fs::read_to_string(repository().join(M6_HOST_PAGE))
+        .expect("the GPU host's record is committed");
+    let story = std::fs::read_to_string(repository().join(M6_STORY_PAGE))
+        .expect("user story 1's record is committed");
+    let whole = |fields: &toml::Table, name: &str| -> i64 {
+        fields[name]
+            .as_integer()
+            .unwrap_or_else(|| panic!("{name} is a whole number"))
+    };
+    let a_run_id = |run: &str| {
+        let (at, count) = run.split_once('-').expect("a run id is <ms>-<count>");
+        assert!(
+            [at, count]
+                .iter()
+                .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())),
+            "{run}"
+        );
+    };
+
+    // The host: of this tree, SAM 3's installation as the Mac's record names it, and a
+    // request's bound the price times the host's limit times the attempts.
+    let blocks = toml_blocks(&host);
+    assert_eq!(
+        blocks.len(),
+        4,
+        "the host, two rounds of parity, the cancel"
+    );
+    let at = &blocks[0];
+    let commits: Vec<&str> = at["commits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_str().unwrap())
+        .collect();
+    assert!(!commits.is_empty());
+    for commit in &commits {
+        assert!(is_ancestor(commit), "{commit}");
+    }
+    let (top, _) = record();
+    let installation = field(&top, "installation").to_owned();
+    assert_eq!(at["installation"].as_str(), Some(installation.as_str()));
+    let bound = whole(at, "bound_micros");
+    assert_eq!(
+        bound,
+        whole(at, "price_microusd_per_second") * whole(at, "host_limit_s") * whole(at, "attempts")
+    );
+
+    // Parity: each of SAM 3's fixtures in each round, inside the tolerance, on cuda, three
+    // calls each.
+    let mut fixtures: Vec<String> =
+        std::fs::read_dir(repository().join("fixtures/parity/segment/sam3"))
+            .unwrap()
+            .filter_map(|e| {
+                let name = e.unwrap().file_name().into_string().unwrap();
+                name.strip_suffix(".json").map(str::to_owned)
+            })
+            .collect();
+    fixtures.sort_unstable();
+    for (round, name) in blocks[1..3].iter().zip(["A", "B"]) {
+        assert_eq!(round["round"].as_str(), Some(name));
+        let commit = round["commit"].as_str().unwrap();
+        assert!(commits.contains(&commit), "{name}: {commit}");
+        assert_eq!(round["outcome"].as_str(), Some("passed"));
+        assert_eq!(round["device"].as_str(), Some("cuda"));
+        let list = |key: &str| {
+            round[key]
+                .as_array()
+                .unwrap_or_else(|| panic!("{key}"))
+                .clone()
+        };
+        let mut named: Vec<String> = list("fixtures")
+            .iter()
+            .map(|f| f.as_str().unwrap().to_owned())
+            .collect();
+        let count = named.len();
+        named.sort_unstable();
+        assert_eq!(named, fixtures, "{name}: every fixture of SAM 3");
+        let (ious, gaps, calls) = (list("least_iou"), list("widest_score_gap"), list("call_ms"));
+        assert_eq!((ious.len(), gaps.len(), calls.len()), (count, count, count));
+        for ((iou, gap), times) in ious.iter().zip(&gaps).zip(&calls) {
+            assert!(iou.as_float().unwrap() >= M6_LEAST_IOU, "{name}: {iou:?}");
+            assert!(
+                gap.as_float().unwrap() <= M6_WIDEST_SCORE_GAP,
+                "{name}: {gap:?}"
+            );
+            let times = times.as_array().unwrap();
+            assert_eq!(times.len(), 3, "{name}: three calls of each fixture");
+            assert!(times.iter().all(|t| t.as_integer().unwrap() > 0));
+        }
+    }
+
+    // The cancel: recorded as cancelled, charged at its bound, and the call ended within
+    // the cancel's five seconds or its worker was killed at that deadline.
+    let cancel = &blocks[3];
+    a_run_id(cancel["run"].as_str().unwrap());
+    assert_eq!(cancel["outcome"].as_str(), Some("cancelled"));
+    assert_eq!(whole(cancel, "charged_micros"), bound);
+    assert!(
+        cancel["call_ended_after_cancel_seconds"]
+            .as_float()
+            .unwrap()
+            <= 5.0
+            || cancel["worker"].as_str() == Some("killed")
+    );
+    assert!(host.contains("cancel frame written to worker"));
+    assert!(host.contains("<dispatch>"));
+
+    // User story 1: nine runs, three pictures each named and clicked, every one completed
+    // with no local worker, each charged as its tool is and sent where its tool sends.
+    let blocks = toml_blocks(&story);
+    assert_eq!(blocks.len(), 3, "the runs, each run, the ledger");
+    let (sum, runs, ledger) = (&blocks[0], &blocks[1], &blocks[2]);
+    assert!(is_ancestor(sum["commit"].as_str().unwrap()));
+    assert!(commits.contains(&sum["commit"].as_str().unwrap()));
+    assert_eq!(whole(sum, "local_workers"), 0);
+    assert_eq!(whole(sum, "segment_bound_micros"), bound);
+    let fill = whole(sum, "fill_micros");
+    let runs = runs["run"].as_array().expect("each run");
+    assert_eq!(runs.len() as i64, whole(sum, "runs"));
+    assert_eq!(whole(sum, "runs"), 9);
+    let (mut charged, mut completed, mut ids) = (0, 0, Vec::new());
+    let mut shapes: Vec<(String, String, String)> = Vec::new();
+    for run in runs {
+        let run = run.as_table().unwrap();
+        let id = run["run"].as_str().unwrap();
+        a_run_id(id);
+        ids.push(id.to_owned());
+        let tool = run["tool"].as_str().unwrap();
+        let how = run["how"].as_str().unwrap();
+        let picture = run["picture"].as_str().unwrap();
+        shapes.push((picture.to_owned(), how.to_owned(), tool.to_owned()));
+        if run["outcome"].as_str() == Some("completed") {
+            completed += 1;
+        }
+        assert!(run["seconds"].as_float().unwrap() > 0.0, "{id}");
+        let recipients: Vec<&str> = run["recipients"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r.as_str().unwrap())
+            .collect();
+        let (wanted, price) = match (how, tool) {
+            ("named", "remove_prompt") => (vec!["gpu", "fal"], bound + fill),
+            ("clicked", "segment") => (vec!["gpu"], bound),
+            ("clicked", "fill") => (vec!["fal"], fill),
+            other => panic!("{id}: {other:?}"),
+        };
+        assert_eq!(recipients, wanted, "{id}");
+        assert_eq!(whole(run, "charged_micros"), price, "{id}");
+        charged += price;
+    }
+    assert_eq!(completed, whole(sum, "completed"));
+    assert_eq!(completed, 9);
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), 9, "each run its own id");
+    shapes.sort_unstable();
+    let mut wanted = Vec::new();
+    for picture in ["A", "B", "C"] {
+        for (how, tool) in [
+            ("clicked", "fill"),
+            ("clicked", "segment"),
+            ("named", "remove_prompt"),
+        ] {
+            wanted.push((picture.to_owned(), how.to_owned(), tool.to_owned()));
+        }
+    }
+    assert_eq!(shapes, wanted, "each picture named once and clicked once");
+    assert_eq!(whole(sum, "story_micros"), charged);
+    assert_eq!(whole(ledger, "story_micros"), charged);
+    assert_eq!(
+        whole(ledger, "ledger_micros"),
+        charged
+            + whole(ledger, "warm_up_micros")
+            + whole(ledger, "cancel_attempt_unresolved_micros")
+    );
+
+    // Aggregates and run ids only: no endpoint, workspace, token, path or picture.
+    let edits: toml::Table = std::fs::read_to_string(repository().join("labs/m3-edits/edits.toml"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let pictures: Vec<String> = edits["source"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(!pictures.is_empty());
+    let identities = vec![installation.clone()];
+    for (page, text) in [(M6_HOST_PAGE, &host), (M6_STORY_PAGE, &story)] {
+        if let Some(why) = m6_record_holds_more(text, &identities, &pictures) {
+            panic!("{page}: {why}");
+        }
+    }
+    // And the check refuses each of those, added as a line to either record.
+    let token = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+    let picture = format!("data:image/png;base64,{}", "A".repeat(120));
+    let added = [
+        "the front at https://example-host/whizbang-sam3".to_owned(),
+        "the front is under modal.run".to_owned(),
+        "the host acme--whizbang-sam3-front.example.dev answered".to_owned(),
+        format!("the token {token}"),
+        format!("an identity sha256:{token}"),
+        // Made here, so that no private path is written in the source.
+        format!("the config at /{}/someone/whizbang.toml", "Users"),
+        format!("the store at /{}/var/folders/store", "private"),
+        picture,
+        "A".repeat(140),
+        "the result is result.png".to_owned(),
+        format!("the picture {}", pictures[0]),
+        "SEGMENT_TOKEN=abc".to_owned(),
+    ];
+    for line in &added {
+        for text in [&host, &story] {
+            assert!(
+                m6_record_holds_more(&format!("{text}\n{line}\n"), &identities, &pictures)
+                    .is_some(),
+                "not refused: {line}"
+            );
+        }
+    }
+    // While the lines it keeps are kept: SAM 3's identity, a commit, a run id, a flag.
+    for line in [
+        format!("installation = \"{installation}\""),
+        "commit = \"fc63a86b9b665808f0ae9f8f1f1e353f00021132\"".to_owned(),
+        "run = \"1795543984279-1\"".to_owned(),
+        "`whizbang serve --http 127.0.0.1:<port>`".to_owned(),
+    ] {
+        assert_eq!(
+            m6_record_holds_more(&line, &identities, &pictures),
+            None,
+            "{line}"
+        );
+    }
+}

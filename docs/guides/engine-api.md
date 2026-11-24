@@ -229,3 +229,9 @@ tier): whizbang starts no pack worker; each run's record names the front for `se
 fal for `fill`, with the classes each was sent; the ledger books each segment at its bound,
 0.36 dollars with the example, and each fill at fal's price. `fill` paints the mask as
 `segment` found it; `remove_prompt` grows and feathers its mask first.
+
+Live, in the live round of plan m6 (task L1), the same exchange ran from a short client
+against SAM 3 on Modal and Bria through fal: three pictures, each named and each clicked, nine
+runs, every one completed with no local worker (`docs/results/m6-user-story-1.md`). The
+clicked removals there left a faint fringe at the thing's edge, since `fill` paints the mask
+unshaped.

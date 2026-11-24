@@ -28,7 +28,7 @@ They are merged because keeping them apart cost more than it gave:
 |---|---|
 | Command line (`whizbang …`) | A person, scripts |
 | MCP server over stdio (`whizbang serve`) | A local agent |
-| The same server over HTTP (`whizbang serve --http`) | A hosted app that uses whizbang as its engine |
+| The same server over HTTP (`whizbang serve --http`) | A hosted app that uses whizbang as its engine (`docs/guides/engine-api.md`) |
 | Playground (`whizbang play`) | A person trying tools in a browser |
 
 There is no public Rust library. Only the `whizbang` binary is released.
@@ -364,6 +364,11 @@ model = "bria-eraser"
 key_env = "FAL_KEY"
 ```
 
+A segment of the kind `remote` also states its price, in `[backends.segment.settings]`:
+`price_microusd_per_second`, what the host costs a second, and `host_limit_s`, the longest the
+host itself bills one attempt for (`docs/guides/config.md`; section 6). Without both it has no
+bound and is refused. The example leaves them out, since its digest is a vector of ADR 0011.
+
 ### The Python pack
 
 Local and self-hosted backends for segment and fill run the same Python package.
@@ -456,7 +461,10 @@ From checkpoint 1C the pack's runtime extra (`whizbang setup --extra`) is locked
 "Amended: the Mac alone"): on Linux the index's `torch` is a CUDA build whose NVIDIA
 packages are under a proprietary licence or state none. On Linux the pack's core installs
 and the extra is refused. Local models on Linux come back with the carry-over row "Linux
-runtime extra".
+runtime extra". A GPU host is not a user's install: from milestone 6 it runs the pack on Linux
+on x86-64 with CUDA, from a lock of its own (`deploy/gpu-host/requirements.txt`), in the host's
+image alone (the owner's decision of 2026-11-23, plan m6). Local models on Linux for a user
+stay deferred.
 
 ## 6. Spend and controls
 
@@ -752,7 +760,8 @@ cross-origin request, an oversized image, and for the engine API a path.
   says so.
 
 Approved recipients at first: fal for fills; Anthropic, Google and OpenAI for judging; one GPU
-host for SAM 3 from milestone 6. Adding a recipient is the owner's decision.
+host for SAM 3 from milestone 6, Modal (the owner's decision of 2026-11-22). Adding a recipient
+is the owner's decision.
 
 ### The public repo
 
@@ -844,7 +853,12 @@ whizbang store import <file> --store <dir> [--create]
                                        # (ADR 0002) into a store
 whizbang runs list|show|stats|export
 whizbang spend status|reset
-whizbang serve [--http <addr>]
+whizbang serve [--http <addr>]         # --http: the engine API (docs/guides/engine-api.md),
+                                       # with (--token-env <NAME> | --token-file <file>),
+                                       # [--wait-s <seconds>], [--off-loopback
+                                       # --host-name <name>...], [--allow-origin <origin>...],
+                                       # [--calls <n>], [--pixel-limit <pixels>] and
+                                       # [--uploads-kept-h <hours>]
 whizbang play
 whizbang describe [--json [--pretty]]  # static: identical on every machine; --json is
                                        # one line, and --pretty indents it
@@ -1101,7 +1115,8 @@ module, reshaped to fit this design, with the tests that guard kept behaviour.
 and every kept item in section 7 has its replacement. They are never deleted. The coordination
 repo is retired at milestone 0.
 
-**Milestones.** Each is cumulative: everything earlier still passes.
+**Milestones.** Each is cumulative: everything earlier still passes. After milestone 6 they
+run in the order 6, 7, E, 8 (the owner's decision of 2026-11-24).
 
 | # | Milestone | Done when |
 |---|---|---|
@@ -1117,7 +1132,7 @@ repo is retired at milestone 0.
 | 6 | HTTP and remote hosting | User story 1 runs: the engine API with its negative tests, SAM 3 on a GPU host with parity inside the 1D tolerance, Bria through fal |
 | 7 | Bundles and replay | Invocation bundles and journal replay; saved-run comparisons, saved examples and guided chain replay in the playground |
 | 8 | More local models | Each cell section 5 assigns to this milestone passes conformance: fill and judge, each both local and self-hosted; plus any further segmenter the evaluations call for |
-| E | Evidence and edit quality | Runs alongside milestones 3 onward, once 2 is done. Every unverified tool and recipe is taken up the ladder, squint's first and the most doubtful first, until each is admitted, experimental or dropped. Per-subject comparison climbs rungs 3 and 4 on a fresh confirmation set; `regions`, `classes` and `outline` are each brought in as experimental tools and scored on rungs 1 and 2, on SAM 3 where that works and on their old segmenter as a catalogue entry where it does not, and those that pass go on; the submission format is redesigned so small models can follow it; job requirements carry colour, count and lettering in a new set version. Each change is admitted through its gate |
+| E | Evidence and edit quality | Runs after milestone 7 and before 8, so that its evaluations decide what 8 builds: a further segmenter, and how local fill and judge are scored (the owner's decision of 2026-11-24; until milestone 6 it ran beside the numbered milestones). Every unverified tool and recipe is taken up the ladder, squint's first and the most doubtful first, until each is admitted, experimental or dropped. Per-subject comparison climbs rungs 3 and 4 on a fresh confirmation set; `regions`, `classes` and `outline` are each brought in as experimental tools and scored on rungs 1 and 2, on SAM 3 where that works and on their old segmenter as a catalogue entry where it does not, and those that pass go on; the submission format is redesigned so small models can follow it; job requirements carry colour, count and lettering in a new set version. Each change is admitted through its gate |
 
 Checkpoints 1A to 1D each end with a note. Milestones 2 and 3 need 1A and 1B; they need 1C and
 1D only for the parts that use a real model.
