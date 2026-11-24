@@ -1,7 +1,7 @@
 # Plan: milestone 7, bundles and replay
 
-Draft 3, 2026-11-24, written from `main` at 6c75b6e3 (the tag `m6`, the merge of #300, the
-note of milestone 6), after two outside review rounds ("Review rounds", at the end). Milestone 7 is `SPEC.md` section 16, row 7, "Bundles and replay":
+Draft 4, 2026-11-24, written from `main` at 6c75b6e3 (the tag `m6`, the merge of #300, the
+note of milestone 6), after three outside review rounds ("Review rounds", at the end). Milestone 7 is `SPEC.md` section 16, row 7, "Bundles and replay":
 "Invocation bundles and journal replay; saved-run comparisons, saved examples and guided
 chain replay in the playground". Beside the row it takes section 6's control "Invocation
 bundles | Deferred to milestone 7", section 7's rascal row "Replay from a journal; invocation
@@ -171,7 +171,7 @@ same bytes (B1, item 2).
 | `runs/<run id>/record` | Each step's run record and each of its descendants', as the store holds it, byte for byte |
 | `runs/<run id>/journal` | Its journal, as stored |
 | `runs/<run id>/diagnostics/<name>` | Each diagnostic it kept: its judge's exchanges, `segment.txt`, and a fill's answer (below) among them |
-| `artifacts/sha256-<hex>` | The canonical file (ADR 0002) of every input, every output and every artifact a kept diagnostic or exchange names, once each, whatever runs share it |
+| `files/sha256-<hex>` | Each canonical file (ADR 0002) of an input, an output or an artifact a kept diagnostic or exchange names, once for each **file digest**: two files of one artifact identity with other origins (an identity leaves the origin out, `artifact/wire.rs`, and the store keeps each run's own file, `artifact/stored.rs`) are two members |
 
 **The manifest.** `{"bundle": 1, "whizbang": <version>, "steps": [...], "artifacts":
 [...], "withheld": [...]}`:
@@ -183,7 +183,8 @@ same bytes (B1, item 2).
   either the artifact's identity or **the earlier step's output it took** (`{"step":
   <index>, "port": <name>, "place": <n>}`) when its identity is one an earlier step made. A
   step never names a path.
-- `artifacts`: each member's identity, type and SHA-256 of its file.
+- `artifacts`: for each file member, its SHA-256, the artifact identity and type it holds,
+  and each run and port it is the file of, so every run keeps its own file.
 - `withheld`: what the bundle does not carry and why, each with a sentence: an opaque part
   of a judge's exchange (its adapter, digest and length, as ADR 0009 keeps it); a picture a
   stored exchange names that the store does not hold; a diagnostic the store let go of; a
@@ -223,7 +224,11 @@ below passes before the first publication:
   and outputs); each record's parent is in the bundle and the families are trees with one
   root each, the steps' roots; every input and output a record names is a member or listed
   as withheld; every link names an earlier step's output that its record committed, at that
-  port and place, with the identity the later step's record took.
+  port and place, with the identity the later step's record took. And the two directions of
+  a family agree: every step a record lists as a child run is a record of the bundle whose
+  parent is that record, with the same action and an ending that agrees with what the parent
+  noted; every record with a parent is listed by that parent once; no run is the child of
+  two.
 - *Version*: an unknown manifest version is refused, naming it.
 
 A refusal names the first fault and says that nothing was imported and nothing ran. Each
@@ -239,8 +244,13 @@ bundle's entry**, `bundles/<digest>/manifest`,
 store's names hold each one (`store/generation.rs`, a generation names what it keeps) and a
 prune keeps them while the entry is there. A bundle's runs are never made runs of the
 importing store: no history, stats or ledger counts them, and replay reads them from the
-entry. A second import of a bundle already held changes nothing. A run started from a bundle (a replay, a chain's
-step) names its inputs as any run does, so what it used outlives the bundle. **A bundle is
+entry. A second import of a bundle already held changes nothing. **A run started from a bundle** (a replay, a chain's step)
+reads its inputs through the bundle's names: preparation and admission look an artifact up
+by its ordinary name and then, for a run started from that bundle, by the bundle's
+(`artifact/stored.rs`, the lookup; `contract/engine.rs`, admission's retention of inputs).
+Admission then gives each input it took a name of the run's own in its publication, so the
+run holds what it used once the bundle is deleted and pruned, and a later run can take it as
+any input. **A bundle is
 deleted** by `whizbang bundle delete <digest>` or from the playground, which removes the
 entry's names in one publication; its artifacts stay while a run, an example, an ordinary
 import or another bundle names them, and a prune removes the rest.
@@ -356,13 +366,19 @@ offline, naming that.
 **Tool files.** A check may call a tool file the config names (`check.rs`,
 `dispatch_file`), noted among its settings as `tool_file:<name>` with the file's digest. A
 tool file is code, and a replay never takes it from a record or a bundle: offline, a run
-whose settings name one is refused before it starts, naming the file; live, it is replayed
-only when the current config names a file of that name with the same digest. An
-answer the store cannot give (an opaque part withheld, a picture not held, a diagnostic
-gone, a fill with no kept answer) ends it before that request as `unanswerable`, naming what
-is missing: the carry-over row's "says where it gets an opaque part from, or that it
-cannot". Pixel work runs for real: every operation and every step of a recipe is computed
-again.
+whose settings or judge turns name one is refused before it starts, naming the file; and,
+since a call of a tool file that failed notes no digest (`check.rs`, its error arm), the
+refusal is also made where a tool file is dispatched: a replay's context refuses every
+tool-file call, offline, as `unanswerable`, so no file runs whatever the record says. Live,
+a run whose family called a tool file is replayed only when the current config names a file
+of that name with the digest the record noted; one whose digest was never noted (the call
+failed) is refused, naming the file.
+
+**What cannot be answered.** An answer the store cannot give (an opaque part withheld, a
+picture not held, a diagnostic gone, a fill with no kept answer) ends the replay before that
+request as `unanswerable`, naming what is missing: the carry-over row's "says where it gets
+an opaque part from, or that it cannot". Pixel work runs for real: every operation and every
+step of a recipe is computed again.
 
 **What it compares**, once the replayed run has ended, family against family: the runs are
 matched by their place (a root to a root, each child to the child at the same place among
@@ -389,10 +405,13 @@ nor are a model's pixels. A live replay of a step whose input is withheld is ref
 it is prepared.
 
 **Its request id and its provenance.** A replay may be given a request id like any call.
-What a replay is (offline or live, and its source: the run's id, or the bundle's digest and
-step) is part of the request's fingerprint (`contract/request.rs`), so the same id under an
-ordinary call, another mode or another source is a conflict, and the same replay asked again
-returns its run. `replayed` is written with the run's admission and in its record at its
+A replay's fingerprint is made from **the replay request itself** (its mode, its source: the
+run's id, or the bundle's digest and step, and its options), not from the call rebuilt from
+the source, so the executor's durable lookup of a request id (`contract/request.rs`, made
+before readiness, `contract/engine.rs`) answers a repeat before the source is read: the same
+replay asked again returns its run even after its source run or bundle was deleted or the
+config changed, and the same id under an ordinary call, another mode or another source is a
+conflict. `replayed` is written with the run's admission and in its record at its
 end, in the publications that write them today, never added afterwards.
 
 **Where a replay runs.** It is one more run of the store's one executor (section 3, "One
@@ -413,8 +432,9 @@ An example is the store's: a small entry `examples/<id>` (a random id of 16 hex 
 `example/1`, holding a name of at most 80 characters and notes of at most 2,000 that a
 person gave, the task, its arguments as the run's record holds them, the backends and models
 it named, each input by its identity, and the run it was saved from. It names its inputs,
-so they outlive the run's deletion. A run whose record cut an argument cannot be saved as an
-example (as for replay). Opening one fills a draft and runs nothing; the draft's choices are
+so they outlive the run's deletion. A run whose call depends on a setting that may have been
+cut (a text exactly at `SETTING_TEXT_LIMIT`) cannot be saved as an example, as for replay;
+arguments are kept whole. Opening one fills a draft and runs nothing; the draft's choices are
 the example's where the current config offers them, and readiness is asked again as for any
 draft; a later run from it is an ordinary run under the current config. Examples are made,
 renamed and deleted in the playground; `whizbang store list` names them, and `store delete
@@ -696,6 +716,8 @@ model ran.
   `bundle::a_diagnostic_whose_bytes_differ_from_its_record_is_refused`,
   `bundle::a_manifest_that_contradicts_a_record_or_a_link_that_contradicts_both_is_refused`,
   `bundle::a_family_with_a_missing_parent_a_cycle_or_two_roots_is_refused`,
+  `bundle::a_child_listed_by_one_parent_and_naming_another_or_listed_twice_is_refused`,
+  `bundle::two_files_of_one_identity_with_other_origins_travel_and_each_run_keeps_its_own`,
   `bundle::an_unknown_version_is_refused_naming_it`,
   `bundle::a_bundle_over_its_bounds_is_refused_before_it_is_read_whole`,
   `bundle::a_long_member_name_round_trips_through_prefix_and_name_and_one_too_long_is_refused`,
@@ -768,14 +790,19 @@ abandoned.
    (b) *A panic at `Publishing`* (carry-over, "a panic in the executor's code while a run's
    end is at `Reached::Publishing`"): readable is not durable (a publication makes the new
    pointer visible by a rename before the root folder is synced, `store/mod.rs`, the
-   module's steps 4 and 5), so a snapshot cannot tell. The store gains
-   `Store::confirm(generation)`, which syncs the root folder and answers whether `CURRENT`
-   names that generation or one after it: then the end is durable. The catch calls it; when
-   it answers yes, the run is answered as a durable end is (finishing what is left once, as
-   the `Durable` arm does); when it answers no or fails, as today.
+   module's steps 4 and 5), so a snapshot cannot tell; and a generation's number is not this
+   publication's (a publication that unwound before its rename leaves the number to the
+   next, `store/mod.rs`, where it is chosen under the lock). The end's own evidence is used
+   instead: before it publishes, the end holds the digest of the record bytes it writes, which
+   no unwinding loses. The store gains `Store::confirm(name, digest)`, which syncs the root
+   folder and answers whether the current generation names the run's record with exactly that
+   digest; a run's record is written once, by its end, so that answer is this end's. The catch
+   calls it; when it answers yes, the run is answered as a durable end is (finishing what is
+   left once, as the `Durable` arm does); when it answers no or fails, as today.
    `execute::a_panic_after_the_pointer_was_renamed_and_before_the_sync_is_confirmed_by_a_sync_and_answers_the_durable_end`,
    `execute::a_panic_after_the_sync_answers_the_durable_end` and
-   `execute::a_panic_at_publishing_before_the_pointer_was_renamed_answers_as_before`.
+   `execute::a_panic_at_publishing_before_the_pointer_was_renamed_answers_as_before`, and
+   `execute::a_panic_before_the_rename_then_another_publication_is_not_taken_for_the_end`.
 
 - [ ] Done when: `replay::an_offline_replay_of_remove_prompt_reproduces_it_with_no_backend_configured`,
   `replay::an_offline_replay_of_remove_checked_reproduces_its_attempts_and_verdict_through_the_run_match`,
@@ -791,6 +818,8 @@ abandoned.
   `replay::a_turn_that_held_an_opaque_part_is_unanswerable_naming_it`,
   `replay::a_child_an_interrupted_run_a_recipe_files_run_and_a_setting_at_its_limit_are_each_refused`,
   `replay::a_check_that_called_a_tool_file_is_refused_offline_and_replayed_live_only_with_the_same_digest`,
+  `replay::a_tool_file_call_that_failed_in_the_original_runs_no_file_offline_and_is_refused_live`,
+  `replay::a_replay_from_a_bundle_holds_its_inputs_after_the_bundle_is_deleted_and_pruned`,
   `replay::choices_are_found_by_alias_for_an_explicit_choice_a_default_and_two_aliases_of_one_model`,
   `replay::a_changed_measurement_of_an_action_with_no_artifact_output_is_a_difference`,
   `replay::a_divergence_in_a_second_look_or_a_loops_check_is_the_replays_report_whatever_the_action_made_of_it`,
@@ -798,6 +827,7 @@ abandoned.
   `replay::a_live_replay_spends_as_a_run_and_reports_a_changed_verdict_as_a_difference`,
   `replay::a_live_replay_whose_backend_the_config_no_longer_offers_is_refused`,
   `replay::a_request_id_under_another_mode_or_source_is_a_conflict_and_the_same_replay_returns_its_run`,
+  `replay::a_repeated_replay_is_answered_after_its_source_was_deleted_and_after_the_config_changed`,
   `replay::every_run_of_a_replayed_family_names_it_and_stats_leaves_the_family_out_by_default`,
   `replay::a_replay_in_a_held_store_is_cancelled_waited_for_and_counted_like_any_run`,
   `runs_bundle::a_bundle_imports_into_an_empty_store_and_survives_its_archive_and_first_store_gone_a_restart_and_a_prune`
@@ -1169,4 +1199,35 @@ minors. Each was checked against the code; all were right and taken.
 10. **Minor: Export run's time.** Right (`report.rs`). Taken: the writer takes the time as a
     parameter.
 11. **Minor: three stale references in the carry-over table.** Right. Taken.
+
+### Review round 3
+
+On draft 3. Verdict: revise. Round 2's fixes held, but for its findings 1 and 3, and the
+wording of its finding 9 under saved examples. Seven findings: 1 blocker, 5 majors, 1 minor.
+Each was checked against the code; all were right and taken.
+
+1. **Blocker: a generation's number does not prove this end was published.** Right: the
+   number is chosen under the lock from the current pointer (`store/mod.rs`), so a
+   publication that unwound before its rename leaves it to the next, and an unwinding
+   publication returns nothing. Taken: the end holds the digest of the record it writes;
+   `Store::confirm(name, digest)` syncs the root and answers whether the current generation
+   names the run's record with that digest; a test where another publication comes between.
+2. **Major: a failed tool-file call notes no digest.** Right (`check.rs`, the error arm).
+   Taken: a replay's context refuses every tool-file dispatch offline, so no file runs; live,
+   a call whose digest was never noted is refused; a test.
+3. **Major: a bundle's names are not seen by lookup or admission.** Right
+   (`artifact/stored.rs`; admission's retention in `engine.rs`). Taken: a run started from a
+   bundle looks its inputs up through the bundle's names, and admission gives each a name of
+   the run's own; a test of the bundle deleted and pruned after admission.
+4. **Major: one file per identity loses an origin.** Right (`artifact/wire.rs`;
+   `artifact/stored.rs` keeps each run's own file; `commit.rs`'s test). Taken: files are
+   members by file digest, each mapped to the runs and ports it is the file of; a round trip.
+5. **Major: parents and listed children were not reconciled.** Right (`record.rs`'s checks
+   are local). Taken: the two directions of a family must agree, a child listed once and by
+   its own parent, with action and ending; adversarial tests.
+6. **Major: a replay's request id must be answered before its source is read.** Right
+   (`request.rs`; the lookup before readiness in `engine.rs`). Taken: a replay's fingerprint
+   is made from the replay request, not the rebuilt call; a test after the source was deleted
+   and after the config changed.
+7. **Minor: saved examples still said arguments are cut.** Right. Taken.
 
