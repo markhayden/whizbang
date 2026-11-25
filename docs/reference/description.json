@@ -5052,6 +5052,10 @@
       "mark": "experimental"
     },
     {
+      "tool": "regions",
+      "mark": "experimental"
+    },
+    {
       "tool": "tiles",
       "mark": "experimental"
     }
