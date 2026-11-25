@@ -139,6 +139,17 @@ struct Store<'a> {
 }
 
 impl Held for Store<'_> {
+    fn input(
+        &self,
+        run: &str,
+        root: &str,
+        _port: &str,
+        _place: u32,
+        name: &str,
+    ) -> Result<Option<Vec<u8>>, String> {
+        input_of(self.contents, self.generation, run, root, name)
+    }
+
     fn diagnostic(&self, run: &str, name: &str) -> Result<Option<Vec<u8>>, String> {
         let Some(entry) = self.generation.run(run).and_then(|held| held.get(name)) else {
             return Ok(None);
@@ -261,7 +272,10 @@ pub(super) fn read(
             .map(|step| step.run().to_owned())
             .collect();
         for child in steps {
-            if runs.len() > DESCENDANTS_LIMIT {
+            // The root and at most as many runs under it as one root may have: the run
+            // about to be read would be one more.
+            let descendants = runs.len() - 1;
+            if descendants >= DESCENDANTS_LIMIT {
                 return Err(not_replayed(
                     &root,
                     "its family holds more runs than one may",
@@ -338,4 +352,34 @@ pub(super) fn read(
 /// among its diagnostics.
 pub fn note_name() -> String {
     format!("{DIAGNOSTICS_PREFIX}{}", recorded::NOTE)
+}
+
+/// The file of an input of a run of the store, as the run read it: its hold, else the
+/// name the first run of its tree keeps for the runs under it, else the name outside runs.
+fn input_of(
+    contents: &(dyn Contents + Send + Sync),
+    generation: &Generation,
+    run: &str,
+    root: &str,
+    name: &str,
+) -> Result<Option<Vec<u8>>, String> {
+    let output = |entry: &&crate::store::Entry| entry.kind == Kind::Output;
+    let hold = format!("{}{name}", crate::store::HOLDS_PREFIX);
+    let entry = (generation
+        .run(run)
+        .and_then(|held| held.get(&hold))
+        .filter(output))
+    .or_else(|| {
+        generation
+            .run(root)
+            .and_then(|held| held.get(name))
+            .filter(output)
+    })
+    .or_else(|| generation.get(name).filter(output));
+    let Some(entry) = entry else {
+        return Ok(None);
+    };
+    (contents.read(entry))
+        .map(Some)
+        .map_err(|why| format!("the input {name} of the run {run} cannot be read: {why}"))
 }

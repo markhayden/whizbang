@@ -1451,7 +1451,10 @@ impl Store {
     /// A run whose content this finds is taken as closed in the table of open runs, as
     /// the publication would have taken it had it come back: so its closer lets it go.
     pub fn confirm_record(&self, run: &str, name: &str, digest: &Digest) -> Result<bool> {
-        self.confirm()?;
+        // Synced first; what is visible is looked at whether the sync was or not, so that
+        // a run whose end is visible and not confirmed is taken as closed in the table:
+        // it is kept there as abandoned with its ending visible.
+        let synced = self.confirm();
         let generation = self.snapshot()?;
         let held = (generation.run(run))
             .and_then(|held| held.get(name))
@@ -1462,6 +1465,7 @@ impl Store {
                 *closed = true;
             }
         }
+        synced?;
         Ok(held)
     }
 

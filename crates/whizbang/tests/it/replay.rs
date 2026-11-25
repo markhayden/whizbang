@@ -378,3 +378,201 @@ fn a_replay_in_a_held_store_is_cancelled_waited_for_and_counted_like_any_run() {
     let made = record(&world, run.as_str());
     assert_eq!(made.replayed(), Some(&offline_of(original.run())));
 }
+
+#[test]
+fn an_offline_replay_sends_nothing_reserves_nothing_reads_no_key_and_starts_no_worker() {
+    use std::sync::atomic::Ordering;
+    use whizbang_core::contract::Value;
+    // A real runner over a models directory, whose filler is a local model of it: the
+    // lease stands in its place for every ordinary run. The original asks that local
+    // model; the model is then installed again, as another installation. An offline
+    // replay takes no hold on any installation and asks no backend: its run reaches the
+    // recorded answers, which here cannot answer (`paints` is no run of `fill`, which
+    // alone keeps its answer), and the replay says so.
+    let world = Arc::new(crate::wired::World::new("replay-lease"));
+    let over = world.config("[backends.fill]\nkind = \"fake\"\n");
+    let mut shipped = whizbang::bundling::shipped().unwrap();
+    shipped.insert("paints".to_owned(), "1.0.0".to_owned());
+    let runner = || {
+        let store = Arc::new(Store::open(&world.root, Arc::new(RealFs)).unwrap());
+        wiring::runner(world.registry(), store, &over)
+            .unwrap()
+            .with_shipped(shipped.clone())
+    };
+    let engine = runner();
+    let original = engine
+        .submit(&Call::new("paints").argument("times", Value::Integer(2)))
+        .unwrap();
+    assert_eq!(
+        original.outcome().name(),
+        "completed",
+        "{:?}",
+        original.outcome()
+    );
+    drop(engine);
+    let (sent, ran) = (world.fakes.requests(), world.runs.load(Ordering::SeqCst));
+    assert_eq!(sent, 2);
+    world.install("2026-11.2");
+    let engine = runner();
+    let (run, _) = replayed(&engine, &of_run(original.run()));
+    drop(engine);
+    assert_eq!(world.fakes.requests(), sent, "no backend was asked");
+    assert_eq!(world.runs.load(Ordering::SeqCst), ran + 1);
+    let reader = Reader::open(&world.root, Arc::new(RealFs)).unwrap();
+    let generation = reader.snapshot().unwrap();
+    let name = whizbang_core::contract::replay::note_name();
+    let entry = generation.run(run.as_str()).unwrap().get(&name).unwrap();
+    let said = String::from_utf8(reader.read(entry).unwrap()).unwrap();
+    assert!(said.starts_with("unanswerable fill request 1:"), "{said}");
+    assert!(said.contains("only a run of fill"), "{said}");
+    let made = record::stored(&generation, run.as_str(), |e| reader.read(e))
+        .unwrap()
+        .unwrap();
+    let was = record::stored(&generation, original.run().as_str(), |e| reader.read(e))
+        .unwrap()
+        .unwrap();
+    // Nothing reserved, nothing paid, nothing sent anywhere, no device named.
+    assert_eq!(made.spend().reserved_micros, Some(0));
+    assert!(made.spend().requests.is_empty());
+    assert!(made.egress().is_empty());
+    assert!(made.models().iter().all(|m| m.device.is_none()));
+    // The recorded model, under the installation the original ran on.
+    assert_eq!(made.models()[0].version, was.models()[0].version);
+}
+
+/// The build's actions with one changed: `name` is `with` given the action it replaces.
+fn changing(
+    name: &str,
+    with: impl Fn(Arc<dyn Action>) -> Arc<dyn Action>,
+) -> whizbang_core::contract::Registry {
+    let built = wiring::registry().unwrap();
+    let mut registry = whizbang_core::contract::Registry::new();
+    let names: Vec<String> = built.descriptors().map(|d| d.name().to_owned()).collect();
+    for each in names {
+        let action = built.get(&each).unwrap().clone();
+        registry
+            .register(if each == name { with(action) } else { action })
+            .unwrap();
+    }
+    registry
+}
+
+/// An action as `segment` or `fill` is described, whose run is `body`.
+struct Asks(
+    Arc<dyn Action>,
+    Box<dyn Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync>,
+);
+
+impl Action for Asks {
+    fn descriptor(&self) -> &ActionDescriptor {
+        self.0.descriptor()
+    }
+    fn run(&self, call: &PreparedCall, context: &Context) -> Result<Produced, Failure> {
+        (self.1)(call, context)
+    }
+}
+
+/// The picture at a port of a call.
+fn picture_at(
+    call: &PreparedCall,
+    context: &Context,
+    port: &str,
+) -> (
+    whizbang_core::artifact::Image,
+    whizbang_core::capability::Picture,
+) {
+    use whizbang_core::artifact::{self, Artifact, ArtifactType};
+    let limits = whizbang_core::identity::DecodeLimits::default();
+    let input = call.inputs().iter().find(|i| i.port() == port).unwrap();
+    let Ok(Artifact::Image(image)) =
+        artifact::get(context.store(), ArtifactType::Image, input.id(), &limits)
+    else {
+        panic!("no image");
+    };
+    let pixels = image.pixels(&limits).unwrap();
+    let picture = whizbang_core::capability::Picture::new(pixels).unwrap();
+    (image, picture)
+}
+
+#[test]
+fn a_segment_request_with_another_query_is_diverged_and_nothing_is_called() {
+    use whizbang_core::capability::{Query, SegmentRequest};
+    let world = world("replay-segment-diverged", 1);
+    let removed = removal(&world);
+    let sent = world.kit.requests();
+    let registry = changing("segment", |inner| {
+        Arc::new(Asks(
+            inner,
+            Box::new(|call, context| {
+                let (image, picture) = picture_at(call, context, "image");
+                let query = Query::phrase("something else").unwrap();
+                let request = SegmentRequest::new(picture, vec![query], 8)
+                    .and_then(|r| r.under(&image.binding()))
+                    .unwrap();
+                let segment = context.capabilities().segment().unwrap();
+                match segment.segment(&request) {
+                    Ok(_) => Ok(Produced::nothing()),
+                    Err(fault) => Err(Failure::error("segment", fault.sentence())),
+                }
+            }),
+        ))
+    });
+    let (run, _) = replayed(&world.engine_of(registry), &of_run(removed.run()));
+    assert_eq!(world.kit.requests(), sent);
+    let said = note(&world, run.as_str()).expect("stopped");
+    assert!(
+        said.starts_with(
+            "diverged segment request 1: the replay asked a segmenter with another query"
+        ),
+        "{said}"
+    );
+}
+
+#[test]
+fn a_fill_request_with_another_prompt_is_diverged_and_nothing_is_called() {
+    use whizbang_core::artifact::{self, ArtifactType};
+    use whizbang_core::capability::{FillRequest, Support};
+    let world = world("replay-fill-diverged", 1);
+    let removed = removal(&world);
+    let sent = world.kit.requests();
+    let registry = changing("fill", |inner| {
+        Arc::new(Asks(
+            inner,
+            Box::new(|call, context| {
+                let (_, picture) = picture_at(call, context, "image");
+                let limits = whizbang_core::identity::DecodeLimits::default();
+                let input = call.inputs().iter().find(|i| i.port() == "mask").unwrap();
+                let mask = artifact::get(context.store(), ArtifactType::Mask, input.id(), &limits)
+                    .unwrap()
+                    .into_mask()
+                    .unwrap();
+                let request =
+                    FillRequest::new(picture, Support::of(&mask), Some("another prompt")).unwrap();
+                let fill = context.capabilities().fill().unwrap();
+                match fill.fill(&request) {
+                    Ok(_) => Ok(Produced::nothing()),
+                    Err(fault) => Err(Failure::error("fill", fault.sentence())),
+                }
+            }),
+        ))
+    });
+    let (run, _) = replayed(&world.engine_of(registry), &of_run(removed.run()));
+    assert_eq!(world.kit.requests(), sent);
+    let said = note(&world, run.as_str()).expect("stopped");
+    assert!(
+        said.starts_with("diverged fill request 1: the replay asked a filler with another prompt"),
+        "{said}"
+    );
+}
+
+#[test]
+fn the_query_the_core_makes_of_a_segment_run_is_segments_own() {
+    use whizbang_core::capability::recorded::query_of;
+    for (kind, text) in [("phrase", "a cat"), ("point", "3, 4"), ("box", "1 2 30 40")] {
+        assert_eq!(
+            query_of(kind, text),
+            whizbang_rascal::segment::query_of(kind, text).ok(),
+            "{kind} {text}"
+        );
+    }
+}
