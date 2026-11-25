@@ -1,7 +1,7 @@
 # Plan: milestone E, evidence and edit quality
 
-Draft 18, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
-note of milestone 7), after seventeen outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
+Draft 19, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
+note of milestone 7), after eighteen outside review rounds, the last of which approved it ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
 quality". Its first slice ran beside milestone 5 (`docs/plans/e1-judge-format-loop.md`,
 `docs/plans/e1-note.md`) and chose the default judge and kept the submission format on
 descriptive evidence. This plan is the rest of the milestone: every unverified tool and
@@ -1202,9 +1202,11 @@ row on the panorama side of `view`):
 1. **The fresh corpus**, in owner storage, never committed, none of it used on rungs 2 or 3:
    - 10 of the owner's own photos, each with the phrase of what to remove, where one pass may
      leave something behind (the carry-over row on the owner's photos), for the removals; for
-     each, the owner also draws a box around the thing and clicks a point on it in the
-     playground and exports them (`store export`): the box is `remove`'s location, and the
-     point is asked of SAM 3 for the clicked removal's mask, as in R5;
+     each, the owner also draws a box around the thing in the playground and exports it
+     (`store export`, a location artifact), the box being `remove`'s location; and clicks a
+     point on the thing, runs SAM 3's point request there in the playground and exports the
+     mask it gives (`store export`, a mask), the clicked removal's mask, as in R5. A point
+     alone is query text, not an artifact, so the mask is what is kept;
    - 10 of the owner's photos with a scratch or a tear, each with a stroke and an area the
      owner draws in the playground and exports as a location (`store export`), for `repair`
      and `repair_area`;
@@ -1509,8 +1511,8 @@ P1 ──────────────────┘
 - **C1, if built**: the marks of 20 finished pictures and the picks of 10 pairs.
 - **R5**: the picks of about 48 pairs of its runs (56 with tier 2).
 - **R6**: in owner storage, 10 of your own photos, each of a different scene with the phrase of
-  what to remove, a box drawn around the thing and a point clicked on it in the playground and
-  exported; 10 photos with a scratch or a tear, each with a stroke and an area you draw
+  what to remove, a box drawn around the thing and exported, and the mask SAM 3 gives for a
+  point you click on it, exported; 10 photos with a scratch or a tear, each with a stroke and an area you draw
   in the playground and export; 10 panoramas not used before. Then the marks of R6's sheets
   and the picks of its pages.
 - **T2, only if needed**: a yes to a new origin for the segmenter's files, if they are not
@@ -1899,4 +1901,11 @@ On draft 17, by the Codex CLI. Verdict: revise. Round 16's fixes held. Two findi
    a point for each photo.
 2. **Minor: the seal does not cover `images_repo`.** Right (`sets.rs`). Taken: gap 6 says so;
    the alias stands, since a sealed set is never edited.
+
+### Review round 18
+
+On draft 18, by the Codex CLI. Verdict: approve. Round 17's fixes held, and no earlier finding
+was reopened. One finding, a minor: a clicked point is query text in the playground, not an
+artifact `store export` can write. Right (`Workspace.tsx`; `store.rs`), and taken: the owner
+runs SAM 3's point request in the playground and exports the mask it gives.
 
