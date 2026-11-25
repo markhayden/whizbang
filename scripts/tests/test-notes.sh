@@ -113,4 +113,11 @@ done
 [ "$(cited docs/plans/m6-note.md | wc -l | tr -d ' ')" -ge 45 ] ||
   fail "docs/plans/m6-note.md cites fewer than 45 tests: its table of clauses is gone or is no longer read"
 
+# And the note of milestone 7 (plan m7, task N1), for its row: bundles, replay, and the
+# playground's comparisons, examples and chains, with the Chrome cases of each.
+[ "$(cited docs/plans/m7-note.md | wc -l | tr -d ' ')" -ge 80 ] ||
+  fail "docs/plans/m7-note.md cites fewer than 80 tests: its table of clauses is gone or is no longer read"
+[ "$(chrome_cited docs/plans/m7-note.md | wc -l | tr -d ' ')" -ge 8 ] ||
+  fail "docs/plans/m7-note.md cites fewer than 8 Chrome cases: its table of clauses is gone or is no longer read"
+
 finished
