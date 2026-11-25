@@ -621,7 +621,7 @@ right.
    `remote::wire::a_request_whose_connection_was_refused_settles_at_nothing` and
    `remote::wire::a_request_cut_after_its_first_byte_is_still_charged_at_its_bound`.
 
-- [x] Done when: five full checks on the owner's Mac each under 250 seconds of test time,
+- [ ] Done when: five full checks on the owner's Mac each under 250 seconds of test time,
   or the owner's word on the budget; the pack's run under 10 seconds on
   `macos-15` in five runs, or the owner's word on its budget; the Chrome case passed 20 runs
   in a row (the run named); item 4's tests pass; the four rows closed with their lines.
