@@ -1641,3 +1641,75 @@ fn a_live_replay_with_the_same_answers_reproduces_a_check_and_a_bundles_step() {
     ]);
     assert_eq!(offline.code, Some(0), "{}{}", offline.out, offline.err);
 }
+
+/// A chain's step started under an id (plan m7, task U2): the run the call makes, waited
+/// for.
+fn stepped(engine: &Engine, request: &whizbang_core::contract::Request) -> RunId {
+    let Answer::Started(run) = engine.start(request).unwrap() else {
+        panic!("not started");
+    };
+    engine.wait(&run).unwrap();
+    run
+}
+
+#[test]
+fn a_steps_id_after_its_bundle_went_answers_only_its_own_request_and_another_as_a_conflict() {
+    use whizbang_core::contract::{Request, Value};
+    let world = world("replay-step-id", 1);
+    let removed = removal(&world);
+    let store = Arc::new(Store::open(&world.root, Arc::new(RealFs)).unwrap());
+    let made = whizbang_core::bundle::make(
+        store.as_ref(),
+        &[removed.run().as_str()],
+        &whizbang::bundling::shipped().unwrap(),
+        "test",
+    )
+    .unwrap();
+    let bytes = made.bytes.clone();
+    whizbang_core::bundle::import(&store, || Ok(std::io::Cursor::new(bytes.clone()))).unwrap();
+    drop(store);
+    let call = Call::new("remove_prompt")
+        .argument("prompt", Value::text("the hose"))
+        .input("image", world.image_id());
+    let id = RequestId::parse("step-one").unwrap();
+    let request = Request::new(call.clone())
+        .with_id(id.clone())
+        .from_step(made.digest, 0);
+    let engine = world.engine();
+    let run = stepped(&engine, &request);
+    assert_eq!(
+        record(&world, run.as_str())
+            .replayed()
+            .and_then(|r| r.bundle.as_ref())
+            .map(|b| b.step),
+        Some(0)
+    );
+    drop(engine);
+    // The bundle goes; the same request is answered with its run.
+    let store = Store::open(&world.root, Arc::new(RealFs)).unwrap();
+    whizbang_core::bundle::delete(&store, &made.digest).unwrap();
+    drop(store);
+    let engine = world.engine();
+    let Answer::Repeat(earlier) = engine.start(&request).unwrap() else {
+        panic!("not a repeat");
+    };
+    assert_eq!(earlier.run(), &run);
+    // Another call under the id is a conflict, not the step's refusal.
+    let other = Request::new(call.clone().argument("prompt", Value::text("the cup")))
+        .with_id(id)
+        .from_step(made.digest, 0);
+    match engine.start(&other).unwrap_err() {
+        CallError::Refused(Refusal::Conflict { run: named, .. }) => assert_eq!(named, run),
+        other => panic!("{other:?}"),
+    }
+    // A new id finds no step: the step's own refusal.
+    let fresh = Request::new(call)
+        .with_id(RequestId::parse("step-two").unwrap())
+        .from_step(made.digest, 0);
+    match engine.start(&fresh).unwrap_err() {
+        CallError::Refused(Refusal::NotReplayed { why, .. }) => {
+            assert!(why.contains("holds no bundle"), "{why}");
+        }
+        other => panic!("{other:?}"),
+    }
+}

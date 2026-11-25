@@ -181,13 +181,29 @@ fn a_link_that_finds_no_output_or_two_stops_the_chain() {
     let kitted = Kitted::new("chain-stops");
     let chain = chain_in(&kitted, 71);
     let digest = imported(&kitted, &bundled(&kitted, &[&chain.removal, &chain.check]));
-    // A run that made no output stands as step 1's new run: the link finds nothing there.
-    let nothing = ran(&kitted, "shout", &json!({"words": "nothing"}));
+    // Step 1's new run found nothing and made no picture: the link finds no output there.
+    let first = opened(&kitted, &digest, 0, &[]);
+    kitted.kit().set("nothing").unwrap();
+    let step = json!({"bundle": digest, "step": 0});
+    let nothing = started(&kitted, "remove_prompt", &first["values"], Some(&step));
+    kitted.kit().set("reset").unwrap();
     let stopped = opened(&kitted, &digest, 1, &[Some(&nothing)]);
     let why = stopped["stopped"]["why"].as_str().unwrap();
     assert!(why.contains("made no output there"), "{stopped}");
     assert_eq!(stopped["stopped"]["run"], nothing.as_str(), "{stopped}");
     assert!(stopped.get("values").is_none(), "{stopped}");
+    // A run that is not this chain's step, named for it, is refused: the host does not
+    // take the page's word for which run a step made.
+    let crafted = ran(&kitted, "shout", &json!({"words": "not a step"}));
+    for run in [crafted.as_str(), chain.removal.as_str()] {
+        let answer = kitted.api(
+            "POST",
+            &format!("/api/bundles/{digest}/steps/1/open"),
+            Some(&json!({"runs": [run]})),
+        );
+        assert_eq!(answer.status, 422, "{}", answer.text());
+        assert!(answer.text().contains("is not step 1"), "{}", answer.text());
+    }
     // Two outputs that could be the one the step recorded: the chain cannot tell which.
     let two = whizbang::play_bundles::bind(0, 1, &["sha256:a".to_owned(), "sha256:b".to_owned()]);
     assert!(two.unwrap_err().contains("cannot tell which"));
@@ -248,6 +264,30 @@ fn a_run_started_from_a_step_records_the_bundle_and_the_step() {
     let again = kitted.api("POST", "/api/runs", Some(&body));
     assert_eq!(again.json()["run"], once.json()["run"], "{}", again.text());
     kitted.until_ended(once.json()["run"].as_str().unwrap());
+    // The same id under another call, with the step's mark: a conflict, not the step's
+    // answer; and the same request after its bundle was deleted is answered with its run.
+    let mut other = first["values"].clone();
+    other["prompt"] = json!("the kettle");
+    let prepared = kitted.prepare("remove_prompt", &other);
+    let conflict = json!({"action": "remove_prompt", "arguments": other,
+                          "handle": prepared["handle"], "request_id": id, "replay": step});
+    assert_eq!(kitted.api("POST", "/api/runs", Some(&conflict)).status, 409);
+    // A call of another action under a step's mark is not that step made again.
+    let shout = kitted.prepare("shout", &json!({"words": "hi"}));
+    let wrong = json!({"action": "shout", "arguments": {"words": "hi"},
+                       "handle": shout["handle"], "request_id": fresh_id(), "replay": step});
+    let refused = kitted.api("POST", "/api/runs", Some(&wrong));
+    assert_eq!(refused.status, 422, "{}", refused.text());
+    assert!(
+        refused.text().contains("is a run of remove_prompt"),
+        "{}",
+        refused.text()
+    );
+    // A replay's and a step's outputs are offered to the binding picker all the same.
+    let picker = kitted
+        .api("GET", "/api/runs?output=image&limit=200", None)
+        .json();
+    assert!(picker.to_string().contains(&made), "{picker}");
     let elsewhere = format!("sha256:{}", "0".repeat(64));
     for replay in [
         json!({"bundle": elsewhere, "step": 0}),
@@ -264,4 +304,26 @@ fn a_run_started_from_a_step_records_the_bundle_and_the_step() {
             refused.text()
         );
     }
+}
+
+#[test]
+fn a_step_asked_again_after_its_bundle_went_is_answered_with_its_run() {
+    let kitted = Kitted::new("chain-repeat");
+    let chain = chain_in(&kitted, 73);
+    let digest = imported(&kitted, &bundled(&kitted, &[&chain.removal]));
+    let first = opened(&kitted, &digest, 0, &[]);
+    let prepared = kitted.prepare("remove_prompt", &first["values"]);
+    let body = json!({"action": "remove_prompt", "arguments": first["values"],
+                      "handle": prepared["handle"], "request_id": fresh_id(),
+                      "replay": {"bundle": digest, "step": 0}});
+    let once = kitted.api("POST", "/api/runs", Some(&body));
+    assert_eq!(once.status, 201, "{}", once.text());
+    let run = once.json()["run"].as_str().unwrap().to_owned();
+    kitted.until_ended(&run);
+    let deleted = kitted.api("DELETE", &format!("/api/bundles/{digest}"), None);
+    assert_eq!(deleted.status, 200, "{}", deleted.text());
+    // The host restarts, so the store's record of the id answers, not the host's memory.
+    let kitted = kitted.restarted_after(|_| ());
+    let again = kitted.api("POST", "/api/runs", Some(&body));
+    assert_eq!(again.json()["run"], run.as_str(), "{}", again.text());
 }

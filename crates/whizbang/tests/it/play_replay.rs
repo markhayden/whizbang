@@ -83,3 +83,37 @@ fn record_child(kitted: &Kitted, run: &str) -> String {
         .cloned()
         .expect("the loop called a run")
 }
+
+#[test]
+fn a_live_replay_runs_only_under_the_cost_the_page_showed() {
+    let kitted = Kitted::new("replay-live-shown");
+    let arguments = json!({"image": kitted.picture(91), "prompt": "the cup"});
+    let run = ran(&kitted, "remove_prompt", &arguments);
+    let path = format!("/api/runs/{run}/replay");
+    // No cost shown: refused, and nothing asked of a backend.
+    let asked = kitted.kit().requests();
+    let bare = kitted.api(
+        "POST",
+        &path,
+        Some(&json!({"live": true, "request_id": fresh_id()})),
+    );
+    assert_eq!(bare.status, 409, "{}", bare.text());
+    // A cost shown that is less than the replay may spend: refused before it is admitted.
+    let free = kitted.prepare("shout", &json!({"words": "free"}));
+    let cheap = json!({"live": true, "request_id": fresh_id(), "handle": free["handle"]});
+    let refused = kitted.api("POST", &path, Some(&cheap));
+    assert_eq!(refused.status, 422, "{}", refused.text());
+    assert!(refused.text().contains("more than"), "{}", refused.text());
+    assert_eq!(kitted.kit().requests(), asked);
+    // The run's own cost, shown from its Run again draft: it runs, live.
+    let record = kitted
+        .api("GET", &format!("/api/runs/{run}/record"), None)
+        .json();
+    let again = &record["again"];
+    let shown = kitted.prepare(again["task"].as_str().unwrap(), &again["values"]);
+    assert_eq!(shown["ready"], true, "{shown}");
+    let body = json!({"live": true, "request_id": fresh_id(), "handle": shown["handle"]});
+    let started = kitted.api("POST", &path, Some(&body));
+    assert_eq!(started.status, 201, "{}", started.text());
+    kitted.until_ended(started.json()["run"].as_str().unwrap());
+}

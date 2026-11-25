@@ -52,6 +52,7 @@ pub struct Replay {
     id: Option<RequestId>,
     cancellation: Option<super::Cancellation>,
     deadline: Option<std::time::Instant>,
+    shown: Option<u64>,
 }
 
 impl Replay {
@@ -63,6 +64,7 @@ impl Replay {
             id: None,
             cancellation: None,
             deadline: None,
+            shown: None,
         }
     }
 
@@ -92,6 +94,19 @@ impl Replay {
     pub fn until(mut self, deadline: std::time::Instant) -> Replay {
         self.deadline = Some(deadline);
         self
+    }
+
+    /// The same replay, live, held to the bound its caller was shown, in millionths of a
+    /// US dollar: a live replay whose own preparation's bound is more is refused before
+    /// anything is admitted (plan m7, task U2). It is no part of the fingerprint.
+    pub fn shown(mut self, micros: u64) -> Replay {
+        self.shown = Some(micros);
+        self
+    }
+
+    /// The bound its caller was shown, when it was shown one.
+    pub fn shown_bound(&self) -> Option<u64> {
+        self.shown
     }
 
     pub fn cancellation(&self) -> Option<&super::Cancellation> {
@@ -463,7 +478,7 @@ pub(super) fn read(
 }
 
 /// A step of a bundle the store holds, as a chain's step finds it (plan m7, task U2): the
-/// step's run, and the name of each input of it under which a run started from the step
+/// step's run, its action, and the name of each input of it under which a run started from the step
 /// finds it among the bundle's files. An input whose file the bundle withholds is not
 /// named: the run is given another, or is refused for it as any run is.
 pub(super) fn step_of(
@@ -471,7 +486,7 @@ pub(super) fn step_of(
     generation: &Generation,
     digest: &Digest,
     step: u32,
-) -> Result<(String, Vec<(String, Entry)>), CallError> {
+) -> Result<(String, Option<String>, Vec<(String, Entry)>), CallError> {
     let stored =
         Stored::of_bundle(contents, generation, digest).map_err(|why| not_replayed("-", &why))?;
     let manifest = stored
@@ -500,7 +515,7 @@ pub(super) fn step_of(
         }
         *place += 1;
     }
-    Ok((root, names))
+    Ok((root, record.asked().action.clone(), names))
 }
 
 /// Whether a family replays, decided by this build from its records alone (ADR 0049,

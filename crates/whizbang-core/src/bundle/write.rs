@@ -283,37 +283,7 @@ pub fn make(
             gather(store, &generation, run, given, &mut gathered)?;
         }
         // The step's inputs: each linked to the earlier output it took, by identity.
-        let mut step_inputs = Vec::new();
-        for input in inputs(&root) {
-            let could: Vec<&(u32, String, u32, Digest)> = (earlier.iter())
-                .filter(|(_, _, _, identity)| *identity == input.artifact)
-                .collect();
-            let (artifact, from) = match could.as_slice() {
-                [] => (Some(input.artifact), None),
-                [(step, port, place, _)] => (
-                    None,
-                    Some(Link {
-                        step: *step,
-                        port: port.clone(),
-                        place: *place,
-                    }),
-                ),
-                [(a, at, _, _), (b, bt, _, _), ..] => {
-                    return Err(format!(
-                        "the input {} of step {index} ({given}) could be the output {at} of \
-                         step {a} or the output {bt} of step {b}: the chain cannot say which \
-                         it took; bundle the runs apart",
-                        input.port
-                    ));
-                }
-            };
-            step_inputs.push(StepInput {
-                port: input.port,
-                place: input.place,
-                artifact,
-                from,
-            });
-        }
+        let step_inputs = linked(&root, &earlier, index, given)?;
         for output in outputs(&root) {
             earlier.push((index as u32, output.port, output.place, output.artifact));
         }
@@ -406,6 +376,103 @@ pub fn make(
         bytes,
         manifest,
     })
+}
+
+/// A step's inputs, each linked to the one earlier output it took, by identity: an input
+/// two earlier outputs could be refuses the chain.
+fn linked(
+    root: &RunRecord,
+    earlier: &[(u32, String, u32, Digest)],
+    index: usize,
+    given: &str,
+) -> Result<Vec<StepInput>, String> {
+    let mut step_inputs = Vec::new();
+    for input in inputs(root) {
+        let could: Vec<&(u32, String, u32, Digest)> = (earlier.iter())
+            .filter(|(_, _, _, identity)| *identity == input.artifact)
+            .collect();
+        let (artifact, from) = match could.as_slice() {
+            [] => (Some(input.artifact), None),
+            [(step, port, place, _)] => (
+                None,
+                Some(Link {
+                    step: *step,
+                    port: port.clone(),
+                    place: *place,
+                }),
+            ),
+            [(a, at, _, _), (b, bt, _, _), ..] => {
+                return Err(format!(
+                    "the input {} of step {index} ({given}) could be the output {at} of \
+                     step {a} or the output {bt} of step {b}: the chain cannot say which \
+                     it took; bundle the runs apart",
+                    input.port
+                ));
+            }
+        };
+        step_inputs.push(StepInput {
+            port: input.port,
+            place: input.place,
+            artifact,
+            from,
+        });
+    }
+    Ok(step_inputs)
+}
+
+/// A chain's steps as [`make`] would write them, each with its action and its inputs
+/// linked, or the refusal [`make`] would give for its runs and links; nothing of the
+/// runs' files is read or written (plan m7, task U2: a chain checked as it is picked).
+pub fn links(
+    store: &(impl Contents + ?Sized),
+    steps: &[&str],
+) -> Result<Vec<(String, Option<String>, Vec<StepInput>)>, String> {
+    if steps.is_empty() {
+        return Err("a bundle holds one run at least".to_owned());
+    }
+    if steps.len() > STEPS_LIMIT {
+        return Err(format!(
+            "a bundle holds {STEPS_LIMIT} runs at most, and {} were given",
+            steps.len()
+        ));
+    }
+    let generation = store
+        .snapshot()
+        .map_err(|why| format!("the store cannot be read: {why}"))?;
+    let mut earlier: Vec<(u32, String, u32, Digest)> = Vec::new();
+    let mut taken: BTreeSet<String> = BTreeSet::new();
+    let mut said = Vec::new();
+    for (index, given) in steps.iter().enumerate() {
+        let (root, _) = record_of(store, &generation, given)?;
+        if root.identity().parent.is_some() {
+            let top = root_of(store, &generation, &root);
+            return Err(format!(
+                "the run {given} is a call made inside the run {}: a step is a run that \
+                 nothing called, and carries the runs under it; give {} instead",
+                top.chars().take(64).collect::<String>(),
+                top.chars().take(64).collect::<String>()
+            ));
+        }
+        if !taken.insert((*given).to_owned()) {
+            return Err(format!("the run {given} is given twice"));
+        }
+        let family = with_descendants(&generation, &[given], |entry| store.read_record(entry));
+        for run in &family {
+            if run != given && !taken.insert(run.clone()) {
+                return Err(format!("the run {run} is under two of the runs given"));
+            }
+        }
+        let step_inputs = linked(&root, &earlier, index, given)?;
+        for output in outputs(&root) {
+            earlier.push((index as u32, output.port, output.place, output.artifact));
+        }
+        said.push((
+            (*given).to_owned(),
+            root.asked().action.clone(),
+            step_inputs,
+        ));
+    }
+    Ok(said)
 }
 
 /// Gathers one run of a step's family: its record, its diagnostics, the files of its

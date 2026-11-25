@@ -131,7 +131,12 @@ pub fn listed(
     titles: &dyn Fn(&str) -> Option<String>,
 ) -> Result<Json, Refused> {
     let filter = filter_of(&asked.filter)?;
-    let replays = replays_of(&asked.filter)?;
+    // The binding picker asks by an output's type: a replay's or a chain step's output is
+    // as much a picture to take as any, so it is listed unless the page says otherwise.
+    let replays = match (asked.filter.get("replayed"), &asked.output) {
+        (None, Some(_)) => stats::Replays::Include,
+        _ => replays_of(&asked.filter)?,
+    };
     let runs = Runs::within(loaded, &filter, lookups)
         .map_err(|why| Refused::new(400, &why))?
         .keeping(replays);

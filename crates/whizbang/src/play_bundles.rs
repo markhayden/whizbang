@@ -58,15 +58,6 @@ pub fn escaped_all(value: Json) -> Json {
     }
 }
 
-/// A file name of letters, digits and `-` from a task's name and a run's id.
-fn file_name(action: &str, run: &str) -> String {
-    let plain: String = (action.chars())
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .take(64)
-        .collect();
-    format!("{plain}-{run}.whizbang-bundle")
-}
-
 /// What a manifest says of a withheld thing, in a line a person reads.
 fn withheld_json(item: &Withheld) -> Json {
     let what = match item {
@@ -234,11 +225,8 @@ impl Bundles for Playground {
         let root = self.root_path()?;
         let made = crate::bundling::make(&root, &[run.as_str()])
             .map_err(|why| Refused::new(422, &escaped(&why)))?;
-        let action = (made.manifest.steps.first())
-            .and_then(|step| step.action.clone())
-            .unwrap_or_default();
         Ok(Document {
-            name: file_name(&action, run.as_str()),
+            name: format!("{}.whizbang-bundle", run.as_str()),
             content_type: "application/x-tar",
             bytes: made.bytes,
         })
@@ -302,12 +290,49 @@ impl Bundles for Playground {
         let first = ids.first().copied().unwrap_or_default();
         Ok((
             Document {
-                name: file_name("chain", first),
+                name: format!("chain-{first}.whizbang-bundle"),
                 content_type: "application/x-tar",
                 bytes: made.bytes,
             },
             said,
         ))
+    }
+
+    fn check_chain(&self, runs: &[RunId]) -> Result<Json, Refused> {
+        let store = self.store()?;
+        let ids: Vec<&str> = runs.iter().map(RunId::as_str).collect();
+        let linked =
+            bundle::links(store.as_ref(), &ids).map_err(|why| Refused::new(422, &escaped(&why)))?;
+        let titles = |action: &str| {
+            (self.descriptors().iter())
+                .find(|d| d.name() == action)
+                .and_then(|d| d.title().map(escaped))
+        };
+        let steps: Vec<Json> = (linked.iter().enumerate())
+            .map(|(at, (run, action, inputs))| {
+                let inputs: Vec<Json> = (inputs.iter())
+                    .map(|input| {
+                        json!({
+                            "port": escaped(&input.port), "place": input.place,
+                            "artifact": input.artifact.map(|digest| digest.to_string()),
+                            "from": input.from.as_ref().map(|link| json!({
+                                "step": link.step, "port": escaped(&link.port), "place": link.place,
+                            })),
+                        })
+                    })
+                    .collect();
+                json!({
+                    "step": at, "run": escaped(run),
+                    "action": action.as_deref().map(escaped),
+                    "title": action.as_deref().and_then(titles),
+                    "version": null, "runs": 1, "replayable": true, "why": null,
+                    "inputs": inputs,
+                })
+            })
+            .collect();
+        Ok(
+            json!({"digest": null, "steps": steps, "holds": {"records": 0, "files": 0}, "withheld": []}),
+        )
     }
 
     fn import(&self, bytes: &[u8]) -> Result<Json, Refused> {
@@ -340,7 +365,9 @@ impl Bundles for Playground {
                 listed.push(json!({"digest": digest.to_string(), "steps": [], "unreadable": true}));
                 continue;
             };
-            listed.push(self.summary(&digest, &manifest, None));
+            // Whether each step replays is this build's decision, never the manifest's.
+            let decided = decided(&store, &generation, &digest, &manifest)?;
+            listed.push(self.summary(&digest, &manifest, Some(&decided)));
         }
         Ok(json!({"bundles": listed}))
     }
@@ -448,6 +475,22 @@ impl Bundles for Playground {
                         )), "run": escaped(&new_run)}));
                         break;
                     };
+                    // The run named for the earlier step is that step's run of this chain:
+                    // its record names this bundle and that step.
+                    let of_step = (made.replayed())
+                        .and_then(|replayed| replayed.bundle.as_ref())
+                        .is_some_and(|from| from.digest == digest && from.step == link.step);
+                    if !of_step {
+                        return Err(Refused::new(
+                            422,
+                            &format!(
+                                "the run {} is not step {}'s run of this chain: its record \
+                                 names no step of this bundle",
+                                escaped(&new_run),
+                                link.step + 1
+                            ),
+                        ));
+                    }
                     let outputs: Vec<String> = (made.outputs().iter())
                         .filter(|output| output.port == link.port)
                         .map(|output| output.artifact.to_string())
@@ -489,13 +532,6 @@ impl Bundles for Playground {
                 }
             }
         }
-        if let Some(publication) = publication
-            && stopped.is_none()
-        {
-            publication
-                .publish()
-                .map_err(|_| Refused::new(500, "the store could not give the step its inputs"))?;
-        }
         let title = (self.descriptors().iter())
             .find(|d| d.name() == action)
             .map(|d| escaped(d.title().unwrap_or(d.name())));
@@ -508,7 +544,8 @@ impl Bundles for Playground {
         }
         // An ordinary draft, as Run again gives one: the record's arguments, the inputs as
         // bound, and the config's choices of backend (the bundle's store's names are not
-        // this one's).
+        // this one's). Made before anything is published, so a step this build cannot
+        // run leaves nothing behind.
         let draft = self
             .tasks()
             .draft_of(
@@ -527,6 +564,11 @@ impl Bundles for Playground {
                     ),
                 )
             })?;
+        if let Some(publication) = publication {
+            publication
+                .publish()
+                .map_err(|_| Refused::new(500, "the store could not give the step its inputs"))?;
+        }
         let mut said = draft;
         said["step"] = step_json;
         said["bindings"] = Json::Array(bindings);

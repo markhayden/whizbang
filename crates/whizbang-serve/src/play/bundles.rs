@@ -44,6 +44,9 @@ pub trait Bundles: Send + Sync {
     /// The bundle of a chain of root runs, in the order given, and what it holds: its
     /// steps, their links and what it withholds.
     fn bundle_chain(&self, runs: &[RunId]) -> Result<(Document, Json), Refused>;
+    /// A chain's steps and their links, or the refusal the writer would give, without
+    /// reading the runs' files or writing the bundle.
+    fn check_chain(&self, runs: &[RunId]) -> Result<Json, Refused>;
     /// Reads a bundle's bytes whole and imports it.
     fn import(&self, bytes: &[u8]) -> Result<Json, Refused>;
     /// Every bundle the store holds.
@@ -164,9 +167,38 @@ fn digest_of(guarded: &Guarded<'_>) -> Result<String, Response> {
     }
 }
 
+/// A place among the host's two uploads, taken by the writing of a bundle, which reads a
+/// run's whole family: so polls, Stop and Quit always find a worker (ADR 0041). Given back
+/// when dropped.
+struct Writing<'a>(&'a Shared);
+
+impl Drop for Writing<'_> {
+    fn drop(&mut self) {
+        let mut state = self.0.state();
+        state.uploads = state.uploads.saturating_sub(1);
+    }
+}
+
+fn writing(shared: &Shared) -> Result<Writing<'_>, Response> {
+    let mut state = shared.state();
+    if state.uploads >= super::UPLOADS_LIMIT {
+        return Err(Response::refused(
+            429,
+            "at most two pictures or bundles are sent or written at once",
+        )
+        .with("Retry-After", "1"));
+    }
+    state.uploads += 1;
+    Ok(Writing(shared))
+}
+
 fn bundle_run(shared: &Shared, guarded: &Guarded<'_>) -> Response {
     let run = match run_of(guarded) {
         Ok(run) => run,
+        Err(refused) => return refused,
+    };
+    let _place = match writing(shared) {
+        Ok(place) => place,
         Err(refused) => return refused,
     };
     match bundles(shared).map(|bundles| bundles.bundle_run(&run)) {
@@ -211,11 +243,21 @@ fn chain(shared: &Shared, guarded: &Guarded<'_>) -> Response {
             Err(_) => return Response::refused(404, "no run has that id"),
         }
     }
-    match bundles(shared).map(|bundles| bundles.bundle_chain(&runs)) {
-        Ok(Ok((_, said))) if asked.check => Response::json(200, &said),
-        Ok(Ok((document, _))) => download(document),
-        Ok(Err(why)) => refused_by_play(&why),
-        Err(refused) => refused,
+    let bundles = match bundles(shared) {
+        Ok(bundles) => bundles,
+        Err(refused) => return refused,
+    };
+    // A check reads the runs' records alone, and writes nothing.
+    if asked.check {
+        return answered(bundles.check_chain(&runs), 200);
+    }
+    let _place = match writing(shared) {
+        Ok(place) => place,
+        Err(refused) => return refused,
+    };
+    match bundles.bundle_chain(&runs) {
+        Ok((document, _)) => download(document),
+        Err(why) => refused_by_play(&why),
     }
 }
 
@@ -306,6 +348,9 @@ struct Replaying {
     #[serde(default)]
     live: bool,
     request_id: String,
+    /// Live: the handle of the preparation whose cost the page showed.
+    #[serde(default)]
+    handle: Option<String>,
 }
 
 /// `POST /api/runs/{id}/replay`: a replay started on the host's one executor, as a start
@@ -355,6 +400,38 @@ fn replay(shared: &Shared, guarded: &Guarded<'_>) -> Response {
         Ok(id) => id,
         Err(error) => return call_refused(&error),
     };
+    // A live replay may spend: it runs only under the cost the page showed, from a
+    // preparation the host still keeps, and is held to that preparation's bound.
+    let shown_bound = match (asked.live, &asked.handle) {
+        (false, _) => None,
+        (true, None) => {
+            return Response::json(
+                409,
+                &json!({"error": "a live replay runs only under the cost the page showed: prepare it, then replay",
+                        "kind": "stale"}),
+            );
+        }
+        (true, Some(handle)) => {
+            let age = shared.settings.preparation_age;
+            let now = Instant::now();
+            let kept = shared
+                .state()
+                .preparations
+                .iter()
+                .find(|kept| &kept.handle == handle && now.duration_since(kept.at) < age)
+                .map(|kept| kept.prepared.estimate().micros());
+            match kept {
+                Some(bound) => Some(bound),
+                None => {
+                    return Response::json(
+                        409,
+                        &json!({"error": "the cost the page showed is no longer kept: prepare it again, then replay",
+                                "kind": "stale"}),
+                    );
+                }
+            }
+        }
+    };
     let signal = Cancellation::new();
     let until = Instant::now() + shared.settings.run_limit;
     // What a page that follows the run is shown while it goes: the task and the
@@ -385,6 +462,9 @@ fn replay(shared: &Shared, guarded: &Guarded<'_>) -> Response {
         .until(until + shared.settings.grace);
     if asked.live {
         replay = replay.live();
+    }
+    if let Some(bound) = shown_bound {
+        replay = replay.shown(bound);
     }
     match executor.start_replay(&replay) {
         Ok(Answer::Started(made)) => {

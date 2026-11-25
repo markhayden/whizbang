@@ -208,3 +208,24 @@ fn no_bundle_route_takes_a_path() {
     );
     assert_eq!(replayed.status, 400, "{}", replayed.text());
 }
+
+#[test]
+fn a_chain_is_checked_from_its_records_without_being_written() {
+    let kitted = Kitted::new("bundles-check");
+    let chain = chain_in(&kitted, 83);
+    let body = json!({"runs": [chain.removal, chain.check], "check": true});
+    let checked = kitted.api("POST", "/api/bundles/chain", Some(&body));
+    assert_eq!(checked.status, 200, "{}", checked.text());
+    let said = checked.json();
+    let linked = said["steps"][1]["inputs"].as_array().unwrap();
+    assert!(
+        linked.iter().any(|input| input["from"]["step"] == 0),
+        "{said}"
+    );
+    // The same run twice is refused, as the writer refuses it.
+    let twice = json!({"runs": [chain.removal, chain.removal], "check": true});
+    let refused = kitted.api("POST", "/api/bundles/chain", Some(&twice));
+    assert_eq!(refused.status, 422, "{}", refused.text());
+    assert!(refused.text().contains("given twice"), "{}", refused.text());
+    assert!(held(&kitted).is_empty());
+}

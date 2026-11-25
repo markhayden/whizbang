@@ -1149,3 +1149,33 @@ pub fn with_descendants(
     }
     all
 }
+
+#[cfg(test)]
+mod step_tests {
+    use super::Request;
+    use crate::contract::{Call, Value};
+    use crate::identity::Digest;
+
+    #[test]
+    fn a_steps_fingerprint_is_not_its_calls_and_names_its_bundle_and_step() {
+        let call = Call::new("remove_prompt").argument("prompt", Value::text("the hose"));
+        let plain = Request::new(call.clone()).fingerprint();
+        let bundle = Digest::of_bytes(b"a bundle");
+        let step = Request::new(call.clone())
+            .from_step(bundle, 0)
+            .fingerprint();
+        assert_ne!(plain, step);
+        assert_ne!(
+            step,
+            Request::new(call.clone())
+                .from_step(bundle, 1)
+                .fingerprint()
+        );
+        let other = Digest::of_bytes(b"another bundle");
+        assert_ne!(
+            step,
+            Request::new(call.clone()).from_step(other, 0).fingerprint()
+        );
+        assert_eq!(step, Request::new(call).from_step(bundle, 0).fingerprint());
+    }
+}
