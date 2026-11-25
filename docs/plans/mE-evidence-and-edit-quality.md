@@ -1,7 +1,7 @@
 # Plan: milestone E, evidence and edit quality
 
-Draft 9, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
-note of milestone 7), after eight outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
+Draft 10, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
+note of milestone 7), after nine outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
 quality". Its first slice ran beside milestone 5 (`docs/plans/e1-judge-format-loop.md`,
 `docs/plans/e1-note.md`) and chose the default judge and kept the submission format on
 descriptive evidence. This plan is the rest of the milestone: every unverified tool and
@@ -574,19 +574,31 @@ names the source path and commit.
    name the current repository; `SETS_REPOSITORY` names it; the reader takes the old name as
    an alias for sets sealed before, with a test that every set resolves to the one
    repository. No sealed file changes.
-7. **A spend guard.** A table of a bound price per generated picture for each generator,
-   dated and read from each provider's page by the orchestrator before the first build; a
-   build refuses to start when its plan's pictures times their bounds pass `--cap-usd`, and
-   stops when what it has asked for reaches it. The construction record states each call's
-   bound; the build prints the total. This spend is outside every store's ledger and is
-   counted in the milestone's spend by the orchestrator from that total.
-8. **The seasonal cover pair** (the carry-over row on a seasonal cover). A dev plan of one
+7. **A spend guard, cumulative.** A table of a bound price per generated picture for each
+   generator, dated and read from each provider's page by the orchestrator before the first
+   build. One durable ledger file for all of E's generation, `--ledger <owner storage>`,
+   with one allowance set once (`--cap-usd 8`) and shared by every build and `rebuild`, the
+   fixture's and the fresh set's alike, across interruptions. Every request, a retry of the
+   generator's (squint's `_open` tries a request up to six times) included, is charged at its
+   bound and written to the ledger before it is sent; one whose cost is not known is kept at
+   its bound; a request that would pass the allowance is not sent. The build prints what the
+   ledger holds. This spend is outside every store's ledger, and E's cap counts the builder's
+   allowance whole ("Spend").
+8. **Output that tells nothing of a blind set.** For a blind set, `build`, `rebuild` and
+   `promote` print only counts, the set's id and families and items by their place (never an
+   id, a path, a prompt, a label or a plan's text), and a provider's failure by its status
+   alone, never its body; everything else goes to the construction record in owner storage.
+   The validation errors squint's toolkit writes with ids and paths, and its echo of a
+   provider's response, are held to that by negative tests: a bad plan, a failed request, a
+   promote with an unreviewed label. `scripts/tests/test-sets.sh: a blind build prints no id,
+   path, prompt or provider text`.
+9. **The seasonal cover pair** (the carry-over row on a seasonal cover). A dev plan of one
    family whose `restyle` lays snow over a protected subject, with two jobs on the same
    pictures: one whose brief permits a seasonal cover (a pass), one that does not (a fail).
    Built by D1 from fresh images, as a fixture of `check`'s use-case tests.
 
 - [ ] Done when: both pull requests are merged, the dry run passes in `just check`, and the
-  alias test passes. **Reviewer reads hardest:** that no plan, label or contact sheet of a
+  alias test and the blind-output tests pass. **Reviewer reads hardest:** that no plan, label or contact sheet of a
   blind set can be written inside the repo (`--owner` inside the work tree is refused).
 
 ## T1. `outline`, then `regions`, as tool files on SAM 3 (large, two pull requests)
@@ -722,7 +734,7 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    lettering. A dev set's pictures may be viewed, so the building agent writes those
    attributes from them. Labels are carried from v1 and confirmed by the owner, who changes
    any a fuller requirement now decides otherwise. v1 is untouched; v2 is sealed beside it.
-2. **The seasonal cover pair** (B1, item 8), generated from fresh images and committed as a
+2. **The seasonal cover pair** (B1, item 9), generated from fresh images and committed as a
    dev fixture.
 3. **The fresh set, `source-fidelity/confirm-v1`, and its plain twin.** 22 families of new
    scene kinds, disjoint from every family of every set, about 5 items each, about half
@@ -869,9 +881,13 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
 7. **Tier 2, only on the owner's yes** ("I need", item 2), added to the matrix before it is
    frozen: the study's one comparison that excluded zero, `regions` on `gemini-3.8-flash`,
    with two repetitions of each of C and `C+regions` on `confirm-v1` (the carry-over row on the
-   study's one repetition), if `regions` passed R2; Flash beside Haiku and Terra in each
-   tool's gate; a third tool's arms. If this comparison does not run, for want of the yes or because
-   `regions` did not pass R2, N1 withdraws the study's claim with a
+   study's one repetition). It repeats the study's tool, so `regions` runs with
+   `method = eomt`, squint's class disagreement on the fixed-class segmenter, whatever R2
+   chose: that method is kept in the code until this round has run, even if it lost R2, and
+   removed after. Its result answers the study's claim only, and is reported apart from
+   `regions`' own gate, which uses R2's method. Also: Flash beside Haiku and Terra in each
+   tool's gate; a third tool's arms. If this comparison does not run, for want of the yes or
+   because the fixed-class segmenter does not run (T2), N1 withdraws the study's claim with a
    line in `docs/results/2026-11-tool-study.md` and the row.
 
 - [ ] Done when: every receipt is committed, `whizbang eval admitted` lists what they admitted,
@@ -1125,9 +1141,9 @@ row on the panorama side of `view`):
    and the segmenter they use, and rascal's rows, marked as E left them; section 4's
    segmenters naming the fixed-class entry; section 16, row E, if the owner's answer to "I
    need", item 3 changed it.
-3. **The study's claim**, withdrawn with a line unless R4 ran its comparison (`regions` on
-   Flash, two repetitions an arm), whatever else tier 2 ran: if tier 2 was not approved, or
-   `regions` did not pass R2, the claim is withdrawn.
+3. **The study's claim**, withdrawn with a line unless R4 ran its comparison (`regions` with
+   the study's method on Flash, two repetitions an arm), whatever else tier 2 ran; if it ran,
+   its result kept or withdrew the claim, and the record says which.
 4. **The tag `mE`**, by the orchestrator, on the note's merge.
 
 - [ ] Done when: the note is merged and `mE` is tagged.
@@ -1142,7 +1158,7 @@ row on the panorama side of `view`):
 | The fixed slack in `land` | P1, item 5 |
 | `resize`'s methods (dropped) and squint's spherical estimator of `align` | P1, item 8: re-owned to the first panorama set to align |
 | Job requirements omit colour, count and lettering | B1, item 5; D1, items 1 and 3; R4 |
-| A test pair for a seasonal cover | B1, item 8; D1, item 2 |
+| A test pair for a seasonal cover | B1, item 9; D1, item 2 |
 | Small models break the submission format | F1, F2, R4 |
 | What the port of the use cases left of the rules | T1, item 4 |
 | Which tools a gate admitted | M1, item 8 |
@@ -1623,4 +1639,20 @@ majors. Each was checked against the code; all were right and taken.
    variant and the arm give `check` the same arguments.
 3. **Major: the study's claim could stay open with tier 2 approved.** Right. Taken: N1
    withdraws it unless R4 ran the comparison, whatever the reason it did not.
+
+### Review round 9
+
+On draft 9, by the Codex CLI. Verdict: revise. Round 8's fixes held but for its finding 3,
+completed by this round's finding 3. Three findings, all majors. Each was checked against the
+pinned source and the plan; all were right and taken.
+
+1. **Major: the builder's output could tell the fresh set's ids, paths or a provider's
+   reply.** Right (squint's `cli.py`, `plan.py`, `generators.py`). Taken: B1, item 8, output
+   for a blind set limited to counts and places, with negative tests.
+2. **Major: the builder's cap was per build and did not count retries.** Right (squint's
+   `_open` tries six times). Taken: one durable ledger for all of E's generation, each request
+   and retry charged at its bound before it is sent.
+3. **Major: the study's repeat could test a different `regions`.** Right. Taken: the repeat
+   runs squint's method on the fixed-class segmenter, kept for it whatever R2 chose, and its
+   result is reported apart from `regions`' own gate.
 
