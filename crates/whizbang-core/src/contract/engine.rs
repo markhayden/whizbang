@@ -883,10 +883,19 @@ impl Executor for Engine {
         let failed = |error| CallError::Store(StoreFailure::new(error));
         // The source is read through one held generation.
         let holding = store.hold().map_err(failed)?;
+        // Live, the config as it is now: what it chooses by default is a choice the call
+        // need not write, and its backends are what the family's models are held to.
+        let taken = match replay.mode() {
+            super::record::ReplayMode::Live => Some(self.take()?),
+            super::record::ReplayMode::Offline => None,
+        };
+        let defaults =
+            |capability| (taken.as_ref()).and_then(|taken| taken.snapshot.default_of(capability));
         let told = replay::Told {
             shipped,
             registry: &self.registry,
             tool_files: &self.tool_files,
+            defaults: &defaults,
         };
         let read = replay::read(replay, store.as_ref(), holding.generation(), &told)?;
         drop(holding);
@@ -916,6 +925,40 @@ impl Executor for Engine {
                     .collect();
                 let offered = need.model().is_some_and(|model| recorded.contains(&model));
                 if let (false, Some(was)) = (offered, recorded.first()) {
+                    return Err(Refusal::NotReplayed {
+                        run: read.root.clone(),
+                        why: format!(
+                            "its {} requests were answered by {} {} {}, and the config no \
+                             longer offers that model under the choice the run made",
+                            capability.name(),
+                            was.backend(),
+                            was.model(),
+                            was.version()
+                        ),
+                    }
+                    .into());
+                }
+            }
+            // A capability a run under the root asked that the root's call does not say
+            // it needs: held to what the config chooses of it by default, which is what
+            // a call that names no backend of it is handed.
+            let backends = (taken.as_ref())
+                .and_then(|taken| taken.snapshot.backends())
+                .unwrap_or(self.backends.as_ref());
+            for (capability, was) in &read.models {
+                if prepared
+                    .needs()
+                    .iter()
+                    .any(|need| need.capability() == *capability)
+                {
+                    continue;
+                }
+                let recorded: Vec<&ModelIdentity> = (read.models.iter())
+                    .filter(|(c, _)| c == capability)
+                    .map(|(_, model)| model)
+                    .collect();
+                let now = backends.resolve(*capability, None, &[]).ok();
+                if !now.as_ref().is_some_and(|model| recorded.contains(&model)) {
                     return Err(Refusal::NotReplayed {
                         run: read.root.clone(),
                         why: format!(

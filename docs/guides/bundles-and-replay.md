@@ -103,8 +103,8 @@ with what the run made. The run is one nothing called (a step of a recipe is rep
 the recipe), of an action this build ships at the version it ships, that was not
 interrupted. A bundle's step is replayed from the bundle's names in the store; `--bundle`
 imports the file first. Whether a step replays is decided from its records, whatever the
-bundle's manifest says of it: `bundle show` prints this build's decision, and the
-manifest's beside it where the two differ.
+bundle's manifest says of it: `bundle show` prints this build's decision for an
+offline replay, and the manifest's beside it where the two differ.
 
 **Offline**, the default, every model's answer is the one the run recorded: a segmenter's
 from the masks the run committed and its `segment.txt`, a filler's from the painted picture
@@ -124,8 +124,11 @@ a difference. Settings that differ from the run's are listed beside the report.
 Neither reads nor writes the decision cache. The report is `reproduced` (exit 0), or
 `differs`, each difference by the place of its run (`the run, step 3`) and what differs,
 the first where the replay first went otherwise, `diverged` or `unanswerable` (exit 3).
-`--request-id` makes a replay asked again answer with the run it made, even once its source
-is gone. Every run of a replayed family names the run it replays, in its record and its
+`--request-id` makes a replay asked again answer with the run it made, even once its run or
+its bundle's entry is gone, asked by the run's id or `--bundle-digest` (`--bundle <file>`
+reads the file to find its digest, so the file must be there). A replay that ran and whose
+report cannot be made prints `report: not made` and exits 3. A live replay compares what
+the judge said, never the ids a provider gives each answer. Every run of a replayed family names the run it replays, in its record and its
 admission; `runs stats` leaves replayed families out unless `--replayed include` or `only`
 is given.
 

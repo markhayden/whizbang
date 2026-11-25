@@ -296,6 +296,8 @@ pub(super) struct Told<'a> {
     pub(super) shipped: &'a BTreeMap<String, String>,
     pub(super) registry: &'a Registry,
     pub(super) tool_files: &'a BTreeMap<String, String>,
+    /// The choice the config makes now of each capability when a call makes none.
+    pub(super) defaults: &'a dyn Fn(Capability) -> Option<String>,
 }
 
 /// Reads a replay from its source through this generation: the root's family, every rule
@@ -343,37 +345,8 @@ pub(super) fn read(
             "it has not ended: a run is replayed once it has its record",
         ));
     };
-    if let Some(parent) = &record.identity().parent {
-        return Err(not_replayed(
-            &root,
-            &format!(
-                "it is a run another run called, which is replayed as part of the run it is \
-                 under; replay the run {parent}, or the run that called that"
-            ),
-        ));
-    }
     let asked = record.asked().clone();
-    let (Some(action), Some(version)) = (&asked.action, &asked.version) else {
-        return Err(not_replayed(&root, "its record lost its admission"));
-    };
-    match told.shipped.get(action) {
-        Some(shipped) if shipped == version => {}
-        Some(shipped) => {
-            return Err(not_replayed(
-                &root,
-                &format!("this build ships {action} at version {shipped}, not {version}"),
-            ));
-        }
-        None => {
-            return Err(not_replayed(
-                &root,
-                &format!(
-                    "{action} is not an action this build ships: a recipe file's or a tool \
-                     file's action is never replayed"
-                ),
-            ));
-        }
-    }
+    let action = asked.action.clone().unwrap_or_default();
     // The family, the root first and each run before the runs it called.
     let mut runs = vec![record];
     let mut at = 0;
@@ -403,61 +376,11 @@ pub(super) fn read(
         }
         at += 1;
     }
-    for record in &runs {
-        let ended = record.outcome();
-        if ended.error.as_ref().is_some_and(|e| e.kind == INTERRUPTED) {
-            let run = &record.identity().run;
-            return Err(not_replayed(
-                &root,
-                &format!(
-                    "the run {run} of its family was interrupted: the process that ran it ended \
-                     first, and the steps it lost cannot be answered"
-                ),
-            ));
-        }
-    }
-    if let Some((run, name)) = recorded::at_the_limit(&runs).first() {
-        return Err(not_replayed(
-            &root,
-            &format!(
-                "the setting {name} of the run {run} is exactly as long as a setting may be, \
-                 so it may have been cut"
-            ),
-        ));
-    }
+    decide(&runs, told.shipped, replay.mode, told.tool_files)
+        .map_err(|why| not_replayed(&root, &why))?;
     let live = replay.mode == ReplayMode::Live;
-    for record in &runs {
-        let run = &record.identity().run;
-        for setting in &record.asked().settings {
-            let Some(name) = setting.name().strip_prefix(recorded::TOOL_FILE_SETTING) else {
-                continue;
-            };
-            if !live {
-                return Err(not_replayed(
-                    &root,
-                    &format!(
-                        "the run {run} of its family called the tool file {name}: a tool file \
-                         is code, and an offline replay never runs one"
-                    ),
-                ));
-            }
-            let noted = match setting.value() {
-                ArgumentValue::Text(text) => text.as_str(),
-                _ => "",
-            };
-            if told.tool_files.get(name).map(String::as_str) != Some(noted) {
-                return Err(not_replayed(
-                    &root,
-                    &format!(
-                        "the run {run} of its family called the tool file {name} at {noted}, \
-                         and the config names no tool file of that name with that digest"
-                    ),
-                ));
-            }
-        }
-    }
     let root_record = &runs[0];
-    let mut call = Call::new(action);
+    let mut call = Call::new(&action);
     for argument in &root_record.asked().arguments {
         let value = match &argument.value {
             ArgumentValue::Number(number) => Value::Number(*number),
@@ -499,7 +422,7 @@ pub(super) fn read(
         }
     }
     if live {
-        call = with_choices(call, &root, &runs, &models, told.registry)?;
+        call = with_choices(call, &root, &runs, &models, told.registry, told.defaults)?;
     }
     let recorded = (!live).then(|| Arc::new(Recorded::of_family(&runs, &stored)));
     Ok(Read {
@@ -512,6 +435,85 @@ pub(super) fn read(
     })
 }
 
+/// Whether a family replays, decided by this build from its records alone (ADR 0049,
+/// "What is replayed"), never from what a bundle's manifest says of it: the records, the
+/// root first; each action this build ships, with its version; the mode; and, live, each
+/// tool file the config names now, with its revision. Why not, in a sentence.
+pub fn decide(
+    runs: &[RunRecord],
+    shipped: &BTreeMap<String, String>,
+    mode: ReplayMode,
+    tool_files: &BTreeMap<String, String>,
+) -> Result<(), String> {
+    let Some(root) = runs.first() else {
+        return Err("its record is not held".to_owned());
+    };
+    if let Some(parent) = &root.identity().parent {
+        return Err(format!(
+            "it is a run another run called, which is replayed as part of the run it is \
+             under; replay the run {parent}, or the run that called that"
+        ));
+    }
+    for record in runs {
+        if (record.outcome().error.as_ref()).is_some_and(|e| e.kind == INTERRUPTED) {
+            let run = &record.identity().run;
+            return Err(format!(
+                "the run {run} of its family was interrupted: the process that ran it ended \
+                 first, and the steps it lost cannot be answered"
+            ));
+        }
+    }
+    let asked = root.asked();
+    let (Some(action), Some(version)) = (&asked.action, &asked.version) else {
+        return Err("its record lost its admission".to_owned());
+    };
+    match shipped.get(action) {
+        Some(ships) if ships == version => {}
+        Some(ships) => {
+            return Err(format!(
+                "this build ships {action} at version {ships}, not {version}"
+            ));
+        }
+        None => {
+            return Err(format!(
+                "{action} is not an action this build ships: a recipe file's or a tool \
+                 file's action is never replayed"
+            ));
+        }
+    }
+    if let Some((run, name)) = recorded::at_the_limit(runs).first() {
+        return Err(format!(
+            "the setting {name} of the run {run} is exactly as long as a setting may be, \
+             so it may have been cut"
+        ));
+    }
+    for record in runs {
+        let run = &record.identity().run;
+        for setting in &record.asked().settings {
+            let Some(name) = setting.name().strip_prefix(recorded::TOOL_FILE_SETTING) else {
+                continue;
+            };
+            if mode == ReplayMode::Offline {
+                return Err(format!(
+                    "the run {run} of its family called the tool file {name}: a tool file \
+                     is code, and an offline replay never runs one"
+                ));
+            }
+            let noted = match setting.value() {
+                ArgumentValue::Text(text) => text.as_str(),
+                _ => "",
+            };
+            if tool_files.get(name).map(String::as_str) != Some(noted) {
+                return Err(format!(
+                    "the run {run} of its family called the tool file {name} at {noted}, \
+                     and the config names no tool file of that name with that digest"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// A live replay's call with each choice the root's run took written explicitly: the
 /// alias its settings name for each capability its action chooses by an argument
 /// (`backends.<capability>.<alias>.…`). A capability the family asked whose settings do
@@ -522,6 +524,7 @@ fn with_choices(
     runs: &[RunRecord],
     models: &[(Capability, ModelIdentity)],
     registry: &Registry,
+    defaults: &dyn Fn(Capability) -> Option<String>,
 ) -> Result<Call, CallError> {
     let Some(action) = registry.get(call.action()) else {
         return Ok(call);
@@ -540,6 +543,9 @@ fn with_choices(
             .collect();
         aliases.dedup();
         match aliases.as_slice() {
+            // The config's default now: the call makes the same choice without the
+            // argument, as the original's did, and its arguments stay the original's.
+            [alias] if defaults(capability).as_deref() == Some(*alias) => {}
             [alias] => call = call.argument(argument, Value::text(alias)),
             _ if models.iter().any(|(c, _)| *c == capability) => {
                 return Err(not_replayed(
@@ -679,21 +685,16 @@ pub fn differences(original: &[Placed], replay: &[Placed]) -> Vec<Difference> {
             .collect()
     };
     let (was_names, now_names) = (names(original), names(replay));
-    let placed = |text: &str, names: &[(String, String)]| -> String {
-        let mut text = text.to_owned();
-        for (id, place) in names {
-            text = text.replace(id.as_str(), place);
-        }
-        text
-    };
+    let placed = |text: &str, names: &[(String, String)]| as_places(text, names);
     let mut found = Vec::new();
     let mut differ = |place: &str, what: &str, was: String, now: String| {
         if was != now {
+            let (original, replay) = around_the_difference(&was, &now);
             found.push(Difference {
                 place: place.to_owned(),
                 what: what.to_owned(),
-                original: cut(&was),
-                replay: cut(&now),
+                original,
+                replay,
             });
         }
     };
@@ -744,7 +745,7 @@ pub fn differences(original: &[Placed], replay: &[Placed]) -> Vec<Difference> {
             let shown = |kept: Option<&Vec<u8>>, ids: &[(String, String)]| match kept {
                 None => "nothing".to_owned(),
                 Some(bytes) => match std::str::from_utf8(bytes) {
-                    Ok(text) => placed(text, ids),
+                    Ok(text) => placed(&unanswered(text), ids),
                     Err(_) => Digest::of_bytes(bytes).to_string(),
                 },
             };
@@ -805,7 +806,11 @@ fn ended_order<'a>(places: impl Iterator<Item = &'a str>) -> BTreeMap<&'a str, u
 fn unspent(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(map) => {
-            map.retain(|key, _| !key.ends_with("_micros"));
+            // What was spent, and what a provider names its answer by: each request a
+            // new one, which a live replay cannot repeat.
+            map.retain(|key, _| {
+                !key.ends_with("_micros") && key != "provider_id" && key != "request_id"
+            });
             map.values_mut().for_each(unspent);
         }
         serde_json::Value::Array(items) => items.iter_mut().for_each(unspent),
@@ -845,6 +850,56 @@ fn cut(text: &str) -> String {
     }
 }
 
+/// The two sides of a difference as a report shows them: each from a little before the
+/// first character where they differ, at most 200 characters, with dots where cut.
+fn around_the_difference(was: &str, now: &str) -> (String, String) {
+    let first = (was.chars().zip(now.chars()))
+        .position(|(a, b)| a != b)
+        .unwrap_or_else(|| was.chars().count().min(now.chars().count()));
+    let from = first.saturating_sub(40);
+    let side = |text: &str| {
+        let rest: String = text.chars().skip(from).collect();
+        let shown = cut(&rest);
+        if from > 0 {
+            format!("...{shown}")
+        } else {
+            shown
+        }
+    };
+    (side(was), side(now))
+}
+
+/// A text with each run id of a family read as its place, the longest id first, so that
+/// an id that begins another is never read inside it.
+fn as_places(text: &str, names: &[(String, String)]) -> String {
+    let mut names: Vec<&(String, String)> = names.iter().collect();
+    names.sort_by_key(|(id, _)| std::cmp::Reverse(id.len()));
+    let mut text = text.to_owned();
+    for (id, place) in names {
+        text = text.replace(id.as_str(), place);
+    }
+    text
+}
+
+/// A kept document read as JSON, when it is one, without what a provider names its
+/// answer by and what was spent ([`unspent`]); any other text as it is.
+fn unanswered(text: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(text) {
+        Ok(mut json) => {
+            unspent(&mut json);
+            json.to_string()
+        }
+        Err(_) => text.to_owned(),
+    }
+}
+
+/// Differences cut to the most a report lists: those listed, and how many more.
+fn capped(mut differences: Vec<Difference>) -> (Vec<Difference>, usize) {
+    let more = differences.len().saturating_sub(DIFFERENCES_LIMIT);
+    differences.truncate(DIFFERENCES_LIMIT);
+    (differences, more)
+}
+
 /// The report of a replayed family against the family it replays: where it stopped,
 /// when its root noted a stop; else reproduced, or each difference.
 pub fn report(original: &[Placed], replay: &[Placed], note: Option<&[u8]>) -> Report {
@@ -854,12 +909,11 @@ pub fn report(original: &[Placed], replay: &[Placed], note: Option<&[u8]>) -> Re
     {
         return Report::Stopped(stop);
     }
-    let mut differences = differences(original, replay);
+    let differences = differences(original, replay);
     if differences.is_empty() {
         return Report::Reproduced;
     }
-    let more = differences.len().saturating_sub(DIFFERENCES_LIMIT);
-    differences.truncate(DIFFERENCES_LIMIT);
+    let (differences, more) = capped(differences);
     Report::Differs { differences, more }
 }
 
@@ -891,4 +945,83 @@ fn input_of(
     (contents.read(entry))
         .map(Some)
         .map_err(|why| format!("the input {name} of the run {run} cannot be read: {why}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn difference(at: usize) -> Difference {
+        Difference {
+            place: "the run".to_owned(),
+            what: format!("outputs {at}"),
+            original: "a".to_owned(),
+            replay: "b".to_owned(),
+        }
+    }
+
+    #[test]
+    fn at_most_256_differences_are_listed_and_the_rest_counted() {
+        let (listed, more) = capped((0..300).map(difference).collect());
+        assert_eq!(
+            (listed.len(), more),
+            (DIFFERENCES_LIMIT, 300 - DIFFERENCES_LIMIT)
+        );
+        assert_eq!(listed[0].what, "outputs 0");
+        let (listed, more) = capped((0..3).map(difference).collect());
+        assert_eq!((listed.len(), more), (3, 0));
+    }
+
+    #[test]
+    fn what_was_spent_and_a_providers_ids_are_left_out_at_any_depth() {
+        let mut json = serde_json::json!({"a": 1, "settled_micros": 5, "list": [
+            {"provider_id": "x", "request_id": "y", "kept": true, "reserved_micros": 2}]});
+        unspent(&mut json);
+        assert_eq!(json, serde_json::json!({"a": 1, "list": [{"kept": true}]}));
+        assert_eq!(unanswered("not json"), "not json");
+    }
+
+    #[test]
+    fn steps_end_before_the_run_that_called_them_in_their_order_at_any_depth() {
+        let places = [
+            "the run",
+            "the run, step 1",
+            "the run, step 2",
+            "the run, step 2, step 1",
+            "the run, step 10",
+        ];
+        let rank = ended_order(places.into_iter());
+        let mut order: Vec<&str> = places.to_vec();
+        order.sort_by_key(|place| rank[place]);
+        assert_eq!(
+            order,
+            [
+                "the run, step 1",
+                "the run, step 2, step 1",
+                "the run, step 2",
+                "the run, step 10",
+                "the run"
+            ]
+        );
+    }
+
+    #[test]
+    fn an_id_that_begins_another_is_never_read_inside_it() {
+        let names = [
+            ("1000-1".to_owned(), "<the run>".to_owned()),
+            ("1000-12".to_owned(), "<the run, step 1>".to_owned()),
+        ];
+        assert_eq!(
+            as_places("1000-12 then 1000-1", &names),
+            "<the run, step 1> then <the run>"
+        );
+    }
+
+    #[test]
+    fn a_difference_is_shown_around_where_it_begins() {
+        let same = "x".repeat(300);
+        let (was, now) = around_the_difference(&format!("{same}A"), &format!("{same}B"));
+        assert!(was.starts_with("...") && was.ends_with('A'), "{was}");
+        assert!(now.ends_with('B'), "{now}");
+    }
 }

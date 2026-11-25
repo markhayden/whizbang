@@ -1013,7 +1013,17 @@ pub fn replay(
         LookedUp::Missing => {
             // A file is imported only now, once the id is known not to be a repeat.
             if let (Source::Bundle { .. }, Some(file)) = (&source, bundle) {
-                whizbang::bundling::import_into(&store, file)?;
+                let imported = whizbang::bundling::import_into(&store, file)?;
+                // The file read for the import is the file whose digest was looked up.
+                if let Source::Bundle { digest, .. } = &source
+                    && imported.digest != *digest
+                {
+                    return Err(format!(
+                        "the bundle file changed while it was read: it was {digest} when its \
+                         request id was looked up, and {} when it was imported",
+                        imported.digest
+                    ));
+                }
             }
             match engine.start_replay(&replay).map_err(|e| e.to_string())? {
                 Answer::Started(run) => run,
@@ -1039,7 +1049,11 @@ pub fn replay(
             let text = format!("replay: {made}\nreport: not made: {why}\n");
             return Ok((printable_lines(&text).into_bytes(), true));
         }
-        Err(why) => return Err(why),
+        // The replay ran: its report could not be made, which is no refusal.
+        Err(why) => {
+            let text = format!("replay: {made}\nreport: not made: {why}\n");
+            return Ok((printable_lines(&text).into_bytes(), false));
+        }
     };
     let text = if *json {
         reported.json()

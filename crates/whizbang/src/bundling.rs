@@ -196,14 +196,13 @@ pub fn show(file: &Path) -> Result<String, String> {
     Ok(shown_deciding(&checked, &decided))
 }
 
-/// Whether each step of a checked bundle replays, decided by this build from the step's
-/// records, never from the manifest's claim (ADR 0049, "What is replayed"): a root run of
-/// an action this build ships, at its version, whose family has no interrupted run and
-/// whose record kept its admission.
+/// Whether each step of a checked bundle replays offline, decided by this build from the
+/// step's records by the rules a replay holds it to (`replay::decide`; ADR 0049, "What is
+/// replayed"), never from the manifest's claim. A record that does not read is said so.
 pub fn decided(file: &Path, manifest: &Manifest) -> Result<Vec<(bool, Option<String>)>, String> {
-    use whizbang_core::contract::record::{INTERRUPTED, RunRecord};
+    use whizbang_core::contract::record::{ReplayMode, RunRecord};
     let shipped = shipped()?;
-    let mut records: BTreeMap<String, RunRecord> = BTreeMap::new();
+    let mut records: BTreeMap<String, Result<RunRecord, String>> = BTreeMap::new();
     let mut reader =
         bundle::tar::Reader::new(std::io::BufReader::new(opened(file)?), bundle::MAX_BYTES);
     while let Some(head) = reader.next_head().map_err(|why| why.to_string())? {
@@ -213,42 +212,27 @@ pub fn decided(file: &Path, manifest: &Manifest) -> Result<Vec<(bool, Option<Str
         else {
             continue;
         };
-        if let Ok(record) = RunRecord::from_bytes(&bytes) {
-            records.insert(run.to_owned(), record);
-        }
+        let read = RunRecord::from_bytes(&bytes).map_err(|why| why.to_string());
+        records.insert(run.to_owned(), read);
     }
     let decide = |step: &bundle::Step| -> (bool, Option<String>) {
-        let Some(root) = records.get(&step.run) else {
-            return (false, Some("its record is not in the bundle".to_owned()));
-        };
-        let interrupted = (step.runs.iter())
-            .filter_map(|run| records.get(run))
-            .any(|record| (record.outcome().error.as_ref()).is_some_and(|e| e.kind == INTERRUPTED));
-        if interrupted {
-            return (
-                false,
-                Some("a run of its family was interrupted".to_owned()),
-            );
+        let mut runs = Vec::new();
+        for run in &step.runs {
+            match records.get(run) {
+                Some(Ok(record)) => runs.push(record.clone()),
+                Some(Err(why)) => {
+                    return (
+                        false,
+                        Some(format!("the record of {run} does not read: {why}")),
+                    );
+                }
+                None => return (false, Some(format!("the record of {run} is not in it"))),
+            }
         }
-        if root.identity().parent.is_some() {
-            return (false, Some("it is a run another run called".to_owned()));
-        }
-        let asked = root.asked();
-        match (&asked.action, &asked.version) {
-            (Some(action), Some(version)) => match shipped.get(action) {
-                Some(ships) if ships == version => (true, None),
-                Some(ships) => (
-                    false,
-                    Some(format!(
-                        "this build ships {action} at version {ships}, not {version}"
-                    )),
-                ),
-                None => (
-                    false,
-                    Some(format!("{action} is not an action this build ships")),
-                ),
-            },
-            _ => (false, Some("its record lost its admission".to_owned())),
+        let none = BTreeMap::new();
+        match whizbang_core::contract::replay::decide(&runs, &shipped, ReplayMode::Offline, &none) {
+            Ok(()) => (true, None),
+            Err(why) => (false, Some(why)),
         }
     };
     Ok(manifest.steps.iter().map(decide).collect())

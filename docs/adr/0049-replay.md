@@ -283,6 +283,18 @@ missing input; a replay of a user's recipe or tool file from a bundle.
 
 ### As R1 built it
 
+- **One decision, two readers.** `replay::decide` holds a family's records to "What is
+  replayed" for a replay and for `bundle show`, which prints the offline decision; a
+  record that does not read is said so, never left out.
+- **A live replay's choices.** A choice the run took from the config's default, which the
+  config still makes by default, is not written into the call, so the replay's arguments
+  are the original's; any other is written from the alias its settings name. A capability
+  a run under the root asked that the root's call does not say it needs is held to the
+  config's default choice of it.
+- **What a live replay cannot repeat** is left out of the comparison with what was spent:
+  the ids a provider gives each answer (`provider_id`, `request_id`), in the record and in
+  a kept JSON document such as an exchange.
+
 - **The comparison** reads each record's groups as its JSON (the action, its version and
   arguments; its inputs, outputs, outcome, steps, judge, plan, start, findings and
   attempts) with every amount of money left out, and each diagnostic but the journal and

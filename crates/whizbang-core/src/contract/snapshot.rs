@@ -326,6 +326,13 @@ impl Snapshot {
         })
     }
 
+    /// The name of the backend that answers a call that names none of this capability,
+    /// when the snapshot holds backends and offers one.
+    pub(super) fn default_of(&self, capability: Capability) -> Option<String> {
+        let offered = self.offered.as_ref()?;
+        offered.default_of(capability).map(str::to_owned)
+    }
+
     /// The ways out of a run admitted under this snapshot: the snapshot's policy and
     /// credentials behind the executor's sender and check, or the executor's own
     /// ways when the snapshot holds neither.

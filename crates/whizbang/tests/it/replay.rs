@@ -869,9 +869,9 @@ fn a_manifest_that_claims_a_step_replayable_that_is_not_changes_nothing() {
     let shown = whizbang(&["bundle", "show", path(&file)]);
     assert_eq!(shown.code, Some(0), "{}", shown.err);
     assert!(
-        shown.out.contains(
-            "not replayable: a run of its family was interrupted (its manifest says replayable)"
-        ),
+        shown.out.contains("not replayable: the run ")
+            && shown.out.contains("of its family was interrupted")
+            && shown.out.contains("(its manifest says replayable)"),
         "{}",
         shown.out
     );
@@ -937,7 +937,24 @@ fn a_live_replay_spends_as_a_run_and_reports_a_changed_verdict_as_a_difference()
     let report = reported(&world, &run);
     assert_eq!(report.report.name(), "differs", "{}", report.text());
     let text = report.text();
-    assert!(text.contains("judge"), "{text}");
+    let whizbang_core::contract::replay::Report::Differs { differences, .. } = &report.report
+    else {
+        unreachable!()
+    };
+    // The verdict differs, where the checklist and the decision are kept, and the call
+    // is the original's: no argument differs.
+    assert!(
+        differences
+            .iter()
+            .any(|d| d.what == "judge" && d.original.contains("pass") && d.replay.contains("fail")),
+        "{text}"
+    );
+    assert!(
+        !differences
+            .iter()
+            .any(|d| d.what == "arguments" || d.what == "steps"),
+        "{text}"
+    );
     // What it spent is in its records, as any run's.
     let spent: usize = (family(&world, run.as_str()).iter())
         .map(|r| r.spend().requests.len())
@@ -1582,4 +1599,45 @@ fn the_query_the_core_makes_of_a_segment_run_is_segments_own() {
             "{kind} {text}"
         );
     }
+}
+
+#[test]
+fn a_live_replay_with_the_same_answers_reproduces_a_check_and_a_bundles_step() {
+    // Under the config the runs ran under, every backend a fake that answers as it did:
+    // a live replay makes the same calls, the choices the config makes by default not
+    // written into them, and is reproduced; through the command it exits 0.
+    let world = world("replay-live-same", 3);
+    let removed = removal(&world);
+    let checked = checking(&world, output(&removed, "image"));
+    let (run, _) = replayed(&world.engine(), &of_run(checked.run()).live());
+    let report = reported(&world, &run);
+    assert!(report.reproduced(), "{}", report.text());
+    // A step of a bundle of the removal, taken into the same store.
+    let made = whizbang::bundling::make(&world.root, &[removed.run().as_str()]).unwrap();
+    let dir = whizbang_testkit::scratch::Scratch::new("replay-live-same-file");
+    let file = dir.path().join("removal.tar");
+    std::fs::write(&file, &made.bytes).unwrap();
+    {
+        let store = Store::open(&world.root, Arc::new(RealFs)).unwrap();
+        whizbang::bundling::import_into(&store, &file).unwrap();
+    }
+    let replay = Replay::of(Source::Bundle {
+        digest: made.digest,
+        step: 0,
+    })
+    .live();
+    let (run, _) = replayed(&world.engine(), &replay);
+    let report = reported(&world, &run);
+    assert!(report.reproduced(), "{}", report.text());
+    let offline = whizbang(&[
+        "runs",
+        "replay",
+        "--bundle-digest",
+        &made.digest.to_string(),
+        "--step",
+        "0",
+        "--store",
+        path(&world.root),
+    ]);
+    assert_eq!(offline.code, Some(0), "{}{}", offline.out, offline.err);
 }
