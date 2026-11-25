@@ -477,6 +477,9 @@ pub(super) fn read(
     })
 }
 
+/// A step's run, its action, and its inputs' names among the bundle's files.
+pub(super) type StepOf = (String, Option<String>, Vec<(String, Entry)>);
+
 /// A step of a bundle the store holds, as a chain's step finds it (plan m7, task U2): the
 /// step's run, its action, and the name of each input of it under which a run started from the step
 /// finds it among the bundle's files. An input whose file the bundle withholds is not
@@ -486,7 +489,7 @@ pub(super) fn step_of(
     generation: &Generation,
     digest: &Digest,
     step: u32,
-) -> Result<(String, Option<String>, Vec<(String, Entry)>), CallError> {
+) -> Result<StepOf, CallError> {
     let stored =
         Stored::of_bundle(contents, generation, digest).map_err(|why| not_replayed("-", &why))?;
     let manifest = stored

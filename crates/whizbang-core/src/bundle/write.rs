@@ -420,13 +420,13 @@ fn linked(
     Ok(step_inputs)
 }
 
+/// One step of a chain as [`links`] answers it: its run, its action, its inputs linked.
+pub type Linked = (String, Option<String>, Vec<StepInput>);
+
 /// A chain's steps as [`make`] would write them, each with its action and its inputs
 /// linked, or the refusal [`make`] would give for its runs and links; nothing of the
 /// runs' files is read or written (plan m7, task U2: a chain checked as it is picked).
-pub fn links(
-    store: &(impl Contents + ?Sized),
-    steps: &[&str],
-) -> Result<Vec<(String, Option<String>, Vec<StepInput>)>, String> {
+pub fn links(store: &(impl Contents + ?Sized), steps: &[&str]) -> Result<Vec<Linked>, String> {
     if steps.is_empty() {
         return Err("a bundle holds one run at least".to_owned());
     }
