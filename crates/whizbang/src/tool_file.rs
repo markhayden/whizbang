@@ -5,12 +5,14 @@
 //! **Its declaration** is a block of TOML at the top of the file, each line a comment, in
 //! the form of inline script metadata, between `# /// whizbang-tool` and `# ///`
 //! ([`Declaration`]): its format, `tool-file/1`; its name, version and purpose, which make
-//! its action's; the images it reads (`bindings`, each an input port); the kind of
-//! evidence it returns (`measurements`); each measurement with its unit and its bounds;
-//! the most readings it returns; its primary measurement, which way of it is changed and
-//! how several readings reduce to one (the worst); its time; and its arguments. A
-//! declaration that lacks a bound, or breaks a rule, is refused when the config is read,
-//! and nothing of the file runs ([`Files::read`]).
+//! its action's; the images it reads (`bindings`, each an input port); the kinds of
+//! evidence it returns (`measurements`, and `regions` beside them, plan mE, task T1,
+//! item 0); each measurement with its unit and its bounds; the most readings it returns;
+//! the most regions and the longest label of one, when it returns regions; its primary
+//! measurement, which way of it is changed and how several readings reduce to one (the
+//! worst); its time; and its arguments. A declaration that lacks a bound, or breaks a
+//! rule, is refused when the config is read, and nothing of the file runs
+//! ([`Files::read`]).
 //!
 //! **What runs is the file as it is now, by its digest.** Each run reads the file's bytes
 //! once, through a name that is no link, from a file its group and others cannot write;
@@ -23,8 +25,10 @@
 //! **Its output is held to its declaration before anything uses it** ([`checked`]): an
 //! object of `readings`, each a subject and a value for declared measurements within
 //! their bounds, at most the declared count, and `not_applicable`, subjects it could not
-//! read. A run that completed states them in its diagnostic [`REPORT`], with the primary
-//! measurement reduced by the declared rule.
+//! read; and, from a tool that declares them, `regions`, each a box or a polygon in pixels
+//! of an image the run handed it, a label and a score, at most the declared count. A run
+//! that completed states them in its diagnostic [`REPORT`], with the primary measurement
+//! reduced by the declared rule.
 //!
 //! **Its capabilities are nested calls** (ADR 0008): a tool's `segment` is a call of the
 //! action `segment` through the executor of the run's context, under its allowance and
@@ -73,6 +77,14 @@ pub const SUBJECT_LIMIT: usize = 200;
 pub const UNIT_LIMIT: usize = 32;
 /// The longest a declaration may give a run, in seconds.
 pub const TIME_MOST_S: u64 = 600;
+/// The most regions a declaration may allow, and the longest label of one, in bytes.
+pub const REGIONS_MOST: usize = 64;
+pub const REGION_LABEL_MOST: usize = 200;
+/// The most vertices of a region's polygon (as a location's, ADR 0002).
+pub const POLYGON_MOST: usize = 64;
+/// The kinds of evidence a tool file may return: `measurements` always, `regions` beside.
+pub const MEASUREMENTS: &str = "measurements";
+pub const REGIONS: &str = "regions";
 
 /// A tool file's declaration.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -82,7 +94,7 @@ pub struct Declaration {
     pub name: String,
     pub version: String,
     pub purpose: String,
-    pub evidence: String,
+    pub evidence: Evidence,
     pub bindings: Vec<String>,
     pub primary: String,
     pub changed: String,
@@ -93,9 +105,34 @@ pub struct Declaration {
     /// past what is reserved is refused by the run's allowance. None when not given.
     #[serde(default)]
     pub segments_most: u64,
+    /// The most regions one output holds, and the longest label of one, in bytes: given
+    /// when, and only when, `evidence` names `regions`.
+    #[serde(default)]
+    pub max_regions: Option<usize>,
+    #[serde(default)]
+    pub max_region_label_bytes: Option<usize>,
     pub measurements: Vec<Measure>,
     #[serde(default)]
     pub arguments: Vec<Arg>,
+}
+
+/// The kinds of evidence a declaration names: one, as `"measurements"`, or a list, as
+/// `["measurements", "regions"]`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub enum Evidence {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl Evidence {
+    /// Each kind named, in the order given.
+    pub fn kinds(&self) -> Vec<&str> {
+        match self {
+            Evidence::One(kind) => vec![kind.as_str()],
+            Evidence::Many(kinds) => kinds.iter().map(String::as_str).collect(),
+        }
+    }
 }
 
 /// One measurement a tool reports, with its unit and its bounds.
@@ -157,10 +194,42 @@ impl Declaration {
             self.format == FORMAT,
             "the declaration's format is not tool-file/1",
         )?;
+        let kinds = self.evidence.kinds();
         rule(
-            self.evidence == "measurements",
-            "evidence is measurements, the one kind at tool-file/1",
+            kinds.first() == Some(&MEASUREMENTS)
+                && kinds[1..].iter().all(|kind| *kind == REGIONS)
+                && kinds.len() <= 2,
+            "evidence is measurements, or measurements and regions",
         )?;
+        match (
+            self.regions(),
+            self.max_regions,
+            self.max_region_label_bytes,
+        ) {
+            (true, Some(most), Some(label)) => {
+                rule(
+                    (1..=REGIONS_MOST).contains(&most),
+                    "max_regions is from 1 to 64",
+                )?;
+                rule(
+                    (1..=REGION_LABEL_MOST).contains(&label),
+                    "max_region_label_bytes is from 1 to 200",
+                )?;
+            }
+            (true, _, _) => {
+                return Err(
+                    "a tool that returns regions declares max_regions and max_region_label_bytes"
+                        .to_owned(),
+                );
+            }
+            (false, None, None) => {}
+            (false, _, _) => {
+                return Err(
+                    "max_regions and max_region_label_bytes are for a tool whose evidence names regions"
+                        .to_owned(),
+                );
+            }
+        }
         rule(
             (1..=BINDINGS_MOST).contains(&self.bindings.len()),
             "bindings names 1 to 4 images",
@@ -265,6 +334,11 @@ impl Declaration {
             .map_err(|why| format!("the declaration: {why}"))
     }
 
+    /// Whether it returns regions beside its readings.
+    pub fn regions(&self) -> bool {
+        self.evidence.kinds().contains(&REGIONS)
+    }
+
     /// Which way of its primary measurement is changed.
     pub fn changed(&self) -> Changed {
         if self.changed == "smaller" {
@@ -363,11 +437,38 @@ pub struct Reading {
     pub values: BTreeMap<String, f64>,
 }
 
+/// Where a region is, in pixels of its image: a box, or a polygon of 3 to 64 vertices.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RegionShape {
+    Box([f64; 4]),
+    Polygon(Vec<[f64; 2]>),
+}
+
+/// One region a tool located: the image it is on, by the binding the run handed it under,
+/// its shape, a label and a score from 0 to 1.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Region {
+    pub frame: String,
+    pub shape: RegionShape,
+    pub label: String,
+    pub score: f64,
+}
+
+/// An image a run handed a tool, by its binding: what a region may be on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Frame {
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+}
+
 /// A tool's output, held to its declaration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Readings {
     pub readings: Vec<Reading>,
     pub not_applicable: Vec<String>,
+    /// The regions it located: empty from a tool that declares none.
+    pub regions: Vec<Region>,
 }
 
 fn subject(value: &Json) -> Result<String, String> {
@@ -383,16 +484,22 @@ fn subject(value: &Json) -> Result<String, String> {
 }
 
 /// A tool's output held to its declaration: an object of `readings` and, if it likes,
-/// `not_applicable`, and nothing else; at most the declared count of readings, each a
-/// subject and values of declared measurements, each finite and within its bounds.
-pub fn checked(declaration: &Declaration, output: &Json) -> Result<Readings, String> {
+/// `not_applicable` and, from a tool that declares them, `regions`, and nothing else; at
+/// most the declared count of readings, each a subject and values of declared
+/// measurements, each finite and within its bounds; at most the declared count of
+/// regions, each on one of `frames`, the images the run handed it ([`region`]).
+pub fn checked(
+    declaration: &Declaration,
+    output: &Json,
+    frames: &[Frame],
+) -> Result<Readings, String> {
     let Some(fields) = output.as_object() else {
         return Err("the output is not an object".to_owned());
     };
-    if let Some(key) = fields
-        .keys()
-        .find(|k| !matches!(k.as_str(), "readings" | "not_applicable"))
-    {
+    let declared = |key: &str| {
+        matches!(key, "readings" | "not_applicable") || (key == "regions" && declaration.regions())
+    };
+    if let Some(key) = fields.keys().find(|k| !declared(k)) {
         let shown: String = key.chars().take(32).collect();
         return Err(format!(
             "the output holds {shown:?}, which it does not declare"
@@ -453,9 +560,118 @@ pub fn checked(declaration: &Declaration, output: &Json) -> Result<Readings, Str
             not_applicable.push(subject(item)?);
         }
     }
+    let mut regions = Vec::new();
+    if let Some(value) = fields.get("regions") {
+        let listed = value.as_array().ok_or("regions is not a list")?;
+        let most = declaration.max_regions.unwrap_or(0);
+        if listed.len() > most {
+            return Err(format!(
+                "the output has {} regions, more than the {most} it declares",
+                listed.len()
+            ));
+        }
+        let label_most = declaration.max_region_label_bytes.unwrap_or(0);
+        for item in listed {
+            regions.push(region(item, frames, label_most)?);
+        }
+    }
     Ok(Readings {
         readings,
         not_applicable,
+        regions,
+    })
+}
+
+/// One region held to its rules: an object of `frame`, the binding of an image the run
+/// handed the tool; exactly one of `box`, `[left, top, right, bottom]` with area inside
+/// that image, and `polygon`, 3 to 64 points `[x, y]` inside it; `label`, printable ASCII
+/// of at most `label_most` bytes; and `score`, from 0 to 1. Nothing else.
+pub fn region(item: &Json, frames: &[Frame], label_most: usize) -> Result<Region, String> {
+    let Some(item) = item.as_object() else {
+        return Err("a region is not an object".to_owned());
+    };
+    if let Some(key) = item
+        .keys()
+        .find(|k| !matches!(k.as_str(), "frame" | "box" | "polygon" | "label" | "score"))
+    {
+        let shown: String = key.chars().take(32).collect();
+        return Err(format!("a region holds {shown:?}, which a region does not"));
+    }
+    let named = item.get("frame").and_then(Json::as_str).unwrap_or_default();
+    let Some(frame) = frames.iter().find(|f| f.name == named) else {
+        let shown: String = named.chars().take(32).collect();
+        return Err(format!(
+            "a region is on {shown:?}, which is no image the run handed the tool"
+        ));
+    };
+    let number = |value: &Json| value.as_f64().filter(|n| n.is_finite());
+    let (width, height) = (f64::from(frame.width), f64::from(frame.height));
+    let inside = |x: f64, y: f64| (0.0..=width).contains(&x) && (0.0..=height).contains(&y);
+    let shape = match (item.get("box"), item.get("polygon")) {
+        (Some(given), None) => {
+            let values: Vec<f64> = (given.as_array().into_iter().flatten())
+                .filter_map(number)
+                .collect();
+            let [left, top, right, bottom] = values[..] else {
+                return Err("a region's box is four numbers".to_owned());
+            };
+            if !(inside(left, top) && inside(right, bottom) && left < right && top < bottom) {
+                return Err(format!(
+                    "a region's box is not inside the {}x{} image {}, with area",
+                    frame.width, frame.height, frame.name
+                ));
+            }
+            RegionShape::Box([left, top, right, bottom])
+        }
+        (None, Some(given)) => {
+            let listed = given.as_array().ok_or("a region's polygon is not a list")?;
+            if !(3..=POLYGON_MOST).contains(&listed.len()) {
+                return Err("a region's polygon has 3 to 64 points".to_owned());
+            }
+            let mut points = Vec::new();
+            for point in listed {
+                let values: Vec<f64> = (point.as_array().into_iter().flatten())
+                    .filter_map(number)
+                    .collect();
+                let [x, y] = values[..] else {
+                    return Err("a point of a region's polygon is two numbers".to_owned());
+                };
+                if !inside(x, y) {
+                    return Err(format!(
+                        "a point of a region's polygon is not inside the {}x{} image {}",
+                        frame.width, frame.height, frame.name
+                    ));
+                }
+                points.push([x, y]);
+            }
+            RegionShape::Polygon(points)
+        }
+        _ => return Err("a region has a box or a polygon, one of the two".to_owned()),
+    };
+    let label = match item.get("label").and_then(Json::as_str) {
+        Some(text)
+            if text.len() <= label_most && text.chars().all(|c| (' '..='~').contains(&c)) =>
+        {
+            text.to_owned()
+        }
+        _ => {
+            return Err(format!(
+                "a region's label is printable text of at most the {label_most} bytes declared"
+            ));
+        }
+    };
+    let Some(score) = item
+        .get("score")
+        .and_then(number)
+        .filter(|n| (0.0..=1.0).contains(n))
+    else {
+        return Err("a region's score is a number from 0 to 1".to_owned());
+    };
+    Ok(Region {
+        frame: frame.name.clone(),
+        shape,
+        label,
+        score,
     })
 }
 
@@ -472,12 +688,29 @@ impl Readings {
         }
     }
 
-    /// The readings as JSON: what a judge is shown and a run's diagnostic holds.
-    pub fn to_json(&self) -> Json {
-        json!({
+    /// The readings as JSON: what a judge is shown and a run's diagnostic holds. The
+    /// regions are there when the tool declares them.
+    pub fn to_json(&self, declaration: &Declaration) -> Json {
+        let mut shown = json!({
             "readings": self.readings.iter().map(|r| json!({"subject": r.subject, "values": r.values})).collect::<Vec<_>>(),
             "not_applicable": self.not_applicable,
-        })
+        });
+        if declaration.regions()
+            && let Json::Object(fields) = &mut shown
+        {
+            let regions = (self.regions.iter())
+                .map(|r| {
+                    let mut region = json!({"frame": r.frame, "label": r.label, "score": r.score});
+                    match &r.shape {
+                        RegionShape::Box(edges) => region["box"] = json!(edges),
+                        RegionShape::Polygon(points) => region["polygon"] = json!(points),
+                    }
+                    region
+                })
+                .collect();
+            fields.insert("regions".to_owned(), Json::Array(regions));
+        }
+        shown
     }
 }
 
@@ -547,6 +780,7 @@ impl Files {
         let declaration = &file.declaration;
         let limits = DecodeLimits::default();
         let mut handed = Vec::new();
+        let mut frames = Vec::new();
         for (binding, id) in images {
             let image = match artifact::get(context.store(), ArtifactType::Image, *id, &limits) {
                 Ok(Artifact::Image(image)) => image,
@@ -554,6 +788,11 @@ impl Files {
                 Err(error) => return Err(format!("{binding}: {error}")),
             };
             let pixels = image.pixels(&limits).map_err(|e| e.to_string())?;
+            frames.push(Frame {
+                name: binding.clone(),
+                width: pixels.width(),
+                height: pixels.height(),
+            });
             handed.push(ToolImage {
                 name: binding.clone(),
                 width: pixels.width(),
@@ -578,7 +817,7 @@ impl Files {
             .worker
             .run_tool(&Secrets::none(), run, &limits, &mut answer)
             .map_err(|fault| fault.to_string())?;
-        let readings = checked(declaration, &output)?;
+        let readings = checked(declaration, &output, &frames)?;
         Ok((file, readings))
     }
 }
@@ -670,7 +909,7 @@ impl FileTools for Files {
         let (file, readings) = self.ran(name, images, arguments, context)?;
         Ok(FileRan {
             digest: file.digest.to_string(),
-            output: readings.to_json(),
+            output: readings.to_json(&file.declaration),
         })
     }
 }
@@ -721,7 +960,7 @@ impl Action for ToolFileAction {
                 json!({"name": declaration.primary, "value": value, "unit": declaration.unit(&declaration.primary)})
             })
             .collect();
-        let mut report = readings.to_json();
+        let mut report = readings.to_json(declaration);
         if let Json::Object(fields) = &mut report {
             fields.insert("tool".to_owned(), json!(declaration.name));
             fields.insert("version".to_owned(), json!(declaration.version));

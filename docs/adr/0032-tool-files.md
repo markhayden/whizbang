@@ -26,7 +26,7 @@ form of Python's inline script metadata, so the binary reads it without running 
 |---|---|
 | `format` | `tool-file/1` |
 | `name`, `version`, `purpose` | Its action's, by the descriptor's rules |
-| `evidence` | `measurements`, the one kind at `tool-file/1` |
+| `evidence` | `measurements`, the one kind at `tool-file/1` (and `regions` beside it, "Amended: regions") |
 | `bindings` | The images it reads, 1 to 4, each an input port of its action |
 | `measurements` | 1 to 16, each a `name`, a `unit`, and its bounds `min` and `max` |
 | `readings_most` | The most readings an output holds, 1 to 64 |
@@ -131,3 +131,35 @@ requirements it reads and never its label.
   is refused there and a local one is not.
 - The tool file of this milestone is per-subject comparison (`pack/tools/per_subject.py`).
   Its record, with rungs 1 and 2 on the Mac, is owed (`docs/carry-over.md`).
+
+## Amended: regions (2026-11-25)
+
+Plan mE, task T1, item 0. `outline` and `regions`, ported from squint, locate what changed:
+their evidence is regions on a frame as well as numbers. `tool-file/1` is widened, and a file
+written to it before still reads as it did.
+
+- **`evidence`** is `measurements`, as before, or the list `["measurements", "regions"]`.
+  Measurements stay required: every tool file declares the one number `eval tool` scores it
+  by.
+- **Two bounds, for a tool whose evidence names regions, and only for one:**
+  `max_regions`, the most regions an output holds, 1 to 64; and `max_region_label_bytes`,
+  the longest label of one, 1 to 200. A declaration that lacks either is refused when the
+  config is read, as one lacking any bound is.
+- **The output** may then hold `regions`, beside `readings` and `not_applicable`. Each is
+  an object of `frame`, the binding of an image the run handed the tool (`source`,
+  `candidate`); exactly one of `box`, `[left, top, right, bottom]` with area, and `polygon`,
+  3 to 64 points `[x, y]`, in pixels of that image and inside it; `label`, printable ASCII
+  of at most the declared bytes; and `score`, from 0 to 1. Nothing else. Each is held to
+  these rules before anything uses it, as a reading is: a region past the declared count, of
+  another frame, outside its image, or of a tool that declares none fails the run, and
+  nothing it read is stated.
+- **Where they go.** The run's diagnostic `tool_file.json` holds them beside the readings,
+  and a judge that called the tool is shown them in its answer. The checklist's evidence
+  items read them (plan mE, task T1, item 4).
+- **What a tool file may import.** It runs in the tool worker, from the pack: besides the
+  standard library it may import the pack's own modules. `pack/tools/outline.py` reads its
+  subjects through `whizbang_pack.subjects`, per-subject comparison's rule, shared.
+
+`tool/1` is unchanged: an output is still one JSON object of at most the header's bound.
+Plan mE's task T2 widens the context again, for a model named by the request and a labels
+artifact.
