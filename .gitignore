@@ -21,3 +21,5 @@ __pycache__/
 *.pyc
 # The playground interface's packages, installed by `npm ci` from ui/package-lock.json.
 ui/node_modules/
+# The set builder's environment, made by `uv run` in tools/sets/ (plan mE, task B1).
+tools/sets/.venv/
