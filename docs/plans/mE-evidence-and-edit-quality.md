@@ -1,7 +1,7 @@
 # Plan: milestone E, evidence and edit quality
 
-Draft 15, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
-note of milestone 7), after fourteen outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
+Draft 16, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
+note of milestone 7), after fifteen outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
 quality". Its first slice ran beside milestone 5 (`docs/plans/e1-judge-format-loop.md`,
 `docs/plans/e1-note.md`) and chose the default judge and kept the submission format on
 descriptive evidence. This plan is the rest of the milestone: every unverified tool and
@@ -288,7 +288,7 @@ theirs; builders make no live call.
 | T2 | The fixed-class segmenter as a catalogue entry that labels every pixel, and the tool context's reach to it; `classes`; the `method` of `regions` and `outline` | T1 | Large, two pull requests: about 1,800 (the adapter, its entry, conformance, the context's routing), then about 1,000 (`classes`, the methods) |
 | F1 | Submission v3; Haiku's invalid submissions counted by rule | M1 | Medium: about 1,400 |
 | D1 | The new set versions and the fresh set (the orchestrator's, with the owner) | B1; the fresh twins also M1 (`--held-out`) | Medium: about 500, and the sets' files |
-| R2 | Rung 2 of the new tools and their methods (the orchestrator's) | T2 | Small: about 400, records |
+| R2 | Rung 2 of the new tools and their methods (the orchestrator's) | T2, P1 | Small: about 400, records |
 | R3 | Rung 3 of squint's tools on `blind-v3` under a cheap judge (the orchestrator's) | M1, R2 | Medium: about 600, gate files and records |
 | F2 | The dev round of the format and the requirements (the orchestrator's) | F1, M1, D1 | Small: about 400, a matrix and records |
 | R4 | Rung 4: the confirmation round on the fresh set (the orchestrator's) | M1, D1, R3, F2 | Medium: about 900, gate files, receipts, records, ADR 0044 amended |
@@ -309,11 +309,13 @@ theirs; builders make no live call.
 1. **A0, M1, B1 and T1**, side by side. They share no source file but `docs/carry-over.md`.
    **F1 and M2** when M1 has landed: F1 adds v3 to the arms `crates/whizbang-eval/src/
    matrix.rs` reads, which M1 changes, and M2's command and M1's flags meet in
-   `crates/whizbang/src/eval.rs`. Beside them, the code tasks no squint round waits on: **P0, L1, C1**
-   (its measurement waits for nothing paid) and **P1**.
+   `crates/whizbang/src/eval.rs`. Beside them: **P1**, which every squint round waits for,
+   since it changes `view`, which every arm offers (a crop's mapping, the slack, a reduced
+   crop with transparency), so no receipt describes a `view` that later changed; and the code
+   tasks no squint round waits on, **P0, L1, C1** (its measurement waits for nothing paid).
 2. **T2** when T1 has landed; **D1** when B1 has landed, its fresh twins when M1 has too (the owner reviews the contact
    sheets); **L2** when L1 has landed.
-3. **R2** and **K1** when T2 has landed; then **R3** (and M1); **F2** when F1, M1 and D1's dev versions
+3. **R2** and **K1** when T2 and P1 have landed; then **R3** (and M1); **F2** when F1, M1 and D1's dev versions
    have landed.
 4. **R4** when D1's fresh set, R3 and F2 are in, and the owner has said yes to its use.
 5. **V1** (it may start any time after P0, as the owner's time allows); **R5** when V1, L2,
@@ -326,7 +328,8 @@ wave merges `main`; N1 writes the rest. `crates/whizbang-squint/src/marks.rs`: A
 and T2 add their records. `crates/whizbang-eval/src/gate.rs` and `crates/whizbang/src/
 gating.rs`: M1 alone. `crates/whizbang-eval/src/matrix.rs`: M1, then F1 (the `submission`
 values an arm takes). `crates/whizbang/src/eval.rs`: M1, then M2 and F1, the second of them
-to land merging `main`. `crates/whizbang-squint/src/submission.rs` and `check.rs`: F1 alone.
+to land merging `main`. `crates/whizbang-squint/src/submission.rs`: F1 alone. `crates/whizbang-squint/src/check.rs`: M1
+(item 12, the frozen method), then F1. `crates/whizbang-squint/src/checklist.rs`: T1 alone.
 `pack/`: T1 (tool files), then T2 (the adapter). `crates/whizbang-rascal/src/checked.rs`: L1,
 then L2. `crates/whizbang-squint/src/view.rs` and `crates/whizbang-core/src/identity/`: P1
 alone. `docs/reference/`: whoever changes the description runs `just docs`. This plan's own
@@ -1127,14 +1130,21 @@ row on the panorama side of `view`):
 
 ## K1. The segmenters compared (the orchestrator's; nothing paid)
 
-1. **The measure**: SAM 3, Tiny and the fixed-class segmenter (on the phrases its list holds)
-   on the 20 truth masks of `segmentation/segment-01`, on the Mac, by mask coverage and IoU,
-   by group, under `eval loop score`'s reading of a truth mask.
+1. **The measure**: SAM 3, Tiny and the fixed-class segmenter on the truth masks of
+   `segmentation/segment-01`, on the Mac, by mask coverage and IoU, by group, under `eval loop
+   score`'s reading of a truth mask. **Matched populations**: SAM 3 against Tiny on all 20
+   pictures, both phrase models; SAM 3 against the fixed-class segmenter only on the pictures
+   whose phrase is one of its class names, which T2 refuses otherwise, every model scored on
+   that same subset. The subset's size by group is written before anything is scored.
 2. **`segment`'s rung 2**: this table is mask agreement with references (section 8), so
    `segment` has rungs 1 and 2 and becomes unverified, before R6 credits its upper rungs.
-3. **The rule for milestone 8, frozen here**: milestone 8 builds a further segmenter only if
-   SAM 3 is under-covered (below 0.95) on at least a quarter of a group's pictures and another
-   model in the catalogue is not. Otherwise no further segmenter. W1 records the outcome.
+3. **The rule for milestone 8, frozen here**, applied to each pair of models on its matched
+   population, group by group: a group with fewer than 5 matched pictures is inconclusive for
+   that pair and decides nothing. Milestone 8 builds a further segmenter only if, in some
+   group with at least 5 matched pictures, SAM 3 is under-covered (below 0.95) on at least a
+   quarter of them and the other model on at least 2 fewer. Otherwise no further segmenter;
+   if every group is inconclusive for the fixed-class segmenter, the record says the
+   comparison could not be made for it. W1 records the outcome.
 4. **The record**, `docs/results/e-segmenters.md` and its TOML, held by an evidence test.
 
 - [ ] Done when: the record is committed and `segment`'s record names it.
@@ -1429,6 +1439,7 @@ P1 ──────────────────┘
 
 - F1 and M2 after M1: they change files M1 changes first.
 - T2 after T1: its methods extend T1's tools.
+- R2, and every squint round after it, after P1: the rounds measure `view` as it will stay.
 - R2 after T2: both methods of each tool are scored together.
 - R3 after M1 and R2: several gates on one matrix, the second look under C, and only tools
   that passed rung 2.
@@ -1499,8 +1510,9 @@ P1 ──────────────────┘
   default.
 - `align` loses its mark: it is a control, complete with rungs 1 and 2.
 - Details first, `resize` and `tiles` end E experimental.
-- At most one change to source fidelity's default recipe comes out of E: the format, or else
-  one tool.
+- At most one change to source fidelity's default recipe comes out of E: the format. A tool
+  or the second look that passes is admitted as a variant of its own,
+  `source-fidelity-<name>`.
 - Expected spend about 57 dollars of the 63.88 E has left; cap 63.5. `remove_checked`'s
   rounds need tier 2.
 
@@ -1828,4 +1840,17 @@ taken.
    protocol in tier 2, or its recipes end E experimental.
 4. **Minor: the tallies cannot say what the check after a place said.** Right. Taken: L1,
    item 3 extends the evidence reader and the orchestrator re-tallies the kept runs.
+
+### Review round 15
+
+On draft 15, by the Codex CLI. Verdict: revise. Round 14's fixes held. Four findings: 2
+majors, 2 minors. Each was checked against the code; all were right and taken.
+
+1. **Major: K1 compared models on different pictures.** Right (T2 refuses a phrase outside
+   its list). Taken: matched populations, their sizes written first, at least 5 matched
+   pictures in a group or it is inconclusive, and a margin of 2 pictures.
+2. **Major: P1 could change `view` after the squint rounds.** Right (every arm offers `view`,
+   `matrix.rs`). Taken: R2 and every squint round after it wait for P1.
+3. **Minor: `check.rs` had two owners.** Right. Taken: M1, then F1; `checklist.rs` T1's.
+4. **Minor: the owner's summary still said one tool could change the default.** Right. Taken.
 
