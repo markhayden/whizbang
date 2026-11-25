@@ -396,7 +396,7 @@ reported in its pull request. Every test that calls a provider or a real model i
    The "Evaluations" row on `tiles`, the second look and details first is narrowed with that
    line.
 
-- [ ] Done when: the two tests pass; `describe` shows every mark; the spec's sentences are in;
+- [x] Done when: the two tests pass; `describe` shows every mark; the spec's sentences are in;
   the ledger's figures are in this plan. **Reviewer reads hardest:** that no record's mark
   changed but `align`'s.
 
@@ -1367,6 +1367,18 @@ is taken at 1.5 times its control. Bria through fal at 0.04 a fill. These are es
 limits: the limits are E's store's allowance, each call's cap and the builder's `--cap-usd`.
 
 **What E has left: 63.88 dollars** of the milestone's 100, since the first slice settled 36.12.
+
+**E's ledger, as read on 2026-11-25** (A0, item 2), by `whizbang spend status` on the two
+stores of the first slice, before any round of this plan:
+
+| Store | Allowance | Charged | Unresolved | Left |
+|---|---|---|---|---|
+| The evaluation store | 70.00 | 29.056671 | 0.18144 | 40.943329 |
+| The loop store | 25.00 | 7.285148 | 0.08 | 17.714852 |
+
+The loop store's charge holds milestone 5's 0.22 beside E's first slice. Settled by E's first
+slice: 36.12; left of the milestone's 100: 63.88. Neither store takes a run of this plan: E's
+store does (below).
 
 **Tier 1, within what is left.**
 
