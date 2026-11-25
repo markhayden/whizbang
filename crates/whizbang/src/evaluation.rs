@@ -326,7 +326,12 @@ pub fn plan(
             // An arm that measures tiles for this use case cannot take a job that relates
             // a pair: the matrix is refused before anything runs.
             let paired = (job.images.iter()).any(|image| image.role != JobRole::Candidate);
-            for arm in &matrix.matrix.arms {
+            // Only the arms the matrix runs on this set (plan mE, task M1, item 1).
+            let runs = |arm: &matrix::Arm| {
+                let name = arm.to_string();
+                (matrix.matrix.judges.iter()).any(|judge| matrix.runs(id, judge, &name).is_some())
+            };
+            for arm in matrix.matrix.arms.iter().filter(|arm| runs(arm)) {
                 let tiles = arm
                     .detail_for(&job.use_case)
                     .is_some_and(|d| d.split(',').any(|d| d == whizbang_squint::details::TILES));

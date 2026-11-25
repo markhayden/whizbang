@@ -476,7 +476,10 @@ fn an_arm_naming_a_detail_for_a_use_case_that_cannot_take_it_is_refused_before_a
             r#"{ arm = "F", details = [{ detail = "outline", use_cases = ["reality-checks"] }] }"#,
             "is no detail measured first",
         ),
-        (r#""C;second_look=on""#, "settings of an arm F"),
+        (
+            r#"{ arm = "C", details = [{ detail = "align", use_cases = ["source-fidelity"] }] }"#,
+            "details are a setting of an arm F",
+        ),
         (
             r#""F;second_look=maybe""#,
             "second_look is on, strict or off",
@@ -524,6 +527,79 @@ fn an_arm_naming_a_detail_for_a_use_case_that_cannot_take_it_is_refused_before_a
         "{refused}"
     );
     assert!(checks(&judged.world.root).is_empty());
+}
+
+#[test]
+fn the_second_look_is_an_arm_of_c() {
+    // Plan mE, task M1, item 2: arm C may take the second look, and stays the control
+    // otherwise: nothing measured first, `view` and `align` offered, `align` answered with
+    // its pictures alone.
+    let matrix = matrix_with(SET, r#""C", { arm = "C", second_look = "on" }"#);
+    let looked = &matrix.matrix.arms[1];
+    assert_eq!(looked.to_string(), "C;second_look=on");
+    assert_eq!(
+        "C;second_look=on".parse::<whizbang_eval::matrix::Arm>(),
+        Ok(looked.clone())
+    );
+    assert_eq!(
+        (looked.offered(), looked.details(), looked.projection()),
+        ("view,align".to_owned(), "none", "visual_only")
+    );
+    // Forecast at three times arm C, as a second look under F is.
+    let cell = |arm: &str| whizbang_eval::matrix::Cell {
+        set: SET.to_owned(),
+        item: "a".to_owned(),
+        backend: "default".to_owned(),
+        model: "claude-haiku-5-5".to_owned(),
+        arm: arm.to_owned(),
+        repetition: 1,
+    };
+    assert_eq!(
+        whizbang_eval::matrix::forecast(&[cell("C;second_look=on")]),
+        Ok(3 * whizbang_eval::matrix::forecast(&[cell("C")]).unwrap())
+    );
+    // Run: arm C as before, then arm C with its second look, whose tentative item gets one
+    // more turn.
+    let (judged, tiny) = world_with("matrix-c-look", &["a"]);
+    let answers = vec![
+        items(&[(SF1, "held", "confident"), (SF2, "held", "confident")]),
+        items(&[(SF1, "held", "confident"), (SF2, "held", "tentative")]),
+        items(&[(SF2, "held", "confident")]),
+    ];
+    let (report, log) = run_matrix(&judged, answers, &|e| {
+        ran(e, &judged, &tiny, &matrix, PLENTY, &never)
+    });
+    let report = report.unwrap();
+    assert_eq!(
+        (report.completed, report.verdicts.get("pass")),
+        (2, Some(&2))
+    );
+    assert_eq!(log.lock().unwrap().len(), 3);
+    let mut runs = checks(&judged.world.root);
+    runs.sort_by_key(|(_, record)| argument(record, "second_look"));
+    let (plain, look) = (&runs[0].1, &runs[1].1);
+    for (record, second_look) in [(plain, "off"), (look, "on")] {
+        assert_eq!(
+            argument(record, "second_look").as_deref(),
+            Some(second_look)
+        );
+        assert_eq!(argument(record, "details").as_deref(), Some("none"));
+        assert_eq!(
+            argument(record, "projection").as_deref(),
+            Some("visual_only")
+        );
+        assert_eq!(argument(record, "tools").as_deref(), Some("view,align"));
+    }
+    let arm_of = |record: &serde_json::Value| -> serde_json::Value {
+        serde_json::from_str::<serde_json::Value>(&argument(record, "cell").unwrap()).unwrap()
+            ["arm"]
+            .clone()
+    };
+    assert_eq!(arm_of(look), "C;second_look=on");
+    let kept = judged_of(&judged.world.root, &runs[1].0);
+    assert_eq!(kept["second_look"]["items"], serde_json::json!([SF2]));
+    assert_eq!(kept["second_look"]["verdict_before"], "unsure");
+    assert!(judged_of(&judged.world.root, &runs[0].0)["second_look"].is_null());
 }
 
 const REALITY: &str = "reality-checks/tiny-v1";
