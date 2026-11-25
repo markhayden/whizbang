@@ -1482,10 +1482,10 @@ fn changing(
 }
 
 /// An action as `segment` or `fill` is described, whose run is `body`.
-struct Asks(
-    Arc<dyn Action>,
-    Box<dyn Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync>,
-);
+struct Asks(Arc<dyn Action>, AsksBody);
+
+/// What an [`Asks`] runs.
+type AsksBody = Box<dyn Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync>;
 
 impl Action for Asks {
     fn descriptor(&self) -> &ActionDescriptor {
