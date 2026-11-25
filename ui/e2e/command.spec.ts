@@ -22,9 +22,10 @@ function quoted(word: string): string {
   return `'${word.replace(/'/g, `'\\''`)}'`;
 }
 
-/** The command the page shows once Copy command is pressed. */
+/** The command the page shows once Copy command is pressed, in the result's More menu. */
 async function copied(page: Page): Promise<string> {
-  await page.getByRole("button", { name: /Copy command/ }).click();
+  await page.getByRole("button", { name: /^More/ }).click();
+  await page.getByRole("menuitem", { name: /Copy command/ }).click();
   const shown = page.locator(".result__command-text");
   await expect(shown).toContainText("whizbang ");
   return (await shown.textContent()) ?? "";

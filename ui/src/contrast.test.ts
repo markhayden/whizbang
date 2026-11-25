@@ -77,6 +77,9 @@ const PAIRS: Array<[string, string, string | null, string]> = [
   ["on-scrim", "scrim", "mark", "BEFORE and AFTER over a light picture"],
   ["running", "hover", null, "a running step's mark"],
   ["muted", "lacquer-wash", "panel", "a failed step's figures"],
+  ["ink", "brass-wash", "panel", "an attempt's value in a row of what differs"],
+  ["ink-2", "brass-wash", "panel", "a baseline's value in a row of what differs"],
+  ["muted", "brass-wash", "panel", "the name of a row of what differs"],
 ];
 
 /**

@@ -3,7 +3,7 @@
 .result__actions { display: flex; gap: var(--spacing-2); align-items: flex-start; }
 .result__actions > .button, .result__actions > .button-with-why { flex: 1; }
 .result__actions .button { width: 100%; justify-content: center; }
-.result__send { position: relative; flex: 1; }
+.result__send, .result__more-wrap { position: relative; flex: 1; }
 .result__menu { position: absolute; bottom: calc(100% + var(--spacing-2)); left: 0; z-index: 5; }
 .result__command { display: flex; flex-direction: column; gap: var(--spacing-1-5); }
 .result__command-text { margin: 0; max-height: 140px; overflow: auto; padding: var(--spacing-2); border-radius: var(--radius-sm); background: var(--color-raised); color: var(--color-ink); font-size: var(--text-xs); line-height: 16px; white-space: pre-wrap; overflow-wrap: anywhere; user-select: all; }
@@ -18,3 +18,13 @@
 .workspace--sent { grid-template-rows: auto minmax(0, 1fr); }
 .workspace__banner { grid-column: 1 / -1; padding: var(--spacing-2) var(--spacing-3); background: var(--color-panel); border-bottom: 1px solid var(--color-line); }
 .result__replacing { display: flex; flex-direction: column; gap: var(--spacing-1-5); }
+/* The More menu (plan m7, task U1): under the result's actions, at the end of its row. */
+.result__menu--end { left: auto; right: 0; }
+.result__more { width: 260px; }
+.result__more .menu__item { min-height: 30px; }
+/* A draft an example opened (plan m7, task U1; the design's surface 2, C). */
+.workspace__example { display: flex; align-items: center; gap: var(--spacing-2); margin: 0; }
+.workspace__example-tag { padding: 2px 6px; border-radius: var(--radius-xs); background: var(--color-brass-soft); color: var(--color-ink-2); font-size: 10px; letter-spacing: var(--tracking-caps); line-height: 12px; }
+.workspace__example-name { color: var(--color-ink-2); font-size: var(--text-md); overflow-wrap: anywhere; }
+.workspace__fell-back { margin: 0; padding: 10px var(--spacing-3); border-radius: var(--radius-sm); background: var(--color-raised); box-shadow: var(--color-copper) 2px 0 0 inset; color: var(--color-ink-2); font-size: var(--text-sm); line-height: 17px; }
+.workspace__examples { margin-top: var(--spacing-4); }

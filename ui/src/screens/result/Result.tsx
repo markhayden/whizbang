@@ -4,6 +4,7 @@ import { Button } from "../../components/Button";
 import { Canvas } from "../../components/Canvas";
 import { Compare, type CompareMode } from "../../components/Compare";
 import { CostTable } from "../../components/CostTable";
+import { ExampleDialog } from "../../components/ExampleDialog";
 import { Segmented } from "../../components/Segmented";
 import { SendToMenu } from "../../components/SendToMenu";
 import { StepList, type StepListEntry } from "../../components/StepList";
@@ -15,6 +16,7 @@ import { dollars, elapsed, middle } from "../../format";
 import { useArtifact, useArtifactState, useImageSize } from "../../hooks";
 import { actionOf } from "../../keyboard";
 import { hrefOf } from "../../routes";
+import { EXAMPLE_NAME_LIMIT, EXAMPLE_NOTES_LIMIT, readPin, saveExample, savePin, type Pin } from "../../saved";
 import { StoredPicture } from "../shared";
 import "./result.css";
 import { attemptWords, costLines, draftFrom, fetchCommand, fetchRecord, flagsOf, nothingFound, targetsOf, verdictOf, verdictTitle, type CommandView, type OpenDraft, type RunRecordView } from "./record";
@@ -46,6 +48,13 @@ export function Result(props: ResultProps) {
   const [copied, setCopied] = useState<string | null>(null);
   // A draft Send to or Run again would put in place of one the person has not run yet.
   const [replacing, setReplacing] = useState<{ draft: OpenDraft; sent: boolean } | null>(null);
+  // The More menu (plan m7, task U1): pin, compare, save as example, copy command.
+  const [more, setMore] = useState(false);
+  const [pin, setPin] = useState<Pin | null>(() => readPin(localStore()));
+  const [naming, setNaming] = useState(false);
+  const [savingExample, setSavingExample] = useState(false);
+  const [exampleProblem, setExampleProblem] = useState<string | undefined>(undefined);
+  const [said, setSaid] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -124,6 +133,30 @@ export function Result(props: ResultProps) {
         );
       },
       (error: unknown) => setProblem(error instanceof ApiError ? error.message : String(error)),
+    );
+  };
+
+  const pinHere = () => {
+    if (!record) return;
+    const next = { run: record.run, action: record.action ?? "" };
+    savePin(localStore(), next);
+    setPin(next);
+    setMore(false);
+    setSaid(`Pinned as the baseline. Open another run of ${record.title ?? record.action ?? "this task"} and compare it with this one.`);
+  };
+  const keepExample = (name: string, notes: string) => {
+    setSavingExample(true);
+    setExampleProblem(undefined);
+    saveExample(props.client, props.id, name, notes).then(
+      (example) => {
+        setSavingExample(false);
+        setNaming(false);
+        setSaid(`Saved as the example "${example.name}". It is listed on Home and in its kit, and opens as a draft.`);
+      },
+      (error: unknown) => {
+        setSavingExample(false);
+        setExampleProblem(error instanceof ApiError ? error.message : String(error));
+      },
     );
   };
 
@@ -248,13 +281,66 @@ export function Result(props: ResultProps) {
               ) : null}
             </div>
           </div>
+          {said ? (
+            <p class="workspace__purpose" role="status">
+              {said}
+            </p>
+          ) : null}
           <div class="result__actions">
             <Button variant="quiet" disabled={!record.again} why={record.again ? undefined : "This build has no such task to run again."} onClick={() => record.again && open(record.again, false)}>
               Run again
             </Button>
-            <Button variant="quiet" onClick={copy}>
-              <span class="mono">{">_"}</span> Copy command
-            </Button>
+            <div class="result__more-wrap">
+              <Button variant="quiet" onClick={() => setMore((now) => !now)}>
+                {more ? "More ▴" : "More ▾"}
+              </Button>
+              {more ? (
+                <div class="result__menu result__menu--end">
+                  <div class="menu result__more" role="menu" aria-label="More">
+                    <button type="button" role="menuitem" class="menu__item" onClick={pinHere}>
+                      <span class="menu__title">{pin?.run === record.run ? "Pinned as baseline" : "Pin as baseline"}</span>
+                    </button>
+                    {pin && pin.run !== record.run ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        class="menu__item"
+                        onClick={() => {
+                          setMore(false);
+                          props.go(hrefOf({ name: "compare", baseline: pin.run, attempt: record.run }));
+                        }}
+                      >
+                        <span class="menu__title">{`Compare with baseline ${middle(pin.run, 18)}`}</span>
+                      </button>
+                    ) : null}
+                    <span class="menu__rule" aria-hidden="true" />
+                    <button
+                      type="button"
+                      role="menuitem"
+                      class="menu__item"
+                      onClick={() => {
+                        setMore(false);
+                        setExampleProblem(undefined);
+                        setNaming(true);
+                      }}
+                    >
+                      <span class="menu__title">Save as example…</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      class="menu__item"
+                      onClick={() => {
+                        setMore(false);
+                        copy();
+                      }}
+                    >
+                      <span class="menu__title mono">{">_ Copy command"}</span>
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
           </div>
         </footer>
       </section>
@@ -312,6 +398,18 @@ export function Result(props: ResultProps) {
           <p class="workspace__tools mono result__run">run {record.run}</p>
         </section>
       </aside>
+      {naming ? (
+        <ExampleDialog
+          from={`from run ${middle(record.run, 18)} · ${record.title ?? record.action ?? ""}`}
+          keeps={["task", "settings", "backends", ...record.inputs.filter((input) => input.type === "image").map((input) => `picture ${middle(input.id, 14)}`)].join(", ")}
+          nameLimit={EXAMPLE_NAME_LIMIT}
+          notesLimit={EXAMPLE_NOTES_LIMIT}
+          saving={savingExample}
+          problem={exampleProblem}
+          onSave={keepExample}
+          onCancel={() => setNaming(false)}
+        />
+      ) : null}
     </main>
   );
 }

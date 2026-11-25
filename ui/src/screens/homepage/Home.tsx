@@ -3,15 +3,17 @@ import { ApiError, tasksOf, type Client, type Hello, type OpenRun, type Picture 
 import { Button } from "../../components/Button";
 import { BrandArt } from "../../components/BrandArt";
 import { ContinueRow } from "../../components/ContinueRow";
+import { cx } from "../../components/cx";
 import { DropTarget } from "../../components/DropTarget";
+import { ExampleList } from "../../components/ExampleList";
 import { KitPanel } from "../../components/KitPanel";
 import { kitTone } from "../../components/kitTone";
 import { Wordmark } from "../../components/Wordmark";
 import { draftOf, readDrafts, localStore, saveDraft, type Draft } from "../../drafts";
 import { taskOf } from "../../form";
-import { ago } from "../../format";
-import { usePictures } from "../../hooks";
+import { ago, bytes, middle } from "../../format";
 import { hrefOf } from "../../routes";
+import { asPicture, fetchCard, LIBRARY_PAGE, listLibrary, momentWords, shownName, SHOWS, tileLine, type LibraryCard, type LibraryPicture, type Show } from "../../saved";
 import { StoredPicture } from "../shared";
 import { draftWith, startersOf, type Starter } from "./picked";
 
@@ -59,7 +61,7 @@ export function Home(props: HomeProps) {
     };
   }, [client]);
 
-  const library = usePictures(client, asked);
+  const library = useLibrary(client, asked);
   const pictures = library.pictures;
 
   const upload = (files: File[]) => {
@@ -174,10 +176,32 @@ export function Home(props: HomeProps) {
         )}
       </section>
 
-      <section class="home__section" aria-labelledby="pictures-title">
-        <h2 id="pictures-title" class="section-title">
-          Pictures
-        </h2>
+      {client ? (
+        <section class="home__section">
+          <ExampleList client={client} go={(hash) => props.go?.(hash)} kitName={(kit) => kits.find((one) => one.id === kit)?.name ?? kit ?? ""} />
+        </section>
+      ) : null}
+
+      <section class="home__section home__library" aria-labelledby="pictures-title">
+        <header class="home__library-head">
+          <h2 id="pictures-title" class="section-title home__library-title">
+            Pictures <span class="home__library-count mono">{`· ${library.counts.all} in this store`}</span>
+          </h2>
+          <div class="home__chips" role="tablist" aria-label="Which pictures">
+            {SHOWS.map((show) => (
+              <button
+                key={show.value}
+                type="button"
+                role="tab"
+                aria-selected={library.show === show.value ? "true" : "false"}
+                class={cx("home__chip", library.show === show.value && "home__chip--on")}
+                onClick={() => library.choose(show.value)}
+              >
+                {show.label} <span class="home__chip-count">{library.counts[show.value]}</span>
+              </button>
+            ))}
+          </div>
+        </header>
         {client && props.picture ? (
           <Picked
             client={client}
@@ -193,22 +217,28 @@ export function Home(props: HomeProps) {
             {problem}
           </p>
         ) : null}
-        {pictures.length === 0 && !client ? <p class="empty">No pictures yet. A picture you give a task is kept in the store and shows here.</p> : null}
+        {pictures.length === 0 && !client ? <p class="empty">No pictures yet. A picture a run is given, or one imported, is kept in the store and shows here.</p> : null}
         {client ? (
           <div class="library home__pictures">
-            {pictures.length === 0 ? <p class="empty">No pictures yet. A picture you give a task is kept in the store and shows here.</p> : null}
+            {pictures.length === 0 ? <p class="empty">No pictures yet. A picture a run is given, or one imported, is kept in the store and shows here, whatever gave it.</p> : null}
             {pictures.map((picture) => (
-              <StoredPicture
-                key={picture.id}
-                client={client}
-                picture={picture}
-                selected={picture.id === props.picture}
-                onClick={() => props.go?.(hrefOf(picture.id === props.picture ? { name: "home" } : { name: "home", picture: picture.id }))}
-              />
+              <figure key={picture.id} class="home__tile" data-picture={picture.id}>
+                <StoredPicture
+                  client={client}
+                  picture={asPicture(picture)}
+                  selected={picture.id === props.picture}
+                  onClick={() => props.go?.(hrefOf(picture.id === props.picture ? { name: "home" } : { name: "home", picture: picture.id }))}
+                />
+                <figcaption class="home__tile-words">
+                  <span class={cx("home__tile-name", !picture.name && "mono")}>{shownName(picture)}</span>
+                  <span class="home__tile-line mono">{tileLine(picture)}</span>
+                </figcaption>
+              </figure>
             ))}
             {library.more ? (
-              <button type="button" class="link-button" onClick={library.next}>
-                More pictures
+              <button type="button" class="home__more" onClick={library.next}>
+                <span>Show more</span>
+                <span class="home__more-line mono">{`${pictures.length} of ${library.counts[library.show]} shown`}</span>
               </button>
             ) : null}
             <DropTarget label="Drop a picture" max={8} onFiles={upload} />
@@ -219,31 +249,61 @@ export function Home(props: HomeProps) {
   );
 }
 
-/** A picked picture as the page knows it: still being looked up, kept, or not in the store. */
-type Found = { state: "looking" } | { state: "kept"; picture: Picture } | { state: "none" } | { state: "failed"; why: string };
+/** A picked picture as the page knows it: still being looked up, its card, or not in the store. */
+type Found = { state: "looking" } | { state: "kept"; card: LibraryCard } | { state: "none" } | { state: "failed"; why: string };
 
-/**
- * The picture a picked identity names: the library's own when it lists it, else looked up
- * in the store by its identity (a picture past the first page, or an address typed).
- */
-function useFound(client: Client, id: string, listed: Picture | undefined): Found {
-  const [found, setFound] = useState<Found>(listed ? { state: "kept", picture: listed } : { state: "looking" });
+/** The card of a picked identity: what the library knows of it, with the runs that took it. */
+function useFound(client: Client, id: string, listed: LibraryPicture | undefined): Found {
+  const [found, setFound] = useState<Found>({ state: "looking" });
   useEffect(() => {
-    if (listed) {
-      setFound({ state: "kept", picture: listed });
-      return;
-    }
     let live = true;
-    setFound({ state: "looking" });
-    client.pictureById(id).then(
-      (picture) => live && setFound(picture ? { state: "kept", picture } : { state: "none" }),
-      (error: unknown) => live && setFound({ state: "failed", why: error instanceof ApiError ? error.message : String(error) }),
+    setFound(listed ? { state: "kept", card: { ...listed, runs_list: [] } } : { state: "looking" });
+    fetchCard(client, id).then(
+      (card) => live && setFound({ state: "kept", card }),
+      (error: unknown) => live && setFound(error instanceof ApiError && error.status === 404 ? { state: "none" } : { state: "failed", why: error instanceof ApiError ? error.message : String(error) }),
     );
     return () => {
       live = false;
     };
-  }, [id, listed?.id, listed?.name]);
+  }, [id]);
   return found;
+}
+
+/** The library's pictures under one chip, a page at a time, and how many each chip holds. */
+function useLibrary(client: Client | undefined, asked: unknown) {
+  const [show, setShow] = useState<Show>("all");
+  const [pictures, setPictures] = useState<LibraryPicture[]>([]);
+  const [more, setMore] = useState(false);
+  const [counts, setCounts] = useState<Record<Show, number>>({ all: 0, named: 0, inputs: 0, imported: 0 });
+  useEffect(() => {
+    if (!client || typeof client.request !== "function") return;
+    let live = true;
+    listLibrary(client, show).then(
+      (page) => {
+        if (!live) return;
+        setPictures(page.pictures);
+        setMore(page.more);
+        setCounts(page.counts);
+      },
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [client, asked, show]);
+  const next = () => {
+    const last = pictures[pictures.length - 1];
+    if (!client || !last) return;
+    listLibrary(client, show, last.id, LIBRARY_PAGE).then(
+      (page) => {
+        setPictures((now) => [...now, ...page.pictures.filter((one) => !now.some((seen) => seen.id === one.id))]);
+        setMore(page.more);
+        setCounts(page.counts);
+      },
+      () => setMore(false),
+    );
+  };
+  return { show, choose: setShow, pictures, more, counts, next };
 }
 
 /**
@@ -252,7 +312,7 @@ function useFound(client: Client, id: string, listed: Picture | undefined): Foun
  * task not yet run is replaced only once the person says so. A picture the store does
  * not hold is said to be missing, and no task is offered.
  */
-function Picked(props: { client: Client; id: string; listed: Picture | undefined; starters: Starter[]; onClose: () => void; go: (hash: string) => void }) {
+function Picked(props: { client: Client; id: string; listed: LibraryPicture | undefined; starters: Starter[]; onClose: () => void; go: (hash: string) => void }) {
   const [replacing, setReplacing] = useState<Starter | null>(null);
   const found = useFound(props.client, props.id, props.listed);
   const panel = useRef<HTMLDivElement>(null);
@@ -261,7 +321,8 @@ function Picked(props: { client: Client; id: string; listed: Picture | undefined
   useEffect(() => {
     panel.current?.scrollIntoView?.({ block: "nearest" });
   }, [props.id]);
-  const picture = found.state === "kept" ? found.picture : null;
+  const card = found.state === "kept" ? found.card : null;
+  const picture: Picture | null = card ? asPicture(card) : null;
   const start = (starter: Starter, sure = false) => {
     if (!picture) return;
     const store = localStore();
@@ -284,7 +345,7 @@ function Picked(props: { client: Client; id: string; listed: Picture | undefined
           {found.state === "looking" ? <p class="empty">Looking for the picture in the store…</p> : null}
           {found.state === "none" ? (
             <p class="field__error" role="alert">
-              The store holds no picture the playground kept under that identity, so no task can start with it.
+              The store holds no picture of that identity as an input of a run or an import, so no task can start with it.
             </p>
           ) : null}
           {found.state === "failed" ? (
@@ -301,7 +362,8 @@ function Picked(props: { client: Client; id: string; listed: Picture | undefined
     <div class="picked" ref={panel} role="region" aria-label={`Start a task with ${picture.name}`}>
       <div class="picked__picture">
         <StoredPicture client={props.client} picture={picture} />
-        <span class="picked__name mono">{picture.name}</span>
+        <span class="picked__name mono">{card?.name ? card.name : middle(props.id, 24)}</span>
+        {card ? <PictureFacts card={card} /> : null}
       </div>
       <div class="picked__tasks">
         <p class="picked__line">Start a task with this picture:</p>
@@ -329,6 +391,35 @@ function Picked(props: { client: Client; id: string; listed: Picture | undefined
         ) : null}
         {close}
       </div>
+    </div>
+  );
+}
+
+/**
+ * What the library knows of a picture (the design's surface 6, read in the engine's terms):
+ * its name or none, its size, when it was first used, and the runs that took it, each a link.
+ */
+function PictureFacts(props: { card: LibraryCard }) {
+  const card = props.card;
+  const size = card.width && card.height ? `${card.width} × ${card.height}` : null;
+  const facts = [card.name ? null : "No name given", size, typeof card.bytes === "number" ? bytes(card.bytes) : null].filter(Boolean).join(" · ");
+  return (
+    <div class="picked__facts">
+      {facts ? <span class="picked__fact">{facts}</span> : null}
+      {card.first_ms ? <span class="picked__fact">{`First used ${momentWords(card.first_ms)}`}</span> : null}
+      {card.imported && card.runs === 0 ? <span class="picked__fact">Imported, not run yet</span> : null}
+      {card.runs_list.length > 0 ? (
+        <div class="picked__runs" aria-label="Runs that took it">
+          <span class="picked__runs-title mono">{card.runs === 1 ? "INPUT OF 1 RUN" : `INPUT OF ${card.runs} RUNS`}</span>
+          {card.runs_list.map((run) => (
+            <a key={run.run} class="picked__run" href={hrefOf({ name: "run", id: run.run })}>
+              <span class="mono">{middle(run.run, 16)}</span>
+              <span class="picked__run-task">{run.title ?? run.action}</span>
+              <span class={cx("picked__run-outcome mono", run.outcome === "completed" && "picked__run-outcome--done")}>{run.outcome}</span>
+            </a>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

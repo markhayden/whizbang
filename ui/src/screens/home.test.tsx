@@ -1,7 +1,7 @@
 // Home: a picture picked (from the library or from search) starts a task with it.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "preact/test-utils";
-import type { Client, Hello, Picture } from "../api";
+import { ApiError, type Client, type Hello, type Picture } from "../api";
 import { DRAFTS_KEY, draftOf, localStore, saveDraft } from "../drafts";
 import { HOSTILE, click, render } from "../test/render";
 import { Home } from "./homepage/Home";
@@ -24,11 +24,18 @@ const HELLO: Hello = {
   ],
 };
 
+/** A client whose library lists `listed` and whose card is of `kept`, or of nothing. */
 function client(listed: Picture[] = [PORCH], kept: Picture | null = PORCH): Client {
+  const row = (one: Picture) => ({ id: one.id, name: one.name, runs: 0, imported: true });
   return {
     openRuns: vi.fn(() => Promise.resolve([])),
-    listPictures: vi.fn(() => Promise.resolve(listed)),
-    pictureById: vi.fn(() => Promise.resolve(kept)),
+    request: vi.fn((_method: string, path: string) => {
+      if (path === "/api/examples") return Promise.resolve({ examples: [] });
+      if (path.startsWith("/api/library?")) return Promise.resolve({ pictures: listed.map(row), more: false, counts: { all: listed.length, named: listed.length, inputs: 0, imported: listed.length } });
+      if (path.startsWith("/api/library/"))
+        return kept ? Promise.resolve({ ...row(kept), width: kept.width, height: kept.height, bytes: 2048, runs_list: [] }) : Promise.reject(new ApiError(404, "the store holds no picture of that identity"));
+      return Promise.reject(new ApiError(404, "no such route"));
+    }),
     blobUrl: vi.fn(() => new Promise(() => undefined)),
   } as unknown as Client;
 }
@@ -108,7 +115,7 @@ describe("a picture picked on Home", () => {
     const made = client([], PORCH);
     const view = render(<Home hello={HELLO} client={made} picture={PORCH.id} />);
     await settle();
-    expect(made.pictureById).toHaveBeenCalledWith(PORCH.id);
+    expect(made.request).toHaveBeenCalledWith("GET", `/api/library/${PORCH.id}`);
     expect(view.get("[role=region]").getAttribute("aria-label")).toBe("Start a task with porch.png");
     view.unmount();
   });

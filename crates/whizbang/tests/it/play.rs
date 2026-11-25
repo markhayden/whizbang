@@ -410,6 +410,93 @@ fn scripted(
     Arc::new(Scripted(draft.build().unwrap(), Box::new(body)))
 }
 
+/// `judged`: a tool of the tests' that takes a picture and asks a judge, chosen by its
+/// argument `judge`, and that plans. Its plan for the judge `keyless-judge` names a
+/// capability the call does not need, which refuses the call with that choice alone: a
+/// refusal about the choice itself (plan m7, task U1, item 4).
+struct Judged(ActionDescriptor);
+
+impl Action for Judged {
+    fn descriptor(&self) -> &ActionDescriptor {
+        &self.0
+    }
+
+    fn plan(
+        &self,
+        planning: &whizbang_core::contract::Planning<'_>,
+    ) -> Option<whizbang_core::contract::Plan> {
+        let chosen = planning.argument("judge");
+        let keyless = matches!(chosen, Some(whizbang_core::contract::Value::Text(text)) if text == "keyless-judge");
+        let plan = whizbang_core::contract::Plan::new();
+        Some(match keyless {
+            true => plan.sending(whizbang_core::contract::Capability::Fill, 1),
+            false => plan.because("a test's plan"),
+        })
+    }
+
+    fn run(&self, _: &PreparedCall, _: &Context) -> Result<Produced, Failure> {
+        Ok(Produced::nothing())
+    }
+}
+
+fn judged() -> Arc<dyn Action> {
+    use whizbang_core::contract::{Argument, InputPort, Requirement, ValueType};
+    let draft = ActionDescriptor::draft("judged", "1.0.0", Kind::Primitive, "A test action.")
+        .input(InputPort::required(
+            "image",
+            whizbang_core::artifact::ArtifactType::Image,
+            "A picture.",
+        ))
+        .argument(Argument::optional("judge", "The judge.", ValueType::Text))
+        .needs(Requirement::new(whizbang_core::contract::Capability::Judge).chosen_by("judge"))
+        .plans();
+    Arc::new(Judged(draft.build().unwrap()))
+}
+
+#[test]
+fn a_choice_refused_for_itself_is_told_apart_from_a_missing_input() {
+    let kitted = Kitted::new("play-u1-choice-refused");
+    let choice = |prepared: &Json, value: &str| {
+        let judges = prepared["choices"]["judge"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        judges
+            .into_iter()
+            .find(|choice| choice["value"] == value)
+            .unwrap_or_else(|| panic!("no choice {value}: {prepared}"))
+    };
+    // With its picture: the call as given is ready, and the choice whose plan is no plan
+    // is refused for itself, in the core's words.
+    let given = kitted.prepare("judged", &json!({"image": kitted.picture(41)}));
+    assert_eq!(given["ready"], true, "{given}");
+    let refused = choice(&given, "keyless-judge");
+    assert_eq!(refused["ready"], false, "{refused}");
+    assert_eq!(refused["kind"], "refused", "{refused}");
+    assert!(
+        refused["why"]
+            .as_str()
+            .unwrap()
+            .contains("no need of this call"),
+        "{refused}"
+    );
+    assert_eq!(choice(&given, "cloud-judge")["kind"], "ready", "{given}");
+    // Without it: every choice is refused as the call is, for the missing input, and is
+    // answered with its backend's own readiness instead.
+    let missing = kitted.prepare("judged", &json!({}));
+    assert_eq!(missing["refused"], true, "{missing}");
+    assert_eq!(
+        choice(&missing, "keyless-judge")["kind"],
+        "no_key",
+        "{missing}"
+    );
+    assert_eq!(
+        choice(&missing, "cloud-judge")["kind"],
+        "ready",
+        "{missing}"
+    );
+}
+
 fn wait_for_stop(context: &Context) -> Result<Produced, Failure> {
     for _ in 0..6000 {
         if context.cancellation().is_cancelled() || context.deadline_passed() {
@@ -440,6 +527,7 @@ impl Hosted {
         let released = Arc::new(AtomicBool::new(false));
         let gate = Arc::new(Gate::default());
         let mut registry = Registry::new();
+        registry.register(judged()).unwrap();
         registry
             .register(scripted("waits", |context| {
                 context.events().progress("waiting for a stop");
@@ -1021,6 +1109,7 @@ impl Kitted {
                 Ok(Produced::nothing())
             }))
             .unwrap();
+        registry.register(judged()).unwrap();
         registry
             .register(scripted("waits", |context| {
                 context.events().progress("waiting for a stop");
@@ -1046,15 +1135,21 @@ impl Kitted {
     }
 
     /// Stops the host and starts another over the same store and config.
-    fn restarted(mut self) -> Kitted {
+    fn restarted(self) -> Kitted {
+        self.restarted_after(|_| ())
+    }
+
+    /// The same, doing `between` to the store's folder while no host holds it.
+    pub(crate) fn restarted_after(mut self, between: impl FnOnce(&Path)) -> Kitted {
         let host = self.host.take().unwrap();
         host.stopper().quit();
         host.wait();
+        between(&self.root());
         let scratch = std::mem::replace(&mut self.scratch, Scratch::new("play-spent"));
         Kitted::over(scratch, false)
     }
 
-    fn root(&self) -> PathBuf {
+    pub(crate) fn root(&self) -> PathBuf {
         self.scratch.path().join("store")
     }
 
@@ -1118,7 +1213,7 @@ impl Kitted {
     }
 
     /// The store's generation as a reader of its own sees it.
-    fn generation(&self) -> whizbang_core::store::Generation {
+    pub(crate) fn generation(&self) -> whizbang_core::store::Generation {
         let reader = whizbang_core::store::Reader::open(&self.root(), Arc::new(RealFs)).unwrap();
         reader.snapshot().unwrap()
     }
