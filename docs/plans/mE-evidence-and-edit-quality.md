@@ -1,7 +1,7 @@
 # Plan: milestone E, evidence and edit quality
 
-Draft 4, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
-note of milestone 7), after three outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
+Draft 5, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
+note of milestone 7), after four outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
 quality". Its first slice ran beside milestone 5 (`docs/plans/e1-judge-format-loop.md`,
 `docs/plans/e1-note.md`) and chose the default judge and kept the submission format on
 descriptive evidence. This plan is the rest of the milestone: every unverified tool and
@@ -150,7 +150,7 @@ task item or a question at the end; none is settled silently.
    editing them.
 7. **The retry of a failed cell.** The carry-over row on resumed matrices asks for "a rule
    for retrying a judge's failed cell". Section 9 already rules that a failed attempt "is
-   reported, never replaced by a later success". Fix: M1, item 8: no retry, by that rule, in
+   reported, never replaced by a later success". Fix: M1, item 9: no retry, by that rule, in
    an ADR line; the row closes with it.
 8. **A gate compares two arms of one matrix.** The code refuses a gate whose matrix has other
    arms (`crates/whizbang/src/gating.rs`: "the matrix's arms are not exactly the gate's
@@ -200,10 +200,14 @@ task item or a question at the end; none is settled silently.
 6. **The submission format is redesigned once more, as v3, from what failed.** Plan e1's
    format round counted every rejection by class (`docs/results/e-submission.md`): under v2
    Haiku's first rejections rose to 93 in 220, 77 of them `finding_cites`, and Flash ended 14
-   runs as faults. v3 keeps v1's list form, which no provider faulted on, and v2's one repair
-   and recoveries, and reads a finding whose citations name no held call as the finding with
-   those citations dropped, recorded as a recovery, instead of a rejection (F1). Its dev
-   round (F2) decides which of v2 and v3 goes to the gate on fresh data.
+   runs as faults. `finding_cites` is a finding's `obligation_ids`: none cited, one not of the
+   list, an exemption cited, an obligation whose own answer is not a violation, `cant_tell`
+   or allowed change, or no mandatory one (`crates/whizbang-squint/src/use_case/
+   submission.rs`). v3 keeps v1's list form, which no provider faulted on, and v2's one repair
+   and recoveries, and makes those citations structural: a finding is written inside the
+   answer of the checklist item it bears on, so the obligation it cites is that item's own and
+   cannot be missing, unknown or inconsistent with its answer (F1). Its dev round (F2)
+   decides whether v3 or v2 goes to the gate on fresh data.
 7. **The old segmenter comes back as a catalogue entry for what SAM 3 cannot do.** `outline`
    and `regions` are written on SAM 3's phrase requests first (T1). `classes`, which asks
    what classes cover a box, needs a segmenter that labels every pixel from a closed list,
@@ -260,7 +264,7 @@ panorama side, P1).
 |---|---|---|
 | Its evaluations decide what 8 builds: a further segmenter | T2, W1 | W1's record and ADR: the comparison on segment-01, the rule frozen here, its outcome |
 | ... and how local fill and judge are scored | W1 | The frozen protocol and gate files for milestone 8, committed, each named by its digest |
-| Every unverified tool and recipe taken up the ladder, squint's first, the most doubtful first, until each is admitted, experimental or dropped | A0, R2, R3, R4, V1, R5, R6 | Each record's "Mark and history" names its end state and the receipt that set it; `describe` shows every mark (A0, item 3); `whizbang eval admitted` lists what the receipts admitted (M1, item 7); N1's table of every tool and its end |
+| Every unverified tool and recipe taken up the ladder, squint's first, the most doubtful first, until each is admitted, experimental or dropped | A0, R2, R3, R4, V1, R5, R6 | Each record's "Mark and history" names its end state and the receipt that set it; `describe` shows every mark (A0, item 3); `whizbang eval admitted` lists what the receipts admitted (M1, item 8); N1's table of every tool and its end |
 | Per-subject comparison climbs rungs 3 and 4 on a fresh confirmation set | R3, D1, R4 | The rung 3 receipt on `blind-v3`; the rung 4 receipt on `confirm-v1` |
 | `regions`, `classes`, `outline` brought in as experimental tools, scored on rungs 1 and 2, on SAM 3 where that works and on their old segmenter as a catalogue entry where not; those that pass go on | T1, T2, R2, R3, R4 | Each record's rung 1 examples, run as tests; R2's rung 2 table for each method; R3 and R4's receipts for those that pass |
 | The submission format redesigned so small models can follow it | F1, F2, R4 | F2's record; the format's gate receipt on `confirm-v1` |
@@ -276,8 +280,8 @@ theirs; builders make no live call.
 | Task | What | Builds on | Size |
 |---|---|---|---|
 | A0 | The entry check: the Google prices; E's ledger; every mark shown by `describe`, `align` as a control; the spec's wording for gaps 3 to 5; details first's end | `main` | Small: about 600 |
-| M1 | The machinery of the squint rounds: a matrix that runs only the cells it names; the second look under C; gates frozen in their matrix, several on one; a gate across two versions of a set; `submission/2` and `judge-pick/2`; the list of what was admitted; no retry of a failed cell; the judge round's figures held to their TOML | `main` | Medium to large, two pull requests: about 1,300 (matrices and gates), then about 1,100 (the rules and the records) |
-| M2 | The edits' gates: `edit-gate/1`, `eval edits gate`, marks for any recipe's pictures | `main` | Medium: about 1,200 |
+| M1 | The machinery of the squint rounds: a matrix that runs only the cells it names; the second look under C; gates frozen in their matrix, several on one; a gate across two versions of a set; `submission/2` and `judge-pick/2` with its sets; refusals that tell nothing of a held-out set; the list of what was admitted; no retry of a failed cell; the judge round's figures held to their TOML | `main` | Medium to large, two pull requests: about 1,300 (matrices and gates), then about 1,500 (the rules, the held-out refusals and the records) |
+| M2 | The edits' gates: `edit-gate/1`, `eval edits gate`, marks for any recipe's pictures, pairs from recorded runs | `main` | Medium: about 1,700 |
 | B1 | The set builder, ported, with full requirements and a spend guard; the seasonal cover pair; the pictures' repository's name | `main` | Large, two pull requests: about 1,400 (the port), then about 1,100 (full requirements, the guard, the pair, the name) |
 | T1 | `outline`, then `regions`, as tool files on SAM 3; the rules' `[hints]` and the checklist's evidence from regions | `main` | Large, two pull requests: about 1,100 (`outline`), then about 1,200 (`regions` and the rules) |
 | T2 | The fixed-class segmenter as a catalogue entry that labels every pixel; `classes`; the `method` of `regions` and `outline` | T1 | Large, two pull requests: about 1,400 (the adapter, its entry, conformance), then about 1,000 (`classes`, the methods) |
@@ -429,28 +433,43 @@ reported in its pull request. Every test that calls a provider or a real model i
    family-resampled 95% interval at its bound toward harm, the rest as `submission/1`.
    `judges::submission_2_reads_clause_c_on_the_interval`.
 6. **`judge-pick/2`** in `--mode judges` (R4): `judge-pick/1`'s clauses, with a minimum of 20
-   families below which the outcome is inconclusive, the interval at the level the matrix's
-   correction gives it, and the runs read from a matrix whose cells `eval matrix` made, gates
-   or not (today `eval judges` passes over runs that carry a gate, `judges.rs`). A test of
-   too few families, of the corrected level, and of runs of a gated matrix.
-7. **What was admitted** (the carry-over row on admissions). `whizbang eval admitted
+   families below which the outcome is inconclusive; the interval at the level the matrix's
+   correction gives it, with enough resamples that each tail holds at least 20 draws (at 13
+   hypotheses, 2,000 leave about 4: `judges.rs` fixes 2,000; `judge-pick/2` takes 20,000) and
+   an unresolved tail inconclusive, as `bootstrap.rs` rules for gates; the runs read from a
+   matrix whose cells `eval matrix` made, gates or not (today `eval judges` passes over runs
+   that carry a gate); and **`--set <id>`**, repeatable, so that only those sets are scored and
+   completeness is over the cells the matrix names for them (R4 scores the judges on
+   `confirm-v1` alone, though its matrix also holds the plain twin under two judges). Tests
+   of too few families, of the corrected level and its resamples, of runs of a gated matrix,
+   and of R4's own matrix shape scored on one set.
+7. **Refusals that tell nothing of a held-out set.** Reading a set and fetching its pictures
+   print full paths, a TOML parser's text and an import's picture path when something is
+   wrong (`crates/whizbang-eval/src/sets.rs`, `crates/whizbang/src/evaluation.rs`). A flag,
+   `--held-out`, on `eval sets check`, `eval sets fetch`, `eval matrix`, `eval run --gate` and
+   `eval judges` makes every refusal and warning name only the set's id, the item's place in
+   the set (never its id, which can tell its construction) and the kind of problem: no path,
+   no parser text, no job text. Negative tests with a malformed job, a missing picture and a
+   picture whose digest is wrong, each holding the output to that.
+   `sets::a_held_out_refusal_names_no_path_no_item_and_no_text`.
+8. **What was admitted** (the carry-over row on admissions). `whizbang eval admitted
    --receipts gates/` reads every receipt and prints each tool, use case, format, wording or
    judge a rung 4 gate admitted, with the receipt's digest and date; a receipt of a rung 3
    gate, or on a set whose split is not `blind` or `heldout`, admits nothing. Each record's
    "Mark and history" names its receipt by digest, and a test holds the records' marks to the
    list. `admitted::a_rung_3_receipt_admits_nothing`;
    `admitted::the_records_marks_are_the_receipts`.
-8. **No retry of a failed cell** (the carry-over row on resumed matrices). A short ADR, "Gates
-   of milestone E", records items 1 to 7 and: a resumed matrix or gate never runs a failed
+9. **No retry of a failed cell** (the carry-over row on resumed matrices). A short ADR, "Gates
+   of milestone E", records items 1 to 8 and: a resumed matrix or gate never runs a failed
    cell again, by section 9 ("a failed attempt is reported, never replaced by a later
    success"); a failure counts as an error, which the 2% guardrail sees. The row closes with
    that line.
-9. **The judge round's figures held to their TOML** (the carry-over row on figures copied by
+10. **The judge round's figures held to their TOML** (the carry-over row on figures copied by
    hand). A test reads `docs/results/e-judges.toml` and requires each use case record's
    "Another judge" table and "Speed and cost" line, ADR 0044's figures and the two guides'
    figures to be the ones it gives.
    `evidence::the_judges_figures_outside_their_record_are_its_own`.
-10. **A set read from owner storage before it is published.** `eval matrix`, `eval run
+11. **A set read from owner storage before it is published.** `eval matrix`, `eval run
     --gate` and `eval judges` already take `--root` for the sets and `--labels` for blind
     labels; a test holds that a set under another root runs and scores, that a label folder at
     or below the sets' folder is refused, and that no record or receipt names the root's path.
@@ -483,8 +502,16 @@ R5 and R6 need a scorer that `eval run --gate` is not: it gates balanced accurac
 3. **Marks for any recipe's finished pictures.** `eval loop sheet` and `eval loop score
    --labels` serve `remove_checked` today; they take any recipe's runs of a manifest, so the
    owner can mark `remove`, `repair` or `seam` as the loop's sheet is marked.
+4. **Pairs from recorded runs.** `whizbang lab` runs recipes only, and refuses one that needs
+   a judge (`crates/whizbang/src/laboratory.rs`; `crates/whizbang-eval/src/lab/cell.rs`), so
+   it cannot make `remove_checked`'s or the clicked removal's pairs. `whizbang lab pairs
+   --from-runs <manifest>` draws a frozen assignment from runs already in the store, any
+   action's, the loop's among them: each case's kept output against its reference arm (the
+   source picture, or another manifest's runs of the same cases), by the protocol's seed, and
+   writes the page as `lab pairs` does; `lab decode` reads it unchanged.
    `edits_gate::a_recipe_passes_only_with_every_measure`;
-   `edits_gate::too_few_runs_is_inconclusive`; `loop_sheet::a_sheet_of_any_recipe`.
+   `edits_gate::too_few_runs_is_inconclusive`; `loop_sheet::a_sheet_of_any_recipe`;
+   `lab::pairs_from_recorded_loop_runs_decode_against_their_assignment`.
 
 - [ ] Done when: the tests pass. **Reviewer reads hardest:** that a mark file is never read
   from inside the repo and that no mark or phrase reaches a receipt.
@@ -629,21 +656,35 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    Haiku's 14 invalid submissions under v1 and 4 under v2 by the rule each broke, and its
    first rejections by class. The counts go into ADR 0042's amendment; the row closes with
    the fix below or a line.
-2. **v3.** v1's list of items, each with its checklist id (no keyed object: Flash faulted 14
-   times under v2's); v2's one repair naming every problem, and its recoveries; and one new
-   recovery, `cites_dropped`: a finding whose citations name a call the run does not hold is
-   read as the finding without those citations, recorded, instead of a rejection. Every other
-   rule of v1 holds. `submission = "v3"` on `check`, the recipes and a matrix arm, as v2's
-   setting is (ADR 0042, item 1); the default stays `v1`.
-3. **Tests**: a provider conformance fixture of v3 for each adapter; the recoveries counted
-   in `rejections/2`; v1 byte for byte unchanged.
-   `submission::v3_drops_a_citation_the_run_does_not_hold_and_records_it`;
+2. **What v3 changes, from the counts.** Haiku's first rejections under v2 were mostly
+   `finding_cites` (77 of 93), and that class is about a finding's `obligation_ids`
+   (`use_case/submission.rs`, the rules a finding's citations must meet: at least one, each of
+   the list, none an exemption, each an obligation whose answer is a violation, `cant_tell`
+   or allowed change, a mandatory one among them). v2's recoveries do not touch them: v2 drops
+   evidence ids of calls the run does not hold (`use_case/v2.rs`, `evidence`), a different
+   field. v3 makes the citation structural.
+3. **v3.** v1's list of items, each with its checklist id (no keyed object: Flash faulted 14
+   times under v2's). A finding is no longer a separate list citing obligations by id: an
+   item whose answer is a violation, `cant_tell` or an allowed change carries its findings
+   inside it, and each finding's obligations are read from that item (its checklist id names
+   the obligation instance it was made from). The rules of `finding_cites` then hold by
+   construction for the item it is written in; what remains checkable (a finding under an
+   item answered `holds`, a finding on an exemption's item) is a rejection of its own class,
+   counted. v2's one repair naming every problem, and its recoveries, are kept. The verdict
+   is worked out from the items and findings exactly as v1's is, after the findings are read
+   back to v1's form, so `check`'s rules are unchanged. `submission = "v3"` on `check`, the
+   recipes and a matrix arm, as v2's setting is (ADR 0042, item 1); the default stays `v1`.
+4. **Tests**: a provider conformance fixture of v3 for each adapter; v3 read back to v1's
+   form gives the same verdict as the v1 submission it stands for; the new classes counted in
+   `rejections/2`; v1 byte for byte unchanged.
+   `submission::v3_reads_back_to_the_v1_submission_it_stands_for`;
+   `submission::a_finding_under_an_item_that_holds_is_rejected_in_v3`;
    `submission::v1_is_unchanged`.
-4. **ADR 0042 amended**: v3, and why it is shaped by the classes counted.
+5. **ADR 0042 amended**: v3, and why it is shaped by the classes counted.
 
-- [ ] Done when: the tests pass. **Reviewer reads hardest:** that dropping a citation can never
-  turn a finding into a pass, only into an uncited finding the verdict rules read as they read
-  any.
+- [ ] Done when: the tests pass. **Reviewer reads hardest:** that v3 read back to v1's form can
+  never give a verdict v1 could not, and that every rule of v1 it no longer needs to check is
+  held by construction, with a test of each.
 
 ## D1. The new set versions and the fresh set (the orchestrator's, with the owner)
 
@@ -663,7 +704,8 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    `--labels-out` to owner storage. Both twins stay whole in owner storage (manifest, jobs,
    pictures, labels) and are read by `--root` and `eval sets fetch --from` until R4 has run.
    **No agent opens a job, a picture, a contact sheet or a plan of it**, the orchestrator
-   included: it runs the commands and reads what they print, which is counts.
+   included: it runs the commands, always with `--held-out` (M1, item 7), and reads what
+   they print, which is counts, set ids and places.
 4. **After R4**, the twins are published as `blind-v3` was: manifests and jobs into
    `evalsets/`, pictures by the owner into the pictures repository, labels kept in owner
    storage. From then on they are exposed.
@@ -752,6 +794,9 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
      the first other treatment in the order of the ladder that passed;
    - `confirm-plain-v1` under arm C, Haiku and Terra: the requirement gate's control, a gate
      across two versions of a set (M1, item 4).
+   Every treatment that passed R3 and is not run here, for the slots or for a cut, ends E
+   **experimental**, its record saying it passed rung 3 and that its confirmation on fresh data
+   is owed, in a carry-over row opened by N1.
    **The hypotheses**, counted together in one Bonferroni correction: two for each tool,
    five for the format, two for the requirements, one for the judge's rule, and, if tier 2
    runs, one for the study's comparison: at most 13 in tier 1.
@@ -900,8 +945,9 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    segment-01, through Bria: task success by mask coverage as in item 1 and by the owner's
    marks of the finished pictures (M2, item 3); preservation exact from each run; visual
    quality from a lab round of 10 pairs against the unshaped fill, picked by the owner and
-   decoded under P0's protocol version 2. Rungs 1 and 2 shown, it is unverified and climbs
-   with the others in R5. About 0.8 dollars in fills.
+   decoded under P0's protocol version 2, the unshaped arm filled for those 10 pictures.
+   Rungs 1 and 2 shown, it is unverified and climbs with the others in R5. About 1.2 dollars
+   in fills.
 
 - [ ] Done when: the counts are recorded and the recipe built or the row closed.
 
@@ -1054,12 +1100,12 @@ row on the panorama side of `view`):
 | A test pair for a seasonal cover | B1, item 8; D1, item 2 |
 | Small models break the submission format | F1, F2, R4 |
 | What the port of the use cases left of the rules | T1, item 4 |
-| Which tools a gate admitted | M1, item 7 |
+| Which tools a gate admitted | M1, item 8 |
 | The 2026-11 study's one repetition | R4, item 7 (tier 2), or withdrawn by N1 |
 | The study's results by kind of failure | The owner's answer ("I need", item 5); if yes, `scripts/baseline/tables.py` adds the table in N1 |
 | A clicked removal is filled as `segment` found its mask | C1 |
 | The Google rows of prices | A0, item 1, at the first Google round on or after each date |
-| A resumed matrix never runs a failed cell again | M1, item 8 |
+| A resumed matrix never runs a failed cell again | M1, item 9 |
 | `fan` and `ramp`'s windows; `measure`'s continuity | P1, item 7 |
 | The pairs page's script and `node`; the padding chunk | P0, items 1 and 2 |
 | The blinded picking rounds of milestone 3 | P0, item 3; V1, item 1 |
@@ -1073,7 +1119,7 @@ row on the panorama side of `view`):
 | `carry` and `view` decode the picture every call | L2, item 4 |
 | The model tier's located retry never reaches a fill | L2, item 5 |
 | The loop's retries have no live evidence (the contact sheet) | V1, item 2 |
-| The judge round's figures copied by hand | M1, item 9 |
+| The judge round's figures copied by hand | M1, item 10 |
 | The default judge and the format admitted by no gate | R4, items 2 and 3 |
 | The owner's own photos | R6 |
 | The pictures' repository's old name | B1, item 6 |
@@ -1153,15 +1199,15 @@ limits: the limits are each store's allowance, each call's cap and the builder's
 | R3 | 143 items: Haiku under C and up to seven treatments | 143 × 0.00357 + 7 × 143 × 0.00357 × 1.5 | 5.9 |
 | F2 | 110 dev items under v1 and v3; 22 items of each version of the two source-fidelity dev sets in a matrix of their own; Haiku and Flash | (2 × 110 + 2 × 22) × (0.00352 + 0.01659) | 5.3 |
 | R4 | 110 items: C under five judges; the format under five; two tools under two; the plain twin under two | 12.6 + 12.6 + 4.8 + 1.6 | 31.7 |
-| C1 | If built: 20 fills for its rung 2 | 20 × 0.04 | 0.8 |
+| C1 | If built: 20 fills for its rung 2 and 10 of the unshaped arm | 30 × 0.04 | 1.2 |
 | R5 | 56 runs, each a fill and a check by Argon; `remove_checked`'s 8 up to two more attempts | 72 × (0.04 + 0.0595) | 7.2 |
 | R6 | 30 fresh cases: 10 under four removals, 10 under two repairs, 10 panoramas; a loop's second attempt a fill and a check more | 80 × 0.04 + 20 × 0.0595 | 4.4 |
-| | **Expected** | | **about 61** |
+| | **Expected** | | **about 62** |
 
 If Flash's price has doubled before a round, the round changes so that tier 1 still fits: F2
 runs Haiku alone (4.0 less than its estimate), and R4's Flash cells cost 4.0 more, so R4's
 second tool's arms move to tier 2 (2.4 less), per-subject comparison keeping its slot: about
-60 if both rounds run after the date, about 63 if only R4 does.
+60 if both rounds run after the date, about 63.4 if only R4 does.
 
 **Cuts, in this order, before a round that the re-forecast puts past the cap.** Before each
 paid round the orchestrator adds what was settled to the estimates of the rounds left. If the
@@ -1287,7 +1333,7 @@ P1 ──────────────────┘
 - Details first, `resize` and `tiles` end E experimental.
 - At most one change to source fidelity's default recipe comes out of E: the format, or else
   one tool.
-- Expected spend about 61 dollars of the 63.88 E has left; cap 63.5.
+- Expected spend about 62 dollars of the 63.88 E has left; cap 63.5.
 
 ## I need
 
@@ -1297,7 +1343,7 @@ P1 ──────────────────┘
    runs. They are guards; the milestone's cap is what counts. Without them R4 and R6 cannot
    start.
 2. **I need a yes or no: may milestone E spend up to 140 dollars in all, instead of 100?** The
-   first slice settled 36.12, tier 1 needs about 61 more, and tier 2 (the study's claim
+   first slice settled 36.12, tier 1 needs about 62 more, and tier 2 (the study's claim
    tested, a third judge on each tool, a rerun, a margin) about 40. Recommended: yes. With
    no, tier 2 does not run and the study's claim is withdrawn.
 3. **I need a yes or no: may a use case of `check` whose gate on fresh data is not run or not
@@ -1416,4 +1462,28 @@ against the code; all were right and taken.
    corrected, the totals restated, the cap set at 63.5 of the 63.88 left, and an order of cuts
    stated for a re-forecast that passes it.
 5. **Minor: the waves left out M1 for F2 and M2 and P0 for C1's rung 2.** Right. Taken.
+
+### Review round 4
+
+On draft 4, by the Codex CLI. Verdict: revise. Round 3's fixes held. Seven findings: 6
+majors, 1 minor. Each was checked against the code; all were right and taken.
+
+1. **Major: v3 recovered the wrong failure.** Right: `finding_cites` is about a finding's
+   `obligation_ids` (`use_case/submission.rs`), and v2 already drops evidence ids of calls not
+   held (`use_case/v2.rs`). Taken: F1 makes the citation structural, a finding written inside
+   the item it bears on, read back to v1's form for the verdict, with tests.
+2. **Major: the judge's gate could not be scored on one set of R4's matrix.** Right
+   (`judges.rs` checks every judge on every item of the matrices). Taken: `judge-pick/2` takes
+   `--set`, completeness over the cells named for those sets, with a test of R4's shape.
+3. **Major: no pairs could be drawn for the loop.** Right (`laboratory.rs` runs recipes;
+   `lab/cell.rs` refuses one that needs a judge). Taken: M2, item 4, `lab pairs --from-runs`.
+4. **Major: a failed read of a held-out set could print its text or a private path.** Right
+   (`sets.rs`, `evaluation.rs`). Taken: M1, item 7, `--held-out` on every command D1 and R4 use,
+   with negative tests; D1 runs every command with it.
+5. **Major: the judge rule's corrected tails had too few resamples.** Right (`judges.rs` fixes
+   2,000). Taken: 20,000 in `judge-pick/2`, an unresolved tail inconclusive.
+6. **Major: a treatment that passed R3 but had no slot in R4 had no end.** Right. Taken: it ends
+   E experimental, its confirmation owed in a carry-over row.
+7. **Minor: C1's fills left out the unshaped arm.** Right. Taken: 30 fills, 1.2 dollars; the
+   totals restated.
 
