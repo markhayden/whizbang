@@ -211,14 +211,17 @@ impl Hosted for Served {
     }
 
     /// Through the store's collection, by the writer the executor holds (plan m6, task D1,
-    /// item 5): an upload a run took, or a run's admission in progress holds, stays.
+    /// item 5): an upload a run took, or a run's admission in progress holds, stays. The
+    /// collection ends in the store's own prune, through the same writer, so an upload's
+    /// bytes go with its name (ADR 0048): a run going holds its generation, and keeps
+    /// every file it reads.
     fn collect_unused(&self, older_than_ms: u64, now_ms: u64) -> Result<u64, String> {
         let store = self
             .store()
             .map_err(|_| "the engine is stopping".to_owned())?;
         store
-            .collect_unused_imports(older_than_ms, now_ms)
-            .map(|collected| collected.names)
+            .collect_and_prune(older_than_ms, now_ms)
+            .map(|(collected, _)| collected.names)
             .map_err(|error| error.to_string())
     }
 }

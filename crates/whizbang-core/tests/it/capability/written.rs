@@ -556,3 +556,47 @@ fn one_exchange_with_text_a_withheld_part_a_missing_picture_and_an_answer_reads_
         Err(Unread::OtherVersion { .. })
     ));
 }
+
+/// What decides whether a cut turn is asked for again is kept with the turn (plan m7,
+/// task B1, item 7; ADR 0048): the output ceiling of its backend, in the exchange a run
+/// stores and in a script. An exchange written before it was kept has none, and is read
+/// as none; one whose backend states none is written as before, byte for byte.
+#[test]
+fn an_exchange_keeps_its_turns_output_ceiling_and_an_older_one_reads_as_none() {
+    let ceiled = Ok(cut_off().under_output_ceiling(1024));
+    // Written as a run stores it (an opaque part as its digest) and whole; read back
+    // from the one written whole, which is the one that can be.
+    for keep in [Keep::Digests, Keep::Whole] {
+        let written = write_exchange(2, &request(), &ceiled, keep);
+        let document: Json = serde_json::from_slice(&written).unwrap();
+        assert_eq!(document["answer"]["turn"]["output_ceiling"], 1024);
+    }
+    let written = write_exchange(2, &request(), &ceiled, Keep::Whole);
+    let read = read_exchange(&written, &pictures).unwrap();
+    assert_eq!(read.answer.unwrap().output_ceiling(), Some(1024));
+    // A turn whose backend states none writes no field: the bytes are those written
+    // before the ceiling was kept, and they are read as none.
+    let older = write_exchange(2, &request(), &Ok(cut_off()), Keep::Whole);
+    assert!(!String::from_utf8_lossy(&older).contains("output_ceiling"));
+    let read = read_exchange(&older, &pictures).unwrap();
+    assert_eq!(read.answer.unwrap().output_ceiling(), None);
+    // The same of the exchange that held the ceiling, with the field taken out: an
+    // older one, read as none.
+    let written = write_exchange(2, &request(), &ceiled, Keep::Whole);
+    let mut document: Json = serde_json::from_slice(&written).unwrap();
+    let turn = document["answer"]["turn"].as_object_mut().unwrap();
+    assert!(turn.remove("output_ceiling").is_some());
+    let mut bytes = serde_json::to_vec(&document).unwrap();
+    bytes.push(b'\n');
+    let read = read_exchange(&bytes, &pictures).unwrap();
+    assert_eq!(read.answer.unwrap().output_ceiling(), None);
+    // A script plays the ceiling back too, and refuses one that is no number of tokens.
+    let script = write_script(&[ceiled.clone(), Ok(calling())]);
+    let played = read_script(&script).unwrap();
+    assert_eq!(played[0].as_ref().unwrap().output_ceiling(), Some(1024));
+    assert_eq!(played[1].as_ref().unwrap().output_ceiling(), None);
+    let wrong = script_with(|script| {
+        script["entries"][0]["turn"]["output_ceiling"] = json!("many");
+    });
+    assert!(matches!(read_script(&wrong), Err(Unread::Malformed(_))));
+}

@@ -77,6 +77,10 @@ pub enum Error {
     },
     /// No run has this id in the current generation. Nothing was published.
     NoSuchRun { run: String },
+    /// No bundle's or example's entry of this name is in the current generation, or the
+    /// text is no such entry's name ([`super::Publication::let_go_of_entry`]). Nothing
+    /// was published.
+    NoSuchEntry { entry: String },
     /// A publication was to make this run, and the current generation holds it already.
     /// Nothing was published: two runs are never merged under one id.
     RunExists { run: String },
@@ -202,6 +206,9 @@ impl Error {
                 reads_formats(*reads)
             ),
             Error::NoSuchRun { .. } => "the store does not hold that run".to_owned(),
+            Error::NoSuchEntry { .. } => {
+                "the store does not hold that bundle or example".to_owned()
+            }
             Error::RunExists { .. } => "the store already holds a run of that id".to_owned(),
             Error::NameExists { .. } => {
                 "the store already holds a name that is made once".to_owned()
@@ -325,6 +332,11 @@ impl fmt::Display for Error {
                 reads_formats(*reads)
             ),
             Error::NoSuchRun { run } => write!(f, "the store holds no run {run:?}"),
+            Error::NoSuchEntry { entry } => write!(
+                f,
+                "the store holds no bundle or example {entry:?}: an entry is bundles/ or \
+                 examples/ and one name"
+            ),
             Error::RunExists { run } => write!(
                 f,
                 "the store already holds a run {run:?}: a new run is not merged into it"
@@ -383,6 +395,7 @@ impl std::error::Error for Error {
             | Error::LocksDoNotHold { .. }
             | Error::TooManyAbandoned { .. }
             | Error::NoSuchRun { .. }
+            | Error::NoSuchEntry { .. }
             | Error::RunExists { .. }
             | Error::NameExists { .. }
             | Error::MadeOnly { .. }

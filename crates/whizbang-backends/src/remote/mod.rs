@@ -55,7 +55,7 @@ use std::time::Duration;
 
 use sha2::{Digest as _, Sha256};
 use whizbang_core::capability::{
-    Bounds, Declaration, Device, Fault, FaultKind, Instance, Picture, Price, SegmentRequest,
+    Bounds, Card, Declaration, Device, Fault, FaultKind, Instance, Picture, Price, SegmentRequest,
     SegmentResponse, Segmenter, Served, Stage, TimeLimit,
 };
 use whizbang_core::config::{Kind, KindRefused, Setting, Table};
@@ -835,6 +835,16 @@ fn response(request: &SegmentRequest, answered: Answered) -> Result<SegmentRespo
     }
     let device = Device::named(&called.device).map_err(|_| malformed())?;
     let served = Served::unknown().on(device).cached(false);
+    // The card the load named, when it is one by the rule (ADR 0048): a text that is
+    // not is no card, and is not kept.
+    let card = called
+        .card
+        .as_deref()
+        .and_then(|card| Card::named(card).ok());
+    let served = match card {
+        Some(card) => served.with_card(card),
+        None => served,
+    };
     let mut said = format!("remote: dispatch {dispatch}, files {digest}\n");
     said.push_str(&called.diagnostics);
     Ok(SegmentResponse::new(answers)

@@ -152,7 +152,7 @@ impl Eq for Clock {}
 /// The hourly collection of uploads that no run took (plan m6, task D1, item 5): at the
 /// start, then every [`Collection::every`] by [`Collection::clock`], each import no run
 /// took that is older than [`Collection::kept`] is let go, through the store's collection
-/// ([`Hosted::collect_unused`]).
+/// ([`Hosted::collect_unused`]), which ends in the store's prune (ADR 0048).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Collection {
     pub kept: Duration,
@@ -244,7 +244,8 @@ pub trait Hosted: Door {
         None
     }
     /// Lets go of every upload no run took that is older than `older_than_ms` at
-    /// `now_ms`, through the store's collection: how many names were let go.
+    /// `now_ms`, through the store's collection, and then prunes the store, so the
+    /// upload's bytes go with its name (ADR 0048): how many names were let go.
     fn collect_unused(&self, _older_than_ms: u64, _now_ms: u64) -> Result<u64, String> {
         Ok(0)
     }

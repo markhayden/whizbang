@@ -186,7 +186,7 @@ fn a_record_of_another_version_is_another_version_not_damage() {
     ));
     let said = RunRecord::from_bytes(other).unwrap_err().to_string();
     assert!(
-        said.contains("run/9") && said.contains("this build reads run/6, run/5, run/4"),
+        said.contains("run/9") && said.contains("this build reads run/7, run/6, run/5, run/4"),
         "{said}"
     );
 }
@@ -645,7 +645,7 @@ fn what_a_refusal_quotes_of_stored_bytes_is_escaped_and_cut() {
     // The fields it expected are the first and how many more: a record has more
     // fields than a reason has room for.
     assert!(
-        said.contains("unknown field `extra`, expected one of `record` or 16 more at line 1"),
+        said.contains("unknown field `extra`, expected one of `record` or 17 more at line 1"),
         "{said}"
     );
     assert!(said.contains(" at line 1 column "), "{said}");
@@ -2034,14 +2034,14 @@ fn the_new_record_version_reads_a_record_of_the_version_before() {
         RunRecord::from_bytes(long.as_bytes()),
         Err(RecordError::Inconsistent(_))
     ));
-    // The refusal of another version names the five this build reads.
-    let other = fifth.replacen("\"run/5\"", "\"run/7\"", 1);
+    // The refusal of another version names the six this build reads.
+    let other = fifth.replacen("\"run/5\"", "\"run/8\"", 1);
     assert_eq!(
         RunRecord::from_bytes(other.as_bytes())
             .unwrap_err()
             .to_string(),
-        "a record of another version: run/7, and this build reads run/6, run/5, run/4, run/3 \
-         and run/2"
+        "a record of another version: run/8, and this build reads run/7, run/6, run/5, run/4, \
+         run/3 and run/2"
     );
 }
 
@@ -2508,4 +2508,169 @@ fn run_6_holds_each_list_to_its_bound() {
         Err(RecordError::Inconsistent(_))
     ));
     assert!(validate(&schema_6(), &as_json(&negative)).is_err());
+}
+
+// --- run/7: a model's card and the run replayed (plan m7, task B1, item 6; ADR 0048) -----------
+
+fn schema_7() -> Json {
+    serde_json::from_str(whizbang_core::contract::RUN_7_SCHEMA).unwrap()
+}
+
+/// The card the vector's first request names: a card's name as a worker gives one.
+const CARD: &str = "NVIDIA A10G";
+
+/// The fixed vector of `run/4` (three requests, the first answered on `mps`) with the
+/// first request's card, as `run/7`.
+fn carded() -> String {
+    served().replacen("\"run/4\"", "\"run/7\"", 1).replacen(
+        r#""device":"mps","cached""#,
+        &format!(r#""device":"mps","card":"{CARD}","cached""#),
+        1,
+    )
+}
+
+#[test]
+fn a_record_with_a_card_is_run_7_and_one_without_is_written_as_before() {
+    use whizbang_core::contract::record::{FromBundle, ReplayMode, Replayed};
+    use whizbang_core::contract::{Context, Failure, Produced, RUN_7};
+    // A record that names a card is `run/7`: it reads, is written back as it was, and is
+    // of its schema; the card is beside the device of the request it is of.
+    let bytes = carded();
+    let record = RunRecord::from_bytes(bytes.as_bytes()).unwrap();
+    assert_eq!(record.version(), RUN_7);
+    assert_eq!(record.to_bytes(), bytes.as_bytes());
+    validate(&schema_7(), &as_json(&bytes)).unwrap();
+    assert_eq!(record.models()[0].card.as_deref(), Some(CARD));
+    assert_eq!(record.models()[1].card, None);
+    // The same record without its card is `run/4`, written byte for byte as before, and
+    // is of `run/4`'s schema and not of `run/7`'s.
+    let before = served();
+    let read = RunRecord::from_bytes(before.as_bytes()).unwrap();
+    assert_eq!(read.version(), RUN_RECORD);
+    assert_eq!(read.to_bytes(), before.as_bytes());
+    assert!(!before.contains("\"card\""));
+    assert!(validate(&schema_7(), &as_json(&before)).is_err());
+    assert!(validate(&schema(), &as_json(&bytes)).is_err());
+    // What a record may not say of a card: in a record of a version that has none, of a
+    // request that was not answered, not of the rule of a card, and a `run/7` record
+    // that holds neither a card nor the run replayed.
+    let refused: [(&str, String); 7] = [
+        (
+            "a card in run/4",
+            bytes.replacen("\"run/7\"", "\"run/4\"", 1),
+        ),
+        (
+            "a card in run/6",
+            bytes.replacen("\"run/7\"", "\"run/6\"", 1),
+        ),
+        (
+            "a card of a request that timed out",
+            bytes.replacen(
+                r#""device":null,"cached":null,"ended":"timed_out""#,
+                &format!(r#""device":null,"card":"{CARD}","cached":null,"ended":"timed_out""#),
+                1,
+            ),
+        ),
+        ("an empty card", bytes.replacen(CARD, "", 1)),
+        (
+            "a card with a space at its end",
+            bytes.replacen(CARD, "A10G ", 1),
+        ),
+        (
+            "a card of 65 characters",
+            bytes.replacen(CARD, &"c".repeat(65), 1),
+        ),
+        (
+            "run/7 with neither",
+            before.replacen("\"run/4\"", "\"run/7\"", 1),
+        ),
+    ];
+    for (what, written) in &refused {
+        assert!(RunRecord::from_bytes(written.as_bytes()).is_err(), "{what}");
+    }
+    // The longest card is taken, and one longer is refused by both; what the schema
+    // cannot say, the types refuse: a character no terminal prints, one not ASCII.
+    let longest = bytes.replacen(CARD, &"c".repeat(64), 1);
+    RunRecord::from_bytes(longest.as_bytes()).unwrap();
+    validate(&schema_7(), &as_json(&longest)).unwrap();
+    let longer = bytes.replacen(CARD, &"c".repeat(65), 1);
+    assert!(validate(&schema_7(), &as_json(&longer)).is_err());
+    for card in ["A10G\\u0007", "Ä10G"] {
+        let written = bytes.replacen(CARD, card, 1);
+        assert!(RunRecord::from_bytes(written.as_bytes()).is_err(), "{card}");
+        validate(&schema_7(), &as_json(&written)).unwrap();
+    }
+
+    // A run that notes the run it replays is `run/7`, with `replayed` after the groups of
+    // `run/6`; a second note, a step no bundle has, and the run itself are not taken.
+    struct Replays(ActionDescriptor);
+    impl Action for Replays {
+        fn descriptor(&self) -> &ActionDescriptor {
+            &self.0
+        }
+        fn run(&self, _: &PreparedCall, context: &Context) -> Result<Produced, Failure> {
+            let facts = context.facts();
+            let bundle = |step| {
+                Some(FromBundle {
+                    digest: ONES.parse().unwrap(),
+                    step,
+                })
+            };
+            let replayed = |run: &str, step| Replayed {
+                run: run.to_owned(),
+                bundle: bundle(step),
+                mode: ReplayMode::Offline,
+            };
+            assert!(
+                !facts.replayed(replayed("1000-1", 16)),
+                "a step no bundle has"
+            );
+            assert!(!facts.replayed(replayed("Not An Id", 0)), "no run's id");
+            assert!(facts.replayed(replayed("1000-1", 2)));
+            assert!(!facts.replayed(replayed("1000-2", 0)), "a second");
+            Ok(Produced::nothing())
+        }
+    }
+    let dir = Scratch::new("run-7");
+    let store = Arc::new(Store::open(&dir.path().join("store"), Arc::new(RealFs)).unwrap());
+    let mut registry = Registry::new();
+    let draft = ActionDescriptor::draft("replays", "1.0.0", Kind::Primitive, "A test action.");
+    registry
+        .register(Arc::new(Replays(draft.build().unwrap())))
+        .unwrap();
+    let engine = Engine::over(
+        registry,
+        Arc::new(NoBackends),
+        store.clone(),
+        Digest::of_bytes(b""),
+    );
+    let finished = engine.submit(&Call::new("replays")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    let generation = store.snapshot().unwrap();
+    let stored = record::stored(&generation, finished.run().as_str(), |e| store.read(e));
+    let stored = stored.unwrap().unwrap();
+    assert_eq!(stored.version(), RUN_7);
+    let replayed = stored.replayed().unwrap();
+    assert_eq!(
+        (replayed.run.as_str(), replayed.mode),
+        ("1000-1", ReplayMode::Offline)
+    );
+    assert_eq!(replayed.bundle.as_ref().unwrap().step, 2);
+    let text = String::from_utf8(stored.to_bytes()).unwrap();
+    let written = format!(
+        r#","replayed":{{"run":"1000-1","bundle":{{"digest":"{ONES}","step":2}},"mode":"offline"}}}}"#
+    );
+    assert!(text.ends_with(&(written + "\n")), "{text}");
+    validate(&schema_7(), &as_json(&text)).unwrap();
+    // A record that says it replays itself, or leaves out the bundle's null, is refused.
+    let own = finished.run().as_str();
+    let itself = text.replacen("\"run\":\"1000-1\"", &format!("\"run\":\"{own}\""), 1);
+    assert!(RunRecord::from_bytes(itself.as_bytes()).is_err());
+    let live = text.replacen("\"offline\"", "\"live\"", 1);
+    let live = live.replacen(&format!(r#"{{"digest":"{ONES}","step":2}}"#), "null", 1);
+    RunRecord::from_bytes(live.as_bytes()).unwrap();
+    validate(&schema_7(), &as_json(&live)).unwrap();
+    let left_out = live.replacen("\"bundle\":null,", "", 1);
+    assert!(RunRecord::from_bytes(left_out.as_bytes()).is_err());
+    assert!(validate(&schema_7(), &as_json(&left_out)).is_err());
 }

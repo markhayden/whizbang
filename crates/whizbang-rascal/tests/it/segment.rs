@@ -444,3 +444,98 @@ fn instances_are_read_in_the_order_the_interface_fixes() {
         Less
     );
 }
+
+/// What replay needs of a segmenter's answer is in its run (plan m7, task B1, item 7; ADR
+/// 0048): each instance's plane is its mask's core, and its score, its box and its
+/// predicted IoU, and what the backend said beside the answer, are in the diagnostic. The
+/// answer made again from those is the answer the segmenter gave, whole, in the fixed
+/// order, number for number.
+#[test]
+fn the_answer_rebuilt_from_a_runs_masks_and_its_diagnostic_is_the_answer_it_was_given() {
+    use whizbang_core::capability::{Instance, Picture, Query, SegmentHandle, SegmentRequest};
+    use whizbang_core::contract::Cancellation;
+    use whizbang_rascal::segment::in_order;
+
+    let world = World::new();
+    let (image, id) = with_picture(&world);
+    // Three instances, out of the fixed order, each with a predicted IoU, and two lines
+    // the backend says beside them.
+    let boxes = [[10, 2, 14, 9], [1, 1, 5, 4], [18, 10, 24, 16]];
+    let segmenter = Arc::new(
+        boxes
+            .iter()
+            .fold(FakeSegmenter::new(), |fake, bounds| {
+                fake.finding("a cat", *bounds)
+            })
+            .saying("3 instances on mps\nas determined", 0.875),
+    );
+    let finished = engine(&world, &segmenter)
+        .submit(&call(id, "a cat"))
+        .unwrap();
+    let Outcome::Completed { outputs } = finished.outcome() else {
+        panic!("{:?}", finished.outcome());
+    };
+    // The answer the segmenter gives that request, asked again of it, in the fixed order.
+    let limits = DecodeLimits::default();
+    let picture = Picture::new(image.pixels(&limits).unwrap()).unwrap();
+    let request = SegmentRequest::new(picture, vec![Query::phrase("a cat").unwrap()], 8)
+        .and_then(|request| request.under(&image.binding()))
+        .unwrap();
+    let handle = SegmentHandle::new(segmenter.clone(), Cancellation::new());
+    let given = handle.segment(&request).unwrap();
+    let found = &given.answers()[0];
+    let key = |at: usize| {
+        let instance = &found[at];
+        let iou = given.predicted_iou(0, at);
+        (instance.score(), instance.bounds(), iou, instance.plane())
+    };
+    let mut order: Vec<usize> = (0..found.len()).collect();
+    order.sort_by(|one, other| in_order(key(*one), key(*other)));
+    let given_whole: Vec<(Instance, Option<f64>)> = (order.iter())
+        .map(|at| (found[*at].clone(), given.predicted_iou(0, *at)))
+        .collect();
+
+    // The answer rebuilt from the run alone: its committed masks and its diagnostic.
+    let stored = held(&world.root(), world.fs.clone());
+    let run = stored
+        .runs
+        .iter()
+        .find(|run| run.id == finished.run().as_str())
+        .unwrap();
+    let said = String::from_utf8(run.diagnostic(DIAGNOSTIC).unwrap().to_vec()).unwrap();
+    let masks = masks_of(&world, outputs);
+    let mut lines = said.lines();
+    assert_eq!(lines.next(), Some("instances 3"));
+    let mut rebuilt = Vec::new();
+    for mask in &masks {
+        let line = lines.next().unwrap();
+        let words: Vec<&str> = line.split(' ').collect();
+        assert_eq!(words[..2], ["mask", mask.id().0.to_string().as_str()]);
+        assert_eq!((words[2], words[4]), ("score", "box"));
+        let number = |at: usize| words[at].parse::<f64>().unwrap();
+        let bounds = [number(5), number(6), number(7), number(8)];
+        let iou = (words.get(9) == Some(&"iou")).then(|| number(10));
+        let space = mask.space();
+        let instance = Instance::new(
+            mask.binding().id(),
+            space.width(),
+            space.height(),
+            mask.core().to_vec(),
+            bounds,
+            number(3),
+        )
+        .unwrap();
+        rebuilt.push((instance, iou));
+    }
+    let backend: Vec<&str> = lines
+        .map(|line| line.strip_prefix("backend ").unwrap())
+        .collect();
+    assert_eq!(rebuilt, given_whole);
+    assert_eq!(backend.join("\n"), given.diagnostics());
+    // And where it was answered is in the run's record, as the response said it.
+    let record = run.record.as_ref().unwrap();
+    let model = &record.models()[0];
+    let served = given.served();
+    assert_eq!(model.device.as_deref(), served.device().map(|d| d.as_str()));
+    assert_eq!(model.cached, served.from_cache());
+}

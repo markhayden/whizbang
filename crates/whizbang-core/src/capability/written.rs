@@ -203,6 +203,13 @@ struct TurnWire {
     counted_input_tokens: Option<u64>,
     #[serde(deserialize_with = "present")]
     request_id: Option<String>,
+    /// The most output tokens the turn's backend sends any request with, when it holds
+    /// one (ADR 0048, "What the store keeps for replay"): whether a turn cut at its limit
+    /// is asked for again turns on it. Written only when the backend states one; an
+    /// exchange or a script written before it was kept has no such field, and is read
+    /// as none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    output_ceiling: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -339,6 +346,7 @@ fn answer_out(answer: &Result<Turn, Fault>, opaque: Keep) -> AnswerWire {
             }),
             counted_input_tokens: turn.counted_input(),
             request_id: turn.request_id().map(str::to_owned),
+            output_ceiling: turn.output_ceiling(),
         }),
         Err(fault) => AnswerWire::Fault(FaultWire {
             kind: fault.kind().name().to_owned(),
@@ -644,11 +652,15 @@ fn answer_in(answer: AnswerWire, at: usize) -> Result<Result<Turn, Fault>, Unrea
                 Usage::new(usage.input_tokens, usage.output_tokens)
                     .cached(usage.cache_read_tokens, usage.cache_write_tokens)
             });
-            let counted = turn.counted_input_tokens;
+            let (counted, ceiling) = (turn.counted_input_tokens, turn.output_ceiling);
             let turn = Turn::new(parts, stop, usage, turn.request_id.as_deref());
             let turn = turn.map_err(|why| Unread::Unfit { at, why })?;
-            Ok(match counted {
+            let turn = match counted {
                 Some(tokens) => turn.counted(tokens),
+                None => turn,
+            };
+            Ok(match ceiling {
+                Some(tokens) => turn.under_output_ceiling(tokens),
                 None => turn,
             })
         }

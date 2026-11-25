@@ -68,7 +68,7 @@ use crate::models::{InstallationId, ModelName, ModelsDir, draining, removals};
 use super::proto::{Ask, Scalar};
 use super::worker::{
     CALL_LIMIT, CANCEL_LIMIT, Called, END_LIMIT, Ended, Failed, HELLO_LIMIT, LOAD_LIMIT, Limits,
-    Progress, RESTART_PAUSE, STARTS_FAILED_MOST, UNLOAD_LIMIT, Worker,
+    Progress, RESTART_PAUSE, STARTS_FAILED_MOST, UNLOAD_LIMIT, Worker, card_of,
 };
 
 /// How many requests may wait for the worker (D4): the one past them is refused.
@@ -178,13 +178,29 @@ pub struct Status {
     pub worker: Option<u32>,
 }
 
-/// The model resident in a worker: what was loaded, in which worker.
+/// The model resident in a worker: what was loaded, in which worker, and the card its
+/// `load` named, when it named one (ADR 0048).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Resident {
     model: ModelName,
     installation: InstallationId,
     settings: BTreeMap<String, Scalar>,
     worker: Option<u32>,
+    card: Option<String>,
+}
+
+impl Resident {
+    /// Whether this is the load `wanted` asks for: the same model, installation and
+    /// settings, in the same worker. The card is what the load said, not what was asked.
+    fn is(&self, wanted: &Resident) -> bool {
+        (&self.model, self.installation, &self.settings, self.worker)
+            == (
+                &wanted.model,
+                wanted.installation,
+                &wanted.settings,
+                wanted.worker,
+            )
+    }
 }
 
 #[derive(Default)]
@@ -539,11 +555,14 @@ impl Supervisor {
             installation: request.installation,
             settings: request.settings.clone(),
             worker: worker.pid(),
+            card: None,
         };
         let resident = self.lock().resident.clone();
         // What a worker that has ended, or another worker, held is not resident.
         let resident = resident.filter(|resident| resident.worker == worker.pid());
-        if resident.as_ref() != Some(&wanted) || wanted.worker.is_none() {
+        let held = resident.as_ref().filter(|resident| resident.is(&wanted));
+        let mut card = held.and_then(|resident| resident.card.clone());
+        if held.is_none() || wanted.worker.is_none() {
             if let Some(old) = resident {
                 let unload = Ask::Unload {
                     model: old.model,
@@ -558,13 +577,19 @@ impl Supervisor {
                 installation: request.installation,
                 settings: request.settings,
             };
-            self.step(worker, number, load, limits)?;
+            let loaded = self.step(worker, number, load, limits)?;
+            // The card the load named, kept with the model it made resident, and handed
+            // on with each call of it (ADR 0048).
+            card = card_of(&loaded.diagnostics);
             self.lock().resident = Some(Resident {
                 worker: worker.pid(),
+                card: card.clone(),
                 ..wanted
             });
         }
-        self.step(worker, number, request.ask, limits)
+        let mut called = self.step(worker, number, request.ask, limits)?;
+        called.card = card;
+        Ok(called)
     }
 
     /// One call of the worker's in a request's turn, told to the status and the journal

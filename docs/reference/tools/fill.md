@@ -37,6 +37,12 @@ one the original's, whatever the filler answered. At `mask`, the mask with a ste
 of the two pictures. A filler that answers with the picture it was sent changes nothing:
 the picture and the mask are handed back as they were.
 
+**What the run keeps.** The picture the filler painted, as the diagnostic `fill-answer.png`:
+its colours with an opaque alpha, written as a canonical image's PNG, and only when it is
+the image's size. The composite cannot be undone into it, and a replay answers the fill
+from it (ADR 0048). `whizbang runs show <run> --diagnostic diagnostics/fill-answer.png >
+answer.png` saves it.
+
 ## Examples
 
 Pictures of 96 by 64, three times their size; a mask's core white, protected pixels red,
@@ -130,4 +136,5 @@ lab's (tasks L1 to L3).
 **Gates.** None faced.
 
 **History.** Plan m3, task F1: the action, its adapter for fal and its live call. Plan m3,
-task D1: this record.
+task D1: this record. Plan m7, task B1: the run keeps the painted answer
+(`fill::a_fill_run_keeps_the_painted_answer_that_a_feathered_mask_was_composited_from`).

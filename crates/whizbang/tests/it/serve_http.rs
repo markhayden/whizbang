@@ -656,7 +656,8 @@ fn an_upload_is_named_by_a_call_and_its_result_is_downloaded() {
 /// The hourly collection (plan m6, task D1, item 5), on a clock of the test's: at its
 /// start and once an hour after by that clock, the engine lets go of each upload no run
 /// took that is older than `--uploads-kept-h` (24 by default), through the store's
-/// collection; one a run took stays, and so does one younger than the age.
+/// collection, and its bytes with it, by the store's prune (plan m7, task B1, item 7); one
+/// a run took stays, and so does one younger than the age.
 #[test]
 fn an_upload_no_run_took_is_collected_after_its_age_and_one_a_run_took_stays() {
     use std::sync::Arc;
@@ -706,11 +707,30 @@ fn an_upload_no_run_took_is_collected_after_its_age_and_one_a_run_took_stays() {
     until(2);
     assert_eq!((status(&taken), status(&untaken)), (200, 200));
     assert_eq!(generation(), before);
-    // Past its age, the upload no run took goes at the next hour; the one a run took stays.
+    // The file each upload's name holds, on disk.
+    let file = |id: &str| {
+        let reader = Reader::open(&engined.root(), Arc::new(RealFs)).unwrap();
+        let hex = id.strip_prefix("sha256:").unwrap();
+        let entry = reader
+            .snapshot()
+            .unwrap()
+            .get(&format!("artifacts/image/{hex}"))
+            .cloned();
+        engined
+            .root()
+            .join("objects")
+            .join(entry.unwrap().digest.hex())
+    };
+    let (untaken_file, taken_file) = (file(&untaken), file(&taken));
+    assert!(untaken_file.exists() && taken_file.exists());
+    // Past its age, the upload no run took goes at the next hour, its name and its bytes:
+    // the collection ends in the store's prune (ADR 0048). The one a run took stays.
     now.store(start + 25 * HOUR_MS, Ordering::SeqCst);
     until(3);
     assert_eq!(status(&untaken), 404);
     assert_eq!(status(&taken), 200);
+    assert!(!untaken_file.exists());
+    assert!(taken_file.exists());
 }
 
 /// Two halves. In process, through the same stop a signal asks for (the binary's reader of

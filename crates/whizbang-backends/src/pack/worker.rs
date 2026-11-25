@@ -315,6 +315,19 @@ pub struct Called {
     pub events: Vec<String>,
     /// The answer, as the wire held it.
     pub answer: Answer,
+    /// The card the `load` that put the call's model on it named ([`card_of`]), when it
+    /// named one: set by whoever made the load, for a call of the model it loaded.
+    pub card: Option<String>,
+}
+
+/// The card a `load`'s result names (ADR 0046, "Its device"; ADR 0048): the worker joins
+/// what a load says with `; ` and names the card last, as `card <name>`. The name as it
+/// was written, when the last part is one; it is held to the rule of a card where the
+/// answer is made.
+pub fn card_of(said: &str) -> Option<String> {
+    let last = said.rsplit("; ").next().unwrap_or(said);
+    let card = last.strip_prefix("card ")?;
+    (!card.is_empty()).then(|| card.to_owned())
 }
 
 /// What a call that failed hands back (task P3b): its fault, whose sentence is fixed
@@ -351,6 +364,7 @@ impl std::fmt::Debug for Called {
             .field("diagnostics_bytes", &self.diagnostics.len())
             .field("events", &self.events.len())
             .field("answer", &answer)
+            .field("card", &self.card.is_some())
             .finish()
     }
 }
@@ -1077,6 +1091,7 @@ impl Worker {
                     diagnostics,
                     events,
                     answer,
+                    card: None,
                 });
             }
             Some(Some(Heard::Said(Message::Error {

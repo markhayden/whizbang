@@ -9,7 +9,9 @@ that fault, and with limits short enough for the fast tier. Which side answers a
 request is read from the model its `load` names: `<fault>--<fake model>`, where the
 fault `none` is the fakes with no fault. The installation of each such model is made
 by the test, with a record that names the fake model as its adapter, so the worker
-loads the fake model the name gives.
+loads the fake model the name gives. The fake model `fake-cuda` is answered by a side of
+its own, whose worker is `fake_card.py` beside this file: the fakes, with that model and
+a stand-in for a runtime with a card (plan m7, task B1, item 6).
 
 What a test reads of it: for each request its side began, a file
 `<models>/seen/<dispatch id>`, the model and the settings of its `load` as JSON, written
@@ -58,6 +60,11 @@ NO_FAULT = "none"
 # The most sides one host makes: one for each fault of the pack's fakes, and one more.
 SIDES_MOST = 16
 
+# The fake model on a card, and the side that answers it.
+ON_A_CARD = "fake-cuda"
+CARD_SIDE = "card"
+HERE = os.path.dirname(os.path.abspath(__file__))
+
 
 class Router:
     """The worker's side the front is given: a `LocalSide` for each fault a request's
@@ -80,8 +87,11 @@ class Router:
             if side is None:
                 if len(self._sides) >= SIDES_MOST:
                     return None
-                more = () if fault == NO_FAULT else ("--fake-fault", fault)
-                spawn = front.spawner(self.models_dir, "whizbang_pack.fakes", more, lifetime_s=120)
+                if fault == CARD_SIDE:
+                    spawn = front.spawner(self.models_dir, "fake_card", (), lifetime_s=120, sources=(front._SRC, HERE))
+                else:
+                    more = () if fault == NO_FAULT else ("--fake-fault", fault)
+                    spawn = front.spawner(self.models_dir, "whizbang_pack.fakes", more, lifetime_s=120)
                 side = front.LocalSide(self.models_dir, spawn=spawn, limits=front.Limits(**LIMITS), secrets=self._secrets)
                 self._sides[fault] = side
             return side
@@ -95,7 +105,9 @@ class Router:
         _note(self.models_dir, "seen", job["dispatch"], {"model": load["model"], "settings": load["settings"]})
         if SLOW_S:
             time.sleep(SLOW_S)
-        fault, separator, _ = load["model"].partition(SEPARATOR)
+        fault, separator, fake = load["model"].partition(SEPARATOR)
+        if separator and fake == ON_A_CARD:
+            fault = CARD_SIDE
         side = self._side(fault) if separator else None
         if side is None:
             emit(front.outcome("failed", "rejected"))

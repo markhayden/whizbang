@@ -30,7 +30,7 @@ use whizbang_testkit::threads;
 use whizbang_testkit::worker as kit;
 
 use super::conformance::{installation, model, segment};
-use super::worker::{queued, queued_over};
+use super::worker::{queued, queued_on_a_card, queued_over};
 
 /// How long a test waits, on the clock, for a state of the supervisor.
 const WITHIN: Duration = Duration::from_secs(20);
@@ -879,4 +879,41 @@ fn the_guard_ends_the_call_in_its_worker_at_once_and_every_waiting_request() {
         "the supervisor of the pack's worker was ended before this request's turn came; it was not sent"
     );
     assert!(!kit::runs_the_pack(worker));
+}
+
+/// The card a `load` named goes with each call of the model it made resident, a call that
+/// finds the model resident and makes no load among them (plan m7, task B1, item 6; ADR
+/// 0048). The worker is the pack's fakes with a model on a card (`fake_card.py`, beside
+/// the fake host's side), whose own code names the card as on a GPU host; a model on no
+/// card names none.
+#[test]
+fn the_card_a_load_named_goes_with_each_call_of_the_model_it_made_resident() {
+    let clock = Arc::new(Stepped::default());
+    let (supervisor, _place) = queued_on_a_card(clock);
+    let named = Some("NVIDIA Fake A10G");
+    let first = supervisor
+        .call(request("fake-cuda"), &Limits::none())
+        .unwrap();
+    assert_eq!(
+        (first.device.as_str(), first.card.as_deref()),
+        ("cuda", named)
+    );
+    let second = supervisor
+        .call(request("fake-cuda"), &Limits::none())
+        .unwrap();
+    assert_eq!(second.card.as_deref(), named);
+    let cuda = || "fake-cuda".to_owned();
+    assert_eq!(
+        sent(&supervisor),
+        [
+            (1, "load", cuda()),
+            (1, "segment", cuda()),
+            (2, "segment", cuda())
+        ]
+    );
+    // Another model, on no card: its load names none, and its calls carry none.
+    let other = supervisor
+        .call(request("fake-ok"), &Limits::none())
+        .unwrap();
+    assert_eq!(other.card, None);
 }

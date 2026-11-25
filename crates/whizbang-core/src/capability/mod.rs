@@ -56,7 +56,7 @@ pub use segment::{
     SegmentRequest, SegmentResponse, Segmenter,
 };
 pub(crate) use served::Answer;
-pub use served::{DEVICE_LIMIT, Device, Served, is_device};
+pub use served::{CARD_LIMIT, Card, DEVICE_LIMIT, Device, Served, is_card, is_device};
 
 /// The most pixels an image, a plane or a fill may have: ADR 0001's default limit on a
 /// decoded image, held here for everything a capability is sent or sends back.

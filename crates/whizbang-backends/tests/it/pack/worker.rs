@@ -99,6 +99,32 @@ pub(super) fn queued_over<C: Clock + 'static>(
     (guard, root)
 }
 
+/// The supervisor of the pack's fakes with one model more, on a card (`fake-cuda`, plan
+/// m7, task B1, item 6): its worker is `fake_card.py` beside the fake host's side, run
+/// from a folder of the test's own that holds it and the pack's package, in place of the
+/// pack's source alone. The folder lives as long as the guard.
+pub(super) fn queued_on_a_card<C: Clock + 'static>(
+    clock: Arc<C>,
+) -> (Guard<Arc<Supervisor>>, Scratch) {
+    let place = Scratch::new("pack-card");
+    let package = kit::source().join("whizbang_pack");
+    std::os::unix::fs::symlink(&package, place.path().join("whizbang_pack")).unwrap();
+    let card = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/it/remote/fake_card.py");
+    std::fs::copy(card, place.path().join("fake_card.py")).unwrap();
+    let source = place.path().to_path_buf();
+    let guard = queued(None, clock, |launch| {
+        *launch = Launch::testing(
+            launch.python.clone(),
+            source,
+            "fake_card".to_owned(),
+            launch.models_dir.clone(),
+            launch.lifetime_s,
+            Vec::new(),
+        );
+    });
+    (guard, place)
+}
+
 /// The same, with the supervisor `make` makes from the fixture.
 fn made(fault: Option<&str>, make: impl FnOnce(&Fixture) -> Worker) -> Guard<Worker> {
     kit::fakes(fault).guard(
