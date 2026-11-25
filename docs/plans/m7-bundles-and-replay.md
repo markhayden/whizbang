@@ -1012,24 +1012,31 @@ step, and replays one run offline or live with its report; built as G1's designs
    row is re-owned with that line to the first live run on or after each date, milestone E's.
 5. **The tag `m7`**, by the orchestrator, on the note's merge.
 
-- [ ] Done when: the note is merged and `m7` is tagged.
+   *As it went (2026-11-25):* items 2 to 4 in one pull request: `docs/plans/m7-note.md`,
+   held by `scripts/tests/test-notes.sh`; `SPEC.md` sections 3, 6, 7, 11 and 16; and the
+   Google rows re-owned to milestone E. Section 11 already named `runs bundle`, `runs
+   replay` and `bundle import|show|list|delete` (B1, R1); it gained `store delete --example`
+   and the replay's config flags, each checked against `whizbang --help`.
+
+- [ ] Done when: the note is merged and `m7` is tagged. This box stays open until the
+  orchestrator makes the tag on the note's merge.
 
 ## Carry-over rows owned by milestone 7, and who takes each
 
-| Row (by its subject in `docs/carry-over.md`) | What happens to it |
-|---|---|
-| A run cannot be sent again from what the store holds of it | R1, item 4 |
-| The engine API's hourly collection lets go of the names of the uploads no run took | B1, item 7 |
-| The Google rows of prices are introductory | N1, item 4: re-owned to E with a line, since no live judge run happens |
-| `choice_json`'s `Err(_)` arm | U1, item 4 |
-| Home's library lists only the pictures given through the playground | U1, item 3 |
-| Every run's end clones what the run kept | R1, item 9 (a) |
-| A panic at `Reached::Publishing` is answered as abandoned | R1, item 9 (b) |
-| The Chrome case `run.spec.ts: each of the five squint use cases runs from its form` | A0, item 3 |
-| The fast tier's time on the owner's Mac near its limit | A0, item 1 |
-| The run record of a request to a GPU host names `device cuda` alone | B1, item 6 |
-| A segment request whose connection never opened is charged at its bound | A0, item 4 |
-| The pack's tests' budget | A0, item 2 |
+| Row (by its subject in `docs/carry-over.md`) | What happens to it | Done |
+|---|---|---|
+| A run cannot be sent again from what the store holds of it | R1, item 4 | Closed by R1's second pull request (#309) |
+| The engine API's hourly collection lets go of the names of the uploads no run took | B1, item 7 | Closed by B1's first pull request (#304) |
+| The Google rows of prices are introductory | N1, item 4: re-owned to E with a line, since no live judge run happens | Re-owned to E by N1, in the note's pull request: no live run of milestone 7 asked a Google judge |
+| `choice_json`'s `Err(_)` arm | U1, item 4 | Closed by U1 (#308) |
+| Home's library lists only the pictures given through the playground | U1, item 3 | Closed by U1 (#308) |
+| Every run's end clones what the run kept | R1, item 9 (a) | Closed by R1's first pull request (#307) |
+| A panic at `Reached::Publishing` is answered as abandoned | R1, item 9 (b) | Closed by R1's first pull request (#307) |
+| The Chrome case `run.spec.ts: each of the five squint use cases runs from its form` | A0, item 3 | Closed by A0 (#302) |
+| The fast tier's time on the owner's Mac near its limit | A0, item 1 | Closed by the owner's decision of 2026-11-24 (#305) |
+| The run record of a request to a GPU host names `device cuda` alone | B1, item 6 | Closed by B1's first pull request (#304) |
+| A segment request whose connection never opened is charged at its bound | A0, item 4 | Closed by A0 (#302) |
+| The pack's tests' budget | A0, item 2 | Closed by A0 (#302) |
 
 Not this milestone's, and untouched: the front's bridge's cancel window (8); the probe's
 wording (the next release); hosting the model's files (no milestone).

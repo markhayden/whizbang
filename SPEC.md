@@ -270,12 +270,12 @@ single source for debugging, for audit and for metrics, so nothing below is opti
 
 | Group | Always stored |
 |---|---|
-| Identity | Run id; request id; parent run, if nested; the whizbang version |
+| Identity | Run id; request id; parent run, if nested; the whizbang version; for a replay, the run it makes again (with the bundle and step when it came from one) and whether offline or live |
 | What was asked | The action; its exact arguments; the resolved settings, with the digest of the config they came from |
 | Inputs and outputs | The identity of every input binding and artifact; a reference to every committed output |
 | Outcome | Completed, cancelled, error or invalid; for an error, its type and message; for a refusal inside a run, what was refused and why |
 | Time | Start and end; the duration of each step, tool call and capability request |
-| Models | For every capability request: the backend, the model and its version or reported identity, the device, and whether the answer came from a cache |
+| Models | For every capability request: the backend, the model and its version or reported identity, the device, the card it ran on when the worker names one, and whether the answer came from a cache |
 | Spend | For every paid request: the amount reserved, the amount settled, and anything unresolved |
 | Egress | Every recipient that was sent data, and the class of data |
 | Steps | Every recipe step, tool call and nested call, in order, with its arguments and a reference to its result |
@@ -530,7 +530,7 @@ dispatch and settlement, and a backend that offers only an estimate.
 | Model installs: atomic, checked by hash, cancellable, previous install left in place on failure, a second request for the same model attaches to the running install | Kept |
 | Removing a model that is in use | Replaced: the model drains, then is removed; a timeout answers "busy" |
 | Artifact export and import | Kept |
-| Invocation bundles | Deferred to milestone 7 |
+| Invocation bundles | Kept, milestone 7 (ADR 0048) |
 | One session and budget per tool | Dropped |
 | The ban on accepting another tool's artifact types | Dropped |
 | Fixtures copied between repos and pinned by version | Dropped |
@@ -554,7 +554,7 @@ This is the full promise. Each kept item has an acceptance case in its milestone
 | The lab: recipe and filler matrices, resumable cells, blinded pair review | Kept, on the shared harness | Milestone 3 |
 | Bounded check and retry | Kept, as nested calls: the loop `remove_checked` (ADR 0039) | Milestone 4 |
 | `carry`: a mask on a crop carried onto the picture the crop was cut from, which rascal's `invert` did through its `to` | Kept, as an action of its own | Milestone 4 |
-| Replay from a journal; invocation bundles | Deferred | Milestone 7 |
+| Replay from a journal; invocation bundles | Kept: a run replayed offline from what it recorded, or live, from its store or a bundle (ADR 0049) | Milestone 7 |
 | Segmenters other than SAM 3 and Tiny; local fill | Deferred | Milestone 8 |
 | Compatibility export of schemas | Dropped | |
 
@@ -590,7 +590,7 @@ This is the full promise. Each kept item has an acceptance case in its milestone
 | A saved run gives a usable command for a pipeline, from its saved inputs and resolved settings | Kept | Milestone 5 |
 | Saved history owns a snapshot of its inputs; moving or editing the original file does not change it | Kept | Milestone 5 |
 | Quit and terminal shutdown cancel and account for running work and release the store | Kept | Milestone 5 |
-| Comparisons between saved runs; saved examples; invocation bundles; guided chain replay | Deferred, required | Milestone 7 |
+| Comparisons between saved runs; saved examples; invocation bundles; guided chain replay | Kept | Milestone 7 |
 | Tool registration, probing and child-process sessions | Dropped | |
 
 ### Doors and releases
@@ -853,7 +853,9 @@ whizbang backends status [--probe] [--config <file> [--env-file <file>]]
                                        # ready; --probe hears the pack's worker say hello,
                                        # and asks a remote backend only when the config
                                        # approves probing it (docs/guides/backends.md)
-whizbang store list|delete|prune
+whizbang store list|delete|prune       # `store list` names the saved examples after the runs
+whizbang store delete --example <id> --store <dir>
+                                       # a saved example deleted; its run and pictures stay
 whizbang store import <file> --store <dir> [--create]
                                        # for developers: bring a canonical artifact file
                                        # (ADR 0002) into a store
@@ -863,6 +865,7 @@ whizbang runs bundle <run>... --to <file> [--overwrite] --store <dir>
                                        # one file another store imports (ADR 0048)
 whizbang runs replay (<run> | --bundle-digest <digest> --step <n> | --bundle <file> [--step <n>])
                     [--live] [--request-id <id>] [--json] --store <dir>
+                    [--config <file> [--env-file <file>]] [--models-dir <dir>]
                                        # a run made again, offline (answered from what it
                                        # recorded, nothing called or spent) or --live, and
                                        # its report: reproduced (0), or differs, diverged or
@@ -1142,7 +1145,8 @@ and every kept item in section 7 has its replacement. They are never deleted. Th
 repo is retired at milestone 0.
 
 **Milestones.** Each is cumulative: everything earlier still passes. After milestone 6 they
-run in the order 6, 7, E, 8 (the owner's decision of 2026-11-24).
+run in the order 6, 7, E, 8 (the owner's decision of 2026-11-24): milestone E starts when 7
+ends, and 8 starts when E ends.
 
 | # | Milestone | Done when |
 |---|---|---|
@@ -1157,8 +1161,8 @@ run in the order 6, 7, E, 8 (the owner's decision of 2026-11-24).
 | 5 | Playground | Every kept playground item in section 7 passes its acceptance case in Chrome; the playground API's negative tests pass; old repos archived |
 | 6 | HTTP and remote hosting | User story 1 runs: the engine API with its negative tests, SAM 3 on a GPU host with parity inside the 1D tolerance, Bria through fal |
 | 7 | Bundles and replay | Invocation bundles and journal replay; saved-run comparisons, saved examples and guided chain replay in the playground |
+| E | Evidence and edit quality | Runs after milestone 7 and before milestone 8, not beside the numbered milestones (the owner's decision of 2026-11-24). Its evaluations decide what 8 builds: a further segmenter, and how local fill and judge are scored. Every unverified tool and recipe is taken up the ladder, squint's first and the most doubtful first, until each is admitted, experimental or dropped. Per-subject comparison climbs rungs 3 and 4 on a fresh confirmation set; `regions`, `classes` and `outline` are each brought in as experimental tools and scored on rungs 1 and 2, on SAM 3 where that works and on their old segmenter as a catalogue entry where it does not, and those that pass go on; the submission format is redesigned so small models can follow it; job requirements carry colour, count and lettering in a new set version. Each change is admitted through its gate |
 | 8 | More local models | Each cell section 5 assigns to this milestone passes conformance: fill and judge, each both local and self-hosted; plus any further segmenter the evaluations call for |
-| E | Evidence and edit quality | Runs after milestone 7 and before 8, so that its evaluations decide what 8 builds: a further segmenter, and how local fill and judge are scored (the owner's decision of 2026-11-24; until milestone 6 it ran beside the numbered milestones). Every unverified tool and recipe is taken up the ladder, squint's first and the most doubtful first, until each is admitted, experimental or dropped. Per-subject comparison climbs rungs 3 and 4 on a fresh confirmation set; `regions`, `classes` and `outline` are each brought in as experimental tools and scored on rungs 1 and 2, on SAM 3 where that works and on their old segmenter as a catalogue entry where it does not, and those that pass go on; the submission format is redesigned so small models can follow it; job requirements carry colour, count and lettering in a new set version. Each change is admitted through its gate |
 
 Checkpoints 1A to 1D each end with a note. Milestones 2 and 3 need 1A and 1B; they need 1C and
 1D only for the parts that use a real model.
