@@ -90,7 +90,7 @@ use whizbang_backends::pack::{
     Called, Ended, Launch, Limits, Said, ToolLaunch, ToolWorker, Worker,
 };
 use whizbang_core::capability::{
-    Bounds, Declaration, Device, Fault, FaultKind, Instance, SegmentRequest, SegmentResponse,
+    Bounds, Card, Declaration, Device, Fault, FaultKind, Instance, SegmentRequest, SegmentResponse,
     Segmenter, Served,
 };
 use whizbang_core::config::{Backend, Kind, KindRefused, Setting, Table};
@@ -826,6 +826,16 @@ fn answered(request: &SegmentRequest, called: Called) -> Result<SegmentResponse,
     // one that is not is refused here all the same, as an answer the core cannot take.
     let device = Device::named(&called.device).map_err(|_| malformed())?;
     let served = Served::unknown().on(device).cached(false);
+    // The card the load named, when it is one by the rule (ADR 0048): a text that is
+    // not is no card, and is not kept.
+    let card = called
+        .card
+        .as_deref()
+        .and_then(|card| Card::named(card).ok());
+    let served = match card {
+        Some(card) => served.with_card(card),
+        None => served,
+    };
     // What the worker said of the answer and each instance's predicted IoU go beside it
     // (plan 1D, task V1), for the action to keep in its run's diagnostics.
     Ok(SegmentResponse::new(answers)

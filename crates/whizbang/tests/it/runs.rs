@@ -617,7 +617,7 @@ fn a_refusal_is_printed_as_the_core_says_it_once_escaped_and_whole() {
     assert_eq!(shown.code, Some(1));
     assert!(
         shown.err.contains(
-            "a record of another version: run/1, and this build reads run/6, run/5, run/4"
+            "a record of another version: run/1, and this build reads run/7, run/6, run/5, run/4"
         ),
         "{}",
         shown.err
@@ -626,7 +626,7 @@ fn a_refusal_is_printed_as_the_core_says_it_once_escaped_and_whole() {
     let listed = whizbang(&["list"], &root);
     assert_eq!(listed.code, Some(0), "{}", listed.err);
     let expected = "older\trecord not read: a record of another version: run/1, and this build \
-                    reads run/6, run/5, run/4, run/3 and run/2";
+                    reads run/7, run/6, run/5, run/4, run/3 and run/2";
     assert!(
         listed.text().lines().any(|line| line == expected),
         "{}",

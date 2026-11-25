@@ -136,3 +136,84 @@ fn a_fill_answered_with_the_picture_it_was_sent_keeps_the_masks_binding() {
     assert_eq!(made.id(), mask.id());
     assert_eq!(made.binding(), mask.binding());
 }
+
+/// What a fill run keeps for replay (plan m7, task B1, item 7; ADR 0048): the composite
+/// cannot be undone, so the run keeps the picture the filler painted as the diagnostic
+/// `fill-answer.png`, a canonical image's PNG of its colours with an opaque alpha; the
+/// composite made again from the picture, that answer and the feathered mask is the one
+/// the run committed. An answer that is not the image's size is not kept.
+#[test]
+fn a_fill_run_keeps_the_painted_answer_that_a_feathered_mask_was_composited_from() {
+    use whizbang_core::artifact::{Image, ImageRole};
+    use whizbang_core::capability::Picture;
+    use whizbang_core::contract::record;
+    use whizbang_core::identity::{Projection, Topology};
+    use whizbang_rascal::composite::{Mode, composite_in};
+    use whizbang_rascal::fill::{ANSWER, answer_png};
+
+    let world = World::new("fill-answer");
+    let base = image_of(&pixels(), "import");
+    let mask = mask_on(&base);
+    // The mask is feathered: a blend beside its core, which the composite mixes by.
+    assert!(mask.blend().iter().any(|blend| (1..255).contains(blend)));
+    let (image_id, mask_id) = (
+        world.put(base.clone().into()),
+        world.put(mask.clone().into()),
+    );
+    let kept = |filler: Arc<dyn Filler>| {
+        let engine = world.engine(
+            Capabilities::none().with_fill(filler.clone()),
+            Arc::new(roster(None, Some(filler.as_ref()), None)),
+        );
+        let call = Call::new("fill")
+            .input("image", image_id)
+            .input("mask", mask_id);
+        let finished = engine.submit(&call).unwrap();
+        let generation = world.store.snapshot().unwrap();
+        let id = finished.run().as_str();
+        let stored = record::stored(&generation, id, |entry| world.store.read(entry));
+        let listed = stored.unwrap().unwrap().diagnostics().to_vec();
+        let name = format!("diagnostics/{ANSWER}");
+        let entry = generation.run(id).unwrap().entries().get(&name).cloned();
+        let bytes = entry.map(|entry| world.store.read(&entry).unwrap());
+        assert_eq!(listed.iter().any(|d| d.name() == name), bytes.is_some());
+        (finished.outcome().clone(), bytes)
+    };
+    let (outcome, bytes) = kept(Arc::new(FakeFiller::new(Paint::Inverse)));
+    let bytes = bytes.expect("the answer is kept");
+    // The painted answer, as the filler gave it: every channel 255 less the picture's.
+    let limits = DecodeLimits::default();
+    let given = base.pixels(&limits).unwrap();
+    let rgb: Vec<u8> = (given.rgba().chunks(4))
+        .flat_map(|p| [255 - p[0], 255 - p[1], 255 - p[2]])
+        .collect();
+    let painted = Painted::from_rgb(given.width(), given.height(), rgb.clone()).unwrap();
+    assert_eq!(bytes, answer_png(&painted).unwrap());
+    // It reads as a canonical picture, whose colours are the answer's and whose alpha is
+    // opaque.
+    let read = Image::new(
+        bytes,
+        Projection::Flat,
+        Topology::Bounded,
+        ImageRole::Picture,
+        base.origin().clone(),
+        &limits,
+    )
+    .unwrap();
+    let read = read.pixels(&limits).unwrap();
+    let back: Vec<u8> = (read.rgba().chunks(4))
+        .flat_map(|p| [p[0], p[1], p[2]])
+        .collect();
+    assert_eq!(back, rgb);
+    assert!(read.rgba().chunks(4).all(|p| p[3] == 255));
+    // The composite made again from it, under the feathered mask, is the run's output.
+    let answered = Painted::from_rgb(read.width(), read.height(), back).unwrap();
+    let picture = Picture::new(given).unwrap();
+    let made = composite_in(&picture, &answered, &mask, Mode::Feather).unwrap();
+    let committed = world.image(outputs(&outcome)[0].1);
+    assert_eq!(made.pixels(), &committed.pixels(&limits).unwrap());
+    // An answer of another size fails the run, and is not kept.
+    let (outcome, bytes) = kept(Arc::new(FakeFiller::new(Paint::Size(W + 1, H))));
+    assert_eq!(outcome.name(), "error");
+    assert!(bytes.is_none());
+}

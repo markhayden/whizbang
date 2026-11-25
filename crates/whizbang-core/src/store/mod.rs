@@ -141,10 +141,15 @@
 //! `holds/<name>`), and an import may mark one ([`Publication::mark_imported`]: the name
 //! `imported/<name>`); a deletion also removes each name outside runs that a deleted run
 //! held and that no remaining run holds and no import marked, decided from the generation
-//! it publishes onto alone. Nothing else removes a name that belongs to no run, and no
-//! name under [`MADE_PREFIXES`] is ever held or removed: that is where the records that
-//! must outlive every run, of spend and of request ids, are published. That is all the
-//! protection there is against removal.
+//! it publishes onto alone. Beside that, the collection of unused imports lets go of an
+//! import's name with its mark ([`Store::collect_unused_imports`]), and a publication
+//! lets go of a bundle's or an example's entry whole when it is asked to
+//! ([`Publication::let_go_of_entry`]; ADR 0048): the names under [`BUNDLES_PREFIX`] and
+//! [`EXAMPLES_PREFIX`] belong to no run and are no import's, so nothing else touches
+//! them, and a prune keeps what they name. Nothing else removes a name that belongs to
+//! no run, and no name under [`MADE_PREFIXES`] is ever held or removed: that is where
+//! the records that must outlive every run, of spend and of request ids, are published.
+//! That is all the protection there is against removal.
 //!
 //! A run may also be given a name of its own that the runs under it read as if it were
 //! outside runs ([`Publication::keep_in`], [`Generation::scoped_to`]): what a run that
@@ -1504,6 +1509,7 @@ impl Store {
             kept_in: BTreeMap::new(),
             marked: BTreeMap::new(),
             collecting: None,
+            let_go: BTreeSet::new(),
         })
     }
 
@@ -1562,6 +1568,24 @@ impl Store {
             generation: published.generation,
             names: counted.load(Ordering::SeqCst),
         })
+    }
+
+    /// The engine API's hourly collection (ADR 0048, "What the store keeps for
+    /// replay"): every import no run took that is older than `older_than_ms` at `now_ms`
+    /// is let go ([`Store::collect_unused_imports`]), then the store is pruned
+    /// ([`Store::prune`]), so an upload's bytes go with its name. A prune leaves every
+    /// generation a reader or a hold shares, and everything it names: a run admitted
+    /// against a generation holds it, so a run going keeps every file it reads. A
+    /// collection that fails prunes nothing. A prune that fails leaves what the
+    /// collection did, and its count, standing: it comes back beside them, and what it
+    /// did not remove is removed by the next.
+    pub fn collect_and_prune(
+        &self,
+        older_than_ms: u64,
+        now_ms: u64,
+    ) -> Result<(Collected, Result<Pruned>)> {
+        let collected = self.collect_unused_imports(older_than_ms, now_ms)?;
+        Ok((collected, self.prune()))
     }
 
     /// Removes what nothing needs: the files of generations older than the current one,
@@ -1754,14 +1778,16 @@ fn unused_imports(
         let Some(imported) = generation.imported(name) else {
             continue;
         };
-        if held.contains(name) || imported.at_ms.saturating_add(older_than_ms) > now_ms {
+        // A name of an entry is never an import's to let go, whatever marks it.
+        let young = imported.at_ms.saturating_add(older_than_ms) > now_ms;
+        if held.contains(name) || young || entry_only(name).is_err() {
             continue;
         }
         gone.push(name.to_owned());
         gone.push(mark.clone());
         let with = imported.with.iter();
         gone.extend(
-            with.filter(|beside| !held.contains(beside.as_str()))
+            with.filter(|beside| !held.contains(beside.as_str()) && entry_only(beside).is_ok())
                 .cloned(),
         );
         imports.push(name.to_owned());
@@ -1818,6 +1844,8 @@ pub struct Publication<'s> {
     /// The age and the time of a collection of unused imports, when it is one, and
     /// where it counts the names it lets go.
     collecting: Option<(u64, u64, Arc<AtomicU64>)>,
+    /// The entries of bundles and examples it lets go of, each whole.
+    let_go: BTreeSet<String>,
 }
 
 /// What the names that are made and never put start with: the records of request ids
@@ -1833,6 +1861,42 @@ pub const HOLDS_PREFIX: &str = "holds/";
 /// What the mark an import leaves on a name outside runs starts with: the name it marks
 /// follows ([`Publication::mark_imported`]).
 pub const IMPORTED_PREFIX: &str = "imported/";
+
+/// What the names of a bundle's entry start with (ADR 0048): the bundle's digest
+/// follows, then a `/` and what the name holds (`files/<file digest>`, `manifest`,
+/// `runs/<run id>/...`).
+pub const BUNDLES_PREFIX: &str = "bundles/";
+
+/// What the name of a saved example starts with (plan m7, task U1): its id follows.
+pub const EXAMPLES_PREFIX: &str = "examples/";
+
+/// Whether this is the name of an entry: [`BUNDLES_PREFIX`] or [`EXAMPLES_PREFIX`], then
+/// one name of no control character and no `/`.
+fn is_entry(entry: &str) -> bool {
+    let rest = (entry.strip_prefix(BUNDLES_PREFIX)).or_else(|| entry.strip_prefix(EXAMPLES_PREFIX));
+    rest.is_some_and(|rest| {
+        !rest.is_empty() && !rest.contains('/') && !rest.chars().any(char::is_control)
+    })
+}
+
+/// Refuses a name of a bundle's or an example's entry where a run would hold it or an
+/// import mark it: such a name is removed only with its entry, by
+/// [`Publication::let_go_of_entry`], so no deletion of a run and no collection of an
+/// import may let it go (ADR 0048).
+fn entry_only(name: &str) -> Result<()> {
+    if name.starts_with(BUNDLES_PREFIX) || name.starts_with(EXAMPLES_PREFIX) {
+        return Err(Error::EntryOnly {
+            name: name.to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// Whether `name` is of the entry `entry`: the entry's own name, or one under it.
+fn of_entry(name: &str, entry: &str) -> bool {
+    name.strip_prefix(entry)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+}
 
 /// Refuses a name that is only ever made.
 fn made_only(name: &str) -> Result<()> {
@@ -2018,6 +2082,7 @@ impl Publication<'_> {
     pub fn hold_in(&mut self, run: &str, name: &str, entry: Entry) -> Result<()> {
         check_run_id(run)?;
         made_only(name)?;
+        entry_only(name)?;
         self.store
             .in_progress
             .lock()
@@ -2074,8 +2139,10 @@ impl Publication<'_> {
     /// it): the collection that lets the import go lets them go with it.
     pub fn mark_imported_with(&mut self, name: &str, with: &[String]) -> Result<()> {
         made_only(name)?;
+        entry_only(name)?;
         for beside in with {
             made_only(beside)?;
+            entry_only(beside)?;
         }
         let at_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -2085,6 +2152,22 @@ impl Publication<'_> {
             with: with.to_vec(),
         };
         self.marked.insert(name.to_string(), imported);
+        Ok(())
+    }
+
+    /// Lets go, in this publication, of the entry of a bundle (`bundles/<digest>`) or of
+    /// an example (`examples/<id>`), whole: the entry's own name and every name under
+    /// it, and nothing else (ADR 0048). What they named stays while another name names
+    /// it, and goes at the next prune otherwise. A text that is no entry's name is
+    /// refused here, and an entry the generation it is published onto does not hold is
+    /// refused there, with [`Error::NoSuchEntry`]: nothing is published.
+    pub fn let_go_of_entry(&mut self, entry: &str) -> Result<()> {
+        if !is_entry(entry) {
+            return Err(Error::NoSuchEntry {
+                entry: entry.to_owned(),
+            });
+        }
+        self.let_go.insert(entry.to_owned());
         Ok(())
     }
 
@@ -2280,6 +2363,23 @@ impl Publication<'_> {
                 generation.set_imported(name, imported);
             }
         }
+        // The entries of bundles and examples it lets go of, each whole: one that is
+        // not there refuses the publication, as a run that is not there does.
+        for entry in &self.let_go {
+            let names: Vec<String> = (generation.entries().range(entry.clone()..))
+                .take_while(|(name, _)| name.starts_with(entry.as_str()))
+                .filter(|(name, _)| of_entry(name, entry))
+                .map(|(name, _)| name.clone())
+                .collect();
+            if names.is_empty() {
+                return Err(Error::NoSuchEntry {
+                    entry: entry.clone(),
+                });
+            }
+            for name in &names {
+                generation.remove_entry(name);
+            }
+        }
         if let Some((older_than_ms, now_ms, counted)) = &self.collecting {
             let taking: BTreeSet<String> = (self.store.holding.lock())
                 .unwrap_or_else(|e| e.into_inner())
@@ -2306,7 +2406,8 @@ impl Publication<'_> {
             let hold = format!("{HOLDS_PREFIX}{name}");
             let still_held = generation.any_run_has(&hold);
             let marked = format!("{IMPORTED_PREFIX}{name}");
-            if !still_held && generation.get(&marked).is_none() && made_only(&name).is_ok() {
+            let removable = made_only(&name).is_ok() && entry_only(&name).is_ok();
+            if !still_held && generation.get(&marked).is_none() && removable {
                 generation.remove_entry(&name);
             }
         }

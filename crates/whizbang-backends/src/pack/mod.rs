@@ -16,4 +16,4 @@ pub mod worker;
 
 pub use queue::Supervisor;
 pub use tool::{ToolLaunch, ToolWorker};
-pub use worker::{Called, Ended, Failed, Launch, Limits, Said, Worker};
+pub use worker::{Called, Ended, Failed, Launch, Limits, Said, Worker, card_of};

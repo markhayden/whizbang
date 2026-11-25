@@ -230,6 +230,8 @@ fn frames(
     let mut verified = false;
     let mut kept_alive: u32 = 0;
     let mut events = Vec::new();
+    // The card the `load` named, when it named one (ADR 0048).
+    let mut card = None;
     let mut ended: Option<Result<Called, (FaultKind, String)>> = None;
     loop {
         let Some(first) = next_four(input)? else {
@@ -296,9 +298,12 @@ fn frames(
                 Message::Result {
                     id,
                     answer: Answer::Load,
+                    device,
+                    diagnostics,
                     ..
                 },
             ) if id == LOAD_ID => {
+                card = crate::pack::card_of(&diagnostics, &device);
                 at = At::Call;
             }
             (
@@ -329,6 +334,7 @@ fn frames(
                     diagnostics,
                     events: std::mem::take(&mut events),
                     answer,
+                    card: card.take(),
                 }));
                 at = At::Done;
             }

@@ -126,7 +126,12 @@ pub(super) fn stored(world: &World, run: &RunId) -> (RunRecord, BTreeMap<String,
     }
     let record = RunRecord::from_bytes(&names["record"]).unwrap();
     let document: Json = serde_json::from_slice(&names["record"]).unwrap();
-    validate(&schema(), &document).unwrap();
+    // A record that names a card is `run/7`, held to its own schema (ADR 0048).
+    let schema = match record.version() {
+        "run/7" => serde_json::from_str(whizbang_core::contract::RUN_7_SCHEMA).unwrap(),
+        _ => schema(),
+    };
+    validate(&schema, &document).unwrap();
     assert!((names["record"].len() as u64) < RECORD_MAX_BYTES);
     (record, names)
 }
@@ -2258,4 +2263,44 @@ fn a_long_model_name_is_cut_and_the_run_and_the_step_never_are() {
         let written = serde_json::to_vec(&(line.message(), line.event().unwrap())).unwrap();
         assert!(written.len() <= EVENT_MAX_BYTES, "{}", written.len());
     }
+}
+
+/// A card that holds a secret of the run is not kept (plan m7, task B1, item 6; ADR
+/// 0048): a name with a secret taken out of it is no card. A clean card of another
+/// request of the same run is kept, and makes the record `run/7`.
+#[test]
+fn a_card_that_holds_a_secret_is_not_kept_and_a_clean_one_is() {
+    use whizbang_core::capability::{Card, Device, Served};
+    let world = World::new();
+    let key = format!("{}{}", "zq7K", "m2Xw");
+    let secrets = Secrets::new([key.clone()]).unwrap();
+    let on = |card: &str| {
+        let served = Served::unknown().on(Device::named("cuda").unwrap());
+        said("well").served_as(served.with_card(Card::named(card).unwrap()))
+    };
+    let script = vec![Ok(on(&format!("NVIDIA {key}"))), Ok(on("NVIDIA A10G"))];
+    let judge = Arc::new(FakeJudge::scripted(script));
+    let asks = action("asks", judging(), |_, context| {
+        let judge = context.capabilities().judge().unwrap();
+        judge.send(&asking("well?", 64)).unwrap();
+        judge.send(&asking("again?", 64)).unwrap();
+        Ok(Produced::nothing())
+    });
+    let executor = engine(
+        &world,
+        roster(None, None, Some(judge.as_ref())),
+        Capabilities::none().with_judge(judge.clone()),
+        vec![asks],
+    )
+    .with_secrets(secrets);
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    let (record, names) = stored(&world, finished.run());
+    assert_eq!(record.version(), "run/7");
+    let cards: Vec<Option<&str>> = (record.models().iter())
+        .map(|model| model.card.as_deref())
+        .collect();
+    assert_eq!(cards, [None, Some("NVIDIA A10G")]);
+    assert_eq!(record.models()[0].device.as_deref(), Some("cuda"));
+    assert!(!holds(&names["record"], key.as_bytes()));
 }

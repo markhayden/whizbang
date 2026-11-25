@@ -2,7 +2,8 @@
 //! response says of where it was answered"; plan 1C, task P7a). Every response of a
 //! capability may say both; one that says neither is answered on a device nobody
 //! named, from nothing anyone said was a cache. The run's record keeps what each
-//! request's answer said (`run/4`, ADR 0025).
+//! request's answer said (`run/4`, ADR 0025), and the card a model ran on when its
+//! worker named one (`run/7`, ADR 0048).
 
 use super::Unfit;
 
@@ -52,12 +53,52 @@ pub fn is_device(name: &str) -> bool {
     first && name.len() <= DEVICE_LIMIT && chars.all(rest)
 }
 
+/// The most characters of a card's name: what the pack's worker says of one at most
+/// (`CARD_NAME_MOST` in the pack's adapter; ADR 0048).
+pub const CARD_LIMIT: usize = 64;
+
+/// The card a model's work ran on, as its worker named it on the `load` that put the
+/// model on it (ADR 0046, "Its device"; ADR 0048): 1 to [`CARD_LIMIT`] printable ASCII
+/// characters, with no space at either end. A name of the rule holds nothing a terminal
+/// obeys.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Card(String);
+
+impl Card {
+    /// A card of this name, when the name is one.
+    pub fn named(name: &str) -> Result<Card, Unfit> {
+        if is_card(name) {
+            return Ok(Card(name.to_owned()));
+        }
+        Err(Unfit::NotAllowed {
+            what: "a card's name",
+            why: "is not 1 to 64 printable ASCII characters with no space at either end",
+        })
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Whether this is a card's name ([`Card`]).
+pub fn is_card(name: &str) -> bool {
+    let printable = |c: char| (' '..='~').contains(&c);
+    !name.is_empty()
+        && name.chars().count() <= CARD_LIMIT
+        && name.chars().all(printable)
+        && !name.starts_with(' ')
+        && !name.ends_with(' ')
+}
+
 /// What a response says of where it was answered: the device, when the backend
-/// named one, and whether a cache answered, when it said. Neither is known by
-/// default: a backend that says nothing is recorded as saying nothing.
+/// named one, the card, when its worker named one, and whether a cache answered,
+/// when it said. None is known by default: a backend that says nothing is recorded
+/// as saying nothing.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Served {
     device: Option<Device>,
+    card: Option<Card>,
     cached: Option<bool>,
 }
 
@@ -73,6 +114,12 @@ impl Served {
         self
     }
 
+    /// The same, on this card.
+    pub fn with_card(mut self, card: Card) -> Served {
+        self.card = Some(card);
+        self
+    }
+
     /// The same, saying whether a cache answered: `false` for a backend that has none
     /// and says so.
     pub fn cached(mut self, cached: bool) -> Served {
@@ -83,6 +130,11 @@ impl Served {
     /// The device that answered, when it was named.
     pub fn device(&self) -> Option<&Device> {
         self.device.as_ref()
+    }
+
+    /// The card that answered, when it was named.
+    pub fn card(&self) -> Option<&Card> {
+        self.card.as_ref()
     }
 
     /// Whether a cache answered, when it was said.

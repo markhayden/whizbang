@@ -146,8 +146,10 @@ default): the server collects such uploads when it starts and once an hour after
 the store's collection, and one a run took stays
 (`serve_http::an_upload_no_run_took_is_collected_after_its_age_and_one_a_run_took_stays`,
 fast tier). An upload sent again is marked again at most once an hour. What is let go is no
-longer named by the store, and answers 404; its bytes stay on disk until `whizbang store
-prune` runs on a store no server holds.
+longer named by the store, and answers 404. Each collection ends in the store's own prune,
+run by the server, so the bytes of an upload go from the disk with its name; a run that is
+going keeps every file it reads until it ends (ADR 0048; the test above checks that the
+uploaded picture's file is gone).
 
 ## Stopping
 

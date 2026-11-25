@@ -15,15 +15,24 @@
 //! of this action, so its origin names it. **An unchanged result** (a fill answered with
 //! the picture it was sent) has no derivation: the input image and the input mask are
 //! handed back as they were, the mask keeping its binding.
+//!
+//! **What the run keeps of the answer** (ADR 0048, "What the store keeps for replay"):
+//! the composite cannot be undone into the picture the filler painted, so the run keeps
+//! that picture as the diagnostic [`ANSWER`], its red, green and blue with an opaque
+//! alpha, written by the core's one encoder as a canonical image's PNG and kept exactly
+//! or not at all; only an answer of the image's size is kept, so it is at most the
+//! image's size. A replay answers the fill from it.
 
 use std::sync::Arc;
 
 use whizbang_core::artifact::{ArtifactType, Step};
-use whizbang_core::capability::{FillRequest, Support};
+use whizbang_core::capability::{FillRequest, Painted, Support};
 use whizbang_core::contract::{
     Action, ActionDescriptor, Argument, Capability, Context, Failure, InputPort, Kind, OutputPort,
     PortRef, PreparedCall, Produced, RegistrationError, Registry, Requirement, ValueType,
 };
+
+use whizbang_core::identity::{CanonicalPixels, encode};
 
 use crate::operation;
 use crate::paste::{pasted, picture};
@@ -33,6 +42,20 @@ pub const NAME: &str = "fill";
 
 /// The action's version, which a composite and a rebound mask record in their origins.
 pub const VERSION: &str = "1.0.0";
+
+/// The diagnostic that keeps the picture the filler painted (ADR 0048).
+pub const ANSWER: &str = "fill-answer.png";
+
+/// The picture a filler painted as a canonical image's PNG: its red, green and blue with
+/// an opaque alpha. Why not, as a sentence.
+pub fn answer_png(painted: &Painted) -> Result<Vec<u8>, String> {
+    let rgba: Vec<u8> = (painted.rgb().chunks(3))
+        .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 255])
+        .collect();
+    let pixels = CanonicalPixels::from_rgba(painted.width(), painted.height(), rgba)
+        .map_err(|error| error.to_string())?;
+    encode::png(&pixels)
+}
 
 /// The action `fill`.
 pub struct Fill {
@@ -131,6 +154,12 @@ impl Action for Fill {
         let painted = filler
             .fill(&request)
             .map_err(|fault| Failure::error("fill", fault.sentence()))?;
+        // The answer, kept for replay, when it is the image's size: the paste below
+        // refuses any other. It is best kept: the run is what it is either way.
+        if (painted.width(), painted.height()) == (picture.width(), picture.height()) {
+            let kept = answer_png(&painted);
+            let _ = kept.and_then(|file| context.diagnostics().write_exact(ANSWER, &file));
+        }
         if operation::stopped(context) {
             return Err(operation::stopped_failure(context, NAME));
         }

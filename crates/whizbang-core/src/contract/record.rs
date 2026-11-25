@@ -11,9 +11,11 @@
 //! those lists hold nothing. A record that lists a step of a recipe is `run/5` (ADR
 //! 0033); one that holds a call's plan, where a recipe's run started, findings or a
 //! loop's attempts is `run/6` (ADR 0005, "run/6"; [`super::sixth`]), which is `run/5`
-//! with those four groups after it, each written only where the run has it. Every
-//! record is written in the oldest version that holds all of it, so a store written
-//! before `run/6` reads as it did, and nothing in one is migrated.
+//! with those four groups after it, each written only where the run has it. One that
+//! names the card a model ran on, or the run it replays, is `run/7` (ADR 0048;
+//! [`super::seventh`]), which is `run/6` with those two after it, written the same way.
+//! Every record is written in the oldest version that holds all of it, so a store
+//! written before `run/7` reads as it did, and nothing in one is migrated.
 //!
 //! A record is written one way: as JSON on one line, its fields in the order of the
 //! types below, followed by a newline. It is read strictly: a field that is not known, a
@@ -24,7 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::artifact::ArtifactType;
 use crate::capability::{
-    Excluded, FaultKind, HowEnded, Logged, MODEL_NAME_LIMIT, Stage, is_device,
+    Excluded, FaultKind, HowEnded, Logged, MODEL_NAME_LIMIT, Stage, is_card, is_device,
 };
 use crate::egress::{Account, Classes, DataClass, Origin, Recipient};
 use crate::identity::Digest;
@@ -45,13 +47,23 @@ pub const RUN_RECORD: &str = "run/4";
 pub const RUN_5: &str = "run/5";
 
 /// The kind and version of a record that holds a plan, where a recipe's run started,
-/// findings or a loop's attempts (ADR 0005, "run/6"): the newest this build writes,
-/// and only for a record that holds one of them.
+/// findings or a loop's attempts (ADR 0005, "run/6"), and holds neither of what
+/// [`RUN_7`] adds.
 pub const RUN_6: &str = "run/6";
+
+/// The kind and version of a record that names the card a model ran on, or the run it
+/// replays (ADR 0048): the newest this build writes, and only for a record that holds
+/// one of them.
+pub const RUN_7: &str = "run/7";
+
+/// The JSON Schema of a `run/7` record, as a document.
+pub const RUN_7_SCHEMA: &str = include_str!("../../schemas/run-7.json");
 
 /// The JSON Schema of a `run/6` record, as a document.
 pub const RUN_6_SCHEMA: &str = include_str!("../../schemas/run-6.json");
 
+use super::seventh::replayed_wire;
+pub use super::seventh::{BUNDLE_STEPS_LIMIT, FromBundle, ReplayMode, Replayed};
 pub use super::sixth::{
     ATTEMPT_CROPS_LIMIT, ATTEMPT_RUNS_LIMIT, ATTEMPT_TEXT_LIMIT, ATTEMPTS_NOT_ENDED, Attempt,
     Attempted, Changed, Crop, Found, GIVEN_LIMIT, Given, Started,
@@ -575,6 +587,10 @@ impl RequestEnded {
 /// are null for a request that ended without an answer the handle took. In a `run/3`
 /// record both are always null: no response of that version said either, so neither
 /// is known.
+///
+/// `card` is the card the model ran on, as its worker named it (`run/7`, ADR 0048): of
+/// the rule of one ([`crate::capability::Card`]), and written only when it is known, of
+/// a request that was answered.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Model {
@@ -584,6 +600,8 @@ pub struct Model {
     pub version: String,
     #[serde(deserialize_with = "present")]
     pub device: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card: Option<String>,
     #[serde(deserialize_with = "present")]
     pub cached: Option<bool>,
     pub ended: RequestEnded,
@@ -615,6 +633,7 @@ impl FrozenModel {
             model: self.model,
             version: self.version,
             device: None,
+            card: None,
             cached: None,
             ended: self.ended,
         }
@@ -1463,6 +1482,8 @@ struct RunRecordWire {
     findings: Option<Found>,
     #[serde(default)]
     attempts: Option<Attempted>,
+    #[serde(default, deserialize_with = "replayed_wire")]
+    replayed: Option<Replayed>,
 }
 
 /// The record of one run. It is written as JSON, and read only by
@@ -1494,6 +1515,9 @@ pub struct RunRecord {
     /// A loop's attempts (`run/6`).
     #[serde(skip_serializing_if = "Option::is_none")]
     attempts: Option<Attempted>,
+    /// The run this run replays (`run/7`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    replayed: Option<Replayed>,
 }
 
 /// A `run/2` record as it is stored, as the tag `m1a` froze it: what `run/3` added is
@@ -1599,6 +1623,7 @@ impl Frozen {
             started: None,
             findings: None,
             attempts: None,
+            replayed: None,
         }
     }
 }
@@ -1653,8 +1678,8 @@ impl std::fmt::Display for RecordError {
         match self {
             RecordError::OtherVersion { found } => write!(
                 f,
-                "a record of another version: {}, and this build reads {RUN_6}, {RUN_5}, \
-                 {RUN_RECORD}, {RUN_3} and {RUN_2}",
+                "a record of another version: {}, and this build reads {RUN_7}, {RUN_6}, \
+                 {RUN_5}, {RUN_RECORD}, {RUN_3} and {RUN_2}",
                 found.escape_debug()
             ),
             // The reason can quote what was read: it is shown escaped and cut.
@@ -1714,6 +1739,8 @@ pub struct Facts {
     /// A loop's attempts, as it noted them, and how it said they ended (`run/6`).
     attempts: Vec<Attempt>,
     ended: Option<(Option<u32>, String)>,
+    /// The run this run replays, when it said so (`run/7`).
+    replayed: Option<Replayed>,
 }
 
 impl Facts {
@@ -1793,6 +1820,16 @@ impl Facts {
             self.attempts.push(attempt);
         }
         takes
+    }
+
+    /// Notes the run this run replays (`run/7`). False, and nothing is noted, when one
+    /// is noted already, or a record would not hold it.
+    pub fn replayed(&mut self, replayed: Replayed) -> bool {
+        let fresh = self.replayed.is_none() && replayed.holds();
+        if fresh {
+            self.replayed = Some(replayed);
+        }
+        fresh
     }
 
     /// Notes which attempt was kept, by its number, and why the attempts ended.
@@ -1972,12 +2009,19 @@ impl RunRecord {
             let device = asked.served.device()?.as_str();
             (secrets.redact(device) == device).then(|| device.to_owned())
         };
+        // A card is the same: kept as its worker named it, by the rule of one, and not
+        // at all when it holds a secret of the run (ADR 0048).
+        let card = |asked: &Logged| {
+            let card = asked.served.card()?.as_str();
+            (secrets.redact(card) == card).then(|| card.to_owned())
+        };
         let models = asked.iter().map(|asked| Model {
             capability: asked.capability,
             backend: named(asked.model.backend()),
             model: named(asked.model.model()),
             version: named(asked.model.version()),
             device: device(asked),
+            card: card(asked),
             cached: asked.served.from_cache(),
             ended: RequestEnded::of(asked.ended),
         });
@@ -2050,6 +2094,7 @@ impl RunRecord {
             started,
             attempts,
             ended,
+            replayed,
         } = ran.facts;
         settings.sort_by(|a, b| a.name.cmp(&b.name));
         paid.retain(|paid| paid.request < models.len() as u64);
@@ -2085,10 +2130,14 @@ impl RunRecord {
             }
         });
         let sixth = plan.is_some() || started.is_some() || findings.is_some() || attempts.is_some();
-        let version = match (sixth, fifth) {
-            (true, _) => RUN_6,
-            (false, true) => RUN_5,
-            (false, false) => RUN_RECORD,
+        // What only `run/7` holds (ADR 0048). A run replays another run, never itself.
+        let replayed = replayed.filter(|replayed| replayed.run != ran.run);
+        let seventh = models.iter().any(|model| model.card.is_some()) || replayed.is_some();
+        let version = match (seventh, sixth, fifth) {
+            (true, _, _) => RUN_7,
+            (false, true, _) => RUN_6,
+            (false, false, true) => RUN_5,
+            (false, false, false) => RUN_RECORD,
         };
         RunRecord {
             record: version.to_owned(),
@@ -2134,6 +2183,7 @@ impl RunRecord {
             started,
             findings,
             attempts,
+            replayed,
         }
     }
 
@@ -2198,6 +2248,7 @@ impl RunRecord {
             started: None,
             findings: None,
             attempts: None,
+            replayed: None,
         };
         // What the admission said was read from a store. A record its own reader
         // would refuse is not made of it.
@@ -2254,7 +2305,7 @@ impl RunRecord {
         }
         let frozen = match serde_json::from_slice::<Version>(bytes) {
             Ok(Version { record })
-                if ![RUN_6, RUN_5, RUN_RECORD, RUN_3, RUN_2].contains(&record.as_str()) =>
+                if ![RUN_7, RUN_6, RUN_5, RUN_RECORD, RUN_3, RUN_2].contains(&record.as_str()) =>
             {
                 // What it says its version is can be anything: its first 64 characters
                 // are kept.
@@ -2346,7 +2397,7 @@ impl RunRecord {
         // arguments than a recipe's step sets, and each text cut.
         let of_recipes = self.steps.iter().filter_map(|step| step.recipe.as_ref());
         if of_recipes.clone().count() > RECIPE_STEPS_LIMIT
-            || (![RUN_5, RUN_6].contains(&self.record.as_str())
+            || (![RUN_5, RUN_6, RUN_7].contains(&self.record.as_str())
                 && of_recipes.clone().next().is_some())
         {
             return refuse(
@@ -2440,6 +2491,16 @@ impl RunRecord {
                 return refuse(
                     "a capability request's device is not a lower-case letter, then \
                      lower-case letters, digits, ., _, - and :, 32 characters at most",
+                );
+            }
+            // A card (`run/7`, ADR 0048): of the rule of one, of a request that was
+            // answered.
+            if let Some(card) = model.card.as_deref()
+                && (!is_card(card) || model.ended != RequestEnded::Answered)
+            {
+                return refuse(
+                    "a capability request's card is not 1 to 64 printable ASCII characters \
+                     with no space at either end, or names a request that was not answered",
                 );
             }
         }
@@ -2603,10 +2664,26 @@ impl RunRecord {
         let (plan, started) = (self.plan.as_ref(), self.started.as_ref());
         let (findings, attempts) = (self.findings.as_ref(), self.attempts.as_ref());
         let sixth = plan.is_some() || started.is_some() || findings.is_some() || attempts.is_some();
-        if sixth != (self.record == RUN_6) {
+        let has_sixth = self.record == RUN_6 || self.record == RUN_7;
+        if (sixth && !has_sixth) || (self.record == RUN_6 && !sixth) {
             return refuse(
                 "a plan, a start, findings or attempts in a record of a version that has \
                  none, or a record of run/6 that holds none of them",
+            );
+        }
+        // What `run/7` adds (ADR 0048): in a record of that version alone, which holds
+        // one of the two at least; the run it replays is another run's id.
+        let replayed = self.replayed.as_ref();
+        let carded = self.models.iter().any(|model| model.card.is_some());
+        if (carded || replayed.is_some()) != (self.record == RUN_7) {
+            return refuse(
+                "a card or the run replayed in a record of a version that has neither, or a \
+                 record of run/7 that holds neither",
+            );
+        }
+        if replayed.is_some_and(|replayed| !replayed.holds() || replayed.run == self.identity.run) {
+            return refuse(
+                "the run replayed is not another run's id, or names a step no bundle has",
             );
         }
         if plan.is_some_and(|plan| !plan.holds()) {
@@ -2701,8 +2778,9 @@ impl RunRecord {
         Ok(())
     }
 
-    /// The record's kind and version: `run/4`; `run/3` for a record written before
-    /// it; or `run/2` for a record that the tag `m1a` wrote.
+    /// The record's kind and version: `run/4`, `run/5`, `run/6` or `run/7`, the oldest
+    /// that holds all of it; `run/3` for a record written before `run/4`; or `run/2`
+    /// for a record that the tag `m1a` wrote.
     pub fn version(&self) -> &str {
         &self.record
     }
@@ -2775,6 +2853,11 @@ impl RunRecord {
     /// What the record keeps of the findings the run handed back (`run/6`).
     pub fn findings(&self) -> Option<&Found> {
         self.findings.as_ref()
+    }
+
+    /// The run this run replays, when it replays one (`run/7`).
+    pub fn replayed(&self) -> Option<&Replayed> {
+        self.replayed.as_ref()
     }
 
     /// A loop's attempts (`run/6`).

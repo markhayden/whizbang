@@ -1,0 +1,665 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "A whizbang run record, version run/7 (ADR 0048; after run/6 of ADR 0005): a run that ended by itself; it is run/6 with a model's card, in its entry of models after the device, and, after the attempts, the run it replays, each written only where the run has it and one of them at least. A record a dead process left is never run/7. Beside this schema: it holds a card or the run replayed, one of them at least; a card is of a request that was answered, and is printable ASCII with no space at either end; the run replayed is another run's id; a plan names a capability once and allows no more attempts than were asked; the counts of findings are in the order of their obligation, disposition and confidence, each once; findings are of a run that completed; attempts are numbered from 1 in order, each with a verdict or the reason there is none and never both, the first with no change; the attempt kept is one of them; no text holds a control character",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "record",
+    "identity",
+    "asked",
+    "inputs",
+    "outputs",
+    "outcome",
+    "time",
+    "models",
+    "spend",
+    "egress",
+    "steps",
+    "judge",
+    "diagnostics"
+  ],
+  "properties": {
+    "record": { "const": "run/7" },
+    "identity": { "$ref": "#/$defs/identity" },
+    "asked": { "$ref": "#/$defs/asked" },
+    "inputs": { "$ref": "#/$defs/inputs" },
+    "outputs": { "$ref": "#/$defs/outputs" },
+    "outcome": { "$ref": "#/$defs/outcome" },
+    "time": { "$ref": "#/$defs/time" },
+    "models": { "$ref": "#/$defs/models" },
+    "spend": { "$ref": "#/$defs/spend" },
+    "egress": { "$ref": "#/$defs/egress" },
+    "steps": { "$ref": "#/$defs/steps" },
+    "judge": { "$ref": "#/$defs/judge" },
+    "diagnostics": { "$ref": "#/$defs/diagnostics" },
+    "plan": { "$ref": "#/$defs/plan" },
+    "started": { "$ref": "#/$defs/started" },
+    "findings": { "$ref": "#/$defs/found" },
+    "attempts": { "$ref": "#/$defs/attempted" },
+    "replayed": { "$ref": "#/$defs/replayed" }
+  },
+  "$defs": {
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sends", "attempts", "why"],
+      "properties": {
+        "sends": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["capability", "requests"],
+            "properties": {
+              "capability": { "enum": ["segment", "fill", "judge"] },
+              "requests": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "attempts": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["asked", "allowed", "checks"],
+              "properties": {
+                "asked": { "type": "integer", "minimum": 1, "maximum": 16 },
+                "allowed": { "type": "integer", "minimum": 1, "maximum": 16 },
+                "checks": { "type": "boolean" }
+              }
+            }
+          ]
+        },
+        "why": { "type": ["string", "null"], "minLength": 1, "maxLength": 200 }
+      }
+    },
+    "started": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "given"],
+      "properties": {
+        "from": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "given": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["step", "port", "type", "artifact"],
+            "properties": {
+              "step": { "type": "string", "minLength": 1, "maxLength": 64 },
+              "port": { "type": "string", "minLength": 1, "maxLength": 64 },
+              "type": { "enum": ["mask", "location", "image", "band_profile", "series", "plan"] },
+              "artifact": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        }
+      }
+    },
+    "sha256": { "type": "string", "minLength": 71, "maxLength": 71 },
+    "fraction": { "type": "number", "minimum": 0, "maximum": 1 },
+    "decision": { "enum": ["pass", "fail", "unsure"] },
+    "found": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision", "complete", "left_out", "counts", "places"],
+      "properties": {
+        "decision": { "$ref": "#/$defs/decision" },
+        "complete": { "type": "boolean" },
+        "left_out": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["findings", "places"],
+          "properties": {
+            "findings": { "type": "integer", "minimum": 0 },
+            "places": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "counts": {
+          "type": "array",
+          "maxItems": 512,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["obligation", "disposition", "confidence", "count"],
+            "properties": {
+              "obligation": { "type": "string", "minLength": 2, "maxLength": 12 },
+              "disposition": {
+                "enum": ["violation", "held", "allowed_change", "hidden", "cant_tell", "observed"]
+              },
+              "confidence": { "enum": ["confident", "tentative", null] },
+              "count": { "type": "integer", "minimum": 1 }
+            }
+          }
+        },
+        "places": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["image"],
+            "oneOf": [{ "required": ["box"] }, { "required": ["polygon"] }],
+            "properties": {
+              "image": { "$ref": "#/$defs/sha256" },
+              "box": {
+                "type": "array",
+                "minItems": 4,
+                "maxItems": 4,
+                "items": { "$ref": "#/$defs/fraction" }
+              },
+              "polygon": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 64,
+                "items": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "items": { "$ref": "#/$defs/fraction" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "attempted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["list", "kept", "ended"],
+      "properties": {
+        "list": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["attempt", "runs", "verdict", "unchecked", "changed", "settled_micros"],
+            "properties": {
+              "attempt": { "type": "integer", "minimum": 1, "maximum": 16 },
+              "runs": {
+                "type": "array",
+                "maxItems": 64,
+                "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+              },
+              "verdict": { "enum": ["pass", "fail", "unsure", null] },
+              "unchecked": { "type": ["string", "null"], "minLength": 1, "maxLength": 200 },
+              "changed": {
+                "oneOf": [
+                  { "type": "null" },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["change", "px"],
+                    "properties": {
+                      "change": { "const": "wider" },
+                      "px": { "type": "number", "minimum": 0 }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["change", "crops"],
+                    "properties": {
+                      "change": { "const": "located" },
+                      "crops": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 8,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": ["crop", "mask"],
+                          "properties": {
+                            "crop": { "$ref": "#/$defs/sha256" },
+                            "mask": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/sha256" }] }
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "settled_micros": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "kept": { "type": ["integer", "null"], "minimum": 1, "maximum": 16 },
+        "ended": { "type": "string", "minLength": 1, "maxLength": 200 }
+      }
+    },
+    "digest": { "type": "string", "minLength": 71, "maxLength": 71 },
+    "artifact_type": { "enum": ["mask", "location", "image", "band_profile", "series", "plan"] },
+    "value": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "number": { "type": "number" },
+        "integer": { "type": "integer" },
+        "boolean": { "type": "boolean" },
+        "text": { "type": "string" }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run", "request", "parent", "whizbang"],
+      "properties": {
+        "run": { "type": "string", "minLength": 1 },
+        "request": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
+        "parent": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+        "whizbang": { "type": "string", "minLength": 1 }
+      }
+    },
+    "asked": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "version", "arguments", "settings", "config"],
+      "properties": {
+        "action": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "arguments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "value"],
+            "properties": { "name": { "type": "string", "minLength": 1 }, "value": { "$ref": "#/$defs/value" } }
+          }
+        },
+        "settings": {
+          "type": "array",
+          "maxItems": 96,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "value"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+              "value": { "$ref": "#/$defs/setting_value" }
+            }
+          }
+        },
+        "config": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["port", "type", "artifact", "binding"],
+        "properties": {
+          "port": { "type": "string", "minLength": 1 },
+          "type": { "$ref": "#/$defs/artifact_type" },
+          "artifact": { "$ref": "#/$defs/digest" },
+          "binding": { "$ref": "#/$defs/digest" }
+        }
+      }
+    },
+    "outputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["port", "type", "artifact"],
+        "properties": {
+          "port": { "type": "string", "minLength": 1 },
+          "type": { "$ref": "#/$defs/artifact_type" },
+          "artifact": { "$ref": "#/$defs/digest" }
+        }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "error", "invalid", "refusals", "refusals_omitted", "lost"],
+      "properties": {
+        "status": { "enum": ["completed", "cancelled", "error", "invalid"] },
+        "error": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["kind", "message"],
+          "properties": { "kind": { "type": "string" }, "message": { "type": "string" } }
+        },
+        "invalid": { "type": ["string", "null"] },
+        "refusals": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["action", "kind", "why"],
+                "properties": {
+                  "action": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+                  "kind": {
+                    "enum": [
+                      "unknown_action",
+                      "invalid",
+                      "input",
+                      "not_ready",
+                      "read_only",
+                      "no_such_run",
+                      "conflict",
+                      "stale",
+                      "over_allowance",
+                      "no_bound",
+                      "secret_in_request_id",
+                      "not_a_request_id",
+                      "cancelled",
+                      "deadline_passed",
+                      "too_deep",
+                      "call_back",
+                      "over_caller",
+                      "caller_over",
+                      "too_many_calls",
+                      "tree_full",
+                      "too_many_started",
+                      "too_many_started_under",
+                      "id_inside",
+                      "wait_above",
+                      "wait_cancelled",
+                      "not_offered",
+                      "not_readable"
+                    ]
+                  },
+                  "why": { "type": "string", "minLength": 1, "maxLength": 512 }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["action", "kind", "why"],
+                "properties": {
+                  "action": { "type": "null" },
+                  "kind": {
+                    "enum": [
+                      "request_no_bound",
+                      "request_over_allowance",
+                      "request_not_approved",
+                      "request_not_ready"
+                    ]
+                  },
+                  "why": { "type": "string", "minLength": 1, "maxLength": 512 }
+                }
+              }
+            ]
+          }
+        },
+        "refusals_omitted": { "type": "integer", "minimum": 0 },
+        "lost": { "type": "array", "maxItems": 0 }
+      }
+    },
+    "time": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_ms", "end_ms", "durations"],
+      "properties": {
+        "start_ms": { "type": "integer", "minimum": 0 },
+        "end_ms": { "type": "integer", "minimum": 0 },
+        "durations": {
+          "type": "array",
+          "maxItems": 1280,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["of", "index", "start_ms", "ms"],
+            "properties": {
+              "of": { "enum": ["request", "call"] },
+              "index": { "type": "integer", "minimum": 0 },
+              "start_ms": { "type": "integer", "minimum": 0 },
+              "ms": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "models": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["capability", "backend", "model", "version", "device", "cached", "ended"],
+        "properties": {
+          "capability": { "enum": ["segment", "fill", "judge"] },
+          "backend": { "type": "string", "maxLength": 128 },
+          "model": { "type": "string", "maxLength": 128 },
+          "version": { "type": "string", "maxLength": 128 },
+          "device": { "type": ["string", "null"], "minLength": 1, "maxLength": 32 },
+          "card": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "cached": { "type": ["boolean", "null"] },
+          "ended": {
+            "enum": [
+              "answered",
+              "cancelled",
+              "unsupported",
+              "credential",
+              "rejected",
+              "unavailable",
+              "timed_out",
+              "malformed",
+              "too_large",
+              "unwound"
+            ]
+          }
+        }
+      }
+    },
+    "spend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reserved_micros", "requests"],
+      "properties": {
+        "reserved_micros": { "type": ["integer", "null"], "minimum": 0 },
+        "requests": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "request",
+              "reserved_micros",
+              "settled_micros",
+              "unresolved_micros",
+              "stage",
+              "over_bound"
+            ],
+            "properties": {
+              "request": { "type": "integer", "minimum": 0, "maximum": 1023 },
+              "reserved_micros": { "type": "integer", "minimum": 0 },
+              "settled_micros": { "type": "integer", "minimum": 0 },
+              "unresolved_micros": { "type": "integer", "minimum": 0 },
+              "stage": { "enum": ["not_sent", "answered", "unresolved"] },
+              "over_bound": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "egress": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["origin", "account", "classes", "outcome"],
+        "properties": {
+          "origin": { "type": "string", "minLength": 8, "maxLength": 267 },
+          "account": { "type": ["string", "null"], "minLength": 1, "maxLength": 7 },
+          "classes": {
+            "type": "array",
+            "maxItems": 4,
+            "items": { "enum": ["source_images", "derived_images", "prompts", "evidence"] }
+          },
+          "outcome": { "enum": ["sent", "refused"] }
+        }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["step", "run", "action", "status"],
+            "properties": {
+              "step": { "const": "call" },
+              "run": { "type": "string", "minLength": 1, "maxLength": 64 },
+              "action": { "type": "string", "minLength": 1, "maxLength": 64 },
+              "status": { "enum": ["completed", "cancelled", "error", "invalid", null] }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["step", "run", "action", "status", "id", "arguments", "constants"],
+            "properties": {
+              "step": { "const": "recipe" },
+              "run": { "type": "string", "minLength": 1, "maxLength": 64 },
+              "action": { "type": "string", "minLength": 1, "maxLength": 64 },
+              "status": { "enum": ["completed", "cancelled", "error", "invalid", null] },
+              "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+              "arguments": {
+                "type": "array",
+                "maxItems": 16,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["name", "value"],
+                  "properties": {
+                    "name": { "type": "string", "minLength": 1 },
+                    "value": {
+                      "oneOf": [
+                        { "type": "object", "additionalProperties": false, "required": ["number"], "properties": { "number": { "type": "number" } } },
+                        { "type": "object", "additionalProperties": false, "required": ["integer"], "properties": { "integer": { "type": "integer" } } },
+                        { "type": "object", "additionalProperties": false, "required": ["boolean"], "properties": { "boolean": { "type": "boolean" } } },
+                        { "type": "object", "additionalProperties": false, "required": ["text"], "properties": { "text": { "type": "string", "maxLength": 64 } } }
+                      ]
+                    }
+                  }
+                }
+              },
+              "constants": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 }
+            }
+          }
+        ]
+      }
+    },
+    "judge": {
+      "type": "array",
+      "maxItems": 1025,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "judge",
+              "request",
+              "exchange",
+              "max_output_tokens",
+              "messages",
+              "stop",
+              "tool_calls",
+              "usage",
+              "provider_id",
+              "excluded"
+            ],
+            "properties": {
+              "judge": { "const": "turn" },
+              "request": { "type": "integer", "minimum": 0 },
+              "exchange": { "type": ["string", "null"], "minLength": 1, "maxLength": 76 },
+              "max_output_tokens": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+              "messages": { "type": "integer", "minimum": 0 },
+              "stop": { "enum": ["end_turn", "tool_use", "max_tokens", "refusal", "other", null] },
+              "tool_calls": { "type": "integer", "minimum": 0 },
+              "usage": {
+                "type": ["object", "null"],
+                "additionalProperties": false,
+                "required": ["input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"],
+                "properties": {
+                  "input_tokens": { "type": "integer", "minimum": 0 },
+                  "output_tokens": { "type": "integer", "minimum": 0 },
+                  "cache_read_tokens": { "type": "integer", "minimum": 0 },
+                  "cache_write_tokens": { "type": "integer", "minimum": 0 }
+                }
+              },
+              "provider_id": { "type": ["string", "null"], "maxLength": 128 },
+              "excluded": { "enum": ["truncated", "refusal", "no_call", null] }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["judge", "decision", "why"],
+            "properties": {
+              "judge": { "const": "verdict" },
+              "decision": { "enum": ["pass", "fail", "unsure"] },
+              "why": { "type": "string", "maxLength": 4099 }
+            }
+          }
+        ]
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "digest", "bytes"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "digest": { "$ref": "#/$defs/digest" },
+          "bytes": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "replayed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run", "bundle", "mode"],
+      "properties": {
+        "run": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "bundle": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["digest", "step"],
+              "properties": {
+                "digest": { "$ref": "#/$defs/digest" },
+                "step": { "type": "integer", "minimum": 0, "maximum": 15 }
+              }
+            }
+          ]
+        },
+        "mode": { "enum": ["offline", "live"] }
+      }
+    },
+    "none": { "type": "array", "maxItems": 0 },
+    "setting_value": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "number": { "type": "number" },
+        "integer": { "type": "integer" },
+        "boolean": { "type": "boolean" },
+        "text": { "type": "string", "maxLength": 256 }
+      }
+    }
+  }
+}

@@ -99,6 +99,32 @@ pub(super) fn queued_over<C: Clock + 'static>(
     (guard, root)
 }
 
+/// The supervisor of the pack's fakes with one model more, on a card (`fake-cuda`, plan
+/// m7, task B1, item 6): its worker is `fake_card.py` beside the fake host's side, run
+/// from a folder of the test's own that holds it and the pack's package, in place of the
+/// pack's source alone. The folder lives as long as the guard.
+pub(super) fn queued_on_a_card<C: Clock + 'static>(
+    clock: Arc<C>,
+) -> (Guard<Arc<Supervisor>>, Scratch) {
+    let place = Scratch::new("pack-card");
+    let package = kit::source().join("whizbang_pack");
+    std::os::unix::fs::symlink(&package, place.path().join("whizbang_pack")).unwrap();
+    let card = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/it/remote/fake_card.py");
+    std::fs::copy(card, place.path().join("fake_card.py")).unwrap();
+    let source = place.path().to_path_buf();
+    let guard = queued(None, clock, |launch| {
+        *launch = Launch::testing(
+            launch.python.clone(),
+            source,
+            "fake_card".to_owned(),
+            launch.models_dir.clone(),
+            launch.lifetime_s,
+            Vec::new(),
+        );
+    });
+    (guard, place)
+}
+
 /// The same, with the supervisor `make` makes from the fixture.
 fn made(fault: Option<&str>, make: impl FnOnce(&Fixture) -> Worker) -> Guard<Worker> {
     kit::fakes(fault).guard(
@@ -1185,4 +1211,30 @@ fn a_text_whizbang_sends_is_cleaned_as_a_text_of_the_protocol_and_the_worker_tak
         lines_after(&worker, "took an error "),
         ["unavailable: this side speaks pack 1 and the other said pack 2"]
     );
+}
+
+/// The card of a `load`'s result is its last part, `card <name>`, read on CUDA alone
+/// (plan m7, task B1, item 6; ADR 0048): a load on another device names no card,
+/// whatever its adapter said last.
+#[test]
+fn a_loads_card_is_its_last_part_and_is_read_on_cuda_alone() {
+    use whizbang_backends::pack::card_of;
+    let named = Some("NVIDIA A10G".to_owned());
+    assert_eq!(
+        card_of("loaded with 2 settings; card NVIDIA A10G", "cuda"),
+        named
+    );
+    assert_eq!(card_of("already loaded; card NVIDIA A10G", "cuda:0"), named);
+    assert_eq!(card_of("card NVIDIA A10G", "cuda"), named);
+    for (said, device) in [
+        ("loaded with 2 settings; card NVIDIA A10G", "mps"),
+        ("loaded; card NVIDIA A10G", "cpu"),
+        ("loaded with 2 settings", "cuda"),
+        ("already loaded", "cuda"),
+        ("card NVIDIA A10G; loaded", "cuda"),
+        ("loaded; card ", "cuda"),
+        ("loaded; card A10G", "cudax"),
+    ] {
+        assert_eq!(card_of(said, device), None, "{said} on {device}");
+    }
 }

@@ -332,6 +332,42 @@ fn the_run_records_the_identity_asked_the_one_reported_and_the_device() {
     assert!(said.contains(&format!("files {digest}")), "{said}");
 }
 
+/// The card the worker named on the `load` that put the model on it (plan m7, task B1,
+/// item 6; ADR 0048): the fake host's model on a card, whose worker's own code names it
+/// as on a GPU host, is answered on `cuda`, and the run's record, `run/7`, names the card
+/// beside the device. A model on no card names none, and its record is as before.
+#[test]
+fn the_run_records_the_card_the_fake_host_named() {
+    let remoted = Remoted::new("remote-card", &["fake-cuda", "fake-mps"]);
+    // Three runs, each charged at its bound of 0.36 dollars.
+    let reset = whizbang(&["spend", "reset", "--allowance", "2"], &remoted.world.root);
+    assert_eq!(reset.code, Some(0), "{}", reset.err);
+    let ran = remoted.segment(&remoted.runner(&remoted.priced("fake-cuda")));
+    assert_eq!(ran.outcome().name(), "completed", "{:?}", ran.outcome());
+    let record = record_of(&remoted.world.root, ran.run().as_str());
+    assert_eq!(record["record"], "run/7", "{record}");
+    let model = &record["models"][0];
+    assert_eq!(model["device"], "cuda", "{model}");
+    assert_eq!(model["card"], "NVIDIA Fake A10G", "{model}");
+    assert_eq!(model["cached"], false, "{model}");
+    // `runs show` reads it back.
+    let shown = whizbang(&["runs", "show", ran.run().as_str()], &remoted.world.root);
+    assert_eq!(shown.code, Some(0), "{}", shown.err);
+    // A second run finds the host warm: the front sends the load again, the model is
+    // resident, and the worker names the card all the same.
+    let again = remoted.segment(&remoted.runner(&remoted.priced("fake-cuda")));
+    assert_eq!(again.outcome().name(), "completed", "{:?}", again.outcome());
+    let record = record_of(&remoted.world.root, again.run().as_str());
+    assert_eq!(record["record"], "run/7", "{record}");
+    assert_eq!(record["models"][0]["card"], "NVIDIA Fake A10G", "{record}");
+    // A model on no card: no card, and the record is of the version before.
+    let ran = remoted.segment(&remoted.runner(&remoted.priced("fake-mps")));
+    assert_eq!(ran.outcome().name(), "completed", "{:?}", ran.outcome());
+    let record = record_of(&remoted.world.root, ran.run().as_str());
+    assert_eq!(record["record"], "run/4", "{record}");
+    assert!(record["models"][0].get("card").is_none(), "{record}");
+}
+
 #[test]
 fn the_dispatch_id_is_in_the_runs_record_and_a_cancel_names_it() {
     let remoted = Remoted::new("remote-dispatch", &["fake-ok"]);

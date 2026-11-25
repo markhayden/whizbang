@@ -12,7 +12,7 @@
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use super::record::{Attempt, Facts, Handed, Paid, Refused, Setting, Started, Went};
+use super::record::{Attempt, Facts, Handed, Paid, Refused, Replayed, Setting, Started, Went};
 use super::{RefusalKind, Secrets, Value};
 use crate::egress::{Account, Classes, DataClass, Origin};
 
@@ -186,6 +186,13 @@ impl RunFacts {
     /// and when the run's end has begun.
     pub fn started(&self, started: Started) -> bool {
         self.note(|facts| facts.started(started))
+    }
+
+    /// Notes the run this run replays (`run/7`, ADR 0048). False, and nothing is noted:
+    /// when one is noted already, when a record would not hold it, and when the run's
+    /// end has begun.
+    pub fn replayed(&self, replayed: Replayed) -> bool {
+        self.note(|facts| facts.replayed(replayed))
     }
 
     /// Notes a loop's next attempt (`run/6`): the reason it has no verdict, when it
