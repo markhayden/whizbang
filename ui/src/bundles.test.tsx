@@ -133,6 +133,13 @@ describe("bundles and chains", () => {
     const titles = titlesOf({ steps: [{ step: 0, run: "1-1", action: "remove_prompt", title: "Remove what you name", version: null, runs: 1, replayable: true, why: null, inputs: [] }, { step: 1, run: "1-2", action: "source-fidelity", title: null, version: null, runs: 1, replayable: true, why: null, inputs: [] }] });
     expect(titles).toEqual(["Remove what you name", "source-fidelity"]);
     expect(draftOfStep(opened, DIGEST, 5, titles).chain.titles).toEqual(titles);
+    // A place's titles are read back only as the page writes them: words and nulls.
+    const place = { digest: DIGEST, steps: 2, runs: [], stopped: false, at: 1 };
+    localStorage.setItem("whizbang.chains", JSON.stringify([{ ...place, titles: ["Remove what you name", null] }, { ...place, digest: OTHER, titles: [3, { x: 1 }] }, { ...place, digest: PICTURE, titles: "Remove" }]));
+    const read = readChains(localStore());
+    expect(read[0]?.titles).toEqual(["Remove what you name", null]);
+    expect(read[1]).toEqual({ ...place, digest: OTHER });
+    expect(read[2]).toEqual({ ...place, digest: PICTURE });
   });
 });
 

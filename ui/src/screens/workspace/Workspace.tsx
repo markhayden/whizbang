@@ -25,7 +25,7 @@ import { actionOf } from "../../keyboard";
 import { createPreparer, type Preparer } from "../../preparer";
 import { hrefOf } from "../../routes";
 import { chainOf, saveChain, withRun } from "../../bundles";
-import { fellBackWords, listLibrary, shownName, type LibraryPicture } from "../../saved";
+import { asPicture, fellBackWords, listLibrary } from "../../saved";
 import { EmptyScreen } from "../Empty";
 import "../result/result.css";
 import { toneOf } from "../result/record";
@@ -337,7 +337,11 @@ function Draft(props: DraftProps) {
   // What the call a draft was made from held that no field shows (Run again, an example,
   // a chain's step): sent as it was, so a draft left as it is makes that call (plan m7,
   // N1's pass, finding 4).
-  const recorded = kept?.kept && Object.keys(kept.kept).length > 0 ? kept.kept : undefined;
+  // A recipe run from a step (`from`, and its `from_<step>_<port>` inputs) is let go of as
+  // soon as a picture or another input changes, as an edited brief lets go of the job: the
+  // inputs it carries were made from the pictures given then. A step's settings (`set`)
+  // stay, whatever else changes.
+  const [recorded, setRecorded] = useState<Record<string, unknown> | undefined>(() => (kept?.kept && Object.keys(kept.kept).length > 0 ? kept.kept : undefined));
   // A draft an example opened (plan m7, task U1, item 2): which example, and each choice
   // of backend it made that this config does not offer now.
   const example = kept?.example;
@@ -351,6 +355,8 @@ function Draft(props: DraftProps) {
     setValues((now) => ({ ...now, [name]: value }));
     setFromFields((now) => now.filter((field) => field !== name));
     if (name === "brief") setJobOf(null);
+    const field = fields.find((one) => one.name === name);
+    if (field && (field.kind === "picture" || field.kind === "pictures" || field.kind === "artifact")) setRecorded((now) => withoutFrom(now));
   };
   const args = { ...recorded, ...withJob(argumentsOf(task, values), jobOf) };
   const argsKey = JSON.stringify(args);
@@ -386,7 +392,6 @@ function Draft(props: DraftProps) {
   // A field's library is Home's (plan m7, N1's pass, finding 1): every picture the store
   // holds as an input of a run or an import, whatever door gave it, a page at a time.
   const [libraryMore, setLibraryMore] = useState(false);
-  const asPicture = (one: LibraryPicture): Picture => ({ id: one.id, name: shownName(one) });
   const moreLibrary = () => {
     const last = library?.[library.length - 1];
     if (!last) return;
@@ -582,7 +587,7 @@ function Draft(props: DraftProps) {
           ))}
           {recorded ? (
             <p class="workspace__fell-back workspace__kept" role="note">
-              {`Kept from the call this draft was made from, which no field here shows, and sent as it was: ${Object.keys(recorded).join(", ")}.`}
+              {`Kept from the call this draft was made from, which no field here shows, and sent as it was: ${Object.keys(recorded).join(", ")}. A run from a step is let go of when you change a picture or an input; settings stay.`}
             </p>
           ) : null}
           {jobOf !== null && !sent ? (
@@ -913,6 +918,17 @@ function PicturesInput(props: InputProps & { id: string; label: string }) {
 }
 
 /** The call's arguments with the job a check takes from a run, and no brief beside it. */
+/**
+ * What a draft keeps of its recorded call once a picture or another input has changed:
+ * everything but a recipe's run from a step (`from` and each `from_*` input), which was
+ * made from the inputs given then. None when nothing is left.
+ */
+export function withoutFrom(kept: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!kept) return kept;
+  const left = Object.fromEntries(Object.entries(kept).filter(([name]) => name !== "from" && !name.startsWith("from_")));
+  return Object.keys(left).length > 0 ? left : undefined;
+}
+
 export function withJob(args: Record<string, unknown>, jobOf: JobOf | null): Record<string, unknown> {
   if (!jobOf) return args;
   const next: Record<string, unknown> = { ...args, job_of: jobOf };

@@ -100,6 +100,7 @@ export function ChainCard(props: ChainCardProps) {
     const runs = props.place.runs.filter((one): one is string => typeof one === "string");
     const name = `chain-${runs[0] ?? "runs"}.whizbang-bundle`;
     setSaved(null);
+    setProblem(null);
     bundleChain(props.client, runs).then(
       (blob) => {
         save(blob, name);

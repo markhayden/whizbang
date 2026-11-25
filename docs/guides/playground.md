@@ -369,7 +369,9 @@ nothing, and a run with no judge ready left unchecked; `docs/results/m5-playgrou
   the run made: a check keeps the run's job, requirements and all, though its form shows
   the brief alone, until you change the brief; and what the run was asked that no field
   shows (a recipe's `set`, `from` or `until`, from the command line) is kept and sent as it
-  was, which the draft names.
+  was, which the draft names. A run from a step (`from` and the inputs it was given at that
+  step) is let go of as soon as you change a picture or another input, since those inputs
+  were made from the pictures given then; settings (`set`) and `until` stay.
 - **More** holds **Pin as baseline** and **Compare with baseline** (below, "Comparing two
   runs"), **Save as example…** (below, "Saved examples"), **Replay…** (below, "Replaying a
   run"), **Bundle this run…** (below, "Bundles") and **Copy command**. The arrow keys move

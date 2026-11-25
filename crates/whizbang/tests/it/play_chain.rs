@@ -407,4 +407,20 @@ fn an_unchanged_step_makes_the_call_it_recorded_requirements_and_all() {
     );
     assert_eq!(refused.status, 422, "{}", refused.text());
     assert!(refused.text().contains("no bundle"), "{}", refused.text());
+    // A step whose job is another use case's is refused, naming the step, not a run.
+    let other = json!({"candidate": as_the_page_sends(&second)["candidate"],
+                       "job_of": {"bundle": digest, "step": 1}});
+    let refused = kitted.api(
+        "POST",
+        "/api/prepare",
+        Some(&json!({"action": "reality-checks", "arguments": other})),
+    );
+    assert_eq!(refused.status, 422, "{}", refused.text());
+    assert!(
+        refused
+            .text()
+            .contains("the job of that bundle's step is of another use case than reality-checks"),
+        "{}",
+        refused.text()
+    );
 }

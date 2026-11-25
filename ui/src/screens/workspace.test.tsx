@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "preact/test-utils";
 import { ApiError, type Client, type Hello, type Prepared } from "../api";
-import { localStore, saveDraft } from "../drafts";
+import { draftOf, localStore, saveDraft } from "../drafts";
 import { HOSTILE, click, input, render } from "../test/render";
 import { bindingsOf, offered, Workspace } from "./workspace/Workspace";
 
@@ -367,6 +367,34 @@ describe("the workspace", () => {
     input(view.get<HTMLInputElement>("#field-brief"), "other words");
     await later(300);
     expect(made.prepare).toHaveBeenLastCalledWith("source-fidelity", { until: "judge", candidate, source, brief: "other words" });
+    view.unmount();
+  });
+
+  it("lets go of a run from a step once a picture changes, and keeps the settings", async () => {
+    // The review of #311: a recipe run from a step carries `from` and the inputs that step
+    // was given, made from the picture given then; a new picture must not be paired with them.
+    const candidate = `sha256:${"81".repeat(32)}`;
+    const source = `sha256:${"82".repeat(32)}`;
+    const mask = `sha256:${"83".repeat(32)}`;
+    const kept = { set: "judge.second_look=on", from: "judge", from_details_measured: mask };
+    saveDraft(localStore(), { kit: "squint", task: "source-fidelity", values: { candidate, source }, pictures: {}, at: 1, kept });
+    const made = client(() => ({ ready: false }));
+    const view = render(<Workspace kit="squint" task="source-fidelity" hello={CHECKING} client={made} />);
+    await later(300);
+    expect(made.prepare).toHaveBeenLastCalledWith("source-fidelity", { ...kept, candidate, source });
+    expect(view.text()).toContain("sent as it was: set, from, from_details_measured.");
+    expect(view.text()).toContain("settings stay");
+    // Words changed: the run from a step stays, as nothing it was made from changed.
+    input(view.get<HTMLInputElement>("#field-brief"), "the words");
+    await later(300);
+    expect(made.prepare).toHaveBeenLastCalledWith("source-fidelity", { ...kept, candidate, source, brief: "the words" });
+    // The picture cleared: `from` and every `from_*` go, `set` stays.
+    click(view.all<HTMLButtonElement>(".picture-field button").find((one) => one.textContent === "Clear")!);
+    await later(300);
+    expect(made.prepare).toHaveBeenLastCalledWith("source-fidelity", { set: kept.set, source, brief: "the words" });
+    expect(view.text()).toContain("sent as it was: set.");
+    // The draft kept in the browser carries the same rule.
+    expect(draftOf(localStore(), "source-fidelity")?.kept).toEqual({ set: kept.set });
     view.unmount();
   });
 });

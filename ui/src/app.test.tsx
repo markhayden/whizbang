@@ -287,5 +287,9 @@ describe("the shell", () => {
     expect(view.all("[role=dialog]")).toHaveLength(1);
     // Each task, and each task's record (plan m5, task W3, item 7).
     expect(view.all("[role=option]").length).toBe(4);
+    // Its pictures are Home's library, whatever door gave them, not the uploads alone.
+    await settle();
+    expect(lastClient.request).toHaveBeenCalledWith("GET", "/api/library?show=all&limit=48");
+    expect(lastClient.listPictures).not.toHaveBeenCalled();
   });
 });

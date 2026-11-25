@@ -234,10 +234,18 @@ export function readChains(store: Store | null): ChainPlace[] {
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (one): one is ChainPlace =>
-        typeof one === "object" && one !== null && typeof (one as ChainPlace).digest === "string" && Array.isArray((one as ChainPlace).runs) && typeof (one as ChainPlace).steps === "number",
-    );
+    const titled = (titles: unknown): titles is Array<string | null> => Array.isArray(titles) && titles.every((one) => one === null || typeof one === "string");
+    return parsed
+      .filter(
+        (one): one is ChainPlace =>
+          typeof one === "object" && one !== null && typeof (one as ChainPlace).digest === "string" && Array.isArray((one as ChainPlace).runs) && typeof (one as ChainPlace).steps === "number",
+      )
+      .map((one) => {
+        // Titles are kept only as the page writes them: a list of words and nulls.
+        if (one.titles === undefined || titled(one.titles)) return one;
+        const { titles: _, ...rest } = one;
+        return rest;
+      });
   } catch {
     return [];
   }

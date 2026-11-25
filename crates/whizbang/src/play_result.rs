@@ -313,6 +313,15 @@ impl JobOf {
             }
         }
     }
+
+    /// What it names, as a refusal says it: "that run", "that example", "that step".
+    fn what(&self) -> &'static str {
+        match self {
+            JobOf::Run(_) => "that run",
+            JobOf::Example(_) => "that example",
+            JobOf::Step { .. } => "that bundle's step",
+        }
+    }
 }
 
 /// The job a check of the use case `use_case` takes from the call `of` names (the page's
@@ -337,14 +346,19 @@ pub fn job_and_measuring_of(
     {
         Job::from_json(&whizbang_rascal::checked::job(phrase))?
     } else if play_form::is_use_case(&action) {
-        let text = text_of(&arguments, "job").ok_or("that run holds no job")?;
+        let text =
+            text_of(&arguments, "job").ok_or_else(|| format!("{} holds no job", of.what()))?;
         Job::from_json(text)?
     } else {
-        return Err("that run gives no job: it is no check and had no phrase".to_owned());
+        return Err(format!(
+            "{} gives no job: it is no check and had no phrase",
+            of.what()
+        ));
     };
     if job.use_case != use_case {
         return Err(format!(
-            "that run's job is of another use case than {use_case}"
+            "the job of {} is of another use case than {use_case}",
+            of.what()
         ));
     }
     let measuring = play_form::is_use_case(&action)
