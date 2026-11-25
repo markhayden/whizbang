@@ -748,6 +748,101 @@ fn the_identity_of_each_kind_of_mapping_is_fixed() {
         wrap,
         "sha256:889eca0cbc19667a28da178b22ebbeac80e99eac3588dbc36d947184e6123a67"
     );
+    // Kind 5, ADR 0051: yaw, pitch and fov, in that order.
+    let perspective = onto(
+        Space::flat(512, 512).unwrap(),
+        Space::panorama(2048, 1024).unwrap(),
+        Direction::SourceToDestination,
+        Mapping::Perspective {
+            yaw: 30.0,
+            pitch: -12.5,
+            fov: 60.0,
+        },
+    );
+    assert_eq!(
+        perspective,
+        "sha256:288310036574f427094e25265e88f0a7eba2a53989366ce551f52d9946f9bb60"
+    );
+}
+
+#[test]
+fn a_perspective_view_is_read_back_as_it_was_written_and_composes_with_the_identity_alone() {
+    let view = Space::flat(256, 256).unwrap();
+    let panorama = Space::panorama(1024, 512).unwrap();
+    let binding = Binding::new(
+        image("view"),
+        view,
+        image("panorama"),
+        panorama,
+        Direction::SourceToDestination,
+        Mapping::Perspective {
+            yaw: -170.25,
+            pitch: 33.0,
+            fov: 90.0,
+        },
+    )
+    .unwrap();
+    let text = serde_json::to_string(&binding).unwrap();
+    assert!(
+        text.contains(r#""perspective":{"yaw":-170.25,"pitch":33.0,"fov":90.0}"#),
+        "{text}"
+    );
+    let read: Binding = serde_json::from_str(&text).unwrap();
+    assert_eq!((read.id(), &read), (binding.id(), &binding));
+    // Checked again on the way in: a field of view of 180 degrees sees nothing.
+    let wide = text.replace(r#""fov":90.0"#, r#""fov":180.0"#);
+    assert!(serde_json::from_str::<Binding>(&wide).is_err());
+
+    // The reverse maps back what the binding maps, and the identity leaves it as it is.
+    let point = Point::new(17.25, 200.5);
+    let there = binding.to_destination(point).unwrap();
+    let back = binding.reversed().unwrap().to_destination(there).unwrap();
+    assert!(close(back, point, 1e-9), "{back:?}");
+    let itself = Binding::new(
+        image("panorama"),
+        panorama,
+        image("panorama"),
+        panorama,
+        Direction::SourceToDestination,
+        Mapping::Identity,
+    )
+    .unwrap();
+    assert_eq!(
+        *binding.then(&itself).unwrap().mapping(),
+        *binding.mapping()
+    );
+    // A crop of the view, or a turn of the panorama, does not make one mapping with it.
+    let crop = Binding::new(
+        image("detail"),
+        Space::flat(64, 64).unwrap(),
+        image("view"),
+        view,
+        Direction::SourceToDestination,
+        Mapping::Crop {
+            left: 0.0,
+            top: 0.0,
+            right: 64.0,
+            bottom: 64.0,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        crop.then(&binding),
+        Err(IdentityError::Binding(_))
+    ));
+    let turn = Binding::new(
+        image("panorama"),
+        panorama,
+        image("turned"),
+        panorama,
+        Direction::SourceToDestination,
+        Mapping::Rotation { matrix: yaw(10.0) },
+    )
+    .unwrap();
+    assert!(matches!(
+        binding.then(&turn),
+        Err(IdentityError::Binding(_))
+    ));
 }
 
 #[test]

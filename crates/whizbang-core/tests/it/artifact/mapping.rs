@@ -267,4 +267,25 @@ fn what_is_not_carried_is_refused() {
         },
     );
     assert!(refused(&across, &turn, Toward::Destination).contains("seam"));
+    // Nothing is carried through a perspective view yet (ADR 0051), whichever way.
+    let look = Binding::new(
+        picture("look"),
+        Space::flat(10, 10).unwrap(),
+        picture("panorama"),
+        Space::panorama(40, 10).unwrap(),
+        Direction::SourceToDestination,
+        Mapping::Perspective {
+            yaw: 0.0,
+            pitch: 0.0,
+            fov: 60.0,
+        },
+    )
+    .unwrap();
+    let in_view = on(
+        &Binding::root(picture("look"), Space::flat(10, 10).unwrap()),
+        boxed(1.0, 1.0, 2.0, 2.0),
+    );
+    assert!(refused(&in_view, &look, Toward::Destination).contains("perspective view"));
+    let on_panorama = on(&panorama, boxed(18.0, 4.0, 22.0, 6.0));
+    assert!(refused(&on_panorama, &look, Toward::Source).contains("perspective view"));
 }
