@@ -36,11 +36,11 @@ impl Mark {
 
 /// The records of the tools the upper rungs apply to, and of the controls, by the tool's
 /// name: first the actions, in the order the description lists them (rascal's recipes, the
-/// five use cases' recipes, the loop, then the tools), then the two tools that are no action,
-/// each offered to a judge only when a run names it: the tool file `per_subject` and the
-/// detail `tiles` (plan mE, task A0, item 3). Every record under `docs/reference/tools/` that
+/// five use cases' recipes, the loop, then the tools), then the tools that are no action,
+/// each offered to a judge only when a run names it: the tool files `per_subject` and
+/// `outline` (plan mE, task T1) and the detail `tiles` (plan mE, task A0, item 3). Every record under `docs/reference/tools/` that
 /// states a mark is here, which a test holds.
-pub const RECORDS: [(&str, &str); 20] = [
+pub const RECORDS: [(&str, &str); 21] = [
     (
         "remove_prompt",
         include_str!("../../../docs/reference/tools/remove_prompt.md"),
@@ -118,14 +118,18 @@ pub const RECORDS: [(&str, &str); 20] = [
         include_str!("../../../docs/reference/tools/per_subject.md"),
     ),
     (
+        "outline",
+        include_str!("../../../docs/reference/tools/outline.md"),
+    ),
+    (
         "tiles",
         include_str!("../../../docs/reference/tools/tiles.md"),
     ),
 ];
 
 /// The tools among [`RECORDS`] that are no action: each offered to a judge only when a run
-/// names it, the tool file `per_subject` and the detail `tiles`.
-pub const OFFERED: [&str; 2] = ["per_subject", crate::details::TILES];
+/// names it, the tool files `per_subject` and `outline` and the detail `tiles`.
+pub const OFFERED: [&str; 3] = ["per_subject", "outline", crate::details::TILES];
 
 /// The mark a record states, or none: the first bold word of its part "Mark and history",
 /// or, when that is `**Mark.**`, the word after it.
