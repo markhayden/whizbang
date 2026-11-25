@@ -969,11 +969,13 @@ step, and replays one run offline or live with its report; built as G1's designs
   pass, inside the Chrome tier's 240 seconds.
   *As U2 built it:* a chain's step is started by `POST /api/runs` with `replay`, which the
   core takes as `Request::from_step` (its fingerprint `step/1`, of the call's `request/1`,
-  the bundle and the step); opening a step gives the inputs the bundle carries the store's
-  ordinary names as an import, as an example's open does, so the draft prepares as any. A
-  replay started from the page carries the host's signal and stated time
-  (`Replay::cancelled_by`, `Replay::until`). The live replay's cost is reviewed from the
-  preparation of the run's Run again draft. A dropped bundle is imported at once and shown,
+  the bundle and the step; refused for a call of another action than the step's); opening a
+  step gives the inputs the bundle carries the store's ordinary names as an import, as an
+  example's open does, so the draft prepares as any (ADR 0048, amended). A replay started
+  from the page carries the host's signal and stated time (`Replay::cancelled_by`,
+  `Replay::until`). The live replay's cost is reviewed from the preparation of the run's
+  Run again draft, sent by its handle, and the replay is refused when its own preparation
+  may spend more (`Replay::shown`). A dropped bundle is imported at once and shown,
   with Start the chain and Delete, where the design has "Import only" and "Import and start
   the chain"; the chain's list of steps is its own page, and the workspace's draft names its
   step and shows each link, where the design puts the list beside the canvas.

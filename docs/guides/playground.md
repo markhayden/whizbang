@@ -481,7 +481,9 @@ takes in (`docs/guides/bundles-and-replay.md` says what it holds and how it is c
   whether each step replays offline as this build decides it from the step's records (never
   from what the bundle says of itself), what it holds and what it withholds, each with why.
   A file that is not a bundle this build can read is refused, naming its first fault, and
-  nothing is kept. **Delete bundle** lets it go; what a run of this store took from it stays.
+  nothing is kept. **Delete bundle** asks once, then lets it go: what a run of this store
+  took from it stays, and so do the pictures a step's draft was given from it, which became
+  imports of this store when the step was opened.
 
 The page never names a file by its path: a bundle goes to the host as its bytes, at most
 256 MiB, one of the host's two uploads at a time, and is read and taken in one at a time.
