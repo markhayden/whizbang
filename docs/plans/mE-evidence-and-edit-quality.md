@@ -1,7 +1,7 @@
 # Plan: milestone E, evidence and edit quality
 
-Draft 8, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
-note of milestone 7), after seven outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
+Draft 9, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
+note of milestone 7), after eight outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
 quality". Its first slice ran beside milestone 5 (`docs/plans/e1-judge-format-loop.md`,
 `docs/plans/e1-note.md`) and chose the default judge and kept the submission format on
 descriptive evidence. This plan is the rest of the milestone: every unverified tool and
@@ -505,8 +505,11 @@ R5 and R6 need a scorer that `eval run --gate` is not: it gates balanced accurac
    from the run's record), blinded quality (the outcome of a lab decode of this round's runs),
    and operational errors; the minimum number of families; the correction across the recipes
    of one round (Bonferroni on the intervals); the limits on cost (the settled cost of a run
-   at most the recipe's guide figure doubled) and on latency (the median run at most twice its
-   record's); and that too little data, too few families, or fewer picked pairs than the
+   at most the recipe's guide figure doubled) and on latency, of the local work alone, which
+   is what a record times (its "Speed and cost" runs under a scripted filler): the median
+   run's time less the time its backend calls took, both from the run's record, at most twice
+   the record's time at the nearest size; the time the backends took is reported beside it,
+   not gated; and that too little data, too few families, or fewer picked pairs than the
    protocol's minimum is inconclusive.
 2. **`whizbang eval edits gate --gate <file>`** scores it from the store: task success from
    the runs' checks (rung 3, R5) or from the owner's marks (rung 4, R6, read by `--labels
@@ -844,11 +847,15 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
      of item 3 was too.
    - **The requirements**: admitted when both judges' comparisons are; then B1's builder
      writes full requirements by default. It changes no recipe.
-   - **A tool**: admitted when both judges' comparisons are, as a recipe of its own (gap 10):
-     a variant of source fidelity, `source-fidelity-<tool>` (for example
-     `source-fidelity-per_subject`, a name the action validator takes), its file the use case's with that
-     one tool offered, under v1. That variant is admitted, for the two judges its gate
-     measured, and the tool is on by default in it. Source fidelity itself does not change for
+   - **A treatment** (a tool or the second look): admitted when both judges' comparisons are,
+     as a recipe of its own (gap 10): a variant of source fidelity, `source-fidelity-<name>`
+     (for example `source-fidelity-per_subject` or `source-fidelity-second_look`, names the
+     action validator takes), its file the use case's with exactly the tested arm's one
+     difference, under v1: the tool offered to the judge, or, for the second look, the
+     setting `second_look = "on"` in the judge's step (`second_look` is a setting of `check`,
+     not an offered tool). A test runs the variant and the arm and requires the same arguments
+     of `check`. That variant is admitted, for the two judges its gate
+     measured, and the treatment is on by default in it. Source fidelity itself does not change for
      a tool, whatever judge is the default: under any judge other than the two, the variant
      is named and runs, but its record says it was not confirmed there. Two tools that pass
      make two variants, never one recipe with both; a combination is a later gate, a carry-
@@ -863,7 +870,8 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    frozen: the study's one comparison that excluded zero, `regions` on `gemini-3.8-flash`,
    with two repetitions of each of C and `C+regions` on `confirm-v1` (the carry-over row on the
    study's one repetition), if `regions` passed R2; Flash beside Haiku and Terra in each
-   tool's gate; a third tool's arms. Without the yes, N1 withdraws the study's claim with a
+   tool's gate; a third tool's arms. If this comparison does not run, for want of the yes or because
+   `regions` did not pass R2, N1 withdraws the study's claim with a
    line in `docs/results/2026-11-tool-study.md` and the row.
 
 - [ ] Done when: every receipt is committed, `whizbang eval admitted` lists what they admitted,
@@ -1117,7 +1125,9 @@ row on the panorama side of `view`):
    and the segmenter they use, and rascal's rows, marked as E left them; section 4's
    segmenters naming the fixed-class entry; section 16, row E, if the owner's answer to "I
    need", item 3 changed it.
-3. **The study's claim**, withdrawn with a line if tier 2 did not run.
+3. **The study's claim**, withdrawn with a line unless R4 ran its comparison (`regions` on
+   Flash, two repetitions an arm), whatever else tier 2 ran: if tier 2 was not approved, or
+   `regions` did not pass R2, the claim is withdrawn.
 4. **The tag `mE`**, by the orchestrator, on the note's merge.
 
 - [ ] Done when: the note is merged and `mE` is tagged.
@@ -1597,4 +1607,20 @@ checked against the code; all were right and taken.
    largest reservation left; tier 1 is now about 57; tier 2 about 45, the ceiling asked 145.
 3. **Minor: M1, F1 and M2 share files.** Right (`matrix.rs`, `eval.rs`). Taken: F1 and M2
    start when M1 has landed, and the shared files name their order.
+
+### Review round 8
+
+On draft 8, by the Codex CLI. Verdict: revise. Round 7's fixes held. Three findings, all
+majors. Each was checked against the code; all were right and taken.
+
+1. **Major: the edit gates' latency compared live runs with times under a scripted filler.**
+   Right (`remove_prompt.md`, `seam.md`, "Speed and cost"). Taken: M2 gates the local work
+   alone, a run's time less its backend calls', against the record; the backends' time is
+   reported, not gated.
+2. **Major: a passing second look had no variant to be admitted as.** Right (`second_look` is a
+   setting, `matrix.rs`; an unknown offered tool is refused, `check.rs`). Taken: a variant
+   carries exactly the tested arm's difference, a tool or the setting, with a test that the
+   variant and the arm give `check` the same arguments.
+3. **Major: the study's claim could stay open with tier 2 approved.** Right. Taken: N1
+   withdraws it unless R4 ran the comparison, whatever the reason it did not.
 
