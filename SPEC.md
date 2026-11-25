@@ -614,6 +614,11 @@ then tools are brought in one at a time and evaluated as they arrive.
 | The control | `view`, `align` | 1 and 2. For `align`, scored alone means registration error on pairs with a known transform. Every squint comparison is measured against these two, so rungs 3 and 4 cannot apply |
 | Any model-based recipe or tool offered to a judge, inherited or new | `remove_prompt`, `change_map`, per-subject comparison | All four |
 
+A use case of `check` is the judge's own procedure, with no judge to improve: its rung 3 is a
+round of judges on development and exposed sets under a rule frozen before it, and its rung 4
+is the rule that picks a judge (`judge-pick/2`) run on a fresh set of that use case, which
+admits the use case with the judge the rule picks there.
+
 ### Tool records
 
 Every tool and recipe has one record, at `docs/reference/tools/<name>.md`, and the playground
@@ -658,6 +663,9 @@ pixel operation or a control is complete when its record shows rungs 1 and 2.
   The result is recorded either way.
 - **Changing an admitted tool's** model, prompt or logic returns it to unverified until it
   clears its gate again.
+- **A tool is admitted as the recipe its gate measured:** a use case with that tool offered,
+  on by default in that recipe and for the judges the gate measured. Another combination
+  needs a gate of its own.
 
 ### The ladder
 
@@ -667,6 +675,9 @@ pixel operation or a control is complete when its record shows rungs 1 and 2.
 | 2. Scored alone | Its read separates good from bad on a development set | Mask agreement with references; for edits, task success, preservation outside the mask, and visual quality |
 | 3. Small end-to-end | Improves a cheap judge on a sample | The finished edit passes on a sample |
 | 4. Confirmation | Improves judges across models on fresh, held-out data | Holds on a fresh corpus |
+
+A rung 3 gate decides only whether a tool goes on up the ladder. Only a rung 4 gate, on
+fresh data, admits.
 
 Cost depends on the backend. An offline mode refuses any call that would spend.
 
@@ -1161,7 +1172,7 @@ ends, and 8 starts when E ends.
 | 5 | Playground | Every kept playground item in section 7 passes its acceptance case in Chrome; the playground API's negative tests pass; old repos archived |
 | 6 | HTTP and remote hosting | User story 1 runs: the engine API with its negative tests, SAM 3 on a GPU host with parity inside the 1D tolerance, Bria through fal |
 | 7 | Bundles and replay | Invocation bundles and journal replay; saved-run comparisons, saved examples and guided chain replay in the playground |
-| E | Evidence and edit quality | Runs after milestone 7 and before milestone 8, not beside the numbered milestones (the owner's decision of 2026-11-24). Its evaluations decide what 8 builds: a further segmenter, and how local fill and judge are scored. Every unverified tool and recipe is taken up the ladder, squint's first and the most doubtful first, until each is admitted, experimental or dropped. Per-subject comparison climbs rungs 3 and 4 on a fresh confirmation set; `regions`, `classes` and `outline` are each brought in as experimental tools and scored on rungs 1 and 2, on SAM 3 where that works and on their old segmenter as a catalogue entry where it does not, and those that pass go on; the submission format is redesigned so small models can follow it; job requirements carry colour, count and lettering in a new set version. Each change is admitted through its gate |
+| E | Evidence and edit quality | Runs after milestone 7 and before milestone 8, not beside the numbered milestones (the owner's decision of 2026-11-24). Its evaluations decide what 8 builds: a further segmenter, and how local fill and judge are scored. Every unverified tool and recipe is taken up the ladder, squint's first and the most doubtful first, until each is admitted, experimental or dropped. Per-subject comparison climbs rung 3, and rung 4 on a fresh confirmation set; `regions`, `classes` and `outline` are each brought in as experimental tools and scored on rungs 1 and 2, on SAM 3 where that works and on their old segmenter as a catalogue entry where it does not, and those that pass go on; the submission format is redesigned so small models can follow it; job requirements carry colour, count and lettering in a new set version. Each change is admitted through its gate |
 | 8 | More local models | Each cell section 5 assigns to this milestone passes conformance: fill and judge, each both local and self-hosted; plus any further segmenter the evaluations call for |
 
 Checkpoints 1A to 1D each end with a note. Milestones 2 and 3 need 1A and 1B; they need 1C and

@@ -1,12 +1,16 @@
-//! The marks of squint's tools (`SPEC.md` section 8, "Marks"), each read from the tool's
-//! record (`docs/reference/tools/<name>.md`, its part "Mark and history"), which is compiled
-//! in: the first word in bold there is the mark. A record whose part opens `**Mark.** None`
-//! gives no mark (a control or a pixel operation, to which the upper rungs do not apply).
+//! The marks of the tools the upper rungs apply to (`SPEC.md` section 8, "Marks"), squint's
+//! and rascal's, each read from the tool's record (`docs/reference/tools/<name>.md`, its part
+//! "Mark and history"), which is compiled in. A record states its mark in one of two ways:
+//! its first word in bold is the mark (`**Unverified**`), or it opens `**Mark.**` and the
+//! mark is the word after it (`**Mark.** Experimental`). A record whose part opens
+//! `**Mark.** None` gives no mark: a control or a pixel operation, to which the upper rungs
+//! do not apply, complete when its record shows rungs 1 and 2.
 //!
 //! A tool has a mark only through its record: one with no record here has none to show, and
 //! [`of`] gives it none, so it cannot be unverified or admitted (`SPEC.md` section 8: "A tool
 //! is not finished, and cannot be marked unverified or admitted, without its record"). Who
-//! runs an unmarked tool treats it as experimental: it runs only when named.
+//! runs an unmarked tool that is not a control treats it as experimental: it runs only when
+//! named.
 
 /// A mark.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,9 +34,33 @@ impl Mark {
     }
 }
 
-/// The records of squint's tools, by the tool's name: the five use cases' recipes (plan m3,
-/// task Q1, item 5) first, in the order the description lists them, then the tools.
-const RECORDS: [(&str, &str); 10] = [
+/// The records of the tools the upper rungs apply to, and of the controls, by the tool's
+/// name: first the actions, in the order the description lists them (rascal's recipes, the
+/// five use cases' recipes, the loop, then the tools), then the two tools that are no action,
+/// each offered to a judge only when a run names it: the tool file `per_subject` and the
+/// detail `tiles` (plan mE, task A0, item 3). Every record under `docs/reference/tools/` that
+/// states a mark is here, which a test holds.
+pub const RECORDS: [(&str, &str); 20] = [
+    (
+        "remove_prompt",
+        include_str!("../../../docs/reference/tools/remove_prompt.md"),
+    ),
+    (
+        "remove",
+        include_str!("../../../docs/reference/tools/remove.md"),
+    ),
+    (
+        "repair_area",
+        include_str!("../../../docs/reference/tools/repair_area.md"),
+    ),
+    (
+        "repair",
+        include_str!("../../../docs/reference/tools/repair.md"),
+    ),
+    (
+        "seam",
+        include_str!("../../../docs/reference/tools/seam.md"),
+    ),
     (
         "source-fidelity",
         include_str!("../../../docs/reference/tools/source-fidelity.md"),
@@ -54,6 +82,10 @@ const RECORDS: [(&str, &str); 10] = [
         include_str!("../../../docs/reference/tools/product-fidelity.md"),
     ),
     (
+        "remove_checked",
+        include_str!("../../../docs/reference/tools/remove_checked.md"),
+    ),
+    (
         "align",
         include_str!("../../../docs/reference/tools/align.md"),
     ),
@@ -70,17 +102,45 @@ const RECORDS: [(&str, &str); 10] = [
         include_str!("../../../docs/reference/tools/resize.md"),
     ),
     (
+        "segment",
+        include_str!("../../../docs/reference/tools/segment.md"),
+    ),
+    (
         "view",
         include_str!("../../../docs/reference/tools/view.md"),
     ),
+    (
+        "fill",
+        include_str!("../../../docs/reference/tools/fill.md"),
+    ),
+    (
+        "per_subject",
+        include_str!("../../../docs/reference/tools/per_subject.md"),
+    ),
+    (
+        "tiles",
+        include_str!("../../../docs/reference/tools/tiles.md"),
+    ),
 ];
 
-/// The mark a record states, or none: the first bold word of its part "Mark and history".
+/// The tools among [`RECORDS`] that are no action: each offered to a judge only when a run
+/// names it, the tool file `per_subject` and the detail `tiles`.
+pub const OFFERED: [&str; 2] = ["per_subject", crate::details::TILES];
+
+/// The mark a record states, or none: the first bold word of its part "Mark and history",
+/// or, when that is `**Mark.**`, the word after it.
 pub fn stated(record: &str) -> Option<Mark> {
     let (_, part) = record.split_once("\n## Mark and history\n")?;
     let (_, rest) = part.split_once("**")?;
-    let (word, _) = rest.split_once("**")?;
-    match word.trim_end_matches(['.', ':']) {
+    let (word, after) = rest.split_once("**")?;
+    let word = match word {
+        "Mark." => after
+            .trim_start_matches(' ')
+            .split(|c: char| !c.is_ascii_alphabetic())
+            .next()?,
+        bold => bold.trim_end_matches(['.', ':']),
+    };
+    match word {
         "Experimental" => Some(Mark::Experimental),
         "Unverified" => Some(Mark::Unverified),
         "Admitted" => Some(Mark::Admitted),

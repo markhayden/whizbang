@@ -801,7 +801,7 @@ fn squint_check_details_first_measures_first_offers_resize_and_answers_in_full()
         .collect();
     assert_eq!(texts[2], whizbang_squint::details::DETAILS_INTRO);
     assert!(
-        texts[3].starts_with("align (unverified), candidate onto source: registered "),
+        texts[3].starts_with("align (control), candidate onto source: registered "),
         "{}",
         texts[3]
     );
@@ -870,7 +870,7 @@ fn squint_check_with_detail_change_map_hands_its_measurements_to_a_scripted_judg
         .iter()
         .filter_map(|part| part["text"].as_str())
         .collect();
-    assert!(texts[3].starts_with("align (unverified), "), "{}", texts[3]);
+    assert!(texts[3].starts_with("align (control), "), "{}", texts[3]);
     let measured = texts
         .iter()
         .find(|text| {

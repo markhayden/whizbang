@@ -30,7 +30,7 @@ fn registry() -> Registry {
 fn a_description_lists_what_was_registered_in_order_and_in_full() {
     let description = Description::new("1.2.3", &registry());
     assert_eq!(description.description_version(), DESCRIPTION_VERSION);
-    assert_eq!(DESCRIPTION_VERSION, 11);
+    assert_eq!(DESCRIPTION_VERSION, 12);
     assert_eq!(description.name(), "whizbang");
     assert_eq!(description.version(), "1.2.3");
     let names: Vec<&str> = description.actions().iter().map(|a| a.name()).collect();
@@ -41,13 +41,28 @@ fn a_description_lists_what_was_registered_in_order_and_in_full() {
     );
     let value = serde_json::to_value(&description).unwrap();
     assert_eq!(value["actions"][1]["outputs"][2]["name"], "found");
-    // Marks (version 7): only of actions it registers, in the order given.
+    // Marks (version 7): only of actions it registers, in the order given; and (version
+    // 12) of the tools it names as offered only when a run names them.
     assert!(description.marks().is_empty());
-    let marked = description.with_marks([("seam", "experimental"), ("nothing", "admitted")]);
+    let marks = [
+        ("seam", "experimental"),
+        ("nothing", "admitted"),
+        ("a_tool_file", "experimental"),
+    ];
+    let marked = description.clone().with_marks(marks, &[]);
     let value = serde_json::to_value(&marked).unwrap();
     assert_eq!(
         value["marks"],
         serde_json::json!([{"tool": "seam", "mark": "experimental"}])
+    );
+    let marked = description.with_marks(marks, &["a_tool_file"]);
+    let value = serde_json::to_value(&marked).unwrap();
+    assert_eq!(
+        value["marks"],
+        serde_json::json!([
+            {"tool": "seam", "mark": "experimental"},
+            {"tool": "a_tool_file", "mark": "experimental"}
+        ])
     );
 }
 
@@ -131,7 +146,7 @@ fn the_description_lists_findings_among_an_actions_results_and_which_actions_pla
     }
     let description = Description::new("1.2.3", &registry);
     let value = serde_json::to_value(&description).unwrap();
-    assert_eq!(value["description_version"], 11);
+    assert_eq!(value["description_version"], 12);
     let action = |name: &str| {
         let actions = value["actions"].as_array().unwrap();
         actions.iter().find(|a| a["name"] == name).unwrap().clone()
