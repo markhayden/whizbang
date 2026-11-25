@@ -207,11 +207,7 @@ fn a_bundle_imports_into_an_empty_store_and_survives_its_archive_and_first_store
     assert!(entry_names(&other, &digest).is_empty());
     // What only the bundle named is gone; the replays' runs keep what they hold.
     let reader = Reader::open(&other, Arc::new(RealFs)).unwrap();
-    assert_eq!(
-        reader.snapshot().unwrap().runs().len() > 0,
-        true,
-        "{deleted}"
-    );
+    assert!(!reader.snapshot().unwrap().runs().is_empty(), "{deleted}");
     drop(reader);
     let again = whizbang(
         &["bundle", "delete", &digest.to_string(), "--store"],
