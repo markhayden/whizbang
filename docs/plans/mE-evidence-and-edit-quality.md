@@ -1,7 +1,7 @@
 # Plan: milestone E, evidence and edit quality
 
-Draft 14, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
-note of milestone 7), after thirteen outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
+Draft 15, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
+note of milestone 7), after fourteen outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
 quality". Its first slice ran beside milestone 5 (`docs/plans/e1-judge-format-loop.md`,
 `docs/plans/e1-note.md`) and chose the default judge and kept the submission format on
 descriptive evidence. This plan is the rest of the milestone: every unverified tool and
@@ -284,8 +284,8 @@ theirs; builders make no live call.
 | M1 | The machinery of the squint rounds: a matrix that runs only the cells it names; the second look under C; gates frozen in their matrix, several on one; a gate across two versions of a set; `submission/2` and `judge-pick/2` with its sets; refusals that tell nothing of a held-out set; the list of what was admitted; no retry of a failed cell; the judge round's figures held to their TOML | `main` | Medium to large, two pull requests: about 1,300 (matrices and gates), then about 1,500 (the rules, the held-out refusals and the records) |
 | M2 | The edits' gates: `edit-gate/1`, `eval edits gate`, marks for any recipe's pictures, pairs from recorded runs | M1 | Medium: about 1,700 |
 | B1 | The set builder, ported, with full requirements and a spend guard; the seasonal cover pair; the pictures' repository's name | `main` | Large, two pull requests: about 1,400 (the port), then about 1,100 (full requirements, the guard, the pair, the name) |
-| T1 | `outline`, then `regions`, as tool files on SAM 3; the rules' `[hints]` and the checklist's evidence from regions | `main` | Large, two pull requests: about 1,100 (`outline`), then about 1,200 (`regions` and the rules) |
-| T2 | The fixed-class segmenter as a catalogue entry that labels every pixel; `classes`; the `method` of `regions` and `outline` | T1 | Large, two pull requests: about 1,400 (the adapter, its entry, conformance), then about 1,000 (`classes`, the methods) |
+| T1 | The tool-file contract widened for regions; `outline`, then `regions`, as tool files on SAM 3; the rules' `[hints]` and the checklist's evidence from regions | `main` | Large, two pull requests: about 1,600 (the contract and `outline`), then about 1,200 (`regions` and the rules) |
+| T2 | The fixed-class segmenter as a catalogue entry that labels every pixel, and the tool context's reach to it; `classes`; the `method` of `regions` and `outline` | T1 | Large, two pull requests: about 1,800 (the adapter, its entry, conformance, the context's routing), then about 1,000 (`classes`, the methods) |
 | F1 | Submission v3; Haiku's invalid submissions counted by rule | M1 | Medium: about 1,400 |
 | D1 | The new set versions and the fresh set (the orchestrator's, with the owner) | B1; the fresh twins also M1 (`--held-out`) | Medium: about 500, and the sets' files |
 | R2 | Rung 2 of the new tools and their methods (the orchestrator's) | T2 | Small: about 400, records |
@@ -643,6 +643,20 @@ Ported from squint's `tools/python/src/squint_tools/outline.py` and `regions.py`
 pinned commit, as tool files in ADR 0032's shape under `pack/tools/`, beside `per_subject.py`.
 `outline` first: it is the most doubted of the three.
 
+0. **The tool-file contract widened first** (the first pull request, before `outline`). A
+   tool file today returns readings and `not_applicable` alone
+   (`crates/whizbang/src/tool_file.rs`, its evidence kinds and the check of a tool's output),
+   and its context asks the default segmenter for a phrase, point or box and gets masks back
+   (`pack/src/whizbang_pack/tool_worker.py`; `tool_file.rs`, the routing of a segment
+   request). `outline` and `regions` return located regions on `frame`. So: a declared
+   evidence kind `regions` (each a box or polygon on a named frame, a label and a score, held
+   to the declared bounds `max_regions` and `max_region_label_bytes`), validated as readings
+   are, recorded, and read by the checklist (item 4). ADR 0032 amended. T2 widens it again
+   for a model by name and for labels (T2, item 2). Tests of a tool that returns regions in
+   bounds, past them, and on a frame the run does not hold.
+   `tool_file::a_tool_returns_regions_within_its_bounds`;
+   `tool_file::regions_past_the_bounds_or_on_an_unknown_frame_are_refused`.
+
 1. **`outline` on SAM 3.** For a protected subject (the job's `must_hold` requirement, or the
    class a hint names), the subject's mask on each frame of an aligned pair, from SAM 3's
    phrase request through the tool context; then squint's comparison of the two shapes:
@@ -683,7 +697,11 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    files is served from an origin the config does not already approve, the builder stops and
    the orchestrator asks the owner ("What the owner provides").
 2. **A new feature, `labels`** (the "Evaluations" row "Segmentation that labels every pixel |
-   When a tool needs it": `classes` needs it). A request for labels returns, for the whole
+   When a tool needs it": `classes` needs it), **and the tool context's reach to it**: the
+   context's segment request may name a model of the catalogue (routed to it, refused when it
+   is not installed or does not declare the feature), and a `labels` request returns a labels
+   artifact the tool reads through the context, as it reads masks now; the routing in
+   `tool_file.rs` and `tool_worker.py` and their validation extended, with tests. A request for labels returns, for the whole
    picture, a class per pixel from the model's closed list and each class's confidence, as
    one artifact; the feature is declared, and a model that does not declare it refuses the
    request (ADR 0006). The entry also answers phrase requests whose phrase is one of its
@@ -980,7 +998,11 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    again from the kept stores with P0's writer (`whizbang lab pairs`): `m3-seam`, 30 pairs,
    and the four `m3-edits-<recipe>` labs, 24 pairs each, written to owner storage. The owner
    picks them. `whizbang lab decode` holds the picks to each frozen assignment and decodes
-   them. If a store is gone, the picks on the page already drawn are decoded instead.
+   them. A page drawn before P0 is not used: its files' lengths can tell the reference arm
+   (the carry-over row on the padding chunk). If a store is gone, its round is run again
+   under a protocol frozen anew, as the row's third way says, in tier 2 ("Spend": about 3.8 a
+   round, as milestone 3's settled); without tier 2, the recipes that round served keep their
+   visual quality unconfirmed, rung 2 is not complete, and they end E experimental.
 2. **The loop's contact sheet** (the carry-over row on the loop's retries). The owner marks
    it; `whizbang eval loop score --labels <owner storage>` adds whether the named thing is
    still visible and whether something else was damaged, beside the attempt before.
@@ -1002,11 +1024,15 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    rule, and `runs stats` counts by it. Older records count by their sentence, as now.
 2. **Located retries that added nothing** (the carry-over row on them): the tally counts how
    often a located retry added no pixel, and how often the widening after it passed.
-3. **The tenth** (the carry-over row on `ITSELF_PART`): from the tallies of plan e1's loop
-   round (`docs/results/e-loop-<judge>-<n>.toml`, `[places]`), the places that joined as
-   themselves and those left out over a tenth, with what the checks after them said; the
-   number is kept or changed with a line in the row, by the rule: changed only if more than
-   a quarter of the places looked into were left out for size.
+3. **The tenth** (the carry-over row on `ITSELF_PART`). The committed tallies of plan e1's loop
+   round give totals apart (`docs/results/e-loop-<judge>-<n>.toml`, `[places]`), not what the
+   check after each such place said, which the row asks. So the evidence reader
+   (`scripts/loop-evidence.py`) gains that cross-tabulation, by place: joined as itself, left
+   out over a tenth, joined with something found, each against the verdict of the attempt
+   after it; and the orchestrator runs it again over the loop store's kept runs, which spends
+   nothing, committing only the new aggregates. The number is kept or changed with a line in
+   the row, by the rule: changed only if more than a quarter of the places looked into were
+   left out for size.
 
 - [ ] Done when: the tests pass and each row has its line. Nothing paid.
 
@@ -1019,13 +1045,17 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    loop already has: preparation budgets one segment request a place and at most eight a
    retry (`checked.rs`), and a record holds at most eight crops and 64 runs an attempt
    (`contract/sixth.rs`), and `select` at most 64 masks (`select.rs`). A place whose cut passes
-   1,024 pixels a side is looked into in at most four tiles, each a crop `view` cuts with its
-   binding, each carried as the picture's own pixels, and each counted as one of the eight
+   1,024 pixels a side and at most 2,048 is looked into in at most four tiles, each a crop
+   `view` cuts with its binding at the picture's own pixels, each carried as such, and each counted as one of the eight
    requests and one of the eight crops; places are taken in the order the check gave them
    until the eight are used, and a place left out for the bound is recorded as such, with its
-   reason. The reservation is worked out from the same eight, so it does not grow. A polygon
-   joins as its own pixels. Tests at the bound: eight places of which two need tiles, the
-   requests, crops and masks counted, the record published, and the place left out named.
+   reason. The reservation is worked out from the same eight, so it does not grow. A place
+   over 2,048 pixels a side would need more than four tiles, and a larger tile is scaled down
+   by `view` (`view.rs`) and cannot be carried (`carry.rs`): it is left out, recorded with that
+   reason, and the carry-over row is narrowed to it, with the limit stated. A polygon joins as
+   its own pixels. Tests at the bound: eight places of which two need tiles, the requests,
+   crops and masks counted, the record published, and the place left out named; and one
+   place of 3,072 pixels a side, left out for its size and named.
 3. **One mask at a time** (the carry-over row on `select`'s memory): `select` joins masks
    holding one and the union.
 4. **One decode** (the carry-over row on `carry` and `view`): a retry decodes its picture
@@ -1354,6 +1384,7 @@ and is said. There is no allowance for a round run again after a fix: that is ti
 | Flash beside Haiku and Terra in each tool's gate on fresh data | 3 a tool |
 | A third tool's arms on fresh data | 2.4 |
 | One round run again after a fix | 10 |
+| A picking round of milestone 3 run again, only if its store is gone (V1) | 3.8 a round |
 
 **E needs more than it has left.** Tier 1 spends nearly all of the 63.88: it cannot run the
 loop's rounds, it confirms at most two tools on fresh data, and it leaves nothing for a round
@@ -1778,4 +1809,23 @@ On draft 13, by the Codex CLI. Verdict: revise. Round 12's fixes held. Two findi
    every gate file, with tests of both shapes.
 2. **Minor: `tiles`' record states its mark in plain text.** Right (`tiles.md`). Taken: A0
    writes it in bold like the others, with a test that `describe` shows it experimental.
+
+### Review round 14
+
+On draft 14, by the Codex CLI. Verdict: revise. Round 13's fixes held. Four findings: 3
+majors, 1 minor. Each was checked against the code and the records; all were right and
+taken.
+
+1. **Major: the new tools need more than a tool file can return or ask.** Right
+   (`tool_file.rs` takes readings alone and routes segment requests to the default model;
+   `tool_worker.py`). Taken: T1, item 0 widens the contract for regions first; T2, item 2 for
+   a model by name and labels; ADR 0032 amended; sizes raised.
+2. **Major: four tiles do not cover a place of any size.** Right (`view.rs` scales a larger
+   cut down; `carry.rs` takes only native pixels). Taken: places up to 2,048 a side are tiled;
+   a larger one is left out, recorded, and the row narrowed to it, with a test.
+3. **Major: an old page could tell its reference arm.** Right (the row on the padding chunk).
+   Taken: no page drawn before P0 is used; a round whose store is gone runs again under a new
+   protocol in tier 2, or its recipes end E experimental.
+4. **Minor: the tallies cannot say what the check after a place said.** Right. Taken: L1,
+   item 3 extends the evidence reader and the orchestrator re-tallies the kept runs.
 
