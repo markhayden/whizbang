@@ -8,6 +8,7 @@ import { api, file, give, openAt, runOf, runWhenReady } from "./play";
 import { bundledVia, chainVia } from "./bundled";
 
 interface Recorded {
+  arguments: Array<{ name: string; value: unknown }>;
   inputs: Array<{ port: string; id: string }>;
   outputs: Array<{ port: string; type: string; id: string }>;
   replayed: { run: string; bundle: { digest: string; step: number } | null; mode: string } | null;
@@ -25,6 +26,9 @@ test("a chain of a removal and its check replays one ordinary run a step, binds 
   const downloading = page.waitForEvent("download");
   await page.getByRole("button", { name: "Bundle chain" }).click();
   const saved = await (await downloading).path();
+  // What was saved is said once the panel closes (N1's pass, finding 5).
+  await expect(page.locator(".history__chain")).toHaveCount(0);
+  await expect(page.locator(".history__saved")).toHaveText(new RegExp(`^Saved chain-${chain.removal}\\.whizbang-bundle: a chain of 2 steps, [0-9.]+ KB\\. Take it into another playground on its Bundles page\\.$`));
   // Taken in on the Bundles page: checked whole, its steps and their link shown.
   await page.goto(`${host.address}#/bundles`);
   await page.locator(".bundles__drop input[type=file]").setInputFiles({ name: "chain.whizbang-bundle", mimeType: "application/octet-stream", buffer: readFileSync(saved) });
@@ -48,6 +52,9 @@ test("a chain of a removal and its check replays one ordinary run a step, binds 
   // from the one recorded.
   const next = page.locator(".chain-card").getByRole("button", { name: "Continue to step 2" });
   await expect(next).toBeVisible();
+  // Each step by its task's title, as the chain's page names it (N1's pass, finding 3).
+  await expect(page.locator(".chain-card__title")).toHaveText("Step 1 · Remove what you name ended");
+  await expect(page.locator(".chain-card__line")).toContainText("Its outputs go to step 2, Check an edit.");
   await next.click();
   await expect(page).toHaveURL(/#\/k\/squint\/source-fidelity$/);
   await expect(page.locator(".workspace__chain")).toContainText("STEP 2 OF 2");
@@ -55,6 +62,7 @@ test("a chain of a removal and its check replays one ordinary run a step, binds 
   await runWhenReady(page);
   const second = runOf(page);
   await expect(page.locator(".chain-card")).toContainText("Chain done");
+  await expect(page.locator(".chain-card .chain-step__name")).toHaveText(["1 · Remove what you name", "2 · Check an edit"]);
   await expect(page.locator(".chain-card").getByRole("button", { name: "Compare last step" })).toBeVisible();
   // Each step's run is an ordinary run that names the bundle and its step.
   const made = await api<Recorded>(request, host, `/api/runs/${first}/record`);
@@ -64,6 +72,12 @@ test("a chain of a removal and its check replays one ordinary run a step, binds 
   expect(checked.replayed?.mode).toBe("live");
   const output = made.outputs.find((one) => one.port === "image")!.id;
   expect(checked.inputs.map((one) => one.id)).toContain(output);
+  // The check's draft was left as it was: its call is the recorded one, the job's
+  // requirements and all (N1's pass, finding 4).
+  const recorded = await api<Recorded>(request, host, `/api/runs/${chain.check}/record`);
+  const job = (record: Recorded) => record.arguments.find((one) => one.name === "job")?.value;
+  expect(job(recorded)).toContain("RQ1");
+  expect(job(checked)).toBe(job(recorded));
 });
 
 test("stop leaves the chain and a reopened tab finds its runs", async ({ page, request, host }) => {

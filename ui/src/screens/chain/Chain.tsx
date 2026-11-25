@@ -4,7 +4,7 @@
 // step before; Stop. Nothing runs two steps by itself: each runs when Run is pressed.
 import { useEffect, useRef, useState } from "preact/hooks";
 import { ApiError, type Client, type Hello } from "../../api";
-import { chainOf, draftOfStep, openStep, saveChain, showBundle, stepStates, type BundleSummary, type ChainPlace, type OpenedStep } from "../../bundles";
+import { chainOf, draftOfStep, openStep, saveChain, showBundle, stepStates, titlesOf, type BundleSummary, type ChainPlace, type OpenedStep } from "../../bundles";
 import { Button } from "../../components/Button";
 import { ChainSteps } from "../../components/ChainSteps";
 import "../../components/bundles.css";
@@ -70,7 +70,7 @@ export function Chain(props: ChainProps) {
           setBlocked(opened);
           return;
         }
-        const draft = draftOfStep(opened, props.digest, Date.now());
+        const draft = draftOfStep(opened, props.digest, Date.now(), titlesOf(bundle));
         saveDraft(store, draft);
         props.go(hrefOf({ name: "kit", kit: draft.kit || "rascal", task: draft.task }));
       },

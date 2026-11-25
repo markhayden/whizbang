@@ -354,18 +354,19 @@ impl Play for Playground {
             return Err("this build has no action of that name".to_owned());
         };
         if crate::play_form::is_use_case(descriptor.name()) {
-            // A check that takes a run's job reads it from the store, by the run's id.
+            // A check that takes a job from a run, an example or a bundle's step reads it
+            // from the store.
             let job = match arguments.get(crate::play_result::JOB_OF) {
                 None | Some(Json::Null) => None,
-                Some(Json::String(run)) => {
+                Some(of) => {
+                    let of = crate::play_result::JobOf::of(of)?;
                     let store = self.store().map_err(|refused| refused.why)?;
                     Some(crate::play_result::job_and_measuring_of(
                         &store,
-                        run,
+                        &of,
                         descriptor.name(),
                     )?)
                 }
-                Some(_) => return Err("job_of names a run by its id".to_owned()),
             };
             let (job, measuring) = match job {
                 Some((job, measuring)) => (Some(job), measuring),

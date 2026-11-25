@@ -8,7 +8,7 @@ import type { CostLine } from "../../components/CostTable";
 import { kitTone } from "../../components/kitTone";
 import type { SendTarget } from "../../components/SendToMenu";
 import type { Verdict } from "../../components/VerdictCard";
-import type { Draft, Sent } from "../../drafts";
+import { carriedOf, type Draft, type JobOf, type Sent } from "../../drafts";
 import type { Heard } from "../../form";
 import { middle } from "../../format";
 
@@ -36,8 +36,10 @@ export interface OpenDraft {
   from: string[];
   /** What the draft gets, in words. */
   line?: string;
-  /** The run whose job a check takes, read by the host from the store. */
-  job_of?: string;
+  /** The call whose job a check takes, read by the host from the store. */
+  job_of?: JobOf;
+  /** What Run again's run held that no field shows, sent as it was. */
+  kept?: Record<string, unknown>;
 }
 
 export interface Attempt {
@@ -180,7 +182,7 @@ export function draftFrom(open: OpenDraft, record: RunRecordView, kits: HelloKit
     pictures,
     at: now,
     ...(from ? { sent: from } : {}),
-    ...(!sent && open.job_of ? { jobOf: open.job_of } : {}),
+    ...(sent ? {} : carriedOf(open)),
   };
 }
 

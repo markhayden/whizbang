@@ -93,6 +93,38 @@ pub(crate) fn opened(kitted: &Kitted, digest: &str, step: u32, runs: &[Option<&s
     answer.json()
 }
 
+/// What the page sends of a draft left as it is (the workspace's `withJob` and `kept`):
+/// its values; with `job_of`, that and no brief beside it; and what the record held that
+/// no field shows.
+pub(crate) fn as_the_page_sends(draft: &Json) -> Json {
+    let mut call = draft["kept"].as_object().cloned().unwrap_or_default();
+    for (name, value) in draft["values"].as_object().unwrap() {
+        call.insert(name.clone(), value.clone());
+    }
+    if !draft["job_of"].is_null() {
+        call.remove("brief");
+        call.insert("job_of".to_owned(), draft["job_of"].clone());
+    }
+    Json::Object(call)
+}
+
+/// A run's arguments, as its record lists them.
+pub(crate) fn arguments(kitted: &Kitted, run: &str) -> Json {
+    let answer = kitted.api("GET", &format!("/api/runs/{run}/record"), None);
+    assert_eq!(answer.status, 200, "{}", answer.text());
+    answer.json()["arguments"].clone()
+}
+
+/// A run's arguments with the judge the draft wrote out, as Run again and an example
+/// write out each backend a run took from the config's default: the rest of the call.
+pub(crate) fn judge_written_out(arguments: &Json) -> Json {
+    let judge = json!({"name": "judge", "value": "cloud-judge"});
+    let all = arguments.as_array().unwrap();
+    let rest: Vec<&Json> = all.iter().filter(|one| **one != judge).collect();
+    assert_eq!(all.len(), rest.len() + 1, "{arguments}");
+    json!(rest)
+}
+
 /// How many runs history lists, with replayed families as `replayed` says.
 fn listed(kitted: &Kitted, replayed: &str) -> Vec<String> {
     let path = match replayed {
@@ -326,4 +358,53 @@ fn a_step_asked_again_after_its_bundle_went_is_answered_with_its_run() {
     let kitted = kitted.restarted_after(|_| ());
     let again = kitted.api("POST", "/api/runs", Some(&body));
     assert_eq!(again.json()["run"], run.as_str(), "{}", again.text());
+}
+
+#[test]
+fn an_unchanged_step_makes_the_call_it_recorded_requirements_and_all() {
+    // N1's pass, finding 4: a check whose job held the loop's requirements, made again as
+    // a chain's step from its draft left as it was, judged two items instead of five.
+    let kitted = Kitted::new("chain-same-call");
+    let chain = chain_in(&kitted, 74);
+    let recorded = arguments(&kitted, &chain.check);
+    assert!(recorded.to_string().contains("RQ1"), "{recorded}");
+    let digest = imported(&kitted, &bundled(&kitted, &[&chain.removal, &chain.check]));
+    let first = opened(&kitted, &digest, 0, &[]);
+    let step = json!({"bundle": digest, "step": 0});
+    let made = started(
+        &kitted,
+        "remove_prompt",
+        &as_the_page_sends(&first),
+        Some(&step),
+    );
+    assert_eq!(
+        arguments(&kitted, &made),
+        arguments(&kitted, &chain.removal)
+    );
+    // The step's draft takes its job from the bundle's step, of which the form shows the
+    // words alone; the call made from it is the call recorded.
+    let second = opened(&kitted, &digest, 1, &[Some(&made)]);
+    assert_eq!(
+        second["job_of"],
+        json!({"bundle": digest, "step": 1}),
+        "{second}"
+    );
+    let step = json!({"bundle": digest, "step": 1});
+    let checked = started(
+        &kitted,
+        "source-fidelity",
+        &as_the_page_sends(&second),
+        Some(&step),
+    );
+    assert_eq!(arguments(&kitted, &checked), recorded);
+    // A step of a bundle the store does not hold gives no job: refused, saying why.
+    let mut elsewhere = as_the_page_sends(&second);
+    elsewhere["job_of"] = json!({"bundle": format!("sha256:{}", "0".repeat(64)), "step": 1});
+    let refused = kitted.api(
+        "POST",
+        "/api/prepare",
+        Some(&json!({"action": "source-fidelity", "arguments": elsewhere})),
+    );
+    assert_eq!(refused.status, 422, "{}", refused.text());
+    assert!(refused.text().contains("no bundle"), "{}", refused.text());
 }

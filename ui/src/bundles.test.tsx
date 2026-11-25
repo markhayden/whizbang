@@ -4,7 +4,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "preact/test-utils";
 import { ApiError, type Client } from "./api";
-import { chainOf, chainOfRun, draftOfStep, linksOf, readChains, reportTitle, saveChain, sizeWords, stepStates, withRun, type OpenedStep, type ReplayReport as Report } from "./bundles";
+import { chainOf, chainOfRun, draftOfStep, linksOf, readChains, reportTitle, saveChain, sizeWords, stepStates, titlesOf, withRun, type OpenedStep, type ReplayReport as Report } from "./bundles";
+import { ChainCard } from "./components/ChainCard";
 import { ChainSteps } from "./components/ChainSteps";
 import { ReplayDialog } from "./components/ReplayDialog";
 import { ReplayReport } from "./components/ReplayReport";
@@ -81,6 +82,57 @@ describe("bundles and chains", () => {
     expect(draft.chain).toEqual({ digest: DIGEST, step: 1, of: 2, bindings: [{ port: "candidate", from: { step: 0, port: "image" }, run: "1795-4", now: OTHER, recorded: PICTURE, differs: true }] });
     expect(draft.pictures[OTHER]?.name).toContain("step 1's image");
     expect(draft.pictures[PICTURE]?.name).toContain("from the bundle");
+    // Nothing beyond the fields when the host names nothing more.
+    expect(draft.jobOf).toBeUndefined();
+    expect(draft.kept).toBeUndefined();
+  });
+
+  it("open a step whose call holds more than its form shows with that kept for the call", () => {
+    // N1's pass, finding 4: the step's check takes its job from the bundle's step, and a
+    // recipe's `until` that no field shows is sent as it was.
+    const opened: OpenedStep = {
+      task: "source-fidelity",
+      kit: "squint",
+      values: { source: PICTURE, candidate: OTHER, brief: "the words" },
+      step: { index: 1, of: 2, run: "1-2", action: "source-fidelity" },
+      bindings: [],
+      stopped: null,
+      job_of: { bundle: DIGEST, step: 1 },
+      kept: { until: "select" },
+    };
+    const draft = draftOfStep(opened, DIGEST, 5);
+    expect(draft.jobOf).toEqual({ bundle: DIGEST, step: 1 });
+    expect(draft.kept).toEqual({ until: "select" });
+  });
+
+  it("name each step on a step's card by its task's title, while the bundle is still being read", async () => {
+    // N1's pass, finding 3: "Step 1 · step 1 ended", "Its outputs go to step 2, step 2."
+    const reading = { request: vi.fn(() => new Promise(() => undefined)) } as unknown as Client;
+    const titled = { digest: DIGEST, steps: 2, runs: ["1795-4"], stopped: false, at: 1, titles: ["Remove what you name", "Check an edit"] };
+    let view = render(<ChainCard client={reading} place={titled} step={0} run="1795-4" outcome="completed" title="Remove what you name" go={vi.fn()} />);
+    await settle();
+    expect(view.get(".chain-card__title").textContent).toBe("Step 1 · Remove what you name ended");
+    expect(view.get(".chain-card__line").textContent).toContain("Its outputs go to step 2, Check an edit.");
+    view.unmount();
+    // A place kept before titles were: this step's title from its result, the next by number once.
+    const { titles: _, ...untitled } = titled;
+    view = render(<ChainCard client={reading} place={untitled} step={0} run="1795-4" outcome="completed" title="Remove what you name" go={vi.fn()} />);
+    await settle();
+    expect(view.get(".chain-card__title").textContent).toBe("Step 1 · Remove what you name ended");
+    expect(view.get(".chain-card__line").textContent).toContain("Its outputs go to step 2.");
+    view.unmount();
+    // Chain done lists each step by its title.
+    view = render(<ChainCard client={reading} place={{ ...titled, runs: ["1795-4", "1795-5"] }} step={1} run="1795-5" outcome="completed" title="Check an edit" go={vi.fn()} />);
+    await settle();
+    expect(view.all(".chain-step__name").map((one) => one.textContent)).toEqual(["1 · Remove what you name", "2 · Check an edit"]);
+    view.unmount();
+  });
+
+  it("take the titles of a chain's steps into the draft of a step, for its place", () => {
+    const opened: OpenedStep = { task: "remove_prompt", kit: "rascal", values: {}, step: { index: 0, of: 2, run: "1-1", action: "remove_prompt" }, bindings: [], stopped: null };
+    const titles = titlesOf({ steps: [{ step: 0, run: "1-1", action: "remove_prompt", title: "Remove what you name", version: null, runs: 1, replayable: true, why: null, inputs: [] }, { step: 1, run: "1-2", action: "source-fidelity", title: null, version: null, runs: 1, replayable: true, why: null, inputs: [] }] });
+    expect(titles).toEqual(["Remove what you name", "source-fidelity"]);
+    expect(draftOfStep(opened, DIGEST, 5, titles).chain.titles).toEqual(titles);
   });
 });
 

@@ -3,7 +3,7 @@
 // token), the baseline pinned in the browser's storage, and the pure helpers each screen
 // lays out. Every text in an answer was escaped by the host; the page puts it in as text.
 import { IDENTITY, type Client, type Picture } from "./api";
-import type { Draft, Store } from "./drafts";
+import { carriedOf, type Draft, type JobOf, type Store } from "./drafts";
 import { middle } from "./format";
 
 /** One side of a comparison: a run, how it ended, its time, and its family's cost. */
@@ -152,6 +152,9 @@ export interface OpenedExample {
   values: Record<string, unknown>;
   example: { id: string; name: string; notes: string; run: string };
   fell_back: FellBack[];
+  /** The example a check's job is read from, and what its call held that no field shows. */
+  job_of?: JobOf | null;
+  kept?: Record<string, unknown> | null;
 }
 
 export function openExample(client: Client, id: string): Promise<OpenedExample> {
@@ -179,6 +182,7 @@ export function draftOfExample(opened: OpenedExample, now: number): Draft & { ex
     values: { ...opened.values },
     pictures,
     at: now,
+    ...carriedOf(opened),
     example: { id: opened.example.id, name: opened.example.name, fellBack: opened.fell_back },
   };
 }

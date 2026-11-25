@@ -17,7 +17,7 @@ import { PlanBlock } from "../../components/PlanBlock";
 import { Segmented } from "../../components/Segmented";
 import { SentFromBanner } from "../../components/SentFromBanner";
 import { TextField } from "../../components/TextField";
-import { dropDraft, draftOf, localStore, saveDraft } from "../../drafts";
+import { dropDraft, draftOf, localStore, saveDraft, type JobOf } from "../../drafts";
 import { argumentsOf, choicesFor, displayed, fieldsOf, given, labelOf, planNeeds, seeded, segmentQuery, shapeOf, whyNotRun, type Values } from "../../form";
 import { ago, dollars, middle } from "../../format";
 import { PICTURES_PAGE, useArtifact, useImageSize } from "../../hooks";
@@ -25,7 +25,7 @@ import { actionOf } from "../../keyboard";
 import { createPreparer, type Preparer } from "../../preparer";
 import { hrefOf } from "../../routes";
 import { chainOf, saveChain, withRun } from "../../bundles";
-import { fellBackWords } from "../../saved";
+import { fellBackWords, listLibrary, shownName, type LibraryPicture } from "../../saved";
 import { EmptyScreen } from "../Empty";
 import "../result/result.css";
 import { toneOf } from "../result/record";
@@ -333,7 +333,11 @@ function Draft(props: DraftProps) {
   // is changed. A check run again keeps its run's job the same way (item 4).
   const sent = kept?.sent;
   const [fromFields, setFromFields] = useState<string[]>(sent?.fields ?? []);
-  const [jobOf, setJobOf] = useState<string | null>(sent?.jobOf ?? kept?.jobOf ?? null);
+  const [jobOf, setJobOf] = useState<JobOf | null>(sent?.jobOf ?? kept?.jobOf ?? null);
+  // What the call a draft was made from held that no field shows (Run again, an example,
+  // a chain's step): sent as it was, so a draft left as it is makes that call (plan m7,
+  // N1's pass, finding 4).
+  const recorded = kept?.kept && Object.keys(kept.kept).length > 0 ? kept.kept : undefined;
   // A draft an example opened (plan m7, task U1, item 2): which example, and each choice
   // of backend it made that this config does not offer now.
   const example = kept?.example;
@@ -348,7 +352,7 @@ function Draft(props: DraftProps) {
     setFromFields((now) => now.filter((field) => field !== name));
     if (name === "brief") setJobOf(null);
   };
-  const args = withJob(argumentsOf(task, values), jobOf);
+  const args = { ...recorded, ...withJob(argumentsOf(task, values), jobOf) };
   const argsKey = JSON.stringify(args);
 
   useEffect(() => {
@@ -375,21 +379,37 @@ function Draft(props: DraftProps) {
     const shownAlone = JSON.stringify(argumentsOf(task, seeded(task, {}, backends)));
     if (Object.keys(args).length > 0 && argsKey !== shownAlone) {
       const from = sent ? { sent: { ...sent, fields: fromFields, jobOf: jobOf ?? undefined } } : jobOf ? { jobOf } : {};
-      saveDraft(store, { kit: props.kit, task: task.name, values, pictures, at: Date.now(), ...from, ...(example ? { example } : {}), ...(chain ? { chain } : {}) });
+      saveDraft(store, { kit: props.kit, task: task.name, values, pictures, at: Date.now(), ...from, ...(recorded ? { kept: recorded } : {}), ...(example ? { example } : {}), ...(chain ? { chain } : {}) });
     }
   }, [argsKey]);
 
+  // A field's library is Home's (plan m7, N1's pass, finding 1): every picture the store
+  // holds as an input of a run or an import, whatever door gave it, a page at a time.
+  const [libraryMore, setLibraryMore] = useState(false);
+  const asPicture = (one: LibraryPicture): Picture => ({ id: one.id, name: shownName(one) });
   const moreLibrary = () => {
     const last = library?.[library.length - 1];
     if (!last) return;
-    client.listPictures(PICTURES_PAGE, last.id).then(
-      (found) => setLibrary((now) => [...(now ?? []), ...found.filter((one) => !(now ?? []).some((seen) => seen.id === one.id))]),
-      () => undefined,
+    listLibrary(client, "all", last.id, PICTURES_PAGE).then(
+      (page) => {
+        setLibrary((now) => [...(now ?? []), ...page.pictures.map(asPicture).filter((one) => !(now ?? []).some((seen) => seen.id === one.id))]);
+        setLibraryMore(page.more);
+      },
+      () => setLibraryMore(false),
     );
   };
   const openLibrary = (name: string) => {
     setPicking((now) => (now === name ? null : name));
-    client.listPictures(PICTURES_PAGE).then(setLibrary, () => setLibrary([]));
+    listLibrary(client, "all", undefined, PICTURES_PAGE).then(
+      (page) => {
+        setLibrary(page.pictures.map(asPicture));
+        setLibraryMore(page.more);
+      },
+      () => {
+        setLibrary([]);
+        setLibraryMore(false);
+      },
+    );
   };
 
   const keep = (picture: Picture) => setPictures((now) => ({ ...now, [picture.id]: picture }));
@@ -465,7 +485,8 @@ function Draft(props: DraftProps) {
         dropDraft(store, task.name);
         if (chain) {
           const place = chainOf(store, chain.digest) ?? { digest: chain.digest, steps: chain.of, runs: [], stopped: false, at: Date.now() };
-          saveChain(store, withRun(place, chain.step, started.run));
+          const titles = chain.titles ?? place.titles;
+          saveChain(store, withRun({ ...place, ...(titles ? { titles } : {}) }, chain.step, started.run));
         }
         props.go(hrefOf({ name: "run", id: started.run }));
       },
@@ -527,7 +548,7 @@ function Draft(props: DraftProps) {
                 class="link-button workspace__chain-line"
                 onClick={() => {
                   setChain(undefined);
-                  saveDraft(store, { kit: props.kit, task: task.name, values, pictures, at: Date.now(), ...(example ? { example } : {}) });
+                  saveDraft(store, { kit: props.kit, task: task.name, values, pictures, at: Date.now(), ...(jobOf ? { jobOf } : {}), ...(recorded ? { kept: recorded } : {}), ...(example ? { example } : {}) });
                 }}
               >
                 Run it as an ordinary draft
@@ -559,6 +580,16 @@ function Draft(props: DraftProps) {
               )}
             </div>
           ))}
+          {recorded ? (
+            <p class="workspace__fell-back workspace__kept" role="note">
+              {`Kept from the call this draft was made from, which no field here shows, and sent as it was: ${Object.keys(recorded).join(", ")}.`}
+            </p>
+          ) : null}
+          {jobOf !== null && !sent ? (
+            <p class="workspace__fell-back workspace__kept" role="note">
+              The check's job is the one recorded, requirements and all, until you change its brief.
+            </p>
+          ) : null}
           {example?.fellBack.map((one) => (
             <p key={one.argument} class="workspace__fell-back" role="note">
               {fellBackWords(one, one.capability === "fill" ? "filler" : one.capability === "segment" ? "segmenter" : one.capability)}
@@ -592,7 +623,7 @@ function Draft(props: DraftProps) {
               }}
               onUpload={upload}
               onLibrary={() => openLibrary(field.name)}
-              onMoreLibrary={library && library.length > 0 && library.length % PICTURES_PAGE === 0 ? moreLibrary : undefined}
+              onMoreLibrary={library && library.length > 0 && libraryMore ? moreLibrary : undefined}
               onPicked={(picture) => {
                 keep(picture);
                 setPicking(null);
@@ -882,7 +913,7 @@ function PicturesInput(props: InputProps & { id: string; label: string }) {
 }
 
 /** The call's arguments with the job a check takes from a run, and no brief beside it. */
-export function withJob(args: Record<string, unknown>, jobOf: string | null): Record<string, unknown> {
+export function withJob(args: Record<string, unknown>, jobOf: JobOf | null): Record<string, unknown> {
   if (!jobOf) return args;
   const next: Record<string, unknown> = { ...args, job_of: jobOf };
   delete next.brief;
