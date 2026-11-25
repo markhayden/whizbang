@@ -2536,3 +2536,67 @@ mod stats {
         assert_eq!(figures["cache_hits"], 1, "{figures}");
     }
 }
+
+/// The writer "Export run" had before it moved to the core's (plan m7, task B1, item 2):
+/// one file of a tar archive, its header and its bytes, padded to a block, its name cut
+/// at 100 bytes. Kept here, word for word, to hold the move to the same bytes.
+fn tar_file_before_the_move(out: &mut Vec<u8>, name: &str, bytes: &[u8], mtime: u64) {
+    let mut header = [0u8; 512];
+    let name = name.as_bytes();
+    header[..name.len().min(100)].copy_from_slice(&name[..name.len().min(100)]);
+    let octal = |field: &mut [u8], value: u64| {
+        let text = format!("{value:0width$o}\0", width = field.len() - 1);
+        field.copy_from_slice(text.as_bytes());
+    };
+    octal(&mut header[100..108], 0o644);
+    octal(&mut header[108..116], 0);
+    octal(&mut header[116..124], 0);
+    octal(&mut header[124..136], bytes.len() as u64);
+    octal(&mut header[136..148], mtime);
+    header[148..156].copy_from_slice(b"        ");
+    header[156] = b'0';
+    header[257..263].copy_from_slice(b"ustar\0");
+    header[263..265].copy_from_slice(b"00");
+    let sum: u32 = header.iter().map(|b| u32::from(*b)).sum();
+    let text = format!("{sum:06o}\0 ");
+    header[148..156].copy_from_slice(text.as_bytes());
+    out.extend_from_slice(&header);
+    out.extend_from_slice(bytes);
+    let pad = (512 - bytes.len() % 512) % 512;
+    out.extend(std::iter::repeat_n(0u8, pad));
+}
+
+#[test]
+fn export_run_is_the_same_bytes_after_the_writer_moved() {
+    use whizbang_core::bundle::tar;
+    let chain = crate::bundle::chain("play-export-run");
+    let run = RunId::parse(&chain.removal).unwrap();
+    let archive = whizbang::report::archive(&chain.world.root, &run, None).unwrap();
+    let mut reader = tar::Reader::new(std::io::Cursor::new(&archive), 1 << 30);
+    let mut members = Vec::new();
+    while let Some(head) = reader.next_head().unwrap() {
+        let bytes = reader.bytes(&head).unwrap();
+        members.push((head.name, bytes));
+    }
+    let names: Vec<&str> = members.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "record.json",
+            "report.html",
+            "outputs/image.image",
+            "outputs/image.png",
+            "outputs/mask.mask",
+            "outputs/mask.png"
+        ]
+    );
+    let record = whizbang_core::contract::RunRecord::from_bytes(&members[0].1).unwrap();
+    let mtime = record.time().end_ms / 1000;
+    assert!(mtime > 0);
+    let mut before = Vec::new();
+    for (name, bytes) in &members {
+        tar_file_before_the_move(&mut before, name, bytes, mtime);
+    }
+    before.extend(std::iter::repeat_n(0u8, 1024));
+    assert_eq!(archive, before);
+}
