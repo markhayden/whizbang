@@ -7,35 +7,41 @@ the images or the measurements stop being what the tool gives
 
 ## What it does
 
-Shows a region of an image closer: a crop of a flat image by box, and the same region of a
-second image when asked.
+Shows a region of an image closer: a crop by box, of a flat image or of a panorama, or a
+square perspective view into a panorama by yaw, pitch and field of view; and the same
+region of a second image when asked.
 
 - **Use it** to inspect a detail, an edge or a seam at more resolution than the whole image
-  gives, or to compare the same region of two images side by side.
+  gives, to look into a panorama as a camera would, or to compare the same region of two
+  images side by side.
 - **Do not use it** to judge whole-image properties such as composition: a crop shows less
   of the picture, not more.
 - **Kind.** A control (`SPEC.md` section 8): every squint comparison is measured against it.
 
-It is a library function so far, `whizbang_squint::view::view`. It becomes an action that a
-judge can call when the scripted run of checkpoint 1A is built on the execution contract;
-until then nothing on the command line reaches it.
+It is the action `view`, which `check` offers a judge as a tool, and the library function
+`whizbang_squint::view::view`.
 
-**Arguments.**
+**Arguments.** A box, or the three angles, and not both.
 
 | Argument | Meaning |
 |---|---|
-| `image` | The image to look into: an image artifact in a flat space. It may itself be a crop that `view` returned |
-| `also` | Optional. A second image to show the same region of. It is flat, and is not the same picture as `image` |
-| `bbox` | Left, top, right and bottom, as fractions of each image from 0 to 1, with left under right and top under bottom. The same box names the same region of two images of different sizes |
+| `image` | The image to look into: an image artifact, flat or a panorama. It may itself be a crop that `view` returned |
+| `also` | Optional. A second image to show the same region of. It has the projection of `image`, and is not the same picture |
+| `bbox` | Left, top, right and bottom, as fractions of each image from 0 to 1, with left under right and top under bottom. The same box names the same region of two images of different sizes. The action takes the four as `left`, `top`, `right` and `bottom` |
+| `yaw`, `pitch`, `fov` | Of a whole panorama only, all three together: degrees from the panorama's middle column, growing to the right, from -180 up to and not including 180; degrees above the horizon, from -90 to 90; and the field of view across and down, from 10 to 120 degrees |
 
 **Outputs.** One crop, or two when `also` is given, in the order asked. Each is:
 
-- an image artifact: a picture, flat, whose origin names `view`, the box, and the image it
-  was cut from;
-- a binding (ADR 0001) of the crop onto the image it was cut from: a crop mapping whose box
-  is the whole pixels that were cut, in the source's pixels. A location on the crop maps
-  back through it, and through the bindings of the crops it was cut from in turn
-  (`whizbang_squint::view::box_to_root`).
+- an image artifact: a picture whose origin names `view`, the box or the angles, and the
+  image it was cut from. A crop of part of an image is flat; a crop of the whole of an
+  image keeps its projection, so the whole of a panorama is still a panorama; a
+  perspective view is flat and square;
+- a binding of the crop onto the image it was cut from: for a box, ADR 0001's crop
+  mapping whose box is the whole pixels that were cut, in the source's pixels; for the
+  angles, ADR 0051's perspective mapping, whose parameters are the three angles. A
+  location on a crop by box maps back through it, and through the bindings of the crops
+  it was cut from in turn (`whizbang_squint::view::box_to_root`); a point maps through
+  either.
 
 Either every crop asked for is returned or none is. A request that cannot be met is refused
 with a sentence that says what to send instead.
@@ -74,11 +80,30 @@ doubles, so the same request gives the same bytes on every machine.
 7. **The binding.** The crop's pixels onto the source's pixels, by a crop mapping with the
    box of step 2, stated from the crop.
 
+**The perspective view, exactly** (ADR 0051). Every step is in whole numbers, or in
+doubles through `libm`'s functions and the square root IEEE 754 defines, so the same
+request gives the same bytes on every machine.
+
+1. **The pixels.** As step 1 above. The image is a whole panorama: equirectangular and
+   wrapped.
+2. **The size.** A square of side `round(W × fov / 360)`, for a panorama `W` wide, held to
+   256 at least and 1024 at most: about the panorama's own resolution across the field of
+   view.
+3. **Where each pixel looks.** Pixel `(u, v)` shows the panorama at the point ADR 0051's
+   mapping takes `(u + 0.5, v + 0.5)` to.
+4. **The sample.** Bilinear, between the centres of the four panorama pixels around that
+   point: columns taken round the seam, rows held to the first and the last. The four
+   channels are sampled apart, and each is rounded to the nearest level, a half going up.
+5. **The file.** As step 6 above.
+6. **The binding.** The view's pixels onto the panorama's, by a perspective mapping with
+   the three angles, stated from the view.
+
 ## Examples
 
-Both look into one picture, painted for the purpose: a soft ground with a grid, a checker
-of single black and white pixels, lines one pixel wide, and nested squares. The tests paint
-it again, run both examples, and compare every image below byte for byte.
+The first two look into one picture, painted for the purpose: a soft ground with a grid, a
+checker of single black and white pixels, lines one pixel wide, and nested squares. The
+last three look into a panorama painted the same way. The tests paint both again, run
+every example, and compare every image below byte for byte.
 
 ![The scene: 1280 by 800 pixels](view/scene.png)
 
@@ -116,6 +141,35 @@ What to look for:
 - So a large box is the wrong way to look at fine detail. Ask for a box at most 1024
   source pixels on its longer side, as the first example does, and the crop is exact.
 
+### A panorama, across its seam and up to its pole
+
+The panorama is 1024 by 512: a ground whose red rises and falls once round it, so it has
+no edge at the seam; a line every 85 columns and every 85 rows, about every 30 degrees; the
+seam's two columns, its first and its last, in red; and a checker of 8-pixel squares above
+70 degrees north.
+
+![The panorama: 1024 by 512 pixels](view/panorama.png)
+
+`image` is the panorama. Across the seam, `yaw` is -180, `pitch` 0 and `fov` 90; up to the
+pole, `yaw` is 0, `pitch` 75 and `fov` 100; and a box, `bbox` `[0.4, 0.3, 0.6, 0.7]`.
+
+| Across the seam | Up to the pole | A box |
+|---|---|---|
+| ![The view across the seam](view/across.png) | ![The view up to the pole](view/up.png) | ![A box of the panorama](view/strip.png) |
+
+What to look for:
+
+- Across the seam, the red seam runs down the middle of the view, the panorama's last
+  columns on its left and its first on its right, with no gap: the sample takes columns
+  round. A quarter of 1024 pixels is 256, so the view is 256 square, about the panorama's
+  own resolution.
+- Lines of longitude, straight in the panorama, are straight in a perspective view, and
+  lines of latitude other than the horizon curve, as a camera sees them. Up to the pole,
+  the meridians meet at it and the checker round it is a disc, not the band it is in the
+  panorama. That view is 284 square: 1024 × 100 / 360 is 284.4.
+- A box of a panorama is a flat crop, cut and bound as a box of a flat image is: columns
+  409 to 615 and rows 153 to 359, pixel for pixel.
+
 ## Rung 2 results
 
 Scored alone, for a control, means exact against an analytic or reference result, and timed
@@ -133,6 +187,30 @@ none.
   edge is shown, in the crop pixel it crosses, as the white share of that pixel, at four
   ratios and every position across the crop.
 - The same vectors fix the bytes of each crop's file, on macOS and on Linux.
+
+**The perspective view.** It resamples the panorama, so it is not exact against the scene
+it shows, and nothing is: the third table below holds it to squint's view of the same
+panorama, to the scene itself, and to its binding. On squint's own panorama (512 by 256,
+`fixtures/view/pano.png`, from the commit `docs/sources.toml` pins):
+
+- *Against squint's stored view* of its own test, the same request in squint's `view`: the
+  largest difference and the share of samples that differ. Squint used the platform's sine,
+  cosine and arc functions, this the `libm` ones; squint's test held its own view to the
+  stored one within 2 levels, and so does this. On this view there is no difference at
+  all: every sample is squint's.
+- *Against the scene*: the scene squint painted the panorama from, a sum of blobs on the
+  sphere, seen along the direction the binding gives each view pixel's centre, in 8 bits.
+  A view resamples a panorama of 8-bit pixels, so sharp blob edges differ by more at single
+  pixels; squint held the largest to 32 levels and the mean under half a level, and so
+  does this.
+- *Through the binding and back*: how far 81 points of the view land from themselves,
+  mapped onto the panorama and back.
+- The first view's pixel digest is fixed in the tests
+  (`a_perspective_view_has_the_same_pixels_on_every_machine`), on macOS and on Linux.
+
+The binding of a perspective view places each pixel where it was sampled: on a panorama
+painted with its column and its row, every pixel tested shows them to within the blend of
+two neighbours (`a_perspective_view_is_bound_onto_its_panorama_and_says_what_made_it`).
 
 **Mapping error against known boxes.** For each box below, the image is black with one
 white pixel inside the cut. All distances are in pixels of the source image unless the
@@ -167,6 +245,12 @@ column says otherwise.
 | barely | 1025x40 | [0.0, 0.1, 1.0, 0.9] | [0.0, 4.0, 1025.0, 36.0] | 1024x32 | 131072 | equal to the reference's |
 | uncut | 300x200 | [0.101, 0.203, 0.907, 0.611] | [30.0, 40.0, 273.0, 123.0] | 243x83 | 80676 | equal to the reference's |
 
+| Panorama | Yaw, pitch and fov | Shown at | Against squint's stored view: largest difference, in levels | Samples that differ from it | Against the scene: largest difference, in levels | Mean difference | A point through the binding and back, at most, in view pixels |
+|---|---|---|---|---|---|---|---|
+| squint's, 512x256 | 30, 10, 60 | 256x256 | 0 | 0.0% | 23 | 0.166 | 2e-13 |
+| squint's, 512x256 | -175, 0, 40 | 256x256 | none stored | none stored | 13 | 0.182 | 2e-13 |
+| squint's, 512x256 | 0, 80, 90 | 256x256 | none stored | none stored | 12 | 0.157 | 1e-13 |
+
 <!-- measured: end -->
 
 So the binding itself has no error: a location in a crop maps back to the source exactly at
@@ -189,9 +273,9 @@ Measured on Apple M4 Max (macos, aarch64), in a release build; each time is the 
 
 | Image | Megapixels | File | `view` of the whole image | Of which reading the image | `view` of a box 256 pixels square |
 |---|---|---|---|---|---|
-| 1024x768 | 0.8 | 0.1 MB | 7.9 | 2.7 | 3.4 |
-| 4096x3072 | 12.6 | 1.5 MB | 67 | 51 | 43 |
-| 8000x6000 | 48.0 | 5.9 MB | 246 | 163 | 164 |
+| 1024x768 | 0.8 | 0.1 MB | 7.6 | 2.7 | 3.3 |
+| 4096x3072 | 12.6 | 1.5 MB | 68 | 41 | 42 |
+| 8000x6000 | 48.0 | 5.9 MB | 230 | 160 | 161 |
 
 | Picture | Method | Samples that differ from the exact mean | Largest difference, in levels | Mean difference | The whole call |
 |---|---|---|---|---|---|
@@ -199,13 +283,22 @@ Measured on Apple M4 Max (macos, aarch64), in a release build; each time is the 
 | | The `image` crate's `resize` with the triangle filter, as in squint | 12.8% | 33 | 0.99 | 18 |
 | | The `image` crate's `thumbnail` | 11.9% | 162 | 6.80 | 13 |
 | Noise with alpha, 1500x1100, shown at 1024x751 | The area mean in whole numbers (the method) | 0% | 0 | 0 | 41 |
-| | The `image` crate's `resize` with the triangle filter, as in squint | 94.2% | 41 | 6.61 | 105 |
-| | The `image` crate's `thumbnail` | 99.1% | 215 | 38.50 | 100 |
+| | The `image` crate's `resize` with the triangle filter, as in squint | 94.2% | 41 | 6.61 | 104 |
+| | The `image` crate's `thumbnail` | 99.1% | 215 | 38.50 | 99 |
 | The scene repeated, 4096x3072, shown at 1024x768 | The area mean in whole numbers (the method) | 0% | 0 | 0 | 67 |
 | | The `image` crate's `resize` with the triangle filter, as in squint | 17.7% | 40 | 1.54 | 85 |
-| | The `image` crate's `thumbnail` | 0.0% | 0 | 0.00 | 68 |
+| | The `image` crate's `thumbnail` | 0.0% | 0 | 0.00 | 67 |
+
+| Panorama | Megapixels | A perspective view, 90 degrees | Shown at | Of which reading the panorama |
+|---|---|---|---|---|
+| 2048x1024 | 2.1 | 16 | 512x512 | 5.2 |
+| 4096x2048 | 8.4 | 60 | 1024x1024 | 19 |
+| 8192x4096 | 33.6 | 113 | 1024x1024 | 70 |
 
 <!-- timed: end -->
+
+A perspective view takes longer than a box of the same size, since every pixel is mapped
+through sines and cosines; reading the panorama is still most of it.
 
 Reading the image is most of a call, whatever the box: the whole image is decoded each
 time, and a crop is decoded once more to check its file. Other work was running on the
@@ -267,7 +360,13 @@ milestone 2, with image preparation and the judge loop, and the comparison belon
 
 | Limit | Example |
 |---|---|
-| Panoramas are not supported yet. An image in an equirectangular space is refused, as `image` and as `also`: there is no perspective view by yaw, pitch and field of view, and no crop of a panorama by box. Both are on `docs/carry-over.md` for milestone 2 | A 128 by 64 panorama with `bbox` `[0.0, 0.25, 0.25, 0.75]` is refused with "image is a panorama: view shows flat images only, so far" (`a_panorama_is_not_viewed_yet`) |
+| A box cannot cross a panorama's seam: a box is fractions from 0 to 1, so the region on either side of the seam is two boxes. A perspective view looks across it | `[0.9, 0.25, 1.1, 0.75]` of a panorama is refused (`angles_out_of_bounds_or_on_a_flat_image_are_the_callers_mistake`) |
+| A perspective view needs a whole panorama: angles on a flat image are refused with a sentence that says to send a box, and on part of a panorama (equirectangular, not wrapped) likewise | "image is flat: send bbox [left, top, right, bottom] as fractions of it; yaw, pitch and fov are for panoramas" (`angles_out_of_bounds_or_on_a_flat_image_are_the_callers_mistake`) |
+| `also` has the projection of `image`, as in squint: a flat image and a panorama are refused together, whichever way round | "also is a panorama and image is flat: the two have one projection" (`a_second_image_of_another_projection_is_refused`) |
+| A perspective view can be enlarged, where a crop never is: its side is at least 256, so a panorama under `256 × 360 / fov` pixels wide is magnified, and one pixel of it covers several of the view's | Every view of squint's 512-pixel panorama in the third table under "Rung 2 results" is 256 square |
+| A perspective view's pixels are a resampling, not the panorama's own: a thing a pixel wide is spread over its neighbours, and its colour is a blend | The scene's columns of the third table: up to 23 levels from the scene at single pixels, and under a fifth of a level on average |
+| Alpha is sampled apart from the colours in a perspective view, as it is averaged apart in a reduced crop (the row on alpha below), so a hidden colour can show at the edge of a transparent area. Which way a view and a reduced crop treat transparency is decided once, for both (plan mE, task P1, item 6) | ADR 0051, "Alternatives" |
+| A location in a perspective view is not carried onto the panorama yet, and a box on one does not map back by `box_to_root`, which takes crops by box only. A point maps through the binding both ways. Plan mE's task P1 carries locations through every binding | `carry` refuses with "a location is not carried through a perspective view yet" |
 | A large box loses fine detail, and can show a pattern the source does not have | The second example above |
 | A crop is never enlarged, and a cut under 8 pixels a side is refused | `[0.5, 0.5, 0.51, 0.51]` of a 256 by 192 image covers 3 by 2 pixels and is refused (`a_bad_request_is_the_callers_mistake`) |
 | A fraction meant to fall on a pixel edge can fall a hair off it, and the cut is then a whole pixel wider on that side: past it on the high side, short of it on the low side. Squint's `view` did the same. Of the 78,989 pairs of a fraction from 0 to 1 written with one, two or three decimals and a width from 8 to 4096 pixels on which it names a whole number of pixels, 1,539 widen a high edge and 826 a low edge (`how_often_a_fraction_meant_as_a_pixel_edge_falls_a_hair_off_it`) | 0.07 of 100 pixels is 7.000000000000001 as a double, so the cut ends at pixel 8; 0.7 of 90 pixels is 62.99999999999999, so the cut starts at column 62 (`a_fraction_a_hair_past_a_pixel_edge_widens_the_cut_by_a_pixel`) |
@@ -285,13 +384,12 @@ milestone 2, with image preparation and the judge loop, and the comparison belon
 
 **Mark.** None: marks belong to tools the upper rungs apply to, and `view` is a control,
 which rungs 3 and 4 cannot apply to. A control is complete when its record shows rungs 1
-and 2. This record shows them for flat images only, so `view` is not complete: its panorama
-view is not ported.
+and 2, and this record shows them for flat images and for panoramas, so `view` is complete.
 
 | Rung | Result | Evidence |
 |---|---|---|
-| 1. Single examples | Shown, for flat images | The two examples above, run as tests |
-| 2. Scored alone | Shown, for flat images | Exact against the reference vectors and the analytic results; the mapping table; the times at three image sizes |
+| 1. Single examples | Shown, for flat images and for panoramas | The three examples above, run as tests |
+| 2. Scored alone | Shown, for flat images and for panoramas | Exact against the reference vectors and the analytic results; the mapping table; the perspective view against squint's stored view, against its scene and through its binding; the times at three image sizes and three panorama sizes |
 | 3 and 4 | Do not apply | `SPEC.md` section 8: every squint comparison is measured against the control |
 
 **Gates.** None faced.
@@ -325,3 +423,19 @@ view is not ported.
   choice from `docs/results/m3-encoding.md`. Every crop's file, and so its identity,
   changed; its pixels and its binding did not. The fixed vectors' file digests and the
   example images were made again.
+- 2026-11-25, plan mE, task P1, its first pull request: the panorama side, ported from
+  squint's `crates/squint-tools/src/builtin/view.rs` and `raster.rs` and
+  `crates/squint-core/src/frames/sphere.rs`, at the commit pinned in `docs/sources.toml`,
+  with squint's stored-view and analytic tests on squint's own files. A crop of a panorama
+  by box; the square perspective view by yaw, pitch and field of view, bound by a new kind
+  of mapping (ADR 0051); the refusals of angles, and of an `also` of another projection.
+  The action's descriptor is 1.1.0: its sides are optional beside the three angles. No
+  crop of a flat image changed. What changed from squint's tool:
+  - the perspective view is an image artifact bound onto its panorama, where squint
+    returned an inline picture with a view mapping in fractions;
+  - its functions are `libm`'s, so its pixels are the same on every machine, where squint's
+    were the platform's; squint's stored view is reproduced sample for sample;
+  - alpha is sampled with the colours, where squint took red, green and blue;
+  - the whole of a panorama by box is still a panorama, where squint's crop frame of it
+    was flat;
+  - a perspective view needs a whole panorama; part of one is refused.

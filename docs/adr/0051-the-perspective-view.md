@@ -81,8 +81,8 @@ binding maps it to are one.
 - A store written before this record holds no binding of kind 5, so nothing stored
   changes, and nothing of ADR 0001 is re-hashed. A reader older than this record refuses
   a binding of kind 5 as "not a kind of mapping".
-- Squint's stored view is reproduced to within two levels, the difference being the
-  platform's functions against `libm`'s; whizbang's own view of it is the same on every
+- Squint's stored view is reproduced sample for sample, though squint's functions were the
+  platform's (its own test allowed two levels); whizbang's view of it is the same on every
   machine, held by a pixel digest in the tests.
 - A location is not carried through this kind until plan mE's task P1 carries one: the
   footprint of a box in a view is no box on the panorama, and may cross its seam or hold a

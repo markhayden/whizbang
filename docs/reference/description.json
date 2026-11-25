@@ -3250,9 +3250,9 @@
     },
     {
       "name": "view",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "kind": "primitive",
-      "purpose": "Shows a region of an image closer, and the same region of a second image when one is given.",
+      "purpose": "Shows a region of an image closer, by box or as a perspective view into a panorama, and the same of a second image when one is given.",
       "arguments": [
         {
           "name": "left",
@@ -3262,7 +3262,7 @@
             "min": 0.0,
             "max": 1.0
           },
-          "required": true,
+          "required": false,
           "default": null
         },
         {
@@ -3273,7 +3273,7 @@
             "min": 0.0,
             "max": 1.0
           },
-          "required": true,
+          "required": false,
           "default": null
         },
         {
@@ -3284,7 +3284,7 @@
             "min": 0.0,
             "max": 1.0
           },
-          "required": true,
+          "required": false,
           "default": null
         },
         {
@@ -3295,7 +3295,40 @@
             "min": 0.0,
             "max": 1.0
           },
-          "required": true,
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "yaw",
+          "purpose": "A perspective view's degrees from the panorama's middle column, growing to the right; with pitch and fov, not with a box.",
+          "type": {
+            "type": "number",
+            "min": -180.0,
+            "max": 180.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "pitch",
+          "purpose": "A perspective view's degrees above the horizon.",
+          "type": {
+            "type": "number",
+            "min": -90.0,
+            "max": 90.0
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "fov",
+          "purpose": "A perspective view's field of view across and down, in degrees.",
+          "type": {
+            "type": "number",
+            "min": 10.0,
+            "max": 120.0
+          },
+          "required": false,
           "default": null
         }
       ],
