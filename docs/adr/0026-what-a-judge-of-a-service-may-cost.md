@@ -10,7 +10,9 @@ success the adapter does not list costs its bound, where it cost nothing. Added:
 prompt", "A turn cut off at the output ceiling" and "What a turn records".
 Amended: 2026-11-18, with task P1 of plan m2c (`docs/plans/m2c-milestone-2.md`, item 4).
 Added: "Google and OpenAI". Amended: 2026-11-19, with the fix of the Google judge from
-the gate run of the details first: added "A Google turn's thinking is its output". The ceilings, the bound and the settlement are the kind's,
+the gate run of the details first: added "A Google turn's thinking is its output".
+Amended: 2026-11-25, with task A0 of plan mE (`docs/plans/mE-evidence-and-edit-quality.md`,
+item 1): added "Reading the Google rows again". The ceilings, the bound and the settlement are the kind's,
 the same for each provider (`whizbang_backends::service::spend`).
 
 ## Context
@@ -154,6 +156,32 @@ the bound is unchanged. An answer whose finish reason is `MALFORMED_FUNCTION_CAL
 `MALFORMED_RESPONSE` is settled at its usage and is a fault `unavailable`, which `check`
 sends again
 (`google::a_call_the_model_could_not_form_is_a_fault_sent_again_and_charged_its_usage`).
+
+**Reading the Google rows again** (plan mE, task A0, item 1). Each Google row is read again
+from the provider's page of prices on or after its date: `gemini-4-argon`'s on or after
+2026-11-30, `gemini-3.8-flash`'s on or after 2026-12-31. The read is the orchestrator's, made
+before the first paid round that asks that model on or after its date; a builder reads no
+page of prices and changes no row. Each round's task does the read it needs: a round that asks
+no Google judge needs none, and a round that would run across a row's date waits for that
+date and the read, so no round runs a Google judge at a price the row no longer holds.
+
+- **The page gives the row's prices.** Nothing in the build changes. The date of the read is
+  written here, under "Google and OpenAI", and in the carry-over row on the Google rows, in
+  the round's own pull request.
+- **The page gives other prices.** A pull request of its own changes the row
+  (`whizbang_backends::google::spend`), the date it was read, this ADR's lines under "Google
+  and OpenAI" with the bounds worked out again, and every test and guide that holds the row
+  or a bound made from it, the example config's cap among them. At the prices squint's
+  catalogue gives after the dates, sixteen turns of `gemini-4-argon` would reserve
+  3.87072 dollars (40,000 × 4.00 + 4,096 × 20.00 = 241,920 millionths a turn), past the
+  example's cap of 2.00, so that pull request says what the cap becomes; sixteen of
+  `gemini-3.8-flash` would reserve 1.45152, within it. The round runs on a binary built with
+  that change, after it has merged.
+- **The page cannot be read,** or does not name the model. The round that asks that model
+  waits, and the orchestrator asks the owner.
+
+The carry-over row on the Google rows closes when both rows have been read on or after their
+dates.
 
 ## Consequences
 

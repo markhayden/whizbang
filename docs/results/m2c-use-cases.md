@@ -575,5 +575,6 @@ which measures first, offers `resize` too and answers a call of `align` in `full
 server, `"details": "first"`. An evaluation's cell states its arm on `check` itself and is
 unchanged, so every committed matrix and gate means what it meant. The recipes' digests
 changed with their defaults, so the decision cache misses once for each job. No call of this
-record was made again: fixing details first and gating it on fresh data is milestone E's
-(`docs/carry-over.md`, the row on `tiles` and the second look).
+record was made again. Details first ends milestone E experimental (plan mE, task A0, item
+5): no fix of it was proposed and its gate rejected it in every run, so it is not gated again
+on fresh data; `resize`, which `check` offers only under it, ends E experimental with it.

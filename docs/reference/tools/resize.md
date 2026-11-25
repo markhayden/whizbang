@@ -116,7 +116,11 @@ squint's judges were handed.
 ## Mark and history
 
 **Experimental**: ported with its record and rung 2 shown; its alternatives are owed (above),
-and it has faced no gate.
+and it has faced no gate. It ends milestone E experimental: `check` offers it only under
+details first, which ends E experimental (plan mE, task A0, item 5), so no gate of E
+measures it.
 
 - 2026-11-18, plan m2c task A2: ported from squint (`crates/squint-tools/src/builtin/
   resize.rs`) at the pinned commit; offered to a judge by `check` under `--details first`.
+- 2026-11-25, plan mE task A0, item 5: ends milestone E experimental with details first; its
+  mark is unchanged.
