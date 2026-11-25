@@ -1,0 +1,23 @@
+# The set builder (plan mE, task B1; ADR 0050): plans, construction ops, the three
+# generators behind whizbang's approved recipients, the draft labels and the seal. Ported
+# from squint's `scripts/sets/` at the commit `docs/sources.toml` pins; `docs/evalsets.md`,
+# "Building a set", says how it is run.
+#
+# One third-party package, Pillow, pinned by version here and by hash in `uv.lock` beside
+# this file, from `https://pypi.org/simple` and `https://files.pythonhosted.org/` only.
+# `tool.uv.package = false`: the project itself is never built, so no build backend is
+# fetched; it runs as `python -m whizbang_sets` from this folder. The Python is the one the
+# pack pins (`.python-version`, the same as `pack/.python-version`).
+[project]
+name = "whizbang-sets"
+version = "0.0.0"
+description = "Builds evaluation sets by construction: families, ops, draft labels, the seal."
+requires-python = "==3.12.*"
+dependencies = ["pillow==13.0.0"]
+
+[tool.uv]
+package = false
+environments = [
+  "sys_platform == 'darwin' and platform_machine == 'arm64'",
+  "sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
