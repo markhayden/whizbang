@@ -244,6 +244,21 @@ replayed automatically; a replay is a new run, never the old one carried on); re
 the engine API or the stdio server (ADR 0048, "Which doors"); a replay that reconstructs a
 missing input; a replay of a user's recipe or tool file from a bundle.
 
+### As R1 built it
+
+- **The comparison** reads each record's groups as its JSON (the action, its version and
+  arguments; its inputs, outputs, outcome, steps, judge, plan, start, findings and
+  attempts) with every amount of money left out, and each diagnostic but the journal and
+  the note, by its bytes, a text with each run id of either family read as its place.
+  Differences are ordered as the runs ended, each run's steps before the run, so the first
+  is where the replay first went otherwise.
+- **`runs stats`** leaves replayed families out through `--replayed exclude|include|only`
+  (`stats::Runs::keeping`); the playground's history and figures read the same `Loaded`, and
+  take the choice up with its replay screens (plan m7, task U2).
+- **A tool file's call that failed** in the original noted no digest, so a live replay
+  cannot know of it from the record; it is answered as the live call answers, and the
+  report shows any difference.
+
 ## Consequences
 
 - Any ended run of a shipped action can be made again with nothing called and nothing

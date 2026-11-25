@@ -2,8 +2,8 @@
 
 A bundle carries a run, or a chain of runs, out of one store as one file that another store
 takes in (ADR 0048). This page says how to make one, read one, bring one into a store and
-remove it, and what it holds and withholds. Replay, offline and live, is added to this page
-with plan m7's task R1.
+remove it, and what it holds and withholds; and how to replay a run, from its store or from a
+bundle, offline or live (ADR 0049).
 
 ## Making one
 
@@ -88,3 +88,44 @@ still names stays.
 The playground shows bundles with plan m7's task U2. The engine API and the MCP server over
 stdio do not offer them: a bundle carries a store's files out and brings in runs of another
 store, which is local control (`SPEC.md` section 10).
+
+## Replaying a run
+
+```
+whizbang runs replay <run> --store <dir>
+whizbang runs replay --bundle-digest <digest> --step <n> --store <dir>
+whizbang runs replay --bundle <file> [--step <n>] --store <dir>
+    [--live] [--request-id <id>] [--json]
+```
+
+A replay makes a run that ended again, as a new run of the store, and compares what it made
+with what the run made. The run is one nothing called (a step of a recipe is replayed with
+the recipe), of an action this build ships at the version it ships, that was not
+interrupted. A bundle's step is replayed from the bundle's names in the store; `--bundle`
+imports the file first. Whether a step replays is decided from its records, whatever the
+bundle's manifest says of it: `bundle show` prints this build's decision, and the
+manifest's beside it where the two differ.
+
+**Offline**, the default, every model's answer is the one the run recorded: a segmenter's
+from the masks the run committed and its `segment.txt`, a filler's from the painted picture
+it kept, a judge's from its stored exchanges. Nothing is called, nothing is spent, no
+config, key or models directory is read, and no worker starts. Every operation is computed
+again. A request the run did not make, or made otherwise, is `diverged`; an answer the store
+cannot give (a provider's opaque part, a fill made before its answer was kept, a check the
+decision cache answered) is `unanswerable`; either stops the replay there, whatever the
+action made of it. A run that called a tool file is not replayed offline: a tool file is
+code.
+
+**Live** (`--live`) makes the call again under the config as it is now, as a run that may
+spend, under the allowance; a model the record names that the config no longer offers
+refuses it. A live judgment is not promised to repeat, and a changed verdict is reported as
+a difference. Settings that differ from the run's are listed beside the report.
+
+Neither reads nor writes the decision cache. The report is `reproduced` (exit 0), or
+`differs`, each difference by the place of its run (`the run, step 3`) and what differs,
+the first where the replay first went otherwise, `diverged` or `unanswerable` (exit 3).
+`--request-id` makes a replay asked again answer with the run it made, even once its source
+is gone. Every run of a replayed family names the run it replays, in its record and its
+admission; `runs stats` leaves replayed families out unless `--replayed include` or `only`
+is given.
+

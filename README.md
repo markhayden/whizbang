@@ -27,6 +27,9 @@ as a stdio server for agents, as an engine for a hosted app, and in a browser:
   `whizbang bundle import|show|list|delete` brings it into another store, reads it, and
   lists and removes those a store holds
   ([docs/guides/bundles-and-replay.md](docs/guides/bundles-and-replay.md)).
+- `whizbang runs replay` makes a run again, offline from what it recorded (nothing called,
+  nothing spent) or live, from its store or from a bundle, and reports whether it reproduced
+  ([docs/guides/bundles-and-replay.md](docs/guides/bundles-and-replay.md)).
 
 The design is in [SPEC.md](SPEC.md); the plans are in [docs/plans/](docs/plans/). It replaces four earlier projects, which stay available as
 reference; their final commits are pinned in [docs/sources.toml](docs/sources.toml).
