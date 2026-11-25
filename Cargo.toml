@@ -56,10 +56,22 @@ expect_used = "warn"
 [profile.dev.package.whizbang-squint]
 opt-level = 3
 
+# The fast tier came to 245 to 254 seconds of its 300 on the owner's Mac at the start of
+# milestone 7, past the 250 the plan keeps as room (plan m7, task A0, item 1). Rascal's
+# pixel work and the core's contract, store and ledger are where its tests spend their
+# time: built optimised they come to about 15 seconds less. Only the optimisation changes:
+# the checks of debug builds and the overflow checks stay on, as for squint.
+[profile.dev.package.whizbang-rascal]
+opt-level = 2
+
+[profile.dev.package.whizbang-core]
+opt-level = 2
+
 # Every crate from outside the workspace is built optimised too: the digests, the PNG and
 # JPEG coders, the deflate and the JSON reader the tests go through thousands of times
 # took a fifth of the fast tests' processor time built unoptimised (the test-time task of
-# milestone 3). The workspace's own crates are not: their checks of debug builds, and
-# their overflow checks, stay as they were. A release build optimises everything anyway.
+# milestone 3). The workspace's own crates are not, but for the three above; the checks
+# of debug builds, and the overflow checks, stay on in all of them. A release build
+# optimises everything anyway.
 [profile.dev.package."*"]
 opt-level = 2
