@@ -157,7 +157,7 @@ fn an_answer_cut_at_its_ceiling_replays_as_it_ran() {
     let (world, source, candidate, _) = paired();
     let call = of_pair(&source, &candidate, &[]);
     let engine = world.engine(
-        under_ceiling(&turns(&[cut.clone()]), Some(1024)),
+        under_ceiling(&turns(std::slice::from_ref(&cut)), Some(1024)),
         Secrets::none(),
     );
     let ceiling = engine.submit(&call).unwrap();
