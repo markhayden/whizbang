@@ -1,7 +1,7 @@
 # Plan: milestone E, evidence and edit quality
 
-Draft 13, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
-note of milestone 7), after twelve outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
+Draft 14, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
+note of milestone 7), after thirteen outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
 quality". Its first slice ran beside milestone 5 (`docs/plans/e1-judge-format-loop.md`,
 `docs/plans/e1-note.md`) and chose the default judge and kept the submission format on
 descriptive evidence. This plan is the rest of the milestone: every unverified tool and
@@ -365,13 +365,15 @@ reported in its pull request. Every test that calls a provider or a real model i
    phrasings a record uses, `**Unverified**` and `**Mark.** Experimental`; `RECORDS` gains
    every record whose tool the upper rungs apply to, rascal's included (`remove`,
    `remove_prompt`, `repair`, `repair_area`, `seam`, `remove_checked`, `segment`, `fill`) and
-   the tool files (`per_subject`, `tiles`); a test reads every record under
+   the tool files (`per_subject`, `tiles`); `tiles.md`'s "Mark and history", the one record
+   that states its mark in plain text, opens `**Experimental**` like the others; a test reads
+   every record under
    `docs/reference/tools/` and fails when one that states a mark is not in `RECORDS`.
    `align.md`'s "Mark and history" opens `**Mark.** None`, as `view.md`'s does, naming it
    complete as a control; `evidence::` tests that held `align` unverified are changed to
    hold it unmarked. `just docs` writes the description again.
    `marks::every_record_that_states_a_mark_is_shown_by_describe`;
-   `marks::the_control_carries_no_mark`.
+   `marks::the_control_carries_no_mark`; `marks::tiles_and_per_subject_are_shown_experimental`.
 4. **The spec's wording for gaps 3, 4, 5 and 10.** `SPEC.md` section 8 gains two sentences
    under "The ladder" (a rung 3 gate decides whether a tool goes on; only a rung 4 gate on
    fresh data admits), one under the table of kinds (a use case's rung 3 is a judge round
@@ -446,14 +448,18 @@ reported in its pull request. Every test that calls a provider or a real model i
 6. **`judge-pick/2`** in `--mode judges` (R4): `judge-pick/1`'s clauses, with a minimum of 20
    families below which the outcome is inconclusive; the interval at the level the matrix's
    correction gives it, with enough resamples that each tail holds at least 20 draws (at 13
-   hypotheses, 2,000 leave about 4: `judges.rs` fixes 2,000; `judge-pick/2` takes 20,000, enough for 21, at about 24 draws a tail) and
+   hypotheses, 2,000 leave about 4: `judges.rs` fixes 2,000; `judge-pick/2` takes the count the round's hypotheses need, at least 20 draws in each
+   tail: the larger of 20,000 and 20 × 2 × H ÷ 0.05 rounded up to a thousand, H the matrix's
+   hypotheses, so 20,000 for tier 1's 21 and 22,000 for tier 2's full 27; every gate file of
+   the round states the same count) and
    an unresolved tail inconclusive, as `bootstrap.rs` rules for gates; the runs read from a
    matrix whose cells `eval matrix` made, gates or not (today `eval judges` passes over runs
    that carry a gate); and **`--set <id>`**, repeatable, so that only those sets are scored and
    completeness is over the cells the matrix names for them (R4 scores the judges on
    `confirm-v1` alone, though its matrix also holds the plain twin under two judges). Tests
    of too few families, of the corrected level and its resamples, of runs of a gated matrix,
-   and of R4's own matrix shape scored on one set.
+   and of R4's own matrix shape scored on one set, in tier 1 and in tier 2's full shape, each
+   with every tail resolved.
 7. **Refusals that tell nothing of a held-out set.** Reading a set and fetching its pictures
    print full paths, a TOML parser's text and an import's picture path when something is
    wrong (`crates/whizbang-eval/src/sets.rs`, `crates/whizbang/src/evaluation.rs`). A flag,
@@ -1760,4 +1766,16 @@ taken.
    4 families is inconclusive.
 3. **Minor: `submission/2` was stated two ways.** Right. Taken: clause (a) pooled over the
    judges, (b) and (c) per judge, in both places.
+
+### Review round 13
+
+On draft 13, by the Codex CLI. Verdict: revise. Round 12's fixes held. Two findings: 1 major,
+1 minor. Each was checked against the code; both were right and taken.
+
+1. **Major: 20,000 resamples leave too few in each tail of tier 2's full round.** Right: 27
+   hypotheses give about 18.5 draws a tail, under `bootstrap.rs`'s 20. Taken: the count is
+   worked out from the round's hypotheses (20,000 in tier 1, 22,000 in tier 2), stated in
+   every gate file, with tests of both shapes.
+2. **Minor: `tiles`' record states its mark in plain text.** Right (`tiles.md`). Taken: A0
+   writes it in bold like the others, with a test that `describe` shows it experimental.
 
