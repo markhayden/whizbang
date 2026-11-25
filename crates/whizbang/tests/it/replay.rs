@@ -644,11 +644,13 @@ fn with_a_changed_grow() -> whizbang_core::contract::Registry {
             self.0.descriptor()
         }
         fn run(&self, call: &PreparedCall, context: &Context) -> Result<Produced, Failure> {
-            use whizbang_core::artifact::{self, ArtifactType};
-            let input = call.inputs().iter().find(|i| i.port() == "mask").unwrap();
-            let limits = whizbang_core::identity::DecodeLimits::default();
-            let mask = artifact::get(context.store(), ArtifactType::Mask, input.id(), &limits)
-                .map_err(|e| Failure::error("input", &e.without_paths()))?;
+            // The same pixels, under one more step of its origin: another identity, and
+            // the same area for the filler to paint.
+            let grown = self.0.run(call, context)?;
+            let (_, mask) = grown.outputs().next().unwrap();
+            let mut mask = mask.clone().into_mask().unwrap();
+            let step = whizbang_core::artifact::Step::new("changed", "1.0.0");
+            mask.record(step).unwrap();
             Ok(Produced::nothing().with("mask", mask))
         }
     }
@@ -1333,9 +1335,9 @@ fn a_changed_measurement_of_an_action_with_no_artifact_output_is_a_difference() 
 #[test]
 fn a_divergence_in_a_second_look_or_a_loops_check_is_the_replays_report_whatever_the_action_made_of_it()
  {
-    // The loop's check is sent a picture the original's never was (its removal was made
-    // by a changed `grow`): diverged there. The loop turns a failed check into an
-    // unchecked attempt and goes on; the replay's report is the divergence all the same.
+    // The loop's check, changed, sends its judge another request than the original's:
+    // diverged there. The loop turns the failed check into an unchecked attempt and goes
+    // on; the replay's report is the divergence all the same.
     let world = world("replay-loop-diverged", 2);
     let original = world.run(&world.call());
     assert_eq!(
@@ -1345,10 +1347,28 @@ fn a_divergence_in_a_second_look_or_a_loops_check_is_the_replays_report_whatever
         original.outcome()
     );
     let sent = world.kit.requests();
-    let (run, outcome) = replayed(
-        &world.engine_of(with_a_changed_grow()),
-        &of_run(original.run()),
-    );
+    let registry = changing("check", |inner| {
+        Arc::new(Asks(
+            inner,
+            Box::new(|_, context| {
+                let judge = context.capabilities().judge().expect("a judge is handed");
+                let text = "another question".to_owned();
+                let message = Message::new(Role::User, vec![Part::Text(text)]).unwrap();
+                let request = JudgeRequest::new(
+                    "a test",
+                    vec![message],
+                    Vec::new(),
+                    Controls::new(64).unwrap(),
+                )
+                .unwrap();
+                match judge.send(&request) {
+                    Ok(_) => Ok(Produced::nothing()),
+                    Err(fault) => Err(Failure::error("judge", fault.sentence())),
+                }
+            }),
+        ))
+    });
+    let (run, outcome) = replayed(&world.engine_of(registry), &of_run(original.run()));
     assert_eq!(world.kit.requests(), sent, "nothing was called");
     let report = reported(&world, &run);
     assert_eq!(
