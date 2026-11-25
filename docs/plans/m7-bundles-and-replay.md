@@ -642,8 +642,26 @@ Approved designs of every new surface, before U1 and U2 build them, in the style
 3. **The owner approves** each surface in Paper. Until then U1 and U2 do not start their
    screens; B1 and R1 do not wait.
 
-- [ ] Done when: the owner has approved the six surfaces (or said which to leave out), and
-  the table is merged into this plan.
+- [x] Done when: the owner has approved the six surfaces (or said which to leave out), and
+  the table is merged into this plan. The owner approved all six on 2026-11-24.
+
+### What the design shows that the engine cannot back yet
+
+Read from the Paper file on 2026-11-24 against `main` at 242270a7. Each row is either left
+out of the build, shown in the engine's own terms, or added by a named task item; the right
+column says which. None changes the agreed design's structure.
+
+| Screen element | What the engine has | What this plan does |
+|---|---|---|
+| Home's library: the chips "Playground · Command line · Engine API · Bundles", and each tile's door ("command line · 2 runs") | A run record says nothing of the door that started it (`contract::record::RunRecord`); the playground knows only the pictures it was given, with their names (`play::routes`, the picture upload) | Shown in the engine's terms: the chips are "All · Named · Inputs of runs · Imported", and a tile says its count of runs or "imported" (U1, item 3) |
+| Home's library: a picture's card, "First given by the command line, 24 Nov 14:02" | No first-given time or door; each run's `time.start_ms`, and each import's time | Shown as "first used" with the earliest run's start, or the import's time, and no door (U1, item 3) |
+| Home's library: a picture's card, "Input of 2 runs" with each run | Records name their inputs by identity; nothing indexes a picture to its runs | The host reads the store's records for the card, within the store's own bounds (U1, item 3) |
+| Home's library: "Show all 23" | — | Pages through the library's route, as History pages (U1, item 3) |
+| Compare: the More menu's "Replay…" shown unavailable, with its reason, before it is opened | Whether a run replays offline is known only by replaying it (R1) | Shown in the engine's terms: "Replay…" is always offered, and the dialog shows the engine's refusal (U2, item 3) |
+| An example opened as a draft, naming which of its saved choices fell back | Preparation answers for one choice at a time, with its reason kept as a kind (milestone 5, K1) | The draft prepares each saved choice and names those not offered now, from that reason (U1, item 2) |
+| Bundle this run: the bundle's size before it is written | A bundle's bytes are known once it is written (B1) | Shown as "about" the sum of its artifacts' sizes before, and the exact size after (U2, item 1) |
+| Compare: the keys B and C to pin and compare | — | Left out |
+| The end of a chain: "Compare last step" | The compare route takes two runs of one task (U1, item 1); a step's replay and its recorded run are such a pair | Backed: the link opens the compare route on the two runs (U2, item 2) |
 
 ## B1. Invocation bundles (large)
 
