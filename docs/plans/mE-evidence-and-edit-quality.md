@@ -1,7 +1,7 @@
 # Plan: milestone E, evidence and edit quality
 
-Draft 3, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
-note of milestone 7), after two outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
+Draft 4, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
+note of milestone 7), after three outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
 quality". Its first slice ran beside milestone 5 (`docs/plans/e1-judge-format-loop.md`,
 `docs/plans/e1-note.md`) and chose the default judge and kept the submission format on
 descriptive evidence. This plan is the rest of the milestone: every unverified tool and
@@ -285,13 +285,13 @@ theirs; builders make no live call.
 | D1 | The new set versions and the fresh set (the orchestrator's, with the owner) | B1 | Medium: about 500, and the sets' files |
 | R2 | Rung 2 of the new tools and their methods (the orchestrator's) | T2 | Small: about 400, records |
 | R3 | Rung 3 of squint's tools on `blind-v3` under a cheap judge (the orchestrator's) | M1, R2 | Medium: about 600, gate files and records |
-| F2 | The dev round of the format and the requirements (the orchestrator's) | F1, D1 | Small: about 400, a matrix and records |
+| F2 | The dev round of the format and the requirements (the orchestrator's) | F1, M1, D1 | Small: about 400, a matrix and records |
 | R4 | Rung 4: the confirmation round on the fresh set (the orchestrator's) | M1, D1, R3, F2 | Medium: about 900, gate files, receipts, records, ADR 0044 amended |
 | P0 | The pairs page: sizes that follow from dimensions alone; the engine its test needs; `not_worse` | `main` | Small: about 500 |
 | V1 | Visual quality: the picking rounds of milestone 3 and the loop's contact sheet (the orchestrator's, with the owner) | P0 | Small: about 400, records |
 | L1 | The loop's record and evidence: a closed set of reasons; located retries that added nothing; the tenth | `main` | Medium: about 1,000 |
 | L2 | The located retry, whole: the phrase delimited; a place of any size; a polygon as its pixels; one mask at a time; one decode | L1 | Medium to large: about 1,600 |
-| C1 | The clicked removal: measured on segment-01, then built if the rule asks | `main` | Medium: about 900 if built, 200 if not |
+| C1 | The clicked removal: measured on segment-01, then built if the rule asks | `main`; its rung 2 (item 4) after M2 and P0 | Medium: about 900 if built, 200 if not |
 | P1 | Panoramas: `view`'s panorama side and its mapping; locations through every binding; the scaled slack; a reduced crop with transparency; the seam's two record lines | `main` | Large, two pull requests: about 1,500 (`view`'s panorama side, the mapping, its ADR), then about 1,000 (locations, the slack, alpha, the records) |
 | R5 | Rung 3 of the edit recipes (the orchestrator's) | M2, V1, L2, C1, P1 | Medium: about 600, gate files and records |
 | K1 | The segmenters compared on segment-01's truth masks; `segment`'s rung 2; the rule for milestone 8 (the orchestrator's) | T2 | Small: about 400, a record |
@@ -306,7 +306,7 @@ theirs; builders make no live call.
    (its measurement waits for nothing paid) and **P1**.
 2. **T2** when T1 has landed; **D1** when B1 has landed (the owner reviews the contact
    sheets); **L2** when L1 has landed.
-3. **R2** and **K1** when T2 has landed; then **R3** (and M1); **F2** when F1 and D1's dev versions
+3. **R2** and **K1** when T2 has landed; then **R3** (and M1); **F2** when F1, M1 and D1's dev versions
    have landed.
 4. **R4** when D1's fresh set, R3 and F2 are in, and the owner has said yes to its use.
 5. **V1** (it may start any time after P0, as the owner's time allows); **R5** when V1, L2,
@@ -414,8 +414,14 @@ reported in its pull request. Every test that calls a provider or a real model i
    `gate::gates_on_one_matrix_count_their_hypotheses_together`.
 4. **A gate across two versions of a set.** `[baseline]` may name `control_set` and
    `treatment_set` instead of two arms: two sets of one use case whose items and families are
-   the same by id, under one arm. Refused when the ids or families differ.
-   `gate::a_gate_compares_two_versions_of_a_set_item_by_item`.
+   the same by id, under one arm. Refused when the ids or families differ. The paired
+   statistics hold one truth for both sides (`crates/whizbang-eval/src/metrics.rs` refuses
+   labels that differ), so the comparison is over the items whose label is the same in both
+   versions; an item whose label a version changed is counted and reported apart, and never
+   scored against the other version's truth. The fresh twins share every label by
+   construction (D1); the dev versions may not, and F2's record says how many differed.
+   `gate::a_gate_compares_two_versions_of_a_set_item_by_item`;
+   `gate::an_item_whose_label_changed_between_versions_is_reported_apart`.
 
 **Second pull request: the rules and the records.**
 
@@ -801,14 +807,20 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    their decodes report `preferred`, `inconclusive` or `worse`, and the record says why. The
    decoder counts `same` and `neither` toward neither side (`crates/whizbang-eval/src/lab/
    decode.rs`), which is why: losses under a third of the decided pairs is wins over two
-   thirds. Protocol version 2, for E's new rounds (C1, R5, R6, W1): a group is `inconclusive`
-   below a minimum of pairs **picked** (not decided, so a `same` pick never makes it
-   inconclusive); else `preferred` when wins reach two thirds of the decided pairs; else
-   `not_worse` when losses stay under a third of every pair picked, `same` included; else
-   `worse`. With `same` picks it can be reached at any size of round: of 8 pairs picked, 4
-   wins, 2 losses and 2 `same` is `not_worse`.
+   thirds. Protocol version 2, for E's new rounds (C1, R5, R6, W1), where arm `a` is the
+   recipe and `b` the reference. The page defines `neither` as both failing
+   (`crates/whizbang/pages/pairs.html`), so in version 2 a `neither` is a loss of the recipe,
+   not an abstention, and only `same` (both acceptable and alike) counts toward neither side.
+   A group is `inconclusive` below a minimum of pairs **picked**, so a `same` pick never makes
+   it inconclusive; else `preferred` when it has at least one decided pair and wins reach two
+   thirds of the decided pairs; else `not_worse` when losses (with every `neither`) stay under
+   a third of every pair picked; else `worse`. With `same` picks it can be reached at any size
+   of round: of 8 pairs picked, 4 wins, 2 losses and 2 `same` is `not_worse`; 7 `neither` and 1
+   loss is `worse`; 8 `same` is `not_worse`, the recipe alike to the reference.
    `decode::not_worse_is_reached_when_same_picks_keep_losses_under_a_third`;
    `decode::a_same_pick_does_not_make_a_version_2_round_inconclusive`;
+   `decode::neither_is_a_loss_of_the_recipe_in_version_2`;
+   `decode::no_decided_pair_is_never_preferred`;
    `decode::a_version_1_protocol_decodes_as_before`.
 
 - [ ] Done when: the tests pass. **Reviewer reads hardest:** that an old page's picks still
@@ -1139,19 +1151,25 @@ limits: the limits are each store's allowance, each call's cap and the builder's
 | R2, V1, W1 | Nothing: local models and the owner's picks | | 0 |
 | D1 | About 70 pictures generated for 22 families and the seasonal pair, under `--cap-usd 8` | | 6 |
 | R3 | 143 items: Haiku under C and up to seven treatments | 143 × 0.00357 + 7 × 143 × 0.00357 × 1.5 | 5.9 |
-| F2 | 110 dev items under v1 and v3, and 22 of the new versions, Haiku and Flash | (2 × 110 + 22) × (0.00352 + 0.01659) | 4.9 |
+| F2 | 110 dev items under v1 and v3; 22 items of each version of the two source-fidelity dev sets in a matrix of their own; Haiku and Flash | (2 × 110 + 2 × 22) × (0.00352 + 0.01659) | 5.3 |
 | R4 | 110 items: C under five judges; the format under five; two tools under two; the plain twin under two | 12.6 + 12.6 + 4.8 + 1.6 | 31.7 |
 | C1 | If built: 20 fills for its rung 2 | 20 × 0.04 | 0.8 |
 | R5 | 56 runs, each a fill and a check by Argon; `remove_checked`'s 8 up to two more attempts | 72 × (0.04 + 0.0595) | 7.2 |
-| R6 | 30 fresh cases: 10 under four removals, 10 under two repairs, 10 panoramas; two checks a loop | 70 × 0.04 + 20 × 0.0595 | 4.0 |
-| | **Expected** | | **about 60** |
+| R6 | 30 fresh cases: 10 under four removals, 10 under two repairs, 10 panoramas; a loop's second attempt a fill and a check more | 80 × 0.04 + 20 × 0.0595 | 4.4 |
+| | **Expected** | | **about 61** |
 
 If Flash's price has doubled before a round, the round changes so that tier 1 still fits: F2
 runs Haiku alone (4.0 less than its estimate), and R4's Flash cells cost 4.0 more, so R4's
 second tool's arms move to tier 2 (2.4 less), per-subject comparison keeping its slot: about
-58 if both rounds run after the date, about 62 if only R4 does.
+60 if both rounds run after the date, about 63 if only R4 does.
 
-**Cap: 63 dollars settled**, counted across every store and the builder's total. A round that
+**Cuts, in this order, before a round that the re-forecast puts past the cap.** Before each
+paid round the orchestrator adds what was settled to the estimates of the rounds left. If the
+sum passes the cap: R4's second tool's arms move to tier 2; F2 runs Haiku alone; R5 runs 6
+cases a recipe instead of 8; then the round waits for the owner. Each cut is said in the
+round's record.
+
+**Cap: 63.5 dollars settled**, counted across every store and the builder's total. A round that
 would take the milestone past it does not start; a round that passes twice its estimate stops
 and is said. There is no allowance for a round run again after a fix: that is tier 2.
 
@@ -1175,8 +1193,12 @@ item 2), and plans nothing past 100 without that yes.
 study's rates doubled, are under 15 together. R4 needs a store of its own: its forecast, at
 the study's rates doubled, is about 55 in tier 1, more than any store has left, so the
 confirmation store's first allowance, 75 dollars, is a reset and the owner's ("I need", item
-1). The allowance is a guard; what counts is settled. R5 and R6 run in the loop store (about
-17.71 left).
+1). The allowance is a guard; what counts is settled. C1, R5 and R6 run in the loop store
+(about 17.71 left), but a loop reserves its whole bound when admitted: under Argon at its new
+price, three attempts reserve about 11.73 (`docs/guides/loop.md`, "What it costs", with
+Argon's request bound doubled), and R5 is expected to settle about 7.2 first, so R6 could be
+refused with what is left. The loop store's allowance is reset to 30 dollars before C1's rung
+2, also the owner's ("I need", item 1).
 
 ## Dependencies
 
@@ -1265,15 +1287,17 @@ P1 ──────────────────┘
 - Details first, `resize` and `tiles` end E experimental.
 - At most one change to source fidelity's default recipe comes out of E: the format, or else
   one tool.
-- Expected spend about 60 dollars of the 63.88 E has left; cap 63.
+- Expected spend about 61 dollars of the 63.88 E has left; cap 63.5.
 
 ## I need
 
-1. **I need your yes to set the confirmation store's allowance to 75 dollars** (yes/no). It is
-   a reset, which is yours (section 6); R4's forecast doubles its expected 32. Without it R4
-   cannot start.
+1. **I need your yes to two allowances: a new confirmation store at 75 dollars, and the loop
+   store reset to 30** (yes/no). Each is a reset, which is yours (section 6). R4's forecast
+   doubles its expected 32, and a loop reserves its three attempts' whole bound before it
+   runs. They are guards; the milestone's cap is what counts. Without them R4 and R6 cannot
+   start.
 2. **I need a yes or no: may milestone E spend up to 140 dollars in all, instead of 100?** The
-   first slice settled 36.12, tier 1 needs about 60 more, and tier 2 (the study's claim
+   first slice settled 36.12, tier 1 needs about 61 more, and tier 2 (the study's claim
    tested, a third judge on each tool, a rerun, a margin) about 40. Recommended: yes. With
    no, tier 2 does not run and the study's claim is withdrawn.
 3. **I need a yes or no: may a use case of `check` whose gate on fresh data is not run or not
@@ -1372,4 +1396,24 @@ against the code; all were right and taken.
     before F2, F2 runs Haiku alone; the totals of each case are stated, all under the cap.
 11. **Minor: A0's spec sentence was narrower than "I need", item 3.** Right. Taken: the
     sentence now matches the question.
+
+### Review round 3
+
+On draft 3, by the Codex CLI. Verdict: revise. Round 2's fixes held but for its finding 7,
+completed by this round's finding 1. Five findings: 3 majors, 2 minors. Each was checked
+against the code; all were right and taken.
+
+1. **Major: a `neither` pick could make a recipe `not_worse`.** Right (`pairs.html` defines it
+   as both failing; `decode.rs`'s `preferred` holds at zero decided pairs). Taken: in protocol
+   version 2 a `neither` is a loss of the recipe; `preferred` needs a decided pair; tests of
+   both and worked cases.
+2. **Major: a comparison of two set versions could meet changed labels.** Right
+   (`metrics.rs` holds one truth for both sides). Taken: it scores only items whose label is
+   the same in both versions and reports the others apart; the fresh twins share every label.
+3. **Major: the loop store could refuse R6.** Right: a loop reserves its whole bound. Taken:
+   the loop store is reset to 30 before C1's rung 2, the owner's, in "I need", item 1.
+4. **Minor: F2 and R6 were each a little under-counted.** Right. Taken: the arithmetic is
+   corrected, the totals restated, the cap set at 63.5 of the 63.88 left, and an order of cuts
+   stated for a re-forecast that passes it.
+5. **Minor: the waves left out M1 for F2 and M2 and P0 for C1's rung 2.** Right. Taken.
 
