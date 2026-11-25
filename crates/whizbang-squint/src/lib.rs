@@ -10,6 +10,7 @@
 pub mod align;
 pub mod cache;
 pub mod check;
+pub mod checklist;
 pub mod compare;
 pub mod details;
 pub mod files;

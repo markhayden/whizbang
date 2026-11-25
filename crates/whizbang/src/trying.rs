@@ -30,8 +30,9 @@ use crate::import;
 use crate::tool_file::{self, Files as ToolFiles};
 
 /// A tool that can be tried: its name, its primary measurement, the way of it that means
-/// changed, the diagnostic its run states its measurements in, and whether it is a tool
-/// file that takes the item's job.
+/// changed, the diagnostic its run states its measurements in, whether it is a tool file
+/// that takes the item's job, and the arguments of text it declares, which the rules'
+/// `[hints]` may fill.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Declared {
     pub tool: String,
@@ -40,6 +41,7 @@ pub struct Declared {
     pub report: String,
     pub file: bool,
     pub takes_job: bool,
+    pub texts: Vec<String>,
 }
 
 /// The tools this build links that can be tried: each its name, primary measurement, the
@@ -75,6 +77,7 @@ pub fn declared_in(tool: &str, files: Option<&ToolFiles>) -> Result<Declared, St
             report: report.to_owned(),
             file: false,
             takes_job: false,
+            texts: Vec::new(),
         });
     }
     let file = files.and_then(|files| files.declared(tool));
@@ -89,6 +92,10 @@ pub fn declared_in(tool: &str, files: Option<&ToolFiles>) -> Result<Declared, St
                 .arguments
                 .iter()
                 .any(|a| a.name == "job" && a.kind == "text"),
+            texts: (file.arguments.iter())
+                .filter(|a| a.kind == "text")
+                .map(|a| a.name.clone())
+                .collect(),
         });
     }
     let mut names: Vec<String> = LINKED.iter().map(|d| d.0.to_owned()).collect();
@@ -395,11 +402,21 @@ pub fn eval_tool(
             };
             // A tool file that takes the job is given it whole: its requirements, never
             // the item's label, which is the set's and not the job's.
-            let arguments = if declared.takes_job {
+            let mut arguments = if declared.takes_job {
                 vec![("job".to_owned(), Value::text(&job.to_json()))]
             } else {
                 Vec::new()
             };
+            // And what the rules of its use case hint to the tool (plan mE, task T1, item
+            // 4), as the arguments of text it declares under those names.
+            let hints = whizbang_squint::use_case::rules(&job.use_case)
+                .map(|rules| rules.hints.arguments(&declared.tool))
+                .unwrap_or_default();
+            for (name, value) in hints {
+                if declared.texts.contains(&name) {
+                    arguments.push((name, Value::text(&value)));
+                }
+            }
             planned.push((
                 id.clone(),
                 item.clone(),
