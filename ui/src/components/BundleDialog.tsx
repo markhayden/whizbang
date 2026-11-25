@@ -81,7 +81,7 @@ export function BundleDialog(props: BundleDialogProps) {
           <span class="holds__yes" aria-hidden="true">✓</span> {about ? `${counted(about.inputs, "input")}, ${counted(about.outputs, "output")}${about.masks ? `, ${counted(about.masks, "mask")}` : ""}` : "its inputs and outputs"}
         </p>
         <p class="holds__item mono">
-          <span class="holds__yes" aria-hidden="true">✓</span> each model's answer, for offline replay
+          <span class="holds__yes" aria-hidden="true">✓</span> each model's answer the store kept, for offline replay; what it withholds is listed when the bundle is shown
         </p>
         <p class="holds__title">Never holds</p>
         <p class="holds__item holds__item--never mono">— keys, tokens or endpoints</p>

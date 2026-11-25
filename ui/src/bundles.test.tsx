@@ -126,7 +126,7 @@ describe("the replay dialog", () => {
   });
 
   it("reviews a live replay's cost before it starts", async () => {
-    const prepare = vi.fn(async () => ({ ready: true, bound: 0.46, needs: [{ capability: "fill", backend: "cloud-fill", model: "fill", requests: 1, each: 0.04, bound: 0.04 }] }));
+    const prepare = vi.fn(async () => ({ ready: true, handle: "h-1", bound: 0.46, needs: [{ capability: "fill", backend: "cloud-fill", model: "fill", requests: 1, each: 0.04, bound: 0.04 }] }));
     const request = vi.fn(async () => ({ run: "1795-9" }));
     const client = { request, prepare } as unknown as Client;
     const started = vi.fn();
@@ -143,8 +143,28 @@ describe("the replay dialog", () => {
     expect(go.textContent).toContain("$0.460");
     click(go);
     await settle();
-    expect(request).toHaveBeenCalledWith("POST", "/api/runs/1795-1/replay", expect.objectContaining({ live: true }));
+    expect(request).toHaveBeenCalledWith("POST", "/api/runs/1795-1/replay", expect.objectContaining({ live: true, handle: "h-1" }));
     expect(started).toHaveBeenCalledWith("1795-9");
     view.unmount();
+  });
+
+  it("never starts a live replay whose cost was refused or is not ready", async () => {
+    for (const answer of [{ ready: false, refused: true, why: "the call is refused", bound: 0 }, { ready: false, bound: 0.04, needs: [] }]) {
+      const prepare = vi.fn(async () => answer);
+      const request = vi.fn();
+      const client = { request, prepare } as unknown as Client;
+      const view = render(<ReplayDialog client={client} run="1795-1" title="Remove" again={{ task: "remove_prompt", values: {} }} onStarted={() => undefined} onCancel={() => undefined} />);
+      const live = view.all<HTMLInputElement>("input[type=radio]")[1]!;
+      act(() => {
+        live.checked = true;
+        live.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      await settle();
+      const go = view.all<HTMLButtonElement>(".button--primary").find((one) => one.textContent?.includes("Replay live"))!;
+      expect(go.disabled).toBe(true);
+      expect(view.text()).toContain("a live replay cannot start");
+      expect(request).not.toHaveBeenCalled();
+      view.unmount();
+    }
   });
 });

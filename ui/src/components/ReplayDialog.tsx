@@ -45,7 +45,7 @@ export function ReplayDialog(props: ReplayDialogProps) {
   const start = () => {
     setStarting(true);
     setProblem(null);
-    startReplay(props.client, props.run, live, requestId).then(
+    startReplay(props.client, props.run, live, requestId, plan?.handle ?? undefined).then(
       (started) => props.onStarted(started.run),
       (error: unknown) => {
         setStarting(false);
@@ -53,7 +53,17 @@ export function ReplayDialog(props: ReplayDialogProps) {
       },
     );
   };
-  const liveWhy = live && !plan && !planProblem ? "The cost is being reviewed." : undefined;
+  // Live runs only under a cost the page showed: a preparation that is ready, kept by the
+  // host under its handle, whose bound the replay is held to.
+  const liveWhy = !live
+    ? undefined
+    : planProblem
+      ? "The cost could not be reviewed, so a live replay cannot start."
+      : !plan
+        ? "The cost is being reviewed."
+        : !plan.ready || !plan.handle
+          ? "This run's call is not ready under the config now, so a live replay cannot start."
+          : undefined;
   return (
     <Dialog
       id="replay-title"

@@ -340,7 +340,8 @@ function Draft(props: DraftProps) {
   // A draft a chain's step opened (plan m7, task U2, item 2): the step, and each linked
   // input bound to the new run of the step before, beside the one recorded. It runs as
   // any draft, only when Run is pressed, naming the step.
-  const chain = kept?.chain;
+  // "Run it as an ordinary draft" lets go of the step: the draft then carries no chain.
+  const [chain, setChain] = useState(kept?.chain);
 
   const set = (name: string, value: unknown) => {
     setValues((now) => ({ ...now, [name]: value }));
@@ -521,6 +522,16 @@ function Draft(props: DraftProps) {
                 {`chain ${middle(chain.digest, 18)}`}
               </a>
               <span class="workspace__chain-line">nothing runs until you press Run</span>
+              <button
+                type="button"
+                class="link-button workspace__chain-line"
+                onClick={() => {
+                  setChain(undefined);
+                  saveDraft(store, { kit: props.kit, task: task.name, values, pictures, at: Date.now(), ...(example ? { example } : {}) });
+                }}
+              >
+                Run it as an ordinary draft
+              </button>
             </p>
           ) : null}
           {example ? (

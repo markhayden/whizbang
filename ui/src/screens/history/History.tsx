@@ -270,7 +270,7 @@ export function History(props: HistoryProps) {
               {props.client ? <Row client={props.client} run={run} tone={toneOf(run.kit)} now={now} onOpen={() => props.go?.(hrefOf({ name: "run", id: run.run }))} /> : null}
               <span class="history__pin">
                 {chaining ? (
-                  <button type="button" class="history__pin-button" aria-pressed={picked.includes(run.run) ? "true" : "false"} onClick={() => pick(run.run)}>
+                  <button type="button" class="history__pin-button" aria-label={`Pick run ${run.run} for the chain`} aria-pressed={picked.includes(run.run) ? "true" : "false"} onClick={() => pick(run.run)}>
                     {picked.includes(run.run) ? `Picked ${picked.indexOf(run.run) + 1}` : "Pick"}
                   </button>
                 ) : null}

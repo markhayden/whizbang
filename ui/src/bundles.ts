@@ -2,7 +2,7 @@
 // of the host's routes, made through the client's one request (which carries the token),
 // a chain's place kept in the browser's storage, and the pure helpers the screens lay out.
 // Every text in an answer was escaped by the host; the page puts it in as text.
-import type { Client } from "./api";
+import { ApiError, type Client } from "./api";
 import type { Draft, Store } from "./drafts";
 import { middle } from "./format";
 
@@ -69,8 +69,13 @@ export function bundleChain(client: Client, runs: string[]): Promise<Blob> {
   return client.postBytes("/api/bundles/chain", { runs });
 }
 
+/** The most bytes of a bundle the host takes (ADR 0048). */
+export const BUNDLE_LIMIT = 256 * 1024 * 1024;
+
+/** Sends a bundle file as a tar, whatever type the browser gave it; one over the bound is refused here. */
 export function importBundle(client: Client, file: Blob): Promise<BundleSummary> {
-  return client.upload<BundleSummary>("/api/bundles", file);
+  if (file.size > BUNDLE_LIMIT) return Promise.reject(new ApiError(413, "A bundle is at most 256 MiB; this file is larger, and nothing was sent."));
+  return client.upload<BundleSummary>("/api/bundles", new Blob([file], { type: "application/x-tar" }));
 }
 
 export async function listBundles(client: Client): Promise<BundleSummary[]> {
@@ -114,8 +119,8 @@ export function openStep(client: Client, digest: string, step: number, runs: Arr
 }
 
 /** Starts a replay of a run: offline, or live. */
-export function startReplay(client: Client, run: string, live: boolean, requestId: string): Promise<{ run: string; state?: string }> {
-  return client.request("POST", `/api/runs/${encodeURIComponent(run)}/replay`, { live, request_id: requestId });
+export function startReplay(client: Client, run: string, live: boolean, requestId: string, handle?: string): Promise<{ run: string; state?: string }> {
+  return client.request("POST", `/api/runs/${encodeURIComponent(run)}/replay`, live ? { live, request_id: requestId, handle } : { live, request_id: requestId });
 }
 
 /** One difference of a replay from the run it replays, by place. */

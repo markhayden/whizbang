@@ -14,6 +14,8 @@ export interface ChainCardProps {
   /** The step this result is the new run of. */
   step: number;
   run: string;
+  /** How this step's run ended. */
+  outcome: string;
   go: (hash: string) => void;
 }
 
@@ -29,6 +31,8 @@ export function ChainCard(props: ChainCardProps) {
   const [blocked, setBlocked] = useState<OpenedStep | null>(null);
   const [busy, setBusy] = useState(false);
   const [stopped, setStopped] = useState(props.place.stopped);
+  // Whether this store holds the run the last step replays: compared only then.
+  const [held, setHeld] = useState(false);
   const digest = props.place.digest;
   useEffect(() => {
     let live = true;
@@ -41,6 +45,19 @@ export function ChainCard(props: ChainCardProps) {
     };
   }, [digest]);
   const steps = bundle?.steps ?? [];
+  const original = steps[props.step]?.run;
+  useEffect(() => {
+    let live = true;
+    setHeld(false);
+    if (!original || props.step < props.place.steps - 1) return;
+    props.client.request("GET", `/api/runs/${encodeURIComponent(original)}/record`).then(
+      () => live && setHeld(true),
+      () => live && setHeld(false),
+    );
+    return () => {
+      live = false;
+    };
+  }, [original]);
   const named = (at: number) => steps[at]?.title ?? steps[at]?.action ?? `step ${at + 1}`;
   const last = props.step >= props.place.steps - 1;
   const proceed = () => {
@@ -100,11 +117,11 @@ export function ChainCard(props: ChainCardProps) {
     );
   }
   if (last) {
-    const original = steps[props.step]?.run;
+    const done = props.outcome === "completed";
     return (
       <section class="chain-card" aria-label="The chain">
         <div class="chain-card__head">
-          <h2 class="chain-card__title">Chain done</h2>
+          <h2 class="chain-card__title">{done ? "Chain done" : `The chain ended: its last step ${props.outcome === "cancelled" ? "was stopped" : `ended ${props.outcome}`}`}</h2>
           <span class="mono replay-report__meta">{`${props.place.steps} steps · ${middle(digest, 14)}`}</span>
         </div>
         <ol class="chain-steps">
@@ -121,7 +138,7 @@ export function ChainCard(props: ChainCardProps) {
           ))}
         </ol>
         <div class="chain-card__actions">
-          {original ? (
+          {original && held ? (
             <Button variant="secondary" onClick={() => props.go(hrefOf({ name: "compare", baseline: original, attempt: props.run }))}>
               Compare last step
             </Button>
@@ -142,19 +159,25 @@ export function ChainCard(props: ChainCardProps) {
       </div>
       <p class="chain-card__line">
         {stopped
-          ? "You stopped this chain here. Its runs stay; reopen it from Bundles to go on."
+          ? "You stopped this chain here. Its runs stay; open the chain to go on with it."
           : `Its outputs go to step ${props.step + 2}, ${named(props.step + 1)}. Where one differs from the one recorded, you'll see both before that step runs.`}
       </p>
-      <div class="chain-card__actions">
-        <Button variant="primary" busy={busy} onClick={proceed}>
-          {`Continue to step ${props.step + 2}`}
-        </Button>
-        {stopped ? null : (
+      {stopped ? (
+        <div class="chain-card__actions">
+          <Button variant="secondary" onClick={() => props.go(hrefOf({ name: "chain", digest }))}>
+            Open the chain
+          </Button>
+        </div>
+      ) : (
+        <div class="chain-card__actions">
+          <Button variant="primary" busy={busy} onClick={proceed}>
+            {`Continue to step ${props.step + 2}`}
+          </Button>
           <Button variant="secondary" onClick={stop}>
             Stop
           </Button>
-        )}
-      </div>
+        </div>
+      )}
       {said}
     </section>
   );

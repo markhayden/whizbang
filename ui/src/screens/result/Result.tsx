@@ -341,7 +341,7 @@ export function Result(props: ResultProps) {
             </Button>
             <div class="result__more-wrap">
               <span ref={moreButton}>
-                <Button variant="quiet" onClick={() => setMore((now) => !now)}>
+                <Button variant="quiet" haspopup="menu" expanded={more} onClick={() => setMore((now) => !now)}>
                   {more ? "More ▴" : "More ▾"}
                 </Button>
               </span>
@@ -427,7 +427,7 @@ export function Result(props: ResultProps) {
       </section>
       <aside class="workspace__right" aria-label="Summary">
         <h2 class="section-title">Summary</h2>
-        {chained ? <ChainCard client={props.client} place={chained.place} step={chained.step} run={record.run} go={props.go} /> : null}
+        {chained ? <ChainCard client={props.client} place={chained.place} step={chained.step} run={record.run} outcome={record.outcome} go={props.go} /> : null}
         {report ? <ReplayReport report={report} compareHref={report.report === "differs" ? hrefOf({ name: "compare", baseline: report.of, attempt: report.replay }) : undefined} /> : null}
         {reportProblem ? <p class="workspace__purpose">{`The replay's report could not be made: ${reportProblem}`}</p> : null}
         {verdict ? <VerdictCard verdict={verdict} title={verdictTitle(verdict)} detail={record.attempts?.kept ? `attempt ${record.attempts.kept}` : undefined} reasons={record.verdict?.reasons ?? []} /> : null}

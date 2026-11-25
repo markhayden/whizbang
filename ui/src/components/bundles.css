@@ -92,3 +92,4 @@
 .chain-binding__differs { color: var(--color-ink); font-weight: var(--font-weight-medium); }
 .workspace__chain { flex-wrap: wrap; }
 .workspace__chain-line { color: var(--color-muted); font-size: var(--text-xs); }
+.replay-report--diverged .replay-report__meta, .replay-report--diverged .replay-report__setting { color: var(--color-ink-2); }

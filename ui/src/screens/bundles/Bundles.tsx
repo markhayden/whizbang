@@ -184,6 +184,8 @@ export function Bundles(props: BundlesProps) {
 
 function Shown(props: { summary: BundleSummary; onStart: () => void; onDelete: () => void }) {
   const summary = props.summary;
+  // Delete asks once: the bundle goes, and what a run of this store took from it stays.
+  const [asking, setAsking] = useState(false);
   const links = linksOf(summary);
   const place = chainOf(localStore(), summary.digest);
   const runs = place?.runs ?? [];
@@ -228,8 +230,21 @@ function Shown(props: { summary: BundleSummary; onStart: () => void; onDelete: (
           ))
         )}
       </div>
+      {asking ? (
+        <div class="bundle-card__section" role="alert">
+          <p class="holds__item">Delete this bundle? Its runs and files go from this store; what a run here took from it stays.</p>
+          <div class="chain-card__actions">
+            <Button variant="danger" onClick={props.onDelete}>
+              Delete it
+            </Button>
+            <Button variant="quiet" onClick={() => setAsking(false)}>
+              Keep it
+            </Button>
+          </div>
+        </div>
+      ) : null}
       <footer class="bundle-card__foot">
-        <Button variant="quiet" onClick={props.onDelete}>
+        <Button variant="quiet" onClick={() => setAsking(true)}>
           Delete bundle
         </Button>
         <Button variant="primary" onClick={props.onStart}>
