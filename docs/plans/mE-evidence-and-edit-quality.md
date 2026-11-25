@@ -1,7 +1,7 @@
 # Plan: milestone E, evidence and edit quality
 
-Draft 7, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
-note of milestone 7), after six outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
+Draft 8, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
+note of milestone 7), after seven outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
 quality". Its first slice ran beside milestone 5 (`docs/plans/e1-judge-format-loop.md`,
 `docs/plans/e1-note.md`) and chose the default judge and kept the submission format on
 descriptive evidence. This plan is the rest of the milestone: every unverified tool and
@@ -250,7 +250,7 @@ Ranked from the evidence each already has. Squint's tools first, then rascal's r
 | 10 | The submission format | v1 default; v2 a setting | v2 cut failures but moved each small judge's accuracy by more than 2 points | F1, F2, R4 |
 | 11 | The default judge, and source fidelity | Unverified | Argon's lead comes from `blind-v3`, an exposed set; on dev sets alone it trails Flash | R4; unverified if its gate is not cleared ("I need", item 3) |
 | 12 | The other four use cases | Unverified | No fresh set | End E unverified, if the owner agrees ("I need", item 3) |
-| 13 | `remove_checked` | Experimental | Which attempt it keeps is not scored; 33 of Argon's 40 runs on segment-01 ended `fail` (`docs/results/e-loop.md`) | L1, L2, V1 (the contact sheet), R5, R6 |
+| 13 | `remove_checked` | Experimental | Which attempt it keeps is not scored; 33 of Argon's 40 runs on segment-01 ended `fail` (`docs/results/e-loop.md`) | L1, L2, V1 (the contact sheet); R5 and R6 in tier 2 ("Spend") |
 | 14 | `seam` | Experimental | Its decode is owed; a judge cannot look into a panorama (`view` refuses any box on one); its protocol cannot reach `not_worse` | P0, P1, V1, R5 |
 | 15 | `repair_area`, `repair`, `remove_prompt`, `remove` | Experimental | Visual quality owed (`docs/results/m3-edits.md`) | V1, R5, R6; a clicked removal beside `remove` (C1) |
 | 16 | `segment` | Experimental | Rung 2 not shown | W1, item 1 (rung 2: mask agreement with segment-01's truth masks); rungs 3 and 4 credited from `remove_prompt`'s (R6, item 4) |
@@ -282,11 +282,11 @@ theirs; builders make no live call.
 |---|---|---|---|
 | A0 | The entry check: the Google prices; E's ledger; every mark shown by `describe`, `align` as a control; the spec's wording for gaps 3 to 5; details first's end | `main` | Small: about 600 |
 | M1 | The machinery of the squint rounds: a matrix that runs only the cells it names; the second look under C; gates frozen in their matrix, several on one; a gate across two versions of a set; `submission/2` and `judge-pick/2` with its sets; refusals that tell nothing of a held-out set; the list of what was admitted; no retry of a failed cell; the judge round's figures held to their TOML | `main` | Medium to large, two pull requests: about 1,300 (matrices and gates), then about 1,500 (the rules, the held-out refusals and the records) |
-| M2 | The edits' gates: `edit-gate/1`, `eval edits gate`, marks for any recipe's pictures, pairs from recorded runs | `main` | Medium: about 1,700 |
+| M2 | The edits' gates: `edit-gate/1`, `eval edits gate`, marks for any recipe's pictures, pairs from recorded runs | M1 | Medium: about 1,700 |
 | B1 | The set builder, ported, with full requirements and a spend guard; the seasonal cover pair; the pictures' repository's name | `main` | Large, two pull requests: about 1,400 (the port), then about 1,100 (full requirements, the guard, the pair, the name) |
 | T1 | `outline`, then `regions`, as tool files on SAM 3; the rules' `[hints]` and the checklist's evidence from regions | `main` | Large, two pull requests: about 1,100 (`outline`), then about 1,200 (`regions` and the rules) |
 | T2 | The fixed-class segmenter as a catalogue entry that labels every pixel; `classes`; the `method` of `regions` and `outline` | T1 | Large, two pull requests: about 1,400 (the adapter, its entry, conformance), then about 1,000 (`classes`, the methods) |
-| F1 | Submission v3; Haiku's invalid submissions counted by rule | `main` | Medium: about 1,400 |
+| F1 | Submission v3; Haiku's invalid submissions counted by rule | M1 | Medium: about 1,400 |
 | D1 | The new set versions and the fresh set (the orchestrator's, with the owner) | B1; the fresh twins also M1 (`--held-out`) | Medium: about 500, and the sets' files |
 | R2 | Rung 2 of the new tools and their methods (the orchestrator's) | T2 | Small: about 400, records |
 | R3 | Rung 3 of squint's tools on `blind-v3` under a cheap judge (the orchestrator's) | M1, R2 | Medium: about 600, gate files and records |
@@ -306,8 +306,10 @@ theirs; builders make no live call.
 
 **Waves.** Each from `main` once what it builds on has landed.
 
-1. **A0, M1, M2, B1, T1 and F1**, side by side. They share no source file but
-   `docs/carry-over.md`. Beside them, the code tasks no squint round waits on: **P0, L1, C1**
+1. **A0, M1, B1 and T1**, side by side. They share no source file but `docs/carry-over.md`.
+   **F1 and M2** when M1 has landed: F1 adds v3 to the arms `crates/whizbang-eval/src/
+   matrix.rs` reads, which M1 changes, and M2's command and M1's flags meet in
+   `crates/whizbang/src/eval.rs`. Beside them, the code tasks no squint round waits on: **P0, L1, C1**
    (its measurement waits for nothing paid) and **P1**.
 2. **T2** when T1 has landed; **D1** when B1 has landed, its fresh twins when M1 has too (the owner reviews the contact
    sheets); **L2** when L1 has landed.
@@ -322,7 +324,9 @@ theirs; builders make no live call.
 the rows the table "Carry-over rows owned by milestone E" gives it; the second to land in a
 wave merges `main`; N1 writes the rest. `crates/whizbang-squint/src/marks.rs`: A0, then T1
 and T2 add their records. `crates/whizbang-eval/src/gate.rs` and `crates/whizbang/src/
-gating.rs`: M1 alone. `crates/whizbang-squint/src/submission.rs` and `check.rs`: F1 alone.
+gating.rs`: M1 alone. `crates/whizbang-eval/src/matrix.rs`: M1, then F1 (the `submission`
+values an arm takes). `crates/whizbang/src/eval.rs`: M1, then M2 and F1, the second of them
+to land merging `main`. `crates/whizbang-squint/src/submission.rs` and `check.rs`: F1 alone.
 `pack/`: T1 (tool files), then T2 (the adapter). `crates/whizbang-rascal/src/checked.rs`: L1,
 then L2. `crates/whizbang-squint/src/view.rs` and `crates/whizbang-core/src/identity/`: P1
 alone. `docs/reference/`: whoever changes the description runs `just docs`. This plan's own
@@ -1034,6 +1038,8 @@ row on the panorama side of `view`):
    location) on 8 pictures of `labs/m3-edits/corpus.toml` with the strokes and locations it
    already holds; `seam` on 8 panoramas of `labs/m3-seam/corpus.toml`. In the order of the
    ladder: `remove_checked`, `seam`, `repair_area`, `repair`, `remove_prompt`, `remove`.
+   `remove_checked`'s runs are tier 2 ("Spend"): without the owner's yes it ends E
+   experimental, and its gate is not run.
 2. **The gates, frozen before the run** (M2): one `edit-gate/1` file a recipe,
    `gates/e-edit-rung3-<recipe>.toml`: task success is the share of finished edits that `check`
    under the default judge passes, at least 0.75, with its family-resampled 95% interval,
@@ -1046,7 +1052,7 @@ row on the panorama side of `view`):
    states. Too little data is inconclusive.
 3. **The run**, in E's store, SAM 3 on the Mac and Bria through fal; the cap of one call
    is `remove_checked`'s three-attempt bound under the default judge, plus a cent. Then the
-   pages, written to owner storage; the owner picks about 56 pairs; `eval edits gate`
+   pages, written to owner storage; the owner picks about 48 pairs (56 with tier 2); `eval edits gate`
    decides.
 4. **What it decides.** Passed: the recipe goes on to R6. Not passed: it ends E
    experimental, recorded.
@@ -1075,6 +1081,7 @@ row on the panorama side of `view`):
    lab pairs` write the sheet and the pages to owner storage; the owner marks and picks;
    `eval edits gate` decides.
 4. **What it decides.** Every measure passed: the recipe is admitted. Otherwise experimental.
+   `remove_checked` runs here only in tier 2, as in R5.
    **`segment` and `fill`** are credited with rungs 3 and 4 from `remove_prompt`'s
    receipts (section 8, "Earlier evidence counts"): every mask there is SAM 3's and every fill
    Bria's through fal, the same backends `segment` and `fill` default to. If `remove_prompt`
@@ -1213,7 +1220,7 @@ rounds on its sets (Haiku 0.00357, Terra 0.01106, Flash 0.01842, Sol 0.02238, Ar
 and over all sets for F2's dev round (Haiku 0.00352, Flash 0.01659). Argon's price doubles
 from 2026-11-30, so 0.0595 in every round of E; Flash's doubles from 2026-12-31. A tool's arm
 is taken at 1.5 times its control. Bria through fal at 0.04 a fill. These are estimates, not
-limits: the limits are each store's allowance, each call's cap and the builder's `--cap-usd`.
+limits: the limits are E's store's allowance, each call's cap and the builder's `--cap-usd`.
 
 **What E has left: 63.88 dollars** of the milestone's 100, since the first slice settled 36.12.
 
@@ -1222,46 +1229,52 @@ limits: the limits are each store's allowance, each call's cap and the builder's
 | Task | What is paid | Arithmetic | Estimate (dollars) |
 |---|---|---|---|
 | A0, M1, M2, B1, T1, T2, F1, P0, L1, L2, C1, P1 | Nothing: fakes in every test; SAM 3 and the fixed-class segmenter on the Mac | | 0 |
-| R2, V1, W1 | Nothing: local models and the owner's picks | | 0 |
+| R2, K1, V1, W1 | Nothing: local models and the owner's picks | | 0 |
 | D1 | About 70 pictures generated for 22 families and the seasonal pair, under `--cap-usd 8` | | 6 |
 | R3 | 143 items: Haiku under C and up to seven treatments | 143 × 0.00357 + 7 × 143 × 0.00357 × 1.5 | 5.9 |
 | F2 | 110 dev items under v1 and v3; 22 items of each version of the two source-fidelity dev sets in a matrix of their own; Haiku and Flash | (2 × 110 + 2 × 22) × (0.00352 + 0.01659) | 5.3 |
 | R4 | 110 items: C under five judges; the format under five; two tools under two; the plain twin under two | 12.6 + 12.6 + 4.8 + 1.6 | 31.7 |
 | C1 | If built: 20 fills for its rung 2 and 10 of the unshaped arm | 30 × 0.04 | 1.2 |
-| R5 | 56 runs, each a fill and a check by Argon; `remove_checked`'s 8 up to two more attempts | 72 × (0.04 + 0.0595) | 7.2 |
-| R6 | 30 fresh cases: 10 under four removals, 10 under two repairs, 10 panoramas; a loop's second attempt a fill and a check more | 80 × 0.04 + 20 × 0.0595 | 4.4 |
-| | **Expected** | | **about 62** |
+| R5 | 48 runs of the five recipes that are not a loop (and the clicked removal), each a fill and a check by Argon | 48 × (0.04 + 0.0595) | 4.8 |
+| R6 | 60 fills of the fresh cases under the recipes that are not a loop; the owner marks them, no judge | 60 × 0.04 | 2.4 |
+| | **Expected** | | **about 57** |
 
-If Flash's price has doubled before a round, the round changes so that tier 1 still fits: F2
-runs Haiku alone (4.0 less than its estimate), and R4's Flash cells cost 4.0 more, so R4's
-second tool's arms move to tier 2 (2.4 less), per-subject comparison keeping its slot: about
-60 if both rounds run after the date, about 63.4 if only R4 does.
+**`remove_checked`'s rounds are tier 2.** A loop reserves its three attempts' whole bound
+before it runs, about 11.73 under Argon at its new price (`docs/guides/loop.md`, "What it
+costs", the request bound doubled), and tier 1 leaves too little in E's store when R5 starts
+for even one. Its 18 runs would settle about 5.4. Without tier 2, `remove_checked` ends E
+experimental, said in its record; every other recipe climbs in tier 1.
 
-**Cuts, in this order, before a round that the re-forecast puts past the cap.** Before each
-paid round the orchestrator adds what was settled to the estimates of the rounds left. If the
-sum passes the cap: R4's second tool's arms move to tier 2; F2 runs Haiku alone; R5 runs 6
-cases a recipe instead of 8; then the round waits for the owner. Each cut is said in the
-round's record.
+**Headroom, and the cuts.** Before each paid round the orchestrator adds what E's store has
+settled and holds unresolved to the estimates of the rounds left, plus the largest single
+reservation among them (4 dollars, a check by Argon and a fill, while R5 or R6 is left). If
+the sum passes the allowance, cuts are made in this order until it does not: R4's second
+tool's arms move to tier 2; F2 runs Haiku alone; R5 runs 6 cases a recipe instead of 8; then
+the round waits for the owner. If Flash's price has doubled before F2 or R4, that round's
+estimate is taken at the new price in the same sum: R4 then costs 4.0 more, F2 4.0 more
+unless it runs Haiku alone. Each cut is said in the round's record. Per-subject comparison
+keeps its slot in R4 through every cut.
 
-**Cap: 63.5 dollars settled**, counted across every store and the builder's total. A round that
-would take the milestone past it does not start; a round that passes twice its estimate stops
+**Cap: 63.5 dollars settled** of the 63.88: E's store's allowance (55.5) and the builder's
+`--cap-usd 8`, each enforced where it is spent. A round that passes twice its estimate stops
 and is said. There is no allowance for a round run again after a fix: that is tier 2.
 
-**Tier 2, only on the owner's yes** ("I need", item 2), about 40 more:
+**Tier 2, only on the owner's yes** ("I need", item 2), about 45 more:
 
 | What | Estimate (dollars) |
 |---|---|
+| `remove_checked`'s rounds: 8 loops in R5, 10 in R6, with the headroom of one loop's reservation | 5.4 settled, 12 held |
 | The study's comparison repeated: `regions` on Flash, two repetitions of C and of `C+regions` on `confirm-v1` (one of C is tier 1's) | 8 (16 after Flash's price doubles) |
 | Flash beside Haiku and Terra in each tool's gate on fresh data | 3 a tool |
 | A third tool's arms on fresh data | 2.4 |
 | One round run again after a fix | 10 |
-| A margin for prices and retries of the loop | 10 |
 
-**E needs more than it has left.** Tier 1 spends nearly all of the 63.88 and leaves nothing
-for a round run again, and it confirms at most two tools on fresh data. Tier 2 lets the
-study's one claim be tested rather than withdrawn, reads tools under a third judge and allows
-a rerun. So this plan asks the owner to raise E's ceiling to 140 dollars in all ("I need",
-item 2), and plans nothing past 100 without that yes.
+**E needs more than it has left.** Tier 1 spends nearly all of the 63.88: it cannot run the
+loop's rounds, it confirms at most two tools on fresh data, and it leaves nothing for a round
+run again. Tier 2 lets `remove_checked` climb, the study's one claim be tested rather than
+withdrawn, tools be read under a third judge, and a rerun. So this plan asks the owner to
+raise E's ceiling to 145 dollars in all ("I need", item 2), and plans nothing past 100
+without that yes.
 
 **Stores, and how the cap is enforced.** Every paid round of E's runs in one new store, E's
 store, whose allowance is the milestone's cap less what the builder may spend: 63.5 less D1's
@@ -1269,13 +1282,15 @@ store, whose allowance is the milestone's cap less what the builder may spend: 6
 request is sent (section 6), so the ledger itself stops E at its cap, with reservations still
 open counted; nothing waits for a round to end. The two stores of the first slice keep their
 records and take no run of this plan. Setting the allowance is a reset, the owner's, once,
-before R3 ("I need", item 1); with tier 2 the owner sets it again, 40 more. A forecast is
-advice, not a limit (section 6): R4's matrix forecasts about 55 at the study's rates doubled,
-more than will be left when it starts, and `eval matrix` refuses a forecast past what is left;
-so M1, item 12 lets the orchestrator run a matrix past its forecast with the allowance alone
-holding it, a stopped matrix resuming. A loop reserves its three attempts' whole bound, about
-11.73 under Argon at its new price (`docs/guides/loop.md`, "What it costs", the request bound
-doubled), so R5 and R6 run with at least that much left, or wait.
+before R3 ("I need", item 1). A reset closes the books (section 6): what was settled before
+it no longer counts against the new allowance. So if the owner says yes to tier 2, the new
+allowance is what is left of the approved total, not 40 more: 145 less 36.12, less the
+builder's total, less what E's store has settled and holds unresolved, as `whizbang spend
+status` gives them on the day; the orchestrator gives the owner that figure and the command.
+A forecast is advice, not a limit (section 6): R4's matrix forecasts about 55 at the study's
+rates doubled, more than will be left when it starts, and `eval matrix` refuses a forecast
+past what is left; so M1, item 12 lets the orchestrator run a matrix past its forecast with
+the allowance alone holding it, a stopped matrix resuming.
 
 ## Dependencies
 
@@ -1293,6 +1308,7 @@ C1 ──────────────────┤
 P1 ──────────────────┘
 ```
 
+- F1 and M2 after M1: they change files M1 changes first.
 - T2 after T1: its methods extend T1's tools.
 - R2 after T2: both methods of each tool are scored together.
 - R3 after M1 and R2: several gates on one matrix, the second look under C, and only tools
@@ -1342,7 +1358,7 @@ P1 ──────────────────┘
 - **V1**: the picks of the five pages (about 126 pairs) and the marks of the loop's contact
   sheet.
 - **C1, if built**: the marks of 20 finished pictures and the picks of 10 pairs.
-- **R5**: the picks of about 56 pairs of its runs.
+- **R5**: the picks of about 48 pairs of its runs (56 with tier 2).
 - **R6**: in owner storage, 10 of your own photos, each of a different scene with the phrase of
   what to remove; 10 photos with a scratch or a tear, each with a stroke and an area you draw
   in the playground and export; 10 panoramas not used before. Then the marks of R6's sheets
@@ -1364,17 +1380,20 @@ P1 ──────────────────┘
 - Details first, `resize` and `tiles` end E experimental.
 - At most one change to source fidelity's default recipe comes out of E: the format, or else
   one tool.
-- Expected spend about 62 dollars of the 63.88 E has left; cap 63.5.
+- Expected spend about 57 dollars of the 63.88 E has left; cap 63.5. `remove_checked`'s
+  rounds need tier 2.
 
 ## I need
 
 1. **I need your yes to one allowance: a new store for E's rounds at 55.5 dollars** (yes/no):
    the 63.5 cap less the 8 the set builder may spend outside any store. It is a reset, which
    is yours (section 6), and it makes the ledger enforce E's cap at every request. If item 2
-   is yes, you set it 40 higher. Without it no paid round can start.
-2. **I need a yes or no: may milestone E spend up to 140 dollars in all, instead of 100?** The
-   first slice settled 36.12, tier 1 needs about 62 more, and tier 2 (the study's claim
-   tested, a third judge on each tool, a rerun, a margin) about 40. Recommended: yes. With
+   is yes, you reset it once more to what is left of the 145, a figure the orchestrator
+   gives you with the command. Without it no paid round can start.
+2. **I need a yes or no: may milestone E spend up to 145 dollars in all, instead of 100?** The
+   first slice settled 36.12, tier 1 needs about 57 more and holds back the rest of the 100,
+   and tier 2 (the loop's rounds, the study's claim tested, a third judge on each tool, a
+   rerun) about 45. Recommended: yes. With
    no, tier 2 does not run and the study's claim is withdrawn.
 3. **I need a yes or no: may a use case of `check` whose gate on fresh data is not run or not
    cleared in E end E unverified, as the default it is today?** That is the four use cases
@@ -1562,4 +1581,20 @@ against the code; all were right and taken.
    one.
 4. **Minor: `+` cannot be in a recipe's name.** Right (`contract/text.rs`). Taken:
    `source-fidelity-<tool>`.
+
+### Review round 7
+
+On draft 7, by the Codex CLI. Verdict: revise. Round 6's fixes held but for its finding 1,
+completed by this round's findings 1 and 2. Three findings: 2 majors, 1 minor. Each was
+checked against the code; all were right and taken.
+
+1. **Major: a second reset for tier 2 would free what was already spent.** Right (section 6, a
+   reset closes the books; `spend.rs`). Taken: the new allowance is what is left of the
+   approved total, less everything settled and unresolved, given to the owner as a figure.
+2. **Major: the single store left no room for a loop's reservation.** Right: tier 1 settles
+   nearly all of it, and a loop reserves about 11.73. Taken: `remove_checked`'s rounds move to
+   tier 2 (it ends E experimental without it); the re-forecast before each round counts the
+   largest reservation left; tier 1 is now about 57; tier 2 about 45, the ceiling asked 145.
+3. **Minor: M1, F1 and M2 share files.** Right (`matrix.rs`, `eval.rs`). Taken: F1 and M2
+   start when M1 has landed, and the shared files name their order.
 
