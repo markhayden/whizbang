@@ -1,7 +1,7 @@
 # Plan: milestone E, evidence and edit quality
 
-Draft 6, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
-note of milestone 7), after five outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
+Draft 7, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
+note of milestone 7), after six outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
 quality". Its first slice ran beside milestone 5 (`docs/plans/e1-judge-format-loop.md`,
 `docs/plans/e1-note.md`) and chose the default judge and kept the submission format on
 descriptive evidence. This plan is the rest of the milestone: every unverified tool and
@@ -356,7 +356,7 @@ reported in its pull request. Every test that calls a provider or a real model i
    dollars. What is left of the milestone's 100: 63.88. What each store has left, read by
    `whizbang spend status`: the evaluation store about 40.94 (70 less 29.06), the loop store
    about 17.71 (25 less 7.07 and milestone 5's 0.22). Written into this plan's "Spend" as
-   read, before any round.
+   read, before any round. Neither takes a run of this plan: E's store does ("Spend").
 3. **Every mark shown, and `align` as a control** (gaps 1 and 2). `marks::stated` reads both
    phrasings a record uses, `**Unverified**` and `**Mark.** Experimental`; `RECORDS` gains
    every record whose tool the upper rungs apply to, rascal's included (`remove`,
@@ -439,7 +439,7 @@ reported in its pull request. Every test that calls a provider or a real model i
 6. **`judge-pick/2`** in `--mode judges` (R4): `judge-pick/1`'s clauses, with a minimum of 20
    families below which the outcome is inconclusive; the interval at the level the matrix's
    correction gives it, with enough resamples that each tail holds at least 20 draws (at 13
-   hypotheses, 2,000 leave about 4: `judges.rs` fixes 2,000; `judge-pick/2` takes 20,000) and
+   hypotheses, 2,000 leave about 4: `judges.rs` fixes 2,000; `judge-pick/2` takes 20,000, enough for 16) and
    an unresolved tail inconclusive, as `bootstrap.rs` rules for gates; the runs read from a
    matrix whose cells `eval matrix` made, gates or not (today `eval judges` passes over runs
    that carry a gate); and **`--set <id>`**, repeatable, so that only those sets are scored and
@@ -478,6 +478,12 @@ reported in its pull request. Every test that calls a provider or a real model i
     labels; a test holds that a set under another root runs and scores, that a label folder at
     or below the sets' folder is refused, and that no record or receipt names the root's path.
     `gating::a_set_under_another_root_is_scored_and_its_path_is_nowhere`.
+12. **A matrix run past its forecast.** `eval matrix --past-forecast` prints the forecast and
+    runs anyway, each run admitted against the allowance as any run is, so the allowance,
+    which is enforced, holds the matrix and not the forecast, which is advice (section 6). A
+    run refused for the allowance ends the matrix with the cells left to run named by count;
+    run again after a new allowance, it resumes. Without the flag the refusal stands as today.
+    `matrix::past_its_forecast_a_matrix_stops_at_the_allowance_and_resumes`.
 
 - [ ] Done when: both pull requests are merged and their tests pass. **Reviewer reads
   hardest:** that a version 2 gate and a matrix without lists score exactly as before; that a
@@ -675,10 +681,13 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
      change carries its findings inside it. A mandatory item names one obligation instance,
      which the finding cites. A reference item can name several: the finding then lists which
      of that item's instances it bears on, from an enum the schema writes per item (so it
-     cannot name one outside it), and none listed means all of them. The rules of
-     `finding_cites` hold by construction; what stays checkable (a finding under an item
-     answered `holds`, a finding on an exemption's item) is a rejection of its own class,
-     counted.
+     cannot name one outside it), and none listed means all of them. The finding keeps its
+     own disposition, as v1's does, and the verdict is worked out from the strictest result,
+     as v1 works it (`submission.rs`); v1's checks on a finding's own disposition and on its
+     location against the obligations it cites stay, applied to the obligations read from
+     the item. What nesting makes impossible is a citation that is missing or not of the
+     list; a finding on an exemption's item is refused, as v1 refuses citing one. No new
+     consistency rule between an item's answer and its findings is added.
    - **An observed finding**: kept as v1 has it, in a separate list, citing observation rules
      by id, under v1's rule that it cites observation rules alone (`submission.rs`). v2's one repair naming every problem, and its recoveries, are kept. The verdict
    is worked out from the items and findings exactly as v1's is, after the findings are read
@@ -689,7 +698,8 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    reference item of several instances (some listed, none listed) and an observed finding; the new classes counted in
    `rejections/2`; v1 byte for byte unchanged.
    `submission::v3_reads_back_to_the_v1_submission_it_stands_for`;
-   `submission::a_finding_under_an_item_that_holds_is_rejected_in_v3`;
+   `submission::a_finding_on_an_exemptions_item_is_refused_in_v3`;
+   `submission::v3_keeps_v1s_location_checks_on_the_items_obligations`;
    `submission::v1_is_unchanged`.
 5. **ADR 0042 amended**: v3, and why it is shaped by the classes counted.
 
@@ -754,7 +764,7 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    `C+regions` (if it passed R2) and `C+per_subject`. The spec's defaults (section 8,
    "Gates"), false accepts as a guardrail too, families at least 20 (the set has 24),
    Bonferroni over every treatment of the matrix.
-2. **The run**, in the evaluation store, `blind-v3`'s labels by `--labels <owner storage>`;
+2. **The run**, in E's store, `blind-v3`'s labels by `--labels <owner storage>`;
    then each gate scored by `eval run --gate`.
 3. **What a receipt decides.** Admitted at rung 3 means the treatment goes on to R4; it admits
    nothing (A0, item 4). Rejected or inconclusive: the tool ends E **experimental**, or
@@ -809,17 +819,17 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    **experimental**, its record saying it passed rung 3 and that its confirmation on fresh data
    is owed, in a carry-over row opened by N1.
    **The hypotheses**, counted together in one Bonferroni correction: two for each tool,
-   five for the format, two for the requirements, four for the judge's rule (each of the four
-   judges that is not the best is compared with it, `judges.rs`, and each comparison is a
-   hypothesis; the pick is the cheapest of those within the margin, so each is counted), and,
-   if tier 2 runs, one for the study's comparison and two for each tool's Flash and third
-   arms: at most 15 in tier 1.
+   five for the format, two for the requirements, five for the judge's rule (every eligible
+   judge gets an interval against the best, chosen again inside each resample, the best
+   included, `judges.rs`; each is counted, which is conservative), and, if tier 2 runs, one
+   for the study's comparison and two for each tool's Flash and third arms: at most 16 in
+   tier 1.
 3. **The judge's gate**: `judge-pick/2` (M1, item 6) on `confirm-v1` under arm C, at the
    round's corrected level, inconclusive below 20 families. The pick is admitted as the
    default judge, and source fidelity with it (A0, item 4); no pick, or inconclusive, leaves
    both unverified ("I need", item 3). ADR 0044 is amended by the outcome.
-4. **The run**, in a new store, the confirmation store, whose allowance the owner sets ("I
-   need", item 1); sets by `--root <owner storage>`, pictures by `eval sets fetch --from
+4. **The run**, in E's store ("Spend", "Stores"), past its forecast with `--past-forecast`
+   (M1, item 12); sets by `--root <owner storage>`, pictures by `eval sets fetch --from
    <owner storage>`, labels by `--labels <owner storage>`. The cap of one call: the largest
    one-check bound among the five judges under the dearest arm, plus a cent.
 5. **What each receipt decides.**
@@ -831,7 +841,8 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    - **The requirements**: admitted when both judges' comparisons are; then B1's builder
      writes full requirements by default. It changes no recipe.
    - **A tool**: admitted when both judges' comparisons are, as a recipe of its own (gap 10):
-     a variant of source fidelity, `source-fidelity+<tool>`, its file the use case's with that
+     a variant of source fidelity, `source-fidelity-<tool>` (for example
+     `source-fidelity-per_subject`, a name the action validator takes), its file the use case's with that
      one tool offered, under v1. That variant is admitted, for the two judges its gate
      measured, and the tool is on by default in it. Source fidelity itself does not change for
      a tool, whatever judge is the default: under any judge other than the two, the variant
@@ -1033,7 +1044,7 @@ row on the panorama side of `view`):
    runs against the source picture, picked by the owner and decoded under P0's protocol
    version 2, `preferred` or `not_worse`; operational errors under 10%; cost and latency as M2
    states. Too little data is inconclusive.
-3. **The run**, in the loop store, SAM 3 on the Mac and Bria through fal; the cap of one call
+3. **The run**, in E's store, SAM 3 on the Mac and Bria through fal; the cap of one call
    is `remove_checked`'s three-attempt bound under the default judge, plus a cent. Then the
    pages, written to owner storage; the owner picks about 56 pairs; `eval edits gate`
    decides.
@@ -1060,7 +1071,7 @@ row on the panorama side of `view`):
    the mask exact; blinded quality from a lab round against the source picture as reference
    arm, `preferred` or `not_worse` by P0's protocol version 2, at least 8 pairs picked; cost
    and latency as M2 states. Section 8: the marks and picks are not squint's.
-3. **The run** in the loop store; `eval loop sheet` for any recipe (M2, item 3) and `whizbang
+3. **The run** in E's store; `eval loop sheet` for any recipe (M2, item 3) and `whizbang
    lab pairs` write the sheet and the pages to owner storage; the owner marks and picks;
    `eval edits gate` decides.
 4. **What it decides.** Every measure passed: the recipe is admitted. Otherwise experimental.
@@ -1252,17 +1263,19 @@ study's one claim be tested rather than withdrawn, reads tools under a third jud
 a rerun. So this plan asks the owner to raise E's ceiling to 140 dollars in all ("I need",
 item 2), and plans nothing past 100 without that yes.
 
-**Stores.** R3 and F2 run in the evaluation store (about 40.94 left): their forecasts, at the
-study's rates doubled, are under 15 together. R4 needs a store of its own: its forecast, at
-the study's rates doubled, is about 55 in tier 1 and about 105 with tier 2, more than any
-store has left. So the confirmation store's first allowance is set from the frozen matrix:
-its forecast, as `eval matrix` prints it before anything runs, plus 5, at most 75 dollars in
-tier 1 and at most 110 with tier 2. It is a reset and the owner's ("I need", item 1). The allowance is a guard; what counts is settled. C1, R5 and R6 run in the loop store
-(about 17.71 left), but a loop reserves its whole bound when admitted: under Argon at its new
-price, three attempts reserve about 11.73 (`docs/guides/loop.md`, "What it costs", with
-Argon's request bound doubled), and R5 is expected to settle about 7.2 first, so R6 could be
-refused with what is left. The loop store's allowance is reset to 30 dollars before C1's rung
-2, also the owner's ("I need", item 1).
+**Stores, and how the cap is enforced.** Every paid round of E's runs in one new store, E's
+store, whose allowance is the milestone's cap less what the builder may spend: 63.5 less D1's
+`--cap-usd 8`, so 55.5 dollars. A store's allowance is enforced at each admission, before a
+request is sent (section 6), so the ledger itself stops E at its cap, with reservations still
+open counted; nothing waits for a round to end. The two stores of the first slice keep their
+records and take no run of this plan. Setting the allowance is a reset, the owner's, once,
+before R3 ("I need", item 1); with tier 2 the owner sets it again, 40 more. A forecast is
+advice, not a limit (section 6): R4's matrix forecasts about 55 at the study's rates doubled,
+more than will be left when it starts, and `eval matrix` refuses a forecast past what is left;
+so M1, item 12 lets the orchestrator run a matrix past its forecast with the allowance alone
+holding it, a stopped matrix resuming. A loop reserves its three attempts' whole bound, about
+11.73 under Argon at its new price (`docs/guides/loop.md`, "What it costs", the request bound
+doubled), so R5 and R6 run with at least that much left, or wait.
 
 ## Dependencies
 
@@ -1355,12 +1368,10 @@ P1 ──────────────────┘
 
 ## I need
 
-1. **I need your yes to two allowances: a new confirmation store at the frozen matrix's
-   forecast plus 5 dollars (at most 75 in tier 1, at most 110 if item 2 is yes), and the loop
-   store reset to 30** (yes/no). Each is a reset, which is yours (section 6). A forecast
-   doubles the expected spend, and a loop reserves its three attempts' whole bound before it
-   runs. They are guards; the milestone's cap is what counts. Without them R4 and R6 cannot
-   start.
+1. **I need your yes to one allowance: a new store for E's rounds at 55.5 dollars** (yes/no):
+   the 63.5 cap less the 8 the set builder may spend outside any store. It is a reset, which
+   is yours (section 6), and it makes the ledger enforce E's cap at every request. If item 2
+   is yes, you set it 40 higher. Without it no paid round can start.
 2. **I need a yes or no: may milestone E spend up to 140 dollars in all, instead of 100?** The
    first slice settled 36.12, tier 1 needs about 62 more, and tier 2 (the study's claim
    tested, a third judge on each tool, a rerun, a margin) about 40. Recommended: yes. With
@@ -1530,4 +1541,25 @@ against the code; all were right and taken.
    forecast past what is left). Taken: the allowance is the frozen matrix's forecast plus 5,
    at most 75 or 110, and "I need", item 1 asks for that.
 6. **Minor: D1's fresh twins need M1's `--held-out`.** Right. Taken.
+
+### Review round 6
+
+On draft 6, by the Codex CLI. Verdict: revise. Round 5's fixes held but for the wording of
+its findings 1 to 3, completed here. Four findings: 1 major, 3 minors. Each was checked
+against the code; all were right and taken.
+
+1. **Major: nothing enforced E's cap while a round ran.** Right (`harness.rs` holds a store's
+   allowance, not a milestone's). Taken: every paid round runs in one new store whose
+   allowance is the cap less the builder's own cap, so admission enforces it at each request;
+   M1, item 12 lets a matrix run past its forecast with the allowance holding it. "I need",
+   item 1 asks for that one allowance.
+2. **Minor: the judge rule's comparisons were miscounted.** Right (`judges.rs` gives every
+   eligible judge an interval, the best included). Taken: five, counted conservatively; at
+   most 16 in tier 1.
+3. **Minor: v3 described a rule v1 does not have.** Right (`submission.rs` checks a finding's
+   own disposition). Taken: v3 keeps the finding's disposition and v1's location checks, adds
+   no new consistency rule, and refuses a finding on an exemption's item as v1 refuses citing
+   one.
+4. **Minor: `+` cannot be in a recipe's name.** Right (`contract/text.rs`). Taken:
+   `source-fidelity-<tool>`.
 
