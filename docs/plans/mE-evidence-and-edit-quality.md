@@ -1,7 +1,7 @@
 # Plan: milestone E, evidence and edit quality
 
-Draft 5, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
-note of milestone 7), after four outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
+Draft 6, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
+note of milestone 7), after five outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
 quality". Its first slice ran beside milestone 5 (`docs/plans/e1-judge-format-loop.md`,
 `docs/plans/e1-note.md`) and chose the default judge and kept the submission format on
 descriptive evidence. This plan is the rest of the milestone: every unverified tool and
@@ -168,9 +168,10 @@ task item or a question at the end; none is settled silently.
     "on by default"; a recipe is admitted as its combination of tools, order and settings
     (section 3, "Primitives, recipes and loops"), and changing it returns it to unverified. A
     tool's gate on fresh data measures it under the judges and format of its matrix, not under
-    every judge a user may choose. Fix: A0, item 4 writes into section 8 that an admitted tool
-    is on by default in the combination its gate measured, and one flag away under any other
-    until a gate of that combination; R4, item 5 applies it.
+    every judge a user may choose. Fix: A0, item 4 writes into section 8 that a tool is
+    admitted as the recipe its gate measured (a use case with that tool offered), on by
+    default in that recipe and for the judges measured; R4, item 5 applies it, one variant a
+    tool.
 
 ## Choices this plan makes
 
@@ -286,7 +287,7 @@ theirs; builders make no live call.
 | T1 | `outline`, then `regions`, as tool files on SAM 3; the rules' `[hints]` and the checklist's evidence from regions | `main` | Large, two pull requests: about 1,100 (`outline`), then about 1,200 (`regions` and the rules) |
 | T2 | The fixed-class segmenter as a catalogue entry that labels every pixel; `classes`; the `method` of `regions` and `outline` | T1 | Large, two pull requests: about 1,400 (the adapter, its entry, conformance), then about 1,000 (`classes`, the methods) |
 | F1 | Submission v3; Haiku's invalid submissions counted by rule | `main` | Medium: about 1,400 |
-| D1 | The new set versions and the fresh set (the orchestrator's, with the owner) | B1 | Medium: about 500, and the sets' files |
+| D1 | The new set versions and the fresh set (the orchestrator's, with the owner) | B1; the fresh twins also M1 (`--held-out`) | Medium: about 500, and the sets' files |
 | R2 | Rung 2 of the new tools and their methods (the orchestrator's) | T2 | Small: about 400, records |
 | R3 | Rung 3 of squint's tools on `blind-v3` under a cheap judge (the orchestrator's) | M1, R2 | Medium: about 600, gate files and records |
 | F2 | The dev round of the format and the requirements (the orchestrator's) | F1, M1, D1 | Small: about 400, a matrix and records |
@@ -308,7 +309,7 @@ theirs; builders make no live call.
 1. **A0, M1, M2, B1, T1 and F1**, side by side. They share no source file but
    `docs/carry-over.md`. Beside them, the code tasks no squint round waits on: **P0, L1, C1**
    (its measurement waits for nothing paid) and **P1**.
-2. **T2** when T1 has landed; **D1** when B1 has landed (the owner reviews the contact
+2. **T2** when T1 has landed; **D1** when B1 has landed, its fresh twins when M1 has too (the owner reviews the contact
    sheets); **L2** when L1 has landed.
 3. **R2** and **K1** when T2 has landed; then **R3** (and M1); **F2** when F1, M1 and D1's dev versions
    have landed.
@@ -371,9 +372,9 @@ reported in its pull request. Every test that calls a provider or a real model i
    under "The ladder" (a rung 3 gate decides whether a tool goes on; only a rung 4 gate on
    fresh data admits), one under the table of kinds (a use case's rung 3 is a judge round
    under a rule frozen before it; its rung 4 is `judge-pick/2` on a fresh set of that use
-   case), and one under "Marks" (an admitted tool is on by default in the recipe, judges and
-   format its gate measured; under another judge or format it is one flag away until a gate
-   of that combination). If the owner says yes to "I need", item 3, row E gains: "a use case
+   case), and one under "Marks" (a tool is admitted as the recipe its gate measured, a use case
+   with that tool offered, on by default in it, for the judges measured; another combination
+   needs a gate of its own). If the owner says yes to "I need", item 3, row E gains: "a use case
    of `check` whose gate on fresh data is not run or not cleared in E ends E unverified, the
    default it was". This is the spec brought in line with a reviewed plan.
 5. **Details first's end.** Its record and `docs/reference/tools/source-fidelity.md` say it
@@ -393,11 +394,14 @@ reported in its pull request. Every test that calls a provider or a real model i
 1. **A matrix that runs only the cells it names.** Today a matrix runs every set, item, judge,
    arm and repetition together (`crates/whizbang-eval/src/matrix.rs`, `Matrix::cells`), so
    R4's design would cost about five times its estimate. A judge's table may list the arms it
-   runs (`arms = [...]`), and a set's table may list the arms and judges it runs; a cell
-   outside both is not a cell. The forecast, the resume and the completeness checks count
+   runs (`arms = [...]`), each with its own `repetitions` where it differs from the judge's,
+   and a set's table may list the arms and judges it runs; a cell outside both is not a cell.
+   So R4's tier 2 repeats Flash's C and `C+regions` cells twice without repeating its other
+   arms. The forecast, the resume and the completeness checks count
    only the cells the matrix names. A matrix without these lists names every cell, as
    today, with the same identity. `matrix::a_judge_runs_only_its_arms`;
-   `matrix::a_matrix_without_lists_keeps_its_cells_and_identity`.
+   `matrix::a_matrix_without_lists_keeps_its_cells_and_identity`;
+   `matrix::an_arm_of_a_judge_repeats_on_its_own`.
 2. **The second look under arm C.** `Arm::validate` refuses details and the second look on
    arm C ("C is the control"). The second look is not a detail measured first: it is one more
    turn after a submission that left an item tentative (`docs/results/m3-unsure.md`). Arm C
@@ -664,18 +668,25 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    evidence ids of calls the run does not hold (`use_case/v2.rs`, `evidence`), a different
    field. v3 makes the citation structural.
 3. **v3.** v1's list of items, each with its checklist id (no keyed object: Flash faulted 14
-   times under v2's). A finding is no longer a separate list citing obligations by id: an
-   item whose answer is a violation, `cant_tell` or an allowed change carries its findings
-   inside it, and each finding's obligations are read from that item (its checklist id names
-   the obligation instance it was made from). The rules of `finding_cites` then hold by
-   construction for the item it is written in; what remains checkable (a finding under an
-   item answered `holds`, a finding on an exemption's item) is a rejection of its own class,
-   counted. v2's one repair naming every problem, and its recoveries, are kept. The verdict
+   times under v2's). Findings come in the two kinds the checklist already has
+   (`crates/whizbang-squint/src/use_case/render.rs`, which makes items for mandatory
+   obligations and references and asks for observed findings apart):
+   - **A finding on an item**: an item whose answer is a violation, `cant_tell` or an allowed
+     change carries its findings inside it. A mandatory item names one obligation instance,
+     which the finding cites. A reference item can name several: the finding then lists which
+     of that item's instances it bears on, from an enum the schema writes per item (so it
+     cannot name one outside it), and none listed means all of them. The rules of
+     `finding_cites` hold by construction; what stays checkable (a finding under an item
+     answered `holds`, a finding on an exemption's item) is a rejection of its own class,
+     counted.
+   - **An observed finding**: kept as v1 has it, in a separate list, citing observation rules
+     by id, under v1's rule that it cites observation rules alone (`submission.rs`). v2's one repair naming every problem, and its recoveries, are kept. The verdict
    is worked out from the items and findings exactly as v1's is, after the findings are read
    back to v1's form, so `check`'s rules are unchanged. `submission = "v3"` on `check`, the
    recipes and a matrix arm, as v2's setting is (ADR 0042, item 1); the default stays `v1`.
 4. **Tests**: a provider conformance fixture of v3 for each adapter; v3 read back to v1's
-   form gives the same verdict as the v1 submission it stands for; the new classes counted in
+   form gives the same verdict as the v1 submission it stands for, for a mandatory item, a
+   reference item of several instances (some listed, none listed) and an observed finding; the new classes counted in
    `rejections/2`; v1 byte for byte unchanged.
    `submission::v3_reads_back_to_the_v1_submission_it_stands_for`;
    `submission::a_finding_under_an_item_that_holds_is_rejected_in_v3`;
@@ -798,8 +809,11 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    **experimental**, its record saying it passed rung 3 and that its confirmation on fresh data
    is owed, in a carry-over row opened by N1.
    **The hypotheses**, counted together in one Bonferroni correction: two for each tool,
-   five for the format, two for the requirements, one for the judge's rule, and, if tier 2
-   runs, one for the study's comparison: at most 13 in tier 1.
+   five for the format, two for the requirements, four for the judge's rule (each of the four
+   judges that is not the best is compared with it, `judges.rs`, and each comparison is a
+   hypothesis; the pick is the cheapest of those within the margin, so each is counted), and,
+   if tier 2 runs, one for the study's comparison and two for each tool's Flash and third
+   arms: at most 15 in tier 1.
 3. **The judge's gate**: `judge-pick/2` (M1, item 6) on `confirm-v1` under arm C, at the
    round's corrected level, inconclusive below 20 families. The pick is admitted as the
    default judge, and source fidelity with it (A0, item 4); no pick, or inconclusive, leaves
@@ -816,12 +830,15 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
      of item 3 was too.
    - **The requirements**: admitted when both judges' comparisons are; then B1's builder
      writes full requirements by default. It changes no recipe.
-   - **A tool**: admitted when both judges' comparisons are, in the combination its gate
-     measured: source fidelity under v1, Haiku or Terra (gap 10). It is on by default only
-     there; under the default judge, or beside an admitted format, it stays one flag away, and
-     a carry-over row is opened for the gate of that combination. Its record and `describe`
-     say so. Source fidelity's default recipe therefore changes in E by the format alone, or
-     not at all, and its record names the combination its receipt measured.
+   - **A tool**: admitted when both judges' comparisons are, as a recipe of its own (gap 10):
+     a variant of source fidelity, `source-fidelity+<tool>`, its file the use case's with that
+     one tool offered, under v1. That variant is admitted, for the two judges its gate
+     measured, and the tool is on by default in it. Source fidelity itself does not change for
+     a tool, whatever judge is the default: under any judge other than the two, the variant
+     is named and runs, but its record says it was not confirmed there. Two tools that pass
+     make two variants, never one recipe with both; a combination is a later gate, a carry-
+     over row. Source fidelity's default recipe therefore changes in E by the format alone, or
+     not at all.
    - Rejected or inconclusive: a tool ends E experimental, or dropped by R3's rule; the
      format stays v1; the wording stays plain.
 6. **The records**: `docs/results/e-confirm.md` and its TOML; each record's "Mark and history";
@@ -1237,9 +1254,10 @@ item 2), and plans nothing past 100 without that yes.
 
 **Stores.** R3 and F2 run in the evaluation store (about 40.94 left): their forecasts, at the
 study's rates doubled, are under 15 together. R4 needs a store of its own: its forecast, at
-the study's rates doubled, is about 55 in tier 1, more than any store has left, so the
-confirmation store's first allowance, 75 dollars, is a reset and the owner's ("I need", item
-1). The allowance is a guard; what counts is settled. C1, R5 and R6 run in the loop store
+the study's rates doubled, is about 55 in tier 1 and about 105 with tier 2, more than any
+store has left. So the confirmation store's first allowance is set from the frozen matrix:
+its forecast, as `eval matrix` prints it before anything runs, plus 5, at most 75 dollars in
+tier 1 and at most 110 with tier 2. It is a reset and the owner's ("I need", item 1). The allowance is a guard; what counts is settled. C1, R5 and R6 run in the loop store
 (about 17.71 left), but a loop reserves its whole bound when admitted: under Argon at its new
 price, three attempts reserve about 11.73 (`docs/guides/loop.md`, "What it costs", with
 Argon's request bound doubled), and R5 is expected to settle about 7.2 first, so R6 could be
@@ -1337,9 +1355,10 @@ P1 ──────────────────┘
 
 ## I need
 
-1. **I need your yes to two allowances: a new confirmation store at 75 dollars, and the loop
-   store reset to 30** (yes/no). Each is a reset, which is yours (section 6). R4's forecast
-   doubles its expected 32, and a loop reserves its three attempts' whole bound before it
+1. **I need your yes to two allowances: a new confirmation store at the frozen matrix's
+   forecast plus 5 dollars (at most 75 in tier 1, at most 110 if item 2 is yes), and the loop
+   store reset to 30** (yes/no). Each is a reset, which is yours (section 6). A forecast
+   doubles the expected spend, and a loop reserves its three attempts' whole bound before it
    runs. They are guards; the milestone's cap is what counts. Without them R4 and R6 cannot
    start.
 2. **I need a yes or no: may milestone E spend up to 140 dollars in all, instead of 100?** The
@@ -1486,4 +1505,29 @@ majors, 1 minor. Each was checked against the code; all were right and taken.
    E experimental, its confirmation owed in a carry-over row.
 7. **Minor: C1's fills left out the unshaped arm.** Right. Taken: 30 fills, 1.2 dollars; the
    totals restated.
+
+### Review round 5
+
+On draft 5, by the Codex CLI. Verdict: revise. Round 4's fixes held but for its finding 1,
+completed by this round's finding 1. Six findings: 5 majors, 1 minor. Each was checked
+against the code; all were right and taken.
+
+1. **Major: v3 had no place for an observed finding, and a reference item names several
+   instances.** Right (`render.rs` makes items for mandatory obligations and references and
+   asks for observations apart; `submission.rs`). Taken: observed findings stay in v1's
+   separate list; a finding on a reference item lists which of its instances it bears on,
+   from an enum per item; tests of each read back to v1.
+2. **Major: the judge's rule was counted as one hypothesis.** Right (`judges.rs` compares each
+   judge with the best and picks the cheapest within the margin). Taken: four hypotheses, one
+   for each comparison; at most 15 in tier 1.
+3. **Major: two tools that pass had no defined default.** Right. Taken: each admitted tool is
+   admitted as a recipe variant of its own, `source-fidelity+<tool>`, for the judges its gate
+   measured; source fidelity changes for the format alone; a combination of tools is a later
+   gate.
+4. **Major: repetitions could not differ by arm.** Right (`matrix.rs`, a judge's repetitions
+   apply to every arm). Taken: M1, item 1 lets an arm of a judge state its own repetitions.
+5. **Major: 75 dollars could not hold tier 2's forecast.** Right (`harness.rs` refuses a
+   forecast past what is left). Taken: the allowance is the frozen matrix's forecast plus 5,
+   at most 75 or 110, and "I need", item 1 asks for that.
+6. **Minor: D1's fresh twins need M1's `--held-out`.** Right. Taken.
 
