@@ -6,7 +6,7 @@ import { localStore } from "../../drafts";
 import { dollars, elapsed, middle } from "../../format";
 import { useArtifact, useImageSize } from "../../hooks";
 import { hrefOf } from "../../routes";
-import { fetchCompare, pictureOf, readPin, rowsShown, savePin, SECTIONS, type Compared, type CompareRow, type CompareSide } from "../../saved";
+import { fetchCompare, pictureOf, rowsShown, savePin, SECTIONS, type Compared, type CompareRow, type CompareSide } from "../../saved";
 import { THUMB_EDGE } from "../shared";
 import "./compare.css";
 
@@ -50,11 +50,6 @@ export function CompareRuns(props: CompareRunsProps) {
   const [problem, setProblem] = useState<ApiError | null>(null);
   const [all, setAll] = useState(false);
   const [mode, setMode] = useState<CompareMode>("side");
-  useEffect(() => {
-    // The pin follows the address: a reload of a comparison keeps its baseline.
-    const store = localStore();
-    if (readPin(store)?.run !== props.baseline) savePin(store, { run: props.baseline, action: compared?.action ?? readPin(store)?.action ?? "" });
-  }, [props.baseline]);
   useEffect(() => {
     setCompared(null);
     setProblem(null);

@@ -91,6 +91,20 @@ fn an_example_keeps_its_inputs_after_its_run_is_deleted_and_pruned() {
         "remove_prompt",
         &json!({"image": made, "prompt": "the reel"}),
     );
+    // Deleted, the example's own name and each of its inputs' names go, as the store
+    // reads them.
+    let inputs = format!("examples/{id}/inputs/");
+    let held = |generation: &whizbang_core::store::Generation| {
+        (generation.entries().keys())
+            .filter(|name| name.starts_with(&inputs))
+            .count()
+    };
+    assert_eq!(held(&kitted.generation()), 1);
+    let deleted = kitted.api("DELETE", &format!("/api/examples/{id}"), None);
+    assert_eq!(deleted.status, 200, "{}", deleted.text());
+    let generation = kitted.generation();
+    assert_eq!(held(&generation), 0);
+    assert!(generation.get(&format!("examples/{id}")).is_none());
 }
 
 #[test]
@@ -192,8 +206,17 @@ fn a_name_or_notes_holding_markup_are_shown_as_text() {
         "{one}"
     );
     assert_eq!(one["notes"], notes, "{one}");
-    // A rename is held to the same rules, and kept.
+    assert_eq!(one["given"]["name"], name, "{one}");
+    // A change of the notes alone leaves the name as it was given, not as it was shown.
     let id = one["id"].as_str().unwrap();
+    let noted = kitted.api(
+        "PATCH",
+        &format!("/api/examples/{id}"),
+        Some(&json!({"notes": "other notes"})),
+    );
+    assert_eq!(noted.status, 200, "{}", noted.text());
+    assert_eq!(noted.json()["given"]["name"], name, "{}", noted.text());
+    // A rename is held to the same rules, and kept.
     let long = "x".repeat(81);
     let too_long = kitted.api(
         "PATCH",
@@ -208,10 +231,24 @@ fn a_name_or_notes_holding_markup_are_shown_as_text() {
     );
     assert_eq!(renamed.status, 200, "{}", renamed.text());
     assert_eq!(renamed.json()["name"], "<b>bold</b>");
-    assert_eq!(renamed.json()["notes"], notes);
-    // Deleted, it is gone, and its run stays.
+    assert_eq!(renamed.json()["notes"], "other notes");
+    // Deleted, it is gone, every name under its entry with it, and its run stays.
+    let entry = format!("examples/{id}");
+    let under = |generation: &whizbang_core::store::Generation| {
+        (generation.entries().keys())
+            .filter(|name| *name == &entry || name.starts_with(&format!("{entry}/")))
+            .count()
+    };
+    assert!(under(&kitted.generation()) >= 1);
     let deleted = kitted.api("DELETE", &format!("/api/examples/{id}"), None);
     assert_eq!(deleted.status, 200, "{}", deleted.text());
+    assert_eq!(under(&kitted.generation()), 0);
+    let gone = kitted.api(
+        "PATCH",
+        &format!("/api/examples/{id}"),
+        Some(&json!({"name": "back again"})),
+    );
+    assert_eq!(gone.status, 404, "{}", gone.text());
     let again = kitted.api("DELETE", &format!("/api/examples/{id}"), None);
     assert_eq!(again.status, 404, "{}", again.text());
     let record = kitted.api("GET", &format!("/api/runs/{run}/record"), None);

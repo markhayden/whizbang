@@ -110,6 +110,8 @@ export interface Example {
   picture?: string | null;
   inputs: Array<{ port: string; type: string; id: string }>;
   backends: Record<string, string>;
+  /** The name and notes as given, unescaped: what a rename starts from and sends back. */
+  given?: { name: string; notes: string };
 }
 
 export const EXAMPLES_LIMIT = 1000;

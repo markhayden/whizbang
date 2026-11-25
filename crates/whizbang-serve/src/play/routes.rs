@@ -442,20 +442,36 @@ pub(crate) fn own_readiness(shared: &Shared, capability: &str, row: &Json, value
     json!({"value": value, "ready": ready, "kind": kind, "why": why})
 }
 
-/// The words of a preparation's refusal, when it was refused: what a choice's refusal is
-/// held against, to tell one about the choice from one about the call.
-pub(crate) fn refusal_words(prepared: &Result<PreparedCall, CallError>) -> Option<String> {
+/// A preparation's refusal, when it was refused: what a choice's refusal is held
+/// against, to tell one about the choice from one about the call.
+pub(crate) fn refusal_of(prepared: &Result<PreparedCall, CallError>) -> Option<Refusal> {
     match prepared {
-        Err(CallError::Refused(refusal)) => Some(refusal.to_string()),
+        Err(CallError::Refused(refusal)) => Some(refusal.clone()),
         _ => None,
     }
+}
+
+/// The refusal of the call as given with the argument `argument` left out, so the
+/// config's default answers it: what a choice for that argument is held against. None
+/// when that call is not refused, or cannot be made.
+pub(crate) fn base_refusal(
+    shared: &Shared,
+    executor: &dyn whizbang_core::contract::Executor,
+    action: &str,
+    arguments: &Map<String, Json>,
+    argument: &str,
+) -> Option<Refusal> {
+    let mut without = arguments.clone();
+    without.remove(argument);
+    let (call, _) = shared.play.call(action, &without).ok()?;
+    refusal_of(&executor.prepare(&call))
 }
 
 /// One choice's readiness, from its own preparation: the readiness of its own
 /// capability, which another capability of the call that is not ready (a filler with no
 /// key beside a segmenter that needs none) does not change. When the call with this
-/// choice is refused, the refusal is held against the call's own (`base`, the words of
-/// the refusal of the call as given, without the choice): the same refusal is the
+/// choice is refused, the refusal is held against the call's own (`base`, the refusal
+/// of the call as given with the choice's argument left out): the same refusal is the
 /// call's (an input still missing), and the choice is answered with its backend's own
 /// readiness, as `/api/hello` lists it (`row`); any other is about the choice itself,
 /// and is said as a refusal, kind `refused`, with the core's words.
@@ -465,7 +481,7 @@ pub(crate) fn choice_json(
     row: &Json,
     value: &str,
     prepared: Result<PreparedCall, CallError>,
-    base: Option<&str>,
+    base: Option<&Refusal>,
 ) -> Json {
     match prepared {
         Ok(prepared) => match prepared.readiness() {
@@ -484,7 +500,7 @@ pub(crate) fn choice_json(
                 }
             }
         },
-        Err(CallError::Refused(refusal)) if base != Some(refusal.to_string().as_str()) => {
+        Err(CallError::Refused(refusal)) if base != Some(&refusal) => {
             json!({"value": value, "ready": false, "kind": "refused",
                    "why": escaped(&refusal.to_string())})
         }
@@ -504,13 +520,20 @@ fn prepare(shared: &Shared, guarded: &Guarded<'_>) -> Response {
     let Some(executor) = shared.executor() else {
         return Response::refused(503, "the playground is stopping");
     };
-    // The call as given, prepared first: a choice's refusal is held against its words.
     let base = executor.prepare(&call);
-    let base_words = refusal_words(&base);
     // Each choice of a backend, prepared once each with the rest of the call as given:
     // its readiness is the preparation's, by kind (plan m5, task W1, item 4).
     let mut choices = Map::new();
     for (argument, values) in shared.play.choosers(&asked.action) {
+        // A choice's refusal is held against the call's own with this argument left out,
+        // so the choice the call names now is not taken for the call (plan m7, U1).
+        let held = base_refusal(
+            shared,
+            &*executor,
+            &asked.action,
+            &asked.arguments,
+            &argument,
+        );
         let mut answers = Vec::new();
         for backend in values {
             let Some(value) = backend["name"].as_str() else {
@@ -532,7 +555,7 @@ fn prepare(shared: &Shared, guarded: &Guarded<'_>) -> Response {
                 &backend,
                 value,
                 prepared,
-                base_words.as_deref(),
+                held.as_ref(),
             );
             // A backend that is not ready for a reason of its own (a model not
             // installed, a key not set) says that reason, which the preparation may

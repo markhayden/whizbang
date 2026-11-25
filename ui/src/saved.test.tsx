@@ -77,7 +77,7 @@ describe("an example", () => {
 
   it("is listed with its words as text, opened as a draft, and one whose task is gone is not opened", async () => {
     const examples: Example[] = [
-      { id: "0123456789abcdef", name: HOSTILE, notes: HOSTILE, task: "remove_prompt", title: "Remove what you name", kit: "rascal", known: true, run: "1795-1", at_ms: 1, picture: PICTURE, inputs: [], backends: {} },
+      { id: "0123456789abcdef", name: `${HOSTILE}\\u{1b}`, notes: HOSTILE, task: "remove_prompt", title: "Remove what you name", kit: "rascal", known: true, run: "1795-1", at_ms: 1, picture: PICTURE, inputs: [], backends: {}, given: { name: `${HOSTILE}\u001b`, notes: HOSTILE } },
       { id: "fedcba9876543210", name: "Pool chairs, old judge", notes: "", task: "check-legacy", title: null, kit: null, known: false, run: "1795-2", at_ms: 0, picture: null, inputs: [], backends: {} },
     ];
     const request = vi.fn((method: string, path: string) => {
@@ -95,6 +95,10 @@ describe("an example", () => {
     expect(view.text()).toContain("2 of up to 1,000");
     expect(view.text()).toContain("this build has no task “check-legacy”");
     expect(view.all(".examples__row--gone button.examples__name")).toHaveLength(0);
+    // Rename starts from the name as given, not as it is shown escaped.
+    click(view.get(".examples__row:not(.examples__row--gone) .examples__dots"));
+    click(view.all<HTMLElement>("[role=menuitem]").find((one) => one.textContent === "Rename…")!);
+    expect(view.get<HTMLInputElement>(".examples__ask input").value).toBe(`${HOSTILE}\u001b`);
     click(view.get(".examples__row:not(.examples__row--gone) .examples__name"));
     await settle();
     expect(go).toHaveBeenCalledWith("#/k/rascal/remove_prompt");

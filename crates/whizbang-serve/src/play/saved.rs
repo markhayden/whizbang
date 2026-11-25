@@ -23,7 +23,7 @@ use whizbang_core::contract::RunId;
 
 use super::guard::Guarded;
 use super::http::Response;
-use super::routes::{Body, Route, choice_json, own_readiness, refusal_words, refused_by_play};
+use super::routes::{Body, Route, base_refusal, choice_json, own_readiness, refused_by_play};
 use super::{Refused, Shared};
 use crate::escaped;
 
@@ -360,17 +360,11 @@ fn open(shared: &Shared, guarded: &Guarded<'_>) -> Response {
             })),
             Some(row) => {
                 let with = draft["values"].as_object().cloned().unwrap_or_default();
-                let mut without = with.clone();
-                without.remove(argument);
                 let answer = match shared.play.call(&action, &with) {
                     Ok((call, _)) => {
-                        let base = shared
-                            .play
-                            .call(&action, &without)
-                            .ok()
-                            .and_then(|(call, _)| refusal_words(&executor.prepare(&call)));
+                        let base = base_refusal(shared, &*executor, &action, &with, argument);
                         let prepared = executor.prepare(&call);
-                        choice_json(shared, capability, row, value, prepared, base.as_deref())
+                        choice_json(shared, capability, row, value, prepared, base.as_ref())
                     }
                     Err(_) => own_readiness(shared, capability, row, value),
                 };

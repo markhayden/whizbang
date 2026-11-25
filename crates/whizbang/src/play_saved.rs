@@ -147,7 +147,6 @@ fn resolved(records: &[RunRecord], resolve: &Resolve<'_>) -> Vec<(String, String
 
 /// One side of a comparison.
 fn side(
-    store: &Store,
     root: &std::path::Path,
     record: &RunRecord,
     records: &[RunRecord],
@@ -198,7 +197,6 @@ fn side(
         .collect();
     models.sort();
     models.dedup();
-    let _ = store;
     json!({
         "run": run,
         "action": escaped(&action),
@@ -271,20 +269,15 @@ pub fn compare_json(
             .map(|setting| (setting.name().to_owned(), shown(setting.value())))
             .collect()
     };
-    let ports = |list: Vec<(String, String)>| list;
-    let inputs = |record: &RunRecord| {
-        ports(
-            (record.inputs().iter())
-                .map(|input| (input.port.clone(), input.artifact.to_string()))
-                .collect(),
-        )
+    let inputs = |record: &RunRecord| -> Vec<(String, String)> {
+        (record.inputs().iter())
+            .map(|input| (input.port.clone(), input.artifact.to_string()))
+            .collect()
     };
-    let outputs = |record: &RunRecord| {
-        ports(
-            (record.outputs().iter())
-                .map(|output| (output.port.clone(), output.artifact.to_string()))
-                .collect(),
-        )
+    let outputs = |record: &RunRecord| -> Vec<(String, String)> {
+        (record.outputs().iter())
+            .map(|output| (output.port.clone(), output.artifact.to_string()))
+            .collect()
     };
     let mut rows = rows_by_name("asked", &arguments(a), &arguments(b));
     rows.extend(rows_by_name(
@@ -297,8 +290,8 @@ pub fn compare_json(
     rows.extend(rows_by_name("outputs", &outputs(a), &outputs(b)));
     Ok(json!({
         "action": escaped(&one),
-        "baseline": side(store, root, a, &left, left_whole, tasks, resolve),
-        "attempt": side(store, root, b, &right, right_whole, tasks, resolve),
+        "baseline": side(root, a, &left, left_whole, tasks, resolve),
+        "attempt": side(root, b, &right, right_whole, tasks, resolve),
         "rows": rows,
     }))
 }
@@ -391,6 +384,9 @@ fn example_json(example: &Example, tasks: &Tasks<'_>) -> Json {
         "id": example.id,
         "name": escaped(&example.name),
         "notes": escaped(&example.notes),
+        // The name and notes as given, which a rename starts from and sends back, so a
+        // rename never changes what it was not asked to: the page puts them in as text.
+        "given": {"name": example.name, "notes": example.notes},
         "task": escaped(&example.action),
         "title": descriptor.map(|d| d.title().unwrap_or(d.name()).to_owned()),
         "kit": descriptor.and_then(|d| crate::play_form::listed_in(d, tasks.kits)),
@@ -566,13 +562,16 @@ pub fn rename(
     }
     let bytes = serde_json::to_vec(&example).map_err(|_| busy())?;
     let mut publication = store.begin().map_err(|_| busy())?;
+    // Refused when a deletion was published since the read: a rename never makes again
+    // an example that was deleted, without its inputs.
     publication
-        .put(&example_name(id), &bytes)
+        .replace(&example_name(id), &bytes)
         .map_err(|_| Refused::new(500, "the store could not keep the example"))?;
-    publication
-        .publish()
-        .map_err(|_| Refused::new(500, "the store could not keep the example"))?;
-    Ok(example_json(&example, tasks))
+    match publication.publish() {
+        Ok(_) => Ok(example_json(&example, tasks)),
+        Err(whizbang_core::store::Error::NoSuchEntry { .. }) => Err(no_example()),
+        Err(_) => Err(Refused::new(500, "the store could not keep the example")),
+    }
 }
 
 /// Lets go of an example, its names alone: its run and its pictures stay.

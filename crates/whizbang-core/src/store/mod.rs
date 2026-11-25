@@ -1510,6 +1510,7 @@ impl Store {
             marked: BTreeMap::new(),
             collecting: None,
             let_go: BTreeSet::new(),
+            replaced: BTreeSet::new(),
         })
     }
 
@@ -1846,6 +1847,9 @@ pub struct Publication<'s> {
     collecting: Option<(u64, u64, Arc<AtomicU64>)>,
     /// The entries of bundles and examples it lets go of, each whole.
     let_go: BTreeSet<String>,
+    /// The names it gives new content only where the generation it is published onto
+    /// still holds them ([`Publication::replace`]).
+    replaced: BTreeSet<String>,
 }
 
 /// What the names that are made and never put start with: the records of request ids
@@ -2155,6 +2159,17 @@ impl Publication<'_> {
         Ok(())
     }
 
+    /// Gives `name`, an entry's own name outside runs, this content in place of what it
+    /// has, as [`Publication::put`] does, only where the generation this is published
+    /// onto still holds `name`: publishing is refused with [`Error::NoSuchEntry`], and
+    /// nothing is published, when a publication between let go of it. So a change of an
+    /// entry (an example renamed) never makes again one that was deleted meanwhile.
+    pub fn replace(&mut self, name: &str, bytes: &[u8]) -> Result<Digest> {
+        let digest = self.put(name, bytes)?;
+        self.replaced.insert(name.to_owned());
+        Ok(digest)
+    }
+
     /// Lets go, in this publication, of the entry of a bundle (`bundles/<digest>`) or of
     /// an example (`examples/<id>`), whole: the entry's own name and every name under
     /// it, and nothing else (ADR 0048). What they named stays while another name names
@@ -2309,6 +2324,11 @@ impl Publication<'_> {
         }
         if let Some(name) = self.made.iter().find(|name| generation.get(name).is_some()) {
             return Err(Error::NameExists { name: name.clone() });
+        }
+        if let Some(name) = (self.replaced.iter()).find(|name| generation.get(name).is_none()) {
+            return Err(Error::NoSuchEntry {
+                entry: name.clone(),
+            });
         }
         for (name, entry) in &self.names {
             generation.insert_entry(name.clone(), entry.clone());

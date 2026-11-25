@@ -139,7 +139,8 @@ interface ExampleRowProps {
 function ExampleRow(props: ExampleRowProps) {
   const { example } = props;
   const src = useArtifact(props.client, example.picture ?? null, 80);
-  const [name, setName] = useState(example.name);
+  // The name as given, not as it is shown escaped: renaming changes only what is typed.
+  const [name, setName] = useState(example.given?.name ?? example.name);
   return (
     <li class={cx("examples__row", !example.known && "examples__row--gone")} data-example={example.id}>
       {src ? <img class="examples__thumb" src={src} alt="" /> : <span class="examples__thumb" aria-hidden="true" />}

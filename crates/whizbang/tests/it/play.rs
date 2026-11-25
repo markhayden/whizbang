@@ -481,10 +481,35 @@ fn a_choice_refused_for_itself_is_told_apart_from_a_missing_input() {
         "{refused}"
     );
     assert_eq!(choice(&given, "cloud-judge")["kind"], "ready", "{given}");
+    // The same with the refused choice the one the call names now: it is still refused
+    // for itself, and not taken for the call's own refusal.
+    let picked = kitted.prepare(
+        "judged",
+        &json!({"image": kitted.picture(42), "judge": "keyless-judge"}),
+    );
+    assert_eq!(picked["refused"], true, "{picked}");
+    assert_eq!(
+        choice(&picked, "keyless-judge")["kind"],
+        "refused",
+        "{picked}"
+    );
+    assert_eq!(choice(&picked, "cloud-judge")["kind"], "ready", "{picked}");
     // Without it: every choice is refused as the call is, for the missing input, and is
     // answered with its backend's own readiness instead.
     let missing = kitted.prepare("judged", &json!({}));
     assert_eq!(missing["refused"], true, "{missing}");
+    assert_eq!(
+        choice(&missing, "keyless-judge")["kind"],
+        "no_key",
+        "{missing}"
+    );
+    assert_eq!(
+        choice(&missing, "cloud-judge")["kind"],
+        "ready",
+        "{missing}"
+    );
+    // The same, the choice named now included.
+    let missing = kitted.prepare("judged", &json!({"judge": "keyless-judge"}));
     assert_eq!(
         choice(&missing, "keyless-judge")["kind"],
         "no_key",

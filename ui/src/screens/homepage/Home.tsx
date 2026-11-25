@@ -220,7 +220,13 @@ export function Home(props: HomeProps) {
         {pictures.length === 0 && !client ? <p class="empty">No pictures yet. A picture a run is given, or one imported, is kept in the store and shows here.</p> : null}
         {client ? (
           <div class="library home__pictures">
-            {pictures.length === 0 ? <p class="empty">No pictures yet. A picture a run is given, or one imported, is kept in the store and shows here, whatever gave it.</p> : null}
+            {library.failed ? (
+              <p class="field__error" role="alert">
+                {`The pictures could not be listed: ${library.failed}`}
+              </p>
+            ) : library.loaded && pictures.length === 0 ? (
+              <p class="empty">No pictures yet. A picture a run is given, or one imported, is kept in the store and shows here, whatever gave it.</p>
+            ) : null}
             {pictures.map((picture) => (
               <figure key={picture.id} class="home__tile" data-picture={picture.id}>
                 <StoredPicture
@@ -272,38 +278,45 @@ function useFound(client: Client, id: string, listed: LibraryPicture | undefined
 /** The library's pictures under one chip, a page at a time, and how many each chip holds. */
 function useLibrary(client: Client | undefined, asked: unknown) {
   const [show, setShow] = useState<Show>("all");
-  const [pictures, setPictures] = useState<LibraryPicture[]>([]);
-  const [more, setMore] = useState(false);
+  // Each answer is kept with the chip it was asked for, and one for another chip than the
+  // one shown now is dropped: a slow answer never fills the wrong chip.
+  const [listed, setListed] = useState<{ show: Show; pictures: LibraryPicture[]; more: boolean; loaded: boolean }>({ show: "all", pictures: [], more: false, loaded: false });
+  const [failed, setFailed] = useState<string | null>(null);
   const [counts, setCounts] = useState<Record<Show, number>>({ all: 0, named: 0, inputs: 0, imported: 0 });
+  const said = (error: unknown) => (error instanceof ApiError ? error.message : String(error));
   useEffect(() => {
     if (!client || typeof client.request !== "function") return;
     let live = true;
-    listLibrary(client, show).then(
+    const tab = show;
+    setListed((now) => (now.show === tab ? now : { show: tab, pictures: [], more: false, loaded: false }));
+    listLibrary(client, tab).then(
       (page) => {
         if (!live) return;
-        setPictures(page.pictures);
-        setMore(page.more);
+        setFailed(null);
+        setListed({ show: tab, pictures: page.pictures, more: page.more, loaded: true });
         setCounts(page.counts);
       },
-      () => undefined,
+      // A refused token is the shell's to say, once.
+      (error: unknown) => live && !(error instanceof ApiError && error.status === 401) && setFailed(said(error)),
     );
     return () => {
       live = false;
     };
   }, [client, asked, show]);
+  const current = listed.show === show ? listed : { show, pictures: [], more: false, loaded: false };
   const next = () => {
-    const last = pictures[pictures.length - 1];
+    const tab = show;
+    const last = current.pictures[current.pictures.length - 1];
     if (!client || !last) return;
-    listLibrary(client, show, last.id, LIBRARY_PAGE).then(
+    listLibrary(client, tab, last.id, LIBRARY_PAGE).then(
       (page) => {
-        setPictures((now) => [...now, ...page.pictures.filter((one) => !now.some((seen) => seen.id === one.id))]);
-        setMore(page.more);
+        setListed((now) => (now.show !== tab ? now : { ...now, pictures: [...now.pictures, ...page.pictures.filter((one) => !now.pictures.some((seen) => seen.id === one.id))], more: page.more }));
         setCounts(page.counts);
       },
-      () => setMore(false),
+      (error: unknown) => setFailed(said(error)),
     );
   };
-  return { show, choose: setShow, pictures, more, counts, next };
+  return { show, choose: setShow, pictures: current.pictures, more: current.more, loaded: current.loaded, failed, counts, next };
 }
 
 /**
