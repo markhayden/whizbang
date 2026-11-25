@@ -29,6 +29,7 @@ mod fill;
 mod inventory;
 mod judge;
 mod price;
+pub mod recorded;
 mod segment;
 mod served;
 pub mod written;

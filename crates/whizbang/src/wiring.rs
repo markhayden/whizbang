@@ -1294,7 +1294,10 @@ pub fn runner(registry: Registry, store: Arc<Store>, over: &Over) -> Result<Engi
     let engine = wired(over, |source| Engine::writing(registry, store, source))?
         .with_ways(ways)
         .with_ledger(Arc::new(StoreLedger))
-        .with_wrapper(Place::Meter, Arc::new(meter));
+        .with_wrapper(Place::Meter, Arc::new(meter))
+        // A replay's root is an action this build ships, never a recipe file's or a
+        // tool file's (plan m7, task R1; ADR 0049).
+        .with_shipped(crate::bundling::shipped()?);
     // The lease stands in its place wherever there is a models directory to take
     // a hold in. Without one no local backend is ready ([`Over::inventory`]), so
     // no request ever comes to the place.

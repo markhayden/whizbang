@@ -48,6 +48,7 @@ pub mod record;
 mod recover;
 mod redact;
 mod registry;
+pub mod replay;
 pub mod request;
 mod run;
 mod seventh;

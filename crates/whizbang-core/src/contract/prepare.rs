@@ -1028,6 +1028,11 @@ pub enum Refusal {
         kind: RefusalKind,
         why: String,
     },
+    /// A replay was asked of a run that is not replayed (plan m7, task R1; ADR 0049):
+    /// the run, and why, in a sentence. Nothing was prepared, nothing ran, and the
+    /// request's id is not taken by this request. A replay is never a call from inside
+    /// an action, so no record lists this refusal; its kind is `invalid`.
+    NotReplayed { run: String, why: String },
 }
 
 impl Refusal {
@@ -1066,6 +1071,7 @@ impl Refusal {
             Refusal::NotOffered { .. } => RefusalKind::NotOffered,
             Refusal::NotReadable { .. } => RefusalKind::NotReadable,
             Refusal::ByPart { kind, .. } => *kind,
+            Refusal::NotReplayed { .. } => RefusalKind::Invalid,
         }
     }
 }
@@ -1163,6 +1169,9 @@ impl std::fmt::Display for Refusal {
                 "{action} was not called: a call from inside an action carries no \
                  request id"
             ),
+            Refusal::NotReplayed { run, why } => {
+                write!(f, "the run {run} was not replayed: {why}")
+            }
             Refusal::TooManyStarted { bound } => write!(
                 f,
                 "the request was not started: {bound} started runs are not over yet, and \

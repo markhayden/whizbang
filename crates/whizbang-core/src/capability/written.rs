@@ -740,6 +740,32 @@ pub fn read_exchange(
     })
 }
 
+/// The answer of an exchange a run stored, read back as [`read_exchange`] reads one, and
+/// nothing of its request (plan m7, task R1, item 2): a turn holds no picture, so none is
+/// asked for. A turn that held an opaque part, stored as its digest and length, or a
+/// turn that was not written, is [`Unread::Withheld`].
+pub(crate) fn recorded_answer(bytes: &[u8]) -> Result<Result<Turn, Fault>, Unread> {
+    let read: ExchangeWire = document(bytes, EXCHANGE_MAX_BYTES, "exchange", EXCHANGE)?;
+    answer_in(read.answer, read.messages.len())
+}
+
+/// Whether this request is the one an exchange a run stored was sent: the exchange,
+/// as the run stored it, begins with what this request writes at the stored exchange's
+/// place, every opaque part as its digest and length, every picture as its digest, and
+/// then its answer (plan m7, task R1, item 2).
+pub(crate) fn sent_as_recorded(stored: &[u8], request: &JudgeRequest) -> bool {
+    let Ok(read) = document::<ExchangeWire>(stored, EXCHANGE_MAX_BYTES, "exchange", EXCHANGE)
+    else {
+        return false;
+    };
+    let Ok(place) = usize::try_from(read.place) else {
+        return false;
+    };
+    let sent = head(place, request, Keep::Digests);
+    let then = b",\"answer\":";
+    stored.starts_with(sent.0.as_bytes()) && stored[sent.0.len()..].starts_with(then)
+}
+
 /// An opaque part a stored exchange keeps without its body: its adapter, the digest of
 /// its body and the body's length (ADR 0009).
 #[derive(Debug, Clone, PartialEq, Eq)]
