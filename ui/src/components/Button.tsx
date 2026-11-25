@@ -16,6 +16,9 @@ export interface ButtonProps {
   onClick?: () => void;
   type?: "button" | "submit";
   title?: string;
+  /** A button that opens a menu: its popup, and whether it is open. */
+  haspopup?: "menu";
+  expanded?: boolean;
 }
 
 /** Primary (Run), secondary (Send to), quiet (Clear) and danger (Stop run). */
@@ -29,6 +32,8 @@ export function Button(props: ButtonProps) {
       disabled={disabled}
       aria-busy={props.busy ? "true" : undefined}
       title={props.title}
+      aria-haspopup={props.haspopup}
+      aria-expanded={props.haspopup ? (props.expanded ? "true" : "false") : undefined}
       onClick={disabled ? undefined : props.onClick}
     >
       <span class="button__label">{props.children}</span>

@@ -25,6 +25,8 @@ pub enum Body {
     None,
     Json,
     Picture,
+    /// A bundle's bytes (plan m7, task U2): at most [`super::guard::BUNDLE_LIMIT`].
+    Bundle,
 }
 
 /// A handler: given the host and a request that passed the guard.
@@ -147,6 +149,7 @@ const TABLES: &[&[Route]] = &[
     super::models::ROUTES,
     super::result::ROUTES,
     super::saved::ROUTES,
+    super::bundles::ROUTES,
 ];
 
 /// The route of this method and path, with the parts of the path its pattern names: a
@@ -210,7 +213,7 @@ pub(crate) fn serve(shared: &Shared, stream: &mut TcpStream, since: Instant) {
     }
 }
 
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| {
@@ -257,9 +260,40 @@ struct Starting {
     handle: Option<String>,
     #[serde(default)]
     request_id: Option<String>,
+    /// A step of a guided chain replay (plan m7, task U2): the bundle the store holds and
+    /// the step the run makes again.
+    #[serde(default)]
+    replay: Option<StepOf>,
 }
 
-fn body<T: for<'d> Deserialize<'d>>(guarded: &Guarded<'_>) -> Result<T, Response> {
+/// A chain's step a start names: the bundle's digest and the step, from 0.
+#[derive(Deserialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StepOf {
+    pub bundle: String,
+    pub step: u32,
+}
+
+/// What a start's request id is held to beside its action: its arguments as sent, and the
+/// chain's step it names, when it names one.
+fn asked_digest(
+    arguments: &Map<String, Json>,
+    step: Option<&StepOf>,
+) -> whizbang_core::identity::Digest {
+    match step {
+        None => arguments_digest(arguments),
+        Some(step) => {
+            let mut with = arguments.clone();
+            with.insert(
+                "\u{0}replay".to_owned(),
+                json!({"bundle": step.bundle, "step": step.step}),
+            );
+            arguments_digest(&with)
+        }
+    }
+}
+
+pub(crate) fn body<T: for<'d> Deserialize<'d>>(guarded: &Guarded<'_>) -> Result<T, Response> {
     let json = guarded.json.clone().unwrap_or(Json::Null);
     serde_json::from_value(json).map_err(|_| {
         Response::refused(
@@ -271,7 +305,7 @@ fn body<T: for<'d> Deserialize<'d>>(guarded: &Guarded<'_>) -> Result<T, Response
 
 /// A refusal of the executor's, as the page is told it: the sentence, escaped, and its
 /// kind, for a refusal of the call; fixed words for a failure that is not the call's.
-fn call_refused(error: &CallError) -> Response {
+pub(crate) fn call_refused(error: &CallError) -> Response {
     match error {
         CallError::Refused(refusal) => {
             let status = match refusal {
@@ -636,7 +670,7 @@ fn start(shared: &Shared, guarded: &Guarded<'_>) -> Response {
     // it started, or a conflict when something else was asked under it.
     let earlier = shared.state().requests.get(&text_id).map(|earlier| {
         let same = earlier.action == asked.action
-            && earlier.arguments == arguments_digest(&asked.arguments);
+            && earlier.arguments == asked_digest(&asked.arguments, asked.replay.as_ref());
         (earlier.run.clone(), same)
     });
     if let Some((run, same)) = earlier {
@@ -658,6 +692,18 @@ fn start(shared: &Shared, guarded: &Guarded<'_>) -> Response {
     let id = match executor.request_id(&text_id) {
         Ok(id) => id,
         Err(error) => return call_refused(&error),
+    };
+    let step = match &asked.replay {
+        None => None,
+        Some(step) => match step.bundle.parse::<whizbang_core::identity::Digest>() {
+            Ok(digest) => Some((digest, step.step)),
+            Err(_) => {
+                return Response::refused(
+                    400,
+                    "replay names a bundle by its digest, sha256: and 64 hex digits",
+                );
+            }
+        },
     };
     // An id the host has forgotten (it restarted) and the store holds: answered with the
     // run its admission names, by that id alone, before a place is taken or the call
@@ -714,6 +760,9 @@ fn start(shared: &Shared, guarded: &Guarded<'_>) -> Response {
     if let Some(prepared) = &prepared {
         request = request.expecting(prepared);
     }
+    if let Some((bundle, at)) = step {
+        request = request.from_step(bundle, at);
+    }
     match executor.start(&request) {
         Ok(Answer::Started(run)) => {
             admitting.made(run.clone());
@@ -721,7 +770,7 @@ fn start(shared: &Shared, guarded: &Guarded<'_>) -> Response {
                 text_id,
                 Asked {
                     run: run.clone(),
-                    arguments: arguments_digest(&asked.arguments),
+                    arguments: asked_digest(&asked.arguments, asked.replay.as_ref()),
                     sent: kept_arguments(&asked.arguments),
                     action: asked.action,
                 },
@@ -742,7 +791,7 @@ fn start(shared: &Shared, guarded: &Guarded<'_>) -> Response {
     }
 }
 
-fn state_word(state: &RunState, stopping: bool) -> &'static str {
+pub(crate) fn state_word(state: &RunState, stopping: bool) -> &'static str {
     match state {
         RunState::NotEnded { here: true } if stopping => "stopping",
         RunState::NotEnded { here: true } => "running",

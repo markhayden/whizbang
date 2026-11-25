@@ -1,0 +1,95 @@
+/*
+ * Bundles, guided chain replay and the replay of a run (plan m7, task U2): the dialogs,
+ * the replay's report, the chain's steps and its cards, as the Paper file's page
+ * "Playground · bundles and replay" and its components draw them. Text is ink, ink-2 or
+ * muted; brass marks a step to review and is never the colour of words.
+ */
+
+/* A dialog: head, body, foot. */
+.dialog { width: 400px; padding: 0; gap: 0; }
+.dialog__head { display: flex; flex-direction: column; gap: var(--spacing-1); padding: var(--spacing-4); border-bottom: 1px solid var(--color-line); }
+.dialog__title { margin: 0; color: var(--color-ink); font-family: var(--font-display); font-size: var(--text-xl); font-weight: var(--font-weight-display); letter-spacing: var(--tracking-tight); overflow-wrap: anywhere; }
+.dialog__line { margin: 0; color: var(--color-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.dialog__body { display: flex; flex-direction: column; gap: var(--spacing-3); padding: var(--spacing-4); }
+.dialog__foot { display: flex; justify-content: flex-end; gap: var(--spacing-2); padding: var(--spacing-3) var(--spacing-4); border-top: 1px solid var(--color-line); }
+
+/* Replay: offline or live. */
+.replay-dialog { width: 420px; }
+.replay-dialog__modes { display: flex; flex-direction: column; gap: var(--spacing-2); }
+.replay-mode { display: flex; gap: var(--spacing-3); padding: var(--spacing-3); border-radius: var(--radius-md); box-shadow: var(--color-line) 0 0 0 1px inset; cursor: pointer; }
+.replay-mode--chosen { background: var(--color-brass-soft); box-shadow: var(--color-brass) 0 0 0 1px inset; }
+.replay-mode input { margin: 2px 0 0; accent-color: var(--color-brass); }
+.replay-mode__text { display: flex; flex-direction: column; gap: var(--spacing-1); }
+.replay-mode__name { color: var(--color-ink); font-size: var(--text-md); font-weight: var(--font-weight-medium); }
+.replay-mode__free { margin-left: var(--spacing-1); color: var(--color-ink-2); font-size: var(--text-xs); font-weight: var(--font-weight-regular); }
+.replay-mode__line { color: var(--color-ink-2); font-size: var(--text-sm); line-height: 18px; }
+.replay-dialog__cost { display: flex; flex-direction: column; gap: var(--spacing-1); padding: var(--spacing-3); border-radius: var(--radius-md); background: var(--color-raised); }
+.replay-dialog__cost-title { margin: 0 0 var(--spacing-1); color: var(--color-ink); font-size: var(--text-md); font-weight: var(--font-weight-medium); }
+.replay-dialog__need { margin: 0; color: var(--color-ink-2); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.replay-dialog__note { margin: 0; color: var(--color-muted); font-size: var(--text-sm); }
+.replay-dialog__refused { margin: 0; overflow-wrap: anywhere; }
+
+/* What a bundle holds and never holds. */
+.bundle-dialog { width: 400px; }
+.holds { display: flex; flex-direction: column; gap: var(--spacing-1-5); }
+.holds__title { margin: var(--spacing-2) 0 0; color: var(--color-ink); font-size: var(--text-sm); font-weight: var(--font-weight-medium); }
+.holds__title:first-child { margin-top: 0; }
+.holds__item { margin: 0; color: var(--color-ink-2); font-size: var(--text-sm); line-height: 16px; overflow-wrap: anywhere; }
+.holds__item--never { color: var(--color-muted); }
+.holds__yes { color: var(--color-pass); }
+.holds__no { color: var(--color-lacquer); }
+.holds__note { margin: var(--spacing-1) 0 0; color: var(--color-muted); font-size: var(--text-sm); line-height: 18px; }
+
+/* The replay's report, at the top of its result. */
+.report-chip--differs { background: var(--color-brass-soft); color: var(--color-ink); }
+.report-chip--reproduced { background: var(--color-pass-tint); color: var(--color-pass); }
+.report-chip--diverged { background: var(--color-lacquer-tint); color: var(--color-lacquer); }
+.report-chip--unanswerable { background: var(--color-unsure-tint); color: var(--color-unsure); }
+.replay-report { display: flex; flex-direction: column; gap: var(--spacing-2); padding: var(--spacing-3) var(--spacing-4); border-radius: var(--radius-md); background: var(--color-raised); box-shadow: var(--color-line) 0 0 0 1px inset; }
+.replay-report--reproduced { box-shadow: var(--color-pass) 0 0 0 1px inset; }
+.replay-report--differs { background: var(--color-brass-wash); box-shadow: var(--color-brass) 0 0 0 1px inset; }
+.replay-report--diverged { background: var(--color-lacquer-soft); box-shadow: var(--color-lacquer) 0 0 0 1px inset; }
+.replay-report__head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: var(--spacing-2); }
+.replay-report__title { margin: 0; color: var(--color-ink); font-size: var(--text-lg); font-weight: var(--font-weight-semibold); }
+.replay-report__meta { color: var(--color-muted); font-size: var(--text-xs); }
+.replay-report__line { margin: 0; color: var(--color-ink-2); font-size: var(--text-md); line-height: 20px; overflow-wrap: anywhere; }
+.replay-report__differences { margin: 0; padding-left: var(--spacing-4); color: var(--color-ink-2); font-size: var(--text-xs); line-height: 18px; overflow-wrap: anywhere; }
+.replay-report__setting { margin: 0; color: var(--color-muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
+.replay-report__link { color: var(--color-ink); font-size: var(--text-sm); text-decoration: underline; }
+
+/* A chain's steps, each with its state. */
+.chain-steps { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; border-radius: var(--radius-md); background: var(--color-panel); box-shadow: var(--shadow-chip); overflow: clip; }
+.chain-step { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: var(--spacing-2) var(--spacing-3); border-bottom: 1px solid var(--color-line); }
+.chain-step:last-child { border-bottom: 0; }
+.chain-step__mark { display: flex; flex-shrink: 0; justify-content: center; align-items: center; width: 18px; height: 18px; border-radius: 999px; box-shadow: var(--color-line-strong) 0 0 0 1px inset; color: var(--color-muted); font-size: 10px; line-height: 12px; }
+.chain-step__text { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
+.chain-step__name { color: var(--color-ink-2); font-size: var(--text-sm); line-height: 16px; }
+.chain-step__line { color: var(--color-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.chain-step--ended .chain-step__mark { background: var(--color-pass); box-shadow: none; color: var(--color-on-pass); }
+.chain-step--review { background: var(--color-hover); box-shadow: var(--color-brass) 2px 0 0 inset; }
+.chain-step--review .chain-step__mark { background: var(--color-brass); box-shadow: none; color: var(--color-brass-ink); }
+.chain-step--review .chain-step__name { color: var(--color-ink); font-weight: var(--font-weight-medium); }
+.chain-step--blocked .chain-step__mark { background: var(--color-lacquer-soft); box-shadow: var(--color-lacquer) 0 0 0 1px inset; color: var(--color-lacquer); }
+.chain-step--blocked .chain-step__name { color: var(--color-ink); }
+.chain-step__open { padding: 2px 8px; border: 0; border-radius: var(--radius-sm); background: transparent; box-shadow: var(--color-line-strong) 0 0 0 1px inset; color: var(--color-ink-2); font: inherit; font-size: var(--text-xs); cursor: pointer; }
+.chain-step__open:hover { background: var(--color-hover); }
+
+/* A chain's card: continue, blocked, done. */
+.chain-card { display: flex; flex-direction: column; gap: var(--spacing-2); padding: var(--spacing-3) var(--spacing-4); border-radius: var(--radius-md); background: var(--color-panel); box-shadow: var(--shadow-chip); }
+.chain-card--blocked { background: var(--color-lacquer-soft); box-shadow: var(--color-lacquer) 0 0 0 1px inset; }
+.chain-card__head { display: flex; justify-content: space-between; align-items: center; gap: var(--spacing-2); }
+.chain-card__title { margin: 0; color: var(--color-ink); font-size: var(--text-md); font-weight: var(--font-weight-semibold); }
+.chain-card__line { margin: 0; color: var(--color-ink-2); font-size: var(--text-md); line-height: 20px; overflow-wrap: anywhere; }
+.chain-card__actions { display: flex; flex-wrap: wrap; gap: var(--spacing-2); }
+.chain-card__actions .button--primary { flex: 1; }
+
+/* A linked input of a chain's step, in its draft. */
+.chain-binding { margin: 0; padding: var(--spacing-2) var(--spacing-3); border-radius: var(--radius-md); background: var(--color-raised); box-shadow: var(--color-line) 0 0 0 1px inset; }
+.chain-binding--differs { box-shadow: var(--color-brass) 0 0 0 1px inset; }
+.chain-binding__head { margin: 0; color: var(--color-ink); font-size: var(--text-sm); font-weight: var(--font-weight-medium); }
+.chain-binding__line { margin: var(--spacing-1) 0 0; color: var(--color-ink-2); font-size: var(--text-sm); overflow-wrap: anywhere; }
+.chain-binding__ids { margin: var(--spacing-1) 0 0; color: var(--color-muted); font-size: var(--text-xs); line-height: 16px; }
+.chain-binding__differs { color: var(--color-ink); font-weight: var(--font-weight-medium); }
+.workspace__chain { flex-wrap: wrap; }
+.workspace__chain-line { color: var(--color-muted); font-size: var(--text-xs); }
+.replay-report--diverged .replay-report__meta, .replay-report--diverged .replay-report__setting { color: var(--color-ink-2); }

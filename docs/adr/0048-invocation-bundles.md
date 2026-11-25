@@ -1,6 +1,8 @@
 # 0048. Invocation bundles
 
-Status: accepted. Changes ADR 0005: the record gains `run/7`
+Status: accepted. Changes ADR 0005: the record gains `run/7`. Amended by plan m7, task U2
+(2026-11-25): a chain's step opened in the playground gives the inputs the bundle carries
+ordinary names, as an import ("Importing one")
 Date: 2026-11-24
 Spec: section 3, "The execution contract", "Storage" and "What every run records"; section
 4 (the device "recorded in the run"); section 6, "Controls from table-manners" ("Invocation
@@ -165,6 +167,13 @@ bundle's runs are never made runs of the importing store: no history, stats or l
 counts them. A second import of a bundle already held changes nothing. A run started from a
 bundle reads its inputs through the bundle's names, and its admission gives each input it
 took a name of the run's own, so the run holds what it used once the bundle is gone.
+*Amended by plan m7, task U2:* the import itself gives no file an ordinary name, but when
+the playground opens a chain's step as a draft, each input of the step the bundle carries
+is given the store's ordinary name and an import's mark, in one publication made once the
+draft is made, so the draft is prepared and run as any draft is (a preparation looks an
+artifact up by its ordinary name only). Those imports are the store's own from then on:
+deleting the bundle leaves them, as it leaves what a run took, and the uploads' collection
+treats them as any import.
 
 **A bundle is deleted** by `whizbang bundle delete <digest>` or from the playground, which
 removes the entry's names in one publication ([`Publication::let_go_of_entry`]); its

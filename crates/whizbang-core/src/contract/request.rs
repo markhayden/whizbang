@@ -113,6 +113,9 @@ pub struct Request {
     cap: Option<Estimate>,
     /// Whether the call runs only under a preparation it came with.
     needing: bool,
+    /// The step of a bundle the store holds that this request makes again, when it is a
+    /// step of a guided chain replay (plan m7, task U2): the bundle's digest and the step.
+    step: Option<(Digest, u32)>,
 }
 
 impl Request {
@@ -126,7 +129,25 @@ impl Request {
             deadline: None,
             cap: None,
             needing: false,
+            step: None,
         }
+    }
+
+    /// The same request, as a step of a guided chain replay (plan m7, task U2; ADR 0048,
+    /// "`replayed`"): a run of the call as given, under the config as it is now, that
+    /// makes again the step `step` of the bundle of this digest the store holds. The
+    /// executor refuses it when the store holds no such bundle or the bundle no such
+    /// step; otherwise every run of its family records `replayed` with the step's run,
+    /// the bundle and the step, live, and its inputs are found among the bundle's files
+    /// as a replay of the step finds them. It is part of the request's fingerprint.
+    pub fn from_step(mut self, bundle: Digest, step: u32) -> Request {
+        self.step = Some((bundle, step));
+        self
+    }
+
+    /// The bundle and the step this request makes again, when it is a chain's step.
+    pub fn step(&self) -> Option<(Digest, u32)> {
+        self.step
     }
 
     /// The same request, marked as one that runs only under the preparation it came
@@ -220,7 +241,20 @@ impl Request {
 
     /// The fingerprint of the request: see [`request_fingerprint`].
     pub fn fingerprint(&self) -> Digest {
-        request_fingerprint(&self.call)
+        let call = request_fingerprint(&self.call);
+        match self.step {
+            None => call,
+            // A chain's step, kind `step/1`: the call's `request/1`, the bundle's digest
+            // and the step. The same call asked as an ordinary run, or as another step, is
+            // another request.
+            Some((bundle, step)) => {
+                let mut fields = Encoder::new("step/1");
+                fields.digest(&call);
+                fields.digest(&bundle);
+                fields.unsigned(u64::from(step));
+                fields.finish()
+            }
+        }
     }
 }
 
@@ -1114,4 +1148,34 @@ pub fn with_descendants(
         all.push(run);
     }
     all
+}
+
+#[cfg(test)]
+mod step_tests {
+    use super::Request;
+    use crate::contract::{Call, Value};
+    use crate::identity::Digest;
+
+    #[test]
+    fn a_steps_fingerprint_is_not_its_calls_and_names_its_bundle_and_step() {
+        let call = Call::new("remove_prompt").argument("prompt", Value::text("the hose"));
+        let plain = Request::new(call.clone()).fingerprint();
+        let bundle = Digest::of_bytes(b"a bundle");
+        let step = Request::new(call.clone())
+            .from_step(bundle, 0)
+            .fingerprint();
+        assert_ne!(plain, step);
+        assert_ne!(
+            step,
+            Request::new(call.clone())
+                .from_step(bundle, 1)
+                .fingerprint()
+        );
+        let other = Digest::of_bytes(b"another bundle");
+        assert_ne!(
+            step,
+            Request::new(call.clone()).from_step(other, 0).fingerprint()
+        );
+        assert_eq!(step, Request::new(call).from_step(bundle, 0).fingerprint());
+    }
 }

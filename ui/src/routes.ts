@@ -2,7 +2,8 @@
 // `?picture=<identity>`, a picture of the library picked, to start a task with),
 // `#/k/<kit>/<task>`, `#/run/<id>`, `#/history`, `#/models`; and task W3's
 // `#/run/<id>/report` and `#/record/<name>`; plan m7, task U1's `#/compare/<baseline>`
-// and `#/compare/<baseline>/<attempt>`. A hash keeps every route on
+// and `#/compare/<baseline>/<attempt>`; plan m7, task U2's `#/bundles`, `#/bundles/<digest>`
+// and `#/chain/<digest>`. A hash keeps every route on
 // the one page the host serves, so a reload or a copied address finds the same screen.
 
 export type Route =
@@ -14,13 +15,15 @@ export type Route =
   | { name: "report"; id: string }
   | { name: "record"; record: string }
   | { name: "compare"; baseline: string; attempt?: string }
+  | { name: "bundles"; digest?: string }
+  | { name: "chain"; digest: string }
   | { name: "unknown"; hash: string };
 
 /** A name in an address: lower-case letters, digits, `_` and `-` (the rule for names). */
 const NAME = /^[a-z][a-z0-9_-]{0,63}$/;
 /** A run's id: letters, digits, `-` and `_`. */
 const RUN = /^[A-Za-z0-9_-]{1,128}$/;
-/** A picture's identity in the store. */
+/** A picture's identity in the store, and a bundle's digest. */
 const PICTURE = /^sha256:[0-9a-f]{64}$/;
 
 export function parseRoute(hash: string): Route {
@@ -50,6 +53,9 @@ export function parseRoute(hash: string): Route {
   if (head === "models" && parts.length === 1) return { name: "models" };
   if (head === "compare" && a && RUN.test(a) && parts.length === 2) return { name: "compare", baseline: a };
   if (head === "compare" && a && RUN.test(a) && b && RUN.test(b) && parts.length === 3) return { name: "compare", baseline: a, attempt: b };
+  if (head === "bundles" && parts.length === 1) return { name: "bundles" };
+  if (head === "bundles" && a && PICTURE.test(a) && parts.length === 2) return { name: "bundles", digest: a };
+  if (head === "chain" && a && PICTURE.test(a) && parts.length === 2) return { name: "chain", digest: a };
   return { name: "unknown", hash };
 }
 
@@ -73,6 +79,10 @@ export function hrefOf(route: Route): string {
       return `#/record/${encodeURIComponent(route.record)}`;
     case "compare":
       return route.attempt ? `#/compare/${encodeURIComponent(route.baseline)}/${encodeURIComponent(route.attempt)}` : `#/compare/${encodeURIComponent(route.baseline)}`;
+    case "bundles":
+      return route.digest ? `#/bundles/${route.digest}` : "#/bundles";
+    case "chain":
+      return `#/chain/${route.digest}`;
     case "unknown":
       return route.hash || "#/";
   }

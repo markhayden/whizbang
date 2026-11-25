@@ -9,6 +9,8 @@ import { StatusBar } from "./components/StatusBar";
 import { TopBar } from "./components/TopBar";
 import { actionOf } from "./keyboard";
 import { hrefOf, parseRoute, type Route } from "./routes";
+import { Bundles } from "./screens/bundles/Bundles";
+import { Chain } from "./screens/chain/Chain";
 import { CompareRuns } from "./screens/compare/CompareRuns";
 import { EmptyScreen } from "./screens/Empty";
 import type { Taken } from "./token";
@@ -205,6 +207,10 @@ export function App(props: AppProps) {
       <span class="top-bar__place">Home</span>
     ) : route.name === "compare" ? (
       <span class="top-bar__place">Compare</span>
+    ) : route.name === "bundles" ? (
+      <span class="top-bar__place">Bundles</span>
+    ) : route.name === "chain" ? (
+      <span class="top-bar__place">Chain</span>
     ) : null;
 
   if (quit?.stage === "quit") {
@@ -302,6 +308,10 @@ function screenOf(route: Route, hello: Hello | null, client: Client, go: (hash: 
       return <Models client={client} />;
     case "compare":
       return <CompareRuns key={`${route.baseline}/${route.attempt ?? ""}`} baseline={route.baseline} attempt={route.attempt} hello={hello} client={client} go={go} />;
+    case "bundles":
+      return <Bundles key={route.digest ?? ""} hello={hello} client={client} digest={route.digest} go={go} />;
+    case "chain":
+      return <Chain key={route.digest} hello={hello} client={client} digest={route.digest} go={go} />;
     case "unknown":
       return (
         <EmptyScreen title="Not a page" link={{ href: "#/", words: "Back to Home" }}>

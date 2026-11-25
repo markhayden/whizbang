@@ -33,7 +33,7 @@ use crate::identity::{Digest, PixelDigest};
 
 pub use import::{ImportError, Imported, delete, entry, held, import, manifest_of};
 pub use read::{Checked, check};
-pub use write::{Made, make};
+pub use write::{Linked, Made, links, make};
 
 /// The bundle's kind and version, as its manifest's `bundle` holds it.
 pub const FORMAT: u32 = 1;

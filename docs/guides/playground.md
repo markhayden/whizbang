@@ -365,7 +365,9 @@ nothing, and a run with no judge ready left unchecked; `docs/results/m5-playgrou
 - **Run again** opens a new draft of the same task with the run's inputs and the backends it
   used written out. Changing it changes nothing of the run.
 - **More** holds **Pin as baseline** and **Compare with baseline** (below, "Comparing two
-  runs"), **Save as example…** (below, "Saved examples") and **Copy command**.
+  runs"), **Save as example…** (below, "Saved examples"), **Replay…** (below, "Replaying a
+  run"), **Bundle this run…** (below, "Bundles") and **Copy command**. The arrow keys move
+  through it, and Escape closes it.
 - **Copy command** gives the `whizbang` command that makes the same call, shows it, and puts
   it on the clipboard: every input by its identity in the store; the store, config, env
   file, models directory and a recipe file by their absolute paths; each backend the run
@@ -460,6 +462,91 @@ Held by `play_examples::an_example_keeps_its_inputs_after_its_run_is_deleted_and
 `examples.spec.ts: an example saved from a result opens as a draft that runs nothing, after a restart and after its run was deleted`
 (Chrome tier).
 
+## Bundles
+
+A bundle carries a run, or a chain of runs, out of one store as one file that another store
+takes in (`docs/guides/bundles-and-replay.md` says what it holds and how it is checked).
+
+- **Bundle this run…**, in a result's More menu, says what the bundle holds and never holds
+  (no key, token, endpoint, path or model weights) and its size: about the sum of what the
+  store holds of the run before it is written, and exactly once it is. **Download bundle**
+  saves `<run>.whizbang-bundle`.
+- **A chain** is made in History: **Make a chain**, then **Pick** runs in the order they ran,
+  up to 16. Each pick is checked by the host, which names each link (a later run's input
+  that is an earlier pick's output) or why it refuses the chain (an input two picked outputs
+  could be, or a run another run called). **Bundle chain** saves the file.
+- **Bundles** (`#/bundles`, from History) lists the bundles the store holds. A bundle file
+  dropped on its frame, or chosen, is sent to the host, read whole and checked before
+  anything of it is kept, and shown (`#/bundles/<digest>`): its steps and their links,
+  whether each step replays offline as this build decides it from the step's records (never
+  from what the bundle says of itself), what it holds and what it withholds, each with why.
+  A file that is not a bundle this build can read is refused, naming its first fault, and
+  nothing is kept. **Delete bundle** asks once, then lets it go: what a run of this store
+  took from it stays, and so do the pictures a step's draft was given from it, which became
+  imports of this store when the step was opened.
+
+The page never names a file by its path: a bundle goes to the host as its bytes, at most
+256 MiB, one of the host's two uploads at a time, and is read and taken in one at a time.
+A bundle is not encrypted and holds the runs' pictures and words.
+
+Held by `play_bundles::a_bundle_uploaded_is_read_whole_before_anything_is_imported`,
+`play_bundles::a_bundle_over_256_mib_is_refused_413_before_it_is_read_whole`,
+`play_bundles::with_two_bundle_uploads_stalled_a_third_is_refused_429_and_polling_and_stop_are_answered`,
+`play_bundles::a_deleted_bundle_leaves_the_artifacts_a_run_names` and
+`play_bundles::no_bundle_route_takes_a_path` (fast tier);
+`send.spec.ts: bundle this run downloads one file that imports into another playground` and
+`security.spec.ts: a bundle holding markup in its words shows them as text` (Chrome tier).
+
+## Replaying a chain
+
+**Start the chain**, on a chain's bundle, opens the chain's page (`#/chain/<digest>`): its
+steps, each with its state (ended, to review, waits, stopped, blocked), and **Review step
+N**. Reviewing a step opens it as an ordinary draft of its task, saying which step of which
+chain it is: its inputs the bundle carries are given to this store as an import, and each
+input linked to an earlier step is bound to the output of that step's new run, at the same
+port and place, beside the one recorded: "same as recorded", or "differs from recorded"
+with both identities. Change anything, then press **Run**: nothing runs until you do, and
+nothing runs two steps by itself. The run is an ordinary run under the config as it is now,
+its cost reviewed as any run's, and its record names the bundle and the step it makes again.
+
+On the step's result, **Continue to step N** opens the next step the same way. A link that
+finds no output in the new run, or two that could be it, stops the chain there, saying
+why. **Stop** stops it; the runs it made stay. The chain's place (which step, which runs)
+is kept in the browser, so closing the tab loses nothing, and the chain's page reads it
+again from its runs and its bundle. At the end, **Chain done** offers **Compare last step**
+(the step's new run beside the run it replays, when this store holds both) and **Bundle the
+new chain**.
+
+A chain's runs, like a replay's, are left out of History and its figures unless asked
+("With replays", "Replays only").
+
+Held by `play_chain::a_step_runs_only_when_started_and_continue_binds_the_new_output`,
+`play_chain::a_link_that_finds_no_output_or_two_stops_the_chain` and
+`play_chain::a_run_started_from_a_step_records_the_bundle_and_the_step` (fast tier);
+`chain.spec.ts: a chain of a removal and its check replays one ordinary run a step, binds the new output and shows its changed identity`
+and `chain.spec.ts: stop leaves the chain and a reopened tab finds its runs` (Chrome tier).
+
+## Replaying a run
+
+**Replay…**, in a result's More menu, is always offered. **Offline**, the default, makes the
+run again with every model's answer the one it recorded: nothing is called and nothing is
+spent; the pixel work runs again. **Live** makes the call again under the config as it is
+now; its cost is reviewed first, as any paid run's, and the button says what it may spend.
+When the engine refuses the replay (a run another run called, one that was interrupted, a
+task this build does not ship at that version, a tool file offline), the dialog says why in
+its words.
+
+A replay is a run of the host like any other: followed, stopped and counted among the four
+that go at once. Once it has ended, its result opens with the replay's report on top:
+**Reproduced**, **Differs** (each difference by the place of its run, with **Compare side
+by side**), **Diverged** (the replay asked something the run never asked, and nothing was
+called) or **Can't be answered offline** (with what was missing). A live replay lists the
+settings that changed since.
+
+Held by `play_replay::an_offline_replay_from_the_page_spends_nothing_and_shows_reproduced`
+(fast tier); `replay.spec.ts: replay of a result shows reproduced, and a changed one shows where it differs`
+(Chrome tier).
+
 ## History
 
 History (the top bar's **History**, or `#/history`) lists every run of the store, newest
@@ -472,6 +559,10 @@ Opening a row opens its result.
   by words, matched without case. The address carries the filter, and every filter of
   `whizbang runs stats` too (`#/history?action=check&since=2026-11-01`), so a filtered list
   can be reopened or shared with yourself.
+- **Replays** are left out unless asked: "With replays" lists them too, "Replays only" lists
+  them alone (`replayed=include|only`, as `whizbang runs stats --replayed` takes it). A run
+  of a replayed family, a chain's step among them, is a replay.
+- **Make a chain** picks runs for a chain's bundle (above, "Bundles").
 - **The figures** below the list are the ones `whizbang runs stats` prints for the same
   filter: runs (child runs included), how they ended, verdicts, a loop's attempts and
   retries, retries and repairs, time as median and 95th percentile, cost settled and

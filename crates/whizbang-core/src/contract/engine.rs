@@ -814,8 +814,13 @@ impl Executor for Engine {
     }
 
     fn request(&self, request: &Request) -> Result<Answer, CallError> {
-        match self.begin(request)? {
-            Ok(admitted) => Ok(Answer::Ran(self.execute(admitted)?)),
+        let stepping = match self.stepping(request) {
+            Ok(stepping) => stepping,
+            Err(refused) => return self.repeat_or(request, refused),
+        };
+        let this = stepping.as_ref().unwrap_or(self);
+        match this.begin(request)? {
+            Ok(admitted) => Ok(Answer::Ran(this.execute(admitted)?)),
             Err(answer) => Ok(answer),
         }
     }
@@ -833,11 +838,16 @@ impl Executor for Engine {
             },
             None => None,
         };
-        let admitted = match self.begin(request)? {
+        let stepping = match self.stepping(request) {
+            Ok(stepping) => stepping,
+            Err(refused) => return self.repeat_or(request, refused),
+        };
+        let this = stepping.as_ref().unwrap_or(self);
+        let admitted = match this.begin(request)? {
             Ok(admitted) => admitted,
             Err(answer) => return Ok(answer),
         };
-        self.launch(admitted, place)
+        this.launch(admitted, place)
     }
 
     fn start_replay(&self, replay: &Replay) -> Result<Answer, CallError> {
@@ -917,6 +927,20 @@ impl Executor for Engine {
         // by that the config no longer offers refuses the replay, naming it.
         if read.recorded.is_none() {
             let prepared = engine.prepare(&read.call)?;
+            // Held to the bound its caller was shown, when it was shown one.
+            if let Some(shown) = replay.shown_bound()
+                && prepared.estimate().micros() > shown
+            {
+                return Err(Refusal::NotReplayed {
+                    run: read.root.clone(),
+                    why: format!(
+                        "it may spend up to {} millionths of a dollar now, more than the {shown} \
+                         shown before it was asked",
+                        prepared.estimate().micros()
+                    ),
+                }
+                .into());
+            }
             for need in prepared.needs() {
                 let capability = need.capability();
                 let recorded: Vec<&ModelIdentity> = (read.models.iter())
@@ -977,6 +1001,12 @@ impl Executor for Engine {
         let mut request = Request::new(read.call);
         if let Some(id) = id {
             request = request.with_id(id.clone());
+        }
+        if let Some(signal) = replay.cancellation() {
+            request = request.cancelled_by(signal.clone());
+        }
+        if let Some(deadline) = replay.deadline() {
+            request = request.until(deadline);
         }
         let admitted = match engine.begin_as(&request, fingerprint)? {
             Ok(admitted) => admitted,
@@ -1082,6 +1112,67 @@ impl Engine {
                 request: id.clone(),
                 run,
             })),
+        }
+    }
+
+    /// For a chain's step ([`Request::from_step`]): the same executor, holding the step's
+    /// provenance and the names of its inputs among the bundle's files for that one run
+    /// and its family, as a replay of the step holds them; none for any other request. A
+    /// store that holds no such bundle, or a bundle with no such step, refuses it.
+    fn stepping(&self, request: &Request) -> Result<Option<Engine>, CallError> {
+        let Some((digest, step)) = request.step() else {
+            return Ok(None);
+        };
+        let Some(store) = &self.store else {
+            return Err(Refusal::ReadOnly.into());
+        };
+        let failed = |error| CallError::Store(StoreFailure::new(error));
+        let holding = store.hold().map_err(failed)?;
+        let (root, action, names) =
+            replay::step_of(store.as_ref(), holding.generation(), &digest, step)?;
+        drop(holding);
+        // A step's mark is the step's: a call of another action is not that step made again.
+        if action.as_deref() != Some(request.call().action()) {
+            return Err(Refusal::NotReplayed {
+                run: root,
+                why: format!(
+                    "step {step} of the bundle {digest} is a run of {}, and the call is of {}",
+                    action.as_deref().unwrap_or("an action its record lost"),
+                    request.call().action()
+                ),
+            }
+            .into());
+        }
+        let mut engine = self.clone();
+        engine.replay = Some(Arc::new(Replaying {
+            replayed: Replayed {
+                run: root,
+                bundle: Some(super::record::FromBundle { digest, step }),
+                mode: super::record::ReplayMode::Live,
+            },
+            recorded: None,
+            names,
+        }));
+        Ok(Some(engine))
+    }
+
+    /// A request whose step could not be read: answered with its run when its id names
+    /// this request admitted before (its bundle may have gone since), as a conflict when
+    /// it names another, else refused so.
+    fn repeat_or(&self, request: &Request, refused: CallError) -> Result<Answer, CallError> {
+        let Some(id) = request.id() else {
+            return Err(refused);
+        };
+        match self.find_request(id, request.fingerprint())? {
+            Found::Same(earlier) => Ok(Answer::Repeat(earlier)),
+            Found::Other { .. } if self.secrets.now().redact(id.as_str()) != id.as_str() => {
+                Err(Refusal::SecretInRequestId.into())
+            }
+            Found::Other { run } => Err(CallError::Refused(Refusal::Conflict {
+                request: id.clone(),
+                run,
+            })),
+            Found::Nothing => Err(refused),
         }
     }
 

@@ -20,6 +20,8 @@ use super::routes::{Body, Route, find};
 pub const JSON_LIMIT: u64 = 1024 * 1024;
 /// The most bytes of a picture.
 pub const PICTURE_LIMIT: u64 = 64 * 1024 * 1024;
+/// The most bytes of a bundle sent to be imported: a bundle's own bound (ADR 0048).
+pub const BUNDLE_LIMIT: u64 = whizbang_core::bundle::MAX_BYTES;
 /// How deep a JSON body nests at most: the stdio server's bound.
 pub const DEPTH_LIMIT: usize = crate::frame::DEPTH_LIMIT;
 
@@ -33,6 +35,8 @@ pub struct Guarded<'a> {
     pub json: Option<Json>,
     /// A picture whose header says a size inside the core's limits.
     pub picture: Option<Picture>,
+    /// A bundle's bytes, not yet read.
+    pub bundle: Option<Vec<u8>>,
     _upload: Option<Upload<'a>>,
     _sealed: Sealed,
 }
@@ -218,6 +222,20 @@ pub(crate) fn admit<'a>(
                 return Err(refused(415, "this route takes application/json"));
             }
         }
+        Body::Bundle => {
+            if head.length > BUNDLE_LIMIT {
+                return Err(refused(413, "a bundle is at most 256 MiB"));
+            }
+            if !matches!(
+                declared.as_deref(),
+                Some("application/x-tar" | "application/octet-stream")
+            ) {
+                return Err(refused(
+                    415,
+                    "this route takes application/x-tar or application/octet-stream",
+                ));
+            }
+        }
         Body::Picture => {
             if head.length > PICTURE_LIMIT {
                 return Err(refused(413, "a picture is at most 64 MiB"));
@@ -227,14 +245,14 @@ pub(crate) fn admit<'a>(
             }
         }
     }
-    // An upload holds a worker for its time: at most two at once, refused as soon as
-    // the headers are read.
+    // An upload holds a worker for its time: at most two at once, pictures and bundles
+    // together, refused as soon as the headers are read.
     let upload = match route.body {
-        Body::Picture => {
+        Body::Picture | Body::Bundle => {
             let mut state = shared.state();
             if state.uploads >= super::UPLOADS_LIMIT {
                 return Err(Unread::Answer(
-                    Response::refused(429, "at most two pictures are sent at once")
+                    Response::refused(429, "at most two pictures or bundles are sent at once")
                         .with("Retry-After", "1"),
                 ));
             }
@@ -249,8 +267,11 @@ pub(crate) fn admit<'a>(
     };
     let mut json = None;
     let mut picture = None;
+    let mut bundle = None;
     match route.body {
         Body::None => {}
+        // Read by the route's handler, one bundle at a time, by the core's reader.
+        Body::Bundle => bundle = Some(body),
         Body::Json => {
             if crate::frame::depth(&body) > DEPTH_LIMIT {
                 return Err(refused(400, "a JSON body nests at most 16 deep"));
@@ -290,6 +311,7 @@ pub(crate) fn admit<'a>(
             params,
             json,
             picture,
+            bundle,
             _upload: upload,
             _sealed: Sealed,
         },

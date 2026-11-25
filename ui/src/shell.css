@@ -142,3 +142,9 @@
 .history__item:hover .history__pin, .history__item:focus-within .history__pin, .history__pin:has([aria-pressed="true"]) { display: flex; }
 .history__pin-button { padding: 3px 8px; border: 0; border-radius: var(--radius-sm); background: var(--color-raised); box-shadow: var(--color-line-strong) 0 0 0 1px inset; color: var(--color-ink); font-size: var(--text-sm); cursor: pointer; }
 .history__pin-button[aria-pressed="true"] { background: var(--color-brass-soft); color: var(--color-ink); }
+/* Making a chain in History (plan m7, task U2): the picks, their links, the refusal. */
+.history__chain { display: flex; flex-direction: column; align-items: flex-start; gap: var(--spacing-1-5); padding: var(--spacing-3) var(--spacing-4); border-radius: var(--radius-md); background: var(--color-brass-wash); box-shadow: var(--color-brass) 0 0 0 1px inset; }
+.history__chain--refused { background: var(--color-lacquer-soft); box-shadow: var(--color-lacquer) 0 0 0 1px inset; }
+.history__chain-title { margin: 0; color: var(--color-ink); font-size: var(--text-md); font-weight: var(--font-weight-semibold); }
+.history__chain-link { margin: 0; color: var(--color-ink-2); font-size: var(--text-sm); overflow-wrap: anywhere; }
+.history--chaining .history__pin { display: flex; }

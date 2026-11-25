@@ -80,6 +80,9 @@ const PAIRS: Array<[string, string, string | null, string]> = [
   ["ink", "brass-wash", "panel", "an attempt's value in a row of what differs"],
   ["ink-2", "brass-wash", "panel", "a baseline's value in a row of what differs"],
   ["muted", "brass-wash", "panel", "the name of a row of what differs"],
+  ["ink-2", "lacquer-soft", null, "a refused bundle's fault, a blocked chain's reason"],
+  ["ink-2", "brass-wash", "panel", "a picked chain's links, a report's differences"],
+  ["muted", "raised", null, "an unanswerable replay's place"],
 ];
 
 /**

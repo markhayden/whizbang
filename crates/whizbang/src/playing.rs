@@ -625,6 +625,10 @@ impl Play for Playground {
         Some(self)
     }
 
+    fn bundles(&self) -> Option<&dyn whizbang_serve::play::bundles::Bundles> {
+        Some(self)
+    }
+
     fn models(&self) -> Option<&dyn whizbang_serve::play::models::Models> {
         self.models
             .as_ref()

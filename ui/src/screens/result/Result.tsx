@@ -4,7 +4,11 @@ import { Button } from "../../components/Button";
 import { Canvas } from "../../components/Canvas";
 import { Compare, type CompareMode } from "../../components/Compare";
 import { CostTable } from "../../components/CostTable";
+import { BundleDialog } from "../../components/BundleDialog";
+import { ChainCard } from "../../components/ChainCard";
 import { ExampleDialog } from "../../components/ExampleDialog";
+import { ReplayDialog } from "../../components/ReplayDialog";
+import { ReplayReport } from "../../components/ReplayReport";
 import { Segmented } from "../../components/Segmented";
 import { SendToMenu } from "../../components/SendToMenu";
 import { StepList, type StepListEntry } from "../../components/StepList";
@@ -16,6 +20,7 @@ import { dollars, elapsed, middle } from "../../format";
 import { useArtifact, useArtifactState, useImageSize } from "../../hooks";
 import { actionOf } from "../../keyboard";
 import { hrefOf } from "../../routes";
+import { chainOfRun, fetchReplayReport, type ReplayReport as Report } from "../../bundles";
 import { EXAMPLE_NAME_LIMIT, EXAMPLE_NOTES_LIMIT, readPin, saveExample, savePin, type Pin } from "../../saved";
 import { StoredPicture } from "../shared";
 import "./result.css";
@@ -55,6 +60,13 @@ export function Result(props: ResultProps) {
   const [savingExample, setSavingExample] = useState(false);
   const [exampleProblem, setExampleProblem] = useState<string | undefined>(undefined);
   const [said, setSaid] = useState<string | null>(null);
+  // Replay… and Bundle this run (plan m7, task U2), and a replay's report once it is read.
+  const [replaying, setReplaying] = useState(false);
+  const [bundling, setBundling] = useState(false);
+  const [report, setReport] = useState<Report | null>(null);
+  const [reportProblem, setReportProblem] = useState<string | null>(null);
+  const moreButton = useRef<HTMLSpanElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let live = true;
@@ -66,6 +78,41 @@ export function Result(props: ResultProps) {
       live = false;
     };
   }, [props.id]);
+  // A replay's report: read once the record says the run is a replay of a run.
+  const replayOf = record?.replayed && !record.replayed.bundle ? record.replayed.run : null;
+  useEffect(() => {
+    setReport(null);
+    setReportProblem(null);
+    if (!replayOf) return;
+    let live = true;
+    fetchReplayReport(props.client, props.id).then(
+      (answer) => live && setReport(answer),
+      (error: unknown) => live && setReportProblem(error instanceof ApiError ? error.message : String(error)),
+    );
+    return () => {
+      live = false;
+    };
+  }, [props.id, replayOf]);
+  // The menu's keys: the arrows move between its items, Escape closes it and gives the
+  // focus back to More.
+  useEffect(() => {
+    if (!more) return;
+    menu.current?.querySelector<HTMLElement>("[role=menuitem]")?.focus();
+  }, [more]);
+  const onMenuKey = (event: KeyboardEvent) => {
+    const items = Array.from(menu.current?.querySelectorAll<HTMLElement>("[role=menuitem]") ?? []);
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setMore(false);
+      moreButton.current?.querySelector("button")?.focus();
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const next = event.key === "ArrowDown" ? (at + 1) % items.length : (at - 1 + items.length) % items.length;
+      items[next]?.focus();
+    }
+  };
 
   const kits = Array.isArray(props.hello?.kits) ? props.hello.kits : [];
   const task = taskOf(tasksOf(props.hello), record?.action);
@@ -188,6 +235,8 @@ export function Result(props: ResultProps) {
   const meta = [`run ${middle(record.run, 18)}`, took, total > 0 || (record.reserved ?? 0) > 0 ? `${dollars(total)}${record.reserved ? ` of up to ${dollars(record.reserved)}` : ""}` : "free"].filter(Boolean).join(" · ");
   const fields = fieldsOf(task);
   const targets = Array.isArray(record.send_to) ? record.send_to : [];
+  // A chain's step this page ran (plan m7, task U2, item 2): its place, kept in the browser.
+  const chained = chainOfRun(localStore(), record.run);
 
   return (
     <main class="workspace" aria-labelledby="result-title">
@@ -291,12 +340,14 @@ export function Result(props: ResultProps) {
               Run again
             </Button>
             <div class="result__more-wrap">
-              <Button variant="quiet" onClick={() => setMore((now) => !now)}>
-                {more ? "More ▴" : "More ▾"}
-              </Button>
+              <span ref={moreButton}>
+                <Button variant="quiet" haspopup="menu" expanded={more} onClick={() => setMore((now) => !now)}>
+                  {more ? "More ▴" : "More ▾"}
+                </Button>
+              </span>
               {more ? (
                 <div class="result__menu result__menu--end">
-                  <div class="menu result__more" role="menu" aria-label="More">
+                  <div ref={menu} class="menu result__more" role="menu" aria-label="More" onKeyDown={onMenuKey}>
                     <button type="button" role="menuitem" class="menu__item" onClick={pinHere}>
                       <span class="menu__title">{pin?.run === record.run ? "Pinned as baseline" : "Pin as baseline"}</span>
                     </button>
@@ -332,6 +383,28 @@ export function Result(props: ResultProps) {
                       class="menu__item"
                       onClick={() => {
                         setMore(false);
+                        setReplaying(true);
+                      }}
+                    >
+                      <span class="menu__title">Replay…</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      class="menu__item"
+                      onClick={() => {
+                        setMore(false);
+                        setBundling(true);
+                      }}
+                    >
+                      <span class="menu__title">Bundle this run…</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      class="menu__item"
+                      onClick={() => {
+                        setMore(false);
                         copy();
                       }}
                     >
@@ -354,6 +427,9 @@ export function Result(props: ResultProps) {
       </section>
       <aside class="workspace__right" aria-label="Summary">
         <h2 class="section-title">Summary</h2>
+        {chained ? <ChainCard client={props.client} place={chained.place} step={chained.step} run={record.run} outcome={record.outcome} go={props.go} /> : null}
+        {report ? <ReplayReport report={report} compareHref={report.report === "differs" ? hrefOf({ name: "compare", baseline: report.of, attempt: report.replay }) : undefined} /> : null}
+        {reportProblem ? <p class="workspace__purpose">{`The replay's report could not be made: ${reportProblem}`}</p> : null}
         {verdict ? <VerdictCard verdict={verdict} title={verdictTitle(verdict)} detail={record.attempts?.kept ? `attempt ${record.attempts.kept}` : undefined} reasons={record.verdict?.reasons ?? []} /> : null}
         {nothing ? (
           <p class="field__error result__nothing" role="status">
@@ -398,6 +474,20 @@ export function Result(props: ResultProps) {
           <p class="workspace__tools mono result__run">run {record.run}</p>
         </section>
       </aside>
+      {replaying ? (
+        <ReplayDialog
+          client={props.client}
+          run={record.run}
+          title={record.title ?? record.action ?? "a run"}
+          again={record.again ? { task: record.again.task, values: record.again.values } : null}
+          onCancel={() => setReplaying(false)}
+          onStarted={(run) => {
+            setReplaying(false);
+            props.go(hrefOf({ name: "run", id: run }));
+          }}
+        />
+      ) : null}
+      {bundling ? <BundleDialog client={props.client} run={record.run} onCancel={() => setBundling(false)} /> : null}
       {naming ? (
         <ExampleDialog
           from={`from run ${middle(record.run, 18)} · ${record.title ?? record.action ?? ""}`}

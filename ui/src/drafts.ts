@@ -23,6 +23,17 @@ export interface Draft {
   jobOf?: string;
   /** The saved example this draft was opened from, and its choices that fell back (plan m7, U1). */
   example?: FromExample;
+  /** The chain's step this draft makes again (plan m7, U2): run with the step named. */
+  chain?: FromChain;
+}
+
+/** Where a draft opened from a chain's step came from: the bundle, the step, its links. */
+export interface FromChain {
+  digest: string;
+  step: number;
+  of: number;
+  /** Each linked input bound to the new run's output, beside the one recorded. */
+  bindings: Array<{ port: string; from: { step: number; port: string }; run: string; now: string; recorded: string; differs: boolean }>;
 }
 
 /** Where a draft that Send to opened came from: the run, its kit and task, and when. */

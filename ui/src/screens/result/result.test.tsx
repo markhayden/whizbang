@@ -203,7 +203,7 @@ describe("the result screen", () => {
     expect(go).toHaveBeenCalledWith("#/k/rascal/remove_checked");
     // Copy command is in the More menu (plan m7, task U1), beside the pin and Save as example.
     click(view.all<HTMLElement>(".button--quiet").find((one) => one.textContent?.includes("More"))!);
-    expect(view.all("[role=menu][aria-label=More] [role=menuitem]").map((one) => one.textContent)).toEqual(["Pin as baseline", "Save as example…", ">_ Copy command"]);
+    expect(view.all("[role=menu][aria-label=More] [role=menuitem]").map((one) => one.textContent)).toEqual(["Pin as baseline", "Save as example…", "Replay…", "Bundle this run…", ">_ Copy command"]);
     const copy = view.all<HTMLElement>("[role=menuitem]").find((one) => one.textContent?.includes("Copy command"))!;
     click(copy);
     await act(async () => undefined);

@@ -1190,6 +1190,36 @@ impl Kitted {
         send(self.address, &bytes)
     }
 
+    /// Bytes sent as the page sends a file: a bundle (plan m7, task U2).
+    pub(crate) fn send_bytes(&self, path: &str, content_type: &str, bytes: &[u8]) -> Answer {
+        let mut head = self.head_of("POST", path, content_type, bytes.len() as u64);
+        head.extend_from_slice(bytes);
+        send(self.address, &head)
+    }
+
+    /// The head of a request with a body of this length, as the page sends it.
+    pub(crate) fn head_of(
+        &self,
+        method: &str,
+        path: &str,
+        content_type: &str,
+        length: u64,
+    ) -> Vec<u8> {
+        format!(
+            "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+             Authorization: Bearer {token}\r\nOrigin: http://127.0.0.1:{port}\r\n\
+             Content-Type: {content_type}\r\nContent-Length: {length}\r\n\r\n",
+            port = self.address.port(),
+            token = self.token.hex(),
+        )
+        .into_bytes()
+    }
+
+    /// The address the host listens on.
+    pub(crate) fn address(&self) -> SocketAddr {
+        self.address
+    }
+
     /// A picture sent as the page sends one.
     pub(crate) fn upload(&self, png: &[u8], name: &str) -> Answer {
         let mut head = format!(

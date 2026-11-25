@@ -3,7 +3,8 @@
 import { request as http } from "node:http";
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
-import { READY } from "./play";
+import { bundledVia, chainVia } from "./bundled";
+import { openAt, READY } from "./play";
 import { largePng } from "./png";
 
 /** What a page's fetch came to: its status, or that the browser refused to hand it over. */
@@ -136,4 +137,18 @@ test("an upload of a picture over the pixel limit is refused, naming the limit",
   );
   expect(outcome.status).toBe(413);
   expect(outcome.body.error).toContain("50000000");
+});
+
+test("a bundle holding markup in its words shows them as text", async ({ page, request, host }) => {
+  const hostile = `<img src=x onerror="document.title='ran'">`;
+  const chain = await chainVia(request, host, 91, hostile);
+  const digest = await bundledVia(request, host, [chain.removal, chain.check]);
+  await openAt(page, host, `#/bundles/${digest}`);
+  await expect(page.locator(".bundle-card")).toContainText("A chain of 2 steps");
+  await page.goto(`${host.address}#/chain/${digest}`);
+  await page.getByRole("button", { name: "Review step 1" }).click();
+  // The bundle's words are the draft's, as text in its field: nothing of them is markup.
+  await expect(page.locator("#field-prompt")).toHaveValue(hostile);
+  expect(await page.locator("img[onerror]").count()).toBe(0);
+  expect(await page.title()).not.toBe("ran");
 });

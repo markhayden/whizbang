@@ -27,14 +27,14 @@ use crate::escaped;
 /// The fields of the filter, as the address names them: `runs stats`'s, then the page's.
 pub const FILTER: &[&str] = &[
     "action", "model", "backend", "use_case", "matrix", "since", "until", "kit", "task", "result",
-    "words",
+    "words", "replayed",
 ];
 
 /// The fields `GET /api/runs` takes: the filter, the type of an output, a page's place
 /// and size, and W1's `open`.
 pub const LISTED: &[&str] = &[
     "action", "model", "backend", "use_case", "matrix", "since", "until", "kit", "task", "result",
-    "words", "output", "before", "limit", "open",
+    "words", "replayed", "output", "before", "limit", "open",
 ];
 
 /// The most runs one page of history lists, and how many when the page does not say.
@@ -229,7 +229,7 @@ fn run_of(guarded: &Guarded<'_>) -> Result<RunId, Response> {
 }
 
 /// A document as a download: its type, its name, and nothing that would let it run.
-fn download(document: Document) -> Response {
+pub(crate) fn download(document: Document) -> Response {
     let name: String = (document.name.chars())
         .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
         .collect();
