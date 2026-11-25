@@ -1,0 +1,27 @@
+# The dry run's plan of a reality-checks set (scripts/tests/test-sets.sh). Made up for the test.
+[set]
+id = "reality-checks/dry-run-v1"
+use_case = "reality-checks"
+split = "dev"
+licence = "CC-BY-4.0"
+images_repo = "github.com/markhayden/wafflery-evalsets"
+rules = { base = "reality-checks", version = 1 }
+
+[[family]]
+id = "bakery-counter"
+generator = "fake"
+description = "a baker at a counter holding out a loaf, a board that reads RYE"
+brief = ""
+source = { prompt = "A baker at a counter holds out a loaf; a board behind reads RYE.", seed = 601, size = 128 }
+
+[[family.item]]
+id = "bakery-counter-clean"
+op = { kind = "as_is" }
+
+[[family.item]]
+id = "bakery-counter-board"
+op = { kind = "edit", prompt = "Turn the board's word into shapes that spell nothing. Change nothing else.", defect = "text", words = "the board's word is not a word" }
+
+[[family.item]]
+id = "bakery-counter-hand"
+op = { kind = "generate", prompt = "A baker whose hand has six fingers holds out a loaf.", defect = "anatomy", size = 128 }
