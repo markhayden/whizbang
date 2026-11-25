@@ -99,18 +99,29 @@ fn a_bundle_over_256_mib_is_refused_413_before_it_is_read_whole() {
 fn with_two_bundle_uploads_stalled_a_third_is_refused_429_and_polling_and_stop_are_answered() {
     let kitted = Kitted::new("bundles-stalled");
     // Two uploads that send their head and a few bytes, and then nothing.
-    let mut stalled = Vec::new();
-    for _ in 0..2 {
+    let stall = || {
         let mut stream = TcpStream::connect(kitted.address()).unwrap();
         let mut head = kitted.head_of("POST", "/api/bundles", "application/x-tar", 4096);
         head.extend_from_slice(&[0u8; 16]);
         stream.write_all(&head).unwrap();
-        stalled.push(stream);
-    }
-    // Each holds its place once its head is read: the third waits for them to be read.
+        stream.set_nonblocking(true).unwrap();
+        stream
+    };
+    let mut stalled = vec![stall(), stall()];
+    // Each holds its place once its head is read. A probe, sent whole so that one taken
+    // before then is answered at once (it is no bundle), is refused once both are held;
+    // a stalled upload that a probe beat to a place was answered, and is sent again.
     let mut third = None;
     for _ in 0..200 {
-        let head = kitted.head_of("POST", "/api/bundles", "application/x-tar", 1024);
+        for one in &mut stalled {
+            let mut byte = [0u8; 1];
+            if !matches!(one.peek(&mut byte), Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock)
+            {
+                *one = stall();
+            }
+        }
+        let mut head = kitted.head_of("POST", "/api/bundles", "application/x-tar", 1024);
+        head.extend_from_slice(&[0u8; 1024]);
         let answer = crate::play::send(kitted.address(), &head);
         if answer.status == 429 {
             third = Some(answer);
