@@ -67,7 +67,7 @@ for t in $part; do
   case "$t" in scripts/tests/test-*.sh) ;; *) fail "the part names something else than a script test: $t" ;; esac
   [ -f "$root/$t" ] || fail "the part names a script test that is not there: $t"
 done
-for t in test-binary-start test-sign-in test-thread-lint test-notes test-pack test-compile-fail test-baseline test-deny; do
+for t in test-binary-start test-sign-in test-thread-lint test-notes test-pack test-compile-fail test-baseline test-deny test-sets; do
   case " $part " in *" scripts/tests/$t.sh "*) ;; *) fail "the part leaves out $t, which reads the crates' sources or every tracked file" ;; esac
 done
 [ "$(ls "$root"/scripts/tests/test-*.sh | wc -l)" -gt "$(echo "$part" | wc -w)" ] || fail "the part is every script test"
@@ -92,6 +92,10 @@ ran_part "the script taken away again: what the branch committed under crates/ i
 printf 'y = 2\n' >>"$repo/pack/x.py"
 ran_all "a change under pack/ (the uv rules of test-pack read it)" "pack/x.py changed"
 git -C "$repo" checkout -q -- pack/x.py
+mkdir -p "$repo/tools/sets"
+printf 'y = 2\n' >"$repo/tools/sets/x.py"
+ran_all "a file under tools/ (test-sets runs the set builder)" "tools/sets/x.py changed"
+rm -r "$repo/tools"
 printf 'check:\n' >>"$repo/justfile"
 git -C "$repo" add justfile
 ran_all "a staged change to the justfile" "justfile changed"

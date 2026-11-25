@@ -28,13 +28,14 @@
 #   test-notes looks there for each test a note cites; test-compile-fail reads the example
 #   in the core's ledger.rs; test-baseline reads the eval crate's baseline.rs; test-deny
 #   copies the crates' manifests and asks which of their source files exist; test-pack
-#   holds the uv rules over every tracked file. These are the part.
+#   holds the uv rules over every tracked file; test-sets builds the binary and checks the
+#   sets the builder made against the rule files `check` ships. These are the part.
 # - scripts/, the justfile, .github/, .config/, any folder named .claude and any .mcp.json
 #   (test-rules, at any depth and in any letter case), clippy.toml, deny.toml, AGENTS.md,
 #   CLAUDE.md, SPEC.md, the workspace's Cargo.toml, Cargo.lock and rust-toolchain.toml,
 #   each crate's Cargo.toml and build.rs (test-deny, test-features, test-crate-graph),
 #   .gitignore, pack/, deploy/ (test-gpu-host copies the GPU host's deployment) and docs/ (the plan, the notes, the reference, the baseline, the
-#   carry-over, the sources), and ui/ (test-ui builds a copy of it, test-e2e reads its
+#   carry-over, the sources), tools/ (test-sets runs the set builder), and ui/ (test-ui builds a copy of it, test-e2e reads its
 #   Playwright configuration, test-third-party-licences its licences). These are whole. A path git prints in quotes, for a character
 #   it will not print bare, is taken as whole too.
 # A new script test that reads the crates' sources joins `part`.
@@ -44,8 +45,8 @@ main() {
 set -euo pipefail
 export LC_ALL=C
 
-part="scripts/tests/test-baseline.sh scripts/tests/test-binary-start.sh scripts/tests/test-compile-fail.sh scripts/tests/test-deny.sh scripts/tests/test-notes.sh scripts/tests/test-pack.sh scripts/tests/test-sign-in.sh scripts/tests/test-thread-lint.sh"
-listed="scripts/, justfile, .github/, .config/, .claude/, .mcp.json, clippy.toml, deny.toml, AGENTS.md, CLAUDE.md, SPEC.md, Cargo.toml, Cargo.lock, rust-toolchain.toml, a crate's Cargo.toml or build.rs, .gitignore, pack/, deploy/, docs/ or ui/"
+part="scripts/tests/test-baseline.sh scripts/tests/test-binary-start.sh scripts/tests/test-compile-fail.sh scripts/tests/test-deny.sh scripts/tests/test-notes.sh scripts/tests/test-pack.sh scripts/tests/test-sets.sh scripts/tests/test-sign-in.sh scripts/tests/test-thread-lint.sh"
+listed="scripts/, justfile, .github/, .config/, .claude/, .mcp.json, clippy.toml, deny.toml, AGENTS.md, CLAUDE.md, SPEC.md, Cargo.toml, Cargo.lock, rust-toolchain.toml, a crate's Cargo.toml or build.rs, .gitignore, pack/, deploy/, docs/, tools/ or ui/"
 
 dry=0
 case "$*" in
@@ -78,7 +79,7 @@ whole() {
   local lower
   case "$1" in
     '"'* | scripts/* | justfile | .github/* | .config/* | clippy.toml | deny.toml | AGENTS.md | CLAUDE.md \
-      | SPEC.md | Cargo.toml | Cargo.lock | rust-toolchain.toml | .gitignore | pack/* | deploy/* | docs/* | ui/* \
+      | SPEC.md | Cargo.toml | Cargo.lock | rust-toolchain.toml | .gitignore | pack/* | deploy/* | docs/* | tools/* | ui/* \
       | crates/*/Cargo.toml | crates/*/build.rs) return 0 ;;
   esac
   lower=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')

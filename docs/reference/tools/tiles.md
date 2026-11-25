@@ -84,5 +84,8 @@ the judge's: four more pictures in the opening, which the screen's settled spend
 
 ## Mark and history
 
-Experimental (`SPEC.md` section 8): added by plan m3, task U1, with this record's two worked
-examples as its rung 1. It becomes a default only through a gate on fresh data.
+**Experimental** (`SPEC.md` section 8): added by plan m3, task U1, with this record's two
+worked examples as its rung 1. It becomes a default only through a gate on fresh data.
+
+- 2026-11-25, plan mE task A0, item 3: the mark, the same, is written in bold to open this
+  part, as every record's is, so that `whizbang describe` reads it and shows it.

@@ -86,9 +86,14 @@ pub const DETAILED: [&str; 3] = [align::NAME, compare::CHANGE_MAP, compare::EDGE
 pub const AFTER_ALIGN: [&str; 2] = [compare::CHANGE_MAP, compare::EDGE_SIMILARITY];
 
 /// A tool's mark (`SPEC.md` section 8, "Marks"), as its record states it
-/// ([`crate::marks`]): experimental for a tool whose record states no other.
+/// ([`crate::marks`]); `control` for `align`, which is a control and carries none (plan mE,
+/// task A0, item 3); experimental for any other tool whose record states no mark.
 pub fn mark(tool: &str) -> &'static str {
-    crate::marks::of(tool).map_or("experimental", crate::marks::Mark::word)
+    match crate::marks::of(tool) {
+        Some(mark) => mark.word(),
+        None if tool == align::NAME => "control",
+        None => "experimental",
+    }
 }
 
 /// Squint's manifest of a tool, as its prompt's Tools section read it: the name, the cost

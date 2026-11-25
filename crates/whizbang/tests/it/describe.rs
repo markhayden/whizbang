@@ -25,7 +25,7 @@ fn indented_description() -> &'static str {
 /// `check`, the recipe.
 fn compact_start() -> String {
     format!(
-        "{{\"description_version\":11,\"name\":\"whizbang\",\"version\":\"{}\",\"kits\":[{{\"name\":\"rascal\",\"title\":\"Rascal\",\"line\":\"edit pictures\"}},{{\"name\":\"squint\",\"title\":\"Squint\",\"line\":\"check pictures\"}}],\"actions\":[{{\"name\":\"check\",\"version\":\"1.8.0\",\"kind\":\"recipe\",\"purpose\":\"",
+        "{{\"description_version\":12,\"name\":\"whizbang\",\"version\":\"{}\",\"kits\":[{{\"name\":\"rascal\",\"title\":\"Rascal\",\"line\":\"edit pictures\"}},{{\"name\":\"squint\",\"title\":\"Squint\",\"line\":\"check pictures\"}}],\"actions\":[{{\"name\":\"check\",\"version\":\"1.8.0\",\"kind\":\"recipe\",\"purpose\":\"",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -101,7 +101,7 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
     assert!(ok);
     let doc: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
     assert_eq!(doc["name"], "whizbang");
-    assert_eq!(doc["description_version"], 11);
+    assert_eq!(doc["description_version"], 12);
     assert_eq!(doc["version"], env!("CARGO_PKG_VERSION"));
     let names: Vec<&str> = doc["actions"]
         .as_array()
@@ -214,8 +214,12 @@ fn describe_without_json_names_the_build() {
         ),
         "{text}"
     );
-    // Each action's line, and under a recipe the line of when to use it.
-    let lines: Vec<&str> = (text.lines().skip(1))
+    // Each action's line, and under a recipe the line of when to use it; after them, the
+    // tools that are no action (`marks::tiles_and_per_subject_are_shown_experimental`).
+    let (actions, _) = text
+        .split_once("tools a run offers a judge only when it names them:\n")
+        .expect("the tools offered");
+    let lines: Vec<&str> = (actions.lines().skip(1))
         .filter(|line| !line.starts_with("      use: "))
         .collect();
     let names: Vec<&str> = lines
@@ -336,10 +340,16 @@ fn a_test_adds_echo_to_the_registry_the_binary_builds() {
     let shipped = whizbang::wiring::registry().expect("the registry builds");
     let shipped = whizbang::wiring::describe_text(&whizbang::wiring::description(&shipped));
     assert!(shipped.starts_with(&format!("whizbang {}\n", env!("CARGO_PKG_VERSION"))));
+    // After the last action, before the tools that are no action (plan mE, task A0).
+    let at = shipped
+        .find("tools a run offers a judge")
+        .expect("the tools offered");
+    let (actions, offered) = shipped.split_at(at);
     assert_eq!(
         text,
         format!(
-            "{shipped}  echo  Returns the text it was given; a fake for tests, which never ships.\n"
+            "{actions}  echo  Returns the text it was given; a fake for tests, which never \
+             ships.\n{offered}"
         )
     );
 }
@@ -350,7 +360,7 @@ fn a_test_adds_echo_to_the_registry_the_binary_builds() {
 fn describe_json_pretty_starts_and_ends_with_these_bytes() {
     let (_, pretty) = whizbang(&["describe", "--json", "--pretty"]);
     let start = format!(
-        "{{\n  \"description_version\": 11,\n  \"name\": \"whizbang\",\n  \"version\": \"{}\",\n  \"kits\": [\n    {{\n      \"name\": \"rascal\",\n      \"title\": \"Rascal\",\n      \"line\": \"edit pictures\"\n    }},\n    {{\n      \"name\": \"squint\",\n      \"title\": \"Squint\",\n      \"line\": \"check pictures\"\n    }}\n  ],\n  \"actions\": [\n    {{\n      \"name\": \"check\",\n",
+        "{{\n  \"description_version\": 12,\n  \"name\": \"whizbang\",\n  \"version\": \"{}\",\n  \"kits\": [\n    {{\n      \"name\": \"rascal\",\n      \"title\": \"Rascal\",\n      \"line\": \"edit pictures\"\n    }},\n    {{\n      \"name\": \"squint\",\n      \"title\": \"Squint\",\n      \"line\": \"check pictures\"\n    }}\n  ],\n  \"actions\": [\n    {{\n      \"name\": \"check\",\n",
         env!("CARGO_PKG_VERSION")
     );
     let types = r#"    {
@@ -444,7 +454,8 @@ fn each_tool_the_upper_rungs_apply_to_shows_its_mark_from_its_record() {
             )
         })
         .collect();
-    // Each action whose record states a mark shows that mark, and no other action shows one.
+    // Each action whose record states a mark shows that mark, and no other action shows one;
+    // after them, the tools that are no action (plan mE, task A0, item 3).
     let mut want = Vec::new();
     for action in doc["actions"].as_array().unwrap() {
         let name = action["name"].as_str().unwrap();
@@ -453,6 +464,10 @@ fn each_tool_the_upper_rungs_apply_to_shows_its_mark_from_its_record() {
             want.push((name.to_owned(), mark.word().to_owned()));
         }
     }
+    for name in whizbang_squint::marks::OFFERED {
+        let mark = whizbang_squint::marks::stated(&record_of(name).unwrap()).unwrap();
+        want.push((name.to_owned(), mark.word().to_owned()));
+    }
     let shown: Vec<(&str, &str)> = marks
         .iter()
         .map(|(t, m)| (t.as_str(), m.as_str()))
@@ -460,25 +475,32 @@ fn each_tool_the_upper_rungs_apply_to_shows_its_mark_from_its_record() {
     assert_eq!(
         shown,
         [
+            ("remove_prompt", "experimental"),
+            ("remove", "experimental"),
+            ("repair_area", "experimental"),
+            ("repair", "experimental"),
+            ("seam", "experimental"),
             ("source-fidelity", "unverified"),
             ("reference-consistency", "unverified"),
             ("reality-checks", "unverified"),
             ("brief-compliance", "unverified"),
             ("product-fidelity", "unverified"),
-            ("align", "unverified"),
+            ("remove_checked", "experimental"),
             ("change_map", "unverified"),
             ("edge_similarity", "unverified"),
             ("resize", "experimental"),
+            ("segment", "experimental"),
+            ("fill", "experimental"),
+            ("per_subject", "experimental"),
+            ("outline", "experimental"),
+            ("tiles", "experimental"),
         ]
     );
     assert_eq!(marks, want);
-    // The text form shows each beside the tool's name.
+    // The text form shows each beside the tool's name; the controls carry none.
     let (ok, text) = whizbang(&["describe"]);
     assert!(ok);
-    assert!(
-        text.contains("\n  align  [unverified]  Registers "),
-        "{text}"
-    );
+    assert!(text.contains("\n  align  Registers "), "{text}");
     assert!(
         text.contains("\n  change_map  [unverified]  Shows "),
         "{text}"
@@ -497,15 +519,28 @@ fn a_tool_without_a_record_cannot_be_unverified_or_admitted() {
     // An action that ships without a record has none, and shows none.
     assert!(record_of("check").is_none(), "check has a record now");
     assert_eq!(of("check"), None);
-    // Rascal's records (plan m3, task D1) are not squint's: they give no mark here, and
-    // `segment` and `fill`, experimental by theirs, run only when named either way.
-    for tool in ["feather", "fill", "plug", "render", "segment", "select"] {
+    // Rascal's records (plan m3, task D1) state their mark after `**Mark.**`, and give it
+    // (plan mE, task A0, item 3); its pixel operations state none, and give none.
+    for tool in ["fill", "segment"] {
+        assert_eq!(of(tool), Some(Mark::Experimental), "{tool}");
+    }
+    for tool in ["feather", "plug", "render", "select"] {
         assert!(record_of(tool).is_some(), "{tool} has no record");
         assert_eq!(of(tool), None, "{tool}");
     }
+    assert_eq!(
+        stated("# t\n\n## Mark and history\n\n**Mark.** Experimental. Rung 1 only.\n"),
+        Some(Mark::Experimental)
+    );
+    assert_eq!(
+        stated("# t\n\n## Mark and history\n\n**Mark.** Unverified: rungs 1 and 2.\n"),
+        Some(Mark::Unverified)
+    );
     // A record whose part states no mark (a control, a pixel operation) gives none.
     assert_eq!(of("view"), None);
+    assert_eq!(of("align"), None);
     assert!(stated("# t\n\n## Mark and history\n\n**Mark.** None: a control.\n").is_none());
+    assert!(stated("# t\n\n## Mark and history\n\n**Mark.**\n").is_none());
     assert!(stated("# t\n\n## Limits\n\n**Unverified**\n").is_none());
 }
 

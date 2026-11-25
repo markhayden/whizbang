@@ -2,7 +2,7 @@
 
 # Actions
 
-What `whizbang` 0.1.0 can do, from its static description (version 11).
+What `whizbang` 0.1.0 can do, from its static description (version 12).
 The same as data: [description.json](description.json).
 
 Kits: `rascal`, Rascal: edit pictures; `squint`, Squint: check pictures.

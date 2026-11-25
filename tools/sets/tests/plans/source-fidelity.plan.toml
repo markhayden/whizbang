@@ -1,0 +1,58 @@
+# The dry run's plan of a source-fidelity set (scripts/tests/test-sets.sh): every op of a
+# scene family, built with the fake generator. Made up for the test; no published set's.
+[set]
+id = "source-fidelity/dry-run-v1"
+use_case = "source-fidelity"
+split = "dev"
+licence = "CC-BY-4.0"
+images_repo = "github.com/markhayden/wafflery-evalsets"
+rules = { base = "source-fidelity", version = 1 }
+
+[[family]]
+id = "boathouse"
+generator = "fake"
+description = "a boathouse on a lake with a blue rowing boat and a wooden jetty"
+brief = "Restyle the scene; keep the structure and every named subject."
+source = { prompt = "A boathouse on a still lake, a blue rowing boat tied to a wooden jetty.", seed = 501, size = 128 }
+protected = ["the blue rowing boat", "the wooden jetty"]
+
+[[family.item]]
+id = "boathouse-grade"
+op = { kind = "grade", warmth = 0.12, jpeg = 60, resample = 0.5 }
+
+[[family.item]]
+id = "boathouse-dawn"
+op = { kind = "restyle", prompt = "Make it dawn with low pink light. Keep everything where it is." }
+
+[[family.item]]
+id = "boathouse-mirror"
+op = { kind = "mirror" }
+
+[[family.item]]
+id = "boathouse-rotate"
+op = { kind = "rotate", degrees = 180 }
+
+[[family.item]]
+id = "boathouse-crop"
+op = { kind = "crop", keep = 0.8 }
+
+[[family.item]]
+id = "boathouse-tilt"
+op = { kind = "tilt", degrees = -2.5 }
+
+[[family.item]]
+id = "boathouse-zoom"
+op = { kind = "zoom", factor = 1.08 }
+
+[[family.item]]
+id = "boathouse-keystone"
+op = { kind = "keystone", strength = 0.05 }
+
+[[family.item]]
+id = "boathouse-no-boat"
+op = { kind = "edit", prompt = "Take the rowing boat away. Change nothing else.", removes = "blue rowing boat" }
+
+[[family.item]]
+id = "boathouse-extra-boat"
+generator = "openai"
+op = { kind = "edit", prompt = "Put a second boat beside the jetty. Change nothing else.", adds = "a second boat" }

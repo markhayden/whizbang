@@ -440,7 +440,7 @@ fn each_shipped_recipe_called_with_nothing_set_is_the_control_arm() {
             !opening
                 .iter()
                 .any(|said| said == whizbang_squint::details::DETAILS_INTRO
-                    || said.starts_with("align (unverified)")),
+                    || said.starts_with("align (control)")),
             "{name}: {opening:?}"
         );
         // `view` and `align` are offered, and no `resize`.

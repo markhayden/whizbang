@@ -31,8 +31,10 @@ use crate::contract::{ActionDescriptor, Kind, Registry};
 /// build with its title and its line, in the order a door lists them; and, to an action
 /// that says them, `kit`, the kit it belongs to, `title`, its title as a person reads it,
 /// and `uses`, the other kit a loop uses (plan m5, task W1, item 2; ADR 0040): every
-/// recipe and loop this build ships says its kit and its title.
-pub const DESCRIPTION_VERSION: u32 = 11;
+/// recipe and loop this build ships says its kit and its title. Version 12 lets `marks`
+/// name a tool that is no action, one a run offers a judge only when it names it, a tool
+/// file or a detail, so that every mark a record states is shown (plan mE, task A0, item 3).
+pub const DESCRIPTION_VERSION: u32 = 12;
 
 /// Everything a door can offer, as one document.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -91,7 +93,7 @@ pub struct MarkSummary {
 }
 
 impl MarkSummary {
-    /// The tool's name, as its action is named.
+    /// The tool's name, as its action is named, or as a run names a tool that is no action.
     pub fn tool(&self) -> &str {
         &self.tool
     }
@@ -187,13 +189,21 @@ impl Description {
         }
     }
 
-    /// The same description, with these marks: each a tool and its mark, in this order. A
-    /// mark of a tool this build does not register is left out.
-    pub fn with_marks<'a>(mut self, marks: impl IntoIterator<Item = (&'a str, &'a str)>) -> Self {
-        let registered = |tool: &str| self.actions.iter().any(|action| action.name() == tool);
+    /// The same description, with these marks: each a tool and its mark, in this order.
+    /// `offered` names the tools of this build that are no action, which a run offers a
+    /// judge only when it names them (a tool file, a detail). A mark of a tool that is
+    /// neither an action this build registers nor one of those is left out.
+    pub fn with_marks<'a>(
+        mut self,
+        marks: impl IntoIterator<Item = (&'a str, &'a str)>,
+        offered: &[&str],
+    ) -> Self {
+        let shown = |tool: &str| {
+            offered.contains(&tool) || self.actions.iter().any(|action| action.name() == tool)
+        };
         let marks: Vec<MarkSummary> = marks
             .into_iter()
-            .filter(|(tool, _)| registered(tool))
+            .filter(|(tool, _)| shown(tool))
             .map(|(tool, mark)| MarkSummary {
                 tool: tool.to_owned(),
                 mark: mark.to_owned(),

@@ -207,7 +207,10 @@ way: its fields are private, so one cannot be written by hand with a name listed
   its record, `docs/reference/tools/<name>.md`, compiled in
   (`whizbang_squint::marks`). A tool without a record, or whose record states none, is not
   listed: it cannot be unverified or admitted. The text form prints the mark beside the
-  name.
+  name. Version 12 (plan mE, task A0, item 3): `marks` also holds, after the actions', each
+  tool of the build that is no action, offered to a judge only when a run names it (the
+  tool file `per_subject`, the detail `tiles`), and a record may state its mark as the word
+  after `**Mark.**`, as rascal's do; the text form lists those tools after the actions.
 - `artifact_types` holds the six types in ADR 0002's order, each with its `name`, a
   `purpose` that keeps the purpose rule, and `travels_as`, which is `canonical_file` for
   all six: a copy of the file is the artifact, and `whizbang store import` reads it.

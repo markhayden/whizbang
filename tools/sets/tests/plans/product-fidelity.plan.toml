@@ -1,0 +1,33 @@
+# The dry run's plan of a product-fidelity set (scripts/tests/test-sets.sh). Made up for
+# the test.
+[set]
+id = "product-fidelity/dry-run-v1"
+use_case = "product-fidelity"
+split = "dev"
+licence = "CC-BY-4.0"
+images_repo = "github.com/markhayden/wafflery-evalsets"
+rules = { base = "product-fidelity", version = 1 }
+
+[[family]]
+id = "teapot"
+kind = "subject"
+generator = "fake"
+size = 128
+description = "a squat white teapot with a blue band and the word KETTLEBY on it"
+subject = "a squat white teapot with one blue band round its body and KETTLEBY printed on the band"
+protected = ["the blue band", "the word KETTLEBY"]
+references = [ { prompt = "Packshot of the teapot on white.", seed = 801 } ]
+
+[[family.item]]
+id = "teapot-shelf"
+scene = { prompt = "The teapot on a kitchen shelf, morning light.", seed = 811 }
+
+[[family.item]]
+id = "teapot-shelf-band"
+from = "teapot-shelf"
+op = { kind = "edit", prompt = "Make the band green. Change nothing else.", alters = "blue band", aspect = "colour" }
+
+[[family.item]]
+id = "teapot-table-lookalike"
+scene = { prompt = "A teapot on a garden table.", seed = 813 }
+lookalike = "a tall black teapot with no band"
