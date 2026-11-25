@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from . import build, toml_out
+from .build import read_text, write_text
 
 #: The rule files `check` ships, which the seal's rules component is made of.
 RULES_DIR = Path(__file__).resolve().parents[3] / "crates" / "whizbang-squint" / "rules"
@@ -34,8 +35,8 @@ class PromoteReport:
     struck: int = 0
 
 
-def _hex(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+def _hex(text: str | bytes) -> str:
+    return hashlib.sha256(text if isinstance(text, bytes) else text.encode("utf-8")).hexdigest()
 
 
 def _job_json(job: dict[str, Any]) -> str:
@@ -79,13 +80,14 @@ def _job_json(job: dict[str, Any]) -> str:
 
 
 def components(set_dir: Path, rules_dir: Path = RULES_DIR) -> dict[str, str]:
-    manifest = tomllib.loads((set_dir / "set.toml").read_text())
+    manifest = tomllib.loads(read_text(set_dir / "set.toml"))
     meta, items = manifest["set"], manifest.get("item", [])
-    jobs = {i["id"]: tomllib.loads((set_dir / i["job"]).read_text())["job"] for i in items}
+    jobs = {i["id"]: tomllib.loads(read_text(set_dir / i["job"]))["job"] for i in items}
     pictures = sorted(
         {f"{img['source']['path']} {img['source']['sha256'].lower()}" for job in jobs.values() for img in job.get("images", [])}
     )
-    rules = (rules_dir / f"{meta['rules']['base']}.toml").read_text()
+    # The rule file's bytes, as the binary includes them: no locale and no newline is applied.
+    rules = (rules_dir / f"{meta['rules']['base']}.toml").read_bytes()
     if "labels" in meta:
         labels = hashlib.sha256((set_dir / meta["labels"]).read_bytes()).hexdigest()
     else:
@@ -95,7 +97,7 @@ def components(set_dir: Path, rules_dir: Path = RULES_DIR) -> dict[str, str]:
         "families": _hex("\n".join(sorted(f"{i['id']}={i['family']}" for i in items))),
         "jobs": _hex("".join(f"{item}\n{_job_json(jobs[item])}\n" for item in sorted(jobs))),
         "images": _hex("\n".join(pictures)),
-        "rules": _hex(f"{meta['rules']['base']}@{meta['rules']['version']}\n{rules}"),
+        "rules": _hex(f"{meta['rules']['base']}@{meta['rules']['version']}\n".encode("utf-8") + rules),
         "labels": labels,
     }
 
@@ -110,7 +112,8 @@ def seal(set_dir: Path, attestation: str, rules_dir: Path = RULES_DIR) -> str:
     c = components(set_dir, rules_dir)
     created = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     body = {"sha256": overall(c), "created": created, "attestation": attestation}
-    (set_dir / "seal.toml").write_text(
+    write_text(
+        set_dir / "seal.toml",
         toml_out.document("", [("seal", body, False), ("seal.components", c, False)])
     )
     return body["sha256"]
@@ -127,7 +130,7 @@ def promote(
     and seals it. A label still a draft is refused before anything changes. A blind set's
     labels go to `labels_out`, outside every repository, and its manifest keeps their hash."""
     set_dir = Path(set_dir)
-    manifest = tomllib.loads((set_dir / "set.toml").read_text())
+    manifest = tomllib.loads(read_text(set_dir / "set.toml"))
     blind = manifest["set"]["split"] == "blind"
     if blind and labels_out is None:
         raise ValueError("a blind set's labels leave the set folder: name owner storage with --labels-out")
@@ -137,7 +140,10 @@ def promote(
         labels_out = build.outside_every_repository(labels_out, "--labels-out")
         if (labels_out / "labels.toml").exists():
             raise ValueError("--labels-out already holds a labels.toml; nothing is overwritten")
-    draft = tomllib.loads(Path(draft_path).read_text())
+    if blind:
+        # A blind set's draft labels are owner material, read only from owner storage.
+        draft_path = build.outside_every_repository(draft_path, "a blind set's --draft")
+    draft = tomllib.loads(read_text(draft_path))
     report = PromoteReport()
     confirmed: list[dict[str, Any]] = []
     struck: set[str] = set()
@@ -163,16 +169,17 @@ def promote(
     )
     meta = dict(manifest["set"])
     if labels_out is None:
-        (set_dir / "labels.toml").write_text(labels_text)
+        write_text(set_dir / "labels.toml", labels_text)
     else:
         labels_out.mkdir(parents=True, exist_ok=True)
-        (labels_out / "labels.toml").write_text(labels_text)
+        write_text(labels_out / "labels.toml", labels_text)
         meta.pop("labels", None)
         fields = list(meta.items())
         at = [k for k, _ in fields].index("families")
         fields.insert(at, ("labels_sha256", hashlib.sha256(labels_text.encode("utf-8")).hexdigest()))
         meta = dict(fields)
-    (set_dir / "set.toml").write_text(
+    write_text(
+        set_dir / "set.toml",
         build.manifest_text(meta, kept, "Built by whizbang-sets; labels confirmed by the owner.")
     )
     seal(set_dir, attestation, rules_dir)

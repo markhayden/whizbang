@@ -1,7 +1,7 @@
 # The dry run's plan of a blind source-fidelity set (scripts/tests/test-sets.sh). A real
 # blind plan lives in owner storage and is never in a repository: the test copies this one
 # out of the repository before it builds, and the builder refuses it where it is. Made up for
-# the test.
+# the test. Its item ids are opaque, <family>-<n>, as a blind set's must be.
 [set]
 id = "source-fidelity/dry-run-blind-v1"
 use_case = "source-fidelity"
@@ -19,9 +19,9 @@ source = { prompt = "An orchard behind a green gate in a stone wall.", seed = 10
 protected = ["the green gate"]
 
 [[family.item]]
-id = "orchard-gate-grade"
+id = "orchard-gate-1"
 op = { kind = "grade", warmth = 0.08 }
 
 [[family.item]]
-id = "orchard-gate-no-gate"
+id = "orchard-gate-2"
 op = { kind = "edit", prompt = "Take the gate away. Change nothing else.", removes = "green gate" }

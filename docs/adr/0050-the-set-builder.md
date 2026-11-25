@@ -42,8 +42,12 @@ and used any proxy the environment named.
    three generators use are `https://fal.run`, `https://api.openai.com` and
    `https://generativelanguage.googleapis.com`, and whatever host fal serves a picture from
    when it does not answer with it.
-4. **Owner material stays out of repositories.** `--owner`, `--labels-out` and a blind
-   set's `--plan` are refused when any folder from them up holds a `.git`.
+4. **Owner material stays out of repositories.** `--owner` (and the set's folder in it),
+   `--labels-out`, and a blind set's `--plan` and `--draft` are refused when any folder from
+   them up holds a `.git`. Every id a plan gives (the set's, `<use case>/<name>`, a
+   family's, an item's) is lower-case letters, digits and hyphens, so none leads out of its
+   folder; a blind set's item ids, which are public, are `<family>-<n>` and say nothing of
+   how an item was made.
 5. **Nothing is generated live before the spend guard.** Until B1's second pull request
    builds the cumulative guard (plan mE, B1, item 7), the program refuses any build that is
    not `--fake`.

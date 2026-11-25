@@ -72,6 +72,12 @@ class Seal(unittest.TestCase):
                 seal.promote(draft, out, "a dry run")
             with self.assertRaisesRegex(ValueError, "inside a repository"):
                 seal.promote(draft, out, "a dry run", Path(kit.HERE))
+            # The draft, copied into a work tree, is not read from there.
+            os.makedirs(os.path.join(s, "repo", ".git"))
+            inside = Path(s) / "repo" / "labels-draft.toml"
+            inside.write_bytes(draft.read_bytes())
+            with self.assertRaisesRegex(ValueError, "--draft is inside a repository"):
+                seal.promote(inside, out, "a dry run", Path(s) / "owner" / "elsewhere")
             away = Path(s) / "owner" / "blind-labels"
             seal.promote(draft, out, "a dry run", away)
             self.assertFalse((out / "labels.toml").exists())

@@ -73,6 +73,16 @@ def outside_every_repository(path: Path, what: str) -> Path:
     return path
 
 
+def read_text(path) -> str:
+    """A file the builder reads, as UTF-8 whatever the locale."""
+    return Path(path).read_text(encoding="utf-8")
+
+
+def write_text(path, text: str) -> None:
+    """A file the builder writes, as UTF-8 with its newlines as they are, whatever the locale."""
+    Path(path).write_text(text, encoding="utf-8", newline="")
+
+
 def sha256(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
@@ -432,7 +442,7 @@ def _write_item(set_id: str, use_case: str, out: Path, b: _Built):
             entry["label"] = label
         entry["source"] = {"path": rel, "sha256": sha}
         images.append(entry)
-    (item_dir / "job.toml").write_text(_job_text(set_id, use_case, b.brief, b.requirements, images))
+    write_text(item_dir / "job.toml", _job_text(set_id, use_case, b.brief, b.requirements, images))
     fields: dict[str, Any] = {
         "item": b.id,
         "expected": b.label.expected,
@@ -486,7 +496,13 @@ def _family_generator(family: Family, generators: dict[str, Any]) -> Any:
 
 
 def _owner_dir(plan: Plan, owner: Path) -> Path:
-    return outside_every_repository(owner, "--owner") / plan.set.id
+    """The set's folder in owner storage: owner storage, and the folder the set's id makes of
+    it, both outside every repository and the second inside the first."""
+    root = outside_every_repository(owner, "--owner")
+    owner_dir = outside_every_repository(root / plan.set.id, "--owner with the set's id")
+    if root not in owner_dir.parents:
+        raise ValueError("the set's id leads out of owner storage")
+    return owner_dir
 
 
 def build(plan: Plan, out: Path, owner: Path, generators: dict[str, Any]) -> BuildReport:
@@ -529,17 +545,19 @@ def build(plan: Plan, out: Path, owner: Path, generators: dict[str, Any]) -> Bui
         "families": "families.toml",
         "rules": dict(plan.set.rules),
     }
-    (out / "set.toml").write_text(manifest_text(set_fields, manifest_items))
-    (out / "families.toml").write_text(
+    write_text(out / "set.toml", manifest_text(set_fields, manifest_items))
+    write_text(
+        out / "families.toml",
         toml_out.document(
             "Scene, subject or brief families; a family is never in more than one split.",
             [("family", f, True) for f in families_out],
         )
     )
-    (owner_dir / "construction.toml").write_text(
+    write_text(
+        owner_dir / "construction.toml",
         _record_text(plan.set.id, {"id": plan.set.id, "built_on": today()}, record_families, record_items)
     )
-    (owner_dir / "labels-draft.toml").write_text(toml_out.document(DRAFT_COMMENT, drafts))
+    write_text(owner_dir / "labels-draft.toml", toml_out.document(DRAFT_COMMENT, drafts))
     return report
 
 
@@ -592,21 +610,22 @@ def rebuild(plan: Plan, out: Path, owner: Path, generators: dict[str, Any], item
         b = _scene_item(family, item, n, source, gen, generators, use_case, seed_offset)
         cells = [("source", source, None)]
     entry, drafts = _write_item(plan.set.id, use_case, out, b)
-    record = tomllib.loads((owner_dir / "construction.toml").read_text())
+    record = tomllib.loads(read_text(owner_dir / "construction.toml"))
     plan_ids = [i.id for i in family.items]
     family_ids = {i["id"] for i in record.get("item", []) if i.get("family") == family.id} | set(plan_ids)
     sync = lambda entries, key, fresh: _resync(entries, key, fresh, item_id, family_ids, plan_ids)  # noqa: E731
     items = sync(record.get("item", []), "id", entry)
-    (owner_dir / "construction.toml").write_text(
+    write_text(
+        owner_dir / "construction.toml",
         _record_text(plan.set.id, record["set"], record.get("family", []), items)
     )
-    draft = tomllib.loads((owner_dir / "labels-draft.toml").read_text())
+    draft = tomllib.loads(read_text(owner_dir / "labels-draft.toml"))
     fresh = dict(drafts[0][1])
     if len(drafts) > 1:
         fresh["regions"] = [d[1] for d in drafts[1:]]
     labels = sync(draft.get("label", []), "item", fresh)
-    (owner_dir / "labels-draft.toml").write_text(toml_out.document(DRAFT_COMMENT, label_tables(labels)))
-    manifest = tomllib.loads((out / "set.toml").read_text())
+    write_text(owner_dir / "labels-draft.toml", toml_out.document(DRAFT_COMMENT, label_tables(labels)))
+    manifest = tomllib.loads(read_text(out / "set.toml"))
     for i in manifest.get("item", []):
         if i["id"] in family_ids and i["id"] not in plan_ids:
             shutil.rmtree(out / "items" / i["id"], ignore_errors=True)
@@ -615,7 +634,7 @@ def rebuild(plan: Plan, out: Path, owner: Path, generators: dict[str, Any], item
         "id",
         {"id": item_id, "family": family.id, "job": f"items/{item_id}/job.toml"},
     )
-    (out / "set.toml").write_text(manifest_text(manifest["set"], manifest_items))
+    write_text(out / "set.toml", manifest_text(manifest["set"], manifest_items))
     by_item = {label["item"]: label for label in labels}
     for i in family.items:
         data = (out / "items" / i.id / CANDIDATE_FILE).read_bytes()

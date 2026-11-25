@@ -54,6 +54,32 @@ class Plans(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, said):
                 plan_mod.parse(text.replace(old, new, 1))
 
+    def test_an_id_that_could_lead_out_of_a_folder_is_refused(self):
+        text = kit.plan_text("reality-checks")
+        for old, new in (
+            ('id = "reality-checks/dry-run-v1"', 'id = "reality-checks/../../x"'),
+            ('id = "reality-checks/dry-run-v1"', 'id = "/tmp/x"'),
+            ('id = "reality-checks/dry-run-v1"', 'id = "reality-checks/a/b"'),
+            ('id = "reality-checks/dry-run-v1"', 'id = "source-fidelity/dry-run-v1"'),
+            ('use_case = "reality-checks"', 'use_case = "../reality-checks"'),
+            ('id = "bakery-counter"', 'id = "../bakery"'),
+            ('id = "bakery-counter"', 'id = "/abs"'),
+            ('id = "bakery-counter-clean"', 'id = "../../clean"'),
+            ('id = "bakery-counter-clean"', 'id = "/tmp/clean"'),
+            ('id = "bakery-counter-clean"', 'id = "Clean Item"'),
+        ):
+            changed = text.replace(old, new, 1)
+            self.assertNotEqual(changed, text, old)
+            with self.assertRaises(ValueError, msg=new):
+                plan_mod.parse(changed)
+
+    def test_a_blind_set_s_item_ids_say_nothing_of_how_each_was_made(self):
+        text = kit.plan_text("blind")
+        self.assertEqual([i.id for i in plan_mod.parse(text).families[0].items], ["orchard-gate-1", "orchard-gate-2"])
+        for old, new in (('"orchard-gate-2"', '"orchard-gate-no-gate"'), ('"orchard-gate-1"', '"orchard-gate-3"')):
+            with self.assertRaisesRegex(ValueError, "<family>-<n>"):
+                plan_mod.parse(text.replace(old, new, 1))
+
     def test_a_subject_item_from_an_unknown_item_is_refused(self):
         text = kit.plan_text("reference-consistency").replace('from = "moss-library"', 'from = "nowhere"')
         with self.assertRaisesRegex(ValueError, "nowhere"):

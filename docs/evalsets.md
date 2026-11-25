@@ -73,11 +73,11 @@ folder:
 
 ```
 cd tools/sets
-uv run --locked --no-config --no-python-downloads python -m whizbang_sets build \
+uv run --locked --no-build --no-config --no-python-downloads python -m whizbang_sets build \
   --plan <plan.toml> --out <owner storage>/build/evalsets/<set id> --owner <owner storage> --fake
 # review <owner storage>/<set id>/contact-<family>.png and labels-draft.toml:
 # set each label's status to "confirmed" or "struck", and adjudicated_on to the date
-uv run --locked --no-config --no-python-downloads python -m whizbang_sets promote \
+uv run --locked --no-build --no-config --no-python-downloads python -m whizbang_sets promote \
   --draft <owner storage>/<set id>/labels-draft.toml --set <the set folder> --attest "<attestation>"
 ```
 
@@ -108,15 +108,25 @@ of one of three kinds:
 The draft label comes from the construction alone: no judge or tool looks at an item to
 write it. `build` writes the set folder (manifest, families, one job per item with its
 pictures pinned) and, under `--owner`, the construction record, the draft labels and a contact
-sheet per family; `--owner` inside a repository is refused. `rebuild --item <id>
-[--seed-offset N]` makes one item again from the pictures already built, with the plan as it
-now reads, and puts only its label back to draft. `promote` publishes the confirmed labels,
-takes the struck items out, and writes the seal that `eval sets check` verifies; a label still
-a draft is refused.
+sheet per family; `--owner` inside a repository is refused. A set's id is
+`<use case>/<name>`, and every id is lower-case letters, digits and hyphens, so none leads out
+of its folder. `rebuild` makes one item again from the pictures already built, with the plan
+as it now reads, and puts only its label back to draft:
+
+```
+uv run --locked --no-build --no-config --no-python-downloads python -m whizbang_sets rebuild \
+  --plan <plan.toml> --out <the set folder> --owner <owner storage> --fake \
+  --item <id> [--seed-offset N]
+```
+
+`promote` publishes the confirmed labels, takes the struck items out, and writes the seal that
+`eval sets check` verifies; a label still a draft is refused.
 
 **Blind sets.** A blind plan lives in owner storage and is refused inside a repository, since
-an item's construction gives its label away. `promote --labels-out <owner storage>` moves the
-labels there and leaves `labels_sha256` in the manifest; a blind set is refused without it.
+an item's construction gives its label away; so is its `--draft`. Its item ids are public, so
+each is its family's id and its place, `<family>-<n>`, and any other is refused.
+`promote --labels-out <owner storage>` moves the labels there and leaves `labels_sha256` in
+the manifest; a blind set is refused without it.
 
 **The generators reach only approved recipients.** `--config <file>` names the whizbang config
 whose `[egress.recipients]` decide where a generator may send: a request goes only to an

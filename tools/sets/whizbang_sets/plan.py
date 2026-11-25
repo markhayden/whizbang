@@ -8,6 +8,7 @@ Ported from squint `scripts/sets/src/squint_sets/plan.py`.
 
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import dataclass, field
 from typing import Any
@@ -15,6 +16,15 @@ from typing import Any
 GENERATORS = ("fal", "openai", "gemini", "fake")
 SPLITS = ("dev", "heldout", "blind")
 KINDS = ("scene", "subject", "brief")
+#: A use case, a set's name, a family's id or an item's id: each becomes a folder or a file
+#: name, so it is plain lower-case letters, digits and hyphens, and nothing that leads out.
+PLAIN = re.compile(r"[a-z0-9][a-z0-9-]*\Z")
+
+
+def _plain(value: Any, what: str) -> str:
+    if not isinstance(value, str) or not PLAIN.match(value):
+        raise ValueError(f"{what} must be lower-case letters, digits and hyphens")
+    return value
 
 
 @dataclass(frozen=True)
@@ -104,6 +114,7 @@ def _items(f: dict[str, Any], kind: str, where: str, seen: set[str]) -> list[Ite
     for it in f.get("item", []):
         iw = f"{where} item {it.get('id', '?')}"
         _require(it, ("id",), iw)
+        _plain(it["id"], f"{where}: an item's id")
         if it["id"] in seen:
             raise ValueError(f"{iw}: duplicate item id")
         seen.add(it["id"])
@@ -175,6 +186,11 @@ def parse(text: str) -> Plan:
         raise ValueError(f"[set] split must be one of {', '.join(SPLITS)}")
     _only(s["rules"], {"base", "version"}, "[set] rules")
     _require(s["rules"], ("base", "version"), "[set] rules")
+    use_case = _plain(s["use_case"], "[set] use_case")
+    parts = s["id"].split("/") if isinstance(s["id"], str) else []
+    if len(parts) != 2 or parts[0] != use_case:
+        raise ValueError("[set] id must be <use_case>/<name>, of the set's own use case")
+    _plain(parts[1], "[set] id's name")
     spec = SetSpec(
         id=s["id"],
         use_case=s["use_case"],
@@ -187,7 +203,9 @@ def parse(text: str) -> Plan:
     families: list[Family] = []
     seen: set[str] = set()
     for f in doc["family"]:
-        where = f"family {f.get('id', '?')}"
+        where = "a family"
+        _plain(f.get("id"), "a family's id")
+        where = f"family {f['id']}"
         kind = f.get("kind", "scene")
         if kind not in KINDS:
             raise ValueError(f"{where}: kind must be scene, subject or brief")
@@ -228,7 +246,20 @@ def parse(text: str) -> Plan:
                 text=[str(x) for x in f.get("text", [])],
             )
         )
+    if spec.split == "blind":
+        _opaque(families)
     return Plan(set=spec, families=families)
+
+
+def _opaque(families: list[Family]) -> None:
+    """A blind set's item ids are public (its manifest, its folders) and must say nothing of
+    how an item was made: each is its family's id, a hyphen and its place, from 1."""
+    for f in families:
+        for n, item in enumerate(f.items, start=1):
+            if item.id != f"{f.id}-{n}":
+                raise ValueError(
+                    f"family {f.id}: a blind set's item ids are <family>-<n> in order; item {n} is not"
+                )
 
 
 def load(path) -> Plan:
