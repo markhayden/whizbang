@@ -91,7 +91,8 @@ enum JudgeArmWritten {
 #[serde(deny_unknown_fields)]
 struct JudgeArmTable {
     arm: String,
-    repetitions: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    repetitions: Option<u32>,
 }
 
 impl Serialize for JudgeArm {
@@ -100,7 +101,7 @@ impl Serialize for JudgeArm {
             None => JudgeArmWritten::Name(self.arm.clone()),
             Some(repetitions) => JudgeArmWritten::Table(JudgeArmTable {
                 arm: self.arm.clone(),
-                repetitions,
+                repetitions: Some(repetitions),
             }),
         }
         .serialize(s)
@@ -114,9 +115,10 @@ impl<'de> Deserialize<'de> for JudgeArm {
                 arm,
                 repetitions: None,
             },
+            // A table without repetitions is the arm's name alone, and the same identity.
             JudgeArmWritten::Table(table) => JudgeArm {
                 arm: table.arm,
-                repetitions: Some(table.repetitions),
+                repetitions: table.repetitions,
             },
         })
     }
@@ -717,6 +719,9 @@ impl Matrix {
                         ));
                     }
                 }
+            }
+            if runs.arms.is_none() && runs.judges.is_none() {
+                return Err(format!("the set {id}: a set's table lists arms or judges"));
             }
             if runs.arms.as_ref().is_some_and(Vec::is_empty)
                 || runs.judges.as_ref().is_some_and(Vec::is_empty)

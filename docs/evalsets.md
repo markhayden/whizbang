@@ -111,8 +111,12 @@ replaces a failure; one whose last attempt was interrupted is run as its next at
 each by the name the matrix gives it, with its own repetitions where they are not the
 judge's; a set's table may list the arms and the judges (by backend) it runs. A cell outside
 any list is not a cell: it is not forecast, run, resumed or counted complete. Each set, judge
-and arm keeps at least one cell. A matrix without lists names every cell, with the identity
-it had before.
+and arm keeps at least one cell, and a set's table lists arms or judges, or both. A set's
+table names judges by their backend alone, so a backend it names is that of one judge of the
+matrix. The lists and their order are part of the matrix's identity: the same cells listed in
+another order, or a list that names every arm, make another matrix. An arm listed as a table
+without `repetitions` is the arm's name alone. A matrix without lists names every cell, with
+the identity it had before.
 
 ```toml
 [matrix.set."source-fidelity/confirm-plain-v1"]
@@ -166,7 +170,10 @@ file of version 3 (plan mE, task M1, items 3 and 4) is frozen in its matrix inst
   `whizbang eval run --gate <file> --labels <dir> --receipt <file>` then runs nothing: it
   scores the gate from the matrix's runs, only the cells of its two sides under the judges it
   compares, refuses while one of them has not ended, and writes a receipt of version 2, which
-  adds `arm` and `relabelled` for two versions of a set. Run it once for each gate.
+  adds `arm` and `relabelled` for two versions of a set. The receipt's `cells` counts every
+  cell the gate read, those of relabelled items among them. Run it once for each gate.
+  `eval matrix` also refuses, before any cell runs, two versions of a set whose items or
+  families differ by id.
 
 ## Scoring judges
 

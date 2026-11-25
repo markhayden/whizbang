@@ -234,11 +234,14 @@ pub fn comparisons(gate: &Gate, matrix: &Matrix) -> Result<Vec<Comparison>, Stri
 }
 
 /// The most repetitions of any cell a gate of version 3 reads.
-fn most_repetitions(gate: &Gate, matrix: &Matrix, comparisons: &[Comparison]) -> u32 {
-    let arms: Vec<String> = match gate.compared() {
-        Ok(Compared::Arms { control, treatment }) => vec![control, treatment],
-        Ok(Compared::Sets { arm, .. }) => vec![arm],
-        Err(_) => Vec::new(),
+fn most_repetitions(
+    gate: &Gate,
+    matrix: &Matrix,
+    comparisons: &[Comparison],
+) -> Result<u32, String> {
+    let arms: Vec<String> = match gate.compared()? {
+        Compared::Arms { control, treatment } => vec![control, treatment],
+        Compared::Sets { arm, .. } => vec![arm],
     };
     let mut most = 0;
     for one in comparisons {
@@ -251,7 +254,38 @@ fn most_repetitions(gate: &Gate, matrix: &Matrix, comparisons: &[Comparison]) ->
             }
         }
     }
-    most
+    Ok(most)
+}
+
+/// Every gate on the matrix that compares two versions of a set: those two sets, under the
+/// sets' folder, hold the same items in the same families by id. `eval matrix` refuses a
+/// matrix whose gates fail this before any cell runs, and scoring refuses it again.
+pub fn versions_hold(sets_root: &Path, gates: &[Named]) -> Result<(), String> {
+    for (file, gate, _) in gates {
+        if let Compared::Sets {
+            control, treatment, ..
+        } = gate.compared()?
+        {
+            let of = |id: &str| sets::find(sets_root, id).map(|set| set.families_by_item());
+            if of(&control)? != of(&treatment)? {
+                return Err(format!(
+                    "{}: {}",
+                    printable(&file.file_name().unwrap_or_default().to_string_lossy()),
+                    not_versions(&control, &treatment)
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn not_versions(control: &str, treatment: &str) -> String {
+    format!(
+        "the sets {} and {} are not two versions of one set: their items or their families \
+         differ by id; nothing was run or scored",
+        printable(control),
+        printable(treatment)
+    )
 }
 
 /// A gate file a matrix names: its path, its gate and what it compares.
@@ -296,7 +330,7 @@ pub fn gates_on(matrix_file: &Path, matrix: &Matrix) -> Result<(Vec<Named>, usiz
             ));
         }
         let compared = comparisons(&gate, matrix).map_err(|why| format!("{shown}: {why}"))?;
-        let most = most_repetitions(&gate, matrix, &compared);
+        let most = most_repetitions(&gate, matrix, &compared)?;
         if most != gate.repetitions.count {
             return Err(format!(
                 "{shown}: the gate's repetitions are {}, and the most of any cell it reads are \
@@ -435,14 +469,15 @@ pub struct Gating<'a> {
 }
 
 /// How one ended cell is scored: its verdict, its cost in dollars and its wall time.
-struct Scored {
-    computed: Computed,
-    cost_usd: f64,
-    wall_ms: u64,
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Decided {
+    pub computed: Computed,
+    pub cost_usd: f64,
+    pub wall_ms: u64,
 }
 
 /// Each run's verdict, cost and wall time, read from its record in the store at `root`.
-fn scored_runs(root: &Path, runs: &[(String, Ended)]) -> Result<BTreeMap<String, Scored>, String> {
+fn scored_runs(root: &Path, runs: &[(String, Ended)]) -> Result<BTreeMap<String, Decided>, String> {
     let reader = Reader::open(root, Arc::new(RealFs)).map_err(|e| e.to_string())?;
     let generation = reader.snapshot().map_err(|e| e.to_string())?;
     let mut out = BTreeMap::new();
@@ -469,7 +504,7 @@ fn scored_runs(root: &Path, runs: &[(String, Ended)]) -> Result<BTreeMap<String,
             .map_or(0, |start| time.end_ms.saturating_sub(start));
         out.insert(
             run.clone(),
-            Scored {
+            Decided {
                 computed,
                 cost_usd: micros as f64 / 1_000_000.0,
                 wall_ms,
@@ -610,81 +645,140 @@ pub fn score(gating: &Gating<'_>, root: &Path) -> Result<Receipt, String> {
     score_frozen(gating, &frozen, root)
 }
 
-/// The items of each set by id, and, for two versions of a set, the check that they hold
-/// the same items in the same families.
-fn items_of(
-    sets_root: &Path,
-    ids: &[String],
-    versions: Option<(&str, &str)>,
-) -> Result<Vec<(String, Vec<String>)>, String> {
+/// The items of each set by id.
+fn items_of(sets_root: &Path, ids: &[String]) -> Result<Vec<(String, Vec<String>)>, String> {
     let mut items = Vec::new();
-    let mut families = BTreeMap::new();
     for id in ids {
         let set = sets::find(sets_root, id)?;
         let its: Vec<String> = set.jobs.iter().map(|(item, _)| item.clone()).collect();
-        families.insert(id.clone(), set.families_by_item());
         items.push((id.clone(), its));
-    }
-    if let Some((control, treatment)) = versions
-        && families.get(control) != families.get(treatment)
-    {
-        return Err(format!(
-            "the sets {} and {} are not two versions of one set: their items or their \
-             families differ by id; nothing was scored",
-            printable(control),
-            printable(treatment)
-        ));
     }
     Ok(items)
 }
 
-/// Scores a gate of version 3 from its matrix's runs: only the cells of its two arms, or of
-/// its arm on its two sets, under the judges it compares, each of which must have ended.
+impl Frozen {
+    /// The sets a gate of version 3 reads, in order.
+    pub fn sets(&self) -> Vec<String> {
+        let mut ids: Vec<String> = Vec::new();
+        for one in &self.comparisons {
+            for set in &one.sets {
+                if !ids.contains(set) {
+                    ids.push(set.clone());
+                }
+            }
+        }
+        ids.sort();
+        ids
+    }
+
+    /// The cells a gate of version 3 reads over these items of its sets: of its two arms, or
+    /// of its arm on its two sets, on the sets each judge it compares reads there.
+    pub fn cells(&self, items: &[(String, Vec<String>)]) -> Result<Vec<Cell>, String> {
+        let compared = self.gate.compared()?;
+        let reads = |cell: &Cell| {
+            let judge = (self.comparisons.iter())
+                .find(|c| c.backend == cell.backend && c.model == cell.model);
+            let Some(judge) = judge else { return false };
+            let arm = match &compared {
+                Compared::Arms { control, treatment } => {
+                    cell.arm == *control || cell.arm == *treatment
+                }
+                Compared::Sets { arm, .. } => cell.arm == *arm,
+            };
+            arm && judge.sets.contains(&cell.set)
+        };
+        Ok(self.matrix.cells(items).into_iter().filter(reads).collect())
+    }
+}
+
+/// What scoring a gate of version 3 reads: each of its sets' items, their labels and
+/// families, and how each cell of the gate that has ended was decided. A cell of the gate
+/// missing from `ended` has not ended.
+#[derive(Debug, Clone, Default)]
+pub struct Read {
+    pub items: Vec<(String, Vec<String>)>,
+    pub labelled: Labelled,
+    pub ended: BTreeMap<Cell, Decided>,
+}
+
+/// Scores a gate of version 3 from its matrix's runs in the store at `root`, and writes its
+/// receipt: the store read ([`Read`]), then scored ([`score_read`]).
 fn score_frozen(gating: &Gating<'_>, frozen: &Frozen, root: &Path) -> Result<Receipt, String> {
+    let ids = frozen.sets();
+    let items = items_of(gating.sets_root, &ids)?;
+    let labelled = labelled(gating.sets_root, gating.labels_root, &ids)?;
+    let cells = frozen.cells(&items)?;
+    let identity: String = frozen.matrix.identity().chars().take(16).collect();
+    let attempts = evaluation::attempts_under(root, &identity, None)?;
+    let mut runs = Vec::new();
+    for cell in &cells {
+        if let Some((_, run, end @ (Ended::Completed | Ended::Failed))) =
+            attempts.get(cell).and_then(|list| list.last())
+        {
+            runs.push((cell.clone(), run.clone(), *end));
+        }
+    }
+    let listed: Vec<(String, Ended)> = (runs.iter())
+        .map(|(_, run, end)| (run.clone(), *end))
+        .collect();
+    let decided = scored_runs(root, &listed)?;
+    let read = Read {
+        items,
+        labelled,
+        ended: (runs.into_iter())
+            .map(|(cell, run, _)| (cell, decided[&run]))
+            .collect(),
+    };
+    let receipt = score_read(frozen, &read)?;
+    let written = serde_json::to_string_pretty(&receipt).map_err(|e| e.to_string())? + "\n";
+    write_new(gating.receipt, written.as_bytes())?;
+    Ok(receipt)
+}
+
+/// Scores a gate of version 3 on what was read of its sets and its matrix's runs: only the
+/// cells of its two arms, or of its arm on its two sets, under the judges it compares, each
+/// of which must have ended. Two versions of a set must hold the same items in the same
+/// families by id; they are paired item by item, and an item whose label differs between
+/// them is counted apart and scored under neither. Reads and writes nothing.
+pub fn score_read(frozen: &Frozen, read: &Read) -> Result<Receipt, String> {
     let gate = &frozen.gate;
     let matrix = &frozen.matrix;
     let compared = gate.compared()?;
-    let mut ids: Vec<String> = Vec::new();
-    for one in &frozen.comparisons {
-        for set in &one.sets {
-            if !ids.contains(set) {
-                ids.push(set.clone());
-            }
-        }
-    }
-    ids.sort();
+    let ids = frozen.sets();
+    let labelled = &read.labelled;
     let versions = match &compared {
         Compared::Sets {
             control, treatment, ..
         } => Some((control.as_str(), treatment.as_str())),
         Compared::Arms { .. } => None,
     };
-    let items = items_of(gating.sets_root, &ids, versions)?;
-    let labelled = labelled(gating.sets_root, gating.labels_root, &ids)?;
-    // The gate's cells: of its arms, on the sets each judge it compares reads there.
-    let reads = |cell: &Cell| {
-        let judge = (frozen.comparisons.iter())
-            .find(|c| c.backend == cell.backend && c.model == cell.model);
-        let Some(judge) = judge else { return false };
-        let arm = match &compared {
-            Compared::Arms { control, treatment } => cell.arm == *control || cell.arm == *treatment,
-            Compared::Sets { arm, .. } => cell.arm == *arm,
-        };
-        arm && judge.sets.contains(&cell.set)
+    let items_of = |id: &str| -> Vec<String> {
+        (read.items.iter())
+            .find(|(set, _)| set == id)
+            .map(|(_, its)| its.clone())
+            .unwrap_or_default()
     };
-    let cells: Vec<Cell> = matrix.cells(&items).into_iter().filter(reads).collect();
-    let identity: String = matrix.identity().chars().take(16).collect();
-    let attempts = evaluation::attempts_under(root, &identity, None)?;
-    let mut ended = Vec::new();
-    let mut open = 0;
-    for cell in &cells {
-        match attempts.get(cell).and_then(|list| list.last()) {
-            Some((_, run, end @ (Ended::Completed | Ended::Failed))) => {
-                ended.push((cell.clone(), run.clone(), *end));
-            }
-            _ => open += 1,
+    if let Some((control, treatment)) = versions {
+        let families = |id: &str| -> BTreeMap<String, Option<String>> {
+            (items_of(id).into_iter())
+                .map(|item| {
+                    let family = labelled
+                        .families
+                        .get(&(id.to_owned(), item.clone()))
+                        .cloned();
+                    (item, family)
+                })
+                .collect()
+        };
+        if families(control) != families(treatment) {
+            return Err(not_versions(control, treatment));
         }
     }
+    let cells = frozen.cells(&read.items)?;
+    let open = cells
+        .iter()
+        .filter(|c| !read.ended.contains_key(*c))
+        .count();
     if open > 0 {
         return Err(format!(
             "{open} of the gate's {} cells have not ended; run its matrix (`whizbang eval \
@@ -692,10 +786,6 @@ fn score_frozen(gating: &Gating<'_>, frozen: &Frozen, root: &Path) -> Result<Rec
             cells.len()
         ));
     }
-    let runs: Vec<(String, Ended)> = (ended.iter())
-        .map(|(_, run, end)| (run.clone(), *end))
-        .collect();
-    let scored = scored_runs(root, &runs)?;
     let mut judged: Vec<Judged> = (frozen.comparisons.iter())
         .map(|one| Judged {
             backend: one.backend.clone(),
@@ -707,11 +797,7 @@ fn score_frozen(gating: &Gating<'_>, frozen: &Frozen, root: &Path) -> Result<Rec
     // Of two versions of a set, an item whose label differs between them is counted apart
     // and scored under neither version's truth.
     let relabelled: Vec<String> = match &versions {
-        Some((control, treatment)) => (items.iter())
-            .find(|(id, _)| id == control)
-            .map(|(_, its)| its.clone())
-            .unwrap_or_default()
-            .into_iter()
+        Some((control, treatment)) => (items_of(control).into_iter())
             .filter(|item| {
                 let of = |set: &str| labelled.expected.get(&(set.to_owned(), item.clone()));
                 of(control) != of(treatment)
@@ -720,7 +806,7 @@ fn score_frozen(gating: &Gating<'_>, frozen: &Frozen, root: &Path) -> Result<Rec
         None => Vec::new(),
     };
     let mut missing = 0;
-    for (cell, run, _) in &ended {
+    for cell in &cells {
         let key = (cell.set.clone(), cell.item.clone());
         let (Some(expected), Some(family)) =
             (labelled.expected.get(&key), labelled.families.get(&key))
@@ -731,7 +817,7 @@ fn score_frozen(gating: &Gating<'_>, frozen: &Frozen, root: &Path) -> Result<Rec
         if versions.is_some() && relabelled.contains(&cell.item) {
             continue;
         }
-        let one = &scored[run];
+        let one = &read.ended[cell];
         // Two versions of a set are paired item by item: both sides under one name.
         let set = match &versions {
             Some((_, treatment)) => (*treatment).to_owned(),
@@ -769,14 +855,18 @@ fn score_frozen(gating: &Gating<'_>, frozen: &Frozen, root: &Path) -> Result<Rec
         ));
     }
     let (control, treatment) = compared.sides();
-    let receipt = Receipt {
+    let digests = (labelled.digests.iter())
+        .filter(|(id, _)| ids.contains(id))
+        .map(|(id, digest)| (id.clone(), digest.clone()))
+        .collect();
+    Ok(Receipt {
         receipt_version: RECEIPT_VERSION_FROZEN,
         gate_sha256: frozen.digest.clone(),
         matrix: matrix.matrix.name.clone(),
         matrix_identity: matrix.identity(),
         sets: ids.clone(),
-        labels_sha256: labelled.digests,
-        cells: ended.len(),
+        labels_sha256: digests,
+        cells: cells.len(),
         control: control.to_owned(),
         treatment: treatment.to_owned(),
         arm: match &compared {
@@ -785,10 +875,7 @@ fn score_frozen(gating: &Gating<'_>, frozen: &Frozen, root: &Path) -> Result<Rec
         },
         relabelled: versions.map(|_| relabelled.len()),
         scored: gate.score(&judged)?,
-    };
-    let written = serde_json::to_string_pretty(&receipt).map_err(|e| e.to_string())? + "\n";
-    write_new(gating.receipt, written.as_bytes())?;
-    Ok(receipt)
+    })
 }
 
 /// Writes `bytes` to `path` whole: to a new file beside it first, made by this call and so

@@ -664,7 +664,9 @@ fn run_matrix(
     }
     let matrix = Matrix::parse(&text).map_err(|why| format!("{shown}: {why}"))?;
     // The gates frozen on it hold as frozen, before anything runs (plan mE, task M1).
-    whizbang::gating::gates_on(file, &matrix).map_err(|why| format!("{shown}: {why}"))?;
+    let (gates, _) =
+        whizbang::gating::gates_on(file, &matrix).map_err(|why| format!("{shown}: {why}"))?;
+    whizbang::gating::versions_hold(root, &gates).map_err(|why| format!("{shown}: {why}"))?;
     judges_are_of_their_models(&matrix, under)?;
     let (planned, labels) = evaluation::plan(&matrix, root, at.root())?;
     let left_micros = left(at.root())?;

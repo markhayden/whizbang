@@ -437,6 +437,11 @@ fn a_judge_runs_only_its_arms() {
             "at least one",
         ),
         (
+            "arms = [\"C\"]\njudges = [\"haiku\", \"terra\"]",
+            "",
+            "a set's table lists arms or judges",
+        ),
+        (
             r#"arms = [{ arm = "C", repetitions = 2 }, "C;submission=v2"]"#,
             r#"arms = [{ arm = "C", repetitions = 2 }, "C;submission=v2", "C+per_subject"]
 [[matrix.judges]]
@@ -491,6 +496,13 @@ fn an_arm_of_a_judge_repeats_on_its_own() {
             .collect()
     };
     assert_eq!(others(&m), others(&Matrix::parse(LISTED).unwrap()));
+    // A table that gives no repetitions is the arm's name alone.
+    let table = LISTED.replace(r#""C;submission=v2"]"#, r#"{ arm = "C;submission=v2" }]"#);
+    assert_ne!(table, LISTED);
+    assert_eq!(
+        Matrix::parse(&table).unwrap().identity(),
+        Matrix::parse(LISTED).unwrap().identity()
+    );
     // An arm's repetitions are part of the identity.
     let once = LISTED.replace(r#"{ arm = "C", repetitions = 2 }"#, r#""C""#);
     assert_ne!(
