@@ -853,12 +853,14 @@ whizbang store import <file> --store <dir> [--create]
                                        # for developers: bring a canonical artifact file
                                        # (ADR 0002) into a store
 whizbang runs list|show|stats|export
-whizbang runs bundle <run>... --to <file> [--overwrite]
+whizbang runs bundle <run>... --to <file> [--overwrite] --store <dir>
                                        # one run that ended, or a chain of at most 16, as
                                        # one file another store imports (ADR 0048)
 whizbang bundle import <file> --store <dir> [--create]
 whizbang bundle show <file>
-whizbang bundle list|delete <digest>   # a store's bundles: kept under names of their
+whizbang bundle list --store <dir>
+whizbang bundle delete <digest> --store <dir>
+                                       # a store's bundles: kept under names of their
                                        # own, never as its runs (docs/guides/bundles-and-replay.md)
 whizbang spend status|reset
 whizbang serve [--http <addr>]         # --http: the engine API (docs/guides/engine-api.md),

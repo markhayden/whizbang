@@ -297,8 +297,16 @@ fn manifest(said: &[u8]) -> Result<Manifest, Refused> {
             "its manifest's version is {named}, and this build reads version {FORMAT} alone"
         )));
     }
-    let manifest: Manifest = serde_json::from_value(value)
+    // One spelling alone: read strictly, a key twice refused, and written back to the
+    // same bytes, so a near-copy of a bundle is not another bundle of the same runs.
+    let manifest: Manifest = serde_json::from_slice(said)
         .map_err(|why| Refused::new(format!("its manifest is not one this build reads: {why}")))?;
+    if manifest.to_bytes() != said {
+        return Err(Refused::new(
+            "its manifest is not written as a bundle's is: one line of JSON, its fields in \
+             their order, with no space, then a newline",
+        ));
+    }
     if manifest.steps.is_empty() || manifest.steps.len() > STEPS_LIMIT {
         return Err(Refused::new(format!(
             "its manifest has {} steps: a bundle has 1 to {STEPS_LIMIT}",
@@ -481,7 +489,10 @@ fn whole(
         let Some(parent) = record.identity().parent.as_deref() else {
             continue;
         };
-        let lost = records[parent].outcome().lost.contains(&Lost::Steps);
+        // A parent a dead process left, that declares its steps lost, is not held to
+        // list them.
+        let lost =
+            interrupted(&records[parent]) && records[parent].outcome().lost.contains(&Lost::Steps);
         if listed_by.get(id.as_str()) != Some(&parent) && !lost {
             return Err(Refused::new(format!(
                 "the run {id} names {parent} as its parent, which does not list it"
@@ -493,6 +504,12 @@ fn whole(
     // member is what its records took or made.
     let mut uses: BTreeSet<&Use> = BTreeSet::new();
     for file in &manifest.artifacts {
+        if file.of.is_empty() {
+            return Err(Refused::new(format!(
+                "the manifest names the file {}, which no run took or made",
+                file.file
+            )));
+        }
         for used in &file.of {
             if !uses.insert(used) {
                 return Err(Refused::new(format!(

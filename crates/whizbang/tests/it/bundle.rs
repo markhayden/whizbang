@@ -116,8 +116,16 @@ impl Members {
     /// names.
     pub fn bytes(&self) -> Vec<u8> {
         let mut writer = tar::Writer::new(0);
-        let mut said = serde_json::to_vec(&self.manifest).unwrap();
-        said.push(b'\n');
+        // Written as a bundle's is when it is one, so a test breaks what it means to;
+        // as its JSON otherwise.
+        let said = match serde_json::from_value::<Manifest>(self.manifest.clone()) {
+            Ok(manifest) => manifest.to_bytes(),
+            Err(_) => {
+                let mut said = serde_json::to_vec(&self.manifest).unwrap();
+                said.push(b'\n');
+                said
+            }
+        };
         writer.add(bundle::MANIFEST, &said).unwrap();
         for (name, bytes) in &self.members {
             writer.add(name, bytes).unwrap();
@@ -1102,4 +1110,48 @@ fn an_input_two_earlier_outputs_could_be_refuses_the_chain() {
         whizbang::bundling::make(&chain.world.root, &[&chain.removal, &chain.removal]).unwrap_err();
     assert!(said.contains("given twice"), "{said}");
     assert!(whizbang::bundling::make(&chain.world.root, &[]).is_err());
+}
+
+/// The bundle again, with its manifest's bytes as given.
+fn with_manifest(members: &Members, said: &[u8]) -> Vec<u8> {
+    let mut writer = tar::Writer::new(0);
+    writer.add(bundle::MANIFEST, said).unwrap();
+    for (name, bytes) in &members.members {
+        writer.add(name, bytes).unwrap();
+    }
+    writer.finish()
+}
+
+#[test]
+fn a_manifest_written_another_way_or_a_file_no_run_vouches_for_is_refused() {
+    let chain = chain("bundle-spelling");
+    let made = made(&chain);
+    let members = Members::of(&made.bytes);
+    let said = made.manifest.to_bytes();
+    let text = String::from_utf8(said.clone()).unwrap();
+    // The same manifest with a space in it, or indented: another bundle of the same
+    // runs, which is refused, so one set of runs is not imported twice.
+    let spaced = text.replacen("{\"bundle\":1,", "{\"bundle\": 1,", 1);
+    refused_for(
+        &with_manifest(&members, spaced.as_bytes()),
+        "not written as a bundle's is",
+    );
+    let mut pretty = serde_json::to_vec_pretty(&made.manifest).unwrap();
+    pretty.push(b'\n');
+    refused_for(
+        &with_manifest(&members, &pretty),
+        "not written as a bundle's is",
+    );
+    // A key twice: read one way here and another elsewhere, so refused.
+    let twice = text.replacen("{\"bundle\":1,", "{\"bundle\":1,\"bundle\":1,", 1);
+    refused_for(
+        &with_manifest(&members, twice.as_bytes()),
+        "duplicate field",
+    );
+    // As written, it reads.
+    assert!(bundle::check(Cursor::new(with_manifest(&members, &said))).is_ok());
+    // A file the manifest names that no run took or made.
+    let mut unvouched = members.clone();
+    unvouched.manifest["artifacts"][0]["of"] = json!([]);
+    refused_for(&unvouched.bytes(), "which no run took or made");
 }

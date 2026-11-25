@@ -94,9 +94,36 @@ struct Gathered {
     pixels: BTreeSet<PixelDigest>,
     /// Each picture a stored exchange names: its run, the exchange and the pixels.
     pictures: Vec<(String, String, PixelDigest)>,
+    /// The bytes the members gathered so far take in the archive, headers and padding.
+    taken: u64,
 }
 
+/// What the manifest may take in the archive, its header and its bytes, and the end's
+/// two blocks: held back from the bound while the members are gathered.
+const HELD_BACK: u64 = tar::BLOCK as u64 + MANIFEST_MAX_BYTES + 2 * tar::BLOCK as u64;
+
 impl Gathered {
+    /// Adds one member, refused as soon as the bundle would be over either of its
+    /// bounds: so no more than a bundle may hold is ever held.
+    fn member(&mut self, name: String, bytes: Vec<u8>) -> Result<(), String> {
+        let block = tar::BLOCK as u64;
+        let padded = (bytes.len() as u64).div_ceil(block) * block;
+        self.taken = self.taken.saturating_add(block + padded);
+        if self.taken.saturating_add(HELD_BACK) > MAX_BYTES {
+            return Err(format!(
+                "the bundle would be over its bound of {MAX_BYTES} bytes"
+            ));
+        }
+        // The manifest is a member too.
+        if self.members.len() + 2 > MEMBERS_LIMIT {
+            return Err(format!(
+                "the bundle would hold more than {MEMBERS_LIMIT} members, its bound"
+            ));
+        }
+        self.members.insert(name, bytes);
+        Ok(())
+    }
+
     /// Adds the file of one input or output of a run, checked to be the artifact the
     /// record names, once for each file digest.
     fn file(&mut self, bytes: Vec<u8>, port: &Port, run: &str, role: Role) -> Result<(), String> {
@@ -130,7 +157,7 @@ impl Gathered {
         if let Artifact::Image(image) = &read {
             self.pixels.insert(image.identity().pixels);
         }
-        self.members.insert(file_member(&digest), bytes);
+        self.member(file_member(&digest), bytes)?;
         self.files.insert(
             digest,
             File {
@@ -355,12 +382,6 @@ pub fn make(
             said.len()
         ));
     }
-    if gathered.members.len() + 1 > MEMBERS_LIMIT {
-        return Err(format!(
-            "the bundle would hold {} members, over its bound of {MEMBERS_LIMIT}",
-            gathered.members.len() + 1
-        ));
-    }
     let mut writer = tar::Writer::new(0);
     writer.add(MANIFEST, &said).map_err(|why| why.to_string())?;
     for (name, bytes) in &gathered.members {
@@ -377,6 +398,9 @@ pub fn make(
             "the bundle would be over its bound of {MAX_BYTES} bytes"
         ));
     }
+    // Nothing is handed out that the reader would refuse.
+    super::check(std::io::Cursor::new(&bytes))
+        .map_err(|why| format!("the bundle written would be refused: {}", why.fault))?;
     Ok(Made {
         digest: Digest::of_bytes(&bytes),
         bytes,
@@ -394,7 +418,7 @@ fn gather(
     gathered: &mut Gathered,
 ) -> Result<(), String> {
     let (record, bytes) = record_of(store, generation, run)?;
-    gathered.members.insert(run_member(run, RECORD_NAME), bytes);
+    gathered.member(run_member(run, RECORD_NAME), bytes)?;
     let held = generation.run(run);
     for diagnostic in record.diagnostics() {
         let name = diagnostic.name();
@@ -424,9 +448,13 @@ fn gather(
             ));
         }
         let exchange = format!("{DIAGNOSTICS_PREFIX}{EXCHANGE_PREFIX}");
-        if name.starts_with(&exchange)
-            && let Ok((parts, pictures)) = written::named_outside(&bytes)
-        {
+        if name.starts_with(&exchange) {
+            // What it withholds is said whole, or the bundle is not written.
+            let (parts, pictures) = written::named_outside(&bytes).map_err(|why| {
+                format!(
+                    "the exchange {name} of the run {run} cannot be read for what it names: {why}"
+                )
+            })?;
             for part in parts {
                 gathered.withheld.push(Withheld::OpaquePart {
                     run: run.to_owned(),
@@ -445,7 +473,7 @@ fn gather(
                     .push((run.to_owned(), name.to_owned(), pixels));
             }
         }
-        gathered.members.insert(run_member(run, name), bytes);
+        gathered.member(run_member(run, name), bytes)?;
     }
     let asked = record.asked();
     let answer = format!("{DIAGNOSTICS_PREFIX}{FILL_ANSWER}");

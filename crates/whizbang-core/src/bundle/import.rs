@@ -175,7 +175,11 @@ pub fn import<R: Read>(
             ..already
         }),
         // Another import of the same bundle was published first: it holds it.
-        Err(store::Error::NameExists { name }) if name == manifest_name => Ok(already),
+        Err(store::Error::NameExists { name })
+            if name.starts_with(&format!("{}/", entry(&digest))) =>
+        {
+            Ok(already)
+        }
         Err(error) => Err(ImportError::Store(error)),
     }
 }
