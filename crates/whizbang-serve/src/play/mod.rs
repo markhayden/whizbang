@@ -6,6 +6,7 @@
 //! - [`guard`]: the checks every request passes before a route is looked at.
 //! - [`routes`]: the table of routes, which takes only guarded handlers.
 //! - [`saved`]: saved-run comparisons, saved examples and Home's library (plan m7, U1).
+//! - [`bundles`]: bundles, a chain's steps and the replay of a run (plan m7, U2).
 //! - [`assets`]: the interface's files, embedded.
 //! - [`threads`]: the host's counted spawner.
 //! - [`Host`]: the listener, its workers, the runs it started, and stopping.
@@ -25,6 +26,7 @@
 //! returns with how many runs had not ended.
 
 pub mod assets;
+pub mod bundles;
 pub mod guard;
 pub mod history;
 pub mod http;
@@ -198,6 +200,11 @@ pub trait Play: Send + Sync {
     /// What answers saved-run comparisons, saved examples and Home's library (plan m7,
     /// task U1), when the door keeps a store.
     fn saved(&self) -> Option<&dyn saved::Saved> {
+        None
+    }
+    /// What answers bundles, a chain's steps and a replay's report (plan m7, task U2),
+    /// when the door keeps a store.
+    fn bundles(&self) -> Option<&dyn bundles::Bundles> {
         None
     }
 }
@@ -398,6 +405,8 @@ pub(crate) struct Shared {
     pub settings: Settings,
     pub port: u16,
     pub stopping: AtomicBool,
+    /// Held while a bundle is read and imported: one at a time (plan m7, task U2).
+    pub(crate) importing: Mutex<()>,
     state: Mutex<State>,
     changed: Condvar,
 }
@@ -621,6 +630,7 @@ impl Host {
             port: address.port(),
             settings,
             stopping: AtomicBool::new(false),
+            importing: Mutex::new(()),
             state: Mutex::new(State {
                 runs: Vec::new(),
                 next_place: 0,

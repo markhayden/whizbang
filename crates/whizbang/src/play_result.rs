@@ -699,6 +699,8 @@ pub fn record_json(
         "reserved": record.spend().reserved_micros.map(dollars),
         "send_to": tasks.send_to(record),
         "again": tasks.again(record, &used),
+        // A replay, or a chain's step: the run it makes again (plan m7, task U2).
+        "replayed": crate::play_bundles::replayed_json(record),
     }))
 }
 

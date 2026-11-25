@@ -50,6 +50,8 @@ pub struct Replay {
     source: Source,
     mode: ReplayMode,
     id: Option<RequestId>,
+    cancellation: Option<super::Cancellation>,
+    deadline: Option<std::time::Instant>,
 }
 
 impl Replay {
@@ -59,6 +61,8 @@ impl Replay {
             source,
             mode: ReplayMode::Offline,
             id: None,
+            cancellation: None,
+            deadline: None,
         }
     }
 
@@ -73,6 +77,29 @@ impl Replay {
     pub fn with_id(mut self, id: RequestId) -> Replay {
         self.id = Some(id);
         self
+    }
+
+    /// The same replay, cancelled by this signal, which its caller keeps, as a request
+    /// is ([`super::Request::cancelled_by`]): the playground's host holds the signal of
+    /// every run it starts (plan m7, task U2). It is no part of the fingerprint.
+    pub fn cancelled_by(mut self, signal: super::Cancellation) -> Replay {
+        self.cancellation = Some(signal);
+        self
+    }
+
+    /// The same replay, to be over by this time, as a request is
+    /// ([`super::Request::until`]). It is no part of the fingerprint.
+    pub fn until(mut self, deadline: std::time::Instant) -> Replay {
+        self.deadline = Some(deadline);
+        self
+    }
+
+    pub fn cancellation(&self) -> Option<&super::Cancellation> {
+        self.cancellation.as_ref()
+    }
+
+    pub fn deadline(&self) -> Option<std::time::Instant> {
+        self.deadline
     }
 
     pub fn source(&self) -> &Source {
@@ -433,6 +460,47 @@ pub(super) fn read(
         recorded,
         names,
     })
+}
+
+/// A step of a bundle the store holds, as a chain's step finds it (plan m7, task U2): the
+/// step's run, and the name of each input of it under which a run started from the step
+/// finds it among the bundle's files. An input whose file the bundle withholds is not
+/// named: the run is given another, or is refused for it as any run is.
+pub(super) fn step_of(
+    contents: &(dyn Contents + Send + Sync),
+    generation: &Generation,
+    digest: &Digest,
+    step: u32,
+) -> Result<(String, Vec<(String, Entry)>), CallError> {
+    let stored =
+        Stored::of_bundle(contents, generation, digest).map_err(|why| not_replayed("-", &why))?;
+    let manifest = stored
+        .manifest()
+        .ok_or_else(|| not_replayed("-", "no manifest"))?;
+    let Some(at) = manifest.steps.get(step as usize) else {
+        return Err(not_replayed(
+            "-",
+            &format!(
+                "the bundle {digest} has {} steps, and no step {step}",
+                manifest.steps.len()
+            ),
+        ));
+    };
+    let root = at.run.clone();
+    let Some(record) = stored.record_of(&root)? else {
+        return Err(not_replayed(&root, "the bundle holds no record of it"));
+    };
+    let mut names = Vec::new();
+    let mut places: BTreeMap<String, u32> = BTreeMap::new();
+    for input in record.inputs() {
+        let place = places.entry(input.port.clone()).or_default();
+        if let Some(entry) = stored.file(&root, Role::Input, &input.port, *place) {
+            let name = crate::artifact::name(input.artifact_type, ArtifactId(input.artifact));
+            names.push((name, entry.clone()));
+        }
+        *place += 1;
+    }
+    Ok((root, names))
 }
 
 /// Whether a family replays, decided by this build from its records alone (ADR 0049,

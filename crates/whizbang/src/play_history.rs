@@ -53,6 +53,16 @@ pub fn filter_of(asked: &Map<String, Json>) -> Result<Filter, Refused> {
     })
 }
 
+/// Which runs of replayed families the page asked for (`replayed=exclude|include|only`,
+/// as `runs stats --replayed` takes it): left out unless asked (plan m7, task U2; ADR 0049).
+pub fn replays_of(asked: &Map<String, Json>) -> Result<stats::Replays, Refused> {
+    match asked.get("replayed").and_then(Json::as_str) {
+        None => Ok(stats::Replays::Exclude),
+        Some(name) => stats::Replays::named(name)
+            .ok_or_else(|| Refused::new(400, "replayed is exclude, include or only")),
+    }
+}
+
 /// Millionths of a US dollar as dollars, for the page.
 #[allow(clippy::cast_precision_loss)]
 fn dollars(micros: u128) -> f64 {
@@ -121,7 +131,10 @@ pub fn listed(
     titles: &dyn Fn(&str) -> Option<String>,
 ) -> Result<Json, Refused> {
     let filter = filter_of(&asked.filter)?;
-    let runs = Runs::within(loaded, &filter, lookups).map_err(|why| Refused::new(400, &why))?;
+    let replays = replays_of(&asked.filter)?;
+    let runs = Runs::within(loaded, &filter, lookups)
+        .map_err(|why| Refused::new(400, &why))?
+        .keeping(replays);
     let mut top: Vec<&(String, RunRecord)> = (runs.found.iter())
         .filter(|(_, record)| record.identity().parent.is_none())
         .filter(|(_, record)| {
@@ -151,7 +164,10 @@ pub fn listed(
 /// The figures of `runs stats` over the filter the page asked for.
 pub fn figures(loaded: Arc<Loaded>, asked: &Asked, lookups: Lookups) -> Result<Json, Refused> {
     let filter = filter_of(&asked.filter)?;
-    let runs = Runs::within(loaded, &filter, lookups).map_err(|why| Refused::new(400, &why))?;
+    let replays = replays_of(&asked.filter)?;
+    let runs = Runs::within(loaded, &filter, lookups)
+        .map_err(|why| Refused::new(400, &why))?
+        .keeping(replays);
     let figures = Figures::of(&runs);
     let mut said = serde_json::to_value(&figures).unwrap_or(Json::Null);
     said["text"] = json!(figures.text());

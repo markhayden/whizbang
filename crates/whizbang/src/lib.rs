@@ -21,6 +21,7 @@ pub mod pack;
 pub mod pack_setup;
 pub mod pairs_page;
 pub mod parity;
+pub mod play_bundles;
 pub mod play_form;
 pub mod play_history;
 pub mod play_kept;
