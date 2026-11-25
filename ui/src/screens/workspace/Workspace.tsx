@@ -6,6 +6,7 @@ import { Canvas, type DrawTool, type Mark } from "../../components/Canvas";
 import { ChoiceList } from "../../components/ChoiceList";
 import { ContinueRow } from "../../components/ContinueRow";
 import { DropTarget } from "../../components/DropTarget";
+import { ExampleList } from "../../components/ExampleList";
 import { Field } from "../../components/Field";
 import { KitPanel } from "../../components/KitPanel";
 import { kitTone } from "../../components/kitTone";
@@ -23,6 +24,7 @@ import { PICTURES_PAGE, useArtifact, useImageSize } from "../../hooks";
 import { actionOf } from "../../keyboard";
 import { createPreparer, type Preparer } from "../../preparer";
 import { hrefOf } from "../../routes";
+import { fellBackWords } from "../../saved";
 import { EmptyScreen } from "../Empty";
 import "../result/result.css";
 import { toneOf } from "../result/record";
@@ -69,6 +71,11 @@ export function Workspace(props: WorkspaceProps) {
             href: hrefOf({ name: "kit", kit: kit.id, task: one.name }),
           }))}
         />
+        {props.client ? (
+          <div class="workspace__examples">
+            <ExampleList client={props.client} go={props.go ?? (() => undefined)} kit={kit.id} kitName={(id) => kits.find((one) => one.id === id)?.name ?? id ?? ""} />
+          </div>
+        ) : null}
       </main>
     );
   }
@@ -326,6 +333,9 @@ function Draft(props: DraftProps) {
   const sent = kept?.sent;
   const [fromFields, setFromFields] = useState<string[]>(sent?.fields ?? []);
   const [jobOf, setJobOf] = useState<string | null>(sent?.jobOf ?? kept?.jobOf ?? null);
+  // A draft an example opened (plan m7, task U1, item 2): which example, and each choice
+  // of backend it made that this config does not offer now.
+  const example = kept?.example;
 
   const set = (name: string, value: unknown) => {
     setValues((now) => ({ ...now, [name]: value }));
@@ -359,7 +369,7 @@ function Draft(props: DraftProps) {
     const shownAlone = JSON.stringify(argumentsOf(task, seeded(task, {}, backends)));
     if (Object.keys(args).length > 0 && argsKey !== shownAlone) {
       const from = sent ? { sent: { ...sent, fields: fromFields, jobOf: jobOf ?? undefined } } : jobOf ? { jobOf } : {};
-      saveDraft(store, { kit: props.kit, task: task.name, values, pictures, at: Date.now(), ...from });
+      saveDraft(store, { kit: props.kit, task: task.name, values, pictures, at: Date.now(), ...from, ...(example ? { example } : {}) });
     }
   }, [argsKey]);
 
@@ -494,8 +504,19 @@ function Draft(props: DraftProps) {
             {task.title ?? task.name}
           </h1>
           {task.purpose ? <p class="workspace__purpose">{task.purpose}</p> : null}
+          {example ? (
+            <p class="workspace__example">
+              <span class="workspace__example-tag mono">EXAMPLE</span>
+              <span class="workspace__example-name">{example.name}</span>
+            </p>
+          ) : null}
         </header>
         <div class="workspace__fields">
+          {example?.fellBack.map((one) => (
+            <p key={one.argument} class="workspace__fell-back" role="note">
+              {fellBackWords(one, one.capability === "fill" ? "filler" : one.capability === "segment" ? "segmenter" : one.capability)}
+            </p>
+          ))}
           {fields.map((field) => (
             <Input
               key={field.name}

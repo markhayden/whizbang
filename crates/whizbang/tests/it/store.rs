@@ -18,13 +18,14 @@ const RENDER: &[u8] = b"what only run one made";
 const EXCHANGE: &[u8] = b"the exchange of a turn that failed";
 const LEDGER: &[u8] = b"a spend record";
 
-struct Ran {
-    code: Option<i32>,
-    out: String,
-    err: String,
+pub(crate) struct Ran {
+    pub(crate) code: Option<i32>,
+    pub(crate) out: String,
+    pub(crate) err: String,
 }
 
-fn whizbang(args: &[&str], root: &Path) -> Ran {
+/// `whizbang store <args> --store <root>`.
+pub(crate) fn whizbang(args: &[&str], root: &Path) -> Ran {
     let out = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
         .arg("store")
         .args(args)

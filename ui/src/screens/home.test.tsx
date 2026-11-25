@@ -1,7 +1,7 @@
 // Home: a picture picked (from the library or from search) starts a task with it.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "preact/test-utils";
-import type { Client, Hello, Picture } from "../api";
+import { ApiError, type Client, type Hello, type Picture } from "../api";
 import { DRAFTS_KEY, draftOf, localStore, saveDraft } from "../drafts";
 import { HOSTILE, click, render } from "../test/render";
 import { Home } from "./homepage/Home";
@@ -24,11 +24,18 @@ const HELLO: Hello = {
   ],
 };
 
+/** A client whose library lists `listed` and whose card is of `kept`, or of nothing. */
 function client(listed: Picture[] = [PORCH], kept: Picture | null = PORCH): Client {
+  const row = (one: Picture) => ({ id: one.id, name: one.name, runs: 0, imported: true });
   return {
     openRuns: vi.fn(() => Promise.resolve([])),
-    listPictures: vi.fn(() => Promise.resolve(listed)),
-    pictureById: vi.fn(() => Promise.resolve(kept)),
+    request: vi.fn((_method: string, path: string) => {
+      if (path === "/api/examples") return Promise.resolve({ examples: [] });
+      if (path.startsWith("/api/library?")) return Promise.resolve({ pictures: listed.map(row), more: false, counts: { all: listed.length, named: listed.length, inputs: 0, imported: listed.length } });
+      if (path.startsWith("/api/library/"))
+        return kept ? Promise.resolve({ ...row(kept), width: kept.width, height: kept.height, bytes: 2048, runs_list: [] }) : Promise.reject(new ApiError(404, "the store holds no picture of that identity"));
+      return Promise.reject(new ApiError(404, "no such route"));
+    }),
     blobUrl: vi.fn(() => new Promise(() => undefined)),
   } as unknown as Client;
 }
@@ -108,7 +115,7 @@ describe("a picture picked on Home", () => {
     const made = client([], PORCH);
     const view = render(<Home hello={HELLO} client={made} picture={PORCH.id} />);
     await settle();
-    expect(made.pictureById).toHaveBeenCalledWith(PORCH.id);
+    expect(made.request).toHaveBeenCalledWith("GET", `/api/library/${PORCH.id}`);
     expect(view.get("[role=region]").getAttribute("aria-label")).toBe("Start a task with porch.png");
     view.unmount();
   });
@@ -118,6 +125,41 @@ describe("a picture picked on Home", () => {
     await settle();
     expect(view.get("[role=region] [role=alert]").textContent).toContain("holds no picture");
     expect(view.all(".picked__task")).toHaveLength(0);
+    view.unmount();
+  });
+
+  it("keeps each chip's answer to its chip, and says a list that failed rather than none", async () => {
+    const answers: Record<string, (value: unknown) => void> = {};
+    const failures: Record<string, (error: unknown) => void> = {};
+    const made = {
+      openRuns: vi.fn(() => Promise.resolve([])),
+      request: vi.fn((_method: string, path: string) => {
+        if (path === "/api/examples") return Promise.resolve({ examples: [] });
+        return new Promise((resolve, reject) => {
+          answers[path] = resolve;
+          failures[path] = reject;
+        });
+      }),
+      blobUrl: vi.fn(() => new Promise(() => undefined)),
+    } as unknown as Client;
+    const view = render(<Home hello={HELLO} client={made} />);
+    await settle();
+    const all = "/api/library?show=all&limit=24";
+    expect(answers[all]).toBeTruthy();
+    click(view.all<HTMLElement>(".home__chip").find((one) => one.textContent?.startsWith("Named"))!);
+    await settle();
+    const named = "/api/library?show=named&limit=24";
+    // The answer for All comes after Named was chosen: it is dropped.
+    const row = (id: string) => ({ id, name: id, runs: 0, imported: true });
+    const counts = { all: 1, named: 1, inputs: 0, imported: 1 };
+    answers[all]!({ pictures: [row(PORCH.id)], more: true, counts });
+    await settle();
+    expect(view.all(".home__tile")).toHaveLength(0);
+    expect(view.text()).not.toContain("No pictures yet");
+    failures[named]!(new ApiError(500, "the store could not answer"));
+    await settle();
+    expect(view.get(".home__pictures [role=alert]").textContent).toContain("the store could not answer");
+    expect(view.text()).not.toContain("No pictures yet");
     view.unmount();
   });
 });

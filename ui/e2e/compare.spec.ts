@@ -1,7 +1,7 @@
 // Before and after (plan m5, task W2; SPEC.md section 7, row 3 of the plan's acceptance
 // table): a result's source and its picture side by side, swiped and as their difference.
 import { expect, test } from "./fixtures";
-import { file, give, openAt, picture, runWhenReady, script } from "./play";
+import { file, give, openAt, picture, runOf, runWhenReady, script } from "./play";
 
 test.afterEach(async ({ request, host }) => {
   await script(request, host, "reset");
@@ -78,4 +78,55 @@ test("two pictures wider than half the canvas both fit side by side, at one zoom
       }),
     )
     .toEqual([]);
+});
+
+// Saved-run comparisons (plan m7, task U1, item 1; the acceptance row "Saved-run comparisons
+// in the playground").
+test("a pinned baseline and an attempt of the same task show their pictures, settings and cost side by side, and the pin survives a reload", async ({ page, host }) => {
+  await openAt(page, host, "#/k/rascal/remove_prompt");
+  await give(page, "image", file("pinned.png", 36));
+  await page.locator("#field-prompt").fill("the hose");
+  await runWhenReady(page);
+  await expect(page.locator(".workspace__title-row .tag", { hasText: "DONE" })).toBeVisible();
+  const baseline = runOf(page);
+  await page.getByRole("button", { name: /^More/ }).click();
+  await page.getByRole("menuitem", { name: "Pin as baseline" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Pinned as the baseline" })).toBeVisible();
+  // The attempt: the same task and picture, other words.
+  await page.goto(`${host.address}#/k/rascal/remove_prompt`);
+  await give(page, "image", file("pinned.png", 36));
+  await page.locator("#field-prompt").fill("the garden hose");
+  await runWhenReady(page);
+  await expect(page.locator(".workspace__title-row .tag", { hasText: "DONE" })).toBeVisible();
+  const attempt = runOf(page);
+  await page.getByRole("button", { name: /^More/ }).click();
+  await page.getByRole("menuitem", { name: /Compare with baseline/ }).click();
+  await expect(page).toHaveURL(new RegExp(`#/compare/${baseline}/${attempt}$`));
+  const shown = async () => {
+    // The two pictures, labelled, at one size.
+    const figures = page.locator(".compare__side .compare__figure");
+    await expect(figures).toHaveCount(2);
+    await expect(figures.nth(0).locator("img")).toHaveAttribute("alt", "Baseline");
+    await expect(figures.nth(1).locator("img")).toHaveAttribute("alt", "Attempt");
+    const sizes = await figures.evaluateAll((all) => all.map((one) => `${(one as HTMLElement).style.width}|${(one as HTMLElement).style.height}`));
+    expect(sizes[0]).toBe(sizes[1]);
+    // What was asked, side by side, the difference marked; the same picture, not.
+    const prompt = page.locator(".compare-runs__row", { has: page.locator(".compare-runs__row-name", { hasText: /^prompt$/ }) });
+    await expect(prompt).toHaveAttribute("data-differs", "true");
+    await expect(prompt).toContainText("the hose");
+    await expect(prompt).toContainText("the garden hose");
+    // The cost of each whole run, side by side.
+    const cost = page.locator(".compare-runs__row", { has: page.locator(".compare-runs__row-name", { hasText: "cost, whole run" }) });
+    await expect(cost.locator(".compare-runs__row-value").nth(0)).toHaveText(/^\$\d/);
+    await expect(page.locator(".compare-runs__card-run").nth(0)).toContainText(baseline.slice(0, 6));
+  };
+  await shown();
+  // Show all puts the rows that are the same back, marked same.
+  await page.getByRole("button", { name: "Show all" }).click();
+  const inputs = page.locator('.compare-runs__section[aria-label="Inputs"]');
+  await expect(inputs.locator(".compare-runs__row", { has: page.locator(".compare-runs__row-name", { hasText: /^image$/ }) })).toContainText("same");
+  await page.reload();
+  await expect(page).toHaveURL(new RegExp(`#/compare/${baseline}/${attempt}$`));
+  await shown();
+  expect(await page.evaluate(() => localStorage.getItem("whizbang.baseline"))).toContain(baseline);
 });

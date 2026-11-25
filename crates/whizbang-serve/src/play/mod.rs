@@ -5,6 +5,7 @@
 //! - [`http`]: a request read within its bounds and deadlines, and an answer.
 //! - [`guard`]: the checks every request passes before a route is looked at.
 //! - [`routes`]: the table of routes, which takes only guarded handlers.
+//! - [`saved`]: saved-run comparisons, saved examples and Home's library (plan m7, U1).
 //! - [`assets`]: the interface's files, embedded.
 //! - [`threads`]: the host's counted spawner.
 //! - [`Host`]: the listener, its workers, the runs it started, and stopping.
@@ -31,6 +32,7 @@ pub mod models;
 pub mod records;
 pub mod result;
 pub mod routes;
+pub mod saved;
 pub mod threads;
 pub mod token;
 
@@ -191,6 +193,11 @@ pub trait Play: Send + Sync {
     /// The Models screen's models, backends and allowance (plan m5, task M1), when the
     /// door offers them.
     fn models(&self) -> Option<&dyn models::Models> {
+        None
+    }
+    /// What answers saved-run comparisons, saved examples and Home's library (plan m7,
+    /// task U1), when the door keeps a store.
+    fn saved(&self) -> Option<&dyn saved::Saved> {
         None
     }
 }

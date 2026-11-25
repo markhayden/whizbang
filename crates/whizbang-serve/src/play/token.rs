@@ -63,7 +63,7 @@ impl Token {
 }
 
 /// A short id of random bytes, as hex: a preparation's handle.
-pub(crate) fn random_hex(bytes: usize) -> io::Result<String> {
+pub fn random_hex(bytes: usize) -> io::Result<String> {
     let mut made = vec![0u8; bytes];
     getrandom::getrandom(&mut made)
         .map_err(|_| io::Error::other("the system's randomness could not be read"))?;

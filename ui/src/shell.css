@@ -36,7 +36,6 @@
 .home__continue { display: flex; flex-direction: column; border-radius: var(--radius-md); background: var(--color-panel); box-shadow: var(--shadow-panel); overflow: hidden; }
 .library { display: flex; flex-wrap: wrap; gap: var(--spacing-3); align-items: stretch; }
 .library .picture-tile { width: 132px; height: 88px; }
-.home__pictures .drop-target { width: 132px; height: 88px; }
 
 /* The kit workspace and a run: inputs, canvas, the right panel (the Paper file's "Rascal · Remove, checked"). */
 .workspace { display: grid; grid-template-columns: 320px minmax(0, 1fr) 300px; height: 100%; min-height: 0; }
@@ -107,3 +106,39 @@
 .workspace__runs .continue-row__gap { display: none; }
 .workspace__runs .continue-row__when { grid-area: when; justify-self: end; }
 .workspace__note { padding: var(--spacing-2) var(--spacing-3) 0; }
+/* Home's library (plan m7, task U1; the design's surface 6): every picture the store holds,
+   whatever door gave it, under the engine's own chips. */
+.home__library { display: flex; flex-direction: column; gap: var(--spacing-3); padding: 14px; border-radius: var(--radius-md); background: var(--color-panel); box-shadow: var(--shadow-panel); }
+.home__library-head { display: flex; align-items: center; gap: var(--spacing-3); flex-wrap: wrap; }
+.home__library-title { margin: 0; color: var(--color-ink); font-size: var(--text-md); }
+.home__library-count { color: var(--color-muted); font-size: var(--text-sm); font-weight: var(--font-weight-regular); }
+.home__chips { display: flex; gap: var(--spacing-1); }
+.home__chip { padding: 3px 10px; border: 0; border-radius: 999px; background: transparent; color: var(--color-muted); font-size: var(--text-md); cursor: pointer; }
+.home__chip:hover { color: var(--color-ink); }
+.home__chip--on { background: var(--color-hover); color: var(--color-ink); box-shadow: var(--color-line-strong) 0 0 0 1px inset; }
+.home__chip-count { color: var(--color-faint); }
+.home__chip--on .home__chip-count { color: var(--color-muted); }
+.home__tile { display: flex; flex-direction: column; gap: var(--spacing-1); width: 158px; margin: 0; }
+.home__pictures .home__tile .picture-tile { width: 158px; height: 104px; }
+.home__tile-words { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.home__tile-name { color: var(--color-ink); font-size: var(--text-md); line-height: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home__tile-line { color: var(--color-muted); font-size: var(--text-xs); line-height: 14px; }
+.home__more { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--spacing-1); width: 158px; height: 104px; border: 1px dashed var(--color-line-strong); border-radius: var(--radius-sm); background: transparent; color: var(--color-ink); font-size: var(--text-md); cursor: pointer; }
+.home__more:hover { background: var(--color-hover); }
+.home__more-line { color: var(--color-muted); font-size: var(--text-xs); }
+.home__pictures .drop-target { width: 158px; height: 104px; }
+.picked__facts { display: flex; flex-direction: column; gap: var(--spacing-1); color: var(--color-ink-2); font-size: var(--text-sm); line-height: 16px; }
+.picked__fact { overflow-wrap: anywhere; }
+.picked__runs { display: flex; flex-direction: column; gap: var(--spacing-1); margin-top: var(--spacing-2); padding-top: var(--spacing-2); border-top: 1px solid var(--color-line); }
+.picked__runs-title { color: var(--color-muted); font-size: 10px; letter-spacing: var(--tracking-caps); }
+.picked__run { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--spacing-2); color: var(--color-ink); font-size: var(--text-sm); text-decoration: none; }
+.picked__run:hover .picked__run-task { text-decoration: underline; }
+.picked__run-task { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picked__run-outcome { color: var(--color-muted); font-size: var(--text-xs); }
+.picked__run-outcome--done { color: var(--color-pass); }
+/* A row's pin (plan m7, task U1): shown on hover or focus, at the row's end. */
+.history__item { position: relative; }
+.history__pin { position: absolute; right: 96px; top: 50%; transform: translateY(-50%); display: none; gap: var(--spacing-1); }
+.history__item:hover .history__pin, .history__item:focus-within .history__pin, .history__pin:has([aria-pressed="true"]) { display: flex; }
+.history__pin-button { padding: 3px 8px; border: 0; border-radius: var(--radius-sm); background: var(--color-raised); box-shadow: var(--color-line-strong) 0 0 0 1px inset; color: var(--color-ink); font-size: var(--text-sm); cursor: pointer; }
+.history__pin-button[aria-pressed="true"] { background: var(--color-brass-soft); color: var(--color-ink); }

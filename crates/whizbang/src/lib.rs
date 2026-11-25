@@ -26,6 +26,7 @@ pub mod play_history;
 pub mod play_kept;
 pub mod play_models;
 pub mod play_result;
+pub mod play_saved;
 pub mod playing;
 pub mod replaying;
 pub mod report;

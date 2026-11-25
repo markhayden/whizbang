@@ -12,6 +12,8 @@ export interface Kept {
   host: Host;
   /** Stops the host and starts another over the same store: its address and token are new. */
   restart(): Promise<Host>;
+  /** The same, doing `between` to the store's folder while no host holds it. */
+  restartAfter(between: (store: string) => void): Promise<Host>;
 }
 
 /** A host over a store of the case's own, stopped and the store removed when `use` is done. */
@@ -20,8 +22,10 @@ export async function withKeptHost<T>(use: (kept: Kept) => Promise<T>): Promise<
   let started = await startHost(store);
   const kept: Kept = {
     host: started.host,
-    restart: async () => {
+    restart: () => kept.restartAfter(() => undefined),
+    restartAfter: async (between) => {
       await stopHost(started.child);
+      between(store);
       started = await startHost(store);
       kept.host = started.host;
       return started.host;

@@ -79,6 +79,9 @@ fn the_playgrounds_guide_names_only_cases_that_exist() {
         ("play", "crates/whizbang/tests/it/play.rs"),
         ("play_result", "crates/whizbang/tests/it/play_result.rs"),
         ("play_models", "crates/whizbang/tests/it/play_models.rs"),
+        ("play_compare", "crates/whizbang/tests/it/play_compare.rs"),
+        ("play_examples", "crates/whizbang/tests/it/play_examples.rs"),
+        ("play_library", "crates/whizbang/tests/it/play_library.rs"),
         ("play_guard", "crates/whizbang-serve/tests/it/play_guard.rs"),
         ("guides", "crates/whizbang/tests/it/guides.rs"),
     ];

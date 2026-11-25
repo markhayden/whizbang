@@ -137,7 +137,7 @@ impl Playground {
         self
     }
 
-    fn tasks(&self) -> crate::play_result::Tasks<'_> {
+    pub(crate) fn tasks(&self) -> crate::play_result::Tasks<'_> {
         crate::play_result::Tasks {
             descriptors: &self.descriptors,
             kits: &self.kits,
@@ -169,7 +169,7 @@ impl Playground {
         self
     }
 
-    fn store(&self) -> Result<Arc<Store>, Refused> {
+    pub(crate) fn store(&self) -> Result<Arc<Store>, Refused> {
         self.store
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -247,6 +247,11 @@ impl Playground {
     /// (for its history, `crate::play_history`).
     pub(crate) fn root(&self) -> Option<&Path> {
         self.root.as_deref()
+    }
+
+    /// What the executor was built over: the config and its backends.
+    pub(crate) fn over(&self) -> &Over {
+        &self.over
     }
 
     pub(crate) fn descriptors(&self) -> &[ActionDescriptor] {
@@ -616,6 +621,10 @@ impl Play for Playground {
         Some(self)
     }
 
+    fn saved(&self) -> Option<&dyn whizbang_serve::play::saved::Saved> {
+        Some(self)
+    }
+
     fn models(&self) -> Option<&dyn whizbang_serve::play::models::Models> {
         self.models
             .as_ref()
@@ -641,7 +650,7 @@ impl Play for Playground {
 /// The config's name of the backend of this capability whose kind and model are these, as
 /// a run's record names a request's backend: none when the config names none, or more
 /// than one, so.
-fn resolved(rows: &[Json], capability: &str, kind: &str, model: &str) -> Option<String> {
+pub(crate) fn resolved(rows: &[Json], capability: &str, kind: &str, model: &str) -> Option<String> {
     let mut named = rows.iter().filter(|row| {
         row["capability"] == capability && row["kind"] == kind && row["model"] == model
     });

@@ -206,7 +206,7 @@ impl Shelf for Playground {
 impl Playground {
     /// The runs of the store's current generation: those read before when the store has
     /// not published since, else read again.
-    fn loaded(&self) -> Result<Arc<Loaded>, Refused> {
+    pub(crate) fn loaded(&self) -> Result<Arc<Loaded>, Refused> {
         let root = self.root_of()?;
         let busy = || Refused::new(500, "the store could not answer");
         let reader =
