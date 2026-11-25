@@ -1,7 +1,7 @@
 # Plan: milestone E, evidence and edit quality
 
-Draft 2, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
-note of milestone 7), after one outside review round ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
+Draft 3, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
+note of milestone 7), after two outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
 quality". Its first slice ran beside milestone 5 (`docs/plans/e1-judge-format-loop.md`,
 `docs/plans/e1-note.md`) and chose the default judge and kept the submission format on
 descriptive evidence. This plan is the rest of the milestone: every unverified tool and
@@ -164,6 +164,13 @@ task item or a question at the end; none is settled silently.
    squint's set toolkit (squint `scripts/sets/`, `squint-sets build`, its `docs/evalsets.md`,
    "Building a set", at the commit `docs/sources.toml` pins), and the carry-over list neither
    ports nor drops it. Fix: B1 ports it.
+10. **Admitted means on by default, but a gate measures some judges.** Section 8: admitted is
+    "on by default"; a recipe is admitted as its combination of tools, order and settings
+    (section 3, "Primitives, recipes and loops"), and changing it returns it to unverified. A
+    tool's gate on fresh data measures it under the judges and format of its matrix, not under
+    every judge a user may choose. Fix: A0, item 4 writes into section 8 that an admitted tool
+    is on by default in the combination its gate measured, and one flag away under any other
+    until a gate of that combination; R4, item 5 applies it.
 
 ## Choices this plan makes
 
@@ -262,7 +269,7 @@ panorama side, P1).
 
 ## How the work is split
 
-Twenty-three tasks. Sizes are changed lines of source, tests and hand-written documents, by
+Twenty-four tasks. Sizes are changed lines of source, tests and hand-written documents, by
 milestone 3's rate (about 2,500 for a large one). The orchestrator's rounds are named as
 theirs; builders make no live call.
 
@@ -287,8 +294,9 @@ theirs; builders make no live call.
 | C1 | The clicked removal: measured on segment-01, then built if the rule asks | `main` | Medium: about 900 if built, 200 if not |
 | P1 | Panoramas: `view`'s panorama side and its mapping; locations through every binding; the scaled slack; a reduced crop with transparency; the seam's two record lines | `main` | Large, two pull requests: about 1,500 (`view`'s panorama side, the mapping, its ADR), then about 1,000 (locations, the slack, alpha, the records) |
 | R5 | Rung 3 of the edit recipes (the orchestrator's) | M2, V1, L2, C1, P1 | Medium: about 600, gate files and records |
-| R6 | Rung 4 of the edit recipes on fresh cases (the orchestrator's, with the owner); `segment` and `fill` credited | R5 | Small: about 400, records |
-| W1 | What milestone 8 builds: the segmenters compared; the protocols for local fill and judge | T2, R4, R6 | Medium: about 700, an ADR, records, protocol files |
+| K1 | The segmenters compared on segment-01's truth masks; `segment`'s rung 2; the rule for milestone 8 (the orchestrator's) | T2 | Small: about 400, a record |
+| R6 | Rung 4 of the edit recipes on fresh cases (the orchestrator's, with the owner); `segment` and `fill` credited | R5, K1 | Small: about 400, records |
+| W1 | What milestone 8 builds: K1's outcome; the protocols for local fill and judge | K1, R4, R6 | Medium: about 600, an ADR and protocol files |
 | N1 | The note | all | Small: about 500, no code |
 
 **Waves.** Each from `main` once what it builds on has landed.
@@ -298,7 +306,7 @@ theirs; builders make no live call.
    (its measurement waits for nothing paid) and **P1**.
 2. **T2** when T1 has landed; **D1** when B1 has landed (the owner reviews the contact
    sheets); **L2** when L1 has landed.
-3. **R2** when T2 has landed; then **R3** (and M1); **F2** when F1 and D1's dev versions
+3. **R2** and **K1** when T2 has landed; then **R3** (and M1); **F2** when F1 and D1's dev versions
    have landed.
 4. **R4** when D1's fresh set, R3 and F2 are in, and the owner has said yes to its use.
 5. **V1** (it may start any time after P0, as the owner's time allows); **R5** when V1, L2,
@@ -355,12 +363,15 @@ reported in its pull request. Every test that calls a provider or a real model i
    hold it unmarked. `just docs` writes the description again.
    `marks::every_record_that_states_a_mark_is_shown_by_describe`;
    `marks::the_control_carries_no_mark`.
-4. **The spec's wording for gaps 3, 4 and 5.** `SPEC.md` section 8 gains two sentences under
-   "The ladder" (a rung 3 gate decides whether a tool goes on; only a rung 4 gate on fresh data
-   admits) and one under the table of kinds (a use case's rung 3 is a judge round under a rule
-   frozen before it; its rung 4 is `judge-pick/1` on a fresh set of that use case). If the
-   owner says yes to "I need", item 3, row E gains: "the use cases without a fresh set end E
-   unverified". This is the spec brought in line with a reviewed plan.
+4. **The spec's wording for gaps 3, 4, 5 and 10.** `SPEC.md` section 8 gains two sentences
+   under "The ladder" (a rung 3 gate decides whether a tool goes on; only a rung 4 gate on
+   fresh data admits), one under the table of kinds (a use case's rung 3 is a judge round
+   under a rule frozen before it; its rung 4 is `judge-pick/2` on a fresh set of that use
+   case), and one under "Marks" (an admitted tool is on by default in the recipe, judges and
+   format its gate measured; under another judge or format it is one flag away until a gate
+   of that combination). If the owner says yes to "I need", item 3, row E gains: "a use case
+   of `check` whose gate on fresh data is not run or not cleared in E ends E unverified, the
+   default it was". This is the spec brought in line with a reviewed plan.
 5. **Details first's end.** Its record and `docs/reference/tools/source-fidelity.md` say it
    ends E experimental: no fix was proposed, and its gate rejected it in every run. `resize`,
    which `check` offers only under it, ends E experimental with it, its record saying so.
@@ -389,9 +400,11 @@ reported in its pull request. Every test that calls a provider or a real model i
    may take `second_look`; details stay arm F's. `matrix::the_second_look_is_an_arm_of_c`.
 3. **Gates frozen in their matrix, scored from its runs.** Gate file version 3: `[baseline]`
    names its control and treatment among the matrix's arms, or (item 4) two sets; the matrix
-   may hold more arms. The matrix names, under `[gates]`, the digest of every gate file frozen
-   on it, so its identity, which every run holds, proves the gates were frozen before its
-   first cell. `whizbang eval matrix` runs the cells; `whizbang eval run --gate <file>` scores
+   may hold more arms. The binding runs one way only, so nothing is circular: a version 3
+   gate names its matrix by file alone, with no `matrix_identity` (version 2's field, which
+   hashes the matrix, is refused in version 3), and the matrix names, under `[gates]`, the
+   digest of the bytes of every gate file frozen on it. The matrix's identity, which every run
+   holds, then covers the gates, and proves they were frozen before its first cell. `whizbang eval matrix` runs the cells; `whizbang eval run --gate <file>` scores
    a gate from the runs of the matrix it names, reading only its own arms' or sets' cells,
    and refuses a gate whose digest the matrix does not name. `[confidence] hypotheses`
    counts every hypothesis of every gate the matrix names, the judge's rule included (M1,
@@ -445,13 +458,17 @@ reported in its pull request. Every test that calls a provider or a real model i
 
 R5 and R6 need a scorer that `eval run --gate` is not: it gates balanced accuracy of `check`.
 
-1. **An edit gate file**, `edit-gate/1`, frozen before its round: the recipe, the corpus
-   manifest, and its measures, each with its bar: task success (a share, with its Wilson 95%
-   lower bound against a bar), preservation outside the mask (exact: every pixel outside the
-   kept mask's support is the picture's own, from the run's record), blinded quality (a lab
-   decode's outcome), the operational error rate, and the correction across the recipes of
-   one round (Bonferroni on the Wilson bounds). Too few runs, or fewer decided pairs than the
-   protocol's minimum, is inconclusive.
+1. **An edit gate file**, `edit-gate/1`, frozen before its round, stating every item section 8
+   lists for a gate: the recipe and the corpus manifest, whose every case names its family (a
+   scene; variants of one scene are one family); the measures, each with its bar: task success
+   (a share of runs, with its 95% interval resampled by family against a bar), preservation
+   outside the mask (exact: every pixel outside the kept mask's support is the picture's own,
+   from the run's record), blinded quality (the outcome of a lab decode of this round's runs),
+   and operational errors; the minimum number of families; the correction across the recipes
+   of one round (Bonferroni on the intervals); the limits on cost (the settled cost of a run
+   at most the recipe's guide figure doubled) and on latency (the median run at most twice its
+   record's); and that too little data, too few families, or fewer picked pairs than the
+   protocol's minimum is inconclusive.
 2. **`whizbang eval edits gate --gate <file>`** scores it from the store: task success from
    the runs' checks (rung 3, R5) or from the owner's marks (rung 4, R6, read by `--labels
    <owner storage>` as `eval loop score --labels` reads marks), preservation from each run,
@@ -693,14 +710,19 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
 
 ## F2. The dev round of the format and the requirements (the orchestrator's)
 
-1. **The matrix**, `matrices/e-format-dev.toml`: the ten dev sets, arms `C;submission=v1` and
-   `C;submission=v3`, judges `claude-haiku-5-5` and `gemini-3.8-flash`, one repetition; and
-   `source-fidelity/scenes-v2` and `adversarial-v2` under `C;submission=v1` and the same two
-   judges, for the requirement change on dev data. v2 is not run again: plan e1's format round
-   measured it against v1 on the same sets (`docs/results/e-submission.md`).
+1. **Two matrices, two populations.** `matrices/e-format-dev.toml`: the ten dev sets, arms
+   `C;submission=v1` and `C;submission=v3`, judges `claude-haiku-5-5` and `gemini-3.8-flash`,
+   one repetition: every item under both arms, so the format is compared on one population.
+   `matrices/e-requirements-dev.toml`, apart: `source-fidelity/scenes-v1` and `adversarial-v1`
+   against `scenes-v2` and `adversarial-v2`, item by item, under `C;submission=v1` and the same
+   two judges, scored as a comparison of two versions of a set (M1, item 4) and never mixed
+   into the format's counts. v2 is not run again: plan e1's format round measured it against
+   v1 on the same ten sets (`docs/results/e-submission.md`). If Flash's price has doubled
+   before F2 runs, Flash leaves both matrices and Haiku alone runs them, said in the record.
 2. **The rule, `submission/2`, frozen here** and applied by `eval judges` (M1, item 5):
    `submission/1`'s clauses (a) and (b), and clause (c) read on the family-resampled 95%
-   intervals at their bound toward harm. v3 goes to R4 if it meets the rule. If it does not,
+   intervals at their bound toward harm; every count and rate over the items scored under
+   both arms of one judge alone. v3 goes to R4 if it meets the rule. If it does not,
    the format whose dev evidence is better by the rule's clauses goes, v2 by e1's round or v3
    by this one, said in the record; only a gate on fresh data admits either.
 3. **The record**, `docs/results/e-format-dev.md`: descriptive, admits nothing; the
@@ -719,8 +741,9 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    - `confirm-v1` under arm C, all five judges: the judge's gate, and every gate's control;
    - `confirm-v1` under the format F2 sent, all five judges, so that whichever judge item 3
      picks is measured under it;
-   - `confirm-v1` under each treatment that passed R3, Haiku and Terra, at most two
-     treatments in tier 1, the first two in the order of the ladder that passed;
+   - `confirm-v1` under each treatment that passed R3, Haiku and Terra; in tier 1 at most two:
+     per-subject comparison if it passed R3 (row E names its rungs 3 and 4 on fresh data), and
+     the first other treatment in the order of the ladder that passed;
    - `confirm-plain-v1` under arm C, Haiku and Terra: the requirement gate's control, a gate
      across two versions of a set (M1, item 4).
    **The hypotheses**, counted together in one Bonferroni correction: two for each tool,
@@ -735,19 +758,19 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    <owner storage>`, labels by `--labels <owner storage>`. The cap of one call: the largest
    one-check bound among the five judges under the dearest arm, plus a cent.
 5. **What each receipt decides.**
-   - **The format**: admitted when every judge's comparison is admitted; then the
-     `submission` default changes in `check` and the five recipe files, and the default
-     judge of item 3 is one that was measured under it.
+   - **The format**: admitted for source fidelity when every judge's comparison is admitted;
+     then the `submission` of source fidelity's recipe file changes, and only that one: the
+     other four use cases were not confirmed under it and keep v1 in their files, which state
+     it themselves (ADR 0042, item 1). Every judge was measured under it, so the default judge
+     of item 3 was too.
    - **The requirements**: admitted when both judges' comparisons are; then B1's builder
      writes full requirements by default. It changes no recipe.
-   - **A tool**: admitted when both judges' comparisons are. Admitted means on by default
-     (section 8), which changes source fidelity's recipe; so at most one change to that
-     recipe's default is made in E, the first that holds in this order: the format, then a
-     tool. A tool admitted beside an admitted format was measured under v1, not with the new
-     format, so it is recorded as admitted under v1 and stays one flag away until a gate of
-     the combination clears it; a carry-over row is opened for that gate. The recipe whose
-     default changed is source fidelity under the combination its receipt measured, and its
-     record says which.
+   - **A tool**: admitted when both judges' comparisons are, in the combination its gate
+     measured: source fidelity under v1, Haiku or Terra (gap 10). It is on by default only
+     there; under the default judge, or beside an admitted format, it stays one flag away, and
+     a carry-over row is opened for the gate of that combination. Its record and `describe`
+     say so. Source fidelity's default recipe therefore changes in E by the format alone, or
+     not at all, and its record names the combination its receipt measured.
    - Rejected or inconclusive: a tool ends E experimental, or dropped by R3's rule; the
      format stays v1; the wording stays plain.
 6. **The records**: `docs/results/e-confirm.md` and its TOML; each record's "Mark and history";
@@ -778,10 +801,14 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    their decodes report `preferred`, `inconclusive` or `worse`, and the record says why. The
    decoder counts `same` and `neither` toward neither side (`crates/whizbang-eval/src/lab/
    decode.rs`), which is why: losses under a third of the decided pairs is wins over two
-   thirds. Protocol version 2, for E's new rounds (R6, W1): a group is `preferred` when wins
-   reach two thirds of the decided pairs; else `not_worse` when losses stay under a third of
-   every pair picked, `same` included; else `worse`. With `same` picks it can be reached.
+   thirds. Protocol version 2, for E's new rounds (C1, R5, R6, W1): a group is `inconclusive`
+   below a minimum of pairs **picked** (not decided, so a `same` pick never makes it
+   inconclusive); else `preferred` when wins reach two thirds of the decided pairs; else
+   `not_worse` when losses stay under a third of every pair picked, `same` included; else
+   `worse`. With `same` picks it can be reached at any size of round: of 8 pairs picked, 4
+   wins, 2 losses and 2 `same` is `not_worse`.
    `decode::not_worse_is_reached_when_same_picks_keep_losses_under_a_third`;
+   `decode::a_same_pick_does_not_make_a_version_2_round_inconclusive`;
    `decode::a_version_1_protocol_decodes_as_before`.
 
 - [ ] Done when: the tests pass. **Reviewer reads hardest:** that an old page's picks still
@@ -856,7 +883,13 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    least 3 fewer pictures than the unshaped one. Otherwise the row closes with the counts.
 3. **If built**: a recipe that removes a thing from a mask a caller gives, shaped as `remove`
    shapes a location's, then filled; its record (rung 1 examples, marked experimental); the
-   playground's clicked removal calls it. It climbs with the others in R5.
+   playground's clicked removal calls it.
+4. **Its rung 2, if built** (the orchestrator's, with the owner): on the 20 pictures of
+   segment-01, through Bria: task success by mask coverage as in item 1 and by the owner's
+   marks of the finished pictures (M2, item 3); preservation exact from each run; visual
+   quality from a lab round of 10 pairs against the unshaped fill, picked by the owner and
+   decoded under P0's protocol version 2. Rungs 1 and 2 shown, it is unverified and climbs
+   with the others in R5. About 0.8 dollars in fills.
 
 - [ ] Done when: the counts are recorded and the recipe built or the row closed.
 
@@ -893,6 +926,20 @@ row on the panorama side of `view`):
 
 - [ ] Done when: both pull requests are merged and each row has its line. Nothing paid.
 
+## K1. The segmenters compared (the orchestrator's; nothing paid)
+
+1. **The measure**: SAM 3, Tiny and the fixed-class segmenter (on the phrases its list holds)
+   on the 20 truth masks of `segmentation/segment-01`, on the Mac, by mask coverage and IoU,
+   by group, under `eval loop score`'s reading of a truth mask.
+2. **`segment`'s rung 2**: this table is mask agreement with references (section 8), so
+   `segment` has rungs 1 and 2 and becomes unverified, before R6 credits its upper rungs.
+3. **The rule for milestone 8, frozen here**: milestone 8 builds a further segmenter only if
+   SAM 3 is under-covered (below 0.95) on at least a quarter of a group's pictures and another
+   model in the catalogue is not. Otherwise no further segmenter. W1 records the outcome.
+4. **The record**, `docs/results/e-segmenters.md` and its TOML, held by an evidence test.
+
+- [ ] Done when: the record is committed and `segment`'s record names it.
+
 ## R5. Rung 3 of the edit recipes (the orchestrator's)
 
 1. **The sample**, 8 cases a recipe, each recipe on inputs of its own kind: `remove`,
@@ -903,11 +950,18 @@ row on the panorama side of `view`):
    ladder: `remove_checked`, `seam`, `repair_area`, `repair`, `remove_prompt`, `remove`.
 2. **The gates, frozen before the run** (M2): one `edit-gate/1` file a recipe,
    `gates/e-edit-rung3-<recipe>.toml`: task success is the share of finished edits that `check`
-   under the default judge passes, at least 0.75 with a Wilson 95% lower bound, corrected
-   across the recipes of the round, above 0.4; preservation outside the mask exact on every
-   run; operational errors under 10%. Too few runs is inconclusive.
+   under the default judge passes, at least 0.75, with its family-resampled 95% interval,
+   corrected across the recipes of the round, above 0.4 at its lower bound; at least 4
+   families (segment-01's four groups count as families of their pictures' scenes, the
+   m3-edits corpus's five scenes, the m3-seam corpus's panoramas each its own); preservation
+   outside the mask exact on every run; blinded quality from a lab round of this round's 8
+   runs against the source picture, picked by the owner and decoded under P0's protocol
+   version 2, `preferred` or `not_worse`; operational errors under 10%; cost and latency as M2
+   states. Too little data is inconclusive.
 3. **The run**, in the loop store, SAM 3 on the Mac and Bria through fal; the cap of one call
-   is `remove_checked`'s three-attempt bound under the default judge, plus a cent.
+   is `remove_checked`'s three-attempt bound under the default judge, plus a cent. Then the
+   pages, written to owner storage; the owner picks about 56 pairs; `eval edits gate`
+   decides.
 4. **What it decides.** Passed: the recipe goes on to R6. Not passed: it ends E
    experimental, recorded.
 
@@ -917,18 +971,20 @@ row on the panorama side of `view`):
 ## R6. Rung 4 of the edit recipes on fresh cases (the orchestrator's, with the owner)
 
 1. **The fresh corpus**, in owner storage, never committed, none of it used on rungs 2 or 3:
-   - 12 of the owner's own photos, each with the phrase of what to remove, where one pass may
+   - 10 of the owner's own photos, each with the phrase of what to remove, where one pass may
      leave something behind (the carry-over row on the owner's photos), for the removals;
-   - 8 of the owner's photos with a scratch or a tear, each with a stroke and an area the owner
-     draws in the playground and exports as a location (`store export`), for `repair` and
-     `repair_area`;
-   - 8 panoramas of the owner's, not in `labs/m3-seam/`, for `seam`.
+   - 10 of the owner's photos with a scratch or a tear, each with a stroke and an area the
+     owner draws in the playground and exports as a location (`store export`), for `repair`
+     and `repair_area`;
+   - 10 panoramas of the owner's, not in `labs/m3-seam/`, for `seam`.
+   Each photo is its own family: they are of different scenes, which the owner is asked for.
 2. **The gates, frozen before the run** (M2), one a recipe that passed R5: task success from
    the owner's blinded marks of each finished picture (the named thing or defect gone; nothing
-   else damaged), at least 0.75 with a Wilson 95% lower bound, corrected across the round's
-   recipes, above 0.4; preservation outside the mask exact; blinded quality from a lab round
-   against the source picture as reference arm, `preferred` or `not_worse` by P0's protocol
-   version 2, at least 8 decided pairs. Section 8: the marks and picks are not squint's.
+   else damaged), at least 0.75 with its family-resampled 95% interval, corrected across the
+   round's recipes, above 0.4 at its lower bound, at least 8 families; preservation outside
+   the mask exact; blinded quality from a lab round against the source picture as reference
+   arm, `preferred` or `not_worse` by P0's protocol version 2, at least 8 pairs picked; cost
+   and latency as M2 states. Section 8: the marks and picks are not squint's.
 3. **The run** in the loop store; `eval loop sheet` for any recipe (M2, item 3) and `whizbang
    lab pairs` write the sheet and the pages to owner storage; the owner marks and picks;
    `eval edits gate` decides.
@@ -936,8 +992,8 @@ row on the panorama side of `view`):
    **`segment` and `fill`** are credited with rungs 3 and 4 from `remove_prompt`'s
    receipts (section 8, "Earlier evidence counts"): every mask there is SAM 3's and every fill
    Bria's through fal, the same backends `segment` and `fill` default to. If `remove_prompt`
-   is not admitted, each ends E as its own rungs leave it: `segment` unverified by W1's rung 2
-   is not an end state, so it ends experimental, as does `fill`.
+   is not admitted, each ends E experimental, since unverified is not an end state of row E.
+   `segment`'s rung 2 is K1's, which runs before this round.
 5. **The record**, `docs/results/e-edit-rung4.md`, aggregates only.
 
 - [ ] Done when: the receipts are recorded. If the owner says the photos or panoramas are not
@@ -945,13 +1001,7 @@ row on the panorama side of `view`):
 
 ## W1. What milestone 8 builds (medium; the orchestrator's measure)
 
-1. **The segmenters compared**, nothing paid: SAM 3, Tiny and the fixed-class segmenter (on the
-   phrases its list holds) on the 20 truth masks of `segmentation/segment-01`, by mask
-   coverage and IoU, by group. **The rule, frozen here**: milestone 8 builds a further
-   segmenter only if SAM 3 is under-covered on at least a quarter of a group's pictures and
-   another model in the catalogue is not. Otherwise no further segmenter. This table is
-   `segment`'s rung 2 (mask agreement with references), so `segment` has rungs 1 and 2 before
-   R6 credits its upper rungs.
+1. **A further segmenter**, from K1's table and its rule, frozen in K1.
 2. **How local fill is scored in milestone 8**: a lab protocol frozen and committed under
    `labs/m8-fill/`: local fill against Bria through fal on the same masks of segment-01 and the
    m3-edits corpus, blinded pairs, `not_worse` as P0 states it, task success and preservation
@@ -1091,12 +1141,15 @@ limits: the limits are each store's allowance, each call's cap and the builder's
 | R3 | 143 items: Haiku under C and up to seven treatments | 143 × 0.00357 + 7 × 143 × 0.00357 × 1.5 | 5.9 |
 | F2 | 110 dev items under v1 and v3, and 22 of the new versions, Haiku and Flash | (2 × 110 + 22) × (0.00352 + 0.01659) | 4.9 |
 | R4 | 110 items: C under five judges; the format under five; two tools under two; the plain twin under two | 12.6 + 12.6 + 4.8 + 1.6 | 31.7 |
-| R5 | 64 runs, each a fill and a check by Argon; `remove_checked`'s 8 up to two more attempts | 72 × (0.04 + 0.0595) | 7.2 |
-| R6 | 28 fresh cases: 12 under four removals, 8 under two repairs, 8 panoramas; two checks a loop | 72 × 0.04 + 24 × 0.0595 | 4.3 |
+| C1 | If built: 20 fills for its rung 2 | 20 × 0.04 | 0.8 |
+| R5 | 56 runs, each a fill and a check by Argon; `remove_checked`'s 8 up to two more attempts | 72 × (0.04 + 0.0595) | 7.2 |
+| R6 | 30 fresh cases: 10 under four removals, 10 under two repairs, 10 panoramas; two checks a loop | 70 × 0.04 + 20 × 0.0595 | 4.0 |
 | | **Expected** | | **about 60** |
 
-If Flash's price has doubled by R4, R4 costs 4.0 more, and the second tool's arms move to tier
-2 (2.4 less): about 62.
+If Flash's price has doubled before a round, the round changes so that tier 1 still fits: F2
+runs Haiku alone (4.0 less than its estimate), and R4's Flash cells cost 4.0 more, so R4's
+second tool's arms move to tier 2 (2.4 less), per-subject comparison keeping its slot: about
+58 if both rounds run after the date, about 62 if only R4 does.
 
 **Cap: 63 dollars settled**, counted across every store and the builder's total. A round that
 would take the milestone past it does not start; a round that passes twice its estimate stops
@@ -1136,6 +1189,7 @@ F1 ─────────► F2 ───────┘            │
 M2 ──────────────────┐               │
 P0 ──► V1 ───────────┤               │
 L1 ──► L2 ───────────┼──► R5 ──► R6 ─┘
+T2 ──► K1 ─────────────────────► R6
 C1 ──────────────────┤
 P1 ──────────────────┘
 ```
@@ -1149,7 +1203,9 @@ P1 ──────────────────┘
   and the owner's yes to use the fresh set.
 - R5 after M2 (its gates), V1 (rung 2 done first), L2 (the loop as it will stay), C1 and P1
   (the seam's check can look into a panorama).
-- W1 after T2 (its model is compared), R4 (the fresh set is spent) and R6.
+- K1 after T2 (its model is compared); R6 after K1 (`segment`'s rung 2 before its upper rungs
+  are credited).
+- W1 after K1, R4 (the fresh set is spent) and R6.
 
 ## Risks
 
@@ -1186,16 +1242,18 @@ P1 ──────────────────┘
   fresh twins (about 140 items).
 - **V1**: the picks of the five pages (about 126 pairs) and the marks of the loop's contact
   sheet.
-- **R6**: in owner storage, 12 of your own photos, each with the phrase of what to remove; 8
-  photos with a scratch or a tear, each with a stroke and an area you draw in the playground
-  and export; 8 panoramas not used before. Then the marks of R6's sheets and the picks of its
-  pages.
+- **C1, if built**: the marks of 20 finished pictures and the picks of 10 pairs.
+- **R5**: the picks of about 56 pairs of its runs.
+- **R6**: in owner storage, 10 of your own photos, each of a different scene with the phrase of
+  what to remove; 10 photos with a scratch or a tear, each with a stroke and an area you draw
+  in the playground and export; 10 panoramas not used before. Then the marks of R6's sheets
+  and the picks of its pages.
 - **T2, only if needed**: a yes to a new origin for the segmenter's files, if they are not
   served from `https://huggingface.co`.
 
 ## What the owner is told, not asked
 
-- Twenty-three tasks, eight of them the orchestrator's rounds; squint's ladder first, then
+- Twenty-four tasks, nine of them the orchestrator's rounds; squint's ladder first, then
   rascal's.
 - One fresh set, for source fidelity, kept whole in owner storage until its one round, seen
   by no agent; published after it, as `blind-v3` was.
@@ -1276,3 +1334,42 @@ was checked against the code; all were right and taken.
     two judges and no v2; R4 confirms at most two tools in tier 1; the total is about 60, about
     62 if Flash's price has doubled, under the cap of 63, and the plan says plainly that E
     needs the owner's yes for more.
+
+### Review round 2
+
+On draft 2, by the Codex CLI. Verdict: revise. Round 1's fixes held but for findings 1, 2, 9,
+10 and 12, which this round completed. Eleven findings: 10 majors, 1 minor. Each was checked
+against the code; all were right and taken.
+
+1. **Major: the gate and its matrix would name each other's digests.** Right (`gate.rs`'s
+   `matrix_identity`; `Matrix::identity` hashes its content). Taken: in version 3 the binding
+   runs one way: a gate names its matrix by file only, and the matrix names each gate's
+   digest.
+2. **Major: the edit gates resampled runs, not families, and stated no cost or latency.**
+   Right (section 8, "Gates"). Taken: M2's gate names each case's family, resamples by family,
+   states a minimum of families and the limits on cost and latency; R5 and R6 state theirs.
+3. **Major: F2 mixed the requirement items into the format's counts.** Right (`judges.rs`
+   counts every decision of an arm). Taken: two matrices, the format's on one population,
+   the requirements' as a comparison of two set versions; `submission/2` counts only items
+   scored under both arms.
+4. **Major: defaults still went past what was measured.** Right. Taken: the format changes
+   only source fidelity's recipe file, the one use case confirmed; a tool is on by default
+   only in the combination its gate measured (gap 10, A0, item 4), so source fidelity's
+   default changes by the format alone or not at all.
+5. **Major: R4's two slots could leave out per-subject comparison.** Right (row E names its
+   rungs 3 and 4). Taken: it keeps a slot in tier 1 whenever it passed R3.
+6. **Major: R5's gates had no blinded quality.** Right. Taken: R5 draws pages of its own runs;
+   the owner picks; the decode is one of its measures.
+7. **Major: `not_worse` was still out of reach on rounds of 8.** Right (`decode.rs`: the
+   minimum is of decided pairs). Taken: protocol version 2's minimum is of pairs picked, with
+   a test that a `same` pick does not make a round inconclusive and a worked case.
+8. **Major: `segment`'s rung 2 came after the round that credits its upper rungs.** Right.
+   Taken: K1, a task of its own after T2 and before R6, compares the segmenters and gives
+   `segment` its rung 2; W1 reads its outcome.
+9. **Major: the clicked removal skipped rung 2.** Right. Taken: C1, item 4, its rung 2 before
+   R5: task success, preservation and quality on segment-01.
+10. **Major: the late-price case left out F2.** Right. Taken: if Flash's price has doubled
+    before F2, F2 runs Haiku alone; the totals of each case are stated, all under the cap.
+11. **Minor: A0's spec sentence was narrower than "I need", item 3.** Right. Taken: the
+    sentence now matches the question.
+
