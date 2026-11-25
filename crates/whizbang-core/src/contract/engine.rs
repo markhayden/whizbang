@@ -3,7 +3,7 @@
 
 use std::any::Any;
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -17,7 +17,7 @@ use crate::egress::Ways;
 use crate::identity::{DecodeLimits, Digest};
 use crate::store::{self, Store};
 
-use super::journal::{Heard, Journal, JournalBounds, Kept};
+use super::journal::{Heard, JournalBounds, Kept};
 use super::ledger::{Closing, Declined, Reread, Reservation, Settled, Step};
 use super::live::{self, LiveRun, Told};
 use super::nested::{Added, DESCENDANTS_LIMIT, Family, HeldOpen, Nested, Offer, Under};
@@ -25,19 +25,21 @@ use super::part::{self, Asking, PartDeclined, PartStep};
 use super::prepare::prepare;
 use super::record::{
     Diagnostic, Facts, Inside, OUTPUTS_PREFIX, RECORD_KIND, RECORD_MAX_BYTES, RECORD_NAME, Ran,
-    RunRecord, Status, StoredRecordError,
+    Replayed, RunRecord, Status, StoredRecordError,
 };
 use super::registry::MEASUREMENTS_MAX_BYTES;
+use super::replay::{self, Replay};
 use super::request::{Found, LookedUp, look_up, outcome_of};
 use super::snapshot::Known;
 use super::{
     ADMITTED_NAME, Action, ActionDescriptor, Admission, AdmissionPart, Allowance, Answer, Backends,
     Call, CallError, Cancel, Cancellation, Capabilities, Clock, Committed, ConfigSource, Context,
-    Ending, Estimate, Failure, Findings, Finished, Ledger, MESSAGE_LIMIT, Outcome, PreparedCall,
-    Produced, Readiness, Refusal, Registry, Request, RequestId, ResultKind, RunFacts, RunId,
-    RunState, Secrets, Snapshot, Stale, StoreFailure, SystemClock, Value, Verdict, Watched,
+    Diagnostics, Ending, Estimate, Failure, Findings, Finished, Ledger, MESSAGE_LIMIT, Outcome,
+    PreparedCall, Produced, Readiness, Refusal, Registry, Request, RequestId, ResultKind, RunFacts,
+    RunId, RunState, Secrets, Snapshot, Stale, StoreFailure, SystemClock, Value, Verdict, Watched,
     request_fingerprint,
 };
+use crate::capability::recorded::{self, Recorded};
 
 /// What runs actions. A door, the evaluation harness and an action that calls another
 /// action all hold one of these and nothing closer to a tool.
@@ -144,6 +146,23 @@ pub trait Executor: Send + Sync {
     fn on_threads(&self) -> usize {
         0
     }
+
+    /// Replays a stored run (plan m7, task R1; ADR 0049): a new run of this executor, made
+    /// from the source's record and started as [`Executor::start`] starts one, holding a
+    /// place among the started runs, asked after by its id and cancelled by it like any.
+    /// Offline, its capability requests are answered from what the source recorded, by
+    /// handles given to that one run and its descendants alone, and nothing of the config
+    /// is read for a backend. A request id is looked up first, by the fingerprint of the
+    /// replay request itself ([`Replay::fingerprint`]), before the source is read. An
+    /// executor that runs no replay refuses it.
+    fn start_replay(&self, replay: &Replay) -> Result<Answer, CallError> {
+        let _ = replay;
+        Err(Refusal::NotReplayed {
+            run: "-".to_owned(),
+            why: "this executor replays nothing".to_owned(),
+        }
+        .into())
+    }
 }
 
 /// The executor of one build: a registry, the backends, a store and the digest of the
@@ -200,6 +219,22 @@ pub struct Engine {
     /// For tests: what is done at each place where a panic of the executor's own code
     /// is caught and told apart ([`Engine::with_panic_at`]).
     panic_at: Option<PanicHook>,
+    /// For tests: what is told where each end holds what its run kept
+    /// ([`Engine::with_kept_seen`]).
+    kept_seen: Option<KeptHook>,
+    /// Each action this build ships, with its version: what a replay's root must be
+    /// ([`Engine::with_shipped`]). None for an executor that replays nothing.
+    shipped: Option<Arc<BTreeMap<String, String>>>,
+    /// The replay this executor's runs are of: set for a replayed run and every run it
+    /// calls, and for no other.
+    replay: Option<Arc<Replaying>>,
+}
+
+/// What the runs of a replayed family share: what each records of the replay, and,
+/// offline, the answers they are given and how far they have got.
+struct Replaying {
+    replayed: Replayed,
+    recorded: Option<Arc<Recorded>>,
 }
 
 /// What a test has done at a place in the ending of a run: the run's action, and the
@@ -224,6 +259,9 @@ pub enum PanicAt {
     Visible,
     /// The run's end is durable; its parent and its waiters are not told yet.
     Durable,
+    /// A panic came while the end's publication was under way, and the store is about
+    /// to be asked whether that end is durable ([`Store::confirm_record`]).
+    Confirming,
     /// The run's parent was told how it ended, and that is not yet noted: once a
     /// telling, including one made again after a panic.
     Told,
@@ -233,8 +271,15 @@ pub enum PanicAt {
 /// ended, which is what is left to tell its parent.
 type Durable = (Finished, Status, (u64, u64));
 
-/// What a run kept, taken for its end: its journal and its diagnostics.
-type TakenJournal = (Journal, Vec<(Diagnostic, Vec<u8>)>);
+/// What a run kept, taken for its end once: its whole journal first, then its
+/// diagnostics, each with the bytes the end writes. It is held once, shared and never
+/// changed, so the end and a second end after a panic read the same bytes and none is
+/// copied (plan m7, task R1, item 9).
+type TakenKept = Arc<Vec<(Diagnostic, Vec<u8>)>>;
+
+/// For tests: what is told, at each attempt at a run's end, the run's action and where
+/// what the run kept is held ([`Engine::with_kept_seen`]).
+pub type KeptHook = Arc<dyn Fn(&str, usize) + Send + Sync>;
 
 /// How far the ending of a run has got, which a catch of a panic goes by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -397,6 +442,9 @@ impl Engine {
             started_bound: STARTED_RUNS_DEFAULT,
             spawn: spawn_thread,
             panic_at: None,
+            kept_seen: None,
+            shipped: None,
+            replay: None,
         }
     }
 
@@ -518,6 +566,24 @@ impl Engine {
     #[doc(hidden)]
     pub fn with_panic_at(mut self, hook: PanicHook) -> Engine {
         self.panic_at = Some(hook);
+        self
+    }
+
+    /// The same executor, replaying a run ([`Executor::start_replay`]) only when its root's
+    /// action is one of these, at the version given: each action this build ships, as
+    /// `whizbang describe` lists them. A recipe file's or a tool file's action is none of
+    /// them, and is never replayed. Without this the executor replays nothing.
+    pub fn with_shipped(mut self, shipped: BTreeMap<String, String>) -> Engine {
+        self.shipped = Some(Arc::new(shipped));
+        self
+    }
+
+    /// For tests: the same executor, telling this, at each attempt at a run's end, the
+    /// run's action and the address of what the run kept as the end holds it: one
+    /// address for every attempt says the bytes were held once and not copied.
+    #[doc(hidden)]
+    pub fn with_kept_seen(mut self, hook: KeptHook) -> Engine {
+        self.kept_seen = Some(hook);
         self
     }
 
@@ -730,7 +796,7 @@ impl Executor for Engine {
         let place = match &self.store {
             Some(store) => match store.start_place(self.started_bound) {
                 Some(place) => Some(place),
-                None => return self.over_the_bound(request),
+                None => return self.over_the_bound_as(request.id(), request.fingerprint()),
             },
             None => None,
         };
@@ -739,6 +805,75 @@ impl Executor for Engine {
             Err(answer) => return Ok(answer),
         };
         self.launch(admitted, place)
+    }
+
+    fn start_replay(&self, replay: &Replay) -> Result<Answer, CallError> {
+        let fingerprint = replay.fingerprint();
+        let id = replay.id();
+        if id.is_some_and(|id| self.secrets.now().redact(id.as_str()) != id.as_str()) {
+            return Err(Refusal::SecretInRequestId.into());
+        }
+        let Some(store) = &self.store else {
+            return Err(Refusal::ReadOnly.into());
+        };
+        // A place first, as for any start: a replay over the bound is refused, with no
+        // run, unless it is a repeat.
+        let Some(place) = store.start_place(self.started_bound) else {
+            return self.over_the_bound_as(id, fingerprint);
+        };
+        // The id is looked up before the source is read: the same replay asked again is
+        // answered with its run, whatever became of its source or the config.
+        if let Some(id) = id {
+            match self.find_request(id, fingerprint)? {
+                Found::Nothing => {}
+                Found::Same(earlier) => return Ok(Answer::Repeat(earlier)),
+                Found::Other { .. } if self.secrets.now().redact(id.as_str()) != id.as_str() => {
+                    return Err(Refusal::SecretInRequestId.into());
+                }
+                Found::Other { run } => {
+                    return Err(CallError::Refused(Refusal::Conflict {
+                        request: id.clone(),
+                        run,
+                    }));
+                }
+            }
+        }
+        let Some(shipped) = &self.shipped else {
+            return Err(Refusal::NotReplayed {
+                run: "-".to_owned(),
+                why: "this executor was not told which actions this build ships, and \
+                      replays nothing"
+                    .to_owned(),
+            }
+            .into());
+        };
+        let failed = |error| CallError::Store(StoreFailure::new(error));
+        // The source is read through one held generation.
+        let holding = store.hold().map_err(failed)?;
+        let read = replay::read(replay, store.as_ref(), holding.generation(), shipped)?;
+        drop(holding);
+        let mut engine = self.clone();
+        engine.replay = Some(Arc::new(Replaying {
+            replayed: replay.replayed(&read.root),
+            recorded: read.recorded.clone(),
+        }));
+        // Offline, the run and every run it calls are admitted under one snapshot that
+        // offers the recorded answers and nothing else: the config's source is not
+        // asked, so no backend is built, no key is read and no worker is started.
+        if let Some(recorded) = &read.recorded {
+            let digest = read.config.unwrap_or_else(|| Digest::of_bytes(b""));
+            let snapshot = Snapshot::of(digest).offering(recorded.offered());
+            engine.config = Arc::new(snapshot);
+        }
+        let mut request = Request::new(read.call);
+        if let Some(id) = id {
+            request = request.with_id(id.clone());
+        }
+        let admitted = match engine.begin_as(&request, fingerprint)? {
+            Ok(admitted) => admitted,
+            Err(answer) => return Ok(answer),
+        };
+        engine.launch(admitted, Some(place))
     }
 
     fn look_up(&self, id: &RequestId, request: &Request) -> Result<LookedUp, CallError> {
@@ -813,17 +948,21 @@ impl Engine {
     /// The answer to a request to start a run when the started runs are at the bound.
     /// A request that was sent before starts nothing, and is answered as it always
     /// is, with the run it made; any other is refused.
-    fn over_the_bound(&self, request: &Request) -> Result<Answer, CallError> {
+    fn over_the_bound_as(
+        &self,
+        id: Option<&RequestId>,
+        fingerprint: Digest,
+    ) -> Result<Answer, CallError> {
         let refused = Refusal::TooManyStarted {
             bound: self.started_bound,
         };
-        let Some(id) = request.id() else {
+        let Some(id) = id else {
             return Err(refused.into());
         };
         if self.secrets.now().redact(id.as_str()) != id.as_str() {
             return Err(Refusal::SecretInRequestId.into());
         }
-        match self.find_request(id, request.fingerprint())? {
+        match self.find_request(id, fingerprint)? {
             Found::Nothing => Err(refused.into()),
             Found::Same(earlier) => Ok(Answer::Repeat(earlier)),
             // As in `begin`: the id is looked at once more before an answer names it.
@@ -841,6 +980,16 @@ impl Engine {
     /// and the admission. What comes back is the run that was admitted, to be executed,
     /// or the answer to a request that makes no run: a repeat.
     fn begin(&self, request: &Request) -> Result<Result<Admitted, Answer>, CallError> {
+        self.begin_as(request, request.fingerprint())
+    }
+
+    /// As [`Engine::begin`], with the request's id held to this fingerprint: a replay's,
+    /// which is of the replay request and not of the call made from its source.
+    fn begin_as(
+        &self,
+        request: &Request,
+        fingerprint: Digest,
+    ) -> Result<Result<Admitted, Answer>, CallError> {
         let bounded = Bounded::by(request);
         // A request marked as running only under a preparation, that came with none,
         // is stale: refused before anything is prepared, admitted, reserved or sent
@@ -873,7 +1022,6 @@ impl Engine {
         // The id is looked up here, before anything else: a repeated id answers with the
         // run it already has, and neither readiness nor preparation is consulted
         // (`SPEC.md` section 3, "Request identity").
-        let fingerprint = request.fingerprint();
         let answer = |found: Found| match found {
             Found::Nothing => None,
             Found::Same(earlier) => Some(Ok(Err(Answer::Repeat(earlier)))),
@@ -1154,13 +1302,15 @@ impl Drop for Over {
             kept.let_go();
         }
         let failure = self.failure.take();
-        self.live.over(self.ended, failure.clone());
         // Abandoned: a marker takes the place of its live state in the table, so that
         // what a long-lived process keeps of such runs is small (plan m6, task S1, item
-        // 3). Whoever waits holds the live state until it is told, which it is above.
+        // 3). It is put there before whoever waits is told, so a caller that waited for
+        // the run finds it marked (plan m7, task R1, item 9 (b)); whoever waits holds the
+        // live state until it is told, which it is below.
         if let (false, Some(kept)) = (self.ended, &self.kept) {
-            kept.abandon(|ending| live::marker(failure, ending));
+            kept.abandon(|ending| live::marker(failure.clone(), ending));
         }
+        self.live.over(self.ended, failure);
     }
 }
 
@@ -1433,6 +1583,7 @@ impl Engine {
                 start_ms,
             )
             .under(parent.clone())
+            .replaying(self.replay.as_ref().map(|replay| replay.replayed.clone()))
             .to_bytes();
             let mut publication = store.begin().map_err(failed)?;
             // The executor's parts are asked first, in the order they were given, for
@@ -1904,8 +2055,14 @@ impl Engine {
             let live = live.clone();
             Box::new(move |refused| live.nest().refused(refused))
         });
-        // What the run kept, taken once: a second end, after a panic, writes it too.
-        let taken: RefCell<Option<TakenJournal>> = RefCell::new(None);
+        // Every run of a replayed family records the run it replays, a child as its root
+        // does (ADR 0048, ADR 0049).
+        if let Some(replay) = &self.replay {
+            run_facts.replayed(replay.replayed.clone());
+        }
+        // What the run kept, taken once and held once: a second end, after a panic,
+        // writes the same bytes, and neither copies them (plan m7, task R1, item 9 (a)).
+        let taken: RefCell<Option<TakenKept>> = RefCell::new(None);
         let noted_once: RefCell<Option<Facts>> = RefCell::new(None);
         let pre = catch_unwind(AssertUnwindSafe(|| -> Result<Pre, CallError> {
             let offer = Offer::of(live.clone(), secrets.clone(), family.offer.clone());
@@ -1957,6 +2114,14 @@ impl Engine {
                 Some(_) => self.places.clone(),
                 None => self.places.clone().with(Place::Gate, ways.gate()),
             };
+            // An offline replay's handles are the record's answers, of no installation:
+            // the lease's place is empty for its runs, so no hold is taken on a model
+            // installed now and none is asked for (ADR 0049).
+            let offline = (self.replay.as_ref()).is_some_and(|replay| replay.recorded.is_some());
+            let places = match offline {
+                true => places.without(Place::Lease),
+                false => places,
+            };
             let above = family.above_with(&run);
             let around = Wrappers {
                 run: run.clone(),
@@ -1992,7 +2157,8 @@ impl Engine {
             .recording(kept.clone(), self.requests, self.exchanges)
             .noting(facts.clone())
             .offering(offer)
-            .placed(above.clone());
+            .placed(above.clone())
+            .replaying(self.replay.as_ref().map(|replay| replay.replayed.mode));
             live.nest().watch(context.requests().clone());
             // A panic in the action is caught: its run ends as any other does, with its
             // record and what it wrote, and the executor goes on (ADR 0008). The context
@@ -2019,6 +2185,15 @@ impl Engine {
             // reaches them.
             self.panicking(&action_name, PanicAt::ActionBack);
             live.nest().settle();
+            // The root of an offline replay keeps where the replay stopped, once every
+            // run under it is over: the replay's report reads it (ADR 0049).
+            let stopped = (self.replay.as_ref())
+                .filter(|_| family.parent.is_none())
+                .and_then(|replay| replay.recorded.as_ref())
+                .and_then(|recorded| recorded.course().stopped());
+            if let Some(stop) = stopped {
+                let _ = kept.write(recorded::NOTE, stop.to_text().as_bytes());
+            }
             // A request of the run that could not be accounted for: a wrapper failed
             // once its backend had been called, or its backend panicked under a wrapper
             // (ADR 0015). Whatever the action handed back, the run is not ended: no end
@@ -2128,6 +2303,9 @@ impl Engine {
         let told = Cell::new(false);
         let visible: RefCell<Option<StoreFailure>> = RefCell::new(None);
         let durable: RefCell<Option<Durable>> = RefCell::new(None);
+        // The digest of the record the end publishes, and what the run finished as,
+        // once they are made: what a panic in the publication goes by.
+        let pending: RefCell<Option<(Digest, Durable)>> = RefCell::new(None);
         let end = |pre: Pre| -> Result<Finished, CallError> {
             let Pre {
                 facts,
@@ -2148,14 +2326,20 @@ impl Engine {
             // only then. The run must still be there: one that was deleted while it
             // executed is not made again from its last names. The run is reported after
             // this is durable.
-            let (journal, written) = taken
+            let kept: TakenKept = taken
                 .borrow_mut()
-                .get_or_insert_with(|| kept.take())
+                .get_or_insert_with(|| {
+                    let (journal, written) = kept.take();
+                    Arc::new(
+                        std::iter::once(Diagnostic::whole_journal(&journal))
+                            .chain(written)
+                            .collect(),
+                    )
+                })
                 .clone();
-            let kept: Vec<(Diagnostic, Vec<u8>)> =
-                std::iter::once(Diagnostic::whole_journal(&journal))
-                    .chain(written)
-                    .collect();
+            if let Some(seen) = &self.kept_seen {
+                seen(&action_name, Arc::as_ptr(&kept) as usize);
+            }
             // What the run's record says of the calls its action made: they are all over.
             let parent = family.parent.as_ref().map(|(run, _)| run.clone());
             // A verdict is written only in the record of a run that completed: the record
@@ -2290,6 +2474,15 @@ impl Engine {
                 measurements,
                 findings,
             );
+            // The record's bytes, made once: every attempt writes the same, and the end
+            // keeps their digest, which no unwinding loses, so that a panic while the
+            // publication is under way can ask the store whether this end is durable
+            // (plan m7, task R1, item 9 (b)).
+            let record_bytes = record.to_bytes();
+            *pending.borrow_mut() = Some((
+                Digest::of_bytes(&record_bytes),
+                (finished.clone(), status, (start_ms, end_ms)),
+            ));
             let mut attempts = 0;
             loop {
                 attempts += 1;
@@ -2310,13 +2503,13 @@ impl Engine {
                     artifact::commit(&mut publication, run.as_str(), first, &reference, artifact)
                         .map_err(failed)?;
                 }
-                for (diagnostic, bytes) in &kept {
+                for (diagnostic, bytes) in kept.iter() {
                     publication
                         .put_in(run.as_str(), diagnostic.name(), RECORD_KIND, bytes)
                         .map_err(failed)?;
                 }
                 publication
-                    .put_in(run.as_str(), RECORD_NAME, RECORD_KIND, &record.to_bytes())
+                    .put_in(run.as_str(), RECORD_NAME, RECORD_KIND, &record_bytes)
                     .map_err(failed)?;
                 if let Some(id) = request {
                     let ending =
@@ -2409,6 +2602,23 @@ impl Engine {
             }
             Ok(finished)
         };
+        // What is left of a durable end, finished once: what the run did not use goes
+        // back to its caller, and its caller is told how it ended unless it was.
+        let finish = |(finished, status, times): Durable| -> Result<Finished, CallError> {
+            if family.parent.is_some() {
+                family.allowance.hand_up();
+            }
+            if let (false, Some((_, parent))) = (told.get(), &family.parent) {
+                let outputs = finished.outcome().outputs();
+                parent.nest().ended(&run, status, outputs, times, &store);
+                self.panicking(&action_name, PanicAt::Told);
+            }
+            Ok(finished)
+        };
+        let abandoned = || CallError::Abandoned {
+            run: run.clone(),
+            why: "the executor's own code panicked as it ended the run".to_owned(),
+        };
         match catch_unwind(AssertUnwindSafe(|| end(pre))) {
             Ok(ended) => ended,
             Err(panic) => match reached.get() {
@@ -2424,33 +2634,45 @@ impl Engine {
                         }),
                     }
                 }
-                // In the publication, or visible and not confirmed: left so, with the
-                // store's failure when there was one; the next open reads the store.
-                Reached::Publishing | Reached::Visible => Err(match visible.take() {
+                // In the publication: what was published may be visible, and may be
+                // durable. A snapshot cannot tell (a rename shows the pointer before the
+                // sync makes it durable), and a generation's number is not this
+                // publication's. The end's own evidence is used: the digest of the record
+                // it wrote, which only this end writes. The store syncs its root and says
+                // whether the current generation names the run's record with exactly that
+                // digest; when it does, the run is answered as a durable end is, and what
+                // is left is finished once. Otherwise, or when the store cannot say, as
+                // before: abandoned, and the next open reads the store.
+                Reached::Publishing => {
+                    let confirmed = catch_unwind(AssertUnwindSafe(|| {
+                        self.panicking(&action_name, PanicAt::Confirming);
+                        let digest = pending.borrow().as_ref().map(|(digest, _)| *digest)?;
+                        store
+                            .confirm_record(run.as_str(), RECORD_NAME, &digest)
+                            .ok()
+                    }));
+                    match (confirmed, pending.take()) {
+                        (Ok(Some(true)), Some((_, ended))) => {
+                            reached.set(Reached::Durable);
+                            match catch_unwind(AssertUnwindSafe(|| finish(ended))) {
+                                Ok(finished) => finished,
+                                Err(_) => Err(abandoned()),
+                            }
+                        }
+                        _ => Err(abandoned()),
+                    }
+                }
+                // Visible and not confirmed: left so, with the store's failure; the next
+                // open reads the store.
+                Reached::Visible => Err(match visible.take() {
                     Some(failure) => CallError::Store(failure),
-                    None => CallError::Abandoned {
-                        run: run.clone(),
-                        why: "the executor's own code panicked as it ended the run".to_owned(),
-                    },
+                    None => abandoned(),
                 }),
                 // Durable: what was left is finished, once; nothing is settled again.
-                Reached::Durable => {
-                    let Some((finished, status, times)) = durable.take() else {
-                        return Err(CallError::Abandoned {
-                            run: run.clone(),
-                            why: "the executor's own code panicked as it ended the run".to_owned(),
-                        });
-                    };
-                    if family.parent.is_some() {
-                        family.allowance.hand_up();
-                    }
-                    if let (false, Some((_, parent))) = (told.get(), &family.parent) {
-                        let outputs = finished.outcome().outputs();
-                        parent.nest().ended(&run, status, outputs, times, &store);
-                        self.panicking(&action_name, PanicAt::Told);
-                    }
-                    Ok(finished)
-                }
+                Reached::Durable => match durable.take() {
+                    Some(ended) => finish(ended),
+                    None => Err(abandoned()),
+                },
             },
         }
     }

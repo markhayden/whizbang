@@ -855,6 +855,8 @@ pub struct Context {
     /// The runs from the one nothing called down to this run, this run last; empty for
     /// a context no executor made.
     lineage: Arc<Vec<super::RunId>>,
+    /// How the run's family replays another, when it does (ADR 0049).
+    replay: Option<super::record::ReplayMode>,
 }
 
 impl Context {
@@ -887,7 +889,21 @@ impl Context {
             offer: Arc::new(Offer::default()),
             facts: RunFacts::default(),
             lineage: Arc::new(Vec::new()),
+            replay: None,
         }
+    }
+
+    /// The same context, of a run of a replayed family, replayed in this mode.
+    pub(super) fn replaying(mut self, mode: Option<super::record::ReplayMode>) -> Context {
+        self.replay = mode;
+        self
+    }
+
+    /// How the run's family replays another run, when it does (plan m7, task R1; ADR
+    /// 0049): an action reads no decision cache and writes none in a replay, offline or
+    /// live, and runs no tool file in an offline one.
+    pub fn replay(&self) -> Option<super::record::ReplayMode> {
+        self.replay
     }
 
     /// The same context, of the run at the end of this lineage.

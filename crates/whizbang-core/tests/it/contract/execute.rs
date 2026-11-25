@@ -1789,42 +1789,268 @@ fn a_panic_once_the_parent_is_told_tells_it_again_whole_and_changes_nothing() {
     told_once(&world);
 }
 
+// --- a panic while a run's end is published (plan m7, task R1, item 9) ----------------------
+
+/// The number of the generation a store's pointer names now.
+fn current(world: &World) -> u64 {
+    let text = std::fs::read_to_string(world.root().join("CURRENT")).unwrap();
+    text.trim().parse().unwrap()
+}
+
+/// An action that, once it runs, has the store's file system panic straight after the
+/// first rename onto a file of this name: inside the publication of the run's end. The
+/// name is made from the number of the generation the store holds as the action runs.
+fn panicking_after_the_rename_onto(
+    world: &World,
+    name: impl Fn(u64) -> String + Send + Sync + 'static,
+) -> Arc<dyn Action> {
+    let fs = world.fs.clone();
+    let root = world.root();
+    scripted("ending", move |_, _| {
+        let now = std::fs::read_to_string(root.join("CURRENT")).unwrap();
+        let onto = name(now.trim().parse().unwrap());
+        fs.pause_after_rename_onto(&onto, || {
+            panic!("an injected panic of the executor's code inside the publication")
+        });
+        Ok(Produced::nothing())
+    })
+}
+
+/// How each run of the store ended, by its record: none for a run with no record.
+fn endings(world: &World) -> Vec<Option<Status>> {
+    let reader = Reader::open(&world.root(), world.fs.clone()).unwrap();
+    let generation = reader.snapshot().unwrap();
+    (generation.runs().values())
+        .map(|run| {
+            let entry = run.get(record::RECORD_NAME)?;
+            let bytes = reader.read(entry).unwrap();
+            Some(RunRecord::from_bytes(&bytes).unwrap().outcome().status)
+        })
+        .collect()
+}
+
+/// Runs `ending` through `submit` or through `start`, and what the run came to: its id,
+/// and the answer its caller was given, or the state a wait for it saw.
+fn ended_through(engine: &Engine, started: bool) -> (RunId, Result<Outcome, String>) {
+    use whizbang_core::contract::{Answer, Request, RunState};
+    if !started {
+        return match engine.submit(&Call::new("ending")) {
+            Ok(finished) => (finished.run().clone(), Ok(finished.outcome().clone())),
+            Err(error) => {
+                let run = match &error {
+                    CallError::Abandoned { run, .. } => run.clone(),
+                    other => panic!("{other:?}"),
+                };
+                (run, Err(format!("{error:?}")))
+            }
+        };
+    }
+    let Answer::Started(run) = engine.start(&Request::new(Call::new("ending"))).unwrap() else {
+        panic!("not started");
+    };
+    let waited = engine.wait(&run).unwrap();
+    let came = match waited.state() {
+        RunState::Ended(outcome) => Ok(outcome.clone()),
+        other => Err(format!("{other:?}")),
+    };
+    (run, came)
+}
+
 #[test]
-fn a_panic_inside_the_publication_of_an_end_leaves_the_committed_outcome_standing() {
-    use whizbang_core::contract::{Answer, PanicAt, Request};
-    // The end was published, and the panic came before the executor looked at what the
-    // publication answered: the run is never ended again, as `panicked` or otherwise.
-    // Through `submit` and through `start`.
+fn a_panic_after_the_pointer_was_renamed_and_before_the_sync_is_confirmed_by_a_sync_and_answers_the_durable_end()
+ {
+    // The end's pointer was renamed into place, and the panic came before the root was
+    // synced: the end is visible and not yet durable. The catch asks the store, which
+    // syncs the root and finds the run's record with the digest the end wrote: the run
+    // is answered as a durable end, completed, through `submit` and through `start`.
+    for started in [false, true] {
+        let world = World::new();
+        let ending = panicking_after_the_rename_onto(&world, |_| "CURRENT".to_owned());
+        let engine = world.engine_with(vec![ending]);
+        let (run, came) = ended_through(&engine, started);
+        assert_eq!(came, Ok(done()), "started {started}");
+        // The root was synced after the pointer's rename: by the catch's confirmation.
+        let events = world.fs.events();
+        let renamed = (events.iter())
+            .rposition(|e| matches!(e, Event::Rename(_, to) if to.ends_with("CURRENT")))
+            .unwrap();
+        let root = world.root();
+        assert!(
+            (events[renamed..].iter()).any(|e| matches!(e, Event::SyncDir(dir) if *dir == root)),
+            "started {started}"
+        );
+        assert_eq!(endings(&world), [Some(Status::Completed)]);
+        assert_eq!(engine.marked_abandoned(&run), None, "started {started}");
+        assert_eq!(engine.on_threads(), 0);
+        let waited = engine.wait(&run).unwrap();
+        assert!(
+            matches!(waited.state(), whizbang_core::contract::RunState::Ended(_)),
+            "started {started}: {:?}",
+            waited.state()
+        );
+    }
+}
+
+#[test]
+fn a_panic_after_the_pointer_was_renamed_whose_confirming_sync_is_refused_is_abandoned_with_its_end_visible()
+ {
+    use whizbang_core::contract::RunState;
+    // The end's pointer was renamed into place and the panic came before the root was
+    // synced; the catch's own sync is refused too. The end is visible and not confirmed:
+    // abandoned, marked with its ending visible, and a wait says so.
+    for started in [false, true] {
+        let world = World::new();
+        let fs = world.fs.clone();
+        let root = world.root();
+        let ending = scripted("ending", move |_, _| {
+            let root = root.clone();
+            fs.pause_after_rename_onto("CURRENT", || {
+                panic!("an injected panic of the executor's code inside the publication")
+            });
+            fs.refuse_matching_times(
+                0,
+                usize::MAX,
+                move |event| matches!(event, Event::SyncDir(dir) if *dir == root),
+            );
+            Ok(Produced::nothing())
+        });
+        let engine = world.engine_with(vec![ending]);
+        let (run, came) = ended_through(&engine, started);
+        let said = came.unwrap_err();
+        assert!(said.contains("Abandoned"), "started {started}: {said}");
+        assert_eq!(
+            engine.marked_abandoned(&run),
+            Some(true),
+            "started {started}"
+        );
+        let waited = engine.wait(&run).unwrap();
+        assert!(
+            matches!(waited.state(), RunState::Abandoned { .. }),
+            "started {started}: {:?}",
+            waited.state()
+        );
+        assert_eq!(engine.on_threads(), 0);
+    }
+}
+
+#[test]
+fn a_panic_after_the_sync_answers_the_durable_end() {
+    use whizbang_core::contract::PanicAt;
+    // The end was published and is durable, and the panic came before the executor
+    // looked at what the publication answered: the store says it is durable, and the run
+    // is answered so, never ended again, as `panicked` or otherwise. Through `submit` and
+    // through `start`, each time.
     for started in [false, true] {
         let world = World::new();
         let engine = world
-            .engine()
-            .with_panic_at(panics_at("echo", PanicAt::Published));
-        match started {
-            false => {
-                let refused = engine.submit(&echo("published")).unwrap_err();
-                assert!(
-                    matches!(refused, CallError::Abandoned { .. }),
-                    "{refused:?}"
-                );
-            }
-            true => {
-                let Answer::Started(run) = engine.start(&Request::new(echo("published"))).unwrap()
-                else {
-                    panic!("not started");
-                };
-                let _ = engine.wait(&run).unwrap();
-                assert_eq!(
-                    engine.marked_abandoned(&run),
-                    Some(true),
-                    "started {started}"
-                );
-            }
-        }
-        let statuses: Vec<Status> = records(&world).into_iter().map(|(_, s, _)| s).collect();
-        assert_eq!(statuses, [Status::Completed], "started {started}");
+            .engine_with(vec![scripted("ending", |_, _| Ok(Produced::nothing()))])
+            .with_panic_at(panics_at("ending", PanicAt::Published));
+        let (run, came) = ended_through(&engine, started);
+        assert_eq!(came, Ok(done()), "started {started}");
+        assert_eq!(engine.marked_abandoned(&run), None, "started {started}");
+        assert_eq!(endings(&world), [Some(Status::Completed)]);
         assert_eq!(engine.on_threads(), 0);
     }
+}
+
+#[test]
+fn a_panic_at_publishing_before_the_pointer_was_renamed_answers_as_before() {
+    // The panic came as the end's generation file was moved into place, before the
+    // pointer: nothing of the end is visible. The store, asked, finds no record of the
+    // run: it is abandoned, as before, and marked so before its waiter is told.
+    for started in [false, true] {
+        let world = World::new();
+        let ending = panicking_after_the_rename_onto(&world, |now| format!("{}.json", now + 1));
+        let engine = world.engine_with(vec![ending]);
+        let (run, came) = ended_through(&engine, started);
+        let said = came.unwrap_err();
+        assert!(said.contains("Abandoned"), "started {started}: {said}");
+        assert_eq!(
+            engine.marked_abandoned(&run),
+            Some(false),
+            "started {started}"
+        );
+        assert_eq!(endings(&world), [None]);
+        assert_eq!(engine.on_threads(), 0);
+    }
+}
+
+#[test]
+fn a_panic_before_the_rename_then_another_publication_is_not_taken_for_the_end() {
+    use std::sync::OnceLock;
+    use whizbang_core::contract::PanicAt;
+    // The panic came before the end's pointer was renamed, and another run was admitted
+    // and ended before the store was asked: the generation the failed end would have had
+    // is the other run's now. What is asked is whether the run's own record is there
+    // with the digest the end wrote: it is not, and the run is abandoned.
+    let world = World::new();
+    let ending = panicking_after_the_rename_onto(&world, |now| format!("{}.json", now + 1));
+    let other: Arc<OnceLock<Engine>> = Arc::new(OnceLock::new());
+    let hook: whizbang_core::contract::PanicHook = {
+        let other = other.clone();
+        Arc::new(move |of: &str, at| {
+            if of == "ending" && at == PanicAt::Confirming {
+                let finished = other.get().unwrap().submit(&echo("meanwhile")).unwrap();
+                assert_eq!(finished.outcome().name(), "completed");
+            }
+        })
+    };
+    let engine = world.engine_with(vec![ending]).with_panic_at(hook);
+    let before = current(&world);
+    assert!(other.set(engine.clone()).is_ok());
+    let (run, came) = ended_through(&engine, false);
+    assert!(came.unwrap_err().contains("Abandoned"));
+    // The other run's admission took the number the end would have had.
+    assert!(current(&world) >= before + 3);
+    let mut seen = endings(&world);
+    seen.sort_by_key(|status| format!("{status:?}"));
+    assert_eq!(seen, [None, Some(Status::Completed)]);
+    assert_eq!(engine.marked_abandoned(&run), Some(false));
+}
+
+#[test]
+fn an_end_holds_one_copy_of_what_the_run_kept_and_a_second_end_after_a_panic_writes_it_whole() {
+    use whizbang_core::contract::PanicAt;
+    // What the run kept is taken once and held once: the first end, which a panic cut
+    // short before anything was visible, and the second, which ends the run as
+    // `panicked`, hold it at one place, and the second writes all of it.
+    let world = World::new();
+    let writing = scripted("writing", |_, context| {
+        context.events().progress("kept in the journal");
+        context
+            .diagnostics()
+            .write("kept.txt", b"what the run kept")
+            .unwrap();
+        Ok(Produced::nothing())
+    });
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (hook, _) = panics_once_at("writing", PanicAt::Ending);
+    let engine = world
+        .engine_with(vec![writing])
+        .with_panic_at(hook)
+        .with_kept_seen({
+            let seen = seen.clone();
+            Arc::new(move |action: &str, at| {
+                if action == "writing" {
+                    seen.lock().unwrap().push(at);
+                }
+            })
+        });
+    let finished = engine.submit(&Call::new("writing")).unwrap();
+    assert!(panicked(finished.outcome()), "{:?}", finished.outcome());
+    let seen = seen.lock().unwrap().clone();
+    assert_eq!(seen.len(), 2);
+    assert_eq!(seen[0], seen[1]);
+    let held = names_of(&world.root(), world.fs.clone(), finished.run().as_str());
+    let named: Vec<&str> = held.iter().map(|(name, _, _)| name.as_str()).collect();
+    assert!(named.contains(&"diagnostics/kept.txt"), "{named:?}");
+    assert!(named.contains(&"journal"), "{named:?}");
+    let kept = held
+        .iter()
+        .find(|(name, _, _)| name == "diagnostics/kept.txt");
+    assert_eq!(kept.unwrap().2, b"what the run kept");
+    let journal = held.iter().find(|(name, _, _)| name == "journal").unwrap();
+    assert!(String::from_utf8_lossy(&journal.2).contains("kept in the journal"));
 }
 
 #[test]

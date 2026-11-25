@@ -54,6 +54,7 @@ mod record;
 mod release;
 mod remote;
 mod remote_parity;
+mod replay;
 mod runner;
 mod runs;
 mod runs_bundle;

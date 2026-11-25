@@ -367,6 +367,14 @@ struct AdmissionWire {
     action: String,
     version: String,
     start_ms: u64,
+    /// The run this run replays, for a run of a replayed family (plan m7, task R1, item
+    /// 8; ADR 0049): written only then, so every other admission is written as before.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::seventh::replayed_wire"
+    )]
+    replayed: Option<record::Replayed>,
 }
 
 /// A field that may be null and may not be left out.
@@ -393,6 +401,7 @@ pub struct Admission {
     action: String,
     version: String,
     start_ms: u64,
+    replayed: Option<record::Replayed>,
 }
 
 impl Admission {
@@ -417,7 +426,20 @@ impl Admission {
             action: action.to_owned(),
             version: version.to_owned(),
             start_ms,
+            replayed: None,
         }
+    }
+
+    /// The same admission, of a run of a replayed family: the run it replays (ADR 0049),
+    /// which a run a dead process left keeps through its admission.
+    pub(super) fn replaying(mut self, replayed: Option<record::Replayed>) -> Admission {
+        self.replayed = replayed;
+        self
+    }
+
+    /// The run this run's family replays, when it is a run of a replayed family.
+    pub fn replayed(&self) -> Option<&record::Replayed> {
+        self.replayed.as_ref()
     }
 
     /// The same admission, of a run that this run called from inside its action.
@@ -491,6 +513,7 @@ impl Admission {
             action: self.action.clone(),
             version: self.version.clone(),
             start_ms: self.start_ms,
+            replayed: self.replayed.clone(),
         })
     }
 
@@ -535,7 +558,16 @@ impl Admission {
             action: wire.action,
             version: wire.version,
             start_ms: wire.start_ms,
+            replayed: wire.replayed,
         };
+        if (admission.replayed.as_ref())
+            .is_some_and(|replayed| !replayed.holds() || replayed.run == admission.run.as_str())
+        {
+            return Err(inconsistent(
+                "the run replayed is not another run's id, or names a step no bundle has"
+                    .to_owned(),
+            ));
+        }
         if admission.reserved_micros == Some(u64::MAX) {
             return Err(inconsistent(NOT_AN_AMOUNT.to_owned()));
         }

@@ -811,8 +811,9 @@ abandoned.
    with `--bundle <file>`, the file's SHA-256 is computed by reading it as a stream and
    nothing else, and only when the id is not a repeat is the bundle imported (B1, item 4),
    so a repeat publishes nothing and recreates no deleted entry.
-8. **Provenance and request ids**: `replayed` is part of the request's fingerprint
-   (`contract/request.rs`) and written with the admission and the record, for every run of
+8. **Provenance and request ids**: a replay's request id is held to a fingerprint of its
+   own, `replay/1`, of its mode and its source (`contract/replay.rs`; R1 built it apart
+   from the call's `request/1`), and `replayed` is written with the admission and the record, for every run of
    the family; `runs stats` leaves replayed families out by default
    (`--replayed include|exclude|only`), so the figures of ordinary use are not changed by
    replays (`crates/whizbang/src/stats.rs`).
@@ -829,7 +830,7 @@ abandoned.
    publication's (a publication that unwound before its rename leaves the number to the
    next, `store/mod.rs`, where it is chosen under the lock). The end's own evidence is used
    instead: before it publishes, the end holds the digest of the record bytes it writes, which
-   no unwinding loses. The store gains `Store::confirm(name, digest)`, which syncs the root
+   no unwinding loses. The store gains `Store::confirm_record(run, name, digest)`, which syncs the root
    folder and answers whether the current generation names the run's record with exactly that
    digest; a run's record is written once, by its end, so that answer is this end's. The catch
    calls it; when it answers yes, the run is answered as a durable end is (finishing what is

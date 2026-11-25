@@ -48,7 +48,7 @@ use whizbang_core::capability::{
     Controls, Excluded, FaultKind, JudgeHandle, JudgeRequest, Message, Part, Picture, Role,
     StopReason, ToolCall, ToolDefinition, ToolResult, Turn,
 };
-use whizbang_core::contract::record::Decision;
+use whizbang_core::contract::record::{Decision, ReplayMode};
 use whizbang_core::contract::{
     Action, ActionDescriptor, Argument, Call, CallError, Capability, Committed, Context, Count,
     DescriptorError, Failure, InputPort, Kind, Outcome, PreparedCall, Produced, Requirement,
@@ -772,6 +772,15 @@ impl Run<'_> {
         let Some(file_tools) = &self.file_tools else {
             return answer("not called: no tool file is on offer", true);
         };
+        // A tool file is code, and an offline replay runs none, whatever its record says
+        // (plan m7, task R1, item 3; ADR 0049): the call is answered as one the replay
+        // cannot answer, and no file runs.
+        if self.context.replay() == Some(ReplayMode::Offline) {
+            return answer(
+                "not called: the replay cannot answer it: an offline replay runs no tool file",
+                true,
+            );
+        }
         self.context.events().progress("a tool file was called");
         match file_tools.run(&tool.name, &images, &arguments, self.context) {
             Ok(ran) => {
@@ -1291,7 +1300,12 @@ impl Action for Check {
             })
             .collect();
         let key = match &judging {
-            Some(judging) if self.cache && argument("cell").is_none() => {
+            // A replay neither reads the decision cache nor writes it, offline or live
+            // (plan m7, task R1, item 3; ADR 0049): offline, a check would be answered
+            // by the entry its own original wrote; live, each repetition is a fresh trial.
+            Some(judging)
+                if self.cache && argument("cell").is_none() && context.replay().is_none() =>
+            {
                 let images: Vec<_> = (images.iter())
                     .map(|input| (input.id(), input.binding()))
                     .collect();
