@@ -107,10 +107,66 @@ once. Run again over the same store, a matrix resumes: a cell that completed is 
 one whose last attempt failed is reported as failed and not run again, so no later success
 replaces a failure; one whose last attempt was interrupted is run as its next attempt.
 
+**Only the cells it names** (plan mE, task M1, item 1). A judge may list the arms it runs,
+each by the name the matrix gives it, with its own repetitions where they are not the
+judge's; a set's table may list the arms and the judges (by backend) it runs. A cell outside
+any list is not a cell: it is not forecast, run, resumed or counted complete. Each set, judge
+and arm keeps at least one cell. A matrix without lists names every cell, with the identity
+it had before.
+
+```toml
+[matrix.set."source-fidelity/confirm-plain-v1"]
+arms = ["C"]
+judges = ["haiku", "terra"]
+
+[[matrix.judges]]
+backend = "flash"
+model = "gemini-3.8-flash"
+arms = [{ arm = "C", repetitions = 2 }, "C;submission=v2"]
+```
+
+Arm `C` may take the second look (`C;second_look=on`), which is one more turn after a
+submission that left an item tentative, forecast at three times arm C; details stay arm F's.
+
 `matrices/` holds squint's study matrices, ported, with the models of the Google and OpenAI
 judges named, the matrix of E1's evidence, and the matrix of plan e1's format round
 (`e-submission.toml`: v1 against v2 under arm C, each arm naming its format).
 `whizbang runs stats` and `runs export` report on the runs a matrix made (`--matrix <name>`).
+
+## Several gates on one matrix
+
+A gate file of version 2 names its matrix and the matrix's identity, and `eval run --gate`
+runs that matrix of exactly the gate's two arms, each run holding the gate's digest. A gate
+file of version 3 (plan mE, task M1, items 3 and 4) is frozen in its matrix instead:
+
+- **The binding runs one way.** The gate names its matrix by file alone (`[run] matrix`; a
+  `matrix_identity` is refused). The matrix names each gate frozen on it, beside it, by the
+  SHA-256 of the gate file's bytes, in `[gates]`:
+
+  ```toml
+  [gates]
+  "e-rung3-outline.toml" = "<64 hex digits>"
+  ```
+
+  The table is in the matrix's identity, which every run holds, so a gate named there was
+  frozen before the first cell. Gate files are written first, then the matrix.
+- **What a gate compares.** `[baseline]` names two arms of the matrix (`control`,
+  `treatment`), which may hold more arms; or two versions of a set of one use case under one
+  arm (`arm`, `control_set`, `treatment_set`). A judge is compared when it runs both sides:
+  both arms on a set, or the arm on both sets. Two versions must hold the same items in the
+  same families by id, or nothing is scored; they are paired item by item, and an item whose
+  label differs between them is counted in the receipt (`relabelled`) and scored under
+  neither version's truth.
+- **Hypotheses.** Each gate's `[confidence] hypotheses` is the count over every gate the
+  matrix names, one for each judge a gate compares. Its `[repetitions] count` is the most of
+  any cell it reads.
+- **Running and scoring.** `whizbang eval matrix` runs the cells, and refuses before anything
+  runs when a gate file the matrix names is missing, is not the bytes its digest names, does
+  not name the matrix back, or does not hold (its arms, its count, its repetitions).
+  `whizbang eval run --gate <file> --labels <dir> --receipt <file>` then runs nothing: it
+  scores the gate from the matrix's runs, only the cells of its two sides under the judges it
+  compares, refuses while one of them has not ended, and writes a receipt of version 2, which
+  adds `arm` and `relabelled` for two versions of a set. Run it once for each gate.
 
 ## Scoring judges
 

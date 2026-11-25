@@ -30,9 +30,10 @@ pub enum Command {
     },
     /// Run a matrix: each item of each set it names, under each judge and arm, as many
     /// times as it says, each a run of `squint check` in the store, at most `concurrency`
-    /// at once. Run again, it resumes: a cell that completed or failed is not run again,
-    /// and one that was interrupted is. Refused before anything runs when its forecast
-    /// passes what the store's allowance has left.
+    /// at once; where a judge or a set lists what it runs, only those cells. Run again, it
+    /// resumes: a cell that completed or failed is not run again, and one that was
+    /// interrupted is. Refused before anything runs when its forecast passes what the
+    /// store's allowance has left, or when a gate file it names is not as it was frozen.
     Matrix {
         /// The matrix file.
         #[arg(long, value_name = "FILE")]
@@ -47,7 +48,9 @@ pub enum Command {
     },
     /// Run a gate frozen in a file (`SPEC.md` section 8, "Gates"): the matrix it names, each
     /// run holding the gate's digest, then scored against the labels given and decided.
-    /// Writes the receipt and prints aggregates only. Run again, it resumes.
+    /// Writes the receipt and prints aggregates only. Run again, it resumes. A gate of
+    /// version 3, which its matrix names by digest, runs nothing: it is scored from the
+    /// runs `eval matrix` made of its matrix.
     Run {
         /// The gate file; the matrix it names is beside it.
         #[arg(long, value_name = "FILE")]
@@ -465,6 +468,16 @@ pub fn run(command: &Command) -> Result<String, String> {
             under,
         } => {
             let frozen = whizbang::gating::frozen(gate)?;
+            let gating = whizbang::gating::Gating {
+                file: gate,
+                sets_root: root,
+                labels_root: labels,
+                receipt,
+            };
+            if frozen.scored_from_its_matrix() {
+                let written = whizbang::gating::score(&gating, at.root())?;
+                return Ok(whizbang::gating::text(&written));
+            }
             judges_are_of_their_models(&frozen.matrix, under)?;
             let executor = executor(at, under, recovery, None, uses_of(&frozen.matrix))?;
             let running = Running {
@@ -472,12 +485,6 @@ pub fn run(command: &Command) -> Result<String, String> {
                 root: at.root(),
                 left_micros: left(at.root())?,
                 stop: &|| false,
-            };
-            let gating = whizbang::gating::Gating {
-                file: gate,
-                sets_root: root,
-                labels_root: labels,
-                receipt,
             };
             let written = whizbang::gating::run(&gating, &running)?;
             Ok(whizbang::gating::text(&written))
@@ -656,6 +663,8 @@ fn run_matrix(
         ));
     }
     let matrix = Matrix::parse(&text).map_err(|why| format!("{shown}: {why}"))?;
+    // The gates frozen on it hold as frozen, before anything runs (plan mE, task M1).
+    whizbang::gating::gates_on(file, &matrix).map_err(|why| format!("{shown}: {why}"))?;
     judges_are_of_their_models(&matrix, under)?;
     let (planned, labels) = evaluation::plan(&matrix, root, at.root())?;
     let left_micros = left(at.root())?;
