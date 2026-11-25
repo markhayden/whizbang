@@ -246,7 +246,8 @@ empty store; nothing is migrated from the old tools.
 - **Retention.** Everything is kept until deleted. `whizbang store list|delete|prune` remove
   runs and what only they reference, with the caches and exports this store manages for them.
   Copies that left the store are out of its reach. Spend records and request-id records are
-  never deleted by these commands.
+  never deleted by these commands. A bundle a store imported (ADR 0048) is kept under names
+  of its own until `whizbang bundle delete` removes it.
 - **Permissions.** Stored images, evidence and journals are readable by the owner only.
 - **One writer.** One process at a time may write a store; a second is refused. While
   `whizbang play` or `whizbang serve` holds a store, command-line actions that write to it are
@@ -852,6 +853,13 @@ whizbang store import <file> --store <dir> [--create]
                                        # for developers: bring a canonical artifact file
                                        # (ADR 0002) into a store
 whizbang runs list|show|stats|export
+whizbang runs bundle <run>... --to <file> [--overwrite]
+                                       # one run that ended, or a chain of at most 16, as
+                                       # one file another store imports (ADR 0048)
+whizbang bundle import <file> --store <dir> [--create]
+whizbang bundle show <file>
+whizbang bundle list|delete <digest>   # a store's bundles: kept under names of their
+                                       # own, never as its runs (docs/guides/bundles-and-replay.md)
 whizbang spend status|reset
 whizbang serve [--http <addr>]         # --http: the engine API (docs/guides/engine-api.md),
                                        # with (--token-env <NAME> | --token-file <file>),

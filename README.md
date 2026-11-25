@@ -23,6 +23,10 @@ as a stdio server for agents, as an engine for a hosted app, and in a browser:
 - `whizbang runs list|show|stats|export` reads what every run recorded, `whizbang store …`
   looks after a store, `whizbang spend …` sets what it may spend, and `whizbang models …`
   installs the local models.
+- `whizbang runs bundle` carries a run, or a chain of runs, out of a store as one file, and
+  `whizbang bundle import|show|list|delete` brings it into another store, reads it, and
+  lists and removes those a store holds
+  ([docs/guides/bundles-and-replay.md](docs/guides/bundles-and-replay.md)).
 
 The design is in [SPEC.md](SPEC.md); the plans are in [docs/plans/](docs/plans/). It replaces four earlier projects, which stay available as
 reference; their final commits are pinned in [docs/sources.toml](docs/sources.toml).

@@ -342,6 +342,10 @@ deferred is on the carry-over list with a milestone. A tool is not done without 
   Setup replaces whatever is at `pre-commit`, `commit-msg` and `pre-push` in the
   repository's hooks folder, a hook of your own included, and says so.
 - **Linux CI catches timing races that macOS misses.** Tests wait on events, never on sleeps.
+- **The committed bundle is read by every later build.** `fixtures/bundle/remove-then-check.tar`
+  was written once by plan m7's task B1, and `runs_bundle::the_committed_fixture_reads` holds
+  each build to read it: a change of the bundle's format or of the run record keeps reading
+  it. The file is never written again to make a test pass.
 - **Threads and processes.** A test that made threads until the system refused one took a
   machine down, twice. A test makes a thread only through `whizbang_testkit::threads`, which
   holds a process to 64 of them (`just check` refuses any other way), and no test, probe or

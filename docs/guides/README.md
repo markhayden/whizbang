@@ -18,6 +18,7 @@ then. Milestones are those of `SPEC.md` section 16.
 | [The playground](playground.md) | `whizbang play`: starting it, the address and its token, reopening the page, stopping, a run's stated time, what it holds while it runs, and every screen: Home, a kit, the workspace, a run going, its result, History, a run's report, a tool's record, and Models | 5 |
 | [The engine API](engine-api.md) | `whizbang serve --http` for a hosted app: starting it, the token, off loopback behind a proxy, the routes, calling a tool, reconnecting, cancelling, the uploads it keeps, stopping, and user story 1 end to end in `curl` | 6 |
 | [A GPU host of your own](gpu-host.md) | SAM 3 on a GPU host you deploy with your own account and tokens, for the kind `remote`: the front and the worker, a machine of your own, Modal's deployment, the config, the price and what it does not bound, the spend limit, SAM 3's files and its licence, the token | 6 |
+| [Bundles and replay](bundles-and-replay.md) | `whizbang runs bundle` and `whizbang bundle import`, `show`, `list` and `delete`: making a bundle of a run or a chain, what it holds and withholds, that it is not encrypted, reading one, bringing one into a store and removing it. Replay is added with plan m7, task R1 | 7 |
 
 ## Doors
 
