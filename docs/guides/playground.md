@@ -3,8 +3,8 @@
 `whizbang play` is the door for a person trying tools in a browser (`SPEC.md` section 1): a
 page in Google Chrome, served by the `whizbang` process on your own machine. This page covers
 starting it, the address and its token, reopening the page, stopping, and then each screen in
-turn: Home, a kit, the workspace where a task is drafted, a run going, its result, History, a
-run's report, a tool's record, and Models.
+turn: Home, a kit, the workspace where a task is drafted, a run going, its result, two runs
+compared, saved examples, History, a run's report, a tool's record, and Models.
 
 ```text
 whizbang play --store <dir> [--config <file> [--env-file <file>]] [--models-dir <dir>]
@@ -18,8 +18,8 @@ it:
 
 - **The fast tier** (`just check`): Rust tests against the host on a real loopback socket,
   with the test kit's fakes for every model, named here as `play::…`, `play_result::…`,
-  `play_models::…` and `play_guard::…`; and the interface's own unit tests. Nothing is sent
-  anywhere.
+  `play_models::…`, `play_compare::…`, `play_examples::…`, `play_library::…` and
+  `play_guard::…`; and the interface's own unit tests. Nothing is sent anywhere.
 - **The Chrome tier** (`just e2e`): cases in `ui/e2e/`, run in Google Chrome against the
   fixture host, the host and the interface as they ship with a fake segmenter, a scripted
   fill and a scripted judge in place of real models, held to 240 seconds of test time in
@@ -169,25 +169,38 @@ Home (`#/`) is where the page opens.
   its first four tasks, each with what it takes and gives in words, and the kit another kit
   uses when it does ("uses squint"); the rest are behind "+n tasks". A kit added to the build
   shows here with no change to the page.
-- **Pictures**: every picture the playground has imported into the store, newest first, by
-  pages of 48, under the name it came with; and a place to drop up to eight at once.
-  Clicking a picture opens a panel of every task that takes a picture; picking one opens its
-  draft with the picture given. An unrun draft of that task is replaced only once you
-  confirm. A picture the store no longer holds is said to be missing, and no task is
-  offered.
+- **Examples**: the examples saved in this store (below, "Saved examples"), with how many
+  of the 1,000 a store keeps.
+- **Pictures**: every picture the store holds as an input of a run or an import, whatever
+  gave it: the playground, the command line, the engine API or a bundle. They are newest
+  used first, 24 at a time with **Show more**, under four chips: **All**, **Named** (a
+  picture given a name in the playground), **Inputs of runs** and **Imported**, each with
+  its count. A picture no person named is shown by its identity, shortened. Each tile says
+  how many runs took it, or that it was imported and not run yet. A run records nothing
+  of the door that started it, so the library says what the store knows instead. You can
+  drop up to eight pictures at once.
+  Clicking a picture opens its card: its name or "No name given", its size and bytes,
+  when it was first used (the earliest run that took it, or its import), and the runs that
+  took it, each a link to its result. Beside them is every task that takes a picture, and
+  picking one opens its draft with the picture given. An unrun draft of that task is
+  replaced only once you confirm. A picture the store no longer holds is said to be
+  missing, and no task is offered.
 
 **Drafts** are a task with its inputs given and not yet run. They are kept in Chrome's own
 storage for the playground's address, one a task and the twelve newest in all, and are a
 convenience: losing them loses no run. Running a draft removes it.
 
-Held by `home.spec.ts: a third kit of fake actions shows on home, in the switcher and in
+Held by `play_library::the_library_lists_inputs_of_runs_and_imports_by_pages_with_each_cards_runs`
+(fast tier); `home.spec.ts: home lists the pictures of a store filled from the command line`,
+`home.spec.ts: a third kit of fake actions shows on home, in the switcher and in
 search` and `reconnect.spec.ts: a run started in a tab that is closed ends completed, and a
 new tab finds it in Continue and opens its result` (Chrome tier).
 
 ## A kit
 
 A kit's address (`#/k/rascal`, `#/k/squint`), from "+n tasks" or the kit switcher, lists all
-of its tasks the same way; each opens its workspace.
+of its tasks the same way; each opens its workspace. Below them are the kit's saved
+examples.
 
 ## The workspace: a draft
 
@@ -213,7 +226,10 @@ left, the canvas in the middle, and the task's runs and tools on the right.
   a reload or a restart, and it is read again when a run of the task ends;
 - **a backend**, where the task lets you choose one: each choice the config offers with its
   state, READY, NO KEY, GET · its size (a model not installed), UPDATE, DAMAGED or NOT READY.
-  A choice that is not ready can still be picked, and Run then says what is missing.
+  A choice that is not ready can still be picked, and Run then says what is missing. A
+  choice the task refuses for itself is NOT READY with the refusal's words; while the call
+  lacks something of its own (a picture not given yet), each choice shows its backend's own
+  state instead.
 
 Squint's tasks take their pictures and brief as `whizbang squint check` does: the picture to
 judge, the source where the use case takes one, references in order, and the brief. The host
@@ -247,6 +263,7 @@ on a result.
 Held by `play::a_start_without_a_matching_fresh_preparation_is_refused_as_stale`,
 `play::a_start_sent_twice_with_one_request_id_answers_one_run`,
 `play::each_choice_is_prepared_and_answered_with_its_readiness_kind`,
+`play::a_choice_refused_for_itself_is_told_apart_from_a_missing_input`,
 `play::the_first_import_into_a_new_store_keeps_the_picture_and_its_name_in_one_publication`,
 `play::a_picture_that_fails_to_decode_leaves_nothing_in_the_store` and
 `play::a_drawn_shape_is_committed_as_a_location_bound_to_its_picture` (fast tier);
@@ -335,7 +352,7 @@ zoom`, `run.spec.ts: a rascal task runs from a picture and words to a result` an
 the loop's cases by hand (a fail the loop stopped, a clean pass, a vague prompt that found
 nothing, and a run with no judge ready left unchecked; `docs/results/m5-playground.md`).
 
-### Save picture, Send to, Run again, Copy command
+### Save picture, Send to, Run again, More
 
 - **Save picture** (⌘S) downloads the picture it made, as `<run id>-result.png`.
 - **Send to** opens a new draft of another task with the result's outputs filled in: a field
@@ -347,6 +364,8 @@ nothing, and a run with no judge ready left unchecked; `docs/results/m5-playgrou
   A result no task takes says so.
 - **Run again** opens a new draft of the same task with the run's inputs and the backends it
   used written out. Changing it changes nothing of the run.
+- **More** holds **Pin as baseline** and **Compare with baseline** (below, "Comparing two
+  runs"), **Save as example…** (below, "Saved examples") and **Copy command**.
 - **Copy command** gives the `whizbang` command that makes the same call, shows it, and puts
   it on the clipboard: every input by its identity in the store; the store, config, env
   file, models directory and a recipe file by their absolute paths; each backend the run
@@ -374,6 +393,72 @@ the words tagged from rascal`, `send.spec.ts: back to the run returns to the sen
 `command.spec.ts: copy command gives a command that, run in a shell against the same store,
 makes the same call` and `command.spec.ts: the command of a check sent from a removal
 carries its whole job` (Chrome tier).
+
+## Comparing two runs
+
+Pin a run as the baseline (a result's **More**, **Pin as baseline**, or a History row's
+**Pin as baseline**, shown when the pointer is over the row). Then open another run of the
+same task and press **Compare with baseline** (in its More menu, or on its History row).
+The comparison is at `#/compare/<baseline>/<attempt>`, and the pin is kept there and in
+Chrome's storage for the playground's address, so a reload keeps it; the store keeps no
+pin. With only a baseline picked (`#/compare/<baseline>`) the page says to pick an attempt.
+
+- **On the left**: the baseline (with **Clear**) and the attempt (with **Swap**), each with
+  its picture, its id and how it ended, when it ran, how long it took and its cost; and
+  **Open baseline** and **Open attempt**.
+- **In the middle**: the two runs' pictures, labelled Baseline and Attempt, side by side at
+  one zoom, or swiped, or as their difference, when both are of one size; pictures of two
+  sizes are shown side by side alone. How each ended is under its picture.
+- **What differs**, on the right: what each was asked, what each capability resolved to
+  (the config's name of its backend, and its model), the settings it ran under, its inputs
+  and its outputs, by name or port, each row that differs marked; **Show all** shows the
+  rows that are the same too, marked "same". Then the outcome, the time, the cost of each
+  whole run (every run it called included, with what no answer settled said beside it, and
+  "not all read" for a family the store could not read whole) and its models.
+
+The comparison claims no winner and computes no score. Two runs of two tasks, or a run
+another run called, are refused, and the page offers to pin the other run instead; a run
+still going ends first.
+
+Held by `play_compare::two_runs_of_one_task_compare_by_settings_inputs_outputs_time_and_cost`,
+`play_compare::two_paid_loops_compare_cost_and_models_over_their_families_with_unresolved_spend_said`
+and `play_compare::two_tasks_are_refused_422_and_a_run_not_ended_409` (fast tier);
+`compare.spec.ts: a pinned baseline and an attempt of the same task show their pictures, settings and cost side by side, and the pin survives a reload`
+(Chrome tier).
+
+## Saved examples
+
+An example is a run's task, inputs and settings kept as a named starting point. **Save as
+example…** in a result's More menu asks for a name (at most 80 characters) and optional
+notes (at most 2,000), and says what it keeps: the task, its settings, the backends it used
+and its pictures. The store keeps it (`examples/<id>`), with each of its pictures, so it
+outlives its run: deleting the run, and pruning, leaves the example whole. A store keeps at
+most 1,000. No example ships with the binary.
+
+Examples are listed on Home and in their kit's page. Each row's menu (⋯) opens it as a
+draft, renames it, opens its run, or deletes it; deleting asks once, and the run and its
+pictures stay. An example whose task this build no longer has says so, and can be read and
+deleted, not opened.
+
+**Opening one** fills a draft of its task and runs nothing. The draft says which example it
+came from. Its choices of backend are the example's where this config offers them now: a
+backend the config no longer names, or one that is not ready (a key not set, a model not
+installed), is left to the config's default, and the draft says which and why. Readiness
+and the plan are asked again as for any draft, and a run from it is an ordinary run under
+the config as it is now. A picture the store let go of with its run is given back from the
+example as an import when it is opened.
+
+From the command line, `whizbang store list` lists the examples after the runs, when there are any, each by its
+id, task and name, and `whizbang store delete --example <id>` deletes one.
+
+Held by `play_examples::an_example_keeps_its_inputs_after_its_run_is_deleted_and_pruned`,
+`play_examples::opening_an_example_starts_no_run`,
+`play_examples::an_example_whose_backend_is_not_offered_now_names_it_and_falls_back`,
+`play_examples::a_name_or_notes_holding_markup_are_shown_as_text`,
+`play_examples::past_1000_examples_a_new_one_is_refused_naming_the_bound` and
+`play_examples::store_list_names_an_example_and_store_delete_example_lets_it_go` (fast tier);
+`examples.spec.ts: an example saved from a result opens as a draft that runs nothing, after a restart and after its run was deleted`
+(Chrome tier).
 
 ## History
 

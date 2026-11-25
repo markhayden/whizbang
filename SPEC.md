@@ -247,7 +247,9 @@ empty store; nothing is migrated from the old tools.
   runs and what only they reference, with the caches and exports this store manages for them.
   Copies that left the store are out of its reach. Spend records and request-id records are
   never deleted by these commands. A bundle a store imported (ADR 0048) is kept under names
-  of its own until `whizbang bundle delete` removes it.
+  of its own until `whizbang bundle delete` removes it, and a saved example (the playground's,
+  `examples/<id>`) until it is deleted in the playground or by
+  `whizbang store delete --example <id>`; deleting runs leaves both.
 - **Permissions.** Stored images, evidence and journals are readable by the owner only.
 - **One writer.** One process at a time may write a store; a second is refused. While
   `whizbang play` or `whizbang serve` holds a store, command-line actions that write to it are
