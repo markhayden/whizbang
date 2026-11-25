@@ -1,7 +1,7 @@
 # Plan: milestone E, evidence and edit quality
 
-Draft 17, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
-note of milestone 7), after sixteen outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
+Draft 18, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
+note of milestone 7), after seventeen outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
 quality". Its first slice ran beside milestone 5 (`docs/plans/e1-judge-format-loop.md`,
 `docs/plans/e1-note.md`) and chose the default judge and kept the submission format on
 descriptive evidence. This plan is the rest of the milestone: every unverified tool and
@@ -144,8 +144,9 @@ task item or a question at the end; none is settled silently.
    or dropped, by the rules of R2 to R6.
 6. **The pictures' repository against sealed sets.** The carry-over row on the repository's
    old name asks that "each [set] names the repository's current name, the pins unchanged".
-   Each set's `images_repo` is in its `set.toml`, which its seal covers, and sealed sets are
-   never edited (section 8). Fix: B1, item 6: the new sets name the current name, and the
+   Each set's `images_repo` is in its `set.toml`. The seal hashes the set's items, families,
+   jobs, pictures, rules and labels, not `images_repo` (`crates/whizbang-eval/src/sets.rs`), but
+   a sealed set is still never edited (section 8: "Sealed sets are never edited"). Fix: B1, item 6: the new sets name the current name, and the
    reader takes the old name as an alias of it for sealed sets, with a test, instead of
    editing them.
 7. **The retry of a failed cell.** The carry-over row on resumed matrices asks for "a rule
@@ -1160,7 +1161,12 @@ row on the panorama side of `view`):
 
 1. **The sample**, 8 cases a recipe, each recipe on inputs of its own kind: `remove`,
    `remove_prompt`, `remove_checked` and the clicked removal (if C1 built it) on 8 pictures of
-   `segmentation/segment-01`; `repair` (a stroke) and `repair_area` (a location) on 8 pictures
+   `segmentation/segment-01`. Each takes what its recipe file asks: `remove_prompt` and
+   `remove_checked` the manifest's phrase; `remove` a location, the box around the truth mask
+   grown by a twentieth of its sides; the clicked removal a mask, SAM 3's one instance for a
+   point at the truth mask's interior point farthest from its edge, as C1 measured it. These
+   are derived by a committed script from the manifest's pins before the run, the same for
+   every arm, and only aggregates of them are kept; `repair` (a stroke) and `repair_area` (a location) on 8 pictures
    of `labs/m3-edits/corpus.toml` with the strokes and locations it already holds; `seam` on 8
    panoramas of `labs/m3-seam/corpus.toml`. **Families are frozen first**: R5's manifest
    gives every case its scene family, read from the corpus's own records of where each
@@ -1195,7 +1201,10 @@ row on the panorama side of `view`):
 
 1. **The fresh corpus**, in owner storage, never committed, none of it used on rungs 2 or 3:
    - 10 of the owner's own photos, each with the phrase of what to remove, where one pass may
-     leave something behind (the carry-over row on the owner's photos), for the removals;
+     leave something behind (the carry-over row on the owner's photos), for the removals; for
+     each, the owner also draws a box around the thing and clicks a point on it in the
+     playground and exports them (`store export`): the box is `remove`'s location, and the
+     point is asked of SAM 3 for the clicked removal's mask, as in R5;
    - 10 of the owner's photos with a scratch or a tear, each with a stroke and an area the
      owner draws in the playground and exports as a location (`store export`), for `repair`
      and `repair_area`;
@@ -1500,7 +1509,8 @@ P1 ──────────────────┘
 - **C1, if built**: the marks of 20 finished pictures and the picks of 10 pairs.
 - **R5**: the picks of about 48 pairs of its runs (56 with tier 2).
 - **R6**: in owner storage, 10 of your own photos, each of a different scene with the phrase of
-  what to remove; 10 photos with a scratch or a tear, each with a stroke and an area you draw
+  what to remove, a box drawn around the thing and a point clicked on it in the playground and
+  exported; 10 photos with a scratch or a tear, each with a stroke and an area you draw
   in the playground and export; 10 panoramas not used before. Then the marks of R6's sheets
   and the picks of its pages.
 - **T2, only if needed**: a yes to a new origin for the segmenter's files, if they are not
@@ -1877,4 +1887,16 @@ major, 2 minors. Each was checked; all were right and taken.
 3. **Minor: row E's "rungs 3 and 4 on a fresh confirmation set".** Right: rung 4's families
    must be disjoint from rung 3's. Taken: A0, item 4 writes it as rung 3, then rung 4 on the
    fresh set.
+
+### Review round 17
+
+On draft 17, by the Codex CLI. Verdict: revise. Round 16's fixes held. Two findings: 1 major,
+1 minor. Each was checked against the code; both were right and taken.
+
+1. **Major: `remove` and the clicked removal had no input of their kind.** Right (`remove.toml`
+   takes a location; the clicked removal a mask). Taken: R5 derives a location and a clicked
+   mask from segment-01's truth masks by a committed script; R6's owner draws a box and clicks
+   a point for each photo.
+2. **Minor: the seal does not cover `images_repo`.** Right (`sets.rs`). Taken: gap 6 says so;
+   the alias stands, since a sealed set is never edited.
 
