@@ -1,7 +1,7 @@
 # Plan: milestone E, evidence and edit quality
 
-Draft 16, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
-note of milestone 7), after fifteen outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
+Draft 17, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
+note of milestone 7), after sixteen outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
 quality". Its first slice ran beside milestone 5 (`docs/plans/e1-judge-format-loop.md`,
 `docs/plans/e1-note.md`) and chose the default judge and kept the submission format on
 descriptive evidence. This plan is the rest of the milestone: every unverified tool and
@@ -385,7 +385,10 @@ reported in its pull request. Every test that calls a provider or a real model i
    with that tool offered, on by default in it, for the judges measured; another combination
    needs a gate of its own). If the owner says yes to "I need", item 3, row E gains: "a use case
    of `check` whose gate on fresh data is not run or not cleared in E ends E unverified, the
-   default it was". This is the spec brought in line with a reviewed plan.
+   default it was". And row E's "Per-subject comparison climbs rungs 3 and 4 on a fresh
+   confirmation set" is written as what it can mean, since section 8 requires rung 4's
+   families to be disjoint from rung 3's: "climbs rung 3, and rung 4 on a fresh confirmation
+   set". This is the spec brought in line with a reviewed plan.
 5. **Details first's end.** Its record and `docs/reference/tools/source-fidelity.md` say it
    ends E experimental: no fix was proposed, and its gate rejected it in every run. `resize`,
    which `check` offers only under it, ends E experimental with it, its record saying so.
@@ -1063,7 +1066,11 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    holding one and the union.
 4. **One decode** (the carry-over row on `carry` and `view`): a retry decodes its picture
    once; `carry`'s comparison looks at the run's signal row by row; the times of a located
-   retry on a large picture are in the loop's record.
+   retry on a large picture are in the loop's record. And `remove_checked`'s record gains what
+   it lacks (its "Speed and cost" says its local work is not timed): a whole run's local work
+   timed at three sizes under the scripted filler and a scripted judge, by
+   `scripts/tool-record.sh remove_checked`, which is the baseline M2's latency limit compares
+   R5's and R6's runs against.
 5. **A carried mask reaching a fill** (the carry-over row on the model tier's fixture): a
    fixture with a second thing the first find misses, on which the located retry's mask is
    filled and checked, in the model tier.
@@ -1469,8 +1476,11 @@ P1 ──────────────────┘
    item; a family that loses all its items is struck, and fewer than 20 families makes R4
    inconclusive by rule, so D1 builds 22.
 5. **The fixed-class segmenter is large** (about 1.2 GB in squint's export) and slow on CPU; it
-   runs on the Mac's GPU. If it cannot run there through `transformers`, T2 stops and the
-   three tools are scored on SAM 3 alone, the catalogue entry recorded as not working.
+   runs on the Mac's GPU. If it cannot run there through `transformers`, T2 stops: `outline`
+   and `regions` are scored on SAM 3 alone; `classes`, which needs labels for every pixel and
+   has no SAM 3 method, cannot be built and is dropped, with its record kept saying why; the
+   study's repeat cannot run its method, so N1 withdraws the claim; the catalogue entry is
+   recorded as not working, and K1 compares SAM 3 and Tiny alone.
 6. **v3 may still fail small models**, or cost accuracy. Only R4 can admit it; F2 sends the
    better of v2 and v3, and v1 stays the default otherwise.
 7. **Owner time.** Contact sheets for 22 families and two dev versions, about 126 pairs to pick,
@@ -1853,4 +1863,18 @@ majors, 2 minors. Each was checked against the code; all were right and taken.
    `matrix.rs`). Taken: R2 and every squint round after it wait for P1.
 3. **Minor: `check.rs` had two owners.** Right. Taken: M1, then F1; `checklist.rs` T1's.
 4. **Minor: the owner's summary still said one tool could change the default.** Right. Taken.
+
+### Review round 16
+
+On draft 16, by the Codex CLI. Verdict: revise. Round 15's fixes held. Three findings: 1
+major, 2 minors. Each was checked; all were right and taken.
+
+1. **Major: `remove_checked` had no local timing to gate latency against.** Right
+   (`remove_checked.md`, "Speed and cost"; `scripts/tool-record.sh`). Taken: L2, item 4 times a
+   whole run's local work at three sizes and writes it into the record before R5.
+2. **Minor: risk 5's fallback left `classes` out.** Right. Taken: without the fixed-class
+   segmenter `classes` is dropped, and the study's claim withdrawn.
+3. **Minor: row E's "rungs 3 and 4 on a fresh confirmation set".** Right: rung 4's families
+   must be disjoint from rung 3's. Taken: A0, item 4 writes it as rung 3, then rung 4 on the
+   fresh set.
 
