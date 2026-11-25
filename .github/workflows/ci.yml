@@ -257,27 +257,6 @@ jobs:
         env:
           WHIZBANG_E2E_SHARD: ${{ matrix.shard }}/2
         run: just e2e
-      # Plan m7, task A0, item 3: for one run of the pull request, and taken out by its next
-      # commit. On macos-15, shard 2 only, the case that timed out once in milestone 6 runs
-      # alone 20 times in a row with no retry against the fixture host `just e2e` built: two
-      # runs of 10 one after the other, each report held to the 120 seconds of a shard, since
-      # the case takes about 6 seconds here and 7 on this runner, and 20 in one report pass
-      # 120.
-      - name: The five use cases 20 times in a row
-        env:
-          RUNNER: ${{ matrix.os }}
-          SHARD: ${{ matrix.shard }}
-        run: |
-          if [ "$RUNNER" = macos-15 ] && [ "$SHARD" = 2 ]; then
-            fixture=$(cargo metadata --format-version 1 --no-deps | jq -r .target_directory)/debug/examples/play_fixture
-            for half in 1 2; do
-              echo "the case, 10 times in a row, part $half of 2"
-              (cd ui && WHIZBANG_PLAY_FIXTURE="$fixture" ../scripts/thread-guard.sh node_modules/.bin/playwright test e2e/run.spec.ts -g "each of the five squint use cases runs from its form" --repeat-each 10 --retries 0)
-              scripts/e2e.sh --report target/e2e/report.json --limit 120
-            done
-          else
-            echo "the repeated case runs on macos-15, shard 2"
-          fi
       # Pinned to a commit (v7.0.2).
       - name: The Playwright report of a failed run
         if: failure()
