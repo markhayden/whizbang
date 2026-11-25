@@ -41,6 +41,35 @@ describe("history", () => {
     expect(go).toHaveBeenCalledWith("#/run/r-1");
     view.unmount();
   });
+
+  it("says what Bundle chain saved, by its file name, once the chain is written", async () => {
+    // N1's pass, finding 5: the panel closed with no word of what was saved.
+    const row = (run: string) => ({ run, action: "remove_prompt", kit: "rascal", title: "Remove what you name", words: [], pictures: [], result: "done", models: [], time_ms: 1, cost: 0, at_ms: Date.now() });
+    const client = answering({
+      "/api/runs": { runs: [row("r-1"), row("r-2")], more: false },
+      "/api/stats": { runs: 2, verdicts: { pass: 0, fail: 0, unsure: 0 }, cache_hits: 0, settled_micros: 0 },
+      "/api/bundles/chain": { digest: "", steps: [], holds: { records: 2, files: 2 }, withheld: [] },
+    });
+    const postBytes = vi.fn(() => Promise.resolve(new Blob([new Uint8Array(171_520)])));
+    Object.assign(client, { postBytes });
+    const created = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:saved");
+    const view = render(<History hello={HELLO} client={client} query={new URLSearchParams()} go={vi.fn()} />);
+    await settle();
+    const button = (words: string) => view.all<HTMLButtonElement>("button").find((one) => one.textContent?.includes(words))!;
+    button("Make a chain").click();
+    await settle();
+    view.get<HTMLButtonElement>('[aria-label="Pick run r-1 for the chain"]').click();
+    await settle();
+    view.get<HTMLButtonElement>('[aria-label="Pick run r-2 for the chain"]').click();
+    await settle();
+    button("Bundle chain").click();
+    await settle();
+    expect(postBytes).toHaveBeenCalledWith("/api/bundles/chain", { runs: ["r-1", "r-2"] });
+    expect(view.root.querySelector(".history__chain")).toBeNull();
+    expect(view.get('[role="status"].history__saved').textContent).toBe("Saved chain-r-1.whizbang-bundle: a chain of 2 steps, 171.5 KB. Take it into another playground on its Bundles page.");
+    created.mockRestore();
+    view.unmount();
+  });
 });
 
 describe("a report", () => {

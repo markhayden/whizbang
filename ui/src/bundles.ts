@@ -3,7 +3,7 @@
 // a chain's place kept in the browser's storage, and the pure helpers the screens lay out.
 // Every text in an answer was escaped by the host; the page puts it in as text.
 import { ApiError, type Client } from "./api";
-import type { Draft, Store } from "./drafts";
+import { carriedOf, type Draft, type JobOf, type Store } from "./drafts";
 import { middle } from "./format";
 
 /** An input of a bundle's step: the identity it took, or the earlier step's output. */
@@ -112,6 +112,9 @@ export interface OpenedStep {
   bindings: Binding[];
   stopped: { why: string; run?: string } | null;
   bundle?: string;
+  /** The step a check's job is read from, and what its call held that no field shows. */
+  job_of?: JobOf | null;
+  kept?: Record<string, unknown> | null;
 }
 
 export function openStep(client: Client, digest: string, step: number, runs: Array<string | null>): Promise<OpenedStep> {
@@ -212,6 +215,16 @@ export interface ChainPlace {
   /** The person stopped the chain. */
   stopped: boolean;
   at: number;
+  /**
+   * Each step's task title, as the chain's page had them from the bundle, so a step's
+   * result names the steps before the bundle is read again (plan m7, N1's pass, finding 3).
+   */
+  titles?: Array<string | null>;
+}
+
+/** Each step's task title in a bundle's summary: its title, else its action. */
+export function titlesOf(summary: Pick<BundleSummary, "steps">): Array<string | null> {
+  return summary.steps.map((step) => step.title ?? step.action ?? null);
 }
 
 export function readChains(store: Store | null): ChainPlace[] {
@@ -221,10 +234,18 @@ export function readChains(store: Store | null): ChainPlace[] {
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (one): one is ChainPlace =>
-        typeof one === "object" && one !== null && typeof (one as ChainPlace).digest === "string" && Array.isArray((one as ChainPlace).runs) && typeof (one as ChainPlace).steps === "number",
-    );
+    const titled = (titles: unknown): titles is Array<string | null> => Array.isArray(titles) && titles.every((one) => one === null || typeof one === "string");
+    return parsed
+      .filter(
+        (one): one is ChainPlace =>
+          typeof one === "object" && one !== null && typeof (one as ChainPlace).digest === "string" && Array.isArray((one as ChainPlace).runs) && typeof (one as ChainPlace).steps === "number",
+      )
+      .map((one) => {
+        // Titles are kept only as the page writes them: a list of words and nulls.
+        if (one.titles === undefined || titled(one.titles)) return one;
+        const { titles: _, ...rest } = one;
+        return rest;
+      });
   } catch {
     return [];
   }
@@ -276,7 +297,7 @@ export function stepStates(place: ChainPlace, blockedAt: number | null): StepSta
 }
 
 /** The draft a chain's step opens, as the workspace keeps drafts. */
-export function draftOfStep(opened: OpenedStep, digest: string, now: number): Draft & { chain: NonNullable<Draft["chain"]> } {
+export function draftOfStep(opened: OpenedStep, digest: string, now: number, titles?: Array<string | null>): Draft & { chain: NonNullable<Draft["chain"]> } {
   const pictures: Draft["pictures"] = {};
   const linked = new Map(opened.bindings.map((one) => [one.now, one]));
   for (const value of Object.values(opened.values ?? {})) {
@@ -292,11 +313,13 @@ export function draftOfStep(opened: OpenedStep, digest: string, now: number): Dr
     values: { ...(opened.values ?? {}) },
     pictures,
     at: now,
+    ...carriedOf(opened),
     chain: {
       digest,
       step: opened.step.index,
       of: opened.step.of,
       bindings: opened.bindings.map((one) => ({ port: one.port, from: { step: one.from.step, port: one.from.port }, run: one.run, now: one.now, recorded: one.recorded, differs: one.differs })),
+      ...(titles && titles.length > 0 ? { titles } : {}),
     },
   };
 }

@@ -307,3 +307,33 @@ fn store_list_names_an_example_and_store_delete_example_lets_it_go() {
     let record = kitted.api("GET", &format!("/api/runs/{run}/record"), None);
     assert_eq!(record.status, 200, "{}", record.text());
 }
+
+#[test]
+fn an_example_of_a_check_opened_unchanged_makes_its_recorded_call_after_its_run_is_gone() {
+    // N1's pass, finding 4: an example's draft showed its check's words alone, and its
+    // call lost the job's requirements.
+    let kitted = Kitted::new("examples-same-call");
+    let chain = crate::play_chain::chain_in(&kitted, 75);
+    let recorded = crate::play_chain::arguments(&kitted, &chain.check);
+    assert!(recorded.to_string().contains("RQ1"), "{recorded}");
+    let example = saved(&kitted, &chain.check, "The hose, checked", "");
+    let id = example["id"].as_str().unwrap().to_owned();
+    let kitted = kitted.restarted_after(|root| {
+        let opening = wiring::opening(root, Make::Nothing, wiring::recovery()).unwrap();
+        let remover = opening.remover().unwrap();
+        remover
+            .delete_with_descendants(&[chain.check.as_str()])
+            .unwrap();
+    });
+    let draft = opened(&kitted, &id);
+    assert_eq!(draft["job_of"], json!({"example": id}), "{draft}");
+    let made = ran(
+        &kitted,
+        "source-fidelity",
+        &crate::play_chain::as_the_page_sends(&draft),
+    );
+    // The judge the run took from the config's default is written out, as an example's
+    // choices are: the rest is the call recorded.
+    let made = crate::play_chain::arguments(&kitted, &made);
+    assert_eq!(crate::play_chain::judge_written_out(&made), recorded);
+}

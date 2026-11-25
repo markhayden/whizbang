@@ -211,8 +211,9 @@ left, the canvas in the middle, and the task's runs and tools on the right.
 
 - text in a text field; a number or an integer with its bounds, an integer with few values
   as buttons; yes or no; a choice among the task's values;
-- **a picture**, dropped on its field or chosen from the library (the pictures Home lists).
-  A picture is sent to the store as bytes and kept there as a snapshot: moving or changing
+- **a picture**, dropped on its field or chosen from the library: the pictures Home lists,
+  whatever door gave them (the playground, `store import`, a run from the command line, a
+  bundle), a page at a time with **More pictures**. A picture is sent to the store as bytes and kept there as a snapshot: moving or changing
   the file afterwards changes nothing of the run. Its metadata (EXIF, profiles) is not kept;
   its name is;
 - **a list of pictures**, in order, held to the count the task takes: drop or choose more,
@@ -279,8 +280,9 @@ is not ready can be picked and Run says what is missing`,
 refused once the preparation is stale` and
 `run.spec.ts: each of the five squint use cases runs from its form` and
 `inputs.spec.ts: a picture picked in search starts a task, whose mask port lists the store's
-masks after a reload, and a task shows its earlier runs with their mask and result` (Chrome
-tier).
+masks after a reload, and a task shows its earlier runs with their mask and result` and
+`home.spec.ts: home lists the pictures of a store filled from the command line`, which
+picks one of them in a field's library too (Chrome tier).
 
 A picture is held to 64 MiB and to 50,000,000 pixels, and at most two are sent at once; a
 picture over either limit is refused with the limit named
@@ -363,7 +365,13 @@ nothing, and a run with no judge ready left unchecked; `docs/results/m5-playgrou
   when), tags each field it filled FROM <KIT> until you change it, and leads back to the run.
   A result no task takes says so.
 - **Run again** opens a new draft of the same task with the run's inputs and the backends it
-  used written out. Changing it changes nothing of the run.
+  used written out. Changing it changes nothing of the run. Left as it is, it makes the call
+  the run made: a check keeps the run's job, requirements and all, though its form shows
+  the brief alone, until you change the brief; and what the run was asked that no field
+  shows (a recipe's `set`, `from` or `until`, from the command line) is kept and sent as it
+  was, which the draft names. A run from a step (`from` and the inputs it was given at that
+  step) is let go of as soon as you change a picture or another input, since those inputs
+  were made from the pictures given then; settings (`set`) and `until` stay.
 - **More** holds **Pin as baseline** and **Compare with baseline** (below, "Comparing two
   runs"), **Save as example…** (below, "Saved examples"), **Replay…** (below, "Replaying a
   run"), **Bundle this run…** (below, "Bundles") and **Copy command**. The arrow keys move
@@ -384,6 +392,7 @@ so ("Replace it", or "Keep my draft").
 
 Held by `play_result::send_to_offers_each_task_whose_ports_a_results_outputs_fill`,
 `play_result::send_to_leaves_a_port_empty_when_two_ports_take_the_same_type`,
+`play_result::run_again_left_as_it_is_makes_the_recorded_call_with_what_no_field_shows`,
 `play_result::the_command_quotes_every_argument_for_a_posix_shell`,
 `play_result::words_holding_an_escape_sequence_a_nul_or_a_format_character_are_refused_422`
 and `play_result::the_command_copied_from_a_mask_rect_run_makes_the_same_call_with_the_shipped_binary`
@@ -448,13 +457,16 @@ backend the config no longer names, or one that is not ready (a key not set, a m
 installed), is left to the config's default, and the draft says which and why. Readiness
 and the plan are asked again as for any draft, and a run from it is an ordinary run under
 the config as it is now. A picture the store let go of with its run is given back from the
-example as an import when it is opened.
+example as an import when it is opened. Left as it is, the draft makes the example's call:
+an example of a check keeps its job, requirements and all, read from the example itself
+(so after its run is gone), until you change the brief.
 
 From the command line, `whizbang store list` lists the examples after the runs, when there are any, each by its
 id, task and name, and `whizbang store delete --example <id>` deletes one.
 
 Held by `play_examples::an_example_keeps_its_inputs_after_its_run_is_deleted_and_pruned`,
 `play_examples::opening_an_example_starts_no_run`,
+`play_examples::an_example_of_a_check_opened_unchanged_makes_its_recorded_call_after_its_run_is_gone`,
 `play_examples::an_example_whose_backend_is_not_offered_now_names_it_and_falls_back`,
 `play_examples::a_name_or_notes_holding_markup_are_shown_as_text`,
 `play_examples::past_1000_examples_a_new_one_is_refused_naming_the_bound` and
@@ -474,7 +486,9 @@ takes in (`docs/guides/bundles-and-replay.md` says what it holds and how it is c
 - **A chain** is made in History: **Make a chain**, then **Pick** runs in the order they ran,
   up to 16. Each pick is checked by the host, which names each link (a later run's input
   that is an earlier pick's output) or why it refuses the chain (an input two picked outputs
-  could be, or a run another run called). **Bundle chain** saves the file.
+  could be, or a run another run called). **Bundle chain** saves the file,
+  `chain-<first run>.whizbang-bundle`, and History says so under its filters: the file's
+  name, its steps and its size.
 - **Bundles** (`#/bundles`, from History) lists the bundles the store holds. A bundle file
   dropped on its frame, or chosen, is sent to the host, read whole and checked before
   anything of it is kept, and shown (`#/bundles/<digest>`): its steps and their links,
@@ -508,8 +522,13 @@ port and place, beside the one recorded: "same as recorded", or "differs from re
 with both identities. Change anything, then press **Run**: nothing runs until you do, and
 nothing runs two steps by itself. The run is an ordinary run under the config as it is now,
 its cost reviewed as any run's, and its record names the bundle and the step it makes again.
+A step left as it is makes the call recorded, but for its linked inputs: a check's job is
+the step's, read from the bundle, requirements and all, though the form shows its brief
+alone, until you change the brief; and what the step was asked that no field shows is
+kept and sent as it was, which the draft names.
 
-On the step's result, **Continue to step N** opens the next step the same way. A link that
+On the step's result, a card names the step by its task's title, as the chain's page does,
+and **Continue to step N** opens the next step the same way. A link that
 finds no output in the new run, or two that could be it, stops the chain there, saying
 why. **Stop** stops it; the runs it made stay. The chain's place (which step, which runs)
 is kept in the browser, so closing the tab loses nothing, and the chain's page reads it
@@ -521,8 +540,9 @@ A chain's runs, like a replay's, are left out of History and its figures unless 
 ("With replays", "Replays only").
 
 Held by `play_chain::a_step_runs_only_when_started_and_continue_binds_the_new_output`,
-`play_chain::a_link_that_finds_no_output_or_two_stops_the_chain` and
-`play_chain::a_run_started_from_a_step_records_the_bundle_and_the_step` (fast tier);
+`play_chain::a_link_that_finds_no_output_or_two_stops_the_chain`,
+`play_chain::a_run_started_from_a_step_records_the_bundle_and_the_step` and
+`play_chain::an_unchanged_step_makes_the_call_it_recorded_requirements_and_all` (fast tier);
 `chain.spec.ts: a chain of a removal and its check replays one ordinary run a step, binds the new output and shows its changed identity`
 and `chain.spec.ts: stop leaves the chain and a reopened tab finds its runs` (Chrome tier).
 
@@ -541,9 +561,12 @@ that go at once. Once it has ended, its result opens with the replay's report on
 **Reproduced**, **Differs** (each difference by the place of its run, with **Compare side
 by side**), **Diverged** (the replay asked something the run never asked, and nothing was
 called) or **Can't be answered offline** (with what was missing). A live replay lists the
-settings that changed since.
+settings that changed since. What a segmenter's backend read of the machine as it answered
+(its device, the memory the GPU held) is not compared, so a live replay of an unchanged
+segment is **Reproduced** (`docs/guides/bundles-and-replay.md`).
 
 Held by `play_replay::an_offline_replay_from_the_page_spends_nothing_and_shows_reproduced`
+and `replay::two_segment_diagnostics_that_differ_only_in_what_the_backend_read_of_its_machine_are_the_same`
 (fast tier); `replay.spec.ts: replay of a result shows reproduced, and a changed one shows where it differs`
 (Chrome tier).
 

@@ -756,6 +756,22 @@ const COMPARED: [&str; 9] = [
     "inputs", "outputs", "outcome", "steps", "judge", "plan", "started", "findings", "attempts",
 ];
 
+/// A kept diagnostic's text as it is compared: without the readings of the machine that
+/// answered, which no replay can repeat, as it cannot repeat a time. A segmenter's
+/// `segment.txt` ends with what its backend said of itself, each line after `backend `
+/// (the device, the memory the GPU held, a remote host's dispatch): those lines are left
+/// out, and its masks, scores, boxes and predicted IoUs are compared (plan m7, N1's pass,
+/// finding 2). Every other diagnostic is compared whole.
+fn without_readings(name: &str, text: &str) -> String {
+    if name.strip_prefix(DIAGNOSTICS_PREFIX) != Some(recorded::SEGMENT_DIAGNOSTIC) {
+        return text.to_owned();
+    }
+    text.lines()
+        .filter(|line| !line.starts_with("backend "))
+        .map(|line| format!("{line}\n"))
+        .collect()
+}
+
 /// What two families differ in, run matched to run by place, first first: every
 /// difference, in order. A reference to a run of either family is compared through the
 /// match: each run's id is read as its place.
@@ -831,7 +847,7 @@ pub fn differences(original: &[Placed], replay: &[Placed]) -> Vec<Difference> {
             let shown = |kept: Option<&Vec<u8>>, ids: &[(String, String)]| match kept {
                 None => "nothing".to_owned(),
                 Some(bytes) => match std::str::from_utf8(bytes) {
-                    Ok(text) => placed(&unanswered(text), ids),
+                    Ok(text) => placed(&unanswered(&without_readings(name, text)), ids),
                     Err(_) => Digest::of_bytes(bytes).to_string(),
                 },
             };

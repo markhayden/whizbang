@@ -241,42 +241,128 @@ fn decision_word(decision: Decision) -> &'static str {
     }
 }
 
-/// The job a check of the use case `use_case` takes from the run `run` (the page's
+/// Where a check takes its job from (the page's `job_of`), each a call the store holds:
+/// a run of the store, by its id (Send to, Run again); a saved example (`{"example": id}`);
+/// or a step of a bundle the store holds (`{"bundle": digest, "step": n}`). The host reads
+/// the job there, never from the page (plan m7, N1's pass, finding 4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JobOf {
+    Run(String),
+    Example(String),
+    Step { bundle: String, step: u32 },
+}
+
+impl JobOf {
+    /// What the page sent as `job_of`.
+    pub fn of(value: &Json) -> Result<JobOf, String> {
+        const SAID: &str = "job_of names a run by its id, an example as {\"example\": id}, \
+                            or a bundle's step as {\"bundle\": digest, \"step\": n}";
+        match value {
+            Json::String(run) => Ok(JobOf::Run(run.clone())),
+            Json::Object(named) if named.len() == 1 => match named.get("example") {
+                Some(Json::String(id)) => Ok(JobOf::Example(id.clone())),
+                _ => Err(SAID.to_owned()),
+            },
+            Json::Object(named) if named.len() == 2 => {
+                match (
+                    named.get("bundle"),
+                    named.get("step").and_then(Json::as_u64),
+                ) {
+                    (Some(Json::String(bundle)), Some(step)) => Ok(JobOf::Step {
+                        bundle: bundle.clone(),
+                        step: u32::try_from(step).map_err(|_| SAID.to_owned())?,
+                    }),
+                    _ => Err(SAID.to_owned()),
+                }
+            }
+            _ => Err(SAID.to_owned()),
+        }
+    }
+
+    /// As a draft gives it to the page.
+    pub fn json(&self) -> Json {
+        match self {
+            JobOf::Run(run) => json!(run),
+            JobOf::Example(id) => json!({"example": id}),
+            JobOf::Step { bundle, step } => json!({"bundle": bundle, "step": step}),
+        }
+    }
+
+    /// The recorded call it names: its action and its arguments.
+    fn call(&self, store: &Store) -> Result<(String, Vec<record::Argument>), String> {
+        match self {
+            JobOf::Run(run) => {
+                let run = RunId::parse(run).map_err(|_| "job_of names no run".to_owned())?;
+                let record = record_of(store, &run).map_err(|refused| refused.why)?;
+                let action = record.asked().action.clone().unwrap_or_default();
+                Ok((action, record.asked().arguments.clone()))
+            }
+            JobOf::Example(id) => {
+                if !whizbang_serve::play::saved::is_example_id(id) {
+                    return Err("job_of names no example of this store".to_owned());
+                }
+                let generation = store.snapshot().map_err(|_| busy().why)?;
+                let example = crate::play_saved::example_in(store, &generation, id)
+                    .ok_or("job_of names no example of this store")?;
+                Ok((example.action, example.arguments))
+            }
+            JobOf::Step { bundle, step } => {
+                let record = crate::play_bundles::step_record(store, bundle, *step)?;
+                let action = record.asked().action.clone().unwrap_or_default();
+                Ok((action, record.asked().arguments.clone()))
+            }
+        }
+    }
+
+    /// What it names, as a refusal says it: "that run", "that example", "that step".
+    fn what(&self) -> &'static str {
+        match self {
+            JobOf::Run(_) => "that run",
+            JobOf::Example(_) => "that example",
+            JobOf::Step { .. } => "that bundle's step",
+        }
+    }
+}
+
+/// The job a check of the use case `use_case` takes from the call `of` names (the page's
 /// `job_of`): the job a check of that use case was given, or the job the loop writes from
 /// the phrase of a removal. Never a job from the page.
-pub fn job_of(store: &Store, run: &str, use_case: &str) -> Result<Job, String> {
-    job_and_measuring_of(store, run, use_case).map(|(job, _)| job)
+pub fn job_of(store: &Store, of: &JobOf, use_case: &str) -> Result<Job, String> {
+    job_and_measuring_of(store, of, use_case).map(|(job, _)| job)
 }
 
 /// The same, and what a check of a use case measured first and offered its judge (its
-/// argument `set`), which a check run again keeps; none for a removal's job.
+/// argument `set`), which a check made again keeps; none for a removal's job.
 pub fn job_and_measuring_of(
     store: &Store,
-    run: &str,
+    of: &JobOf,
     use_case: &str,
 ) -> Result<(Job, Option<String>), String> {
-    let run = RunId::parse(run).map_err(|_| "job_of names no run".to_owned())?;
-    let record = record_of(store, &run).map_err(|refused| refused.why)?;
-    let action = record.asked().action.clone().unwrap_or_default();
+    let (action, arguments) = of.call(store)?;
     let job = if let Some(phrase) = PHRASED
         .contains(&action.as_str())
-        .then(|| text_argument(&record, "prompt"))
+        .then(|| text_of(&arguments, "prompt"))
         .flatten()
     {
         Job::from_json(&whizbang_rascal::checked::job(phrase))?
     } else if play_form::is_use_case(&action) {
-        let text = text_argument(&record, "job").ok_or("that run holds no job")?;
+        let text =
+            text_of(&arguments, "job").ok_or_else(|| format!("{} holds no job", of.what()))?;
         Job::from_json(text)?
     } else {
-        return Err("that run gives no job: it is no check and had no phrase".to_owned());
+        return Err(format!(
+            "{} gives no job: it is no check and had no phrase",
+            of.what()
+        ));
     };
     if job.use_case != use_case {
         return Err(format!(
-            "that run's job is of another use case than {use_case}"
+            "the job of {} is of another use case than {use_case}",
+            of.what()
         ));
     }
     let measuring = play_form::is_use_case(&action)
-        .then(|| text_argument(&record, whizbang_core::recipe::SET).map(str::to_owned))
+        .then(|| text_of(&arguments, whizbang_core::recipe::SET).map(str::to_owned))
         .flatten();
     Ok((job, measuring))
 }
@@ -489,22 +575,25 @@ impl Tasks<'_> {
             &record.asked().arguments,
             &Given::of(record),
             used,
-            Some(&record.identity().run),
+            Some(&JobOf::Run(record.identity().run.clone())),
         )
     }
 
     /// A draft of the task `action` from these arguments and inputs, as a run's record
-    /// holds them, with each backend in `used` written out where the arguments chose none;
-    /// for a check of a use case, the run whose job it takes (`job_of`) when one is
-    /// given, else its job's words alone (an example's draft, whose run may be gone).
-    /// None when this build has no such task.
+    /// holds them, with each backend in `used` written out where the arguments chose none.
+    /// A draft left as it is makes the recorded call (plan m7, N1's pass, finding 4): for
+    /// a check of a use case, the call whose job it takes (`job_of`: the run, the example
+    /// or the bundle's step it was made from), whose words alone the form shows; for any
+    /// other task, what the record holds that no field shows (a recipe's `set`, `from` or
+    /// `until`, and the inputs of a run from a step), kept apart as `kept`. None when this
+    /// build has no such task.
     pub fn draft_of(
         &self,
         action: &str,
         arguments: &[record::Argument],
         inputs: &[Given],
         used: &BTreeMap<String, String>,
-        job_of: Option<&str>,
+        job_of: Option<&JobOf>,
     ) -> Option<Json> {
         let descriptor = self.descriptor(action)?;
         let mut draft = self.draft(descriptor);
@@ -521,8 +610,8 @@ impl Tasks<'_> {
             if let Some(brief) = &job.brief {
                 values.insert("brief".to_owned(), json!(brief));
             }
-            if let Some(run) = job_of {
-                draft.insert(JOB_OF.to_owned(), json!(run));
+            if let Some(of) = job_of {
+                draft.insert(JOB_OF.to_owned(), of.json());
             }
             let judge = text_of(arguments, "judge")
                 .map(str::to_owned)
@@ -531,7 +620,32 @@ impl Tasks<'_> {
                 values.insert("judge".to_owned(), json!(judge));
             }
         } else {
-            for field in play_form::fields_of(descriptor) {
+            let fields = play_form::fields_of(descriptor);
+            let shown = |name: &str| fields.iter().any(|field| field["name"] == name);
+            let mut kept = Map::new();
+            for argument in arguments {
+                if !shown(&argument.name) && descriptor.argument(&argument.name).is_some() {
+                    kept.insert(argument.name.clone(), argument_json(&argument.value));
+                }
+            }
+            for port in descriptor.inputs() {
+                let ids: Vec<Json> = (inputs.iter())
+                    .filter(|input| input.port == port.name())
+                    .map(|input| json!(input.id))
+                    .collect();
+                if shown(port.name()) || ids.is_empty() {
+                    continue;
+                }
+                let value = match port.count().max() {
+                    Some(1) => ids.into_iter().next().unwrap_or_default(),
+                    _ => Json::Array(ids),
+                };
+                kept.insert(port.name().to_owned(), value);
+            }
+            if !kept.is_empty() {
+                draft.insert("kept".to_owned(), Json::Object(kept));
+            }
+            for field in fields.iter() {
                 let Some(name) = field["name"].as_str() else {
                     continue;
                 };

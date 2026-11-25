@@ -642,7 +642,7 @@ pub fn open(store: &Store, id: &str, tasks: &Tasks<'_>) -> Result<Json, Refused>
             &example.arguments,
             &given,
             &example.backends,
-            None,
+            Some(&play_result::JobOf::Example(example.id.clone())),
         )
         .ok_or_else(|| Refused::new(422, "the example's inputs do not fit its task"))?;
     // Each backend the draft chose, apart: the host prepares each, and names those this

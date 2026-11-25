@@ -7,8 +7,10 @@ import { kitTone } from "./components/kitTone";
 import { SearchPalette, type SearchEntry } from "./components/SearchPalette";
 import { StatusBar } from "./components/StatusBar";
 import { TopBar } from "./components/TopBar";
+import { PICTURES_PAGE } from "./hooks";
 import { actionOf } from "./keyboard";
 import { hrefOf, parseRoute, type Route } from "./routes";
+import { asPicture, listLibrary } from "./saved";
 import { Bundles } from "./screens/bundles/Bundles";
 import { Chain } from "./screens/chain/Chain";
 import { CompareRuns } from "./screens/compare/CompareRuns";
@@ -147,10 +149,11 @@ export function App(props: AppProps) {
   const kits = Array.isArray(hello?.kits) ? hello.kits : [];
   const [pictures, setPictures] = useState<Picture[]>([]);
   useEffect(() => {
-    if (!searching || typeof props.client.listPictures !== "function") return;
+    if (!searching || typeof props.client.request !== "function") return;
     let live = true;
-    props.client.listPictures().then(
-      (found) => live && setPictures(found),
+    // Search lists Home's library, whatever door gave each picture (N1's pass, as finding 1).
+    listLibrary(props.client, "all", undefined, PICTURES_PAGE).then(
+      (page) => live && setPictures(page.pictures.map(asPicture)),
       () => undefined,
     );
     return () => {

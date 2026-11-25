@@ -979,6 +979,13 @@ step, and replays one run offline or live with its report; built as G1's designs
   with Start the chain and Delete, where the design has "Import only" and "Import and start
   the chain"; the chain's list of steps is its own page, and the workspace's draft names its
   step and shows each link, where the design puts the list beside the canvas.
+  *After N1's pass by hand:* a step's draft left as it is makes the call recorded, but for
+  its linked inputs: a check's `job_of` names the bundle and the step, so its job is read
+  from the bundle's record (the draft had rebuilt it from the brief, losing the
+  requirements), and what the record holds that no field shows is carried as `kept`; an
+  example's draft and Run again do the same (`play_result::JobOf`). The step's card names
+  each step by its task's title from the chain's place, and a live replay compares
+  `segment.txt` without what the backend read of its machine (ADR 0049, amended).
 
 ## N1. The note (small; the orchestrator's pass first)
 
@@ -987,6 +994,11 @@ step, and replays one run offline or live with its report; built as G1's designs
    surface of G1 used once as a person would; a bundle made in one playground, imported in
    another with the first store moved away, and its chain replayed. What it finds is fixed in
    its own pull request before the note, or written into the carry-over list with an owner.
+   *As it went (2026-11-25):* five findings fixed in one pull request (a field's library is
+   Home's; a live replay of an unchanged segment is reproduced; a chain's card names steps
+   by their titles; a step, an example or Run again left as it is makes the recorded call;
+   Bundle chain says what it saved), and five follow-ups owned by milestone 8 in the
+   carry-over list.
 2. **The note**, `docs/plans/m7-note.md`, in milestone 6's shape: the row's clauses each with
    its evidence (held by `scripts/tests/test-notes.sh`), the timing report by suite and by
    job, the spend (none), what moved to the carry-over list, and what a reader should not

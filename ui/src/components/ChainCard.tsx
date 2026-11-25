@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { ApiError, type Client } from "../api";
-import { bundleChain, draftOfStep, openStep, saveChain, showBundle, type BundleSummary, type ChainPlace, type OpenedStep } from "../bundles";
+import { bundleChain, draftOfStep, openStep, saveChain, showBundle, sizeWords, titlesOf, type BundleSummary, type ChainPlace, type OpenedStep } from "../bundles";
 import { localStore, saveDraft } from "../drafts";
 import { middle } from "../format";
 import { hrefOf } from "../routes";
@@ -16,6 +16,8 @@ export interface ChainCardProps {
   run: string;
   /** How this step's run ended. */
   outcome: string;
+  /** This step's task title, as its result names it. */
+  title?: string | null;
   go: (hash: string) => void;
 }
 
@@ -31,6 +33,8 @@ export function ChainCard(props: ChainCardProps) {
   const [blocked, setBlocked] = useState<OpenedStep | null>(null);
   const [busy, setBusy] = useState(false);
   const [stopped, setStopped] = useState(props.place.stopped);
+  // What Bundle the new chain saved, said under the card (N1's pass, finding 5).
+  const [saved, setSaved] = useState<string | null>(null);
   // Whether this store holds the run the last step replays: compared only then.
   const [held, setHeld] = useState(false);
   const digest = props.place.digest;
@@ -58,7 +62,15 @@ export function ChainCard(props: ChainCardProps) {
       live = false;
     };
   }, [original]);
-  const named = (at: number) => steps[at]?.title ?? steps[at]?.action ?? `step ${at + 1}`;
+  // Each step by its task's title, as the chain's page names it (plan m7, N1's pass, finding
+  // 3): the bundle's, else the titles the chain's place kept from it, else this result's own;
+  // never the step's number twice while the bundle is still being read.
+  const titles = bundle ? titlesOf(bundle) : (props.place.titles ?? []);
+  const named = (at: number): string | null => titles[at] ?? props.place.titles?.[at] ?? (at === props.step ? (props.title ?? null) : null);
+  const step = (at: number, joiner: string) => {
+    const name = named(at);
+    return name ? `${at + 1}${joiner}${name}` : `${at + 1}`;
+  };
   const last = props.step >= props.place.steps - 1;
   const proceed = () => {
     setBusy(true);
@@ -70,7 +82,7 @@ export function ChainCard(props: ChainCardProps) {
           setBlocked(opened);
           return;
         }
-        const draft = draftOfStep(opened, digest, Date.now());
+        const draft = draftOfStep(opened, digest, Date.now(), titles);
         saveDraft(localStore(), draft);
         props.go(hrefOf({ name: "kit", kit: draft.kit || "rascal", task: draft.task }));
       },
@@ -86,14 +98,24 @@ export function ChainCard(props: ChainCardProps) {
   };
   const bundleNew = () => {
     const runs = props.place.runs.filter((one): one is string => typeof one === "string");
+    const name = `chain-${runs[0] ?? "runs"}.whizbang-bundle`;
+    setSaved(null);
+    setProblem(null);
     bundleChain(props.client, runs).then(
-      (blob) => save(blob, `chain-${runs[0] ?? "runs"}.whizbang-bundle`),
+      (blob) => {
+        save(blob, name);
+        setSaved(`Saved ${name}: a chain of ${runs.length} ${runs.length === 1 ? "step" : "steps"}, ${sizeWords(blob.size)}.`);
+      },
       (error: unknown) => setProblem(error instanceof ApiError ? error.message : String(error)),
     );
   };
   const said = problem ? (
     <p class="field__error" role="alert">
       {problem}
+    </p>
+  ) : saved ? (
+    <p class="chain-card__line" role="status">
+      {saved}
     </p>
   ) : null;
   if (blocked?.stopped) {
@@ -131,7 +153,7 @@ export function ChainCard(props: ChainCardProps) {
                 ✓
               </span>
               <span class="chain-step__text">
-                <span class="chain-step__name">{`${at + 1} · ${named(at)}`}</span>
+                <span class="chain-step__name">{step(at, " · ")}</span>
                 <span class="chain-step__line mono">{run ? middle(run, 18) : "not run"}</span>
               </span>
             </li>
@@ -154,13 +176,13 @@ export function ChainCard(props: ChainCardProps) {
   return (
     <section class="chain-card" aria-label="The chain">
       <div class="chain-card__head">
-        <h2 class="chain-card__title">{`Step ${props.step + 1} · ${named(props.step)} ended`}</h2>
+        <h2 class="chain-card__title">{`Step ${step(props.step, " · ")} ended`}</h2>
         <span class="tag tag--done mono">ENDED</span>
       </div>
       <p class="chain-card__line">
         {stopped
           ? "You stopped this chain here. Its runs stay; open the chain to go on with it."
-          : `Its outputs go to step ${props.step + 2}, ${named(props.step + 1)}. Where one differs from the one recorded, you'll see both before that step runs.`}
+          : `Its outputs go to step ${step(props.step + 1, ", ")}. Where one differs from the one recorded, you'll see both before that step runs.`}
       </p>
       {stopped ? (
         <div class="chain-card__actions">

@@ -430,9 +430,10 @@ fn identity_of(value: &Json, what: &str) -> Result<ArtifactId, String> {
 /// shorthand: the candidate, the source, the references in order, the brief and the
 /// judge. A field the form does not have is refused.
 ///
-/// With `job`, the job a run of the store gives (`job_of`, plan m5, task W2, item 3:
-/// the job the loop writes from a removal's phrase, or a check's own job run again), the
-/// pictures fill its images by their roles, in its order, and no brief is taken beside it.
+/// With `job`, the job the call `job_of` names gives (plan m5, task W2, item 3: the job the
+/// loop writes from a removal's phrase, or a check's own job made again from its run, its
+/// example or its bundle's step; `play_result::JobOf`), the pictures fill its images by
+/// their roles, in its order, and no brief is taken beside it.
 pub fn use_case_call(
     use_case: &str,
     arguments: &Map<String, Json>,

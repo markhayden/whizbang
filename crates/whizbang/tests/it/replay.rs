@@ -1713,3 +1713,54 @@ fn a_steps_id_after_its_bundle_went_answers_only_its_own_request_and_another_as_
         other => panic!("{other:?}"),
     }
 }
+
+#[test]
+fn two_segment_diagnostics_that_differ_only_in_what_the_backend_read_of_its_machine_are_the_same() {
+    // N1's pass, finding 2: every live replay of a local SAM 3 segment differed in one
+    // place, the memory the GPU held when it answered, a reading of the machine that no
+    // replay can repeat, as it cannot repeat a time.
+    use std::collections::BTreeMap;
+    use whizbang_core::capability::recorded::SEGMENT_DIAGNOSTIC;
+    use whizbang_core::contract::replay::{Placed, differences};
+    let world = world("replay-readings", 1);
+    let removed = removal(&world);
+    let segment = (family(&world, removed.run().as_str()).into_iter())
+        .find(|record| record.asked().action.as_deref() == Some(whizbang_rascal::segment::NAME))
+        .expect("the removal segments");
+    let name = (segment.diagnostics().iter())
+        .map(|diagnostic| diagnostic.name().to_owned())
+        .find(|name| *name == format!("{}{SEGMENT_DIAGNOSTIC}", record::DIAGNOSTICS_PREFIX))
+        .expect("the segment run keeps its diagnostic under its name");
+    let said = |score: &str, backend: &str| Placed {
+        place: "the run".to_owned(),
+        record: segment.clone(),
+        kept: BTreeMap::from([(
+            name.clone(),
+            format!(
+                "instances 1\nmask sha256:{} score {score} box 10 20 30 40 iou 0.97\n{backend}",
+                "a".repeat(64)
+            )
+            .into_bytes(),
+        )]),
+    };
+    let was = said("0.95", "backend 1 instances on mps; 4269 MiB on the GPU\n");
+    // Another reading, another device, a line more or none: the same answer.
+    for now in [
+        "backend 1 instances on mps; 6371 MiB on the GPU\n",
+        "backend 1 instances on cuda\nbackend dispatch 0123\n",
+        "",
+    ] {
+        let found = differences(std::slice::from_ref(&was), &[said("0.95", now)]);
+        assert!(found.is_empty(), "{now}: {found:?}");
+    }
+    // What the backend answered is compared still: a score that moved is a difference.
+    let found = differences(
+        std::slice::from_ref(&was),
+        &[said(
+            "0.96",
+            "backend 1 instances on mps; 4269 MiB on the GPU\n",
+        )],
+    );
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].what, format!("diagnostic {name}"));
+}

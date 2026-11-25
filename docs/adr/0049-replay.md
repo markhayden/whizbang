@@ -1,7 +1,9 @@
 # 0049. Replay
 
 Status: accepted. Builds on ADR 0048 (`run/7`'s `replayed`); changes ADR 0007's admission
-record (an admission of a replayed run names the run it replays)
+record (an admission of a replayed run names the run it replays). Amended 2026-11-25 after
+plan m7's N1 pass by hand: what a backend reads of its machine is not compared ("What it
+compares")
 Date: 2026-11-25
 Spec: section 3, "The execution contract", "Request identity" and "What every run
 records"; section 6, "Spend" ("After a crash, nothing that was dispatched is replayed
@@ -212,8 +214,25 @@ checklist and verdict, and a loop's attempts. A run's measurements are what its 
 handed back, which the record does not keep: they are compared in the diagnostic each
 action that measures keeps them in (`edge_similarity.json`, `details`'s `measured.json`),
 byte for byte, each run id read as its place. Numbers are compared exactly: a replay runs
-the same build on the same pixels. Times, run ids and request ids are not compared. The
-report is **reproduced**, **differs** (each difference by place, first first, at most 256
+the same build on the same pixels. Times, run ids and request ids are not compared.
+
+**Nor are the readings of the machine that answered** (amended after plan m7's N1 pass by
+hand, where every live replay of an unchanged local SAM 3 segment was reported to differ in
+one place: the last line of its `segment.txt`, which read 4,269 MiB on the GPU for the run
+and 6,371 MiB for its replay, its masks and scores the same). What a segmenter's backend
+says of itself follows its masks in `segment.txt`, each line after `backend `: the device
+it ran on, the memory the GPU held, whatever else that backend reports of its own state.
+Those are readings of the machine at the moment it answered; a live replay cannot repeat
+them any more than it can repeat a time, and they say nothing of the answer. So
+`segment.txt` is compared without its `backend ` lines, and its instance count, each mask's
+identity, score, box and predicted IoU, and a `failed` line are compared byte for byte as
+before. An offline replay gives the recorded lines back unchanged, so it loses nothing by
+this. No other diagnostic a shipped action keeps holds such a reading: a fill keeps the
+picture it was painted, and a check its exchanges, whose provider ids are left out already;
+the journal, where progress is said, is not compared. A diagnostic that comes to hold one is
+named here when it does, never left out silently.
+
+The report is **reproduced**, **differs** (each difference by place, first first, at most 256
 with a count of the rest), **diverged** or **unanswerable** (from the note).
 
 ### Its request id, and its fingerprint
@@ -298,7 +317,9 @@ missing input; a replay of a user's recipe or tool file from a bundle.
 - **The comparison** reads each record's groups as its JSON (the action, its version and
   arguments; its inputs, outputs, outcome, steps, judge, plan, start, findings and
   attempts) with every amount of money left out, and each diagnostic but the journal and
-  the note, by its bytes, a text with each run id of either family read as its place.
+  the note, by its bytes, a text with each run id of either family read as its place;
+  `diagnostics/segment.txt` without its `backend ` lines (`without_readings`, after N1's
+  pass; "What it compares").
   Differences are ordered as the runs ended, each run's steps before the run, so the first
   is where the replay first went otherwise.
 - **`runs stats`** leaves replayed families out through `--replayed exclude|include|only`

@@ -32,7 +32,7 @@ use whizbang_serve::play::Refused;
 use whizbang_serve::play::bundles::Bundles;
 use whizbang_serve::play::history::Document;
 
-use crate::play_result::{Given, record_in};
+use crate::play_result::{Given, JobOf, record_in};
 use crate::playing::Playground;
 
 fn busy() -> Refused {
@@ -171,6 +171,24 @@ pub fn bind(place: u32, recorded: usize, outputs: &[String]) -> Result<String, S
         .get(place as usize)
         .cloned()
         .ok_or_else(|| format!("made no output there at place {place}"))
+}
+
+/// The record of a step of a bundle the store holds, as the bundle keeps it: what a
+/// check made from that step takes its job from (`JobOf::Step`).
+pub fn step_record(store: &Store, digest: &str, step: u32) -> Result<RunRecord, String> {
+    let digest = digest_of(digest).map_err(|refused| refused.why)?;
+    let generation = store.snapshot().map_err(|_| busy().why)?;
+    let manifest = match bundle::manifest_of(store, &generation, &digest) {
+        Some(Ok(manifest)) => manifest,
+        Some(Err(_)) => return Err("the bundle's manifest cannot be read".to_owned()),
+        None => return Err(no_bundle().why),
+    };
+    let at = (manifest.steps.get(step as usize)).ok_or("the bundle has no step of that number")?;
+    let stored = Stored::of_bundle(store, &generation, &digest).map_err(|_| no_bundle().why)?;
+    match stored.record(&at.run) {
+        Ok(Some(record)) => Ok(record),
+        _ => Err("the bundle's record of the step does not read".to_owned()),
+    }
 }
 
 impl Playground {
@@ -553,7 +571,10 @@ impl Bundles for Playground {
                 &record.asked().arguments,
                 &given,
                 &BTreeMap::new(),
-                None,
+                Some(&JobOf::Step {
+                    bundle: digest.to_string(),
+                    step,
+                }),
             )
             .ok_or_else(|| {
                 Refused::new(

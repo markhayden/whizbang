@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "preact/test-utils";
 import { ApiError, type Client, type Hello, type Prepared } from "../api";
+import { draftOf, localStore, saveDraft } from "../drafts";
 import { HOSTILE, click, input, render } from "../test/render";
 import { bindingsOf, offered, Workspace } from "./workspace/Workspace";
 
@@ -326,7 +327,100 @@ describe("the workspace", () => {
     expect(offered(listed, "mask", listed[0]!.id, false)).toEqual(listed);
     expect(offered(listed, "location", given, true)).toEqual(listed);
   });
+
+  it("lists Home's library in a picture field, whatever door gave each picture, a page at a time", async () => {
+    // N1's pass, finding 1: the field listed the playground's uploads alone.
+    const first = `sha256:${"61".repeat(32)}`;
+    const second = `sha256:${"62".repeat(32)}`;
+    const counts = { all: 2, named: 0, inputs: 1, imported: 1 };
+    const request = vi.fn((_: string, path: string) =>
+      Promise.resolve(path.includes("after=") ? { pictures: [{ id: second, name: null, runs: 0, imported: true }], more: false, counts } : { pictures: [{ id: first, name: "porch.png", runs: 1, imported: false }], more: true, counts }),
+    );
+    const made = { ...client(() => ({ ready: false })), request } as unknown as Client;
+    const view = render(<Workspace kit="squint" task="source-fidelity" hello={CHECKING} client={made} />);
+    click(view.all<HTMLButtonElement>("button").find((one) => one.textContent === "From the library")!);
+    await flush();
+    expect(request).toHaveBeenCalledWith("GET", "/api/library?show=all&limit=48");
+    expect(made.listPictures).not.toHaveBeenCalled();
+    expect(view.all(".library .picture-tile").map((tile) => tile.getAttribute("title"))).toEqual(["porch.png"]);
+    click(view.all<HTMLButtonElement>("button").find((one) => one.textContent === "More pictures")!);
+    await flush();
+    expect(request).toHaveBeenLastCalledWith("GET", `/api/library?show=all&limit=48&after=${encodeURIComponent(first)}`);
+    expect(view.all(".library .picture-tile")).toHaveLength(2);
+    expect(view.all<HTMLButtonElement>("button").some((one) => one.textContent === "More pictures")).toBe(false);
+    view.unmount();
+  });
+
+  it("sends what a draft's call held that no field shows, and its job until the brief changes", async () => {
+    // N1's pass, finding 4: a chain's step, an example or Run again left as it is makes
+    // the recorded call.
+    const candidate = `sha256:${"71".repeat(32)}`;
+    const source = `sha256:${"72".repeat(32)}`;
+    const step = { bundle: `sha256:${"73".repeat(32)}`, step: 1 };
+    saveDraft(localStore(), { kit: "squint", task: "source-fidelity", values: { candidate, source, brief: "the words" }, pictures: {}, at: 1, jobOf: step, kept: { until: "judge" } });
+    const made = client(() => ({ ready: false }));
+    const view = render(<Workspace kit="squint" task="source-fidelity" hello={CHECKING} client={made} />);
+    await later(300);
+    expect(made.prepare).toHaveBeenLastCalledWith("source-fidelity", { until: "judge", candidate, source, job_of: step });
+    expect(view.text()).toContain("sent as it was: until.");
+    expect(view.text()).toContain("requirements and all");
+    input(view.get<HTMLInputElement>("#field-brief"), "other words");
+    await later(300);
+    expect(made.prepare).toHaveBeenLastCalledWith("source-fidelity", { until: "judge", candidate, source, brief: "other words" });
+    view.unmount();
+  });
+
+  it("lets go of a run from a step once a picture changes, and keeps the settings", async () => {
+    // The review of #311: a recipe run from a step carries `from` and the inputs that step
+    // was given, made from the picture given then; a new picture must not be paired with them.
+    const candidate = `sha256:${"81".repeat(32)}`;
+    const source = `sha256:${"82".repeat(32)}`;
+    const mask = `sha256:${"83".repeat(32)}`;
+    const kept = { set: "judge.second_look=on", from: "judge", from_details_measured: mask };
+    saveDraft(localStore(), { kit: "squint", task: "source-fidelity", values: { candidate, source }, pictures: {}, at: 1, kept });
+    const made = client(() => ({ ready: false }));
+    const view = render(<Workspace kit="squint" task="source-fidelity" hello={CHECKING} client={made} />);
+    await later(300);
+    expect(made.prepare).toHaveBeenLastCalledWith("source-fidelity", { ...kept, candidate, source });
+    expect(view.text()).toContain("sent as it was: set, from, from_details_measured.");
+    expect(view.text()).toContain("settings stay");
+    // Words changed: the run from a step stays, as nothing it was made from changed.
+    input(view.get<HTMLInputElement>("#field-brief"), "the words");
+    await later(300);
+    expect(made.prepare).toHaveBeenLastCalledWith("source-fidelity", { ...kept, candidate, source, brief: "the words" });
+    // The picture cleared: `from` and every `from_*` go, `set` stays.
+    click(view.all<HTMLButtonElement>(".picture-field button").find((one) => one.textContent === "Clear")!);
+    await later(300);
+    expect(made.prepare).toHaveBeenLastCalledWith("source-fidelity", { set: kept.set, source, brief: "the words" });
+    expect(view.text()).toContain("sent as it was: set.");
+    // The draft kept in the browser carries the same rule.
+    expect(draftOf(localStore(), "source-fidelity")?.kept).toEqual({ set: kept.set });
+    view.unmount();
+  });
 });
+
+const CHECKING: Hello = {
+  version: "0.1.0",
+  kits: [
+    {
+      id: "squint",
+      name: "Squint",
+      tasks: [
+        {
+          name: "source-fidelity",
+          title: "Check an edit",
+          kind: "recipe",
+          fields: [
+            { name: "candidate", kind: "picture", required: true, artifact: "image" },
+            { name: "source", kind: "picture", required: true, artifact: "image" },
+            { name: "brief", kind: "text", required: false },
+          ],
+        },
+      ],
+    },
+  ],
+  backends: [],
+};
 
 async function flush() {
   for (let at = 0; at < 6; at += 1) await later(0);

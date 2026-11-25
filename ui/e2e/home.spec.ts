@@ -60,6 +60,15 @@ test("home lists the pictures of a store filled from the command line", async ({
       await expect(card).toContainText("First used");
       await expect(card).toContainText("INPUT OF 1 RUN");
       await expect(card.locator(".picked__run")).toContainText("Remove what you name");
+      // A field's library is Home's (N1's pass, finding 1): both pictures, though neither
+      // was given through the playground.
+      await page.goto(`${host.address}#/k/rascal/remove_prompt`);
+      await page.locator(".workspace__picture").getByRole("button", { name: "From the library" }).first().click();
+      const library = page.locator(".workspace__picture .library .picture-tile");
+      await expect(library).toHaveCount(2);
+      await library.first().click();
+      await expect(page.locator(".workspace__picture .picture-field__chosen")).toHaveCount(1);
+      await expect(library).toHaveCount(0);
     } finally {
       await stopHost(child);
     }

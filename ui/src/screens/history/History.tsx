@@ -14,7 +14,7 @@ import { useArtifact } from "../../hooks";
 import { hrefOf } from "../../routes";
 import { localStore } from "../../drafts";
 import { readPin, savePin, type Pin } from "../../saved";
-import { bundleChain, checkChain, linksOf, type BundleSummary } from "../../bundles";
+import { bundleChain, checkChain, linksOf, sizeWords, type BundleSummary } from "../../bundles";
 import { save } from "./calls";
 import { RESULTS, figuresOf, listRuns, type Figures, type HistoryRun } from "./calls";
 
@@ -164,6 +164,8 @@ export function History(props: HistoryProps) {
   const [picked, setPicked] = useState<string[]>([]);
   const [checked, setChecked] = useState<BundleSummary | null>(null);
   const [chainProblem, setChainProblem] = useState<string | null>(null);
+  // What Bundle chain saved, said once the panel closes (plan m7, N1's pass, finding 5).
+  const [chainSaved, setChainSaved] = useState<string | null>(null);
   const checking = useRef(0);
   useEffect(() => {
     const mine = (checking.current += 1);
@@ -178,11 +180,15 @@ export function History(props: HistoryProps) {
   const pick = (run: string) => setPicked((now) => (now.includes(run) ? now.filter((one) => one !== run) : now.length >= 16 ? now : [...now, run]));
   const bundlePicked = () => {
     if (!props.client || !checked) return;
+    const name = `chain-${picked[0] ?? "runs"}.whizbang-bundle`;
+    const steps = picked.length;
+    setChainSaved(null);
     bundleChain(props.client, picked).then(
       (blob) => {
-        save(blob, `chain-${picked[0] ?? "runs"}.whizbang-bundle`);
+        save(blob, name);
         setChaining(false);
         setPicked([]);
+        setChainSaved(`Saved ${name}: a chain of ${steps} ${steps === 1 ? "step" : "steps"}, ${sizeWords(blob.size)}. Take it into another playground on its Bundles page.`);
       },
       (error: unknown) => setChainProblem(error instanceof ApiError ? error.message : String(error)),
     );
@@ -255,6 +261,11 @@ export function History(props: HistoryProps) {
             Bundle chain
           </Button>
         </section>
+      ) : null}
+      {chainSaved && !chaining ? (
+        <p class="history__saved" role="status">
+          {chainSaved}
+        </p>
       ) : null}
       {problem ? (
         <p class="history__problem" role="alert">

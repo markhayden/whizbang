@@ -130,7 +130,11 @@ the first where the replay first went otherwise, `diverged` or `unanswerable` (e
 its bundle's entry is gone, asked by the run's id or `--bundle-digest` (`--bundle <file>`
 reads the file to find its digest, so the file must be there). A replay that ran and whose
 report cannot be made prints `report: not made` and exits 3. A live replay compares what
-the judge said, never the ids a provider gives each answer. Every run of a replayed family names the run it replays, in its record and its
+the judge said, never the ids a provider gives each answer, and what a segmenter answered,
+never what its backend read of the machine as it answered: the lines after `backend ` at
+the end of `segment.txt` (the device, the memory the GPU held) are left out of the
+comparison, so a live replay of an unchanged segment on the same model is `reproduced`.
+Every run of a replayed family names the run it replays, in its record and its
 admission; `runs stats` leaves replayed families out unless `--replayed include` or `only`
 is given.
 

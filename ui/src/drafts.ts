@@ -19,12 +19,35 @@ export interface Draft {
   at: number;
   /** The result this draft was sent from (plan m5, task W2, item 3). */
   sent?: Sent;
-  /** A check run again takes the job of the run it came from (task W2, item 4). */
-  jobOf?: string;
+  /**
+   * A check made again takes the job of the call it came from (task W2, item 4): a run, an
+   * example or a bundle's step, read by the host; the form shows its words alone.
+   */
+  jobOf?: JobOf;
+  /**
+   * What the recorded call held that no field shows (a recipe's `set`, `from` or `until`),
+   * sent as it was, so a draft left as it is makes the recorded call (plan m7, N1's pass).
+   */
+  kept?: Record<string, unknown>;
   /** The saved example this draft was opened from, and its choices that fell back (plan m7, U1). */
   example?: FromExample;
   /** The chain's step this draft makes again (plan m7, U2): run with the step named. */
   chain?: FromChain;
+}
+
+/** Where the host reads a check's job: a run's id, an example, or a bundle's step. */
+export type JobOf = string | { example: string } | { bundle: string; step: number };
+
+/** What a draft the host opened carries beside its fields' values. */
+export interface Carried {
+  job_of?: JobOf | null;
+  kept?: Record<string, unknown> | null;
+}
+
+/** A draft's `jobOf` and `kept`, from what the host opened it with. */
+export function carriedOf(opened: Carried): Pick<Draft, "jobOf" | "kept"> {
+  const kept = opened.kept && typeof opened.kept === "object" && Object.keys(opened.kept).length > 0 ? { kept: { ...opened.kept } } : {};
+  return { ...(opened.job_of ? { jobOf: opened.job_of } : {}), ...kept };
 }
 
 /** Where a draft opened from a chain's step came from: the bundle, the step, its links. */
@@ -34,6 +57,8 @@ export interface FromChain {
   of: number;
   /** Each linked input bound to the new run's output, beside the one recorded. */
   bindings: Array<{ port: string; from: { step: number; port: string }; run: string; now: string; recorded: string; differs: boolean }>;
+  /** Each step's task title, from the bundle, kept with the chain's place when it runs. */
+  titles?: Array<string | null>;
 }
 
 /** Where a draft that Send to opened came from: the run, its kit and task, and when. */
@@ -46,7 +71,7 @@ export interface Sent {
   /** The fields it filled, tagged FROM <KIT>. */
   fields: string[];
   /** The run whose job the check takes (the loop's, from a removal's phrase). */
-  jobOf?: string;
+  jobOf?: JobOf;
 }
 
 export interface Store {

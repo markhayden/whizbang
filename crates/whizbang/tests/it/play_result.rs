@@ -383,3 +383,37 @@ fn an_unchecked_run_says_which_variable_its_judge_needs_and_never_the_core_words
         "{said}"
     );
 }
+
+#[test]
+fn run_again_left_as_it_is_makes_the_recorded_call_with_what_no_field_shows() {
+    // N1's pass, finding 4, for Run again: a recipe run until a step holds `until`, which
+    // no field shows; and a check's job, of which the form shows the words.
+    let kitted = Kitted::new("result-again-same");
+    let asked = json!({"image": kitted.picture(35), "prompt": "the cup",
+                       "backend": "default", "filler": "default", "until": "select"});
+    let run = ran(&kitted, "remove_prompt", &asked);
+    let again = record(&kitted, &run)["again"].clone();
+    assert_eq!(again["kept"], json!({"until": "select"}), "{again}");
+    let made = ran(
+        &kitted,
+        "remove_prompt",
+        &crate::play_chain::as_the_page_sends(&again),
+    );
+    assert_eq!(
+        crate::play_chain::arguments(&kitted, &made),
+        crate::play_chain::arguments(&kitted, &run)
+    );
+    let chain = crate::play_chain::chain_in(&kitted, 36);
+    let again = record(&kitted, &chain.check)["again"].clone();
+    assert_eq!(again["job_of"], chain.check.as_str(), "{again}");
+    let made = ran(
+        &kitted,
+        "source-fidelity",
+        &crate::play_chain::as_the_page_sends(&again),
+    );
+    let made = crate::play_chain::arguments(&kitted, &made);
+    assert_eq!(
+        crate::play_chain::judge_written_out(&made),
+        crate::play_chain::arguments(&kitted, &chain.check)
+    );
+}
