@@ -1,7 +1,7 @@
 # Plan: milestone E, evidence and edit quality
 
-Draft 10, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
-note of milestone 7), after nine outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
+Draft 11, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
+note of milestone 7), after ten outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
 quality". Its first slice ran beside milestone 5 (`docs/plans/e1-judge-format-loop.md`,
 `docs/plans/e1-note.md`) and chose the default judge and kept the submission format on
 descriptive evidence. This plan is the rest of the milestone: every unverified tool and
@@ -482,7 +482,16 @@ reported in its pull request. Every test that calls a provider or a real model i
     labels; a test holds that a set under another root runs and scores, that a label folder at
     or below the sets' folder is refused, and that no record or receipt names the root's path.
     `gating::a_set_under_another_root_is_scored_and_its_path_is_nowhere`.
-12. **A matrix run past its forecast.** `eval matrix --past-forecast` prints the forecast and
+12. **A tool's method frozen in an arm.** An arm may name a tool file with its method
+    (`{ tool = "regions", method = "eomt" }`, or `C+regions@eomt`), in the arm's identity;
+    `eval matrix` and `eval run --gate` pass it to `check`, which calls the tool file with that
+    method and refuses a judge's call that names another; an arm that names none runs the
+    tool's default method. So one matrix can hold `C+regions` under R2's method and the
+    study's `C+regions@eomt` as two arms. Today an arm carries tool names alone (`matrix.rs`,
+    `Arm`) and the judge's arguments reach the tool (`check.rs`).
+    `matrix::an_arm_freezes_a_tools_method_in_its_identity`;
+    `check::a_judge_cannot_override_the_method_its_arm_froze`.
+13. **A matrix run past its forecast.** `eval matrix --past-forecast` prints the forecast and
     runs anyway, each run admitted against the allowance as any run is, so the allowance,
     which is enforced, holds the matrix and not the forecast, which is advice (section 6). A
     run refused for the allowance ends the matrix with the cells left to run named by count;
@@ -546,9 +555,21 @@ names the source path and commit.
    families; `grade`, `restyle`, `mirror`, `rotate`, `crop`, `tilt`, `zoom`, `keystone`,
    `edit`, delivery damage; the fake generator; the draft label from the construction alone,
    no judge and no tool run on an item.
-2. **Generators** `fal`, `openai` and `gemini`, the three approved for this use in squint, at
-   the recipients `SPEC.md` section 15 approves (fal, OpenAI's API, Google's API). Keys come
-   from the environment by name; the toolkit never writes one.
+2. **Generators** `fal`, `openai` and `gemini`, squint's three, whose providers are among
+   the recipients the owner has approved (fal, OpenAI's API, Google's API). Keys come from
+   the environment by name; the toolkit never writes one. **Checked egress** (section 10):
+   squint's generators call `urllib` directly and fetch the address fal returns unchecked
+   (`generators.py`). Here every request, and every download of a generated picture, goes
+   only to an origin the whizbang config approves as a recipient for the data class it
+   carries (`[egress.recipients]`, read by the builder: prompts and the family's own
+   generated pictures, no user data); a redirect is followed only to such an origin, each hop
+   checked; anything else is refused before it is sent. Before the first build the
+   orchestrator lists the exact origins the three generators use (fal's image endpoint and
+   the origin its pictures are served from, OpenAI's and Google's image endpoints) against
+   the approved config; any that is not already approved for these data classes is asked of
+   the owner ("What the owner provides"), and nothing is generated through it until then.
+   `scripts/tests/test-sets.sh: a generator's request or download to an origin the config does
+   not approve is refused, and so is a redirect to one`.
 3. **The public and the private halves.** `build` writes the set folder (manifest, families,
    jobs with pinned pictures) and, to `--owner <owner storage>`, the construction record,
    draft labels and a contact sheet per family. For a blind set the plan itself lives in owner
@@ -848,7 +869,7 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    default judge, and source fidelity with it (A0, item 4); no pick, or inconclusive, leaves
    both unverified ("I need", item 3). ADR 0044 is amended by the outcome.
 4. **The run**, in E's store ("Spend", "Stores"), past its forecast with `--past-forecast`
-   (M1, item 12); sets by `--root <owner storage>`, pictures by `eval sets fetch --from
+   (M1, item 13); sets by `--root <owner storage>`, pictures by `eval sets fetch --from
    <owner storage>`, labels by `--labels <owner storage>`. The cap of one call: the largest
    one-check bound among the five judges under the dearest arm, plus a cent.
 5. **What each receipt decides.**
@@ -881,8 +902,8 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
 7. **Tier 2, only on the owner's yes** ("I need", item 2), added to the matrix before it is
    frozen: the study's one comparison that excluded zero, `regions` on `gemini-3.8-flash`,
    with two repetitions of each of C and `C+regions` on `confirm-v1` (the carry-over row on the
-   study's one repetition). It repeats the study's tool, so `regions` runs with
-   `method = eomt`, squint's class disagreement on the fixed-class segmenter, whatever R2
+   study's one repetition). It repeats the study's tool, so `regions` runs as
+   `C+regions@eomt` (M1, item 12), squint's class disagreement on the fixed-class segmenter, whatever R2
    chose: that method is kept in the code until this round has run, even if it lost R2, and
    removed after. Its result answers the study's claim only, and is reported apart from
    `regions`' own gate, which uses R2's method. Also: Flash beside Haiku and Terra in each
@@ -916,7 +937,8 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    it inconclusive; else `preferred` when it has at least one decided pair and wins reach two
    thirds of the decided pairs; else `not_worse` when losses (with every `neither`) stay under
    a third of every pair picked; else `worse`. With `same` picks it can be reached at any size
-   of round: of 8 pairs picked, 4 wins, 2 losses and 2 `same` is `not_worse`; 7 `neither` and 1
+   of round: of 8 pairs picked, 3 wins, 2 losses and 3 `same` is `not_worse` (wins 3 of 5
+   decided, under two thirds; losses 2 of 8, under a third); 7 `neither` and 1
    loss is `worse`; 8 `same` is `not_worse`, the recipe alike to the reference.
    `decode::not_worse_is_reached_when_same_picks_keep_losses_under_a_third`;
    `decode::a_same_pick_does_not_make_a_version_2_round_inconclusive`;
@@ -1315,7 +1337,7 @@ builder's total, less what E's store has settled and holds unresolved, as `whizb
 status` gives them on the day; the orchestrator gives the owner that figure and the command.
 A forecast is advice, not a limit (section 6): R4's matrix forecasts about 55 at the study's
 rates doubled, more than will be left when it starts, and `eval matrix` refuses a forecast
-past what is left; so M1, item 12 lets the orchestrator run a matrix past its forecast with
+past what is left; so M1, item 13 lets the orchestrator run a matrix past its forecast with
 the allowance alone holding it, a stopped matrix resuming.
 
 ## Dependencies
@@ -1391,6 +1413,8 @@ P1 ──────────────────┘
   and the picks of its pages.
 - **T2, only if needed**: a yes to a new origin for the segmenter's files, if they are not
   served from `https://huggingface.co`.
+- **B1, only if needed**: a yes to any origin of the three generators that the config does
+  not already approve for prompts and generated pictures.
 
 ## What the owner is told, not asked
 
@@ -1596,7 +1620,7 @@ against the code; all were right and taken.
 1. **Major: nothing enforced E's cap while a round ran.** Right (`harness.rs` holds a store's
    allowance, not a milestone's). Taken: every paid round runs in one new store whose
    allowance is the cap less the builder's own cap, so admission enforces it at each request;
-   M1, item 12 lets a matrix run past its forecast with the allowance holding it. "I need",
+   M1, item 13 lets a matrix run past its forecast with the allowance holding it. "I need",
    item 1 asks for that one allowance.
 2. **Minor: the judge rule's comparisons were miscounted.** Right (`judges.rs` gives every
    eligible judge an interval, the best included). Taken: five, counted conservatively; at
@@ -1655,4 +1679,19 @@ pinned source and the plan; all were right and taken.
 3. **Major: the study's repeat could test a different `regions`.** Right. Taken: the repeat
    runs squint's method on the fixed-class segmenter, kept for it whatever R2 chose, and its
    result is reported apart from `regions`' own gate.
+
+### Review round 10
+
+On draft 10, by the Codex CLI. Verdict: revise. Round 9's fixes held but for its finding 3,
+completed by this round's finding 1. Three findings: 2 majors, 1 minor. Each was checked
+against the code and the pinned source; all were right and taken.
+
+1. **Major: nothing could freeze `regions`' method in a matrix.** Right (`matrix.rs`, `Arm`;
+   `check.rs` passes the judge's arguments). Taken: M1, item 12, a method frozen in an arm's
+   identity and passed to the tool, a judge refused another, with tests.
+2. **Major: the builder's generators had no checked egress.** Right (squint's `generators.py`
+   calls `urllib` and follows fal's address). Taken: B1, item 2, every request, download and
+   redirect held to origins the config approves for their data class, the exact origins
+   listed before the first build, any not approved asked of the owner.
+3. **Minor: P0's worked example was `preferred`.** Right. Taken: 3 wins, 2 losses, 3 `same`.
 
