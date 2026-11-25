@@ -679,6 +679,12 @@ pinned commit, as tool files in ADR 0032's shape under `pack/tools/`, beside `pe
    `per_subject` does: `outline`, one minus the overlap of the subject's two shapes, the
    largest over the job's subjects; `regions`, the score of its strongest region, zero when
    it finds none. Subjects are read by `per_subject`'s `subjects_of`, shared, not copied.
+   As built (the first pull request): the rule lives in the pack's module
+   `whizbang_pack.subjects`, which `outline` imports; `per_subject.py` keeps its own copy
+   until its next measured run, because its record's rung 2 names the digest of the file as
+   measured, and `test_outline.Subjects` holds the two to one rule. The records' examples are
+   answered by the pack's fake model and run under `just test-pack`; SAM 3's readings of the
+   tools are R2's.
 4. **The rules' parts regions need** (the carry-over row on what the port of the use cases
    left). `[hints]` (`regions`' `preserve` and `ignore` classes) and the checklist's evidence
    items from a tool's regions (`checklist.rs`, `ingest`) are ported with tests. A profile and

@@ -5048,6 +5048,10 @@
       "mark": "experimental"
     },
     {
+      "tool": "outline",
+      "mark": "experimental"
+    },
+    {
       "tool": "tiles",
       "mark": "experimental"
     }

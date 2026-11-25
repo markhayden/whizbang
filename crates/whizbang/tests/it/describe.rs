@@ -492,6 +492,7 @@ fn each_tool_the_upper_rungs_apply_to_shows_its_mark_from_its_record() {
             ("segment", "experimental"),
             ("fill", "experimental"),
             ("per_subject", "experimental"),
+            ("outline", "experimental"),
             ("tiles", "experimental"),
         ]
     );

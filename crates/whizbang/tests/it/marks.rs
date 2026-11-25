@@ -73,7 +73,7 @@ fn every_record_that_states_a_mark_is_shown_by_describe() {
         );
     }
     assert_eq!(stating.len(), shown.len());
-    assert_eq!(shown.len(), 18);
+    assert_eq!(shown.len(), 19);
 }
 
 #[test]
@@ -103,19 +103,24 @@ fn the_control_carries_no_mark() {
 
 #[test]
 fn tiles_and_per_subject_are_shown_experimental() {
-    // Neither is an action: a tool file and a detail, each offered only when a run names it.
-    assert_eq!(marks::OFFERED, ["per_subject", "tiles"]);
+    // None is an action: two tool files and a detail, each offered only when a run names
+    // it (`outline`: plan mE, task T1).
+    assert_eq!(marks::OFFERED, ["per_subject", "outline", "tiles"]);
     for tool in marks::OFFERED {
         assert_eq!(marks::of(tool), Some(Mark::Experimental), "{tool}");
     }
     let shown = shown();
-    let tail: Vec<(&str, &str)> = shown[shown.len() - 2..]
+    let tail: Vec<(&str, &str)> = shown[shown.len() - 3..]
         .iter()
         .map(|(t, m)| (t.as_str(), m.as_str()))
         .collect();
     assert_eq!(
         tail,
-        [("per_subject", "experimental"), ("tiles", "experimental")]
+        [
+            ("per_subject", "experimental"),
+            ("outline", "experimental"),
+            ("tiles", "experimental")
+        ]
     );
     // `tiles.md` opens its part with the mark in bold, as every other record does.
     let record = std::fs::read_to_string(records().join("tiles.md")).unwrap();
@@ -125,7 +130,7 @@ fn tiles_and_per_subject_are_shown_experimental() {
     assert!(
         text.ends_with(
             "tools a run offers a judge only when it names them:\n  per_subject  \
-             [experimental]\n  tiles  [experimental]\n"
+             [experimental]\n  outline  [experimental]\n  tiles  [experimental]\n"
         ),
         "{text}"
     );

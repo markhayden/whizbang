@@ -866,6 +866,7 @@ class Imports(unittest.TestCase):
                 "owlv2_sam2.py",
                 "proto.py",
                 "sam3.py",
+                "subjects.py",
                 "tool_worker.py",
                 "worker.py",
             ],
