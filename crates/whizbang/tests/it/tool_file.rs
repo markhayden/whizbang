@@ -122,7 +122,8 @@ impl Kind for Finding {
             .priced(whizbang_core::capability::Price::at_most(1000.0).unwrap());
         let mut fake = FakeSegmenter::new()
             .declared_as(declaration)
-            .finding("circle", [330, 110, 510, 290]);
+            .finding("circle", [330, 110, 510, 290])
+            .finding("pool", [32, 24, 96, 72]);
         if let Some(barriers) = &self.0 {
             fake = fake.stopping_at(barriers, "segment");
         }
@@ -394,6 +395,21 @@ fn a_tool_returns_regions_within_its_bounds() {
     let unlocated = json!({"readings": [{"subject": "pool", "values": {"covered": 0.5}}]});
     let fine = tool_file::checked(&plain, &unlocated, &frames()).unwrap();
     assert!(fine.to_json(&plain).get("regions").is_none());
+    // The tool file the pack ships, `outline`, declares regions and their bounds.
+    let shipped = include_bytes!("../../../../pack/tools/outline.py");
+    let outline = Declaration::parse(shipped).unwrap();
+    assert!(outline.regions());
+    assert_eq!(
+        (outline.max_regions, outline.max_region_label_bytes),
+        (Some(6), Some(120))
+    );
+    assert_eq!(
+        (outline.primary.as_str(), outline.bindings.as_slice()),
+        (
+            "one_minus_iou",
+            ["source", "candidate"].map(String::from).as_slice()
+        )
+    );
     // Through a run: the tool locates a region on the candidate it was handed, in that
     // image's pixels, and the run's diagnostic records it.
     let code = r#"def run(context):
