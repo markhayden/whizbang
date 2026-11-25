@@ -81,14 +81,14 @@ fn sphere(x: u32, y: u32) -> [u8; 4] {
     const H: u32 = 512;
     // A line is the column or row nearest a multiple of 30 degrees: W / 12 and H / 6
     // pixels apart.
-    let on_meridian = x % (W / 12) == 0;
-    let on_parallel = y % (H / 6) == 0;
+    let on_meridian = x.is_multiple_of(W / 12);
+    let on_parallel = y.is_multiple_of(H / 6);
     let [r, g, b] = if x == 0 || x == W - 1 {
         [220, 30, 30]
     } else if on_meridian || on_parallel {
         [40, 40, 60]
     } else if y < H * 20 / 180 {
-        if (x / 8 + y / 8) % 2 == 0 {
+        if (x / 8 + y / 8).is_multiple_of(2) {
             [250, 240, 60]
         } else {
             [30, 30, 90]
