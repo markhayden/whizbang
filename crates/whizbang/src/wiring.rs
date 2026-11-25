@@ -1297,7 +1297,10 @@ pub fn runner(registry: Registry, store: Arc<Store>, over: &Over) -> Result<Engi
         .with_wrapper(Place::Meter, Arc::new(meter))
         // A replay's root is an action this build ships, never a recipe file's or a
         // tool file's (plan m7, task R1; ADR 0049).
-        .with_shipped(crate::bundling::shipped()?);
+        .with_shipped(crate::bundling::shipped()?)
+        // A live replay of a family that called a tool file is held to the files the
+        // config names now, at their revisions.
+        .with_tool_files(tool_revisions(over)?);
     // The lease stands in its place wherever there is a models directory to take
     // a hold in. Without one no local backend is ready ([`Over::inventory`]), so
     // no request ever comes to the place.
@@ -1308,6 +1311,18 @@ pub fn runner(registry: Registry, store: Arc<Store>, over: &Over) -> Result<Engi
         }
         None => engine,
     })
+}
+
+/// Each tool file the config names, with its revision now (`sha256:` and the digest of
+/// its bytes); none that cannot be read.
+fn tool_revisions(over: &Over) -> Result<std::collections::BTreeMap<String, String>, String> {
+    use whizbang_squint::files::FileTools;
+    let Some(files) = over.tool_files()? else {
+        return Ok(std::collections::BTreeMap::new());
+    };
+    Ok((files.listed().into_iter())
+        .filter_map(|tool| Some((tool.name.clone(), files.revision(&tool.name)?)))
+        .collect())
 }
 
 impl Over {

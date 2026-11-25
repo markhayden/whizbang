@@ -175,6 +175,29 @@ fn a_bundle_imports_into_an_empty_store_and_survives_its_archive_and_first_store
     // A reader holds the generation it read, and a prune leaves it: this one is done.
     drop(reader);
 
+    // Its chain, replayed offline here, with the first store and the file gone: each step
+    // is reproduced, nothing called (plan m7, task R1).
+    for step in ["0", "1"] {
+        let replayed = whizbang(
+            &[
+                "runs",
+                "replay",
+                "--bundle-digest",
+                &digest.hex(),
+                "--step",
+                step,
+                "--store",
+            ],
+            &[&other],
+        );
+        assert_eq!(replayed.code, Some(0), "{}{}", replayed.out, replayed.err);
+        assert!(
+            replayed.out.contains("report: reproduced"),
+            "{}",
+            replayed.out
+        );
+    }
+
     // Deleted, and pruned: its names go, and so does what only it named.
     let deleted = ok(&["bundle", "delete", &digest.hex(), "--store"], &[&other]);
     assert!(
@@ -182,8 +205,14 @@ fn a_bundle_imports_into_an_empty_store_and_survives_its_archive_and_first_store
         "{deleted}"
     );
     assert!(entry_names(&other, &digest).is_empty());
-    let objects = std::fs::read_dir(other.join("objects")).unwrap().count();
-    assert_eq!(objects, 0, "{deleted}");
+    // What only the bundle named is gone; the replays' runs keep what they hold.
+    let reader = Reader::open(&other, Arc::new(RealFs)).unwrap();
+    assert_eq!(
+        reader.snapshot().unwrap().runs().len() > 0,
+        true,
+        "{deleted}"
+    );
+    drop(reader);
     let again = whizbang(
         &["bundle", "delete", &digest.to_string(), "--store"],
         &[&other],

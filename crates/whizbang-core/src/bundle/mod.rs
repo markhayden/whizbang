@@ -321,6 +321,25 @@ mod type_name {
     }
 }
 
+/// The digest of a bundle's file, read as a stream and nothing else: its SHA-256, which
+/// names it. A replay of a file looks its request id up by it before it imports anything
+/// (ADR 0049).
+pub fn file_digest(mut read: impl std::io::Read) -> std::io::Result<Digest> {
+    use sha2::Digest as _;
+    let mut hashed = sha2::Sha256::new();
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        let count = read.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        hashed.update(&buffer[..count]);
+    }
+    let mut bytes = [0u8; 32];
+    bytes.copy_from_slice(&hashed.finalize());
+    Ok(Digest::from_bytes(bytes))
+}
+
 /// A run's member names: `runs/<run>/` and what follows.
 pub(crate) fn run_member(run: &str, name: &str) -> String {
     format!("{RUNS_PREFIX}{run}/{name}")

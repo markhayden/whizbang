@@ -72,6 +72,16 @@ impl Added {
         let _ = self.1.set(run.to_owned());
     }
 
+    /// Takes these names as resolved: what a run reads besides the generation it was
+    /// admitted against, as a child's committed names are (a replay of a bundle's step,
+    /// whose inputs are the bundle's files; ADR 0049).
+    pub(super) fn given(&self, names: &[(String, Entry)]) {
+        let mut held = self.names();
+        for (name, entry) in names {
+            held.resolved.insert(name.clone(), entry.clone());
+        }
+    }
+
     /// The first run of this run's tree, once it is said.
     pub(super) fn first(&self) -> Option<&str> {
         self.1.get().map(String::as_str)

@@ -60,6 +60,22 @@ fn open(file: &Path) -> std::io::Result<File> {
     Ok(opened)
 }
 
+/// The bundle file at `file`, opened to read as [`read`] opens it.
+pub fn opened(file: &Path) -> Result<File, String> {
+    open(file).map_err(|why| format!("cannot read {}: {why}", file.display()))
+}
+
+/// Checks the bundle at `file`, then brings it into this store, held to write, in one
+/// publication: what `runs replay --bundle` does before it replays a step of it.
+pub fn import_into(
+    store: &whizbang_core::store::Store,
+    file: &Path,
+) -> Result<bundle::Imported, String> {
+    read(file)?;
+    let reopen = || open(file).map(std::io::BufReader::new);
+    bundle::import(store, reopen).map_err(|why| why.to_string())
+}
+
 /// Reads and checks the bundle at `file`.
 pub fn read(file: &Path) -> Result<Checked, String> {
     let opened = open(file).map_err(|why| format!("cannot read {}: {why}", file.display()))?;
@@ -69,6 +85,13 @@ pub fn read(file: &Path) -> Result<Checked, String> {
 /// What `bundle show` prints of a checked bundle: its digest, its steps with their links,
 /// how many files it carries, and what it withholds, with why.
 pub fn shown(checked: &Checked) -> String {
+    shown_deciding(checked, &[])
+}
+
+/// As [`shown`], with whether each step replays as this build decides it from the step's
+/// records (ADR 0049): what is printed, and the manifest's claim beside it where the two
+/// differ.
+pub fn shown_deciding(checked: &Checked, decided: &[(bool, Option<String>)]) -> String {
     let manifest = &checked.manifest;
     let mut text = format!(
         "bundle: {}\nwritten by: whizbang {}\nbytes: {}\nmembers: {}\nsteps: {}\n",
@@ -78,7 +101,7 @@ pub fn shown(checked: &Checked) -> String {
         checked.members.len(),
         manifest.steps.len()
     );
-    text.push_str(&steps_text(manifest));
+    text.push_str(&steps_text(manifest, decided));
     text.push_str(&format!("files: {}\n", manifest.artifacts.len()));
     text.push_str(&withheld_text(&manifest.withheld));
     text
@@ -86,16 +109,30 @@ pub fn shown(checked: &Checked) -> String {
 
 /// Each step: its run, its action and version, whether it is replayable, how many runs
 /// its family has, and each input, an identity or the earlier output it took.
-fn steps_text(manifest: &Manifest) -> String {
+fn steps_text(manifest: &Manifest, decided: &[(bool, Option<String>)]) -> String {
     let mut text = String::new();
     for (at, step) in manifest.steps.iter().enumerate() {
         let action = step.action.as_deref().unwrap_or("(unknown action)");
         let version = step.version.as_deref().unwrap_or("(unknown version)");
-        let replayable = match (&step.replayable, &step.why) {
-            (true, _) => "replayable".to_owned(),
-            (false, why) => format!(
+        let said = |replayable: bool, why: &Option<String>| match replayable {
+            true => "replayable".to_owned(),
+            false => format!(
                 "not replayable: {}",
                 why.as_deref().unwrap_or("no reason given")
+            ),
+        };
+        let claimed = said(step.replayable, &step.why);
+        let replayable = match decided.get(at) {
+            None => claimed,
+            Some((replayable, why)) if *replayable == step.replayable => said(*replayable, why),
+            Some((replayable, why)) => format!(
+                "{} (its manifest says {})",
+                said(*replayable, why),
+                if step.replayable {
+                    "replayable"
+                } else {
+                    "not replayable"
+                }
             ),
         };
         text.push_str(&printable(&format!(
@@ -154,7 +191,67 @@ fn withheld_text(withheld: &[Withheld]) -> String {
 
 /// `bundle show`: reads and checks the bundle at `file`, reading nothing into a store.
 pub fn show(file: &Path) -> Result<String, String> {
-    Ok(shown(&read(file)?))
+    let checked = read(file)?;
+    let decided = decided(file, &checked.manifest)?;
+    Ok(shown_deciding(&checked, &decided))
+}
+
+/// Whether each step of a checked bundle replays, decided by this build from the step's
+/// records, never from the manifest's claim (ADR 0049, "What is replayed"): a root run of
+/// an action this build ships, at its version, whose family has no interrupted run and
+/// whose record kept its admission.
+pub fn decided(file: &Path, manifest: &Manifest) -> Result<Vec<(bool, Option<String>)>, String> {
+    use whizbang_core::contract::record::{INTERRUPTED, RunRecord};
+    let shipped = shipped()?;
+    let mut records: BTreeMap<String, RunRecord> = BTreeMap::new();
+    let mut reader =
+        bundle::tar::Reader::new(std::io::BufReader::new(opened(file)?), bundle::MAX_BYTES);
+    while let Some(head) = reader.next_head().map_err(|why| why.to_string())? {
+        let bytes = reader.bytes(&head).map_err(|why| why.to_string())?;
+        let Some(run) = (head.name.strip_prefix(bundle::RUNS_PREFIX))
+            .and_then(|rest| rest.strip_suffix("/record"))
+        else {
+            continue;
+        };
+        if let Ok(record) = RunRecord::from_bytes(&bytes) {
+            records.insert(run.to_owned(), record);
+        }
+    }
+    let decide = |step: &bundle::Step| -> (bool, Option<String>) {
+        let Some(root) = records.get(&step.run) else {
+            return (false, Some("its record is not in the bundle".to_owned()));
+        };
+        let interrupted = (step.runs.iter())
+            .filter_map(|run| records.get(run))
+            .any(|record| (record.outcome().error.as_ref()).is_some_and(|e| e.kind == INTERRUPTED));
+        if interrupted {
+            return (
+                false,
+                Some("a run of its family was interrupted".to_owned()),
+            );
+        }
+        if root.identity().parent.is_some() {
+            return (false, Some("it is a run another run called".to_owned()));
+        }
+        let asked = root.asked();
+        match (&asked.action, &asked.version) {
+            (Some(action), Some(version)) => match shipped.get(action) {
+                Some(ships) if ships == version => (true, None),
+                Some(ships) => (
+                    false,
+                    Some(format!(
+                        "this build ships {action} at version {ships}, not {version}"
+                    )),
+                ),
+                None => (
+                    false,
+                    Some(format!("{action} is not an action this build ships")),
+                ),
+            },
+            _ => (false, Some("its record lost its admission".to_owned())),
+        }
+    };
+    Ok(manifest.steps.iter().map(decide).collect())
 }
 
 /// `bundle import`: checks the bundle at `file`, then brings it into the store at
