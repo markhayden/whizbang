@@ -91,6 +91,29 @@ same writer, whose output for its short names is the same bytes.
   withheld still bundles; its offline replay says, before it starts, which step cannot be
   answered and why (ADR 0049).
 
+**The manifest's fields, as B1's second pull request built them** (`crates/whizbang-core/src/bundle/`).
+Each step also lists `runs`, its family's run ids, the root first: the members a step
+brings are named by it, so "every member the manifest names" covers each run's record, and
+a record of a recovered family that its parent does not list is still named. A step's
+`inputs` are its record's, in order, each `{"port", "place", "artifact", "from"}` with
+exactly one of the last two set; `replayable` and `why` say what replay may do. An entry
+of `artifacts` is `{"file", "artifact", "type", "of"}`, each use `{"run", "as": "input" |
+"output", "port", "place"}`. An entry of `withheld` is tagged by `what`: `opaque_part`,
+`picture`, `diagnostic`, `fill_answer`, `cached_check`, or `artifact` (an input or an output
+whose file the store no longer holds), each with the run it is of and `why`. A picture is
+withheld when no image the bundle carries has its pixels: an exchange names a picture by
+its pixels alone, and the writer looks among the bundle's images, not the whole store. The
+writer holds the bundle in memory while it writes it, refusing it as soon as what it has
+gathered would be over either bound, so it holds at most its bound; and it reads back what
+it wrote before handing it out. The reader holds one member at a time. The core's import
+reads a file twice, once to check it and once to stage each member, held to the digests the
+first reading found; `whizbang bundle import` checks it once more before it opens the store,
+so a refused bundle makes no store. The manifest has one spelling: it is read strictly, a
+key twice refused, and must be the bytes the writer would write of it, so a near-copy of a
+bundle is not another bundle of the same runs. A file member must be the file of some run's
+input or output. A member's padding must be zeros, and nothing but zeros may follow the
+archive's end.
+
 **What a bundle may hold, and what replays.** A bundle carries data, never code. A step
 whose action is one this build ships (`whizbang describe`) is replayable. A step of a user's
 recipe file or of an experimental tool file is carried as evidence, marked `not

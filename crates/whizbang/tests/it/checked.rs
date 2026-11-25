@@ -379,14 +379,16 @@ impl Kit {
         };
         let entries: Vec<Json> = (setup.answers.iter())
             .map(|answers| {
-                // A turn that calls a tool is played as it is written; anything else
-                // is the submission of a turn that submits.
-                let call = match answers.get("tool_call") {
-                    Some(_) => answers.clone(),
-                    None => json!({"tool_call": {"id": "s1", "name": "submit_verdict",
-                                   "arguments": answers}}),
+                // A turn that calls a tool is played as it is written, and so is one
+                // whose parts are written whole (`{"parts": […]}`); anything else is
+                // the submission of a turn that submits.
+                let parts = match (answers.get("tool_call"), answers.get("parts")) {
+                    (Some(_), _) => json!([answers]),
+                    (None, Some(parts)) => parts.clone(),
+                    (None, None) => json!([{"tool_call": {"id": "s1",
+                                   "name": "submit_verdict", "arguments": answers}}]),
                 };
-                json!({"turn": {"parts": [call], "stop": "tool_use", "usage": null,
+                json!({"turn": {"parts": parts, "stop": "tool_use", "usage": null,
                        "request_id": null}})
             })
             .collect();

@@ -982,49 +982,25 @@ pub fn report(root: &Path, run: &RunId, title: Option<&str>) -> Result<String, S
     Ok(out)
 }
 
-/// One file of a tar archive: its header and its bytes, padded to a block.
-fn tar_file(out: &mut Vec<u8>, name: &str, bytes: &[u8], mtime: u64) {
-    let mut header = [0u8; 512];
-    let name = name.as_bytes();
-    header[..name.len().min(100)].copy_from_slice(&name[..name.len().min(100)]);
-    let octal = |field: &mut [u8], value: u64| {
-        let text = format!("{value:0width$o}\0", width = field.len() - 1);
-        field.copy_from_slice(text.as_bytes());
-    };
-    octal(&mut header[100..108], 0o644);
-    octal(&mut header[108..116], 0);
-    octal(&mut header[116..124], 0);
-    octal(&mut header[124..136], bytes.len() as u64);
-    octal(&mut header[136..148], mtime);
-    header[148..156].copy_from_slice(b"        ");
-    header[156] = b'0';
-    header[257..263].copy_from_slice(b"ustar\0");
-    header[263..265].copy_from_slice(b"00");
-    let sum: u32 = header.iter().map(|b| u32::from(*b)).sum();
-    let text = format!("{sum:06o}\0 ");
-    header[148..156].copy_from_slice(text.as_bytes());
-    out.extend_from_slice(&header);
-    out.extend_from_slice(bytes);
-    let pad = (512 - bytes.len() % 512) % 512;
-    out.extend(std::iter::repeat_n(0u8, pad));
-}
-
 /// The run's archive, a tar file: `record.json`, its record as `runs export` writes it;
 /// `report.html`; and under `outputs/` each output as the artifact export writes it,
 /// its canonical file, named by its port and type, and each picture beside it as a PNG.
-/// No name in it comes from the store but a port's, which keeps the rule for names.
+/// No name in it comes from the store but a port's, which keeps the rule for names. It is
+/// written by the core's ustar writer, the one a bundle is written by (ADR 0048), every
+/// member's time the run's end.
 pub fn archive(root: &Path, run: &RunId, title: Option<&str>) -> Result<Vec<u8>, String> {
     let shelf = Shelf::open(root)?;
     let record = shelf
         .record(run.as_str())
         .ok_or_else(|| "the store holds no record of that run".to_owned())?;
     let mtime = record.time().end_ms / 1000;
-    let mut out = Vec::new();
+    let mut out = whizbang_core::bundle::tar::Writer::new(mtime);
+    let mut tar_file = |name: &str, bytes: &[u8]| out.add(name, bytes).map_err(|e| e.to_string());
     let mut line = record.to_bytes().trim_ascii_end().to_vec();
     line.push(b'\n');
-    tar_file(&mut out, "record.json", &line, mtime);
+    tar_file("record.json", &line)?;
     let report = report(root, run, title)?;
-    tar_file(&mut out, "report.html", report.as_bytes(), mtime);
+    tar_file("report.html", report.as_bytes())?;
     let mut named = std::collections::BTreeSet::new();
     for (at, output) in record.outputs().iter().enumerate() {
         let plain: String = (output.port.chars())
@@ -1043,12 +1019,7 @@ pub fn archive(root: &Path, run: &RunId, title: Option<&str>) -> Result<Vec<u8>,
             continue;
         };
         let kind = output.artifact_type.name();
-        tar_file(
-            &mut out,
-            &format!("outputs/{port}.{kind}"),
-            &held.to_bytes(),
-            mtime,
-        );
+        tar_file(&format!("outputs/{port}.{kind}"), &held.to_bytes())?;
         let png = match held.as_ref() {
             Artifact::Image(image) => image
                 .pixels(&shelf.limits)
@@ -1064,9 +1035,8 @@ pub fn archive(root: &Path, run: &RunId, title: Option<&str>) -> Result<Vec<u8>,
             _ => None,
         };
         if let Some(png) = png {
-            tar_file(&mut out, &format!("outputs/{port}.png"), &png, mtime);
+            tar_file(&format!("outputs/{port}.png"), &png)?;
         }
     }
-    out.extend(std::iter::repeat_n(0u8, 1024));
-    Ok(out)
+    Ok(out.finish())
 }

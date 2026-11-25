@@ -738,7 +738,7 @@ model ran.
    its answer), read by the tests of this build and every later one, so a later change of
    format must keep reading it.
 
-- [ ] Done when: `bundle::the_same_runs_make_the_same_bytes_twice`,
+- [x] Done when: `bundle::the_same_runs_make_the_same_bytes_twice`,
   `bundle::a_bundle_reads_back_whole_with_every_member_checked`,
   `bundle::a_member_named_absolutely_with_dot_dot_twice_or_as_a_link_is_refused_and_nothing_imported`,
   `bundle::a_member_not_named_by_the_manifest_or_a_named_one_missing_is_refused`,

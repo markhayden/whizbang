@@ -1,6 +1,7 @@
 //! The core of whizbang: what every tool, backend and door shares.
 
 pub mod artifact;
+pub mod bundle;
 pub mod capability;
 pub mod config;
 pub mod contract;

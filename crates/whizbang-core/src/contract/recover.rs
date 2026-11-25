@@ -493,6 +493,14 @@ impl Remover {
         self.store.collect_unused_imports(older_than_ms, now_ms)
     }
 
+    /// Lets go of a bundle's or an example's entry whole, in one publication
+    /// ([`crate::bundle::delete`]; ADR 0048).
+    pub fn let_go_of_entry(&self, entry: &str) -> store::Result<Published> {
+        let mut publication = self.store.begin()?;
+        publication.let_go_of_entry(entry)?;
+        publication.publish()
+    }
+
     /// Removes what nothing needs ([`Store::prune`]).
     pub fn prune(&self) -> store::Result<Pruned> {
         self.store.prune()

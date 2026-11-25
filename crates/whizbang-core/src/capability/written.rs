@@ -740,6 +740,51 @@ pub fn read_exchange(
     })
 }
 
+/// An opaque part a stored exchange keeps without its body: its adapter, the digest of
+/// its body and the body's length (ADR 0009).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WithheldPart {
+    pub adapter: String,
+    pub digest: Digest,
+    pub bytes: u64,
+}
+
+/// What a stored exchange names that is not in it (ADR 0048, "withheld"): each opaque
+/// part kept without its body, and the pixel digest of each picture it names, the
+/// messages' then the answer's, in order. It refuses only what is not an exchange of
+/// this kind and version, or is over [`EXCHANGE_MAX_BYTES`].
+pub fn named_outside(bytes: &[u8]) -> Result<(Vec<WithheldPart>, Vec<PixelDigest>), Unread> {
+    let read: ExchangeWire = document(bytes, EXCHANGE_MAX_BYTES, "exchange", EXCHANGE)?;
+    let (mut withheld, mut pictures) = (Vec::new(), Vec::new());
+    let mut look = |parts: Vec<PartWire>| {
+        for part in parts {
+            match part {
+                PartWire::Image(image) => pictures.push(image.pixels),
+                PartWire::ToolResult { images, .. } => {
+                    pictures.extend(images.into_iter().map(|image| image.pixels));
+                }
+                PartWire::OpaqueWithheld {
+                    adapter,
+                    digest,
+                    bytes,
+                } => withheld.push(WithheldPart {
+                    adapter,
+                    digest,
+                    bytes,
+                }),
+                _ => {}
+            }
+        }
+    };
+    for message in read.messages {
+        look(message.parts);
+    }
+    if let AnswerWire::Turn(turn) = read.answer {
+        look(turn.parts);
+    }
+    Ok((withheld, pictures))
+}
+
 /// One part of a stored exchange, as it is shown to a person (plan m5, task W3, item 3):
 /// never made into a part of a conversation that could be sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
