@@ -10,7 +10,7 @@ check=scripts/check-sign-in.sh
 # --- The repo itself. The script tests are part of `just check-full`, which `just ci` runs,
 # and this one is among those the local `just check` runs on any change to the crates'
 # sources (scripts/script-tests-local.sh), so this is where both refuse.
-grep -q -x -F 'check-full: fmt-check clippy graph deny test-scripts docs-check ui-check timing test-pack' justfile ||
+grep -q -x -F 'check-full: fmt-check clippy graph deny test-scripts docs-check ui-check timing-fast timing-sweeps test-pack' justfile ||
   fail "justfile: check-full runs the script tests, and this check with them"
 grep -q -E '^part=".*scripts/tests/test-sign-in\.sh' scripts/script-tests-local.sh ||
   fail "scripts/script-tests-local.sh: the local check runs this test on a change to the crates' sources"

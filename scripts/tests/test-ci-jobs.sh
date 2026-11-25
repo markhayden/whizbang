@@ -34,11 +34,13 @@
 #   first part;
 # - since November 2026: the fast tests are split in two, each under the limit of 300
 #   seconds, because with all of them in `check (macos-15)` its test time came to 225 to
-#   271 seconds: the first part runs `timing-fast` in the place of `timing`, and the jobs
-#   `sweeps (<runner>)` run the rest, `timing-sweeps`, set up as `check` is, with no
-#   condition but the one that puts Linux's scratch folders in memory. `check` and
-#   `check-full` still run `timing`, every test. That the two parts are the whole is held
-#   by scripts/tests/test-timing.sh, where the split is named (scripts/timing.sh);
+#   271 seconds: the first part runs `timing-fast`, and the jobs `sweeps (<runner>)` run
+#   the rest, `timing-sweeps`, set up as `check` is, with no condition but the one that
+#   puts Linux's scratch folders in memory. Since the owner's decision of 2026-11-24
+#   `check` and `check-full` run the same two parts, `ui-check`, then `timing-fast`, then
+#   `timing-sweeps`, each held to the 300, and not `timing`, the whole at once. That the
+#   two parts are the whole is held by scripts/tests/test-timing.sh, where the split is
+#   named (scripts/timing.sh);
 # - since 2026-11-22: the script tests are split in two shards on each runner, the jobs
 #   `scripts (<runner>, shard <k>)`, each handed WHIZBANG_SCRIPT_SHARD=<k>/2
 #   (scripts/tests/run.sh), because with all of them in `scripts (macos-15)` that job took
@@ -79,33 +81,35 @@ check_justfile() { # <justfile>
   done
   [ " $(deps "$file" check)" = "$local_check" ] ||
     { echo "justfile: check must depend on exactly what check-full does, in its order, with test-scripts-local for test-scripts:$local_check"; return 1; }
+  # The fast tests: the two parts in `check`, as in CI, each one run of the one script, and
+  # never the whole at once (the owner's decision of 2026-11-24); the whole by hand.
+  case " $(deps "$file" check-full) " in *" timing "*)
+    echo "justfile: check-full must not run timing, the whole at once: it runs the two parts"; return 1 ;; esac
   # `ci`, with `check-full` written out, the script tests left out, and the fast tests'
-  # first part in the place of the whole (the second is the job `sweeps`).
+  # second part left out (it is the job `sweeps`).
   for word in $(deps "$file" ci); do
     if [ "$word" = check-full ]; then
       for word in $(deps "$file" check-full); do
-        [ "$word" = timing ] && word=timing-fast
-        [ "$word" = test-scripts ] || want="$want $word"
+        case "$word" in test-scripts | timing-sweeps) ;; *) want="$want $word" ;; esac
       done
     else
       want="$want $word"
     fi
   done
   [ " $(deps "$file" ci-without-scripts) $(deps "$file" ci-release) e2e" = "$want" ] ||
-    { echo "justfile: ci-without-scripts, then ci-release, then e2e must be exactly what ci runs, in its order, without test-scripts and with timing-fast for timing:$want"; return 1; }
-  # The fast tests: the whole in `check`, and its two parts, each one run of the one script.
-  case " $(deps "$file" check-full) " in *" timing "*) ;; *)
-    echo "justfile: check-full must run timing, every fast test"; return 1 ;; esac
+    { echo "justfile: ci-without-scripts, then ci-release, then e2e must be exactly what ci runs, in its order, without test-scripts and timing-sweeps:$want"; return 1; }
+  # Each of the fast tests' parts is one run of the one script; the whole is by hand.
   [ "$(body "$file" timing)" = "scripts/timing.sh" ] ||
     { echo "justfile: timing must run exactly: scripts/timing.sh"; return 1; }
   [ "$(body "$file" timing-fast)" = "scripts/timing.sh --part fast" ] ||
     { echo "justfile: timing-fast must run exactly: scripts/timing.sh --part fast"; return 1; }
   [ "$(body "$file" timing-sweeps)" = "scripts/timing.sh --part sweeps" ] ||
     { echo "justfile: timing-sweeps must run exactly: scripts/timing.sh --part sweeps"; return 1; }
-  # The interface: checked in the fast tier before the timing table counts its seconds;
-  # built and checked by the one script; the Chrome tier by its own.
-  case " $(deps "$file" check-full) " in *" ui-check timing "*) ;; *)
-    echo "justfile: check-full must run ui-check just before timing, which counts its seconds"; return 1 ;; esac
+  # The interface: checked in the fast tier just before the part fast, whose table counts
+  # its seconds, and then the part sweeps; built and checked by the one script; the
+  # Chrome tier by its own.
+  case " $(deps "$file" check-full) " in *" ui-check timing-fast timing-sweeps "*) ;; *)
+    echo "justfile: check-full must run ui-check, then timing-fast, which counts its seconds, then timing-sweeps"; return 1 ;; esac
   [ "$(body "$file" ui-check)" = "scripts/ui.sh check" ] ||
     { echo "justfile: ui-check must run exactly: scripts/ui.sh check"; return 1; }
   [ "$(body "$file" ui-build)" = "scripts/ui.sh build" ] ||
@@ -484,10 +488,10 @@ fourth '          tool: just@1.59.0' '^          tool: '
 fourth delete '^        run: rustup show$'
 
 # --- The interface and the Chrome tier (plan m5, task U1).
-changed check_justfile justfile 's/^\(check-full: .*\) ui-check timing /\1 timing ui-check /;s/^\(check: .*\) ui-check timing /\1 timing ui-check /;s/^\(ci-without-scripts: .*\) ui-check timing-fast /\1 timing-fast ui-check /' \
-  "check-full must run ui-check just before timing"
+changed check_justfile justfile 's/^\(check-full: .*\) ui-check timing-fast /\1 timing-fast ui-check /;s/^\(check: .*\) ui-check timing-fast /\1 timing-fast ui-check /;s/^\(ci-without-scripts: .*\) ui-check timing-fast /\1 timing-fast ui-check /' \
+  "check-full must run ui-check, then timing-fast"
 changed check_justfile justfile 's/^\(check-full: .*\) ui-check /\1 /;s/^\(check: .*\) ui-check /\1 /;s/^\(ci-without-scripts: .*\) ui-check /\1 /' \
-  "check-full must run ui-check just before timing"
+  "check-full must run ui-check, then timing-fast"
 changed check_justfile justfile 's/^\(ci-without-scripts: .*\) ui-check /\1 /' "ci-without-scripts, then ci-release, then e2e must be exactly"
 changed check_justfile justfile 's/^\(ci: .*\) e2e$/\1/' "ci-without-scripts, then ci-release, then e2e must be exactly"
 changed check_justfile justfile 's/^    scripts\/ui.sh check$/    scripts\/ui.sh build/' "ui-check must run exactly"
@@ -513,13 +517,18 @@ expect_fail "scripts without Node" "scripts must set up Node" check_workflow "$t
 
 # --- The fast tests in two parts.
 # The whole back in the first part, the first part with nothing of the fast tests, a part
-# run another way, or the whole gone from check.
+# run another way, the whole back in check, a part gone from check, or the parts out of
+# order there.
 changed check_justfile justfile 's/^\(ci-without-scripts: .*\) timing-fast /\1 timing /' "ci-without-scripts, then ci-release, then e2e must be exactly"
 changed check_justfile justfile 's/^\(ci-without-scripts: .*\) timing-fast /\1 /' "ci-without-scripts, then ci-release, then e2e must be exactly"
 changed check_justfile justfile 's/^    scripts\/timing.sh --part sweeps$/    scripts\/timing.sh --part fast/' "timing-sweeps must run exactly"
 changed check_justfile justfile 's/^    scripts\/timing.sh --part fast$/    scripts\/timing.sh/' "timing-fast must run exactly"
 changed check_justfile justfile 's/^    scripts\/timing.sh$/    scripts\/timing.sh --part fast/' "timing must run exactly"
-changed check_justfile justfile 's/^\(check-full: .*\) timing /\1 timing-fast /;s/^\(check: .*\) timing /\1 timing-fast /' "check-full must run timing"
+changed check_justfile justfile 's/^\(check-full: .*\) timing-fast timing-sweeps /\1 timing /;s/^\(check: .*\) timing-fast timing-sweeps /\1 timing /' "check-full must not run timing"
+changed check_justfile justfile 's/^\(check-full: .*\) timing-sweeps /\1 timing-sweeps timing /;s/^\(check: .*\) timing-sweeps /\1 timing-sweeps timing /' "check-full must not run timing"
+changed check_justfile justfile 's/^\(check-full: .*\) timing-sweeps /\1 /;s/^\(check: .*\) timing-sweeps /\1 /' "then timing-sweeps"
+changed check_justfile justfile 's/^\(check-full: .*\) timing-fast timing-sweeps /\1 timing-sweeps timing-fast /;s/^\(check: .*\) timing-fast timing-sweeps /\1 timing-sweeps timing-fast /' "then timing-sweeps"
+changed check_justfile justfile 's/^\(check-full: .*\) timing-sweeps /\1 /' "check must depend on exactly what check-full does"
 # The job gone, elsewhere, skipped, allowed to fail, given more time, running something
 # else, with another condition, or set up another way.
 changed check_workflow "$workflow" 's/^  sweeps:$/  slow:/' "the jobs must be check, scripts, release, e2e, sweeps, secrets and ci"
