@@ -71,6 +71,8 @@ export interface RunRecordView {
   reserved?: number | null;
   send_to?: OpenDraft[];
   again?: OpenDraft | null;
+  /** A replay, or a chain's step: the run it makes again (plan m7, task U2). */
+  replayed?: { run: string; bundle: { digest: string; step: number } | null; mode: "offline" | "live" } | null;
 }
 
 /** What `GET /api/runs/{id}/command` answers. */

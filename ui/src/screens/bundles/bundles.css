@@ -1,0 +1,27 @@
+/* Bundles and a chain (plan m7, task U2): the list beside one bundle's card, the drop
+   frame, a refusal, and a chain's page. */
+.bundles__head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--spacing-4); flex-wrap: wrap; }
+.bundles__body { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(320px, 420px); gap: var(--spacing-6); align-items: start; }
+.bundles__list { display: flex; flex-direction: column; gap: var(--spacing-3); min-width: 0; }
+.bundles__drop { width: 100%; min-height: 72px; box-sizing: border-box; }
+.bundles__rows { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; border-radius: var(--radius-md); background: var(--color-panel); box-shadow: var(--shadow-chip); overflow: clip; }
+.bundles__row { display: flex; flex-direction: column; gap: 2px; padding: var(--spacing-2) var(--spacing-3); border-bottom: 1px solid var(--color-line); color: var(--color-ink); text-decoration: none; }
+.bundles__rows li:last-child .bundles__row { border-bottom: 0; }
+.bundles__row:hover, .bundles__row--chosen { background: var(--color-hover); }
+.bundles__row--chosen { box-shadow: var(--color-brass) 2px 0 0 inset; }
+.bundles__row-name { font-size: var(--text-md); }
+.bundles__row-line { color: var(--color-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.bundles__refused { padding: var(--spacing-3); border-radius: var(--radius-md); background: var(--color-lacquer-soft); box-shadow: var(--color-lacquer) 0 0 0 1px inset; }
+.bundles__refused-title { margin: 0; color: var(--color-ink); font-size: var(--text-md); font-weight: var(--font-weight-medium); }
+.bundles__refused-line { margin: var(--spacing-1) 0 0; color: var(--color-ink-2); font-size: var(--text-xs); line-height: 16px; overflow-wrap: anywhere; }
+.bundle-card { display: flex; flex-direction: column; border-radius: var(--radius-md); background: var(--color-panel); box-shadow: var(--shadow-panel); overflow: clip; }
+.bundle-card__head { display: flex; flex-direction: column; gap: var(--spacing-1); padding: var(--spacing-4); border-bottom: 1px solid var(--color-line); }
+.bundle-card__title { margin: 0; color: var(--color-ink); font-family: var(--font-display); font-size: var(--text-xl); font-weight: var(--font-weight-display); letter-spacing: var(--tracking-tight); }
+.bundle-card__line { margin: 0; color: var(--color-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.bundle-card .chain-steps { border-radius: 0; box-shadow: none; border-bottom: 1px solid var(--color-line); }
+.bundle-card__section { display: flex; flex-direction: column; gap: var(--spacing-1-5); padding: var(--spacing-3) var(--spacing-4); border-bottom: 1px solid var(--color-line); }
+.bundle-card__foot { display: flex; justify-content: flex-end; gap: var(--spacing-2); padding: var(--spacing-3) var(--spacing-4); }
+.chain__body { display: flex; flex-direction: column; gap: var(--spacing-3); max-width: 560px; }
+@media (max-width: 760px) {
+  .bundles__body { grid-template-columns: 1fr; }
+}

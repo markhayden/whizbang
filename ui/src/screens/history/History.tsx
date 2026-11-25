@@ -14,6 +14,8 @@ import { useArtifact } from "../../hooks";
 import { hrefOf } from "../../routes";
 import { localStore } from "../../drafts";
 import { readPin, savePin, type Pin } from "../../saved";
+import { bundleChain, checkChain, linksOf, type BundleSummary } from "../../bundles";
+import { save } from "./calls";
 import { RESULTS, figuresOf, listRuns, type Figures, type HistoryRun } from "./calls";
 
 export interface HistoryProps {
@@ -155,10 +157,41 @@ export function History(props: HistoryProps) {
     savePin(localStore(), next);
     setPin(next);
   };
+  // A chain (plan m7, task U2, item 1; the design's surface 3, B): runs picked in the order
+  // they ran, each pick checked by the host, which names the links the chain holds or why it
+  // refuses it; then bundled as one file.
+  const [chaining, setChaining] = useState(false);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [checked, setChecked] = useState<BundleSummary | null>(null);
+  const [chainProblem, setChainProblem] = useState<string | null>(null);
+  const checking = useRef(0);
+  useEffect(() => {
+    const mine = (checking.current += 1);
+    setChecked(null);
+    setChainProblem(null);
+    if (!props.client || picked.length === 0) return;
+    checkChain(props.client, picked).then(
+      (found) => mine === checking.current && setChecked(found),
+      (error: unknown) => mine === checking.current && setChainProblem(error instanceof ApiError ? error.message : String(error)),
+    );
+  }, [picked.join(",")]);
+  const pick = (run: string) => setPicked((now) => (now.includes(run) ? now.filter((one) => one !== run) : now.length >= 16 ? now : [...now, run]));
+  const bundlePicked = () => {
+    if (!props.client || !checked) return;
+    bundleChain(props.client, picked).then(
+      (blob) => {
+        save(blob, `chain-${picked[0] ?? "runs"}.whizbang-bundle`);
+        setChaining(false);
+        setPicked([]);
+      },
+      (error: unknown) => setChainProblem(error instanceof ApiError ? error.message : String(error)),
+    );
+  };
+  const links = checked ? linksOf(checked) : [];
   const now = Date.now();
   const toneOf = (kit: string | null | undefined) => kitTone(Math.max(0, kits.findIndex((one) => one.id === kit)));
   return (
-    <main class="screen history" aria-labelledby="history-title">
+    <main class={chaining ? "screen history history--chaining" : "screen history"} aria-labelledby="history-title">
       <header class="history__head">
         <div>
           <h1 id="history-title" class="screen__title">
@@ -187,8 +220,42 @@ export function History(props: HistoryProps) {
           <div class="history__words">
             <TextField id="history-words" label="Words" value={words} placeholder="Filter by picture or words" maxLength={200} onInput={setWords} />
           </div>
+          <Segmented
+            label="Replays"
+            segments={[
+              { value: "", label: "Without replays" },
+              { value: "include", label: "With replays" },
+              { value: "only", label: "Replays only" },
+            ]}
+            value={query.get("replayed") ?? ""}
+            onChange={(value) => set("replayed", value)}
+          />
+          <Button variant={chaining ? "secondary" : "quiet"} onClick={() => setChaining((on) => !on)}>
+            {chaining ? "Cancel the chain" : "Make a chain"}
+          </Button>
+          <a class="screen__link" href={hrefOf({ name: "bundles" })}>
+            Bundles
+          </a>
         </div>
       </header>
+      {chaining ? (
+        <section class={chainProblem ? "history__chain history__chain--refused" : "history__chain"} aria-label="Making a chain">
+          <p class="history__chain-title">{`Making a chain · ${picked.length} picked${links.length ? ` · ${links.length} ${links.length === 1 ? "link" : "links"}` : ""}`}</p>
+          {links.map((link) => (
+            <p key={link} class="history__chain-link mono">{`↳ link: ${link}`}</p>
+          ))}
+          {chainProblem ? (
+            <p class="history__chain-link mono" role="alert">
+              {chainProblem}
+            </p>
+          ) : (
+            <p class="history__chain-link">Pick runs in the order they ran, up to 16. A later run's input that is an earlier pick's output becomes a link.</p>
+          )}
+          <Button variant="primary" disabled={!checked} why={checked ? undefined : picked.length === 0 ? "Pick a run first." : "The chain is checked first."} onClick={bundlePicked}>
+            Bundle chain
+          </Button>
+        </section>
+      ) : null}
       {problem ? (
         <p class="history__problem" role="alert">
           {problem}
@@ -202,6 +269,11 @@ export function History(props: HistoryProps) {
             <div key={run.run} role="listitem" data-run={run.run} class="history__item">
               {props.client ? <Row client={props.client} run={run} tone={toneOf(run.kit)} now={now} onOpen={() => props.go?.(hrefOf({ name: "run", id: run.run }))} /> : null}
               <span class="history__pin">
+                {chaining ? (
+                  <button type="button" class="history__pin-button" aria-pressed={picked.includes(run.run) ? "true" : "false"} onClick={() => pick(run.run)}>
+                    {picked.includes(run.run) ? `Picked ${picked.indexOf(run.run) + 1}` : "Pick"}
+                  </button>
+                ) : null}
                 {pin && pin.run !== run.run && pin.action === run.action ? (
                   <button type="button" class="history__pin-button" onClick={() => props.go?.(hrefOf({ name: "compare", baseline: pin.run, attempt: run.run }))}>
                     Compare with baseline

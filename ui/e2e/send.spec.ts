@@ -2,7 +2,8 @@
 // plan's acceptance table): a result handed to another task, or to its own again, as a new
 // draft that changes nothing of the run it came from.
 import type { Page } from "@playwright/test";
-import { expect, test } from "./fixtures";
+import { readFileSync } from "node:fs";
+import { expect, test, withHost } from "./fixtures";
 import { api, file, give, openAt, runOf, runWhenReady, script } from "./play";
 
 test.afterEach(async ({ request, host }) => {
@@ -114,4 +115,31 @@ test("a removal sent to check an edit carries the job the loop writes", async ({
   expect(job.requirements[0]!.text).toContain("the garden hose");
   expect(job.brief).toContain("the garden hose");
   expect(run).not.toBe(runOf(page));
+});
+
+test("bundle this run downloads one file that imports into another playground", async ({ page, host }) => {
+  await openAt(page, host, "#/");
+  const run = await removed(page, "remove_prompt", 46, "the hammock");
+  await page.getByRole("button", { name: /^More/ }).click();
+  await page.getByRole("menuitem", { name: "Bundle this run…" }).click();
+  const dialog = page.getByRole("dialog", { name: `Bundle run ${run}` });
+  // Its size before it is written is about the sum of what the store holds of the run.
+  await expect(dialog.locator(".dialog__line")).toContainText(/about [\d.]+ (KB|MB|bytes)/);
+  await expect(dialog).toContainText("keys, tokens or endpoints");
+  const downloading = page.waitForEvent("download");
+  await dialog.getByRole("button", { name: "Download bundle" }).click();
+  const download = await downloading;
+  const bytes = readFileSync(await download.path());
+  // And exactly, once written.
+  await expect(dialog.locator(".dialog__line")).not.toContainText("about");
+  await expect(dialog).toContainText("Written:");
+  await withHost([], async (other) => {
+    await openAt(page, other, "#/bundles");
+    await page.locator(".bundles__drop input[type=file]").setInputFiles({ name: download.suggestedFilename(), mimeType: "application/octet-stream", buffer: bytes });
+    await expect(page).toHaveURL(/#\/bundles\/sha256:[0-9a-f]{64}$/);
+    const card = page.locator(".bundle-card");
+    await expect(card).toContainText("Remove what you name");
+    await expect(card).toContainText("step 1 replays offline");
+    await expect(page.locator(".bundles__row")).toHaveCount(1);
+  });
 });

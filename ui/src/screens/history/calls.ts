@@ -37,7 +37,7 @@ export interface Figures {
 }
 
 /** The fields of the filter the address may carry: `runs stats`'s and the page's. */
-export const FILTER = ["kit", "task", "result", "words", "action", "model", "backend", "use_case", "matrix", "since", "until"];
+export const FILTER = ["kit", "task", "result", "words", "action", "model", "backend", "use_case", "matrix", "since", "until", "replayed"];
 
 /** The results a run is listed under, in the order the filter offers them. */
 export const RESULTS = ["pass", "fail", "unsure", "done", "cancelled", "error", "interrupted"] as const;

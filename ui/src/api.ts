@@ -273,6 +273,8 @@ export interface RunStart {
   arguments: Record<string, unknown>;
   /** The handle `POST /api/prepare` answered for exactly these arguments. */
   handle: string;
+  /** A step of a guided chain replay (plan m7, task U2): the bundle and the step it makes again. */
+  replay?: { bundle: string; step: number };
 }
 
 /** What `POST /api/runs` answers: the run it started, or the one its request id started. */
@@ -417,6 +419,8 @@ export interface Client {
   blobUrl(path: string, signal?: AbortSignal): Promise<string>;
   /** The bytes a `GET` of the API answers, as they came: a report, a record, a download. */
   bytes(path: string): Promise<Blob>;
+  /** The bytes a `POST` of JSON answers, as they came: a chain's bundle (plan m7, task U2). */
+  postBytes(path: string, body: unknown): Promise<Blob>;
   /**
    * Something the store's books hold may have changed: a run the page followed ended, or
    * the allowance was reset. Whoever listens (the top bar's allowance) reads it again.
@@ -515,6 +519,22 @@ export function createClient(options: ClientOptions): Client {
       await pause(artifactRetryMs(response.headers.get("Retry-After"), attempt));
     }
   };
+  /** The bytes an API call answers, as they came, or its refusal. */
+  const fetchBytes = async (method: string, path: string, body: unknown): Promise<Blob> => {
+    let response: Response;
+    const json = body === undefined ? undefined : JSON.stringify(body);
+    try {
+      response = await call(path, { method, headers: headers(json === undefined ? {} : { "Content-Type": "application/json" }), body: json, cache: "no-store", credentials: "omit", redirect: "error" });
+    } catch {
+      throw new ApiError(0, sentenceFor(0));
+    }
+    if (!response.ok) {
+      const error = await refusal(response);
+      if (error.status === 401) options.onUnauthorized?.(error);
+      throw error;
+    }
+    return response.blob();
+  };
   const listeners = new Set<() => void>();
   const client: Client = {
     settled: () => {
@@ -583,20 +603,8 @@ export function createClient(options: ClientOptions): Client {
       return (Array.isArray(answer?.pictures) ? answer.pictures : []).find((one) => one.id === id) ?? null;
     },
     commitLocation: (picture, shape) => client.request<{ id: string }>("POST", "/api/locations", { picture, shape }),
-    bytes: async (path) => {
-      let response: Response;
-      try {
-        response = await call(path, { method: "GET", headers: headers({}), cache: "no-store", credentials: "omit", redirect: "error" });
-      } catch {
-        throw new ApiError(0, sentenceFor(0));
-      }
-      if (!response.ok) {
-        const error = await refusal(response);
-        if (error.status === 401) options.onUnauthorized?.(error);
-        throw error;
-      }
-      return response.blob();
-    },
+    bytes: (path) => fetchBytes("GET", path, undefined),
+    postBytes: (path, body) => fetchBytes("POST", path, body),
     blobUrl: (path, signal) => {
       let entry = blobs.get(path);
       if (!entry) {

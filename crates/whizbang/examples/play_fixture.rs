@@ -307,6 +307,9 @@ impl Play for Fixture {
     fn saved(&self) -> Option<&dyn whizbang_serve::play::saved::Saved> {
         self.door.saved()
     }
+    fn bundles(&self) -> Option<&dyn whizbang_serve::play::bundles::Bundles> {
+        self.door.bundles()
+    }
 }
 
 /// The made-up key of `cloud-fill`, which the fixture's env file sets: a Chrome case looks

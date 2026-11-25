@@ -24,6 +24,7 @@ import { PICTURES_PAGE, useArtifact, useImageSize } from "../../hooks";
 import { actionOf } from "../../keyboard";
 import { createPreparer, type Preparer } from "../../preparer";
 import { hrefOf } from "../../routes";
+import { chainOf, saveChain, withRun } from "../../bundles";
 import { fellBackWords } from "../../saved";
 import { EmptyScreen } from "../Empty";
 import "../result/result.css";
@@ -336,6 +337,10 @@ function Draft(props: DraftProps) {
   // A draft an example opened (plan m7, task U1, item 2): which example, and each choice
   // of backend it made that this config does not offer now.
   const example = kept?.example;
+  // A draft a chain's step opened (plan m7, task U2, item 2): the step, and each linked
+  // input bound to the new run of the step before, beside the one recorded. It runs as
+  // any draft, only when Run is pressed, naming the step.
+  const chain = kept?.chain;
 
   const set = (name: string, value: unknown) => {
     setValues((now) => ({ ...now, [name]: value }));
@@ -369,7 +374,7 @@ function Draft(props: DraftProps) {
     const shownAlone = JSON.stringify(argumentsOf(task, seeded(task, {}, backends)));
     if (Object.keys(args).length > 0 && argsKey !== shownAlone) {
       const from = sent ? { sent: { ...sent, fields: fromFields, jobOf: jobOf ?? undefined } } : jobOf ? { jobOf } : {};
-      saveDraft(store, { kit: props.kit, task: task.name, values, pictures, at: Date.now(), ...from, ...(example ? { example } : {}) });
+      saveDraft(store, { kit: props.kit, task: task.name, values, pictures, at: Date.now(), ...from, ...(example ? { example } : {}), ...(chain ? { chain } : {}) });
     }
   }, [argsKey]);
 
@@ -453,9 +458,14 @@ function Draft(props: DraftProps) {
     if (why !== null || starting || !prepared?.handle) return;
     setStarting(true);
     setProblem(null);
-    client.start({ action: task.name, arguments: args, handle: prepared.handle }).then(
+    const replay = chain ? { replay: { bundle: chain.digest, step: chain.step } } : {};
+    client.start({ action: task.name, arguments: args, handle: prepared.handle, ...replay }).then(
       (started) => {
         dropDraft(store, task.name);
+        if (chain) {
+          const place = chainOf(store, chain.digest) ?? { digest: chain.digest, steps: chain.of, runs: [], stopped: false, at: Date.now() };
+          saveChain(store, withRun(place, chain.step, started.run));
+        }
         props.go(hrefOf({ name: "run", id: started.run }));
       },
       (error: unknown) => {
@@ -504,6 +514,15 @@ function Draft(props: DraftProps) {
             {task.title ?? task.name}
           </h1>
           {task.purpose ? <p class="workspace__purpose">{task.purpose}</p> : null}
+          {chain ? (
+            <p class="workspace__example workspace__chain">
+              <span class="workspace__example-tag mono">{`STEP ${chain.step + 1} OF ${chain.of}`}</span>
+              <a class="workspace__example-name" href={hrefOf({ name: "chain", digest: chain.digest })}>
+                {`chain ${middle(chain.digest, 18)}`}
+              </a>
+              <span class="workspace__chain-line">nothing runs until you press Run</span>
+            </p>
+          ) : null}
           {example ? (
             <p class="workspace__example">
               <span class="workspace__example-tag mono">EXAMPLE</span>
@@ -512,6 +531,23 @@ function Draft(props: DraftProps) {
           ) : null}
         </header>
         <div class="workspace__fields">
+          {chain?.bindings.map((one) => (
+            <div key={one.port} class={one.differs ? "chain-binding chain-binding--differs" : "chain-binding"} role="note">
+              <p class="chain-binding__head">{`${one.port} · linked to step ${one.from.step + 1}`}</p>
+              <p class="chain-binding__line">{`${one.from.port} from ${middle(one.run, 18)}, step ${one.from.step + 1}'s new run`}</p>
+              {one.differs ? (
+                <p class="chain-binding__ids mono">
+                  <span class="chain-binding__differs">differs from recorded</span>
+                  <br />
+                  {`now ${middle(one.now, 18)}`}
+                  <br />
+                  {`recorded ${middle(one.recorded, 18)}`}
+                </p>
+              ) : (
+                <p class="chain-binding__ids mono">same as recorded</p>
+              )}
+            </div>
+          ))}
           {example?.fellBack.map((one) => (
             <p key={one.argument} class="workspace__fell-back" role="note">
               {fellBackWords(one, one.capability === "fill" ? "filler" : one.capability === "segment" ? "segmenter" : one.capability)}
