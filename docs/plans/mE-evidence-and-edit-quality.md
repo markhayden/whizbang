@@ -1,7 +1,7 @@
 # Plan: milestone E, evidence and edit quality
 
-Draft 11, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
-note of milestone 7), after ten outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
+Draft 12, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
+note of milestone 7), after eleven outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
 quality". Its first slice ran beside milestone 5 (`docs/plans/e1-judge-format-loop.md`,
 `docs/plans/e1-note.md`) and chose the default judge and kept the submission format on
 descriptive evidence. This plan is the rest of the milestone: every unverified tool and
@@ -497,6 +497,12 @@ reported in its pull request. Every test that calls a provider or a real model i
     run refused for the allowance ends the matrix with the cells left to run named by count;
     run again after a new allowance, it resumes. Without the flag the refusal stands as today.
     `matrix::past_its_forecast_a_matrix_stops_at_the_allowance_and_resumes`.
+14. **The study's measure in a gate.** `[measure] primary` may be `catch_rate` beside
+    `balanced_accuracy`: the gain in the share of expected failures caught, resampled over
+    families with at least one expected failure, repetitions combined by mean when the file
+    says so; the guardrails as the file states them. Today a gate scores balanced accuracy
+    alone (`gate.rs`) and the paired scorer gives no interval of a catch-rate difference
+    (`metrics.rs`). `gate::a_catch_rate_gate_resamples_the_families_with_a_failure`.
 
 - [ ] Done when: both pull requests are merged and their tests pass. **Reviewer reads
   hardest:** that a version 2 gate and a matrix without lists score exactly as before; that a
@@ -906,7 +912,12 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    `C+regions@eomt` (M1, item 12), squint's class disagreement on the fixed-class segmenter, whatever R2
    chose: that method is kept in the code until this round has run, even if it lost R2, and
    removed after. Its result answers the study's claim only, and is reported apart from
-   `regions`' own gate, which uses R2's method. Also: Flash beside Haiku and Terra in each
+   `regions`' own gate, which uses R2's method. **It is scored as the study scored it**: the
+   gain in catch rate (`docs/results/2026-11-tool-study.md`, "Method"), resampled over the
+   families with an expected failure, the two repetitions of each arm averaged, frozen in a
+   gate file of its own whose primary measure is `catch_rate` (M1, item 14), at the round's
+   corrected level. The claim stands if the lower bound of the gain is above zero, and is
+   withdrawn otherwise. Also: Flash beside Haiku and Terra in each
    tool's gate; a third tool's arms. If this comparison does not run, for want of the yes or
    because the fixed-class segmenter does not run (T2), N1 withdraws the study's claim with a
    line in `docs/results/2026-11-tool-study.md` and the row.
@@ -990,9 +1001,17 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
 1. **The phrase delimited** (the carry-over row on `JOB_TEMPLATE`): the caller's phrase is
    marked where it starts and ends in `RQ1` and the brief; the template has a new version and
    digest; a test holds a phrase that reads as an instruction to its marks.
-2. **A place of any size** (the carry-over row on `located::usable`): a place whose cut passes
-   1,024 pixels a side is looked into in tiles, each carried as the picture's own pixels; a
-   polygon joins as its own pixels.
+2. **A place of any size** (the carry-over row on `located::usable`), inside the bounds the
+   loop already has: preparation budgets one segment request a place and at most eight a
+   retry (`checked.rs`), and a record holds at most eight crops and 64 runs an attempt
+   (`contract/sixth.rs`), and `select` at most 64 masks (`select.rs`). A place whose cut passes
+   1,024 pixels a side is looked into in at most four tiles, each a crop `view` cuts with its
+   binding, each carried as the picture's own pixels, and each counted as one of the eight
+   requests and one of the eight crops; places are taken in the order the check gave them
+   until the eight are used, and a place left out for the bound is recorded as such, with its
+   reason. The reservation is worked out from the same eight, so it does not grow. A polygon
+   joins as its own pixels. Tests at the bound: eight places of which two need tiles, the
+   requests, crops and masks counted, the record published, and the place left out named.
 3. **One mask at a time** (the carry-over row on `select`'s memory): `select` joins masks
    holding one and the union.
 4. **One decode** (the carry-over row on `carry` and `view`): a retry decodes its picture
@@ -1333,8 +1352,10 @@ records and take no run of this plan. Setting the allowance is a reset, the owne
 before R3 ("I need", item 1). A reset closes the books (section 6): what was settled before
 it no longer counts against the new allowance. So if the owner says yes to tier 2, the new
 allowance is what is left of the approved total, not 40 more: 145 less 36.12, less the
-builder's total, less what E's store has settled and holds unresolved, as `whizbang spend
-status` gives them on the day; the orchestrator gives the owner that figure and the command.
+builder's whole allowance of 8 (not what it has spent: it may still build and rebuild, unless
+its ledger has been closed, when what it settled and holds unresolved is taken instead), less
+what E's store has settled and holds unresolved, as `whizbang spend status` gives them on the
+day; the orchestrator gives the owner that figure and the command.
 A forecast is advice, not a limit (section 6): R4's matrix forecasts about 55 at the study's
 rates doubled, more than will be left when it starts, and `eval matrix` refuses a forecast
 past what is left; so M1, item 13 lets the orchestrator run a matrix past its forecast with
@@ -1694,4 +1715,19 @@ against the code and the pinned source; all were right and taken.
    redirect held to origins the config approves for their data class, the exact origins
    listed before the first build, any not approved asked of the owner.
 3. **Minor: P0's worked example was `preferred`.** Right. Taken: 3 wins, 2 losses, 3 `same`.
+
+### Review round 11
+
+On draft 11, by the Codex CLI. Verdict: revise. Round 10's fixes held. Three findings, all
+majors. Each was checked against the code; all were right and taken.
+
+1. **Major: the tier 2 reset could free the builder's unspent allowance twice.** Right. Taken:
+   the reset subtracts the builder's whole 8 while its ledger is open.
+2. **Major: tiling a large place would pass the loop's bounds.** Right (`checked.rs` budgets
+   eight requests a retry; `contract/sixth.rs` eight crops and 64 runs; `select.rs` 64 masks).
+   Taken: L2, item 2, at most four tiles a place, each counted in the same eight, places left
+   out for the bound recorded, tests at the bound.
+3. **Major: the study's repeat had no scorer of the study's measure.** Right (`gate.rs` scores
+   balanced accuracy; `metrics.rs` has no catch-rate interval). Taken: M1, item 14, a
+   catch-rate gate; R4, item 7 freezes the repeat on it.
 
