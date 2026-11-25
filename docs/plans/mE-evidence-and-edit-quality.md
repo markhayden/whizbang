@@ -1,7 +1,7 @@
 # Plan: milestone E, evidence and edit quality
 
-Draft 12, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
-note of milestone 7), after eleven outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
+Draft 13, 2026-11-25, written from `main` at 0985bfd9 (the tag `m7`, the merge of #312, the
+note of milestone 7), after twelve outside review rounds ("Review rounds", at the end). Milestone E is `SPEC.md` section 16, row E, "Evidence and edit
 quality". Its first slice ran beside milestone 5 (`docs/plans/e1-judge-format-loop.md`,
 `docs/plans/e1-note.md`) and chose the default judge and kept the submission format on
 descriptive evidence. This plan is the rest of the milestone: every unverified tool and
@@ -437,13 +437,16 @@ reported in its pull request. Every test that calls a provider or a real model i
 
 **Second pull request: the rules and the records.**
 
-5. **`submission/2`** in `whizbang eval judges --mode arms` (F2): clause (c) read on the
-   family-resampled 95% interval at its bound toward harm, the rest as `submission/1`.
+5. **`submission/2`** in `whizbang eval judges --mode arms` (F2), one rule stated once:
+   clause (a) pooled over the judges, as `submission/1` pools it (`judges.rs`;
+   `docs/results/e-submission.md`, "The decision"); clauses (b) and (c) for each judge, (c)
+   read on the family-resampled 95% interval at its bound toward harm; every count and rate
+   over the items scored under both arms of a judge.
    `judges::submission_2_reads_clause_c_on_the_interval`.
 6. **`judge-pick/2`** in `--mode judges` (R4): `judge-pick/1`'s clauses, with a minimum of 20
    families below which the outcome is inconclusive; the interval at the level the matrix's
    correction gives it, with enough resamples that each tail holds at least 20 draws (at 13
-   hypotheses, 2,000 leave about 4: `judges.rs` fixes 2,000; `judge-pick/2` takes 20,000, enough for 16) and
+   hypotheses, 2,000 leave about 4: `judges.rs` fixes 2,000; `judge-pick/2` takes 20,000, enough for 21, at about 24 draws a tail) and
    an unresolved tail inconclusive, as `bootstrap.rs` rules for gates; the runs read from a
    matrix whose cells `eval matrix` made, gates or not (today `eval judges` passes over runs
    that carry a gate); and **`--set <id>`**, repeatable, so that only those sets are scored and
@@ -835,9 +838,9 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    v1 on the same ten sets (`docs/results/e-submission.md`). If Flash's price has doubled
    before F2 runs, Flash leaves both matrices and Haiku alone runs them, said in the record.
 2. **The rule, `submission/2`, frozen here** and applied by `eval judges` (M1, item 5):
-   `submission/1`'s clauses (a) and (b), and clause (c) read on the family-resampled 95%
-   intervals at their bound toward harm; every count and rate over the items scored under
-   both arms of one judge alone. v3 goes to R4 if it meets the rule. If it does not,
+   as M1, item 5 states it: clause (a) pooled over the two judges, as `submission/1` pools it;
+   clauses (b) and (c) for each judge, (c) read on the family-resampled 95% interval at its
+   bound toward harm; every count and rate over the items scored under both arms of a judge. v3 goes to R4 if it meets the rule. If it does not,
    the format whose dev evidence is better by the rule's clauses goes, v2 by e1's round or v3
    by this one, said in the record; only a gate on fresh data admits either.
 3. **The record**, `docs/results/e-format-dev.md`: descriptive, admits nothing; the
@@ -865,15 +868,20 @@ EoMT large, trained on ADE20K at 512, weights MIT and code MIT, backbone Apache-
    **experimental**, its record saying it passed rung 3 and that its confirmation on fresh data
    is owed, in a carry-over row opened by N1.
    **The hypotheses**, counted together in one Bonferroni correction: two for each tool,
-   five for the format, two for the requirements, five for the judge's rule (every eligible
-   judge gets an interval against the best, chosen again inside each resample, the best
-   included, `judges.rs`; each is counted, which is conservative), and, if tier 2 runs, one
-   for the study's comparison and two for each tool's Flash and third arms: at most 16 in
+   five for the format, two for the requirements, ten for the judge's rule, five under each
+   format (every eligible judge gets an interval against the best, chosen again inside each
+   resample, the best included, `judges.rs`; each is counted, which is conservative), and, if tier 2 runs, one
+   for the study's comparison and two for each tool's Flash and third arms: at most 21 in
    tier 1.
-3. **The judge's gate**: `judge-pick/2` (M1, item 6) on `confirm-v1` under arm C, at the
-   round's corrected level, inconclusive below 20 families. The pick is admitted as the
-   default judge, and source fidelity with it (A0, item 4); no pick, or inconclusive, leaves
-   both unverified ("I need", item 3). ADR 0044 is amended by the outcome.
+3. **The judge's gate**: `judge-pick/2` (M1, item 6) on `confirm-v1`, frozen twice before the
+   run, once under arm C (v1) and once under the format F2 sent, each with its five
+   hypotheses in the round's correction, inconclusive below 20 families. Both arms hold all
+   five judges (item 2), so either can be scored. The one read is the one under the format
+   source fidelity ends E with: the new format if its gate admits it (item 5), v1 otherwise
+   (ADR 0044: the judge is chosen again when the default format changes). Its pick is
+   admitted as the default judge, and source fidelity with it (A0, item 4); no pick, or
+   inconclusive, leaves both unverified ("I need", item 3). ADR 0044 is amended by the
+   outcome.
 4. **The run**, in E's store ("Spend", "Stores"), past its forecast with `--past-forecast`
    (M1, item 13); sets by `--root <owner storage>`, pictures by `eval sets fetch --from
    <owner storage>`, labels by `--labels <owner storage>`. The cap of one call: the largest
@@ -1099,9 +1107,14 @@ row on the panorama side of `view`):
 
 1. **The sample**, 8 cases a recipe, each recipe on inputs of its own kind: `remove`,
    `remove_prompt`, `remove_checked` and the clicked removal (if C1 built it) on 8 pictures of
-   `segmentation/segment-01`, two from each group; `repair` (a stroke) and `repair_area` (a
-   location) on 8 pictures of `labs/m3-edits/corpus.toml` with the strokes and locations it
-   already holds; `seam` on 8 panoramas of `labs/m3-seam/corpus.toml`. In the order of the
+   `segmentation/segment-01`; `repair` (a stroke) and `repair_area` (a location) on 8 pictures
+   of `labs/m3-edits/corpus.toml` with the strokes and locations it already holds; `seam` on 8
+   panoramas of `labs/m3-seam/corpus.toml`. **Families are frozen first**: R5's manifest
+   gives every case its scene family, read from the corpus's own records of where each
+   picture came from (a restyle, a crop or another edit of one source is that source's
+   family; `labs/m3-seam/corpus.toml` keeps a restyle's source layout, so the two are one).
+   The 8 cases of a recipe are drawn by the manifest's seed one family at a time, a second
+   case of a family only when every family has one. In the order of the
    ladder: `remove_checked`, `seam`, `repair_area`, `repair`, `remove_prompt`, `remove`.
    `remove_checked`'s runs are tier 2 ("Spend"): without the owner's yes it ends E
    experimental, and its gate is not run.
@@ -1109,8 +1122,8 @@ row on the panorama side of `view`):
    `gates/e-edit-rung3-<recipe>.toml`: task success is the share of finished edits that `check`
    under the default judge passes, at least 0.75, with its family-resampled 95% interval,
    corrected across the recipes of the round, above 0.4 at its lower bound; at least 4
-   families (segment-01's four groups count as families of their pictures' scenes, the
-   m3-edits corpus's five scenes, the m3-seam corpus's panoramas each its own); preservation
+   families as the manifest freezes them (item 1), a recipe whose corpus gives fewer being
+   inconclusive by rule; preservation
    outside the mask exact on every run; blinded quality from a lab round of this round's 8
    runs against the source picture, picked by the owner and decoded under P0's protocol
    version 2, `preferred` or `not_worse`; operational errors under 10%; cost and latency as M2
@@ -1730,4 +1743,21 @@ majors. Each was checked against the code; all were right and taken.
 3. **Major: the study's repeat had no scorer of the study's measure.** Right (`gate.rs` scores
    balanced accuracy; `metrics.rs` has no catch-rate interval). Taken: M1, item 14, a
    catch-rate gate; R4, item 7 freezes the repeat on it.
+
+### Review round 12
+
+On draft 12, by the Codex CLI. Verdict: revise. Round 11's fixes held. Three findings: 2
+majors, 1 minor. Each was checked against the code and the corpus files; all were right and
+taken.
+
+1. **Major: the judge was picked under a format that might be replaced.** Right (ADR 0044:
+   chosen again when the default format changes). Taken: `judge-pick/2` is frozen under both
+   formats, each counted in the correction, and the one read is under the format source
+   fidelity ends with; at most 21 hypotheses, 20,000 resamples.
+2. **Major: R5 counted groups and panoramas as families.** Right (`labs/m3-seam/corpus.toml`
+   keeps a restyle's source layout). Taken: R5's manifest freezes each case's scene family
+   from the corpus's records, draws cases one family at a time, and a recipe with fewer than
+   4 families is inconclusive.
+3. **Minor: `submission/2` was stated two ways.** Right. Taken: clause (a) pooled over the
+   judges, (b) and (c) per judge, in both places.
 
