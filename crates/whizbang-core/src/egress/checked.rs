@@ -577,9 +577,11 @@ impl Sender for Checked {
         };
         let credential = checked.credential().cloned();
         let sent = sender.stream(&checked, bounds, take);
+        // Nothing of the request left, though its connection may have opened: the note
+        // is taken back, and the sender's word on it is handed on.
         if let Err(fault) = &sent.ended
             && fault.stage() == Stage::NotSent
-            && sent.dispatched.is_none()
+            && !sent.left
         {
             note.take_back();
         }
@@ -598,6 +600,7 @@ impl Sender for Checked {
         });
         Sent {
             dispatched,
+            left: sent.left,
             ended: sent.ended,
         }
     }

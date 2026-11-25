@@ -521,6 +521,7 @@ impl Sender for Client {
             .peer_addr()
             .ok()
             .map(|peer| Dispatched::reached(address.origin().clone(), peer));
+        let mut left = false;
         let ended = self.streamed(
             socket,
             tls,
@@ -529,8 +530,19 @@ impl Sender for Client {
             request,
             cancellation,
             take,
+            &mut left,
         );
-        Sent { dispatched, ended }
+        // A connection that failed before a byte of the request was written to it, in its
+        // handshake say, handed the host nothing: its fault says nothing was sent.
+        let ended = match ended {
+            Err(fault) if !left => Err(Fault::new(fault.kind(), fault.sentence()).not_sent()),
+            ended => ended,
+        };
+        Sent {
+            dispatched,
+            left,
+            ended,
+        }
     }
 
     /// A control send, to the address the request it follows reached: no name is
@@ -602,7 +614,8 @@ pub(crate) const NO_DEADLINE: &str = "a control send is made under bounds of its
 impl Client {
     /// The rest of a request of frames, once its socket connected: the handshake, the
     /// request, the answer's head and its body, handed to `take`. A fault of the wire
-    /// under `take` is the request's end, whatever `take` answered.
+    /// under `take` is the request's end, whatever `take` answered. `left` is set once a
+    /// byte of the request was written to the socket.
     #[allow(clippy::too_many_arguments)]
     fn streamed(
         &self,
@@ -613,10 +626,13 @@ impl Client {
         mut request: Zeroed,
         cancellation: &Cancellation,
         take: &mut Take<'_>,
+        left: &mut bool,
     ) -> Result<(), Fault> {
         let mut wire = Wire::new(socket, tls, &*self.clock, timing, cancellation)?;
         wire.handshake()?;
-        wire.send(&request.0)?;
+        let sent = wire.send(&request.0);
+        *left = wire.request_left();
+        sent?;
         request.0.fill(0);
         wire.waiting_for_answers(answer_within);
         let (head, rest) = answer_head(&mut wire)?;

@@ -346,7 +346,9 @@ pub trait Sender: Send + Sync {
     /// hand it: the checked sender holds the parts to the recipient, the policy and
     /// the check, writes them into [`CheckedFrames`], and hands those to the sender
     /// behind it ([`Sender::stream`]). A sender that sends no frames refuses, and
-    /// nothing leaves.
+    /// nothing leaves. What it answers says whether any byte of the request left
+    /// ([`Sent::left`]): a connection that opened and failed before the request's first
+    /// byte was written handed the host nothing, and its fault says nothing was sent.
     fn send_frames(&self, frames: &Frames, bounds: &Bounds, take: &mut Take<'_>) -> Sent {
         let _ = (frames, bounds, take);
         Sent::refused(Fault::new(FaultKind::Rejected, NO_FRAMES).not_sent())

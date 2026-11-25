@@ -349,12 +349,16 @@ impl fmt::Debug for Dispatched {
     }
 }
 
-/// How a request of frames ended: the request it reached, when it reached one, and its
-/// end. A request that failed after it connected still names what it reached, so that a
-/// control send can follow it.
+/// How a request of frames ended: the request it reached, when it reached one, whether
+/// any byte of the request left, and its end. A request that failed after it connected
+/// still names what it reached, so that a control send can follow it. A connection that
+/// opened and failed before the first byte of the request was written to it (in its
+/// handshake, say) reached a host that was handed nothing: `left` is false, and its fault
+/// is [`Stage::NotSent`](crate::capability::Stage::NotSent).
 #[derive(Debug)]
 pub struct Sent {
     pub dispatched: Option<Dispatched>,
+    pub left: bool,
     pub ended: Result<(), Fault>,
 }
 
@@ -363,6 +367,7 @@ impl Sent {
     pub fn refused(fault: Fault) -> Sent {
         Sent {
             dispatched: None,
+            left: false,
             ended: Err(fault),
         }
     }

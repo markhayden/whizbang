@@ -536,7 +536,7 @@ class Bridge(unittest.TestCase):
 
     def test_a_front_replaced_mid_call_leaves_the_bridges_call_to_end_at_its_limit(self):
         models = fk.Models(self)
-        side = fk.Recording(fk.local_side(self, models, limits=fk.small_limits(call=0.5)))
+        side = fk.Recording(fk.local_side(self, models, limits=fk.small_limits(call=0.25)))
         card = Card(side)
         old = Consumer(card)
         old_front, old_port = fk.serve(self, front.Bridged(old.call, old.cancel, log=fk.Log()), models.dir)
@@ -551,7 +551,7 @@ class Bridge(unittest.TestCase):
         old_front.close()
         sock.close()
         document = side.outcome(blocked)
-        self.assertGreaterEqual(time.monotonic() - began, 0.4)
+        self.assertGreaterEqual(time.monotonic() - began, 0.15)
         self.assertEqual((document["kind"], document["stage"], document["ended"]), ("timed_out", "unresolved", "killed"))
         self.assertEqual(card.cancels, [])
         sock, load, request = fk.post_request(new_port, "fake-ok", models.identity["fake-ok"])
@@ -560,8 +560,10 @@ class Bridge(unittest.TestCase):
 
     def test_under_one_call_and_one_control_input_at_a_time_a_cancel_is_not_queued_behind_the_call(self):
         models = fk.Models(self)
-        for inputs, kind in ((2, "cancelled"), (1, "timed_out")):
-            side = fk.Recording(fk.local_side(self, models, limits=fk.small_limits(call=0.6)))
+        # The call with two places is cancelled long before its limit, which its kind says;
+        # the one with one place ends at a short limit, so the test waits little for it.
+        for inputs, kind, limit in ((2, "cancelled", kit.WAIT_SECONDS), (1, "timed_out", 0.25)):
+            side = fk.Recording(fk.local_side(self, models, limits=fk.small_limits(call=limit)))
             card = Card(side, inputs=inputs)
             _, port = fk.serve(self, front.Bridged(card.call, card.cancel, log=fk.Log()), models.dir)
             blocked = fk.dispatch()
@@ -581,7 +583,7 @@ class Bridge(unittest.TestCase):
             else:
                 # The stand-in with one place shows what the second is for: the cancel
                 # waits behind the call, which ends at its limit, and finds nothing running.
-                self.assertGreaterEqual(took, 0.5)
+                self.assertGreaterEqual(took, 0.15)
                 fk.wait_until(lambda: card.cancels == [(blocked, False)])
 
     def test_two_generations_never_overlap_a_deploy_waits_for_the_old_one_to_stop_and_a_redelivery_after_it_finds_its_claim(self):
@@ -857,7 +859,7 @@ class Generation:
     stopped, and how many of its containers are left (one while an input runs)."""
 
     def __init__(self, test, models, store):
-        self.side = fk.Recording(fk.local_side(test, models, limits=fk.small_limits(call=0.5), claims=front.StoreClaims(store.put)))
+        self.side = fk.Recording(fk.local_side(test, models, limits=fk.small_limits(call=0.3), claims=front.StoreClaims(store.put)))
         self.stopped = False
         self.containers = 0
         self._lock = threading.Lock()

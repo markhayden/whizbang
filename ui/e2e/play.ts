@@ -69,11 +69,22 @@ export async function give(page: Page, field: string, files: ReturnType<typeof f
   await page.locator(`.field:has(#field-${field}) input[type=file]`).setInputFiles(files);
 }
 
-/** The Run button, once a ready preparation has enabled it. */
+/**
+ * The Run button, once a ready preparation has enabled it; then what the run's screen
+ * shows, the running one or its result once it has ended: the line that names the run.
+ * A start the host refused leaves the workspace saying why, which is named here rather
+ * than waited past. The address is checked after.
+ */
 export async function runWhenReady(page: Page): Promise<void> {
   const run = page.locator(".workspace__run .button--primary");
   await expect(run).toBeEnabled();
   await run.click();
+  const named = page.locator(".workspace__head .workspace__purpose.mono", { hasText: /^run \S/ });
+  const refused = page.locator(".workspace__foot:has(.workspace__run) .field__error[role=alert]");
+  await expect(named.or(refused).first()).toBeVisible();
+  // A problem said before the click may linger a moment after it: the run's screen is
+  // still waited for, and a failure names what the workspace said.
+  if (!(await named.isVisible())) await expect(named, `the run's screen, after: ${(await refused.allTextContents()).join(" ") || "nothing"}`).toBeVisible();
   await expect(page).toHaveURL(/#\/run\//);
 }
 

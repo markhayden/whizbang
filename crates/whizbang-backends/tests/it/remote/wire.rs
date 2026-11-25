@@ -720,6 +720,57 @@ fn a_plain_http_address_is_refused_and_a_certificate_of_another_root_fails_the_c
     assert!(host.seen().is_empty(), "the front began no request");
 }
 
+// --- a connection that failed before the request, or after its first byte ---------------------
+
+/// Settled at nothing: no byte of the request left, so its fault says nothing was sent.
+fn settled_at_nothing(failed: &Failed) {
+    assert_eq!(failed.fault.stage(), Stage::NotSent, "{failed:?}");
+}
+
+#[test]
+fn a_request_whose_connection_was_refused_settles_at_nothing() {
+    let pki = Arc::new(Pki::loopback());
+    // A host whose connection opens and is closed at once, before TLS's handshake: the
+    // socket reached it, and no byte of the request was written.
+    let front = scripted(&pki, vec![Step::Closed]);
+    let asking = Asking::scripted(&front, &pki);
+    let closed = failed(asking.ask(&named(None, "fake-ok"), &request(phrase(), 1)));
+    settled_at_nothing(&closed);
+    assert!(
+        closed.fault.sentence().starts_with("dispatch "),
+        "it still names its dispatch id: {closed:?}"
+    );
+    assert_eq!(
+        front.listener.finish(),
+        1,
+        "one connection, and no cancel after it"
+    );
+    assert!(front.seen.lock().unwrap().is_empty());
+    // A port where nothing listens: the connection is refused outright.
+    let unused = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = unused.local_addr().unwrap().port();
+    drop(unused);
+    let mut asking = asking;
+    asking.base = format!("https://127.0.0.1:{port}");
+    let refused = failed(asking.ask(&named(None, "fake-ok"), &request(phrase(), 1)));
+    settled_at_nothing(&refused);
+}
+
+#[test]
+fn a_request_cut_after_its_first_byte_is_still_charged_at_its_bound() {
+    let pki = Arc::new(Pki::loopback());
+    // The front reads the request's head and closes: bytes of the request reached it, and
+    // the host may have started a machine for them.
+    let front = scripted(&pki, vec![Step::CutAfterHead]);
+    let asking = Asking::scripted(&front, &pki);
+    let cut = failed(asking.ask(&named(None, "fake-ok"), &request(phrase(), 1)));
+    charged_at_its_bound(&cut);
+    assert_eq!(front.listener.finish(), 1);
+    let seen = front.seen.lock().unwrap().clone();
+    assert_eq!(seen.len(), 1, "the front read the request's head");
+    assert!(seen[0].head.starts_with("POST "), "{:?}", seen[0].head);
+}
+
 // --- what the send check sees ------------------------------------------------------------------
 
 /// A picture whose pixels hold the bytes of a path, and a request of it.

@@ -981,7 +981,12 @@ class Ends(unittest.TestCase):
         self.assertEqual(running.exits, [worker.LIFETIME_CODE])
         self.assertLess(time.monotonic() - began, 2.0, "nothing waited on the error output")
 
-    def test_the_worker_exits_at_the_end_of_its_input_and_at_its_lifetime(self):
+    # Its lifetime ends it too: in this process, the test above, at 0.2 seconds; and as a
+    # process of its own with its input open, exit code 3, in the Rust tests of the
+    # supervisor (crates/whizbang-backends/tests/it/pack/worker.rs), whose worker of the
+    # fakes runs this module's `main`. This test showed that too, at the least lifetime the
+    # command line takes, a whole second (plan m7, task A0, item 2).
+    def test_the_worker_exits_at_the_end_of_its_input(self):
         child = Child(self)
         child.send(hello())
         answer = child.read()
@@ -994,14 +999,6 @@ class Ends(unittest.TestCase):
         child.end_input()
         self.assertEqual(child.wait(), 0)
         self.assertIsNone(child.read(), "nothing more was written")
-
-        child = Child(self, lifetime="1")
-        child.send(hello())
-        child.read()
-        # Its input stays open: only its lifetime ends it.
-        self.assertEqual(child.wait(), worker.LIFETIME_CODE)
-        self.assertGreaterEqual(time.monotonic() - child.began, 1.0)
-        self.assertIsNone(child.read())
 
     def test_the_worker_exits_at_the_end_of_its_input_inside_a_call_that_ignores_cancel(self):
         child = Child(self)

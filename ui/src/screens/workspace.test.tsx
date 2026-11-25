@@ -102,6 +102,38 @@ describe("the workspace", () => {
     view.unmount();
   });
 
+  it("keeps Run off in the render where the call changed and its preparation is of the one before", async () => {
+    const start = vi.fn(() => Promise.resolve({ run: "r-1", requestId: "x" }));
+    const made = client((args) => ({ ready: true, handle: `h-${String(args.prompt)}`, bound: 0 }), start);
+    const view = render(<Workspace kit="rascal" task="remove_prompt" hello={HELLO} client={made} />);
+    const run = () => view.get<HTMLButtonElement>(".button--primary");
+    input(view.get<HTMLInputElement>("#field-prompt"), "hose");
+    await later(300);
+    expect(run().disabled).toBe(false);
+    // The change rendered, and the effect that tells the preparer of it not yet run: a
+    // click here would start the new call with the old call's handle.
+    const field = view.get<HTMLInputElement>("#field-prompt");
+    field.value = "the hose";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(made.prepare).toHaveBeenCalledTimes(1);
+    expect(run().disabled).toBe(true);
+    run().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await Promise.resolve();
+    expect(start).not.toHaveBeenCalled();
+    // The effect runs after the paint, and the preparation a pause after it.
+    await later(100);
+    expect(run().disabled).toBe(true);
+    await later(300);
+    expect(made.prepare).toHaveBeenCalledTimes(2);
+    expect(run().disabled).toBe(false);
+    click(run());
+    await later(0);
+    expect(start).toHaveBeenCalledWith({ action: "remove_prompt", arguments: { attempts: 3, filler: "cloud-fill", prompt: "the hose" }, handle: "h-the hose" });
+    view.unmount();
+  });
+
   it("prepares again at once when a start is refused as stale, and says so", async () => {
     let handle = 0;
     const start = vi.fn(() => Promise.reject(new ApiError(409, "The preparation is stale.", "stale")));

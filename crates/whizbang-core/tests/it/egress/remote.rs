@@ -37,6 +37,7 @@ impl Sender for Behind {
         let ended = take(&Head::new(200, Vec::new()), &mut std::io::empty());
         Sent {
             dispatched: Some(Dispatched::reached(frames.to().origin().clone(), peer)),
+            left: true,
             ended,
         }
     }
