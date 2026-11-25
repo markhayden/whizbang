@@ -173,9 +173,16 @@ pictures and other numbers. No other method was run for this record.
 
 ## Mark and history
 
-**Unverified**: ported with its record, rungs 1 and 2 shown; it has faced no gate. As a
-control, rungs 3 and 4 do not apply (`SPEC.md` section 8).
+**Mark.** None: marks belong to tools the upper rungs apply to, and `align` is a control,
+which rungs 3 and 4 cannot apply to (`SPEC.md` section 8: every squint comparison is
+measured against `view` and `align`). A control is complete when its record shows rungs 1
+and 2, and this record shows them, so `align` is complete. It has faced no gate, and needs
+none.
 
 - 2026-11-18, plan m2c task A2: ported from squint (`crates/squint-tools/src/align/`,
   `builtin/align.rs`) at the pinned commit; offered to a judge by `check`, and run first on
   each pair under `--details first` (ADR 0029).
+- 2026-11-25, plan mE task A0, item 3: its mark, unverified until then, is taken away, as
+  `view`'s never was: a control carries none. Nothing it does changed. `whizbang describe`
+  lists it without a mark, and when `check` measures it first (`--details first`) the judge
+  is told `align (control)`, where it was told `align (unverified)`.

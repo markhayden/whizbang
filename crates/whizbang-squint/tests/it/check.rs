@@ -2281,7 +2281,7 @@ fn details_first_on_a_reference_pair_aligns_the_candidate_onto_its_reference() {
     assert!(said[1].starts_with("Image `reference-1`"), "{said:?}");
     assert_eq!(said[2], whizbang_squint::details::DETAILS_INTRO);
     assert!(
-        said[3].starts_with("align (unverified), candidate onto reference-1: "),
+        said[3].starts_with("align (control), candidate onto reference-1: "),
         "{}",
         said[3]
     );
@@ -2329,7 +2329,7 @@ fn details_first_puts_the_aligned_pair_in_the_opening_message_before_the_first_t
     assert_eq!(said[2], whizbang_squint::details::DETAILS_INTRO);
     assert!(
         said[3].starts_with(
-            "align (unverified), candidate onto source: registered candidate registered onto \
+            "align (control), candidate onto source: registered candidate registered onto \
              source: shift "
         ),
         "{}",
@@ -2383,7 +2383,7 @@ fn details_first_puts_the_aligned_pair_in_the_opening_message_before_the_first_t
     let said = texts(judge.received()[0].messages()[0].parts());
     assert!(
         said[3].starts_with(
-            "align (unverified), candidate onto source: not_registered candidate does not \
+            "align (control), candidate onto source: not_registered candidate does not \
              register onto source: agreement "
         ),
         "{}",

@@ -188,7 +188,7 @@ fn three_references_are_each_aligned_in_the_order_given() {
     }
     let said = texts(judge.received()[0].messages()[0].parts());
     let order: Vec<&str> = (said.iter())
-        .filter_map(|t| t.strip_prefix("align (unverified), candidate onto "))
+        .filter_map(|t| t.strip_prefix("align (control), candidate onto "))
         .map(|rest| rest.split(':').next().unwrap())
         .collect();
     assert_eq!(order, ["reference-1", "reference-2", "reference-3"]);

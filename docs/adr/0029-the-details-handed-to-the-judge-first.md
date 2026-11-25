@@ -12,6 +12,9 @@ its mark, squint's sentence, every measurement, and, for the change map, the map
 picture the judge may name (`map:<image>:<against>`), with squint's guidance on what the
 number does not say. Either may also be offered to the judge by the run's `tools`, and a
 call of it is answered as squint's harness answered it. Neither runs unless a run names it.
+Amended: 2026-11-25, by plan mE, task A0 (item 3). `align` is a control and carries no mark,
+so where a tool's mark is said, `align`'s call is said as `align (control)`, where it was
+`align (unverified)`; every other tool's is said as before.
 
 ## Context
 

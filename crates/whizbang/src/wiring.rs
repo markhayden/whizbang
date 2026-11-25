@@ -1403,7 +1403,7 @@ pub fn description(registry: &Registry) -> Description {
     let marks = marks.iter().map(|(tool, mark)| (*tool, mark.word()));
     Description::new(env!("CARGO_PKG_VERSION"), registry)
         .with_kits(&kits())
-        .with_marks(marks)
+        .with_marks(marks, &whizbang_squint::marks::OFFERED)
 }
 
 /// The description as `whizbang describe` prints it for a person: the build, then each
@@ -1430,6 +1430,24 @@ pub fn describe_text(description: &Description) -> String {
         // When to use it, where it says: a recipe does.
         if let Some(when) = action.use_when() {
             text.push_str(&format!("      use: {when}\n"));
+        }
+    }
+    // The marks of the tools that are no action, each offered to a judge only when a run
+    // names it (plan mE, task A0, item 3).
+    let offered: Vec<_> = description
+        .marks()
+        .iter()
+        .filter(|mark| {
+            !description
+                .actions()
+                .iter()
+                .any(|action| action.name() == mark.tool())
+        })
+        .collect();
+    if !offered.is_empty() {
+        text.push_str("tools a run offers a judge only when it names them:\n");
+        for mark in offered {
+            text.push_str(&format!("  {}  [{}]\n", mark.tool(), mark.mark()));
         }
     }
     text
