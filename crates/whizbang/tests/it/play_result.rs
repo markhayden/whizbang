@@ -335,11 +335,19 @@ fn the_record_of_a_run_stopped_while_its_fill_was_out_counts_that_request() {
     );
     assert_eq!(started.status, 201, "{}", started.text());
     let run = started.json()["run"].as_str().unwrap().to_owned();
-    kitted.kit().set("release,hold").unwrap();
+    // The segmenter's request is let go once it has come, and only then: a release said
+    // after the fill came would let the fill go too, and the run would end answered.
     let limit = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while kitted.kit().requests() < before + 1 {
+        assert!(
+            std::time::Instant::now() < limit,
+            "the segment was never asked"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    kitted.kit().set("release,hold").unwrap();
     while kitted.kit().requests() < before + 2 {
         assert!(std::time::Instant::now() < limit, "the fill was never sent");
-        kitted.kit().set("release,hold").unwrap();
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     let stopped = kitted.api("POST", &format!("/api/runs/{run}/cancel"), None);
