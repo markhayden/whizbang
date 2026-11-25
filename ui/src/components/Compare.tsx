@@ -15,6 +15,8 @@ export interface CompareProps {
    */
   zoom: number | "fit";
   onMode?: (mode: CompareMode) => void;
+  /** What the two pictures are called: Before and After unless said (Baseline and Attempt). */
+  labels?: { before: string; after: string };
 }
 
 /**
@@ -110,6 +112,8 @@ export function Compare(props: CompareProps) {
     };
   }, [props.mode, props.before, props.after, props.width, props.height]);
   const size = { width: `${Math.floor(props.width * zoom)}px`, height: `${Math.floor(props.height * zoom)}px` };
+  const before = props.labels?.before ?? "Before";
+  const after = props.labels?.after ?? "After";
   return (
     <div class="compare">
       <Segmented label="Compare" segments={MODES} value={props.mode} onChange={(mode) => props.onMode?.(mode as CompareMode)} />
@@ -117,28 +121,28 @@ export function Compare(props: CompareProps) {
         {props.mode === "side" ? (
           <div class="compare__side">
             <figure class="compare__figure" style={size}>
-              <img src={props.before} alt="Before" />
-              <figcaption class="compare__badge mono">BEFORE</figcaption>
+              <img src={props.before} alt={before} />
+              <figcaption class="compare__badge mono">{before.toUpperCase()}</figcaption>
             </figure>
             <figure class="compare__figure" style={size}>
-              <img src={props.after} alt="After" />
-              <figcaption class="compare__badge mono">AFTER</figcaption>
+              <img src={props.after} alt={after} />
+              <figcaption class="compare__badge mono">{after.toUpperCase()}</figcaption>
             </figure>
           </div>
         ) : null}
         {props.mode === "swipe" ? (
           <figure class="compare__figure compare__swipe" style={size}>
-            <img src={props.after} alt="After" />
-            <img class="compare__top" src={props.before} alt="Before" style={{ clipPath: `inset(0 ${100 - split}% 0 0)` }} />
+            <img src={props.after} alt={after} />
+            <img class="compare__top" src={props.before} alt={before} style={{ clipPath: `inset(0 ${100 - split}% 0 0)` }} />
             <span class="compare__line" style={{ left: `${split}%` }} aria-hidden="true" />
-            <input class="compare__range" type="range" min={0} max={100} value={split} aria-label="Swipe between before and after" onInput={(event) => setSplit(Number((event.currentTarget as HTMLInputElement).value))} />
-            <span class="compare__badge mono">BEFORE</span>
-            <span class="compare__badge compare__badge--end mono">AFTER</span>
+            <input class="compare__range" type="range" min={0} max={100} value={split} aria-label={`Swipe between ${before.toLowerCase()} and ${after.toLowerCase()}`} onInput={(event) => setSplit(Number((event.currentTarget as HTMLInputElement).value))} />
+            <span class="compare__badge mono">{before.toUpperCase()}</span>
+            <span class="compare__badge compare__badge--end mono">{after.toUpperCase()}</span>
           </figure>
         ) : null}
         {props.mode === "difference" ? (
           <figure class="compare__figure" style={size}>
-            <canvas ref={difference} class="compare__difference" width={props.width} height={props.height} aria-label="Difference between before and after" />
+            <canvas ref={difference} class="compare__difference" width={props.width} height={props.height} aria-label={`Difference between ${before.toLowerCase()} and ${after.toLowerCase()}`} />
             <figcaption class="compare__badge mono">DIFFERENCE</figcaption>
           </figure>
         ) : null}

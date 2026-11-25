@@ -899,7 +899,7 @@ designs show.
 5. **What G1's table assigns to U1**, each with its test.
 6. **The guide**: `docs/guides/playground.md`, "Comparing two runs" and "Saved examples".
 
-- [ ] Done when: `play_compare::two_runs_of_one_task_compare_by_settings_inputs_outputs_time_and_cost`,
+- [x] Done when: `play_compare::two_runs_of_one_task_compare_by_settings_inputs_outputs_time_and_cost`,
   `play_compare::two_paid_loops_compare_cost_and_models_over_their_families_with_unresolved_spend_said`,
   `play_compare::two_tasks_are_refused_422_and_a_run_not_ended_409`,
   `play_examples::an_example_keeps_its_inputs_after_its_run_is_deleted_and_pruned`,

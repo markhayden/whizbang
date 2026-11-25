@@ -610,3 +610,37 @@ fn an_examples_entry_survives_delete_and_prune_and_goes_by_its_own_deletion() {
     store.prune().unwrap();
     assert!(!on_disk(&store, held));
 }
+
+/// A replace of an entry's name (an example renamed, plan m7, task U1) is refused, whole,
+/// when a deletion of the entry was published after it began: it never makes the entry
+/// again without what it held.
+#[test]
+fn a_replace_of_an_entry_deleted_meanwhile_is_refused_and_publishes_nothing() {
+    let dir = Scratch::new("store-replace");
+    let store = Store::open(&dir.path().join("store"), Arc::new(RealFs)).unwrap();
+    let example = format!("{EXAMPLES_PREFIX}0123456789abcdef");
+    let mut publication = store.begin().unwrap();
+    publication.put(&example, b"first name").unwrap();
+    publication
+        .put(&format!("{example}/inputs/0"), b"an input")
+        .unwrap();
+    publication.publish().unwrap();
+    // A replace of a name that is there is published.
+    let mut renamed = store.begin().unwrap();
+    renamed.replace(&example, b"second name").unwrap();
+    renamed.publish().unwrap();
+    let generation = store.snapshot().unwrap();
+    assert_eq!(
+        store.read(generation.get(&example).unwrap()).unwrap(),
+        b"second name"
+    );
+    // One begun before a deletion and published after it is refused.
+    let mut late = store.begin().unwrap();
+    late.replace(&example, b"third name").unwrap();
+    let_go(&store, &example);
+    let number = store.snapshot().unwrap().number();
+    assert!(matches!(late.publish(), Err(Error::NoSuchEntry { .. })));
+    let generation = store.snapshot().unwrap();
+    assert_eq!(generation.number(), number);
+    assert_eq!(named_under(&store, &example), 0);
+}

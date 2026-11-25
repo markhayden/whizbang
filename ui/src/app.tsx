@@ -9,6 +9,7 @@ import { StatusBar } from "./components/StatusBar";
 import { TopBar } from "./components/TopBar";
 import { actionOf } from "./keyboard";
 import { hrefOf, parseRoute, type Route } from "./routes";
+import { CompareRuns } from "./screens/compare/CompareRuns";
 import { EmptyScreen } from "./screens/Empty";
 import type { Taken } from "./token";
 import { History } from "./screens/history/History";
@@ -202,6 +203,8 @@ export function App(props: AppProps) {
       />
     ) : route.name === "home" ? (
       <span class="top-bar__place">Home</span>
+    ) : route.name === "compare" ? (
+      <span class="top-bar__place">Compare</span>
     ) : null;
 
   if (quit?.stage === "quit") {
@@ -297,6 +300,8 @@ function screenOf(route: Route, hello: Hello | null, client: Client, go: (hash: 
       return <Record name={route.record} hello={hello} client={client} />;
     case "models":
       return <Models client={client} />;
+    case "compare":
+      return <CompareRuns key={`${route.baseline}/${route.attempt ?? ""}`} baseline={route.baseline} attempt={route.attempt} hello={hello} client={client} go={go} />;
     case "unknown":
       return (
         <EmptyScreen title="Not a page" link={{ href: "#/", words: "Back to Home" }}>

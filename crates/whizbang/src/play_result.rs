@@ -283,13 +283,15 @@ pub fn job_and_measuring_of(
 
 /// A use case run's pictures by their role, from its job and its images in order: the
 /// candidate, the source, and the references in order.
-fn pictures_by_role(record: &RunRecord) -> Option<(Job, Map<String, Json>)> {
-    let job = Job::from_json(text_argument(record, "job")?).ok()?;
-    let images: Vec<String> = record
-        .inputs()
+fn pictures_by_role(
+    arguments: &[record::Argument],
+    inputs: &[Given],
+) -> Option<(Job, Map<String, Json>)> {
+    let job = Job::from_json(text_of(arguments, "job")?).ok()?;
+    let images: Vec<String> = inputs
         .iter()
         .filter(|input| input.port == "images")
-        .map(|input| input.artifact.to_string())
+        .map(|input| input.id.clone())
         .collect();
     if images.len() != job.images.len() {
         return None;
@@ -313,6 +315,40 @@ fn pictures_by_role(record: &RunRecord) -> Option<(Job, Map<String, Json>)> {
     Some((job, values))
 }
 
+/// An input a draft is made from: its port, its artifact's type and its identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Given {
+    pub port: String,
+    pub artifact_type: ArtifactType,
+    pub id: String,
+}
+
+impl Given {
+    /// A run's inputs, in order.
+    pub fn of(record: &RunRecord) -> Vec<Given> {
+        record
+            .inputs()
+            .iter()
+            .map(|input| Given {
+                port: input.port.clone(),
+                artifact_type: input.artifact_type,
+                id: input.artifact.to_string(),
+            })
+            .collect()
+    }
+}
+
+fn text_of<'a>(arguments: &'a [record::Argument], name: &str) -> Option<&'a str> {
+    match &arguments
+        .iter()
+        .find(|argument| argument.name == name)?
+        .value
+    {
+        ArgumentValue::Text(text) => Some(text),
+        _ => None,
+    }
+}
+
 /// What the page is given of the descriptors and kits, to say where a result goes.
 pub struct Tasks<'a> {
     pub descriptors: &'a [ActionDescriptor],
@@ -320,7 +356,8 @@ pub struct Tasks<'a> {
 }
 
 impl Tasks<'_> {
-    fn descriptor(&self, name: &str) -> Option<&ActionDescriptor> {
+    /// The task of this name, when this build has one.
+    pub fn descriptor(&self, name: &str) -> Option<&ActionDescriptor> {
         self.descriptors.iter().find(|d| d.name() == name)
     }
 
@@ -447,17 +484,47 @@ impl Tasks<'_> {
     /// arguments, and each backend it resolved written out.
     pub fn again(&self, record: &RunRecord, used: &BTreeMap<String, String>) -> Option<Json> {
         let action = record.asked().action.clone()?;
-        let descriptor = self.descriptor(&action)?;
+        self.draft_of(
+            &action,
+            &record.asked().arguments,
+            &Given::of(record),
+            used,
+            Some(&record.identity().run),
+        )
+    }
+
+    /// A draft of the task `action` from these arguments and inputs, as a run's record
+    /// holds them, with each backend in `used` written out where the arguments chose none;
+    /// for a check of a use case, the run whose job it takes (`job_of`) when one is
+    /// given, else its job's words alone (an example's draft, whose run may be gone).
+    /// None when this build has no such task.
+    pub fn draft_of(
+        &self,
+        action: &str,
+        arguments: &[record::Argument],
+        inputs: &[Given],
+        used: &BTreeMap<String, String>,
+        job_of: Option<&str>,
+    ) -> Option<Json> {
+        let descriptor = self.descriptor(action)?;
         let mut draft = self.draft(descriptor);
         let mut values = Map::new();
-        if play_form::is_use_case(&action) {
-            let (job, pictures) = pictures_by_role(record)?;
+        let named = |name: &str| {
+            arguments
+                .iter()
+                .find(|argument| argument.name == name)
+                .map(|argument| &argument.value)
+        };
+        if play_form::is_use_case(action) {
+            let (job, pictures) = pictures_by_role(arguments, inputs)?;
             values.extend(pictures);
             if let Some(brief) = &job.brief {
                 values.insert("brief".to_owned(), json!(brief));
             }
-            draft.insert(JOB_OF.to_owned(), json!(record.identity().run));
-            let judge = text_argument(record, "judge")
+            if let Some(run) = job_of {
+                draft.insert(JOB_OF.to_owned(), json!(run));
+            }
+            let judge = text_of(arguments, "judge")
                 .map(str::to_owned)
                 .or_else(|| used.get("judge").cloned());
             if let Some(judge) = judge {
@@ -468,20 +535,19 @@ impl Tasks<'_> {
                 let Some(name) = field["name"].as_str() else {
                     continue;
                 };
-                let ids: Vec<Json> = record
-                    .inputs()
+                let ids: Vec<Json> = inputs
                     .iter()
                     .filter(|input| input.port == name)
-                    .map(|input| json!(input.artifact.to_string()))
+                    .map(|input| json!(input.id))
                     .collect();
                 let value = match field["kind"].as_str() {
                     Some("pictures") if !ids.is_empty() => Some(Json::Array(ids)),
                     Some("picture" | "artifact") => ids.into_iter().next(),
-                    Some("backend") => argument(record, name).map(argument_json).or_else(|| {
+                    Some("backend") => named(name).map(argument_json).or_else(|| {
                         used.get(field["capability"].as_str().unwrap_or_default())
                             .map(|backend| json!(backend))
                     }),
-                    _ => argument(record, name).map(argument_json),
+                    _ => named(name).map(argument_json),
                 };
                 if let Some(value) = value {
                     values.insert(name.to_owned(), value);

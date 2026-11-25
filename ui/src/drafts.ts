@@ -4,6 +4,7 @@
 // every read and write is guarded.
 import type { Picture } from "./api";
 import type { Values } from "./form";
+import type { FromExample } from "./saved";
 
 export const DRAFTS_KEY = "whizbang.drafts";
 /** The most drafts kept: the oldest go first. */
@@ -20,6 +21,8 @@ export interface Draft {
   sent?: Sent;
   /** A check run again takes the job of the run it came from (task W2, item 4). */
   jobOf?: string;
+  /** The saved example this draft was opened from, and its choices that fell back (plan m7, U1). */
+  example?: FromExample;
 }
 
 /** Where a draft that Send to opened came from: the run, its kit and task, and when. */

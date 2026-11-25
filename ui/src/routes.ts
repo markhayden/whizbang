@@ -1,7 +1,8 @@
 // The page's routes, by the address's hash (plan m5, task U1, item 4): `#/` (with
 // `?picture=<identity>`, a picture of the library picked, to start a task with),
 // `#/k/<kit>/<task>`, `#/run/<id>`, `#/history`, `#/models`; and task W3's
-// `#/run/<id>/report` and `#/record/<name>`. A hash keeps every route on
+// `#/run/<id>/report` and `#/record/<name>`; plan m7, task U1's `#/compare/<baseline>`
+// and `#/compare/<baseline>/<attempt>`. A hash keeps every route on
 // the one page the host serves, so a reload or a copied address finds the same screen.
 
 export type Route =
@@ -12,6 +13,7 @@ export type Route =
   | { name: "models" }
   | { name: "report"; id: string }
   | { name: "record"; record: string }
+  | { name: "compare"; baseline: string; attempt?: string }
   | { name: "unknown"; hash: string };
 
 /** A name in an address: lower-case letters, digits, `_` and `-` (the rule for names). */
@@ -46,6 +48,8 @@ export function parseRoute(hash: string): Route {
   if (head === "record" && a && NAME.test(a) && parts.length === 2) return { name: "record", record: a };
   if (head === "history" && parts.length === 1) return { name: "history", query: new URLSearchParams(search) };
   if (head === "models" && parts.length === 1) return { name: "models" };
+  if (head === "compare" && a && RUN.test(a) && parts.length === 2) return { name: "compare", baseline: a };
+  if (head === "compare" && a && RUN.test(a) && b && RUN.test(b) && parts.length === 3) return { name: "compare", baseline: a, attempt: b };
   return { name: "unknown", hash };
 }
 
@@ -67,6 +71,8 @@ export function hrefOf(route: Route): string {
       return `#/run/${encodeURIComponent(route.id)}/report`;
     case "record":
       return `#/record/${encodeURIComponent(route.record)}`;
+    case "compare":
+      return route.attempt ? `#/compare/${encodeURIComponent(route.baseline)}/${encodeURIComponent(route.attempt)}` : `#/compare/${encodeURIComponent(route.baseline)}`;
     case "unknown":
       return route.hash || "#/";
   }

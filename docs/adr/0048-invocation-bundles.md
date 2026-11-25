@@ -243,7 +243,8 @@ until the host runs a build with this decision.
   none from an exchange written before. An older exchange whose answer was cut at a
   ceiling it did not keep is `unanswerable` offline (ADR 0049).
 - **A bundle's entry and a saved example are names that keep what they hold.** A bundle's
-  names start `bundles/<digest>/` and an example's is `examples/<id>` (plan m7, task U1).
+  names start `bundles/<digest>/`; an example's is `examples/<id>`, with the canonical file of
+  each of its inputs under it, `examples/<id>/inputs/<n>` (plan m7, task U1).
   They belong to no run and are no import's mark: the store refuses to hold one in a run
   or to mark one imported (`Error::EntryOnly`), and neither the deletion of runs nor the
   collection of unused imports lets one go, so `store delete` leaves them, the collection

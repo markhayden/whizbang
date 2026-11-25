@@ -100,6 +100,7 @@ fn delete(root: &Path, run: &str) -> store::Command {
     store::Command::Delete {
         at: Where::at(root),
         runs: vec![run.to_owned()],
+        example: None,
     }
 }
 
