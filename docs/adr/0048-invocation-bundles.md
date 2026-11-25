@@ -184,17 +184,26 @@ did; nothing in a store is migrated.
 **Where the card reaches whizbang.** The pack's worker names the card in the result of its
 `load`, as the last of the parts it joins with `; `, `card <name>`, where `<name>` is the
 runtime's name of the card cut to 64 characters (`pack/src/whizbang_pack/worker.py`,
-`adapter.card_name`). Both whizbang sides read it there; `pack/1` is not changed:
+`adapter.card_name`), for a model its adapter placed on CUDA. From this decision on it
+names the card on a load of the model already resident too ("already loaded; card
+<name>"): the front sends a load before every call, so each request to a warm host is
+one, and its record names the card as a cold one's does. Both whizbang sides read it
+there, and only from a load whose result names CUDA's device (`cuda`, or `cuda:` and a
+number); `pack/1` is not changed:
 
 - the kind `pack`'s supervisor keeps the card the `load` named with the model it made
   resident, and hands it on with each call of that model, a call that finds its model
-  resident included (`whizbang_backends::pack::queue`);
+  resident and makes no load included; a load of the same model and installation again
+  (other settings) on CUDA that names none keeps the card it had
+  (`whizbang_backends::pack::queue`);
 - the kind `remote` reads it from the `load`'s result among the frames of the front's
   answer (`whizbang_backends::remote::answer`).
 
 Each carries it into the answer's `Served` (`capability/served.rs`, `Served::with_card`),
 where the run's record takes it. A text that is not a card by the rule is not kept. A
-worker of a build before this one names a card the same way, so its card is read too.
+worker of a build before this one names the card only on a load that makes the model
+resident: on a host that runs one, a warm request's record names `cuda` and no card,
+until the host runs a build with this decision.
 
 ### What the store keeps for replay
 
@@ -212,9 +221,10 @@ worker of a build before this one names a card the same way, so its card is read
   ceiling it did not keep is `unanswerable` offline (ADR 0049).
 - **A bundle's entry and a saved example are names that keep what they hold.** A bundle's
   names start `bundles/<digest>/` and an example's is `examples/<id>` (plan m7, task U1).
-  They belong to no run and are no import's mark, so `store delete` of runs leaves them,
-  the collection of unused imports never lets them go, and a prune keeps every object
-  they name. Each entry is removed whole by one publication that lets go of it
+  They belong to no run and are no import's mark: the store refuses to hold one in a run
+  or to mark one imported (`Error::EntryOnly`), and neither the deletion of runs nor the
+  collection of unused imports lets one go, so `store delete` leaves them, the collection
+  never lets them go, and a prune keeps every object they name. Each entry is removed whole by one publication that lets go of it
   ([`Publication::let_go_of_entry`]); nothing else removes them. What the entry named then
   goes at the next prune, unless another name (a run's output, a run's hold, an ordinary
   import, another bundle) still names it.
@@ -223,14 +233,17 @@ worker of a build before this one names a card the same way, so its card is read
   bytes go with its name. A prune leaves every generation a reader or a run holds and
   everything it names (ADR 0036): a run admitted against a generation holds it until the
   executor is done with the run (`contract/engine.rs`, `Store::hold`), so a run going
-  keeps every file it reads. A prune that fails is tried at the next collection; the
-  collection's own count is unchanged.
+  keeps every file it reads. A prune that fails is tried at the next collection: its
+  failure comes back beside what the collection did, whose names and count stand.
 - **Rolling back.** The store's names take any text (`store/buckets.rs`), and the names of
   a bundle's entry and an example are bucketed by the rule that already holds for a name
   with a `/`, so the store's format does not change. A build before this decision opens a
   store with `bundles/` or `examples/` names, reads it, and leaves those names alone; it
   refuses a `run/7` record when it reads one, by its version, and reads every other run of
-  the store. A revert keeps the record's reader and drops the writers.
+  the store. It also refuses to read back a `judge-exchange/1` exchange that keeps
+  `output_ceiling`, a field it does not know (its reader takes no unknown field): such an
+  exchange's bytes are still kept and printed by `runs show --diagnostic`, but it is not
+  read, or shown in the playground, as an exchange. A revert keeps the record's and the exchange's readers and drops the writers.
 
 ## Consequences
 

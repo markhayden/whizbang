@@ -252,7 +252,7 @@ fn an_import_made_again_is_younger_and_keeps_every_name_that_came_in_with_it() {
 // --- What the store keeps for replay (plan m7, task B1, item 7; ADR 0048) ----------------------
 
 use whizbang_core::store::Digest;
-use whizbang_core::store::{BUNDLES_PREFIX, Error, Kind, Reader};
+use whizbang_core::store::{BUNDLES_PREFIX, EXAMPLES_PREFIX, Error, Kind, Reader};
 
 /// Whether the store's folder holds the content of these bytes.
 fn on_disk(store: &Store, bytes: &[u8]) -> bool {
@@ -320,6 +320,7 @@ fn the_hourly_collection_ends_in_a_prune_and_an_uploads_bytes_go_with_its_name()
     let (collected, pruned) = store
         .collect_and_prune(24 * HOUR_MS, now_ms() + 25 * HOUR_MS)
         .unwrap();
+    let pruned = pruned.unwrap();
     assert_eq!(collected.names, 3);
     assert!(pruned.objects_removed >= 1, "{pruned:?}");
     assert!(!on_disk(&store, b"left"));
@@ -333,6 +334,7 @@ fn the_hourly_collection_ends_in_a_prune_and_an_uploads_bytes_go_with_its_name()
     let (collected, pruned) = store
         .collect_and_prune(24 * HOUR_MS, now_ms() + 26 * HOUR_MS)
         .unwrap();
+    let pruned = pruned.unwrap();
     assert_eq!((collected.names, pruned.objects_removed), (0, 0));
 }
 
@@ -383,7 +385,11 @@ fn a_run_going_keeps_every_file_a_held_reader_reads() {
     drop(holding);
     drop(seen);
     drop(reader);
-    store.collect_and_prune(0, now_ms() + 2 * HOUR_MS).unwrap();
+    store
+        .collect_and_prune(0, now_ms() + 2 * HOUR_MS)
+        .unwrap()
+        .1
+        .unwrap();
     assert!(!on_disk(&store, b"read by a run"));
     assert!(!on_disk(&store, b"seen by a reader"));
 }
@@ -411,6 +417,8 @@ fn a_bundles_entry_keeps_its_artifacts_from_delete_prune_and_the_collection() {
     store.delete(&["run-1"]).unwrap();
     store
         .collect_and_prune(0, now_ms() + 1_000 * HOUR_MS)
+        .unwrap()
+        .1
         .unwrap();
     let generation = store.snapshot().unwrap();
     assert!(generation.run("run-1").is_none());
@@ -509,6 +517,96 @@ fn an_ordinary_import_before_or_after_a_bundle_keeps_its_artifact_when_the_bundl
     // And the imports go by their own collection, with their bytes.
     store
         .collect_and_prune(0, now_ms() + 1_000 * HOUR_MS)
+        .unwrap()
+        .1
         .unwrap();
     assert!(!on_disk(&store, before) && !on_disk(&store, after));
+}
+
+/// Only an entry's own deletion removes its names (ADR 0048): no run may hold a name of a
+/// bundle's or an example's entry and no import may mark one, so a run's deletion and the
+/// collection never let one go.
+#[test]
+fn a_run_cannot_hold_an_entrys_name_and_its_deletion_leaves_the_entry() {
+    let dir = Scratch::new("store-entry-held");
+    let store = Store::open(&dir.path().join("store"), Arc::new(RealFs)).unwrap();
+    let file: &[u8] = b"a file a run asks to hold";
+    let entry = bundle(&store, "b1", &[file]);
+    let named = format!("{entry}/files/{}", Digest::of_bytes(file).hex());
+    let held = store.snapshot().unwrap().get(&named).unwrap().clone();
+    let mut publication = store.begin().unwrap();
+    publication.create_run("run-1").unwrap();
+    let refused = publication.hold_in("run-1", &named, held);
+    assert!(
+        matches!(refused, Err(Error::EntryOnly { .. })),
+        "{refused:?}"
+    );
+    for (name, with) in [
+        (named.as_str(), "uploads/a"),
+        ("artifacts/image/a", named.as_str()),
+    ] {
+        let marked = publication.mark_imported_with(name, &[with.to_owned()]);
+        assert!(
+            matches!(marked, Err(Error::EntryOnly { .. })),
+            "{name} {with}"
+        );
+    }
+    let example = "examples/0123456789abcdef";
+    assert!(matches!(
+        publication.mark_imported(example),
+        Err(Error::EntryOnly { .. })
+    ));
+    publication.publish().unwrap();
+    store.delete(&["run-1"]).unwrap();
+    store
+        .collect_and_prune(0, now_ms() + 1_000 * HOUR_MS)
+        .unwrap()
+        .1
+        .unwrap();
+    let generation = store.snapshot().unwrap();
+    assert_eq!(store.read(generation.get(&named).unwrap()).unwrap(), file);
+}
+
+/// An example's entry (plan m7, task U1) is a name that keeps what it holds as a bundle's
+/// does: delete, the collection and a prune leave it, and its own deletion removes it.
+#[test]
+fn an_examples_entry_survives_delete_and_prune_and_goes_by_its_own_deletion() {
+    let dir = Scratch::new("store-example");
+    let store = Store::open(&dir.path().join("store"), Arc::new(RealFs)).unwrap();
+    let held: &[u8] = b"an input an example names";
+    let example = format!("{EXAMPLES_PREFIX}0123456789abcdef");
+    let mut publication = store.begin().unwrap();
+    publication
+        .put(&example, b"example/1 of a saved run")
+        .unwrap();
+    publication
+        .put(&format!("{example}/inputs/image"), held)
+        .unwrap();
+    publication.create_run("run-1").unwrap();
+    publication
+        .put_in("run-1", "outputs/image/0", Kind::Output, held)
+        .unwrap();
+    publication.publish().unwrap();
+    store.delete(&["run-1"]).unwrap();
+    store
+        .collect_and_prune(0, now_ms() + 1_000 * HOUR_MS)
+        .unwrap()
+        .1
+        .unwrap();
+    assert!(store.snapshot().unwrap().get(&example).is_some());
+    assert!(on_disk(&store, held));
+    // An entry is the whole name: one that only starts as it does is another.
+    let mut publication = store.begin().unwrap();
+    publication
+        .let_go_of_entry(&format!("{EXAMPLES_PREFIX}0123"))
+        .unwrap();
+    assert!(matches!(
+        publication.publish(),
+        Err(Error::NoSuchEntry { .. })
+    ));
+    let_go(&store, &example);
+    assert_eq!(named_under(&store, &example), 0);
+    assert!(store.snapshot().unwrap().get(&example).is_none());
+    store.prune().unwrap();
+    assert!(!on_disk(&store, held));
 }

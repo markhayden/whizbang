@@ -81,6 +81,11 @@ pub enum Error {
     /// text is no such entry's name ([`super::Publication::let_go_of_entry`]). Nothing
     /// was published.
     NoSuchEntry { entry: String },
+    /// A publication was to hold a name of a bundle's or an example's entry in a run, or
+    /// to mark one as imported: such a name is removed only with its entry
+    /// ([`super::Publication::let_go_of_entry`]), so neither may be made of it. Refused
+    /// here, before anything is staged.
+    EntryOnly { name: String },
     /// A publication was to make this run, and the current generation holds it already.
     /// Nothing was published: two runs are never merged under one id.
     RunExists { run: String },
@@ -209,6 +214,9 @@ impl Error {
             Error::NoSuchEntry { .. } => {
                 "the store does not hold that bundle or example".to_owned()
             }
+            Error::EntryOnly { .. } => {
+                "the store was to hold or mark a name of a bundle or an example".to_owned()
+            }
             Error::RunExists { .. } => "the store already holds a run of that id".to_owned(),
             Error::NameExists { .. } => {
                 "the store already holds a name that is made once".to_owned()
@@ -332,6 +340,11 @@ impl fmt::Display for Error {
                 reads_formats(*reads)
             ),
             Error::NoSuchRun { run } => write!(f, "the store holds no run {run:?}"),
+            Error::EntryOnly { name } => write!(
+                f,
+                "the name {name:?} is of a bundle's or an example's entry: it goes only with \
+                 its entry, so no run holds it and no import marks it"
+            ),
             Error::NoSuchEntry { entry } => write!(
                 f,
                 "the store holds no bundle or example {entry:?}: an entry is bundles/ or \
@@ -396,6 +409,7 @@ impl std::error::Error for Error {
             | Error::TooManyAbandoned { .. }
             | Error::NoSuchRun { .. }
             | Error::NoSuchEntry { .. }
+            | Error::EntryOnly { .. }
             | Error::RunExists { .. }
             | Error::NameExists { .. }
             | Error::MadeOnly { .. }

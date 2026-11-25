@@ -139,6 +139,16 @@ class Resident:
         self.adapter = adapter
 
 
+def _card_said(adapter):
+    """The card's name, beside the device a result names, as the last part of what a load
+    says (ADR 0046, "Its device"; ADR 0048): `card <name>` for a model on CUDA whose
+    runtime names one, and nothing otherwise."""
+    if adapter.device != "cuda":
+        return []
+    card = card_name()
+    return ["card " + card] if card else []
+
+
 class Call:
     """What an adapter is handed for one request: its events go out through it, and its
     waits end at its cancel or at the worker's end."""
@@ -417,7 +427,9 @@ class Worker:
         model, identity = request["model"], request["installation"]
         resident = self.resident
         if resident is not None and (resident.model, resident.identity) == (model, identity):
-            return "already loaded"
+            # A load of the model that is resident names its card too (ADR 0048): each
+            # request of a warm host is a load and a call, and its record names the card.
+            return "; ".join(["already loaded"] + _card_said(resident.adapter))
         installation = Installation(self.models_dir, model, identity)
         # By the installation's record, held to the identity this load names (task U1).
         make = installed.adapter_of(self.models_dir, installation, self.adapters, self.by_adapter, SHIPPED)
@@ -433,11 +445,7 @@ class Worker:
         self.resident = Resident(model, identity, installation, adapter)
         if diagnostics:
             said.append(str(diagnostics))
-        if adapter.device == "cuda":
-            # The card's name, beside the device a result names (ADR 0046, "Its device").
-            card = card_name()
-            if card:
-                said.append("card " + card)
+        said.extend(_card_said(adapter))
         return "; ".join(said)
 
     def _unload(self, call):

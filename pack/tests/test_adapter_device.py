@@ -67,6 +67,8 @@ class Device(unittest.TestCase):
             made = worker.Worker("/nowhere", None, io.BytesIO(), io.BytesIO(), io.StringIO(), exit=lambda code: None, adapters={"fake-ok": OnCuda})
             call = worker.Call(made, {"type": "request", "id": "r1", "kind": "load", "model": "fake-ok", "installation": "sha256:" + "11" * 32, "settings": {}})
             message = made._perform(call)
+            # A load of the model already resident names the card too (ADR 0048).
+            again = made._perform(worker.Call(made, dict(call.request, id="r2")))
         finally:
             if saved is None:
                 del sys.modules["torch"]
@@ -75,6 +77,8 @@ class Device(unittest.TestCase):
         self.assertEqual(message["device"], "cuda")
         self.assertIn("card NVIDIA L4", message["diagnostics"])
         proto.encode(message)
+        self.assertEqual(again["diagnostics"], "already loaded; card NVIDIA L4")
+        proto.encode(again)
 
 
 if __name__ == "__main__":

@@ -298,11 +298,12 @@ fn frames(
                 Message::Result {
                     id,
                     answer: Answer::Load,
+                    device,
                     diagnostics,
                     ..
                 },
             ) if id == LOAD_ID => {
-                card = crate::pack::card_of(&diagnostics);
+                card = crate::pack::card_of(&diagnostics, &device);
                 at = At::Call;
             }
             (

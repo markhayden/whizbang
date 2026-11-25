@@ -321,10 +321,14 @@ pub struct Called {
 }
 
 /// The card a `load`'s result names (ADR 0046, "Its device"; ADR 0048): the worker joins
-/// what a load says with `; ` and names the card last, as `card <name>`. The name as it
-/// was written, when the last part is one; it is held to the rule of a card where the
-/// answer is made.
-pub fn card_of(said: &str) -> Option<String> {
+/// what a load says with `; ` and names the card last, as `card <name>`, for a model on
+/// CUDA, a load of the model already resident included. The name as it was written,
+/// when the result's device is CUDA's (`cuda`, or `cuda:` and a number) and the last
+/// part is one; it is held to the rule of a card where the answer is made.
+pub fn card_of(said: &str, device: &str) -> Option<String> {
+    if device != "cuda" && !device.starts_with("cuda:") {
+        return None;
+    }
     let last = said.rsplit("; ").next().unwrap_or(said);
     let card = last.strip_prefix("card ")?;
     (!card.is_empty()).then(|| card.to_owned())

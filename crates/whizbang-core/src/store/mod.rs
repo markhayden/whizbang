@@ -1576,14 +1576,16 @@ impl Store {
     /// ([`Store::prune`]), so an upload's bytes go with its name. A prune leaves every
     /// generation a reader or a hold shares, and everything it names: a run admitted
     /// against a generation holds it, so a run going keeps every file it reads. A
-    /// collection that fails prunes nothing.
+    /// collection that fails prunes nothing. A prune that fails leaves what the
+    /// collection did, and its count, standing: it comes back beside them, and what it
+    /// did not remove is removed by the next.
     pub fn collect_and_prune(
         &self,
         older_than_ms: u64,
         now_ms: u64,
-    ) -> Result<(Collected, Pruned)> {
+    ) -> Result<(Collected, Result<Pruned>)> {
         let collected = self.collect_unused_imports(older_than_ms, now_ms)?;
-        Ok((collected, self.prune()?))
+        Ok((collected, self.prune()))
     }
 
     /// Removes what nothing needs: the files of generations older than the current one,
@@ -1776,14 +1778,16 @@ fn unused_imports(
         let Some(imported) = generation.imported(name) else {
             continue;
         };
-        if held.contains(name) || imported.at_ms.saturating_add(older_than_ms) > now_ms {
+        // A name of an entry is never an import's to let go, whatever marks it.
+        let young = imported.at_ms.saturating_add(older_than_ms) > now_ms;
+        if held.contains(name) || young || entry_only(name).is_err() {
             continue;
         }
         gone.push(name.to_owned());
         gone.push(mark.clone());
         let with = imported.with.iter();
         gone.extend(
-            with.filter(|beside| !held.contains(beside.as_str()))
+            with.filter(|beside| !held.contains(beside.as_str()) && entry_only(beside).is_ok())
                 .cloned(),
         );
         imports.push(name.to_owned());
@@ -1873,6 +1877,19 @@ fn is_entry(entry: &str) -> bool {
     rest.is_some_and(|rest| {
         !rest.is_empty() && !rest.contains('/') && !rest.chars().any(char::is_control)
     })
+}
+
+/// Refuses a name of a bundle's or an example's entry where a run would hold it or an
+/// import mark it: such a name is removed only with its entry, by
+/// [`Publication::let_go_of_entry`], so no deletion of a run and no collection of an
+/// import may let it go (ADR 0048).
+fn entry_only(name: &str) -> Result<()> {
+    if name.starts_with(BUNDLES_PREFIX) || name.starts_with(EXAMPLES_PREFIX) {
+        return Err(Error::EntryOnly {
+            name: name.to_string(),
+        });
+    }
+    Ok(())
 }
 
 /// Whether `name` is of the entry `entry`: the entry's own name, or one under it.
@@ -2065,6 +2082,7 @@ impl Publication<'_> {
     pub fn hold_in(&mut self, run: &str, name: &str, entry: Entry) -> Result<()> {
         check_run_id(run)?;
         made_only(name)?;
+        entry_only(name)?;
         self.store
             .in_progress
             .lock()
@@ -2121,8 +2139,10 @@ impl Publication<'_> {
     /// it): the collection that lets the import go lets them go with it.
     pub fn mark_imported_with(&mut self, name: &str, with: &[String]) -> Result<()> {
         made_only(name)?;
+        entry_only(name)?;
         for beside in with {
             made_only(beside)?;
+            entry_only(beside)?;
         }
         let at_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -2386,7 +2406,8 @@ impl Publication<'_> {
             let hold = format!("{HOLDS_PREFIX}{name}");
             let still_held = generation.any_run_has(&hold);
             let marked = format!("{IMPORTED_PREFIX}{name}");
-            if !still_held && generation.get(&marked).is_none() && made_only(&name).is_ok() {
+            let removable = made_only(&name).is_ok() && entry_only(&name).is_ok();
+            if !still_held && generation.get(&marked).is_none() && removable {
                 generation.remove_entry(&name);
             }
         }

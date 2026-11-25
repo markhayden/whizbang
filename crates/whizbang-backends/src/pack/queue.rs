@@ -563,6 +563,16 @@ impl Supervisor {
         let held = resident.as_ref().filter(|resident| resident.is(&wanted));
         let mut card = held.and_then(|resident| resident.card.clone());
         if held.is_none() || wanted.worker.is_none() {
+            // The card the same model and installation was last loaded on, kept for a
+            // load on CUDA that names none (a worker of a build before ADR 0048 names it
+            // only when it loads the model anew).
+            let same = |old: &&Resident| {
+                (&old.model, old.installation) == (&wanted.model, wanted.installation)
+            };
+            let before = resident
+                .as_ref()
+                .filter(same)
+                .and_then(|old| old.card.clone());
             if let Some(old) = resident {
                 let unload = Ask::Unload {
                     model: old.model,
@@ -580,7 +590,8 @@ impl Supervisor {
             let loaded = self.step(worker, number, load, limits)?;
             // The card the load named, kept with the model it made resident, and handed
             // on with each call of it (ADR 0048).
-            card = card_of(&loaded.diagnostics);
+            let on_cuda = loaded.device == "cuda" || loaded.device.starts_with("cuda:");
+            card = card_of(&loaded.diagnostics, &loaded.device).or(before.filter(|_| on_cuda));
             self.lock().resident = Some(Resident {
                 worker: worker.pid(),
                 card: card.clone(),

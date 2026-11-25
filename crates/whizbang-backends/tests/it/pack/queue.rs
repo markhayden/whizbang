@@ -911,6 +911,22 @@ fn the_card_a_load_named_goes_with_each_call_of_the_model_it_made_resident() {
             (2, "segment", cuda())
         ]
     );
+    // Other settings load the model again, on the same card, which the load names.
+    let mut changed = request("fake-cuda");
+    changed.settings.insert(
+        "threshold".to_owned(),
+        whizbang_backends::pack::proto::Scalar::Whole(3),
+    );
+    let reloaded = supervisor.call(changed, &Limits::none()).unwrap();
+    assert_eq!(reloaded.card.as_deref(), named);
+    assert_eq!(
+        sent(&supervisor)[3..],
+        [
+            (3, "unload", cuda()),
+            (3, "load", cuda()),
+            (3, "segment", cuda())
+        ]
+    );
     // Another model, on no card: its load names none, and its calls carry none.
     let other = supervisor
         .call(request("fake-ok"), &Limits::none())

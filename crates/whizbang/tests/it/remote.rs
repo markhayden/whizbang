@@ -339,6 +339,9 @@ fn the_run_records_the_identity_asked_the_one_reported_and_the_device() {
 #[test]
 fn the_run_records_the_card_the_fake_host_named() {
     let remoted = Remoted::new("remote-card", &["fake-cuda", "fake-mps"]);
+    // Three runs, each charged at its bound of 0.36 dollars.
+    let reset = whizbang(&["spend", "reset", "--allowance", "2"], &remoted.world.root);
+    assert_eq!(reset.code, Some(0), "{}", reset.err);
     let ran = remoted.segment(&remoted.runner(&remoted.priced("fake-cuda")));
     assert_eq!(ran.outcome().name(), "completed", "{:?}", ran.outcome());
     let record = record_of(&remoted.world.root, ran.run().as_str());
@@ -350,6 +353,13 @@ fn the_run_records_the_card_the_fake_host_named() {
     // `runs show` reads it back.
     let shown = whizbang(&["runs", "show", ran.run().as_str()], &remoted.world.root);
     assert_eq!(shown.code, Some(0), "{}", shown.err);
+    // A second run finds the host warm: the front sends the load again, the model is
+    // resident, and the worker names the card all the same.
+    let again = remoted.segment(&remoted.runner(&remoted.priced("fake-cuda")));
+    assert_eq!(again.outcome().name(), "completed", "{:?}", again.outcome());
+    let record = record_of(&remoted.world.root, again.run().as_str());
+    assert_eq!(record["record"], "run/7", "{record}");
+    assert_eq!(record["models"][0]["card"], "NVIDIA Fake A10G", "{record}");
     // A model on no card: no card, and the record is of the version before.
     let ran = remoted.segment(&remoted.runner(&remoted.priced("fake-mps")));
     assert_eq!(ran.outcome().name(), "completed", "{:?}", ran.outcome());

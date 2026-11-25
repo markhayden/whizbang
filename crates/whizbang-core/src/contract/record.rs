@@ -1822,9 +1822,6 @@ impl Facts {
         takes
     }
 
-    /// Notes which attempt was kept, by its number, and why the attempts ended.
-    /// False, and nothing is noted, when it was said already or a record would not
-    /// hold it.
     /// Notes the run this run replays (`run/7`). False, and nothing is noted, when one
     /// is noted already, or a record would not hold it.
     pub fn replayed(&mut self, replayed: Replayed) -> bool {
@@ -1835,6 +1832,9 @@ impl Facts {
         fresh
     }
 
+    /// Notes which attempt was kept, by its number, and why the attempts ended.
+    /// False, and nothing is noted, when it was said already or a record would not
+    /// hold it.
     pub fn attempts_ended(&mut self, kept: Option<u32>, why: String) -> bool {
         let said = Attempted {
             list: std::mem::take(&mut self.attempts),
