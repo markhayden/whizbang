@@ -1,5 +1,5 @@
 {
-  "description_version": 11,
+  "description_version": 12,
   "name": "whizbang",
   "version": "0.1.0",
   "kits": [
@@ -4980,6 +4980,26 @@
   ],
   "marks": [
     {
+      "tool": "remove_prompt",
+      "mark": "experimental"
+    },
+    {
+      "tool": "remove",
+      "mark": "experimental"
+    },
+    {
+      "tool": "repair_area",
+      "mark": "experimental"
+    },
+    {
+      "tool": "repair",
+      "mark": "experimental"
+    },
+    {
+      "tool": "seam",
+      "mark": "experimental"
+    },
+    {
       "tool": "source-fidelity",
       "mark": "unverified"
     },
@@ -5000,8 +5020,8 @@
       "mark": "unverified"
     },
     {
-      "tool": "align",
-      "mark": "unverified"
+      "tool": "remove_checked",
+      "mark": "experimental"
     },
     {
       "tool": "change_map",
@@ -5013,6 +5033,26 @@
     },
     {
       "tool": "resize",
+      "mark": "experimental"
+    },
+    {
+      "tool": "segment",
+      "mark": "experimental"
+    },
+    {
+      "tool": "fill",
+      "mark": "experimental"
+    },
+    {
+      "tool": "per_subject",
+      "mark": "experimental"
+    },
+    {
+      "tool": "outline",
+      "mark": "experimental"
+    },
+    {
+      "tool": "tiles",
       "mark": "experimental"
     }
   ],

@@ -74,6 +74,11 @@ call of `align` in `full`. Over the server, `check` takes `"details": "first"`. 
 the recipe itself sets the three together: `details.details=first`,
 `judge.tools=view,align,resize` and `judge.projection=full`.
 
+Details first ends milestone E experimental (plan mE, task A0, item 5): no fix of it was
+proposed, and its gate rejected it in every run, so it is not gated again and stays off by
+default, one flag away. `resize`, which `check` offers only under it, ends E experimental
+with it.
+
 ## Examples
 
 Two worked examples on synthetic drawings made for the tests of `align` (`fixtures/align/`),
@@ -198,3 +203,5 @@ cases together.
 - Plan m3, task Q1: a recipe of two steps (#210); this record (its third pull request).
 - Plan m4, task A1: details first is off by default; the recipe as shipped is the gate's
   control arm, whole, and the examples above were made again under it.
+- Plan mE, task A0: details first ends milestone E experimental, with `resize`; the recipe's
+  mark is unchanged.

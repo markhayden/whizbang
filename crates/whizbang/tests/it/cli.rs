@@ -801,7 +801,7 @@ fn squint_check_details_first_measures_first_offers_resize_and_answers_in_full()
         .collect();
     assert_eq!(texts[2], whizbang_squint::details::DETAILS_INTRO);
     assert!(
-        texts[3].starts_with("align (unverified), candidate onto source: registered "),
+        texts[3].starts_with("align (control), candidate onto source: registered "),
         "{}",
         texts[3]
     );
@@ -870,7 +870,7 @@ fn squint_check_with_detail_change_map_hands_its_measurements_to_a_scripted_judg
         .iter()
         .filter_map(|part| part["text"].as_str())
         .collect();
-    assert!(texts[3].starts_with("align (unverified), "), "{}", texts[3]);
+    assert!(texts[3].starts_with("align (control), "), "{}", texts[3]);
     let measured = texts
         .iter()
         .find(|text| {
@@ -2097,6 +2097,11 @@ fn try_runs_one_tool_on_a_pair_with_no_judge() {
 /// A set of source-fidelity under `dir` of three items in three families, each its source
 /// and candidate from `fixtures/compare/`, labelled as given; its pictures in a folder beside.
 pub(crate) fn three_items(dir: &Path) -> (PathBuf, PathBuf) {
+    three_items_keeping(dir, None)
+}
+
+/// The same, each item's job holding this requirement of kind `must_hold` when one is given.
+pub(crate) fn three_items_keeping(dir: &Path, keeps: Option<&str>) -> (PathBuf, PathBuf) {
     const SET: &str = "source-fidelity/compare-v1";
     let (root, from) = (dir.join("evalsets"), dir.join("pictures"));
     let set = root.join(SET);
@@ -2115,6 +2120,12 @@ pub(crate) fn three_items(dir: &Path) -> (PathBuf, PathBuf) {
     for (item, source, candidate, expected) in items {
         let mut job =
             "[job]\nuse_case = \"source-fidelity\"\nbrief = \"Keep the scene.\"\n".to_owned();
+        if let Some(text) = keeps {
+            job.push_str(&format!(
+                "\n[[job.requirements]]\nid = \"RQ1\"\nkind = \"must_hold\"\n\
+                 scope = [\"candidate\"]\nevidence = [\"source\"]\ntext = \"{text}\"\n"
+            ));
+        }
         for (role, name) in [("candidate", candidate), ("source", source)] {
             let bytes = compared(name);
             let path = format!("items/{item}/{role}.png");
@@ -2285,6 +2296,63 @@ fn a_tool_file_is_tried_scored_edited_and_run_again_without_a_rebuild() {
         again.primary(&declared).unwrap(),
     );
     assert!((after - before / 2.0).abs() < 1e-9, "{before} {after}");
+}
+
+#[test]
+fn outline_runs_under_try_and_eval_tool_against_the_fake_segmenter() {
+    // Plan mE, task T1: the tool file the pack ships, listed by a config, asks the fake
+    // segmenter for its subject on each side and compares the two shapes. The fake finds
+    // `pool` in one box on every picture, so the shapes agree wholly.
+    use crate::tool_file::Tools;
+    let shipped = include_str!("../../../../pack/tools/outline.py").to_owned();
+    let tools = Tools::new("cli-outline", &[("outline.py", shipped)]);
+    let root = tools.root.clone();
+    let ids = ["before", "after"].map(|name| {
+        let id = imported(&tools.dir, &root, name);
+        whizbang_core::artifact::ArtifactId(id.parse().unwrap())
+    });
+    let (sets_root, from) = three_items_keeping(
+        &tools.dir.path().join("set"),
+        Some("The pool keeps its shape."),
+    );
+    let set = "source-fidelity/compare-v1";
+    let found = whizbang_eval::sets::find(&sets_root, set).unwrap();
+    whizbang::evaluation::from_folder(&found, &from, &root, &wiring::recovery()).unwrap();
+    let over = tools.over(None);
+    let files = over.tool_files().unwrap();
+    let declared = whizbang::trying::declared_in("outline", files.as_deref()).unwrap();
+    assert!(declared.takes_job);
+    let executor = tools.runner(&over);
+    // Tried on a pair, the subject named by a phrase.
+    let phrases = [(
+        "phrases".to_owned(),
+        whizbang_core::contract::Value::text("pool"),
+    )];
+    let tried =
+        whizbang::trying::read_pair_with(&executor, &root, &declared, ids[0], ids[1], &phrases)
+            .unwrap();
+    let text = whizbang::trying::tried_text(&declared, &tried).unwrap();
+    assert!(text.contains("\none_minus_iou 0 ratio\n"), "{text}");
+    let run = tried.tool.clone().unwrap();
+    let report = door::diagnostic(&root, &run, whizbang::tool_file::REPORT).unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&report).unwrap();
+    assert_eq!(report["readings"][0]["subject"], "pool");
+    assert_eq!(report["regions"], serde_json::json!([]));
+    // Scored on a set of three items, each subject read from its job.
+    let (scored, said) = whizbang::trying::eval_tool(
+        &executor,
+        &root,
+        &sets_root,
+        &declared,
+        &[set.to_owned()],
+        50,
+    )
+    .unwrap();
+    assert_eq!((scored.items, scored.families), (3, 3), "{said}");
+    assert!(
+        said.contains("outline one_minus_iou (larger is changed): 3 items"),
+        "{said}"
+    );
 }
 
 #[test]

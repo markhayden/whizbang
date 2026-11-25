@@ -396,7 +396,7 @@ reported in its pull request. Every test that calls a provider or a real model i
    The "Evaluations" row on `tiles`, the second look and details first is narrowed with that
    line.
 
-- [ ] Done when: the two tests pass; `describe` shows every mark; the spec's sentences are in;
+- [x] Done when: the two tests pass; `describe` shows every mark; the spec's sentences are in;
   the ledger's figures are in this plan. **Reviewer reads hardest:** that no record's mark
   changed but `align`'s.
 
@@ -679,6 +679,12 @@ pinned commit, as tool files in ADR 0032's shape under `pack/tools/`, beside `pe
    `per_subject` does: `outline`, one minus the overlap of the subject's two shapes, the
    largest over the job's subjects; `regions`, the score of its strongest region, zero when
    it finds none. Subjects are read by `per_subject`'s `subjects_of`, shared, not copied.
+   As built (the first pull request): the rule lives in the pack's module
+   `whizbang_pack.subjects`, which `outline` imports; `per_subject.py` keeps its own copy
+   until its next measured run, because its record's rung 2 names the digest of the file as
+   measured, and `test_outline.Subjects` holds the two to one rule. The records' examples are
+   answered by the pack's fake model and run under `just test-pack`; SAM 3's readings of the
+   tools are R2's.
 4. **The rules' parts regions need** (the carry-over row on what the port of the use cases
    left). `[hints]` (`regions`' `preserve` and `ignore` classes) and the checklist's evidence
    items from a tool's regions (`checklist.rs`, `ingest`) are ported with tests. A profile and
@@ -1367,6 +1373,18 @@ is taken at 1.5 times its control. Bria through fal at 0.04 a fill. These are es
 limits: the limits are E's store's allowance, each call's cap and the builder's `--cap-usd`.
 
 **What E has left: 63.88 dollars** of the milestone's 100, since the first slice settled 36.12.
+
+**E's ledger, as read on 2026-11-25** (A0, item 2), by `whizbang spend status` on the two
+stores of the first slice, before any round of this plan:
+
+| Store | Allowance | Charged | Unresolved | Left |
+|---|---|---|---|---|
+| The evaluation store | 70.00 | 29.056671 | 0.18144 | 40.943329 |
+| The loop store | 25.00 | 7.285148 | 0.08 | 17.714852 |
+
+The loop store's charge holds milestone 5's 0.22 beside E's first slice. Settled by E's first
+slice: 36.12; left of the milestone's 100: 63.88. Neither store takes a run of this plan: E's
+store does (below).
 
 **Tier 1, within what is left.**
 

@@ -122,7 +122,8 @@ impl Kind for Finding {
             .priced(whizbang_core::capability::Price::at_most(1000.0).unwrap());
         let mut fake = FakeSegmenter::new()
             .declared_as(declaration)
-            .finding("circle", [330, 110, 510, 290]);
+            .finding("circle", [330, 110, 510, 290])
+            .finding("pool", [32, 24, 96, 72]);
         if let Some(barriers) = &self.0 {
             fake = fake.stopping_at(barriers, "segment");
         }
@@ -243,7 +244,7 @@ fn an_output_outside_its_declared_bounds_is_refused_before_use() {
     let text = tool_text("covers", BOUNDS, "");
     let declaration = Declaration::parse(text.as_bytes()).unwrap();
     let reading = |value: serde_json::Value| json!({"readings": [{"subject": "a door", "values": {"covered": value}}]});
-    let fine = tool_file::checked(&declaration, &reading(json!(0.25))).unwrap();
+    let fine = tool_file::checked(&declaration, &reading(json!(0.25)), &[]).unwrap();
     assert_eq!(fine.primary(&declaration), Some(0.25));
     for (output, said) in [
         (reading(json!(1.5)), "outside its declared bounds"),
@@ -263,7 +264,7 @@ fn an_output_outside_its_declared_bounds_is_refused_before_use() {
         ),
         (json!([1, 2]), "not an object"),
     ] {
-        let refused = tool_file::checked(&declaration, &output).unwrap_err();
+        let refused = tool_file::checked(&declaration, &output, &[]).unwrap_err();
         assert!(refused.contains(said), "{output}: {refused}");
     }
     // Through a run: the tool answers outside its bounds, and the run fails, stating
@@ -328,4 +329,244 @@ def run(context):
     let report = whizbang::door::diagnostic(&tools.root, &run, REPORT).unwrap();
     let report: serde_json::Value = serde_json::from_slice(&report).unwrap();
     assert_eq!(report["readings"][0]["subject"], json!("key:False lang:C"));
+}
+
+// --- regions (plan mE, task T1, item 0) ----------------------------------------------------
+
+/// The declaration of [`tool_text`], returning regions as well: at most two, each label at
+/// most 16 bytes.
+fn regions_text(name: &str, code: &str) -> String {
+    tool_text(name, BOUNDS, code).replace(
+        "# evidence = \"measurements\"\n",
+        "# evidence = [\"measurements\", \"regions\"]\n# max_regions = 2\n# max_region_label_bytes = 16\n",
+    )
+}
+
+/// The images a run hands a tool of two bindings, each 200 by 100.
+fn frames() -> Vec<tool_file::Frame> {
+    ["source", "candidate"]
+        .into_iter()
+        .map(|name| tool_file::Frame {
+            name: name.to_owned(),
+            width: 200,
+            height: 100,
+        })
+        .collect()
+}
+
+/// An output of one reading and these regions.
+fn located(regions: serde_json::Value) -> serde_json::Value {
+    json!({"readings": [{"subject": "pool", "values": {"covered": 0.5}}], "regions": regions})
+}
+
+#[test]
+fn a_tool_returns_regions_within_its_bounds() {
+    use tool_file::RegionShape;
+    let declaration = Declaration::parse(regions_text("located", "").as_bytes()).unwrap();
+    assert!(declaration.regions());
+    let output = located(json!([
+        {"frame": "candidate", "box": [10, 20, 200, 100], "label": "pool added", "score": 0.75},
+        {"frame": "source", "polygon": [[0, 0], [200, 0], [100, 100]], "label": "", "score": 0},
+    ]));
+    let read = tool_file::checked(&declaration, &output, &frames()).unwrap();
+    assert_eq!(read.regions.len(), 2);
+    assert_eq!(read.regions[0].frame, "candidate");
+    assert_eq!(
+        read.regions[0].shape,
+        RegionShape::Box([10.0, 20.0, 200.0, 100.0])
+    );
+    assert_eq!(
+        (read.regions[0].label.as_str(), read.regions[0].score),
+        ("pool added", 0.75)
+    );
+    assert_eq!(
+        read.regions[1].shape,
+        RegionShape::Polygon(vec![[0.0, 0.0], [200.0, 0.0], [100.0, 100.0]])
+    );
+    // What a judge is shown and the diagnostic holds: the regions beside the readings.
+    let shown = read.to_json(&declaration);
+    assert_eq!(
+        shown["regions"][0]["box"],
+        json!([10.0, 20.0, 200.0, 100.0])
+    );
+    assert_eq!(shown["regions"][1]["polygon"][2], json!([100.0, 100.0]));
+    // A tool that declares no regions is shown as before, with no list of them.
+    let plain = Declaration::parse(tool_text("plain", BOUNDS, "").as_bytes()).unwrap();
+    let unlocated = json!({"readings": [{"subject": "pool", "values": {"covered": 0.5}}]});
+    let fine = tool_file::checked(&plain, &unlocated, &frames()).unwrap();
+    assert!(fine.to_json(&plain).get("regions").is_none());
+    // The tool file the pack ships, `outline`, declares regions and their bounds.
+    let shipped = include_bytes!("../../../../pack/tools/outline.py");
+    let outline = Declaration::parse(shipped).unwrap();
+    assert!(outline.regions());
+    assert_eq!(
+        (outline.max_regions, outline.max_region_label_bytes),
+        (Some(6), Some(120))
+    );
+    assert_eq!(
+        (outline.primary.as_str(), outline.bindings.as_slice()),
+        (
+            "one_minus_iou",
+            ["source", "candidate"].map(String::from).as_slice()
+        )
+    );
+    // Through a run: the tool locates a region on the candidate it was handed, in that
+    // image's pixels, and the run's diagnostic records it.
+    let code = r#"def run(context):
+    image = context.image('candidate')
+    return {'readings': [{'subject': 'pool', 'values': {'covered': 0.5}}], 'regions': [{'frame': 'candidate', 'box': [0, 0, image.width, image.height], 'label': 'all of it', 'score': 1.0}]}
+"#;
+    let tools = Tools::new(
+        "tool-file-regions",
+        &[("located.py", regions_text("located", code))],
+    );
+    let executor = tools.runner(&tools.over(None));
+    let call = Call::new("located")
+        .input("source", tools.image_id())
+        .input("candidate", tools.image_id());
+    let (run, outcome) = ran(&executor, &call);
+    assert!(matches!(outcome, Outcome::Completed { .. }), "{outcome:?}");
+    let report = whizbang::door::diagnostic(&tools.root, &run, REPORT).unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&report).unwrap();
+    let region = &report["regions"][0];
+    assert_eq!(
+        (region["frame"].as_str(), region["label"].as_str()),
+        (Some("candidate"), Some("all of it"))
+    );
+    assert_eq!(region["box"][0], json!(0.0));
+    assert!(region["box"][2].as_f64().unwrap() > 0.0);
+}
+
+#[test]
+fn regions_past_the_bounds_or_on_an_unknown_frame_are_refused() {
+    // Declarations: regions need both bounds, within theirs; the bounds need regions; and
+    // measurements come first, always.
+    let base = regions_text("located", "");
+    for (text, said) in [
+        (
+            base.replace("# max_regions = 2\n", ""),
+            "declares max_regions and max_region_label_bytes",
+        ),
+        (
+            base.replace("max_regions = 2", "max_regions = 65"),
+            "max_regions is from 1 to 64",
+        ),
+        (
+            base.replace(
+                "max_region_label_bytes = 16",
+                "max_region_label_bytes = 201",
+            ),
+            "max_region_label_bytes is from 1 to 200",
+        ),
+        (
+            base.replace("[\"measurements\", \"regions\"]", "\"measurements\""),
+            "are for a tool whose evidence names regions",
+        ),
+        (
+            base.replace("[\"measurements\", \"regions\"]", "[\"regions\"]"),
+            "evidence is measurements, or measurements and regions",
+        ),
+        (
+            base.replace("[\"measurements\", \"regions\"]", "\"labels\""),
+            "evidence is measurements, or measurements and regions",
+        ),
+    ] {
+        let refused = Declaration::parse(text.as_bytes()).unwrap_err();
+        assert!(refused.contains(said), "{said}: {refused}");
+    }
+    // Outputs: each region is held to the declared bounds and to an image the run holds.
+    let declaration = Declaration::parse(base.as_bytes()).unwrap();
+    let boxed = |frame: &str, edges: serde_json::Value, label: &str, score: serde_json::Value| json!({"frame": frame, "box": edges, "label": label, "score": score});
+    let fine = boxed("candidate", json!([0, 0, 10, 10]), "a", json!(0.5));
+    for (regions, said) in [
+        (json!([fine, fine, fine]), "3 regions, more than the 2"),
+        (
+            json!([boxed(
+                "candidate",
+                json!([0, 0, 10, 10]),
+                "seventeen bytes!!",
+                json!(0.5)
+            )]),
+            "at most the 16 bytes",
+        ),
+        (
+            json!([boxed(
+                "candidate",
+                json!([0, 0, 10, 10]),
+                "tab\there",
+                json!(0.5)
+            )]),
+            "printable text",
+        ),
+        (
+            json!([boxed("candidate", json!([0, 0, 10, 10]), "a", json!(1.5))]),
+            "score is a number from 0 to 1",
+        ),
+        (
+            json!([boxed("candidate", json!([0, 0, 201, 10]), "a", json!(0.5))]),
+            "not inside the 200x100 image candidate",
+        ),
+        (
+            json!([boxed("candidate", json!([5, 0, 5, 10]), "a", json!(0.5))]),
+            "with area",
+        ),
+        (
+            json!([boxed("candidate", json!([0, 0, 10]), "a", json!(0.5))]),
+            "box is four numbers",
+        ),
+        (
+            json!([boxed(
+                "aligned:candidate:t1",
+                json!([0, 0, 10, 10]),
+                "a",
+                json!(0.5)
+            )]),
+            "no image the run handed the tool",
+        ),
+        (
+            json!([{"frame": "source", "polygon": [[0, 0], [10, 0]], "label": "a", "score": 0.5}]),
+            "3 to 64 points",
+        ),
+        (
+            json!([{"frame": "source", "polygon": [[0, 0], [10, 0], [10, 101]], "label": "a", "score": 0.5}]),
+            "not inside the 200x100 image source",
+        ),
+        (
+            json!([{"frame": "source", "box": [0, 0, 1, 1], "polygon": [[0, 0], [1, 0], [1, 1]], "label": "a", "score": 0.5}]),
+            "a box or a polygon, one of the two",
+        ),
+        (
+            json!([{"frame": "source", "box": [0, 0, 1, 1], "label": "a", "score": 0.5, "verdict": "fail"}]),
+            "which a region does not",
+        ),
+        (json!({"frame": "source"}), "regions is not a list"),
+    ] {
+        let refused =
+            tool_file::checked(&declaration, &located(regions.clone()), &frames()).unwrap_err();
+        assert!(refused.contains(said), "{regions}: {refused}");
+    }
+    // A tool that declares no regions may not return them.
+    let plain = Declaration::parse(tool_text("plain", BOUNDS, "").as_bytes()).unwrap();
+    let refused = tool_file::checked(&plain, &located(json!([])), &frames()).unwrap_err();
+    assert!(refused.contains("which it does not declare"), "{refused}");
+    // Through a run: a region on an image the run did not hand the tool fails the run,
+    // and nothing it read is stated.
+    let code = "def run(context):\n    return {'readings': [], 'regions': [{'frame': 'elsewhere', 'box': [0, 0, 1, 1], 'label': 'a', 'score': 0.5}]}\n";
+    let tools = Tools::new(
+        "tool-file-regions-out",
+        &[("located.py", regions_text("located", code))],
+    );
+    let executor = tools.runner(&tools.over(None));
+    let call = Call::new("located")
+        .input("source", tools.image_id())
+        .input("candidate", tools.image_id());
+    let (run, outcome) = ran(&executor, &call);
+    let Outcome::Error { message, .. } = outcome else {
+        panic!("{outcome:?}");
+    };
+    assert!(
+        message.contains("no image the run handed the tool"),
+        "{message}"
+    );
+    assert!(whizbang::door::diagnostic(&tools.root, &run, REPORT).is_err());
 }
