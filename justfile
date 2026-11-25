@@ -10,13 +10,14 @@ setup:
 # The fast tier on this machine: format check, lint, the repo checks, the script tests a
 # change of this branch can reach (test-scripts-local), the generated reference against a
 # fresh copy, the playground interface's type check and unit tests (ui-check), the fast
-# tests with their timing table, then the pack's Python tests.
-check: fmt-check clippy graph deny test-scripts-local docs-check ui-check timing test-pack
+# tests in CI's two parts, each with its timing table and limit (timing-fast, then
+# timing-sweeps), then the pack's Python tests.
+check: fmt-check clippy graph deny test-scripts-local docs-check ui-check timing-fast timing-sweeps test-pack
 
 # The fast tier with every script test, whatever changed: what `ci` runs, so CI runs them
 # all on every push. scripts/tests/test-ci-jobs.sh holds `check` to it, the script tests
 # aside.
-check-full: fmt-check clippy graph deny test-scripts docs-check ui-check timing test-pack
+check-full: fmt-check clippy graph deny test-scripts docs-check ui-check timing-fast timing-sweeps test-pack
 
 fmt-check:
     cargo fmt --all -- --check
@@ -37,17 +38,19 @@ test:
 test-only +args:
     scripts/test-only.sh "$@"
 
-# The fast tests, then seconds per suite; fails when test time exceeds 300 seconds (see
-# scripts/timing.sh). They run through
-# scripts/thread-guard.sh too.
+# Every fast test in one run, then seconds per suite; fails when test time exceeds 300
+# seconds (see scripts/timing.sh). They run through scripts/thread-guard.sh too. By hand
+# only: `check` runs the two parts below instead, as CI does.
 timing:
     scripts/timing.sh
 
 # The fast tests in two parts, each with its table and the same limit of 300 seconds: CI
 # runs `timing-fast` in the jobs `check (<runner>)` and `timing-sweeps` in the jobs
 # `sweeps (<runner>)`, because on the hosted macOS runner the whole came near its limit.
-# `sweeps` is the test group `crash-sweeps` and squint's check of every use case; `fast`
-# is every other test (scripts/timing.sh, `--part`). `just check` runs `timing`, the whole.
+# `check` and `check-full` run both, one after the other, each held to the 300 (the
+# owner's decision of 2026-11-24). `sweeps` is the test group `crash-sweeps` and squint's
+# check of every use case; `fast` is every other test and counts the interface's unit
+# tests (scripts/timing.sh, `--part`).
 timing-fast:
     scripts/timing.sh --part fast
 
@@ -110,7 +113,7 @@ ui-build:
 
 # The interface's type check and unit tests, ui/dist/ against a fresh build, and the
 # host's list of the files it embeds against ui/dist/. The unit tests' seconds are counted
-# by `timing`, which runs next, under the fast tier's one limit (scripts/ui.sh).
+# by `timing-fast`, which runs next, under its limit (scripts/ui.sh).
 ui-check:
     scripts/ui.sh check
 
@@ -200,15 +203,15 @@ ci: check-full deny-advisories smoke compile-fail scan-secrets package install-c
 # `ci` in five parts, for CI, where the script tests alone take a runner five to twelve
 # minutes and the rest took the macOS runner past its limit: it runs each part in a job of
 # its own, side by side, on each runner (.github/workflows/ci.yml). The first is `ci`
-# without the script tests, without the release build and what follows it, and with
-# `timing-fast` in the place of `timing`; the second
+# without the script tests, without the release build and what follows it, and without
+# `timing-sweeps`; the second
 # is those (the smoke of the release binary, the example that must not compile, the
 # secrets scan, and then the release archive made and installed: `package` and
 # `install-check`, plan m4, task R1); the third is the script tests, after `deny` as in `check`: one of them
 # reads the workspace's crates from cargo's home, where `deny` puts them; the fourth is
 # the recipe `e2e`, the Chrome tier, in jobs of its own (plan m5, task U1); the fifth is
-# `timing-sweeps`, the rest of `timing`, in the jobs `sweeps (<runner>)`: with every test in
-# `check (macos-15)` its test time came to 225 to 271 seconds of the 300.
+# `timing-sweeps`, the fast tests' second part, in the jobs `sweeps (<runner>)`: with every
+# test in `check (macos-15)` its test time came to 225 to 271 seconds of the 300.
 # scripts/tests/test-ci-jobs.sh holds the five to `check-full` and `ci`.
 ci-without-scripts: fmt-check clippy graph deny docs-check ui-check timing-fast test-pack deny-advisories
 

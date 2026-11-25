@@ -598,6 +598,10 @@ right.
    the owner may do. If the tier cannot be brought under 250 without testing less, A0 stops
    and asks the owner ("Open questions"). The record of the five runs goes in the pull
    request; the row closes with the numbers.
+   **Done by the owner's decision of 2026-11-24.** The tier stayed at about 250 seconds
+   without testing less (#302), so the owner was asked the question below and answered
+   "option a is fine": `just check` runs the fast tests in CI's two parts, each held to
+   300 seconds (`SPEC.md` section 13, #305).
 2. **The pack's budget** (carry-over, "The pack's tests' budget"). The pack's run on the
    macOS runner measured over five runs from CI's reports, each test's time listed; the
    slowest cut (a fake's waits, a front's deadlines taken from a test clock where they are
@@ -621,10 +625,11 @@ right.
    `remote::wire::a_request_whose_connection_was_refused_settles_at_nothing` and
    `remote::wire::a_request_cut_after_its_first_byte_is_still_charged_at_its_bound`.
 
-- [ ] Done when: five full checks on the owner's Mac each under 250 seconds of test time,
+- [x] Done when: five full checks on the owner's Mac each under 250 seconds of test time,
   or the owner's word on the budget; the pack's run under 10 seconds on
   `macos-15` in five runs, or the owner's word on its budget; the Chrome case passed 20 runs
   in a row (the run named); item 4's tests pass; the four rows closed with their lines.
+  Item 1 closed by the owner's word on the budget, 2026-11-24 (#305); the rest by #302.
 
 ## G1. The designs (the orchestrator's, with the owner, in Paper)
 
@@ -1032,7 +1037,7 @@ wording (the next release); hosting the model's files (no milestone).
 
 | Tasks | To undo |
 |---|---|
-| A0 | Revert the merge: `just check` runs one part again; the remote charge goes back to its bound |
+| A0 | Revert the merges: `just check` runs every fast test at once again; the remote charge goes back to its bound |
 | B1 | Revert with care: a store written by B1's build may hold `run/7` records, which a build before B1 refuses by version when it reads one, and `bundles/` and `examples/` names, which it leaves alone (the store's names take any text, `store/buckets.rs`). ADR 0048 says this; a revert keeps the record's reader and drops the writers |
 | R1 | Revert the merge after U2: replay is gone; replayed runs stay readable as `run/7` records, by B1's reader |
 | U1, U2 | Revert the merge: the screens and routes go; examples and bundle entries in a store stay, read by B1's reader and listed by `store list` |
@@ -1080,8 +1085,9 @@ G1 ─────┴──► U1 ───────► U2 ──► N1
 4. **The Chrome tier's time.** U1 and U2 add about eight cases. Each reports its seconds by
    file and stops past about 220 of the 240, or 110 of a shard's 120; then coverage is
    reviewed first, as section 13 says, and no limit is raised without the owner.
-5. **The fast tier's time** is at about 246 of 300 on the owner's Mac. A0 makes room first;
-   each later task reports its seconds and stops past about 250.
+5. **The fast tier's time** was at about 250 of 300 on the owner's Mac. Since the owner's
+   decision of 2026-11-24, `just check` runs it in CI's two parts, each held to 300 s; each
+   later task reports each part's seconds and stops when either passes about 250.
 6. **The designs may ask more than the engine has.** G1's table names each element and its
    fate; a change of structure is a change of this plan.
 7. **A new record version and two new store entries.** Older builds refuse a `run/7`
@@ -1096,17 +1102,18 @@ G1 ─────┴──► U1 ───────► U2 ──► N1
 
 ## Open questions
 
-None now. One may arise in A0: if the fast tier cannot be brought under 250 seconds on the
-owner's Mac without testing less, A0 stops and the owner is asked, "I need a yes or no: may
+None now. One arose in A0: the fast tier could not be brought under 250 seconds on the
+owner's Mac without testing less, so the owner was asked, "I need a yes or no: may
 `just check` run the fast tests in CI's two parts, each held to 300 seconds?" (which raises
-the local budget of `SPEC.md` section 13, and so is the owner's).
+the local budget of `SPEC.md` section 13, and so is the owner's). The owner answered
+"option a is fine" on 2026-11-24 (A0, item 1).
 
 ## What the owner still does
 
 - **G1**: draws and approves the new surfaces in Paper with the orchestrator, and says which
   of the six to leave out, if any. U1 and U2 wait for it; B1 and R1 do not.
 - **A0, item 1**: only if the fast tier cannot come under 250 seconds without testing
-  less, the owner's yes or no ("Open questions").
+  less, the owner's yes or no ("Open questions"). Given on 2026-11-24: yes.
 - **A0, item 2**: only if the pack's tests cannot come under 10 seconds on the macOS runner
   without testing less, the owner's word on their budget, with the measurements.
 
