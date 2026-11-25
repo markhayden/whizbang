@@ -1442,6 +1442,29 @@ impl Store {
             .map_err(Error::io("sync", root))
     }
 
+    /// Confirms the generation that is visible, as [`Store::confirm`] does, and answers
+    /// whether it names, among the names of the run `run`, `name` with exactly this
+    /// digest (plan m7, task R1, item 9 (b)). A publication that unwound while it was
+    /// under way may have made its pointer visible before its root was synced, and a
+    /// generation's number is not that publication's: whoever wrote the one content
+    /// that only it writes asks this, and is told whether that content is durable now.
+    /// A run whose content this finds is taken as closed in the table of open runs, as
+    /// the publication would have taken it had it come back: so its closer lets it go.
+    pub fn confirm_record(&self, run: &str, name: &str, digest: &Digest) -> Result<bool> {
+        self.confirm()?;
+        let generation = self.snapshot()?;
+        let held = (generation.run(run))
+            .and_then(|held| held.get(name))
+            .is_some_and(|entry| entry.digest == *digest);
+        if held {
+            let mut made = self.made_runs.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some((_, closed, _, _)) = made.get_mut(run) {
+                *closed = true;
+            }
+        }
+        Ok(held)
+    }
+
     /// The current generation. It holds nothing: its file goes as the next generation is
     /// published, which takes nothing from what was read, since content goes by prune
     /// alone; and a prune may remove what it names. What must stay is held with
