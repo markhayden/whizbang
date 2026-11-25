@@ -44,21 +44,26 @@ impl Where {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// List the runs the store holds. Reads only: it works while another process writes.
+    /// List the runs the store holds, then its saved examples. Reads only: it works
+    /// while another process writes.
     List {
         #[command(flatten)]
         at: Where,
     },
     /// Delete runs, and remove what only they referenced. What another run shares is
     /// kept; spend and request-id records are never removed. If the store does not hold
-    /// one of the runs, none is deleted.
+    /// one of the runs, none is deleted. With `--example`, delete a saved example
+    /// instead: its run and its pictures stay.
     Delete {
         #[command(flatten)]
         at: Where,
         /// The runs to delete, each by its id, or as `runs list` prints it when that
         /// is no run's id: the same run `runs show` shows for the same text.
-        #[arg(required = true, value_name = "RUN")]
+        #[arg(required_unless_present = "example", value_name = "RUN")]
         runs: Vec<String>,
+        /// A saved example to delete, by the id `store list` prints for it.
+        #[arg(long, value_name = "ID", conflicts_with = "runs")]
+        example: Option<String>,
     },
     /// Remove what nothing references: older generations and unreferenced content.
     /// With `--unused-imports-older-than`, first let go of every imported picture,
@@ -184,7 +189,12 @@ pub fn run_with(command: &Command, recovery: Recovery) -> Result<String, String>
                     .to_owned(),
             ),
         },
-        Command::Delete { at, runs } => delete(&at.store, runs, recovery),
+        Command::Delete {
+            at,
+            example: Some(example),
+            ..
+        } => delete_example(&at.store, example, recovery),
+        Command::Delete { at, runs, .. } => delete(&at.store, runs, recovery),
         Command::Import {
             file,
             picture,
@@ -278,6 +288,48 @@ fn list(root: &Path) -> Result<String, String> {
             count(Kind::Diagnostic)
         ));
     }
+    // The saved examples (plan m7, task U1), when the store holds any: each id, its task
+    // and its name, escaped.
+    let ids = whizbang::play_saved::example_ids(&generation);
+    if !ids.is_empty() {
+        text.push_str(&format!("examples: {}\n", ids.len()));
+    }
+    for id in ids {
+        let read = (generation.get(&whizbang::play_saved::example_name(&id)))
+            .and_then(|entry| reader.read_output(entry).ok())
+            .and_then(|bytes| serde_json::from_slice::<whizbang::play_saved::Example>(&bytes).ok());
+        match read {
+            Some(example) => text.push_str(&format!(
+                "example {id}\t{}\t{}\n",
+                example.action.escape_debug(),
+                example.name.escape_debug()
+            )),
+            None => text.push_str(&format!("example {id}\tunreadable\n")),
+        }
+    }
+    Ok(text)
+}
+
+/// Deletes a saved example: its names, in one publication, then what only they named.
+fn delete_example(root: &Path, id: &str, recovery: Recovery) -> Result<String, String> {
+    if !whizbang_serve::play::saved::is_example_id(id) {
+        return Err(format!(
+            "{} is not an example's id: 16 hex digits, as store list prints it",
+            id.escape_debug()
+        ));
+    }
+    let store = remover(root, recovery)?;
+    let published = store
+        .let_go_of_entry(&whizbang::play_saved::example_name(id))
+        .map_err(|e| e.to_string())?;
+    let mut text = format!(
+        "example deleted: {id}\ngeneration: {}\n",
+        published.generation
+    );
+    let pruned = store.prune().map_err(|e| {
+        format!("the example is deleted, and the removal of what it left failed: {e}")
+    })?;
+    text.push_str(&report(&pruned));
     Ok(text)
 }
 

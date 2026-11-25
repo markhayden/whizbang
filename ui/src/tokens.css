@@ -45,6 +45,7 @@
   --color-unsure-tint: #9F8CFF29;
   --color-lacquer-tint: #FF455229;
   --color-lacquer-wash: #FF455214;
+  --color-brass-wash: #FFC51F12;
   --color-running: #FFC51F;
   --color-press-veil: #FFFFFF1F;
   --color-mask: #FFC51F52;
@@ -126,6 +127,7 @@
   --color-unsure-tint: #7B5CFF24;
   --color-lacquer-tint: #FFE5E7;
   --color-lacquer-wash: #FFE5E7;
+  --color-brass-wash: #FFF8E1;
   --color-running: #C98F00;
   --color-press-veil: #0000000F;
   --color-mask: #FFB8004D;

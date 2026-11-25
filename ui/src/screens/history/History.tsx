@@ -12,6 +12,8 @@ import { TextField } from "../../components/TextField";
 import { ago, dollars, elapsed } from "../../format";
 import { useArtifact } from "../../hooks";
 import { hrefOf } from "../../routes";
+import { localStore } from "../../drafts";
+import { readPin, savePin, type Pin } from "../../saved";
 import { RESULTS, figuresOf, listRuns, type Figures, type HistoryRun } from "./calls";
 
 export interface HistoryProps {
@@ -145,6 +147,14 @@ export function History(props: HistoryProps) {
     );
   };
 
+  // The baseline pinned for a comparison (plan m7, task U1, item 1): pinned from a row,
+  // and each other run of the same task offers to be compared with it.
+  const [pin, setPin] = useState<Pin | null>(() => readPin(localStore()));
+  const pinRun = (run: HistoryRun) => {
+    const next = { run: run.run, action: run.action };
+    savePin(localStore(), next);
+    setPin(next);
+  };
   const now = Date.now();
   const toneOf = (kit: string | null | undefined) => kitTone(Math.max(0, kits.findIndex((one) => one.id === kit)));
   return (
@@ -189,8 +199,18 @@ export function History(props: HistoryProps) {
       ) : (
         <div class="history__list" role="list" aria-label="Runs">
           {runs.map((run) => (
-            <div key={run.run} role="listitem" data-run={run.run}>
+            <div key={run.run} role="listitem" data-run={run.run} class="history__item">
               {props.client ? <Row client={props.client} run={run} tone={toneOf(run.kit)} now={now} onOpen={() => props.go?.(hrefOf({ name: "run", id: run.run }))} /> : null}
+              <span class="history__pin">
+                {pin && pin.run !== run.run && pin.action === run.action ? (
+                  <button type="button" class="history__pin-button" onClick={() => props.go?.(hrefOf({ name: "compare", baseline: pin.run, attempt: run.run }))}>
+                    Compare with baseline
+                  </button>
+                ) : null}
+                <button type="button" class="history__pin-button" aria-pressed={pin?.run === run.run ? "true" : "false"} title="Pin as baseline" onClick={() => pinRun(run)}>
+                  {pin?.run === run.run ? "Pinned" : "Pin as baseline"}
+                </button>
+              </span>
             </div>
           ))}
         </div>

@@ -401,3 +401,46 @@ img.wordmark--home { height: 40px; }
 .quit-dialog__what p { margin: 0; }
 .quit-dialog__going { color: var(--color-ink); font-weight: var(--font-weight-medium); }
 .quit-dialog__actions { display: flex; justify-content: flex-end; gap: var(--spacing-2); }
+
+/* A rule between groups of a menu (plan m7, task U1). */
+.menu__rule { display: block; height: 1px; margin: var(--spacing-1) var(--spacing-1-5); background: var(--color-line); }
+
+/* Save as example (plan m7, task U1; the design's surface 2, A). */
+.example-dialog { width: 400px; padding: 0; gap: 0; }
+.example-dialog__head { display: flex; flex-direction: column; gap: var(--spacing-1); padding: var(--spacing-4); border-bottom: 1px solid var(--color-line); }
+.example-dialog__title { margin: 0; color: var(--color-ink); font-family: var(--font-display); font-size: var(--text-xl); font-weight: var(--font-weight-display); letter-spacing: var(--tracking-tight); }
+.example-dialog__from { margin: 0; color: var(--color-muted); font-size: var(--text-xs); }
+.example-dialog__body { display: flex; flex-direction: column; gap: var(--spacing-3); padding: var(--spacing-4); }
+.example-dialog__field { display: flex; flex-direction: column; gap: var(--spacing-1-5); }
+.example-dialog__control { position: relative; display: flex; }
+.example-dialog__control .control { flex: 1; padding-right: 56px; }
+.example-dialog__count { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--color-faint); font-size: var(--text-xs); }
+.example-dialog__notes { min-height: 64px; resize: vertical; font-family: var(--font-sans); }
+.example-dialog__keeps { margin: 0; padding: var(--spacing-3); border-radius: var(--radius-sm); background: var(--color-raised); color: var(--color-muted); font-size: var(--text-xs); line-height: 18px; overflow-wrap: anywhere; }
+.example-dialog__foot { display: flex; justify-content: flex-end; gap: var(--spacing-2); padding: var(--spacing-3) var(--spacing-4); border-top: 1px solid var(--color-line); }
+
+/* Saved examples (plan m7, task U1; the design's surface 2, B). */
+.examples { display: flex; flex-direction: column; border-radius: var(--radius-md); background: var(--color-panel); box-shadow: var(--shadow-panel); }
+.examples__head { display: flex; align-items: center; justify-content: space-between; padding: var(--spacing-3) 14px; border-bottom: 1px solid var(--color-line); }
+.examples__title { margin: 0; color: var(--color-ink); font-size: var(--text-md); font-weight: var(--font-weight-semibold); }
+.examples__count { color: var(--color-muted); font-size: var(--text-xs); }
+.examples__empty, .examples__problem { padding: var(--spacing-3) 14px; }
+.examples__replacing { display: flex; align-items: center; flex-wrap: wrap; gap: var(--spacing-2); padding: var(--spacing-2) 14px; }
+.examples__replacing p { margin: 0; }
+.examples__list { margin: 0; padding: 0; list-style: none; }
+.examples__row { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacing-3); padding: 10px 14px; }
+.examples__row + .examples__row { border-top: 1px solid var(--color-line); }
+.examples__thumb { width: 40px; height: 30px; border-radius: var(--radius-xs); object-fit: cover; flex-shrink: 0; background: var(--color-hover); }
+.examples__words { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.examples__name { padding: 0; border: 0; background: transparent; color: var(--color-ink); font-size: var(--text-md); line-height: 16px; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.examples__row--gone .examples__name { color: var(--color-muted); cursor: default; }
+.examples__line { color: var(--color-muted); font-size: var(--text-xs); line-height: 14px; }
+.examples__line--gone { color: var(--color-lacquer); }
+.examples__more { position: relative; flex-shrink: 0; }
+.examples__dots { width: 28px; height: 24px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--color-muted); cursor: pointer; }
+.examples__dots:hover { background: var(--color-hover); color: var(--color-ink); }
+.examples__menu { position: absolute; right: 0; top: calc(100% + var(--spacing-1)); width: 160px; z-index: 5; }
+.examples__menu .menu__item { min-height: 30px; }
+.examples__delete .menu__title { color: var(--color-lacquer); }
+.examples__ask { display: flex; align-items: center; flex-wrap: wrap; gap: var(--spacing-2); width: 100%; padding-left: 52px; }
+.examples__ask .control { flex: 1; min-width: 160px; }
