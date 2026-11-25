@@ -951,7 +951,7 @@ step, and replays one run offline or live with its report; built as G1's designs
 5. **The guide**: `docs/guides/playground.md`, "Bundles", "Replaying a chain", "Replaying a
    run".
 
-- [ ] Done when: `play_chain::a_step_runs_only_when_started_and_continue_binds_the_new_output`,
+- [x] Done when: `play_chain::a_step_runs_only_when_started_and_continue_binds_the_new_output`,
   `play_chain::a_link_that_finds_no_output_or_two_stops_the_chain`,
   `play_chain::a_run_started_from_a_step_records_the_bundle_and_the_step`,
   `play_bundles::a_bundle_uploaded_is_read_whole_before_anything_is_imported`,
@@ -967,6 +967,16 @@ step, and replays one run offline or live with its report; built as G1's designs
   `replay.spec.ts: replay of a result shows reproduced, and a changed one shows where it differs`,
   and `security.spec.ts`'s new case `a bundle holding markup in its words shows them as text`
   pass, inside the Chrome tier's 240 seconds.
+  *As U2 built it:* a chain's step is started by `POST /api/runs` with `replay`, which the
+  core takes as `Request::from_step` (its fingerprint `step/1`, of the call's `request/1`,
+  the bundle and the step); opening a step gives the inputs the bundle carries the store's
+  ordinary names as an import, as an example's open does, so the draft prepares as any. A
+  replay started from the page carries the host's signal and stated time
+  (`Replay::cancelled_by`, `Replay::until`). The live replay's cost is reviewed from the
+  preparation of the run's Run again draft. A dropped bundle is imported at once and shown,
+  with Start the chain and Delete, where the design has "Import only" and "Import and start
+  the chain"; the chain's list of steps is its own page, and the workspace's draft names its
+  step and shows each link, where the design puts the list beside the canvas.
 
 ## N1. The note (small; the orchestrator's pass first)
 

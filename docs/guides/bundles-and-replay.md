@@ -85,7 +85,9 @@ whizbang bundle delete <digest> --store <dir>
 bundle's names at once and prunes: a file that a run, an ordinary import or another bundle
 still names stays.
 
-The playground shows bundles with plan m7's task U2. The engine API and the MCP server over
+The playground makes, takes in, shows and deletes bundles too, and replays a chain one
+step at a time and a run offline or live (`docs/guides/playground.md`, "Bundles",
+"Replaying a chain" and "Replaying a run"). The engine API and the MCP server over
 stdio do not offer them: a bundle carries a store's files out and brings in runs of another
 store, which is local control (`SPEC.md` section 10).
 

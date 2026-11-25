@@ -320,7 +320,10 @@ table-manners is listed in section 6. It is versioned with whizbang.
 The browser calls a host API served by whizbang; the host runs tools through the executor
 inside its own process. The only other process is the optional Python worker. Chrome is the
 only supported browser. The host's API listens on loopback only, behind the guard of
-section 10; its routes and guard are in `docs/adr/0041-the-playground-host.md`.
+section 10; its routes and guard are in `docs/adr/0041-the-playground-host.md`. From
+milestone 7 the playground also makes and takes in bundles (ADR 0048), replays a chain one
+ordinary run a step, each run only when the person presses Run, and replays a run offline or
+live (ADR 0049); a bundle reaches the host as its bytes, never by a path.
 
 ## 4. Backends
 

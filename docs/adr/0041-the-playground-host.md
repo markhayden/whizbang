@@ -1,7 +1,8 @@
 # 0041. The playground host
 
 Status: accepted; its routes amended by plan m7, task U1 (2026-11-25): comparisons, saved
-examples, Home's library and a choice's own refusal.
+examples, Home's library and a choice's own refusal; and by plan m7, task U2 (2026-11-25):
+bundles, a chain's steps, the replay of a run, and a bundle's upload among the two.
 Date: 2026-11-21
 Spec: sections 1, 3, 7 and 10; plan m5 (`docs/plans/m5-the-playground.md`), task H1;
 ADR 0008, ADR 0015, ADR 0031
@@ -48,7 +49,7 @@ fails answers and closes:
 | For `/api/…`: `Authorization: Bearer <token>`, compared in constant time | 401 |
 | For `/api/…`: an `Origin`, when sent, is exactly `http://127.0.0.1:<port>` or `http://localhost:<port>`; any method but `GET` must send one | 403 |
 | `Sec-Fetch-Site`, when sent, is `same-origin` or `none` | 403 |
-| The route takes no other field in the address; the body is at most 1 MiB for JSON (nested at most 16 deep, the stdio server's bound, and naming no field the route does not take) and 64 MiB for a picture, and its declared type is the route's | 400, or 413, or 415 |
+| The route takes no other field in the address; the body is at most 1 MiB for JSON (nested at most 16 deep, the stdio server's bound, and naming no field the route does not take), 64 MiB for a picture and 256 MiB for a bundle (a bundle's own bound, ADR 0048), and its declared type is the route's | 400, or 413, or 415 |
 | A picture decodes inside the core's `DecodeLimits` | 413, naming the limit |
 | A body arrives at no less than 1 MiB a second after its first 5 seconds; an answer is taken within 10 seconds | closed |
 
@@ -75,7 +76,11 @@ process: two hosts' twenty each (the twentieth is a host's one install, plan m5,
 an install's thread wakes the keeper when it ends, and the next install waits for it to
 end before its own is made, so a host never holds two), and room for the binary's readers of its signals and its
 input and the waiter of a Chrome started on Linux. At most two
-uploads hold a worker at once: a third is answered 429 as soon as its headers are read. Every
+uploads hold a worker at once, pictures and bundles together: a third is answered 429 as
+soon as its headers are read. One bundle is read and imported at a time, by the core's
+reader, whose memory is one artifact's and the manifest; a second waits for the first. The
+bytes of a bundle being sent are held by its worker until they are read, so at most two
+bundles' bytes, 512 MiB, are held at once (plan m7, task U2). Every
 other request is a short read and a short answer, so polls, Stop and Quit find a free worker. A
 worker that panics loses its connection, not itself. The workers are not joined when the
 host stops: once the acceptor has ended, each ends after the connection it holds, which its
@@ -163,11 +168,11 @@ a module of its own, whose table `play/routes.rs` lists by one line (`TABLES`).
 | `GET /api/hello` | Version, the store's folder, the backends' readiness (no probe), the allowance, what is spent and held since its reset (`spent`, the top bar's figure) and what is left | H1, then W1 adds the kits; `spent`, the m5 live fixes |
 | `POST /api/quit` | Stop, as above | H1 |
 | `POST /api/prepare` | A preparation of a call, kept under a handle when it is ready; its readiness and what is missing by kind, each need's bound and whether its backend is ready (`ready`, `why`; a need that is not is neither `local` nor free), a loop's attempts, and each choice of a backend prepared on its own, ready by its own capability's readiness alone; a choice whose call is refused is held against the refusal of the call as given with that argument left out, compared as values: the same refusal is the call's (an input still missing), and the choice is answered by its own readiness as hello lists it; any other is about the choice itself, kind `refused`, in the core's words | H1 (the handle), W1 (per choice, needs, plan), the m5 live fixes, m7 U1 (the choice's own refusal) |
-| `POST /api/runs` | Start a call with its handle and a request id | H1, W1 |
+| `POST /api/runs` | Start a call with its handle and a request id; with `replay` (`{"bundle": <digest>, "step": <n>}`), a step of a guided chain replay: an ordinary run of the call as given, refused when the store holds no such bundle or step, whose every run records `replayed` with the step's run, the bundle and the step, live; the step is part of the request's fingerprint (`step/1`) | H1, W1, m7 U2 |
 | `GET /api/runs/{id}?after=<n>` | The run's state and its events after the `n`th, every text escaped (from its journal once it has ended), what was asked, what it spent of what it reserved, its outputs and its verdict | H1, W1 |
 | `POST /api/runs/{id}/cancel` | Stop a run | H1 |
 | `GET /api/runs?open=1` | The runs the host started that are still going | H1 |
-| `GET /api/runs?kit=&task=&result=&words=&action=&model=&backend=&use_case=&matrix=&since=&until=&output=&before=&limit=` | History: the runs of the store that nothing nested, newest first, at most 200 a page after the run `before` names, under `runs stats`'s filter and the page's; each with its task, words, pictures' names, result, models, time, cost, start, a picture and its outputs (port, type, identity). `output=<type>` keeps the runs that made an output of that artifact type: what the workspace's binding picker offers a mask, a location or any other port, from the store, so a reload or a restart keeps it. Read from the store's records once a generation, kept, and read again only when the store has published since (`play/history.rs`) | W3, the m5 gaps |
+| `GET /api/runs?kit=&task=&result=&words=&action=&model=&backend=&use_case=&matrix=&since=&until=&replayed=&output=&before=&limit=` | History: the runs of the store that nothing nested, newest first, replayed families left out unless `replayed=include` or `only` (`stats::Runs::keeping`, as `runs stats --replayed`; the figures the same), at most 200 a page after the run `before` names, under `runs stats`'s filter and the page's; each with its task, words, pictures' names, result, models, time, cost, start, a picture and its outputs (port, type, identity). `output=<type>` keeps the runs that made an output of that artifact type: what the workspace's binding picker offers a mask, a location or any other port, from the store, so a reload or a restart keeps it. Read from the store's records once a generation, kept, and read again only when the store has published since (`play/history.rs`) | W3, the m5 gaps |
 | `GET /api/stats?` the same filter | The figures of `runs stats` (`stats::Figures`, the one aggregation the command prints) as JSON, with the command's text | W3 |
 | `GET /api/runs/{id}/report` | The run's report: one HTML document with its pictures inline as `data:` and no script, served as a download (`Content-Disposition: attachment`) under `Content-Security-Policy: default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; sandbox`, which its own `<meta>` repeats but for `sandbox`; the page shows it in `<iframe sandbox="">` by `srcdoc` | W3 |
 | `GET /api/runs/{id}/export` | The run's archive, a tar file: its record, its report, each output's canonical file and a PNG of each picture or mask, under the same headers | W3 |
@@ -184,7 +189,15 @@ a module of its own, whose table `play/routes.rs` lists by one line (`TABLES`).
 | `POST /api/examples/{id}/open` | The draft an example opens, as Run again gives one, with which example it is. It starts nothing: an input whose name the store let go of is given back from the example's own file as an import, and each backend the example chose is prepared with the rest of the draft as the prepare route prepares a choice; one this config does not list (`not_in_config`) or whose backend is not ready now (its kind) is taken out of the draft, which then takes the config's default, and is named in `fell_back`. 422 for an example whose task this build no longer has | m7 U1 |
 | `GET /api/library?show=all\|named\|inputs\|imported&after=&limit=` and `GET /api/library/{id}` | Home's library: every picture the store holds as an input of a root run (read from the records history reads, once a generation) or an import (its mark), whatever door gave it, newest used first, at most 200 a page after the picture `after` names, with the name a person gave it in the playground or none, its count of runs and whether it was imported, and the count each chip holds; one picture's card adds its size, its bytes, when it was first used and the runs that took it, at most 50 | m7 U1 |
 
-No route takes a file path.
+| `GET /api/runs/{id}/bundle`, `GET /api/runs/{id}/bundle/about` | One ended root run's bundle (`bundle/1`, ADR 0048) as a download, named for its task and run; and, before it is written, what it would hold and about how many bytes (the sum of what the store holds of the run's family) | m7 U2 |
+| `POST /api/bundles/chain` | A chain's bundle from its runs in the order they ran (`runs`, 1 to 16), a download; with `"check": true`, its steps, links and what it withholds, or the writer's refusal, 422 (`play/bundles.rs`) | m7 U2 |
+| `POST /api/bundles` | A bundle's bytes (`application/x-tar` or `application/octet-stream`, at most 256 MiB, 413 from its headers), taking one of the two upload places (429 after its headers when both are taken), read whole and checked by the core's reader before anything is published, one bundle at a time, then imported in one publication; 422 naming the first fault, and nothing kept; its steps, links, what it holds and withholds, and whether each step replays offline as this build decides it from the step's records (`replay::decide`) | m7 U2 |
+| `GET /api/bundles`, `GET /api/bundles/{digest}`, `DELETE /api/bundles/{digest}` | The bundles the store holds; one, as the import answers it; one let go of, then a prune, what a run, an example, an import or another bundle names staying | m7 U2 |
+| `POST /api/bundles/{digest}/steps/{n}/open` | The draft of a chain's step, as Run again gives one, from the new run of each earlier step (`runs`): each input the bundle carries given the store's ordinary name as an import, each linked input bound to the new run's output at the link's port and place beside the identity recorded; a link that finds no output, or two, answers where the chain stops and why. It starts nothing | m7 U2 |
+| `POST /api/runs/{id}/replay`, `GET /api/runs/{id}/replay` | A replay of a run (`live`, a `request_id`): looked up by its id first, then started by `Executor::start_replay` on the host's one executor with the host's signal and stated time, holding a place among the four, so it is polled, stopped and counted as any run it starts; the engine's refusal, 422, in its words. A replayed run's report once it has ended (`replaying::report_of`), every text escaped: 409 before, 422 for a run that is not a replay | m7 U2 |
+
+No route takes a file path: a run is named by its id, a bundle by its digest, and a bundle's
+file goes to the host as its bytes.
 
 **What a backend that is not ready says.** A preparation's reason for a backend whose key
 the env file does not set names the variable to set, by its name alone: "the filler needs
