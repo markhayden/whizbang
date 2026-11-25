@@ -1892,6 +1892,48 @@ fn a_panic_after_the_pointer_was_renamed_and_before_the_sync_is_confirmed_by_a_s
 }
 
 #[test]
+fn a_panic_after_the_pointer_was_renamed_whose_confirming_sync_is_refused_is_abandoned_with_its_end_visible()
+ {
+    use whizbang_core::contract::RunState;
+    // The end's pointer was renamed into place and the panic came before the root was
+    // synced; the catch's own sync is refused too. The end is visible and not confirmed:
+    // abandoned, marked with its ending visible, and a wait says so.
+    for started in [false, true] {
+        let world = World::new();
+        let fs = world.fs.clone();
+        let root = world.root();
+        let ending = scripted("ending", move |_, _| {
+            let root = root.clone();
+            fs.pause_after_rename_onto("CURRENT", || {
+                panic!("an injected panic of the executor's code inside the publication")
+            });
+            fs.refuse_matching_times(
+                0,
+                usize::MAX,
+                move |event| matches!(event, Event::SyncDir(dir) if *dir == root),
+            );
+            Ok(Produced::nothing())
+        });
+        let engine = world.engine_with(vec![ending]);
+        let (run, came) = ended_through(&engine, started);
+        let said = came.unwrap_err();
+        assert!(said.contains("Abandoned"), "started {started}: {said}");
+        assert_eq!(
+            engine.marked_abandoned(&run),
+            Some(true),
+            "started {started}"
+        );
+        let waited = engine.wait(&run).unwrap();
+        assert!(
+            matches!(waited.state(), RunState::Abandoned { .. }),
+            "started {started}: {:?}",
+            waited.state()
+        );
+        assert_eq!(engine.on_threads(), 0);
+    }
+}
+
+#[test]
 fn a_panic_after_the_sync_answers_the_durable_end() {
     use whizbang_core::contract::PanicAt;
     // The end was published and is durable, and the panic came before the executor

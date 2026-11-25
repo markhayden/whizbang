@@ -42,7 +42,7 @@ use crate::identity::{BindingId, DecodeLimits, identify};
 use super::written;
 use super::{
     Bounds, Declaration, Fault, FaultKind, FillRequest, Filler, Instance, Judge, JudgeRequest,
-    Painted, SegmentRequest, SegmentResponse, Segmenter, Turn, feature,
+    Painted, Query, SegmentRequest, SegmentResponse, Segmenter, Support, Turn, feature,
 };
 
 /// The action whose run's segment request is answered from its masks and its diagnostic
@@ -182,7 +182,34 @@ pub enum Given<A> {
 pub struct Asked<A> {
     pub run: String,
     pub model: ModelIdentity,
+    /// What the original's record says it was sent, as far as it says.
+    pub sent: Sent,
     pub given: Given<A>,
+}
+
+/// What a recorded request was sent, as the original's record and its inputs say, which
+/// the replay's request is held to before anything is answered (ADR 0049): a part it
+/// cannot say is not compared.
+#[derive(Debug, Clone, Default)]
+pub enum Sent {
+    /// A segmenter's: the binding of its image, its one query, and the most instances.
+    Segment {
+        binding: Option<BindingId>,
+        query: Option<Query>,
+        most: Option<u32>,
+    },
+    /// A filler's: the picture's pixels, the area to paint, which the action makes of
+    /// its mask, and its prompt.
+    Fill {
+        pixels: Option<crate::identity::PixelDigest>,
+        support: Option<Support>,
+        prompt: Option<String>,
+    },
+    /// A judge's: the exchange as the run stored it.
+    Judge { stored: Option<Vec<u8>> },
+    /// Nothing is said of it.
+    #[default]
+    Unknown,
 }
 
 /// A segmenter's answer, rebuilt: the binding of the image it was about, each instance
@@ -217,6 +244,17 @@ pub trait Held {
     fn diagnostic(&self, run: &str, name: &str) -> Result<Option<Vec<u8>>, String>;
     /// The canonical file of an output of a run, at its port and place, when it is held.
     fn output(&self, run: &str, port: &str, place: u32) -> Result<Option<Vec<u8>>, String>;
+    /// The canonical file of an input of a run, at its port and place, of the artifact
+    /// this name names, as the run read it, when it is held. `root` is its family's
+    /// root, whose names the runs under it read.
+    fn input(
+        &self,
+        run: &str,
+        root: &str,
+        port: &str,
+        place: u32,
+        name: &str,
+    ) -> Result<Option<Vec<u8>>, String>;
 }
 
 /// The answers of a family, and how far a replay has used them.
@@ -250,8 +288,12 @@ impl Recorded {
             aliases: Vec::new(),
             course: Arc::new(Course::default()),
         };
+        let root = runs
+            .first()
+            .map(|r| r.identity().run.clone())
+            .unwrap_or_default();
         for record in runs {
-            recorded.add(record, held);
+            recorded.add(record, &root, held);
         }
         recorded
     }
@@ -266,7 +308,7 @@ impl Recorded {
         Arc::new(RecordedOffered(self.clone()))
     }
 
-    fn add(&mut self, record: &RunRecord, held: &dyn Held) {
+    fn add(&mut self, record: &RunRecord, root: &str, held: &dyn Held) {
         let run = record.identity().run.clone();
         let action = record.asked().action.as_deref().unwrap_or_default();
         // The choice each capability was resolved under, when the settings name one
@@ -300,6 +342,7 @@ impl Recorded {
             self.judge.push(Asked {
                 run: run.clone(),
                 model: unrecorded(),
+                sent: Sent::Unknown,
                 given: Given::Unanswerable(format!(
                     "the run {run} was answered from the decision cache, and the turns that \
                      answered it are another run's"
@@ -315,6 +358,7 @@ impl Recorded {
                     self.segment.push(Asked {
                         run: run.clone(),
                         model: identity,
+                        sent: segment_sent(record),
                         given,
                     });
                 }
@@ -323,14 +367,20 @@ impl Recorded {
                     self.fill.push(Asked {
                         run: run.clone(),
                         model: identity,
+                        sent: fill_sent(record, root, held),
                         given,
                     });
                 }
                 Capability::Judge => {
                     let given = judge_answer(&run, place, ended, held);
+                    let stored = match &given {
+                        Given::Answer(answer) => Some(answer.stored.clone()),
+                        _ => None,
+                    };
                     self.judge.push(Asked {
                         run: run.clone(),
                         model: identity,
+                        sent: Sent::Judge { stored },
                         given,
                     });
                 }
@@ -363,7 +413,7 @@ impl Recorded {
         queue: &'a [Asked<A>],
         model: &ModelIdentity,
         bounds: &Bounds,
-        matches: impl Fn(&A) -> Result<(), String>,
+        matches: impl Fn(&Sent) -> Result<(), String>,
     ) -> Result<&'a A, Fault> {
         if bounds.is_cancelled() {
             return Err(Fault::new(FaultKind::Cancelled, "the replay was cancelled"));
@@ -407,10 +457,13 @@ impl Recorded {
                     asked.model.version()
                 ),
             ),
-            Given::Fault(kind, sentence) => return Err(Fault::new(*kind, sentence)),
-            Given::Answer(answer) => match matches(answer) {
-                Ok(()) => return Ok(answer),
-                Err(why) => stop(StopKind::Diverged, why),
+            // The request is held to what the original was sent before anything is
+            // answered, the original's fault among it.
+            _ => match (matches(&asked.sent), &asked.given) {
+                (Err(why), _) => stop(StopKind::Diverged, why),
+                (Ok(()), Given::Fault(kind, sentence)) => return Err(Fault::new(*kind, sentence)),
+                (Ok(()), Given::Answer(answer)) => return Ok(answer),
+                (Ok(()), Given::Unanswerable(why)) => stop(StopKind::Unanswerable, why.clone()),
             },
         };
         Err(state.stop(made))
@@ -585,6 +638,86 @@ fn rebuilt(record: &RunRecord, said: &str, held: &dyn Held) -> Result<SegmentAns
     })
 }
 
+/// What a run of `segment` was sent, as its record says: its image's binding, its query
+/// made of its kind and its text as the action makes it, and the most instances.
+fn segment_sent(record: &RunRecord) -> Sent {
+    use crate::contract::record::ArgumentValue;
+    let argument = |name: &str| {
+        (record.asked().arguments.iter())
+            .find(|argument| argument.name == name)
+            .map(|argument| &argument.value)
+    };
+    let text = |name: &str| match argument(name) {
+        Some(ArgumentValue::Text(text)) => Some(text.as_str()),
+        _ => None,
+    };
+    let query = text("query").and_then(|query| query_of(text("kind").unwrap_or("phrase"), query));
+    let most = match argument("max_instances") {
+        Some(ArgumentValue::Integer(most)) => u32::try_from(*most).ok(),
+        _ => None,
+    };
+    let binding = (record.inputs().iter())
+        .find(|input| input.port == "image")
+        .map(|input| BindingId(input.binding));
+    Sent::Segment {
+        binding,
+        query,
+        most,
+    }
+}
+
+/// The query of a kind and a text, as `segment` makes it
+/// (`whizbang_rascal::segment::query_of`; a test of the binary holds the two to agree).
+pub fn query_of(kind: &str, text: &str) -> Option<Query> {
+    let numbers = || -> Option<Vec<f64>> {
+        text.split(|c: char| c == ',' || c.is_whitespace())
+            .filter(|word| !word.is_empty())
+            .map(|word| word.parse::<f64>().ok().filter(|n| n.is_finite()))
+            .collect()
+    };
+    match kind {
+        feature::PHRASE => Query::phrase(text).ok(),
+        feature::POINT => match numbers().as_deref() {
+            Some(&[x, y]) => Query::point(x, y).ok(),
+            _ => None,
+        },
+        feature::BOX => match numbers().as_deref() {
+            Some(&[left, top, right, bottom]) => Query::boxed(left, top, right, bottom).ok(),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// What a run of `fill` sent, as its inputs say: its image's pixels and the area its mask
+/// paints, as the action makes the two, and no prompt.
+fn fill_sent(record: &RunRecord, root: &str, held: &dyn Held) -> Sent {
+    let run = record.identity().run.as_str();
+    let limits = DecodeLimits::default();
+    let read = |port: &str, artifact: ArtifactType| {
+        let input = record.inputs().iter().find(|input| input.port == port)?;
+        let name = crate::artifact::name(artifact, crate::artifact::ArtifactId(input.artifact));
+        let bytes = held.input(run, root, port, 0, &name).ok()??;
+        Artifact::from_bytes_as(artifact, &bytes, &limits).ok()
+    };
+    let pixels = read("image", ArtifactType::Image)
+        .and_then(|image| match image {
+            Artifact::Image(image) => Some(image),
+            _ => None,
+        })
+        .and_then(|image| image.pixels(&limits).ok())
+        .and_then(|pixels| super::Picture::new(pixels).ok())
+        .map(|picture| picture.digest());
+    let support = read("mask", ArtifactType::Mask)
+        .and_then(|mask| mask.into_mask().ok())
+        .map(|mask| Support::of(&mask));
+    Sent::Fill {
+        pixels,
+        support,
+        prompt: None,
+    }
+}
+
 fn fill_answer(
     record: &RunRecord,
     action: &str,
@@ -738,17 +871,41 @@ impl Segmenter for Handle {
     fn segment(&self, request: &SegmentRequest, bounds: &Bounds) -> Result<SegmentResponse, Fault> {
         let recorded = &self.recorded;
         let model = self.declaration.model();
-        let answer = recorded.next(Capability::Segment, &recorded.segment, model, bounds, |a| {
-            if a.binding == request.binding() && request.queries().len() == 1 {
+        let answer = recorded.next(
+            Capability::Segment,
+            &recorded.segment,
+            model,
+            bounds,
+            |sent| {
+                let Sent::Segment {
+                    binding,
+                    query,
+                    most,
+                } = sent
+                else {
+                    return Ok(());
+                };
+                let differs = |what: &str| {
+                    Err(format!(
+                        "the replay asked a segmenter with another {what} than the original did"
+                    ))
+                };
+                if binding.is_some_and(|binding| binding != request.binding()) {
+                    return differs("image");
+                }
+                if request.queries().len() != 1
+                    || query
+                        .as_ref()
+                        .is_some_and(|query| request.queries()[0] != *query)
+                {
+                    return differs("query");
+                }
+                if most.is_some_and(|most| most != request.max_instances()) {
+                    return differs("most instances");
+                }
                 Ok(())
-            } else {
-                Err(
-                    "the replay asked a segmenter about another image, or another batch, \
-                     than the original did"
-                        .to_owned(),
-                )
-            }
-        })?;
+            },
+        )?;
         let (instances, iou): (Vec<Instance>, Vec<Option<f64>>) =
             answer.instances.iter().cloned().unzip();
         Ok(SegmentResponse::new(vec![instances])
@@ -765,18 +922,41 @@ impl Filler for Handle {
     fn fill(&self, request: &FillRequest, bounds: &Bounds) -> Result<Painted, Fault> {
         let recorded = &self.recorded;
         let model = self.declaration.model();
-        let size = (request.image().width(), request.image().height());
-        let answer = recorded.next(Capability::Fill, &recorded.fill, model, bounds, |a| {
-            if (a.width, a.height) == size {
-                Ok(())
-            } else {
+        let answer = recorded.next(Capability::Fill, &recorded.fill, model, bounds, |sent| {
+            let Sent::Fill {
+                pixels,
+                support,
+                prompt,
+            } = sent
+            else {
+                return Ok(());
+            };
+            let differs = |what: &str| {
                 Err(format!(
-                    "the replay asked a filler to paint a picture of {} by {}, and the \
-                     original's answer is {} by {}",
-                    size.0, size.1, a.width, a.height
+                    "the replay asked a filler with another {what} than the original did"
                 ))
+            };
+            if pixels.is_some_and(|pixels| pixels != request.image().digest()) {
+                return differs("picture");
             }
+            if support
+                .as_ref()
+                .is_some_and(|support| support != request.support())
+            {
+                return differs("area to paint");
+            }
+            if prompt.as_deref() != request.prompt() {
+                return differs("prompt");
+            }
+            Ok(())
         })?;
+        let size = (request.image().width(), request.image().height());
+        if (answer.width, answer.height) != size {
+            return Err(Fault::new(
+                FaultKind::Malformed,
+                "the recorded answer is not the picture's size",
+            ));
+        }
         Painted::from_rgb(answer.width, answer.height, answer.rgb.clone())
             .map_err(|why| Fault::new(FaultKind::Malformed, &why.to_string()))
     }
@@ -790,13 +970,22 @@ impl Judge for Handle {
     fn send(&self, request: &JudgeRequest, bounds: &Bounds) -> Result<Turn, Fault> {
         let recorded = &self.recorded;
         let model = self.declaration.model();
-        let answer = recorded.next(Capability::Judge, &recorded.judge, model, bounds, |a| {
-            if written::sent_as_recorded(&a.stored, request) {
-                Ok(())
-            } else {
-                Err("the replay sent the judge another request than the original did".to_owned())
-            }
-        })?;
+        let answer =
+            recorded.next(
+                Capability::Judge,
+                &recorded.judge,
+                model,
+                bounds,
+                |sent| match sent {
+                    Sent::Judge {
+                        stored: Some(stored),
+                    } if !written::sent_as_recorded(stored, request) => Err(
+                        "the replay sent the judge another request than the original did"
+                            .to_owned(),
+                    ),
+                    _ => Ok(()),
+                },
+            )?;
         answer.answer.clone()
     }
 }

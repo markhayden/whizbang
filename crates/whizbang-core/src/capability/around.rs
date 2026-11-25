@@ -205,6 +205,12 @@ impl Places {
         self
     }
 
+    /// The same places, with this one empty.
+    pub(crate) fn without(mut self, place: Place) -> Places {
+        *self.at_mut(place) = None;
+        self
+    }
+
     /// What stands in this place.
     pub fn at(&self, place: Place) -> Option<&Arc<dyn Around>> {
         match place {

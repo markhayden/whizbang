@@ -40,6 +40,10 @@ families out.
 
 ## Decision
 
+Plan m7's task R1 built this in two pull requests: the first the handles, the executor's
+seam, the end's two rows and this record; the second the comparison, live replay, replay
+from a bundle, the command and the figures.
+
 ### What is replayed
 
 A **root run** (a run nothing nested) of an action this build ships, at the version this
@@ -104,13 +108,21 @@ The handles answer from the original family, and from nothing else:
 place: the root first, then each run's steps in the order its record lists them, at any
 depth, and within a run its requests in the order its record's `models` lists them. The
 replayed family, made by the same build from the same answers, sends its requests in the
-same order; one that does not has diverged. A request is matched to the next recorded
-request of its capability and must be **that** request:
+same order; one that does not has diverged. This assumes the runs of a family send their
+requests of one capability one after another, as every action this build ships does: a
+family whose runs asked one capability at once could be answered in another order, and
+two such requests that differ are then diverged, never swapped silently. A request is
+matched to the next recorded request of its capability and must be **that** request,
+before anything is answered, a recorded fault included:
 
 - of the model the original's request was answered by (by backend, model and version);
 - for `segment`, about the same image (the request's binding is the one the original run's
-  `image` input belongs to) with one query;
-- for `fill`, of a picture the size of the painted answer;
+  `image` input belongs to), with the one query its record's `kind` and `query` make and
+  the `max_instances` its record holds;
+- for `fill`, of the same picture (the pixels of the original run's `image` input), the
+  same area to paint (what the action makes of its `mask` input) and the same prompt (none:
+  `fill` sends none); a part the store no longer holds is not compared, and a change of a
+  mask shows as well where the mask was made, as a difference of that step;
 - for `judge`, the same request: what the replay's request writes, at the stored
   exchange's place, with every opaque part as its digest and length and every picture as
   its digest, is the stored exchange up to its answer, byte for byte.
@@ -122,13 +134,16 @@ other run keeps them.
 
 **The handles name no recipient and no price.** Egress has nothing to send; the estimate
 is nothing, so the ledger is not asked and nothing is reserved; the meter has nothing to
-charge. The replayed record's `models` name the original's backends and models, its
+charge. They are of no installation, and **the lease's place is empty for the runs of an
+offline replay**: a runner over a models directory takes a hold on a local model's
+installation before each of its requests, and a recorded answer needs none, so no hold is
+taken on the model installed now and none can refuse the replay. The replayed record's `models` name the original's backends and models, its
 spend lists no paid request, and its egress is empty.
 
 **Divergence is the replay's, not the action's.** A request the original did not make, or
 made otherwise (another model, another request, a request past the last recorded), is
 `diverged`. An answer the store cannot give is `unanswerable`: an opaque part withheld
-(naming the part's adapter and length), a turn that was not written, a picture not held, a
+(naming the part's adapter and length), a turn that was not written, a
 diagnostic gone, a fill with no kept answer (a run made before B1, naming that), a check
 the decision cache answered (whose turns are another run's), a request whose backend's
 call unwound. **The first `diverged` or `unanswerable` answer is noted on the replay**,
@@ -247,7 +262,14 @@ for a fact the admission already keeps.
   allowance, telling the parent) is finished once; the store marks the run closed in its
   table of open runs, so it is let go of. No, or no answer: abandoned, as before, and the
   next open reads the store. An abandoned run's marker is put in the table before whoever
-  waits for it is told, so a caller that waited finds it marked.
+  waits for it is told, so a caller that waited finds it marked; a run whose end the store
+  shows and whose confirming sync was refused is marked with its ending visible. A
+  publication whose last sync failed (`Unacknowledged`) and then panicked is answered
+  `Durable` when the catch's own sync succeeds and finds the record: the sync is what
+  durability is, whoever made it. A publication that unwound after its rename skips what
+  a publication does once it is visible (removing older generation files, keeping its
+  packs in memory, dropping superseded content): each is clearing up that a later
+  publication or prune does again, and none is what makes the end durable.
 
 ### Where it runs, and what is not built
 

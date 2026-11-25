@@ -2188,6 +2188,14 @@ impl Engine {
                 Some(_) => self.places.clone(),
                 None => self.places.clone().with(Place::Gate, ways.gate()),
             };
+            // An offline replay's handles are the record's answers, of no installation:
+            // the lease's place is empty for its runs, so no hold is taken on a model
+            // installed now and none is asked for (ADR 0049).
+            let offline = (self.replay.as_ref()).is_some_and(|replay| replay.recorded.is_some());
+            let places = match offline {
+                true => places.without(Place::Lease),
+                false => places,
+            };
             let above = family.above_with(&run);
             let around = Wrappers {
                 run: run.clone(),
