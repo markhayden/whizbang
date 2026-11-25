@@ -903,7 +903,7 @@ just install-check      # that archive installed into an empty home with a clear
 `just setup`, `check`, `test-pack`, `test-scripts-slow`, `docs`, `scan`, `scan-range`,
 `scan-range-secrets`, `ci`, `package` and `install-check` exist; the others arrive with the milestone that needs them.
 `just check` is made of recipes that also run alone: `fmt-check`, `clippy`, `graph`, `deny`,
-`test-scripts`, `docs-check`, `timing`, `test-pack`. CI also runs `just test-timeout` on one runner: a test
+`test-scripts`, `docs-check`, `timing-fast`, `timing-sweeps`, `test-pack`. CI also runs `just test-timeout` on one runner: a test
 that sleeps 31 seconds must fail by timeout.
 
 ## 12. Project structure
@@ -953,23 +953,27 @@ GitHub redirects; the old name must never be reused.
 
 **Budgets.**
 
-- Fast tier: under 3 minutes of test time on the owner's Mac (Apple silicon, 64 GB), with a
-  warm build cache and compilation not counted.
+- Fast tier: each of its two parts (below) under 300 s of test time, on the owner's Mac
+  (Apple silicon, 64 GB) and in CI, with a warm build cache and compilation not counted.
+  The owner decided this on 2026-11-24; until then the whole tier had a target of 3 minutes
+  on the Mac.
 - Pull-request CI: under 10 minutes on GitHub's hosted `macos-15` and `ubuntu-22.04` runners,
   compilation included, with caches.
-- Fast tier's limit (`scripts/timing.sh`): test time is limited to 300 s everywhere. On
-  GitHub's hosted `macos-15` runner by the owner's decision of 2026-11-17, because its test
-  time varies about two-fold on unchanged code; on Linux CI and the owner's Mac, until
-  then 180 s, by the owner's decision of 2026-11-19, answering "raise local (and Linux)
+- Fast tier's limit (`scripts/timing.sh`): each part's test time is limited to 300 s
+  everywhere. On GitHub's hosted `macos-15` runner by the owner's decision of 2026-11-17,
+  because its test time varies about two-fold on unchanged code; on Linux CI and the
+  owner's Mac, until then 180 s, by the owner's decision of 2026-11-19, answering "raise local (and Linux)
   from 180 to 300 seconds?" with "that is ok also i think". One test stays limited to
   30 s (`.config/nextest.toml`).
-- In CI the fast tests run in two parts, each in a job of its own on both runners and each
-  held to the same 300 s: the sweeps (the test group `crash-sweeps`, which runs two at a
-  time, and squint's check of every use case; named once in `scripts/timing.sh`) in
-  `sweeps (<runner>)`, and every other fast test in `check (<runner>)`. With all of them
-  in one job the hosted macOS runner's test time came to 225 to 271 s of its 300 in
-  November 2026, most of it the sweeps. Nothing is dropped: both parts run on every pull
-  request, and `just check` still runs every fast test at once, under the same limit.
+- The fast tests run in two parts, each held to the same 300 s: the sweeps (the test group
+  `crash-sweeps`, which runs two at a time, and squint's check of every use case; named
+  once in `scripts/timing.sh`), and every other fast test. In CI each part is a job of its
+  own on both runners: `sweeps (<runner>)` and `check (<runner>)`. With all of them in one
+  job the hosted macOS runner's test time came to 225 to 271 s of its 300 in November
+  2026, most of it the sweeps. `just check` runs the same two parts, one after the other.
+  The owner decided this on 2026-11-24, answering "may `just check` run the fast tests in
+  CI's two parts, each held to 300 seconds?" with "option a is fine". Nothing is dropped:
+  both parts run on every pull request and in every `just check`.
 - Chrome tier's limit (`scripts/e2e.sh`): 240 s of test time for the whole tier, by the
   owner's decision of 2026-11-22 (until then 180 s). In CI it runs in two shards on each
   runner, `e2e (<runner>, shard <k>)`, each held to 120 s, half of the 240.

@@ -23,17 +23,21 @@
 # scripts/tests/test-timing.sh.
 #
 # The playground interface's unit tests (ui/) are counted too, under the same limit (plan
-# m5, "Fast-tier cost"): `just ui-check`, which `just check` runs just before this, leaves
+# m5, "Fast-tier cost"): `just ui-check`, which `just check` runs just before the part
+# fast, leaves
 # their seconds in target/ui/unit-seconds and their results in target/ui/unit-junit.xml.
 # When it did, each suite is a row of the table, their seconds join the total, and the two
 # files are removed, so a later run without `ui-check` does not count them again. --ui DIR
 # reads the two files from DIR instead (scripts/tests/test-timing.sh).
 #
 # --part fast|sweeps runs one of two parts of the fast tests, each under the same limit;
-# without it every fast test runs, which is what `just check` does. CI runs the two parts
-# in jobs of their own on each runner (`check` and `sweeps`, .github/workflows/ci.yml),
-# because the hosted macOS runner's test time for the whole came to 225 to 271 seconds of
-# the 300 in November 2026, most of it the sweeps two at a time. `sweeps` is the tests
+# without it every fast test runs in one run, by hand (`just timing`) or by
+# scripts/tests/test-timing.sh. CI runs the two parts in jobs of their own on each runner
+# (`check` and `sweeps`, .github/workflows/ci.yml), because the hosted macOS runner's test
+# time for the whole came to 225 to 271 seconds of the 300 in November 2026, most of it
+# the sweeps two at a time. `just check` runs the same two parts, one after the other,
+# each held to the limit: the owner's decision of 2026-11-24, since the whole on the
+# owner's Mac came near the 300 too. `sweeps` is the tests
 # that $SWEEPS below names: the test group `crash-sweeps` of .config/nextest.toml (a test
 # joins it by its name) and squint's check of every use case through its recipe; `fast`
 # is every other test, `not` the same expression, so the two parts are the whole by

@@ -15,8 +15,8 @@
 #
 # `check` writes the unit tests' seconds, the whole run of them as the clock saw it, to
 # target/ui/unit-seconds, and their results to target/ui/unit-junit.xml, where
-# scripts/timing.sh, which `just check` runs next, counts them with the Rust tests' under
-# the one limit of 300 seconds (SPEC.md section 13). It fails when:
+# scripts/timing.sh, whose part fast `just check` runs next, counts them with the Rust
+# tests' under that part's limit of 300 seconds (SPEC.md section 13). It fails when:
 # - the type check or a unit test fails;
 # - ui/dist/ is not, byte for byte, what the sources build (run `just ui-build` and commit);
 # - a file of ui/dist/ is not tracked by git, or one git tracks is not there;
