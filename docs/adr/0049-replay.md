@@ -174,8 +174,20 @@ before it starts, naming the file. Since a call of a tool file that failed notes
 digest, the refusal is also made where a tool file is dispatched: in an offline replay,
 `check` answers every tool-file call as not called, the replay cannot answer it, and no
 file runs. Live, a family that called a tool file is replayed only when the current config
-names a file of that name with the digest the record noted; one whose digest was never
-noted is refused, naming the file.
+names a file of that name with the digest the record noted. A call of a tool file that
+failed noted no digest, and nothing else of the record says a file was called (the call is
+a tool call in the judge's turn, by a name), so a live replay cannot tell it and does not
+refuse it: the file of that name the config names now is run, and a different answer is a
+difference the report shows. Offline, the replay's context refuses the call where it is
+dispatched, no file runs, and the request that follows is `diverged`.
+
+**A turn cut at its output ceiling.** A stored exchange keeps the turn's `output_ceiling`
+since B1, and the recorded answer carries it, so a check decides as it did whether to ask
+again. An exchange written before B1 reads as stating none, the same as a backend that
+states none: the two cannot be told apart, so neither is refused. Where the original had a
+ceiling it did not keep and stopped, the replay asks again with a larger limit, a request
+the original did not make: `diverged`, at that request. This replaces ADR 0048's "an older
+exchange whose answer was cut at a ceiling it did not keep is `unanswerable` offline".
 
 ### Live replay
 
@@ -196,7 +208,10 @@ parent's steps, a loop's attempt to the attempt of the same number), and a refer
 run inside what is compared (a step's run, a measurement's producing run) compared through
 that match, never by its id. Then each run's outcome, its committed outputs by identity,
 port and place, each step's action and arguments, its measurements and findings, a check's
-checklist and verdict, and a loop's attempts. Numbers are compared exactly: a replay runs
+checklist and verdict, and a loop's attempts. A run's measurements are what its action
+handed back, which the record does not keep: they are compared in the diagnostic each
+action that measures keeps them in (`edge_similarity.json`, `details`'s `measured.json`),
+byte for byte, each run id read as its place. Numbers are compared exactly: a replay runs
 the same build on the same pixels. Times, run ids and request ids are not compared. The
 report is **reproduced**, **differs** (each difference by place, first first, at most 256
 with a count of the rest), **diverged** or **unanswerable** (from the note).
@@ -265,6 +280,33 @@ there. Not built: resuming a run a dead process left (section 6: nothing dispatc
 replayed automatically; a replay is a new run, never the old one carried on); replay over
 the engine API or the stdio server (ADR 0048, "Which doors"); a replay that reconstructs a
 missing input; a replay of a user's recipe or tool file from a bundle.
+
+### As R1 built it
+
+- **One decision, two readers.** `replay::decide` holds a family's records to "What is
+  replayed" for a replay and for `bundle show`, which prints the offline decision; a
+  record that does not read is said so, never left out.
+- **A live replay's choices.** A choice the run took from the config's default, which the
+  config still makes by default, is not written into the call, so the replay's arguments
+  are the original's; any other is written from the alias its settings name. A capability
+  a run under the root asked that the root's call does not say it needs is held to the
+  config's default choice of it.
+- **What a live replay cannot repeat** is left out of the comparison with what was spent:
+  the ids a provider gives each answer (`provider_id`, `request_id`), in the record and in
+  a kept JSON document such as an exchange.
+
+- **The comparison** reads each record's groups as its JSON (the action, its version and
+  arguments; its inputs, outputs, outcome, steps, judge, plan, start, findings and
+  attempts) with every amount of money left out, and each diagnostic but the journal and
+  the note, by its bytes, a text with each run id of either family read as its place.
+  Differences are ordered as the runs ended, each run's steps before the run, so the first
+  is where the replay first went otherwise.
+- **`runs stats`** leaves replayed families out through `--replayed exclude|include|only`
+  (`stats::Runs::keeping`); the playground's history and figures read the same `Loaded`, and
+  take the choice up with its replay screens (plan m7, task U2).
+- **A tool file's call that failed** in the original noted no digest, so a live replay
+  cannot know of it from the record; it is answered as the live call answers, and the
+  report shows any difference.
 
 ## Consequences
 

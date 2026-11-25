@@ -28,6 +28,7 @@ pub mod play_models;
 pub mod play_result;
 pub mod play_saved;
 pub mod playing;
+pub mod replaying;
 pub mod report;
 pub mod serving;
 pub mod sign_in;

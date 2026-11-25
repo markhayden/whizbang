@@ -858,6 +858,13 @@ whizbang runs list|show|stats|export
 whizbang runs bundle <run>... --to <file> [--overwrite] --store <dir>
                                        # one run that ended, or a chain of at most 16, as
                                        # one file another store imports (ADR 0048)
+whizbang runs replay (<run> | --bundle-digest <digest> --step <n> | --bundle <file> [--step <n>])
+                    [--live] [--request-id <id>] [--json] --store <dir>
+                                       # a run made again, offline (answered from what it
+                                       # recorded, nothing called or spent) or --live, and
+                                       # its report: reproduced (0), or differs, diverged or
+                                       # unanswerable (3) (ADR 0049); `runs stats` leaves
+                                       # replayed families out unless --replayed says
 whizbang bundle import <file> --store <dir> [--create]
 whizbang bundle show <file>
 whizbang bundle list --store <dir>

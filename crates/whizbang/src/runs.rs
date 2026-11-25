@@ -71,6 +71,12 @@ pub enum Command {
         /// Aggregates only: no run and no item is named, and nothing the judge wrote.
         #[arg(long)]
         rejections: bool,
+        /// Which runs of replayed families to count (`runs replay`): `exclude`, the
+        /// default, leaves every replayed family out, so the figures of ordinary use are
+        /// not changed by replays; `include` counts them as any run; `only` counts them
+        /// alone. A replay a dead process left is known by its admission.
+        #[arg(long, value_name = "WHICH", value_parser = ["include", "exclude", "only"], default_value = "exclude")]
+        replayed: String,
     },
     /// Write the record of each run a filter admits, as it is stored: one JSON object a
     /// line, for analysis outside whizbang. A record holds no label of an evaluation set.
@@ -102,6 +108,51 @@ pub enum Command {
         #[command(flatten)]
         at: Where,
     },
+    /// Replay a run that ended, as a new run, and compare what it made with what the run
+    /// made (ADR 0049). Offline, the default, every model's answer is the one the run
+    /// recorded: nothing is called, nothing is spent, and no config is read. `--live`
+    /// makes the call again for real, under the config, as an ordinary run that may
+    /// spend. The source is a run of the store that nothing called, a step of a bundle
+    /// the store holds, or a step of a bundle file, which is imported first. Prints the
+    /// report: reproduced (exit 0), or differs, diverged or unanswerable (exit 3).
+    Replay {
+        /// The run, by its id or as `runs list` prints it.
+        #[arg(
+            value_name = "RUN",
+            required_unless_present_any = ["bundle_digest", "bundle"],
+            conflicts_with_all = ["bundle_digest", "bundle"]
+        )]
+        run: Option<String>,
+        /// A bundle the store holds, by its digest, as `bundle list` prints it.
+        #[arg(
+            long,
+            value_name = "DIGEST",
+            conflicts_with = "bundle",
+            requires = "step"
+        )]
+        bundle_digest: Option<String>,
+        /// A bundle file: imported into the store, unless the request id finds the
+        /// replay made before, and then a step of it replayed.
+        #[arg(long, value_name = "FILE")]
+        bundle: Option<std::path::PathBuf>,
+        /// The step of the bundle, from 0; for a file, 0 when it is not given.
+        #[arg(long, value_name = "N")]
+        step: Option<u32>,
+        /// Make the call again for real, under the config, as a run that may spend.
+        #[arg(long)]
+        live: bool,
+        /// An id for this replay, of your choosing. The same replay asked again under it
+        /// is answered with the run it made, even once its source is gone.
+        #[arg(long, value_name = "ID")]
+        request_id: Option<String>,
+        /// Print the report as JSON, on one line.
+        #[arg(long)]
+        json: bool,
+        #[command(flatten)]
+        at: Where,
+        #[command(flatten)]
+        under: crate::rascal::Under,
+    },
 }
 
 /// Runs a runs command: the bytes to print on success, or the complaint.
@@ -119,8 +170,10 @@ pub fn run(command: &Command) -> Result<Vec<u8>, String> {
             at,
             unsure_by,
             rejections,
+            replayed,
         } => {
-            let figures = whizbang::stats::figures(at.root(), filter)?;
+            let replays = whizbang::stats::Replays::named(replayed).unwrap_or_default();
+            let figures = whizbang::stats::figures_keeping(at.root(), filter, replays)?;
             let mut text = figures.text();
             if unsure_by.is_some() {
                 text.push_str(&figures.unsure_text());
@@ -137,6 +190,7 @@ pub fn run(command: &Command) -> Result<Vec<u8>, String> {
             overwrite,
             at,
         } => bundle(at.root(), runs, to, *overwrite).map(String::into_bytes),
+        Command::Replay { .. } => replay(command, wiring_recovery(), None).map(|(bytes, _)| bytes),
     }
 }
 
@@ -879,6 +933,141 @@ fn count(count: usize) -> String {
     } else {
         count.to_string()
     }
+}
+
+fn wiring_recovery() -> whizbang_core::contract::Recovery {
+    whizbang::wiring::recovery()
+}
+
+/// `runs replay`: the report's bytes, and whether the run was reproduced. A request id
+/// is looked up before any source is read or imported.
+pub fn replay(
+    command: &Command,
+    recovery: whizbang_core::contract::Recovery,
+    platform: Option<whizbang::wiring::Platform>,
+) -> Result<(Vec<u8>, bool), String> {
+    use whizbang::wiring::{self, Make, Over, Uses};
+    use whizbang_core::contract::replay::{Replay, Source};
+    use whizbang_core::contract::{Answer, Executor, LookedUp, RunId, RunState};
+    let Command::Replay {
+        run,
+        bundle_digest,
+        bundle,
+        step,
+        live,
+        request_id,
+        json,
+        at,
+        under,
+    } = command
+    else {
+        return Err("not a replay".to_owned());
+    };
+    let root = at.root();
+    let source = match (run, bundle_digest, bundle) {
+        (Some(given), _, _) => {
+            let reader = Reader::open(root, Arc::new(RealFs)).map_err(|e| e.to_string())?;
+            let generation = reader.snapshot().map_err(|e| e.to_string())?;
+            let (id, _) = meant(&generation, given)?;
+            Source::Run(RunId::parse(id).map_err(|why| format!("not a run's id: {why}"))?)
+        }
+        (None, Some(digest), _) => Source::Bundle {
+            digest: whizbang::bundling::digest_of(digest)?,
+            step: step.unwrap_or(0),
+        },
+        (None, None, Some(file)) => Source::Bundle {
+            digest: whizbang::replaying::digest_of_file(file)?,
+            step: step.unwrap_or(0),
+        },
+        (None, None, None) => {
+            return Err("name a run, a bundle's digest or a bundle file".to_owned());
+        }
+    };
+    // Offline, no config is read at all: the replay is answered from the record.
+    let over = match live {
+        true => under.over(platform, Uses::Every)?,
+        false => Over::nothing(),
+    };
+    let opening = wiring::opening(root, Make::Nothing, recovery)
+        .map_err(|error| wiring::not_opened(&error))?;
+    let store = opening.writer().map_err(|why| why.to_string())?;
+    let registry = wiring::registry_over(&over, false)?;
+    let engine = wiring::runner(registry, store.clone(), &over)?;
+    let mut replay = Replay::of(source.clone());
+    if *live {
+        replay = replay.live();
+    }
+    if let Some(text) = request_id {
+        replay = replay.with_id(engine.request_id(text).map_err(|e| e.to_string())?);
+    }
+    let found = engine.look_up_replay(&replay).map_err(|e| e.to_string())?;
+    let repeated = matches!(found, LookedUp::Repeat(_));
+    let made = match found {
+        LookedUp::Repeat(earlier) => earlier.run().clone(),
+        LookedUp::Conflict { run } => {
+            return Err(format!(
+                "the request id was used for another request, which made the run {run}: an \
+                 id is one request's, and this one was not run"
+            ));
+        }
+        LookedUp::Missing => {
+            // A file is imported only now, once the id is known not to be a repeat.
+            if let (Source::Bundle { .. }, Some(file)) = (&source, bundle) {
+                let imported = whizbang::bundling::import_into(&store, file)?;
+                // The file read for the import is the file whose digest was looked up.
+                if let Source::Bundle { digest, .. } = &source
+                    && imported.digest != *digest
+                {
+                    return Err(format!(
+                        "the bundle file changed while it was read: it was {digest} when its \
+                         request id was looked up, and {} when it was imported",
+                        imported.digest
+                    ));
+                }
+            }
+            match engine.start_replay(&replay).map_err(|e| e.to_string())? {
+                Answer::Started(run) => run,
+                Answer::Repeat(earlier) => earlier.run().clone(),
+                Answer::Ran(finished) => finished.run().clone(),
+            }
+        }
+    };
+    let waited = engine.wait(&made).map_err(|e| e.to_string())?;
+    drop(engine);
+    drop(store);
+    drop(opening);
+    if !matches!(waited.state(), RunState::Ended(_)) {
+        return Err(format!(
+            "the replay {made} has not ended: nothing in this process works on it"
+        ));
+    }
+    let reported = match whizbang::replaying::report_of(root, made.as_str()) {
+        Ok(reported) => reported,
+        // The same replay asked again is answered with its run, whatever became of its
+        // source; the report is made only while the source is held.
+        Err(why) if repeated => {
+            let text = format!("replay: {made}\nreport: not made: {why}\n");
+            return Ok((printable_lines(&text).into_bytes(), true));
+        }
+        // The replay ran: its report could not be made, which is no refusal.
+        Err(why) => {
+            let text = format!("replay: {made}\nreport: not made: {why}\n");
+            return Ok((printable_lines(&text).into_bytes(), false));
+        }
+    };
+    let text = if *json {
+        reported.json()
+    } else {
+        reported.text()
+    };
+    Ok((text.into_bytes(), reported.reproduced()))
+}
+
+/// Each line of a text escaped by itself.
+fn printable_lines(text: &str) -> String {
+    text.lines()
+        .map(|line| whizbang::door::printable(line) + "\n")
+        .collect()
 }
 
 #[cfg(test)]

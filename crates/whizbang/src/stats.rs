@@ -279,6 +279,9 @@ pub struct Loaded {
     pub without: usize,
     /// The name of each picture the playground kept, by the hex of its identity.
     pub names: BTreeMap<String, String>,
+    /// Every run of a replayed family (ADR 0049): a run whose record names the run it
+    /// replays, one a dead process left whose admission does, and every run under one.
+    pub replayed: BTreeSet<String>,
     generation: Generation,
     reader: Reader,
     /// What the runs kept as JSON, read once each: by run and name.
@@ -307,12 +310,14 @@ impl Loaded {
                 _ => without += 1,
             }
         }
+        let replayed = replayed_of(&generation, &reader, &all, &children);
         Ok(Loaded {
             number: generation.number(),
             all,
             children,
             without,
             names,
+            replayed,
             generation,
             reader,
             kept: std::sync::Mutex::new(BTreeMap::new()),
@@ -419,6 +424,76 @@ impl Runs {
         }
         total
     }
+}
+
+/// Which runs of a replayed family a figure takes (`runs stats --replayed`; ADR 0049).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Replays {
+    /// Leaves every replayed family out: the figures of ordinary use.
+    #[default]
+    Exclude,
+    /// Takes them as any run.
+    Include,
+    /// Takes them alone.
+    Only,
+}
+
+impl Replays {
+    /// As `--replayed` names it: `exclude`, `include` or `only`.
+    pub fn named(name: &str) -> Option<Replays> {
+        match name {
+            "exclude" => Some(Replays::Exclude),
+            "include" => Some(Replays::Include),
+            "only" => Some(Replays::Only),
+            _ => None,
+        }
+    }
+}
+
+impl Runs {
+    /// The same runs, with the runs of replayed families taken as `replays` says.
+    pub fn keeping(mut self, replays: Replays) -> Runs {
+        let replayed = &self.loaded.replayed;
+        self.found.retain(|(id, _)| match replays {
+            Replays::Include => true,
+            Replays::Exclude => !replayed.contains(id),
+            Replays::Only => replayed.contains(id),
+        });
+        self
+    }
+}
+
+/// Every run of a replayed family: each whose record names the run it replays; each a
+/// dead process left whose admission does, since the record of a dead process holds no
+/// `replayed` (ADR 0049, "Provenance"); and every run under one of them.
+fn replayed_of(
+    generation: &Generation,
+    reader: &Reader,
+    all: &BTreeMap<String, RunRecord>,
+    children: &BTreeMap<String, Vec<String>>,
+) -> BTreeSet<String> {
+    let admitted = |id: &str| -> bool {
+        let entry = generation
+            .run(id)
+            .and_then(|run| run.get(whizbang_core::contract::ADMITTED_NAME));
+        let bytes = entry.and_then(|entry| reader.read(entry).ok());
+        let admission =
+            bytes.and_then(|bytes| whizbang_core::contract::Admission::from_bytes(&bytes).ok());
+        admission.is_some_and(|admission| admission.replayed().is_some())
+    };
+    let mut next: Vec<String> = (all.iter())
+        .filter(|(id, record)| {
+            record.replayed().is_some() || (result_of(record) == "interrupted" && admitted(id))
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    let mut replayed = BTreeSet::new();
+    while let Some(id) = next.pop() {
+        if replayed.insert(id.clone()) {
+            next.extend(children.get(&id).cloned().unwrap_or_default());
+        }
+    }
+    replayed
 }
 
 /// `runs export`: each matching run's record as it is stored, one JSON object a line.
@@ -715,9 +790,16 @@ impl Figures {
     }
 }
 
-/// The figures of the runs at `root` that `filter` admits.
+/// The figures of the runs at `root` that `filter` admits, every replayed family left
+/// out.
 pub fn figures(root: &Path, filter: &Filter) -> Result<Figures, String> {
-    let runs = Runs::matching(root, filter, Lookups::of_build())?;
+    figures_keeping(root, filter, Replays::Exclude)
+}
+
+/// The figures of the runs at `root` that `filter` admits, with the runs of replayed
+/// families taken as `replays` says.
+pub fn figures_keeping(root: &Path, filter: &Filter, replays: Replays) -> Result<Figures, String> {
+    let runs = Runs::matching(root, filter, Lookups::of_build())?.keeping(replays);
     Ok(Figures::of(&runs))
 }
 

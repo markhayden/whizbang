@@ -294,6 +294,22 @@ where
             Ok(text) => emit(text.as_bytes()),
             Err(complaint) => complain(&complaint),
         },
+        Command::Runs {
+            command: command @ runs::Command::Replay { .. },
+        } => match runs::replay(
+            &command,
+            whizbang::wiring::recovery(),
+            Some(std::sync::Arc::new(platforms_models_dir)),
+        ) {
+            Ok((bytes, true)) => emit(&bytes),
+            // A replay that did not reproduce its run prints its whole report, then
+            // fails with 3, as a check that finds something wrong does.
+            Ok((bytes, false)) => {
+                let _ = emit(&bytes);
+                ExitCode::from(3)
+            }
+            Err(complaint) => complain(&complaint),
+        },
         Command::Runs { command } => match runs::run(&command) {
             Ok(bytes) => emit(&bytes),
             Err(complaint) => complain(&complaint),

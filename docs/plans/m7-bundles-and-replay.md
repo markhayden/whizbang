@@ -367,7 +367,10 @@ fact of its answer that the loop acts on: a turn's output ceiling, which decides
 cut answer is tried again (`crates/whizbang-squint/src/check.rs`, `output_ceiling`), is not
 written (`crates/whizbang-core/src/capability/written.rs`). From B1 on, an exchange keeps
 it; an older exchange whose answer was cut at a ceiling it did not keep is `unanswerable`
-offline, naming that.
+offline, naming that. *Amended by R1: an exchange written before B1 and one whose backend
+states no ceiling read alike, so neither is refused; where the original stopped at a ceiling
+it did not keep, the replay's retry is a request the original did not make, `diverged`
+(ADR 0049).*
 
 **Tool files.** A check may call a tool file the config names (`check.rs`,
 `dispatch_file`), noted among its settings as `tool_file:<name>` with the file's digest. A
@@ -378,7 +381,9 @@ refusal is also made where a tool file is dispatched: a replay's context refuses
 tool-file call, offline, as `unanswerable`, so no file runs whatever the record says. Live,
 a run whose family called a tool file is replayed only when the current config names a file
 of that name with the digest the record noted; one whose digest was never noted (the call
-failed) is refused, naming the file.
+failed) is refused, naming the file. *Amended by R1: a failed call notes nothing a record
+reader can find, so a live replay cannot refuse it; it runs the file the config names now,
+and the report shows a difference. Offline no file runs, as said (ADR 0049).*
 
 **What cannot be answered.** An answer the store cannot give (an opaque part withheld, a
 picture not held, a diagnostic gone, a fill with no kept answer) ends the replay before that
@@ -840,7 +845,7 @@ abandoned.
    `execute::a_panic_at_publishing_before_the_pointer_was_renamed_answers_as_before`, and
    `execute::a_panic_before_the_rename_then_another_publication_is_not_taken_for_the_end`.
 
-- [ ] Done when: `replay::an_offline_replay_of_remove_prompt_reproduces_it_with_no_backend_configured`,
+- [x] Done when: `replay::an_offline_replay_of_remove_prompt_reproduces_it_with_no_backend_configured`,
   `replay::an_offline_replay_of_remove_checked_reproduces_its_attempts_and_verdict_through_the_run_match`,
   `replay::an_offline_replay_of_a_check_reproduces_its_turns_checklist_and_verdict`,
   `replay::an_offline_replay_of_a_recipe_whose_check_takes_measurements_reproduces_it`,
@@ -854,7 +859,8 @@ abandoned.
   `replay::a_turn_that_held_an_opaque_part_is_unanswerable_naming_it`,
   `replay::a_child_an_interrupted_run_a_recipe_files_run_and_a_setting_at_its_limit_are_each_refused`,
   `replay::a_check_that_called_a_tool_file_is_refused_offline_and_replayed_live_only_with_the_same_digest`,
-  `replay::a_tool_file_call_that_failed_in_the_original_runs_no_file_offline_and_is_refused_live`,
+  `replay::a_tool_file_call_that_failed_in_the_original_runs_no_file_offline` (amended by R1: the
+  live refusal cannot be told from the record, above),
   `replay::a_replay_from_a_bundle_holds_its_inputs_after_the_bundle_is_deleted_and_pruned`,
   `replay::choices_are_found_by_alias_for_an_explicit_choice_a_default_and_two_aliases_of_one_model`,
   `replay::a_changed_measurement_of_an_action_with_no_artifact_output_is_a_difference`,

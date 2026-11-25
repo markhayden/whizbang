@@ -34,10 +34,10 @@ use super::snapshot::Known;
 use super::{
     ADMITTED_NAME, Action, ActionDescriptor, Admission, AdmissionPart, Allowance, Answer, Backends,
     Call, CallError, Cancel, Cancellation, Capabilities, Clock, Committed, ConfigSource, Context,
-    Diagnostics, Ending, Estimate, Failure, Findings, Finished, Ledger, MESSAGE_LIMIT, Outcome,
-    PreparedCall, Produced, Readiness, Refusal, Registry, Request, RequestId, ResultKind, RunFacts,
-    RunId, RunState, Secrets, Snapshot, Stale, StoreFailure, SystemClock, Value, Verdict, Watched,
-    request_fingerprint,
+    Diagnostics, Ending, Estimate, Failure, Findings, Finished, Ledger, MESSAGE_LIMIT,
+    ModelIdentity, Outcome, PreparedCall, Produced, Readiness, Refusal, Registry, Request,
+    RequestId, ResultKind, RunFacts, RunId, RunState, Secrets, Snapshot, Stale, StoreFailure,
+    SystemClock, Value, Verdict, Watched, request_fingerprint,
 };
 use crate::capability::recorded::{self, Recorded};
 
@@ -228,6 +228,9 @@ pub struct Engine {
     /// The replay this executor's runs are of: set for a replayed run and every run it
     /// calls, and for no other.
     replay: Option<Arc<Replaying>>,
+    /// Each tool file the current config names, with its revision: what a live replay of
+    /// a family that called one is held to ([`Engine::with_tool_files`]).
+    tool_files: Arc<BTreeMap<String, String>>,
 }
 
 /// What the runs of a replayed family share: what each records of the replay, and,
@@ -235,6 +238,9 @@ pub struct Engine {
 struct Replaying {
     replayed: Replayed,
     recorded: Option<Arc<Recorded>>,
+    /// For a step of a bundle: each input's ordinary name, and the bundle's file of it,
+    /// which the runs of the replay find it by, and which the run's admission holds.
+    names: Vec<(String, store::Entry)>,
 }
 
 /// What a test has done at a place in the ending of a run: the run's action, and the
@@ -445,6 +451,7 @@ impl Engine {
             kept_seen: None,
             shipped: None,
             replay: None,
+            tool_files: Arc::new(BTreeMap::new()),
         }
     }
 
@@ -576,6 +583,32 @@ impl Engine {
     pub fn with_shipped(mut self, shipped: BTreeMap<String, String>) -> Engine {
         self.shipped = Some(Arc::new(shipped));
         self
+    }
+
+    /// The same executor, holding a live replay of a family that called a tool file to
+    /// these: each tool file the current config names, with its revision (`sha256:` and
+    /// the digest of its bytes). A family that called one is replayed live only when the
+    /// file of that name is here at the digest its record noted.
+    pub fn with_tool_files(mut self, files: BTreeMap<String, String>) -> Engine {
+        self.tool_files = Arc::new(files);
+        self
+    }
+
+    /// What a replay's request id finds, looked up as [`Executor::start_replay`] looks
+    /// it up first: nothing is read of its source, and nothing is written. A replay with
+    /// no id finds nothing.
+    pub fn look_up_replay(&self, replay: &Replay) -> Result<LookedUp, CallError> {
+        let Some(id) = replay.id() else {
+            return Ok(LookedUp::Missing);
+        };
+        if self.secrets.now().redact(id.as_str()) != id.as_str() {
+            return Err(Refusal::SecretInRequestId.into());
+        }
+        Ok(match self.find_request(id, replay.fingerprint())? {
+            Found::Nothing => LookedUp::Missing,
+            Found::Same(earlier) => LookedUp::Repeat(earlier),
+            Found::Other { run } => LookedUp::Conflict { run },
+        })
     }
 
     /// For tests: the same executor, telling this, at each attempt at a run's end, the
@@ -850,12 +883,27 @@ impl Executor for Engine {
         let failed = |error| CallError::Store(StoreFailure::new(error));
         // The source is read through one held generation.
         let holding = store.hold().map_err(failed)?;
-        let read = replay::read(replay, store.as_ref(), holding.generation(), shipped)?;
+        // Live, the config as it is now: what it chooses by default is a choice the call
+        // need not write, and its backends are what the family's models are held to.
+        let taken = match replay.mode() {
+            super::record::ReplayMode::Live => Some(self.take()?),
+            super::record::ReplayMode::Offline => None,
+        };
+        let defaults =
+            |capability| (taken.as_ref()).and_then(|taken| taken.snapshot.default_of(capability));
+        let told = replay::Told {
+            shipped,
+            registry: &self.registry,
+            tool_files: &self.tool_files,
+            defaults: &defaults,
+        };
+        let read = replay::read(replay, store.as_ref(), holding.generation(), &told)?;
         drop(holding);
         let mut engine = self.clone();
         engine.replay = Some(Arc::new(Replaying {
             replayed: replay.replayed(&read.root),
             recorded: read.recorded.clone(),
+            names: read.names.clone(),
         }));
         // Offline, the run and every run it calls are admitted under one snapshot that
         // offers the recorded answers and nothing else: the config's source is not
@@ -864,6 +912,67 @@ impl Executor for Engine {
             let digest = read.config.unwrap_or_else(|| Digest::of_bytes(b""));
             let snapshot = Snapshot::of(digest).offering(recorded.offered());
             engine.config = Arc::new(snapshot);
+        }
+        // Live, under the config as it is now: a model the family's requests were answered
+        // by that the config no longer offers refuses the replay, naming it.
+        if read.recorded.is_none() {
+            let prepared = engine.prepare(&read.call)?;
+            for need in prepared.needs() {
+                let capability = need.capability();
+                let recorded: Vec<&ModelIdentity> = (read.models.iter())
+                    .filter(|(c, _)| *c == capability)
+                    .map(|(_, model)| model)
+                    .collect();
+                let offered = need.model().is_some_and(|model| recorded.contains(&model));
+                if let (false, Some(was)) = (offered, recorded.first()) {
+                    return Err(Refusal::NotReplayed {
+                        run: read.root.clone(),
+                        why: format!(
+                            "its {} requests were answered by {} {} {}, and the config no \
+                             longer offers that model under the choice the run made",
+                            capability.name(),
+                            was.backend(),
+                            was.model(),
+                            was.version()
+                        ),
+                    }
+                    .into());
+                }
+            }
+            // A capability a run under the root asked that the root's call does not say
+            // it needs: held to what the config chooses of it by default, which is what
+            // a call that names no backend of it is handed.
+            let backends = (taken.as_ref())
+                .and_then(|taken| taken.snapshot.backends())
+                .unwrap_or(self.backends.as_ref());
+            for (capability, was) in &read.models {
+                if prepared
+                    .needs()
+                    .iter()
+                    .any(|need| need.capability() == *capability)
+                {
+                    continue;
+                }
+                let recorded: Vec<&ModelIdentity> = (read.models.iter())
+                    .filter(|(c, _)| c == capability)
+                    .map(|(_, model)| model)
+                    .collect();
+                let now = backends.resolve(*capability, None, &[]).ok();
+                if !now.as_ref().is_some_and(|model| recorded.contains(&model)) {
+                    return Err(Refusal::NotReplayed {
+                        run: read.root.clone(),
+                        why: format!(
+                            "its {} requests were answered by {} {} {}, and the config no \
+                             longer offers that model under the choice the run made",
+                            capability.name(),
+                            was.backend(),
+                            was.model(),
+                            was.version()
+                        ),
+                    }
+                    .into());
+                }
+            }
         }
         let mut request = Request::new(read.call);
         if let Some(id) = id {
@@ -1393,6 +1502,11 @@ impl Engine {
             return Err(CallError::Refused(Refusal::SecretInRequestId).into());
         }
         let added = Arc::new(Added::default());
+        // A run of a replay of a bundle's step finds the step's inputs among the bundle's
+        // files, by their ordinary names (ADR 0048, "Importing one").
+        if let Some(replay) = &self.replay {
+            added.given(&replay.names);
+        }
         // A run under another reads what the runs of its tree committed for them: the
         // names of the first run of the tree (plan m3, task Q1, item 3). A run nothing
         // called is that first run, and says so once it is named.
@@ -1464,7 +1578,10 @@ impl Engine {
         let holds: Vec<(String, store::Entry)> = (prepared.inputs().iter())
             .filter_map(|input| {
                 let name = artifact::name(input.artifact(), input.id());
-                let entry = view.holding.generation().get(&name)?;
+                let given = (self.replay.as_ref())
+                    .and_then(|replay| replay.names.iter().find(|(n, _)| *n == name))
+                    .map(|(_, entry)| entry);
+                let entry = view.holding.generation().get(&name).or(given)?;
                 (entry.kind == store::Kind::Output).then(|| (name, entry.clone()))
             })
             .collect();
