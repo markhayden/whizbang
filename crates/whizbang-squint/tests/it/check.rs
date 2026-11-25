@@ -322,7 +322,7 @@ fn arguments_that_are_not_a_views_make_no_call_and_a_box_past_the_image_is_refus
     assert_eq!(said[..3], [no_box, no_box, no_box]);
     assert_eq!(
         said[3],
-        "not called: the arguments are image, bbox and also, and no other"
+        "not called: the arguments are image, also, and bbox or yaw, pitch and fov, and no other"
     );
     assert_eq!(
         said[4],
@@ -337,6 +337,52 @@ fn arguments_that_are_not_a_views_make_no_call_and_a_box_past_the_image_is_refus
     );
     assert_eq!(runs(&world.root(), world.fs.clone()), 1);
     assert!(!left.has("evidence-001"));
+}
+
+#[test]
+fn angles_ask_for_a_perspective_view_and_are_refused_on_a_flat_image() {
+    // The judge is told of yaw, pitch and fov beside bbox (plan mE, task P1). Angles with
+    // a box, or fewer than three, make no call; three angles on the flat photograph are a
+    // call, which `view` refuses as the caller's mistake, saying what to send instead.
+    let world = World::new();
+    let photo = world.photo.id().to_string();
+    let call = |id: &str, arguments: Json| json!({"tool_call": {"id": id, "name": "view", "arguments": arguments}});
+    let parts = json!([
+        call(
+            "c1",
+            json!({"image": photo, "bbox": [0, 0, 1, 1], "yaw": 0})
+        ),
+        call("c2", json!({"image": photo, "yaw": 0, "pitch": 0})),
+        call("c3", json!({"image": photo})),
+        call(
+            "c4",
+            json!({"image": photo, "yaw": 0, "pitch": 0, "fov": "wide"})
+        ),
+        call(
+            "c5",
+            json!({"image": photo, "yaw": 10, "pitch": 0, "fov": 60})
+        ),
+    ]);
+    let done = (json!([{"text": "unsure"}]), "end_turn");
+    let (finished, _, judge) = run(&world, &turns(&[(parts, "tool_use"), done]), &[]);
+    assert_eq!(finished.outcome().name(), "completed");
+    let said = results(&judge, 1);
+    assert!(said.iter().all(|result| result.is_error()));
+    let said: Vec<&str> = said.iter().map(ToolResult::text).collect();
+    assert_eq!(
+        said[..4],
+        [
+            "not called: give either bbox or yaw, pitch and fov, not both",
+            "not called: yaw, pitch and fov go together: send all three for a perspective view",
+            "not called: give bbox for a crop, or yaw, pitch and fov for a perspective view",
+            "not called: fov must be a number",
+        ]
+    );
+    assert!(
+        said[4].starts_with("rejected: image is flat: send bbox [left, top, right, bottom]"),
+        "{}",
+        said[4]
+    );
 }
 
 const CUT_OFF: &str = r#"{"script":"judge-script/1","entries":[

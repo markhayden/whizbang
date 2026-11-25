@@ -492,16 +492,23 @@ pub fn definition(name: &str) -> Result<ToolDefinition, String> {
 fn view_tool() -> Result<ToolDefinition, Failure> {
     let schema = json!({
         "type": "object",
-        "required": ["image", "bbox"],
+        "required": ["image"],
         "properties": {
             "image": { "type": "string" },
             "also": { "type": "string" },
             "bbox": { "type": "array", "items": { "type": "number" } },
+            "yaw": { "type": "number" },
+            "pitch": { "type": "number" },
+            "fov": { "type": "number" },
         },
     });
     let description = "Shows a region of an image closer. image is the name of an image you \
-        were shown; bbox is left, top, right and bottom as fractions of the image; also is a \
-        second image to show the same region of.";
+        were shown; bbox is left, top, right and bottom as fractions of the image, for a \
+        crop; or, for a panorama, yaw, pitch and fov together ask for a square perspective \
+        view instead: yaw in degrees from the middle column, growing to the right, from -180 \
+        up to 180; pitch in degrees above the horizon, from -90 to 90; fov the field of view \
+        in degrees, from 10 to 120. also is a second image of the same projection to show \
+        the same region of.";
     ToolDefinition::new(view::NAME, description, schema).map_err(|why| failed("tools", &why))
 }
 
@@ -516,9 +523,12 @@ fn view_call(arguments: &Json, names: &details::Names) -> Result<Call, String> {
     let Some(arguments) = arguments.as_object() else {
         return Err("the arguments are not an object".to_owned());
     };
-    let known = ["image", "also", "bbox"];
+    let known = ["image", "also", "bbox", "yaw", "pitch", "fov"];
     if arguments.keys().any(|key| !known.contains(&key.as_str())) {
-        return Err("the arguments are image, bbox and also, and no other".to_owned());
+        return Err(
+            "the arguments are image, also, and bbox or yaw, pitch and fov, and no other"
+                .to_owned(),
+        );
     }
     let named = |key: &str| match arguments.get(key) {
         None => Ok(None),
@@ -531,21 +541,46 @@ fn view_call(arguments: &Json, names: &details::Names) -> Result<Call, String> {
     let Some(image) = named("image")? else {
         return Err("image is required".to_owned());
     };
-    // Four entries, each a number: an entry that is none is not skipped, or five
-    // entries of which four are numbers would be a box.
-    let sides = arguments.get("bbox").and_then(Json::as_array);
-    let sides: Option<Vec<f64>> = sides.and_then(|sides| sides.iter().map(Json::as_f64).collect());
-    let Some(sides) = sides.filter(|sides| sides.len() == 4) else {
-        return Err("bbox is four numbers: left, top, right and bottom".to_owned());
-    };
+    let angles: Vec<(&str, &Json)> = view::ANGLES
+        .into_iter()
+        .filter_map(|name| arguments.get(name).map(|value| (name, value)))
+        .collect();
     let mut call = Call::new(view::NAME).input("image", image);
     if let Some(also) = named("also")? {
         call = call.input("also", also);
     }
-    for (name, side) in view::SIDES.into_iter().zip(sides) {
-        call = call.argument(name, Value::Number(side));
+    match (arguments.get("bbox"), angles.len()) {
+        (Some(_), 1..) => Err("give either bbox or yaw, pitch and fov, not both".to_owned()),
+        (Some(bbox), _) => {
+            // Four entries, each a number: an entry that is none is not skipped, or
+            // five entries of which four are numbers would be a box.
+            let sides = bbox.as_array();
+            let sides: Option<Vec<f64>> =
+                sides.and_then(|sides| sides.iter().map(Json::as_f64).collect());
+            let Some(sides) = sides.filter(|sides| sides.len() == 4) else {
+                return Err("bbox is four numbers: left, top, right and bottom".to_owned());
+            };
+            for (name, side) in view::SIDES.into_iter().zip(sides) {
+                call = call.argument(name, Value::Number(side));
+            }
+            Ok(call)
+        }
+        (None, 0) => {
+            Err("give bbox for a crop, or yaw, pitch and fov for a perspective view".to_owned())
+        }
+        (None, 3) => {
+            for (name, value) in angles {
+                let Some(number) = value.as_f64() else {
+                    return Err(format!("{name} must be a number"));
+                };
+                call = call.argument(name, Value::Number(number));
+            }
+            Ok(call)
+        }
+        (None, _) => {
+            Err("yaw, pitch and fov go together: send all three for a perspective view".to_owned())
+        }
     }
-    Ok(call)
 }
 
 /// The verdict a judge's last turn states: the first line of its text is the word,

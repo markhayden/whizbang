@@ -4,8 +4,10 @@
 //! - The example images beside the record are what `view` gives, byte for byte.
 //! - The part of the record between the `measured` marks is what the tests measure: its
 //!   first table is held by the test of `locate.rs` that measures the known boxes, its
-//!   second by the test of `vectors.rs` that makes the fixed vectors' crops. Each makes
-//!   its table from what it has already worked out, so nothing is computed twice.
+//!   second by the test of `vectors.rs` that makes the fixed vectors' crops, its third by
+//!   the test of `panorama.rs` that holds the perspective view to squint's and to its
+//!   scene. Each makes its table from what it has already worked out, so nothing is
+//!   computed twice.
 //! - `write_the_record`, which `scripts/tool-record.sh view` runs, writes the images, that
 //!   part, and the part between the `timed` marks: times, and the other methods. It
 //!   leaves the times as they are when nothing else in that part changed and no time
@@ -16,10 +18,11 @@ use std::time::{Duration, Instant};
 
 use image::imageops::{self, FilterType};
 use whizbang_core::artifact::Image;
-use whizbang_core::identity::{Projection, Topology};
-use whizbang_squint::view::{Crop, Request, view};
+use whizbang_core::identity::{Projection, Space, Topology};
+use whizbang_squint::view::{Crop, Region, Request, view};
 
 use super::locate::{KNOWN, Measured, measure};
+use super::panorama::{self, seen};
 use super::support::*;
 use super::vectors::{self, VECTORS};
 
@@ -69,6 +72,43 @@ const DETAIL: [f64; 4] = [0.1002, 0.1203, 0.5997, 0.5996];
 /// The box of the second example: the whole image, which is over the bound.
 const WHOLE: [f64; 4] = [0.0, 0.0, 1.0, 1.0];
 
+/// The panorama the third and fourth examples look into: 1024 by 512, a soft ground whose
+/// red rises and falls once round the panorama, so it has no edge at the seam; a line
+/// every 30 degrees of longitude and of latitude, the seam's in red; and a checker of
+/// 8-pixel squares round the north pole, above 70 degrees.
+fn sphere(x: u32, y: u32) -> [u8; 4] {
+    const W: u32 = 1024;
+    const H: u32 = 512;
+    // A line is the column or row nearest a multiple of 30 degrees: W / 12 and H / 6
+    // pixels apart.
+    let on_meridian = x % (W / 12) == 0;
+    let on_parallel = y % (H / 6) == 0;
+    let [r, g, b] = if x == 0 || x == W - 1 {
+        [220, 30, 30]
+    } else if on_meridian || on_parallel {
+        [40, 40, 60]
+    } else if y < H * 20 / 180 {
+        if (x / 8 + y / 8) % 2 == 0 {
+            [250, 240, 60]
+        } else {
+            [30, 30, 90]
+        }
+    } else {
+        // A triangle wave of one period round the panorama.
+        let up = x * 2 * 160 / W;
+        let red = if up <= 160 { up } else { 320 - up };
+        [(60 + red) as u8, (64 + y * 128 / H) as u8, 160]
+    };
+    [r, g, b, 255]
+}
+
+/// The third example: across the seam, level, a quarter of the way round.
+pub const ACROSS: (f64, f64, f64) = (-180.0, 0.0, 90.0);
+/// The fourth: up to the north pole.
+pub const UP: (f64, f64, f64) = (0.0, 75.0, 100.0);
+/// The fifth: a box of the panorama, a flat crop.
+const STRIP: [f64; 4] = [0.4, 0.3, 0.6, 0.7];
+
 struct Examples {
     scene: Image,
     edited: Image,
@@ -76,6 +116,11 @@ struct Examples {
     detail: Vec<Crop>,
     /// The second example: the whole scene, scaled down.
     whole: Crop,
+    panorama: Image,
+    /// The third, fourth and fifth: two perspective views and a box of the panorama.
+    across: Crop,
+    up: Crop,
+    strip: Crop,
 }
 
 fn examples() -> Examples {
@@ -85,29 +130,41 @@ fn examples() -> Examples {
         &Request {
             image: &scene,
             also: Some(&edited),
-            bbox: DETAIL,
+            region: Region::Box(DETAIL),
         },
         &limits(),
     )
     .unwrap();
     let whole = look(&scene, WHOLE);
+    let sphere = panorama::panorama(1024, 512, sphere);
+    let across = seen(&sphere, ACROSS.0, ACROSS.1, ACROSS.2);
+    let up = seen(&sphere, UP.0, UP.1, UP.2);
+    let strip = look(&sphere, STRIP);
     Examples {
         scene,
         edited,
         detail,
         whole,
+        panorama: sphere,
+        across,
+        up,
+        strip,
     }
 }
 
 impl Examples {
     /// Each image beside the record: its file name and its bytes.
-    fn files(&self) -> [(&'static str, &[u8]); 5] {
+    fn files(&self) -> [(&'static str, &[u8]); 9] {
         [
             ("scene.png", self.scene.file()),
             ("scene-edited.png", self.edited.file()),
             ("detail.png", self.detail[0].image.file()),
             ("detail-edited.png", self.detail[1].image.file()),
             ("whole.png", self.whole.image.file()),
+            ("panorama.png", self.panorama.file()),
+            ("across.png", self.across.image.file()),
+            ("up.png", self.up.image.file()),
+            ("strip.png", self.strip.image.file()),
         ]
     }
 }
@@ -207,21 +264,21 @@ pub fn vector_table(crops: &[Crop]) -> String {
     out
 }
 
-/// The part of the record between the `measured` marks: the two tables.
-fn measured(tables: [&str; 2]) -> String {
-    format!("\n{}\n{}\n", tables[0], tables[1])
+/// The part of the record between the `measured` marks: the three tables.
+fn measured(tables: [&str; 3]) -> String {
+    format!("\n{}\n{}\n{}\n", tables[0], tables[1], tables[2])
 }
 
 /// Fails unless the committed record's table of that number, among its measurements, is
-/// this one: 0 for the known boxes, 1 for the fixed vectors.
+/// this one: 0 for the known boxes, 1 for the fixed vectors, 2 for the perspective views.
 pub fn holds(number: usize, table: &str) {
     assert!(!table.contains("DIFFERS"), "{table}");
     let record = std::fs::read_to_string(tools().join("view.md")).unwrap();
     let part = between(&record, "measured");
     let tables: Vec<&str> = part.trim_matches('\n').split("\n\n").collect();
     assert!(
-        tables.len() == 2 && part == format!("\n{}\n\n{}\n\n", tables[0], tables[1]),
-        "the record's measurements are two tables: run scripts/tool-record.sh view"
+        tables.len() == 3 && part == format!("\n{}\n\n", tables.join("\n\n")),
+        "the record's measurements are three tables: run scripts/tool-record.sh view"
     );
     assert!(
         table.strip_suffix('\n') == Some(tables[number]),
@@ -289,6 +346,31 @@ fn the_records_examples_are_what_view_gives() {
             assert!(red > 0 && red < 255, "crop pixel ({x}, {y}) is {red}");
         }
     }
+
+    // What the record says of the third: a quarter of 1024 is 256 pixels square, and the
+    // seam, red in the panorama, runs down the view's middle, with the panorama's last
+    // columns on its left and its first on its right.
+    let across = &examples.across;
+    assert_eq!(across.image.space(), Space::flat(256, 256).unwrap());
+    let shown = rgba_of(&across.image);
+    let red = |x: usize, y: usize| {
+        let p = &shown[(y * 256 + x) * 4..(y * 256 + x) * 4 + 3];
+        p[0] > 150 && p[1] < 100 && p[2] < 100
+    };
+    for y in [40, 128, 200] {
+        let columns: Vec<usize> = (0..256).filter(|x| red(*x, y)).collect();
+        assert!(
+            !columns.is_empty() && columns.iter().all(|x| (126..=129).contains(x)),
+            "row {y}: {columns:?}"
+        );
+    }
+    // The fourth looks up past 70 degrees: the checker round the pole fills its top.
+    let up = &examples.up;
+    assert_eq!(up.image.space(), Space::flat(284, 284).unwrap());
+    // The fifth is a flat crop of the panorama, bound by its box.
+    let strip = &examples.strip;
+    assert_eq!(strip.image.space(), Space::flat(206, 206).unwrap());
+    assert_eq!(cut_of(&strip.binding), [409.0, 153.0, 615.0, 359.0]);
 }
 
 // --- Times: kept until one moves ---------------------------------------------------------
@@ -507,6 +589,22 @@ fn timed() -> String {
             ));
         }
     }
+    out.push_str(
+        "\n| Panorama | Megapixels | A perspective view, 90 degrees | Shown at | Of which reading \
+         the panorama |\n|---|---|---|---|---|\n",
+    );
+    for (width, height) in [(2048u32, 1024u32), (4096, 2048), (8192, 4096)] {
+        let pano = panorama::panorama(width, height, |x, y| sphere(x % 1024, y * 512 / height));
+        let crop = seen(&pano, 30.0, 10.0, 90.0);
+        out.push_str(&format!(
+            "| {width}x{height} | {:.1} | {} | {}x{} | {} |\n",
+            f64::from(width) * f64::from(height) / 1e6,
+            millis(time(5, || seen(&pano, 30.0, 10.0, 90.0))),
+            crop.image.space().width(),
+            crop.image.space().height(),
+            millis(time(5, || pano.pixels(&limits()).unwrap())),
+        ));
+    }
     out.push('\n');
     out
 }
@@ -524,8 +622,16 @@ fn write_the_record() {
     let path = tools().join("view.md");
     let record = std::fs::read_to_string(&path).unwrap();
     let known: Vec<Measured> = KNOWN.iter().map(measure).collect();
-    let tables = [mapping_table(&known), vector_table(&vectors::crops())];
-    let record = replaced(&record, "measured", &measured([&tables[0], &tables[1]]));
+    let tables = [
+        mapping_table(&known),
+        vector_table(&vectors::crops()),
+        panorama::perspective_table(&panorama::compared()),
+    ];
+    let record = replaced(
+        &record,
+        "measured",
+        &measured([&tables[0], &tables[1], &tables[2]]),
+    );
     let fresh = timed();
     let times = match settled(between(&record, "timed"), &fresh) {
         Some(kept) => kept.to_owned(),
