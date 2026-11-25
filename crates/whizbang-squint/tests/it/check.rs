@@ -2780,15 +2780,17 @@ fn a_comparison_named_by_a_run_is_offered_to_the_judge_and_answered_with_its_mea
 /// A tool file as the binary hands `check` one: `probe`, which reads `source` and
 /// `candidate` and takes a `phrase`; each run noted, and its output a fixed reading.
 #[derive(Default)]
-struct Probe {
-    ran: std::sync::Mutex<Vec<Probed>>,
+pub struct Probe {
+    pub ran: std::sync::Mutex<Vec<Probed>>,
     /// The digest it says it ran, when not [`PROBE_DIGEST`]: a file edited mid-run.
-    ran_as: Option<&'static str>,
+    pub ran_as: Option<&'static str>,
+    /// Whether every run of it fails, as a file that raised does: no digest is noted.
+    pub fails: bool,
 }
 
-type Probed = (Vec<(String, ArtifactId)>, Json);
+pub type Probed = (Vec<(String, ArtifactId)>, Json);
 
-const PROBE_DIGEST: &str =
+pub const PROBE_DIGEST: &str =
     "sha256:abababababababababababababababababababababababababababababababab";
 
 impl whizbang_squint::files::FileTools for Probe {
@@ -2819,6 +2821,9 @@ impl whizbang_squint::files::FileTools for Probe {
     ) -> Result<whizbang_squint::files::FileRan, String> {
         let mut ran = self.ran.lock().unwrap();
         ran.push((images.to_vec(), Json::Object(arguments.clone())));
+        if self.fails {
+            return Err("the file raised".to_owned());
+        }
         Ok(whizbang_squint::files::FileRan {
             digest: self.ran_as.unwrap_or(PROBE_DIGEST).to_owned(),
             output: json!({"readings": [{"subject": "door", "values": {"kept": 0.75}}]}),
@@ -2826,7 +2831,7 @@ impl whizbang_squint::files::FileTools for Probe {
     }
 }
 
-fn probing(world: &mut World) -> Arc<Probe> {
+pub fn probing(world: &mut World) -> Arc<Probe> {
     let probe = Arc::new(Probe::default());
     world.toolbox = whizbang_squint::check::Toolbox::with_files(probe.clone());
     probe

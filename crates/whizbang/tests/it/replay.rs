@@ -1215,3 +1215,149 @@ fn choices_are_found_by_alias_for_an_explicit_choice_a_default_and_two_aliases_o
         assert_eq!(models(run.as_str()), models(original.run().as_str()));
     }
 }
+
+#[test]
+fn an_offline_replay_of_a_recipe_whose_check_takes_measurements_reproduces_it() {
+    // `source-fidelity` measures first (`details`), and its check is handed those
+    // measurements: the replay measures again, the measurements kept as `details`'s
+    // diagnostic are compared byte for byte, and the check is answered as it was.
+    let world = world("replay-measured", 1);
+    let removed = removal(&world);
+    let job = whizbang_rascal::checked::job(crate::checked::PHRASE);
+    let checked = world.run(
+        &Call::new(whizbang_rascal::checked::CHECK)
+            .argument("job", whizbang_core::contract::Value::text(&job))
+            // Measured first, whole: the measurements are the check's to read.
+            .argument(
+                "set",
+                whizbang_core::contract::Value::text("details.details=first"),
+            )
+            .input("images", output(&removed, "image"))
+            .input("images", world.image_id()),
+    );
+    assert_eq!(
+        checked.outcome().name(),
+        "completed",
+        "{:?}",
+        checked.outcome()
+    );
+    let measured = |root: &str| -> Vec<u8> {
+        let family = family(&world, root);
+        let details = family
+            .iter()
+            .find(|r| r.asked().action.as_deref() == Some(whizbang_squint::measured::NAME))
+            .expect("the recipe measures first");
+        let reader = Reader::open(&world.root, Arc::new(RealFs)).unwrap();
+        let generation = reader.snapshot().unwrap();
+        let name = format!("diagnostics/{}", whizbang_squint::measured::KEPT);
+        let held = generation.run(&details.identity().run).unwrap();
+        reader
+            .read(held.get(&name).expect("the measurements are kept"))
+            .unwrap()
+    };
+    let (run, _) = replayed(&bare(&world), &of_run(checked.run()));
+    let report = reported(&world, &run);
+    assert!(report.reproduced(), "{}", report.text());
+    // Something was measured, and the replay measured the same: the comparison read the
+    // two documents through the run match, each run's id as its place.
+    let entries = |bytes: Vec<u8>| -> serde_json::Value {
+        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["entries"].clone()
+    };
+    let was = entries(measured(checked.run().as_str()));
+    assert!(!was.as_array().unwrap().is_empty(), "{was}");
+    assert_eq!(
+        entries(measured(run.as_str())).as_array().unwrap().len(),
+        was.as_array().unwrap().len()
+    );
+}
+
+#[test]
+fn a_changed_measurement_of_an_action_with_no_artifact_output_is_a_difference() {
+    use whizbang_squint::compare::{EDGE_SIMILARITY, EDGE_SIMILARITY_REPORT};
+    // `edge_similarity` commits no artifact: its result is its measurements, which it
+    // keeps as its diagnostic. A build whose measurement differs is a difference there.
+    struct Halved(Arc<dyn Action>);
+    impl Action for Halved {
+        fn descriptor(&self) -> &ActionDescriptor {
+            self.0.descriptor()
+        }
+        fn run(&self, _: &PreparedCall, context: &Context) -> Result<Produced, Failure> {
+            let said = serde_json::json!({"edge_similarity": 0.5});
+            (context.diagnostics())
+                .write(EDGE_SIMILARITY_REPORT, said.to_string().as_bytes())
+                .map_err(|why| Failure::error("diagnostic", &why))?;
+            Ok(Produced::nothing().with_measurements(said))
+        }
+    }
+    let world = world("replay-measurement", 1);
+    let removed = removal(&world);
+    let call = Call::new(EDGE_SIMILARITY)
+        .input("frame", output(&removed, "image"))
+        .input("against", world.image_id());
+    let original = world.run(&call);
+    assert_eq!(
+        original.outcome().name(),
+        "completed",
+        "{:?}",
+        original.outcome()
+    );
+    assert!(original.outcome().outputs().is_empty());
+    let built = wiring::registry().unwrap();
+    let mut registry = whizbang_core::contract::Registry::new();
+    let names: Vec<String> = built.descriptors().map(|d| d.name().to_owned()).collect();
+    for name in names {
+        let action = built.get(&name).unwrap().clone();
+        let action: Arc<dyn Action> = match name.as_str() {
+            EDGE_SIMILARITY => Arc::new(Halved(action)),
+            _ => action,
+        };
+        registry.register(action).unwrap();
+    }
+    let (run, _) = replayed(&world.engine_of(registry), &of_run(original.run()));
+    let report = reported(&world, &run);
+    let whizbang_core::contract::replay::Report::Differs { differences, .. } = &report.report
+    else {
+        panic!("{}", report.text());
+    };
+    assert_eq!(differences[0].place, "the run");
+    assert_eq!(
+        differences[0].what,
+        format!("diagnostic diagnostics/{EDGE_SIMILARITY_REPORT}")
+    );
+}
+
+#[test]
+fn a_divergence_in_a_second_look_or_a_loops_check_is_the_replays_report_whatever_the_action_made_of_it()
+ {
+    // The loop's check is sent a picture the original's never was (its removal was made
+    // by a changed `grow`): diverged there. The loop turns a failed check into an
+    // unchecked attempt and goes on; the replay's report is the divergence all the same.
+    let world = world("replay-loop-diverged", 2);
+    let original = world.run(&world.call());
+    assert_eq!(
+        original.outcome().name(),
+        "completed",
+        "{:?}",
+        original.outcome()
+    );
+    let sent = world.kit.requests();
+    let (run, outcome) = replayed(
+        &world.engine_of(with_a_changed_grow()),
+        &of_run(original.run()),
+    );
+    assert_eq!(world.kit.requests(), sent, "nothing was called");
+    let report = reported(&world, &run);
+    assert_eq!(
+        report.report.name(),
+        "diverged",
+        "{}\n{outcome:?}",
+        report.text()
+    );
+    let whizbang_core::contract::replay::Report::Stopped(stop) = &report.report else {
+        unreachable!()
+    };
+    assert_eq!(stop.capability, Capability::Judge);
+    // Whatever the loop made of it, as the record says: not the report.
+    let made = record(&world, run.as_str());
+    assert!(made.attempts().is_some());
+}

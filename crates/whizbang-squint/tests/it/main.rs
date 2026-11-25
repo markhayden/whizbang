@@ -14,6 +14,7 @@ mod findings;
 mod job;
 mod locate;
 mod record;
+mod replay;
 mod resize;
 mod resize_record;
 mod runner;
