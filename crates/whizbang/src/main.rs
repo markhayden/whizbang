@@ -6,6 +6,7 @@
 //! arguments.
 
 pub(crate) mod backends;
+pub(crate) mod bundle;
 pub(crate) mod command_of;
 pub(crate) mod eval;
 pub(crate) mod export;
@@ -76,6 +77,12 @@ enum Command {
     Runs {
         #[command(subcommand)]
         command: runs::Command,
+    },
+    /// Bundles: a run or a chain of runs carried out of one store as one file (`runs
+    /// bundle` writes one), brought into another store, read, listed and deleted.
+    Bundle {
+        #[command(subcommand)]
+        command: bundle::Command,
     },
     /// Rascal: its operations on masks, each run as an action against a store.
     Rascal {
@@ -289,6 +296,10 @@ where
         },
         Command::Runs { command } => match runs::run(&command) {
             Ok(bytes) => emit(&bytes),
+            Err(complaint) => complain(&complaint),
+        },
+        Command::Bundle { command } => match bundle::run(&command) {
+            Ok(text) => emit(text.as_bytes()),
             Err(complaint) => complain(&complaint),
         },
         Command::Rascal { command } => {

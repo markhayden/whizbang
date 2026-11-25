@@ -80,6 +80,28 @@ pub enum Command {
         #[command(flatten)]
         at: Where,
     },
+    /// Write a bundle: one run that ended, or a chain of them in the order given, with
+    /// every run under each, their records, journals, diagnostics and the files of their
+    /// inputs and outputs, as one file another store can import (`bundle import`). Each
+    /// input a later run took from an earlier one's output is linked to it. It holds no
+    /// path, no account and no value of the env file, and is not encrypted: it holds the
+    /// pictures and words of the runs. Reads only: it works while another process writes.
+    /// It writes only the file it is given, in a folder that is there: none over another
+    /// unless `--overwrite` is given, none through a link, and none inside the store.
+    Bundle {
+        /// The runs, each a run nothing called, by its id or as `runs list` prints it:
+        /// at most 16, in the order they ran.
+        #[arg(required = true, value_name = "RUN")]
+        runs: Vec<String>,
+        /// The file to write, in a folder that is there.
+        #[arg(long, value_name = "FILE")]
+        to: std::path::PathBuf,
+        /// Replace a file that is there already.
+        #[arg(long)]
+        overwrite: bool,
+        #[command(flatten)]
+        at: Where,
+    },
 }
 
 /// Runs a runs command: the bytes to print on success, or the complaint.
@@ -109,7 +131,36 @@ pub fn run(command: &Command) -> Result<Vec<u8>, String> {
             Ok(text.into_bytes())
         }
         Command::Export { filter, at } => whizbang::stats::export(at.root(), filter),
+        Command::Bundle {
+            runs,
+            to,
+            overwrite,
+            at,
+        } => bundle(at.root(), runs, to, *overwrite).map(String::into_bytes),
     }
+}
+
+/// Writes a bundle of these runs to `to`, as `store export` writes a file: what to print.
+fn bundle(root: &Path, given: &[String], to: &Path, overwrite: bool) -> Result<String, String> {
+    // Where it goes is held to its rules before anything is read.
+    let (target, replace) = crate::export::destination(to, root, overwrite)?;
+    let (_, generation) = open(root)?;
+    let mut runs = Vec::new();
+    for run in given {
+        runs.push(meant(&generation, run)?.0.to_owned());
+    }
+    let runs: Vec<&str> = runs.iter().map(String::as_str).collect();
+    let made = whizbang::bundling::make(root, &runs)?;
+    crate::export::written(&target, replace, &made.bytes)?;
+    let families: usize = made.manifest.steps.iter().map(|step| step.runs.len()).sum();
+    Ok(format!(
+        "bundled {} steps ({families} runs) as {} to {}\nfiles: {}\nwithheld: {}\n",
+        made.manifest.steps.len(),
+        made.digest,
+        whizbang::door::printable(&to.display().to_string()),
+        made.manifest.artifacts.len(),
+        made.manifest.withheld.len()
+    ))
 }
 
 /// How much of a text that was read from a store, or given on the command line, a

@@ -61,7 +61,11 @@ pub fn png(pixels: &CanonicalPixels) -> Result<Vec<u8>, String> {
 /// which is the folder as it was checked, its links followed, joined with the file's
 /// name, so that what is written is in the folder that was held out of the store; and
 /// whether a file is there to be replaced.
-fn destination(out: &Path, root: &Path, overwrite: bool) -> Result<(PathBuf, bool), String> {
+pub(crate) fn destination(
+    out: &Path,
+    root: &Path,
+    overwrite: bool,
+) -> Result<(PathBuf, bool), String> {
     let shown = out.display();
     let Some(name) = out.file_name() else {
         return Err(format!("{shown} names no file"));
@@ -213,7 +217,7 @@ pub fn export_file(root: &Path, id: &str, to: &Path, overwrite: bool) -> Result<
 }
 
 /// Writes `bytes` to `out`, a new file, or over the one there when `replace` says so.
-fn written(out: &Path, replace: bool, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn written(out: &Path, replace: bool, bytes: &[u8]) -> Result<(), String> {
     let shown = out.display();
     let cannot = |error: std::io::Error| format!("cannot write {shown}: {error}");
     if replace {
