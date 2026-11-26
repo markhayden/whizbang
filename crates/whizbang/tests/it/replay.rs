@@ -1204,9 +1204,9 @@ fn choices_are_found_by_alias_for_an_explicit_choice_a_default_and_two_aliases_o
         &Call::new(whizbang_rascal::checked::CHECK)
             .argument(
                 "job",
-                whizbang_core::contract::Value::text(&whizbang_rascal::checked::job(
-                    crate::checked::PHRASE,
-                )),
+                whizbang_core::contract::Value::text(
+                    &whizbang_rascal::checked::job(crate::checked::PHRASE).unwrap(),
+                ),
             )
             .argument(
                 "judge",
@@ -1246,7 +1246,7 @@ fn an_offline_replay_of_a_recipe_whose_check_takes_measurements_reproduces_it() 
     // diagnostic are compared byte for byte, and the check is answered as it was.
     let world = world("replay-measured", 1);
     let removed = removal(&world);
-    let job = whizbang_rascal::checked::job(crate::checked::PHRASE);
+    let job = whizbang_rascal::checked::job(crate::checked::PHRASE).unwrap();
     let checked = world.run(
         &Call::new(whizbang_rascal::checked::CHECK)
             .argument("job", whizbang_core::contract::Value::text(&job))

@@ -739,7 +739,9 @@ mod tests {
         let drawn = mask(&first).unwrap();
         made.push((first, command));
         made.push(bench.ran("protect", json!({"image": picture, "mask": drawn})));
-        let phrase = "-a hose: the 'hose'\nby the $DOOR and `its` \"reel\"";
+        // No line break: the loop refuses a phrase with one (plan mE, task L2); the
+        // quoting of a line break is held by the words of other runs.
+        let phrase = "-a hose: the 'hose' by the $DOOR and `its` \"reel\"";
         let (removal, command) = bench.ran(
             "remove_checked",
             json!({"image": picture, "prompt": phrase, "attempts": 1}),
@@ -849,7 +851,7 @@ mod tests {
     fn squint_check_job_json_takes_a_stored_job_with_images_by_identity() {
         let bench = Bench::new("command-job-json");
         let (candidate, source) = (bench.picture(42), bench.picture(43));
-        let job = whizbang_rascal::checked::job("the bucket");
+        let job = whizbang_rascal::checked::job("the bucket").unwrap();
         let store = bench.root();
         let config = bench.config();
         let line = |images: &[&str], use_case: &str| {

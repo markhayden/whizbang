@@ -153,17 +153,88 @@ pub fn job_template_digest() -> Digest {
     Digest::of_bytes(JOB_TEMPLATE.as_bytes())
 }
 
-/// The job the check of a removal of `phrase` is given, as the argument `job` holds it.
-pub fn job(phrase: &str) -> String {
-    filled(JOB_TEMPLATE, phrase)
+/// The look-alikes of `<` and `>` a phrase may not hold: fullwidth, much less and much
+/// greater, the guillemets, single guillemets, and the angle brackets of CJK and of
+/// mathematics.
+const ANGLE_LOOK_ALIKES: [char; 12] = [
+    '\u{FF1C}', '\u{FF1E}', '\u{226A}', '\u{226B}', '\u{00AB}', '\u{00BB}', '\u{2039}', '\u{203A}',
+    '\u{3008}', '\u{3009}', '\u{27E8}', '\u{27E9}',
+];
+
+/// Whether a character is of Unicode's general category Cf, a format character: one that
+/// is not shown but changes how text around it is read (a zero-width space or joiner, a
+/// mark of direction, a soft hyphen, a byte order mark, a tag).
+fn is_format(c: char) -> bool {
+    matches!(
+        u32::from(c),
+        0x00AD
+            | 0x0600..=0x0605
+            | 0x061C
+            | 0x06DD
+            | 0x070F
+            | 0x0890..=0x0891
+            | 0x08E2
+            | 0x180E
+            | 0x200B..=0x200F
+            | 0x202A..=0x202E
+            | 0x2060..=0x2064
+            | 0x2066..=0x206F
+            | 0xFEFF
+            | 0xFFF9..=0xFFFB
+            | 0x110BD
+            | 0x110CD
+            | 0x13430..=0x1343F
+            | 0x1BCA0..=0x1BCA3
+            | 0x1D173..=0x1D17A
+            | 0xE0001
+            | 0xE0020..=0xE007F
+    )
+}
+
+/// Whether a phrase may be written into the loop's job, between its marks (plan mE, task
+/// L2, item 1, and its review): the one rule every way into a job of version 2 holds
+/// ([`job`]), so that what lies between the marks is the phrase and nothing else. Refused,
+/// in a sentence: `<` and `>`, of which the marks are made, and their look-alikes
+/// ([`ANGLE_LOOK_ALIKES`]); and every control character (category Cc, a line break among
+/// them) and format character (Cf, a zero-width space among them). A phrase that names a
+/// thing in a picture needs none of them.
+pub fn phrase_ok(phrase: &str) -> Result<(), String> {
+    if let Some(c) = phrase.chars().find(|c| *c == '<' || *c == '>') {
+        return Err(format!(
+            "the phrase holds {c}, of which {PHRASE_OPENS} and {PHRASE_CLOSES} are made, which mark where it starts and ends in the check's job"
+        ));
+    }
+    if let Some(c) = phrase.chars().find(|c| ANGLE_LOOK_ALIKES.contains(c)) {
+        return Err(format!(
+            "the phrase holds U+{:04X}, which looks like < or >, of which the marks of the check's job are made",
+            u32::from(c)
+        ));
+    }
+    if let Some(c) = phrase.chars().find(|c| c.is_control() || is_format(*c)) {
+        return Err(format!(
+            "the phrase holds U+{:04X}, a control or format character, which a phrase that names a thing needs none of",
+            u32::from(c)
+        ));
+    }
+    Ok(())
+}
+
+/// The job the check of a removal of `phrase` is given, as the argument `job` holds it;
+/// refused, with [`phrase_ok`]'s sentence, for a phrase that rule refuses, so that no job
+/// of this version holds a phrase that could close its own marks.
+pub fn job(phrase: &str) -> Result<String, String> {
+    phrase_ok(phrase)?;
+    Ok(filled(JOB_TEMPLATE, phrase))
 }
 
 /// The jobs a check of a removal of `phrase` may have been given by the loop: under the
-/// template this build writes, then under version 1 ([`JOB_TEMPLATE_V1`]). A reader of
-/// runs made by earlier builds, as the edits' gates are, knows a check as the loop's by
-/// either.
-pub fn jobs(phrase: &str) -> [String; 2] {
-    [job(phrase), filled(JOB_TEMPLATE_V1, phrase)]
+/// template this build writes, when the phrase may be written into it, then under
+/// version 1 ([`JOB_TEMPLATE_V1`]). A reader of runs made by earlier builds, as the edits'
+/// gates are, knows a check as the loop's by any of them.
+pub fn jobs(phrase: &str) -> Vec<String> {
+    let mut all: Vec<String> = job(phrase).into_iter().collect();
+    all.push(filled(JOB_TEMPLATE_V1, phrase));
+    all
 }
 
 /// A template with `{phrase}` filled, inside its strings.
@@ -591,6 +662,22 @@ pub mod located {
         }
         usable
     }
+}
+
+/// What a located retry's diagnostic says of places left out: each by its number among
+/// those cited, why, and its cut.
+fn left_lines(left_out: &[located::LeftOut]) -> Vec<String> {
+    (left_out.iter())
+        .map(|left| {
+            let [l, t, r, b] = left.cut;
+            let (across, down) = (r - l, b - t);
+            format!(
+                "place {} {} cut {across} by {down}",
+                left.cited,
+                left.why.word()
+            )
+        })
+        .collect()
 }
 
 /// One line of at most `limit` characters, with no control character and no space at
@@ -1039,6 +1126,8 @@ struct Looping<'a> {
     image: ArtifactId,
     protect: Option<ArtifactId>,
     prompt: &'a str,
+    /// The job every check of the run is given, written from the prompt.
+    job: String,
     allowed: u32,
     checks: bool,
     /// Why the plan checks nothing, when it checks nothing.
@@ -1076,12 +1165,9 @@ impl<'a> Looping<'a> {
         }
         // Held here, before any call is made, and not by the find after it was
         // admitted: a descriptor states no length of a text, so preparation cannot.
-        // What lies between the marks of the job is the phrase and nothing else.
-        if prompt.contains(PHRASE_OPENS) || prompt.contains(PHRASE_CLOSES) {
-            return Err(Failure::invalid(&format!(
-                "the prompt holds {PHRASE_OPENS} or {PHRASE_CLOSES}, which mark where it starts and ends in the check's job"
-            )));
-        }
+        // What lies between the marks of the job is the phrase and nothing else: the one
+        // rule of every job's phrase.
+        let job = job(prompt).map_err(|why| Failure::invalid(&why))?;
         if prompt.len() > PHRASE_LIMIT {
             return Err(Failure::invalid(&format!(
                 "the prompt holds {} bytes, and a segmenter takes a phrase of {PHRASE_LIMIT} at most",
@@ -1095,6 +1181,7 @@ impl<'a> Looping<'a> {
             image: operation::one(call, "image")?,
             protect: operation::given(call, "protect").first().copied(),
             prompt,
+            job,
             allowed: attempts.allowed,
             checks: attempts.checks,
             why: plan.why().map(str::to_owned),
@@ -1233,6 +1320,9 @@ impl<'a> Looping<'a> {
         let mut timed: Vec<String> = Vec::new();
         let mut joined = vec![before];
         let mut crops = Vec::new();
+        // How many places were looked into whole: those after them were not reached when
+        // the run was stopped, or a call failed, part way.
+        let mut reached = 0;
         let outcome = (|| {
             for place in &usable.places {
                 let took = std::time::Instant::now();
@@ -1262,16 +1352,19 @@ impl<'a> Looping<'a> {
                     cut.push((crop, *tile, at(&finished, "mask")));
                 }
                 let nothing = cut.iter().all(|(_, _, found)| found.is_empty());
-                let word = match nothing {
+                let joins = nothing && located::joins_as_itself(place, size.0, size.1);
+                let mut word = match nothing {
                     false => "found_something",
-                    true if located::joins_as_itself(place, size.0, size.1) => "joined_as_itself",
+                    true if joins => "joined_as_itself",
                     true => "left_out_over_a_tenth",
                 };
-                if nothing && word == "joined_as_itself" {
+                if joins {
                     // The judge said with confidence that the named thing is there, and
                     // the table has held that it said so of nothing that must be
                     // preserved.
-                    joined.push(self.itself(place, runs)?);
+                    let (mask, how) = self.itself(place, runs)?;
+                    joined.push(mask);
+                    word = how;
                     crops.extend(cut.iter().map(|(crop, _, _)| Crop {
                         crop: crop.0,
                         mask: None,
@@ -1316,19 +1409,19 @@ impl<'a> Looping<'a> {
                     place.cited,
                     took.elapsed().as_millis()
                 ));
+                reached += 1;
             }
             Ok(())
         })();
-        for left in &usable.left_out {
-            let [l, t, r, b] = left.cut;
-            said.push(format!(
-                "place {} {} cut {} by {}",
-                left.cited,
-                left.why.word(),
-                r - l,
-                b - t
-            ));
+        for place in usable
+            .places
+            .iter()
+            .skip(reached)
+            .filter(|_| outcome.is_err())
+        {
+            said.push(format!("place {} not_reached", place.cited));
         }
+        said.extend(left_lines(&usable.left_out));
         said.sort_by_key(|line| {
             let cited = line.split(' ').nth(1).and_then(|n| n.parse::<usize>().ok());
             cited.unwrap_or(usize::MAX)
@@ -1354,7 +1447,11 @@ impl<'a> Looping<'a> {
     /// A place as a mask of its own pixels: its polygon, made a location by `rect` and a
     /// mask by `rasterize`, when it was cited as one and is a polygon a location may be;
     /// its box by [`ITSELF`] otherwise.
-    fn itself(&self, place: &located::Place, runs: &mut Vec<RunId>) -> Result<ArtifactId, Stopped> {
+    fn itself(
+        &self,
+        place: &located::Place,
+        runs: &mut Vec<RunId>,
+    ) -> Result<(ArtifactId, &'static str), Stopped> {
         if let Some(points) = place.polygon_text() {
             let call = Call::new(crate::rect::NAME)
                 .argument("polygon", Value::text(&points))
@@ -1367,11 +1464,13 @@ impl<'a> Looping<'a> {
                         .input("location", location)
                         .input("image", self.image);
                     let finished = self.made(None, &call, runs)?;
-                    return one(&finished, "mask")
-                        .ok_or_else(|| missing(crate::rasterize::NAME, "mask"));
+                    let mask = one(&finished, "mask")
+                        .ok_or_else(|| missing(crate::rasterize::NAME, "mask"))?;
+                    return Ok((mask, "joined_as_itself"));
                 }
-                // A polygon no location may be (its edges cross, or it has too many
-                // points) joins by the box around its pixels.
+                // A polygon `rect` refuses as a location (its edges cross, it has more
+                // vertices than a location holds, or a point lies outside the picture)
+                // joins by the box around its pixels, and says so.
                 Err(Stopped::Call { kind, .. }) if kind == "invalid" => {}
                 Err(stopped) => return Err(stopped),
             }
@@ -1384,7 +1483,12 @@ impl<'a> Looping<'a> {
             )
             .input("image", self.image);
         let finished = self.made(None, &call, runs)?;
-        one(&finished, "mask").ok_or_else(|| missing(ITSELF, "mask"))
+        let mask = one(&finished, "mask").ok_or_else(|| missing(ITSELF, "mask"))?;
+        let how = match place.polygon {
+            Some(_) => "joined_as_its_box",
+            None => "joined_as_itself",
+        };
+        Ok((mask, how))
     }
 
     /// Keeps what became of the places of a retry, and the times it took, as the
@@ -1477,18 +1581,7 @@ impl<'a> Looping<'a> {
             // A wider retry made because every place cited was left out says which,
             // and why, as a located retry would.
             if !unlooked.is_empty() {
-                let lines: Vec<String> = (std::mem::take(&mut unlooked).iter())
-                    .map(|left| {
-                        let [l, t, r, b] = left.cut;
-                        format!(
-                            "place {} {} cut {} by {}",
-                            left.cited,
-                            left.why.word(),
-                            r - l,
-                            b - t
-                        )
-                    })
-                    .collect();
+                let lines = left_lines(&std::mem::take(&mut unlooked));
                 self.kept_places(number, &lines, &[]);
             }
             let mut runs: Vec<RunId> = Vec::new();
@@ -1700,7 +1793,7 @@ impl<'a> Looping<'a> {
 
             // Check: squint's recipe, and nothing under it.
             let mut call = Call::new(CHECK)
-                .argument("job", Value::text(&job(self.prompt)))
+                .argument("job", Value::text(&self.job))
                 .input("images", image)
                 .input("images", self.image);
             if let Some(judge) = operation::text(self.call, "judge") {
@@ -1815,6 +1908,12 @@ impl<'a> Looping<'a> {
                         next = Some(Retry::Located(usable));
                         None
                     } else if widened {
+                        // The places left out are said all the same, with the attempt
+                        // the retry would have made.
+                        let lines = left_lines(&usable.left_out);
+                        if !lines.is_empty() {
+                            self.kept_places(number + 1, &lines, &[]);
+                        }
                         Some((
                             AttemptsEnded::WiderMaskAlreadyUsed,
                             "a wider mask was already used once".to_owned(),

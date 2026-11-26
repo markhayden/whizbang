@@ -344,7 +344,9 @@ pub fn job_and_measuring_of(
         .then(|| text_of(&arguments, "prompt"))
         .flatten()
     {
-        Job::from_json(&whizbang_rascal::checked::job(phrase))?
+        // The loop's job: refused, as the loop refuses it, for a phrase that could close
+        // its own marks (plan mE, task L2).
+        Job::from_json(&whizbang_rascal::checked::job(phrase)?)?
     } else if play_form::is_use_case(&action) {
         let text =
             text_of(&arguments, "job").ok_or_else(|| format!("{} holds no job", of.what()))?;
@@ -501,7 +503,8 @@ impl Tasks<'_> {
                     .then(|| text_argument(record, "prompt"))
                     .flatten();
                 if let Some(phrase) = phrase
-                    && let Ok(job) = Job::from_json(&whizbang_rascal::checked::job(phrase))
+                    && let Ok(text) = whizbang_rascal::checked::job(phrase)
+                    && let Ok(job) = Job::from_json(&text)
                 {
                     draft.insert(JOB_OF.to_owned(), json!(record.identity().run));
                     values.insert(

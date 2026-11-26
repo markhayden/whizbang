@@ -18,6 +18,11 @@ The same call over the MCP server is the tool `remove_checked`, with the argumen
 `prompt`, `attempts`, `check`, `protect`, `backend`, `filler` and `judge`
 ([The MCP server over stdio](serve.md)).
 
+The prompt names a thing in the picture, in words. It is written into the check's job
+between `<<<` and `>>>`, so a prompt that holds `<` or `>`, a look-alike of either (`«`,
+`＜`, `〈` and the like), or a control or format character (a line break, a tab, a
+zero-width space) is refused before anything runs, as is one over the segmenter's length.
+
 ## What it does
 
 An attempt is one removal with the check of its result.
