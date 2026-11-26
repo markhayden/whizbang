@@ -268,7 +268,10 @@ fn a_crop_says_what_made_it() {
     let steps = crop.image.origin().steps();
     assert_eq!(steps.len(), 1);
     let step = &steps[0];
-    assert_eq!((step.action.as_str(), step.version.as_str()), ("view", "1"));
+    assert_eq!(
+        (step.action.as_str(), step.version.as_str()),
+        ("view", whizbang_squint::view::VERSION)
+    );
     let arguments: Vec<(&str, &str)> = step
         .arguments
         .iter()

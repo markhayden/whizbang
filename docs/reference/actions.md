@@ -325,6 +325,18 @@ Gives: `mask` (mask, 0 to 64).
 
 Needs, each a capability a backend must be configured for: `segment`, up to 1 requests, chosen by `backend`.
 
+## `labels`
+
+Asks a fixed-class segmenter which pixels of an image it labels with each class named, as one mask for each.
+
+Arguments: `classes` (text, required), `backend` (text).
+
+Takes: `image` (image, 1 to 1).
+
+Gives: `mask` (mask, 0 to 255).
+
+Needs, each a capability a backend must be configured for: `segment`, up to 4 requests, chosen by `backend`.
+
 ## `select`
 
 One mask from the instance masks to keep: the union of their cores, minus exclude boxes.

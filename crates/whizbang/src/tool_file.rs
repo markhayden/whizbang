@@ -33,7 +33,17 @@
 //! **Its capabilities are nested calls** (ADR 0008): a tool's `segment` is a call of the
 //! action `segment` through the executor of the run's context, under its allowance and
 //! policy, cancelled with it. A mask in the store holds no score, so the answer gives
-//! none.
+//! none. A tool's `labels` (plan mE, task T2; ADR 0053) is a call of the action `labels`
+//! the same way, and its answer is one plane of each pixel's class, made from the masks
+//! it committed, with each class's confidence, which the run handed back.
+//!
+//! **A model by name.** An ask may name a model of the catalogue (`eomt-ade20k`): it is
+//! routed to the segment backend of the config whose `model` is that name, by the call's
+//! `backend` ([`Files::backend_for`]): the default, when it is one of them, and otherwise
+//! the first of them by name. A model no backend of the config is refuses the ask, and
+//! so does one whose backend is not ready (a model not installed) or does not declare the
+//! feature the call needs (`labels`), each as the nested call is refused. An ask that names
+//! none is the default's, as before.
 
 use std::collections::BTreeMap;
 use std::io::Read as _;
@@ -44,7 +54,8 @@ use std::time::Duration;
 use serde::Deserialize;
 use serde_json::{Map, Value as Json, json};
 use whizbang_backends::pack::tool::{
-    ASKS_LIMIT, Asked, CODE_LIMIT, Mask as ToolMask, Sought, ToolImage, ToolLimits, ToolRun,
+    ASKS_LIMIT, Answered, Asked, CODE_LIMIT, Labelled, Mask as ToolMask, Sought, ToolImage,
+    ToolLimits, ToolRun,
 };
 use whizbang_core::artifact::{self, Artifact, ArtifactId, ArtifactType};
 use whizbang_core::contract::{
@@ -745,6 +756,10 @@ impl Readings {
 pub struct Files {
     tools: Vec<(PathBuf, Declaration)>,
     worker: Arc<OneWorker>,
+    /// The config's segment backends that name a model, each its name and its model's;
+    /// and the name of the default: what an ask that names a model is routed by.
+    segmenters: Vec<(String, String)>,
+    default: Option<String>,
 }
 
 impl Files {
@@ -766,7 +781,46 @@ impl Files {
             }
             tools.push((file.path, file.declaration));
         }
-        Ok(Files { tools, worker })
+        Ok(Files {
+            tools,
+            worker,
+            segmenters: Vec::new(),
+            default: None,
+        })
+    }
+
+    /// The same, routing an ask that names a model by these segment backends of the
+    /// config, each its name and the model it names, and the name of the default.
+    #[must_use]
+    pub fn routing<'a>(
+        mut self,
+        segmenters: impl IntoIterator<Item = (&'a str, &'a str)>,
+        default: Option<&str>,
+    ) -> Files {
+        self.segmenters = (segmenters.into_iter())
+            .map(|(name, model)| (name.to_owned(), model.to_owned()))
+            .collect();
+        self.segmenters.sort();
+        self.default = default.map(str::to_owned);
+        self
+    }
+
+    /// The segment backend an ask that names this model is routed to: the default when
+    /// it is that model's, and otherwise the first by name whose model it is. None is
+    /// a refusal that says how to add one.
+    pub fn backend_for(&self, model: &str) -> Result<String, String> {
+        let serving: Vec<&str> = (self.segmenters.iter())
+            .filter(|(_, named)| named == model)
+            .map(|(name, _)| name.as_str())
+            .collect();
+        if let Some(default) = (self.default.as_deref()).filter(|d| serving.contains(d)) {
+            return Ok(default.to_owned());
+        }
+        serving.first().map(|name| (*name).to_owned()).ok_or_else(|| {
+            format!(
+                "the tool asked for the model {model}, and no segment backend of the config is that model; add one whose model is {model}"
+            )
+        })
     }
 
     /// The declaration of the tool file of this name, as its action was made.
@@ -838,7 +892,7 @@ impl Files {
             deadline: context.deadline(),
             limit: Duration::from_secs(declaration.time_limit_s),
         };
-        let mut answer = |asked: &Asked| segment(context, images, asked);
+        let mut answer = |asked: &Asked| self.answer(context, images, &frames, asked);
         let output = self
             .worker
             .run_tool(&Secrets::none(), run, &limits, &mut answer)
@@ -848,42 +902,131 @@ impl Files {
     }
 }
 
-/// A tool's `segment`, as a nested call of the action `segment` under the run's context;
-/// its masks read from what the call committed.
-fn segment(
+impl Files {
+    /// What answers a tool's ask: a nested call of `segment` or of `labels` under the
+    /// run's context, of the backend its model is routed to when it names one.
+    fn answer(
+        &self,
+        context: &Context,
+        images: &[(String, ArtifactId)],
+        frames: &[Frame],
+        asked: &Asked,
+    ) -> Result<Answered, String> {
+        let Some((_, id)) = images.iter().find(|(name, _)| *name == asked.image) else {
+            return Err("the tool asked about an image the run did not hand it".to_owned());
+        };
+        let Some(frame) = frames.iter().find(|frame| frame.name == asked.image) else {
+            return Err("the tool asked about an image the run did not hand it".to_owned());
+        };
+        let backend = asked
+            .model
+            .as_deref()
+            .map(|model| self.backend_for(model))
+            .transpose()?;
+        let query = match &asked.sought {
+            Sought::Phrase(phrase) => Some(("phrase", phrase.clone())),
+            Sought::Point([x, y]) => Some(("point", format!("{x} {y}"))),
+            Sought::Box([l, t, r, b]) => Some(("box", format!("{l} {t} {r} {b}"))),
+            Sought::Labels(_) => None,
+        };
+        let (action, call) = match (&asked.sought, query) {
+            (_, Some((kind, query))) => (
+                whizbang_rascal::segment::NAME,
+                Call::new(whizbang_rascal::segment::NAME)
+                    .input("image", *id)
+                    .argument("kind", Value::text(kind))
+                    .argument("query", Value::text(&query))
+                    .argument("max_instances", Value::Integer(i64::from(asked.most))),
+            ),
+            (Sought::Labels(classes), None) => (
+                whizbang_rascal::labels::NAME,
+                Call::new(whizbang_rascal::labels::NAME)
+                    .input("image", *id)
+                    .argument("classes", Value::text(&classes.join("\n"))),
+            ),
+            (_, None) => return Err("the tool asked for nothing".to_owned()),
+        };
+        let call = match &backend {
+            Some(name) => call.argument("backend", Value::text(name)),
+            None => call,
+        };
+        let finished = context
+            .executor()
+            .submit(&call)
+            .map_err(|e| format!("{action} was refused: {e}"))?;
+        let outputs = match finished.outcome() {
+            Outcome::Completed { outputs } => outputs,
+            Outcome::Invalid { why } => return Err(format!("{action} was refused: {why}")),
+            Outcome::Error { kind, .. } => return Err(format!("{action} failed: {kind}")),
+            Outcome::Cancelled => return Err(format!("{action} was cancelled")),
+        };
+        let masks = masks_of(context, outputs)?;
+        if !matches!(asked.sought, Sought::Labels(_)) {
+            return Ok(Answered::Masks(masks));
+        }
+        labelled(masks, finished.measurements(), frame)
+    }
+}
+
+/// A picture's labels, from the masks `labels` committed, in the order its measurements
+/// list the classes: each pixel the place of its class in that list, from 1, or 0.
+fn labelled(
+    masks: Vec<ToolMask>,
+    measured: Option<&Json>,
+    frame: &Frame,
+) -> Result<Answered, String> {
+    let unread = || "what labels handed back cannot be read".to_owned();
+    let listed = (measured
+        .and_then(|m| m.get("classes"))
+        .and_then(Json::as_array))
+    .ok_or_else(unread)?;
+    if listed.len() != masks.len() || listed.len() > usize::from(u8::MAX) {
+        return Err(unread());
+    }
+    let mut classes = Vec::new();
+    for class in listed {
+        let name = class
+            .get("name")
+            .and_then(Json::as_str)
+            .ok_or_else(unread)?;
+        let score = class
+            .get("score")
+            .and_then(Json::as_f64)
+            .ok_or_else(unread)?;
+        classes.push((name.to_owned(), score.clamp(0.0, 1.0)));
+    }
+    let (width, height) = (frame.width, frame.height);
+    let mut plane = vec![0u8; width as usize * height as usize];
+    for (at, mask) in masks.iter().enumerate() {
+        if (mask.width, mask.height) != (width, height) || mask.plane.len() != plane.len() {
+            return Err(unread());
+        }
+        let k = u8::try_from(at + 1).map_err(|_| unread())?;
+        for (place, sample) in mask.plane.iter().enumerate() {
+            if *sample != 0 {
+                plane[place] = k;
+            }
+        }
+    }
+    Ok(Answered::Labels(Labelled {
+        width,
+        height,
+        classes,
+        plane,
+    }))
+}
+
+/// The masks a nested call committed, each its plane, 255 on and 0 off, and its bounds.
+fn masks_of(
     context: &Context,
-    images: &[(String, ArtifactId)],
-    asked: &Asked,
+    outputs: &[whizbang_core::contract::Committed],
 ) -> Result<Vec<ToolMask>, String> {
-    let Some((_, id)) = images.iter().find(|(name, _)| *name == asked.image) else {
-        return Err("the tool asked about an image the run did not hand it".to_owned());
-    };
-    let (kind, query) = match &asked.sought {
-        Sought::Phrase(phrase) => ("phrase", phrase.clone()),
-        Sought::Point([x, y]) => ("point", format!("{x} {y}")),
-        Sought::Box([l, t, r, b]) => ("box", format!("{l} {t} {r} {b}")),
-    };
-    let call = Call::new(whizbang_rascal::segment::NAME)
-        .input("image", *id)
-        .argument("kind", Value::text(kind))
-        .argument("query", Value::text(&query))
-        .argument("max_instances", Value::Integer(i64::from(asked.most)));
-    let finished = context
-        .executor()
-        .submit(&call)
-        .map_err(|e| e.to_string())?;
-    let outputs = match finished.outcome() {
-        Outcome::Completed { outputs } => outputs,
-        Outcome::Invalid { why } => return Err(format!("segment was refused: {why}")),
-        Outcome::Error { kind, .. } => return Err(format!("segment failed: {kind}")),
-        Outcome::Cancelled => return Err("segment was cancelled".to_owned()),
-    };
     let limits = DecodeLimits::default();
     let mut masks = Vec::new();
     for output in outputs {
         let mask = match artifact::get(context.store(), ArtifactType::Mask, output.id(), &limits) {
             Ok(Artifact::Mask(mask)) => mask,
-            _ => return Err("a mask segment committed cannot be read".to_owned()),
+            _ => return Err("a mask the nested call committed cannot be read".to_owned()),
         };
         let (width, height) = (mask.space().width(), mask.space().height());
         let plane: Vec<u8> = mask
@@ -957,7 +1100,10 @@ impl Action for ToolFileAction {
         // here, so a tool file run as a step of a recipe, whose list binds only its own
         // calls (ADR 0035), is held as it is under a judge. Where the run froze its calls
         // already (a judge's, which lists `segment`), this changes nothing.
-        let _ = context.freeze_calls([whizbang_rascal::segment::NAME]);
+        let _ = context.freeze_calls([
+            whizbang_rascal::segment::NAME,
+            whizbang_rascal::labels::NAME,
+        ]);
         let images: Vec<(String, ArtifactId)> = (call.inputs().iter())
             .map(|input| (input.port().to_owned(), input.id()))
             .collect();

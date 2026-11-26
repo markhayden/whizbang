@@ -1,6 +1,6 @@
 # 0032. Tool files and the tool worker
 
-Status: accepted.
+Status: accepted. Amended by ADR 0053 (below, "Amended: a model by name, and labels").
 Date: 2026-11-18
 Spec: sections 4 ("Experimental tools"), 7, 8 and 10; plan m2c (`docs/plans/m2c-milestone-2.md`),
 task X1, items 1 to 5 and 7; ADR 0008, ADR 0017, ADR 0020, ADR 0031
@@ -179,4 +179,24 @@ written to it before still reads as it did.
 
 `tool/1` is unchanged: an output is still one JSON object of at most the header's bound.
 Plan mE's task T2 widens the context again, for a model named by the request and a labels
-artifact.
+answer.
+
+## Amended: a model by name, and labels (2026-11-25)
+
+Plan mE, task T2, item 2; ADR 0053. The context reaches a model of the catalogue by its
+name, and a fixed-class segmenter's labels of every pixel.
+
+- **An `ask` may hold `model`**, a model's name (a lower-case letter, then lower-case
+  letters, digits, `-` and `_`, 64 at most): `context.segment(..., model=)`. Whizbang routes
+  it to the segment backend of the config whose `model` is that name, the default first
+  when it is one of them and otherwise the first by name, as the nested call's `backend`;
+  a name no backend of the config is refuses the ask. An ask without one is the default's,
+  as before.
+- **An `ask` may be of the capability `labels`**, holding `classes`, 1 to 255 phrases of
+  one line, none twice, in place of `query` and `most`: `context.labels(image, classes,
+  model=)`. It is a nested call of the action `labels` (ADR 0053). Its `answer` holds the
+  image's `width` and `height` and `labels`, the classes some pixel has, each a `name` and
+  a `score`, its confidence; and one payload, a byte a pixel, `k` where the `k`th of those
+  labels the pixel and 0 where none asked does. The context gives it as `Labels`
+  (`width`, `height`, `classes`, `plane`, `name_at(x, y)`).
+- **The calls a tool file's run is held to** are `segment` and `labels`.

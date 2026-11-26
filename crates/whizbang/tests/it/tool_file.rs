@@ -631,3 +631,190 @@ fn the_rules_hints_are_given_to_a_tool_as_the_arguments_of_text_it_declares() {
     assert!(hinted_arguments(&declared("per_subject", &["phrases"]), &hints).is_empty());
     assert!(hinted_arguments(&declared("regions", &["preserve"]), &Hints::default()).is_empty());
 }
+
+// --- a model by name, and labels (plan mE, task T2, item 2) --------------------------------
+
+/// A kind named `labelling` whose fake is a fixed-class segmenter: it declares `phrase` and
+/// `labels`, and labels the top 20 rows of [`SMALL`] `sky` and the 28 below `floor`.
+/// It is a remote backend's kind, as [`Finding`] is (a local one is a model of the
+/// catalogue, installed), at an address of the reserved `.example` domain, which nothing
+/// contacts, and states the same price.
+struct Labelling;
+
+impl Kind for Labelling {
+    fn name(&self) -> &str {
+        "labelling"
+    }
+
+    fn make(&self, table: &Table<'_>) -> Result<Made, KindRefused> {
+        let model = ModelIdentity::new("labelling", "eomt-ade20k", "1");
+        let address = table.backend().address().expect("a url");
+        let declaration = Declared::new(model, &[feature::PHRASE, feature::LABELS])
+            .unwrap()
+            .sending_to(whizbang_core::egress::Recipient::new(
+                address.origin().clone(),
+            ))
+            .priced(whizbang_core::capability::Price::at_most(1000.0).unwrap());
+        let fake = FakeSegmenter::new()
+            .declared_as(declaration)
+            .finding("sky", [0, 0, 64, 20])
+            .finding("floor", [0, 20, 64, 48]);
+        Ok(Made::Segment(Arc::new(fake)))
+    }
+}
+
+/// The config of the routing test: the default, the test's `finding`; `eomt`, the
+/// fixed-class fake, whose model is `eomt-ade20k`; and `sam`, of `finding` again, whose
+/// model is `sam3` and which declares no `labels`.
+const ROUTED: &str = "[backends.segment]\ndefault = \"finding\"\n\n\
+     [backends.segment.finding]\nkind = \"finding\"\nurl = \"https://segment.example.org/v1\"\n\n\
+     [backends.segment.eomt]\nkind = \"labelling\"\nurl = \"https://labels.example.org/v1\"\nmodel = \"eomt-ade20k\"\n\n\
+     [backends.segment.sam]\nkind = \"finding\"\nurl = \"https://segment.example.org/v1\"\nmodel = \"sam3\"\n\n\
+     [egress.recipients.segment]\norigin = \"https://segment.example.org\"\nclasses = [\"prompts\"]\n\n\
+     [egress.recipients.labels]\norigin = \"https://labels.example.org\"\nclasses = [\"prompts\"]\n";
+
+/// A tool that asks, of each model its argument `phrase` names (separated by `;`), the
+/// labels of its source and a segment of `sky`, and reports what it was answered, or why it
+/// was refused, as one reading a model.
+const LABELLED: &str = r#"from whizbang_pack.tool_worker import CapabilityRefused
+def run(context):
+    readings = []
+    for model in context.arguments.get('phrase').split(';'):
+        try:
+            found = context.labels('source', ['sky', 'floor', 'wall'], model=model)
+            counts = {name: found.plane.count(k + 1) for k, (name, _) in enumerate(found.classes)}
+            said = 'labels %dx%d %s; at 0,0 %s; at 0,47 %s' % (found.width, found.height, sorted(counts.items()), found.name_at(0, 0), found.name_at(0, 47))
+            said += '; sky %d' % len(context.segment('source', phrase='sky', model=model))
+        except CapabilityRefused as refused:
+            said = 'refused: ' + refused.sentence
+        readings.append({'subject': said[:200], 'values': {'covered': 0.0}})
+    return {'readings': readings}
+"#;
+
+/// The size of the picture the labels test asks of: small, so that its masks are cheap.
+const SMALL: (u32, u32) = (64, 48);
+
+/// A store with a grey picture of [`SMALL`]'s size in it, brought in as `with_picture`
+/// brings the fixture: the store's path and the image's identity.
+fn with_small_picture(dir: &Scratch) -> (PathBuf, String) {
+    let file = dir.path().join("small.png");
+    image::RgbImage::from_pixel(SMALL.0, SMALL.1, image::Rgb([128, 128, 128]))
+        .save(&file)
+        .unwrap();
+    let root = dir.path().join("store");
+    let imported = crate::wired::whizbang(
+        &[
+            "store",
+            "import",
+            "--picture",
+            file.to_str().unwrap(),
+            "--create",
+        ],
+        &root,
+    );
+    assert_eq!(imported.code, Some(0), "{}", imported.err);
+    let line = imported.out.lines().last().unwrap();
+    let id = line.strip_prefix("imported image ").expect("an image");
+    let reset = crate::wired::whizbang(&["spend", "reset", "--allowance", "1"], &root);
+    assert_eq!(reset.code, Some(0), "{}", reset.err);
+    (root, id.to_owned())
+}
+
+#[test]
+fn a_tool_asks_a_model_by_name_and_reads_each_pixels_class() {
+    let dir = Scratch::new("tool-file-labels");
+    let (root, image) = with_small_picture(&dir);
+    // It declares segments enough for its asks, which its admission reserves.
+    let text = tool_text("labelled", BOUNDS, LABELLED).replace(
+        "# time_limit_s = 20\n",
+        "# time_limit_s = 20\n# segments_most = 16\n",
+    );
+    let path = write_tool(dir.path(), "labelled.py", &text);
+    let config = dir.path().join("whizbang.toml");
+    let text = format!("{ROUTED}\n[tools]\npaths = [\"{}\"]\n", path.display());
+    std::fs::write(&config, text).unwrap();
+    let worker = guarded_tools();
+    let mut kinds = wiring::kinds(&worker);
+    kinds.register(Arc::new(Finding(None))).unwrap();
+    kinds.register(Arc::new(Labelling)).unwrap();
+    let over = Over::nothing()
+        .config(Some(&config))
+        .kinds(kinds)
+        .pack((*worker).clone());
+    let store = Arc::new(Store::open(&root, Arc::new(RealFs)).unwrap());
+    let registry = wiring::registry_over(&over, false).unwrap();
+    let executor = wiring::runner(registry, store, &over).unwrap();
+    let id = whizbang_core::artifact::ArtifactId(image.parse().unwrap());
+    // A backend that declares no labels (`sam`, whose model is `sam3`) is not ready for the
+    // call `labels` that a tool's ask of it would make, which is refused before any run.
+    let plain = Call::new("labels")
+        .input("image", id)
+        .argument("classes", Value::text("sky"))
+        .argument("backend", Value::text("sam"));
+    let refused = executor.submit(&plain);
+    assert!(
+        matches!(
+            refused,
+            Err(whizbang_core::contract::CallError::Refused(
+                whizbang_core::contract::Refusal::NotReady { .. }
+            ))
+        ),
+        "{refused:?}"
+    );
+    // One run of the tool, asking two models in turn.
+    let call = Call::new("labelled")
+        .input("source", id)
+        .input("candidate", id)
+        .argument("phrase", Value::text("eomt-ade20k;tiny"));
+    let (run, outcome) = ran(&executor, &call);
+    assert!(matches!(outcome, Outcome::Completed { .. }), "{outcome:?}");
+    let report = whizbang::door::diagnostic(&root, &run, REPORT).unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&report).unwrap();
+    let said: Vec<&str> = (report["readings"].as_array().unwrap().iter())
+        .map(|reading| reading["subject"].as_str().unwrap())
+        .collect();
+    // Named, the fixed-class model labels every pixel: the classes some pixel has, a plane
+    // of the picture's size, each pixel's class; and its phrase is a class.
+    assert_eq!(
+        said[0],
+        "labels 64x48 [('floor', 1792), ('sky', 1280)]; at 0,0 sky; at 0,47 floor; sky 1"
+    );
+    // A model no backend of the config is is refused to the tool, which goes on.
+    assert!(
+        said[1].starts_with("refused: the tool asked for the model tiny"),
+        "{}",
+        said[1]
+    );
+}
+
+#[test]
+fn a_model_is_routed_to_the_default_when_it_is_that_model_and_else_to_the_first_by_name() {
+    let worker = OneWorker::installed();
+    let files = |default: Option<&str>| {
+        let read = tool_file::Files::read(std::iter::empty(), worker.clone()).unwrap();
+        read.routing(
+            [
+                ("zeta", "eomt-ade20k"),
+                ("alpha", "eomt-ade20k"),
+                ("plain", "sam3"),
+            ],
+            default,
+        )
+    };
+    // The default, when it is one of the model's backends; the first by name otherwise.
+    assert_eq!(
+        files(Some("zeta")).backend_for("eomt-ade20k").unwrap(),
+        "zeta"
+    );
+    assert_eq!(
+        files(Some("plain")).backend_for("eomt-ade20k").unwrap(),
+        "alpha"
+    );
+    assert_eq!(files(None).backend_for("eomt-ade20k").unwrap(), "alpha");
+    assert_eq!(files(None).backend_for("sam3").unwrap(), "plain");
+    let none = files(None).backend_for("tiny").unwrap_err();
+    assert!(
+        none.contains("no segment backend of the config is that model"),
+        "{none}"
+    );
+}

@@ -17,20 +17,14 @@ fn a_whole_number_ratio_is_the_mean_of_each_block_a_half_going_up() {
             u8::from(x % 2 == 1 && y.is_multiple_of(2)),
             // 1, 1, 2, 2: one and a half, which goes up to 2.
             1 + (y % 2) as u8,
-            noise(x, y, 3, 21),
+            // One alpha for each block of four, so that weighting by it changes nothing.
+            noise(x / 2, y / 2, 3, 21),
         ]
     };
     let image = picture(2048, 16, colour);
     let crop = look(&image, [0.0, 0.0, 1.0, 1.0]);
     assert_eq!(crop.image.space(), Space::flat(1024, 8).unwrap());
-    let expected = paint(1024, 8, |x, y| {
-        let block = [(0, 0), (1, 0), (0, 1), (1, 1)];
-        let alpha: u32 = block
-            .iter()
-            .map(|(dx, dy)| u32::from(noise(2 * x + dx, 2 * y + dy, 3, 21)))
-            .sum();
-        [128, 0, 2, ((2 * alpha + 4) / 8) as u8]
-    });
+    let expected = paint(1024, 8, |x, y| [128, 0, 2, noise(x, y, 3, 21)]);
     assert_eq!(rgba_of(&crop.image), expected);
 }
 
@@ -112,12 +106,46 @@ fn the_shorter_side_is_scaled_by_the_same_ratio_to_the_nearest_pixel() {
     }
 }
 
+/// One crop pixel of a reduced crop by each of the three ways the record compares (plan
+/// mE, task P1, item 6), from the source pixels its rectangle covers, each counted once:
+/// the plain mean of each channel; each colour weighted by alpha as well, alpha the plain
+/// mean (the method); and each pixel flattened onto a white ground first, then the mean,
+/// opaque.
+fn three_ways(pixels: &[[u32; 4]]) -> [[u32; 4]; 3] {
+    let n = pixels.len() as u32;
+    let mean = |values: &dyn Fn(&[u32; 4]) -> u32| {
+        (2 * pixels.iter().map(values).sum::<u32>() + n) / (2 * n)
+    };
+    let seen: u32 = pixels.iter().map(|p| p[3]).sum();
+    let plain = [
+        mean(&|p| p[0]),
+        mean(&|p| p[1]),
+        mean(&|p| p[2]),
+        mean(&|p| p[3]),
+    ];
+    let weighted = |k: usize| {
+        let sum: u32 = pixels.iter().map(|p| p[3] * p[k]).sum();
+        (2 * sum + seen) / (2 * seen)
+    };
+    let over_white = |p: &[u32; 4], k: usize| (2 * (p[k] * p[3] + 255 * (255 - p[3])) + 255) / 510;
+    [
+        plain,
+        [weighted(0), weighted(1), weighted(2), plain[3]],
+        [
+            mean(&|p| over_white(p, 0)),
+            mean(&|p| over_white(p, 1)),
+            mean(&|p| over_white(p, 2)),
+            255,
+        ],
+    ]
+}
+
 #[test]
-fn alpha_is_averaged_apart_from_the_colours() {
-    // A known limit, in the record: the colour under a transparent pixel counts as much
-    // as the colour of an opaque one. Each block of four is one opaque red pixel and three
-    // transparent green ones, and is shown as a quarter red, three quarters green, at a
-    // quarter of full alpha.
+fn a_reduced_crop_with_transparency_is_the_mean_weighted_by_alpha() {
+    // Each block of four is one opaque red pixel and three transparent green ones. The
+    // plain mean shows a quarter red and three quarters green, a green nobody sees; the
+    // mean weighted by alpha shows red at a quarter of full alpha; flattened onto white
+    // it is an opaque pink, the ground's colour where there was nothing.
     let image = picture(2048, 16, |x, y| {
         if x % 2 == 0 && y % 2 == 0 {
             [255, 0, 0, 255]
@@ -126,22 +154,35 @@ fn alpha_is_averaged_apart_from_the_colours() {
         }
     });
     let crop = look(&image, [0.0, 0.0, 1.0, 1.0]);
+    let block = [
+        [255, 0, 0, 255],
+        [0, 255, 0, 0],
+        [0, 255, 0, 0],
+        [0, 255, 0, 0],
+    ];
+    let ways = three_ways(&block);
+    assert_eq!(
+        ways,
+        [[64, 191, 0, 64], [255, 0, 0, 64], [255, 191, 191, 255]]
+    );
+    let method = ways[1].map(|v| v as u8);
     assert!(
         rgba_of(&crop.image)
             .as_chunks::<4>()
             .0
             .iter()
-            .all(|pixel| *pixel == [64, 191, 0, 64])
+            .all(|pixel| *pixel == method)
     );
 }
 
 #[test]
-fn hidden_colour_bleeds_into_a_reduced_crop_at_the_edge_of_a_transparent_area() {
-    // The record's worked example for that limit. Opaque white in the even columns, and
+fn hidden_colour_does_not_show_at_the_edge_of_a_transparent_area_of_a_reduced_crop() {
+    // The record's worked example for the rule. Opaque white in the even columns, and
     // in the odd ones nothing to see: black at alpha 0. Over a white page the source
-    // shows white everywhere. Each crop pixel is the plain mean of one of each: grey at
-    // half alpha, which over a white page shows as 191, a grey the source does not have.
-    // A mean weighted by alpha, which was not tried, would give white at half alpha.
+    // shows white everywhere. The plain mean is grey at half alpha, which over a white
+    // page shows as 191, a grey the source does not have: the hidden black shows. The
+    // mean weighted by alpha, the method, is white at half alpha, which shows as 255.
+    // Flattened onto white it is opaque white, and its transparency is gone.
     let image = picture(2048, 16, |x, _| {
         if x % 2 == 0 {
             [255, 255, 255, 255]
@@ -150,18 +191,36 @@ fn hidden_colour_bleeds_into_a_reduced_crop_at_the_edge_of_a_transparent_area() 
         }
     });
     let crop = look(&image, [0.0, 0.0, 1.0, 1.0]);
-    let rgba = rgba_of(&crop.image);
+    let ways = three_ways(&[[255, 255, 255, 255], [0, 0, 0, 0]]);
+    assert_eq!(
+        ways,
+        [
+            [128, 128, 128, 128],
+            [255, 255, 255, 128],
+            [255, 255, 255, 255]
+        ]
+    );
     assert!(
-        rgba.as_chunks::<4>()
+        rgba_of(&crop.image)
+            .as_chunks::<4>()
             .0
             .iter()
-            .all(|pixel| *pixel == [128, 128, 128, 128])
+            .all(|pixel| *pixel == [255, 255, 255, 128])
     );
     // Shown over white, to the nearest level: the crop's colour by its alpha, and white
     // by the rest.
     let over_white =
         |colour: u32, alpha: u32| (2 * (colour * alpha + 255 * (255 - alpha)) + 255) / 510;
     assert_eq!(over_white(128, 128), 191);
-    // The alpha-weighted mean of the same two pixels: (255 x 255 + 0 x 0) / (255 + 0).
     assert_eq!(over_white(255, 128), 255);
+    // Where nothing at all is visible, the colours are the plain mean, as before.
+    let clear = picture(2048, 16, |x, _| {
+        if x % 2 == 0 {
+            [200, 100, 0, 0]
+        } else {
+            [0, 100, 200, 0]
+        }
+    });
+    let crop = look(&clear, [0.0, 0.0, 1.0, 1.0]);
+    assert_eq!(rgba_of(&crop.image)[..4], [100, 100, 100, 0]);
 }

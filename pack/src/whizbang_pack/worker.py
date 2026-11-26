@@ -33,7 +33,7 @@ import queue
 import sys
 import threading
 
-from whizbang_pack import fake_models, installed, owlv2_sam2, proto, sam3
+from whizbang_pack import eomt_ade20k, fake_models, installed, owlv2_sam2, proto, sam3
 from whizbang_pack.adapter import Cancelled, Fault, Installation, Stopped, card_name, runtime_device
 
 END_CODE = 0
@@ -42,10 +42,11 @@ LIFETIME_CODE = 3
 LIFETIME_MOST = 31_536_000
 
 # The adapters of real models, by the adapter's name in the catalogue; each imports its
-# runtime only when its model is loaded (task R2a: `sam3`; plan 1D, task T1: `owlv2-sam2`).
-REAL = {"sam3": sam3.Sam3, "owlv2-sam2": owlv2_sam2.Owlv2Sam2}
+# runtime only when its model is loaded (task R2a: `sam3`; plan 1D, task T1: `owlv2-sam2`;
+# plan mE, task T2: `eomt-ade20k`).
+REAL = {"sam3": sam3.Sam3, "owlv2-sam2": owlv2_sam2.Owlv2Sam2, "eomt-ade20k": eomt_ade20k.EomtAde20k}
 # The shipped catalogue's models, each by the name of its adapter there.
-SHIPPED = {"sam3": "sam3", "tiny": "owlv2-sam2"}
+SHIPPED = {"sam3": "sam3", "tiny": "owlv2-sam2", "eomt-ade20k": "eomt-ade20k"}
 # The adapters the worker answers for, by model name. The fakes answer for names the
 # shipped catalogue never holds; each model of the shipped catalogue joins them.
 ADAPTERS = dict(fake_models.MODELS, **{model: REAL[adapter] for model, adapter in SHIPPED.items()})

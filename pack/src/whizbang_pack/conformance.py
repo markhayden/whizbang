@@ -9,7 +9,10 @@ adapter: a module whose class `ADAPTER` is the adapter. It loads the adapter ove
 files of the folder, as an installation's files, by their names; and asks it, through the
 worker's own handling of a call, each feature it declares alone and then all of them
 together, about a picture of eight by six pixels. Each answer is held to the contract of
-`pack/1` (ADR 0020) and of the core's answer ([`check`]). It prints a line for each run and
+`pack/1` (ADR 0020) and of the core's answer ([`check`]). An adapter that declares `labels`
+(ADR 0053) is asked a phrase that is its first class, and then every class of its list, in
+batches of 64 at one instance each: the planes must be disjoint and cover the picture, a
+class per pixel ([`check_labels`]). It prints a line for each run and
 ends 0 when every run conforms, 1 when one does not, and 2 for a command line it does not
 take. Nothing is installed, nothing is written but a temporary folder of its own, removed
 when it ends, and nothing is fetched.
@@ -26,7 +29,7 @@ import tempfile
 
 from whizbang_pack import installed, proto
 from whizbang_pack import worker as _worker
-from whizbang_pack.adapter import FEATURES
+from whizbang_pack.adapter import FEATURES, LABELS
 
 WIDTH, HEIGHT = 8, 6
 BINDING = "sha256:" + "92b2fa58028958317e408bd84ecfa70f5ee35b121991dbc232c49d166353708b"
@@ -36,6 +39,8 @@ IDENTITY = "sha256:" + "c0" * 32
 # What each feature asks: a phrase, a point inside the picture and a box inside it.
 QUERIES = {"phrase": {"phrase": "a red thing"}, "point": {"point": [5.5, 2.25]}, "box": {"box": [1.0, 1.0, 3.0, 4.0]}}
 MOST = 2
+# The most queries one request holds (ADR 0020).
+QUERIES_MOST = 64
 
 
 class Nonconforming(Exception):
@@ -93,9 +98,13 @@ def check(request, result):
     _hold(keys == sorted(keys), "the instances are not in the fixed order")
 
 
-def requests(features):
+def requests(features, phrase=None):
     """The segment requests the suite asks: each declared feature alone, in the order of
-    `FEATURES`, then all of them together when there are two or more."""
+    `FEATURES`, then all of them together when there are two or more. The phrase asked is
+    `phrase` when one is given: a fixed-class segmenter's first class."""
+    queries = dict(QUERIES)
+    if phrase is not None:
+        queries["phrase"] = {"phrase": phrase}
     declared = [feature for feature in FEATURES if feature in features]
     asked = [[feature] for feature in declared]
     if len(declared) > 1:
@@ -112,12 +121,50 @@ def requests(features):
                     "model": MODEL,
                     "installation": IDENTITY,
                     "image": proto.Payload(WIDTH, HEIGHT, BINDING, picture()),
-                    "queries": [QUERIES[kind] for kind in kinds],
+                    "queries": [queries[kind] for kind in kinds],
                     "max_instances": MOST,
                 },
             )
         )
     return made
+
+
+def labels_requests(classes):
+    """The requests that ask every class of a list: batches of at most 64 phrases, at one
+    instance each, in the list's order."""
+    made = []
+    for start in range(0, len(classes), QUERIES_MOST):
+        made.append(
+            {
+                "type": "request",
+                "id": "l%d" % (start // QUERIES_MOST + 1),
+                "kind": "segment",
+                "model": MODEL,
+                "installation": IDENTITY,
+                "image": proto.Payload(WIDTH, HEIGHT, BINDING, picture()),
+                "queries": [{"phrase": name} for name in classes[start : start + QUERIES_MOST]],
+                "max_instances": 1,
+            }
+        )
+    return made
+
+
+def check_labels(answered):
+    """Holds the answers to every class of a fixed-class segmenter's list (`labels_requests`)
+    to `labels` (ADR 0053): each answer as `check` holds it, at most one instance a class, and
+    the planes of all of them disjoint and together the whole picture."""
+    covered = None
+    for request, result in answered:
+        check(request, result)
+        for item in result["instances"]:
+            samples = bytes(item["plane"].samples)
+            if covered is None:
+                covered = bytearray(len(samples))
+            for at, sample in enumerate(samples):
+                if sample:
+                    _hold(not covered[at], "two classes label one pixel")
+                    covered[at] = 1
+    _hold(covered is not None and all(covered), "a pixel no class labels")
 
 
 def _through(worker, request):
@@ -147,13 +194,23 @@ def run(make, files):
         features = worker.resident.adapter.features
         if not features:
             return ["load: does not conform: the adapter declares no feature"], False
-        for kinds, request in requests(features):
+        classes = tuple(worker.resident.adapter.classes) if LABELS in features else ()
+        if LABELS in features and not classes:
+            return ["load: does not conform: the adapter declares labels and no classes"], False
+        for kinds, request in requests(features, classes[0] if classes else None):
             try:
                 check(request, _through(worker, request))
                 lines.append("%s: conforms" % " and ".join(kinds))
             except Nonconforming as nonconforming:
                 whole = False
                 lines.append("%s: does not conform: %s" % (" and ".join(kinds), nonconforming))
+        if classes:
+            try:
+                check_labels([(request, _through(worker, request)) for request in labels_requests(classes)])
+                lines.append("labels: conforms")
+            except Nonconforming as nonconforming:
+                whole = False
+                lines.append("labels: does not conform: %s" % nonconforming)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     return lines, whole

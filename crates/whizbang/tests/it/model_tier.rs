@@ -1155,3 +1155,114 @@ fn segment_answers_the_records_examples_on_the_mac() {
     std::fs::create_dir_all(&path).unwrap();
     std::fs::write(path.join("segment-record.txt"), out).unwrap();
 }
+
+/// The fixed-class segmenter (plan mE, task T2).
+const EOMT: &str = "eomt-ade20k";
+
+/// The 150 classes of ADE20K, as the pack's adapter lists them (`CLASSES` of
+/// `pack/src/whizbang_pack/eomt_ade20k.py`).
+fn ade20k_classes() -> Vec<String> {
+    let module = include_str!("../../../../pack/src/whizbang_pack/eomt_ade20k.py");
+    let start = module.find("CLASSES = (").expect("the list") + "CLASSES = (".len();
+    let body = &module[start..start + module[start..].find("\n)").expect("its end")];
+    let classes: Vec<String> = (body.split('"').skip(1).step_by(2))
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(classes.len(), 150);
+    classes
+}
+
+#[test]
+#[ignore = "the model tier: just test-models, on a machine with the model installed"]
+fn eomt_labels_every_pixel_of_the_fixture_on_the_mac() {
+    // Plan mE, task T2, item 3: one labels request of every class on the fixture, through
+    // the binary's wiring and the action `labels`, on the GPU. Every pixel has exactly one
+    // class, and each class's confidence is from 0 to 1. A second call answers the same
+    // masks: it is answered from the labels the adapter kept of the picture, not by the
+    // model again, so it shows the action's and the kept answer's agreement, not the
+    // model's repeatability.
+    use whizbang_core::artifact::{self, Artifact, Image, ImageRole, Origin, Step};
+    use whizbang_core::contract::{Outcome, Value};
+    use whizbang_core::identity::{Projection, Topology};
+    let tier = Tier::of("model-tier-eomt", EOMT);
+    let over = tier.over();
+    let ready = over.installations().unwrap().ready(EOMT);
+    let identity = (ready
+        .expect("eomt-ade20k is installed and ready")
+        .identity())
+    .digest()
+    .to_string();
+    let executor = tier.runner(&over);
+    let limits = DecodeLimits::default();
+    let origin = Origin::new(Step::new("fixture", "1")).unwrap();
+    let image = Image::new(
+        FIXTURE.to_vec(),
+        Projection::Flat,
+        Topology::Bounded,
+        ImageRole::Picture,
+        origin,
+        &limits,
+    )
+    .unwrap();
+    let store = Store::open(&tier.root, Arc::new(RealFs)).unwrap();
+    let mut publication = store.begin().unwrap();
+    let id = artifact::put(&mut publication, &Artifact::from(image)).unwrap();
+    publication.publish().unwrap();
+    let classes = ade20k_classes();
+    let call = Call::new("labels")
+        .input("image", id)
+        .argument("classes", Value::text(&classes.join("\n")));
+    let started = Instant::now();
+    let first = executor.submit(&call).unwrap();
+    let took = started.elapsed();
+    let Outcome::Completed { outputs } = first.outcome() else {
+        panic!("{:?}", first.outcome());
+    };
+    let listed = first.measurements().unwrap()["classes"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert!(
+        !listed.is_empty() && listed.len() == outputs.len(),
+        "{listed:?}"
+    );
+    let mut pixels = 0u64;
+    for class in &listed {
+        assert!(
+            classes
+                .iter()
+                .any(|name| name == class["name"].as_str().unwrap())
+        );
+        let score = class["score"].as_f64().unwrap();
+        assert!((0.0..=1.0).contains(&score) && score > 0.0, "{class}");
+        pixels += class["pixels"].as_u64().unwrap();
+    }
+    // Every pixel, once: the action refuses a pixel labelled twice, and these add up.
+    assert_eq!(pixels, 640 * 480);
+    let second = executor.submit(&call).unwrap();
+    assert_eq!(second.outcome(), first.outcome());
+    let record = tier.record(first.run().as_str());
+    for model in record["models"].as_array().unwrap() {
+        assert_eq!(
+            (model["model"].as_str(), model["device"].as_str()),
+            (Some(EOMT), Some("mps"))
+        );
+        assert_eq!(model["version"].as_str(), Some(identity.as_str()));
+    }
+    drop(executor);
+    let mut lines = vec![
+        ("run".to_owned(), first.run().as_str().to_owned()),
+        ("device".to_owned(), "mps".to_owned()),
+        ("installation".to_owned(), identity),
+        ("seconds".to_owned(), seconds(took)),
+        ("classes".to_owned(), listed.len().to_string()),
+    ];
+    for (at, class) in listed.iter().enumerate() {
+        let name = class["name"].as_str().unwrap().replace(' ', "_");
+        lines.push((
+            format!("class_{}", at + 1),
+            format!("{name} {} {}", class["pixels"], class["score"]),
+        ));
+    }
+    write_out("eomt", &lines);
+}

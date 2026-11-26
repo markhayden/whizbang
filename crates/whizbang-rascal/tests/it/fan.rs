@@ -362,3 +362,25 @@ impl Seam {
         whizbang_rascal::cut::canvas_of(&pixels, STRIP).unwrap()
     }
 }
+
+#[test]
+fn on_a_small_panorama_the_windows_are_the_scale_meant_one_column_a_side() {
+    // The seam's canvas of a panorama 800 wide, strip 80, is 160 wide: a tenth of
+    // `ref_width`. `fan` and `ramp` read their windows at that scale on purpose (plan
+    // mE, task P1, item 7): the band is measured on one column each side of the line,
+    // and the texture on sixteen, as the records of `fan` and `ramp` say.
+    let settings = whizbang_rascal::fan::Settings::of("fan-v3").unwrap();
+    let profile = whizbang_rascal::fan::fan_profile(&picture(160, 32), 80.0, &settings).unwrap();
+    let w = profile.windows;
+    assert_eq!((w.gap, w.step_columns, w.texture_columns), (1, 1, 16));
+    assert!((profile.thin - 15.0 * 160.0 / 1620.0).abs() < 1e-12);
+    assert_eq!(
+        whizbang_rascal::fan::windows(80, profile.thin, w, 160),
+        [
+            ("left step", 77, 78),
+            ("right step", 83, 84),
+            ("left texture", 63, 79),
+            ("right texture", 82, 98),
+        ]
+    );
+}

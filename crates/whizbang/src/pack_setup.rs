@@ -152,7 +152,7 @@ pub const EXTRA_HOST: Host = Host {
 };
 
 /// The files of the pack this build carries, by their place in the pack's folder.
-const CARRIED: [(&str, &[u8]); 20] = [
+const CARRIED: [(&str, &[u8]); 21] = [
     (
         "pyproject.toml",
         include_bytes!("../../../pack/pyproject.toml"),
@@ -173,6 +173,10 @@ const CARRIED: [(&str, &[u8]); 20] = [
     (
         "src/whizbang_pack/conformance.py",
         include_bytes!("../../../pack/src/whizbang_pack/conformance.py"),
+    ),
+    (
+        "src/whizbang_pack/eomt_ade20k.py",
+        include_bytes!("../../../pack/src/whizbang_pack/eomt_ade20k.py"),
     ),
     (
         "src/whizbang_pack/fake_models.py",

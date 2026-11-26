@@ -3120,6 +3120,78 @@
       "concurrent": true
     },
     {
+      "name": "labels",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Asks a fixed-class segmenter which pixels of an image it labels with each class named, as one mask for each.",
+      "arguments": [
+        {
+          "name": "classes",
+          "purpose": "The classes to ask, one a line: each one of the segmenter's own.",
+          "type": {
+            "type": "text"
+          },
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "backend",
+          "purpose": "The segmenter, by its name in the config; the default when not given.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The picture to label.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "One mask for each class some pixel has, in the order the classes are named.",
+          "count": {
+            "min": 0,
+            "max": 255
+          },
+          "when": "always",
+          "belongs_to": {
+            "input": "image"
+          },
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "results": [
+        "measurements"
+      ],
+      "needs": [
+        {
+          "capability": "segment",
+          "features": [
+            "phrase",
+            "labels"
+          ],
+          "when": "always",
+          "chosen_by": "backend",
+          "feature_from": null,
+          "requests": 4
+        }
+      ],
+      "concurrent": true
+    },
+    {
       "name": "select",
       "version": "1.0.0",
       "kind": "primitive",
@@ -5080,6 +5152,10 @@
     },
     {
       "tool": "segment",
+      "mark": "experimental"
+    },
+    {
+      "tool": "labels",
       "mark": "experimental"
     },
     {
