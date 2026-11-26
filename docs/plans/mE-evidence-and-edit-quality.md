@@ -303,7 +303,7 @@ theirs; builders make no live call.
 | K1 | The segmenters compared on segment-01's truth masks; `segment`'s rung 2; the rule for milestone 8 (the orchestrator's) | T2 | Small: about 400, a record |
 | R6 | Rung 4 of the edit recipes on fresh cases (the orchestrator's, with the owner); `segment` and `fill` credited | R5, K1 | Small: about 400, records |
 | W1 | What milestone 8 builds: K1's outcome; the protocols for local fill and judge | K1, R4, R6 | Medium: about 600, an ADR and protocol files |
-| O1 | The walkthroughs with the owner: every tool, one at a time, through the playground and the command line, before any round measures it (the orchestrator's, with the owner) | Each session after the tasks that build what it walks (O1's table) | Small: a record of 57 rows and more as tools are added, and the fixes its findings need |
+| O1 | The walkthroughs with the owner: every tool, one at a time, through the playground and the command line, before any round measures it (the orchestrator's, with the owner) | Each session after the tasks that build what it walks (O1's table) | Small: the inputs' writer (about 300), a record of 57 rows and more as tools are added, and the fixes its findings need |
 | N1 | The note | all | Small: about 500, no code |
 
 **Waves.** Each from `main` once what it builds on has landed.
@@ -1312,13 +1312,23 @@ owner's Mac, from `main`'s release build at a named commit, in E's store, with a
 that names the cheap judge as the judge, Bria through fal as the filler, and the tool files
 that have landed under `[tools] paths`. The store has one writer at a time and `whizbang play`
 holds it, so each row runs the command line first, with the playground stopped, then the
-playground on the same store and config. The inputs are only the pictures of the tool's record,
-of the committed dev sets (`source-fidelity/scenes-v1`, `adversarial-v1`), of
-`segmentation/segment-01` and of the labs' committed corpora, brought in by `whizbang store
-import`. No picture of owner storage, of a held-out set or of R6's fresh corpus is used, so no
+playground on the same store and config. The inputs are only the records' example inputs
+(below, "The inputs, made before O1.1") and the pictures of the committed dev sets
+(`source-fidelity/scenes-v1`, `adversarial-v1`), of `segmentation/segment-01` and of the labs'
+committed corpora. No picture of owner storage, of a held-out set or of R6's fresh corpus is used, so no
 row spends a picture a later round needs fresh. Scratch files of a session (a one-step recipe
 file, a bundle file, a set built `--fake`) are kept in the system temp folder and removed
 after it.
+
+**The inputs, made before O1.1.** A record's pictures are drawn for its page, not artifacts
+(`grow.md`, "Examples"), and a mask brought in from a picture loses its protect plane, profile
+and prescriptions (`import.rs`). So O1's first pull request adds a committed command that writes
+every record's example inputs, from the constructors the record's own tests build them with
+(`crates/whizbang-rascal/tests/it/record.rs` and the like), as canonical artifacts into the
+session's store, with their bindings and every artifact they depend on, and prints each one's
+identity; the record names the command and the identities. The same inputs go to both sides;
+no rendered picture of a record stands in for a mask. Pictures of the dev sets and corpora are
+brought in by `whizbang store import`.
 
 **Each row's cases.** Before its session, each row lists in the record the cases it walks:
 for `check`, the use case `general` as it is (its pictures under a fixed prompt, a verdict in
@@ -1353,8 +1363,11 @@ if the record names one, and one refusal. A row is done only when every case has
    replays it. Where it does not, the row records the exact refusal and the owner hears it:
    the root of a recipe file's run, and an offline replay of any family that called a tool
    file (`contract/replay.rs`: "a recipe file's or a tool file's action is never replayed";
-   "an offline replay never runs one"). The step runs of a one-step recipe file are replayed
-   one by one.
+   "an offline replay never runs one"), and a run another run called (it is replayed only as
+   part of its root). So a one-step recipe file's run is not replayed, root or step, and that
+   is recorded; the replay of `align`, `view`, `details` or `resize` is walked on the
+   playground's run of the same case, a root run of the action, by `runs replay` once the
+   playground has stopped.
 5. The refusal: an input the record says is refused (a missing field, a wrong size, a value
    out of range, `tiles` on a pair). The row says which of two it expects, and checks it:
    refused before anything runs, the message naming the fault and no run made; or a run that
@@ -2233,3 +2246,19 @@ code; all were right and taken.
 3. **Minor: the builder's refusals mixed its two pull requests.** Right
    (`tools/sets/whizbang_sets/__main__.py` has no `--cap-usd` yet). Taken: the fake build and
    its refusals in O1.1; the cap and the egress refusals in O1.3.
+
+### Review round O1-5
+
+Review round O1-5, on draft 5 of task O1. Verdict: revise. Round O1-4's fixes held but for its
+finding 1, corrected here. Two findings, both majors. Each was checked against the code; both
+were right and taken.
+
+1. **Major: a run another run called is never replayed.** Right (`contract/replay.rs` refuses a
+   run with a parent). Taken: a one-step recipe file's run is recorded as not replayed, root or
+   step; the replay of `align`, `view`, `details` and `resize` is walked on the playground's
+   root run of the same case.
+2. **Major: a record's pictures are not its inputs.** Right (`grow.md`: the pictures are for
+   the page; `import.rs` refuses colour in a mask and keeps no protect plane, profile or
+   prescriptions). Taken: O1's first pull request adds a command that writes every record's
+   example inputs as canonical artifacts from the constructors its tests use, the same inputs
+   on both sides.
