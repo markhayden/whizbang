@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use super::digest::{FieldSource, Fields};
 use super::perspective::Perspective;
-use super::space::{Point, Space, Topology};
+use super::space::{Point, SLACK, Space, Topology};
 use super::{IdentityError, Result};
 
 /// A 3 by 3 matrix, row-major.
@@ -156,6 +156,34 @@ impl Mapping {
         Ok(())
     }
 
+    /// How many pixels of the space a point lands in one pixel of the other becomes, at
+    /// least 1: for a crop, the ratio of the crop's side to its box's, or the inverse
+    /// toward the box; 1 for every other mapping. Rounding in the space a point comes from
+    /// grows by this much where it lands, so the slack it is given there grows with it.
+    fn magnifies(&self, from: &Space, forward: bool) -> f64 {
+        let Mapping::Crop {
+            left,
+            top,
+            right,
+            bottom,
+        } = self
+        else {
+            return 1.0;
+        };
+        let across = f64::from(from.width()) / (right - left);
+        let down = f64::from(from.height()) / (bottom - top);
+        let ratio = if forward {
+            (1.0 / across).max(1.0 / down)
+        } else {
+            across.max(down)
+        };
+        if ratio.is_finite() {
+            ratio.max(1.0)
+        } else {
+            1.0
+        }
+    }
+
     /// Maps a point of `from` to its place in `to`. The point must lie in `from`, and what
     /// it maps to must lie in `to`. The mapping has passed [`Mapping::check`] for these two
     /// spaces.
@@ -191,7 +219,7 @@ impl Mapping {
                 Point::new(x, y)
             }
         };
-        to.land(mapped)
+        to.land(mapped, SLACK * self.magnifies(from, true))
     }
 
     /// Maps a point of `to` back to its place in `from`: the inverse of
@@ -257,7 +285,7 @@ impl Mapping {
                 Point::new(x, y)
             }
         };
-        from.land(mapped)
+        from.land(mapped, SLACK * self.magnifies(from, false))
     }
 
     /// The mapping as a matrix on pixels, from `from` to `to`, when it is one: the
