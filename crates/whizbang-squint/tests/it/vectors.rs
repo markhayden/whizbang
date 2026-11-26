@@ -4,10 +4,13 @@
 //! record's method (`docs/reference/tools/view.md`) in whole-number arithmetic: the box
 //! snapped outward, the size, and for each output sample the area-weighted sum over the
 //! source pixels its rectangle touches, divided once and rounded half up, each colour
-//! weighted by alpha as well where any alpha is over 0 (plan mE, task P1, item 6: that
-//! changed the two reduced vectors with alpha, `tall` and `inner`, whose digests were
-//! worked out again the same way); then ADR 0001's `pixels/1` over the result. The pictures are `support::noisy`, which that statement
-//! repeats.
+//! weighted by alpha as well where any alpha is over 0; then ADR 0001's `pixels/1` over
+//! the result. The pictures are `support::noisy`, which that statement repeats.
+//!
+//! Weighting by alpha (plan mE, task P1, item 6) changed the two reduced vectors with
+//! alpha, `tall` and `inner`. Their pixel digests were worked out again by that separate
+//! statement, a short program outside the repository that first gave all five of the
+//! digests before the change, and only then the two new ones; the test agreed with them.
 //!
 //! The file digests are what the pinned PNG encoder writes for those pixels: the core's
 //! one encoder (`whizbang_core::identity::encode`), whose pins its own test holds

@@ -8,7 +8,7 @@
 //! (`box_onto_panorama`); other shapes are carried by `whizbang_core::artifact::carry`.
 
 use whizbang_core::artifact::{Location, Origin, Shape, Step, Toward, carry};
-use whizbang_core::identity::{Binding, Direction, IdentityError, Mapping, Point};
+use whizbang_core::identity::{Binding, Destination, Direction, IdentityError, Mapping, Point};
 
 use super::{ViewError, invalid};
 
@@ -278,6 +278,16 @@ pub fn box_onto_panorama(bbox: [f64; 4], chain: &[Binding]) -> Result<Footprint,
         }
         (clipped, clipped != bbox)
     } else {
+        // The crops end on the view: the last one's destination is the view's picture,
+        // in the view's space.
+        let last = &crops[crops.len() - 1];
+        let ends_on_view = last.destination() == Destination::Image(view.source())
+            && last.destination_space() == view.source_space();
+        if !ends_on_view {
+            return refuse(
+                "the crops do not end on the perspective view the last binding places".to_owned(),
+            );
+        }
         let located = box_to_root(bbox, crops)?;
         (located.bbox, located.partial)
     };
