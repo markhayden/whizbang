@@ -240,8 +240,42 @@ fn what_is_not_carried_is_refused() {
     assert!(refused(&view, &cut, Toward::Source).contains("view"));
     let box_on_panorama = on(&panorama, boxed(1.0, 1.0, 2.0, 2.0));
     assert!(refused(&box_on_panorama, &panorama, Toward::Destination).contains("root"));
-    // Through a rotation a box has no one image, and a line no one width.
-    let turn = Binding::new(
+    // Through a rotation a line has no one width.
+    let turn = quarter_turn();
+    let turned = Binding::root(picture("turned"), Space::panorama(40, 10).unwrap());
+    let a_line = on(
+        &turned,
+        Shape::Line {
+            line: Line::Column(3.0),
+            width: 1.0,
+        },
+    );
+    assert!(refused(&a_line, &turn, Toward::Destination).contains("a line"));
+    // Nor through a perspective view, and a view is not carried through one.
+    let look = look();
+    let in_view = Binding::root(picture("look"), Space::flat(256, 256).unwrap());
+    let stroke = on(
+        &in_view,
+        Shape::Stroke {
+            path: vec![Point::new(1.0, 1.0), Point::new(9.0, 9.0)],
+            radius: 2.0,
+        },
+    );
+    assert!(refused(&stroke, &look, Toward::Destination).contains("a stroke"));
+    let a_view = on(
+        &Binding::root(picture("panorama"), Space::panorama(3600, 1800).unwrap()),
+        Shape::View {
+            yaw: 0.0,
+            pitch: 0.0,
+            fov: 60.0,
+        },
+    );
+    assert!(refused(&a_view, &look, Toward::Source).contains("view"));
+}
+
+/// A quarter turn about the vertical of a panorama 40 by 10.
+fn quarter_turn() -> Binding {
+    Binding::new(
         picture("turned"),
         Space::panorama(40, 10).unwrap(),
         picture("panorama"),
@@ -251,11 +285,155 @@ fn what_is_not_carried_is_refused() {
             matrix: [0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
         },
     )
-    .unwrap();
+    .unwrap()
+}
+
+/// A view 256 pixels square at yaw 45, pitch 0 and a field of view of 60 degrees, into a
+/// panorama 3600 by 1800: ten pixels a degree.
+fn look() -> Binding {
+    looking(45.0, 0.0, 60.0)
+}
+
+fn looking(yaw: f64, pitch: f64, fov: f64) -> Binding {
+    Binding::new(
+        picture("look"),
+        Space::flat(256, 256).unwrap(),
+        picture("panorama"),
+        Space::panorama(3600, 1800).unwrap(),
+        Direction::SourceToDestination,
+        Mapping::Perspective { yaw, pitch, fov },
+    )
+    .unwrap()
+}
+
+fn polygon_of(shape: &Shape) -> &[Point] {
+    match shape {
+        Shape::Polygon { points } => points,
+        other => panic!("{other:?} is not a polygon"),
+    }
+}
+
+fn spread(points: &[Point]) -> (f64, f64, f64, f64) {
+    let xs = points.iter().map(|p| p.x);
+    let ys = points.iter().map(|p| p.y);
+    (
+        xs.clone().fold(f64::INFINITY, f64::min),
+        xs.fold(f64::NEG_INFINITY, f64::max),
+        ys.clone().fold(f64::INFINITY, f64::min),
+        ys.fold(f64::NEG_INFINITY, f64::max),
+    )
+}
+
+#[test]
+fn a_box_in_a_view_lands_on_its_panorama_as_the_polygon_around_where_it_looks() {
+    // Squint's `a_box_in_a_view_becomes_a_polygon_around_its_direction`, in pixels.
+    let look = look();
+    let in_view = Binding::root(picture("look"), Space::flat(256, 256).unwrap());
+    let middle = on(&in_view, boxed(102.4, 102.4, 153.6, 153.6));
+    let there = carry(&middle, &look, Toward::Destination).unwrap();
+    assert!(!there.partial);
+    assert_eq!(there.parts.len(), 1);
+    assert_eq!(
+        *there.parts[0].binding(),
+        Binding::root(picture("panorama"), Space::panorama(3600, 1800).unwrap())
+    );
+    let points = polygon_of(there.parts[0].shape());
+    assert_eq!(points.len(), 60);
+    // Yaw 45 is column 2250. A fifth of the view across, at its middle, spans twice
+    // atan(tan(30) / 5), 13.17 degrees: 131.7 pixels at ten a degree.
+    let (x0, x1, y0, y1) = spread(points);
+    assert!(x0 < 2250.0 && 2250.0 < x1 && y0 < 900.0 && 900.0 < y1);
+    assert!((x1 - x0 - 131.7).abs() < 0.1, "{}", x1 - x0);
+    // And back into the view: the box it came from, to within the sampling of its edges.
+    let back = carry(&there.parts[0], &look, Toward::Source).unwrap();
+    let Shape::Polygon { points } = back.parts[0].shape() else {
+        panic!("{:?}", back.parts[0].shape());
+    };
+    let (x0, x1, y0, y1) = spread(points);
+    for (got, want) in [(x0, 102.4), (x1, 153.6), (y0, 102.4), (y1, 153.6)] {
+        assert!((got - want).abs() < 1e-6, "{got} for {want}");
+    }
+    assert_eq!(*back.parts[0].binding(), look);
+}
+
+#[test]
+fn a_footprint_over_the_seam_is_two_parts_and_one_that_holds_a_pole_is_a_band() {
+    // Squint's `a_footprint_over_the_seam_is_cut_and_flagged_and_a_pole_spans_the_width`:
+    // here the two sides of the seam are both parts of the one carry.
+    let in_view = Binding::root(picture("look"), Space::flat(256, 256).unwrap());
+    let whole = on(&in_view, Shape::WholeImage);
+    let seam = carry(&whole, &looking(-178.0, 0.0, 60.0), Toward::Destination).unwrap();
+    assert_eq!(seam.parts.len(), 2);
+    let (a, b) = (
+        spread(polygon_of(seam.parts[0].shape())),
+        spread(polygon_of(seam.parts[1].shape())),
+    );
+    // One part ends at the panorama's right edge and the other starts at its left.
+    assert!(a.1 == 3600.0 && a.0 > 3000.0, "{a:?}");
+    assert!(b.0 == 0.0 && b.1 < 600.0, "{b:?}");
+    // A view up near the north pole holds it: a band from the top, the full width.
+    let pole = carry(&whole, &looking(0.0, 80.0, 60.0), Toward::Destination).unwrap();
+    let [part] = &pole.parts[..] else {
+        panic!("{:?}", pole.parts);
+    };
+    let Shape::Box {
+        left,
+        top,
+        right,
+        bottom,
+    } = part.shape()
+    else {
+        panic!("{:?}", part.shape());
+    };
+    assert_eq!((*left, *top, *right), (0.0, 0.0, 3600.0));
+    assert!(*bottom > 180.0 && *bottom < 540.0, "{bottom}");
+    // A small box in that view below the pole holds no pole: a polygon.
+    let below = on(&in_view, boxed(102.4, 153.6, 153.6, 204.8));
+    let below = carry(&below, &looking(0.0, 80.0, 60.0), Toward::Destination).unwrap();
+    assert_eq!(below.parts.len(), 1);
+    polygon_of(below.parts[0].shape());
+    // A region at the top of a view looking high up crosses the seam behind it.
+    let top = on(&in_view, boxed(76.8, 0.0, 179.2, 25.6));
+    let high = carry(&top, &looking(0.0, 60.0, 120.0), Toward::Destination).unwrap();
+    assert_eq!(high.parts.len(), 2, "{:?}", high.parts);
+}
+
+#[test]
+fn a_box_on_a_panorama_lands_in_the_view_and_one_behind_it_is_refused() {
+    // Squint's `a_raw_box_maps_into_the_view_and_a_box_behind_it_is_refused`.
+    let look = looking(0.0, 0.0, 90.0);
+    let panorama = Binding::root(picture("panorama"), Space::panorama(3600, 1800).unwrap());
+    let ahead = on(&panorama, boxed(1728.0, 810.0, 1872.0, 990.0));
+    let seen = carry(&ahead, &look, Toward::Source).unwrap();
+    assert!(!seen.partial);
+    let Shape::Box {
+        left,
+        top,
+        right,
+        bottom,
+    } = seen.parts[0].shape()
+    else {
+        panic!("{:?}", seen.parts[0].shape());
+    };
+    assert!(*left < 128.0 && *right > 128.0 && *top < 128.0 && *bottom > 128.0);
+    // Wider than the view: clipped to it, and said to be partial.
+    let wide = on(&panorama, boxed(1000.0, 400.0, 2600.0, 1400.0));
+    let clipped = carry(&wide, &look, Toward::Source).unwrap();
+    assert!(clipped.partial);
+    assert_eq!(*clipped.parts[0].shape(), boxed(0.0, 0.0, 256.0, 256.0));
+    // Behind the view: column 0 is longitude -180.
+    let behind = on(&panorama, boxed(0.0, 810.0, 144.0, 990.0));
+    assert!(carry(&behind, &look, Toward::Source).is_err());
+    // The whole panorama fills the view.
+    let all = carry(&on(&panorama, Shape::WholeImage), &look, Toward::Source).unwrap();
+    assert_eq!(*all.parts[0].shape(), Shape::WholeImage);
+}
+
+#[test]
+fn a_polygon_or_a_box_rotated_over_the_seam_is_cut_there() {
+    let turn = quarter_turn();
     let turned = Binding::root(picture("turned"), Space::panorama(40, 10).unwrap());
-    let a_box = on(&turned, boxed(1.0, 1.0, 2.0, 2.0));
-    assert!(refused(&a_box, &turn, Toward::Destination).contains("a box"));
-    // A polygon that would cross the seam once rotated is refused, not split.
+    // A quarter turn takes columns 28 to 32 round the seam.
     let across = on(
         &turned,
         Shape::Polygon {
@@ -266,26 +444,30 @@ fn what_is_not_carried_is_refused() {
             ],
         },
     );
-    assert!(refused(&across, &turn, Toward::Destination).contains("seam"));
-    // Nothing is carried through a perspective view yet (ADR 0051), whichever way.
-    let look = Binding::new(
-        picture("look"),
-        Space::flat(10, 10).unwrap(),
-        picture("panorama"),
-        Space::panorama(40, 10).unwrap(),
-        Direction::SourceToDestination,
-        Mapping::Perspective {
-            yaw: 0.0,
-            pitch: 0.0,
-            fov: 60.0,
-        },
-    )
-    .unwrap();
-    let in_view = on(
-        &Binding::root(picture("look"), Space::flat(10, 10).unwrap()),
-        boxed(1.0, 1.0, 2.0, 2.0),
+    let cut = carry(&across, &turn, Toward::Destination).unwrap();
+    assert_eq!(cut.parts.len(), 2);
+    let (a, b) = (
+        spread(polygon_of(cut.parts[0].shape())),
+        spread(polygon_of(cut.parts[1].shape())),
     );
-    assert!(refused(&in_view, &look, Toward::Destination).contains("perspective view"));
-    let on_panorama = on(&panorama, boxed(18.0, 4.0, 22.0, 6.0));
-    assert!(refused(&on_panorama, &look, Toward::Source).contains("perspective view"));
+    assert!(a.1 == 40.0 && b.0 == 0.0, "{a:?} {b:?}");
+    // A box that stays on one side is the polygon of its boundary; one that holds
+    // nothing of the seam is one part.
+    let a_box = on(&turned, boxed(1.0, 3.0, 4.0, 6.0));
+    let moved = carry(&a_box, &turn, Toward::Destination).unwrap();
+    assert_eq!(moved.parts.len(), 1);
+    assert_eq!(polygon_of(moved.parts[0].shape()).len(), 60);
+    // The same polygon, not crossing, is carried vertex by vertex as before.
+    let inside = on(
+        &turned,
+        Shape::Polygon {
+            points: vec![
+                Point::new(2.0, 4.0),
+                Point::new(6.0, 4.0),
+                Point::new(4.0, 6.0),
+            ],
+        },
+    );
+    let one = carry(&inside, &turn, Toward::Destination).unwrap();
+    assert_eq!(polygon_of(one.parts[0].shape()).len(), 3);
 }
