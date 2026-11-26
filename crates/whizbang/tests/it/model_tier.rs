@@ -1039,18 +1039,34 @@ fn a_located_retry_finds_the_phrase_inside_a_crop_with_sam3() {
     );
 }
 
+/// Where the large discs of [`second_disc_scene`] are: nine, one more than the eight
+/// instances the first find keeps (`remove_prompt`, its step `segment`).
+const LARGE_DISCS: [(i64, i64); 9] = [
+    (100, 90),
+    (320, 90),
+    (540, 90),
+    (100, 240),
+    (320, 240),
+    (540, 240),
+    (430, 165),
+    (320, 390),
+    (540, 390),
+];
+
 /// The scene of the located retry's fill (plan mE, task L2, item 5): 640 by 480, white,
-/// a black disc of radius 90 at (420, 200), the disc of the first find, and a small pale
-/// one, radius 10 at (120, 390), light grey on the white, which the first find over the
-/// whole picture is meant to miss and a crop about it to find. Drawn by this program,
-/// so nothing is committed beside it.
+/// nine black discs of radius 30 ([`LARGE_DISCS`]), and a small pale one, radius 10 at
+/// (120, 390), light grey on the white. The first find keeps at most eight instances of
+/// the phrase, and the nine large discs, each far more plainly a circle, fill them: so
+/// the pale disc is missed by the first find because of that bound, not because of what
+/// the model sees, while a crop about it holds it alone. Drawn by this program, so
+/// nothing is committed beside it.
 fn second_disc_scene() -> Vec<u8> {
     use image::ImageEncoder;
     let rgba: Vec<u8> = (0..640u32 * 480)
         .flat_map(|at| {
             let (x, y) = (i64::from(at % 640), i64::from(at / 640));
             let disc = |cx: i64, cy: i64, r: i64| (x - cx).pow(2) + (y - cy).pow(2) <= r * r;
-            if disc(420, 200, 90) {
+            if LARGE_DISCS.iter().any(|(cx, cy)| disc(*cx, *cy, 30)) {
                 [0, 0, 0, 255]
             } else if disc(120, 390, 10) {
                 [200, 200, 200, 255]
@@ -1074,10 +1090,11 @@ fn a_located_retrys_carried_mask_reaches_a_fill_and_a_check_with_sam3() {
     use whizbang_core::artifact::{self, Artifact, Image, ImageRole, Origin, Step};
     use whizbang_core::identity::{Projection, Topology};
     use whizbang_core::spend::Amount;
-    // Plan mE, task L2, item 5: on a picture with a second, small, pale disc the first
-    // find misses, the judge fails the first attempt and names a loose box about that
-    // disc; SAM 3 finds it inside the crop, the mask is carried, joined, filled and
-    // checked, and the judge's second answer passes it.
+    // Plan mE, task L2, item 5: on a picture where the first find's eight instances are
+    // taken by nine large discs, the judge fails the first attempt and names a loose box
+    // about the small pale disc beside them; SAM 3 finds it inside the crop, where it is
+    // alone, the mask is carried, joined, filled and checked, and the judge's second
+    // answer passes it.
     let place = [80.0 / 640.0, 350.0 / 480.0, 160.0 / 640.0, 430.0 / 480.0];
     let more = format!("\n{}{}", backend("fill"), backend("judge"));
     let tier = Tier::with("model-tier-located-fill", SAM3, &more);
@@ -1155,7 +1172,7 @@ fn a_located_retrys_carried_mask_reaches_a_fill_and_a_check_with_sam3() {
     let at = 390 * 640 + 120;
     assert!(
         mask_of(0)[at] < 0.5,
-        "the first find did not miss the second disc"
+        "the first find did not miss the pale disc, though nine larger ones could fill its eight"
     );
     assert!(mask_of(1)[at] >= 0.5);
 }
