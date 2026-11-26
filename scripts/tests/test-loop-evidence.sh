@@ -671,6 +671,14 @@ table_of() { awk -v t="[$1]" '$0 == t { on = 1; next } /^\[/ { on = 0 } on && NF
   fail "kept runs: the places are not counted against the verdict after them: $(table_of places_by_verdict)"
 [ "$(table_of located_added_nothing)" = "retries = 2 widened_after = 2 widened_after_pass = 1 widened_after_fail = 1 widened_after_unsure = 0 widened_after_unchecked = 0 " ] ||
   fail "kept runs: the located retries that added nothing are not counted: $(table_of located_added_nothing)"
+# A word no record of the loop holds is refused, never read as a sentence: one of no set,
+# and `never_said`, which only an older record's sentence reads as.
+for word in gave_up never_said; do
+  sed "s/\"reason\":\"deadline_passed\"/\"reason\":\"$word\"/" "$tmp/kept.jsonl" >"$tmp/odd.jsonl"
+  grep -F "\"reason\":\"$word\"" "$tmp/odd.jsonl" >/dev/null || fail "kept runs: the word $word was not written"
+  expect_fail "kept runs: the word $word" "in a word that is none of the loop's" python3 -B scripts/loop-evidence.py tally \
+    --records "$tmp/odd.jsonl" --manifest "$seg_manifest" --judge terra --repetition 3 --commit "$commit" --whizbang 0.1.0 --out "$tmp/odd.toml"
+done
 
 # --- Once through the real lock and the real guards: the command that loads a model has
 # the watch on memory and the thread guard above it, and the guard's limit is 200.

@@ -375,13 +375,20 @@ def reason_of(sentence):
     return "other"
 
 
+# The words a record of `run/8` may hold: the set above but `never_said`, which only a
+# sentence of an older record reads as (crates/whizbang-core/src/contract/eighth.rs).
+WORDS = tuple(name for name, _ in REASONS if name != "never_said")
+
+
 def reason_in(attempted):
-    """Why a loop's attempts ended: the record's word (`run/8`) when it is one of the set,
-    or its sentence read as one of them."""
-    word = attempted.get("reason")
-    if word in [name for name, _ in REASONS]:
-        return word
-    return reason_of(attempted.get("ended"))
+    """Why a loop's attempts ended: the record's word (`run/8`), which must be one of
+    WORDS, or, where it holds none, its sentence read as one of the set."""
+    if "reason" not in attempted:
+        return reason_of(attempted.get("ended"))
+    word = attempted["reason"]
+    if word not in WORDS:
+        raise Refused("a record says why its attempts ended in a word that is none of the loop's")
+    return word
 
 
 def word(text, pattern=r"^[a-z][a-z0-9_-]{0,31}$"):
