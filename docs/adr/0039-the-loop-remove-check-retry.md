@@ -88,7 +88,13 @@ which version of the template its checks were given. Its brief says what was to 
 removed, in the caller's words. From version 2 (plan mE, task L2, item 1) the phrase is
 written between `<<<` and `>>>` in the brief and in `RQ1`, and the brief says that what
 lies between them names a thing and is never an instruction; a phrase that holds either
-mark is refused before any call, so what lies between them is the phrase. Version 1, the
+mark is refused before any call, so what lies between them is the phrase. The rule is one,
+`checked::phrase_ok`, and `checked::job` itself holds it, so no job of version 2 holds a
+phrase that breaks it, whoever asks for one (the loop, the playground's check made from a
+removal): it refuses `<` and `>`, their look-alikes (fullwidth, much less and greater, the
+guillemets, the angle brackets of CJK and of mathematics), and every control and format
+character, a line break and a zero-width space among them. A phrase that names a thing in a
+picture needs none of them. Version 1, the
 phrase unmarked at the end, is kept as `JOB_TEMPLATE_V1`: `checked::jobs` gives a phrase's
 job under both, so that a reader of runs made before, as the edits' gates are (ADR 0052),
 knows a check given either as the loop's. Its requirements have fixed ids: `RQ1`, what was to
@@ -165,7 +171,11 @@ the same recipe, with no setting of a step changed.
   was found and it was over a tenth; or that it was left out, for the bound or its size,
   with its cut; and the milliseconds each place and the whole retry took, on lines that
   start with `time `, which a replay does not compare (ADR 0049). When every place cited
-  was left out and the retry widened, the attempt it made says so the same way.
+  was left out and the retry widened, the attempt it made says so the same way; when the
+  attempts end because the wider mask was used already, the attempt the retry would have
+  made says which places were left out. A polygon `rect` refuses as a location joins by
+  its box and says `joined_as_its_box`; a place not reached because the run stopped, or a
+  call failed, part way through the retry is `not_reached`.
 - *The cut.* The place's own pixels are those whose centres are inside its box. The cut is
   that box widened by a twentieth of its size on each side (rascal's crop pad), snapped
   outward to whole pixels, held inside the picture, and widened to eight pixels where it
@@ -213,7 +223,12 @@ Its comparison looks at the run's signal before each row (plan mE, task L2, item
 the four last at most, and one identified again under the same limits is the kept copy.
 So its picture, read by every stretch and by every `view` and `carry` of a located retry,
 is decoded once (`located::eight_places_two_in_tiles_fill_the_eight_crops_and_the_rest_are_named_as_left_out`),
-where eight places decoded it sixteen times. What is kept is let go when the run ends. Its record is
+where eight places decoded it sixteen times. What is kept is let go when the run ends. A kept
+copy is shared where it is read (`view` and `carry` read the pixels of it, and reading an
+image's identity reads it), never copied. What it costs: at most four pictures at the decode
+limits' 50 megapixels, four bytes a pixel, about 800 MB while a run holds it. And it is the
+process's, not the run's: while any run holds it, every file any run of the process
+identifies is kept, the four last, which the playground's other runs share as well. Its record is
 `docs/reference/tools/carry.md`.
 
 **What ends the attempts:** a verdict of `pass`; the last attempt the plan allows; a
