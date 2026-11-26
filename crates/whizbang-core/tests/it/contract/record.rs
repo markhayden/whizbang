@@ -186,7 +186,8 @@ fn a_record_of_another_version_is_another_version_not_damage() {
     ));
     let said = RunRecord::from_bytes(other).unwrap_err().to_string();
     assert!(
-        said.contains("run/9") && said.contains("this build reads run/7, run/6, run/5, run/4"),
+        said.contains("run/9")
+            && said.contains("this build reads run/8, run/7, run/6, run/5, run/4"),
         "{said}"
     );
 }
@@ -2034,14 +2035,14 @@ fn the_new_record_version_reads_a_record_of_the_version_before() {
         RunRecord::from_bytes(long.as_bytes()),
         Err(RecordError::Inconsistent(_))
     ));
-    // The refusal of another version names the six this build reads.
-    let other = fifth.replacen("\"run/5\"", "\"run/8\"", 1);
+    // The refusal of another version names the seven this build reads.
+    let other = fifth.replacen("\"run/5\"", "\"run/9\"", 1);
     assert_eq!(
         RunRecord::from_bytes(other.as_bytes())
             .unwrap_err()
             .to_string(),
-        "a record of another version: run/8, and this build reads run/7, run/6, run/5, run/4, \
-         run/3 and run/2"
+        "a record of another version: run/9, and this build reads run/8, run/7, run/6, run/5, \
+         run/4, run/3 and run/2"
     );
 }
 
@@ -2120,7 +2121,7 @@ fn a_run_that_did_not_complete_never_says_an_attempt_was_kept() {
         fn run(&self, _: &PreparedCall, context: &Context) -> Result<Produced, Failure> {
             let facts = context.facts();
             assert!(facts.attempt(Attempt::judged(1, Decision::Fail)));
-            assert!(facts.attempts_ended(Some(1), "the last attempt the plan allows"));
+            assert!(facts.attempts_ended(Some(1), "the last attempt the plan allows", None));
             match self.1 {
                 "completes" => Ok(Produced::nothing()),
                 "fails" => Err(Failure::error(
@@ -2215,9 +2216,9 @@ fn run_6_holds_a_plan_a_start_findings_and_a_loops_attempts() {
             let third = Attempt::unchecked(3, "the check ended in an error");
             assert!(facts.attempt(third.changed(Changed::Located { crops })));
             // The attempt kept is one of them; the end is said once, and ends the list.
-            assert!(!facts.attempts_ended(Some(4), "the last attempt the plan allows"));
-            assert!(facts.attempts_ended(Some(2), "the last attempt the plan allows"));
-            assert!(!facts.attempts_ended(Some(1), "again"));
+            assert!(!facts.attempts_ended(Some(4), "the last attempt the plan allows", None));
+            assert!(facts.attempts_ended(Some(2), "the last attempt the plan allows", None));
+            assert!(!facts.attempts_ended(Some(1), "again", None));
             assert!(!facts.attempt(Attempt::judged(4, Decision::Pass)));
             Ok(Produced::nothing().with_findings(super::findings::document()))
         }
@@ -2508,6 +2509,127 @@ fn run_6_holds_each_list_to_its_bound() {
         Err(RecordError::Inconsistent(_))
     ));
     assert!(validate(&schema_6(), &as_json(&negative)).is_err());
+}
+
+// --- run/8: why a loop's attempts ended, as a word (plan mE, task L1, item 1) -------------------
+
+fn schema_8() -> Json {
+    serde_json::from_str(whizbang_core::contract::RUN_8_SCHEMA).unwrap()
+}
+
+/// The fixed vector of `run/6` with the word of why its attempts ended, as `run/8`.
+fn of_run_8() -> String {
+    let ended = r#""ended":"the last attempt the plan allows"}"#;
+    of_run_6().replacen("\"run/6\"", "\"run/8\"", 1).replacen(
+        ended,
+        r#""ended":"the last attempt the plan allows","reason":"last_attempt_of_the_plan"}"#,
+        1,
+    )
+}
+
+#[test]
+fn run_8_holds_why_a_loops_attempts_ended_as_a_word_and_older_records_read_as_they_did() {
+    use whizbang_core::contract::record::{Attempt, AttemptsEnded, Decision};
+    use whizbang_core::contract::{Context, Failure, Produced, RUN_8};
+    // The words are a closed set, the schema's and the type's alike, each written as the
+    // type says it.
+    let words: Vec<&str> = AttemptsEnded::ALL.iter().map(|word| word.word()).collect();
+    let schema = schema_8();
+    let listed = &schema["$defs"]["attempted"]["properties"]["reason"]["enum"];
+    assert_eq!(listed, &json!(words));
+    for word in AttemptsEnded::ALL {
+        assert_eq!(serde_json::to_value(word).unwrap(), json!(word.word()));
+    }
+    // The vector reads, is written back as it was, and is of its schema and of no
+    // older one; without the word it is `run/6`, as it was.
+    let vector = of_run_8();
+    let read = RunRecord::from_bytes(vector.as_bytes()).unwrap();
+    assert_eq!(read.version(), RUN_8);
+    assert_eq!(read.to_bytes(), vector.as_bytes());
+    validate(&schema, &as_json(&vector)).unwrap();
+    assert!(validate(&schema_6(), &as_json(&vector)).is_err());
+    let attempts = read.attempts().unwrap();
+    assert_eq!(attempts.reason, Some(AttemptsEnded::LastAttemptOfThePlan));
+    assert_eq!(attempts.ended, "the last attempt the plan allows");
+    assert_eq!(
+        RunRecord::from_bytes(of_run_6().as_bytes())
+            .unwrap()
+            .attempts()
+            .unwrap()
+            .reason,
+        None
+    );
+    // What a record may not say of it: the word in an older version, a `run/8` record
+    // without it, a word of no set, and a null.
+    let word = r#","reason":"last_attempt_of_the_plan""#;
+    let refused = [
+        (
+            "the word in run/6",
+            vector.replacen("\"run/8\"", "\"run/6\"", 1),
+        ),
+        (
+            "the word in run/7",
+            vector.replacen("\"run/8\"", "\"run/7\"", 1),
+        ),
+        ("run/8 without it", vector.replacen(word, "", 1)),
+        (
+            "a word of no set",
+            vector.replacen("last_attempt_of_the_plan", "gave_up", 1),
+        ),
+        ("a null", vector.replacen(word, r#","reason":null"#, 1)),
+    ];
+    for (what, bytes) in refused {
+        assert!(RunRecord::from_bytes(bytes.as_bytes()).is_err(), "{what}");
+    }
+    assert!(validate(&schema, &as_json(&vector.replacen(word, "", 1))).is_err());
+
+    // A loop that says the word is written as `run/8`; one that does not, as before.
+    struct Says(ActionDescriptor, Option<AttemptsEnded>);
+    impl Action for Says {
+        fn descriptor(&self) -> &ActionDescriptor {
+            &self.0
+        }
+        fn run(&self, _: &PreparedCall, context: &Context) -> Result<Produced, Failure> {
+            let facts = context.facts();
+            assert!(facts.attempt(Attempt::judged(1, Decision::Pass)));
+            assert!(facts.attempts_ended(Some(1), "attempt 1 passed", self.1));
+            Ok(Produced::nothing())
+        }
+    }
+    let dir = Scratch::new("run-8");
+    let store = Arc::new(Store::open(&dir.path().join("store"), Arc::new(RealFs)).unwrap());
+    let mut registry = Registry::new();
+    for (name, said) in [("says", Some(AttemptsEnded::Passed)), ("silent", None)] {
+        let draft = ActionDescriptor::draft(name, "1.0.0", Kind::Loop, "A test action.");
+        registry
+            .register(Arc::new(Says(draft.build().unwrap(), said)))
+            .unwrap();
+    }
+    let engine = Engine::over(
+        registry,
+        Arc::new(NoBackends),
+        store.clone(),
+        Digest::of_bytes(b""),
+    );
+    for (name, version, said) in [
+        ("says", RUN_8, Some(AttemptsEnded::Passed)),
+        ("silent", "run/6", None),
+    ] {
+        let finished = engine.submit(&Call::new(name)).unwrap();
+        let generation = store.snapshot().unwrap();
+        let id = finished.run().as_str();
+        let stored = record::stored(&generation, id, |entry| store.read(entry));
+        let stored = stored.unwrap().unwrap();
+        assert_eq!(stored.version(), version, "{name}");
+        assert_eq!(stored.attempts().unwrap().reason, said, "{name}");
+        let document: Json = serde_json::from_slice(&stored.to_bytes()).unwrap();
+        let schema = if said.is_some() {
+            schema_8()
+        } else {
+            schema_6()
+        };
+        validate(&schema, &document).unwrap();
+    }
 }
 
 // --- run/7: a model's card and the run replayed (plan m7, task B1, item 6; ADR 0048) -----------
