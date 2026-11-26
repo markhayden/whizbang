@@ -375,14 +375,75 @@ type Planned = (
 pub const SEED: u64 = 20_261_118;
 pub const RESAMPLES: usize = 2_000;
 
+/// The argument of a tool file that names its method (`SPEC.md` section 8, "Comparing
+/// methods"; plan mE, task T2, item 6), as `check` gives it (`whizbang_squint::check::METHOD`).
+pub const METHOD: &str = whizbang_squint::check::METHOD;
+/// The argument of a tool file that takes a box, and the box `eval tool` gives it: the whole
+/// frame, as fractions of it, so that each item has one number and no tool feeds another
+/// (plan mE, task T2, item 4).
+pub const BBOX: &str = "bbox";
+pub const WHOLE_FRAME: &str = "0 0 1 1";
+
+/// What `eval tool` gives a tool for one item: the job whole, to a tool file that takes
+/// it (never the item's label); what the rules of its use case hint, as the arguments of
+/// text it declares; the whole frame, to one that takes a box; and the method, when one is
+/// named, to one that declares a method, and refused for any other.
+pub fn item_arguments(
+    declared: &Declared,
+    job: &Job,
+    method: Option<&str>,
+) -> Result<Vec<(String, Value)>, String> {
+    let mut arguments = if declared.takes_job {
+        vec![("job".to_owned(), Value::text(&job.to_json()))]
+    } else {
+        Vec::new()
+    };
+    if let Some(rules) = whizbang_squint::use_case::rules(&job.use_case) {
+        arguments.extend(hinted_arguments(declared, &rules.hints));
+    }
+    if declared.texts.iter().any(|name| name == BBOX) {
+        arguments.push((BBOX.to_owned(), Value::text(WHOLE_FRAME)));
+    }
+    if let Some(method) = method {
+        let named = !method.is_empty()
+            && (method.bytes())
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-');
+        if !named {
+            return Err(format!(
+                "--method {}: a method is a name of lower-case letters, digits, _ and -",
+                printable(method)
+            ));
+        }
+        if !declared.texts.iter().any(|name| name == METHOD) {
+            return Err(format!(
+                "{} declares no methods: --method is for a tool file that takes the argument method",
+                declared.tool
+            ));
+        }
+        arguments.push((METHOD.to_owned(), Value::text(method)));
+    }
+    Ok(arguments)
+}
+
+/// The name `eval tool` prints a tool under: with its method, `regions@eomt`, when one is
+/// named.
+pub fn named(declared: &Declared, method: Option<&str>) -> String {
+    match method {
+        Some(method) => format!("{}@{}", declared.tool, printable(method)),
+        None => declared.tool.clone(),
+    }
+}
+
 /// `whizbang eval tool`: the tool's read of each item of each set, each a run, scored
 /// against the sets' labels. A set without labels (a blind set) is refused; a picture the
-/// store does not hold is refused before anything runs, naming the set to fetch.
+/// store does not hold is refused before anything runs, naming the set to fetch; and so is a
+/// method named of a tool that declares none.
 pub fn eval_tool(
     executor: &dyn Executor,
     root: &Path,
     sets_root: &Path,
     declared: &Declared,
+    method: Option<&str>,
     ids: &[String],
     resamples: usize,
 ) -> Result<(Scored, String), String> {
@@ -412,18 +473,9 @@ pub fn eval_tool(
             else {
                 return Err(format!("{id}: item {item} has no label or no family"));
             };
-            // A tool file that takes the job is given it whole: its requirements, never
-            // the item's label, which is the set's and not the job's.
-            let mut arguments = if declared.takes_job {
-                vec![("job".to_owned(), Value::text(&job.to_json()))]
-            } else {
-                Vec::new()
-            };
-            // And what the rules of its use case hint to the tool (plan mE, task T1, item
-            // 4), as the arguments of text it declares under those names.
-            if let Some(rules) = whizbang_squint::use_case::rules(&job.use_case) {
-                arguments.extend(hinted_arguments(declared, &rules.hints));
-            }
+            // The job, the hints, the whole frame and the method (plan mE, tasks T1 and
+            // T2): never the item's label, which is the set's and not the job's.
+            let arguments = item_arguments(declared, &job, method)?;
             planned.push((
                 id.clone(),
                 item.clone(),
@@ -464,7 +516,7 @@ pub fn eval_tool(
     let mut text = lines;
     text.push_str(&format!(
         "{} {} ({} is changed): {} items ({} fail, {} pass) in {} families\n",
-        declared.tool,
+        named(declared, method),
         declared.primary,
         match declared.changed {
             Changed::Larger => "larger",

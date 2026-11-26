@@ -76,6 +76,30 @@ with every subject's readings beside it (`one_minus_iou`, `area_source`, `area_c
 `removed`) and the regions, each held to its declared bounds before anything uses it. No
 image.
 
+**Its methods** (plan mE, task T2; `SPEC.md` section 8, "Comparing methods"), the argument
+`method`, which `whizbang eval tool --method` gives each run: `sam3`, the default, as above;
+or `eomt`, squint's own, where a subject's mask is the pixels the catalogue's fixed-class
+segmenter `eomt-ade20k` labels with the ADE20K class its phrase names (the class itself, or
+a word squint mapped to one: "pool" is `swimming pool`; `whizbang_pack.class_groups`). A
+subject whose phrase names no class is not applicable. Its examples under `eomt` run as
+tests (`test_classes.OutlineByClass`); rung 2 chooses between the two (task R2).
+
+Under `eomt`, the record's own source and examples, read by a fake fixed-class segmenter that
+calls each red pixel `swimming pool` and every other `floor` (run as a test,
+`test_classes.MethodRecords`), the subject from the job "The pool keeps its shape.":
+
+<!-- eomt: begin -->
+
+| Example | Subject | Values | Regions |
+|---|---|---|---|
+| widened | pool | added 0.0501 area_candidate 0.2168 area_change 0.3008 area_source 0.1667 one_minus_iou 0.2312 removed 0 shift_max_px 12.0312 shift_p95_px 12.0312 | pool added, boundary moved up to 12 px 0.771 |
+| towel | pool | added 0.0052 area_candidate 0.1719 area_change 0.0312 area_source 0.1667 one_minus_iou 0.0303 removed 0 shift_max_px 15 shift_p95_px 6.9141 | pool added, boundary moved up to 15 px 0.75 |
+
+<!-- eomt: end -->
+
+The subject "pool" names the class `swimming pool`; the fake labels the red pixels so, so
+the shapes are the same as under `sam3`, and so are the readings.
+
 ## Examples
 
 Both compare a picture drawn by a program, 160 by 120, a red pool on grey, with an edit of
@@ -160,3 +184,5 @@ names it.
 - 2026-11-25, plan mE task T1: ported from squint as a tool file on SAM 3's phrase requests,
   with its regions on the candidate; this record's two examples (rung 1), run against the
   fake model.
+- 2026-11-26, plan mE task T2: the argument `method`, `sam3` (the default) or `eomt`, on the
+  catalogue's fixed-class segmenter; version 0.2.0.

@@ -196,7 +196,7 @@ Each path is a tool file of yours: a Python file that declares, in a block of co
 its top, its name, the images it reads, what it measures with each measurement's bounds,
 the regions it may locate with their bounds, and its arguments, and has one function,
 `run(context)` (ADR 0032 gives the whole shape; `pack/tools/per_subject.py`,
-`pack/tools/outline.py` and `pack/tools/regions.py` are three, and `whizbang setup` puts a
+`pack/tools/outline.py`, `pack/tools/regions.py` and `pack/tools/classes.py` are four, and `whizbang setup` puts a
 copy of each at `pack/project/tools/` in the models directory). At most 16, each an absolute path, each named once. A
 file that cannot be read, that its group or others can write, or whose declaration lacks a
 bound, is refused when the config is read. `whizbang try` and `whizbang eval tool` run it

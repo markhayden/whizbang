@@ -28,6 +28,10 @@ expect_fail "a folder without the pack" "no models directory with a model and th
 expect_fail "a folder that is not there" "no models directory with a model and the pack" \
   env WHIZBANG_MODELS_DIR="$tmp/nowhere" "$tm"
 [ ! -e "$tmp/models-only/pack" ] || fail "nothing is made in the folder it refused"
+# A pack installed by another tree is refused before anything is built.
+mkdir -p "$tmp/stale/models" "$tmp/stale/pack/project/src/whizbang_pack"
+printf 'REVISION = "0"\n' >"$tmp/stale/pack/project/src/whizbang_pack/sam3.py"
+expect_fail "a pack of another tree" "is not this tree's" env WHIZBANG_MODELS_DIR="$tmp/stale" "$tm"
 
 expect_fail "the evidence outside the guard" "run it through scripts/heavy.sh" \
   env -u WHIZBANG_THREAD_GUARD "$ev"

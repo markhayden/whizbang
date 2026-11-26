@@ -152,7 +152,7 @@ pub const EXTRA_HOST: Host = Host {
 };
 
 /// The files of the pack this build carries, by their place in the pack's folder.
-const CARRIED: [(&str, &[u8]); 21] = [
+const CARRIED: [(&str, &[u8]); 23] = [
     (
         "pyproject.toml",
         include_bytes!("../../../pack/pyproject.toml"),
@@ -169,6 +169,10 @@ const CARRIED: [(&str, &[u8]); 21] = [
     (
         "src/whizbang_pack/adapter.py",
         include_bytes!("../../../pack/src/whizbang_pack/adapter.py"),
+    ),
+    (
+        "src/whizbang_pack/class_groups.py",
+        include_bytes!("../../../pack/src/whizbang_pack/class_groups.py"),
     ),
     (
         "src/whizbang_pack/conformance.py",
@@ -226,6 +230,10 @@ const CARRIED: [(&str, &[u8]); 21] = [
     ),
     // The tool files, for a config to list: per-subject comparison (plan 2C, task X1; ADR
     // 0032), `outline` and `regions` (plan mE, task T1).
+    (
+        "tools/classes.py",
+        include_bytes!("../../../pack/tools/classes.py"),
+    ),
     (
         "tools/outline.py",
         include_bytes!("../../../pack/tools/outline.py"),

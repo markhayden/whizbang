@@ -44,6 +44,10 @@ places the model on the device the setting `device` asks for (`mps`, `cuda` or t
 off (`local_files_only=True`), and reports the device the parameters are on. The tests hand
 the adapter a stand-in for it.
 
+**The runtime's packages.** `transformers` builds EoMT's training loss with the model, and the
+loss asks for `scipy`, which the pack's `torch` extra pins for it; an import the library
+fails while it builds the model is refused, `unavailable`, with the library's words.
+
 **The load** holds the installation's `config.json` to `CLASSES`: the labels its `id2label`
 gives, in order and each trimmed, are the list, or the load is refused, `unavailable`, and
 nothing is placed. **Settings**: `device`; `threshold`, `pad`, `min_cover` and `outline` are
@@ -129,7 +133,13 @@ class EomtAde20k(Adapter):
         if classes_of(config) != CLASSES:
             raise Fault("unavailable", "the installation's classes are not the 150 of ADE20K the adapter names")
         runtime = self._runtime() if self._runtime is not None else Torch.imported()
-        runtime.load(os.path.dirname(path), device)
+        try:
+            runtime.load(os.path.dirname(path), device)
+        except ImportError as missing:
+            # The library asks for a package of its own when the model is built (EoMT's
+            # loss asks for `scipy`): say which, not only that an import failed.
+            words = " ".join(str(missing).split())[:120] or "a module the library needs is missing"
+            raise Fault("unavailable", "the runtime cannot build the model: " + words + "; run whizbang setup --extra torch") from None
         self.model = runtime
         self.device = runtime.device
         self._last = None

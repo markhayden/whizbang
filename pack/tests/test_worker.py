@@ -859,6 +859,7 @@ class Imports(unittest.TestCase):
             [
                 "__init__.py",
                 "adapter.py",
+                "class_groups.py",
                 "conformance.py",
                 "eomt_ade20k.py",
                 "fake_models.py",
